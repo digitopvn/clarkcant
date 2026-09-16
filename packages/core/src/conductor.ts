@@ -8,6 +8,7 @@ import {
   type Principal,
   type TaskRecord,
   type WidgetDefinition,
+  assertBlockProvenance,
   nowInstant,
 } from "@clarkcant/contracts";
 
@@ -98,6 +99,18 @@ export interface ModelTurnInput {
   text: string;
 }
 
+/**
+ * One piece of a model reply, in the order the model produced it.
+ *
+ * The order is the point. Concatenating the text and appending the cards afterwards would put
+ * every card below the whole reply, which is not what the model said — it said a sentence, asked
+ * for a view, then said another sentence. A list of segments is that order today and the streaming
+ * order later, so the shape does not have to change when replies stream.
+ */
+export type ModelSegment =
+  | { kind: "text"; text: string }
+  | { kind: "block"; block: MessageBlock };
+
 /** What a model turn produced.
  *
  * The provider and model are reported back rather than assumed, because the card that records
@@ -105,7 +118,10 @@ export interface ModelTurnInput {
  * startup and this turn would otherwise label the reply with the wrong model.
  */
 export interface ModelTurnReply {
+  /** The reply's prose, for callers that only want the words. Derived from `segments`. */
   text: string;
+  /** Everything the reply produced, in order. This is what becomes the message. */
+  segments: ModelSegment[];
   provider: string;
   model: string;
   elapsedMs: number;
@@ -365,12 +381,55 @@ async function runModelTurn(
         cancellable: false,
         updatedAt: input.at,
       },
-      { type: "text", format: "markdown", content: reply.text, streaming: false },
+      ...modelSegmentsToBlocks(reply),
     ],
     { at: input.at },
   );
 
   return { messages: [message], taskId: undefined, resolution: "model" };
+}
+
+/**
+ * Turn a model reply into message blocks, screening what the model is not allowed to claim.
+ *
+ * This is where the model path meets the trust boundary, so this is where the boundary is
+ * enforced. A block that is host-owned cannot appear in a model turn: the node builds those from
+ * its own state, and a model turn has no state to build one from. Any that arrive here anyway are
+ * dropped and reported in the prose rather than drawn, because a card asserting something about
+ * the node is exactly the shape an injected instruction would try to produce.
+ *
+ * The screen is deliberately `builtByHost: false`, not `true`. These blocks came from a model
+ * turn, and marking them host-built because the node happened to assemble the array would make
+ * the check agree with itself and prove nothing.
+ */
+function modelSegmentsToBlocks(reply: ModelTurnReply): MessageBlock[] {
+  const blocks: MessageBlock[] = [];
+
+  for (const segment of reply.segments) {
+    if (segment.kind === "text") {
+      if (segment.text.trim() === "") continue;
+      // A settled turn is not a stream: `prompt()` resolves when the run finishes, so nothing
+      // here is still arriving and claiming otherwise would make the UI wait for more.
+      blocks.push({ type: "text", format: "markdown", content: segment.text, streaming: false });
+      continue;
+    }
+
+    const verdict = assertBlockProvenance(segment.block, { builtByHost: false });
+    if (!verdict.ok) {
+      // Said out loud rather than dropped in silence: a model that repeatedly asks for a card it
+      // cannot have is a fact the user should be able to see.
+      blocks.push({
+        type: "text",
+        format: "plain",
+        content: `Một khối nội dung đã bị từ chối: ${verdict.message}`,
+        streaming: false,
+      });
+      continue;
+    }
+    blocks.push(segment.block);
+  }
+
+  return blocks;
 }
 
 function runSampleRecipe(
