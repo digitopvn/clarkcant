@@ -26,10 +26,13 @@ export {
 export {
   ApprovalCardBlock,
   ArtifactBlock,
+  CodeDiffCardBlock,
   ConnectionCardBlock,
   CredentialCardBlock,
   EvidenceBlock,
   HOST_OWNED_BLOCK_TYPES,
+  ProjectPickerCardBlock,
+  ReconnectCardBlock,
   SystemCardBlock,
   TaskOverviewCardBlock,
   TaskProgressCardBlock,

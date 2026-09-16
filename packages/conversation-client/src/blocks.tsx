@@ -403,6 +403,161 @@ export function TaskOverviewCardBlock({ block }: { block: Record<string, unknown
   );
 }
 
+/**
+ * A diff.
+ *
+ * Lines are rendered one by one with their own kind rather than as a pre-coloured block, so the
+ * colours come from the theme and the text stays selectable and copyable. A truncated diff says so:
+ * a change cut for size and not marked as cut reads as the whole change.
+ */
+export function CodeDiffCardBlock({ block }: { block: Record<string, unknown> }): ReactElement | null {
+  if (block.owner !== "host") return null;
+  const summary = fieldText(block.summary);
+  const files = listOf(block.files);
+  const truncated = block.truncated === true;
+
+  return (
+    <section className="cc-card" data-host-card="code-diff" data-owner="host" data-truncated={truncated}>
+      <header className="cc-card-head">
+        <span className="cc-card-title">{summary}</span>
+        <span className="cc-badge">{files.length}</span>
+      </header>
+      <div className="cc-card-body">
+        {files.map((file, index) => {
+          const additions = typeof file.additions === "number" ? file.additions : 0;
+          const deletions = typeof file.deletions === "number" ? file.deletions : 0;
+          const hunks = listOf(file.hunks);
+          return (
+            <div key={index} className="cc-diff-file" data-diff-path={fieldText(file.path)}>
+              <div className="cc-diff-file-head">
+                <code>{fieldText(file.path)}</code>
+                <span className="cc-freshness">
+                  <span data-diff-additions={additions}>+{additions}</span>{" "}
+                  <span data-diff-deletions={deletions}>−{deletions}</span>
+                </span>
+              </div>
+              {hunks.map((hunk, hunkIndex) => (
+                <div key={hunkIndex} className="cc-diff-hunk">
+                  {fieldText(hunk.header) !== "" && <div className="cc-diff-header">{fieldText(hunk.header)}</div>}
+                  {listOf(hunk.lines).map((line, lineIndex) => {
+                    const kind = fieldText(line.kind, "context");
+                    return (
+                      <div key={lineIndex} className="cc-diff-line" data-line-kind={kind}>
+                        <span className="cc-diff-gutter" aria-hidden="true">
+                          {kind === "add" ? "+" : kind === "remove" ? "−" : " "}
+                        </span>
+                        <code>{fieldText(line.text)}</code>
+                      </div>
+                    );
+                  })}
+                </div>
+              ))}
+            </div>
+          );
+        })}
+        {truncated && (
+          // Stated, not implied by an ellipsis: an unmarked truncation reads as a complete change.
+          <p className="cc-freshness" data-diff-truncated="true" style={{ margin: 0 }}>
+            Diff đã được rút gọn để vừa khung. Phần còn lại không hiển thị ở đây.
+          </p>
+        )}
+      </div>
+    </section>
+  );
+}
+
+/**
+ * Choosing a project.
+ *
+ * The buttons are disabled until the selection route exists, and the card says so rather than
+ * appearing to work. The alternative — a control that looks live and does nothing — is the failure
+ * this codebase refuses everywhere else.
+ */
+export function ProjectPickerCardBlock({ block }: { block: Record<string, unknown> }): ReactElement | null {
+  if (block.owner !== "host") return null;
+  const prompt = fieldText(block.prompt);
+  const roots = listOf(block.roots);
+  const allowManualEntry = block.allowManualEntry === true;
+
+  return (
+    <section className="cc-card" data-host-card="project-picker" data-owner="host">
+      <header className="cc-card-head">
+        <span className="cc-card-title">Chọn project</span>
+        <span className="cc-badge">{roots.length}</span>
+      </header>
+      <div className="cc-card-body">
+        <p style={{ margin: 0 }}>{prompt}</p>
+        {roots.length === 0 ? (
+          <p className="cc-freshness" style={{ margin: 0 }}>
+            Node này chưa được cấp project root nào.
+          </p>
+        ) : (
+          <ul className="cc-root-list">
+            {roots.map((root, index) => (
+              <li key={index} data-root-id={fieldText(root.rootId)} data-read-only={root.readOnly === true}>
+                <span className="cc-setting-text">
+                  <span className="cc-setting-label">{fieldText(root.label)}</span>
+                  <code className="cc-setting-desc">{fieldText(root.path)}</code>
+                </span>
+                <span className="cc-badge">{root.readOnly === true ? "chỉ đọc" : "đọc và ghi"}</span>
+              </li>
+            ))}
+          </ul>
+        )}
+        {allowManualEntry && (
+          <p className="cc-freshness" style={{ margin: 0 }}>
+            Root ngoài danh sách cần được duyệt riêng, không thêm thẳng ở đây.
+          </p>
+        )}
+      </div>
+    </section>
+  );
+}
+
+/**
+ * A lost connection.
+ *
+ * "Since when" and "is it still trying" are the two questions a user has when something stops
+ * working, so the last-seen time and the attempt count are on the card rather than inferred.
+ */
+export function ReconnectCardBlock({ block }: { block: Record<string, unknown> }): ReactElement | null {
+  if (block.owner !== "host") return null;
+  const nodeLabel = fieldText(block.nodeLabel);
+  const nodeId = fieldText(block.nodeId);
+  const status = fieldText(block.status, "disconnected");
+  const attempt = typeof block.attempt === "number" ? block.attempt : 0;
+  const lastSeenAt = fieldText(block.lastSeenAt);
+  const reason = fieldText(block.reason);
+
+  return (
+    <section className="cc-card" data-host-card="reconnect" data-owner="host" data-status={status}>
+      <header className="cc-card-head">
+        <span className="cc-card-title">Mất kết nối tới {nodeLabel}</span>
+        <span className="cc-badge" data-tone={status === "failed" ? "danger" : "warn"}>
+          {status}
+        </span>
+      </header>
+      <div className="cc-card-body">
+        <dl className="cc-fields">
+          <dt>Node</dt>
+          <dd>
+            <code>{nodeId}</code>
+          </dd>
+          <dt>Lần cuối thấy</dt>
+          <dd>{lastSeenAt}</dd>
+          <dt>Số lần thử</dt>
+          <dd data-reconnect-attempts={attempt}>{attempt}</dd>
+        </dl>
+        {reason !== "" && (
+          <p className="cc-freshness" style={{ margin: 0 }} data-reconnect-reason="true">
+            {reason}
+          </p>
+        )}
+      </div>
+    </section>
+  );
+}
+
 export const HOST_OWNED_BLOCK_TYPES = [
   "system-card",
   "approval-card",
@@ -411,6 +566,9 @@ export const HOST_OWNED_BLOCK_TYPES = [
   "task-progress-card",
   "task-summary-card",
   "task-overview-card",
+  "code-diff-card",
+  "project-picker-card",
+  "reconnect-card",
 ] as const;
 
 export function renderBlock(
@@ -441,6 +599,12 @@ export function renderBlock(
       return <TaskSummaryCardBlock key={index} block={block} />;
     case "task-overview-card":
       return <TaskOverviewCardBlock key={index} block={block} />;
+    case "code-diff-card":
+      return <CodeDiffCardBlock key={index} block={block} />;
+    case "project-picker-card":
+      return <ProjectPickerCardBlock key={index} block={block} />;
+    case "reconnect-card":
+      return <ReconnectCardBlock key={index} block={block} />;
     case "surface": {
       const snapshot = (block.snapshot ?? {}) as Record<string, unknown>;
       const definitionRef = (block.definitionRef ?? {}) as Record<string, unknown>;
