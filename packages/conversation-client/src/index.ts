@@ -31,6 +31,9 @@ export {
   EvidenceBlock,
   HOST_OWNED_BLOCK_TYPES,
   SystemCardBlock,
+  TaskOverviewCardBlock,
+  TaskProgressCardBlock,
+  TaskSummaryCardBlock,
   TextBlock,
   renderBlock,
 } from "./blocks.tsx";

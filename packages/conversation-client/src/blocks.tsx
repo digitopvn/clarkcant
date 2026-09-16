@@ -218,7 +218,200 @@ function Fragment({ children }: { children: React.ReactNode }): ReactElement {
   return <>{children}</>;
 }
 
-export const HOST_OWNED_BLOCK_TYPES = ["system-card", "approval-card", "credential-card", "connection-card"] as const;
+/**
+ * A status marker that is never colour alone.
+ *
+ * Each of these carries a glyph and its own label, so the state survives a monochrome screen, a
+ * colour-blind reader, and a screenshot printed in black and white. Colour is the second signal,
+ * never the first.
+ */
+const STEP_MARK: Record<string, string> = {
+  pending: "○",
+  active: "◐",
+  done: "●",
+  failed: "✕",
+  skipped: "—",
+};
+
+const TASK_STATUS_TONE: Record<string, string> = {
+  // Quoted because a hyphen in an unquoted key is a subtraction, not a property name.
+  "needs-decision": "warn",
+  blocked: "danger",
+  failed: "danger",
+  cancelled: "",
+  done: "ok",
+  succeeded: "ok",
+  queued: "",
+  working: "",
+};
+
+function fieldText(value: unknown, fallback = ""): string {
+  return typeof value === "string" ? value : fallback;
+}
+
+function listOf(value: unknown): Record<string, unknown>[] {
+  return Array.isArray(value) ? (value as Record<string, unknown>[]) : [];
+}
+
+/**
+ * A task in flight.
+ *
+ * The steps are whatever the host genuinely knows. A card that fills in every step as done to
+ * look complete would be inventing progress, which is the same failure as inventing an answer.
+ */
+export function TaskProgressCardBlock({ block }: { block: Record<string, unknown> }): ReactElement | null {
+  if (block.owner !== "host") return null;
+  const goal = fieldText(block.goal);
+  const status = fieldText(block.status, "working");
+  const steps = listOf(block.steps);
+  const targetNode = (block.targetNode ?? undefined) as Record<string, unknown> | undefined;
+  const cancellable = block.cancellable === true;
+  const startedAt = fieldText(block.startedAt);
+
+  return (
+    <section className="cc-card" data-host-card="task-progress" data-owner="host" data-status={status}>
+      <header className="cc-card-head">
+        <span className="cc-card-title">{goal}</span>
+        <span className="cc-badge" data-tone={TASK_STATUS_TONE[status] ?? ""}>
+          {status}
+        </span>
+      </header>
+      <div className="cc-card-body">
+        {steps.length > 0 && (
+          <ol className="cc-steps">
+            {steps.map((step, index) => {
+              const stepStatus = fieldText(step.status, "pending");
+              return (
+                <li key={index} data-step-status={stepStatus}>
+                  <span className="cc-step-mark" aria-hidden="true">
+                    {STEP_MARK[stepStatus] ?? "○"}
+                  </span>
+                  <span className="cc-step-label">{fieldText(step.label)}</span>
+                  {typeof step.detail === "string" && step.detail !== "" && (
+                    <span className="cc-freshness">{step.detail}</span>
+                  )}
+                </li>
+              );
+            })}
+          </ol>
+        )}
+        <dl className="cc-fields">
+          <dt>Bắt đầu</dt>
+          <dd>{startedAt}</dd>
+          {targetNode !== undefined && (
+            <>
+              {/* Named, because a task running elsewhere must not read as a local one. */}
+              <dt>Chạy trên</dt>
+              <dd>{fieldText(targetNode.label, fieldText(targetNode.nodeId))}</dd>
+            </>
+          )}
+          <dt>Dừng được</dt>
+          <dd>{cancellable ? "có" : "không"}</dd>
+        </dl>
+      </div>
+    </section>
+  );
+}
+
+/**
+ * A finished task.
+ *
+ * Outcome and evidence are rendered as two separate signals because they answer two different
+ * questions: whether the run ended, and whether it achieved anything. Collapsing them into one
+ * badge is how a task that stopped without evidence comes to be read as a success.
+ */
+export function TaskSummaryCardBlock({ block }: { block: Record<string, unknown> }): ReactElement | null {
+  if (block.owner !== "host") return null;
+  const goal = fieldText(block.goal);
+  const outcome = fieldText(block.outcome, "not-verified");
+  const evidence = fieldText(block.evidence, "not-verified");
+  const durationMs = typeof block.durationMs === "number" ? block.durationMs : 0;
+  const changes = listOf(block.changes);
+  const summary = fieldText(block.summary);
+
+  return (
+    <section className="cc-card" data-host-card="task-summary" data-owner="host" data-outcome={outcome}>
+      <header className="cc-card-head">
+        <span className="cc-card-title">{goal}</span>
+        <span className="cc-badge" data-tone={TASK_STATUS_TONE[outcome] ?? ""}>
+          {outcome}
+        </span>
+      </header>
+      <div className="cc-card-body">
+        <p style={{ margin: 0 }}>{summary}</p>
+        <p className="cc-evidence" data-verdict={evidence} style={{ margin: 0 }}>
+          <span className="cc-badge" data-tone={evidence === "verified" ? "ok" : evidence === "contradicted" ? "danger" : "warn"}>
+            {evidence}
+          </span>
+          <span className="cc-freshness">{`${(durationMs / 1000).toFixed(1)}s`}</span>
+        </p>
+        {changes.length > 0 && (
+          <ul className="cc-changes">
+            {changes.map((change, index) => (
+              <li key={index} data-change-kind={fieldText(change.kind)}>
+                <span className="cc-change-kind">{fieldText(change.kind)}</span>
+                <code>{fieldText(change.target)}</code>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+    </section>
+  );
+}
+
+/**
+ * Every task in a conversation.
+ *
+ * The count of unfinished work is stated in words above the list, because a user scanning a
+ * conversation needs to know whether anything is still running without reading every row.
+ */
+export function TaskOverviewCardBlock({ block }: { block: Record<string, unknown> }): ReactElement | null {
+  if (block.owner !== "host") return null;
+  const tasks = listOf(block.tasks);
+  const unfinished = tasks.filter((task) => {
+    const status = fieldText(task.status);
+    return status === "working" || status === "queued" || status === "blocked" || status === "needs-decision";
+  }).length;
+
+  return (
+    <section className="cc-card" data-host-card="task-overview" data-owner="host" data-unfinished={unfinished}>
+      <header className="cc-card-head">
+        <span className="cc-card-title">Các việc trong hội thoại</span>
+        <span className="cc-badge">{tasks.length}</span>
+      </header>
+      <div className="cc-card-body">
+        <p className="cc-freshness" style={{ margin: 0 }} data-unfinished-count={unfinished}>
+          {unfinished === 0 ? "Không còn việc nào đang chạy." : `${unfinished} việc còn dở.`}
+        </p>
+        <ul className="cc-task-list">
+          {tasks.map((task, index) => {
+            const status = fieldText(task.status, "queued");
+            return (
+              <li key={index} data-task-status={status}>
+                <span className="cc-badge" data-tone={TASK_STATUS_TONE[status] ?? ""}>
+                  {status}
+                </span>
+                <span>{fieldText(task.goal)}</span>
+                <span className="cc-freshness">{fieldText(task.updatedAt)}</span>
+              </li>
+            );
+          })}
+        </ul>
+      </div>
+    </section>
+  );
+}
+
+export const HOST_OWNED_BLOCK_TYPES = [
+  "system-card",
+  "approval-card",
+  "credential-card",
+  "connection-card",
+  "task-progress-card",
+  "task-summary-card",
+  "task-overview-card",
+] as const;
 
 export function renderBlock(
   block: Record<string, unknown>,
@@ -242,6 +435,12 @@ export function renderBlock(
       return <ConnectionCardBlock key={index} block={block} />;
     case "credential-card":
       return <CredentialCardBlock key={index} block={block} />;
+    case "task-progress-card":
+      return <TaskProgressCardBlock key={index} block={block} />;
+    case "task-summary-card":
+      return <TaskSummaryCardBlock key={index} block={block} />;
+    case "task-overview-card":
+      return <TaskOverviewCardBlock key={index} block={block} />;
     case "surface": {
       const snapshot = (block.snapshot ?? {}) as Record<string, unknown>;
       const definitionRef = (block.definitionRef ?? {}) as Record<string, unknown>;

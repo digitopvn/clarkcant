@@ -220,6 +220,99 @@ export const connectionCardBlockSchema = z.strictObject({
   lastProbeResult: z.enum(["pass", "fail", "not-run"]).optional(),
 });
 
+/**
+ * A task that is still running.
+ *
+ * Steps are the unit here rather than a percentage. A progress card showing only "60%" invites
+ * the question "doing what", and a card listing steps the host has not actually reached is worse
+ * than no card at all — so a step is only present once there is something true to say about it.
+ */
+export const taskProgressCardSchema = z.strictObject({
+  type: z.literal("task-progress-card"),
+  owner: z.literal("host"),
+  cardId: z.string().min(1).max(128),
+  taskId: z.string().min(1).max(128),
+  goal: z.string().min(1).max(2000),
+  status: z.enum(["queued", "working", "blocked", "needs-decision"]),
+  steps: z
+    .array(
+      z.strictObject({
+        label: z.string().min(1).max(300),
+        status: z.enum(["pending", "active", "done", "failed", "skipped"]),
+        detail: z.string().max(1000).optional(),
+      }),
+    )
+    .max(64),
+  /** Where the work runs, so a task on another node is never shown as if it were local. */
+  targetNode: z
+    .strictObject({ nodeId: z.string().min(1).max(128), label: z.string().min(1).max(200) })
+    .optional(),
+  startedAt: instantSchema,
+  updatedAt: instantSchema,
+  cancellable: z.boolean(),
+});
+
+/**
+ * A task that has finished.
+ *
+ * `outcome` and `evidence` are separate fields on purpose. A task that ran to completion without
+ * producing evidence did not succeed, and a single field would force the card to choose between
+ * reporting that the run ended and reporting whether it achieved anything.
+ */
+export const taskSummaryCardSchema = z.strictObject({
+  type: z.literal("task-summary-card"),
+  owner: z.literal("host"),
+  cardId: z.string().min(1).max(128),
+  taskId: z.string().min(1).max(128),
+  goal: z.string().min(1).max(2000),
+  outcome: z.enum(["succeeded", "failed", "cancelled", "not-verified"]),
+  evidence: z.enum(["verified", "not-verified", "contradicted"]),
+  durationMs: z.number().int().nonnegative(),
+  /** What the task touched, so "done" is not taken on trust. */
+  changes: z
+    .array(
+      z.strictObject({
+        target: z.string().min(1).max(1000),
+        kind: z.enum(["created", "modified", "deleted", "read"]),
+      }),
+    )
+    .max(200),
+  summary: z.string().min(1).max(4000),
+  updatedAt: instantSchema,
+});
+
+/**
+ * Every task in a conversation, in one place.
+ *
+ * A conversation accumulates tasks, and without a single view of them the only way to find out
+ * whether something is still running is to scroll until you recognise it.
+ */
+export const taskOverviewCardSchema = z.strictObject({
+  type: z.literal("task-overview-card"),
+  owner: z.literal("host"),
+  cardId: z.string().min(1).max(128),
+  conversationId: z.string().min(1).max(128),
+  tasks: z
+    .array(
+      z.strictObject({
+        taskId: z.string().min(1).max(128),
+        goal: z.string().min(1).max(2000),
+        status: z.enum([
+          "queued",
+          "working",
+          "blocked",
+          "needs-decision",
+          "done",
+          "failed",
+          "cancelled",
+        ]),
+        updatedAt: instantSchema,
+      }),
+    )
+    .max(200),
+  updatedAt: instantSchema,
+});
+
 export const messageBlockSchema = z.discriminatedUnion("type", [
   textBlockSchema,
   surfaceBlockSchema,
@@ -230,6 +323,9 @@ export const messageBlockSchema = z.discriminatedUnion("type", [
   approvalCardBlockSchema,
   credentialCardBlockSchema,
   connectionCardBlockSchema,
+  taskProgressCardSchema,
+  taskSummaryCardSchema,
+  taskOverviewCardSchema,
 ]);
 export type MessageBlock = z.infer<typeof messageBlockSchema>;
 
@@ -239,6 +335,9 @@ export const HOST_OWNED_BLOCK_TYPES = [
   "approval-card",
   "credential-card",
   "connection-card",
+  "task-progress-card",
+  "task-summary-card",
+  "task-overview-card",
 ] as const satisfies readonly MessageBlock["type"][];
 
 export function isHostOwnedBlock(block: MessageBlock): boolean {
