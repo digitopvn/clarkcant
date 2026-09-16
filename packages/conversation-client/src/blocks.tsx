@@ -469,6 +469,27 @@ export function CodeDiffCardBlock({ block }: { block: Record<string, unknown> })
             Diff đã được rút gọn để vừa khung. Phần còn lại không hiển thị ở đây.
           </p>
         )}
+        {/*
+          The card's actions.
+
+          "Open in editor" is disabled and states why, which is the same rule the project picker
+          already follows: a control that looks live and does nothing is the failure this codebase
+          refuses everywhere else.
+
+          There is deliberately no "next file" control. Every file is rendered above, so a button
+          that stepped through them would be a control with nothing to control — and paginating for
+          real would mean holding a selected-file index, which would make this card stateful and
+          put it beyond the plain-function tests the other renderers rely on. Saying that is better
+          than shipping a button whose only effect is on a number.
+        */}
+        <div className="cc-card-actions" data-card-actions="code-diff">
+          <button type="button" className="cc-action" disabled data-action="open-in-editor">
+            Mở trong editor
+          </button>
+          <span className="cc-freshness" data-action-blocked-reason="true">
+            Node chưa có capability mở editor, nên nút này chưa nối được.
+          </span>
+        </div>
       </div>
     </section>
   );

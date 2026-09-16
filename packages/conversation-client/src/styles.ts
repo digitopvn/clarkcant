@@ -342,6 +342,24 @@ button.cc-badge:hover, .cc-badge[role="button"]:hover { color: var(--cc-text); b
 .cc-chip-label { font-size: var(--cc-text-body-sm); }
 .cc-chip-detail { font-size: var(--cc-text-meta); color: var(--cc-text-tertiary); }
 
+/*
+ * A card's action row.
+ *
+ * A disabled action always sits next to the reason it is disabled. A disabled button on its own
+ * reads as a bug; the reason turns it into a statement about what the node can do, which is the
+ * distinction the whole settings surface is built around.
+ */
+.cc-card-actions { display: flex; align-items: center; gap: var(--cc-space-sm); flex-wrap: wrap; padding-top: var(--cc-space-xs); }
+.cc-action {
+  cursor: pointer; font: inherit; font-size: var(--cc-text-body-sm);
+  padding: var(--cc-space-xs) var(--cc-space-md);
+  background: var(--cc-elevated); color: var(--cc-text);
+  border: 1px solid var(--cc-border); border-radius: var(--cc-radius-button);
+}
+.cc-action:hover:not(:disabled) { border-color: var(--cc-accent); }
+.cc-action:focus-visible { outline: 2px solid var(--cc-focus); outline-offset: 2px; }
+.cc-action:disabled { cursor: not-allowed; color: var(--cc-text-tertiary); }
+
 /* Project roots the node has already approved. */
 .cc-root-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--cc-space-xs); }
 .cc-root-list li { display: flex; align-items: center; justify-content: space-between; gap: var(--cc-space-sm); padding: var(--cc-space-xs) 0; border-bottom: 1px solid var(--cc-border); }
