@@ -1,0 +1,24 @@
+{
+  "name": "@clarkcant/storage",
+  "version": "0.2.0",
+  "private": true,
+  "description": "Node-local durability: SQLite WAL schema, migrations, durable outbox/inbox with dedup, effect ledger persistence, consistent backup.",
+  "license": "Apache-2.0",
+  "type": "module",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "clarkcant": {
+    "phase": "P1",
+    "status": "implemented",
+    "blueprint": "docs/system-architecture.md"
+  },
+  "scripts": {
+    "typecheck": "tsc -p ../../tsconfig.json"
+  },
+  "dependencies": {
+    "@clarkcant/contracts": "workspace:*"
+  }
+}
