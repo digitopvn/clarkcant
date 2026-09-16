@@ -15,7 +15,10 @@ import { join } from "node:path";
 import { applyEnvFile } from "@clarkcant/pi-adapter";
 
 import { handleRequest, type GatewayResponse } from "./gateway.ts";
-import { createModelTurn } from "./model-turn.ts";
+import { SAMPLE_DATASET } from "@clarkcant/data-canvas/sample";
+
+import { createModelTurn, type ViewDescriptor } from "./model-turn.ts";
+import { buildViewCatalog } from "./view-catalog.ts";
 import { bootNodeServices } from "./services.ts";
 
 interface CliOptions {
@@ -63,7 +66,19 @@ async function main(): Promise<void> {
     process.stderr.write(`read ${envFile.loaded.length} variable(s) from .env: ${envFile.loaded.join(", ")}\n`);
   }
 
-  const modelTurn = await createModelTurn({ env: process.env, cwd: process.cwd() });
+  // Filled after the node boots. The catalog is built from widget dependencies that only exist
+  // once `bootNodeServices` has run, and the node is created with the model turn already in hand,
+  // so the turn reads this lazily at the moment a conversation starts rather than at startup.
+  const viewCatalog: ViewDescriptor[] = [];
+  const modelTurn = await createModelTurn({
+    env: process.env,
+    cwd: process.cwd(),
+    views: () => viewCatalog,
+    // The node registers the sample dataset itself, so this is the complete set it holds rather
+    // than a guess. The model is told these names because a view over data that is not there
+    // renders as nothing, which reads as a broken widget instead of a missing fact.
+    datasetRefs: () => [SAMPLE_DATASET.datasetId],
+  });
   process.stderr.write(
     modelTurn === undefined
       ? "no model configured; the node will answer with scripts and capabilities only\n"
@@ -76,6 +91,16 @@ async function main(): Promise<void> {
     label: options.label,
     ...(modelTurn === undefined ? {} : { respondWithModel: modelTurn.answer }),
   });
+
+  // The model may now ask for these views. When there are none the `show_view` tool is not
+  // registered at all, which is why this is reported rather than left to be discovered: a node
+  // that cannot show anything should say so once at startup, not fail a turn later.
+  viewCatalog.push(...buildViewCatalog(services.conductor));
+  process.stderr.write(
+    viewCatalog.length === 0
+      ? "no widget definitions on this node; the model can answer in words only\n"
+      : `views: ${viewCatalog.length} definition(s) the model may show — ${viewCatalog.map((view) => view.id).join(", ")}\n`,
+  );
 
   const server = createServer((request, response) => {    const chunks: Buffer[] = [];
     request.on("data", (chunk: Buffer) => chunks.push(chunk));
