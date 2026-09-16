@@ -20,6 +20,16 @@ export interface WorkerBrief {
   projectRoots: string[];
   /** Capability refs the worker may call. Anything else is not registered. */
   allowedCapabilityRefs: string[];
+  /**
+   * Tools this session may call, registered when the session is created.
+   *
+   * Here rather than added afterwards for two reasons found by reading the SDK. A session's custom
+   * tool set is fixed at creation, so a tool added later cannot be re-enabled once the registry is
+   * rebuilt. And a tool added later bypasses the allowlist — it never reaches the registry, so the
+   * system prompt keeps telling the model there are no tools, and a model that cannot see its tools
+   * invents them.
+   */
+  customTools?: readonly ToolDefinition[];
   /** Token budget for the run. */
   maxTokens?: number;
   maxWallClockMs?: number;
@@ -48,6 +58,14 @@ export interface ToolDefinition {
   description: string;
   /** JSON Schema for parameters, so the contract stays runtime-validated. */
   parameters: Record<string, unknown>;
+  /**
+   * One line for the system prompt's "Available tools" list.
+   *
+   * Required in practice even though the type allows it to be absent: the SDK leaves a custom tool
+   * out of that list when this is missing, and the model is then told it has no tools while being
+   * asked to use one.
+   */
+  promptSnippet?: string;
   execute: (params: Record<string, unknown>) => Promise<{ text: string }>;
 }
 

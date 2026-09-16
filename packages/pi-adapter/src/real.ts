@@ -32,6 +32,33 @@ type SdkSession = Awaited<ReturnType<SdkModule["createAgentSession"]>>["session"
 type SdkEvent = Parameters<Parameters<SdkSession["subscribe"]>[0]>[0];
 type SdkTool = SdkSession["agent"]["state"]["tools"][number];
 
+/**
+ * Convert one of our tool definitions into the SDK's shape.
+ *
+ * SAFETY: `defineTool` is an identity function at runtime, and the SDK accepts the result in both
+ * `customTools` and `agent.state.tools`. The declaration's generic parameter is not inferred from
+ * our JSON-Schema-typed `parameters` — the SDK's type expects a TypeBox schema — so the structural
+ * match fails at compile time even though the runtime shape is the documented one. `pi-ai` detects
+ * the missing TypeBox marker and validates against plain JSON Schema instead.
+ *
+ * `promptSnippet` is carried through deliberately. Without it the SDK leaves the tool out of the
+ * system prompt's "Available tools" list, and a model that cannot see its tools answers with
+ * invented tool syntax rather than calling one.
+ */
+function toSdkTool(sdk: SdkModule, tool: ToolDefinition): SdkTool {
+  return sdk.defineTool({
+    name: tool.name,
+    label: tool.label,
+    description: tool.description,
+    parameters: tool.parameters as never,
+    ...(tool.promptSnippet === undefined ? {} : { promptSnippet: tool.promptSnippet }),
+    execute: async (_toolCallId: string, params: Record<string, unknown>) => {
+      const result = await tool.execute(params);
+      return { content: [{ type: "text" as const, text: result.text }], details: {} };
+    },
+  }) as unknown as SdkTool;
+}
+
 /** SDK exports the adapter requires. Verified before any session is created. */
 export const REQUIRED_SDK_EXPORTS = [
   "createAgentSession",
@@ -193,6 +220,9 @@ export class RealPiAdapter implements PiAdapter {
 
     const selection = await this.#resolveModel(sdk);
 
+    const customTools = brief.customTools ?? [];
+    const builtinTools = [...(this.#options.builtinTools ?? READ_ONLY_TOOLS)];
+
     const { session } = await sdk.createAgentSession({
       cwd: this.#options.cwd,
       ...(this.#options.agentDir === undefined ? {} : { agentDir: this.#options.agentDir }),
@@ -203,7 +233,13 @@ export class RealPiAdapter implements PiAdapter {
         : { thinkingLevel: this.#options.model.thinkingLevel }),
       sessionManager: sdk.SessionManager.inMemory(this.#options.cwd),
       resourceLoader: loader,
-      tools: [...(this.#options.builtinTools ?? READ_ONLY_TOOLS)],
+      // A custom tool has to be named in `tools` as well as supplied in `customTools`. The
+      // allowlist is consulted by name, and it refuses anything it does not list — so a tool that
+      // is registered but not listed is invisible, and an empty allowlist refuses every tool there
+      // is. That combination is what made a model answer with invented tool syntax: it was told it
+      // had no tools and asked to use one.
+      tools: [...builtinTools, ...customTools.map((tool) => tool.name)],
+      customTools: customTools.map((tool) => toSdkTool(sdk, tool)),
     });
 
     this.#counter += 1;
@@ -252,23 +288,7 @@ export class RealPiAdapter implements PiAdapter {
       );
     }
     const sdk = await this.#load();
-    // SAFETY: `defineTool` returns an `AnyToolDefinition`, which the SDK accepts in
-    // both `customTools` and `agent.state.tools` at runtime. The declaration's
-    // generic parameter is not inferred from our JSON-Schema-typed `parameters`
-    // (the SDK expects a TypeBox schema), so the structural match fails at compile
-    // time even though the runtime shape is the documented one. The P0.1 probe
-    // exercises registration and invocation to keep this cast honest.
-    const defined = sdk.defineTool({
-      name: tool.name,
-      label: tool.label,
-      description: tool.description,
-      parameters: tool.parameters as never,
-      execute: async (_toolCallId: string, params: Record<string, unknown>) => {
-        const result = await tool.execute(params);
-        return { content: [{ type: "text" as const, text: result.text }], details: {} };
-      },
-    }) as unknown as SdkTool;
-    entry.session.agent.state.tools = [...entry.session.agent.state.tools, defined];
+    entry.session.agent.state.tools = [...entry.session.agent.state.tools, toSdkTool(sdk, tool)];
     entry.registeredTools.add(tool.name);
   }
 
