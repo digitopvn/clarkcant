@@ -46,6 +46,22 @@ export interface RuntimeOptions {
    * something a service container should do while it is being assembled.
    */
   respondWithModel?: (input: ModelTurnInput) => Promise<ModelTurnReply>;
+  /**
+   * What the node is configured to run on, for the settings surface to report.
+   *
+   * Read separately from the turn handler because it is a different fact: the handler answers
+   * turns, and this says what an operator configured. A settings screen that inferred the model
+   * from the last reply would show the wrong thing until the first one arrived.
+   */
+  model?: NodeModelInfo;
+}
+
+/** The model configuration, as an operator would want to see it. */
+export interface NodeModelInfo {
+  provider: string;
+  id: string;
+  maxWallClockMs: number;
+  maxTokens: number;
 }
 
 export interface Runtime {

@@ -125,6 +125,10 @@ export async function handleRequest(deps: GatewayDeps, request: GatewayRequest):
       nodeId: runtime.identity.nodeId,
       label: runtime.identity.label,
       createdAt: runtime.identity.createdAt,
+      // Reported here rather than inferred by the client, so the settings surface can say what
+      // this node is configured for before it has answered anything. `null` means no model, which
+      // is a state worth showing plainly: the node answers from scripts and capabilities only.
+      model: services.model,
     });
   }
 
