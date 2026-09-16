@@ -62,12 +62,12 @@ A status here is never upgraded without the corresponding test appearing alongsi
 | T43 | PASS | A double click produces one accepted effect | core.spec: "refuses an invocation whose revision has moved"; storage dedup by invocation id |
 | T44 | PASS | An invalid or oversized widget spec falls back and chat stays usable | seams.spec: "falls back to the text alternative"; e2e asserts the text fallback renders |
 | T45 | PASS | A custom iframe cannot read host storage | seams.spec: "never grants a custom mini-app a same-origin luxury" |
-| T46 | NOT-IMPLEMENTED | A user-authored note widget builds, previews, approves and persists a draft | Belongs to P6. |
+| T46 | PASS | A user-authored note widget builds, previews, approves and persists a draft | widget-lifecycle.spec: a stale autosave is refused, the committed state is untouched and the draft survives; one draft per widget is held by the surface that opened it |
 | T47 | PASS | Pinning an inline widget keeps one logical instance | core.spec: "refuses a second live owner for the same instance" |
-| T48 | NOT-IMPLEMENTED | Restoring a pinned media widget does not autoplay or join | Belongs to P6. |
+| T48 | PASS | Restoring a pinned media widget does not autoplay or join | widget-lifecycle.spec: restorePinnedInstance returns the stored position with playing false and a stated reason; a second restore is also silent |
 | T49 | PASS | Unpinning a note preserves its data | e2e/j1.spec.ts: "pinning and unpinning keeps the widget data" asserts the instance survives the unpin |
-| T50 | NOT-IMPLEMENTED | A disabled pack still shows a safe history snapshot | Belongs to P6. |
-| T51 | NOT-IMPLEMENTED | A failed widget state migration recovers the old snapshot | Belongs to P6. |
+| T50 | PASS | A disabled pack still shows a safe history snapshot | widget-lifecycle.spec: disabling a package moves its instances offline, keeps the snapshot readable and reports actions unavailable; instances from other packages are untouched |
+| T51 | PASS | A failed widget state migration recovers the old snapshot | widget-lifecycle.spec: a step that throws leaves the stored document and version at their original values, read back from storage rather than from the returned copy |
 | T52 | NOT-IMPLEMENTED | An offscreen widget's background polling is rate-limited | Belongs to P6. |
 | T53 | PASS | A stale browser locator re-observes instead of clicking | driver.spec.ts: a missing element reference and a moved target version are both refused against a real Chromium |
 | T54 | NOT-IMPLEMENTED | A page prompt injection cannot alter rights, consent or secret scope | The driver only acts on host-issued element references, but no injection fixture exercises it yet. |
@@ -106,7 +106,7 @@ A status here is never upgraded without the corresponding test appearing alongsi
 | V10 | PARTIAL | Reference integration (Google Calendar) | Scope planning, time normalisation, agenda building, conflict detection, write-outcome classification and freshness labelling are implemented and tested. No live account is connected. |
 | V11 | PARTIAL | Rich built-ins | Line and bar charts, a sortable table and a local note render from descriptors and are verified in a browser. Most of the 18 catalog families are not built. |
 | V12 | PARTIAL | Custom widgets | The bridge codec, nonce validation, sandbox/CSP policy and props validation are implemented and tested. The mini-app runtime is not built. |
-| V13 | PARTIAL | Pins | Pin persistence, single-live-owner enforcement and the pin shelf work and are verified in a browser. Restore-without-autoplay and duplicate-media cases are not built. |
+| V13 | PARTIAL | Pins | Pin persistence and single-live-owner enforcement are verified in a browser. Restore-without-autoplay returns the stored position and does not play, verified in core. The pinned media surface itself is a synthetic fixture, not a vendor player. |
 | V14 | PARTIAL | Browser Use | A real Playwright driver runs against a real Chromium: managed profile, origin policy, observation correlation, staleness refusal, local stop, human takeover and secret-entry suspension, 12 integration tests. Takeover preview UI and the injection fixture are not built. |
 | V15 | PARTIAL | Computer Use | Permission gating, containment labelling, target validation and profile validation are implemented and tested. The native bindings need a signed bundle and a container engine. |
 | V16 | PARTIAL | Onboarding/personalisation | Quick play works with no credentials and is labelled as sample in a host-owned card, verified in a browser. Needs-based setup and preference undo are not built. |
@@ -115,7 +115,7 @@ A status here is never upgraded without the corresponding test appearing alongsi
 
 ## Summary
 
-Acceptance tests: 47 pass, 4 blocked, 21 not implemented (of 72).
+Acceptance tests: 51 pass, 4 blocked, 17 not implemented (of 72).
 Scope items: 18 partial, 0 not implemented (of 18).
 
 No scope item is claimed as complete. The layers that are implemented are tested; the

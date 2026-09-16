@@ -573,6 +573,33 @@ export const MIGRATIONS: readonly Migration[] = [
       `);
     },
   },
+  {
+    version: 8,
+    name: "widget-state",
+    reversible: true,
+    up: (db) => {
+      db.exec(`
+        -- Per-instance widget state, which is also where an unsaved draft lives.
+        --
+        -- state_revision is the value the editor last read, so an autosave that
+        -- was composed against older content is refused rather than overwriting
+        -- newer content (T46). Keeping the draft in the same row as the committed
+        -- state is what lets a refused save preserve the draft instead of losing
+        -- it: a conflict clears nothing.
+        CREATE TABLE widget_state (
+          instance_id       TEXT PRIMARY KEY REFERENCES widget_instances(instance_id),
+          state_version     INTEGER NOT NULL,
+          state_revision    INTEGER NOT NULL,
+          document          TEXT NOT NULL,
+          draft             TEXT,
+          draft_revision    INTEGER,
+          draft_editor      TEXT,
+          draft_saved_at    TEXT,
+          updated_at        TEXT NOT NULL
+        );
+      `);
+    },
+  },
 ];
 
 export interface MigrationResult {
