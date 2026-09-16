@@ -97,6 +97,15 @@ export interface ModelTurnInput {
   conversationId: ConversationId;
   principal: Principal;
   text: string;
+  /**
+   * The identifier the reply's message will be stored under.
+   *
+   * Allocated before the turn rather than after it, because a view the model asks for is captured
+   * as a snapshot, and a snapshot records which message it belongs to. Capturing against a
+   * placeholder and rewriting it afterwards would leave a window where the snapshot points at a
+   * message that does not exist.
+   */
+  messageId: string;
 }
 
 /**
@@ -161,10 +170,10 @@ function appendAssistant(
   deps: ConductorDeps,
   conversationId: ConversationId,
   blocks: MessageBlock[],
-  options: { taskId?: string; at: Instant },
+  options: { taskId?: string; at: Instant; messageId?: string },
 ): MessageRecord {
   const message: MessageRecord = {
-    messageId: deps.newId("msg") as MessageRecord["messageId"],
+    messageId: (options.messageId ?? deps.newId("msg")) as MessageRecord["messageId"],
     conversationId,
     role: "assistant",
     blocks,
@@ -328,11 +337,14 @@ async function runModelTurn(
   answer: NonNullable<ConductorDeps["respondWithModel"]>,
 ): Promise<ConductorOutcome> {
   let reply: Awaited<ReturnType<typeof answer>>;
+  // Allocated here so a view captured during the turn can name the message it will live in.
+  const messageId = deps.newId("msg");
   try {
     reply = await answer({
       conversationId: input.conversationId,
       principal: input.principal,
       text: input.text,
+      messageId,
     });
   } catch (cause) {
     // A throw is turned into a message. The user has already been told their message was
@@ -383,7 +395,7 @@ async function runModelTurn(
       },
       ...modelSegmentsToBlocks(reply),
     ],
-    { at: input.at },
+    { at: input.at, messageId },
   );
 
   return { messages: [message], taskId: undefined, resolution: "model" };

@@ -49,6 +49,8 @@ export interface ViewRequest {
   caption: string;
   at: Instant;
   principal: Principal;
+  /** The message this view will be captured into, allocated before the turn. */
+  messageId: string;
 }
 
 export const SHOW_VIEW_TOOL = "show_view";
@@ -58,8 +60,8 @@ export interface ModelTurn {
   selection: ModelSelection;
   /** The ceiling on one turn, so a caller can report what the limit was. */
   budget: ModelBudget;
-  /** Whether a view catalog was supplied, so the interface can say so rather than guess. */
-  viewCatalogSize: number;
+  /** Whether a view catalog is available, so the interface can say so rather than guess. */
+  viewCatalogSize: () => number;
   answer: (input: ModelTurnInput) => Promise<ModelTurnReply>;
   dispose: () => Promise<void>;
 }
@@ -70,6 +72,8 @@ interface Turn {
   pending: string[];
   /** Finished segments, in the order the model produced them. */
   segments: ModelSegment[];
+  /** The message this turn is being written into. Set before the prompt. */
+  messageId?: string;
   unsubscribe: () => void;
 }
 
@@ -92,7 +96,14 @@ function flushText(turn: Turn): void {
 }
 
 /** The JSON Schema the model sees. Deliberately carries no field it could use to claim state. */
-function showViewParameters(views: readonly ViewDescriptor[]): Record<string, unknown> {
+function showViewParameters(
+  views: readonly ViewDescriptor[],
+  datasetRefs: readonly string[],
+): Record<string, unknown> {
+  const datasetNote =
+    datasetRefs.length === 0
+      ? "This node holds no datasets, so pass no dataset reference."
+      : `Dataset references that exist: ${datasetRefs.join(", ")}. Use one of these or the view will render nothing.`;
   return {
     type: "object",
     additionalProperties: false,
@@ -110,7 +121,7 @@ function showViewParameters(views: readonly ViewDescriptor[]): Record<string, un
       },
       props: {
         type: "object",
-        description: "Values for the view. These are rendered as sample data, not as live data.",
+        description: `Values for the view. These are rendered as sample data, not as live data. ${datasetNote}`,
       },
     },
   };
@@ -128,13 +139,29 @@ export async function createModelTurn(options: {
   cwd: string;
   /** Injected so a turn can be tested without a provider account. */
   adapter?: PiAdapter;
-  /** Views the model may ask for. Absent means the tool is not registered at all. */
-  views?: readonly ViewDescriptor[];
+  /**
+   * Views the model may ask for, read at the moment a turn starts.
+   *
+   * A provider rather than a list because the catalog is built from widget dependencies that only
+   * exist after the node boots, and the node boots with the model turn already in hand. Reading it
+   * lazily keeps that ordering honest instead of requiring one half to be constructed before it can
+   * exist.
+   */
+  views?: () => readonly ViewDescriptor[];
+  /**
+   * Dataset references the node actually holds.
+   *
+   * Told to the model rather than left to be guessed. A view that needs data can only be honest if
+   * the data exists, and a model that has to invent a reference produces a card that resolves to
+   * nothing — which looks like a broken widget rather than a missing fact.
+   */
+  datasetRefs?: () => readonly string[];
 }): Promise<ModelTurn | undefined> {
   const selection = modelFromEnv(options.env);
   if (selection === undefined) return undefined;
 
-  const views = options.views ?? [];
+  const readViews = (): readonly ViewDescriptor[] => options.views?.() ?? [];
+  const readDatasetRefs = (): readonly string[] => options.datasetRefs?.() ?? [];
   const budget = modelBudgetFromEnv(options.env);
   const adapter =
     options.adapter ?? new RealPiAdapter({ cwd: options.cwd, model: selection, builtinTools: [] });
@@ -142,7 +169,6 @@ export async function createModelTurn(options: {
   const turns = new Map<string, Turn>();
 
   const describe = (): string => `${selection.provider}/${selection.id}`;
-  const viewById = new Map(views.map((entry) => [entry.id, entry]));
 
   /**
    * The one tool.
@@ -152,13 +178,23 @@ export async function createModelTurn(options: {
    * correct itself instead of the user seeing nothing. A refusal never appends a block: a failed
    * request must not leave a card behind that looks like it succeeded.
    */
-  function showViewTool(onBlock: (block: MessageBlock) => void, principal: Principal): ToolDefinition {
+  function showViewTool(
+    turn: Turn,
+    principal: Principal,
+    views: readonly ViewDescriptor[],
+    viewById: ReadonlyMap<string, ViewDescriptor>,
+    datasetRefs: readonly string[],
+  ): ToolDefinition {
     return {
       name: SHOW_VIEW_TOOL,
       label: "Show a view",
       description:
-        "Show a visual view in the conversation. Use the exact view name from the list. The values you pass are shown as sample data, so never describe them as live.",
-      parameters: showViewParameters(views),
+        `Show a visual view in the conversation. Use the exact view name from the list. ` +
+        `The values you pass are shown as sample data, so never describe them as live. ` +
+        (datasetRefs.length === 0
+          ? "This node holds no datasets."
+          : `Available dataset references: ${datasetRefs.join(", ")}.`),
+      parameters: showViewParameters(views, datasetRefs),
       execute: async (params: Record<string, unknown>): Promise<{ text: string }> => {
         const requested = typeof params.view === "string" ? params.view : "";
         const descriptor = viewById.get(requested);
@@ -167,13 +203,27 @@ export async function createModelTurn(options: {
             text: `No view named "${requested}". Available: ${views.map((entry) => entry.id).join(", ") || "(none)"}.`,
           };
         }
+        if (turn.messageId === undefined) {
+          // A programming error rather than a model error, but the model still gets a reason
+          // instead of a view that would be captured against nothing.
+          return { text: `The view "${requested}" could not be captured: the turn has no message yet.` };
+        }
         const props =
           typeof params.props === "object" && params.props !== null
             ? (params.props as Record<string, unknown>)
             : {};
         const caption = typeof params.caption === "string" ? params.caption : descriptor.label;
         try {
-          onBlock(descriptor.build({ props, caption, at: new Date().toISOString() as Instant, principal }));
+          const block = descriptor.build({
+            props,
+            caption,
+            at: new Date().toISOString() as Instant,
+            principal,
+            messageId: turn.messageId,
+          });
+          // Flushed first: the text the model wrote before asking for this view belongs above it.
+          flushText(turn);
+          turn.segments.push({ kind: "block", block });
         } catch (cause) {
           return {
             text: `The view "${requested}" could not be built: ${cause instanceof Error ? cause.message : String(cause)}.`,
@@ -187,6 +237,10 @@ export async function createModelTurn(options: {
   async function turnFor(conversationId: string, principal: Principal): Promise<Turn> {
     const existing = turns.get(conversationId);
     if (existing !== undefined) return existing;
+
+    const views = readViews();
+    const viewById = new Map(views.map((entry) => [entry.id, entry]));
+    const datasetRefs = readDatasetRefs();
 
     const handle = await adapter.createWorkerSession({
       // The brief is per conversation rather than per message, so the model keeps the thread
@@ -208,11 +262,7 @@ export async function createModelTurn(options: {
     if (views.length > 0) {
       await adapter.registerTool(
         handle.sessionId,
-        showViewTool((block) => {
-          // Flushed first: the text the model wrote before asking for this view belongs above it.
-          flushText(turn);
-          turn.segments.push({ kind: "block", block });
-        }, principal),
+        showViewTool(turn, principal, views, viewById, datasetRefs),
       );
     }
 
@@ -223,7 +273,7 @@ export async function createModelTurn(options: {
   return {
     selection,
     budget,
-    viewCatalogSize: views.length,
+    viewCatalogSize: () => readViews().length,
 
     async answer(input: ModelTurnInput): Promise<ModelTurnReply> {
       if (!availability.available) {
@@ -238,6 +288,7 @@ export async function createModelTurn(options: {
       // buffer empty for the next one instead of prepending the previous reply to it.
       turn.pending.length = 0;
       turn.segments.length = 0;
+      turn.messageId = input.messageId;
 
       // The adapter stops a turn that overruns its brief, but this is the layer holding an open
       // HTTP request, so it does not delegate the guarantee: without a deadline here a provider
