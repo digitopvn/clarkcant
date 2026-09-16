@@ -1,0 +1,24 @@
+{
+  "name": "@clarkcant/browser-playwright",
+  "version": "0.2.0",
+  "private": true,
+  "description": "Browser Use pack. Target/observation/action contract and locator staleness rules are real; executing requires a downloaded browser engine.",
+  "license": "Apache-2.0",
+  "type": "module",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "clarkcant": {
+    "phase": "P8",
+    "status": "external-blocked",
+    "blueprint": "docs/system-architecture.md"
+  },
+  "scripts": {
+    "typecheck": "tsc -p ../../tsconfig.json"
+  },
+  "dependencies": {
+    "@clarkcant/contracts": "workspace:*"
+  }
+}

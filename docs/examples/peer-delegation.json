@@ -1,0 +1,40 @@
+{
+  "protocol": "agent.nodelink",
+  "version": 1,
+  "exampleOnly": true,
+  "messageId": "msg_fixture_01",
+  "correlationId": "corr_fixture_01",
+  "senderNodeId": "node_home_fixture",
+  "recipientNodeId": "node_vps_b_fixture",
+  "kind": "delegate",
+  "delegationId": "delegation_fixture_01",
+  "taskId": "task_child_fixture_01",
+  "expectedTaskRevision": 1,
+  "payload": {
+    "goal": "Chạy bộ test đã định nghĩa trong workspace mẫu; không push/deploy.",
+    "resourceRefs": [
+      {
+        "nodeId": "node_vps_b_fixture",
+        "resourceId": "workspace_fixture",
+        "resourceVersion": "v1"
+      }
+    ],
+    "grantRef": "grant_fixture",
+    "capabilityRefs": [
+      "project.tests.run@1"
+    ],
+    "dataRefs": [
+      "artifact_brief_fixture"
+    ],
+    "budget": {
+      "maxWorkers": 1,
+      "maxDelegationDepth": 0
+    },
+    "requiredEvidence": [
+      "exit-status",
+      "test-output-artifact"
+    ],
+    "externalMutationAllowed": false
+  },
+  "transportNote": "Identity must be authenticated by transport and authorization; this JSON is not a grant."
+}

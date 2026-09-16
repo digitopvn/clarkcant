@@ -1,0 +1,35 @@
+{
+  "schemaVersion": 1,
+  "exampleOnly": true,
+  "widget": "agent.calendar.agenda@1",
+  "props": {
+    "title": "Tuần này — dữ liệu mẫu",
+    "eventsRef": "dataset_fixture_events",
+    "timezone": "Asia/Ho_Chi_Minh"
+  },
+  "actions": {
+    "refresh": {
+      "kind": "invoke",
+      "capabilityRef": "google.calendar.events.list@1",
+      "args": {
+        "connectionRef": "conn_fixture",
+        "calendarRef": "cal_fixture",
+        "rangeRef": "range_fixture"
+      }
+    },
+    "reschedule": {
+      "kind": "agent",
+      "intent": "Đề xuất khung giờ mới cho event được chọn. Chưa sửa lịch.",
+      "contextRefs": [
+        "selectedEvent",
+        "conn_fixture"
+      ]
+    }
+  },
+  "pinPolicy": {
+    "userRequestRequired": true,
+    "refresh": "on-open",
+    "backgroundGrantRequired": true
+  },
+  "textAlternative": "Lịch minh họa; chưa kết nối Google thật."
+}

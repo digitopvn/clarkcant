@@ -1,0 +1,25 @@
+{
+  "name": "@clarkcant/mcp-adapters",
+  "version": "0.2.0",
+  "private": true,
+  "description": "MCP tool/auth adapter and MCP Apps host bridge seam. Protocol metadata parsing is real; live server transport requires a reachable MCP server.",
+  "license": "Apache-2.0",
+  "type": "module",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "clarkcant": {
+    "phase": "P5",
+    "status": "external-blocked",
+    "blueprint": "docs/system-architecture.md"
+  },
+  "scripts": {
+    "typecheck": "tsc -p ../../tsconfig.json"
+  },
+  "dependencies": {
+    "@clarkcant/contracts": "workspace:*",
+    "zod": "4.6.5"
+  }
+}

@@ -1,0 +1,24 @@
+{
+  "name": "@clarkcant/computer-macos",
+  "version": "0.2.0",
+  "private": true,
+  "description": "macOS native driver pack. Foreground-input lease and consent contract are real; requires Accessibility permission and a signed bundle.",
+  "license": "Apache-2.0",
+  "type": "module",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "clarkcant": {
+    "phase": "P8",
+    "status": "external-blocked",
+    "blueprint": "docs/system-architecture.md"
+  },
+  "scripts": {
+    "typecheck": "tsc -p ../../tsconfig.json"
+  },
+  "dependencies": {
+    "@clarkcant/contracts": "workspace:*"
+  }
+}

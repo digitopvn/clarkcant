@@ -1,0 +1,49 @@
+{
+  "schemaVersion": 1,
+  "exampleOnly": true,
+  "planId": "install_fixture_01",
+  "revision": 1,
+  "targetNodeId": "node_vps_a_fixture",
+  "package": {
+    "id": "example.calendar-connector",
+    "version": "0.2.0",
+    "source": "https://example.invalid/calendar-connector-0.2.0.tgz",
+    "artifactDigest": "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+  },
+  "dependencyLockRequired": true,
+  "trustMode": "isolated-service",
+  "requestedGrants": [
+    {
+      "capability": "calendar.read",
+      "resources": [
+        "user-selected-calendar"
+      ],
+      "networkOrigins": [
+        "https://www.googleapis.com"
+      ]
+    }
+  ],
+  "auth": {
+    "method": "oauth2",
+    "credentialOwnerNodeId": "node_vps_a_fixture",
+    "providerClientRegistrationRequired": true
+  },
+  "activation": {
+    "affectedFacets": [
+      "tools",
+      "skills"
+    ],
+    "strategy": "safe-boundary",
+    "preserveVoice": true,
+    "preserveWidgetState": true
+  },
+  "continuation": {
+    "taskId": "task_fixture_01",
+    "expectedTaskRevision": 2,
+    "afterVerifiedReady": "resume-once"
+  },
+  "consent": {
+    "state": "not_granted",
+    "hostOwned": true
+  }
+}

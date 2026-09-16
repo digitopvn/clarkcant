@@ -1,0 +1,97 @@
+{
+  "name": "Agent Conversation Platform Blueprint v2",
+  "date": "2026-09-16",
+  "status": "Architecture/design documents; no application implementation",
+  "validation": {
+    "jsonSyntax": "passed",
+    "markdownFenceBalance": "passed",
+    "relativeFileLinks": "passed",
+    "scopeTraceabilityIds": "V01-V18",
+    "reconstruction": [
+      "CHANGELOG.md"
+    ]
+  },
+  "files": [
+    {
+      "path": "CHANGELOG.md",
+      "bytes": 4679,
+      "sha256": "28aed67b775de652ad41ed42bb0c535ecc892ecd35ae73da684af3d87acbfd54",
+      "reconstructed": "Reconstructed from research-and-decisions.md §2 and scope-lock.md §3; the original file was absent from the delivered document set. Its manifest entry was updated to match the reconstructed content."
+    },
+    {
+      "path": "README.md",
+      "bytes": 3803,
+      "sha256": "2dc9d6533f9fbbf58824f1a81816deb7b25f9d989eb3ba27b16e403b09ee28c0"
+    },
+    {
+      "path": "browser-computer-use.md",
+      "bytes": 10510,
+      "sha256": "fd7cd604513a29f525c75e22fefe201297c3e0a00cec2f423a32e4a43063a67a"
+    },
+    {
+      "path": "distributed-runtime.md",
+      "bytes": 12896,
+      "sha256": "1c2da039084f33e22c4952996eb00edc0f3ed2053f38054596d0aafc5442bb0f"
+    },
+    {
+      "path": "examples/README.md",
+      "bytes": 957,
+      "sha256": "97b92d6f524e98f5261e485a00adc1cd5fa6948f0dc6d8255bec5b979da9a4ea"
+    },
+    {
+      "path": "examples/calendar-widget.json",
+      "bytes": 914,
+      "sha256": "de04ae9c0b5919b28e3daf61a017a756fe443dd188b5f877bc8ef24ad35abcc8"
+    },
+    {
+      "path": "examples/install-plan.json",
+      "bytes": 1183,
+      "sha256": "e8c3b8f4a05483c66895271b2d5c5e78c5bcd834efeb7c141a7ca0af4ac3972c"
+    },
+    {
+      "path": "examples/note-pack.json",
+      "bytes": 1067,
+      "sha256": "a7a49665abb91c5de747e1b2cb7fbfdfd4bbc1c25e2c203415e7de06d2da090a"
+    },
+    {
+      "path": "examples/onboarding-recipe.json",
+      "bytes": 1142,
+      "sha256": "d5eac896f89280bf630e2429832351919f8088ea4dd92ff0e576ba7d19df03f6"
+    },
+    {
+      "path": "examples/peer-delegation.json",
+      "bytes": 1088,
+      "sha256": "a621531c37c7294ef516f3f6aeef95d787d1f120eaae479a5c27d026b3a9508a"
+    },
+    {
+      "path": "implementation-plan.md",
+      "bytes": 25236,
+      "sha256": "b06fb2d320bf94f6786e5d7ef4d0019487c6966a119f7a917fb20594ab849d91"
+    },
+    {
+      "path": "integration-onboarding.md",
+      "bytes": 19697,
+      "sha256": "3d1b844e23ed173c48248f4843fb109bb44072d79154a426e7e2297637ae4997"
+    },
+    {
+      "path": "research-and-decisions.md",
+      "bytes": 13366,
+      "sha256": "1e3e100103588e6ea009bc9df8690f1c642640eb85c04c3466a8cf8b0bf04f6f"
+    },
+    {
+      "path": "scope-lock.md",
+      "bytes": 10306,
+      "sha256": "3ee95d4c6db6a8603ed3bb3989ae92a9aa87b12a0682c9ac5ed8b2627349bd3b"
+    },
+    {
+      "path": "system-architecture.md",
+      "bytes": 22633,
+      "sha256": "56733a0b6c0b9f04b273acc6dc74b663e151bce7d1f56460ca95db84e045355d"
+    },
+    {
+      "path": "widgets-and-extensions.md",
+      "bytes": 20948,
+      "sha256": "e3ce83526ce8923b9ab12d0ac40f3b490c259787b6e1f33a7cd9b70cbabdfc20"
+    }
+  ]
+}
