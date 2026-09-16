@@ -26,7 +26,12 @@ export const THEME_CHOICES: readonly ThemeChoice[] = ["dark", "light", "system"]
 /** The attribute the token sheet selects on. Both themes are always present in the sheet. */
 export const THEME_ATTRIBUTE = "ccTheme";
 
-const STORAGE_KEY = "cc.theme";
+/**
+ * Where the choice is stored. Exported so the drift test compares the real constant against the
+ * pre-paint script rather than against a copy of the string, which would keep passing while the two
+ * drifted apart.
+ */
+export const THEME_STORAGE_KEY = "cc.theme";
 
 /**
  * `system` when the preference is unreadable.
@@ -50,7 +55,7 @@ export function readStoredTheme(storage?: Pick<Storage, "getItem">): ThemeChoice
   const store = storage ?? safeStorage();
   if (store === undefined) return DEFAULT_THEME_CHOICE;
   try {
-    const raw = store.getItem(STORAGE_KEY);
+    const raw = store.getItem(THEME_STORAGE_KEY);
     return isThemeChoice(raw) ? raw : DEFAULT_THEME_CHOICE;
   } catch {
     return DEFAULT_THEME_CHOICE;
@@ -62,7 +67,7 @@ export function storeTheme(choice: ThemeChoice, storage?: Pick<Storage, "setItem
   const store = storage ?? safeStorage();
   if (store === undefined) return;
   try {
-    store.setItem(STORAGE_KEY, choice);
+    store.setItem(THEME_STORAGE_KEY, choice);
   } catch {
     // A preference that cannot be saved is a preference that does not survive reload; the
     // interface still works, so this is not worth interrupting the user for.
@@ -159,10 +164,11 @@ export function watchSystemTheme(onChange: (prefersLight: boolean) => void): () 
 }
 
 /**
- * The inline script that runs before the first paint.
+ * The inline script that ran before the first paint was removed.
  *
- * Without this the page paints with the dark default and then switches, which is a visible
- * flash on every load for anyone who chose light. It is a string rather than a module because
- * it has to run in the document head, before the bundle.
+ * It was exported here and never used: the page cannot run an inline script under `script-src
+ * 'self'`, so the real pre-paint logic lives in `apps/web/public/theme-init.js`, and this copy was
+ * dead code that could only drift away from it. A drift test compares that file against the
+ * constants above instead, which is a check that cannot silently stop being true.
  */
-export const ANTI_FLASH_SCRIPT = `(function(){try{var c=localStorage.getItem(${JSON.stringify(STORAGE_KEY)});var l=(c==="light")||(c==="system"&&matchMedia("(prefers-color-scheme: light)").matches);document.documentElement.dataset.${THEME_ATTRIBUTE}=l?"light":"dark";}catch(e){document.documentElement.dataset.${THEME_ATTRIBUTE}="dark";}})();`;
+export const PREPAINT_SCRIPT_PATH = "apps/web/public/theme-init.js";

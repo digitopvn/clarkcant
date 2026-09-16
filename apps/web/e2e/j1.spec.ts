@@ -70,7 +70,12 @@ test("the client loads, reports a real connection, and asks what to do", async (
   await expect(page.locator(".cc-brand")).toContainText("Agent");
   // "Ready" must mean the node answered, not that the client rendered.
   await expect(page.locator(".cc-status")).toHaveAttribute("data-connection", "ready");
-  await expect(page.getByRole("heading", { name: "Bạn muốn làm gì?" })).toBeVisible();
+  // The structure rather than the exact words. Copy is a design decision that keeps changing, and a
+  // test pinned to it fails on every rewording while catching nothing — what matters is that a
+  // first run shows an invitation with a heading and the four starting chips.
+  await expect(page.locator(".cc-empty")).toBeVisible();
+  await expect(page.locator(".cc-empty h1")).toBeVisible();
+  await expect(page.locator("[data-suggestion]")).toHaveCount(4);
   await page.screenshot({ path: join(EVIDENCE, "j1-01-empty.png") });
 });
 
