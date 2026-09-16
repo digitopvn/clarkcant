@@ -19,8 +19,10 @@ ledger: every scope item (V01–V18) and every acceptance test (T01–T72) from
 [`docs/implementation-plan.md`](docs/implementation-plan.md) with a status of PASS,
 BLOCKED or NOT-IMPLEMENTED, and the evidence for each. Nothing there is marked complete.
 
-**89 acceptance tests pass**; the rest are blocked on external infrastructure or belong to
-phases this bootstrap did not build.
+Of the 72 acceptance tests in the blueprint: **44 pass**, 4 are blocked on external
+infrastructure or credentials, and 24 belong to phases this bootstrap did not build. The
+184 tests in this repository are unit and integration tests of individual layers; passing
+them is not the same as passing a journey, and no journey runs end to end yet.
 
 ## What actually works
 
@@ -102,7 +104,7 @@ node packages/pi-adapter/src/probe-cli.ts --write    # refresh docs/research/com
 
 ## Layout
 
-```
+```text
 apps/        runtime (headless node), web, desktop, worker
 packages/    contracts, storage, core, pi-adapter, node-link, capability-host,
              integration-sdk, widget-sdk, widget-host, mcp-adapters, host-adapters,
