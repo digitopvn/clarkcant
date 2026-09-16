@@ -25,3 +25,10 @@ Thumbs.db
 test-results/
 playwright-report/
 .data/
+
+# Agent session state and test artifacts. These change constantly and say nothing about the
+# product; committing them meant every run added noise to the history and put a session log in a
+# public repository. Neither holds a credential, but neither belongs here either.
+.pi/
+.vitest/
+.vitest-report/
