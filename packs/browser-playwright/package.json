@@ -12,13 +12,15 @@
   },
   "clarkcant": {
     "phase": "P8",
-    "status": "external-blocked",
+    "status": "implemented",
     "blueprint": "docs/system-architecture.md"
   },
   "scripts": {
     "typecheck": "tsc -p ../../tsconfig.json"
   },
   "dependencies": {
-    "@clarkcant/contracts": "workspace:*"
-  }
+    "@clarkcant/contracts": "workspace:*",
+    "playwright": "1.63.0"
+  },
+  "status": "implemented"
 }

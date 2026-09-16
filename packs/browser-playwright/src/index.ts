@@ -154,4 +154,5 @@ export { ESCALATION_ORDER, isConsequential };
  * The engine version must be pinned together with the library version; a mismatched
  * pair is a common and confusing failure.
  */
-export const PLAYWRIGHT_BINDING_STATUS = "contract-implemented-engine-not-installed";
+export const PLAYWRIGHT_BINDING_STATUS = "implemented-engine-installed-on-demand";
+export * from "./driver.ts";

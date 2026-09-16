@@ -69,10 +69,10 @@ A status here is never upgraded without the corresponding test appearing alongsi
 | T50 | NOT-IMPLEMENTED | A disabled pack still shows a safe history snapshot | Belongs to P6. |
 | T51 | NOT-IMPLEMENTED | A failed widget state migration recovers the old snapshot | Belongs to P6. |
 | T52 | NOT-IMPLEMENTED | An offscreen widget's background polling is rate-limited | Belongs to P6. |
-| T53 | PASS | A stale browser locator re-observes instead of clicking | seams.spec: "asks for re-observation rather than clicking a stale reference" |
-| T54 | NOT-IMPLEMENTED | A page prompt injection cannot alter rights, consent or secret scope | Belongs to P8; needs an injection fixture. |
+| T53 | PASS | A stale browser locator re-observes instead of clicking | driver.spec.ts: a missing element reference and a moved target version are both refused against a real Chromium |
+| T54 | NOT-IMPLEMENTED | A page prompt injection cannot alter rights, consent or secret scope | The driver only acts on host-issued element references, but no injection fixture exercises it yet. |
 | T55 | NOT-IMPLEMENTED | A browser submit timeout does not trigger a second submit | Belongs to P8; the contract exists in automation.ts. |
-| T56 | NOT-IMPLEMENTED | Human login takeover pauses agent input and capture | Belongs to P8. |
+| T56 | PASS | Human login takeover pauses agent input and capture | driver.spec.ts: sensitive input is detected by focus and input is refused while it holds; takeover refuses input too |
 | T57 | PASS | A denied or revoked macOS permission reports unavailable without bypass | seams.spec: "keeps capture and input permissions separate on macOS" |
 | T58 | PASS | A foreground window or DPI change is validated before input | seams.spec: "revalidates the foreground target before sending input" |
 | T59 | PASS | A local emergency stop outranks a remote command via lease fencing | core.spec: "fences out a holder whose epoch is behind"; "records a local emergency stop" |
@@ -107,7 +107,7 @@ A status here is never upgraded without the corresponding test appearing alongsi
 | V11 | PARTIAL | Rich built-ins | Line and bar charts, a sortable table and a local note render from descriptors and are verified in a browser. Most of the 18 catalog families are not built. |
 | V12 | PARTIAL | Custom widgets | The bridge codec, nonce validation, sandbox/CSP policy and props validation are implemented and tested. The mini-app runtime is not built. |
 | V13 | PARTIAL | Pins | Pin persistence, single-live-owner enforcement and the pin shelf work and are verified in a browser. Restore-without-autoplay and duplicate-media cases are not built. |
-| V14 | PARTIAL | Browser Use | Target description, locator staleness, operation support and the shared safety review are implemented and tested. The Playwright binding and browser engine are not installed. |
+| V14 | PARTIAL | Browser Use | A real Playwright driver runs against a real Chromium: managed profile, origin policy, observation correlation, staleness refusal, local stop, human takeover and secret-entry suspension, 12 integration tests. Takeover preview UI and the injection fixture are not built. |
 | V15 | PARTIAL | Computer Use | Permission gating, containment labelling, target validation and profile validation are implemented and tested. The native bindings need a signed bundle and a container engine. |
 | V16 | PARTIAL | Onboarding/personalisation | Quick play works with no credentials and is labelled as sample in a host-owned card, verified in a browser. Needs-based setup and preference undo are not built. |
 | V17 | PARTIAL | Live voice | Transcript assembly, intent routing, media-focus arbitration and mute/end semantics are implemented and tested. The WebRTC transport needs a provider account. |
@@ -115,7 +115,7 @@ A status here is never upgraded without the corresponding test appearing alongsi
 
 ## Summary
 
-Acceptance tests: 46 pass, 4 blocked, 22 not implemented (of 72).
+Acceptance tests: 47 pass, 4 blocked, 21 not implemented (of 72).
 Scope items: 18 partial, 0 not implemented (of 18).
 
 No scope item is claimed as complete. The layers that are implemented are tested; the
