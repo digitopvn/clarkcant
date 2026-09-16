@@ -195,6 +195,9 @@ export async function createModelTurn(options: {
           ? "This node holds no datasets."
           : `Available dataset references: ${datasetRefs.join(", ")}.`),
       parameters: showViewParameters(views, datasetRefs),
+      // Without this the SDK omits the tool from the system prompt's "Available tools" list, and a
+      // model that cannot see its tools answers with invented tool syntax instead of calling one.
+      promptSnippet: "show_view — show a chart or table in the conversation",
       execute: async (params: Record<string, unknown>): Promise<{ text: string }> => {
         const requested = typeof params.view === "string" ? params.view : "";
         const descriptor = viewById.get(requested);
@@ -242,29 +245,31 @@ export async function createModelTurn(options: {
     const viewById = new Map(views.map((entry) => [entry.id, entry]));
     const datasetRefs = readDatasetRefs();
 
+    // The turn is created before the session because the tool has to be handed over *at* session
+    // creation — the SDK fixes its custom tool set then, and a tool added afterwards never reaches
+    // the registry the allowlist consults. The tool writes into this object, so it has to exist
+    // first; the session id is filled in once there is one.
+    const turn: Turn = { sessionId: "", pending: [], segments: [], unsubscribe: () => {} };
+    const customTools =
+      views.length === 0 ? [] : [showViewTool(turn, principal, views, viewById, datasetRefs)];
+
     const handle = await adapter.createWorkerSession({
       // The brief is per conversation rather than per message, so the model keeps the thread
       // it is already in instead of meeting the user again on every turn.
       goal: "Answer the user in this conversation.",
       projectRoots: [],
       allowedCapabilityRefs: [],
+      ...(customTools.length === 0 ? {} : { customTools }),
       // Carried on the brief as well as held here, because the adapter enforces it at the
       // turn boundary and that is where a runaway turn is actually stopped.
       maxWallClockMs: budget.maxWallClockMs,
       maxTokens: budget.maxTokens,
     });
 
-    const turn: Turn = { sessionId: handle.sessionId, pending: [], segments: [], unsubscribe: () => {} };
+    turn.sessionId = handle.sessionId;
     turn.unsubscribe = adapter.subscribe(handle.sessionId, (event) => {
       if (isTextDelta(event)) turn.pending.push(event.delta);
     });
-
-    if (views.length > 0) {
-      await adapter.registerTool(
-        handle.sessionId,
-        showViewTool(turn, principal, views, viewById, datasetRefs),
-      );
-    }
 
     turns.set(conversationId, turn);
     return turn;
