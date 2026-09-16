@@ -43,6 +43,15 @@ export {
 export { Conversation, type ConversationProps } from "./Conversation.tsx";
 export { SettingsPanel, SettingsRow, ToolRow, type SettingsPanelProps, type SettingsRowProps, type ToolRowProps } from "./SettingsPanel.tsx";
 export { TokenSpecimens, readVar } from "./TokenSpecimens.tsx";
+export { Modal, type ModalProps } from "./Modal.tsx";
+export { VoiceSurface, type VoiceSurfaceProps } from "./VoiceSurface.tsx";
+export { DevicePairingPanel, type DevicePairingPanelProps } from "./DevicePairingPanel.tsx";
+export {
+  DesktopNotification,
+  MenuBarPopover,
+  type DesktopNotificationProps,
+  type MenuBarPopoverProps,
+} from "./DesktopSurfaces.tsx";
 export { Orb, type OrbProps } from "./Orb.tsx";
 export { createOrbRenderer, type OrbOptions, type OrbRenderer } from "./orb.ts";
 export { ORB_PALETTE, ORB_SHAPE, ORB_SHADER_STATUS } from "./orb-shader.ts";

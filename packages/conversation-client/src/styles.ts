@@ -271,6 +271,38 @@ button.cc-badge:hover, .cc-badge[role="button"]:hover { color: var(--cc-text); b
 .cc-diff-line[data-line-kind="remove"] { background: color-mix(in oklab, var(--cc-danger) 14%, transparent); }
 .cc-diff-line[data-line-kind="remove"] .cc-diff-gutter { color: var(--cc-danger); }
 
+/*
+ * The modal. The specification's numbers: 700px wide, radius 20. Focus is trapped inside while it
+ * is up, and the page behind cannot scroll — a user scrolling a surface they cannot see loses
+ * their place.
+ */
+.cc-modal-scrim { position: fixed; inset: 0; background: color-mix(in oklab, var(--cc-code) 78%, transparent); z-index: 70; }
+.cc-modal {
+  position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); z-index: 71;
+  width: min(var(--cc-modal-width), calc(100vw - 32px)); max-height: calc(100vh - 64px);
+  display: flex; flex-direction: column;
+  background: var(--cc-elevated); border: 1px solid var(--cc-border);
+  border-radius: var(--cc-radius-modal);
+  box-shadow: 0 24px 64px color-mix(in oklab, var(--cc-code) 70%, transparent);
+  animation: cc-modal-in var(--cc-motion-panel) var(--cc-motion-easing);
+}
+@keyframes cc-modal-in { from { opacity: 0; transform: translate(-50%, -48%); } to { opacity: 1; } }
+.cc-modal:focus-visible { outline: 2px solid var(--cc-focus); outline-offset: 2px; }
+.cc-modal-head { display: flex; align-items: center; justify-content: space-between; gap: var(--cc-space-md); padding: var(--cc-space-lg); border-bottom: 1px solid var(--cc-border); }
+.cc-modal-head h2 { margin: 0; font-size: var(--cc-text-heading-md); line-height: var(--cc-leading-heading-md); }
+.cc-modal-body { padding: var(--cc-space-lg); overflow-y: auto; display: flex; flex-direction: column; gap: var(--cc-space-md); }
+.cc-modal-actions { display: flex; justify-content: flex-end; gap: var(--cc-space-sm); padding: var(--cc-space-md) var(--cc-space-lg); border-top: 1px solid var(--cc-border); }
+
+/* Menu bar popover: the same connection wording the app window uses. */
+.cc-menubar {
+  display: flex; flex-direction: column; gap: var(--cc-space-sm);
+  padding: var(--cc-space-md); min-width: 15rem;
+  background: var(--cc-elevated); border: 1px solid var(--cc-border);
+  border-radius: var(--cc-radius-card);
+}
+.cc-menubar-head { display: flex; align-items: center; gap: var(--cc-space-sm); font-size: var(--cc-text-body-sm); color: var(--cc-text); }
+.cc-notification-trigger { display: flex; align-items: center; gap: var(--cc-space-sm); flex-wrap: wrap; }
+
 /* Project roots the node has already approved. */
 .cc-root-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--cc-space-xs); }
 .cc-root-list li { display: flex; align-items: center; justify-content: space-between; gap: var(--cc-space-sm); padding: var(--cc-space-xs) 0; border-bottom: 1px solid var(--cc-border); }
