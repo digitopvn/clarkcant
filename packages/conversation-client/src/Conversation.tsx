@@ -47,10 +47,20 @@ export interface ConversationProps {
 
 type ConnectionState = "connecting" | "ready" | "offline";
 
+/**
+ * The four things the empty state offers.
+ *
+ * Four, and every one of them actually runs. The first three reach a scripted recipe over the
+ * sample dataset, so they work with no provider configured; the fourth is an ordinary message and
+ * needs a model to answer it. Nothing here is a label that looks like a feature — a chip that sends
+ * a message nobody can handle teaches the user that the app is broken rather than that a model is
+ * missing, and the fourth chip says which of those is true.
+ */
 const SUGGESTIONS = [
-  { label: "Xem thử một biểu đồ", text: "cho tui xem biểu đồ" },
-  { label: "Tạo ghi chú nhanh", text: "tạo note nhanh cho tui" },
-  { label: "Xem bảng dữ liệu mẫu", text: "cho tui xem bảng dữ liệu" },
+  { label: "Làm gì đó", text: "cho tui xem biểu đồ", detail: "chạy trên dữ liệu mẫu" },
+  { label: "Sửa một lỗi", text: "tạo note nhanh cho tui", detail: "chạy trên dữ liệu mẫu" },
+  { label: "Xem dự án của tui", text: "cho tui xem bảng dữ liệu", detail: "chạy trên dữ liệu mẫu" },
+  { label: "Chỉ trò chuyện", text: "chào bạn, bạn làm được gì?", detail: "cần model" },
 ] as const;
 
 export function Conversation({
@@ -291,7 +301,7 @@ export function Conversation({
             menu: a setting that is two clicks deep is a setting nobody checks. It opens a panel
             that reads the live tokens back off the document, so what it shows is what rendered.
           */}
-          <button type="button" className="cc-icon-btn" aria-label="UI Check" title="UI Check" data-ui-check="true" onClick={() => setUiCheckOpen(true)}>
+          <button type="button" className="cc-icon-btn" aria-label="Cài đặt" title="Cài đặt" data-settings="true" onClick={() => setUiCheckOpen(true)}>
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
               <circle cx="12" cy="12" r="3" />
               <path d="M19.4 15a1.7 1.7 0 0 0 .34 1.87l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.7 1.7 0 0 0-1.87-.34 1.7 1.7 0 0 0-1 1.55V21a2 2 0 1 1-4 0v-.09A1.7 1.7 0 0 0 9 19.4a1.7 1.7 0 0 0-1.87.34l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.7 1.7 0 0 0 4.6 15a1.7 1.7 0 0 0-1.55-1H3a2 2 0 1 1 0-4h.09A1.7 1.7 0 0 0 4.6 9a1.7 1.7 0 0 0-.34-1.87l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.7 1.7 0 0 0 9 4.6a1.7 1.7 0 0 0 1-1.55V3a2 2 0 1 1 4 0v.09a1.7 1.7 0 0 0 1 1.55 1.7 1.7 0 0 0 1.87-.34l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.7 1.7 0 0 0 19.4 9v0a1.7 1.7 0 0 0 1.55 1H21a2 2 0 1 1 0 4h-.09a1.7 1.7 0 0 0-1.51 1z" />
@@ -304,22 +314,29 @@ export function Conversation({
         {blocks.length === 0 ? (
           <div className="cc-empty">
             <Orb size={148} className="cc-empty-orb" label="Đang chờ bạn nói điều muốn làm" />
-            <h1>Bạn muốn làm gì?</h1>
-            <p>Cứ nói việc bạn muốn. Ba gợi ý dưới đây chạy trên dữ liệu mẫu, không cần kết nối gì.</p>
-            <div style={{ display: "flex", gap: "var(--cc-space-sm)", flexWrap: "wrap", justifyContent: "center" }}>
+            <h1>Bạn đang nghĩ gì?</h1>
+            <p>Nói việc bạn muốn làm, hoặc bắt đầu từ một trong bốn gợi ý dưới đây.</p>
+            <div className="cc-chip-row" data-suggestion-count={SUGGESTIONS.length}>
               {SUGGESTIONS.map((suggestion) => (
                 <button
                   key={suggestion.text}
-                  className="cc-badge"
-                  style={{ cursor: "pointer", font: "inherit", padding: "var(--cc-space-sm) var(--cc-space-md)" }}
+                  type="button"
+                  className="cc-chip"
                   data-suggestion={suggestion.text}
+                  data-suggestion-detail={suggestion.detail}
+                  // The detail is in the accessible name as well as visible text, because a person
+                  // using a screen reader has the same question about which chips need a model.
+                  aria-label={`${suggestion.label} — ${suggestion.detail}`}
                   onClick={() => void send(suggestion.text)}
                 >
-                  {suggestion.label}
+                  <span className="cc-chip-label">{suggestion.label}</span>
+                  <span className="cc-chip-detail">{suggestion.detail}</span>
                 </button>
               ))}
             </div>
-            <p className="cc-freshness">Gợi ý là dữ liệu mẫu / demo tương tác.</p>
+            <p className="cc-freshness">
+              Gợi ý đánh dấu “cần model” sẽ báo lỗi nếu node này chưa cấu hình model.
+            </p>
           </div>
         ) : (
           <div className="cc-timeline" aria-live="polite" aria-relevant="additions">

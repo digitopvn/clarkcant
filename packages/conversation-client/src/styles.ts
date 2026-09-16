@@ -321,6 +321,27 @@ button.cc-badge:hover, .cc-badge[role="button"]:hover { color: var(--cc-text); b
 .cc-menubar-head { display: flex; align-items: center; gap: var(--cc-space-sm); font-size: var(--cc-text-body-sm); color: var(--cc-text); }
 .cc-notification-trigger { display: flex; align-items: center; gap: var(--cc-space-sm); flex-wrap: wrap; }
 
+/*
+ * The four starting chips.
+ *
+ * Each carries a label and a note about whether it needs a model. The note is visible rather than
+ * a tooltip, because the question it answers — will this work on this node — is one the user has
+ * before they click, not after.
+ */
+.cc-chip-row { display: flex; gap: var(--cc-space-sm); flex-wrap: wrap; justify-content: center; }
+.cc-chip {
+  display: flex; flex-direction: column; align-items: flex-start; gap: 2px;
+  cursor: pointer; font: inherit; text-align: left;
+  padding: var(--cc-space-sm) var(--cc-space-md);
+  background: var(--cc-card); color: var(--cc-text);
+  border: 1px solid var(--cc-border); border-radius: var(--cc-radius-pill);
+  transition: border-color var(--cc-motion-micro) var(--cc-motion-easing);
+}
+.cc-chip:hover { border-color: var(--cc-accent); }
+.cc-chip:focus-visible { outline: 2px solid var(--cc-focus); outline-offset: 2px; }
+.cc-chip-label { font-size: var(--cc-text-body-sm); }
+.cc-chip-detail { font-size: var(--cc-text-meta); color: var(--cc-text-tertiary); }
+
 /* Project roots the node has already approved. */
 .cc-root-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--cc-space-xs); }
 .cc-root-list li { display: flex; align-items: center; justify-content: space-between; gap: var(--cc-space-sm); padding: var(--cc-space-xs) 0; border-bottom: 1px solid var(--cc-border); }

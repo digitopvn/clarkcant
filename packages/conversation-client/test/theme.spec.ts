@@ -5,6 +5,9 @@ import { describe, expect, it, vi } from "vitest";
 
 import {
   DEFAULT_THEME_CHOICE,
+  PREPAINT_SCRIPT_PATH,
+  THEME_ATTRIBUTE,
+  THEME_STORAGE_KEY,
   isThemeChoice,
   readDocumentTheme,
   readStoredTheme,
@@ -156,17 +159,19 @@ describe("the pre-paint script", () => {
   const here = fileURLToPath(new URL(".", import.meta.url));
 
   it("agrees with the module about the storage key and the attribute", () => {
-    // The logic is duplicated on purpose (an inline script would violate the page's CSP), so
-    // this test is what stops the two copies from drifting apart without anyone noticing.
-    const script = readFileSync(`${here}../../../apps/web/public/theme-init.js`, "utf8");
+    // The logic is duplicated on purpose (an inline script would violate the page's CSP), so this
+    // test is what stops the two copies from drifting apart without anyone noticing. It compares
+    // against the module's own constants rather than against copies of the strings — a test that
+    // restates the literal would keep passing while the real values diverged.
+    const script = readFileSync(`${here}../../../${PREPAINT_SCRIPT_PATH}`, "utf8");
     const html = readFileSync(`${here}../../../apps/web/index.html`, "utf8");
 
-    expect(script).toContain('localStorage.getItem("cc.theme")');
-    expect(script).toContain("dataset.ccTheme");
+    expect(script).toContain(JSON.stringify(THEME_STORAGE_KEY));
+    expect(script).toContain(`dataset.${THEME_ATTRIBUTE}`);
     // The script has to be reachable at all, and it has to be an external file: the policy is
-    // `script-src 'self'`, so an inline one would never run.
-    expect(html).toContain('src="/theme-init.js"');
-    expect(html).not.toContain("dataset.ccTheme"); // no second inline copy
+    // script-src 'self', so an inline one would never run.
+    expect(html).toContain(`src="/${PREPAINT_SCRIPT_PATH.split("/").pop()}"`);
+    expect(html).not.toContain(`dataset.${THEME_ATTRIBUTE}`); // no second inline copy
     expect(html).toContain("script-src 'self'");
   });
 

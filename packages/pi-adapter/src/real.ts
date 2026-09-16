@@ -56,6 +56,11 @@ function toSdkTool(sdk: SdkModule, tool: ToolDefinition): SdkTool {
       const result = await tool.execute(params);
       return { content: [{ type: "text" as const, text: result.text }], details: {} };
     },
+    // SAFETY: the SDK's declaration types `parameters` as a TypeBox schema, which our runtime-validated
+    // JSON Schema is not, so the generic cannot be inferred and the structural check fails at compile
+    // time while the runtime shape is the documented one. `pi-ai` detects the absent TypeBox marker and
+    // validates against plain JSON Schema instead, and `defineTool` is an identity function, so nothing
+    // is transformed. Verified by the live model turn that calls this tool and gets a view back.
   }) as unknown as SdkTool;
 }
 
