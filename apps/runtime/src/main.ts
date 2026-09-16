@@ -67,7 +67,8 @@ async function main(): Promise<void> {
   process.stderr.write(
     modelTurn === undefined
       ? "no model configured; the node will answer with scripts and capabilities only\n"
-      : `model: ${modelTurn.selection.provider}/${modelTurn.selection.id}\n`,
+      : `model: ${modelTurn.selection.provider}/${modelTurn.selection.id}` +
+          ` (turn limit ${modelTurn.budget.maxWallClockMs} ms, ${modelTurn.budget.maxTokens} tokens)\n`,
   );
 
   const services = bootNodeServices({
@@ -76,8 +77,7 @@ async function main(): Promise<void> {
     ...(modelTurn === undefined ? {} : { respondWithModel: modelTurn.answer }),
   });
 
-  const server = createServer((request, response) => {
-    const chunks: Buffer[] = [];
+  const server = createServer((request, response) => {    const chunks: Buffer[] = [];
     request.on("data", (chunk: Buffer) => chunks.push(chunk));
     request.on("end", async () => {
       const url = new URL(request.url ?? "/", `http://${options.host}:${options.port}`);
@@ -126,6 +126,27 @@ async function main(): Promise<void> {
       });
       response.end(`${JSON.stringify(result.body)}\n`);
     });
+  });
+
+  /**
+   * A port that is already taken, reported plainly.
+   *
+   * Node's default is an unhandled `'error'` event: twenty lines of stack trace and no
+   * statement of the problem or what to do about it. This is the failure an operator of a
+   * local node meets most often — a second node, or one left over from last time — so it is
+   * worth four lines of plain language rather than a stack trace to interpret.
+   */
+  server.on("error", (cause: NodeJS.ErrnoException) => {
+    if (cause.code === "EADDRINUSE") {
+      process.stderr.write(
+        `Port ${options.port} on ${options.host} is already in use.\n` +
+          "Another node is probably running. Stop it, or start this one on a different port with" +
+          ` --port <number>.\n`,
+      );
+      process.exit(1);
+    }
+    process.stderr.write(`The node could not listen on ${options.host}:${options.port}: ${cause.message}\n`);
+    process.exit(1);
   });
 
   server.listen(options.port, options.host, () => {
