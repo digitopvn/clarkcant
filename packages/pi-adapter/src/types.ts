@@ -90,6 +90,15 @@ export interface PiAdapter {
     brief: WorkerBrief,
   ): Promise<{ successor: WorkerSessionHandle; note: string }>;
 
+  /**
+   * Send a prompt and resolve when the run settles.
+   *
+   * Without this the seam could create a session but never start one. It resolves on settle
+   * rather than on success: a run that ends without accomplishing anything is a result the
+   * caller has to judge, not an error the adapter should throw.
+   */
+  prompt(sessionId: string, text: string): Promise<void>;
+
   subscribe(sessionId: string, listener: (event: WorkerEvent) => void): () => void;
 
   steer(sessionId: string, text: string): Promise<void>;

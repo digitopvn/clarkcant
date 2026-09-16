@@ -1,32 +1,42 @@
 /**
  * @clarkcant/app-desktop
  *
- * Thin Electron shell. It hosts the shared conversation components and exposes OS
- * dialogs, notifications and credential-store access through typed IPC. It contains no
- * scheduler and no command logic: closing the window is not the same as stopping work.
+ * Thin Electron shell. It hosts the shared conversation components and exposes OS dialogs,
+ * notifications and credential prompts through named IPC methods. It contains no scheduler and
+ * no command logic: closing the window is not the same as stopping work.
  *
- * @implementation-status stub
- * TODO(P1): `main.mjs`, `preload.mjs` and the renderer entry. The security configuration
- * is fixed and non-negotiable when it is written: `nodeIntegration: false`,
- * `contextIsolation: true`, a CSP, IPC sender validation, and no generic shell or IPC
- * bridge — the main process exposes named methods rather than a transport.
+ * The security posture is fixed and is enforced in `security.mjs`, which is plain JavaScript on
+ * purpose — it is imported by both the Electron main process and the Node test suite, so the
+ * posture is checked by a test run rather than by reading `main.mjs`.
  *
- * Electron is declared in this package's `devDependencies` but its install script is
- * gated by `allowBuilds` in `pnpm-workspace.yaml`, so the platform binary is only
- * downloaded once that entry is deliberately approved.
+ * Verified behaviour, by running the shell: `electron . --smoke-test` starts a real window with
+ * a real preload bridge, calls the bridge from inside the renderer, and asserts that a named
+ * bridge exists, that Node is unreachable from the renderer, and that http, file and script
+ * schemes are all refused. The macOS permission grants and signing work that gates the native
+ * drivers belongs to P8 and issue #3, not here.
  */
 
 export interface DesktopBridge {
-  openExternal(url: string): Promise<void>;
-  showNotification(input: { title: string; body: string }): Promise<void>;
+  openExternal(url: string): Promise<{ ok: boolean; opened?: string; refused?: string }>;
+  showNotification(input: { title: string; body: string }): Promise<{ ok: boolean; shown?: unknown }>;
   /** Secret entry happens in a host-owned window, never in a widget frame. */
-  requestCredential(input: { requestId: string; purpose: string }): Promise<{ stored: boolean }>;
-  setKeepRunningOnWindowClose(keep: boolean): Promise<void>;
+  requestCredential(input: { requestId: string; purpose: string }): Promise<{ ok: boolean; stored?: boolean }>;
+  setKeepRunningOnWindowClose(keep: boolean): Promise<{ ok: boolean; keepRunningOnWindowClose?: boolean }>;
+  status(): Promise<Record<string, unknown>>;
 }
 
 /**
- * @implementation-status stub
- * TODO(P1): see above. The macOS permissions and signing work that gates the native
- * drivers belongs to P8, not here.
+ * The named methods the preload exposes.
+ *
+ * Listed here as well as in `preload.mjs` so a reviewer can see the renderer's whole reach in
+ * one place. `IPC_CHANNELS` in `security.mjs` remains the enforcing copy.
  */
-export const DESKTOP_STATUS = "not-implemented";
+export const DESKTOP_BRIDGE_METHODS = [
+  "openExternal",
+  "notify",
+  "requestCredential",
+  "setKeepRunningOnWindowClose",
+  "status",
+] as const;
+
+export const DESKTOP_STATUS = "implemented-thin-shell";

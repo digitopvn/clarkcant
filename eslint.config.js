@@ -74,6 +74,33 @@ export default tseslint.config(
     },
   },
   {
+    // The desktop renderer runs in a browser context, not Node. It is the one .mjs file in the
+    // repository that must not be handed Node globals, and it needs the DOM ones instead.
+    files: ["apps/desktop/src/shell.mjs"],
+    languageOptions: {
+      globals: {
+        document: "readonly",
+        window: "readonly",
+      },
+    },
+  },
+  {
+    // A sandboxed Electron preload script cannot be an ES module, so this file is CommonJS
+    // because the runtime requires it, not by preference.
+    files: ["**/*.cjs"],
+    languageOptions: {
+      sourceType: "commonjs",
+      globals: {
+        require: "readonly",
+        module: "writable",
+        process: "readonly",
+      },
+    },
+    rules: {
+      "@typescript-eslint/no-require-imports": "off",
+    },
+  },
+  {
     files: ["**/test/**/*.ts", "**/test/**/*.tsx"],
     rules: {
       "@typescript-eslint/no-explicit-any": "off",

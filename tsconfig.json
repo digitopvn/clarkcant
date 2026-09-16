@@ -59,7 +59,8 @@
       "@clarkcant/conversation-client": [
         "packages/conversation-client/src/index.ts"
       ]
-    }
+    },
+    "allowJs": true
   },
   "include": [
     "packages/*/src/**/*.ts",

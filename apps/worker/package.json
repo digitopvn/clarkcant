@@ -21,6 +21,7 @@
   "dependencies": {
     "@clarkcant/contracts": "workspace:*",
     "@clarkcant/core": "workspace:*",
-    "@clarkcant/pi-adapter": "workspace:*"
+    "@clarkcant/pi-adapter": "workspace:*",
+    "zod": "4.6.5"
   }
 }

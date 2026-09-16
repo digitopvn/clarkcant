@@ -288,6 +288,9 @@ importers:
       '@clarkcant/pi-adapter':
         specifier: workspace:*
         version: link:../../packages/pi-adapter
+      zod:
+        specifier: 4.6.5
+        version: 4.6.5
 
   examples/mcp-app-fixture:
     dependencies:

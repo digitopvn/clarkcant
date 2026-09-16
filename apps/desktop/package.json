@@ -16,7 +16,8 @@
     "blueprint": "docs/system-architecture.md"
   },
   "scripts": {
-    "start": "electron ."
+    "start": "electron .",
+    "smoke": "electron . --smoke-test"
   },
   "dependencies": {
     "@clarkcant/conversation-client": "workspace:*"

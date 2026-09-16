@@ -142,6 +142,11 @@ export class FakePiAdapter implements PiAdapter {
     return { turns: session.turns, tokens: session.tokens };
   }
 
+  /** Satisfies the seam. Kept as a thin call so there is one implementation, not two. */
+  async prompt(sessionId: string, text: string): Promise<void> {
+    await this.run(sessionId, text);
+  }
+
   /** Test-only driver: run the scripted reply for a session. */
   async run(sessionId: string, prompt: string): Promise<string> {
     const session = this.#require(sessionId);
