@@ -22,3 +22,12 @@ export {
   type CompatibilityLock,
   type RealPiAdapterOptions,
 } from "./real.ts";
+export {
+  applyEnvFile,
+  keyVariableFor,
+  modelFromEnv,
+  parseEnvFile,
+  PROVIDER_KEY_VARIABLES,
+  type EnvFileResult,
+  type ModelSelection,
+} from "./env-file.ts";

@@ -1,1 +1,6 @@
   ➜  Local:   http://127.0.0.1:4173/
+Error: ERR_PNPM_RECURSIVE_EXEC_FIRST_FAIL
+
+  × "pnpm recursive exec" failed in /Volumes/GOON/www/digitop/clarkcant/apps/
+  │ web
+

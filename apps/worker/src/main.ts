@@ -16,7 +16,7 @@
 
 import { readFileSync } from "node:fs";
 
-import { FakePiAdapter, RealPiAdapter, type PiAdapter } from "@clarkcant/pi-adapter";
+import { FakePiAdapter, RealPiAdapter, modelFromEnv, type PiAdapter } from "@clarkcant/pi-adapter";
 
 import { runWorker, workerBriefEnvelopeSchema, type WorkerBriefEnvelope, type WorkerDeps } from "./index.ts";
 import { allWorkerTools } from "./tools.ts";
@@ -84,9 +84,13 @@ async function main(): Promise<number> {
     return 2;
   }
 
+  // A worker started with no model configured says so rather than resolving one nobody chose.
+  // The adapter refuses an unknown provider or model by name, and the environment is where the
+  // credential for it has to be, so this is the whole of the worker's model configuration.
+  const model = modelFromEnv(process.env);
   const adapter: PiAdapter =
     args.adapter === "real"
-      ? new RealPiAdapter({ cwd: process.cwd() })
+      ? new RealPiAdapter({ cwd: process.cwd(), ...(model === undefined ? {} : { model }) })
       : new FakePiAdapter();
   const availability = await adapter.availability();
   if (!availability.available) {

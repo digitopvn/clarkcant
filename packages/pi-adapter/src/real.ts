@@ -48,6 +48,17 @@ export interface RealPiAdapterOptions {
   /** Directory holding Pi's own configuration and credentials. */
   agentDir?: string;
   /**
+   * Which model the worker runs on.
+   *
+   * Left unset, the SDK resolves its own default, which reads from the user's global Pi
+   * configuration. A node must not depend on that: the credential it runs on is the node's
+   * business, and an operator who has never run Pi interactively has no default to resolve.
+   * Naming the provider and model here makes the choice explicit and, when it cannot be
+   * resolved, makes that a named failure at session creation rather than an obscure one at
+   * the first turn.
+   */
+  model?: { provider: string; id: string; thinkingLevel?: "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max" };
+  /**
    * Built-in tool allowlist. Defaults to a read-only set: a worker that can write
    * must be granted that explicitly, not by omission.
    */
@@ -55,6 +66,10 @@ export interface RealPiAdapterOptions {
   /** Injected so tests can exercise the adapter without loading the real SDK. */
   sdk?: SdkModule;
 }
+
+/** The reasoning levels the SDK accepts. Mirrored as a union so the option is typed. */
+type SdkModelRuntime = Awaited<ReturnType<SdkModule["ModelRuntime"]["create"]>>;
+type SdkModel = ReturnType<SdkModelRuntime["getModels"]>[number];
 
 /**
  * Recorded evidence of which SDK lifecycle behaviour was actually verified.
@@ -88,11 +103,47 @@ export class RealPiAdapter implements PiAdapter {
   >();
 
   #sdk: SdkModule | undefined;
+  #modelRuntime: SdkModelRuntime | undefined;
   #loader:
     | (SdkModule["DefaultResourceLoader"] extends new (options: infer _O) => infer R ? R : never)
     | undefined;
   #counter = 0;
   readonly #aborted = new Set<string>();
+
+  /**
+   * Resolve the configured model against the SDK's catalogue.
+   *
+   * A provider or model that is not there is refused by name. Passing the identifier straight
+   * through would defer the failure to the model runtime, whose complaint names neither the
+   * provider nor what it does have, and that is the error an operator would have to debug.
+   */
+  async #resolveModel(sdk: SdkModule): Promise<{ runtime?: SdkModelRuntime; model?: SdkModel }> {
+    const wanted = this.#options.model;
+    if (wanted === undefined) return {};
+
+    // No options: the credentials this resolves against are the process environment's, which is
+    // the path an operator can control without editing a file in their home directory. The
+    // runtime has no `agentDir` option, so the credential directory an operator sets on the
+    // adapter is deliberately not threaded here — env is the contract.
+    this.#modelRuntime ??= await sdk.ModelRuntime.create({});
+    const runtime = this.#modelRuntime;
+
+    const available = runtime.getModels(wanted.provider);
+    if (available.length === 0) {
+      const providers = runtime.getProviders().map((provider) => provider.id);
+      throw new Error(
+        `no models are available for provider "${wanted.provider}"; available providers: ${providers.join(", ")}`,
+      );
+    }
+    const model = available.find((candidate) => candidate.id === wanted.id);
+    if (model === undefined) {
+      const ids = available.map((candidate) => candidate.id).join(", ");
+      throw new Error(
+        `provider "${wanted.provider}" has no model "${wanted.id}"; it offers: ${ids}`,
+      );
+    }
+    return { runtime, model };
+  }
 
   readonly #options: RealPiAdapterOptions;
 
@@ -140,9 +191,16 @@ export class RealPiAdapter implements PiAdapter {
     this.#loader = loader;
     await loader.reload();
 
+    const selection = await this.#resolveModel(sdk);
+
     const { session } = await sdk.createAgentSession({
       cwd: this.#options.cwd,
       ...(this.#options.agentDir === undefined ? {} : { agentDir: this.#options.agentDir }),
+      ...(selection.runtime === undefined ? {} : { modelRuntime: selection.runtime }),
+      ...(selection.model === undefined ? {} : { model: selection.model }),
+      ...(this.#options.model?.thinkingLevel === undefined
+        ? {}
+        : { thinkingLevel: this.#options.model.thinkingLevel }),
       sessionManager: sdk.SessionManager.inMemory(this.#options.cwd),
       resourceLoader: loader,
       tools: [...(this.#options.builtinTools ?? READ_ONLY_TOOLS)],
