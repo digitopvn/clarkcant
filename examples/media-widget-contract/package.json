@@ -19,6 +19,8 @@
     "typecheck": "tsc -p ../../tsconfig.json"
   },
   "dependencies": {
-    "@clarkcant/contracts": "workspace:*"
+    "@clarkcant/contracts": "workspace:*",
+    "@clarkcant/core": "workspace:*",
+    "@clarkcant/storage": "workspace:*"
   }
 }

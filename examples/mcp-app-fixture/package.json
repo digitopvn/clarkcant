@@ -19,6 +19,7 @@
     "typecheck": "tsc -p ../../tsconfig.json"
   },
   "dependencies": {
-    "@clarkcant/contracts": "workspace:*"
+    "@clarkcant/contracts": "workspace:*",
+    "@clarkcant/widget-sdk": "workspace:*"
   }
 }

@@ -40,6 +40,9 @@ export default defineConfig({
       "packages/*/test/**/*.spec.tsx",
       "apps/*/test/**/*.spec.ts",
       "packs/*/test/**/*.spec.ts",
+      // The example fixtures are executable proofs of the contracts, so their tests belong in
+      // the default run rather than behind a filter nobody remembers.
+      "examples/*/test/**/*.spec.ts",
     ],
     exclude: ["**/dist/**", "**/coverage/**", "**/node_modules/**"],
     environment: "node",
