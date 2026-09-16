@@ -1,0 +1,20 @@
+{
+  "id": "b24535a4c",
+  "name": "Runtime API",
+  "command": "cd /Volumes/GOON/www/digitop/clarkcant && node apps/runtime/src/main.ts --data-dir ./.data --label dev 2>&1",
+  "status": "failed",
+  "outputPath": ".pi/tasks/session-55722-55722/b24535a4c.output",
+  "cwd": "/Volumes/GOON/www/digitop/clarkcant",
+  "startTime": 1789548113340,
+  "endTime": 1789549173203,
+  "exitCode": 1,
+  "signal": null,
+  "pid": 79826,
+  "bytesWritten": 1435,
+  "isAgent": false,
+  "error": "Exited with code 1",
+  "notified": true,
+  "notifyOnCompletion": true,
+  "triggerOnCompletion": true,
+  "timeoutSeconds": 14400
+}

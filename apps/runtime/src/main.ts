@@ -11,7 +11,7 @@ import { createServer } from "node:http";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
-import { handleRequest } from "./gateway.ts";
+import { handleRequest, type GatewayResponse } from "./gateway.ts";
 import { bootNodeServices } from "./services.ts";
 
 interface CliOptions {
@@ -56,16 +56,40 @@ async function main(): Promise<void> {
     request.on("data", (chunk: Buffer) => chunks.push(chunk));
     request.on("end", () => {
       const url = new URL(request.url ?? "/", `http://${options.host}:${options.port}`);
-      const result = handleRequest(
-        { services },
-        {
-          method: request.method ?? "GET",
-          path: url.pathname,
-          query: Object.fromEntries(url.searchParams),
-          headers: request.headers as Record<string, string | string[] | undefined>,
-          body: Buffer.concat(chunks).toString("utf8"),
-        },
-      );
+
+      // The handler is guarded. A request that cannot be satisfied is the request's problem, and
+      // answering it with a 500 is the whole job of this boundary — letting it reach the process
+      // means one bad message takes the node down and every other conversation with it. That is
+      // exactly how this was found: a duplicate id killed the node the user was reviewing.
+      let result: GatewayResponse;
+      try {
+        result = handleRequest(
+          { services },
+          {
+            method: request.method ?? "GET",
+            path: url.pathname,
+            query: Object.fromEntries(url.searchParams),
+            headers: request.headers as Record<string, string | string[] | undefined>,
+            body: Buffer.concat(chunks).toString("utf8"),
+          },
+        );
+      } catch (cause) {
+        // The message is reported rather than swallowed, because a caller that cannot see why a
+        // request failed will retry it unchanged.
+        process.stderr.write(
+          `request ${request.method ?? "GET"} ${url.pathname} failed: ${cause instanceof Error ? cause.stack ?? cause.message : String(cause)}\n`,
+        );
+        result = {
+          status: 500,
+          body: {
+            error: {
+              code: "INTERNAL_ERROR",
+              message: cause instanceof Error ? cause.message : String(cause),
+            },
+          },
+        };
+      }
+
       response.writeHead(result.status, {
         "content-type": "application/json",
         // The browser client is served from a different origin during development, and the

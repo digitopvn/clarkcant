@@ -90,17 +90,20 @@ void main() {
   float lens = sqrt(max(0.0, 1.0 - nx * nx));
 
   // A slow drift, so the band breathes instead of sitting still. Two frequencies keep it from
-  // looking like a single sine.
-  float drift = sin(nx * 3.2 + u_time * 1.15) * 0.020 * lens
-              + sin(nx * 6.1 - u_time * 0.70) * 0.008 * lens;
+  // looking like a single sine, and the lens weighting concentrates the movement towards the
+  // middle: the band is anchored where it meets the glass and moves most where it is widest.
+  float sway = pow(lens, 1.30);
+  float drift = sin(nx * 3.2 + u_time * 1.15) * 0.045 * sway
+              + sin(nx * 6.1 - u_time * 0.70) * 0.016 * sway;
   float y = p.y - drift;
 
   // Two vertical profiles: a broad halo that lights the glass around the band, and a thin core
   // that is the bright line itself. The exponents matter more than the amplitudes — a low power
   // keeps the band the same thickness across the whole width, which reads as a stripe, while a
-  // higher one tapers it towards the ends and reads as a lens.
-  float haloH = 0.240 * pow(lens, 1.55);
-  float coreH = 0.050 * pow(lens, 2.05);
+  // higher one tapers it towards the ends and reads as a lens. The exponents are kept just under
+  // the exponent on the lens itself so the band is thickest in the middle.
+  float haloH = 0.270 * pow(lens, 1.40);
+  float coreH = 0.056 * pow(lens, 1.90);
   // Gated by the lens itself, fading out well before the silhouette. Without the gate the profiles
   // are evaluated with a vanishing denominator where the lens closes, so the gaussian is taken at
   // zero over a near-zero width and returns one — a bright hairline running off the equator. The

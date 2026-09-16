@@ -1,0 +1,26 @@
+(node:79826) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+clarkcant node "dev" listening on http://127.0.0.1:8765
+node id: node_76a174508714457d9ac390ee
+data dir: ./.data
+commands require the bearer token stored in the node's identity.json
+file:///Volumes/GOON/www/digitop/clarkcant/packages/storage/src/repositories.ts:736
+  ).run(
+    ^
+
+Error: UNIQUE constraint failed: messages.message_id
+    at appendMessage (file:///Volumes/GOON/www/digitop/clarkcant/packages/storage/src/repositories.ts:736:5)
+    at appendUser (file:///Volumes/GOON/www/digitop/clarkcant/packages/core/src/conductor.ts:128:3)
+    at handleUserMessage (file:///Volumes/GOON/www/digitop/clarkcant/packages/core/src/conductor.ts:142:23)
+    at handleConversationRoutes (file:///Volumes/GOON/www/digitop/clarkcant/apps/runtime/src/gateway.ts:227:21)
+    at handleRequest (file:///Volumes/GOON/www/digitop/clarkcant/apps/runtime/src/gateway.ts:148:12)
+    at IncomingMessage.<anonymous> (file:///Volumes/GOON/www/digitop/clarkcant/apps/runtime/src/main.ts:59:22)
+    at IncomingMessage.emit (node:events:508:28)
+    at endReadableNT (node:internal/streams/readable:1701:12)
+    at process.processTicksAndRejections (node:internal/process/task_queues:89:21) {
+  code: 'ERR_SQLITE_ERROR',
+  errcode: 1555,
+  errstr: 'constraint failed'
+}
+
+Node.js v25.2.1

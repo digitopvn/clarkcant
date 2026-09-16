@@ -130,7 +130,7 @@ export function createOrbRenderer(
     glow: options.glow ?? ORB_SHAPE.glow,
     sheen: options.sheen ?? ORB_SHAPE.sheen,
   };
-  const speed = options.speed ?? 0.82;
+  const speed = options.speed ?? 1.23;
   const palette = { ...ORB_PALETTE, ...(options.palette ?? {}) };
 
   const vertex = compile(gl, gl.VERTEX_SHADER, ORB_VERTEX_SHADER);

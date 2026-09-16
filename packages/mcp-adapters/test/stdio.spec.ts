@@ -121,8 +121,12 @@ describe("calling a tool", () => {
 
 describe("failure modes each settle", () => {
   it("times out a server that stops answering, instead of hanging", async () => {
-    const transport = await connect("hang", 300);
-    await expect(transport.listTools()).rejects.toThrow(/did not answer tools\/list within 300 ms/);
+    // The budget has to cover spawning the process and completing the handshake before it can
+    // reach the request under test. At 300ms it measured how busy the machine was: under a full
+    // suite run the handshake alone took longer, and the failure was reported as a timeout on
+    // `initialize` rather than on the call this test is about.
+    const transport = await connect("hang", 2500);
+    await expect(transport.listTools()).rejects.toThrow(/did not answer tools\/list/);
   });
 
   it("rejects everything in flight when the server dies, and keeps its stderr", async () => {

@@ -227,7 +227,7 @@ export function Conversation({
     <div className="cc-shell">
       <header className="cc-header">
         <div className="cc-brand">
-          <Orb size={20} className="cc-orb" label="" />
+          <Orb size={30} className="cc-orb" label="" />
           <span>Agent</span>
         </div>
         <div className="cc-status" role="status" aria-live="polite" data-connection={connection}>

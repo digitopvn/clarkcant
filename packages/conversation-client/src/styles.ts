@@ -38,7 +38,7 @@ body {
 }
 .cc-brand { display: flex; align-items: center; gap: var(--cc-space-sm); font-weight: 600; }
 .cc-orb {
-  width: 18px; height: 18px; border-radius: var(--cc-radius-full);
+  width: 27px; height: 27px; border-radius: var(--cc-radius-full);
   display: block; flex: none;
   /*
    * The fallback is scoped to the fallback state. The canvas is transparent so it can composite

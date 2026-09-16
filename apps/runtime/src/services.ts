@@ -1,3 +1,5 @@
+import { randomBytes } from "node:crypto";
+
 import { type Instant, type WidgetDefinition, nowInstant } from "@clarkcant/contracts";
 import {
   type ConductorDeps,
@@ -34,11 +36,32 @@ export interface NodeServices {
   describe: () => { node: string; platform: string; arch: string };
 }
 
+/**
+ * A discriminator unique to this process.
+ *
+ * A counter alone is not enough. It restarts at one whenever the node restarts, and the rows the
+ * previous process wrote are still in the database — so the first message after every restart
+ * collides with an id that already exists. That is not an edge case; it is what happens every
+ * time the node is started a second time against an existing data directory.
+ *
+ * The start time separates two runs and the random suffix separates two runs that began in the
+ * same millisecond.
+ */
+const idDiscriminator = `${Date.now().toString(36)}${randomBytes(3).toString("hex")}`;
 let idCounter = 0;
 
-function newId(prefix: string): string {
+/**
+ * Mint an identifier for a record.
+ *
+ * Exported so its uniqueness across restarts can be tested directly. The property is not
+ * incidental: this is the function whose counter-based predecessor took the node down on the
+ * first message after a restart.
+ */
+export function newId(prefix: string): string {
   idCounter += 1;
-  return `${prefix}_${String(idCounter).padStart(8, "0")}`;
+  // Still short, still readable, and still ordered within a run, which keeps logs and fixtures
+  // legible while making the value unique across runs.
+  return `${prefix}_${idDiscriminator}${idCounter.toString(36)}`;
 }
 
 export function bootNodeServices(options: RuntimeOptions): NodeServices {
