@@ -15,6 +15,21 @@ import { expect, test, type Page } from "@playwright/test";
 const DATA_DIR = join(process.cwd(), ".data", "e2e");
 const EVIDENCE = join(process.cwd(), "plans", "reports", "evidence");
 
+/**
+ * The node this run started.
+ *
+ * Read from the environment rather than assumed, because the suite runs on its own ports so
+ * that it does not have to stop a developer's servers. The client defaults to the usual port,
+ * so without this it would talk to whatever else is listening there.
+ */
+const NODE_PORT = process.env.CC_E2E_NODE_PORT;
+if (NODE_PORT === undefined || NODE_PORT === "") {
+  throw new Error(
+    "CC_E2E_NODE_PORT is not set, so this suite does not know which node it is testing; run it through playwright.config.ts",
+  );
+}
+const GATEWAY = `http://127.0.0.1:${NODE_PORT}`;
+
 function token(): string {
   const path = join(DATA_DIR, "identity.json");
   let raw: string;
@@ -42,7 +57,7 @@ function token(): string {
  * resume test performs — so the test was erasing the very state it meant to verify.
  */
 async function openApp(page: Page): Promise<void> {
-  await page.goto(`/?token=${token()}`);
+  await page.goto(`/?token=${token()}&gateway=${encodeURIComponent(GATEWAY)}`);
 }
 
 test.beforeAll(() => {

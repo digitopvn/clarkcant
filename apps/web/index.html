@@ -5,13 +5,18 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Agent</title>
     <!--
-      The CSP is set here rather than left to defaults. `connect-src` allows the local
-      gateway; `object-src 'none'` and `base-uri 'none'` remove two classic injection
-      footholds, and no remote script may load.
+      The CSP is set here rather than left to defaults. `object-src 'none'` and `base-uri 'none'`
+      remove two classic injection footholds, and no remote script may load.
+
+      `connect-src` allows the node on any loopback port rather than one fixed port. A fixed
+      port made the client's `gateway` parameter unusable: the client reads it, so pointing the
+      app at a node on another port is a supported thing to do, but the policy refused every
+      value except 8765 before the request left the page. The port is the operator's choice — it
+      is their node — and loopback is already the trust boundary this application assumes.
     -->
     <meta
       http-equiv="Content-Security-Policy"
-      content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self' http://127.0.0.1:8765 http://localhost:8765 ws://127.0.0.1:8765; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
+      content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self' http://127.0.0.1:* http://localhost:* ws://127.0.0.1:* ws://localhost:*; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
     />
   </head>
   <body>

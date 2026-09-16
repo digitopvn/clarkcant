@@ -11,8 +11,23 @@ import { defineConfig, devices } from "@playwright/test";
  * generates, which is the only way in.
  */
 const DATA_DIR = ".data/e2e";
-const NODE_PORT = 8765;
-const WEB_PORT = 4173;
+/**
+ * Dedicated ports for this suite.
+ *
+ * They are deliberately not the ports a developer runs the app on. Sharing them meant the
+ * only way to run the browser suite was to stop the dev servers first, and reusing whatever
+ * happened to answer on the port was worse: Playwright will happily adopt a server pointed at
+ * a different data directory, so the suite ran against the dev node and failed on a missing
+ * identity file — which reads like a test bug rather than the wrong server. Override with
+ * `CC_E2E_NODE_PORT` and `CC_E2E_WEB_PORT` when those ports are taken.
+ */
+const NODE_PORT = Number(process.env.CC_E2E_NODE_PORT ?? 8876);
+const WEB_PORT = Number(process.env.CC_E2E_WEB_PORT ?? 4273);
+
+// Published so a test can point the client at the node this run started, rather than at the
+// default the client would otherwise assume.
+process.env.CC_E2E_NODE_PORT = String(NODE_PORT);
+process.env.CC_E2E_WEB_PORT = String(WEB_PORT);
 
 export default defineConfig({
   testDir: "./apps/web/e2e",
