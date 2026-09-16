@@ -90,6 +90,16 @@ async function main(): Promise<void> {
     dataDir: options.dataDir,
     label: options.label,
     ...(modelTurn === undefined ? {} : { respondWithModel: modelTurn.answer }),
+    ...(modelTurn === undefined
+      ? {}
+      : {
+          model: {
+            provider: modelTurn.selection.provider,
+            id: modelTurn.selection.id,
+            maxWallClockMs: modelTurn.budget.maxWallClockMs,
+            maxTokens: modelTurn.budget.maxTokens,
+          },
+        }),
   });
 
   // The model may now ask for these views. When there are none the `show_view` tool is not

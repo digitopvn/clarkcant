@@ -105,6 +105,22 @@ export class GatewayClient {
     return this.#call("GET", "/health");
   }
 
+  /**
+   * This node's identity and what it is configured to run on.
+   *
+   * `model` is null when the node has none, which the settings surface shows as a state rather
+   * than as an absence — a node without a model is a perfectly good node, it just answers from
+   * scripts and capabilities instead of calling a provider.
+   */
+  node(): Promise<{
+    nodeId: string;
+    label: string;
+    createdAt: string;
+    model: { provider: string; id: string; maxWallClockMs: number; maxTokens: number } | null;
+  }> {
+    return this.#call("GET", "/node");
+  }
+
   createConversation(title?: string): Promise<{ conversationId: string }> {
     return this.#call("POST", "/conversations", title === undefined ? {} : { title });
   }
@@ -133,7 +149,6 @@ export class GatewayClient {
     return this.#call("DELETE", `/conversations/${conversationId}/pins/${pinId}`);
   }
 
-  capabilities(): Promise<{ capabilities: { ref: string; summary: string; usable: boolean; blockedReason?: string }[] }> {
-    return this.#call("GET", "/capabilities");
+  capabilities(): Promise<{ capabilities: { ref: string; summary: string; usable: boolean; blockedReason?: string }[] }> {    return this.#call("GET", "/capabilities");
   }
 }

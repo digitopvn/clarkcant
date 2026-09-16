@@ -287,6 +287,35 @@ button:focus-visible, textarea:focus-visible, input:focus-visible, [tabindex]:fo
   text-transform: uppercase; letter-spacing: 0.06em; color: var(--cc-text-muted); font-weight: 600;
 }
 .cc-panel-row { display: flex; flex-wrap: wrap; gap: var(--cc-space-sm); align-items: center; }
+
+/*
+ * Settings rows.
+ *
+ * The description is a visible line, never a tooltip: a limitation that only appears on hover is
+ * one most people never learn about. The control column is fixed-width so a column of rows lines
+ * up down the control rather than down the text.
+ */
+.cc-setting-row {
+  display: flex; align-items: baseline; justify-content: space-between; gap: var(--cc-space-md);
+  padding: var(--cc-space-sm) 0; border-bottom: 1px solid var(--cc-border);
+}
+.cc-setting-row:last-of-type { border-bottom: none; }
+.cc-setting-row[data-state="blocked"] .cc-setting-label { color: var(--cc-warning); }
+.cc-setting-row[data-state="absent"] .cc-setting-label { color: var(--cc-text-tertiary); }
+.cc-setting-text { display: flex; flex-direction: column; gap: var(--cc-space-xxs); min-width: 0; }
+.cc-setting-label { color: var(--cc-text); font-size: var(--cc-text-body-sm); line-height: var(--cc-leading-body-sm); font-weight: 600; }
+.cc-setting-desc { color: var(--cc-text-muted); font-size: var(--cc-text-label); line-height: var(--cc-leading-label); }
+.cc-setting-control { flex: none; display: flex; align-items: center; gap: var(--cc-space-sm); color: var(--cc-text-muted); }
+.cc-setting-control code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: var(--cc-text-mono-sm); line-height: var(--cc-leading-mono-sm); color: var(--cc-text-muted); overflow-wrap: anywhere; }
+
+/* A capability, with its real readiness. The reason is shown whenever there is one. */
+.cc-tool-row {
+  display: flex; align-items: baseline; justify-content: space-between; gap: var(--cc-space-md);
+  padding: var(--cc-space-sm) 0; border-bottom: 1px solid var(--cc-border);
+}
+.cc-tool-row:last-of-type { border-bottom: none; }
+.cc-tool-row code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: var(--cc-text-mono-sm); line-height: var(--cc-leading-mono-sm); color: var(--cc-text); }
+.cc-tool-blocked { color: var(--cc-warning); }
 .cc-panel-note { margin: var(--cc-space-sm) 0 0; font-size: var(--cc-text-label); color: var(--cc-text-muted); }
 .cc-badge[data-selected="true"], .cc-swatch[aria-pressed="true"] {
   outline: 2px solid var(--cc-focus); outline-offset: 2px;

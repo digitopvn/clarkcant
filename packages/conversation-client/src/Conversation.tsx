@@ -3,7 +3,7 @@ import { type ReactElement, useCallback, useEffect, useMemo, useRef, useState } 
 import type { GatewayClient, ResolvedDataset, Timeline } from "./api.ts";
 import { renderBlock } from "./blocks.tsx";
 import { Orb } from "./Orb.tsx";
-import { UiCheckPanel } from "./UiCheckPanel.tsx";
+import { SettingsPanel } from "./SettingsPanel.tsx";
 import { resolveRenderer, toRendererDataset } from "./renderers.tsx";
 
 /**
@@ -57,6 +57,19 @@ export function Conversation({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | undefined>(undefined);
   const [uiCheckOpen, setUiCheckOpen] = useState(false);
+  /**
+   * The active theme.
+   *
+   * Held here rather than pushed into the stylesheet installer: the installed sheet already
+   * carries both themes, so switching is only a matter of which one the root selects, and
+   * re-installing the sheet to change a theme would be work done for nothing.
+   */
+  const [theme, setTheme] = useState<"dark" | "light">("dark");
+
+  const applyTheme = useCallback((next: "dark" | "light") => {
+    if (typeof document !== "undefined") document.documentElement.dataset.ccTheme = next;
+    setTheme(next);
+  }, []);
   const scroller = useRef<HTMLDivElement>(null);
 
   /* Connectivity is checked once, so the status reflects reality rather than optimism. */
@@ -356,7 +369,13 @@ export function Conversation({
         </div>
       </div>
 
-      <UiCheckPanel open={uiCheckOpen} onClose={() => setUiCheckOpen(false)} />
+      <SettingsPanel
+        open={uiCheckOpen}
+        onClose={() => setUiCheckOpen(false)}
+        client={client}
+        theme={theme}
+        onTheme={applyTheme}
+      />
     </div>
   );
 }

@@ -13,7 +13,7 @@ import { QUICK_PLAY_RECIPES, SAMPLE_DATASET } from "@clarkcant/data-canvas/sampl
 import { CAPABILITIES as PROJECT_WORK_CAPABILITIES } from "@clarkcant/project-work";
 import { validateProps } from "@clarkcant/widget-host";
 
-import { type Runtime, type RuntimeOptions, bootRuntime } from "./node.ts";
+import { type NodeModelInfo, type Runtime, type RuntimeOptions, bootRuntime } from "./node.ts";
 
 /**
  * Composition root.
@@ -32,6 +32,8 @@ import { type Runtime, type RuntimeOptions, bootRuntime } from "./node.ts";
 export interface NodeServices {
   runtime: Runtime;
   conductor: ConductorDeps;
+  /** The model this node is configured for, or null when it has none. */
+  model: NodeModelInfo | null;
   /** Runtime description surfaced by the health route. Contains no node identity. */
   describe: () => { node: string; platform: string; arch: string };
 }
@@ -109,8 +111,7 @@ export function bootNodeServices(options: RuntimeOptions): NodeServices {
   const conductor: ConductorDeps = {
     ...base,
     sampleRecipes: QUICK_PLAY_RECIPES,
-    ...(options.respondWithModel === undefined ? {} : { respondWithModel: options.respondWithModel }),
-    validateProps: (
+    ...(options.respondWithModel === undefined ? {} : { respondWithModel: options.respondWithModel }),    validateProps: (
       definition: WidgetDefinition,
       props: Record<string, unknown>,
     ): { ok: true } | { ok: false; problems: string[] } => {
@@ -122,6 +123,7 @@ export function bootNodeServices(options: RuntimeOptions): NodeServices {
   return {
     runtime,
     conductor,
+    model: options.model ?? null,
     describe: () => ({ node: process.version, platform: process.platform, arch: process.arch }),
   };
 }
