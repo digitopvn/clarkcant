@@ -857,3 +857,77 @@ export function nextMessageSequence(db: Database, conversationId: string): numbe
   );
   return Number(row?.max_sequence ?? 0) + 1;
 }
+
+/* ------------------------------------------------------------------ *
+ * Datasets
+ * ------------------------------------------------------------------ */
+
+export interface DatasetView {
+  datasetId: string;
+  originNodeId: string;
+  rowCount: number;
+  /** Never inferred: a cached read must be labelled as cached, not as live. */
+  freshness: "live" | "cached" | "sample" | "unknown";
+  updatedAt: string;
+  document: unknown;
+}
+
+/**
+ * Store a dataset view.
+ *
+ * Datasets are addressed by an opaque reference rather than inlined into the timeline, so
+ * a large result set never enters the transcript and the client can be told how fresh the
+ * data is at the moment it renders it.
+ */
+export function upsertDataset(
+  db: Database,
+  input: {
+    datasetId: string;
+    originNodeId: string;
+    rowCount: number;
+    freshness: DatasetView["freshness"];
+    updatedAt: Instant;
+    document: unknown;
+  },
+): void {
+  db.prepare(
+    `INSERT INTO datasets (dataset_id, origin_node_id, row_count, freshness, updated_at, document)
+     VALUES (?, ?, ?, ?, ?, ?)
+     ON CONFLICT(dataset_id) DO UPDATE SET
+       row_count = excluded.row_count,
+       freshness = excluded.freshness,
+       updated_at = excluded.updated_at,
+       document = excluded.document`,
+  ).run(
+    input.datasetId,
+    input.originNodeId,
+    input.rowCount,
+    input.freshness,
+    input.updatedAt,
+    toJson(input.document),
+  );
+}
+
+export function getDataset(db: Database, datasetId: string): DatasetView | undefined {
+  const row = oneRow<{
+    dataset_id: string;
+    origin_node_id: string;
+    row_count: number;
+    freshness: string;
+    updated_at: string;
+    document: string;
+  }>(
+    db,
+    "SELECT dataset_id, origin_node_id, row_count, freshness, updated_at, document FROM datasets WHERE dataset_id = ?",
+    datasetId,
+  );
+  if (!row) return undefined;
+  return {
+    datasetId: row.dataset_id,
+    originNodeId: row.origin_node_id,
+    rowCount: Number(row.row_count),
+    freshness: row.freshness as DatasetView["freshness"],
+    updatedAt: row.updated_at,
+    document: parseJson<unknown>(row.document, "datasets.document"),
+  };
+}

@@ -6,8 +6,8 @@ import {
   listPinsForConversation,
   registerCapability,
 } from "@clarkcant/core";
-import { conversationMetadata, listActiveTasks, messagesSince } from "@clarkcant/storage";
-import { QUICK_PLAY_RECIPES } from "@clarkcant/data-canvas/sample";
+import { conversationMetadata, listActiveTasks, messagesSince, upsertDataset } from "@clarkcant/storage";
+import { QUICK_PLAY_RECIPES, SAMPLE_DATASET } from "@clarkcant/data-canvas/sample";
 import { CAPABILITIES as PROJECT_WORK_CAPABILITIES } from "@clarkcant/project-work";
 import { validateProps } from "@clarkcant/widget-host";
 
@@ -64,6 +64,17 @@ export function bootNodeServices(options: RuntimeOptions): NodeServices {
       },
     );
   }
+
+  // The sample dataset is registered through the same path a real one would use, so the
+  // renderer never special-cases demo data and the freshness label comes from one place.
+  upsertDataset(runtime.db, {
+    datasetId: SAMPLE_DATASET.datasetId,
+    originNodeId: nodeId,
+    rowCount: SAMPLE_DATASET.rows.length,
+    freshness: "sample",
+    updatedAt: nowInstant() satisfies Instant,
+    document: SAMPLE_DATASET,
+  });
 
   const base = {
     db: runtime.db,

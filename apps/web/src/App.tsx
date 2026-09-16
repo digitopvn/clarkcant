@@ -1,0 +1,80 @@
+import { type ReactElement, useMemo } from "react";
+
+import { Conversation, GatewayClient, installStyles } from "@clarkcant/conversation-client";
+
+/**
+ * Browser client entry.
+ *
+ * The runtime token is a development affordance read from the URL or session storage. It is
+ * deliberately not a cookie: the gateway is token-authenticated, so a cookie would add a
+ * CSRF surface for no benefit. A production deployment replaces this with a same-origin
+ * session established by the operator's ingress, and the blueprint's requirement that the
+ * web UI be served over HTTPS applies there rather than on loopback.
+ */
+installStyles("dark");
+
+function readToken(): string {
+  const params = new URLSearchParams(window.location.search);
+  const fromUrl = params.get("token");
+  if (fromUrl !== null && fromUrl !== "") {
+    // Kept only for this tab: a bearer token does not belong in durable browser storage.
+    window.sessionStorage.setItem("cc_token", fromUrl);
+    return fromUrl;
+  }
+  return window.sessionStorage.getItem("cc_token") ?? "";
+}
+
+function readGateway(): string {
+  const params = new URLSearchParams(window.location.search);
+  return params.get("gateway") ?? "http://127.0.0.1:8765";
+}
+
+export function App(): ReactElement {
+  const token = readToken();
+  const baseUrl = readGateway();
+
+  // Memoised: passing a fresh client into the conversation on every render would make its
+  // load effect depend on a new object each time and re-run without end.
+  const client = useMemo(() => new GatewayClient({ baseUrl, token }), [baseUrl, token]);
+
+  if (token === "") {
+    return (
+      <div className="cc-shell">
+        <header className="cc-header">
+          <div className="cc-brand">
+            <span className="cc-orb" aria-hidden="true" />
+            <span>Agent</span>
+          </div>
+          <div className="cc-status">
+            <span className="cc-dot" data-state="offline" aria-hidden="true" />
+            Chưa có token
+          </div>
+        </header>
+        <div className="cc-scroll">
+          <div className="cc-empty">
+            <span className="cc-empty-orb" aria-hidden="true" />
+            <h1>Chưa kết nối tới runtime</h1>
+            <p data-needs-token="true">
+              Mở trang này kèm token của node, ví dụ{" "}
+              <code>?token=&lt;token trong identity.json&gt;</code>. Token chỉ được giữ trong tab này.
+            </p>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // The conversation id lives in session storage, so reopening the tab resumes the same
+  // conversation without introducing a session picker the user would have to learn.
+  const existing = window.sessionStorage.getItem("cc_conversation") ?? undefined;
+
+  return (
+    <Conversation
+      client={client}
+      // Spread rather than passing undefined: with exactOptionalPropertyTypes an optional
+      // prop may be absent, but may not be explicitly undefined.
+      {...(existing === undefined ? {} : { conversationId: existing })}
+      onConversationReady={(conversationId) => window.sessionStorage.setItem("cc_conversation", conversationId)}
+    />
+  );
+}

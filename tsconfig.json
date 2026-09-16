@@ -6,25 +6,59 @@
     "declaration": false,
     "declarationMap": false,
     "allowImportingTsExtensions": true,
-    "lib": ["ES2023"],
-    "types": ["node"],
+    "lib": [
+      "ES2023"
+    ],
+    "types": [
+      "node"
+    ],
     "baseUrl": ".",
     "paths": {
-      "@clarkcant/design-tokens": ["packages/design-tokens/src/index.ts"],
-      "@clarkcant/contracts": ["packages/contracts/src/index.ts"],
-      "@clarkcant/storage": ["packages/storage/src/index.ts"],
-      "@clarkcant/core": ["packages/core/src/index.ts"],
-      "@clarkcant/pi-adapter": ["packages/pi-adapter/src/index.ts"],
-      "@clarkcant/node-link": ["packages/node-link/src/index.ts"],
-      "@clarkcant/capability-host": ["packages/capability-host/src/index.ts"],
-      "@clarkcant/integration-sdk": ["packages/integration-sdk/src/index.ts"],
-      "@clarkcant/widget-sdk": ["packages/widget-sdk/src/index.ts"],
-      "@clarkcant/widget-host": ["packages/widget-host/src/index.ts"],
-      "@clarkcant/mcp-adapters": ["packages/mcp-adapters/src/index.ts"],
-      "@clarkcant/host-adapters": ["packages/host-adapters/src/index.ts"],
-      "@clarkcant/execution-supervisor": ["packages/execution-supervisor/src/index.ts"],
-      "@clarkcant/voice-adapters": ["packages/voice-adapters/src/index.ts"],
-      "@clarkcant/conversation-client": ["packages/conversation-client/src/index.ts"]
+      "@clarkcant/design-tokens": [
+        "packages/design-tokens/src/index.ts"
+      ],
+      "@clarkcant/contracts": [
+        "packages/contracts/src/index.ts"
+      ],
+      "@clarkcant/storage": [
+        "packages/storage/src/index.ts"
+      ],
+      "@clarkcant/core": [
+        "packages/core/src/index.ts"
+      ],
+      "@clarkcant/pi-adapter": [
+        "packages/pi-adapter/src/index.ts"
+      ],
+      "@clarkcant/node-link": [
+        "packages/node-link/src/index.ts"
+      ],
+      "@clarkcant/capability-host": [
+        "packages/capability-host/src/index.ts"
+      ],
+      "@clarkcant/integration-sdk": [
+        "packages/integration-sdk/src/index.ts"
+      ],
+      "@clarkcant/widget-sdk": [
+        "packages/widget-sdk/src/index.ts"
+      ],
+      "@clarkcant/widget-host": [
+        "packages/widget-host/src/index.ts"
+      ],
+      "@clarkcant/mcp-adapters": [
+        "packages/mcp-adapters/src/index.ts"
+      ],
+      "@clarkcant/host-adapters": [
+        "packages/host-adapters/src/index.ts"
+      ],
+      "@clarkcant/execution-supervisor": [
+        "packages/execution-supervisor/src/index.ts"
+      ],
+      "@clarkcant/voice-adapters": [
+        "packages/voice-adapters/src/index.ts"
+      ],
+      "@clarkcant/conversation-client": [
+        "packages/conversation-client/src/index.ts"
+      ]
     }
   },
   "include": [
@@ -40,7 +74,7 @@
     "eslint.config.js"
   ],
   "exclude": [
-    "packages/conversation-client/src/**/*.tsx",
+    "packages/conversation-client/src/**",
     "apps/web/**"
   ]
 }

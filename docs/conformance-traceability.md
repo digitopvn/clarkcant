@@ -52,7 +52,7 @@ A status here is never upgraded without the corresponding test appearing alongsi
 | T33 | PASS | A loopback callback on a headless server is caught as a mismatch | contracts.spec: checkRedirectReachable |
 | T34 | PASS | An API key typed into ordinary chat is redirected to a secure route and redacted | seams.spec: credential vault suite and redaction test |
 | T35 | PASS | A mismatched MCP token audience or redirect is rejected | seams.spec: "refuses to forward a token issued for a different resource" |
-| T36 | PASS | A cached calendar is labelled with its last update, not as live | seams.spec: "labels cached data as cached rather than live" |
+| T36 | PASS | A cached calendar is labelled with its last update, not as live | seams.spec: "labels cached data as cached rather than live"; e2e asserts the freshness badge in the DOM |
 | T37 | NOT-IMPLEMENTED | A stale ETag conflict preserves the draft | Belongs to P7. |
 | T38 | PASS | A calendar create timeout inspects before duplicating | seams.spec: "treats a submit timeout as unknown rather than repeating the create" |
 | T39 | NOT-IMPLEMENTED | An agent-generated new action binds a discovered capability | Belongs to P2/P6. |
@@ -60,12 +60,12 @@ A status here is never upgraded without the corresponding test appearing alongsi
 | T41 | PASS | A widget cannot forge a host authorization card | seams.spec: "dropped a host card supplied by a non-host origin"; contracts.spec: surface provenance |
 | T42 | NOT-IMPLEMENTED | A changed account or node rebinds and invalidates old consent | Belongs to P6. |
 | T43 | PASS | A double click produces one accepted effect | core.spec: "refuses an invocation whose revision has moved"; storage dedup by invocation id |
-| T44 | PASS | An invalid or oversized widget spec falls back and chat stays usable | seams.spec: "falls back to the text alternative"; contracts.spec: degradation |
+| T44 | PASS | An invalid or oversized widget spec falls back and chat stays usable | seams.spec: "falls back to the text alternative"; e2e asserts the text fallback renders |
 | T45 | PASS | A custom iframe cannot read host storage | seams.spec: "never grants a custom mini-app a same-origin luxury" |
 | T46 | NOT-IMPLEMENTED | A user-authored note widget builds, previews, approves and persists a draft | Belongs to P6. |
 | T47 | PASS | Pinning an inline widget keeps one logical instance | core.spec: "refuses a second live owner for the same instance" |
 | T48 | NOT-IMPLEMENTED | Restoring a pinned media widget does not autoplay or join | Belongs to P6. |
-| T49 | NOT-IMPLEMENTED | Unpinning a note preserves its data | Belongs to P6. |
+| T49 | PASS | Unpinning a note preserves its data | e2e/j1.spec.ts: "pinning and unpinning keeps the widget data" asserts the instance survives the unpin |
 | T50 | NOT-IMPLEMENTED | A disabled pack still shows a safe history snapshot | Belongs to P6. |
 | T51 | NOT-IMPLEMENTED | A failed widget state migration recovers the old snapshot | Belongs to P6. |
 | T52 | NOT-IMPLEMENTED | An offscreen widget's background polling is rate-limited | Belongs to P6. |
@@ -78,7 +78,7 @@ A status here is never upgraded without the corresponding test appearing alongsi
 | T59 | PASS | A local emergency stop outranks a remote command via lease fencing | core.spec: "fences out a holder whose epoch is behind"; "records a local emergency stop" |
 | T60 | PASS | A headless Linux node makes no native-desktop claim | seams.spec: "reports a Linux host without a display as unable to run a virtual desktop" |
 | T61 | NOT-IMPLEMENTED | Virtual desktop access without session auth is rejected | Belongs to P8; needs the preview transport. |
-| T62 | NOT-IMPLEMENTED | Quick play without provider credentials is clearly a sample | Belongs to P7 (onboarding). |
+| T62 | PASS | Quick play without provider credentials is clearly a sample | e2e/j1.spec.ts: "a suggestion produces a labelled sample with a real widget" asserts the host-owned label in a real browser |
 | T63 | NOT-IMPLEMENTED | Skipped or restarted onboarding resumes without reinstalling | Belongs to P7. |
 | T64 | PASS | A spoken interruption changes audio only and does not cancel the job | contracts.spec and seams.spec: barge-in routing |
 | T65 | PASS | A mid-sentence correction is one task revision, not two effects | seams.spec: "emits one intent per completed utterance" |
@@ -94,7 +94,7 @@ A status here is never upgraded without the corresponding test appearing alongsi
 
 | ID | Status | Feature | What is real and what is not |
 |---|---|---|---|
-| V01 | PARTIAL | Conversation client | Contracts for messages, blocks and system cards are implemented and tested. The React client is not built in this bootstrap. |
+| V01 | PARTIAL | Conversation client | One timeline, one composer, pins and a shared React surface are implemented and verified in a real browser (8 Playwright tests). Voice and the desktop host are not built. |
 | V02 | PARTIAL | Portable runtime | `apps/runtime` boots a node with its own identity and database on macOS and Linux, and the gateway refuses an unauthenticated request. The Unix-socket transport and OCI image are not built. |
 | V03 | PARTIAL | Persistent task/session runtime | The full task/run/effect state machine, outbox/inbox durability and success gating are implemented and tested. The conductor and real worker pool are not wired. |
 | V04 | PARTIAL | Trusted node linking | Envelope validation, identity checking, invite single-use and revoke are implemented and tested. Pairing between two live hosts is not exercised. |
@@ -104,19 +104,19 @@ A status here is never upgraded without the corresponding test appearing alongsi
 | V08 | PARTIAL | Conversational install | Plan creation, join-or-create, digest-bound consent, generation activation and rollback are implemented and tested. Quarantine download and isolated build are not built. |
 | V09 | PARTIAL | Credential/auth setup | An encrypted vault, redaction, PKCE generation, state comparison, scope verification and endpoint allowlisting are implemented and tested. A live token exchange is not built. |
 | V10 | PARTIAL | Reference integration (Google Calendar) | Scope planning, time normalisation, agenda building, conflict detection, write-outcome classification and freshness labelling are implemented and tested. No live account is connected. |
-| V11 | NOT-IMPLEMENTED | Rich built-ins | Widget descriptors for the catalog exist; the React renderers do not. |
+| V11 | PARTIAL | Rich built-ins | Line and bar charts, a sortable table and a local note render from descriptors and are verified in a browser. Most of the 18 catalog families are not built. |
 | V12 | PARTIAL | Custom widgets | The bridge codec, nonce validation, sandbox/CSP policy and props validation are implemented and tested. The mini-app runtime is not built. |
-| V13 | PARTIAL | Pins | Pin persistence and single-live-owner enforcement are implemented and tested. The pin UI and restore behaviour are not built. |
+| V13 | PARTIAL | Pins | Pin persistence, single-live-owner enforcement and the pin shelf work and are verified in a browser. Restore-without-autoplay and duplicate-media cases are not built. |
 | V14 | PARTIAL | Browser Use | Target description, locator staleness, operation support and the shared safety review are implemented and tested. The Playwright binding and browser engine are not installed. |
 | V15 | PARTIAL | Computer Use | Permission gating, containment labelling, target validation and profile validation are implemented and tested. The native bindings need a signed bundle and a container engine. |
-| V16 | NOT-IMPLEMENTED | Onboarding/personalisation | Belongs to P7. |
+| V16 | PARTIAL | Onboarding/personalisation | Quick play works with no credentials and is labelled as sample in a host-owned card, verified in a browser. Needs-based setup and preference undo are not built. |
 | V17 | PARTIAL | Live voice | Transcript assembly, intent routing, media-focus arbitration and mute/end semantics are implemented and tested. The WebRTC transport needs a provider account. |
 | V18 | PARTIAL | Operations/security | Seven forward-only migrations, verifiable consistent backup, restore compatibility checks, credential redaction and durable dedup are implemented and tested. Failure injection and soak testing belong to P10. |
 
 ## Summary
 
-Acceptance tests: 44 pass, 4 blocked, 24 not implemented (of 72).
-Scope items: 16 partial, 2 not implemented (of 18).
+Acceptance tests: 46 pass, 4 blocked, 22 not implemented (of 72).
+Scope items: 18 partial, 0 not implemented (of 18).
 
 No scope item is claimed as complete. The layers that are implemented are tested; the
 layers that are not are named individually rather than hidden behind a percentage.

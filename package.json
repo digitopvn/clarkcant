@@ -22,10 +22,13 @@
     "probe:runtime": "node apps/runtime/src/probe-cli.ts",
     "start:runtime": "node apps/runtime/src/main.ts",
     "dev:web": "pnpm --filter @clarkcant/app-web run dev",
-    "start:desktop": "pnpm --filter @clarkcant/app-desktop run start"
+    "start:desktop": "pnpm --filter @clarkcant/app-desktop run start",
+    "test:e2e": "playwright test",
+    "verify:full": "pnpm run verify && pnpm run test:e2e"
   },
   "devDependencies": {
     "@eslint/js": "10.0.1",
+    "@playwright/test": "1.63.0",
     "@types/node": "^24.10.1",
     "eslint": "10.10.0",
     "tsx": "4.23.13",

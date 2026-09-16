@@ -2,7 +2,7 @@ import { timingSafeEqual } from "node:crypto";
 
 import { commandEnvelopeSchema, nowInstant, protocolRangeSchema } from "@clarkcant/contracts";
 import { listCapabilitySummaries, handleUserMessage, pinInstance, unpinInstance } from "@clarkcant/core";
-import { createConversation, getConversation, listConversations } from "@clarkcant/storage";
+import { createConversation, getDataset, getConversation, listConversations } from "@clarkcant/storage";
 
 import { type NodeServices, buildTimeline } from "./services.ts";
 
@@ -89,6 +89,18 @@ export function handleRequest(deps: GatewayDeps, request: GatewayRequest): Gatew
   const { services } = deps;
   const { runtime } = services;
 
+  /*
+   * CORS preflight, answered before the token check.
+   *
+   * A browser sends `OPTIONS` without credentials before any request that carries an
+   * `Authorization` header, so requiring a token here would make every cross-origin request
+   * fail at the preflight and look like a network error in the client. The preflight grants
+   * nothing: the actual request still has to present the token.
+   */
+  if (request.method === "OPTIONS") {
+    return { status: 204, body: null };
+  }
+
   // The only unauthenticated route, and it deliberately discloses no node identity: an
   // open readiness probe must not become a way to enumerate nodes.
   if (request.method === "GET" && request.path === "/health") {
@@ -122,6 +134,14 @@ export function handleRequest(deps: GatewayDeps, request: GatewayRequest): Gatew
       // prompt-injection surface, so a schema is loaded once a capability is chosen.
       capabilities: listCapabilitySummaries({ db: runtime.db, nodeId: runtime.identity.nodeId }),
     });
+  }
+
+  // /datasets/:id
+  if (segments[0] === "datasets" && segments.length === 2 && request.method === "GET") {
+    const dataset = getDataset(runtime.db, segments[1] ?? "");
+    if (!dataset) return fail(404, "RESOURCE_NOT_FOUND", "that dataset is not available on this node");
+    // The freshness travels with the data so a cached read cannot be presented as live.
+    return json(200, dataset);
   }
 
   if (segments[0] === "conversations") {
@@ -176,7 +196,10 @@ function handleConversationRoutes(
     return fail(405, "METHOD_NOT_ALLOWED", `${request.method} is not supported on /conversations`);
   }
 
-  const conversationId = segments[1]!;
+  const conversationId = segments[1];
+  if (conversationId === undefined) {
+    return fail(400, "INVALID_SCHEMA", "a conversation route must name a conversation");
+  }
   const conversation = getConversation(runtime.db, conversationId);
   if (!conversation) {
     return fail(404, "RESOURCE_NOT_FOUND", `conversation ${conversationId} does not exist`);
@@ -246,7 +269,11 @@ function handleConversationRoutes(
 
   // /conversations/:id/pins/:pinId
   if (segments.length === 4 && segments[2] === "pins" && request.method === "DELETE") {
-    const removed = unpinInstance(services.conductor, { conversationId, pinId: segments[3]! });
+    const pinId = segments[3];
+    if (pinId === undefined) {
+      return fail(400, "INVALID_SCHEMA", "a pin route must name a pin");
+    }
+    const removed = unpinInstance(services.conductor, { conversationId, pinId });
     if (!removed) return fail(404, "RESOURCE_NOT_FOUND", "that pin is not on this conversation");
     // Unpinning is a presentation change. Note data and running jobs are untouched, which
     // is why nothing here cancels a task.
