@@ -22,3 +22,6 @@ credentials.json
 # OS noise
 .DS_Store
 Thumbs.db
+test-results/
+playwright-report/
+.data/

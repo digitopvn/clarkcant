@@ -1,0 +1,37 @@
+{
+  "name": "@clarkcant/runtime",
+  "version": "0.2.0",
+  "private": true,
+  "description": "Headless node: composition root, authenticated command gateway over HTTP and WebSocket, node identity, lifecycle and health.",
+  "license": "Apache-2.0",
+  "type": "module",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "clarkcant": {
+    "phase": "P1",
+    "status": "implemented",
+    "blueprint": "docs/system-architecture.md"
+  },
+  "scripts": {
+    "typecheck": "tsc -p ../../tsconfig.json"
+  },
+  "dependencies": {
+    "@clarkcant/capability-host": "workspace:*",
+    "@clarkcant/contracts": "workspace:*",
+    "@clarkcant/core": "workspace:*",
+    "@clarkcant/data-canvas": "workspace:*",
+    "@clarkcant/execution-supervisor": "workspace:*",
+    "@clarkcant/host-adapters": "workspace:*",
+    "@clarkcant/node-link": "workspace:*",
+    "@clarkcant/pi-adapter": "workspace:*",
+    "@clarkcant/project-work": "workspace:*",
+    "@clarkcant/storage": "workspace:*",
+    "@clarkcant/voice-adapters": "workspace:*",
+    "@clarkcant/widget-host": "workspace:*",
+    "@fastify/websocket": "11.3.0",
+    "fastify": "5.12.4"
+  }
+}

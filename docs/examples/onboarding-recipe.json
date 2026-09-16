@@ -1,0 +1,53 @@
+{
+  "schemaVersion": 1,
+  "exampleOnly": true,
+  "id": "example.setup.calendar",
+  "goalTags": [
+    "calendar",
+    "personal-productivity"
+  ],
+  "steps": [
+    {
+      "id": "intent",
+      "kind": "clarify_goal",
+      "optional": true
+    },
+    {
+      "id": "resolve",
+      "kind": "resolve_capability",
+      "capability": "calendar.read"
+    },
+    {
+      "id": "propose",
+      "kind": "host_install_consent",
+      "when": "missing_capability"
+    },
+    {
+      "id": "auth",
+      "kind": "host_authorization_flow",
+      "method": "supported-provider-browser-oauth"
+    },
+    {
+      "id": "probe",
+      "kind": "verify_account_scopes_and_capability",
+      "readOnly": true
+    },
+    {
+      "id": "present",
+      "kind": "show_widget",
+      "widget": "agent.calendar.agenda@1"
+    },
+    {
+      "id": "pin",
+      "kind": "offer_pin",
+      "optional": true
+    }
+  ],
+  "cancel": "preserve-completed-setup-without-running-pending-effects",
+  "resume": "from-durable-checkpoint",
+  "quickPlayAlternative": {
+    "dataset": "synthetic_calendar",
+    "label": "Dữ liệu mẫu",
+    "requiresProviderKey": false
+  }
+}

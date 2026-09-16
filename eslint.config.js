@@ -1,0 +1,110 @@
+// @ts-check
+import js from "@eslint/js";
+import tseslint from "typescript-eslint";
+
+export default tseslint.config(
+  {
+    ignores: [
+      "**/dist/**",
+      "**/coverage/**",
+      "**/.data/**",
+      "scripts/**",
+      "docs/**",
+      "plans/**",
+    ],
+  },
+  js.configs.recommended,
+  ...tseslint.configs.recommended,
+  {
+    files: ["**/*.ts", "**/*.tsx"],
+    languageOptions: {
+      ecmaVersion: 2023,
+      sourceType: "module",
+    },
+    rules: {
+      // Node strips types without transforming syntax that has runtime semantics.
+      // `enum`, `namespace`, and constructor parameter properties would break
+      // direct `node file.ts` execution, so they are banned repo-wide.
+      "no-restricted-syntax": [
+        "error",
+        {
+          selector: "TSEnumDeclaration",
+          message:
+            "Node type-stripping cannot execute enums. Use a const object + union type.",
+        },
+        {
+          selector: "TSModuleDeclaration",
+          message:
+            "Node type-stripping cannot execute namespaces. Use explicit modules.",
+        },
+      ],
+      "@typescript-eslint/no-unused-vars": [
+        "error",
+        { argsIgnorePattern: "^_", varsIgnorePattern: "^_" },
+      ],
+      "@typescript-eslint/consistent-type-imports": [
+        "error",
+        {
+          prefer: "type-imports",
+          fixStyle: "inline-type-imports",
+          // `typeof import("pkg")` is how a dynamically imported module is typed,
+          // and unlike a `require()` it has no runtime equivalent to consolidate.
+          disallowTypeAnnotations: false,
+        },
+      ],
+      // Stubs must be explicit rather than silently empty.
+      "no-empty": ["error", { allowEmptyCatch: false }],
+    },
+  },
+  {
+    // Node scripts and config files run in a Node global scope that the ECMAScript
+    // recommended preset does not declare.
+    files: ["**/*.mjs", "tools/**/*.mjs", "eslint.config.js"],
+    languageOptions: {
+      globals: {
+        process: "readonly",
+        console: "readonly",
+        URL: "readonly",
+        URLSearchParams: "readonly",
+        Buffer: "readonly",
+        __dirname: "readonly",
+        setTimeout: "readonly",
+        clearTimeout: "readonly",
+      },
+    },
+  },
+  {
+    // The desktop renderer runs in a browser context, not Node. It is the one .mjs file in the
+    // repository that must not be handed Node globals, and it needs the DOM ones instead.
+    files: ["apps/desktop/src/shell.mjs"],
+    languageOptions: {
+      globals: {
+        document: "readonly",
+        window: "readonly",
+      },
+    },
+  },
+  {
+    // A sandboxed Electron preload script cannot be an ES module, so this file is CommonJS
+    // because the runtime requires it, not by preference.
+    files: ["**/*.cjs"],
+    languageOptions: {
+      sourceType: "commonjs",
+      globals: {
+        require: "readonly",
+        module: "writable",
+        process: "readonly",
+      },
+    },
+    rules: {
+      "@typescript-eslint/no-require-imports": "off",
+    },
+  },
+  {
+    files: ["**/test/**/*.ts", "**/test/**/*.tsx"],
+    rules: {
+      "@typescript-eslint/no-explicit-any": "off",
+      "@typescript-eslint/no-non-null-assertion": "off",
+    },
+  },
+);

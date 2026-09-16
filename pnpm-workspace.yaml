@@ -1,0 +1,53 @@
+packages:
+  - apps/*
+  - packages/*
+  - packs/*
+  - examples/*
+
+# ---------------------------------------------------------------------------
+# Supply-chain hardening
+#
+# pnpm 12 reads security settings from this file, not from .npmrc. The policy
+# below implements the install-boundary requirements in
+# docs/implementation-plan.md §8 (P5) and the T21/T22 acceptance tests.
+# ---------------------------------------------------------------------------
+
+# A version published minutes ago has had almost no public scrutiny, and the
+# registry can still be serving a compromised artifact. Refuse anything younger
+# than 24 hours so a bad release has a chance to be yanked first.
+minimumReleaseAge: 1440
+
+# Block sub-dependencies resolved from tarballs, git refs, or URLs rather than a
+# registry, so a transitive dependency cannot smuggle in code that no registry
+# policy ever saw.
+blockExoticSubdeps: true
+
+# Reject a store entry whose content hash disagrees with its metadata index.
+verifyStoreIntegrity: true
+
+# Lifecycle scripts (preinstall/install/postinstall/prepare) are the usual
+# execution vector in npm supply-chain attacks. `allowBuilds` is the only way in;
+# unlisted packages are denied by default. All-builds is never enabled.
+dangerouslyAllowAllBuilds: false
+allowBuilds:
+  # Required: vite and vitest load the platform binary this install step places.
+  esbuild: true
+  # Required for the desktop shell: downloads the Electron runtime for this
+  # platform. The Pi SDK's transitive dependencies (@google/genai, protobufjs)
+  # are deliberately left unlisted — they ship prebuilt, and their install
+  # scripts are publisher build concerns rather than ours.
+  electron: true
+  '@google/genai': set this to true or false
+  protobufjs: set this to true or false
+
+# Report blocked build scripts but do not fail the install. A hard failure here
+# would mean auditing every transitive dependency's install scripts, which buries
+# the two that actually matter.
+strictDepBuilds: false
+
+# Exact versions only: an unpinned specifier makes a build unreproducible.
+saveExact: true
+
+# Peer mismatches are surfaced as warnings so a dependency's own peer drift does
+# not block the workspace build.
+strictPeerDependencies: false

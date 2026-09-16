@@ -1,0 +1,19 @@
+{
+  "id": "b619e4b23",
+  "name": "pnpm install workspace deps",
+  "command": "cd /Volumes/GOON/www/digitop/clarkcant && corepack pnpm@12.4.2 install 2>&1 | tail -60",
+  "status": "completed",
+  "outputPath": ".pi/tasks/session-55722-55722/b619e4b23.output",
+  "cwd": "/Volumes/GOON/www/digitop/clarkcant",
+  "startTime": 1789534542339,
+  "endTime": 1789534562419,
+  "exitCode": 0,
+  "signal": null,
+  "pid": 12839,
+  "bytesWritten": 1917,
+  "isAgent": false,
+  "notified": true,
+  "notifyOnCompletion": true,
+  "triggerOnCompletion": true,
+  "timeoutSeconds": 900
+}

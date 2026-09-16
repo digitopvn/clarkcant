@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>clarkcant</title>
+    <!--
+      The CSP is also sent as a response header by the main process. It is repeated here so the
+      policy survives being opened from disk, where no response headers exist.
+    -->
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; form-action 'none'; base-uri 'none'; object-src 'none'"
+    />
+    <link rel="stylesheet" href="shell.css" />
+  </head>
+  <body>
+    <main>
+      <h1>clarkcant</h1>
+      <p class="lede">
+        This window is the desktop shell. It carries no scheduler and no command logic, so
+        closing it does not stop work that is already running.
+      </p>
+
+      <section aria-labelledby="status-heading">
+        <h2 id="status-heading">Shell posture</h2>
+        <dl id="status"></dl>
+      </section>
+
+      <section aria-labelledby="bridge-heading">
+        <h2 id="bridge-heading">Bridge round-trips</h2>
+        <p class="hint">
+          Each button below calls one named method. The refusals are the interesting results:
+          a request the shell will not honour has to come back refused rather than silently
+          do nothing.
+        </p>
+        <div class="row">
+          <button id="open-https" type="button">Open an https link</button>
+          <button id="open-http" type="button">Try an http link</button>
+          <button id="open-file" type="button">Try a file: link</button>
+          <button id="credential-vague" type="button">Ask for a secret with no reason</button>
+          <button id="keep-running" type="button">Toggle keep-running</button>
+        </div>
+        <pre id="output" aria-live="polite">No calls yet.</pre>
+      </section>
+    </main>
+    <script type="module" src="shell.mjs"></script>
+  </body>
+</html>

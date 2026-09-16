@@ -1,0 +1,39 @@
+{
+  "name": "clarkcant",
+  "version": "0.2.0",
+  "private": true,
+  "description": "Conversation-first agent platform: portable runtime, paired execution nodes, rich widgets and capability packs",
+  "license": "Apache-2.0",
+  "type": "module",
+  "packageManager": "pnpm@12.4.2",
+  "engines": {
+    "node": ">=22.19.0"
+  },
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json && tsc -p tsconfig.web.json",
+    "build": "pnpm --filter @clarkcant/app-web run build",
+    "clean": "rm -rf apps/*/dist packages/*/dist packs/*/dist examples/*/dist coverage",
+    "lint": "eslint .",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "verify": "pnpm run invariants && pnpm run typecheck && pnpm run lint && pnpm run test",
+    "invariants": "node tools/check-invariants.mjs",
+    "probe:pi": "node packages/pi-adapter/src/probe-cli.ts",
+    "probe:runtime": "node apps/runtime/src/probe-cli.ts",
+    "start:runtime": "node apps/runtime/src/main.ts",
+    "dev:web": "pnpm --filter @clarkcant/app-web run dev",
+    "start:desktop": "pnpm --filter @clarkcant/app-desktop run start",
+    "test:e2e": "playwright test",
+    "verify:full": "pnpm run verify && pnpm run test:e2e"
+  },
+  "devDependencies": {
+    "@eslint/js": "10.0.1",
+    "@playwright/test": "1.63.0",
+    "@types/node": "^24.10.1",
+    "eslint": "10.10.0",
+    "tsx": "4.23.13",
+    "typescript": "5.9.3",
+    "typescript-eslint": "8.70.0",
+    "vitest": "5.0.0"
+  }
+}

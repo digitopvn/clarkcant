@@ -1,0 +1,54 @@
+{
+  "id": "example.personal-notes",
+  "version": "0.2.0",
+  "exampleOnly": true,
+  "hostApi": ">=1 <2",
+  "facets": {
+    "ui": [
+      {
+        "id": "example.notes.editor",
+        "entry": "dist/index.html",
+        "renderer": "isolated-app",
+        "stateVersion": 1
+      }
+    ],
+    "setup": "setup/notes.json"
+  },
+  "requestedCapabilities": [
+    "widget.state.read",
+    "widget.state.write"
+  ],
+  "permissions": {
+    "networkOrigins": [],
+    "microphone": false,
+    "camera": false,
+    "filesystem": []
+  },
+  "widgets": [
+    {
+      "id": "example.notes.editor",
+      "propsSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "title": {
+            "type": "string",
+            "maxLength": 120
+          }
+        },
+        "required": [
+          "title"
+        ]
+      },
+      "events": [
+        "draft.changed",
+        "save.requested"
+      ],
+      "sizing": {
+        "compact": true,
+        "expanded": true
+      },
+      "textFallback": "Ghi chú cá nhân"
+    }
+  ]
+}

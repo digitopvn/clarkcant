@@ -1,0 +1,28 @@
+{
+  "name": "@clarkcant/app-desktop",
+  "version": "0.2.0",
+  "private": true,
+  "description": "Thin Electron shell: typed IPC only, contextIsolation on, nodeIntegration off. Hosts no scheduler.",
+  "license": "Apache-2.0",
+  "type": "module",
+  "main": "src/main.mjs",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "clarkcant": {
+    "phase": "P1",
+    "status": "implemented",
+    "blueprint": "docs/system-architecture.md"
+  },
+  "scripts": {
+    "start": "electron .",
+    "smoke": "electron . --smoke-test"
+  },
+  "dependencies": {
+    "@clarkcant/conversation-client": "workspace:*"
+  },
+  "devDependencies": {
+    "electron": "44.3.0"
+  }
+}

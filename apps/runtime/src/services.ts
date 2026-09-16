@@ -1,0 +1,199 @@
+import { type Instant, type WidgetDefinition, nowInstant } from "@clarkcant/contracts";
+import {
+  type ConductorDeps,
+  type WidgetDeps,
+  getInstance,
+  listPinsForConversation,
+  registerCapability,
+} from "@clarkcant/core";
+import { conversationMetadata, listActiveTasks, messagesSince, upsertDataset } from "@clarkcant/storage";
+import { QUICK_PLAY_RECIPES, SAMPLE_DATASET } from "@clarkcant/data-canvas/sample";
+import { CAPABILITIES as PROJECT_WORK_CAPABILITIES } from "@clarkcant/project-work";
+import { validateProps } from "@clarkcant/widget-host";
+
+import { type Runtime, type RuntimeOptions, bootRuntime } from "./node.ts";
+
+/**
+ * Composition root.
+ *
+ * Everything the gateway needs is assembled here, so the transport layer stays thin and
+ * the wiring is testable without a socket. Two decisions are deliberate:
+ *
+ *   - **Widget props are validated before they are stored.** The validator is injected
+ *     rather than imported, because `@clarkcant/core` must not depend on
+ *     `@clarkcant/widget-host`; the composition root is the right place to connect them.
+ *   - **Registered capabilities start unavailable.** Declaring a capability is not the
+ *     same as having a worker that can run it, and starting them healthy would let the
+ *     conductor dispatch into nothing.
+ */
+
+export interface NodeServices {
+  runtime: Runtime;
+  conductor: ConductorDeps;
+  /** Runtime description surfaced by the health route. Contains no node identity. */
+  describe: () => { node: string; platform: string; arch: string };
+}
+
+let idCounter = 0;
+
+function newId(prefix: string): string {
+  idCounter += 1;
+  return `${prefix}_${String(idCounter).padStart(8, "0")}`;
+}
+
+export function bootNodeServices(options: RuntimeOptions): NodeServices {
+  const runtime = bootRuntime(options);
+  const nodeId = runtime.identity.nodeId;
+
+  // A capability is registered so the conductor can park a task on it honestly, but it
+  // starts not-installed: no worker has loaded it yet.
+  for (const capability of PROJECT_WORK_CAPABILITIES) {
+    registerCapability(
+      { db: runtime.db, nodeId },
+      {
+        ...capability,
+        executionNodeId: nodeId as never,
+        readiness: {
+          installed: false,
+          loaded: false,
+          authenticated: false,
+          authorized: false,
+          healthy: false,
+          blockedReason: "the pack is declared but no worker has loaded it on this node",
+        },
+      },
+    );
+  }
+
+  // The sample dataset is registered through the same path a real one would use, so the
+  // renderer never special-cases demo data and the freshness label comes from one place.
+  upsertDataset(runtime.db, {
+    datasetId: SAMPLE_DATASET.datasetId,
+    originNodeId: nodeId,
+    rowCount: SAMPLE_DATASET.rows.length,
+    freshness: "sample",
+    updatedAt: nowInstant() satisfies Instant,
+    document: SAMPLE_DATASET,
+  });
+
+  const base = {
+    db: runtime.db,
+    nodeId,
+    now: () => nowInstant() satisfies Instant,
+    newId,
+  } satisfies WidgetDeps & { db: Runtime["db"]; nodeId: string };
+
+  const conductor: ConductorDeps = {
+    ...base,
+    sampleRecipes: QUICK_PLAY_RECIPES,
+    validateProps: (
+      definition: WidgetDefinition,
+      props: Record<string, unknown>,
+    ): { ok: true } | { ok: false; problems: string[] } => {
+      const result = validateProps(definition, props);
+      return result.ok ? { ok: true } : { ok: false, problems: result.problems };
+    },
+  };
+
+  return {
+    runtime,
+    conductor,
+    describe: () => ({ node: process.version, platform: process.platform, arch: process.arch }),
+  };
+}
+
+/* ------------------------------------------------------------------ *
+ * Timeline assembly
+ * ------------------------------------------------------------------ */
+
+export interface TimelineInstanceView {
+  instanceId: string;
+  definitionId: string;
+  definitionVersion: string;
+  lifecycle: string;
+  revision: number;
+  props: Record<string, unknown>;
+}
+
+export interface Timeline {
+  conversationId: string;
+  /** Client replay cursor: the highest event sequence already reflected. */
+  cursor: number;
+  messages: unknown[];
+  pins: ReturnType<typeof listPinsForConversation>;
+  /**
+   * Widget instances the messages reference, with the props needed to render them.
+   *
+   * The client resolves the renderer from its own catalog bundle rather than being sent
+   * component code, so a definition reference stays a reference instead of becoming a
+   * delivery mechanism for executable payloads.
+   */
+  instances: TimelineInstanceView[];
+  metadata: { messageCount: number; taskCount: number; updatedAt: string };
+  /** Tasks the client should show as in flight, so it never invents a status. */
+  activeTaskIds: string[];
+}
+
+/** Widget dependencies for read-only lookups. */
+function readDeps(services: NodeServices): WidgetDeps {
+  return {
+    db: services.runtime.db,
+    nodeId: services.runtime.identity.nodeId,
+    now: () => nowInstant() satisfies Instant,
+    newId,
+  };
+}
+
+/**
+ * Build a timeline page.
+ *
+ * Messages and the instances they reference are returned together. A message rendering a
+ * widget whose props are missing would show an empty surface, and fetching the two halves
+ * separately would let them disagree while the user is looking at them.
+ */
+export function buildTimeline(
+  services: NodeServices,
+  input: { conversationId: string; afterSequence: number; limit?: number },
+): Timeline {
+  const { db } = services.runtime;
+  const deps = readDeps(services);
+  const messages = messagesSince(db, input.conversationId, input.afterSequence, input.limit ?? 200);
+
+  const instanceIds = new Set<string>();
+  for (const message of messages) {
+    for (const block of message.blocks) {
+      if (block.type === "widget-ref") instanceIds.add(block.instanceId);
+      if (block.type === "surface" && block.snapshot.instanceId) instanceIds.add(block.snapshot.instanceId);
+    }
+  }
+
+  const instances: TimelineInstanceView[] = [];
+  for (const instanceId of instanceIds) {
+    const instance = getInstance(deps, instanceId);
+    if (!instance) continue;
+    instances.push({
+      instanceId: instance.instanceId,
+      definitionId: instance.definitionRef.id,
+      definitionVersion: instance.definitionRef.version,
+      lifecycle: instance.lifecycle,
+      revision: instance.revision,
+      props: instance.props,
+    });
+  }
+
+  const metadata = conversationMetadata(db, input.conversationId);
+
+  return {
+    conversationId: input.conversationId,
+    cursor: metadata.cursor,
+    messages,
+    pins: listPinsForConversation(deps, input.conversationId),
+    instances,
+    metadata: {
+      messageCount: metadata.messageCount,
+      taskCount: metadata.taskCount,
+      updatedAt: metadata.updatedAt,
+    },
+    activeTaskIds: listActiveTasks(db, input.conversationId).map((task) => task.taskId),
+  };
+}

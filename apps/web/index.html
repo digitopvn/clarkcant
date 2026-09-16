@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="vi" data-cc-theme="dark">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Agent</title>
+    <!--
+      The CSP is set here rather than left to defaults. `connect-src` allows the local
+      gateway; `object-src 'none'` and `base-uri 'none'` remove two classic injection
+      footholds, and no remote script may load.
+    -->
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self' http://127.0.0.1:8765 http://localhost:8765 ws://127.0.0.1:8765; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
+    />
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

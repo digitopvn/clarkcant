@@ -1,0 +1,41 @@
+[WARN] The "pnpm" field in package.json is no longer read by pnpm. The following keys were ignored: "pnpm.onlyBuiltDependencies". See https://pnpm.io/settings for the new home of each setting.
+Scope: all 29 workspace projects
+Progress: resolved 0, reused 16, downloaded 12, added 0
+Progress: resolved 0, reused 42, downloaded 69, added 0
+Progress: resolved 0, reused 43, downloaded 77, added 0
+Progress: resolved 0, reused 45, downloaded 85, added 0
+Progress: resolved 0, reused 65, downloaded 131, added 0
+Progress: resolved 0, reused 79, downloaded 131, added 0
+Downloading @earendil-works/pi-coding-agent@0.85.1: 0.00 B/6.98 MB
+[WARN] 1 deprecated subdependencies found: node-domexception@1.0.0
+Packages are hard linked from the content-addressable store to the virtual store.
+  Content-addressable store is at: /Volumes/GOON/.pnpm-store/v11
+  Virtual store is at:             node_modules/.pnpm
+Progress: resolved 93, reused 93, downloaded 191, added 86
+Progress: resolved 159, reused 93, downloaded 191, added 152
+Progress: resolved 222, reused 93, downloaded 191, added 214
+Progress: resolved 272, reused 93, downloaded 232, added 256
+Progress: resolved 272, reused 93, downloaded 232, added 266
+Progress: resolved 304, reused 93, downloaded 232, added 304
+Progress: resolved 324, reused 93, downloaded 232, added 321
+Packages: +324
+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+Progress: resolved 324, reused 93, downloaded 232, added 324, done
+
+devDependencies:
++ @eslint/js 10.0.1
++ @types/node 24.13.4
++ eslint 10.10.0
++ tsx 4.23.13
++ typescript 5.9.3
++ typescript-eslint 8.70.0
++ vitest 5.0.0
+
+Error: ERR_PNPM_IGNORED_BUILDS
+
+  × installing dependencies
+  ╰─▶ Ignored build scripts: @google/genai@1.52.0, esbuild@0.28.1,
+      esbuild@0.28.2, protobufjs@7.6.6
+  help: Run "pnpm approve-builds" to pick which dependencies should be allowed
+        to run scripts.
+

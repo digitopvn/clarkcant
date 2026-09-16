@@ -1,0 +1,24 @@
+{
+  "name": "@clarkcant/computer-linux-desktop",
+  "version": "0.2.0",
+  "private": true,
+  "description": "Linux virtual-desktop pack. Session/lease contract is real; requires a display server and an isolated runner profile.",
+  "license": "Apache-2.0",
+  "type": "module",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "clarkcant": {
+    "phase": "P8",
+    "status": "external-blocked",
+    "blueprint": "docs/system-architecture.md"
+  },
+  "scripts": {
+    "typecheck": "tsc -p ../../tsconfig.json"
+  },
+  "dependencies": {
+    "@clarkcant/contracts": "workspace:*"
+  }
+}
