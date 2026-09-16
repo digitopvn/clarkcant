@@ -110,6 +110,36 @@ export function applyResolvedTheme(theme: ThemeName): void {
 }
 
 /**
+ * Read the theme the document is currently showing.
+ *
+ * The attribute is the source of truth rather than the React state, because a canvas that reads it
+ * has no way to know which component last changed the theme — and it must agree with what the CSS
+ * is actually painting, not with what someone intended.
+ */
+export function readDocumentTheme(): ThemeName {
+  if (typeof document === "undefined") return "dark";
+  return document.documentElement.dataset[THEME_ATTRIBUTE] === "light" ? "light" : "dark";
+}
+
+/**
+ * Called when the document's theme changes.
+ *
+ * Exists for the WebGL orb. The orb paints its own background to match the page, and it reads that
+ * colour once when it is created — so without a notification it keeps the previous theme's colour
+ * and its square canvas becomes a visible rectangle on the new one. Nothing else needs this: the
+ * rest of the interface is CSS and follows the attribute on its own.
+ */
+export function subscribeToDocumentTheme(onChange: () => void): () => void {
+  if (typeof document === "undefined" || typeof MutationObserver !== "function") return () => {};
+  const observer = new MutationObserver(onChange);
+  observer.observe(document.documentElement, {
+    attributes: true,
+    attributeFilter: ["data-cc-theme"],
+  });
+  return () => observer.disconnect();
+}
+
+/**
  * Follow the operating system while the choice is `system`.
  *
  * Returns a function that stops following. The listener is re-registered per call rather than

@@ -6,9 +6,11 @@ import { describe, expect, it, vi } from "vitest";
 import {
   DEFAULT_THEME_CHOICE,
   isThemeChoice,
+  readDocumentTheme,
   readStoredTheme,
   resolveTheme,
   storeTheme,
+  subscribeToDocumentTheme,
   systemPrefersLight,
   watchSystemTheme,
 } from "../src/theme.ts";
@@ -174,5 +176,120 @@ describe("the pre-paint script", () => {
     // media query, which is the same answer `resolveTheme("system", …)` gives.
     expect(script).toContain('choice !== "dark"');
     expect(script).toContain("prefers-color-scheme: light");
+  });
+});
+
+/**
+ * The document attribute is what the CSS paints from, so it is what a canvas has to read. These
+ * tests exist because the orb reads it, and an orb that reads a stale colour draws a visible
+ * rectangle over the page — a bug that is invisible in a unit test and obvious in a screenshot.
+ */
+describe("the document's theme attribute", () => {
+  interface FakeDocument {
+    documentElement: { dataset: Record<string, string> };
+  }
+
+  function withDocument(run: (doc: FakeDocument) => void): void {
+    const original = (globalThis as { document?: unknown }).document;
+    const doc: FakeDocument = { documentElement: { dataset: {} } };
+    (globalThis as { document?: unknown }).document = doc;
+    try {
+      run(doc);
+    } finally {
+      (globalThis as { document?: unknown }).document = original;
+    }
+  }
+
+  it("answers dark when there is no document at all", () => {
+    // Rendering outside a browser is a normal case, not a failure.
+    const original = (globalThis as { document?: unknown }).document;
+    delete (globalThis as { document?: unknown }).document;
+    try {
+      expect(readDocumentTheme()).toBe("dark");
+    } finally {
+      (globalThis as { document?: unknown }).document = original;
+    }
+  });
+
+  it("reads the attribute rather than a stored preference", () => {
+    // The attribute is already resolved, so `system` never reaches here — a canvas must match what
+    // is painted, not what was chosen.
+    withDocument((doc) => {
+      doc.documentElement.dataset.ccTheme = "light";
+      expect(readDocumentTheme()).toBe("light");
+      doc.documentElement.dataset.ccTheme = "dark";
+      expect(readDocumentTheme()).toBe("dark");
+    });
+  });
+
+  it("treats an unrecognised attribute as dark rather than as light", () => {
+    withDocument((doc) => {
+      doc.documentElement.dataset.ccTheme = "sepia";
+      expect(readDocumentTheme()).toBe("dark");
+    });
+  });
+
+  it("notifies on a theme change and stops when unsubscribed", () => {
+    const observed: string[] = [];
+    const disconnected: string[] = [];
+    const created: { fire: () => void }[] = [];
+    class FakeObserver {
+      // A parameter property would be shorter and is banned here: Node strips types without
+      // transforming syntax that has runtime meaning, and the repo guards that with an invariant.
+      readonly onFire: () => void;
+      constructor(onFire: () => void) {
+        this.onFire = onFire;
+      }
+      observe(_target: unknown, options: { attributeFilter?: string[] }): void {
+        observed.push((options.attributeFilter ?? []).join(","));
+        created.push(this);
+      }
+      disconnect(): void {
+        disconnected.push("yes");
+        this.live = false;
+      }
+      fire(): void {
+        // Models the real observer: after `disconnect()` it delivers nothing. A fake that keeps
+        // delivering would make the assertion below pass for the wrong reason.
+        if (this.live) this.onFire();
+      }
+      live = true;
+    }
+    const original = (globalThis as { MutationObserver?: unknown }).MutationObserver;
+    (globalThis as { MutationObserver?: unknown }).MutationObserver = FakeObserver;
+
+    try {
+      withDocument(() => {
+        let fired = 0;
+        const stop = subscribeToDocumentTheme(() => {
+          fired += 1;
+        });
+        // The filter matters: observing every attribute would fire on each widget's own DOM churn.
+        expect(observed).toEqual(["data-cc-theme"]);
+
+        // The callback has to actually run when the attribute changes, or the orb would recreate
+        // itself on every mutation of the page and never on the one change it cares about.
+        created[0]!.fire();
+        expect(fired).toBe(1);
+
+        stop();
+        expect(disconnected).toHaveLength(1);
+        // Once unsubscribed, a late mutation must not call back into an unmounted component.
+        created[0]!.fire();
+        expect(fired).toBe(1);
+      });
+    } finally {
+      (globalThis as { MutationObserver?: unknown }).MutationObserver = original;
+    }
+  });
+
+  it("is a no-op rather than a throw when there is no document", () => {
+    const original = (globalThis as { document?: unknown }).document;
+    delete (globalThis as { document?: unknown }).document;
+    try {
+      expect(() => subscribeToDocumentTheme(() => {})()).not.toThrow();
+    } finally {
+      (globalThis as { document?: unknown }).document = original;
+    }
   });
 });

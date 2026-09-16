@@ -1,6 +1,7 @@
-import { useEffect, useRef, useState, type ReactElement } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore, type ReactElement } from "react";
 
 import { createOrbRenderer, type OrbOptions } from "./orb.ts";
+import { readDocumentTheme, subscribeToDocumentTheme } from "./theme.ts";
 
 /**
  * The orb.
@@ -55,7 +56,8 @@ function parseCssColor(value: string): readonly number[] | undefined {
 
 /**
  * The page's own background, so the orb's square canvas does not sit on top of it as a visible
- * rectangle. Read at mount rather than hardcoded, because the theme can be either.
+ * rectangle. Read rather than hardcoded, and re-read whenever the theme changes, because a colour
+ * captured at mount becomes the previous theme's colour the moment someone switches.
  */
 function readCanvasColor(): readonly number[] | undefined {
   if (typeof getComputedStyle !== "function") return undefined;
@@ -66,6 +68,12 @@ function readCanvasColor(): readonly number[] | undefined {
 export function Orb({ size, className, label, ...options }: OrbProps): ReactElement {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const [failed, setFailed] = useState<string | undefined>(undefined);
+  /*
+   * The orb's background is baked into the renderer when it is created, and the renderer has no
+   * setter for it, so a theme change has to recreate it. This dependency is what makes that happen;
+   * without it the canvas keeps painting the old background and its edges become visible.
+   */
+  const theme = useSyncExternalStore(subscribeToDocumentTheme, readDocumentTheme, () => "dark" as const);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -139,7 +147,7 @@ export function Orb({ size, className, label, ...options }: OrbProps): ReactElem
     // The options are read once, when the renderer is built. Re-creating the context whenever a
     // new options object identity arrives would drop and rebuild the GPU program on every keystroke
     // in the composer, which is why the dependency list here is deliberately empty.
-  }, []);
+  }, [theme]);
 
   return (
     <canvas
