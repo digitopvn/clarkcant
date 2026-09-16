@@ -155,3 +155,42 @@ describe("a reconnect card", () => {
     expect(failed.props["data-status"]).toBe("failed");
   });
 });
+
+/**
+ * A card's actions.
+ *
+ * The rule this checks is the one the codebase applies everywhere: a control that cannot work is
+ * disabled *and* says why. A disabled button alone reads as a bug, and an enabled one that does
+ * nothing is worse, because the user concludes the feature is broken rather than unconfigured.
+ */
+describe("a card's actions", () => {
+  const diff = (): Record<string, unknown> => ({
+    type: "code-diff-card",
+    owner: "host",
+    summary: "Đổi theme",
+    files: [
+      { path: "src/a.ts", additions: 2, deletions: 1, hunks: [{ header: "@@ -1 +1 @@", lines: [{ kind: "add", text: "+x" }] }] },
+      { path: "src/b.ts", additions: 0, deletions: 0, hunks: [] },
+    ],
+    truncated: false,
+  });
+
+  it("renders every file rather than paginating behind a control", () => {
+    const element = CodeDiffCardBlock({ block: diff() });
+    // Both files are on screen. A "next file" button would step through content that is already
+    // visible, which is a control with nothing to control.
+    expect(findAll(element, "data-diff-path")).toHaveLength(2);
+    expect(findAll(element, "data-action='next-file'")).toHaveLength(0);
+  });
+
+  it("disables the action it cannot perform and states the reason next to it", () => {
+    const element = CodeDiffCardBlock({ block: diff() });
+    const actions = findAll(element, "data-card-actions");
+    expect(actions).toHaveLength(1);
+
+    const reasons = findAll(element, "data-action-blocked-reason");
+    expect(reasons).toHaveLength(1);
+    // A limitation the user cannot read is a limitation they will report as a bug.
+    expect(textOf(reasons[0]!)).toContain("chưa nối được");
+  });
+});
