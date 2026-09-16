@@ -214,6 +214,36 @@ button.cc-badge:hover, .cc-badge[role="button"]:hover { color: var(--cc-text); b
   display: flex; justify-content: space-between; gap: var(--cc-space-sm);
 }
 
+/*
+ * Task cards.
+ *
+ * The step marker is a glyph and a status attribute, not a coloured dot: the state has to
+ * survive a monochrome screen and a black-and-white screenshot, which a colour alone does not.
+ */
+.cc-steps { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--cc-space-xs); }
+.cc-steps li { display: flex; align-items: baseline; gap: var(--cc-space-sm); font-size: var(--cc-text-body-md); line-height: var(--cc-leading-body-md); }
+.cc-step-mark { flex: none; width: 1em; text-align: center; color: var(--cc-text-tertiary); }
+.cc-steps li[data-step-status="active"] .cc-step-mark { color: var(--cc-accent); }
+.cc-steps li[data-step-status="done"] .cc-step-mark { color: var(--cc-success); }
+.cc-steps li[data-step-status="failed"] .cc-step-mark { color: var(--cc-danger); }
+.cc-steps li[data-step-status="active"] .cc-step-label { color: var(--cc-text); font-weight: 600; }
+.cc-steps li[data-step-status="done"] .cc-step-label,
+.cc-steps li[data-step-status="skipped"] .cc-step-label,
+.cc-steps li[data-step-status="pending"] .cc-step-label { color: var(--cc-text-muted); }
+.cc-steps li[data-step-status="skipped"] .cc-step-label { text-decoration: line-through; }
+.cc-step-label { flex: 1; }
+
+.cc-changes { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--cc-space-xxs); font-size: var(--cc-text-label); }
+.cc-changes li { display: flex; gap: var(--cc-space-sm); align-items: baseline; }
+.cc-change-kind { flex: none; width: 5.5rem; color: var(--cc-text-tertiary); text-transform: uppercase; letter-spacing: 0.04em; font-size: var(--cc-text-meta); }
+.cc-changes code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: var(--cc-text-mono-sm); line-height: var(--cc-leading-mono-sm); color: var(--cc-text-muted); overflow-wrap: anywhere; }
+.cc-changes li[data-change-kind="deleted"] code { color: var(--cc-danger); }
+.cc-changes li[data-change-kind="created"] code { color: var(--cc-success); }
+
+.cc-task-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--cc-space-xs); }
+.cc-task-list li { display: flex; align-items: baseline; gap: var(--cc-space-sm); font-size: var(--cc-text-body-sm); line-height: var(--cc-leading-body-sm); flex-wrap: wrap; }
+.cc-task-list li > span:nth-child(2) { flex: 1; min-width: 12rem; }
+
 /* Evidence and artifacts */
 .cc-evidence { display: flex; gap: var(--cc-space-sm); align-items: flex-start; font-size: var(--cc-text-label); }
 .cc-evidence[data-verdict="not-verified"] { color: var(--cc-warning); }
