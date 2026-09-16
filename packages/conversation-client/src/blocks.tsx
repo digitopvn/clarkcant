@@ -3,10 +3,18 @@ import { type ReactElement } from "react";
 /**
  * Block renderers.
  *
- * The important distinction lives here: a host-owned card is drawn with host chrome and
- * `data-owner="host"`, and the renderer refuses to draw one that did not come from the
- * host. A widget or a pack can produce something that looks like an approval, but it
- * cannot produce this element with that attribute, and the E2E suite asserts it.
+ * A host-owned card is drawn with host chrome and `data-owner="host"`.
+ *
+ * What the renderer does NOT do is prove that provenance. `SystemCardBlock` and its siblings
+ * return null unless `block.owner === "host"`, but `owner` is a field the block carries, so a
+ * forger that sets it satisfies both the schema's `z.literal("host")` and that check. This
+ * comment used to claim the renderer "refuses to draw one that did not come from the host", and
+ * that was not true.
+ *
+ * The real boundary is where blocks enter: the node constructs a host-owned card itself and never
+ * from model, widget or pack output, and `prepareBlocksForRender` screens blocks arriving from a
+ * non-host origin before they are drawn. This guard stays as a cheap second screen against a
+ * careless forgery — it is not a proof, and it should not be read as one.
  */
 
 function textOf(block: Record<string, unknown>): string {

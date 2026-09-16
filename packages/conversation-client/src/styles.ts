@@ -293,6 +293,24 @@ button.cc-badge:hover, .cc-badge[role="button"]:hover { color: var(--cc-text); b
 .cc-modal-body { padding: var(--cc-space-lg); overflow-y: auto; display: flex; flex-direction: column; gap: var(--cc-space-md); }
 .cc-modal-actions { display: flex; justify-content: flex-end; gap: var(--cc-space-sm); padding: var(--cc-space-md) var(--cc-space-lg); border-top: 1px solid var(--cc-border); }
 
+/*
+ * Settings tabs. A tab that is selected says so with an underline and with aria-selected, so
+ * the state does not depend on colour alone.
+ */
+.cc-tabs { display: flex; gap: var(--cc-space-lg); border-bottom: 1px solid var(--cc-border); margin: 0 calc(var(--cc-space-lg) * -1); padding: 0 var(--cc-space-lg); }
+.cc-tab {
+  appearance: none; background: none; border: none; cursor: pointer;
+  font: inherit; font-size: var(--cc-text-body-md); color: var(--cc-text-muted);
+  padding: var(--cc-space-sm) 0; border-bottom: 2px solid transparent;
+  transition: color var(--cc-motion-micro) var(--cc-motion-easing);
+}
+.cc-tab:hover { color: var(--cc-text); }
+.cc-tab[data-selected="true"] { color: var(--cc-text); border-bottom-color: var(--cc-accent); }
+.cc-tab:focus-visible { outline: 2px solid var(--cc-focus); outline-offset: -2px; border-radius: var(--cc-radius-badge); }
+.cc-tabpanel { display: flex; flex-direction: column; gap: var(--cc-space-md); }
+.cc-modal-foot { display: flex; align-items: center; justify-content: space-between; gap: var(--cc-space-md); padding: var(--cc-space-md) var(--cc-space-lg); border-top: 1px solid var(--cc-border); }
+.cc-modal-done { cursor: pointer; font: inherit; padding: var(--cc-space-xs) var(--cc-space-md); }
+
 /* Menu bar popover: the same connection wording the app window uses. */
 .cc-menubar {
   display: flex; flex-direction: column; gap: var(--cc-space-sm);

@@ -84,9 +84,12 @@ export const evidenceBlockSchema = z.strictObject({
 /**
  * Host-owned trust card.
  *
- * `owner` is always the host. This is not decorative metadata: the renderer uses
- * it to apply host chrome and to place the card outside any widget iframe, so a
- * third-party surface cannot impersonate it.
+ * `owner` is always the host, and the renderer uses it to apply host chrome and to place the card
+ * outside any widget iframe. That placement is real; the field is not a proof of origin. A schema
+ * literal only says what value the field must hold, and a forger that holds the right value passes
+ * it — so this type is kept out of third-party reach by construction instead: the node builds these
+ * cards itself and never accepts one from model, widget or pack output, and `prepareBlocksForRender`
+ * rejects any that arrive from a non-host origin (acceptance test T41).
  */
 export const systemCardBlockSchema = z.strictObject({
   type: z.literal("system-card"),
