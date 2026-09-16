@@ -209,6 +209,9 @@ importers:
       '@clarkcant/core':
         specifier: workspace:*
         version: link:../../packages/core
+      '@clarkcant/data-canvas':
+        specifier: workspace:*
+        version: link:../../packs/data-canvas
       '@clarkcant/execution-supervisor':
         specifier: workspace:*
         version: link:../../packages/execution-supervisor
@@ -221,6 +224,9 @@ importers:
       '@clarkcant/pi-adapter':
         specifier: workspace:*
         version: link:../../packages/pi-adapter
+      '@clarkcant/project-work':
+        specifier: workspace:*
+        version: link:../../packs/project-work
       '@clarkcant/storage':
         specifier: workspace:*
         version: link:../../packages/storage
@@ -459,6 +465,9 @@ importers:
       '@clarkcant/contracts':
         specifier: workspace:*
         version: link:../../packages/contracts
+      '@clarkcant/core':
+        specifier: workspace:*
+        version: link:../../packages/core
       '@clarkcant/widget-sdk':
         specifier: workspace:*
         version: link:../../packages/widget-sdk

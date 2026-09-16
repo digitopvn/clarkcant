@@ -16,3 +16,4 @@ export * from "./capability-registry.ts";
 export * from "./install-lifecycle.ts";
 export * from "./widget-service.ts";
 export * from "./routing.ts";
+export * from "./conductor.ts";

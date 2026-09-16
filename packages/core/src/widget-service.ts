@@ -34,6 +34,15 @@ export interface WidgetDeps {
   nodeId: string;
   now: () => Instant;
   newId: (prefix: string) => string;
+  /**
+   * Injected props validator. Optional so this package stays independent of
+   * `@clarkcant/widget-host`, but the runtime always supplies one, because storing props
+   * that no widget can render is how a timeline becomes unrenderable.
+   */
+  validateProps?: (
+    definition: WidgetDefinition,
+    props: Record<string, unknown>,
+  ) => { ok: true } | { ok: false; problems: string[] };
 }
 
 export function createInstance(
@@ -49,6 +58,16 @@ export function createInstance(
   },
 ): WidgetInstance {
   const at = input.at ?? deps.now();
+
+  if (deps.validateProps) {
+    const validation = deps.validateProps(input.definition, input.props);
+    if (!validation.ok) {
+      throw new Error(
+        `props for ${input.definition.id} do not match its schema: ${validation.problems.join(", ")}`,
+      );
+    }
+  }
+
   const instance = widgetInstanceSchema.parse({
     instanceId: deps.newId("winst"),
     definitionRef: {
@@ -465,3 +484,132 @@ export function semanticViewOf(deps: WidgetDeps, instanceId: string, freshness: 
 }
 
 export { nowInstant };
+
+/* ------------------------------------------------------------------ *
+ * Pins
+ * ------------------------------------------------------------------ */
+
+export type PinResult =
+  | { ok: true; pinId: string }
+  | { ok: false; code: "WIDGET_INSTANCE_UNKNOWN" | "PIN_LIMIT_REACHED" | "ALREADY_PINNED"; message: string };
+
+/**
+ * Pin an instance into the conversation.
+ *
+ * Pinning is a presentation preference and nothing more. It creates no task, no
+ * subscription and no grant — the blueprint is explicit that a pin must not start work or
+ * turn on a device, and the only thing this writes is a reference plus a display mode.
+ *
+ * The pin limit exists so a conversation cannot accumulate unbounded live surfaces, which
+ * is what a widget with a background subscription would otherwise cost.
+ */
+export function pinInstance(
+  deps: WidgetDeps,
+  input: {
+    conversationId: string;
+    instanceId: string;
+    displayMode: "compact" | "expanded";
+    refreshPolicy?: "on-open" | "bounded-interval" | "manual";
+    maxPins?: number;
+  },
+): PinResult {
+  const instance = getInstance(deps, input.instanceId);
+  if (!instance) {
+    return {
+      ok: false,
+      code: "WIDGET_INSTANCE_UNKNOWN",
+      message: `widget instance ${input.instanceId} does not exist`,
+    };
+  }
+
+  return transaction(deps.db, () => {
+    const existing = deps.db
+      .prepare("SELECT pin_id FROM pins WHERE conversation_id = ? AND instance_id = ?")
+      .get(input.conversationId, input.instanceId) as { pin_id: string } | undefined;
+    if (existing) {
+      return {
+        ok: false as const,
+        code: "ALREADY_PINNED" as const,
+        message: `instance ${input.instanceId} is already pinned as ${existing.pin_id}`,
+      };
+    }
+
+    const count = deps.db
+      .prepare("SELECT COUNT(*) AS n FROM pins WHERE conversation_id = ?")
+      .get(input.conversationId) as { n: number };
+    const max = input.maxPins ?? 8;
+    if (Number(count.n) >= max) {
+      return {
+        ok: false as const,
+        code: "PIN_LIMIT_REACHED" as const,
+        message: `this conversation already holds ${max} pins; unpin one before adding another`,
+      };
+    }
+
+    const position = Number(count.n);
+    const pinId = deps.newId("pin");
+    deps.db
+      .prepare(
+        `INSERT INTO pins (pin_id, conversation_id, instance_id, display_mode, position, refresh_policy, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        pinId,
+        input.conversationId,
+        input.instanceId,
+        input.displayMode,
+        position,
+        // Default is on-open. A background refresh needs a standing grant, and inventing
+        // one here would give a pin privileges the user never approved.
+        input.refreshPolicy ?? "on-open",
+        deps.now(),
+      );
+
+    return { ok: true as const, pinId };
+  });
+}
+
+/**
+ * Remove a pin.
+ *
+ * Data survives. Unpinning a note must not delete the note, and unpinning a player must
+ * not cancel a remote job — those are separate operations with separate confirmations.
+ */
+export function unpinInstance(deps: WidgetDeps, input: { conversationId: string; pinId: string }): boolean {
+  const result = deps.db
+    .prepare("DELETE FROM pins WHERE pin_id = ? AND conversation_id = ?")
+    .run(input.pinId, input.conversationId);
+  return Number(result.changes) > 0;
+}
+
+export interface PinSummary {
+  pinId: string;
+  instanceId: string;
+  displayMode: "compact" | "expanded";
+  position: number;
+  refreshPolicy: "on-open" | "bounded-interval" | "manual";
+}
+
+export function listPinsForConversation(deps: WidgetDeps, conversationId: string): PinSummary[] {
+  // Mapped explicitly rather than cast: the columns are snake_case, so a cast would
+  // silently hand back undefined for every camelCase field.
+  const rows = deps.db
+    .prepare(
+      "SELECT pin_id, instance_id, display_mode, position, refresh_policy FROM pins WHERE conversation_id = ? ORDER BY position",
+    )
+    .all(conversationId) as {
+    pin_id: string;
+    instance_id: string;
+    display_mode: string;
+    position: number;
+    refresh_policy: string;
+  }[];
+
+  return rows.map((row) => ({
+    pinId: row.pin_id,
+    instanceId: row.instance_id,
+    displayMode: row.display_mode as PinSummary["displayMode"],
+    position: Number(row.position),
+    refreshPolicy: row.refresh_policy as PinSummary["refreshPolicy"],
+  }));
+}
