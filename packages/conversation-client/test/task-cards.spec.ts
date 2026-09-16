@@ -1,4 +1,4 @@
-import { type ReactElement, isValidElement } from "react";
+import { type ReactElement } from "react";
 
 import { describe, expect, it } from "vitest";
 
@@ -8,6 +8,7 @@ import {
   TaskSummaryCardBlock,
   renderBlock,
 } from "../src/blocks.tsx";
+import { findAll, nonHost } from "./block-helpers.ts";
 
 /**
  * The task cards.
@@ -16,36 +17,10 @@ import {
  * be a task card without host ownership must produce nothing at all. The rest checks that the
  * signals a user relies on to tell "finished" from "succeeded" are actually present.
  *
- * The renderers are called as plain functions. They return `ReactElement`, which is an ordinary
- * object, so the tree can be walked without a DOM — and walking the real tree is a stronger
- * check than asserting against a mock, because it fails when a prop stops reaching the element
- * that draws it.
- *
  * This file lives under `tsconfig.web.json` and is excluded from `tsconfig.json`. It imports a
  * `.tsx` module, and the node project carries no `jsx` setting because nothing else in it renders
  * JSX, so leaving it in both projects made it fail to resolve the component it tests.
  */
-
-/** Every element in the tree with the given prop, so one assertion can find a nested signal. */
-function findAll(node: unknown, prop: string): ReactElement<Record<string, unknown>>[] {
-  const found: ReactElement<Record<string, unknown>>[] = [];
-  const walk = (current: unknown): void => {
-    if (Array.isArray(current)) {
-      for (const child of current) walk(child);
-      return;
-    }
-    if (!isValidElement(current)) return;
-    const element = current as ReactElement<Record<string, unknown>>;
-    if (prop in element.props) found.push(element);
-    walk(element.props.children);
-  };
-  walk(node);
-  return found;
-}
-
-function nonHost(block: Record<string, unknown>): Record<string, unknown> {
-  return { ...block, owner: "widget" };
-}
 
 const PROGRESS = {
   type: "task-progress-card",

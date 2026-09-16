@@ -313,6 +313,92 @@ export const taskOverviewCardSchema = z.strictObject({
   updatedAt: instantSchema,
 });
 
+/**
+ * A diff the host is proposing or has applied.
+ *
+ * The hunks are carried as structured lines rather than one pre-coloured string, because the
+ * client has to be able to render them at its own theme and size. `truncated` is explicit: a diff
+ * that was cut for size and not marked as cut reads as the whole change.
+ */
+export const codeDiffCardSchema = z.strictObject({
+  type: z.literal("code-diff-card"),
+  owner: z.literal("host"),
+  cardId: z.string().min(1).max(128),
+  summary: z.string().min(1).max(2000),
+  files: z
+    .array(
+      z.strictObject({
+        path: z.string().min(1).max(1000),
+        additions: z.number().int().nonnegative(),
+        deletions: z.number().int().nonnegative(),
+        hunks: z
+          .array(
+            z.strictObject({
+              header: z.string().max(300),
+              lines: z
+                .array(
+                  z.strictObject({
+                    kind: z.enum(["add", "remove", "context"]),
+                    text: z.string().max(4000),
+                  }),
+                )
+                .max(2000),
+            }),
+          )
+          .max(200),
+      }),
+    )
+    .max(200),
+  /** True when hunks were omitted for size, so the card can say the view is partial. */
+  truncated: z.boolean(),
+  updatedAt: instantSchema,
+});
+
+/**
+ * Choosing which project a task may touch.
+ *
+ * The roots are the ones the node has already approved. A picker that accepted an arbitrary path
+ * would be a way to widen the workspace without an approval, so entry of a new root is a separate
+ * affordance the host has to offer explicitly — `allowManualEntry` says whether it does here.
+ */
+export const projectPickerCardSchema = z.strictObject({
+  type: z.literal("project-picker-card"),
+  owner: z.literal("host"),
+  cardId: z.string().min(1).max(128),
+  prompt: z.string().min(1).max(2000),
+  roots: z
+    .array(
+      z.strictObject({
+        rootId: z.string().min(1).max(128),
+        label: z.string().min(1).max(300),
+        path: z.string().min(1).max(1000),
+        readOnly: z.boolean(),
+      }),
+    )
+    .max(100),
+  allowManualEntry: z.boolean(),
+  updatedAt: instantSchema,
+});
+
+/**
+ * A lost connection to a node the conversation depends on.
+ *
+ * `lastSeenAt` and `attempt` are required rather than optional because the two questions a user
+ * has when something stops working are "since when" and "is it still trying", and a card that
+ * cannot answer either is only a decoration.
+ */
+export const reconnectCardSchema = z.strictObject({
+  type: z.literal("reconnect-card"),
+  owner: z.literal("host"),
+  cardId: z.string().min(1).max(128),
+  nodeId: z.string().min(1).max(128),
+  nodeLabel: z.string().min(1).max(300),
+  status: z.enum(["disconnected", "reconnecting", "failed"]),
+  attempt: z.number().int().nonnegative(),
+  lastSeenAt: instantSchema,
+  reason: z.string().min(1).max(2000).optional(),
+});
+
 export const messageBlockSchema = z.discriminatedUnion("type", [
   textBlockSchema,
   surfaceBlockSchema,
@@ -326,6 +412,9 @@ export const messageBlockSchema = z.discriminatedUnion("type", [
   taskProgressCardSchema,
   taskSummaryCardSchema,
   taskOverviewCardSchema,
+  codeDiffCardSchema,
+  projectPickerCardSchema,
+  reconnectCardSchema,
 ]);
 export type MessageBlock = z.infer<typeof messageBlockSchema>;
 
@@ -338,6 +427,9 @@ export const HOST_OWNED_BLOCK_TYPES = [
   "task-progress-card",
   "task-summary-card",
   "task-overview-card",
+  "code-diff-card",
+  "project-picker-card",
+  "reconnect-card",
 ] as const satisfies readonly MessageBlock["type"][];
 
 export function isHostOwnedBlock(block: MessageBlock): boolean {
