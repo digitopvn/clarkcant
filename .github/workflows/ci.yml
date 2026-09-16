@@ -52,6 +52,11 @@ jobs:
       - name: Lint
         run: pnpm run lint
 
+      # The browser driver tests launch a real Chromium. Without this step they fail with a
+      # message telling you to install it — a true and clear failure, but not a test that ran.
+      - name: Install the browser the driver tests launch
+        run: pnpm exec playwright install --with-deps chromium
+
       - name: Tests
         run: pnpm run test
 
