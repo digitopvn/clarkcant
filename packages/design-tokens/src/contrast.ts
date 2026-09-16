@@ -57,24 +57,51 @@ export interface ContrastPair {
 /**
  * The pairs this design system guarantees.
  *
- * Every text pair is checked at the normal-text threshold, including the muted and
- * status colours, because "secondary text is exempt" is not true: it is still text.
+ * Every text pair is checked at the normal-text threshold, including the muted, tertiary and
+ * status colours, because "secondary text is exempt" is not true: it is still text. Each text
+ * tier is checked against every surface it can be drawn on, because a tier that is readable on
+ * the canvas and unreadable on a card is a palette that fails on half its screens.
  */
 export function requiredPairs(tokens: ColorTokens): ContrastPair[] {
-  return [
-    { foreground: tokens.text, background: tokens.canvas, minimum: AA_NORMAL_TEXT, purpose: "body text on the page" },
-    { foreground: tokens.text, background: tokens.surface, minimum: AA_NORMAL_TEXT, purpose: "body text on a card" },
-    { foreground: tokens.text, background: tokens.surfaceMuted, minimum: AA_NORMAL_TEXT, purpose: "body text on a streaming surface" },
-    { foreground: tokens.textMuted, background: tokens.canvas, minimum: AA_NORMAL_TEXT, purpose: "caption text on the page" },
-    { foreground: tokens.textMuted, background: tokens.surface, minimum: AA_NORMAL_TEXT, purpose: "caption text on a card" },
-    { foreground: tokens.onAccent, background: tokens.accent, minimum: AA_NORMAL_TEXT, purpose: "label on an accent button" },
-    { foreground: tokens.success, background: tokens.surface, minimum: AA_NORMAL_TEXT, purpose: "success status text" },
-    { foreground: tokens.warning, background: tokens.surface, minimum: AA_NORMAL_TEXT, purpose: "warning status text" },
-    { foreground: tokens.danger, background: tokens.surface, minimum: AA_NORMAL_TEXT, purpose: "error status text" },
-    { foreground: tokens.focus, background: tokens.canvas, minimum: AA_NON_TEXT, purpose: "focus ring against the page" },
-    { foreground: tokens.focus, background: tokens.surface, minimum: AA_NON_TEXT, purpose: "focus ring against a card" },
-    { foreground: tokens.border, background: tokens.surface, minimum: 1.2, purpose: "hairline separation from a card" },
+  const surfaces: { color: string; name: string }[] = [
+    { color: tokens.canvas, name: "the page" },
+    { color: tokens.window, name: "the window" },
+    { color: tokens.card, name: "a card" },
+    { color: tokens.elevated, name: "an elevated surface" },
+    { color: tokens.code, name: "a code block" },
   ];
+
+  const textTiers: { color: string; name: string }[] = [
+    { color: tokens.text, name: "body text" },
+    { color: tokens.textMuted, name: "caption text" },
+    { color: tokens.textTertiary, name: "tertiary text" },
+  ];
+
+  const pairs: ContrastPair[] = [];
+
+  for (const tier of textTiers) {
+    for (const surface of surfaces) {
+      pairs.push({
+        foreground: tier.color,
+        background: surface.color,
+        minimum: AA_NORMAL_TEXT,
+        purpose: `${tier.name} on ${surface.name}`,
+      });
+    }
+  }
+
+  pairs.push(
+    { foreground: tokens.onAccent, background: tokens.accent, minimum: AA_NORMAL_TEXT, purpose: "label on an accent button" },
+    { foreground: tokens.success, background: tokens.card, minimum: AA_NORMAL_TEXT, purpose: "success status text" },
+    { foreground: tokens.warning, background: tokens.card, minimum: AA_NORMAL_TEXT, purpose: "warning status text" },
+    { foreground: tokens.danger, background: tokens.card, minimum: AA_NORMAL_TEXT, purpose: "error status text" },
+    { foreground: tokens.focus, background: tokens.canvas, minimum: AA_NON_TEXT, purpose: "focus ring against the page" },
+    { foreground: tokens.focus, background: tokens.card, minimum: AA_NON_TEXT, purpose: "focus ring against a card" },
+    { foreground: tokens.focus, background: tokens.elevated, minimum: AA_NON_TEXT, purpose: "focus ring against an elevated surface" },
+    { foreground: tokens.border, background: tokens.card, minimum: 1.2, purpose: "hairline separation from a card" },
+  );
+
+  return pairs;
 }
 
 export interface ContrastAudit {

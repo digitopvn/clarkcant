@@ -3,6 +3,7 @@ import { type ReactElement, useCallback, useEffect, useMemo, useRef, useState } 
 import type { GatewayClient, ResolvedDataset, Timeline } from "./api.ts";
 import { renderBlock } from "./blocks.tsx";
 import { Orb } from "./Orb.tsx";
+import { UiCheckPanel } from "./UiCheckPanel.tsx";
 import { resolveRenderer, toRendererDataset } from "./renderers.tsx";
 
 /**
@@ -55,6 +56,7 @@ export function Conversation({
   const [draft, setDraft] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | undefined>(undefined);
+  const [uiCheckOpen, setUiCheckOpen] = useState(false);
   const scroller = useRef<HTMLDivElement>(null);
 
   /* Connectivity is checked once, so the status reflects reality rather than optimism. */
@@ -230,9 +232,22 @@ export function Conversation({
           <Orb size={30} className="cc-orb" label="" />
           <span>Agent</span>
         </div>
-        <div className="cc-status" role="status" aria-live="polite" data-connection={connection}>
-          <span className="cc-dot" data-state={connection} aria-hidden="true" />
-          {connection === "ready" ? "Ready" : connection === "connecting" ? "Đang kết nối" : "Mất kết nối"}
+        <div className="cc-header-end">
+          <div className="cc-status" role="status" aria-live="polite" data-connection={connection}>
+            <span className="cc-dot" data-state={connection} aria-hidden="true" />
+            {connection === "ready" ? "Ready" : connection === "connecting" ? "Đang kết nối" : "Mất kết nối"}
+          </div>
+          {/*
+            The gear is the only settings affordance, which is why it is here rather than in a
+            menu: a setting that is two clicks deep is a setting nobody checks. It opens a panel
+            that reads the live tokens back off the document, so what it shows is what rendered.
+          */}
+          <button type="button" className="cc-icon-btn" aria-label="UI Check" title="UI Check" data-ui-check="true" onClick={() => setUiCheckOpen(true)}>
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <circle cx="12" cy="12" r="3" />
+              <path d="M19.4 15a1.7 1.7 0 0 0 .34 1.87l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.7 1.7 0 0 0-1.87-.34 1.7 1.7 0 0 0-1 1.55V21a2 2 0 1 1-4 0v-.09A1.7 1.7 0 0 0 9 19.4a1.7 1.7 0 0 0-1.87.34l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.7 1.7 0 0 0 4.6 15a1.7 1.7 0 0 0-1.55-1H3a2 2 0 1 1 0-4h.09A1.7 1.7 0 0 0 4.6 9a1.7 1.7 0 0 0-.34-1.87l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.7 1.7 0 0 0 9 4.6a1.7 1.7 0 0 0 1-1.55V3a2 2 0 1 1 4 0v.09a1.7 1.7 0 0 0 1 1.55 1.7 1.7 0 0 0 1.87-.34l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.7 1.7 0 0 0 19.4 9v0a1.7 1.7 0 0 0 1.55 1H21a2 2 0 1 1 0 4h-.09a1.7 1.7 0 0 0-1.51 1z" />
+            </svg>
+          </button>
         </div>
       </header>
 
@@ -340,6 +355,8 @@ export function Conversation({
           <span>Enter để gửi · Shift+Enter xuống dòng</span>
         </div>
       </div>
+
+      <UiCheckPanel open={uiCheckOpen} onClose={() => setUiCheckOpen(false)} />
     </div>
   );
 }

@@ -1,4 +1,13 @@
-import { type ThemeName, THEMES, MOTION, MOTION_REDUCED, RADIUS, SPACE, TYPE_SCALE } from "./tokens.ts";
+import {
+  LAYOUT,
+  MOTION,
+  MOTION_REDUCED,
+  RADIUS,
+  SPACE,
+  TYPE_SCALE,
+  type ThemeName,
+  THEMES,
+} from "./tokens.ts";
 
 /**
  * Emit the token set as CSS custom properties.
@@ -11,11 +20,14 @@ import { type ThemeName, THEMES, MOTION, MOTION_REDUCED, RADIUS, SPACE, TYPE_SCA
 
 const COLOR_VARIABLES: Record<keyof (typeof THEMES)["dark"], string> = {
   canvas: "--cc-canvas",
-  surface: "--cc-surface",
-  surfaceMuted: "--cc-surface-muted",
+  window: "--cc-window",
+  card: "--cc-card",
+  elevated: "--cc-elevated",
+  code: "--cc-code",
   border: "--cc-border",
   text: "--cc-text",
   textMuted: "--cc-text-muted",
+  textTertiary: "--cc-text-tertiary",
   accent: "--cc-accent",
   onAccent: "--cc-on-accent",
   success: "--cc-success",
@@ -24,15 +36,38 @@ const COLOR_VARIABLES: Record<keyof (typeof THEMES)["dark"], string> = {
   focus: "--cc-focus",
 };
 
+/**
+ * Layout measurements.
+ *
+ * Emitted as variables rather than imported by each component because a component that
+ * imports a number from TypeScript cannot be overridden by a package that wants a
+ * different measure, and cannot be inspected in a browser's developer tools.
+ */
+const LAYOUT_VARIABLES: Record<keyof typeof LAYOUT, string> = {
+  conversationMaxWidth: "--cc-conversation-max-width",
+  composerMaxWidth: "--cc-composer-max-width",
+  composerMinHeight: "--cc-composer-min-height",
+  topBarHeight: "--cc-topbar-height",
+  modalWidth: "--cc-modal-width",
+};
+
 export function tokensToCss(theme: ThemeName): string {
   const colors = THEMES[theme];
-  const lines: string[] = [];
+  const lines: string[] = [
+    // Without this, every control the user agent draws itself — buttons, scrollbars, form
+    // fields, the caret — keeps the light default regardless of the palette, which is how a
+    // dark interface ends up with a bright grey pill in the middle of it.
+    `  color-scheme: ${theme};`,
+  ];
 
   for (const [key, variable] of Object.entries(COLOR_VARIABLES) as [keyof typeof colors, string][]) {
     lines.push(`  ${variable}: ${colors[key]};`);
   }
+  // Size and leading are emitted as a pair, so a component cannot take the size and forget
+  // the leading that was chosen to go with it.
   for (const [name, value] of Object.entries(TYPE_SCALE)) {
-    lines.push(`  --cc-text-${kebab(name)}: ${value};`);
+    lines.push(`  --cc-text-${kebab(name)}: ${value.size};`);
+    lines.push(`  --cc-leading-${kebab(name)}: ${value.lineHeight};`);
   }
   for (const [name, value] of Object.entries(SPACE)) {
     lines.push(`  --cc-space-${name}: ${value};`);
@@ -42,6 +77,9 @@ export function tokensToCss(theme: ThemeName): string {
   }
   for (const [name, value] of Object.entries(MOTION)) {
     lines.push(`  --cc-motion-${name}: ${value};`);
+  }
+  for (const [name, value] of Object.entries(LAYOUT_VARIABLES)) {
+    lines.push(`  ${value}: ${LAYOUT[name as keyof typeof LAYOUT]};`);
   }
 
   return `:root[data-cc-theme="${theme}"] {\n${lines.join("\n")}\n}`;
