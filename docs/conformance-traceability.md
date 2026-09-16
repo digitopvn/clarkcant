@@ -31,8 +31,8 @@ A status here is never upgraded without the corresponding test appearing alongsi
 | T12 | BLOCKED | Closing the desktop leaves server jobs running | Needs two independent runtimes plus a client. |
 | T13 | NOT-IMPLEMENTED | An offline home defers approval rather than self-approving | Belongs to P4 (node pairing and collaboration). |
 | T14 | PASS | Two writers on one resource are serialized | storage.spec: "allows only one live lease per resource"; core.spec: "allocates a monotonically increasing epoch" |
-| T15 | NOT-IMPLEMENTED | A changed Git common ref is caught by a repo lock | Belongs to P3. |
-| T16 | NOT-IMPLEMENTED | A dirty working tree is never reset or stashed over | Belongs to P3. |
+| T15 | PASS | A changed Git common ref is caught by a repo lock | worktree.spec.ts: a lock records the shared git directory and the commit at HEAD against real repositories; a commit landing under a running task and a path re-pointed to another repository are both caught |
+| T16 | PASS | A dirty working tree is never reset or stashed over | worktree.spec.ts: an uncommitted edit and an untracked file are both refused; the user text is byte-identical afterwards, HEAD has not moved, and git stash list is empty |
 | T17 | PASS | A session file with a dead worker is not reported as running | core.spec: "refuses an illegal transition instead of ignoring it" |
 | T18 | PASS | An idle worker with failing tests is not success | core.spec: success gating suite |
 | T19 | PASS | An ambiguous project produces one clarifying question | core.spec: "asks one clarifying question when a project is ambiguous" |
@@ -43,8 +43,8 @@ A status here is never upgraded without the corresponding test appearing alongsi
 | T24 | PASS | A UI-only package update does not restart Pi or voice | contracts.spec: refresh scoping suite; capability-host test |
 | T25 | PASS | A repeated reload leaves no stale handler or duplicate listener | pi-adapter.spec: "refuses to subscribe the same listener twice" |
 | T26 | PASS | A failed activation leaves the prior generation serving | core.spec: "keeps the previous generation usable after a failed activation" |
-| T27 | NOT-IMPLEMENTED | A changed original intent is revalidated before resuming | Belongs to P5 (continuation staleness). |
-| T28 | NOT-IMPLEMENTED | A native extension asking for global secrets is refused or labelled | Belongs to P3. |
+| T27 | PASS | A changed original intent is revalidated before resuming | continuation.spec.ts: a changed goal refuses to resume and invalidates every prior approval, while a goal that differs only in whitespace and case resumes |
+| T28 | PASS | A native extension asking for global secrets is refused or labelled | secrets.spec.ts: reading every secret is refused outright rather than labelled, while a connection-scoped request is granted only with a stated reason and a label naming the extension, the credential and the reason |
 | T29 | PASS | A discovered but unauthenticated tool reports setup required | core.spec: "distinguishes 'needs a connection' from 'not installed'" |
 | T30 | PASS | Denied/partial/expired OAuth produces an honest state | seams.spec: "reports partial consent instead of implying full access" |
 | T31 | PASS | A callback after a cancelled setup does not activate anything | contracts.spec: pairing invite suite |
@@ -53,12 +53,12 @@ A status here is never upgraded without the corresponding test appearing alongsi
 | T34 | PASS | An API key typed into ordinary chat is redirected to a secure route and redacted | seams.spec: credential vault suite and redaction test |
 | T35 | PASS | A mismatched MCP token audience or redirect is rejected | seams.spec: "refuses to forward a token issued for a different resource" |
 | T36 | PASS | A cached calendar is labelled with its last update, not as live | seams.spec: "labels cached data as cached rather than live"; e2e asserts the freshness badge in the DOM |
-| T37 | NOT-IMPLEMENTED | A stale ETag conflict preserves the draft | Belongs to P7. |
+| T37 | PASS | A stale ETag conflict preserves the draft | consent.spec.ts: a write composed against a superseded version is refused, the newer content is untouched, and the caller text survives as a draft |
 | T38 | PASS | A calendar create timeout inspects before duplicating | seams.spec: "treats a submit timeout as unknown rather than repeating the create" |
-| T39 | NOT-IMPLEMENTED | An agent-generated new action binds a discovered capability | Belongs to P2/P6. |
+| T39 | PASS | An agent-generated new action binds a discovered capability | consent.spec.ts: a binding is created for a discovered capability and refused with a discover-first code for one that is not, and nothing is persisted when it refuses |
 | T40 | PASS | An action naming a nonexistent tool is rejected | contracts.spec: "refuses to bind a capability the registry does not know"; core.spec: same |
 | T41 | PASS | A widget cannot forge a host authorization card | seams.spec: "dropped a host card supplied by a non-host origin"; contracts.spec: surface provenance |
-| T42 | NOT-IMPLEMENTED | A changed account or node rebinds and invalidates old consent | Belongs to P6. |
+| T42 | PASS | A changed account or node rebinds and invalidates old consent | consent.spec.ts: pending approvals naming the previous account or node are expired rather than deleted, decided approvals are left alone, and rebinding to the same target is a no-op |
 | T43 | PASS | A double click produces one accepted effect | core.spec: "refuses an invocation whose revision has moved"; storage dedup by invocation id |
 | T44 | PASS | An invalid or oversized widget spec falls back and chat stays usable | seams.spec: "falls back to the text alternative"; e2e asserts the text fallback renders |
 | T45 | PASS | A custom iframe cannot read host storage | seams.spec: "never grants a custom mini-app a same-origin luxury" |
@@ -68,10 +68,10 @@ A status here is never upgraded without the corresponding test appearing alongsi
 | T49 | PASS | Unpinning a note preserves its data | e2e/j1.spec.ts: "pinning and unpinning keeps the widget data" asserts the instance survives the unpin |
 | T50 | PASS | A disabled pack still shows a safe history snapshot | widget-lifecycle.spec: disabling a package moves its instances offline, keeps the snapshot readable and reports actions unavailable; instances from other packages are untouched |
 | T51 | PASS | A failed widget state migration recovers the old snapshot | widget-lifecycle.spec: a step that throws leaves the stored document and version at their original values, read back from storage rather than from the returned copy |
-| T52 | NOT-IMPLEMENTED | An offscreen widget's background polling is rate-limited | Belongs to P6. |
+| T52 | PASS | An offscreen widget's background polling is rate-limited | consent.spec.ts: a manual subscription never polls, an on-open one only while on screen, and being offscreen cannot shorten the bounded interval |
 | T53 | PASS | A stale browser locator re-observes instead of clicking | driver.spec.ts: a missing element reference and a moved target version are both refused against a real Chromium |
 | T54 | PASS | A page prompt injection cannot alter rights, consent or secret scope | injection.spec.ts: a page instructing the agent to grant itself capabilities, skip approval, reveal secrets and exfiltrate is refused on every path; a differential case proves the refusal is about approval rather than a blanket refusal |
-| T55 | NOT-IMPLEMENTED | A browser submit timeout does not trigger a second submit | Belongs to P8; the contract exists in automation.ts. |
+| T55 | PASS | A browser submit timeout does not trigger a second submit | submit-once.spec.ts: a click that fires its request then stops reporting returns unknown, resending the same action is refused and the server records exactly one submission, and observing lifts the block |
 | T56 | PASS | Human login takeover pauses agent input and capture | driver.spec.ts: sensitive input is detected by focus and input is refused while it holds; takeover refuses input too |
 | T57 | PASS | A denied or revoked macOS permission reports unavailable without bypass | seams.spec: "keeps capture and input permissions separate on macOS" |
 | T58 | PASS | A foreground window or DPI change is validated before input | seams.spec: "revalidates the foreground target before sending input" |
@@ -87,7 +87,7 @@ A status here is never upgraded without the corresponding test appearing alongsi
 | T68 | NOT-IMPLEMENTED | Mute and end actually stop capture and playback on the real transport | The local state machine is tested; the live transport belongs to P9. |
 | T69 | PASS | Backup restore with version drift migrates or blocks, never corrupts silently | storage.spec: consistent backup and restore suite |
 | T70 | PASS | Reaching a disk or budget limit stops new work safely | hardening.spec.ts: the ceiling is checked at the door and an over-budget run is refused before it starts; windows reset so a limit is not permanent; usage accumulates per window rather than per run |
-| T71 | NOT-IMPLEMENTED | Credentials are never copied between nodes implicitly | Connection ownership is modelled in the schema; enforcement belongs to P7. |
+| T71 | PASS | Credentials are never copied between nodes implicitly | consent.spec.ts: the owning node is handed a handle and never a value, a different node is refused with a routing instruction, and a revoked connection is refused on its own node |
 | T72 | BLOCKED | An unavailable vendor SDK yields a working fallback or an unsupported verdict | Needs a real vendor account. |
 
 ## Scope items
@@ -115,7 +115,7 @@ A status here is never upgraded without the corresponding test appearing alongsi
 
 ## Summary
 
-Acceptance tests: 54 pass, 4 blocked, 14 not implemented (of 72).
+Acceptance tests: 64 pass, 4 blocked, 4 not implemented (of 72).
 Scope items: 18 partial, 0 not implemented (of 18).
 
 No scope item is claimed as complete. The layers that are implemented are tested; the

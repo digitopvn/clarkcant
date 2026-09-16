@@ -600,6 +600,26 @@ export const MIGRATIONS: readonly Migration[] = [
       `);
     },
   },
+  {
+    version: 9,
+    name: "conditional-documents",
+    reversible: true,
+    up: (db) => {
+      db.exec(`
+        -- A document read from somewhere else, held with the version marker the source gave
+        -- us. The draft column is the same idea as widget_state's: a write composed against a
+        -- version that has since moved is refused, and the caller's text is kept so the refusal
+        -- is recoverable rather than destructive (T37).
+        CREATE TABLE conditional_documents (
+          document_id       TEXT PRIMARY KEY,
+          etag              TEXT NOT NULL,
+          revision          INTEGER NOT NULL,
+          body              TEXT NOT NULL,
+          draft             TEXT
+        );
+      `);
+    },
+  },
 ];
 
 export interface MigrationResult {

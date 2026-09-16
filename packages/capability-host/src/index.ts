@@ -188,3 +188,5 @@ export function decideRequirementAction(input: {
  * and sandboxed build steps need a real artifact source and an isolation backend.
  */
 export const INSTALL_PIPELINE_STATE: InstallState = "proposed";
+
+export * from "./secrets.ts";

@@ -57,6 +57,15 @@ export class BrowserDriver {
   #observations = new Map<string, Observation>();
   #stopped = false;
   #humanTakeover = false;
+  /**
+   * Action ids whose outcome is genuinely unknown.
+   *
+   * A timed-out click may or may not have landed. Retrying it is the one thing that turns
+   * "maybe it submitted" into "it submitted twice", and a double submit is not a retry — it is a
+   * second application, order or payment. An entry here is cleared only by a fresh observation,
+   * which is the act of finding out what actually happened.
+   */
+  readonly #unresolved = new Set<string>();
   #targetVersion = "1";
 
   constructor(input: { profile: DriverProfile; profileDir: string }) {
@@ -142,6 +151,9 @@ export class BrowserDriver {
    * policy layer decides retention, and raw frames never enter the event log.
    */
   async observe(): Promise<ObserveResult> {
+    // Re-observing is how an unknown outcome stops being unknown, so it is the only thing that
+    // clears the retry block.
+    this.#unresolved.clear();
     const page = await this.#ensurePage();
 
     const elements = await page.evaluate((attribute: string) => {
@@ -217,6 +229,15 @@ export class BrowserDriver {
         verification: "not-applicable",
         message: "the user has takeover of this target; agent input is paused",
         requiresReobservation: false,
+      };
+    }
+
+    if (this.#unresolved.has(action.actionId)) {
+      return {
+        status: "refused",
+        verification: "not-observed",
+        message: `${action.actionId} timed out earlier and may already have taken effect; observe the page to find out before sending it again`,
+        requiresReobservation: true,
       };
     }
 
@@ -360,6 +381,7 @@ export class BrowserDriver {
       const message = cause instanceof Error ? cause.message : String(cause);
       // A timeout is an unknown outcome, never a failed one: the action may have landed.
       const timedOut = /timeout/i.test(message);
+      if (timedOut) this.#unresolved.add(action.actionId);
       return {
         status: timedOut ? "unknown" : "failed",
         verification: "not-observed",

@@ -89,4 +89,6 @@ export const CAPABILITIES = [READ_FILE_QUESTION, CONTROLLED_CODE_TASK];
  * the policy layer and the UI consume; the functions that actually read a file or
  * apply a patch are supplied by the worker host at run time.
  */
+export * from "./worktree.ts";
+
 export const EXECUTION_STATUS = "descriptors-real-implementations-supplied-by-worker";
