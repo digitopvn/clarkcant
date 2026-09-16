@@ -7,11 +7,15 @@
  * listener and no TLS is the deployment mistake the blueprint names: application
  * authorization is required regardless of how private the network looks.
  */
+import { readFileSync } from "node:fs";
 import { createServer } from "node:http";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
+import { applyEnvFile } from "@clarkcant/pi-adapter";
+
 import { handleRequest, type GatewayResponse } from "./gateway.ts";
+import { createModelTurn } from "./model-turn.ts";
 import { bootNodeServices } from "./services.ts";
 
 interface CliOptions {
@@ -49,12 +53,33 @@ async function main(): Promise<void> {
     process.exit(2);
   }
 
-  const services = bootNodeServices({ dataDir: options.dataDir, label: options.label });
+  // Credentials are read from a local file before anything is assembled, because whether the
+  // node has a model decides whether the conductor is built with a way to answer at all. A
+  // variable already present in the environment wins, so a deployment that sets the real
+  // secret does not have it replaced by a file in the checkout. Only the names taken are
+  // reported; no value is ever written to a log.
+  const envFile = applyEnvFile(join(process.cwd(), ".env"), process.env, (path) => readFileSync(path, "utf8"));
+  if (envFile.loaded.length > 0) {
+    process.stderr.write(`read ${envFile.loaded.length} variable(s) from .env: ${envFile.loaded.join(", ")}\n`);
+  }
+
+  const modelTurn = await createModelTurn({ env: process.env, cwd: process.cwd() });
+  process.stderr.write(
+    modelTurn === undefined
+      ? "no model configured; the node will answer with scripts and capabilities only\n"
+      : `model: ${modelTurn.selection.provider}/${modelTurn.selection.id}\n`,
+  );
+
+  const services = bootNodeServices({
+    dataDir: options.dataDir,
+    label: options.label,
+    ...(modelTurn === undefined ? {} : { respondWithModel: modelTurn.answer }),
+  });
 
   const server = createServer((request, response) => {
     const chunks: Buffer[] = [];
     request.on("data", (chunk: Buffer) => chunks.push(chunk));
-    request.on("end", () => {
+    request.on("end", async () => {
       const url = new URL(request.url ?? "/", `http://${options.host}:${options.port}`);
 
       // The handler is guarded. A request that cannot be satisfied is the request's problem, and
@@ -63,7 +88,7 @@ async function main(): Promise<void> {
       // exactly how this was found: a duplicate id killed the node the user was reviewing.
       let result: GatewayResponse;
       try {
-        result = handleRequest(
+        result = await handleRequest(
           { services },
           {
             method: request.method ?? "GET",
@@ -115,6 +140,7 @@ async function main(): Promise<void> {
   const shutdown = (signal: string): void => {
     process.stderr.write(`received ${signal}; closing the node\n`);
     server.close(() => {
+      void modelTurn?.dispose();
       services.runtime.close();
       process.exit(0);
     });

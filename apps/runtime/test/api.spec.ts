@@ -49,11 +49,11 @@ function token(): string {
   return services.runtime.identity.localToken;
 }
 
-function request(
+async function request(
   method: string,
   path: string,
   options: { body?: unknown; authed?: boolean; query?: Record<string, string> } = {},
-): GatewayResponse {
+): Promise<GatewayResponse> {
   const request_: GatewayRequest = {
     method,
     path,
@@ -64,15 +64,15 @@ function request(
   return handleRequest(deps, request_);
 }
 
-function createConversation(): string {
-  const response = request("POST", "/conversations", { body: { title: "J1" } });
+async function createConversation(): Promise<string> {
+  const response = await request("POST", "/conversations", { body: { title: "J1" } });
   expect(response.status).toBe(201);
   return (response.body as { conversationId: string }).conversationId;
 }
 
-describe("gateway authorization", () => {
-  it("serves health without a token but discloses no node identity", () => {
-    const response = request("GET", "/health", { authed: false });
+describe("gateway authorization", async () => {
+  it("serves health without a token but discloses no node identity", async () => {
+    const response = await request("GET", "/health", { authed: false });
     expect(response.status).toBe(200);
     const body = response.body as Record<string, unknown>;
     expect(body.status).toBe("ok");
@@ -82,33 +82,33 @@ describe("gateway authorization", () => {
     expect(JSON.stringify(body)).not.toContain(services.runtime.identity.nodeId);
   });
 
-  it("rejects every other route without a token", () => {
+  it("rejects every other route without a token", async () => {
     for (const [method, path] of [
       ["GET", "/node"],
       ["GET", "/capabilities"],
       ["GET", "/conversations"],
       ["POST", "/conversations"],
     ] as const) {
-      const response = request(method, path, { authed: false });
+      const response = await request(method, path, { authed: false });
       expect(response.status, `${method} ${path}`).toBe(401);
     }
   });
 
-  it("rejects a wrong token and does not distinguish it from a missing one", () => {
-    const wrong = handleRequest(deps, {
+  it("rejects a wrong token and does not distinguish it from a missing one", async () => {
+    const wrong = await handleRequest(deps, {
       method: "GET",
       path: "/node",
       query: {},
       headers: { authorization: "Bearer not-the-token" },
       body: "",
     });
-    const missing = request("GET", "/node", { authed: false });
+    const missing = await await request("GET", "/node", { authed: false });
     expect(wrong.status).toBe(401);
     expect(wrong.body).toEqual(missing.body);
   });
 
-  it("rejects a malformed authorization header", () => {
-    const response = handleRequest(deps, {
+  it("rejects a malformed authorization header", async () => {
+    const response = await handleRequest(deps, {
       method: "GET",
       path: "/node",
       query: {},
@@ -118,8 +118,8 @@ describe("gateway authorization", () => {
     expect(response.status).toBe(401);
   });
 
-  it("returns the node identity only to an authenticated caller", () => {
-    const response = request("GET", "/node");
+  it("returns the node identity only to an authenticated caller", async () => {
+    const response = await request("GET", "/node");
     expect(response.status).toBe(200);
     const body = response.body as Record<string, unknown>;
     expect(nodeIdSchema.safeParse(body.nodeId).success).toBe(true);
@@ -128,18 +128,18 @@ describe("gateway authorization", () => {
   });
 });
 
-describe("J1 over the API", () => {
-  it("creates a conversation and lists it", () => {
-    const created = createConversation();
-    const list = request("GET", "/conversations");
+describe("J1 over the API", async () => {
+  it("creates a conversation and lists it", async () => {
+    const created = await createConversation();
+    const list = await request("GET", "/conversations");
     expect(list.status).toBe(200);
     expect((list.body as { conversations: unknown[] }).conversations).toHaveLength(1);
     expect(created).toBeTruthy();
   });
 
-  it("answers a first message with a labelled sample and a renderable widget", () => {
-    conversationId = createConversation();
-    const response = request("POST", `/conversations/${conversationId}/messages`, {
+  it("answers a first message with a labelled sample and a renderable widget", async () => {
+    conversationId = await createConversation();
+    const response = await request("POST", `/conversations/${conversationId}/messages`, {
       body: { text: "cho tui xem biểu đồ" },
     });
     expect(response.status).toBe(202);
@@ -160,10 +160,10 @@ describe("J1 over the API", () => {
     expect(body.timeline.instances).toHaveLength(1);
   });
 
-  it("returns the instances the timeline references, with props", () => {
-    conversationId = createConversation();
-    request("POST", `/conversations/${conversationId}/messages`, { body: { text: "cho tui xem bảng" } });
-    const timeline = request("GET", `/conversations/${conversationId}/timeline`);
+  it("returns the instances the timeline references, with props", async () => {
+    conversationId = await createConversation();
+    await request("POST", `/conversations/${conversationId}/messages`, { body: { text: "cho tui xem bảng" } });
+    const timeline = await request("GET", `/conversations/${conversationId}/timeline`);
     expect(timeline.status).toBe(200);
 
     const body = timeline.body as {
@@ -175,15 +175,15 @@ describe("J1 over the API", () => {
     expect(body.metadata.messageCount).toBe(2);
   });
 
-  it("rejects an empty message rather than storing a blank turn", () => {
-    conversationId = createConversation();
-    expect(request("POST", `/conversations/${conversationId}/messages`, { body: { text: "   " } }).status).toBe(400);
-    expect(request("POST", `/conversations/${conversationId}/messages`, { body: {} }).status).toBe(400);
+  it("rejects an empty message rather than storing a blank turn", async () => {
+    conversationId = await createConversation();
+    expect((await request("POST", `/conversations/${conversationId}/messages`, { body: { text: "   " } })).status).toBe(400);
+    expect((await request("POST", `/conversations/${conversationId}/messages`, { body: {} })).status).toBe(400);
   });
 
-  it("rejects a message body that is not an object", () => {
-    conversationId = createConversation();
-    const response = handleRequest(deps, {
+  it("rejects a message body that is not an object", async () => {
+    conversationId = await createConversation();
+    const response = await handleRequest(deps, {
       method: "POST",
       path: `/conversations/${conversationId}/messages`,
       query: {},
@@ -193,15 +193,15 @@ describe("J1 over the API", () => {
     expect(response.status).toBe(400);
   });
 
-  it("supports the whole pin lifecycle, and unpinning keeps the widget data", () => {
-    conversationId = createConversation();
-    request("POST", `/conversations/${conversationId}/messages`, { body: { text: "cho tui xem biểu đồ" } });
-    const timeline = request("GET", `/conversations/${conversationId}/timeline`).body as {
+  it("supports the whole pin lifecycle, and unpinning keeps the widget data", async () => {
+    conversationId = await createConversation();
+    await request("POST", `/conversations/${conversationId}/messages`, { body: { text: "cho tui xem biểu đồ" } });
+    const timeline = (await request("GET", `/conversations/${conversationId}/timeline`)).body as {
       instances: { instanceId: string }[];
     };
     const instanceId = timeline.instances[0]!.instanceId;
 
-    const pinned = request("POST", `/conversations/${conversationId}/pins`, {
+    const pinned = await request("POST", `/conversations/${conversationId}/pins`, {
       body: { instanceId, displayMode: "expanded" },
     });
     expect(pinned.status).toBe(201);
@@ -209,14 +209,14 @@ describe("J1 over the API", () => {
     expect((pinned.body as { timeline: { pins: unknown[] } }).timeline.pins).toHaveLength(1);
 
     // Pinning twice is refused rather than duplicated.
-    expect(request("POST", `/conversations/${conversationId}/pins`, { body: { instanceId } }).status).toBe(409);
+    expect((await request("POST", `/conversations/${conversationId}/pins`, { body: { instanceId } })).status).toBe(409);
     // Pinning an instance that does not exist is a 404, not a silent no-op.
-    expect(request("POST", `/conversations/${conversationId}/pins`, { body: { instanceId: "winst_nope" } }).status).toBe(404);
+    expect((await request("POST", `/conversations/${conversationId}/pins`, { body: { instanceId: "winst_nope" } })).status).toBe(404);
 
-    const unpinned = request("DELETE", `/conversations/${conversationId}/pins/${pinId}`);
+    const unpinned = await request("DELETE", `/conversations/${conversationId}/pins/${pinId}`);
     expect(unpinned.status).toBe(200);
 
-    const after = request("GET", `/conversations/${conversationId}/timeline`).body as {
+    const after = (await request("GET", `/conversations/${conversationId}/timeline`)).body as {
       pins: unknown[];
       instances: unknown[];
     };
@@ -225,8 +225,8 @@ describe("J1 over the API", () => {
     expect(after.instances).toHaveLength(1);
   });
 
-  it("reports registered capabilities honestly, as unavailable until a worker loads them", () => {
-    const response = request("GET", "/capabilities");
+  it("reports registered capabilities honestly, as unavailable until a worker loads them", async () => {
+    const response = await request("GET", "/capabilities");
     expect(response.status).toBe(200);
     const body = response.body as { capabilities: { usable: boolean; blockedReason?: string }[] };
     expect(body.capabilities.length).toBeGreaterThan(0);
@@ -234,32 +234,32 @@ describe("J1 over the API", () => {
     expect(body.capabilities.every((capability) => !capability.usable)).toBe(true);
   });
 
-  it("404s an unknown conversation instead of creating one implicitly", () => {
-    expect(request("GET", "/conversations/conv_missing/timeline").status).toBe(404);
-    expect(request("POST", "/conversations/conv_missing/messages", { body: { text: "hi" } }).status).toBe(404);
+  it("404s an unknown conversation instead of creating one implicitly", async () => {
+    expect((await request("GET", "/conversations/conv_missing/timeline")).status).toBe(404);
+    expect((await request("POST", "/conversations/conv_missing/messages", { body: { text: "hi" } })).status).toBe(404);
   });
 
-  it("refuses to write to a conversation homed on another node", () => {
-    conversationId = createConversation();
+  it("refuses to write to a conversation homed on another node", async () => {
+    conversationId = await createConversation();
     // Simulate a conversation that belongs to a peer.
     services.runtime.db
       .prepare("UPDATE conversations SET home_node_id = ? WHERE conversation_id = ?")
       .run("node_elsewhere", conversationId);
 
-    const response = request("POST", `/conversations/${conversationId}/messages`, { body: { text: "hi" } });
+    const response = await request("POST", `/conversations/${conversationId}/messages`, { body: { text: "hi" } });
     expect(response.status).toBe(403);
     expect((response.body as { code: string }).code).toBe("WRONG_NODE_FOR_RESOURCE");
   });
 
-  it("rejects a non-numeric timeline cursor", () => {
-    conversationId = createConversation();
+  it("rejects a non-numeric timeline cursor", async () => {
+    conversationId = await createConversation();
     expect(
-      request("GET", `/conversations/${conversationId}/timeline`, { query: { after: "abc" } }).status,
+      (await request("GET", `/conversations/${conversationId}/timeline`, { query: { after: "abc" } })).status,
     ).toBe(400);
   });
 
-  it("accepts a raw command envelope and reports it as an acknowledgement, not an outcome", () => {
-    const response = request("POST", "/command", {
+  it("accepts a raw command envelope and reports it as an acknowledgement, not an outcome", async () => {
+    const response = await request("POST", "/command", {
       body: {
         schema: "agent.command",
         version: 1,
@@ -277,14 +277,14 @@ describe("J1 over the API", () => {
     expect(body.principal.principalId).toBe(services.runtime.identity.ownerPrincipalId);
   });
 
-  it("rejects a malformed command envelope with field-level detail", () => {
-    const response = request("POST", "/command", { body: { schema: "agent.command", version: 1 } });
+  it("rejects a malformed command envelope with field-level detail", async () => {
+    const response = await request("POST", "/command", { body: { schema: "agent.command", version: 1 } });
     expect(response.status).toBe(400);
     expect((response.body as { issues: string[] }).issues.length).toBeGreaterThan(0);
   });
 
-  it("405s an unsupported method and 404s an unknown path", () => {
-    expect(request("PUT", "/conversations").status).toBe(405);
-    expect(request("GET", "/nope").status).toBe(404);
+  it("405s an unsupported method and 404s an unknown path", async () => {
+    expect((await request("PUT", "/conversations")).status).toBe(405);
+    expect((await request("GET", "/nope")).status).toBe(404);
   });
 });

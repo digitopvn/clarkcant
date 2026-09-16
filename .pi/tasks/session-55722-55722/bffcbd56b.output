@@ -1,0 +1,9 @@
+(node:14922) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+read 14 variable(s) from .env: GEMINI_API_KEY, OPENAI_API_KEY, OPENROUTER_API_KEY, LEONARDO_API_KEY, GH_TOKEN, ELEVENLABS_API_KEY, MINIMAX_API_KEY, DEEPSEEK_API_KEY, CLOUDFLARE_ACCOUNT_ID, CLOUDFLARE_API_TOKEN, CLOUDFLARE_R2_TOKEN, CLOUDFLARE_R2_ACCESS_KEY, CLOUDFLARE_R2_SECRET, CLOUDFLARE_R2_S3_ENDPOINT
+model: deepseek/deepseek-v4-flash
+clarkcant node "dev" listening on http://127.0.0.1:8765
+node id: node_76a174508714457d9ac390ee
+data dir: ./.data
+commands require the bearer token stored in the node's identity.json
+received SIGTERM; closing the node

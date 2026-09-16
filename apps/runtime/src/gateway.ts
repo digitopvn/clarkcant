@@ -84,7 +84,7 @@ function readJson(request: GatewayRequest): { ok: true; value: Record<string, un
  * Returning a discriminated result rather than throwing keeps every refusal visible in one
  * place, which is what makes the negative tests meaningful.
  */
-export function handleRequest(deps: GatewayDeps, request: GatewayRequest): GatewayResponse {
+export async function handleRequest(deps: GatewayDeps, request: GatewayRequest): Promise<GatewayResponse> {
   const at = deps.now ?? (() => nowInstant());
   const { services } = deps;
   const { runtime } = services;
@@ -145,7 +145,7 @@ export function handleRequest(deps: GatewayDeps, request: GatewayRequest): Gatew
   }
 
   if (segments[0] === "conversations") {
-    return handleConversationRoutes(deps, request, segments, at);
+    return await handleConversationRoutes(deps, request, segments, at);
   }
 
   if (request.method === "POST" && request.path === "/command") {
@@ -155,12 +155,12 @@ export function handleRequest(deps: GatewayDeps, request: GatewayRequest): Gatew
   return fail(404, "NOT_FOUND", `no handler for ${request.method} ${request.path}`);
 }
 
-function handleConversationRoutes(
+async function handleConversationRoutes(
   deps: GatewayDeps,
   request: GatewayRequest,
   segments: string[],
   at: () => string,
-): GatewayResponse {
+): Promise<GatewayResponse> {
   const { services } = deps;
   const { runtime } = services;
   const principal = {
@@ -224,14 +224,19 @@ function handleConversationRoutes(
       return fail(400, "INVALID_SCHEMA", "a message must carry a non-empty text field");
     }
 
-    const outcome = handleUserMessage(services.conductor, {
+    const outcome = await handleUserMessage(services.conductor, {
       conversationId: conversationId as never,
       principal,
       text: text.slice(0, 20_000),
       at: at() as never,
     });
 
-    return json(202, {
+    // A turn the model answered is already finished, so reporting it as accepted would be a
+    // lie about what the caller is holding. 202 is reserved for the paths that genuinely have
+    // work still to do: a dispatched or parked task.
+    const finished = outcome.resolution === "model" || outcome.resolution === "model-failed";
+
+    return json(finished ? 200 : 202, {
       resolution: outcome.resolution,
       taskId: outcome.taskId ?? null,
       messageIds: outcome.messages.map((message) => message.messageId),

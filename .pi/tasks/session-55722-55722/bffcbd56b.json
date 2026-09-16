@@ -1,0 +1,19 @@
+{
+  "id": "bffcbd56b",
+  "name": "Runtime with live model",
+  "command": "cd /Volumes/GOON/www/digitop/clarkcant && CC_MODEL_PROVIDER=deepseek CC_MODEL_ID=deepseek-v4-flash node apps/runtime/src/main.ts --data-dir ./.data --label dev 2>&1",
+  "status": "killed",
+  "outputPath": ".pi/tasks/session-55722-55722/bffcbd56b.output",
+  "cwd": "/Volumes/GOON/www/digitop/clarkcant",
+  "startTime": 1789554430343,
+  "endTime": 1789554503107,
+  "exitCode": 0,
+  "signal": null,
+  "pid": 14922,
+  "bytesWritten": 726,
+  "isAgent": false,
+  "notified": true,
+  "notifyOnCompletion": true,
+  "triggerOnCompletion": true,
+  "timeoutSeconds": 7200
+}

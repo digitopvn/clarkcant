@@ -78,10 +78,18 @@ function chartDefinition(id: string): WidgetDefinition {
   return base;
 }
 
-function chartRecipe(input: { id: string; definitionId: string; matches: RegExp; text: string }): SampleRecipe {
+function chartRecipe(input: {
+  id: string;
+  definitionId: string;
+  matches: RegExp;
+  text: string;
+  /** Forwarded to the recipe. Dropping it here silently disabled the catch-all marker. */
+  catchAll?: boolean;
+}): SampleRecipe {
   return {
     id: input.id,
     matches: (text) => input.matches.test(text),
+    ...(input.catchAll === undefined ? {} : { catchAll: input.catchAll }),
     build: () => ({
       definition: chartDefinition(input.definitionId),
       packageDigest: "sha256:data-canvas-sample-v1",
@@ -143,6 +151,10 @@ export const QUICK_PLAY_RECIPES: readonly SampleRecipe[] = [
   chartRecipe({
     id: "quick-play.chart.default",
     definitionId: "canvas.line@1",
+    // Matches everything, deliberately, and is dropped on a node that has a model: see
+    // `SampleRecipe.catchAll`. Without the marker this recipe answered every message the user
+    // could possibly send, because it ran before the model was ever consulted.
+    catchAll: true,
     matches: /.*/s,
     text: "Đây là thứ tui có thể làm ngay mà không cần bạn kết nối gì cả: một biểu đồ trên **dữ liệu mẫu**. Muốn làm việc thật thì mình cần cài thêm capability — cứ nói việc bạn muốn làm.",
   }),

@@ -50,6 +50,16 @@ import { type WidgetDeps, captureSnapshot, createInstance } from "./widget-servi
 export interface SampleRecipe {
   id: string;
   matches: (text: string) => boolean;
+  /**
+   * A recipe that matches anything, kept for a node with no model.
+   *
+   * A catch-all exists so an empty install still answers something useful instead of
+   * refusing. That is only the right behaviour when there is nothing better to answer with:
+   * once a model is configured, a recipe matching everything would swallow every message and
+   * the model would never be consulted. Marking it lets the conductor drop it in that case
+   * rather than relying on recipe ordering to be lucky.
+   */
+  catchAll?: boolean;
   build: (context: { nodeId: string; principalId: string }) => {
     definition: WidgetDefinition;
     packageDigest: string;
@@ -70,6 +80,48 @@ export interface ConductorDeps extends TaskServiceDeps, WidgetDeps, RegistryDeps
   sampleRecipes: readonly SampleRecipe[];
   /** Optional worker bridge. Absent means an install is proposed instead of a run. */
   runTask?: (taskId: string) => Promise<void>;
+  /**
+   * Answers a turn with a model, when this node has one.
+   *
+   * Absent means the node has no model, and the conductor then says so rather than inventing
+   * an answer. It is consulted only after a scripted recipe has declined and no installed
+   * capability can do the work, so a model never displaces something that could have done it
+   * for real.
+   */
+  respondWithModel?: (input: ModelTurnInput) => Promise<ModelTurnReply>;
+}
+
+/** What a model turn is asked to answer. */
+export interface ModelTurnInput {
+  conversationId: ConversationId;
+  principal: Principal;
+  text: string;
+}
+
+/** What a model turn produced.
+ *
+ * The provider and model are reported back rather than assumed, because the card that records
+ * the turn has to name what actually answered. A node whose configuration changed between
+ * startup and this turn would otherwise label the reply with the wrong model.
+ */
+export interface ModelTurnReply {
+  text: string;
+  provider: string;
+  model: string;
+  elapsedMs: number;
+}
+
+/**
+ * A model turn that failed.
+ *
+ * Returned rather than thrown, because a provider being down is an outcome the conversation
+ * has to be able to show. A thrown error would leave the user with a message they sent and no
+ * record of why nothing came back.
+ */
+export interface ModelTurnFailure {
+  error: string;
+  provider: string;
+  model: string;
 }
 
 export interface UserMessageInput {
@@ -85,7 +137,7 @@ export interface ConductorOutcome {
   /** Set when a durable task was created rather than answered immediately. */
   taskId: string | undefined;
   /** How the utterance was resolved, for tests and for the UI's honest labelling. */
-  resolution: "sample" | "task-dispatched" | "task-parked" | "clarification";
+  resolution: "sample" | "model" | "model-failed" | "task-dispatched" | "task-parked" | "clarification";
 }
 
 /** Append an assistant message and return the stored record. */
@@ -137,7 +189,10 @@ function appendUser(
  * pretending to be the product — so samples are only consulted when the registry cannot
  * satisfy the request at all.
  */
-export function handleUserMessage(deps: ConductorDeps, input: UserMessageInput): ConductorOutcome {
+export async function handleUserMessage(
+  deps: ConductorDeps,
+  input: UserMessageInput,
+): Promise<ConductorOutcome> {
   const at = input.at ?? nowInstant();
   const userMessage = appendUser(deps, input.conversationId, input.text, at);
   void userMessage;
@@ -148,10 +203,24 @@ export function handleUserMessage(deps: ConductorDeps, input: UserMessageInput):
   // A scripted recipe is only considered when nothing installed can answer, so an
   // installed integration is never shadowed by a demo.
   if (!executionNode) {
-    const recipe = deps.sampleRecipes.find((candidate) => candidate.matches(input.text));
+    // A catch-all recipe is dropped once a model is available. It matches every message, so
+    // leaving it in would mean the model was never consulted at all — which is exactly what
+    // happened before this was marked.
+    const candidates = deps.sampleRecipes.filter(
+      (candidate) => !(candidate.catchAll === true && deps.respondWithModel !== undefined),
+    );
+    const recipe = candidates.find((candidate) => candidate.matches(input.text));
     if (recipe) {
       return runSampleRecipe(deps, { ...input, at }, recipe);
     }
+  }
+
+  // The model answers the conversation itself. Reached only after a recipe has declined and
+  // nothing installed can do the work, so the ordering is: real capability, then scripted
+  // demo, then the model's own words.
+  const answer = deps.respondWithModel;
+  if (!executionNode && answer !== undefined) {
+    return runModelTurn(deps, { ...input, at }, answer);
   }
 
   const task = createTask(deps, {
@@ -224,6 +293,86 @@ export function handleUserMessage(deps: ConductorDeps, input: UserMessageInput):
  * host-owned block type, so a pack or a model cannot forge one, and the labelling is not
  * something a recipe can opt out of.
  */
+/**
+ * Answer a turn with the configured model.
+ *
+ * This is the only path where the assistant's own words reach a conversation. It is entered
+ * last, after a real capability has been ruled out and a scripted recipe has declined, so a
+ * model never displaces something that could have done the work for real.
+ *
+ * The reply is appended as a new message rather than written into a placeholder that was
+ * added when the turn started. Messages are append-only in storage, and the alternative would
+ * mean putting a mutable row into a log that everything else is entitled to treat as final.
+ * The cost is that the client learns about the reply by asking again, which is why the route
+ * that starts a turn is described as accepted rather than complete.
+ */
+async function runModelTurn(
+  deps: ConductorDeps,
+  input: UserMessageInput & { at: Instant },
+  answer: NonNullable<ConductorDeps["respondWithModel"]>,
+): Promise<ConductorOutcome> {
+  let reply: Awaited<ReturnType<typeof answer>>;
+  try {
+    reply = await answer({
+      conversationId: input.conversationId,
+      principal: input.principal,
+      text: input.text,
+    });
+  } catch (cause) {
+    // A throw is turned into a message. The user has already been told their message was
+    // accepted, so failing silently here would leave the conversation claiming something is
+    // coming when nothing is.
+    const message = appendAssistant(
+      deps,
+      input.conversationId,
+      [
+        {
+          type: "system-card",
+          owner: "host",
+          cardId: deps.newId("card"),
+          subject: "connection",
+          title: "Không gọi được model",
+          status: "blocked",
+          detail: cause instanceof Error ? cause.message : String(cause),
+          fields: [{ label: "Loại lỗi", value: "model-turn-failed" }],
+          cancellable: false,
+          updatedAt: input.at,
+        },
+      ],
+      { at: input.at },
+    );
+    return { messages: [message], taskId: undefined, resolution: "model-failed" };
+  }
+
+  const message = appendAssistant(
+    deps,
+    input.conversationId,
+    [
+      {
+        type: "system-card",
+        owner: "host",
+        cardId: deps.newId("card"),
+        subject: "connection",
+        title: "Trả lời bằng model",
+        status: "done",
+        detail:
+          "Câu trả lời này do model sinh ra. Không capability nào trên máy này được dùng, và không dữ liệu thật nào của bạn được đọc.",
+        fields: [
+          { label: "Provider", value: reply.provider },
+          { label: "Model", value: reply.model },
+          { label: "Thời gian", value: `${reply.elapsedMs} ms` },
+        ],
+        cancellable: false,
+        updatedAt: input.at,
+      },
+      { type: "text", format: "markdown", content: reply.text, streaming: false },
+    ],
+    { at: input.at },
+  );
+
+  return { messages: [message], taskId: undefined, resolution: "model" };
+}
+
 function runSampleRecipe(
   deps: ConductorDeps,
   input: UserMessageInput & { at: Instant },

@@ -3,6 +3,7 @@ import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "n
 import { join } from "node:path";
 
 import { type Instant, nowInstant, nodeIdSchema, principalIdSchema } from "@clarkcant/contracts";
+import type { ModelTurnInput, ModelTurnReply } from "@clarkcant/core";
 import { type Database, migrate, openDatabase } from "@clarkcant/storage";
 
 /**
@@ -37,6 +38,14 @@ export interface RuntimeOptions {
   dataDir: string;
   /** Human label for this node, shown in pairing and status UI. */
   label: string;
+  /**
+   * Answers a turn with a model, when this node has one.
+   *
+   * Supplied by the entry point rather than constructed here, because building it is
+   * asynchronous and reaching a provider is a decision the process makes at startup, not
+   * something a service container should do while it is being assembled.
+   */
+  respondWithModel?: (input: ModelTurnInput) => Promise<ModelTurnReply>;
 }
 
 export interface Runtime {

@@ -42,7 +42,7 @@ beforeEach(() => {
   deps = build();
 });
 
-const ask = (text: string) =>
+const ask = async (text: string) =>
   handleUserMessage(deps, {
     conversationId: CONVERSATION,
     principal: { principalId: OWNER, kind: "user", nodeId: NODE },
@@ -54,9 +54,9 @@ function blocksOf(messages: MessageRecord[]) {
   return messages.flatMap((message) => message.blocks);
 }
 
-describe("J1: an empty install still does something useful", () => {
-  it("answers a chart request with a widget, a snapshot and a sample label", () => {
-    const outcome = ask("cho tui xem biểu đồ");
+describe("J1: an empty install still does something useful", async () => {
+  it("answers a chart request with a widget, a snapshot and a sample label", async () => {
+    const outcome = await ask("cho tui xem biểu đồ");
     expect(outcome.resolution).toBe("sample");
     // A sample needs no durable task: nothing is running, so claiming one would be a lie.
     expect(outcome.taskId).toBeUndefined();
@@ -69,8 +69,8 @@ describe("J1: an empty install still does something useful", () => {
     expect(types).toContain("text");
   });
 
-  it("labels the sample as sample data, in a host-owned card", () => {
-    const outcome = ask("cho tui xem biểu đồ");
+  it("labels the sample as sample data, in a host-owned card", async () => {
+    const outcome = await ask("cho tui xem biểu đồ");
     const card = blocksOf(outcome.messages).find((block) => block.type === "system-card");
     expect(card).toBeDefined();
     if (card?.type !== "system-card") return;
@@ -84,7 +84,7 @@ describe("J1: an empty install still does something useful", () => {
     expect(freshness?.freshness).toBe("sample");
   });
 
-  it("creates a real widget instance and snapshot so the surface can be re-rendered later", () => {
+  it("creates a real widget instance and snapshot so the surface can be re-rendered later", async () => {
     ask("cho tui xem biểu đồ");
     const instance = oneRow<{ instance_id: string }>(
       deps.db,
@@ -101,7 +101,7 @@ describe("J1: an empty install still does something useful", () => {
     expect(snapshot?.document).toContain("textAlternative");
   });
 
-  it("records the user's own message in the timeline before answering", () => {
+  it("records the user's own message in the timeline before answering", async () => {
     ask("cho tui xem biểu đồ");
     const rows = deps.db
       .prepare("SELECT role FROM messages WHERE conversation_id = ? ORDER BY sequence")
@@ -109,8 +109,8 @@ describe("J1: an empty install still does something useful", () => {
     expect(rows.map((row) => row.role)).toEqual(["user", "assistant"]);
   });
 
-  it("offers a note that needs no network and no model", () => {
-    const outcome = ask("tạo note nhanh cho tui");
+  it("offers a note that needs no network and no model", async () => {
+    const outcome = await ask("tạo note nhanh cho tui");
     const blocks = blocksOf(outcome.messages);
     const surface = blocks.find((block) => block.type === "surface");
     expect(surface).toBeDefined();
@@ -119,8 +119,8 @@ describe("J1: an empty install still does something useful", () => {
     expect(surface.snapshot.textAlternative).toContain("plain text");
   });
 
-  it("falls through to a useful default rather than admitting it cannot do anything", () => {
-    const outcome = ask("hello");
+  it("falls through to a useful default rather than admitting it cannot do anything", async () => {
+    const outcome = await ask("hello");
     expect(outcome.resolution).toBe("sample");
     const text = blocksOf(outcome.messages)
       .filter((block) => block.type === "text")
@@ -130,15 +130,15 @@ describe("J1: an empty install still does something useful", () => {
     expect(text).toContain("capability");
   });
 
-  it("answers a table request with a table over the sample dataset", () => {
-    const outcome = ask("cho tui xem bảng dữ liệu");
+  it("answers a table request with a table over the sample dataset", async () => {
+    const outcome = await ask("cho tui xem bảng dữ liệu");
     const surface = blocksOf(outcome.messages).find((block) => block.type === "surface");
     expect(surface?.type === "surface" && surface.definitionRef?.id).toBe("canvas.table@1");
   });
 });
 
-describe("J1: a real capability is never shadowed by the demo", () => {
-  it("prefers an installed capability and creates a durable task instead of a sample", () => {
+describe("J1: a real capability is never shadowed by the demo", async () => {
+  it("prefers an installed capability and creates a durable task instead of a sample", async () => {
     registerCapability(deps, {
       ref: "project.code.change@1" as never,
       executionNodeId: NODE,
@@ -151,7 +151,7 @@ describe("J1: a real capability is never shadowed by the demo", () => {
       uiAffordances: [],
     });
 
-    const outcome = ask("cho tui xem biểu đồ");
+    const outcome = await ask("cho tui xem biểu đồ");
     expect(outcome.resolution).toBe("task-dispatched");
     expect(outcome.taskId).toBeDefined();
     // No sample card, because the registry could answer.
@@ -159,8 +159,8 @@ describe("J1: a real capability is never shadowed by the demo", () => {
     expect(types).not.toContain("surface");
   });
 
-  it("parks a task on a capability rather than inventing a tool when nothing is installed", () => {
-    const outcome = handleUserMessage(
+  it("parks a task on a capability rather than inventing a tool when nothing is installed", async () => {
+    const outcome = await handleUserMessage(
       { ...deps, sampleRecipes: [] },
       {
         conversationId: CONVERSATION,
@@ -186,7 +186,7 @@ describe("J1: a real capability is never shadowed by the demo", () => {
   });
 });
 
-describe("J1: run outcomes are decided by evidence, not by the worker stopping", () => {
+describe("J1: run outcomes are decided by evidence, not by the worker stopping", async () => {
   async function dispatched() {
     registerCapability(deps, {
       ref: "project.code.change@1" as never,
@@ -199,7 +199,7 @@ describe("J1: run outcomes are decided by evidence, not by the worker stopping",
       readiness: { installed: true, loaded: true, authenticated: true, authorized: true, healthy: true },
       uiAffordances: [],
     });
-    const outcome = ask("sửa file giúp tui");
+    const outcome = await ask("sửa file giúp tui");
     return outcome.taskId!;
   }
 
@@ -241,9 +241,107 @@ describe("J1: run outcomes are decided by evidence, not by the worker stopping",
     expect(events.map((event) => event.kind)).toContain("evidence.recorded");
   });
 
-  it("leaves the conversation title and update time coherent after the exchange", () => {
+  it("leaves the conversation title and update time coherent after the exchange", async () => {
     ask("cho tui xem biểu đồ");
     const conversation = getConversation(deps.db, CONVERSATION);
     expect(conversation?.updatedAt).toBe(AT);
+  });
+});
+
+/**
+ * The catch-all sample recipe against a configured model.
+ *
+ * `quick-play.chart.default` matches every string, because an empty install should still
+ * answer something useful. That is the right behaviour on a node with no model and the wrong
+ * one on a node with a model: it would answer every message the user could send, and the
+ * model would never be consulted. This was not theoretical — it is why every prompt came back
+ * as a chart of sample data.
+ */
+describe("a catch-all recipe never displaces a configured model", () => {
+  const askAboutAnything = "Trả lời trong đúng một câu: thủ đô của Pháp là gì?";
+
+  it("answers from the recipe when the node has no model", async () => {
+    const withoutModel = build();
+    const outcome = await handleUserMessage(withoutModel, {
+      conversationId: CONVERSATION,
+      principal: { principalId: OWNER, kind: "user", nodeId: NODE },
+      text: askAboutAnything,
+      at: AT,
+    });
+
+    // The demo default is the whole point of an empty install, so it must still fire here.
+    expect(outcome.resolution).toBe("sample");
+  });
+
+  it("asks the model instead, and says which model answered", async () => {
+    const asked: string[] = [];
+    const withModel = {
+      ...build(),
+      respondWithModel: async (input: { text: string }) => {
+        asked.push(input.text);
+        return { text: "Paris.", provider: "test-provider", model: "test-model", elapsedMs: 12 };
+      },
+    };
+
+    const outcome = await handleUserMessage(withModel, {
+      conversationId: CONVERSATION,
+      principal: { principalId: OWNER, kind: "user", nodeId: NODE },
+      text: askAboutAnything,
+      at: AT,
+    });
+
+    expect(outcome.resolution).toBe("model");
+    expect(asked).toEqual([askAboutAnything]);
+
+    const blocks = blocksOf(outcome.messages);
+    expect(blocks.some((block) => block.type === "text" && block.content === "Paris.")).toBe(true);
+
+    // The card names what actually answered rather than what was configured at startup.
+    const card = blocks.find((block) => block.type === "system-card");
+    if (card?.type !== "system-card") throw new Error("the model turn must record a host card");
+    const recorded = (card.fields ?? []).map((field) => field.value);
+    expect(recorded).toContain("test-provider");
+    expect(recorded).toContain("test-model");
+  });
+
+  it("still prefers a matching specific recipe over the model", async () => {
+    // A chart request is a scripted path that needs no provider account, and the model must
+    // not take it over just because one is available.
+    const withModel = {
+      ...build(),
+      respondWithModel: async () => {
+        throw new Error("the model must not be consulted for a scripted recipe");
+      },
+    };
+
+    const outcome = await handleUserMessage(withModel, {
+      conversationId: CONVERSATION,
+      principal: { principalId: OWNER, kind: "user", nodeId: NODE },
+      text: "cho tui xem biểu đồ",
+      at: AT,
+    });
+
+    expect(outcome.resolution).toBe("sample");
+  });
+
+  it("reports a model that fails rather than leaving the turn silently unanswered", async () => {
+    const withModel = {
+      ...build(),
+      respondWithModel: async () => {
+        throw new Error("provider is unreachable");
+      },
+    };
+
+    const outcome = await handleUserMessage(withModel, {
+      conversationId: CONVERSATION,
+      principal: { principalId: OWNER, kind: "user", nodeId: NODE },
+      text: askAboutAnything,
+      at: AT,
+    });
+
+    expect(outcome.resolution).toBe("model-failed");
+    const card = blocksOf(outcome.messages).find((block) => block.type === "system-card");
+    if (card?.type !== "system-card") throw new Error("a failed turn must record a host card");
+    expect(card.detail).toContain("provider is unreachable");
   });
 });

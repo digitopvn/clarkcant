@@ -109,6 +109,7 @@ export function bootNodeServices(options: RuntimeOptions): NodeServices {
   const conductor: ConductorDeps = {
     ...base,
     sampleRecipes: QUICK_PLAY_RECIPES,
+    ...(options.respondWithModel === undefined ? {} : { respondWithModel: options.respondWithModel }),
     validateProps: (
       definition: WidgetDefinition,
       props: Record<string, unknown>,

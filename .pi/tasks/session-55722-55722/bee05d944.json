@@ -1,0 +1,16 @@
+{
+  "id": "bee05d944",
+  "name": "Runtime with live model",
+  "command": "cd /Volumes/GOON/www/digitop/clarkcant && CC_MODEL_PROVIDER=deepseek CC_MODEL_ID=deepseek-v4-flash node apps/runtime/src/main.ts --data-dir ./.data --label dev 2>&1",
+  "status": "running",
+  "outputPath": ".pi/tasks/session-55722-55722/bee05d944.output",
+  "cwd": "/Volumes/GOON/www/digitop/clarkcant",
+  "startTime": 1789554541144,
+  "pid": 53392,
+  "bytesWritten": 0,
+  "isAgent": false,
+  "notified": false,
+  "notifyOnCompletion": true,
+  "triggerOnCompletion": true,
+  "timeoutSeconds": 7200
+}
