@@ -64,10 +64,10 @@
   "include": [
     "packages/*/src/**/*.ts",
     "packages/*/test/**/*.ts",
-    "apps/runtime/src/**/*.ts",
-    "apps/worker/src/**/*.ts",
-    "apps/desktop/src/**/*.ts",
+    "apps/*/src/**/*.ts",
+    "apps/*/test/**/*.ts",
     "packs/*/src/**/*.ts",
+    "packs/*/test/**/*.ts",
     "examples/*/src/**/*.ts",
     "tools/**/*.ts",
     "vitest.config.ts",

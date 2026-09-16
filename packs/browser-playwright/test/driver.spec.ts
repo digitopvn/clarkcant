@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
-import type { AutomationAction, Observation } from "@clarkcant/contracts";
+import { observationIdSchema, type AutomationAction, type Observation } from "@clarkcant/contracts";
 
 import { createDriver } from "../src/driver.ts";
 import type { BrowserDriver } from "../src/driver.ts";
@@ -54,10 +54,10 @@ afterAll(async () => {
  * It reads the driver's real target id and version instead of assuming them: a hardcoded
  * target made every case fail the target check before reaching the behaviour it tested.
  */
-function action(
-  driver: BrowserDriver,
-  overrides: Partial<AutomationAction> & { observationId: string },
-): AutomationAction {
+type ActionOverrides = Omit<Partial<AutomationAction>, "observationId"> & { observationId: string };
+
+function action(driver: BrowserDriver, overrides: ActionOverrides): AutomationAction {
+  const { observationId, ...rest } = overrides;
   return {
     actionId: "act_1",
     targetId: driver.target.targetId,
@@ -66,8 +66,11 @@ function action(
     arguments: {},
     expectedTargetVersion: driver.targetVersion,
     consequential: false,
-    ...overrides,
-  } as AutomationAction;
+    ...rest,
+    // Built through its schema rather than asserted: the test file is typechecked now, and a
+    // plain string is not an ObservationId.
+    observationId: observationIdSchema.parse(observationId),
+  };
 }
 
 /**
