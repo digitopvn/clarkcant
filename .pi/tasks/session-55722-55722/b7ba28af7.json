@@ -1,0 +1,16 @@
+{
+  "id": "b7ba28af7",
+  "name": "Runtime API",
+  "command": "cd /Volumes/GOON/www/digitop/clarkcant && node apps/runtime/src/main.ts --data-dir ./.data --label dev 2>&1",
+  "status": "running",
+  "outputPath": ".pi/tasks/session-55722-55722/b7ba28af7.output",
+  "cwd": "/Volumes/GOON/www/digitop/clarkcant",
+  "startTime": 1789546746415,
+  "pid": 65070,
+  "bytesWritten": 0,
+  "isAgent": false,
+  "notified": false,
+  "notifyOnCompletion": true,
+  "triggerOnCompletion": true,
+  "timeoutSeconds": 7200
+}

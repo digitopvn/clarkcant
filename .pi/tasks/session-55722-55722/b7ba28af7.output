@@ -1,0 +1,6 @@
+(node:65070) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+clarkcant node "dev" listening on http://127.0.0.1:8765
+node id: node_76a174508714457d9ac390ee
+data dir: ./.data
+commands require the bearer token stored in the node's identity.json
