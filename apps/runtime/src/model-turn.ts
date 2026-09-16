@@ -12,13 +12,22 @@
  * conversation turn a filesystem tool by default would route around all three.
  */
 
-import { RealPiAdapter, modelFromEnv, type ModelSelection, type WorkerEvent } from "@clarkcant/pi-adapter";
+import {
+  RealPiAdapter,
+  modelBudgetFromEnv,
+  modelFromEnv,
+  type ModelBudget,
+  type ModelSelection,
+  type WorkerEvent,
+} from "@clarkcant/pi-adapter";
 
 import type { ModelTurnInput, ModelTurnReply } from "@clarkcant/core";
 
 export interface ModelTurn {
   /** What the node is configured to run on, recorded on the card for each reply. */
   selection: ModelSelection;
+  /** The ceiling on one turn, so a caller can report what the limit was. */
+  budget: ModelBudget;
   answer: (input: ModelTurnInput) => Promise<ModelTurnReply>;
   dispose: () => Promise<void>;
 }
@@ -48,6 +57,7 @@ export async function createModelTurn(options: {
   const selection = modelFromEnv(options.env);
   if (selection === undefined) return undefined;
 
+  const budget = modelBudgetFromEnv(options.env);
   const adapter = new RealPiAdapter({ cwd: options.cwd, model: selection, builtinTools: [] });
   const availability = await adapter.availability();
   const turns = new Map<string, Turn>();
@@ -64,6 +74,10 @@ export async function createModelTurn(options: {
       goal: "Answer the user in this conversation.",
       projectRoots: [],
       allowedCapabilityRefs: [],
+      // Carried on the brief as well as held here, because the adapter enforces it at the
+      // turn boundary and that is where a runaway turn is actually stopped.
+      maxWallClockMs: budget.maxWallClockMs,
+      maxTokens: budget.maxTokens,
     });
 
     const entry: Turn = { sessionId: handle.sessionId, buffer: [], unsubscribe: () => {} };
@@ -76,6 +90,7 @@ export async function createModelTurn(options: {
 
   return {
     selection,
+    budget,
 
     async answer(input: ModelTurnInput): Promise<ModelTurnReply> {
       if (!availability.available) {
@@ -90,7 +105,25 @@ export async function createModelTurn(options: {
       // buffer empty for the next one instead of prepending the previous reply to it.
       turn.buffer.length = 0;
 
-      await adapter.prompt(turn.sessionId, input.text);
+      // The adapter stops a turn that overruns its brief, but this is the layer holding an open
+      // HTTP request, so it does not delegate the guarantee: without a deadline here a provider
+      // that never settles would hold the request until the client gives up, and the user would
+      // see a hung page rather than a limit being reached.
+      let timer: NodeJS.Timeout | undefined;
+      const deadline = new Promise<never>((_, reject) => {
+        timer = setTimeout(() => {
+          void adapter.abort(turn.sessionId, `turn exceeded ${budget.maxWallClockMs} ms`);
+          reject(
+            new Error(`${describe()} did not finish within ${budget.maxWallClockMs} ms; the turn was stopped`),
+          );
+        }, budget.maxWallClockMs);
+      });
+
+      try {
+        await Promise.race([adapter.prompt(turn.sessionId, input.text), deadline]);
+      } finally {
+        if (timer !== undefined) clearTimeout(timer);
+      }
 
       const text = turn.buffer.join("").trim();
       const elapsedMs = Date.now() - startedAt;

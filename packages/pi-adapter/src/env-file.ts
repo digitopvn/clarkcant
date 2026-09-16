@@ -107,6 +107,42 @@ export interface ModelSelection {
 }
 
 /**
+ * Limits on a conversation turn.
+ *
+ * A conversation is the path with no approval step in front of it, so it is the one that most
+ * needs a ceiling: every message is a provider call the user pays for, and a model that decides
+ * to loop would otherwise do so until someone noticed the bill. The defaults are generous enough
+ * that a normal answer never reaches them, because a limit that fires on ordinary use teaches the
+ * user to raise it rather than to trust it.
+ */
+export interface ModelBudget {
+  maxWallClockMs: number;
+  maxTokens: number;
+}
+
+export const DEFAULT_MODEL_BUDGET: ModelBudget = { maxWallClockMs: 120_000, maxTokens: 32_000 };
+
+/**
+ * The turn budget, from the environment.
+ *
+ * A value that is not a positive number is ignored rather than clamped: silently turning a
+ * mistyped limit into a different limit is worse than using the default, because the operator
+ * would believe a restriction is in force when it is not.
+ */
+export function modelBudgetFromEnv(env: NodeJS.ProcessEnv): ModelBudget {
+  const read = (name: string, fallback: number): number => {
+    const raw = env[name]?.trim();
+    if (raw === undefined || raw === "") return fallback;
+    const value = Number(raw);
+    return Number.isFinite(value) && value > 0 ? Math.floor(value) : fallback;
+  };
+  return {
+    maxWallClockMs: read("CC_MODEL_MAX_WALL_CLOCK_MS", DEFAULT_MODEL_BUDGET.maxWallClockMs),
+    maxTokens: read("CC_MODEL_MAX_TOKENS", DEFAULT_MODEL_BUDGET.maxTokens),
+  };
+}
+
+/**
  * The model a node should run on, from its environment.
  *
  * Both halves are required together. A provider without a model, or a model without a

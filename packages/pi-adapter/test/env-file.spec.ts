@@ -1,6 +1,13 @@
 import { describe, expect, it } from "vitest";
 
-import { applyEnvFile, keyVariableFor, modelFromEnv, parseEnvFile } from "../src/env-file.ts";
+import {
+  applyEnvFile,
+  DEFAULT_MODEL_BUDGET,
+  keyVariableFor,
+  modelBudgetFromEnv,
+  modelFromEnv,
+  parseEnvFile,
+} from "../src/env-file.ts";
 
 /**
  * Loading credentials from a local file.
@@ -79,5 +86,37 @@ describe("choosing a model from the environment", () => {
     expect(keyVariableFor("deepseek")).toBe("DEEPSEEK_API_KEY");
     expect(keyVariableFor("google")).toBe("GEMINI_API_KEY");
     expect(keyVariableFor("not-a-provider")).toBeUndefined();
+  });
+});
+
+describe("the ceiling on one conversation turn", () => {
+  it("uses a generous default when nothing is configured", () => {
+    // Generous on purpose: a limit that fires on ordinary use teaches the user to raise it
+    // rather than to trust it.
+    expect(modelBudgetFromEnv({})).toEqual(DEFAULT_MODEL_BUDGET);
+    expect(DEFAULT_MODEL_BUDGET.maxWallClockMs).toBeGreaterThanOrEqual(60_000);
+  });
+
+  it("takes a configured limit", () => {
+    expect(modelBudgetFromEnv({ CC_MODEL_MAX_WALL_CLOCK_MS: "5000", CC_MODEL_MAX_TOKENS: "900" })).toEqual({
+      maxWallClockMs: 5000,
+      maxTokens: 900,
+    });
+  });
+
+  it("ignores a limit that is not a positive number, rather than clamping it", () => {
+    // Clamping would leave an operator believing a restriction is in force when a different
+    // one is. Falling back to the default is the honest reading of a mistyped limit.
+    const base = DEFAULT_MODEL_BUDGET;
+    expect(modelBudgetFromEnv({ CC_MODEL_MAX_WALL_CLOCK_MS: "soon" })).toEqual(base);
+    expect(modelBudgetFromEnv({ CC_MODEL_MAX_WALL_CLOCK_MS: "0" })).toEqual(base);
+    expect(modelBudgetFromEnv({ CC_MODEL_MAX_WALL_CLOCK_MS: "-5" })).toEqual(base);
+    expect(modelBudgetFromEnv({ CC_MODEL_MAX_TOKENS: "" })).toEqual(base);
+  });
+
+  it("keeps the two limits independent", () => {
+    const budget = modelBudgetFromEnv({ CC_MODEL_MAX_TOKENS: "1234" });
+    expect(budget.maxTokens).toBe(1234);
+    expect(budget.maxWallClockMs).toBe(DEFAULT_MODEL_BUDGET.maxWallClockMs);
   });
 });

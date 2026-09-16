@@ -24,10 +24,13 @@ export {
 } from "./real.ts";
 export {
   applyEnvFile,
+  DEFAULT_MODEL_BUDGET,
   keyVariableFor,
+  modelBudgetFromEnv,
   modelFromEnv,
   parseEnvFile,
   PROVIDER_KEY_VARIABLES,
   type EnvFileResult,
+  type ModelBudget,
   type ModelSelection,
 } from "./env-file.ts";
