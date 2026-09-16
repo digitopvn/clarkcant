@@ -93,12 +93,20 @@ describe("fake adapter used by CI and E2E", () => {
 });
 
 describe("real SDK adapter availability (P0.1)", () => {
-  it("loads the installed Pi SDK and reports the required exports as present", async () => {
-    const adapter = new RealPiAdapter({ cwd: process.cwd(), builtinTools: READ_ONLY_TOOLS });
-    const availability = await adapter.availability();
-    expect(availability.available).toBe(true);
-    expect(availability.sdkVersion).toMatch(/^\d+\.\d+\.\d+/);
-  });
+  it(
+    "loads the installed Pi SDK and reports the required exports as present",
+    async () => {
+      const adapter = new RealPiAdapter({ cwd: process.cwd(), builtinTools: READ_ONLY_TOOLS });
+      const availability = await adapter.availability();
+      expect(availability.available).toBe(true);
+      expect(availability.sdkVersion).toMatch(/^\d+\.\d+\.\d+/);
+    },
+    // Loading the SDK is genuinely heavy, and this test runs alongside suites that spawn a
+    // Chromium and several child processes. At the 20 second default it measured the machine's
+    // load rather than the adapter, and failed intermittently for that reason alone. The timeout
+    // is stated so a real regression here is still reported as a failure rather than as slowness.
+    60_000,
+  );
 });
 
 describe("SDK event mapping", () => {
