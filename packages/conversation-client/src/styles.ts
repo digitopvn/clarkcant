@@ -13,7 +13,15 @@ body {
   margin: 0;
   background: var(--cc-canvas);
   color: var(--cc-text);
-  font-family: ui-sans-serif, -apple-system, "Segoe UI", Inter, system-ui, sans-serif;
+  /*
+   * Plus Jakarta Sans first, with the previous system stack kept behind it.
+   *
+   * The font is not bundled here. This package is a component library and ships no font files, so
+   * the host loads them and this names the family it should load. A host that does not is not
+   * broken: the stack falls through to the system faces, which is what this sheet used before.
+   * The family name is "...Variable" because that is what the variable-weight files register.
+   */
+  font-family: "Plus Jakarta Sans Variable", ui-sans-serif, -apple-system, "Segoe UI", Inter, system-ui, sans-serif;
   font-size: var(--cc-text-body);
   line-height: 1.55;
   -webkit-font-smoothing: antialiased;
@@ -31,6 +39,15 @@ body {
 .cc-brand { display: flex; align-items: center; gap: var(--cc-space-sm); font-weight: 600; }
 .cc-orb {
   width: 18px; height: 18px; border-radius: var(--cc-radius-full);
+  display: block; flex: none;
+  /*
+   * The fallback is scoped to the fallback state. The canvas is transparent so it can composite
+   * over any surface, which means background painted on the element shows *through* a working orb
+   * rather than being covered by it — a band of gradient across the middle of a sphere that
+   * already has its own.
+   */
+}
+.cc-orb[data-orb="fallback"] {
   background: radial-gradient(circle at 32% 28%, var(--cc-accent), color-mix(in oklab, var(--cc-accent) 40%, transparent));
 }
 .cc-status {
@@ -51,9 +68,21 @@ body {
 
 .cc-empty { display: flex; flex-direction: column; align-items: center; gap: var(--cc-space-md); padding-top: 18vh; text-align: center; }
 .cc-empty-orb {
-  width: 96px; height: 96px; border-radius: var(--cc-radius-full);
-  background: radial-gradient(circle at 34% 30%, var(--cc-accent), color-mix(in oklab, var(--cc-accent) 25%, transparent) 60%, transparent);
-  filter: blur(2px);
+  border-radius: var(--cc-radius-full);
+  display: block;
+  flex: none;
+}
+/*
+ * The same idea at a larger scale, and scoped the same way: a dark glass ball with a spectral band
+ * across it, so the fallback is recognisably the same object the shader draws. It must not be the
+ * element's ordinary background, because the working canvas is transparent where the glow is and
+ * would let this show through. No blur filter either — it would soften the WebGL output rather
+ * than the fallback.
+ */
+.cc-empty-orb[data-orb="fallback"] {
+  background:
+    radial-gradient(ellipse 78% 11% at 50% 50%, #ffffff 0%, #ffd86b 22%, #82f4ff 40%, #ff7bd5 62%, #8e6cff 82%, transparent 100%),
+    radial-gradient(circle at 50% 46%, #2a2350 0%, #161231 45%, #0b0a1c 100%);
 }
 .cc-empty h1 { font-size: var(--cc-text-title); font-weight: 600; margin: 0; }
 .cc-empty p { color: var(--cc-text-muted); margin: 0; }

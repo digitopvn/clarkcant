@@ -21,16 +21,17 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "@clarkcant/conversation-client": "workspace:*",
     "@clarkcant/contracts": "workspace:*",
+    "@clarkcant/conversation-client": "workspace:*",
     "@clarkcant/design-tokens": "workspace:*",
+    "@fontsource-variable/plus-jakarta-sans": "5.3.0",
     "react": "19.3.0",
     "react-dom": "19.3.0"
   },
   "devDependencies": {
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",
-    "vite": "8.3.0",
-    "@vitejs/plugin-react": "6.1.1"
+    "@vitejs/plugin-react": "6.1.1",
+    "vite": "8.3.0"
   }
 }

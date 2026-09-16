@@ -35,6 +35,9 @@ export {
   renderBlock,
 } from "./blocks.tsx";
 export { Conversation, type ConversationProps } from "./Conversation.tsx";
+export { Orb, type OrbProps } from "./Orb.tsx";
+export { createOrbRenderer, type OrbOptions, type OrbRenderer } from "./orb.ts";
+export { ORB_PALETTE, ORB_SHAPE, ORB_SHADER_STATUS } from "./orb-shader.ts";
 export {
   GatewayClient,
   GatewayError,

@@ -2,6 +2,7 @@ import { type ReactElement, useCallback, useEffect, useMemo, useRef, useState } 
 
 import type { GatewayClient, ResolvedDataset, Timeline } from "./api.ts";
 import { renderBlock } from "./blocks.tsx";
+import { Orb } from "./Orb.tsx";
 import { resolveRenderer, toRendererDataset } from "./renderers.tsx";
 
 /**
@@ -226,7 +227,7 @@ export function Conversation({
     <div className="cc-shell">
       <header className="cc-header">
         <div className="cc-brand">
-          <span className="cc-orb" aria-hidden="true" />
+          <Orb size={20} className="cc-orb" label="" />
           <span>Agent</span>
         </div>
         <div className="cc-status" role="status" aria-live="polite" data-connection={connection}>
@@ -238,7 +239,7 @@ export function Conversation({
       <div className="cc-scroll" ref={scroller}>
         {blocks.length === 0 ? (
           <div className="cc-empty">
-            <span className="cc-empty-orb" aria-hidden="true" />
+            <Orb size={148} className="cc-empty-orb" label="Đang chờ bạn nói điều muốn làm" />
             <h1>Bạn muốn làm gì?</h1>
             <p>Cứ nói việc bạn muốn. Ba gợi ý dưới đây chạy trên dữ liệu mẫu, không cần kết nối gì.</p>
             <div style={{ display: "flex", gap: "var(--cc-space-sm)", flexWrap: "wrap", justifyContent: "center" }}>

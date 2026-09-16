@@ -17,7 +17,15 @@ body {
   padding: 2.5rem clamp(1.25rem, 5vw, 4rem);
   background: var(--surface);
   color: var(--text);
-  font: 15px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  /*
+   * The same family the web client names, so the two surfaces do not drift apart.
+   *
+   * The desktop shell has no bundler and ships no font files, so this resolves to the system
+   * faces until the font is packaged with the app. Naming it first costs nothing and means the
+   * shell picks it up the moment it is available.
+   */
+  font: 15px/1.55 "Plus Jakarta Sans Variable", -apple-system, BlinkMacSystemFont, "Segoe UI",
+    system-ui, sans-serif;
 }
 
 main {

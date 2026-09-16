@@ -250,10 +250,23 @@ export class BrowserDriver {
           requiresReobservation: true,
         };
       }
+      // The origin is checked before the browser is started. Validation that can be done without
+      // launching anything belongs first: doing it after left a refused navigation waiting on a
+      // cold Chromium start, which is slow enough under load to look like a hang.
+      const url = String(action.arguments.url ?? "");
+      try {
+        this.#assertOriginAllowed(url);
+      } catch (cause) {
+        return {
+          status: "refused",
+          verification: "not-applicable",
+          message: cause instanceof Error ? cause.message : String(cause),
+          requiresReobservation: false,
+        };
+      }
+
       const page = await this.#ensurePage();
       try {
-        const url = String(action.arguments.url ?? "");
-        this.#assertOriginAllowed(url);
         await page.goto(url, { waitUntil: "domcontentloaded" });
         // Navigation replaces every reference stamped on the previous document.
         this.#targetVersion = `${Number.parseInt(this.#targetVersion, 10) + 1}`;
