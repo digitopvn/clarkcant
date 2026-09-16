@@ -2,6 +2,16 @@ import { type ReactElement, useCallback, useEffect, useMemo, useRef, useState } 
 
 import type { GatewayClient, ResolvedDataset, Timeline } from "./api.ts";
 import { renderBlock } from "./blocks.tsx";
+import {
+  applyResolvedTheme,
+  readStoredTheme,
+  resolveTheme,
+  storeTheme,
+  systemPrefersLight,
+  watchSystemTheme,
+  type ThemeChoice,
+} from "./theme.ts";
+import type { ThemeName } from "@clarkcant/design-tokens";
 import { Orb } from "./Orb.tsx";
 import { SettingsPanel } from "./SettingsPanel.tsx";
 import { resolveRenderer, toRendererDataset } from "./renderers.tsx";
@@ -58,18 +68,44 @@ export function Conversation({
   const [error, setError] = useState<string | undefined>(undefined);
   const [uiCheckOpen, setUiCheckOpen] = useState(false);
   /**
-   * The active theme.
+   * The theme the user chose, which is `dark`, `light` or `system`.
    *
-   * Held here rather than pushed into the stylesheet installer: the installed sheet already
-   * carries both themes, so switching is only a matter of which one the root selects, and
-   * re-installing the sheet to change a theme would be work done for nothing.
+   * The choice is held, not the resolved theme. Holding the resolved theme would silently turn
+   * `system` into whichever theme the operating system happened to be in when the page loaded,
+   * and the interface would then stop following the system it was asked to follow.
    */
-  const [theme, setTheme] = useState<"dark" | "light">("dark");
+  const [themeChoice, setThemeChoice] = useState<ThemeChoice>(() => readStoredTheme());
+  const [resolvedTheme, setResolvedTheme] = useState<ThemeName>(() =>
+    resolveTheme(readStoredTheme(), systemPrefersLight()),
+  );
 
-  const applyTheme = useCallback((next: "dark" | "light") => {
-    if (typeof document !== "undefined") document.documentElement.dataset.ccTheme = next;
-    setTheme(next);
+  /**
+   * Apply the choice: store it, resolve it, and write the result onto the document.
+   *
+   * Storing the choice rather than the resolved value is what lets `system` keep meaning
+   * `system` across a reload.
+   */
+  const applyThemeChoice = useCallback((next: ThemeChoice) => {
+    storeTheme(next);
+    const resolved = resolveTheme(next, systemPrefersLight());
+    applyResolvedTheme(resolved);
+    setThemeChoice(next);
+    setResolvedTheme(resolved);
   }, []);
+
+  /*
+   * Follow the operating system, but only while the user has actually asked for `system`.
+   * A listener that keeps firing after the user picks an explicit theme would override their
+   * choice the next time their machine switched to night mode.
+   */
+  useEffect(() => {
+    if (themeChoice !== "system") return;
+    return watchSystemTheme((prefersLight) => {
+      const resolved = resolveTheme("system", prefersLight);
+      applyResolvedTheme(resolved);
+      setResolvedTheme(resolved);
+    });
+  }, [themeChoice]);
   const scroller = useRef<HTMLDivElement>(null);
 
   /* Connectivity is checked once, so the status reflects reality rather than optimism. */
@@ -373,8 +409,9 @@ export function Conversation({
         open={uiCheckOpen}
         onClose={() => setUiCheckOpen(false)}
         client={client}
-        theme={theme}
-        onTheme={applyTheme}
+        themeChoice={themeChoice}
+        resolvedTheme={resolvedTheme}
+        onThemeChoice={applyThemeChoice}
       />
     </div>
   );

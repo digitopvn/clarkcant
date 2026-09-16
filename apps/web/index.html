@@ -5,6 +5,12 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Agent</title>
     <!--
+      Before anything else, and after the CSP below in document order for readability only: the
+      policy is a meta tag and applies to the whole document once parsed. A classic script in
+      public/ rather than an inline one, because script-src is 'self'.
+    -->
+    <script src="/theme-init.js"></script>
+    <!--
       The CSP is set here rather than left to defaults. `object-src 'none'` and `base-uri 'none'`
       remove two classic injection footholds, and no remote script may load.
 

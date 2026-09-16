@@ -6,17 +6,26 @@
  * row waiting for a backend — a settings screen that shows plausible values is worse than an empty
  * one, because it is believed.
  *
- * It is a drawer rather than a page for the reason the blueprint gives: seeing a setting should
+ * It is a modal rather than a route for the reason the blueprint gives: seeing a setting should
  * never cost the conversation. A full-page settings route would unmount the timeline to change a
- * theme, and the user would lose the thread they were reading to check a checkbox.
+ * theme, and the user would lose the thread they were reading to check a checkbox. It is a modal
+ * rather than the drawer it used to be because the reference design has four distinct areas and a
+ * drawer shows them as one continuous scroll, which reads as a long list rather than four places.
+ *
+ * Every tab has content of its own. A tab that exists but is empty teaches the user that the tabs
+ * are decoration, and the next time they will not bother opening one.
  */
 
 import { useCallback, useEffect, useState, type ReactElement, type ReactNode } from "react";
 
 import { contrastRatio, AA_NORMAL_TEXT, DARK, LIGHT, type ThemeName } from "@clarkcant/design-tokens";
 
+import { DevicePairingPanel } from "./DevicePairingPanel.tsx";
+import { Modal } from "./Modal.tsx";
 import { TokenSpecimens, readVar } from "./TokenSpecimens.tsx";
+import { VoiceSurface } from "./VoiceSurface.tsx";
 import type { GatewayClient } from "./api.ts";
+import { THEME_CHOICES, type ThemeChoice } from "./theme.ts";
 
 /**
  * Accents worth comparing.
@@ -32,6 +41,21 @@ const ACCENT_CHOICES: { label: string; dark: string; light: string; note: string
   { label: "Muted sage", dark: "#9BBFAC", light: "#41705A", note: "alternative" },
   { label: "Clay", dark: "#D2A69C", light: "#8E5449", note: "alternative" },
 ];
+
+const THEME_LABELS: Record<ThemeChoice, string> = {
+  dark: "Tối",
+  light: "Sáng",
+  system: "Theo hệ thống",
+};
+
+const TABS = [
+  { id: "general", label: "General" },
+  { id: "voice", label: "Voice" },
+  { id: "tools", label: "Tools" },
+  { id: "devices", label: "Devices" },
+] as const;
+
+type TabId = (typeof TABS)[number]["id"];
 
 /** Nodes the settings surface needs, loaded once when it opens. */
 interface NodeFacts {
@@ -121,26 +145,28 @@ export interface SettingsPanelProps {
   open: boolean;
   onClose: () => void;
   client: GatewayClient;
-  theme: ThemeName;
-  onTheme: (theme: ThemeName) => void;
+  /** What the user chose, which may be `system`. */
+  themeChoice: ThemeChoice;
+  /** What is currently shown, which is always `dark` or `light`. */
+  resolvedTheme: ThemeName;
+  onThemeChoice: (choice: ThemeChoice) => void;
 }
 
-export function SettingsPanel({ open, onClose, client, theme, onTheme }: SettingsPanelProps): ReactElement | null {
+export function SettingsPanel({
+  open,
+  onClose,
+  client,
+  themeChoice,
+  resolvedTheme,
+  onThemeChoice,
+}: SettingsPanelProps): ReactElement | null {
   const [facts, setFacts] = useState<NodeFacts | undefined>(undefined);
   const [tools, setTools] = useState<ToolFacts[] | undefined>(undefined);
   const [problem, setProblem] = useState<string | undefined>(undefined);
   const [accentIndex, setAccentIndex] = useState(0);
+  const [tab, setTab] = useState<TabId>("general");
   // Bumped after a theme or accent change so the contrast readout re-reads computed values.
   const [revision, setRevision] = useState(0);
-
-  useEffect(() => {
-    if (!open) return;
-    const onKey = (event: KeyboardEvent): void => {
-      if (event.key === "Escape") onClose();
-    };
-    document.addEventListener("keydown", onKey);
-    return () => document.removeEventListener("keydown", onKey);
-  }, [open, onClose]);
 
   useEffect(() => {
     if (!open) return;
@@ -165,12 +191,19 @@ export function SettingsPanel({ open, onClose, client, theme, onTheme }: Setting
     };
   }, [open, client]);
 
-  const applyTheme = useCallback(
-    (next: ThemeName) => {
-      onTheme(next);
+  // Opened on General each time. Remembering the last tab sounds helpful and is not: someone who
+  // opened Devices once to check a thing would land there every time they wanted the theme.
+  useEffect(() => {
+    if (!open) return;
+    setTab("general");
+  }, [open]);
+
+  const chooseTheme = useCallback(
+    (next: ThemeChoice) => {
+      onThemeChoice(next);
       setRevision((n) => n + 1);
     },
-    [onTheme],
+    [onThemeChoice],
   );
 
   /**
@@ -184,9 +217,9 @@ export function SettingsPanel({ open, onClose, client, theme, onTheme }: Setting
     (index: number) => {
       const choice = ACCENT_CHOICES[index];
       if (choice === undefined || typeof document === "undefined") return;
-      const value = theme === "dark" ? choice.dark : choice.light;
+      const value = resolvedTheme === "dark" ? choice.dark : choice.light;
       const root = document.documentElement;
-      const tokens = theme === "dark" ? DARK : LIGHT;
+      const tokens = resolvedTheme === "dark" ? DARK : LIGHT;
       root.style.setProperty("--cc-accent", value);
       root.style.setProperty(
         "--cc-on-accent",
@@ -195,17 +228,17 @@ export function SettingsPanel({ open, onClose, client, theme, onTheme }: Setting
       setAccentIndex(index);
       setRevision((n) => n + 1);
     },
-    [theme],
+    [resolvedTheme],
   );
 
-  // Re-applied when the theme changes, so switching theme does not leave the other theme's
-  // accent painted over the new one. Deliberately not keyed on `accentIndex`: this exists to
-  // re-paint the current choice against a new theme, and keying on the index would make it write
-  // the same value on every pick as well.
+  // Re-applied when the resolved theme changes, so switching theme does not leave the other
+  // theme's accent painted over the new one. Deliberately not keyed on `accentIndex`: this exists
+  // to re-paint the current choice against a new theme, and keying on the index would make it
+  // write the same value on every pick as well.
   useEffect(() => {
     if (!open) return;
     applyAccent(accentIndex);
-  }, [open, theme]);
+  }, [open, resolvedTheme]);
 
   if (!open) return null;
 
@@ -234,98 +267,158 @@ export function SettingsPanel({ open, onClose, client, theme, onTheme }: Setting
     return measured;
   };
 
+  const nodeStatus = (): string => {
+    if (problem !== undefined) return "Không đọc được trạng thái node";
+    if (facts === undefined) return "Đang đọc…";
+    return `${facts.label} · đã kết nối runtime cục bộ`;
+  };
+
   return (
-    <>
-      <div className="cc-panel-scrim" onClick={onClose} aria-hidden="true" />
-      <aside className="cc-panel" role="dialog" aria-modal="true" aria-labelledby="cc-settings-title">
-        <header className="cc-panel-head">
-          <h2 id="cc-settings-title">Cài đặt</h2>
-          <button type="button" className="cc-icon-btn" onClick={onClose} aria-label="Đóng cài đặt">
-            ✕
+    <Modal open={open} onClose={onClose} title="Cài đặt" description="Vài tuỳ chọn. Mọi thứ khác nằm trong hội thoại.">
+      <div className="cc-tabs" role="tablist" aria-label="Nhóm cài đặt">
+        {TABS.map((entry) => (
+          <button
+            key={entry.id}
+            type="button"
+            role="tab"
+            id={`cc-tab-${entry.id}`}
+            className="cc-tab"
+            aria-selected={tab === entry.id}
+            aria-controls={`cc-tabpanel-${entry.id}`}
+            data-selected={tab === entry.id}
+            onClick={() => setTab(entry.id)}
+          >
+            {entry.label}
           </button>
-        </header>
+        ))}
+      </div>
 
-        <div className="cc-panel-body">
-          {problem !== undefined && (
-            <section className="cc-panel-section">
-              <h3>Không đọc được trạng thái node</h3>
-              <p className="cc-panel-note" data-settings-error="true">
-                {problem}
-              </p>
-            </section>
-          )}
-
-          <section className="cc-panel-section">
-            <h3>Giao diện</h3>
-            <SettingsRow label="Chủ đề" description="Áp dụng ngay, không cần tải lại.">
-              <div className="cc-panel-row">
-                {(["dark", "light"] as ThemeName[]).map((name) => (
-                  <button
-                    key={name}
-                    type="button"
-                    className="cc-badge"
-                    aria-pressed={theme === name}
-                    data-selected={theme === name}
-                    onClick={() => applyTheme(name)}
-                  >
-                    {name}
-                  </button>
-                ))}
-              </div>
-            </SettingsRow>
-            <SettingsRow
-              label="Accent"
-              description="Xem thử, không lưu. Màu chữ trên accent được chọn theo độ tương phản."
-            >
-              <div className="cc-panel-row">
-                {ACCENT_CHOICES.map((choice, index) => (
-                  <button
-                    key={choice.label}
-                    type="button"
-                    className="cc-swatch"
-                    aria-pressed={accentIndex === index}
-                    aria-label={`${choice.label} (${choice.note})`}
-                    onClick={() => applyAccent(index)}
-                    style={{ background: theme === "dark" ? choice.dark : choice.light }}
-                  />
-                ))}
-              </div>
-            </SettingsRow>
-            <p className="cc-panel-note">{ACCENT_CHOICES[accentIndex]?.note ?? ""}</p>
-          </section>
-
-          <section className="cc-panel-section">
-            <h3>Model</h3>
-            {facts === undefined ? (
-              <p className="cc-panel-note">Đang đọc…</p>
-            ) : facts.model === null ? (
-              // A node with no model is a working node. Saying so is the point.
-              <p className="cc-panel-note" data-model="none">
-                Node này chưa cấu hình model. Nó trả lời bằng recipe và capability đã cài, và không
-                gọi provider nào.
-              </p>
-            ) : (
-              <>
-                <SettingsRow label="Provider" description="Đặt bằng CC_MODEL_PROVIDER.">
-                  <code>{facts.model.provider}</code>
-                </SettingsRow>
-                <SettingsRow label="Model" description="Đặt bằng CC_MODEL_ID.">
-                  <code>{facts.model.id}</code>
-                </SettingsRow>
-                <SettingsRow
-                  label="Trần một lượt"
-                  description="Một lượt vượt trần sẽ bị dừng, không chạy tiếp."
-                >
-                  <code>
-                    {facts.model.maxWallClockMs} ms · {facts.model.maxTokens} token
-                  </code>
-                </SettingsRow>
-              </>
+      <div
+        role="tabpanel"
+        id={`cc-tabpanel-${tab}`}
+        aria-labelledby={`cc-tab-${tab}`}
+        className="cc-tabpanel"
+        data-active-tab={tab}
+      >
+        {tab === "general" && (
+          <>
+            {problem !== undefined && (
+              <section className="cc-panel-section">
+                <h3>Không đọc được trạng thái node</h3>
+                <p className="cc-panel-note" data-settings-error="true">
+                  {problem}
+                </p>
+              </section>
             )}
-          </section>
 
+            <section className="cc-panel-section">
+              <h3>Experience</h3>
+              <SettingsRow label="Appearance" description="Áp dụng ngay, và giữ nguyên sau khi tải lại.">
+                <div className="cc-panel-row">
+                  {THEME_CHOICES.map((choice) => (
+                    <button
+                      key={choice}
+                      type="button"
+                      className="cc-badge"
+                      aria-pressed={themeChoice === choice}
+                      data-selected={themeChoice === choice}
+                      data-theme-choice={choice}
+                      onClick={() => chooseTheme(choice)}
+                    >
+                      {THEME_LABELS[choice]}
+                    </button>
+                  ))}
+                </div>
+              </SettingsRow>
+              <p className="cc-panel-note" data-resolved-theme={resolvedTheme}>
+                Đang hiển thị: {THEME_LABELS[resolvedTheme]}
+                {themeChoice === "system" ? " (theo hệ thống)" : ""}
+              </p>
+              <SettingsRow
+                label="Accent"
+                description="Xem thử, không lưu. Màu chữ trên accent được chọn theo độ tương phản."
+              >
+                <div className="cc-panel-row">
+                  {ACCENT_CHOICES.map((choice, index) => (
+                    <button
+                      key={choice.label}
+                      type="button"
+                      className="cc-swatch"
+                      aria-pressed={accentIndex === index}
+                      aria-label={`${choice.label} (${choice.note})`}
+                      onClick={() => applyAccent(index)}
+                      style={{ background: resolvedTheme === "dark" ? choice.dark : choice.light }}
+                    />
+                  ))}
+                </div>
+              </SettingsRow>
+              <p className="cc-panel-note">{ACCENT_CHOICES[accentIndex]?.note ?? ""}</p>
+            </section>
+
+            <section className="cc-panel-section">
+              <h3>Model</h3>
+              {facts === undefined ? (
+                <p className="cc-panel-note">Đang đọc…</p>
+              ) : facts.model === null ? (
+                // A node with no model is a working node. Saying so is the point.
+                <p className="cc-panel-note" data-model="none">
+                  Node này chưa cấu hình model. Nó trả lời bằng recipe và capability đã cài, và không
+                  gọi provider nào.
+                </p>
+              ) : (
+                <>
+                  <SettingsRow label="Provider" description="Đặt bằng CC_MODEL_PROVIDER.">
+                    <code>{facts.model.provider}</code>
+                  </SettingsRow>
+                  <SettingsRow label="Model" description="Đặt bằng CC_MODEL_ID.">
+                    <code>{facts.model.id}</code>
+                  </SettingsRow>
+                  <SettingsRow label="Trần một lượt" description="Một lượt vượt trần sẽ bị dừng, không chạy tiếp.">
+                    <code>
+                      {facts.model.maxWallClockMs} ms · {facts.model.maxTokens} token
+                    </code>
+                  </SettingsRow>
+                </>
+              )}
+            </section>
+
+            <section className="cc-panel-section">
+              <h3>Độ tương phản, đo trực tiếp</h3>
+              <ul className="cc-panel-readout">
+                {contrastReadout().map((row) => (
+                  <li key={row.label} data-pass={row.ratio >= AA_NORMAL_TEXT}>
+                    <span>{row.label}</span>
+                    <span>
+                      {row.ratio.toFixed(2)}:1 {row.ratio >= AA_NORMAL_TEXT ? "✓" : "✗ dưới 4.5"}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            </section>
+
+            {/* The same specimens the UI panel shows. A user checking what the interface is built
+                from should not have to open a second tool to find out. */}
+            <TokenSpecimens />
+          </>
+        )}
+
+        {tab === "voice" && (
           <section className="cc-panel-section">
-            <h3>Công cụ</h3>
+            <h3>Voice</h3>
+            <VoiceSurface
+              requires="một phiên Live API đang mở"
+              unblockedBy="bật voice trong hội thoại để mở phiên tới Gemini"
+            />
+          </section>
+        )}
+
+        {tab === "tools" && (
+          <section className="cc-panel-section">
+            <h3>Tools</h3>
+            <p className="cc-panel-note">
+              Capability đã đăng ký trên node này. Thứ gì chưa nạp thì nói rõ vì sao, không được
+              làm tròn thành “dùng được”.
+            </p>
             {tools === undefined ? (
               <p className="cc-panel-note">Đang đọc…</p>
             ) : tools.length === 0 ? (
@@ -342,42 +435,28 @@ export function SettingsPanel({ open, onClose, client, theme, onTheme }: Setting
               ))
             )}
           </section>
+        )}
 
+        {tab === "devices" && (
           <section className="cc-panel-section">
-            <h3>Node</h3>
-            {facts === undefined ? (
-              <p className="cc-panel-note">Đang đọc…</p>
-            ) : (
-              <>
-                <SettingsRow label="Nhãn">
-                  <code>{facts.label}</code>
-                </SettingsRow>
-                <SettingsRow label="Mã node">
-                  <code>{facts.nodeId}</code>
-                </SettingsRow>
-              </>
-            )}
+            <h3>Devices</h3>
+            <DevicePairingPanel
+              nodeId={facts?.nodeId ?? "(chưa đọc được)"}
+              nodeLabel={facts?.label ?? "(chưa đọc được)"}
+              unblockedBy="chạy node thứ hai trên máy khác rồi ghép nối"
+            />
           </section>
+        )}
+      </div>
 
-          <section className="cc-panel-section">
-            <h3>Độ tương phản, đo trực tiếp</h3>
-            <ul className="cc-panel-readout">
-              {contrastReadout().map((row) => (
-                <li key={row.label} data-pass={row.ratio >= AA_NORMAL_TEXT}>
-                  <span>{row.label}</span>
-                  <span>
-                    {row.ratio.toFixed(2)}:1 {row.ratio >= AA_NORMAL_TEXT ? "✓" : "✗ dưới 4.5"}
-                  </span>
-                </li>
-              ))}
-            </ul>
-          </section>
-
-          {/* The same specimens the UI panel shows. A user checking what the interface is built
-              from should not have to open a second tool to find out. */}
-          <TokenSpecimens />
-        </div>
-      </aside>
-    </>
+      <footer className="cc-modal-foot">
+        <span className="cc-freshness" data-settings-status={problem === undefined ? "ok" : "error"}>
+          {nodeStatus()}
+        </span>
+        <button type="button" className="cc-badge cc-modal-done" onClick={onClose}>
+          Xong
+        </button>
+      </footer>
+    </Modal>
   );
 }

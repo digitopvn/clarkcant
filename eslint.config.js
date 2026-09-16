@@ -85,6 +85,19 @@ export default tseslint.config(
     },
   },
   {
+    // The pre-paint theme script is served to the browser as-is from `public/`, so it runs with
+    // browser globals and is never bundled. Linting it against the Node globals the other `.js`
+    // files get would report every DOM reference as undefined.
+    files: ["apps/web/public/**/*.js"],
+    languageOptions: {
+      globals: {
+        document: "readonly",
+        localStorage: "readonly",
+        matchMedia: "readonly",
+      },
+    },
+  },
+  {
     // A sandboxed Electron preload script cannot be an ES module, so this file is CommonJS
     // because the runtime requires it, not by preference.
     files: ["**/*.cjs"],
