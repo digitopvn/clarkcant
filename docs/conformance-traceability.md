@@ -70,7 +70,7 @@ A status here is never upgraded without the corresponding test appearing alongsi
 | T51 | PASS | A failed widget state migration recovers the old snapshot | widget-lifecycle.spec: a step that throws leaves the stored document and version at their original values, read back from storage rather than from the returned copy |
 | T52 | NOT-IMPLEMENTED | An offscreen widget's background polling is rate-limited | Belongs to P6. |
 | T53 | PASS | A stale browser locator re-observes instead of clicking | driver.spec.ts: a missing element reference and a moved target version are both refused against a real Chromium |
-| T54 | NOT-IMPLEMENTED | A page prompt injection cannot alter rights, consent or secret scope | The driver only acts on host-issued element references, but no injection fixture exercises it yet. |
+| T54 | PASS | A page prompt injection cannot alter rights, consent or secret scope | injection.spec.ts: a page instructing the agent to grant itself capabilities, skip approval, reveal secrets and exfiltrate is refused on every path; a differential case proves the refusal is about approval rather than a blanket refusal |
 | T55 | NOT-IMPLEMENTED | A browser submit timeout does not trigger a second submit | Belongs to P8; the contract exists in automation.ts. |
 | T56 | PASS | Human login takeover pauses agent input and capture | driver.spec.ts: sensitive input is detected by focus and input is refused while it holds; takeover refuses input too |
 | T57 | PASS | A denied or revoked macOS permission reports unavailable without bypass | seams.spec: "keeps capture and input permissions separate on macOS" |
@@ -79,14 +79,14 @@ A status here is never upgraded without the corresponding test appearing alongsi
 | T60 | PASS | A headless Linux node makes no native-desktop claim | seams.spec: "reports a Linux host without a display as unable to run a virtual desktop" |
 | T61 | NOT-IMPLEMENTED | Virtual desktop access without session auth is rejected | Belongs to P8; needs the preview transport. |
 | T62 | PASS | Quick play without provider credentials is clearly a sample | e2e/j1.spec.ts: "a suggestion produces a labelled sample with a real widget" asserts the host-owned label in a real browser |
-| T63 | NOT-IMPLEMENTED | Skipped or restarted onboarding resumes without reinstalling | Belongs to P7. |
+| T63 | PASS | Skipped or restarted onboarding resumes without reinstalling | onboarding.spec.ts: a completed step is not asked again, checkpoints are scoped per node so one machine setup does not mark another done, and progress is counted against the whole catalogue |
 | T64 | PASS | A spoken interruption changes audio only and does not cancel the job | contracts.spec and seams.spec: barge-in routing |
 | T65 | PASS | A mid-sentence correction is one task revision, not two effects | seams.spec: "emits one intent per completed utterance" |
 | T66 | NOT-IMPLEMENTED | Voice and click reach the same widget action state | Belongs to P9; the semantic view contract exists. |
 | T67 | PASS | Competing microphone owners are resolved explicitly | seams.spec: "refuses a second exclusive microphone owner and names the holder" |
 | T68 | NOT-IMPLEMENTED | Mute and end actually stop capture and playback on the real transport | The local state machine is tested; the live transport belongs to P9. |
 | T69 | PASS | Backup restore with version drift migrates or blocks, never corrupts silently | storage.spec: consistent backup and restore suite |
-| T70 | NOT-IMPLEMENTED | Reaching a disk or budget limit stops new work safely | Belongs to P10. |
+| T70 | PASS | Reaching a disk or budget limit stops new work safely | hardening.spec.ts: the ceiling is checked at the door and an over-budget run is refused before it starts; windows reset so a limit is not permanent; usage accumulates per window rather than per run |
 | T71 | NOT-IMPLEMENTED | Credentials are never copied between nodes implicitly | Connection ownership is modelled in the schema; enforcement belongs to P7. |
 | T72 | BLOCKED | An unavailable vendor SDK yields a working fallback or an unsupported verdict | Needs a real vendor account. |
 
@@ -115,7 +115,7 @@ A status here is never upgraded without the corresponding test appearing alongsi
 
 ## Summary
 
-Acceptance tests: 51 pass, 4 blocked, 17 not implemented (of 72).
+Acceptance tests: 54 pass, 4 blocked, 14 not implemented (of 72).
 Scope items: 18 partial, 0 not implemented (of 18).
 
 No scope item is claimed as complete. The layers that are implemented are tested; the
