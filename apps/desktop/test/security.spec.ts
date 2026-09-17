@@ -150,6 +150,7 @@ describe("IPC is answered only for the shell document (sender validation)", () =
       "desktop:getStatus",
       "desktop:notify",
       "desktop:openExternal",
+      "desktop:pickDirectory",
       "desktop:requestCredential",
       "desktop:setKeepRunning",
     ]);

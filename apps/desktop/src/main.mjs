@@ -51,6 +51,7 @@ let keepRunningOnWindowClose = true;
 const EXPECTED_BRIDGE_METHODS = Object.freeze([
   "notify",
   "openExternal",
+  "pickDirectory",
   "requestCredential",
   "setKeepRunningOnWindowClose",
   "status",
@@ -88,6 +89,19 @@ function registerHandlers() {
     const body = typeof input?.body === "string" ? input.body.slice(0, 500) : "";
     if (title.length === 0) return { ok: false, refused: "a notification needs a title" };
     return { ok: true, shown: { title, body } };
+  });
+
+  handle("desktop:pickDirectory", async (input) => {
+    // The OS dialog is the point: choosing a directory is something a person does in a window the
+    // owning process controls, not something a script in the renderer can name. Only the path the
+    // user actually selected is returned, and it is returned as data the renderer may send back as
+    // the answer to the node's own question.
+    const window = BrowserWindow.getAllWindows()[0];
+    if (window === undefined) return { ok: false, refused: "no window is available for the picker" };
+    const title = typeof input?.title === "string" && input.title.trim() !== "" ? input.title.slice(0, 120) : "Choose a directory";
+    const outcome = await dialog.showOpenDialog(window, { title, properties: ["openDirectory"] });
+    if (outcome.canceled || outcome.filePaths.length === 0) return { ok: true, canceled: true };
+    return { ok: true, canceled: false, path: outcome.filePaths[0] };
   });
 
   handle("desktop:requestCredential", async (input) => {
