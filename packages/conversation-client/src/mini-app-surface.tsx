@@ -58,6 +58,14 @@ export interface CompositeSurfaceView {
   tombstone?: { reason: string } | null;
   /** Per-region availability supplied by the transport. */
   availability?: Record<string, RegionAvailability>;
+  /**
+   * Set when this surface may not act.
+   *
+   * A historical snapshot and a surface another tab owns are both in this state. The leaves are told
+   * so rather than being handed an action callback that resolves to nothing: a control that looks
+   * live and does nothing is worse than one that says it is read-only.
+   */
+  readOnly?: boolean;
 }
 
 export interface SurfaceIntent {
@@ -100,6 +108,7 @@ export function MiniAppSurface(props: MiniAppSurfaceProps): ReactElement {
   const { view, onIntent, busy } = props;
   const [state, setState] = useState<Record<string, Record<string, unknown>>>({});
   const sections = useMemo(() => orderSections(view.sections), [view.sections]);
+  const readOnly = view.readOnly === true;
 
   const actionBySection = useMemo(() => {
     const map = new Map<string, CompositeSurfaceAction>();
@@ -197,15 +206,22 @@ export function MiniAppSurface(props: MiniAppSurfaceProps): ReactElement {
                     dataset={regionDataset(section, availability)}
                     state={sectionState}
                     {...(props.imageUrl === undefined ? {} : { imageUrl: props.imageUrl })}
-                    onStateChange={(patch) => {
+                    // Local view state stays interactive everywhere: which day is selected and which
+                    // period is on screen are presentation, not a change to the node. Only the action
+                    // channel is gated, because that is the one that would reach the server.
+                    onStateChange={(patch: Record<string, unknown>) => {
                       setState((current) => ({
                         ...current,
                         [section.sectionId]: { ...(current[section.sectionId] ?? {}), ...patch },
                       }));
                     }}
-                    onAction={(action, payload) => {
-                      emit(section.sectionId, action, payload);
-                    }}
+                    {...(readOnly
+                      ? {}
+                      : {
+                          onAction: (action: string, payload: Record<string, unknown>) => {
+                            emit(section.sectionId, action, payload);
+                          },
+                        })}
                   />
                 )}
                 {action !== undefined && availability !== "denied" && (

@@ -336,6 +336,9 @@ function toSurfaceViewFromLive(
     revision: live.revision,
     stale: false,
     availability: live.availability,
+    // Ownership is what decides this, and it is decided on the server: a surface that does not hold
+    // the claim renders read-only rather than offering controls that would be refused.
+    readOnly,
   };
 }
 

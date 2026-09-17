@@ -85,12 +85,29 @@ export interface TimelineInstance {
   props: Record<string, unknown>;
 }
 
+/** A historical capture, separate from the live instance it came from. */
+export interface TimelineSnapshotView {
+  snapshotId: string;
+  messageId: string;
+  instanceId?: string;
+  capturedRevision: number;
+  capturedAt: string;
+  /** True once the live instance has moved past this revision. */
+  stale: boolean;
+  presentationRef: string;
+  bundleRef?: string;
+  catalogDigest?: string;
+  textAlternative: string;
+}
+
 export interface Timeline {
   conversationId: string;
   cursor: number;
   messages: TimelineMessage[];
   pins: { pinId: string; instanceId: string; displayMode: string; position: number; refreshPolicy: string }[];
   instances: TimelineInstance[];
+  /** The authoritative staleness and capture identity, which the message document cannot carry. */
+  snapshots: TimelineSnapshotView[];
   metadata: { messageCount: number; taskCount: number; updatedAt: string };
   activeTaskIds: string[];
 }

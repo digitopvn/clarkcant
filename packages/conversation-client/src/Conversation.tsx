@@ -327,26 +327,29 @@ export function Conversation({
     (input: SurfaceBlockRef): ReactElement => {
       const instance = input.instanceId === undefined ? undefined : instanceById.get(input.instanceId);
       const definitionId = instance?.definitionId ?? input.definitionId;
-      const Renderer = resolveRenderer(definitionId);
 
-      if (!Renderer || !instance) {
-        // An unknown definition is a normal outcome, not a failure: the snapshot's text
-        // alternative is what history keeps.
-        return (
-          <div className="cc-card cc-freshness" data-widget-fallback="true" style={{ padding: "var(--cc-space-md)" }}>
-            {input.textAlternative}
-          </div>
-        );
-      }
-
+      // The container is checked before the leaf renderer lookup, because the container is not a
+      // leaf: `resolveRenderer` has no entry for it, and asking for one first would send every
+      // composed surface down the fallback path.
       if (definitionId === "canvas.overview@1") {
         const captured = input.snapshotId === "" ? undefined : snapshots[input.snapshotId];
+        // Staleness is the one field that changes after a snapshot is written, and it is recorded on
+        // the snapshot row rather than in the message — the message is history and stays as it was.
+        const snapshotRow = timeline?.snapshots.find((entry) => entry.snapshotId === input.snapshotId);
+        const stale = snapshotRow?.stale ?? input.stale;
+        if (instance === undefined) {
+          return (
+            <div className="cc-card cc-freshness" data-widget-fallback="true" style={{ padding: "var(--cc-space-md)" }}>
+              {input.textAlternative}
+            </div>
+          );
+        }
         return (
           <div
             data-widget-instance={instance.instanceId}
             data-widget-definition={definitionId}
             data-snapshot={input.snapshotId}
-            data-snapshot-stale={input.stale ? "true" : "false"}
+            data-snapshot-stale={stale ? "true" : "false"}
           >
             {captured === undefined ? (
               // History without a stored bundle shows what the message itself carries. Substituting
@@ -378,6 +381,16 @@ export function Conversation({
         );
       }
 
+      const Renderer = resolveRenderer(definitionId);
+      if (Renderer === undefined || instance === undefined) {
+        // An unknown definition is a normal outcome, not a failure: the snapshot's text alternative
+        // is what history keeps.
+        return (
+          <div className="cc-card cc-freshness" data-widget-fallback="true" style={{ padding: "var(--cc-space-md)" }}>
+            {input.textAlternative}
+          </div>
+        );
+      }
       const datasetRef = instance.props.datasetRef;
       const resolved = typeof datasetRef === "string" ? datasets[datasetRef] : undefined;
       const dataset = resolved === undefined ? undefined : toRendererDataset(resolved);
@@ -412,7 +425,9 @@ export function Conversation({
         </div>
       );
     },
-    [applyTimeline, client, conversationId, instanceById, snapshots],
+    // `datasets` belongs here: the renderer reads the resolved rows through this closure, and a
+    // missing entry is the difference between a table and "no data to show".
+    [applyTimeline, client, conversationId, datasets, instanceById, snapshots, timeline],
   );
 
   const blocks = timeline?.messages ?? [];
@@ -634,7 +649,10 @@ function toSurfaceViewFromSnapshot(
   const availability: Record<string, "live" | "missing"> = {};
   const sections = captured.sections.map((section) => {
     const rows = materialised.get(section.sectionId)?.rows;
-    availability[section.sectionId] = rows === undefined ? "missing" : "live";
+    // A region that declares no data reference needs none — a period selector and a save button are
+    // complete on their own. Marking those "missing" because they carry no rows drew an empty card
+    // where a working control belongs.
+    availability[section.sectionId] = section.dataRefs.length === 0 || rows !== undefined ? "live" : "missing";
     return {
       sectionId: section.sectionId,
       slot: section.slot as CompositeSurfaceView["sections"][number]["slot"],
@@ -661,5 +679,7 @@ function toSurfaceViewFromSnapshot(
     stale: captured.snapshot.stale === true,
     tombstone: captured.tombstone,
     availability,
+    // A snapshot is history: it never acts, whatever it recorded when it was taken.
+    readOnly: true,
   };
 }

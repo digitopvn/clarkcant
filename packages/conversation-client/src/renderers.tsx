@@ -730,17 +730,22 @@ function LocalImage({ props, imageUrl }: RendererProps): ReactElement {
 function CallToAction({ props, onAction }: RendererProps): ReactElement {
   const label = String(props.label ?? "Lưu bản xem");
   const actionId = String(props.actionId ?? "");
+  // No `onAction` means this surface has no authorization to act — a historical snapshot, or a
+  // surface another tab owns. Offering a live-looking button there would be a control that does
+  // nothing, which is worse than one that says it is disabled.
+  const actionable = onAction !== undefined && actionId !== "";
   return (
-    <div className="cc-cta" data-cta-action={actionId}>
+    <div className="cc-cta" data-cta-action={actionId} data-cta-actionable={actionable ? "true" : "false"}>
       <div>
         <div className="cc-card-title">{label}</div>
         {typeof props.description === "string" && <p className="cc-freshness">{props.description}</p>}
+        {!actionable && <p className="cc-freshness">Chỉ xem: bản này không thao tác được.</p>}
       </div>
       <button
         type="button"
         className="cc-icon-btn"
         style={{ width: "auto", padding: "0 var(--cc-space-md)" }}
-        disabled={actionId === ""}
+        disabled={!actionable}
         onClick={() => onAction?.("view.save", { actionId })}
       >
         {label}
