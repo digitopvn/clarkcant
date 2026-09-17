@@ -43,10 +43,27 @@ export default defineConfig({
     trace: "retain-on-failure",
     screenshot: "only-on-failure",
   },
-  projects: [{ name: "chromium", use: { ...devices["Desktop Chrome"] } }],
+  projects: [
+    {
+      name: "chromium",
+      use: {
+        ...devices["Desktop Chrome"],
+        launchOptions: {
+          // A synthetic microphone and an auto-accepted permission prompt. Without these the voice
+          // spec cannot run at all in CI, and a voice feature verified only by hand is a voice
+          // feature verified only when someone remembers to.
+          args: ["--use-fake-ui-for-media-stream", "--use-fake-device-for-media-stream"],
+        },
+      },
+    },
+  ],
   webServer: [
     {
-      command: `node apps/runtime/src/main.ts --data-dir ${DATA_DIR} --port ${NODE_PORT} --label e2e-node`,
+      // CC_VOICE_FIXTURE loads a scripted voice provider, so the browser-to-node path is exercised
+      // for real without a provider account and without spending quota on every run. The adapter
+      // that talks to the real provider is covered by unit tests instead, which is the only way
+      // those two things can both be true.
+      command: `CC_VOICE_FIXTURE=1 node apps/runtime/src/main.ts --data-dir ${DATA_DIR} --port ${NODE_PORT} --label e2e-node`,
       url: `http://127.0.0.1:${NODE_PORT}/health`,
       reuseExistingServer: false,
       stdout: "pipe",
