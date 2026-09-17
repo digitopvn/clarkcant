@@ -403,7 +403,10 @@ describe("migration and restore", () => {
 
       const destination = join(temporary, "backup");
       const manifest = createBackup({ db, destination, now: () => AT });
-      expect(manifest.schemaVersion).toBe(10);
+      // Read from the migration list rather than written as a literal: a later migration must not
+      // be able to turn this into a false failure, and the version it should be is whatever the
+      // list says it is.
+      expect(manifest.schemaVersion).toBe(MIGRATIONS[MIGRATIONS.length - 1]?.version);
       expect(manifest.tableCounts.presentation_bundles).toBe(1);
       expect(manifest.tableCounts.surface_compositions).toBe(1);
 

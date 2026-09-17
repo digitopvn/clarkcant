@@ -15,6 +15,16 @@ import { APP_CSS } from "./styles.ts";
 
 export { APP_CSS } from "./styles.ts";
 export {
+  MiniAppSurface,
+  unavailableSections,
+  type CompositeSurfaceAction,
+  type CompositeSurfaceSection,
+  type CompositeSurfaceView,
+  type MiniAppSurfaceProps,
+  type RegionAvailability,
+  type SurfaceIntent,
+} from "./mini-app-surface.tsx";
+export {
   CATALOG,
   RENDERER_IDS,
   resolveRenderer,
@@ -23,6 +33,11 @@ export {
   type RendererDataset,
   type RendererProps,
 } from "./renderers.tsx";
+export type {
+  CalendarEventView,
+  CompositionResponse,
+  ImageView,
+} from "./api.ts";
 export {
   ApprovalCardBlock,
   ArtifactBlock,

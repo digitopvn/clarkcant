@@ -1,9 +1,36 @@
 import { timingSafeEqual } from "node:crypto";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 
-import { commandEnvelopeSchema, nowInstant, protocolRangeSchema } from "@clarkcant/contracts";
+import {
+  commandEnvelopeSchema,
+  nowInstant,
+  protocolRangeSchema,
+  surfaceCompositionSpecSchema,
+} from "@clarkcant/contracts";
 import { listCapabilitySummaries, handleUserMessage, pinInstance, unpinInstance } from "@clarkcant/core";
-import { createConversation, getDataset, getConversation, listConversations } from "@clarkcant/storage";
+import {
+  type CalendarEventRecord,
+  createConversation,
+  findBundleForSnapshot,
+  findCompositionByInstance,
+  getConversation,
+  getDatasetForPrincipal,
+  getLocalImage,
+  listCalendarEvents,
+  listConversations,
+  listLocalImages,
+  oneRow,
+} from "@clarkcant/storage";
 
+import {
+  MAX_IMAGE_BYTES,
+  createLocalEvent,
+  importLocalImage,
+  removeLocalEvent,
+  removeLocalImage,
+  updateLocalEvent,
+} from "./mini-app-data.ts";
 import { type NodeServices, buildTimeline } from "./services.ts";
 
 /**
@@ -28,6 +55,15 @@ export interface GatewayRequest {
 export interface GatewayResponse {
   status: number;
   body: unknown;
+  /**
+   * Bytes to send verbatim instead of a JSON body.
+   *
+   * Only imported images use this. Answering an image request with a base64 JSON envelope would
+   * mean the browser holds a copy of the file in memory as text and the content type is whatever
+   * the caller decides, which is the opposite of serving an approved artifact under the type the
+   * host verified.
+   */
+  binary?: { bytes: Uint8Array; contentType: string };
 }
 
 export interface GatewayDeps {
@@ -148,10 +184,18 @@ export async function handleRequest(deps: GatewayDeps, request: GatewayRequest):
 
   // /datasets/:id
   if (segments[0] === "datasets" && segments.length === 2 && request.method === "GET") {
-    const dataset = getDataset(runtime.db, segments[1] ?? "");
+    const dataset = getDatasetForPrincipal(
+      runtime.db,
+      segments[1] ?? "",
+      runtime.identity.ownerPrincipalId,
+    );
     if (!dataset) return fail(404, "RESOURCE_NOT_FOUND", "that dataset is not available on this node");
     // The freshness travels with the data so a cached read cannot be presented as live.
     return json(200, dataset);
+  }
+
+  if (segments[0] === "calendar" || segments[0] === "images") {
+    return handleMiniAppDataRoutes(deps, request, segments, at);
   }
 
   if (segments[0] === "conversations") {
@@ -163,6 +207,199 @@ export async function handleRequest(deps: GatewayDeps, request: GatewayRequest):
   }
 
   return fail(404, "NOT_FOUND", `no handler for ${request.method} ${request.path}`);
+}
+
+/**
+ * Local calendar and imported images.
+ *
+ * Both are principal-scoped at the query rather than checked after the fact, so a request for
+ * somebody else's event resolves to `404` — the same answer as a request for an event that does
+ * not exist. Distinguishing the two would turn this route into a way to enumerate another
+ * principal's calendar.
+ */
+function handleMiniAppDataRoutes(
+  deps: GatewayDeps,
+  request: GatewayRequest,
+  segments: string[],
+  at: () => string,
+): GatewayResponse {
+  const { runtime } = deps.services;
+  const principalId = runtime.identity.ownerPrincipalId;
+  const dataDeps = {
+    db: runtime.db,
+    nodeId: runtime.identity.nodeId,
+    dataDir: runtime.dataDir,
+    now: () => at() as never,
+    newId: deps.services.conductor.newId,
+  };
+
+  /* Calendar */
+  if (segments[0] === "calendar" && segments[1] === "events") {
+    if (segments.length === 2) {
+      if (request.method === "GET") {
+        const from = request.query.from;
+        const to = request.query.to;
+        const events = listCalendarEvents(runtime.db, {
+          principalId,
+          ...(from === undefined ? {} : { from }),
+          ...(to === undefined ? {} : { to }),
+        });
+        return json(200, {
+          events: events.map(toEventView),
+          // Stated in the response rather than only in the docs: these are local records, and a
+          // client that assumed a provider sync would be wrong about what it is showing.
+          source: "local",
+        });
+      }
+      if (request.method === "POST") {
+        const parsed = readJson(request);
+        if (!parsed.ok) return parsed.response;
+        const created = createLocalEvent(dataDeps, {
+          principalId,
+          title: parsed.value.title,
+          startsAt: parsed.value.startsAt,
+          endsAt: parsed.value.endsAt,
+          timezone: parsed.value.timezone,
+        });
+        if (!created.ok) return fail(400, created.code, created.message);
+        return json(201, { event: toEventView(created.event) });
+      }
+      return fail(405, "METHOD_NOT_ALLOWED", `${request.method} is not supported on /calendar/events`);
+    }
+
+    const eventId = segments[2];
+    if (eventId === undefined) return fail(400, "INVALID_SCHEMA", "a calendar route must name an event");
+    if (request.method === "PATCH" || request.method === "PUT") {
+      const parsed = readJson(request);
+      if (!parsed.ok) return parsed.response;
+      const existing = listCalendarEvents(runtime.db, { principalId }).find((event) => event.eventId === eventId);
+      if (existing === undefined) return fail(404, "RESOURCE_NOT_FOUND", "that event is not on this calendar");
+      const updated = updateLocalEvent(dataDeps, {
+        principalId,
+        eventId,
+        title: parsed.value.title ?? existing.title,
+        startsAt: parsed.value.startsAt ?? existing.startsAt,
+        endsAt: parsed.value.endsAt ?? existing.endsAt,
+        timezone: parsed.value.timezone ?? existing.timezone,
+      });
+      if (!updated.ok) {
+        return fail(updated.code === "EVENT_NOT_FOUND" ? 404 : 400, updated.code, updated.message);
+      }
+      return json(200, { event: toEventView(updated.event) });
+    }
+    if (request.method === "DELETE") {
+      const removed = removeLocalEvent(dataDeps, { principalId, eventId });
+      if (!removed.ok) return fail(404, removed.code, removed.message);
+      return json(200, { removed: true });
+    }
+    return fail(405, "METHOD_NOT_ALLOWED", `${request.method} is not supported on a calendar event`);
+  }
+
+  /* Images */
+  if (segments[0] === "images") {
+    if (segments.length === 1) {
+      if (request.method === "GET") {
+        return json(200, { images: listLocalImages(runtime.db, principalId).map(toImageView) });
+      }
+      if (request.method === "POST") {
+        const parsed = readJson(request);
+        if (!parsed.ok) return parsed.response;
+        const dataBase64 = typeof parsed.value.dataBase64 === "string" ? parsed.value.dataBase64 : "";
+        if (dataBase64.length === 0) {
+          return fail(400, "INVALID_SCHEMA", "an image import must carry a dataBase64 field");
+        }
+        // Checked before decoding: a 100 MB base64 string should be refused without allocating it.
+        if (dataBase64.length > Math.ceil((MAX_IMAGE_BYTES * 4) / 3) + 1024) {
+          return fail(413, "IMAGE_TOO_LARGE", `an imported image must be at most ${MAX_IMAGE_BYTES} bytes`);
+        }
+        const bytes = Buffer.from(dataBase64, "base64");
+        const imported = importLocalImage(dataDeps, {
+          principalId,
+          bytes,
+          declaredMimeType: typeof parsed.value.mimeType === "string" ? parsed.value.mimeType : "",
+          altText: parsed.value.altText,
+          ...(typeof parsed.value.filename === "string" ? { filename: parsed.value.filename } : {}),
+        });
+        if (!imported.ok) return fail(415, imported.code, imported.message);
+        return json(201, { image: toImageView(imported.image) });
+      }
+      return fail(405, "METHOD_NOT_ALLOWED", `${request.method} is not supported on /images`);
+    }
+
+    const imageId = segments[1];
+    if (imageId === undefined) return fail(400, "INVALID_SCHEMA", "an image route must name an image");
+    const image = getLocalImage(runtime.db, imageId, principalId);
+    if (image === undefined) return fail(404, "RESOURCE_NOT_FOUND", "that image is not on this node");
+
+    if (request.method === "GET") {
+      // The path was written by `importLocalImage` under the node's blob directory. It is checked
+      // anyway: a row edited by hand must not become an arbitrary file read.
+      const blobRoot = resolve(runtime.dataDir, "blobs");
+      const target = resolve(image.blobPath);
+      if (!target.startsWith(`${blobRoot}/`)) {
+        return fail(500, "BLOB_PATH_ESCAPES_ROOT", "the stored image path is outside the blob directory");
+      }
+      let bytes: Uint8Array;
+      try {
+        bytes = readFileSync(target);
+      } catch {
+        // A row whose bytes are gone is a missing image, not a server fault: the client shows its
+        // missing-image fallback and the row stays so the user can see what was there.
+        return fail(410, "BLOB_MISSING", "the stored bytes for that image are no longer on disk");
+      }
+      return {
+        status: 200,
+        body: null,
+        // The content type is the one the host verified from the magic bytes, never the one the
+        // uploader declared.
+        binary: { bytes, contentType: image.mimeType },
+      };
+    }
+    if (request.method === "DELETE") {
+      const removed = removeLocalImage(dataDeps, { principalId, imageId });
+      if (!removed) return fail(404, "RESOURCE_NOT_FOUND", "that image is not on this node");
+      return json(200, { removed: true });
+    }
+    return fail(405, "METHOD_NOT_ALLOWED", `${request.method} is not supported on an image`);
+  }
+
+  return fail(404, "NOT_FOUND", `no handler for ${request.method} ${request.path}`);
+}
+
+function toEventView(event: CalendarEventRecord): Record<string, unknown> {
+  return {
+    eventId: event.eventId,
+    title: event.title,
+    startsAt: event.startsAt,
+    endsAt: event.endsAt,
+    timezone: event.timezone,
+    date: event.localDate,
+    source: "local",
+  };
+}
+
+function toImageView(image: {
+  imageId: string;
+  mimeType: string;
+  byteSize: number;
+  width: number | undefined;
+  height: number | undefined;
+  digest: string;
+  altText: string;
+  createdAt: string;
+}): Record<string, unknown> {
+  return {
+    imageId: image.imageId,
+    mimeType: image.mimeType,
+    byteSize: image.byteSize,
+    width: image.width ?? null,
+    height: image.height ?? null,
+    digest: image.digest,
+    alt: image.altText,
+    createdAt: image.createdAt,
+    /** Where the bytes can be fetched. Opaque: the client never builds a blob path. */
+    url: `/images/${image.imageId}`,
+  };
 }
 
 async function handleConversationRoutes(
@@ -263,6 +500,44 @@ async function handleConversationRoutes(
       return fail(400, "INVALID_SCHEMA", "the `after` cursor must be a non-negative integer");
     }
     return json(200, buildTimeline(services, { conversationId, afterSequence: after }));
+  }
+
+  // /conversations/:id/widgets/:instanceId/composition
+  if (
+    segments.length === 5 &&
+    segments[2] === "widgets" &&
+    segments[4] === "composition" &&
+    request.method === "GET"
+  ) {
+    const instanceId = segments[3] ?? "";
+    const principalId = runtime.identity.ownerPrincipalId;
+    const composition = findCompositionByInstance(runtime.db, instanceId, principalId);
+    if (composition === undefined) {
+      return fail(404, "RESOURCE_NOT_FOUND", "that instance has no composition on this node");
+    }
+    const spec = surfaceCompositionSpecSchema.parse(composition);
+    // The bundle is read through the snapshot the message referenced, so a composition without a
+    // captured snapshot answers with the spec alone and the client falls back to text.
+    const snapshot = oneRow<{ snapshot_id: string }>(
+      runtime.db,
+      "SELECT snapshot_id FROM widget_snapshots WHERE instance_id = ? ORDER BY captured_at DESC LIMIT 1",
+      instanceId,
+    );
+    const bundle =
+      snapshot === undefined ? undefined : findBundleForSnapshot(runtime.db, snapshot.snapshot_id, principalId);
+    if (bundle !== undefined && bundle.instanceId !== instanceId) {
+      // A bundle that names a different instance is a malformed ownership relation, not a bundle.
+      return fail(409, "OWNERSHIP_MISMATCH", "the stored bundle does not belong to this instance");
+    }
+    return json(200, {
+      compositionId: spec.compositionId,
+      spec,
+      bundleRef: bundle?.bundleId ?? null,
+      tombstone: bundle?.tombstone ?? null,
+      sections: bundle?.sections ?? [],
+      capturedAt: bundle?.capturedAt ?? null,
+      byteSize: bundle?.byteSize ?? 0,
+    });
   }
 
   // /conversations/:id/pins

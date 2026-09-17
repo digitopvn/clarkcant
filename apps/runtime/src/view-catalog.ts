@@ -13,10 +13,7 @@
  * so a large result set never enters the conversation transcript.
  */
 
-import { createHash } from "node:crypto";
-
 import {
-  type WidgetDefinition,
   type WidgetInstance,
   type WidgetSnapshot,
 } from "@clarkcant/contracts";
@@ -26,27 +23,9 @@ import {
   createInstance,
 } from "@clarkcant/core";
 import { WIDGETS as CATALOG_WIDGETS } from "@clarkcant/data-canvas";
+import { definitionDigest } from "@clarkcant/widget-host";
 
 import type { ViewDescriptor } from "./model-turn.ts";
-
-/**
- * A digest of the exact definition an instance was created against.
- *
- * Instances record this because a widget's meaning is its schema, so an instance created under one
- * props schema and rendered under another is a different thing wearing the same name. Hashing the
- * canonical JSON is enough to notice that, and it is computed rather than hand-maintained because
- * a pinned digest that nobody updates is a digest that stops being true.
- */
-function digestOf(definition: WidgetDefinition): string {
-  const canonical = {
-    id: definition.id,
-    version: definition.version,
-    propsSchema: definition.propsSchema,
-    stateSchema: definition.stateSchema ?? null,
-    stateVersion: definition.stateVersion ?? 0,
-  };
-  return `sha256:${createHash("sha256").update(JSON.stringify(canonical)).digest("hex")}`;
-}
 
 /**
  * Build the catalog, or nothing when this node holds no widget definitions.
@@ -74,7 +53,7 @@ export function buildViewCatalog(deps: WidgetDeps): ViewDescriptor[] {
     build: ({ props, caption, principal, messageId }) => {
       const instance: WidgetInstance = createInstance(deps, {
         definition,
-        packageDigest: digestOf(definition),
+        packageDigest: definitionDigest(definition),
         ownerPrincipalId: principal.principalId,
         props,
       });

@@ -53,6 +53,65 @@ export interface ResolvedDataset {
   document: { rows: Record<string, unknown>[] };
 }
 
+/** The stored composition a composed surface renders from, plus the bundle captured with it. */
+export interface CompositionResponse {
+  compositionId: string;
+  spec: {
+    schemaVersion: number;
+    compositionId: string;
+    instanceId: string;
+    templateId: string;
+    templateVersion: string;
+    catalogDigest: string;
+    sections: {
+      sectionId: string;
+      slot: string;
+      definitionRef: { id: string; version: string; digest: string };
+      props: Record<string, unknown>;
+      dataRefs: string[];
+      textAlternative: string;
+    }[];
+    initialState: { period: "week" | "month"; selectedDate?: string; timezone: string };
+    actions: { actionBindingId: string; sectionId: string; label: string; kind: string; effectCategory: string }[];
+    provenance: { createdAt: string };
+  };
+  bundleRef: string | null;
+  tombstone: { reason: string; at: string } | null;
+  sections: {
+    sectionId: string;
+    slot: string;
+    definitionRef: { id: string; version: string; digest: string };
+    props: Record<string, unknown>;
+    dataRefs: string[];
+    rows?: Record<string, unknown>[];
+    textAlternative: string;
+  }[];
+  capturedAt: string | null;
+  byteSize: number;
+}
+
+export interface CalendarEventView {
+  eventId: string;
+  title: string;
+  startsAt: string;
+  endsAt: string;
+  timezone: string;
+  date: string;
+  source: "local";
+}
+
+export interface ImageView {
+  imageId: string;
+  mimeType: string;
+  byteSize: number;
+  width: number | null;
+  height: number | null;
+  digest: string;
+  alt: string;
+  createdAt: string;
+  url: string;
+}
+
 export class GatewayError extends Error {
   readonly status: number;
   readonly code: string;
@@ -178,5 +237,72 @@ export class GatewayClient {
   }
 
   capabilities(): Promise<{ capabilities: { ref: string; summary: string; usable: boolean; blockedReason?: string }[] }> {    return this.#call("GET", "/capabilities");
+  }
+
+  /**
+   * The stored composition and the bundle captured with it.
+   *
+   * The snapshot's rows travel here rather than through the message, so the transcript keeps its
+   * size while history stays exactly what the user saw.
+   */
+  composition(conversationId: string, instanceId: string): Promise<CompositionResponse> {
+    return this.#call("GET", `/conversations/${conversationId}/widgets/${instanceId}/composition`);
+  }
+
+  /* Local calendar. Local records only: these routes never reach a provider. */
+
+  calendarEvents(options: { from?: string; to?: string } = {}): Promise<{ events: CalendarEventView[]; source: "local" }> {
+    const query = new URLSearchParams();
+    if (options.from !== undefined) query.set("from", options.from);
+    if (options.to !== undefined) query.set("to", options.to);
+    const suffix = query.toString() === "" ? "" : `?${query.toString()}`;
+    return this.#call("GET", `/calendar/events${suffix}`);
+  }
+
+  createEvent(input: { title: string; startsAt: string; endsAt: string; timezone: string }): Promise<{ event: CalendarEventView }> {
+    return this.#call("POST", "/calendar/events", input);
+  }
+
+  updateEvent(
+    eventId: string,
+    input: { title?: string; startsAt?: string; endsAt?: string; timezone?: string },
+  ): Promise<{ event: CalendarEventView }> {
+    return this.#call("PATCH", `/calendar/events/${eventId}`, input);
+  }
+
+  deleteEvent(eventId: string): Promise<{ removed: boolean }> {
+    return this.#call("DELETE", `/calendar/events/${eventId}`);
+  }
+
+  /* Imported images. */
+
+  images(): Promise<{ images: ImageView[] }> {
+    return this.#call("GET", "/images");
+  }
+
+  importImage(input: { dataBase64: string; mimeType: string; altText: string }): Promise<{ image: ImageView }> {
+    return this.#call("POST", "/images", input);
+  }
+
+  deleteImage(imageId: string): Promise<{ removed: boolean }> {
+    return this.#call("DELETE", `/images/${imageId}`);
+  }
+
+  /**
+   * Fetch an imported image's bytes and return an object URL for it.
+   *
+   * An `<img src="/images/x">` cannot carry the bearer token, so the bytes are fetched through the
+   * authenticated client and handed to the DOM as a blob URL. The caller owns the URL and must
+   * revoke it; the runtime is the only thing that ever sees the token.
+   */
+  async imageObjectUrl(imageId: string): Promise<string> {
+    const response = await this.#fetch(`${this.#baseUrl}/images/${imageId}`, {
+      headers: { authorization: `Bearer ${this.#token}` },
+    });
+    if (!response.ok) {
+      throw new GatewayError(response.status, "IMAGE_UNAVAILABLE", "that image could not be read");
+    }
+    const blob = await response.blob();
+    return URL.createObjectURL(blob);
   }
 }

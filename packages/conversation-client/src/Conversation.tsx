@@ -1,6 +1,6 @@
 import { type ReactElement, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-import type { GatewayClient, ResolvedDataset, Timeline } from "./api.ts";
+import type { CompositionResponse, GatewayClient, ResolvedDataset, Timeline } from "./api.ts";
 import { renderBlock } from "./blocks.tsx";
 import {
   applyResolvedTheme,
@@ -15,6 +15,7 @@ import type { ThemeName } from "@clarkcant/design-tokens";
 import { Orb } from "./Orb.tsx";
 import { SettingsPanel } from "./SettingsPanel.tsx";
 import { resolveRenderer, toRendererDataset } from "./renderers.tsx";
+import { MiniAppSurface, type CompositeSurfaceView, type SurfaceIntent } from "./mini-app-surface.tsx";
 
 /**
  * Conversation surface.
@@ -81,6 +82,23 @@ export function Conversation({
   const [conversationId, setConversationId] = useState<string | undefined>(initialConversationId);
   const [timeline, setTimeline] = useState<Timeline | undefined>(undefined);
   const [datasets, setDatasets] = useState<Record<string, ResolvedDataset>>({});
+  /**
+   * Stored compositions, keyed by instance.
+   *
+   * Fetched once per surface and kept: the spec and the captured rows are immutable, so re-reading
+   * them on every render would be a request per keystroke for data that cannot have changed.
+   */
+  const [compositions, setCompositions] = useState<Record<string, CompositionResponse>>({});
+  /** Object URLs for imported images, keyed by image id. Revoked when the surface goes away. */
+  const [imageUrls, setImageUrls] = useState<Record<string, string>>({});
+  /**
+   * The last interaction a composed surface reported, per instance.
+   *
+   * Phase 3 renders and reports; Phase 4 adds the authorized transport that turns one of these
+   * into a durable effect. Keeping the intent visible in the DOM means the behaviour can be
+   * asserted now rather than after the transport lands.
+   */
+  const [lastIntent, setLastIntent] = useState<{ instanceId: string; intent: SurfaceIntent } | undefined>(undefined);
   const [connection, setConnection] = useState<ConnectionState>("connecting");
   const [draft, setDraft] = useState("");
   const [busy, setBusy] = useState(false);
@@ -207,6 +225,73 @@ export function Conversation({
     };
   }, [client, datasetRefs, datasets]);
 
+  const instanceById = useMemo(() => {
+    const map = new Map<string, Timeline["instances"][number]>();
+    for (const instance of timeline?.instances ?? []) map.set(instance.instanceId, instance);
+    return map;
+  }, [timeline]);
+
+  /* Resolve the stored composition behind every composed surface in the timeline. */
+  const composedInstanceIds = useMemo(() => {
+    const ids: string[] = [];
+    for (const block of blocksOf(timeline)) {
+      if (block.type !== "surface") continue;
+      const snapshot = (block.snapshot ?? {}) as Record<string, unknown>;
+      const definitionRef = (block.definitionRef ?? {}) as Record<string, unknown>;
+      const instanceId = typeof snapshot.instanceId === "string" ? snapshot.instanceId : undefined;
+      if (instanceId === undefined) continue;
+      const definitionId = typeof definitionRef.id === "string" ? definitionRef.id : instanceById.get(instanceId)?.definitionId ?? "";
+      if (definitionId === "canvas.overview@1") ids.push(instanceId);
+    }
+    return ids;
+  }, [instanceById, timeline]);
+
+  useEffect(() => {
+    if (conversationId === undefined) return;
+    for (const instanceId of composedInstanceIds) {
+      if (compositions[instanceId] !== undefined) continue;
+      void client
+        .composition(conversationId, instanceId)
+        .then((loaded) => setCompositions((current) => ({ ...current, [instanceId]: loaded })))
+        .catch(() => {
+          // A composition that cannot be read is not an error state for the conversation: the
+          // surface falls back to the message's text alternative, which is what history keeps.
+        });
+    }
+  }, [client, composedInstanceIds, compositions, conversationId]);
+
+  /* Fetch the bytes of every imported image a rendered composition references. */
+  const imageRefs = useMemo(() => {
+    const refs = new Set<string>();
+    for (const composition of Object.values(compositions)) {
+      for (const section of composition.sections) {
+        const ref = section.props.imageRef;
+        if (typeof ref === "string" && ref !== "") refs.add(ref);
+      }
+    }
+    return [...refs];
+  }, [compositions]);
+
+  useEffect(() => {
+    let cancelled = false;
+    for (const imageId of imageRefs) {
+      if (imageUrls[imageId] !== undefined) continue;
+      void client
+        .imageObjectUrl(imageId)
+        .then((url) => {
+          if (cancelled) {
+            URL.revokeObjectURL(url);
+            return;
+          }
+          setImageUrls((current) => ({ ...current, [imageId]: url }));
+        })
+        .catch(() => undefined);
+    }
+    return () => {
+      cancelled = true;
+    };
+  }, [client, imageRefs, imageUrls]);
+
   useEffect(() => {
     const node = scroller.current;
     if (node) node.scrollTop = node.scrollHeight;
@@ -257,17 +342,13 @@ export function Conversation({
     setConversationId(undefined);
     setTimeline(undefined);
     setDatasets({});
+    setCompositions({});
+    setLastIntent(undefined);
     setDraft("");
     setError(undefined);
     setBusy(false);
     onSessionReset?.();
   }, [onSessionReset]);
-
-  const instanceById = useMemo(() => {
-    const map = new Map<string, Timeline["instances"][number]>();
-    for (const instance of timeline?.instances ?? []) map.set(instance.instanceId, instance);
-    return map;
-  }, [timeline]);
 
   const renderSurface = useCallback(
     (input: { instanceId: string | undefined; definitionId: string; textAlternative: string; revision: number }): ReactElement => {
@@ -281,6 +362,35 @@ export function Conversation({
         return (
           <div className="cc-card cc-freshness" data-widget-fallback="true" style={{ padding: "var(--cc-space-md)" }}>
             {input.textAlternative}
+          </div>
+        );
+      }
+
+      const composition = compositions[instance.instanceId];
+      if (definitionId === "canvas.overview@1" && composition !== undefined) {
+        return (
+          <div data-widget-instance={instance.instanceId} data-widget-definition={definitionId} data-last-intent={lastIntent?.instanceId === instance.instanceId ? lastIntent.intent.action : ""}>
+            <MiniAppSurface
+              view={toSurfaceView(composition, instance.revision, datasets)}
+              title={typeof instance.props.title === "string" ? instance.props.title : undefined}
+              imageUrl={(ref) => imageUrls[ref]}
+              onIntent={(intent) => setLastIntent({ instanceId: instance.instanceId, intent })}
+            />
+            {conversationId !== undefined && (
+              <button
+                className="cc-icon-btn"
+                style={{ width: "auto", padding: "0 var(--cc-space-sm)", marginTop: "var(--cc-space-xs)" }}
+                data-pin-instance={instance.instanceId}
+                onClick={() => {
+                  void client
+                    .pin(conversationId, instance.instanceId)
+                    .then((result) => applyTimeline(result.timeline))
+                    .catch((cause: unknown) => setError(cause instanceof Error ? cause.message : String(cause)));
+                }}
+              >
+                Ghim lại
+              </button>
+            )}
           </div>
         );
       }
@@ -319,7 +429,7 @@ export function Conversation({
         </div>
       );
     },
-    [applyTimeline, client, conversationId, datasets, instanceById],
+    [applyTimeline, client, compositions, conversationId, datasets, imageUrls, instanceById, lastIntent],
   );
 
   const blocks = timeline?.messages ?? [];
@@ -486,4 +596,72 @@ export function Conversation({
       />
     </div>
   );
+}
+
+/**
+ * Every block in a timeline, flattened.
+ *
+ * A small helper rather than two nested loops in each caller: the composition effect and the
+ * dataset effect both need the same walk, and writing it twice is how the two drift into
+ * disagreeing about which blocks count.
+ */
+function blocksOf(timeline: Timeline | undefined): Record<string, unknown>[] {
+  const blocks: Record<string, unknown>[] = [];
+  for (const message of timeline?.messages ?? []) {
+    for (const block of message.blocks ?? []) blocks.push(block);
+  }
+  return blocks;
+}
+
+/**
+ * Turn a stored composition into what the surface renders.
+ *
+ * Region availability is decided here, from evidence: rows in the bundle mean live data, a
+ * resolvable dataset reference means a live read, and neither means the region is genuinely empty.
+ * A region is never filled with the last known rows after a failed read.
+ */
+function toSurfaceView(
+  composition: CompositionResponse,
+  revision: number,
+  datasets: Record<string, ResolvedDataset>,
+): CompositeSurfaceView {
+  const captured = new Map(composition.sections.map((section) => [section.sectionId, section]));
+  const availability: Record<string, "live" | "cached" | "missing"> = {};
+  const sections = composition.spec.sections.map((section) => {
+    const materialised = captured.get(section.sectionId);
+    const rows =
+      materialised?.rows ??
+      section.dataRefs
+        .map((ref) => datasets[ref]?.document.rows)
+        .find((candidate): candidate is Record<string, unknown>[] => Array.isArray(candidate));
+    availability[section.sectionId] = rows === undefined ? "missing" : "live";
+    return {
+      sectionId: section.sectionId,
+      slot: section.slot as CompositeSurfaceView["sections"][number]["slot"],
+      definitionRef: section.definitionRef,
+      props: section.props,
+      dataRefs: section.dataRefs,
+      ...(rows === undefined ? {} : { rows }),
+      textAlternative: section.textAlternative,
+    };
+  });
+
+  return {
+    compositionId: composition.compositionId,
+    instanceId: composition.spec.instanceId,
+    catalogDigest: composition.spec.catalogDigest,
+    initialState: composition.spec.initialState,
+    actions: composition.spec.actions.map((action) => ({
+      actionBindingId: action.actionBindingId,
+      sectionId: action.sectionId,
+      label: action.label,
+      kind: action.kind as CompositeSurfaceView["actions"][number]["kind"],
+      effectCategory: action.effectCategory,
+    })),
+    sections,
+    revision,
+    ...(composition.capturedAt === null ? {} : { capturedAt: composition.capturedAt }),
+    tombstone: composition.tombstone,
+    availability,
+  };
 }

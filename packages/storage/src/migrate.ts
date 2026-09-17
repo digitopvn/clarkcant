@@ -713,6 +713,20 @@ export const MIGRATIONS: readonly Migration[] = [
       `);
     },
   },
+  {
+    version: 11,
+    name: "dataset-principal-scope",
+    reversible: true,
+    up: (db) => {
+      db.exec(`
+        -- Datasets the node registered for itself (the sample) are node-scoped and leave this NULL.
+        -- A dataset derived for one person's composed surface names them, so a reference that leaks
+        -- into another principal's page resolves to nothing rather than to someone else's rows.
+        ALTER TABLE datasets ADD COLUMN owner_principal_id TEXT;
+        CREATE INDEX idx_datasets_owner ON datasets(owner_principal_id, updated_at);
+      `);
+    },
+  },
 ];
 
 export interface MigrationResult {

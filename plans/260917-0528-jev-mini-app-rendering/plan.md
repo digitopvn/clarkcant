@@ -89,7 +89,7 @@ Cột **Lane** đánh dấu nhóm có thể chạy song song (file ownership tá
 |---|-------|--------|---------|------|--------|
 | 1 | [Composition và snapshot contracts](./phase-01-start.md) | 3h | — | **S0** (serial, chạy trước) | Done |
 | 2 | [Jev selector server-side](./phase-02-jev-selector.md) | 2h | 1, exact-model gate | **L1** ∥ | Done |
-| 3 | [Local data và composite catalog](./phase-03-local-data-and-catalog.md) | 5h | 1 | **L2** ∥ | Pending |
+| 3 | [Local data và composite catalog](./phase-03-local-data-and-catalog.md) | 5h | 1 | **L2** ∥ | Done |
 | 7 | [Durable session history](./phase-07-durable-session-history.md) | 2h | 1 | **L3** ∥ | Pending (P2) |
 | 4 | [Snapshot, live ownership và actions](./phase-04-snapshot-live-actions.md) | 4h | 3 | L2 (tiếp) | Pending |
 | 8 | [FTS5 retrieval + temporal parser + baseline đo](./phase-08-fts5-retrieval.md) | 3h | 7 | L3 (tiếp) ∥ với 4 | Pending (P2) |

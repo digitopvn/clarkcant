@@ -9,9 +9,15 @@ import {
   registerCapability,
 } from "@clarkcant/core";
 import { conversationMetadata, listActiveTasks, messagesSince, upsertDataset } from "@clarkcant/storage";
+import { FAMILY_BY_DEFINITION, WIDGETS as CATALOG_WIDGETS } from "@clarkcant/data-canvas";
 import { QUICK_PLAY_RECIPES, SAMPLE_DATASET } from "@clarkcant/data-canvas/sample";
 import { CAPABILITIES as PROJECT_WORK_CAPABILITIES } from "@clarkcant/project-work";
-import { validateProps } from "@clarkcant/widget-host";
+import {
+  CatalogRegistry,
+  missingCompositionFamilies,
+  registerCatalog,
+  validateProps,
+} from "@clarkcant/widget-host";
 
 import { type NodeModelInfo, type Runtime, type RuntimeOptions, bootRuntime } from "./node.ts";
 import {
@@ -43,6 +49,15 @@ export interface NodeServices {
   model: NodeModelInfo | null;
   /** The selector, its wiring, and the counters a test or the health route can read. */
   jev: JevRuntime;
+  /**
+   * The catalog this node can actually draw.
+   *
+   * Registered with families so coverage can be checked against what a composed surface needs,
+   * rather than discovered by a user looking at a region that never rendered.
+   */
+  catalog: CatalogRegistry;
+  /** Required families this catalog cannot draw yet. Empty on a complete node. */
+  missingFamilies: string[];
   /** Runtime description surfaced by the health route. Contains no node identity. */
   describe: () => { node: string; platform: string; arch: string };
 }
@@ -122,6 +137,10 @@ export function bootNodeServices(options: RuntimeOptions): NodeServices {
   const runtime = bootRuntime(options);
   const nodeId = runtime.identity.nodeId;
   const jevRuntime = buildJevRuntime(options);
+  const catalog = registerCatalog(
+    new CatalogRegistry(),
+    CATALOG_WIDGETS.map((definition) => ({ definition, family: FAMILY_BY_DEFINITION[definition.id] ?? "unknown" })),
+  );
 
   // A capability is registered so the conductor can park a task on it honestly, but it
   // starts not-installed: no worker has loaded it yet.
@@ -178,6 +197,8 @@ export function bootNodeServices(options: RuntimeOptions): NodeServices {
     conductor,
     model: options.model ?? null,
     jev: jevRuntime,
+    catalog,
+    missingFamilies: missingCompositionFamilies(catalog),
     describe: () => ({ node: process.version, platform: process.platform, arch: process.arch }),
   };
 }

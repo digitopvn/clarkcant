@@ -892,16 +892,22 @@ export function upsertDataset(
     freshness: DatasetView["freshness"];
     updatedAt: Instant;
     document: unknown;
+    /**
+     * Whose data this is. Omitted means node-scoped, which is what the built-in sample is and
+     * what a dataset registered for the node itself would be.
+     */
+    ownerPrincipalId?: string;
   },
 ): void {
   db.prepare(
-    `INSERT INTO datasets (dataset_id, origin_node_id, row_count, freshness, updated_at, document)
-     VALUES (?, ?, ?, ?, ?, ?)
+    `INSERT INTO datasets (dataset_id, origin_node_id, row_count, freshness, updated_at, document, owner_principal_id)
+     VALUES (?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT(dataset_id) DO UPDATE SET
        row_count = excluded.row_count,
        freshness = excluded.freshness,
        updated_at = excluded.updated_at,
-       document = excluded.document`,
+       document = excluded.document,
+       owner_principal_id = excluded.owner_principal_id`,
   ).run(
     input.datasetId,
     input.originNodeId,
@@ -909,7 +915,44 @@ export function upsertDataset(
     input.freshness,
     input.updatedAt,
     toJson(input.document),
+    input.ownerPrincipalId ?? null,
   );
+}
+
+/**
+ * Read a dataset for one principal.
+ *
+ * Node-scoped datasets (owner NULL) are readable by anyone on the node; a dataset derived for one
+ * person is readable only by them. The filter lives in the query rather than in a caller check,
+ * because the caller that forgets it is the one that returns somebody else's rows.
+ */
+export function getDatasetForPrincipal(
+  db: Database,
+  datasetId: string,
+  principalId: string,
+): DatasetView | undefined {
+  const row = oneRow<{ owner_principal_id: string | null }>(
+    db,
+    "SELECT owner_principal_id FROM datasets WHERE dataset_id = ?",
+    datasetId,
+  );
+  if (row === undefined) return undefined;
+  if (row.owner_principal_id !== null && row.owner_principal_id !== principalId) return undefined;
+  return getDataset(db, datasetId);
+}
+
+/** Datasets this principal owns, newest first. Used to clean up derived views. */
+export function listDatasetsForPrincipal(db: Database, principalId: string, limit = 50): DatasetView[] {
+  const rows = allRows<{ dataset_id: string }>(
+    db,
+    "SELECT dataset_id FROM datasets WHERE owner_principal_id = ? ORDER BY updated_at DESC LIMIT ?",
+    principalId,
+    limit,
+  );
+  return rows.flatMap((row) => {
+    const dataset = getDataset(db, row.dataset_id);
+    return dataset === undefined ? [] : [dataset];
+  });
 }
 
 export function getDataset(db: Database, datasetId: string): DatasetView | undefined {

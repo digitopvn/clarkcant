@@ -152,15 +152,31 @@ async function main(): Promise<void> {
         };
       }
 
-      response.writeHead(result.status, {
+      const headers: Record<string, string> = {
         "content-type": "application/json",
         // The browser client is served from a different origin during development, and the
         // gateway is token-authenticated rather than cookie-authenticated, so a wildcard
         // origin here grants nothing a caller does not already need the token for.
         "access-control-allow-origin": "*",
         "access-control-allow-headers": "authorization, content-type",
-        "access-control-allow-methods": "GET, POST, DELETE, OPTIONS",
-      });
+        "access-control-allow-methods": "GET, POST, PATCH, DELETE, OPTIONS",
+      };
+
+      // Imported images are served as their own bytes under the content type the host verified
+      // from the file's magic bytes, rather than wrapped in a JSON envelope the client would have
+      // to decode and re-type.
+      if (result.binary !== undefined) {
+        headers["content-type"] = result.binary.contentType;
+        headers["content-length"] = String(result.binary.bytes.byteLength);
+        // Private: an image URL is authorized by a token, and a shared cache in front of a node
+        // must not hand one principal's image to another.
+        headers["cache-control"] = "private, max-age=300";
+        response.writeHead(result.status, headers);
+        response.end(Buffer.from(result.binary.bytes));
+        return;
+      }
+
+      response.writeHead(result.status, headers);
       response.end(`${JSON.stringify(result.body)}\n`);
     });
   });
