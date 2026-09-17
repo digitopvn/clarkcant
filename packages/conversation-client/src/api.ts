@@ -59,6 +59,32 @@ export interface SnapshotPresentationResponse {
   catalogDigest?: string;
 }
 
+/**
+ * What a start-session request produced.
+ *
+ * `needs-path` is the case the plan asks about by name: nothing matched, so the user is asked for a
+ * directory and the answer is a path. `clarify` is the other question — several directories could be
+ * meant — and its options are what the user chooses between.
+ */
+export type StartSessionResponse =
+  | {
+      status: "started";
+      projectName: string;
+      relPath: string;
+      mode: string;
+      sessionId: string;
+      sessionFile: string | null;
+      messageId: string;
+      timeline: Timeline;
+    }
+  | {
+      status: "clarify" | "needs-path";
+      question: string;
+      options: string[];
+      messageId: string;
+      timeline: Timeline;
+    };
+
 export interface ActionInvocationResult {
   duplicate: boolean;
   instanceId: string;
@@ -361,6 +387,17 @@ export class GatewayClient {
   }
 
   /** The immutable presentation a message captured. Never carries an action binding. */
+  /**
+   * Ask the node to start a worker session in a directory it found.
+   *
+   * The text is the user's own words. A node that cannot tell which directory is meant answers with a
+   * question instead of starting one, and a node that was given a path it cannot use says which of the
+   * two reasons applies — which is why the outcome is reported rather than assumed to be success.
+   */
+  startSession(conversationId: string, text: string): Promise<StartSessionResponse> {
+    return this.#call("POST", `/conversations/${conversationId}/start-session`, { text });
+  }
+
   snapshotPresentation(conversationId: string, snapshotId: string): Promise<SnapshotPresentationResponse> {
     return this.#call("GET", `/conversations/${conversationId}/snapshots/${snapshotId}/presentation`);
   }

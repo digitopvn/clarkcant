@@ -110,6 +110,20 @@ export function Conversation({
   const [error, setError] = useState<string | undefined>(undefined);
   const [uiCheckOpen, setUiCheckOpen] = useState(false);
   /**
+   * Starting a worker session in a directory the node chose.
+   *
+   * The node answers this request in three ways and the third one is the reason the state is here:
+   * `started`, `clarify` (several directories could be meant) and `needs-path` (nothing matched, so
+   * the user is asked for a directory). A control that only rendered success would leave the question
+   * on screen with nowhere to answer it, which is what made this flow unreachable before.
+   */
+  const [sessionOpen, setSessionOpen] = useState(false);
+  const [sessionText, setSessionText] = useState("");
+  const [sessionAsk, setSessionAsk] = useState<"none" | "clarify" | "needs-path">("none");
+  const [sessionOptions, setSessionOptions] = useState<string[]>([]);
+  const [sessionNotice, setSessionNotice] = useState<{ kind: string; text: string } | undefined>(undefined);
+  const [sessionBusy, setSessionBusy] = useState(false);
+  /**
    * Which session the interface is showing.
    *
    * Incremented by a restart, and captured by anything that is about to write a result back. A
@@ -180,6 +194,50 @@ export function Conversation({
       onTimelineChange?.(next);
     },
     [onTimelineChange],
+  );
+
+  /**
+   * Ask the node for a session in a project, and render whatever it answers.
+   *
+   * A path the user types is the answer to the node's own question, so it is sent as the request's
+   * text — the node reads a path from the user's words and never goes looking for one.
+   */
+  const openProjectSession = useCallback(
+    async (text: string) => {
+      const trimmed = text.trim();
+      if (trimmed === "" || sessionBusy) return;
+      setSessionBusy(true);
+      setSessionNotice(undefined);
+      setSessionOptions([]);
+      try {
+        const target = conversationId ?? (await client.createConversation("Conversation")).conversationId;
+        if (conversationId === undefined) {
+          setConversationId(target);
+          onConversationReady?.(target);
+        }
+        const result = await client.startSession(target, trimmed);
+        applyTimeline(result.timeline);
+        if (result.status === "started") {
+          setSessionAsk("none");
+          setSessionText("");
+          setSessionNotice({
+            kind: "started",
+            text: `Đã mở phiên làm việc trong ${result.projectName} (${result.relPath}).`,
+          });
+        } else {
+          // One question, and the input stays open so the answer has somewhere to go.
+          setSessionAsk(result.status);
+          setSessionText("");
+          setSessionOptions(result.options);
+          setSessionNotice({ kind: result.status, text: result.question });
+        }
+      } catch (cause) {
+        setSessionNotice({ kind: "error", text: cause instanceof Error ? cause.message : String(cause) });
+      } finally {
+        setSessionBusy(false);
+      }
+    },
+    [applyTimeline, client, conversationId, onConversationReady, sessionBusy],
   );
 
   /* Load any existing conversation once, so a reload is not a new conversation. */
@@ -611,6 +669,74 @@ export function Conversation({
           })}
         </div>
       )}
+
+      {/*
+        Starting a session in a directory. It sits above the composer because it is a different kind
+        of action from sending a message: it opens a workspace, and the answer to it may be a
+        question the user has to answer with a path.
+      */}
+      <div className="cc-session" data-start-session="true">
+        <button
+          type="button"
+          className="cc-chip"
+          data-start-session-toggle="true"
+          aria-expanded={sessionOpen}
+          onClick={() => setSessionOpen((open) => !open)}
+        >
+          Mở phiên trong dự án
+        </button>
+        {sessionOpen && (
+          <form
+            className="cc-session-form"
+            data-start-session-form="true"
+            onSubmit={(event) => {
+              event.preventDefault();
+              void openProjectSession(sessionText);
+            }}
+          >
+            <input
+              className="cc-session-input"
+              data-start-session-input="true"
+              aria-label={sessionAsk === "needs-path" ? "Đường dẫn thư mục" : "Tên dự án"}
+              placeholder={sessionAsk === "needs-path" ? "/đường/dẫn/đến/thư-mục" : "tên dự án, hoặc đường dẫn"}
+              value={sessionText}
+              onChange={(event) => setSessionText(event.target.value)}
+            />
+            <button
+              type="submit"
+              className="cc-icon-btn"
+              style={{ width: "auto", padding: "0 var(--cc-space-sm)" }}
+              data-start-session-submit="true"
+              disabled={sessionBusy}
+            >
+              {sessionBusy ? "Đang mở…" : "Mở"}
+            </button>
+          </form>
+        )}
+        {sessionOptions.length > 0 && (
+          <div className="cc-session-options">
+            {sessionOptions.map((option) => (
+              <button
+                key={option}
+                type="button"
+                className="cc-chip"
+                data-start-session-option={option}
+                onClick={() => {
+                  setSessionText(option);
+                  void openProjectSession(option);
+                }}
+              >
+                {option}
+              </button>
+            ))}
+          </div>
+        )}
+        {sessionNotice !== undefined && (
+          <p className="cc-freshness" data-start-session-status={sessionNotice.kind}>
+            {sessionNotice.text}
+          </p>
+        )}
+      </div>
 
       <div className="cc-composer-wrap">
         <form

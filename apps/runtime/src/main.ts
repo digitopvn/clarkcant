@@ -27,6 +27,7 @@ import { createFindRuntimeTool } from "./runtime-candidates.ts";
 import { createSearchHistoryTool } from "./session-search.ts";
 import { registerSessionFile, sessionsDirectory } from "./session-store.ts";
 import { bootNodeServices, type NodeServices } from "./services.ts";
+import type { ProjectSessionStarter } from "./project-session.ts";
 
 interface CliOptions {
   dataDir: string;
@@ -129,6 +130,27 @@ async function main(): Promise<void> {
     };
   };
 
+  /**
+   * A session starter that starts nothing.
+   *
+   * The same reason the model and voice fixtures exist: the flow that starts a session in a chosen
+   * directory has a browser half, and proving it must not spawn a worker process — which would need a
+   * provider, a longer wait than any test should take, and would leave a session behind on the machine
+   * running the suite. It answers the shape the gateway expects and says out loud that it is a fixture.
+   */
+  const sessionFixture = process.env.CC_SESSION_FIXTURE === "1";
+  const fixtureProjectSessions = (): ProjectSessionStarter => {
+    let started = 0;
+    return {
+      available: () => ({ available: true }),
+      start: async (input) => {
+        started += 1;
+        void input;
+        return { sessionId: `sess_fixture_${started}`, sessionFile: undefined };
+      },
+    };
+  };
+
   const modelTurn = await createModelTurn({
     env: process.env,
     cwd: process.cwd(),
@@ -178,6 +200,7 @@ async function main(): Promise<void> {
     // The fixture is a composer rather than a model: it never displaces the model turn, and the
     // recipes still answer everything it declines.
     ...(modelFixture ? { composeFromIntent: fixtureCompose } : {}),
+    ...(sessionFixture ? { projectSessions: fixtureProjectSessions() } : {}),
     ...(modelTurn === undefined
       ? {}
       : {
@@ -194,6 +217,12 @@ async function main(): Promise<void> {
   sessionWiring.principalId = services.runtime.identity.ownerPrincipalId;
   searchWiring.deps = services.search;
   modelWiring.compose = services.compose;
+
+  if (sessionFixture) {
+    process.stderr.write(
+      "project sessions: FIXTURE starter loaded — a session is reported, and no worker is spawned\n",
+    );
+  }
 
   if (modelFixture) {
     // Said out loud, because a fixture that is indistinguishable from a model is worse than no

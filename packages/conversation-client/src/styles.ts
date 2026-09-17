@@ -204,6 +204,27 @@ button.cc-badge:hover, .cc-badge[role="button"]:hover { color: var(--cc-text); b
 
 /* Composer */
 .cc-composer-wrap { padding: var(--cc-space-md) var(--cc-space-lg) var(--cc-space-lg); border-top: 1px solid var(--cc-border); }
+/* Starting a session in a project: a chip that opens one row of input, never a second screen. */
+.cc-session {
+  display: flex;
+  flex-direction: column;
+  gap: var(--cc-space-xs);
+  align-items: flex-start;
+  padding: var(--cc-space-sm) var(--cc-space-lg) 0;
+}
+.cc-session-form { display: flex; gap: var(--cc-space-xs); align-items: center; width: 100%; }
+.cc-session-input {
+  flex: 1;
+  min-width: 0;
+  font: inherit;
+  padding: var(--cc-space-xs) var(--cc-space-sm);
+  border: 1px solid var(--cc-border);
+  border-radius: var(--cc-radius-sm);
+  background: var(--cc-surface);
+  color: var(--cc-text);
+}
+.cc-session-input:focus-visible { outline: 2px solid var(--cc-focus); outline-offset: 2px; }
+.cc-session-options { display: flex; gap: var(--cc-space-xs); flex-wrap: wrap; }
 .cc-composer {
   /* Deliberately wider than the column above it, so the input a message is typed into reads as
      the control it is rather than as one more line of the transcript. */

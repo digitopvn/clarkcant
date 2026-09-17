@@ -68,7 +68,10 @@ export default defineConfig({
       // surface can only be produced by a turn, so without it the browser path that renders one could
       // never be exercised in CI; and a checked-out `.env` with provider keys in it must not turn
       // every local e2e run into a paid provider call.
-      command: `CC_VOICE_FIXTURE=1 CC_MODEL_FIXTURE=1 node apps/runtime/src/main.ts --data-dir ${DATA_DIR} --port ${NODE_PORT} --label e2e-node`,
+      // `CC_SESSION_FIXTURE` answers a project-session request without spawning a worker. Starting
+      // one for real needs a provider, takes far longer than a browser assertion should, and would
+      // leave a session behind on whatever machine ran the suite.
+      command: `CC_VOICE_FIXTURE=1 CC_MODEL_FIXTURE=1 CC_SESSION_FIXTURE=1 node apps/runtime/src/main.ts --data-dir ${DATA_DIR} --port ${NODE_PORT} --label e2e-node`,
       url: `http://127.0.0.1:${NODE_PORT}/health`,
       reuseExistingServer: false,
       stdout: "pipe",

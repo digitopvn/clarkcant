@@ -9,6 +9,7 @@ import { type Database, migrate, openDatabase } from "@clarkcant/storage";
 import type { PiAdapter } from "@clarkcant/pi-adapter";
 
 import type { JevConfig, JevTelemetry, JevTransport } from "./jev-selector.ts";
+import type { ProjectSessionStarter } from "./project-session.ts";
 
 /**
  * Composition root for one runtime installation.
@@ -76,6 +77,15 @@ export interface RuntimeOptions {
    * the SDK and spawning a real session.
    */
   projectSessionAdapter?: (cwd: string) => PiAdapter;
+  /**
+   * Replaces the session starter entirely.
+   *
+   * The adapter seam above still builds a real starter around a fake adapter, which is what an
+   * integration test wants. This one exists for a node that has no worker at all — the browser suite,
+   * where starting a session must be provable without spawning a process — and for a host that brings
+   * its own session mechanism.
+   */
+  projectSessions?: ProjectSessionStarter;
   jev?: {
     config?: Partial<{ [K in keyof JevConfig]: JevConfig[K] }>;
     transport?: JevTransport;
