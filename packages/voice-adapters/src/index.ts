@@ -26,16 +26,15 @@ import {
  *   that depends on a remote node acknowledging it is not a mute button.
  */
 
-export interface VoiceProviderAdapter {
-  readonly provider: string;
-  connect(input: { sessionId: string; tokenProvider: () => Promise<string> }): Promise<void>;
-  disconnect(): Promise<void>;
-  sendAudio(frame: Uint8Array): void;
-  /** Provider events, already normalised to app shapes by this adapter. */
-  onTranscript(listener: (fragment: VoiceTranscriptFragment) => void): () => void;
-  onStateChange(listener: (state: VoiceState) => void): () => void;
-  setMuted(muted: boolean): void;
-}
+export type { VoiceProviderAdapter } from "./provider.ts";
+export {
+  GeminiLiveAdapter,
+  globalSocketFactory,
+  type GeminiLiveOptions,
+  type LiveSocket,
+  type LiveSocketFactory,
+} from "./gemini-live.ts";
+
 
 export interface VoiceSessionState {
   sessionId: string;
@@ -180,65 +179,4 @@ export function applyIntent(
 
 export function fallbackFor(state: VoiceSessionState): { required: boolean; message: string } {
   return voiceFallbackRequired(state.state);
-}
-
-/**
- * Provider-neutral adapter for the live conversation API.
- *
- * @implementation-status stub
- * TODO(P9): the WebRTC transport and the token bridge. Transcript assembly,
- * intent routing, media-focus arbitration and mute/end semantics are implemented and
- * tested; opening a live audio session needs a provider account with live access, which
- * this repository does not hold.
- *
- * Deliberately absent: any silent fallback to speech-to-text plus text-to-speech.
- * That would be a different product surface, and reporting it under the name "live
- * conversation" is precisely the substitution the blueprint forbids.
- */
-export class LiveVoiceAdapter implements VoiceProviderAdapter {
-  readonly provider = "gpt-live";
-  readonly #tokenBridge: { issueScopedToken(): Promise<string> };
-
-  constructor(deps: { tokenBridge: { issueScopedToken(): Promise<string> } }) {
-    // Assigned rather than declared as a constructor parameter property: Node's
-    // type-stripping loader cannot execute that syntax.
-    this.#tokenBridge = deps.tokenBridge;
-  }
-
-  /**
-   * Whether a scoped-token bridge is wired, without consuming a token.
-   *
-   * The P9 gate needs to distinguish "the transport is missing" from "the credential
-   * path is missing", and those are the two failure modes this adapter can have. The
-   * method exists so that distinction can be reported rather than inferred.
-   */
-  tokenBridgeReady(): boolean {
-    return typeof this.#tokenBridge.issueScopedToken === "function";
-  }
-
-  async connect(): Promise<void> {
-    throw new Error(
-      "live voice requires a provider account with realtime access; the token bridge is wired but no transport is implemented yet (milestone P9)",
-    );
-  }
-
-  async disconnect(): Promise<void> {
-    throw new Error("live voice was never connected (milestone P9)");
-  }
-
-  sendAudio(_frame: Uint8Array): void {
-    throw new Error("live voice was never connected (milestone P9)");
-  }
-
-  onTranscript(): () => void {
-    return () => {};
-  }
-
-  onStateChange(): () => void {
-    return () => {};
-  }
-
-  setMuted(_muted: boolean): void {
-    throw new Error("live voice was never connected (milestone P9)");
-  }
 }
