@@ -22,6 +22,7 @@ import { SettingsPanel } from "./SettingsPanel.tsx";
 import { resolveRenderer, toRendererDataset } from "./renderers.tsx";
 import { MiniAppSurface, type CompositeSurfaceView } from "./mini-app-surface.tsx";
 import { PinnedLiveSurface } from "./DesktopSurfaces.tsx";
+import { useImageUrls } from "./use-image-urls.ts";
 
 /**
  * Conversation surface.
@@ -96,6 +97,13 @@ export function Conversation({
    * a different read, and it lives in the pinned surface that claims ownership of it.
    */
   const [snapshots, setSnapshots] = useState<Record<string, SnapshotPresentationResponse>>({});
+  /**
+   * The control that opened the expanded live view.
+   *
+   * Focus has to come back somewhere specific when that view closes: a keyboard user who lands on
+   * `<body>` after Escape has to re-navigate the whole page to get where they were.
+   */
+  const liveTrigger = useRef<HTMLElement | null>(null);
   const [connection, setConnection] = useState<ConnectionState>("connecting");
   const [draft, setDraft] = useState("");
   const [busy, setBusy] = useState(false);
@@ -266,6 +274,20 @@ export function Conversation({
     }
   }, [client, composedSnapshots, conversationId, snapshots]);
 
+  /* Every image an inline composed surface asks for, from the snapshots it will render. */
+  const inlineImageRefs = useMemo(() => {
+    const refs = new Set<string>();
+    for (const entry of composedSnapshots) {
+      for (const section of snapshots[entry.snapshotId]?.sections ?? []) {
+        const ref = section.props.imageRef;
+        if (typeof ref === "string" && ref !== "") refs.add(ref);
+      }
+    }
+    return [...refs].sort();
+  }, [composedSnapshots, snapshots]);
+
+  const imageUrl = useImageUrls(client, inlineImageRefs);
+
   useEffect(() => {
     const node = scroller.current;
     if (node) node.scrollTop = node.scrollHeight;
@@ -358,14 +380,19 @@ export function Conversation({
                 {input.textAlternative}
               </div>
             ) : (
-              <MiniAppSurface view={toSurfaceViewFromSnapshot(captured, instance.revision)} title={typeof instance.props.title === "string" ? instance.props.title : undefined} />
+              <MiniAppSurface
+                view={toSurfaceViewFromSnapshot(captured, instance.revision)}
+                title={typeof instance.props.title === "string" ? instance.props.title : undefined}
+                imageUrl={imageUrl}
+              />
             )}
             {conversationId !== undefined && (
               <button
                 className="cc-icon-btn"
                 style={{ width: "auto", padding: "0 var(--cc-space-sm)", marginTop: "var(--cc-space-xs)" }}
                 data-open-live={instance.instanceId}
-                onClick={() => {
+                onClick={(event) => {
+                  liveTrigger.current = event.currentTarget;
                   // "Open the current view" is an expanded pin: the pinned surface is where the
                   // live instance is mounted, and it is the one that claims ownership of it.
                   void client
@@ -427,7 +454,10 @@ export function Conversation({
     },
     // `datasets` belongs here: the renderer reads the resolved rows through this closure, and a
     // missing entry is the difference between a table and "no data to show".
-    [applyTimeline, client, conversationId, datasets, instanceById, snapshots, timeline],
+    // Every value the renderer reads through this closure belongs here. `datasets` and `imageUrl`
+    // are the two that arrive after the first paint, and leaving either out is how a table or a
+    // picture renders as "not available" while its bytes sit in the browser.
+    [applyTimeline, client, conversationId, datasets, imageUrl, instanceById, snapshots, timeline],
   );
 
   const blocks = timeline?.messages ?? [];
@@ -471,7 +501,9 @@ export function Conversation({
         </div>
       </header>
 
-      <div className="cc-scroll" ref={scroller}>
+      {/* Focusable as a fallback target: when the control that opened the live view is gone from the
+          document, focus has to land somewhere meaningful rather than on the body. */}
+      <div className="cc-scroll" ref={scroller} tabIndex={-1}>
         {blocks.length === 0 ? (
           <div className="cc-empty">
             <Orb size={148} className="cc-empty-orb" label="Đang chờ bạn nói điều muốn làm" />
@@ -536,6 +568,20 @@ export function Conversation({
                 displayMode="expanded"
                 title={typeof instanceById.get(pin.instanceId)?.props.title === "string" ? String(instanceById.get(pin.instanceId)?.props.title) : undefined}
                 onTimeline={applyTimeline}
+                onClose={() => {
+                  // Collapsing is an unpin: the expanded view exists because the pin says so, and
+                  // leaving the pin behind would make the next render open it again.
+                  void client
+                    .unpin(conversationId, pin.pinId)
+                    .then((result) => applyTimeline(result.timeline))
+                    .catch((cause: unknown) => setError(cause instanceof Error ? cause.message : String(cause)))
+                    .finally(() => {
+                      const trigger = liveTrigger.current;
+                      liveTrigger.current = null;
+                      if (trigger !== null && trigger.isConnected) trigger.focus();
+                      else scroller.current?.focus();
+                    });
+                }}
               />
             </div>
           ))}

@@ -11,6 +11,7 @@ import { type ReactElement, useCallback, useEffect, useMemo, useRef, useState } 
 
 import type { GatewayClient, LiveWidgetResponse, Timeline } from "./api.ts";
 import { MiniAppSurface, type CompositeSurfaceView } from "./mini-app-surface.tsx";
+import { useImageUrls } from "./use-image-urls.ts";
 
 export interface MenuBarPopoverProps {
   nodeLabel: string;
@@ -113,6 +114,14 @@ export interface PinnedLiveSurfaceProps {
   title?: string | undefined;
   /** Called after any successful action, so the host can refresh its page. */
   onTimeline: (timeline: Timeline) => void;
+  /**
+   * Present when this surface can be dismissed.
+   *
+   * The host owns what closing means (collapsing a pin, restoring focus to whatever opened it), and
+   * Escape is wired here because a keyboard user expects the expanded view to close from anywhere
+   * inside it — not only while a particular control happens to have focus.
+   */
+  onClose?: (() => void) | undefined;
 }
 
 /** How long a claim is held before it is refreshed. Shorter than the server's lease on purpose. */
@@ -136,12 +145,14 @@ export function PinnedLiveSurface({
   displayMode,
   title,
   onTimeline,
+  onClose,
 }: PinnedLiveSurfaceProps): ReactElement {
+  const panel = useRef<HTMLDivElement>(null);
+  const closeButton = useRef<HTMLButtonElement>(null);
   const [live, setLive] = useState<LiveWidgetResponse | undefined>(undefined);
   const [ownership, setOwnership] = useState<"claiming" | "owner" | "elsewhere" | "error">("claiming");
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<string | undefined>(undefined);
-  const [imageUrls, setImageUrls] = useState<Record<string, string>>({});
   const ownerToken = useRef<string>(newOwnerToken());
 
   const load = useCallback(async (): Promise<void> => {
@@ -198,6 +209,37 @@ export function PinnedLiveSurface({
     };
   }, [client, conversationId, instanceId, load]);
 
+  /*
+   * Escape closes the expanded view, from anywhere inside it.
+   *
+   * On `window` rather than on the panel because the panel is not modal: focus can be sitting on a
+   * control the surface drew, and a listener scoped to the container would miss Escape after a click
+   * that moved focus into an iframe-like subtree. The handler is only attached when the host offered
+   * a way to close, so a compact pin never swallows the key.
+   */
+  useEffect(() => {
+    if (onClose === undefined) return;
+    const onKeyDown = (event: KeyboardEvent): void => {
+      if (event.key !== "Escape") return;
+      event.preventDefault();
+      onClose();
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [onClose]);
+
+  /*
+   * Focus moves to the close control when the expanded view appears.
+   *
+   * Otherwise a keyboard user who opened it is left at the trigger, one Tab away from content they
+   * cannot see the shape of, and Escape would be undiscoverable. It is the same reason a dialog takes
+   * focus when it opens — without the modal part, because this view is inline.
+   */
+  useEffect(() => {
+    if (displayMode !== "expanded") return;
+    closeButton.current?.focus();
+  }, [displayMode]);
+
   /* Imported images are fetched through the authenticated client, not linked to directly. */
   const imageRefs = useMemo(() => {
     const refs = new Set<string>();
@@ -208,31 +250,40 @@ export function PinnedLiveSurface({
     return [...refs];
   }, [live]);
 
-  useEffect(() => {
-    let cancelled = false;
-    for (const imageId of imageRefs) {
-      if (imageUrls[imageId] !== undefined) continue;
-      void client
-        .imageObjectUrl(imageId)
-        .then((url) => {
-          if (cancelled) {
-            URL.revokeObjectURL(url);
-            return;
-          }
-          setImageUrls((current) => ({ ...current, [imageId]: url }));
-        })
-        .catch(() => undefined);
-    }
-    return () => {
-      cancelled = true;
-    };
-  }, [client, imageRefs, imageUrls]);
+  const imageUrl = useImageUrls(client, imageRefs);
 
   const readOnly = ownership !== "owner";
 
+  const head =
+    onClose === undefined ? undefined : (
+      <div className="cc-live-head">
+        <button
+          ref={closeButton}
+          type="button"
+          className="cc-icon-btn"
+          style={{ width: "auto", padding: "0 var(--cc-space-sm)" }}
+          data-close-live="true"
+          aria-label="Đóng bản hiện tại (Escape)"
+          onClick={onClose}
+        >
+          Đóng (Esc)
+        </button>
+      </div>
+    );
+
   if (live === undefined) {
     return (
-      <div className="cc-live-surface" data-live-instance={instanceId} data-ownership={ownership}>
+      <div
+        className="cc-live-surface"
+        data-live-instance={instanceId}
+        data-ownership={ownership}
+        data-display-mode={displayMode}
+        role={displayMode === "expanded" ? "region" : undefined}
+        aria-label={displayMode === "expanded" ? `Bản hiện tại: ${title ?? instanceId}` : undefined}
+      >
+        {/* The close control is here in the loading state as well: a surface that is still opening is
+            exactly when a keyboard user wants to be able to back out. */}
+        {head}
         <p className="cc-freshness" style={{ margin: 0 }}>
           {notice ?? "Đang mở bản hiện tại…"}
         </p>
@@ -240,10 +291,19 @@ export function PinnedLiveSurface({
     );
   }
 
-  const view = toSurfaceViewFromLive(live, imageUrls, readOnly);
+  const view = toSurfaceViewFromLive(live, readOnly);
 
   return (
-    <div className="cc-live-surface" data-live-instance={instanceId} data-ownership={ownership} data-display-mode={displayMode}>
+    <div
+      ref={panel}
+      className="cc-live-surface"
+      data-live-instance={instanceId}
+      data-ownership={ownership}
+      data-display-mode={displayMode}
+      role={displayMode === "expanded" ? "region" : undefined}
+      aria-label={displayMode === "expanded" ? `Bản hiện tại: ${title ?? instanceId}` : undefined}
+    >
+      {head}
       {notice !== undefined && (
         <p className="cc-freshness" data-live-notice="true" style={{ margin: "0 0 var(--cc-space-xs)" }}>
           {notice}
@@ -253,7 +313,7 @@ export function PinnedLiveSurface({
         view={view}
         title={title}
         busy={busy}
-        imageUrl={(ref) => imageUrls[ref]}
+        imageUrl={imageUrl}
         onIntent={
           readOnly
             ? undefined
@@ -300,12 +360,7 @@ export function PinnedLiveSurface({
  * Kept next to the pin because it is the pin's read path: history uses the bundle, and this uses
  * current records. Both produce the same view shape, so there is one renderer.
  */
-function toSurfaceViewFromLive(
-  live: LiveWidgetResponse,
-  imageUrls: Record<string, string>,
-  readOnly: boolean,
-): CompositeSurfaceView {
-  void imageUrls;
+function toSurfaceViewFromLive(live: LiveWidgetResponse, readOnly: boolean): CompositeSurfaceView {
   return {
     compositionId: live.compositionId,
     instanceId: live.spec.instanceId,
