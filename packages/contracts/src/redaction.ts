@@ -21,6 +21,14 @@ export const SECRET_SHAPES: readonly { label: string; pattern: RegExp }[] = [
   },
   { label: "base64", pattern: /\b[A-Za-z0-9+/]{32,}={0,2}\b/g },
   { label: "hex", pattern: /\b[A-Fa-f0-9]{32,}\b/g },
+  {
+    label: "home-path",
+    // An absolute path under a home directory names the person and their private layout. The whole
+    // path is replaced rather than just the user segment: the directories below it are often more
+    // revealing than the account name.
+    pattern: /(?:\/Users\/|\/home\/|\/private\/var\/)[A-Za-z0-9._\-/]+/g,
+  },
+  { label: "windows-path", pattern: /[A-Za-z]:\\Users\\[A-Za-z0-9._\\-]+/g },
   { label: "email", pattern: /\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b/g },
   { label: "phone", pattern: /\b(?:\+?\d[\s-]?){9,}\b/g },
 ];

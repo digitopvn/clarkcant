@@ -1,6 +1,6 @@
 ---
 title: "Phase 9: jev-decision-layer"
-status: todo
+status: done
 ---
 
 # Phase 9: Jev decision layer cho search và điều phối runtime
@@ -35,6 +35,22 @@ Root: `/Volumes/GOON/www/digitop/clarkcant/`.
 4. Conductor: nhánh decider chỉ chọn trong `usable`; dispatch giữ nguyên gateway/lease/consent path (T05, T07, T09, T14 phải vẫn pass).
 5. Telemetry: mode, fallback reason, latency split, model id thực tế; không body/prompt.
 6. Calibration: ≥30 query (đường B) và ≥15 tình huống điều phối (đường A) Việt/Anh, human-label; so `jev` vs `rank` thuần; đặt default config theo số đo, ghi vào report.
+
+## Kết quả (2026-09-17)
+
+- `apps/runtime/src/runtime-candidates.ts`: `listRuntimeCandidates` đọc trạng thái sống từ `leases` (chưa release, chưa hết hạn), `widget_live_owners` (bỏ row hết lease), `voice_sessions` (chưa ended), `tasks` (nonterminal) và `nodes`; `filterRuntimeCandidates` (kind/label chuẩn hoá dấu/live/capability), `rankRuntimeCandidates` (rảnh trước, rồi theo kind), `verifyRuntimeCandidate` (đọc lại), `describeRuntimeCandidate` (≤300 ký tự, không path). Thêm tool `find_runtime` chỉ để đọc.
+- `apps/runtime/src/jev-decider.ts`: `decideRuntimeTarget` (0 candidate → none, 1 → chọn luôn không gọi, >1 → Choice + verify sau khi chọn; không rõ ràng/none/unavailable → `fallback` kèm thứ tự rank) và `decideSearchResult` (0/1 kết quả → rank; khoảng cách BM25 **tương đối** ≥25% → rank; ngược lại Choice, rồi Noul "cần hỏi lại?" → `clarify`); `searchDeciderFromEnv` mặc định `rank`.
+- `session-search.ts`: tách `rankSessions` (sync) và `searchSessions` (async, áp decider); outcome có `mode: rank|jev|clarify`, `chosen`, `clarification`, `decider` (model/confidence/margin/reason). Kết quả đã xếp hạng **luôn** được trả về, lựa chọn chỉ đưa kết quả được chọn lên đầu.
+- `packages/core/src/conductor.ts`: hook `chooseExecutionNode` chỉ được gọi khi >1 capability usable, chỉ được chọn trong `usable` (so khớp cả `capabilityRef` lẫn `executionNodeId`), không đổi semantics lease/dispatch.
+- `services.ts`/`main.ts`: wire decider (mặc định `rank`) và đăng ký `search_history` + `find_runtime` cho Main Pi.
+- Sửa hai lỗi thật phát hiện trong phase này: (1) redactor dùng chung chưa che path home — thêm `home-path`/`windows-path` vào `contracts/redaction.ts`; (2) ngưỡng "hai kết quả gần nhau" ban đầu là tuyệt đối (0.15) trong khi điểm BM25 cỡ 1e-6 → mọi truy vấn đều tốn call; đổi thành tỷ lệ tương đối 25% (`rankGapIsClear`).
+- Tests: `apps/runtime/test/jev-decider.spec.ts` (13) và 4 test trong `packages/core/test/core.spec.ts` cho nhánh decider. `pnpm verify` pass (743, 5 skipped).
+- Calibration: harness + corpus (34 truy vấn search, 16 tình huống routing) tại `apps/runtime/test/calibration-corpus.ts` và `jev-calibration-live.spec.ts`; **BLOCKED** vì thiếu `TYPESAFE_API_KEY` — ghi tại `plans/reports/verification-260917-1630-jev-decider-calibration.md` kèm căn cứ giữ default `rank`.
+
+## Ghi chú cho phase sau
+
+- Khi có key: chạy calibration, và chỉ đổi default sang `jev` nếu thắng rõ; cập nhật lại report đó.
+- `decideSearchResult` chỉ được gọi khi `deciderMode === "jev"`, nên chi phí provider cho search hôm nay bằng 0.
 
 ## Success criteria
 - Đường A: nhiều runtime phù hợp → chọn đúng target theo label; unauthorized/lease chết không bao giờ được dispatch dù Jev chọn.

@@ -94,7 +94,7 @@ Cột **Lane** đánh dấu nhóm có thể chạy song song (file ownership tá
 | 4 | [Snapshot, live ownership và actions](./phase-04-snapshot-live-actions.md) | 4h | 3 | L2 (tiếp) | Done |
 | 8 | [FTS5 retrieval + temporal parser + baseline đo](./phase-08-fts5-retrieval.md) | 3h | 7 | L3 (tiếp) ∥ với 4 | Done (P2) |
 | 5 | [Compose trong turn pipeline](./phase-05-turn-composition.md) | 3h | 2, 3, 4 | **J1** (join L1+L2) | Done |
-| 9 | [Jev decision layer cho search và điều phối runtime](./phase-09-jev-query-routing.md) | 3h | 2, 8 | **J2** (join L1+L3) ∥ với 5 | Pending (P2) |
+| 9 | [Jev decision layer cho search và điều phối runtime](./phase-09-jev-query-routing.md) | 3h | 2, 8 | **J2** (join L1+L3) ∥ với 5 | Done (P2) |
 | 6 | [Release validation và evidence](./phase-06-release-validation.md) | 4h + chờ user | 5 (và 9 nếu muốn gộp evidence) | **S1** (serial, cuối) | Pending |
 | 11 | [Workspace & Project Finder + start session](./phase-11-project-finder.md) | 4h | 2, 7 | **L3b** ∥ với 8 (sau 7) | Pending (P1) |
 | 10 | [Semantic retrieval + RRF](./phase-10-semantic-retrieval.md) | 4h | 8 | sau M1 | Pending (P2) |

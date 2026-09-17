@@ -11,6 +11,11 @@ import {
   searchHistory,
 } from "@clarkcant/storage";
 
+import {
+  type DecideDeps,
+  type SearchDeciderMode,
+  decideSearchResult,
+} from "./jev-decider.ts";
 import { type TemporalParseResult, parseTemporal } from "./temporal-parse.ts";
 
 /**
@@ -37,6 +42,15 @@ export interface SessionSearchDeps {
   principalId: string;
   timezone: string;
   now: () => Instant;
+  /**
+   * The decision layer's wiring, when a selector is configured.
+   *
+   * Absent means the ranked order is the answer, which is the default and the measured baseline
+   * (Phase 8: 96.8% of labelled lexical queries).
+   */
+  decider?: DecideDeps;
+  /** `rank` by default; `jev` asks the selector to choose between close results. */
+  deciderMode?: SearchDeciderMode;
 }
 
 export interface SessionSearchRequest {
@@ -76,8 +90,20 @@ export interface SessionSearchOutcome {
   truncated: boolean;
   /** How much history this principal has indexed, so "no matches" is distinguishable from "no index". */
   indexSize: number;
-  /** Ranked by BM25. Phase 9 may replace this with a decision, and records that it did. */
-  mode: "rank";
+  /**
+   * How the results were decided.
+   *
+   * `rank` is BM25 alone; `jev` means a selector chose among close results and its choice is first;
+   * `clarify` means a selector judged the results ambiguous and the user should be asked. A caller
+   * that treats these as the same thing cannot tell a decision from a default.
+   */
+  mode: "rank" | "jev" | "clarify";
+  /** Present when a selector chose a result. */
+  chosen?: SessionSearchHit;
+  /** Present when the results are ambiguous enough to ask the user. */
+  clarification?: string;
+  /** Why the decider did or did not decide, for telemetry and for the calibration. */
+  decider?: { mode: SearchDeciderMode; model?: string; reason?: string; confidence?: number; margin?: number };
 }
 
 const DEFAULT_LIMIT = 10;
@@ -89,7 +115,7 @@ const DEFAULT_LIMIT = 10;
  * for the bug rather than for the words "hôm" and "qua" — which appear in every message from that
  * day and would outrank the real match.
  */
-export function searchSessions(deps: SessionSearchDeps, request: SessionSearchRequest): SessionSearchOutcome {
+export function rankSessions(deps: SessionSearchDeps, request: SessionSearchRequest): SessionSearchOutcome {
   const parsed: TemporalParseResult =
     request.useTemporal === false
       ? { kind: "none", rest: request.text }
@@ -121,6 +147,72 @@ export function searchSessions(deps: SessionSearchDeps, request: SessionSearchRe
     truncated,
     indexSize: historyIndexSize(deps.db, deps.principalId),
     mode: "rank",
+  };
+}
+
+/**
+ * Search, then decide.
+ *
+ * The decision is applied on top of the ranked results rather than replacing them: the ranked list
+ * is always in the answer, so a caller — and a reader — can see what a selector chose between. The
+ * one change a choice makes is that the chosen result moves to the front.
+ */
+export async function searchSessions(
+  deps: SessionSearchDeps,
+  request: SessionSearchRequest,
+): Promise<SessionSearchOutcome> {
+  const ranked = rankSessions(deps, request);
+  const mode = deps.deciderMode ?? "rank";
+
+  if (mode !== "jev" || deps.decider === undefined || ranked.results.length < 2) {
+    return { ...ranked, decider: { mode: "rank" } };
+  }
+
+  const decision = await decideSearchResult(deps.decider, {
+    query: request.text,
+    results: ranked.results.map((hit) => ({
+      ref: hit.ref,
+      snippet: hit.snippet,
+      score: hit.score,
+      source: hit.source,
+    })),
+  });
+
+  if (decision.status === "chosen") {
+    const chosen = ranked.results.find((hit) => hit.ref === decision.ref);
+    if (chosen !== undefined) {
+      return {
+        ...ranked,
+        mode: "jev",
+        chosen,
+        // The chosen result is first, and the rest keep their ranking. Dropping them would hide
+        // that a choice was made between alternatives.
+        results: [chosen, ...ranked.results.filter((hit) => hit.ref !== decision.ref)],
+        decider: {
+          mode: "jev",
+          model: decision.model,
+          ...(decision.confidence === undefined ? {} : { confidence: decision.confidence }),
+          ...(decision.margin === undefined ? {} : { margin: decision.margin }),
+        },
+      };
+    }
+  }
+
+  if (decision.status === "clarify") {
+    return {
+      ...ranked,
+      mode: "clarify",
+      clarification: decision.question,
+      decider: { mode: "jev", model: deps.decider.jev.config.model, reason: "the results are ambiguous" },
+    };
+  }
+
+  return {
+    ...ranked,
+    decider: {
+      mode: "jev",
+      reason: decision.status === "rank" ? decision.reason : "the selector chose a result that was not in the ranked list",
+    },
   };
 }
 
@@ -368,7 +460,7 @@ export function createSearchHistoryTool(deps: SessionSearchDeps): ToolDefinition
       const query = typeof params.query === "string" ? params.query : "";
       if (query.trim() === "") return { text: "No query was given." };
       const limit = typeof params.limit === "number" && params.limit > 0 ? Math.min(params.limit, 20) : 5;
-      const outcome = searchSessions(deps, { text: query, limit });
+      const outcome = await searchSessions(deps, { text: query, limit });
 
       if (outcome.results.length === 0) {
         return {
@@ -384,9 +476,14 @@ export function createSearchHistoryTool(deps: SessionSearchDeps): ToolDefinition
         return `${index + 1}. (${where}, ${hit.provenance.createdAt}) ${hit.snippet}`;
       });
       return {
-        text: `${outcome.results.length} result(s) for "${outcome.searched}"${
-          outcome.temporal.label === undefined ? "" : ` in ${outcome.temporal.label}`
-        }:\n${lines.join("\n")}`,
+        text:
+          `${outcome.results.length} result(s) for "${outcome.searched}"${
+            outcome.temporal.label === undefined ? "" : ` in ${outcome.temporal.label}`
+          }` +
+          (outcome.mode === "clarify" && outcome.clarification !== undefined
+            ? `\n${outcome.clarification}`
+            : "") +
+          `:\n${lines.join("\n")}`,
       };
     },
   };

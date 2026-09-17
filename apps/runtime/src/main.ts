@@ -21,6 +21,7 @@ import { SAMPLE_DATASET } from "@clarkcant/data-canvas/sample";
 
 import { createModelTurn, type ViewDescriptor } from "./model-turn.ts";
 import { buildViewCatalog } from "./view-catalog.ts";
+import { createFindRuntimeTool } from "./runtime-candidates.ts";
 import { createSearchHistoryTool } from "./session-search.ts";
 import { registerSessionFile, sessionsDirectory } from "./session-store.ts";
 import { bootNodeServices, type NodeServices } from "./services.ts";
@@ -107,7 +108,18 @@ async function main(): Promise<void> {
     datasetRefs: () => [SAMPLE_DATASET.datasetId],
     // The Session Manager's search surface, exposed to the main model as its own tool. Read from a
     // closure so the services it needs, which are assembled below, exist by the time a turn runs.
-    extraTools: () => (searchWiring.deps === undefined ? [] : [createSearchHistoryTool(searchWiring.deps)]),
+    extraTools: () =>
+      searchWiring.deps === undefined
+        ? []
+        : [
+            createSearchHistoryTool(searchWiring.deps),
+            // Read-only: the model can see what is running, not start or stop it.
+            createFindRuntimeTool({
+              db: searchWiring.deps.db,
+              nodeId: searchWiring.deps.nodeId,
+              now: searchWiring.deps.now,
+            }),
+          ],
   });
   process.stderr.write(
     modelTurn === undefined

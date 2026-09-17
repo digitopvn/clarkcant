@@ -215,7 +215,7 @@ export async function handleRequest(deps: GatewayDeps, request: GatewayRequest):
   }
 
   if (segments[0] === "search") {
-    return handleSearchRoutes(deps, request, segments);
+    return await handleSearchRoutes(deps, request, segments);
   }
 
   if (segments[0] === "conversations") {
@@ -237,11 +237,11 @@ export async function handleRequest(deps: GatewayDeps, request: GatewayRequest):
  * narrow is the conversation, the task and the time window, all of which are filters within the
  * principal's own history.
  */
-function handleSearchRoutes(
+async function handleSearchRoutes(
   deps: GatewayDeps,
   request: GatewayRequest,
   segments: string[],
-): GatewayResponse {
+): Promise<GatewayResponse> {
   const search = deps.services.search;
 
   // POST /search/sessions/:sessionId/ingest
@@ -280,7 +280,7 @@ function handleSearchRoutes(
       return fail(400, "INVALID_SCHEMA", "a search must carry a non-empty query");
     }
 
-    const outcome = searchSessions(search, {
+    const outcome = await searchSessions(search, {
       text: text.slice(0, 500),
       ...(limit === undefined ? {} : { limit: Math.max(1, Math.min(limit, 50)) }),
       ...(conversationId === undefined ? {} : { conversationId }),

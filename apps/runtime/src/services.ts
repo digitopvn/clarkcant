@@ -30,6 +30,7 @@ import {
 
 import { type NodeModelInfo, type Runtime, type RuntimeOptions, bootRuntime } from "./node.ts";
 import { type ComposeDeps } from "./compose-mini-app.ts";
+import { searchDeciderFromEnv } from "./jev-decider.ts";
 import type { SessionSearchDeps } from "./session-search.ts";
 import {
   type SessionStoreDeps,
@@ -236,8 +237,16 @@ export function bootNodeServices(options: RuntimeOptions): NodeServices {
     // The node's own principal. Search is authorized by the transport, and this record is what the
     // repository filters on, so the two cannot disagree.
     principalId: runtime.identity.ownerPrincipalId,
-    timezone: new Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",
+    timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",
     now: () => nowInstant() satisfies Instant,
+    // The decision layer is wired but off by default: the Phase 8 baseline answered 96.8% of lexical
+    // queries with BM25 alone, and a selector that cannot repair missing vocabulary is not worth a
+    // call per search until the calibration says otherwise.
+    decider: {
+      jev: jevRuntime.deps,
+      budget: createJevBudget(jevRuntime.config),
+    },
+    deciderMode: searchDeciderFromEnv(process.env),
   };
 
   const compose: ComposeDeps = {

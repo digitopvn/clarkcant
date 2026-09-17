@@ -144,11 +144,11 @@ describe("temporal parser", () => {
 });
 
 describe("indexing and search", () => {
-  it("finds a message by its words, ranked, with a snippet and provenance", () => {
+  it("finds a message by its words, ranked, with a snippet and provenance", async () => {
     seed("Sửa lỗi đăng nhập: token hết hạn không được làm mới", "msg_a", "2026-09-16T02:00:00.000Z");
     seed("Nâng cấp giao diện biểu đồ", "msg_b", "2026-09-16T03:00:00.000Z");
 
-    const outcome = searchSessions(search, { text: "đăng nhập" });
+    const outcome = await searchSessions(search, { text: "đăng nhập" });
     expect(outcome.mode).toBe("rank");
     expect(outcome.results[0]?.ref).toBe("msg_a");
     // SQLite highlights per token, so the phrase arrives as two marked words rather than one.
@@ -158,74 +158,74 @@ describe("indexing and search", () => {
     expect(outcome.indexSize).toBe(2);
   });
 
-  it("matches text written without diacritics and vice versa", () => {
+  it("matches text written without diacritics and vice versa", async () => {
     seed("Sửa lỗi đăng nhập", "msg_diacritics", "2026-09-16T02:00:00.000Z");
-    expect(searchSessions(search, { text: "dang nhap" }).results).toHaveLength(1);
-    expect(searchSessions(search, { text: "ĐĂNG NHẬP" }).results).toHaveLength(1);
+    expect((await searchSessions(search, { text: "dang nhap" })).results).toHaveLength(1);
+    expect((await searchSessions(search, { text: "ĐĂNG NHẬP" })).results).toHaveLength(1);
   });
 
-  it("returns nothing for another principal instead of filtering afterwards", () => {
+  it("returns nothing for another principal instead of filtering afterwards", async () => {
     seed("bí mật của người khác", "msg_secret", "2026-09-16T02:00:00.000Z");
     const other = { ...search, principalId: "prin_other" };
-    expect(searchSessions(other, { text: "bí mật" }).results).toHaveLength(0);
+    expect((await searchSessions(other, { text: "bí mật" })).results).toHaveLength(0);
     // The index exists; it is simply not this principal's.
-    expect(searchSessions(search, { text: "bí mật" }).results).toHaveLength(1);
+    expect((await searchSessions(search, { text: "bí mật" })).results).toHaveLength(1);
   });
 
-  it("narrows by time window and by conversation", () => {
+  it("narrows by time window and by conversation", async () => {
     seed("deploy lên staging", "msg_recent", "2026-09-16T02:00:00.000Z");
     seed("deploy lên production", "msg_old", "2026-09-01T02:00:00.000Z");
     seed("deploy khác conversation", "msg_other", "2026-09-16T04:00:00.000Z", "conv_other");
 
-    const windowed = searchSessions(search, { text: "deploy hôm qua" });
+    const windowed = await searchSessions(search, { text: "deploy hôm qua" });
     expect(windowed.results.map((hit) => hit.ref).sort()).toEqual(["msg_other", "msg_recent"]);
     expect(windowed.temporal.kind).toBe("range");
 
-    const scoped = searchSessions(search, { text: "deploy", conversationId: "conv_1" });
+    const scoped = await searchSessions(search, { text: "deploy", conversationId: "conv_1" });
     expect(scoped.results.map((hit) => hit.ref).sort()).toEqual(["msg_old", "msg_recent"]);
   });
 
-  it("answers a query that is only a time phrase with the window's contents, newest first", () => {
+  it("answers a query that is only a time phrase with the window's contents, newest first", async () => {
     seed("việc hôm qua", "msg_yesterday", "2026-09-16T02:00:00.000Z");
     seed("việc tuần trước", "msg_last_week", "2026-09-09T02:00:00.000Z");
 
-    const outcome = searchSessions(search, { text: "hôm qua" });
+    const outcome = await searchSessions(search, { text: "hôm qua" });
     expect(outcome.results.map((hit) => hit.ref)).toEqual(["msg_yesterday"]);
     expect(outcome.temporal.label).toBe("hôm qua");
   });
 
-  it("treats FTS syntax as words rather than as an expression", () => {
+  it("treats FTS syntax as words rather than as an expression", async () => {
     seed("login bug", "msg_login", "2026-09-16T02:00:00.000Z");
     // A user typing these characters is not composing a query; a thrown syntax error would be a
     // failure the user cannot act on.
     for (const text of ['NEAR( OR "', "*", "AND OR NOT", '""']) {
-      expect(() => searchSessions(search, { text })).not.toThrow();
+      await expect(searchSessions(search, { text })).resolves.toBeDefined();
     }
-    expect(searchSessions(search, { text: "*" }).results).toHaveLength(0);
+    expect((await searchSessions(search, { text: "*" })).results).toHaveLength(0);
   });
 
-  it("does not return content that was redacted before it was indexed", () => {
+  it("does not return content that was redacted before it was indexed", async () => {
     const token = `sk${"-live-"}${"c".repeat(20)}`;
     // Redaction runs before indexing: this is what the message holds after the pass.
     seed(`dùng [redacted] để gọi API`, "msg_redacted", "2026-09-16T02:00:00.000Z");
-    expect(searchSessions(search, { text: token }).results).toHaveLength(0);
-    expect(searchSessions(search, { text: "gọi API" }).results).toHaveLength(1);
+    expect((await searchSessions(search, { text: token })).results).toHaveLength(0);
+    expect((await searchSessions(search, { text: "gọi API" })).results).toHaveLength(1);
   });
 
-  it("distinguishes an empty index from no matches", () => {
-    const empty = searchSessions(search, { text: "bất kỳ" });
+  it("distinguishes an empty index from no matches", async () => {
+    const empty = await searchSessions(search, { text: "bất kỳ" });
     expect(empty.indexSize).toBe(0);
     seed("một điều gì đó", "msg_one", "2026-09-16T02:00:00.000Z");
-    const missing = searchSessions(search, { text: "không có từ này" });
+    const missing = await searchSessions(search, { text: "không có từ này" });
     expect(missing.indexSize).toBe(1);
     expect(missing.results).toHaveLength(0);
   });
 
-  it("reports truncation and pages with offset", () => {
+  it("reports truncation and pages with offset", async () => {
     for (let index = 0; index < 5; index += 1) {
       seed(`báo cáo tuần ${index}`, `msg_p${index}`, `2026-09-1${index}T02:00:00.000Z`);
     }
-    const limited = searchSessions(search, { text: "báo cáo", limit: 2 });
+    const limited = await searchSessions(search, { text: "báo cáo", limit: 2 });
     expect(limited.results).toHaveLength(2);
     expect(limited.truncated).toBe(true);
   });
@@ -239,7 +239,7 @@ describe("session transcript ingest", () => {
     sessions = { db, nodeId: "node_local", dataDir: dir, now: () => AT };
   });
 
-  it("indexes what a worker did, resumably and without duplicating", () => {
+  it("indexes what a worker did, resumably and without duplicating", async () => {
     const path = join(sessionsDirectory(dir), "work.jsonl");
     const lines = [
       { type: "message", message: { role: "assistant", content: [{ type: "text", text: "đã sửa lỗi đăng nhập" }] } },
@@ -264,16 +264,16 @@ describe("session transcript ingest", () => {
     // Nothing left: the cursor is at the end, so a repeat pass is a no-op rather than a duplicate.
     expect(third.ingested).toBe(0);
 
-    const hits = searchSessions(search, { text: "đăng nhập", source: "session_entry" });
+    const hits = await await searchSessions(search, { text: "đăng nhập", source: "session_entry" });
     expect(hits.results).toHaveLength(1);
     expect(hits.results[0]?.ref).toBe("sess_work:0");
     expect(hits.results[0]?.provenance.taskId).toBe("task_1");
 
-    const toolHit = searchSessions(search, { text: "vitest passed" });
+    const toolHit = await searchSessions(search, { text: "vitest passed" });
     expect(toolHit.results.some((hit) => hit.source === "session_entry")).toBe(true);
   });
 
-  it("refuses to ingest another principal's session", () => {
+  it("refuses to ingest another principal's session", async () => {
     const path = join(sessionsDirectory(dir), "other.jsonl");
     writeFileSync(path, `${JSON.stringify({ text: "không phải của bạn" })}\n`);
     registerSessionFile(sessions, { sessionId: "sess_other", principalId: "prin_other", path });
@@ -408,11 +408,11 @@ function seedCorpus(): void {
   for (const [text, id, at] of seeds) seed(text, id, at);
 }
 
-function score(cases: readonly CorpusCase[]): { acceptable: number; failures: string[] } {
+async function score(cases: readonly CorpusCase[]): Promise<{ acceptable: number; failures: string[] }> {
   let acceptable = 0;
   const failures: string[] = [];
   for (const entry of cases) {
-    const outcome = searchSessions(search, { text: entry.query, limit: 3 });
+    const outcome = await searchSessions(search, { text: entry.query, limit: 3 });
     const refs = outcome.results.map((hit) => hit.ref);
     const ok = entry.expected === undefined ? refs.length === 0 : refs.includes(entry.expected);
     if (ok) acceptable += 1;
@@ -422,13 +422,13 @@ function score(cases: readonly CorpusCase[]): { acceptable: number; failures: st
 }
 
 describe("baseline over a labelled corpus", () => {
-  it("answers at least 90% of the thirty-one lexical cases", () => {
+  it("answers at least 90% of the thirty-one lexical cases", async () => {
     seedCorpus();
-    const lexical = score(LEXICAL_CORPUS);
+    const lexical = await score(LEXICAL_CORPUS);
     const rate = lexical.acceptable / LEXICAL_CORPUS.length;
 
     // The number reported here is the one the Phase 6 report quotes, so it names both groups.
-    const semantic = score(SEMANTIC_CORPUS);
+    const semantic = await score(SEMANTIC_CORPUS);
     process.stderr.write(
       `[fts-baseline] lexical ${lexical.acceptable}/${LEXICAL_CORPUS.length} (${(rate * 100).toFixed(1)}%); ` +
         `semantic-only ${semantic.acceptable}/${SEMANTIC_CORPUS.length} ` +
@@ -440,9 +440,9 @@ describe("baseline over a labelled corpus", () => {
     expect(rate).toBeGreaterThanOrEqual(0.9);
   });
 
-  it("records what a lexical baseline cannot do, so the next layer has a number to beat", () => {
+  it("records what a lexical baseline cannot do, so the next layer has a number to beat", async () => {
     seedCorpus();
-    const semantic = score(SEMANTIC_CORPUS);
+    const semantic = await score(SEMANTIC_CORPUS);
     // Not asserted as a floor: a synonym query failing is the expected behaviour of BM25, and the
     // only thing worth keeping is the measurement itself.
     expect(semantic.acceptable).toBeLessThan(SEMANTIC_CORPUS.length);
