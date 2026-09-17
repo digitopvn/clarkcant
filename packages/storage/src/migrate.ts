@@ -727,6 +727,37 @@ export const MIGRATIONS: readonly Migration[] = [
       `);
     },
   },
+  {
+    version: 12,
+    name: "session-files",
+    reversible: true,
+    up: (db) => {
+      db.exec(`
+        -- The worker's own JSONL transcript, indexed so it can be read back after a restart and
+        -- ingested into the history index in bounded batches.
+        --
+        -- Two sources of history are deliberate: the messages table is what the conversation
+        -- showed, and this is what the worker actually did — tool calls, reasoning, summaries.
+        -- Neither is derived from the other, and there is no synchronisation between them.
+        CREATE TABLE session_files (
+          session_id        TEXT PRIMARY KEY,
+          node_id           TEXT NOT NULL,
+          principal_id      TEXT NOT NULL,
+          task_id           TEXT,
+          conversation_id   TEXT,
+          path              TEXT NOT NULL,
+          byte_size         INTEGER NOT NULL DEFAULT 0,
+          -- Byte offset already ingested, so a restart resumes rather than reindexing the file.
+          ingest_cursor     INTEGER NOT NULL DEFAULT 0,
+          last_ingested_at  TEXT,
+          created_at        TEXT NOT NULL,
+          updated_at        TEXT NOT NULL
+        );
+        CREATE INDEX idx_session_files_principal ON session_files(principal_id, created_at);
+        CREATE INDEX idx_session_files_task ON session_files(task_id);
+      `);
+    },
+  },
 ];
 
 export interface MigrationResult {

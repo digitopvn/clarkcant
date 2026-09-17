@@ -332,6 +332,9 @@ export async function runWorker(
     usage,
     stopReason,
     withheldCapabilities,
-    sessionFile: undefined,
+    // The real path, so a caller can resume the run instead of repeating it. Reporting `undefined`
+    // here meant every run started from nothing, which is also why there was no transcript to
+    // search.
+    sessionFile: handle.sessionFile,
   };
 }

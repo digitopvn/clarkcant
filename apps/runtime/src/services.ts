@@ -31,6 +31,11 @@ import {
 import { type NodeModelInfo, type Runtime, type RuntimeOptions, bootRuntime } from "./node.ts";
 import { type ComposeDeps } from "./compose-mini-app.ts";
 import {
+  type SessionStoreDeps,
+  ensureSessionsDirectory,
+  sessionStoreDepsFrom,
+} from "./session-store.ts";
+import {
   type JevConfig,
   type JevDeps,
   type JevTelemetry,
@@ -71,6 +76,13 @@ export interface NodeServices {
   missingFamilies: string[];
   /** Everything the composition step needs, assembled once so the turn pipeline stays thin. */
   compose: ComposeDeps;
+  /**
+   * The Session Manager surface: where worker transcripts live and what is indexed.
+   *
+   * Here rather than inside a worker because the supervisor swaps workers while this state has to
+   * survive the swap.
+   */
+  sessions: SessionStoreDeps;
   /** Runtime description surfaced by the health route. Contains no node identity. */
   describe: () => { node: string; platform: string; arch: string };
 }
@@ -205,6 +217,16 @@ export function bootNodeServices(options: RuntimeOptions): NodeServices {
     },
   };
 
+  const sessions = sessionStoreDepsFrom({
+    db: runtime.db,
+    nodeId,
+    dataDir: runtime.dataDir,
+    now: () => nowInstant() satisfies Instant,
+  });
+  // Created before anything can write into it, so a session created later cannot be the first thing
+  // to discover that the directory is missing.
+  ensureSessionsDirectory(runtime.dataDir);
+
   const compose: ComposeDeps = {
     ...base,
     dataDir: runtime.dataDir,
@@ -228,6 +250,7 @@ export function bootNodeServices(options: RuntimeOptions): NodeServices {
     catalog,
     missingFamilies: missingCompositionFamilies(catalog),
     compose,
+    sessions,
     describe: () => ({ node: process.version, platform: process.platform, arch: process.arch }),
   };
 }

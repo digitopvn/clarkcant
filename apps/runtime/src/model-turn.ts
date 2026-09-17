@@ -183,6 +183,15 @@ export async function createModelTurn(options: {
    * nothing — which looks like a broken widget rather than a missing fact.
    */
   datasetRefs?: () => readonly string[];
+  /**
+   * Where a worker transcript is written.
+   *
+   * A conversation turn runs in this process, so its transcript is the one that lets a restart
+   * resume the thread instead of introducing the user to a new assistant on every start.
+   */
+  sessionDir?: string;
+  /** Called once a transcript exists on disk, so the runtime can index it. */
+  onSessionFile?: (input: { sessionId: string; sessionFile: string }) => void;
 }): Promise<ModelTurn | undefined> {
   const selection = modelFromEnv(options.env);
   if (selection === undefined) return undefined;
@@ -191,7 +200,14 @@ export async function createModelTurn(options: {
   const readDatasetRefs = (): readonly string[] => options.datasetRefs?.() ?? [];
   const budget = modelBudgetFromEnv(options.env);
   const adapter =
-    options.adapter ?? new RealPiAdapter({ cwd: options.cwd, model: selection, builtinTools: [] });
+    options.adapter ??
+    new RealPiAdapter({
+      cwd: options.cwd,
+      model: selection,
+      builtinTools: [],
+      ...(options.sessionDir === undefined ? {} : { sessionDir: options.sessionDir }),
+      ...(options.onSessionFile === undefined ? {} : { onSessionFile: options.onSessionFile }),
+    });
   const availability = await adapter.availability();
   const turns = new Map<string, Turn>();
 

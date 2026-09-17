@@ -1,6 +1,6 @@
 ---
 title: "Phase 7: durable-session-history"
-status: todo
+status: done
 ---
 
 # Phase 7: Durable session history
@@ -29,6 +29,22 @@ Root: `/Volumes/GOON/www/digitop/clarkcant/`.
 3. Migration additive + backup/restore test như Phase 1 (nếu cần cột mới).
 4. Redaction pass trước persist: strip pattern key/token đã có trong repo (voice-session tokenMatches là tham chiếu).
 5. E2E nhỏ: gửi message → restart node → message và session vẫn đọc được.
+
+## Kết quả (2026-09-17)
+
+- Migration 12: `session_files(session_id, node_id, principal_id, task_id, conversation_id, path, byte_size, ingest_cursor, last_ingested_at, created_at, updated_at)` + index theo principal/task. `upsertSessionFile` không ghi đè `created_at`/`ingest_cursor`; `advanceSessionIngestCursor` chỉ tiến (batch retry không rewind).
+- `packages/contracts/src/redaction.ts`: một danh sách pattern dùng chung (`redactSecrets`, `findSecretShapes`, `containsSecretShape`); `mini-app-candidates` dùng lại thay vì tự định nghĩa danh sách thứ ba.
+- `packages/pi-adapter/src/session-file.ts`: `redactSessionFile` (rewrite từng dòng, **từ chối ghi** nếu JSON hỏng trước hoặc sau khi redact), `readTranscriptFrom(path, offset, limit)` (bỏ partial tail, throw khi gặp dòng hỏng thay vì bỏ qua), `transcriptSize`.
+- `RealPiAdapterOptions`: `sessionDir` (có → `SessionManager.create(cwd, sessionDir)`, không → `inMemory` như cũ) và `onSessionFile` callback; adapter gọi callback khi transcript đã nằm trên disk.
+- `apps/worker`: trả `handle.sessionFile` thật (trước là `undefined`), `main.ts` nhận `--data-dir` và truyền `sessionDir`.
+- `apps/runtime/src/session-store.ts`: `registerSessionFile` (kiểm tra path nằm trong `dataDir/sessions`, từ chối `PATH_OUTSIDE_SESSION_DIR`), `redactRegisteredSession`, `checkResumable` (`SESSION_UNKNOWN`/`SESSION_FILE_MISSING`), `summariseSessions` (không chứa nội dung transcript), `sessionsDirectory`. Service `NodeServices.sessions`, thư mục tạo lúc boot.
+- `model-turn.ts` + `main.ts`: model turn nhận `sessionDir` và `onSessionFile`, runtime đăng ký vào index; báo đường dẫn sessions lúc khởi động.
+- Tests: `packages/pi-adapter/test/session-persistence.spec.ts` (9) và `apps/runtime/test/session-store.spec.ts` (8) — gồm redaction không phá JSON, offset/limit/partial tail, đọc lại sau restart, path ngoài thư mục sessions bị từ chối, cursor chỉ tiến. `pnpm verify` pass (705).
+
+## Ghi chú cho phase sau
+
+- Phase 8 ingest theo `ingest_cursor` bằng `readTranscriptFrom`; `source: "session_entry"` cho các dòng JSONL, `ref` là `sessionId:offset`.
+- Redaction chạy ở boundary per-turn do adapter chọn; nếu một ngày SDK tự ghi thêm, pass này vẫn chạy lại được (idempotent).
 
 ## Success criteria
 - Restart runtime: `sessionFile` tồn tại trên disk và `open()` resume được; `session_files` có row tương ứng; `messages` đã bền vững từ trước.

@@ -21,7 +21,8 @@ import { SAMPLE_DATASET } from "@clarkcant/data-canvas/sample";
 
 import { createModelTurn, type ViewDescriptor } from "./model-turn.ts";
 import { buildViewCatalog } from "./view-catalog.ts";
-import { bootNodeServices } from "./services.ts";
+import { registerSessionFile, sessionsDirectory } from "./session-store.ts";
+import { bootNodeServices, type NodeServices } from "./services.ts";
 
 interface CliOptions {
   dataDir: string;
@@ -72,9 +73,31 @@ async function main(): Promise<void> {
   // once `bootNodeServices` has run, and the node is created with the model turn already in hand,
   // so the turn reads this lazily at the moment a conversation starts rather than at startup.
   const viewCatalog: ViewDescriptor[] = [];
+  /**
+   * Filled once the node has booted.
+   *
+   * The model turn is built before the services because whether the node has a model decides how
+   * the conductor is assembled, and the session store lives in the services. The callback fires on
+   * the first session creation, long after both exist, so the ordering is a fact about startup
+   * rather than a race.
+   */
+  const sessionWiring: { index?: NodeServices["sessions"]; principalId?: string } = {};
+
   const modelTurn = await createModelTurn({
     env: process.env,
     cwd: process.cwd(),
+    sessionDir: join(options.dataDir, "sessions"),
+    onSessionFile: ({ sessionId, sessionFile }) => {
+      if (sessionWiring.index === undefined || sessionWiring.principalId === undefined) return;
+      const registered = registerSessionFile(sessionWiring.index, {
+        sessionId,
+        principalId: sessionWiring.principalId,
+        path: sessionFile,
+      });
+      if (!registered.ok) {
+        process.stderr.write(`session ${sessionId}: ${registered.message}\n`);
+      }
+    },
     views: () => viewCatalog,
     // The node registers the sample dataset itself, so this is the complete set it holds rather
     // than a guess. The model is told these names because a view over data that is not there
@@ -88,7 +111,7 @@ async function main(): Promise<void> {
           ` (turn limit ${modelTurn.budget.maxWallClockMs} ms, ${modelTurn.budget.maxTokens} tokens)\n`,
   );
 
-  const services = bootNodeServices({
+  const services: NodeServices = bootNodeServices({
     dataDir: options.dataDir,
     label: options.label,
     ...(modelTurn === undefined ? {} : { respondWithModel: modelTurn.answer }),
@@ -104,6 +127,9 @@ async function main(): Promise<void> {
         }),
   });
 
+  sessionWiring.index = services.sessions;
+  sessionWiring.principalId = services.runtime.identity.ownerPrincipalId;
+
   // The model may now ask for these views. When there are none the `show_view` tool is not
   // registered at all, which is why this is reported rather than left to be discovered: a node
   // that cannot show anything should say so once at startup, not fail a turn later.
@@ -118,6 +144,7 @@ async function main(): Promise<void> {
       ? "catalog: every family a composed surface needs is drawable\n"
       : `catalog: a composed surface would be missing ${services.missingFamilies.join(", ")}\n`,
   );
+  process.stderr.write(`session transcripts: ${sessionsDirectory(options.dataDir)}\n`);
   process.stderr.write(
     services.jev.config.enabled
       ? `selector: ${services.jev.config.model} pinned, ${services.jev.config.timeoutMs} ms per turn\n`

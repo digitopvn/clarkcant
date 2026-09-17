@@ -46,6 +46,11 @@ type SdkTool = SdkSession["agent"]["state"]["tools"][number];
  * invented tool syntax rather than calling one.
  */
 function toSdkTool(sdk: SdkModule, tool: ToolDefinition): SdkTool {
+  // SAFETY: the SDK's declaration types `parameters` as a TypeBox schema, which our runtime-validated
+  // JSON Schema is not, so the generic cannot be inferred and the structural check fails at compile
+  // time while the runtime shape is the documented one. `pi-ai` detects the absent TypeBox marker and
+  // validates against plain JSON Schema instead, and `defineTool` is an identity function, so nothing
+  // is transformed. Verified by the live model turn that calls this tool and gets a view back.
   return sdk.defineTool({
     name: tool.name,
     label: tool.label,
@@ -56,11 +61,6 @@ function toSdkTool(sdk: SdkModule, tool: ToolDefinition): SdkTool {
       const result = await tool.execute(params);
       return { content: [{ type: "text" as const, text: result.text }], details: {} };
     },
-    // SAFETY: the SDK's declaration types `parameters` as a TypeBox schema, which our runtime-validated
-    // JSON Schema is not, so the generic cannot be inferred and the structural check fails at compile
-    // time while the runtime shape is the documented one. `pi-ai` detects the absent TypeBox marker and
-    // validates against plain JSON Schema instead, and `defineTool` is an identity function, so nothing
-    // is transformed. Verified by the live model turn that calls this tool and gets a view back.
   }) as unknown as SdkTool;
 }
 
@@ -79,6 +79,21 @@ export interface RealPiAdapterOptions {
   cwd: string;
   /** Directory holding Pi's own configuration and credentials. */
   agentDir?: string;
+  /**
+   * Directory the worker's own session transcript is written into.
+   *
+   * Unset means an in-memory session, which is what a probe wants. A node sets it: a transcript
+   * that only exists in the process is a transcript that cannot be searched after a restart, and the
+   * whole point of persisting one is that it outlives the run that produced it.
+   */
+  sessionDir?: string;
+  /**
+   * Called once the transcript exists on disk, with its path.
+   *
+   * The runtime uses it to index the file. It is a callback rather than something this adapter
+   * writes itself because the adapter has no database and should not grow one.
+   */
+  onSessionFile?: (input: { sessionId: string; sessionFile: string; taskId?: string }) => void;
   /**
    * Which model the worker runs on.
    *
@@ -236,7 +251,13 @@ export class RealPiAdapter implements PiAdapter {
       ...(this.#options.model?.thinkingLevel === undefined
         ? {}
         : { thinkingLevel: this.#options.model.thinkingLevel }),
-      sessionManager: sdk.SessionManager.inMemory(this.#options.cwd),
+      // Persistent when a directory is configured, in memory otherwise. The distinction is
+      // deliberate: an in-memory session leaves nothing to resume and nothing to search, which is
+      // fine for a probe and wrong for a node.
+      sessionManager:
+        this.#options.sessionDir === undefined
+          ? sdk.SessionManager.inMemory(this.#options.cwd)
+          : sdk.SessionManager.create(this.#options.cwd, this.#options.sessionDir),
       resourceLoader: loader,
       // A custom tool has to be named in `tools` as well as supplied in `customTools`. The
       // allowlist is consulted by name, and it refuses anything it does not list — so a tool that
@@ -267,6 +288,10 @@ export class RealPiAdapter implements PiAdapter {
       startedAtMs: Date.now(),
       turns: 0,
     });
+
+    if (session.sessionFile !== undefined) {
+      this.#options.onSessionFile?.({ sessionId, sessionFile: session.sessionFile });
+    }
 
     return {
       sessionId,

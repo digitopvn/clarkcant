@@ -1,4 +1,10 @@
-import { type CompositionSlot, MAX_SELECTION_METADATA_BYTES, utf8Bytes } from "@clarkcant/contracts";
+import {
+  type CompositionSlot,
+  MAX_SELECTION_METADATA_BYTES,
+  findSecretShapes,
+  redactSecrets,
+  utf8Bytes,
+} from "@clarkcant/contracts";
 
 /**
  * What the selector is allowed to see.
@@ -73,23 +79,6 @@ function stripControlCharacters(text: string): string {
   }
   return out;
 }
-
-/**
- * Token-shaped strings, which are what a pasted credential looks like.
- *
- * Deliberately broad. The cost of redacting a harmless long word is a slightly worse prompt; the
- * cost of not redacting a key is a credential leaving the machine.
- */
-const SECRET_SHAPES: readonly RegExp[] = [
-  /\b(?:sk|pk|rk|api|key|token|secret)[-_][A-Za-z0-9._-]{8,}\b/gi,
-  /\bBearer\s+[A-Za-z0-9._~+/-]{10,}=*/g,
-  /\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{5,}\b/g,
-  /\b[A-Za-z0-9+/]{32,}={0,2}\b/g,
-  /\b[A-Fa-f0-9]{32,}\b/g,
-  /\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b/g,
-  /\b(?:\+?\d[\s-]?){9,}\b/g,
-];
-
 /**
  * Reduce free text to something safe to hand to a third party.
  *
@@ -97,10 +86,7 @@ const SECRET_SHAPES: readonly RegExp[] = [
  * request as having no intent rather than sending "intent: " and hoping.
  */
 export function sanitizeIntent(text: string, maxLength = 1000): string {
-  let clean = stripControlCharacters(text).replace(/\s+/g, " ").trim();
-  for (const shape of SECRET_SHAPES) {
-    clean = clean.replace(shape, "[redacted]");
-  }
+  let clean = redactSecrets(stripControlCharacters(text).replace(/\s+/g, " ").trim());
   if (clean.length > maxLength) clean = `${clean.slice(0, maxLength - 1)}…`;
   return clean;
 }
@@ -211,12 +197,6 @@ export function checkSelectionStateSize(
  * the same pattern list, applied to the serialised request.
  */
 export function stateLooksRedacted(state: JevSelectionState): { ok: true } | { ok: false; matches: string[] } {
-  const serialised = JSON.stringify(state);
-  const matches: string[] = [];
-  for (const shape of SECRET_SHAPES) {
-    const pattern = new RegExp(shape.source, shape.flags.replace("g", ""));
-    const found = serialised.match(pattern);
-    if (found !== null) matches.push(found[0].slice(0, 12));
-  }
+  const matches = findSecretShapes(JSON.stringify(state));
   return matches.length === 0 ? { ok: true } : { ok: false, matches };
 }

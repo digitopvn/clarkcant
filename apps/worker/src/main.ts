@@ -15,6 +15,7 @@
  */
 
 import { readFileSync } from "node:fs";
+import { join } from "node:path";
 
 import { FakePiAdapter, RealPiAdapter, modelFromEnv, type PiAdapter } from "@clarkcant/pi-adapter";
 
@@ -25,10 +26,12 @@ interface Args {
   briefPath: string | undefined;
   nodeId: string;
   adapter: "fake" | "real";
+  /** Where the transcript is written. Unset means an in-memory session. */
+  dataDir: string | undefined;
 }
 
 function parseArgs(argv: readonly string[]): Args {
-  const args: Args = { briefPath: undefined, nodeId: "node_local", adapter: "fake" };
+  const args: Args = { briefPath: undefined, nodeId: "node_local", adapter: "fake", dataDir: undefined };
   for (let index = 0; index < argv.length; index += 1) {
     const flag = argv[index];
     const value = argv[index + 1];
@@ -40,6 +43,9 @@ function parseArgs(argv: readonly string[]): Args {
       index += 1;
     } else if (flag === "--adapter" && (value === "fake" || value === "real")) {
       args.adapter = value;
+      index += 1;
+    } else if (flag === "--data-dir" && value !== undefined) {
+      args.dataDir = value;
       index += 1;
     }
   }
@@ -88,9 +94,16 @@ async function main(): Promise<number> {
   // The adapter refuses an unknown provider or model by name, and the environment is where the
   // credential for it has to be, so this is the whole of the worker's model configuration.
   const model = modelFromEnv(process.env);
+  // A worker writes its transcript into the data directory it was given, so a later run can resume
+  // it and the history index can read it. A fake adapter is left in memory: it has no transcript to
+  // resume, and pretending otherwise would be a fixture imitating a fact.
   const adapter: PiAdapter =
     args.adapter === "real"
-      ? new RealPiAdapter({ cwd: process.cwd(), ...(model === undefined ? {} : { model }) })
+      ? new RealPiAdapter({
+          cwd: process.cwd(),
+          ...(model === undefined ? {} : { model }),
+          ...(args.dataDir === undefined ? {} : { sessionDir: join(args.dataDir, "sessions") }),
+        })
       : new FakePiAdapter();
   const availability = await adapter.availability();
   if (!availability.available) {
