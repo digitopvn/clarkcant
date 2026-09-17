@@ -29,13 +29,21 @@ import {
 } from "@clarkcant/widget-host";
 
 import { type NodeModelInfo, type Runtime, type RuntimeOptions, bootRuntime } from "./node.ts";
+import { homedir } from "node:os";
+
+import { getPreference } from "@clarkcant/core";
+
 import { type ComposeDeps } from "./compose-mini-app.ts";
+import { type ProjectFinderDeps } from "./project-finder.ts";
+import { type ProjectSessionStarter, createProjectSessionStarter } from "./project-session.ts";
 import { searchDeciderFromEnv } from "./jev-decider.ts";
 import type { SessionSearchDeps } from "./session-search.ts";
 import {
   type SessionStoreDeps,
   ensureSessionsDirectory,
+  registerSessionFile,
   sessionStoreDepsFrom,
+  sessionsDirectory,
 } from "./session-store.ts";
 import {
   type JevConfig,
@@ -87,6 +95,10 @@ export interface NodeServices {
   sessions: SessionStoreDeps;
   /** The lexical retrieval layer, scoped to this node's owner principal. */
   search: SessionSearchDeps;
+  /** The workspace finder: what is on this machine, and what the user meant. */
+  projects: ProjectFinderDeps;
+  /** How a session starts in a directory the finder chose. */
+  projectSessions: ProjectSessionStarter;
   /** Runtime description surfaced by the health route. Contains no node identity. */
   describe: () => { node: string; platform: string; arch: string };
 }
@@ -249,6 +261,62 @@ export function bootNodeServices(options: RuntimeOptions): NodeServices {
     deciderMode: searchDeciderFromEnv(process.env),
   };
 
+  const preferences = {
+    db: runtime.db,
+    nodeId,
+    now: () => nowInstant() satisfies Instant,
+    newId,
+  };
+  /**
+   * Approved roots and ignores, from the user's own preferences.
+   *
+   * The default root is the home directory — the user's decision, because this application is for
+   * more than code — and the default ignore list is the system one in the scanner. A preference
+   * shaped like an array of strings is read defensively: a malformed value falls back to the default
+   * rather than crashing a scan.
+   */
+  const stringList = (key: string, fallback: readonly string[]): string[] => {
+    const record = getPreference(preferences, {
+      principalId: runtime.identity.ownerPrincipalId,
+      key,
+      scope: "global",
+    });
+    const value = record?.value;
+    if (!Array.isArray(value)) return [...fallback];
+    const strings = value.filter((entry): entry is string => typeof entry === "string" && entry.trim() !== "");
+    return strings.length === 0 ? [...fallback] : strings;
+  };
+
+  const projects: ProjectFinderDeps = {
+    db: runtime.db,
+    nodeId,
+    now: () => nowInstant() satisfies Instant,
+    newId,
+    roots: () => stringList("workspace.roots", [homedir()]),
+    ignore: () => stringList("workspace.ignore", []),
+    home: homedir,
+    decider: {
+      jev: jevRuntime.deps,
+      budget: createJevBudget(jevRuntime.config),
+    },
+  };
+
+  const projectSessions = createProjectSessionStarter({
+    sessionDir: sessionsDirectory(runtime.dataDir),
+    ...(options.model === undefined
+      ? {}
+      : { model: { provider: options.model.provider, id: options.model.id } }),
+    ...(process.env.CC_PI_AGENT_DIR === undefined ? {} : { agentDir: process.env.CC_PI_AGENT_DIR }),
+    ...(options.projectSessionAdapter === undefined ? {} : { createAdapter: options.projectSessionAdapter }),
+    onSessionFile: ({ sessionId, sessionFile }) => {
+      registerSessionFile(sessions, {
+        sessionId,
+        principalId: runtime.identity.ownerPrincipalId,
+        path: sessionFile,
+      });
+    },
+  });
+
   const compose: ComposeDeps = {
     ...base,
     dataDir: runtime.dataDir,
@@ -274,6 +342,8 @@ export function bootNodeServices(options: RuntimeOptions): NodeServices {
     compose,
     sessions,
     search,
+    projects,
+    projectSessions,
     describe: () => ({ node: process.version, platform: process.platform, arch: process.arch }),
   };
 }

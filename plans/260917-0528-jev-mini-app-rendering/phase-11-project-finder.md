@@ -1,6 +1,6 @@
 ---
 title: "Phase 11: project-finder"
-status: todo
+status: done
 ---
 
 # Phase 11: Workspace & Folder Finder + start pi session
@@ -37,6 +37,24 @@ Root: `/Volumes/GOON/www/digitop/clarkcant/`.
 4. Start session: reuse `createWorkerSession` với `projectRoots=[path]`; initial prompt template ngắn; session file persist (Phase 7); message trả về conversation nêu rõ project đã chọn và cách đổi ("không phải, dùng dự án X").
 5. Tool cho Main Pi `find_project(query)` và command gateway cho client.
 6. Telemetry: cache hit/miss, scan duration, candidates count, mode (jev/rank/clarify).
+
+## Kết quả (2026-09-17)
+
+- Migration 14: `project_index(project_id, node_id, path, name, aliases, git_remote, markers, kind, mtime, last_used_at, indexed_at)` + `project_fts(name, aliases, path, kind, project_id)` (unicode61, bỏ dấu).
+- `repositories.ts`: `upsertProject` (giữ `last_used_at` qua refresh; thay row FTS để tên cũ không còn khớp), `searchProjects` (exact alias/name trước, rồi BM25), `touchProjectUse`, `pruneProjects` (theo danh sách path sống sót, không theo thời gian), `projectIndexStats`.
+- `apps/runtime/src/project-finder.ts`: `scanProjects` **bounded** (depth ≤5, trần 20 000 entry, `AbortSignal`, yield giữa các root), ignore list hệ thống + mọi dot-dir + `.app`/`.icloud`, **không đi theo symlink**, dừng descend khi gặp marker, chỉ metadata (marker, mtime, git remote đọc từ `.git/config`); `refreshProjectIndex` incremental theo mtime + prune chỉ khi full/không bị cắt; `findProjectCandidates` (cache-first, alias > recent-use > kind > BM25), `verifyProject` (path còn tồn tại, **trong approved root**, không bị lease), `resolveProject` (cache → scan khi miss → 1 candidate tự quyết → nhiều candidate thì Jev hoặc **một câu hỏi**), `projectContext`, `createFindProjectTool`.
+- `apps/runtime/src/project-session.ts`: `createProjectSessionStarter` (brief `{goal, projectRoots:[path], allowedCapabilityRefs: []}` — bắt đầu phiên không cấp capability) + `initialPrompt`.
+- `jev-decider.ts`: `decideProject` (cùng policy/redaction; state chỉ có intent + `{id, name, relPath, kind}`, không path tuyệt đối) và `verify` sau khi chọn.
+- `packages/core/src/routing.ts`: `disambiguate(candidates, chosen?)` — tôn trọng lựa chọn của decider nếu nó nằm trong candidates, giữ contract T19 khi không có.
+- `services.ts`: `NodeServices.projects` + `projectSessions`; roots/ignore đọc từ preferences `workspace.roots` / `workspace.ignore` (mặc định `~` và rỗng, giá trị sai kiểu → về mặc định). `gateway.ts`: `POST /conversations/:id/start-session` → resolve → (clarify | needs-path | started) và ghi câu trả lời của host vào timeline (có index cho search). `main.ts` đăng ký tool `find_project` cho Main Pi.
+- Tests: `apps/runtime/test/project-finder.spec.ts` (21) trên cây thư mục tạm thật — marker, không descend vào repo, ignore list, depth, symlink escape, kind, không lưu nội dung file, incremental theo mtime, abort/trần entry, alias/recent-use/kind, payload Jev không có path tuyệt đối, verify trong/ngoài root, cache hit <50 ms. Thêm journey `start-session` trong `apps/runtime/test/api.spec.ts` (brief có đúng `projectRoots`, prompt có ngữ cảnh + cách đổi, hoặc hỏi một câu).
+- Đo full scan trên máy dev (`~`, ignore list hệ thống): **42 project, 20 033 entry, 1 270 ms, không bị cắt** — thấp hơn mục tiêu <30 s rất nhiều; incremental sau đó chỉ đọc lại thư mục có mtime đổi.
+- `pnpm verify` pass (764, 5 skipped).
+
+## Ghi chú cho phase sau
+
+- Phase 6 e2e cần: cây thư mục tạm + preference `workspace.roots` trỏ vào đó, không quét home thật.
+- Tool `find_project` trả `~/<relPath>`; `start_session_in_project` là command gateway (không phải tool) để việc mở phiên vẫn qua authorization của gateway.
 
 ## Success criteria
 - "thêm skill mới cho dự án agentkit đi" với 2 thư mục tên gần nhau (`agentkit`, `agentkit-docs`) → chọn đúng theo recent-use/alias hoặc hỏi một câu; session mở với `projectRoots` đúng; không bao giờ mở ngoài approved roots.

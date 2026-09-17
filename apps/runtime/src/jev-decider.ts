@@ -170,6 +170,90 @@ export type SearchDecision =
   | { status: "rank"; reason: string };
 
 /**
+ * Choose which directory the user meant.
+ *
+ * Path B of the finder: the same shape as the runtime decision, with names instead of leases. The
+ * candidates are described by name, relative path, kind and markers — which is what a person would
+ * recognise — and never by an absolute path.
+ */
+export async function decideProject(
+  deps: DecideDeps,
+  input: {
+    intent: string;
+    candidates: readonly { id: string; name: string; relPath: string; kind: string; markers: readonly string[] }[];
+    verify?: (id: string) => boolean;
+  },
+): Promise<
+  | { status: "selected"; id: string; confidence: number | undefined; margin: number | undefined; model: string }
+  | { status: "none"; reason: string }
+  | { status: "fallback"; reason: string }
+> {
+  if (input.candidates.length === 0) return { status: "none", reason: "there were no candidates" };
+  if (input.candidates.length === 1) {
+    const only = input.candidates[0]!;
+    if (input.verify !== undefined && !input.verify(only.id)) {
+      return { status: "fallback", reason: "the only candidate no longer verifies" };
+    }
+    return { status: "selected", id: only.id, confidence: undefined, margin: undefined, model: deps.jev.config.model };
+  }
+
+  const refused = jevCallRefusal(deps.jev.config);
+  if (refused !== undefined) return { status: "fallback", reason: refused };
+
+  const offered = input.candidates.slice(0, 12);
+  const criteria: Record<string, string | null> = {};
+  for (const candidate of offered) {
+    const markers = candidate.markers.slice(0, 4).join(", ");
+    criteria[candidate.id] =
+      `${candidate.name} (${candidate.kind}${markers === "" ? "" : `, ${markers}`}) ở ~/${candidate.relPath}`;
+  }
+
+  const outcome = await askChoice(deps.jev, {
+    state: {
+      intent: redactSecrets(input.intent).slice(0, 300),
+      candidates: offered.map((candidate) => ({ id: candidate.id, name: candidate.name, kind: candidate.kind })),
+    },
+    instructions: "Which directory is the user referring to? Choose none if none of them is what they meant.",
+    criteria,
+    questionId: "project",
+    budget: deps.budget,
+  });
+
+  if (outcome.status !== "answered") {
+    return {
+      status: "fallback",
+      reason: outcome.status === "unavailable" ? outcome.reason : `the selector did not decide: ${outcome.reason}`,
+    };
+  }
+  if (!outcome.value.substantive) {
+    return { status: "none", reason: "the selector said none of the directories is the one meant" };
+  }
+
+  const decisive = isDecisive(
+    outcome.value.top,
+    outcome.value.runnerUp,
+    deps.jev.config.confidenceFloor,
+    deps.jev.config.marginFloor,
+  );
+  if (!decisive.decisive) return { status: "fallback", reason: decisive.reason };
+
+  const chosen = offered.find((candidate) => candidate.id === outcome.value.choice);
+  if (chosen === undefined) return { status: "fallback", reason: "the selector chose something that was not a candidate" };
+  if (input.verify !== undefined && !input.verify(chosen.id)) {
+    return { status: "fallback", reason: "the chosen directory no longer verifies" };
+  }
+
+  return {
+    status: "selected",
+    id: chosen.id,
+    confidence: outcome.value.confidence ?? outcome.value.top,
+    margin: outcome.value.margin,
+    model: deps.jev.config.model,
+  };
+}
+
+
+/**
  * Choose which retrieved result the user meant.
  *
  * The order of the refusals is the design. One result needs no decision, a ranking with a clear

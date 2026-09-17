@@ -793,6 +793,50 @@ export const MIGRATIONS: readonly Migration[] = [
       `);
     },
   },
+  {
+    version: 14,
+    name: "project-index",
+    reversible: true,
+    up: (db) => {
+      db.exec(`
+        -- What is on this machine and where, so "add a skill for the agentkit project" can find the
+        -- directory without the user typing a path.
+        --
+        -- Metadata only: the scan records markers, a name and a modification time. Nothing here is
+        -- file content, which is what makes an index over a home directory defensible.
+        CREATE TABLE project_index (
+          project_id    TEXT PRIMARY KEY,
+          node_id       TEXT NOT NULL,
+          path          TEXT NOT NULL,
+          name          TEXT NOT NULL,
+          -- Names the user or an agent has used for it. A JSON array of strings.
+          aliases       TEXT NOT NULL DEFAULT '[]',
+          git_remote    TEXT,
+          -- Markers that made this a project, as a JSON array: .git, package.json, .obsidian, …
+          markers       TEXT NOT NULL DEFAULT '[]',
+          kind          TEXT NOT NULL,
+          -- Directory mtime, which is what incremental refresh compares.
+          mtime         INTEGER NOT NULL,
+          last_used_at  TEXT,
+          indexed_at    TEXT NOT NULL
+        );
+        CREATE UNIQUE INDEX idx_project_path ON project_index(node_id, path);
+        CREATE INDEX idx_project_kind ON project_index(node_id, kind);
+        CREATE INDEX idx_project_used ON project_index(last_used_at);
+
+        -- Matching by name is a search, not a scan: a home directory holds hundreds of
+        -- directories, and a substring scan on every keystroke is the wrong shape for it.
+        CREATE VIRTUAL TABLE project_fts USING fts5(
+          name,
+          aliases,
+          path,
+          kind UNINDEXED,
+          project_id UNINDEXED,
+          tokenize = 'unicode61 remove_diacritics 2'
+        );
+      `);
+    },
+  },
 ];
 
 export interface MigrationResult {

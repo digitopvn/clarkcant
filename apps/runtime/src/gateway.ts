@@ -3,6 +3,8 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
 import {
+  type Instant,
+  type MessageRecord,
   commandEnvelopeSchema,
   nowInstant,
   protocolRangeSchema,
@@ -25,6 +27,7 @@ import {
 } from "@clarkcant/core";
 import {
   type CalendarEventRecord,
+  appendMessage,
   createConversation,
   findBundleForSnapshot,
   findCompositionByInstance,
@@ -34,6 +37,7 @@ import {
   listCalendarEvents,
   listConversations,
   listLocalImages,
+  nextMessageSequence,
   oneRow,
 } from "@clarkcant/storage";
 
@@ -46,6 +50,8 @@ import {
   resolveLiveSections,
   updateLocalEvent,
 } from "./mini-app-data.ts";
+import { markProjectUsed, projectContext, resolveProject } from "./project-finder.ts";
+import { initialPrompt } from "./project-session.ts";
 import { indexMessages, ingestSessionEntries, searchSessions } from "./session-search.ts";
 import { type NodeServices, buildTimeline } from "./services.ts";
 
@@ -227,6 +233,31 @@ export async function handleRequest(deps: GatewayDeps, request: GatewayRequest):
   }
 
   return fail(404, "NOT_FOUND", `no handler for ${request.method} ${request.path}`);
+}
+
+/**
+ * Append a host-authored reply.
+ *
+ * Written here rather than in the conductor because these are the node's own words about its own
+ * state — which project it opened, which question it is asking — not a model's answer. It is indexed
+ * for search at the same time, so what the conversation shows and what search finds cannot disagree.
+ */
+function appendHostReply(
+  services: NodeServices,
+  input: { conversationId: string; text: string; at: Instant },
+): { messageId: string } {
+  const message: MessageRecord = {
+    messageId: services.conductor.newId("msg") as MessageRecord["messageId"],
+    conversationId: input.conversationId as MessageRecord["conversationId"],
+    role: "assistant",
+    blocks: [{ type: "text", format: "plain", content: input.text, streaming: false }],
+    authorNodeId: services.runtime.identity.nodeId as MessageRecord["authorNodeId"],
+    createdAt: input.at,
+    delivery: "accepted",
+  };
+  appendMessage(services.runtime.db, message, nextMessageSequence(services.runtime.db, input.conversationId));
+  indexMessages(services.search, { conversationId: input.conversationId, messages: [message], at: input.at });
+  return { messageId: message.messageId };
 }
 
 /**
@@ -663,6 +694,73 @@ async function handleConversationRoutes(
       messageIds: outcome.messages.map((message) => message.messageId),
       // The whole timeline page is returned so the client does not have to guess whether
       // its cursor is still valid after its own write.
+      timeline: buildTimeline(services, { conversationId, afterSequence: 0 }),
+    });
+  }
+
+  // /conversations/:id/start-session
+  if (segments.length === 3 && segments[2] === "start-session" && request.method === "POST") {
+    const parsed = readJson(request);
+    if (!parsed.ok) return parsed.response;
+    const text = typeof parsed.value.text === "string" ? parsed.value.text.trim() : "";
+    if (text === "") {
+      return fail(400, "INVALID_SCHEMA", "a start-session request must carry the user's text");
+    }
+
+    const resolution = await resolveProject(services.projects, { intent: text });
+    const startedAt = at() as never;
+
+    if (resolution.status === "rejected") {
+      return fail(409, resolution.code, resolution.message);
+    }
+
+    if (resolution.status === "clarify" || resolution.status === "ask-for-directory") {
+      // One question, and it is written into the conversation so the answer has somewhere to land.
+      const message = appendHostReply(services, {
+        conversationId,
+        text:
+          resolution.status === "clarify"
+            ? `${resolution.question}\n${resolution.options.map((option: string) => `- ${option}`).join("\n")}`
+            : resolution.question,
+        at: startedAt,
+      });
+      return json(200, {
+        status: resolution.status === "clarify" ? "clarify" : "needs-path",
+        question: resolution.question,
+        options: resolution.status === "clarify" ? resolution.options : [],
+        messageId: message.messageId,
+        timeline: buildTimeline(services, { conversationId, afterSequence: 0 }),
+      });
+    }
+
+    // Resolved. The directory was verified by the finder; the session is started in it, and the brief
+    // carries the same path, which is what makes "work in this project" true.
+    const availability = services.projectSessions.available();
+    if (!availability.available) {
+      return fail(503, "SESSION_UNAVAILABLE", availability.reason ?? "this node cannot start a session");
+    }
+
+    const context = projectContext(resolution.project);
+    const session = await services.projectSessions.start({
+      goal: initialPrompt(text, resolution.project.name, context),
+      projectRoots: [resolution.project.path],
+    });
+    markProjectUsed(services.projects, resolution.project.projectId);
+
+    const message = appendHostReply(services, {
+      conversationId,
+      text: `Đã mở phiên làm việc trong ${resolution.project.name} (${resolution.relPath}). ${context}`,
+      at: startedAt,
+    });
+
+    return json(201, {
+      status: "started",
+      projectName: resolution.project.name,
+      relPath: resolution.relPath,
+      mode: resolution.mode,
+      sessionId: session.sessionId,
+      sessionFile: session.sessionFile ?? null,
+      messageId: message.messageId,
       timeline: buildTimeline(services, { conversationId, afterSequence: 0 }),
     });
   }

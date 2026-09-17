@@ -6,6 +6,8 @@ import { type Instant, nowInstant, nodeIdSchema, principalIdSchema } from "@clar
 import type { ModelTurnInput, ModelTurnReply } from "@clarkcant/core";
 import { type Database, migrate, openDatabase } from "@clarkcant/storage";
 
+import type { PiAdapter } from "@clarkcant/pi-adapter";
+
 import type { JevConfig, JevTelemetry, JevTransport } from "./jev-selector.ts";
 
 /**
@@ -60,6 +62,13 @@ export interface RuntimeOptions {
    * Selector wiring, injectable so a test can substitute a transport instead of reaching a
    * provider. The production path builds the config from the environment and uses fetch.
    */
+  /**
+   * Builds the adapter a project session runs on, for one directory.
+   *
+   * A seam rather than an import so a journey test can assert the brief it is handed without loading
+   * the SDK and spawning a real session.
+   */
+  projectSessionAdapter?: (cwd: string) => PiAdapter;
   jev?: {
     config?: Partial<{ [K in keyof JevConfig]: JevConfig[K] }>;
     transport?: JevTransport;
