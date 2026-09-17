@@ -42,6 +42,16 @@ Cả ba đều lộ ra từ việc viết browser journey — không phải từ
 | `packages/storage/test/storage.spec.ts` | Test bổ sung cho tiêu chí Phase 7: message giữ `conversation_id`/`role`/`sequence`/`created_at`/`delivery` qua write→read, và conversation khác không thấy |
 | `apps/runtime/test/session-search.spec.ts` | Test bổ sung cho tiêu chí Phase 9 ở mức **cả đường search**: selector chậm hơn deadline → `mode: "rank"`, không có `chosen`, lý do nêu deadline bị chặn, và tổng thời gian nằm trong `SEARCH_TOTAL_BUDGET_MS` |
 
+### Evidence trong browser
+
+Ảnh do chính suite sinh ra (gitignored, regenerated mỗi lần chạy) nằm ở `plans/reports/evidence/`. Vòng này thêm:
+
+| File | Journey | Assertion đi kèm |
+|---|---|---|
+| `session-01-started-from-typed-path.png` | `project-session.spec.ts` "a project session is started from a path the user types" | Node hỏi `needs-path` → nhập path → trạng thái `started` và câu trả lời của node nằm trong transcript |
+
+Bảy ảnh `miniapp-0*.png` của Phase 6 vẫn được sinh lại bởi `mini-app.spec.ts` (desktop/mobile, light/dark, live-vs-snapshot, ownership refused, keyboard).
+
 ## Gate
 
 | Lệnh | Kết quả |
