@@ -28,7 +28,14 @@ import {
   validateProps,
 } from "@clarkcant/widget-host";
 
+import { loadLocalEmbedder } from "./embeddings-local.ts";
 import { type NodeModelInfo, type Runtime, type RuntimeOptions, bootRuntime } from "./node.ts";
+import {
+  type VectorIndexService,
+  createVectorIndexService,
+  loadVectorExtension,
+  semanticSearchFromEnv,
+} from "./vector-index.ts";
 import { homedir } from "node:os";
 
 import { getPreference } from "@clarkcant/core";
@@ -95,6 +102,13 @@ export interface NodeServices {
   sessions: SessionStoreDeps;
   /** The lexical retrieval layer, scoped to this node's owner principal. */
   search: SessionSearchDeps;
+  /**
+   * The vector half of retrieval, when this machine can run it.
+   *
+   * A service rather than a flag because the model has to be loaded exactly once and the index has to
+   * say whether it is current, behind, or absent — and "absent" is a state the node reports.
+   */
+  vectors: VectorIndexService;
   /** The workspace finder: what is on this machine, and what the user meant. */
   projects: ProjectFinderDeps;
   /** How a session starts in a directory the finder chose. */
@@ -247,6 +261,20 @@ export function bootNodeServices(options: RuntimeOptions): NodeServices {
   // to discover that the directory is missing.
   ensureSessionsDirectory(runtime.dataDir);
 
+  // The extension is loaded into the connection the node actually uses, once. A node without it
+  // searches lexically and says so, which is why this returns a status rather than throwing.
+  const vectorExtension = loadVectorExtension(runtime.db);
+  const vectors: VectorIndexService = createVectorIndexService(
+    {
+      db: runtime.db,
+      principalId: runtime.identity.ownerPrincipalId,
+      enabled: semanticSearchFromEnv(process.env),
+      now: () => nowInstant(),
+    },
+    vectorExtension,
+    async () => (await loadLocalEmbedder()).provider,
+  );
+
   const search: SessionSearchDeps = {
     db: runtime.db,
     nodeId,
@@ -263,7 +291,16 @@ export function bootNodeServices(options: RuntimeOptions): NodeServices {
       budget: createJevBudget(jevRuntime.config),
     },
     deciderMode: searchDeciderFromEnv(process.env),
+    // A getter, not a snapshot: the model is loaded after boot, and a search issued in the meantime
+    // must see the state as it is now rather than the state at startup.
+    get semantic() {
+      return vectors.semantic();
+    },
   };
+
+  // Started but deliberately not awaited. A node still opening its database has to answer searches,
+  // and a model that takes ten seconds to load must not hold up the health route.
+  void vectors.ensure();
 
   const preferences = {
     db: runtime.db,
@@ -346,6 +383,7 @@ export function bootNodeServices(options: RuntimeOptions): NodeServices {
     compose,
     sessions,
     search,
+    vectors,
     projects,
     projectSessions,
     describe: () => ({ node: process.version, platform: process.platform, arch: process.arch }),

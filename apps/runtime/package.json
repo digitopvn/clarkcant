@@ -36,5 +36,9 @@
   },
   "devDependencies": {
     "@types/ws": "8.18.1"
+  },
+  "optionalDependencies": {
+    "@huggingface/transformers": "4.3.0",
+    "sqlite-vec": "0.1.9"
   }
 }

@@ -837,6 +837,37 @@ export const MIGRATIONS: readonly Migration[] = [
       `);
     },
   },
+  {
+    version: 15,
+    name: "history-embeddings",
+    reversible: true,
+    up: (db) => {
+      db.exec(`
+        -- Which history rows have a vector, and which model produced it.
+        --
+        -- Separate from the vector table itself because the vector table cannot exist without a
+        -- loadable extension, and a migration runs whether or not sqlite-vec is installed on this
+        -- machine. This half is plain SQL: it always applies, so an upgrade never depends on an
+        -- optional dependency being present.
+        CREATE TABLE history_embeddings_meta (
+          source        TEXT NOT NULL,
+          ref           TEXT NOT NULL,
+          principal_id  TEXT NOT NULL,
+          model         TEXT NOT NULL,
+          dims          INTEGER NOT NULL,
+          -- Digest of the model artifact, so a silent model swap is detectable.
+          digest        TEXT NOT NULL,
+          -- The rowid in the vec0 table. Recorded here because vec0 assigns it, and a mapping kept
+          -- only inside the extension is a mapping that cannot be rebuilt or audited.
+          vec_rowid     INTEGER NOT NULL,
+          created_at    TEXT NOT NULL,
+          PRIMARY KEY (source, ref)
+        );
+        CREATE INDEX idx_embedding_model ON history_embeddings_meta(model, dims);
+        CREATE INDEX idx_embedding_vec ON history_embeddings_meta(vec_rowid);
+      `);
+    },
+  },
 ];
 
 export interface MigrationResult {

@@ -11,6 +11,8 @@ import {
   searchHistory,
 } from "@clarkcant/storage";
 
+import type { EmbeddingProvider } from "./embeddings-local.ts";
+import { applySemanticFusion, type SemanticStatus } from "./hybrid-rank.ts";
 import {
   type DecideDeps,
   type SearchDeciderMode,
@@ -51,6 +53,19 @@ export interface SessionSearchDeps {
   decider?: DecideDeps;
   /** `rank` by default; `jev` asks the selector to choose between close results. */
   deciderMode?: SearchDeciderMode;
+  /**
+   * The vector half of the retrieval, when this node has it.
+   *
+   * Absent means lexical search alone, which is the default and the measured baseline. A node whose
+   * extension or model is missing reports a reason here rather than failing.
+   */
+  semantic?: {
+    enabled: boolean;
+    provider?: EmbeddingProvider;
+    reason?: string;
+    /** Overrides the measured cosine ceiling. Present so a measurement can vary it. */
+    distanceCeiling?: number;
+  };
 }
 
 export interface SessionSearchRequest {
@@ -90,6 +105,16 @@ export interface SessionSearchOutcome {
   truncated: boolean;
   /** How much history this principal has indexed, so "no matches" is distinguishable from "no index". */
   indexSize: number;
+  /**
+   * What produced the order.
+   *
+   * `bm25` is lower-is-better, `rrf` is higher-is-better. A caller that assumes one while holding the
+   * other ranks the results backwards, so the answer says which one it is instead of leaving the
+   * reader to infer it from the mode.
+   */
+  rankedBy?: "bm25" | "rrf";
+  /** What the vector half did, including the reason it did nothing. */
+  semantic?: SemanticStatus;
   /**
    * How the results were decided.
    *
@@ -146,6 +171,7 @@ export function rankSessions(deps: SessionSearchDeps, request: SessionSearchRequ
     results: hits.slice(0, limit).map(toHit),
     truncated,
     indexSize: historyIndexSize(deps.db, deps.principalId),
+    rankedBy: "bm25",
     mode: "rank",
   };
 }
@@ -161,7 +187,18 @@ export async function searchSessions(
   deps: SessionSearchDeps,
   request: SessionSearchRequest,
 ): Promise<SessionSearchOutcome> {
-  const ranked = rankSessions(deps, request);
+  // The vector half runs before any decision, because a decision has to be made about the results
+  // the user will actually see. When it is off — no extension, no model, or the flag unset — the
+  // lexical answer passes through untouched and carries the reason it was alone.
+  const fused = await applySemanticFusion(
+    deps,
+    request,
+    rankSessions(deps, request),
+    deps.semantic?.distanceCeiling === undefined
+      ? {}
+      : { distanceCeiling: deps.semantic.distanceCeiling },
+  );
+  const ranked: SessionSearchOutcome = { ...fused.outcome, semantic: fused.semantic };
   const mode = deps.deciderMode ?? "rank";
 
   if (mode !== "jev" || deps.decider === undefined || ranked.results.length < 2) {
