@@ -6,9 +6,18 @@ import {
   type WidgetDeps,
   getInstance,
   listPinsForConversation,
+  liveOwnerOf,
+  liveStateOf,
   registerCapability,
 } from "@clarkcant/core";
-import { conversationMetadata, listActiveTasks, messagesSince, upsertDataset } from "@clarkcant/storage";
+import {
+  conversationMetadata,
+  findCompositionByInstance,
+  listActiveTasks,
+  listSnapshotsForMessage,
+  messagesSince,
+  upsertDataset,
+} from "@clarkcant/storage";
 import { FAMILY_BY_DEFINITION, WIDGETS as CATALOG_WIDGETS } from "@clarkcant/data-canvas";
 import { QUICK_PLAY_RECIPES, SAMPLE_DATASET } from "@clarkcant/data-canvas/sample";
 import { CAPABILITIES as PROJECT_WORK_CAPABILITIES } from "@clarkcant/project-work";
@@ -211,9 +220,45 @@ export interface TimelineInstanceView {
   instanceId: string;
   definitionId: string;
   definitionVersion: string;
+  /** Digest of the exact definition this instance was created against. */
+  definitionDigest: string;
   lifecycle: string;
   revision: number;
   props: Record<string, unknown>;
+  dataRefs: string[];
+  actionBindingIds: string[];
+  /** Live state, so a control renders at the value the server holds rather than a guess. */
+  state?: Record<string, unknown>;
+  stateRevision?: number;
+  /**
+   * Which surface currently owns the live instance.
+   *
+   * The surface only, never the owner token: a token in a payload is a token that ends up in a log,
+   * and holding one is what authorizes releasing somebody else's claim.
+   */
+  ownerSurface?: "inline" | "pin";
+  /** Set when this instance is a composed surface, so the client can fetch its spec and bundle. */
+  compositionId?: string;
+}
+
+/**
+ * A historical capture, separate from the live instance above.
+ *
+ * They are deliberately two lists. A message renders a snapshot — immutable values at a revision —
+ * while the live instance is wherever the data has got to since. Merging them is exactly how a
+ * transcript ends up showing today's numbers under yesterday's timestamp.
+ */
+export interface TimelineSnapshotView {
+  snapshotId: string;
+  messageId: string;
+  instanceId?: string;
+  capturedRevision: number;
+  capturedAt: string;
+  stale: boolean;
+  presentationRef: string;
+  bundleRef?: string;
+  catalogDigest?: string;
+  textAlternative: string;
 }
 
 export interface Timeline {
@@ -230,6 +275,7 @@ export interface Timeline {
    * delivery mechanism for executable payloads.
    */
   instances: TimelineInstanceView[];
+  snapshots: TimelineSnapshotView[];
   metadata: { messageCount: number; taskCount: number; updatedAt: string };
   /** Tasks the client should show as in flight, so it never invents a status. */
   activeTaskIds: string[];
@@ -272,14 +318,41 @@ export function buildTimeline(
   for (const instanceId of instanceIds) {
     const instance = getInstance(deps, instanceId);
     if (!instance) continue;
+    const state = liveStateOf(deps, instance.instanceId);
+    const owner = liveOwnerOf(deps, instance.instanceId);
+    const composition = findCompositionByInstance(db, instance.instanceId, instance.ownerPrincipalId);
     instances.push({
       instanceId: instance.instanceId,
       definitionId: instance.definitionRef.id,
       definitionVersion: instance.definitionRef.version,
+      definitionDigest: instance.definitionRef.packageDigest,
       lifecycle: instance.lifecycle,
       revision: instance.revision,
       props: instance.props,
+      dataRefs: instance.dataRefs,
+      actionBindingIds: instance.actionBindingIds,
+      ...(state === undefined ? {} : { state: state.body, stateRevision: state.revision }),
+      ...(owner === undefined ? {} : { ownerSurface: owner.surface }),
+      ...(composition === undefined ? {} : { compositionId: composition.compositionId }),
     });
+  }
+
+  const snapshots: TimelineSnapshotView[] = [];
+  for (const message of messages) {
+    for (const snapshot of listSnapshotsForMessage(db, message.messageId)) {
+      snapshots.push({
+        snapshotId: snapshot.snapshotId,
+        messageId: snapshot.messageId,
+        ...(snapshot.instanceId === undefined ? {} : { instanceId: snapshot.instanceId }),
+        capturedRevision: snapshot.capturedRevision,
+        capturedAt: snapshot.capturedAt,
+        stale: snapshot.stale,
+        presentationRef: snapshot.presentationRef,
+        ...(snapshot.bundleRef === undefined ? {} : { bundleRef: snapshot.bundleRef }),
+        ...(snapshot.catalogDigest === undefined ? {} : { catalogDigest: snapshot.catalogDigest }),
+        textAlternative: snapshot.textAlternative,
+      });
+    }
   }
 
   const metadata = conversationMetadata(db, input.conversationId);
@@ -290,6 +363,7 @@ export function buildTimeline(
     messages,
     pins: listPinsForConversation(deps, input.conversationId),
     instances,
+    snapshots,
     metadata: {
       messageCount: metadata.messageCount,
       taskCount: metadata.taskCount,

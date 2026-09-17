@@ -8,7 +8,21 @@ import {
   protocolRangeSchema,
   surfaceCompositionSpecSchema,
 } from "@clarkcant/contracts";
-import { listCapabilitySummaries, handleUserMessage, pinInstance, unpinInstance } from "@clarkcant/core";
+import {
+  claimLiveOwner,
+  getActionBinding,
+  getInstance,
+  handleUserMessage,
+  invokeMiniAppAction,
+  listCapabilitySummaries,
+  liveOwnerOf,
+  liveStateOf,
+  pinInstance,
+  readSnapshotForDisplay,
+  releaseLiveOwner,
+  sweepExpiredLiveOwners,
+  unpinInstance,
+} from "@clarkcant/core";
 import {
   type CalendarEventRecord,
   createConversation,
@@ -26,6 +40,7 @@ import {
 import {
   MAX_IMAGE_BYTES,
   createLocalEvent,
+  resolveLiveSections,
   importLocalImage,
   removeLocalEvent,
   removeLocalImage,
@@ -366,6 +381,90 @@ function handleMiniAppDataRoutes(
   return fail(404, "NOT_FOUND", `no handler for ${request.method} ${request.path}`);
 }
 
+/**
+ * Resolve what a live composed surface shows right now.
+ *
+ * The rows are read here rather than left to the client to fetch per dataset reference, so the live
+ * view and the snapshot bundle are the same shape and the client has one render path. The state is
+ * read under the same call, which is what lets a control start at the value the server holds
+ * instead of at the default in the spec.
+ */
+function resolveLiveWidget(
+  services: NodeServices,
+  conversationId: string,
+  instanceId: string,
+  principalId: string,
+): GatewayResponse {
+  const { runtime } = services;
+  const instance = getInstance(services.conductor, instanceId);
+  if (instance === undefined) {
+    return fail(404, "RESOURCE_NOT_FOUND", "that instance is not on this node");
+  }
+  if (instance.ownerPrincipalId !== principalId) {
+    return fail(403, "NOT_AUTHORIZED", "that instance belongs to another principal");
+  }
+
+  const composition = findCompositionByInstance(runtime.db, instanceId, principalId);
+  if (composition === undefined) {
+    // A bundled composition is a state, not an error: the instance exists and the client falls back
+    // to a single-widget render or to the message's text alternative.
+    return fail(404, "RESOURCE_NOT_FOUND", "that instance has no composition on this node");
+  }
+
+  const state = liveStateOf(services.conductor, instanceId);
+  const owner = liveOwnerOf(services.conductor, instanceId);
+  const resolved = resolveLiveSections(
+    {
+      db: runtime.db,
+      nodeId: runtime.identity.nodeId,
+      dataDir: runtime.dataDir,
+      now: () => nowInstant() as never,
+      newId: services.conductor.newId,
+    },
+    { principalId: principalId as never, composition, state: state?.body ?? {} },
+  );
+
+  // Bindings are re-read here rather than taken from the stored spec, because a stored document
+  // must not be able to introduce an action after the fact. The digest travels with each one so a
+  // client can send back exactly what it displayed.
+  const bindings = instance.actionBindingIds.flatMap((bindingId) => {
+    const binding = getActionBinding(services.conductor, bindingId);
+    if (binding === undefined) return [];
+    const spec = composition.actions.find((action) => action.actionBindingId === bindingId);
+    if (spec === undefined) return [];
+    return [
+      {
+        actionBindingId: binding.actionBindingId,
+        sectionId: spec.sectionId,
+        label: binding.label,
+        kind: binding.proposal.kind,
+        effectCategory: binding.effectCategory,
+        bindingDigest: binding.bindingDigest,
+      },
+    ];
+  });
+
+  return json(200, {
+    compositionId: composition.compositionId,
+    // A live surface never mints its own authority: the bindings below are references, and every
+    // invocation is re-authorized against the instance, the digest and the current revision.
+    readOnly: false,
+    spec: composition,
+    bindings,
+    sections: resolved.sections,
+    availability: resolved.availability,
+    revision: instance.revision,
+    stateRevision: state?.revision ?? 0,
+    state: state?.body ?? {},
+    ownerSurface: owner?.surface ?? null,
+    capturedAt: null,
+    tombstone: null,
+    period: resolved.period,
+    timezone: resolved.timezone,
+    conversationId,
+  });
+}
+
 function toEventView(event: CalendarEventRecord): Record<string, unknown> {
   return {
     eventId: event.eventId,
@@ -500,6 +599,174 @@ async function handleConversationRoutes(
       return fail(400, "INVALID_SCHEMA", "the `after` cursor must be a non-negative integer");
     }
     return json(200, buildTimeline(services, { conversationId, afterSequence: after }));
+  }
+
+  // /conversations/:id/widgets/:instanceId/actions
+  if (
+    segments.length === 5 &&
+    segments[2] === "widgets" &&
+    segments[4] === "actions" &&
+    request.method === "POST"
+  ) {
+    const parsed = readJson(request);
+    if (!parsed.ok) return parsed.response;
+    const instanceId = segments[3] ?? "";
+
+    // The URL and the body must agree. A body that names a different instance is a request that
+    // intends something other than what its own path says, and resolving which one is authoritative
+    // is a decision this route should not have to make.
+    if (typeof parsed.value.instanceId === "string" && parsed.value.instanceId !== instanceId) {
+      return fail(400, "INSTANCE_MISMATCH", "the body names a different instance than the path");
+    }
+
+    const invocation = {
+      conversationId,
+      principalId: runtime.identity.ownerPrincipalId,
+      instanceId,
+      actionBindingId: typeof parsed.value.actionBindingId === "string" ? parsed.value.actionBindingId : "",
+      expectedRevision:
+        typeof parsed.value.expectedRevision === "number" ? parsed.value.expectedRevision : Number.NaN,
+      expectedBindingDigest:
+        typeof parsed.value.expectedBindingDigest === "string" ? parsed.value.expectedBindingDigest : "",
+      input:
+        typeof parsed.value.input === "object" && parsed.value.input !== null && !Array.isArray(parsed.value.input)
+          ? (parsed.value.input as Record<string, unknown>)
+          : {},
+      invocationId: typeof parsed.value.invocationId === "string" ? parsed.value.invocationId : "",
+    };
+
+    if (invocation.actionBindingId === "" || invocation.invocationId === "") {
+      return fail(400, "INVALID_SCHEMA", "an action invocation needs an actionBindingId and an invocationId");
+    }
+    if (!Number.isFinite(invocation.expectedRevision)) {
+      return fail(400, "INVALID_SCHEMA", "an action invocation needs the expectedRevision the client saw");
+    }
+
+    const outcome = invokeMiniAppAction(services.conductor, invocation);
+    if (!outcome.ok) {
+      const status =
+        outcome.code === "INSTANCE_UNKNOWN" || outcome.code === "ACTION_UNKNOWN"
+          ? 404
+          : outcome.code === "NOT_AUTHORIZED"
+            ? 403
+            : outcome.code === "REVISION_MISMATCH"
+              ? 409
+              : outcome.code === "BINDING_STALE" || outcome.code === "INVOCATION_KEY_REUSED"
+                ? 409
+                : 400;
+      return fail(status, outcome.code, outcome.message, {
+        ...(outcome.currentRevision === undefined ? {} : { currentRevision: outcome.currentRevision }),
+      });
+    }
+
+    return json(200, {
+      duplicate: outcome.duplicate,
+      instanceId: outcome.instanceId,
+      revision: outcome.revision,
+      stateRevision: outcome.stateRevision,
+      state: outcome.state,
+      pinId: outcome.pinId ?? null,
+      // The whole page comes back after a mutation, so the client does not have to guess whether
+      // its cursor is still valid.
+      timeline: buildTimeline(services, { conversationId, afterSequence: 0 }),
+    });
+  }
+
+  // /conversations/:id/widgets/:instanceId/live
+  if (
+    segments.length === 5 &&
+    segments[2] === "widgets" &&
+    segments[4] === "live" &&
+    request.method === "GET"
+  ) {
+    const instanceId = segments[3] ?? "";
+    return resolveLiveWidget(services, conversationId, instanceId, runtime.identity.ownerPrincipalId);
+  }
+
+  // /conversations/:id/widgets/:instanceId/live-owner
+  if (
+    segments.length === 5 &&
+    segments[2] === "widgets" &&
+    segments[4] === "live-owner" &&
+    (request.method === "POST" || request.method === "DELETE")
+  ) {
+    const instanceId = segments[3] ?? "";
+    const parsed = readJson(request);
+    if (!parsed.ok) return parsed.response;
+    const ownerToken = typeof parsed.value.ownerToken === "string" ? parsed.value.ownerToken : "";
+    if (ownerToken === "") {
+      return fail(400, "INVALID_SCHEMA", "a live-owner request must carry the client's ownerToken");
+    }
+
+    if (request.method === "DELETE") {
+      // A release that names a token this client does not hold is a release of somebody else's
+      // claim, and is refused by the token comparison rather than by a principal check.
+      const released = releaseLiveOwner(services.conductor, instanceId, ownerToken);
+      if (!released) {
+        return fail(409, "NOT_OWNER", "that client does not hold the live claim on this instance");
+      }
+      return json(200, { released: true, ownerSurface: null });
+    }
+
+    const surface = parsed.value.surface === "pin" ? "pin" : "inline";
+    const leaseMs = typeof parsed.value.leaseMs === "number" && parsed.value.leaseMs > 0 ? parsed.value.leaseMs : undefined;
+    // Expired claims are cleared first so the reply distinguishes "somebody else is holding it"
+    // from "somebody else held it until a moment ago".
+    sweepExpiredLiveOwners(services.conductor);
+    const claimed = claimLiveOwner(services.conductor, {
+      instanceId,
+      surface,
+      ownerToken,
+      ...(leaseMs === undefined ? {} : { leaseMs }),
+    });
+    if (!claimed.ok) {
+      return fail(409, claimed.code, "another surface holds the live view of this instance", {
+        heldBySurface: claimed.heldBy.surface,
+        ...(claimed.expiresAt === undefined ? {} : { expiresAt: claimed.expiresAt }),
+      });
+    }
+    return json(200, {
+      claimed: true,
+      surface,
+      expiresAt: claimed.expiresAt,
+      ...(claimed.recoveredFrom === undefined ? {} : { recovered: true }),
+    });
+  }
+
+  // /conversations/:id/snapshots/:snapshotId/presentation
+  if (
+    segments.length === 5 &&
+    segments[2] === "snapshots" &&
+    segments[4] === "presentation" &&
+    request.method === "GET"
+  ) {
+    const snapshotId = segments[3] ?? "";
+    const display = readSnapshotForDisplay(services.conductor, snapshotId);
+    if (display === undefined) {
+      return fail(404, "RESOURCE_NOT_FOUND", "that snapshot is not on this node");
+    }
+    const bundle = findBundleForSnapshot(runtime.db, snapshotId, runtime.identity.ownerPrincipalId);
+    if (bundle !== undefined && bundle.instanceId !== display.snapshot.instanceId) {
+      return fail(409, "OWNERSHIP_MISMATCH", "the stored bundle does not belong to this snapshot's instance");
+    }
+    return json(200, {
+      snapshot: display.snapshot,
+      // `read-only` is the point of this route: history never carries an action binding, so a
+      // snapshot cannot be used to mutate anything even if a client tried.
+      readOnly: true,
+      text: display.text,
+      ...(bundle === undefined
+        ? { bundleRef: null, sections: [], tombstone: null }
+        : {
+            bundleRef: bundle.bundleId,
+            sections: bundle.sections,
+            // The spec travels with the bundle so a historical render shows the period and template
+            // it was captured with, not the defaults of whatever the live instance is doing now.
+            spec: bundle.composition,
+            tombstone: bundle.tombstone ?? null,
+            catalogDigest: bundle.catalogDigest,
+          }),
+    });
   }
 
   // /conversations/:id/widgets/:instanceId/composition

@@ -1,7 +1,12 @@
 import { type ReactElement, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-import type { CompositionResponse, GatewayClient, ResolvedDataset, Timeline } from "./api.ts";
-import { renderBlock } from "./blocks.tsx";
+import type {
+  GatewayClient,
+  ResolvedDataset,
+  SnapshotPresentationResponse,
+  Timeline,
+} from "./api.ts";
+import { renderBlock, type SurfaceBlockRef } from "./blocks.tsx";
 import {
   applyResolvedTheme,
   readStoredTheme,
@@ -15,7 +20,8 @@ import type { ThemeName } from "@clarkcant/design-tokens";
 import { Orb } from "./Orb.tsx";
 import { SettingsPanel } from "./SettingsPanel.tsx";
 import { resolveRenderer, toRendererDataset } from "./renderers.tsx";
-import { MiniAppSurface, type CompositeSurfaceView, type SurfaceIntent } from "./mini-app-surface.tsx";
+import { MiniAppSurface, type CompositeSurfaceView } from "./mini-app-surface.tsx";
+import { PinnedLiveSurface } from "./DesktopSurfaces.tsx";
 
 /**
  * Conversation surface.
@@ -83,22 +89,13 @@ export function Conversation({
   const [timeline, setTimeline] = useState<Timeline | undefined>(undefined);
   const [datasets, setDatasets] = useState<Record<string, ResolvedDataset>>({});
   /**
-   * Stored compositions, keyed by instance.
+   * The immutable presentation each message captured, keyed by snapshot.
    *
-   * Fetched once per surface and kept: the spec and the captured rows are immutable, so re-reading
-   * them on every render would be a request per keystroke for data that cannot have changed.
+   * Fetched once and kept: a bundle is written once and never updated, so re-reading it on every
+   * render would be a request per keystroke for data that cannot have changed. The live instance is
+   * a different read, and it lives in the pinned surface that claims ownership of it.
    */
-  const [compositions, setCompositions] = useState<Record<string, CompositionResponse>>({});
-  /** Object URLs for imported images, keyed by image id. Revoked when the surface goes away. */
-  const [imageUrls, setImageUrls] = useState<Record<string, string>>({});
-  /**
-   * The last interaction a composed surface reported, per instance.
-   *
-   * Phase 3 renders and reports; Phase 4 adds the authorized transport that turns one of these
-   * into a durable effect. Keeping the intent visible in the DOM means the behaviour can be
-   * asserted now rather than after the transport lands.
-   */
-  const [lastIntent, setLastIntent] = useState<{ instanceId: string; intent: SurfaceIntent } | undefined>(undefined);
+  const [snapshots, setSnapshots] = useState<Record<string, SnapshotPresentationResponse>>({});
   const [connection, setConnection] = useState<ConnectionState>("connecting");
   const [draft, setDraft] = useState("");
   const [busy, setBusy] = useState(false);
@@ -231,66 +228,43 @@ export function Conversation({
     return map;
   }, [timeline]);
 
-  /* Resolve the stored composition behind every composed surface in the timeline. */
-  const composedInstanceIds = useMemo(() => {
-    const ids: string[] = [];
+  /**
+   * The snapshot behind every composed message, and only those with a bundle.
+   *
+   * A snapshot written before bundles existed has nothing to render from, which is why the absence
+   * of a bundle is carried forward as the reason to show the message's text alternative rather
+   * than the live instance's current props.
+   */
+  const composedSnapshots = useMemo(() => {
+    const entries: { snapshotId: string; instanceId: string | undefined }[] = [];
     for (const block of blocksOf(timeline)) {
       if (block.type !== "surface") continue;
       const snapshot = (block.snapshot ?? {}) as Record<string, unknown>;
       const definitionRef = (block.definitionRef ?? {}) as Record<string, unknown>;
       const instanceId = typeof snapshot.instanceId === "string" ? snapshot.instanceId : undefined;
-      if (instanceId === undefined) continue;
-      const definitionId = typeof definitionRef.id === "string" ? definitionRef.id : instanceById.get(instanceId)?.definitionId ?? "";
-      if (definitionId === "canvas.overview@1") ids.push(instanceId);
+      const definitionId =
+        typeof definitionRef.id === "string" ? definitionRef.id : instanceId === undefined ? "" : instanceById.get(instanceId)?.definitionId ?? "";
+      if (definitionId !== "canvas.overview@1") continue;
+      const snapshotId = typeof snapshot.snapshotId === "string" ? snapshot.snapshotId : "";
+      if (snapshotId === "" || typeof snapshot.bundleRef !== "string") continue;
+      entries.push({ snapshotId, instanceId });
     }
-    return ids;
+    return entries;
   }, [instanceById, timeline]);
 
   useEffect(() => {
     if (conversationId === undefined) return;
-    for (const instanceId of composedInstanceIds) {
-      if (compositions[instanceId] !== undefined) continue;
+    for (const entry of composedSnapshots) {
+      if (snapshots[entry.snapshotId] !== undefined) continue;
       void client
-        .composition(conversationId, instanceId)
-        .then((loaded) => setCompositions((current) => ({ ...current, [instanceId]: loaded })))
+        .snapshotPresentation(conversationId, entry.snapshotId)
+        .then((loaded) => setSnapshots((current) => ({ ...current, [entry.snapshotId]: loaded })))
         .catch(() => {
-          // A composition that cannot be read is not an error state for the conversation: the
-          // surface falls back to the message's text alternative, which is what history keeps.
+          // A snapshot that cannot be read is not an error state for the conversation: the message
+          // falls back to its text alternative, which is what history keeps regardless.
         });
     }
-  }, [client, composedInstanceIds, compositions, conversationId]);
-
-  /* Fetch the bytes of every imported image a rendered composition references. */
-  const imageRefs = useMemo(() => {
-    const refs = new Set<string>();
-    for (const composition of Object.values(compositions)) {
-      for (const section of composition.sections) {
-        const ref = section.props.imageRef;
-        if (typeof ref === "string" && ref !== "") refs.add(ref);
-      }
-    }
-    return [...refs];
-  }, [compositions]);
-
-  useEffect(() => {
-    let cancelled = false;
-    for (const imageId of imageRefs) {
-      if (imageUrls[imageId] !== undefined) continue;
-      void client
-        .imageObjectUrl(imageId)
-        .then((url) => {
-          if (cancelled) {
-            URL.revokeObjectURL(url);
-            return;
-          }
-          setImageUrls((current) => ({ ...current, [imageId]: url }));
-        })
-        .catch(() => undefined);
-    }
-    return () => {
-      cancelled = true;
-    };
-  }, [client, imageRefs, imageUrls]);
+  }, [client, composedSnapshots, conversationId, snapshots]);
 
   useEffect(() => {
     const node = scroller.current;
@@ -342,8 +316,7 @@ export function Conversation({
     setConversationId(undefined);
     setTimeline(undefined);
     setDatasets({});
-    setCompositions({});
-    setLastIntent(undefined);
+    setSnapshots({});
     setDraft("");
     setError(undefined);
     setBusy(false);
@@ -351,7 +324,7 @@ export function Conversation({
   }, [onSessionReset]);
 
   const renderSurface = useCallback(
-    (input: { instanceId: string | undefined; definitionId: string; textAlternative: string; revision: number }): ReactElement => {
+    (input: SurfaceBlockRef): ReactElement => {
       const instance = input.instanceId === undefined ? undefined : instanceById.get(input.instanceId);
       const definitionId = instance?.definitionId ?? input.definitionId;
       const Renderer = resolveRenderer(definitionId);
@@ -366,29 +339,39 @@ export function Conversation({
         );
       }
 
-      const composition = compositions[instance.instanceId];
-      if (definitionId === "canvas.overview@1" && composition !== undefined) {
+      if (definitionId === "canvas.overview@1") {
+        const captured = input.snapshotId === "" ? undefined : snapshots[input.snapshotId];
         return (
-          <div data-widget-instance={instance.instanceId} data-widget-definition={definitionId} data-last-intent={lastIntent?.instanceId === instance.instanceId ? lastIntent.intent.action : ""}>
-            <MiniAppSurface
-              view={toSurfaceView(composition, instance.revision, datasets)}
-              title={typeof instance.props.title === "string" ? instance.props.title : undefined}
-              imageUrl={(ref) => imageUrls[ref]}
-              onIntent={(intent) => setLastIntent({ instanceId: instance.instanceId, intent })}
-            />
+          <div
+            data-widget-instance={instance.instanceId}
+            data-widget-definition={definitionId}
+            data-snapshot={input.snapshotId}
+            data-snapshot-stale={input.stale ? "true" : "false"}
+          >
+            {captured === undefined ? (
+              // History without a stored bundle shows what the message itself carries. Substituting
+              // the live instance here is the failure mode this whole split exists to prevent.
+              <div className="cc-card cc-freshness" data-widget-fallback="true" style={{ padding: "var(--cc-space-md)" }}>
+                {input.textAlternative}
+              </div>
+            ) : (
+              <MiniAppSurface view={toSurfaceViewFromSnapshot(captured, instance.revision)} title={typeof instance.props.title === "string" ? instance.props.title : undefined} />
+            )}
             {conversationId !== undefined && (
               <button
                 className="cc-icon-btn"
                 style={{ width: "auto", padding: "0 var(--cc-space-sm)", marginTop: "var(--cc-space-xs)" }}
-                data-pin-instance={instance.instanceId}
+                data-open-live={instance.instanceId}
                 onClick={() => {
+                  // "Open the current view" is an expanded pin: the pinned surface is where the
+                  // live instance is mounted, and it is the one that claims ownership of it.
                   void client
-                    .pin(conversationId, instance.instanceId)
+                    .pin(conversationId, instance.instanceId, "expanded")
                     .then((result) => applyTimeline(result.timeline))
                     .catch((cause: unknown) => setError(cause instanceof Error ? cause.message : String(cause)));
                 }}
               >
-                Ghim lại
+                Mở bản hiện tại
               </button>
             )}
           </div>
@@ -429,7 +412,7 @@ export function Conversation({
         </div>
       );
     },
-    [applyTimeline, client, compositions, conversationId, datasets, imageUrls, instanceById, lastIntent],
+    [applyTimeline, client, conversationId, instanceById, snapshots],
   );
 
   const blocks = timeline?.messages ?? [];
@@ -520,6 +503,27 @@ export function Conversation({
           </div>
         )}
       </div>
+
+      {/*
+        The expanded live view of a pinned instance. This is the only place a composed surface can
+        be acted on: the copy in the transcript is history, and mounting a second live instance
+        beside it would be two owners for one logical widget.
+      */}
+      {conversationId !== undefined &&
+        pins
+          .filter((pin) => pin.displayMode === "expanded" && instanceById.get(pin.instanceId)?.definitionId === "canvas.overview@1")
+          .map((pin) => (
+            <div key={`live-${pin.pinId}`} className="cc-pin-expanded" data-pin-live={pin.pinId}>
+              <PinnedLiveSurface
+                client={client}
+                conversationId={conversationId}
+                instanceId={pin.instanceId}
+                displayMode="expanded"
+                title={typeof instanceById.get(pin.instanceId)?.props.title === "string" ? String(instanceById.get(pin.instanceId)?.props.title) : undefined}
+                onTimeline={applyTimeline}
+              />
+            </div>
+          ))}
 
       {pins.length > 0 && (
         <div className="cc-pins" data-pin-shelf="true">
@@ -614,26 +618,22 @@ function blocksOf(timeline: Timeline | undefined): Record<string, unknown>[] {
 }
 
 /**
- * Turn a stored composition into what the surface renders.
+ * Turn a captured bundle into what the surface renders.
  *
- * Region availability is decided here, from evidence: rows in the bundle mean live data, a
- * resolvable dataset reference means a live read, and neither means the region is genuinely empty.
- * A region is never filled with the last known rows after a failed read.
+ * Nothing here reaches the live rows. A region with no materialised rows is reported as `missing`
+ * rather than filled from the current dataset, which is the difference between history and a view
+ * that quietly rewrites itself. `actions` is deliberately empty: a snapshot declares the bindings
+ * that existed when it was taken, and the read-only route that produced this data does not carry
+ * them, so a historical surface cannot mutate anything even if a client tried.
  */
-function toSurfaceView(
-  composition: CompositionResponse,
+function toSurfaceViewFromSnapshot(
+  captured: SnapshotPresentationResponse,
   revision: number,
-  datasets: Record<string, ResolvedDataset>,
 ): CompositeSurfaceView {
-  const captured = new Map(composition.sections.map((section) => [section.sectionId, section]));
-  const availability: Record<string, "live" | "cached" | "missing"> = {};
-  const sections = composition.spec.sections.map((section) => {
-    const materialised = captured.get(section.sectionId);
-    const rows =
-      materialised?.rows ??
-      section.dataRefs
-        .map((ref) => datasets[ref]?.document.rows)
-        .find((candidate): candidate is Record<string, unknown>[] => Array.isArray(candidate));
+  const materialised = new Map(captured.sections.map((section) => [section.sectionId, section]));
+  const availability: Record<string, "live" | "missing"> = {};
+  const sections = captured.sections.map((section) => {
+    const rows = materialised.get(section.sectionId)?.rows;
     availability[section.sectionId] = rows === undefined ? "missing" : "live";
     return {
       sectionId: section.sectionId,
@@ -646,22 +646,20 @@ function toSurfaceView(
     };
   });
 
+  const spec = captured.spec;
   return {
-    compositionId: composition.compositionId,
-    instanceId: composition.spec.instanceId,
-    catalogDigest: composition.spec.catalogDigest,
-    initialState: composition.spec.initialState,
-    actions: composition.spec.actions.map((action) => ({
-      actionBindingId: action.actionBindingId,
-      sectionId: action.sectionId,
-      label: action.label,
-      kind: action.kind as CompositeSurfaceView["actions"][number]["kind"],
-      effectCategory: action.effectCategory,
-    })),
+    compositionId: spec?.compositionId ?? "",
+    instanceId: spec?.instanceId ?? captured.snapshot.instanceId ?? "",
+    catalogDigest: captured.catalogDigest ?? "",
+    // The period a snapshot was captured at is the period it shows. A later filter change belongs
+    // to the live instance, not to this message.
+    initialState: spec?.initialState ?? { period: "week", timezone: "UTC" },
+    actions: [],
     sections,
     revision,
-    ...(composition.capturedAt === null ? {} : { capturedAt: composition.capturedAt }),
-    tombstone: composition.tombstone,
+    ...(typeof captured.snapshot.capturedAt === "string" ? { capturedAt: captured.snapshot.capturedAt } : {}),
+    stale: captured.snapshot.stale === true,
+    tombstone: captured.tombstone,
     availability,
   };
 }

@@ -19,6 +19,56 @@ export interface GatewayClientOptions {
   /** Injected so tests and the E2E harness can substitute a transport. */
   fetchImpl?: typeof fetch;
 }
+/** What a live composed surface resolves to right now. */
+export interface LiveWidgetResponse {
+  compositionId: string;
+  readOnly: boolean;
+  spec: CompositionResponse["spec"];
+  /** The compiled bindings for this instance, with the digest the client must send back. */
+  bindings: {
+    actionBindingId: string;
+    sectionId: string;
+    label: string;
+    kind: string;
+    effectCategory: string;
+    bindingDigest: string;
+  }[];
+  sections: CompositionResponse["sections"];
+  availability: Record<string, "live" | "missing" | "denied">;
+  revision: number;
+  stateRevision: number;
+  state: Record<string, unknown>;
+  ownerSurface: "inline" | "pin" | null;
+  capturedAt: null;
+  tombstone: null;
+  period: "week" | "month";
+  timezone: string;
+  conversationId: string;
+}
+
+/** What a historical surface renders from: the bundle captured with the message. */
+export interface SnapshotPresentationResponse {
+  snapshot: { instanceId?: string; capturedAt?: string; stale?: boolean } & Record<string, unknown>;
+  readOnly: true;
+  text: string;
+  bundleRef: string | null;
+  /** Present when the message was captured with a bundle; absent for a legacy snapshot. */
+  spec?: CompositionResponse["spec"];
+  sections: CompositionResponse["sections"];
+  tombstone: { reason: string; at: string } | null;
+  catalogDigest?: string;
+}
+
+export interface ActionInvocationResult {
+  duplicate: boolean;
+  instanceId: string;
+  revision: number;
+  stateRevision: number;
+  state: Record<string, unknown>;
+  pinId: string | null;
+  timeline: Timeline;
+}
+
 export interface TimelineMessage {
   messageId: string;
   role: "user" | "assistant" | "system" | "tool";
@@ -286,6 +336,52 @@ export class GatewayClient {
 
   deleteImage(imageId: string): Promise<{ removed: boolean }> {
     return this.#call("DELETE", `/images/${imageId}`);
+  }
+
+  /** Resolve the live surface for an instance: current state, sections and ownership. */
+  liveWidget(conversationId: string, instanceId: string): Promise<LiveWidgetResponse> {
+    return this.#call("GET", `/conversations/${conversationId}/widgets/${instanceId}/live`);
+  }
+
+  /** The immutable presentation a message captured. Never carries an action binding. */
+  snapshotPresentation(conversationId: string, snapshotId: string): Promise<SnapshotPresentationResponse> {
+    return this.#call("GET", `/conversations/${conversationId}/snapshots/${snapshotId}/presentation`);
+  }
+
+  /**
+   * Invoke a bound view action.
+   *
+   * `expectedRevision` and `expectedBindingDigest` are what the client saw. A mismatch is refused
+   * rather than applied, which is why the caller has to re-read on a conflict instead of retrying
+   * with a fresh revision.
+   */
+  invokeAction(
+    conversationId: string,
+    instanceId: string,
+    invocation: {
+      actionBindingId: string;
+      expectedRevision: number;
+      expectedBindingDigest: string;
+      input: Record<string, unknown>;
+      invocationId: string;
+    },
+  ): Promise<ActionInvocationResult> {
+    return this.#call("POST", `/conversations/${conversationId}/widgets/${instanceId}/actions`, {
+      instanceId,
+      ...invocation,
+    });
+  }
+
+  claimLiveOwner(
+    conversationId: string,
+    instanceId: string,
+    input: { ownerToken: string; surface: "inline" | "pin"; leaseMs?: number },
+  ): Promise<{ claimed: boolean; surface: "inline" | "pin"; expiresAt: string; recovered?: boolean }> {
+    return this.#call("POST", `/conversations/${conversationId}/widgets/${instanceId}/live-owner`, input);
+  }
+
+  releaseLiveOwner(conversationId: string, instanceId: string, ownerToken: string): Promise<{ released: boolean }> {
+    return this.#call("DELETE", `/conversations/${conversationId}/widgets/${instanceId}/live-owner`, { ownerToken });
   }
 
   /**

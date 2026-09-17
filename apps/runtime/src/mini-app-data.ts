@@ -4,8 +4,11 @@ import { join } from "node:path";
 
 import {
   type CompositionPeriod,
+  type CompiledSection,
+  type CompositionSection,
   type Instant,
   type PeriodRange,
+  type SurfaceCompositionSpec,
   type Principal,
   bucketKeyOf,
   countsByBucket,
@@ -689,6 +692,85 @@ export function publishMiniAppData(
     calendarRows,
     imageRefs: [],
   };
+}
+
+export interface LiveSectionResolution {
+  sections: CompiledSection[];
+  availability: Record<string, RegionAvailabilityKind>;
+  published: PublishedMiniAppData;
+  period: CompositionPeriod;
+  timezone: string;
+}
+
+/** How a region resolved for a live read. Mirrors what the client draws. */
+export type RegionAvailabilityKind = "live" | "missing" | "denied";
+
+/**
+ * Resolve the rows a live composed surface shows right now.
+ *
+ * One read path for both the live surface and the snapshot: the live read fills `rows` from current
+ * records, and the snapshot bundle carries the rows that were filled when it was captured. The
+ * client draws the same shape either way, which is what keeps a snapshot render from needing a
+ * second code path that can drift.
+ */
+export function resolveLiveSections(
+  deps: MiniAppDataDeps,
+  input: {
+    principalId: Principal["principalId"];
+    composition: SurfaceCompositionSpec;
+    state: Record<string, unknown>;
+  },
+): LiveSectionResolution {
+  const period: CompositionPeriod = input.state.period === "month" ? "month" : input.composition.initialState.period;
+  const timezone =
+    typeof input.state.timezone === "string" && input.state.timezone.length > 0
+      ? input.state.timezone
+      : input.composition.initialState.timezone;
+
+  const published = publishMiniAppData(deps, { principalId: input.principalId, period, timezone });
+  const availability: Record<string, RegionAvailabilityKind> = {};
+  const sections: CompiledSection[] = input.composition.sections.map((section) => {
+    const { rows, state: availabilityState } = rowsForSlot(section, published, deps, input.principalId);
+    availability[section.sectionId] = availabilityState;
+    return {
+      ...section,
+      ...(rows === undefined ? {} : { rows }),
+    };
+  });
+
+  return { sections, availability, published, period, timezone };
+}
+
+function rowsForSlot(
+  section: CompositionSection,
+  published: PublishedMiniAppData,
+  deps: MiniAppDataDeps,
+  principalId: Principal["principalId"],
+): { rows: Record<string, unknown>[] | undefined; state: RegionAvailabilityKind } {
+  switch (section.slot) {
+    case "metrics":
+      return { rows: published.metrics.rows, state: published.metrics.rows.length === 0 ? "missing" : "live" };
+    case "trend":
+    case "table":
+      return {
+        rows: published.metrics.trendRows,
+        state: published.metrics.trendRows.every((row) => Number(row.completed ?? 0) + Number(row.created ?? 0) === 0)
+          ? "missing"
+          : "live",
+      };
+    case "calendar":
+      return { rows: published.calendarRows, state: published.calendarRows.length === 0 ? "missing" : "live" };
+    case "image": {
+      // An image reference that no longer resolves is reported as missing rather than drawn as a
+      // broken picture, and the alt text stays part of the section so it can still be read.
+      const imageRef = section.props.imageRef;
+      if (typeof imageRef !== "string" || imageRef === "") return { rows: undefined, state: "missing" };
+      const image = getLocalImage(deps.db, imageRef, principalId);
+      return { rows: undefined, state: image === undefined ? "missing" : "live" };
+    }
+    default:
+      return { rows: undefined, state: "live" };
+  }
 }
 
 /** Where a local day starts, exposed so a caller can build a range without duplicating the math. */

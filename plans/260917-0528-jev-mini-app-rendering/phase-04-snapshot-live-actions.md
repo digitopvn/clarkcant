@@ -1,6 +1,6 @@
 ---
 title: "Phase 4: Snapshot, live ownership và actions"
-status: todo
+status: done
 ---
 
 # Phase 4: Snapshot, live ownership và actions
@@ -53,10 +53,26 @@ Root: `/Volumes/GOON/www/digitop/clarkcant/`.
 - Commands: `pnpm exec vitest run apps/runtime/test/mini-app-actions.spec.ts packages/core/test/mini-app-ownership.spec.ts`; `pnpm typecheck`.
 
 ## Todo
-- [ ] Implement snapshot/live DTO và client rendering split.
-- [ ] Wire authorized action transport, idempotency và conflict UX.
-- [ ] Implement shared ownership transfer/crash recovery.
-- [ ] Pass persistence, permission và concurrency tests.
+- [x] Implement snapshot/live DTO và client rendering split.
+- [x] Wire authorized action transport, idempotency và conflict UX.
+- [x] Implement shared ownership transfer/crash recovery.
+- [x] Pass persistence, permission và concurrency tests.
+
+## Kết quả (2026-09-17)
+
+- `packages/core/src/widget-service.ts`: `claimLiveOwner` có lease (`LIVE_OWNER_LEASE_MS`, `recovery` khi lease hết hạn hoặc row cũ không có expiry), `liveOwnerOf`, `sweepExpiredLiveOwners`, release phải khớp token; `invokeMiniAppAction` với thứ tự **idempotency → authorization → binding shape → revision/digest**, ghi state + revision + stale + pin + invocation trong **một** transaction; `M1_VIEW_OPERATIONS` chỉ gồm `period.change`, `date.select`, `view.save`; binding `agent`/`invoke` bị từ chối (`UNSUPPORTED_ACTION`).
+- `packages/storage`: `listSnapshotsForMessage` (cột `stale` thắng document — bug thật: trước đó snapshot bị đánh dấu cũ vẫn đọc ra `stale:false`).
+- `apps/runtime/src/services.ts`: timeline tách `snapshots` (immutable: snapshotId, bundleRef, catalogDigest, capturedAt, stale) khỏi `instances` (live: state, stateRevision, ownerSurface, compositionId, definitionDigest, dataRefs, actionBindingIds). **Không** đưa owner token vào DTO.
+- `apps/runtime/src/gateway.ts`: `POST …/actions`, `GET …/live` (spec + sections có rows hiện tại + `bindings` kèm `bindingDigest` — client cần digest để gửi lại), `GET …/snapshots/:id/presentation` (`readOnly: true`, có `spec` của bundle), `POST/DELETE …/live-owner`.
+- `apps/runtime/src/mini-app-data.ts`: `resolveLiveSections` trả rows theo slot + `availability` (metrics/trend/calendar/image).
+- `packages/conversation-client`: `blocks.tsx` forward `snapshotId/bundleRef/catalogDigest/capturedAt/stale`; `Conversation.tsx` render inline từ bundle (read-only, không actions) + nút “Mở bản hiện tại” tạo pin `expanded`; `DesktopSurfaces.tsx` `PinnedLiveSurface` (claim + refresh 30 s + release khi unmount, read-only khi surface khác giữ, conflict 409 → tải lại và nói rõ thao tác chưa áp dụng).
+- Tests: `packages/core/test/mini-app-ownership.spec.ts` (12) và `apps/runtime/test/mini-app-actions.spec.ts` (11). `pnpm verify` pass (672).
+
+## Ghi chú cho phase sau
+
+- `captureCompositeSurface` nhận `instanceId` do caller cấp, để compiler Phase 5 compile binding trước khi persist mà binding vẫn trỏ đúng instance.
+- Client gửi `expectedBindingDigest` lấy từ `/live`; binding đổi digest → 409 `BINDING_STALE` và UI phải reload.
+- Phase 6 e2e assert: `data-snapshot`, `data-snapshot-stale`, `data-open-live`, `data-live-instance`, `data-ownership`, `data-pin-live`.
 
 ## Risks / next
 Không đưa owner tokens hoặc action auth material vào history bundle, logs hay screenshots. Verify approval invariants không bị bypass. Phase 5 chỉ tích hợp compose khi deterministic interactions đã hoạt động.

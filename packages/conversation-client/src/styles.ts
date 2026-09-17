@@ -560,6 +560,11 @@ button:focus-visible, textarea:focus-visible, input:focus-visible, [tabindex]:fo
 }
 .cc-cta p { margin: 0; }
 
+/* The live view of a pinned instance, and the notice when another surface holds it. */
+.cc-live-surface { display: flex; flex-direction: column; gap: var(--cc-space-xs); }
+.cc-live-surface[data-ownership="elsewhere"] { opacity: 0.9; }
+.cc-live-surface[data-ownership="owner"] .cc-surface-region { border-left: 2px solid transparent; }
+
 @media (prefers-reduced-motion: reduce) {
   .cc-scroll { scroll-behavior: auto; }
   * { transition-duration: var(--cc-motion-micro) !important; animation-duration: var(--cc-motion-micro) !important; }

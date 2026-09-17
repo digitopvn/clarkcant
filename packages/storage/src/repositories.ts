@@ -13,9 +13,11 @@ import {
   type SurfaceCompositionSpec,
   type TaskRecord,
   type WidgetInstance,
+  type WidgetSnapshot,
   commandAckSchema,
   storedPresentationBundleSchema,
   surfaceCompositionSpecSchema,
+  widgetSnapshotSchema,
 } from "@clarkcant/contracts";
 
 import { type Database, oneRow, allRows, parseJson, toJson, transaction } from "./db.ts";
@@ -726,6 +728,27 @@ export function listPins(db: Database, conversationId: string): Pin[] {
 export function deletePin(db: Database, pinId: string): boolean {
   const result = db.prepare("DELETE FROM pins WHERE pin_id = ?").run(pinId);
   return Number(result.changes) > 0;
+}
+
+/**
+ * The snapshots a message captured, oldest first.
+ *
+ * History is read from these rather than from the instance's current props: a snapshot is what the
+ * user saw, and re-deriving it from the live row is how a transcript silently rewrites itself.
+ */
+export function listSnapshotsForMessage(db: Database, messageId: string): WidgetSnapshot[] {
+  const rows = allRows<{ document: string; stale: number }>(
+    db,
+    "SELECT document, stale FROM widget_snapshots WHERE message_id = ? ORDER BY captured_at ASC",
+    messageId,
+  );
+  return rows.map((row) => {
+    const parsed = widgetSnapshotSchema.parse(parseJson<unknown>(row.document, "widget_snapshots.document"));
+    // The column wins over the stored document. Staleness is the one field that changes after a
+    // snapshot is written, and a reader that trusted the document would report history as current
+    // for as long as nothing rewrote the whole row.
+    return { ...parsed, stale: Number(row.stale) === 1 };
+  });
 }
 
 /* ------------------------------------------------------------------ *
