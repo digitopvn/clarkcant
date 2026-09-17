@@ -211,6 +211,25 @@ describe("the scan", () => {
     const outcome = await scanProjects({ roots: [home], maxEntries: 3 });
     expect(outcome.truncated).toBe(true);
   });
+
+  it("does not prune the index when a scan was interrupted", async () => {
+    buildTree();
+    const first = await refreshProjectIndex(deps, { full: true });
+    expect(first.removed).toBe(0);
+    const before = listProjects(db, "node_local", 100).map((project) => project.projectId).sort();
+    expect(before.length).toBeGreaterThan(0);
+
+    const controller = new AbortController();
+    controller.abort();
+    const interrupted = await refreshProjectIndex(deps, { full: true, signal: controller.signal });
+
+    expect(interrupted.stoppedEarly).toBe(true);
+    // An abort before the first walk reports `truncated: false` having examined nothing. Pruning on
+    // that wipes the whole per-node index — including the aliases and last-use times that a rescan
+    // cannot reconstruct — so the stop has to be part of the guard, not just the truncation.
+    expect(interrupted.removed).toBe(0);
+    expect(listProjects(db, "node_local", 100).map((project) => project.projectId).sort()).toEqual(before);
+  });
 });
 
 describe("ranking and candidates", () => {
@@ -418,7 +437,7 @@ describe("the selector's view", () => {
           },
           transport: recorded.transport,
         },
-        budget: { deadlineAt: Date.now() + 4000 },
+        budget: () => ({ deadlineAt: Date.now() + 4000 }),
       },
     };
 
@@ -466,7 +485,7 @@ describe("the selector's view", () => {
           },
           transport: recorded.transport,
         },
-        budget: { deadlineAt: Date.now() + 4000 },
+        budget: () => ({ deadlineAt: Date.now() + 4000 }),
       },
     };
 
@@ -577,7 +596,7 @@ describe("a directory the user typed", () => {
               return { status: 200, body: {} };
             },
           },
-          budget: { deadlineAt: Date.now() + 2000, timeoutMs: 2000 },
+          budget: () => ({ deadlineAt: Date.now() + 2000, timeoutMs: 2000 }),
         },
       },
       { intent: `mở giúp tui ${join(home, "typed-target")}` },

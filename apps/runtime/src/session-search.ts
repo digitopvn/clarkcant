@@ -1,4 +1,4 @@
-import { type Instant, type MessageRecord } from "@clarkcant/contracts";
+import { type Instant, type MessageRecord, redactSecrets } from "@clarkcant/contracts";
 import { readTranscriptFrom, type ToolDefinition } from "@clarkcant/pi-adapter";
 import {
   type Database,
@@ -510,7 +510,11 @@ export function createSearchHistoryTool(deps: SessionSearchDeps): ToolDefinition
 
       const lines = outcome.results.map((hit, index) => {
         const where = hit.provenance.conversationId === undefined ? hit.source : `${hit.source} in ${hit.provenance.conversationId}`;
-        return `${index + 1}. (${where}, ${hit.provenance.createdAt}) ${hit.snippet}`;
+        // The snippet is history the user did not compose for this request, and a tool result is
+        // what the provider reads. The identical text is redacted before it leaves the node on the
+        // search-decision path, so leaving it raw here would mean a credential a worker happened to
+        // print could reach a provider through a search nobody composed as a message.
+        return `${index + 1}. (${where}, ${hit.provenance.createdAt}) ${redactSecrets(hit.snippet)}`;
       });
       return {
         text:

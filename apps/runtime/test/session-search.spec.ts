@@ -319,6 +319,19 @@ describe("the tool the main model sees", () => {
     const empty = await tool.execute({ query: "" });
     expect(empty.text).toContain("No query");
   });
+
+  it("redacts a credential-shaped string in history before the tool returns it", async () => {
+    seed("đổi credential sk-live-abcdef1234567890 cho máy chủ", "msg_cred", "2026-09-16T02:00:00.000Z");
+    const tool = createSearchHistoryTool(search);
+    const result = await tool.execute({ query: "credential" });
+
+    // A tool result is what the provider reads. The search itself returns the raw snippet on purpose
+    // — a reader on this node may look at it — so the redaction has to happen where the text turns
+    // into context for a model, which is here.
+    expect(result.text).toContain("credential");
+    expect(result.text).toContain("[redacted]");
+    expect(result.text).not.toContain("sk-live-abcdef1234567890");
+  });
 });
 
 /* ------------------------------------------------------------------ *
@@ -492,7 +505,7 @@ describe("the search deadline", () => {
     const outcome = await searchSessions(
       {
         ...search,
-        decider: { jev: { config: config(), transport: slow }, budget: { deadlineAt: Date.now() + 30, timeoutMs: 30 } },
+        decider: { jev: { config: config(), transport: slow }, budget: () => ({ deadlineAt: Date.now() + 30, timeoutMs: 30 }) },
         deciderMode: "jev",
       },
       { text: "sửa lỗi đăng nhập", limit: 5 },

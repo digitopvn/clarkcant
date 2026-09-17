@@ -284,8 +284,10 @@ export function bootNodeServices(options: RuntimeOptions): NodeServices {
         {
           jev: jevRuntime.deps,
           // Choosing which capability does the work is a decision, not a composition, so it gets the
-          // decision deadline the plan sets for the selector.
-          budget: searchDecisionBudget(jevRuntime.config, { timeoutMs: decisionTimeoutMsFromEnv(process.env) }),
+          // decision deadline the plan sets for the selector — and a fresh one per decision, because
+          // a budget captured once carries an absolute `deadlineAt` that expires two seconds into the
+          // node's life, after which every decision refuses and it reads like a provider outage.
+          budget: () => searchDecisionBudget(jevRuntime.config, { timeoutMs: decisionTimeoutMsFromEnv(process.env) }),
         },
         {
           intent,
@@ -353,9 +355,9 @@ export function bootNodeServices(options: RuntimeOptions): NodeServices {
     // call per search until the calibration says otherwise.
     decider: {
       jev: jevRuntime.deps,
-      // The decision deadline, not the composition one: a search already has a ranked answer, and
-      // the plan puts a decision at 2 s with the whole path under 2.5 s.
-      budget: searchDecisionBudget(jevRuntime.config, { timeoutMs: decisionTimeoutMsFromEnv(process.env) }),
+      // Per search, not per boot: the deadline is absolute, so a value captured here would already
+      // have expired by the time the first query arrived.
+      budget: () => searchDecisionBudget(jevRuntime.config, { timeoutMs: decisionTimeoutMsFromEnv(process.env) }),
     },
     deciderMode: searchDeciderFromEnv(process.env),
     // A getter, not a snapshot: the model is loaded after boot, and a search issued in the meantime
@@ -366,8 +368,10 @@ export function bootNodeServices(options: RuntimeOptions): NodeServices {
   };
 
   // Started but deliberately not awaited. A node still opening its database has to answer searches,
-  // and a model that takes ten seconds to load must not hold up the health route.
-  void vectors.ensure();
+  // and a model that takes ten seconds to load must not hold up the health route. The catch is not
+  // decoration: an unhandled rejection ends the process on Node, and the vector index is optional —
+  // a node that cannot load it searches lexically and says so through `vectors.status()`.
+  void vectors.ensure().catch(() => undefined);
 
   const preferences = {
     db: runtime.db,
@@ -405,8 +409,10 @@ export function bootNodeServices(options: RuntimeOptions): NodeServices {
     home: homedir,
     decider: {
       jev: jevRuntime.deps,
-      // Choosing a directory is a decision, not a composition, so it gets the decision deadline.
-      budget: searchDecisionBudget(jevRuntime.config, { timeoutMs: decisionTimeoutMsFromEnv(process.env) }),
+      // Choosing a directory is a decision, not a composition, so it gets the decision deadline —
+      // and a fresh one per lookup, because an absolute deadline captured at boot would mean the
+      // finder never asks the selector at all.
+      budget: () => searchDecisionBudget(jevRuntime.config, { timeoutMs: decisionTimeoutMsFromEnv(process.env) }),
     },
   };
 

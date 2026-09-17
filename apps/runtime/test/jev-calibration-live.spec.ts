@@ -83,7 +83,7 @@ beforeAll(() => {
     principalId: "prin_owner",
     timezone: "Asia/Saigon",
     now: () => "2026-09-17T05:00:00.000Z" as Instant,
-    decider: { jev: { config }, budget: createJevBudget(config) },
+    decider: { jev: { config }, budget: () => createJevBudget(config) },
     deciderMode: "jev",
   };
 });
@@ -106,7 +106,7 @@ describe.skipIf(!canRun)("live calibration (opt-in)", () => {
 
       // The decision is applied to the same ranked list, which is what makes the comparison fair.
       const decision = await decideSearchResult(
-        { jev: { config }, budget: createJevBudget(config) },
+        { jev: { config }, budget: () => createJevBudget(config) },
         {
           query: entry.query,
           results: ranked.results.map((hit) => ({ ref: hit.ref, snippet: hit.snippet, score: hit.score, source: hit.source })),
@@ -156,7 +156,7 @@ describe.skipIf(!canRun)("live calibration (opt-in)", () => {
     let correct = 0;
     for (const entry of ROUTING_CALIBRATION) {
       const decision = await decideRuntimeTarget(
-        { jev: { config }, budget: createJevBudget(config) },
+        { jev: { config }, budget: () => createJevBudget(config) },
         { intent: entry.intent, candidates },
       );
       // The deterministic order is the comparison, and for routing it is the lease that ranks first.

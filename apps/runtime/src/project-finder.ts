@@ -346,10 +346,13 @@ export async function refreshProjectIndex(
     kept += 1;
   }
 
-  // A full scan is the only one allowed to prune: a bounded or interrupted scan did not see every
-  // directory, and removing what it did not see would delete the index on every miss.
+  // Only a scan that actually finished is allowed to prune: a bounded or interrupted scan did not
+  // see every directory, and removing what it did not see would delete the index on every miss. Both
+  // halves of that have to be checked — an abort before the first walk reports `truncated: false`
+  // having scanned nothing, and pruning on that empties the per-node index, taking the aliases and
+  // last-use times a rescan cannot reconstruct.
   const removed =
-    options.full === true || !scan.truncated
+    (options.full === true || !scan.truncated) && !scan.stoppedEarly
       ? pruneProjects(deps.db, deps.nodeId, scan.projects.map((project) => project.path))
       : 0;
 

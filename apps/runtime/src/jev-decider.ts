@@ -11,6 +11,7 @@ import {
   createJevBudget,
   jevCallRefusal,
 } from "./jev-selector.ts";
+import { sanitizeIntent } from "./mini-app-candidates.ts";
 import { describeRuntimeCandidate, type RuntimeCandidate } from "./runtime-candidates.ts";
 
 /**
@@ -107,7 +108,16 @@ export function rankGapIsClear(first: number, second: number): boolean {
 
 export interface DecideDeps {
   jev: JevDeps;
-  budget: JevBudget;
+  /**
+   * The deadline for one decision, built when the decision starts.
+   *
+   * A function rather than a value, and that is the whole point: a budget carries an absolute
+   * `deadlineAt`, so one built when the node booted has already expired by the time anybody asks
+   * anything. Wiring a value here reads as "a two-second deadline" and behaves as "no selector, ever"
+   * — every call refused with "the budget for this turn was exhausted" from two seconds of uptime
+   * onward, which is indistinguishable from a provider outage.
+   */
+  budget: () => JevBudget;
 }
 
 export interface RuntimeDecisionInput {
@@ -155,18 +165,26 @@ export async function decideRuntimeTarget(
     criteria[candidate.id] = describeRuntimeCandidate(candidate);
   }
 
+  // One budget for the whole decision, built now rather than at boot and shared by every call this
+  // decision makes. Per call would let the choice and the follow-up question spend a full deadline
+  // each, and the plan's ceiling is for the whole search path; per boot is worse still, because an
+  // absolute `deadlineAt` captured then has expired by the time the first query arrives.
+  const budget = deps.budget();
+
   const outcome = await askChoice(deps.jev, {
     state: {
-      // The intent is the only free text, and it is sanitized on the way out by the same function
-      // the composition path uses.
-      intent: redactSecrets(input.intent).slice(0, 500),
+      // The intent is the only free text, and it goes through the same sanitizer the composition path
+      // uses rather than a bare redaction: control characters stripped, whitespace collapsed, capped,
+      // and then redacted. Claiming that parity while doing less is how a privacy boundary quietly
+      // narrows.
+      intent: sanitizeIntent(input.intent, 500),
       running: live.slice(0, 12).map((candidate) => ({ id: candidate.id, kind: candidate.kind, busy: candidate.load > 0 })),
     },
     instructions:
       "Choose which running thing on this machine the request is about. Choose none if the request is not about anything that is running.",
     criteria,
     questionId: "runtime",
-    budget: deps.budget,
+    budget,
   });
 
   if (outcome.status !== "answered") {
@@ -249,19 +267,32 @@ export async function decideProject(
   const criteria: Record<string, string | null> = {};
   for (const candidate of offered) {
     const markers = candidate.markers.slice(0, 4).join(", ");
-    criteria[candidate.id] =
-      `${candidate.name} (${candidate.kind}${markers === "" ? "" : `, ${markers}`}) ở ~/${candidate.relPath}`;
+    // Directory names and markers are filesystem text the user never wrote for a third party, so the
+    // whole description goes through the same redaction as every other payload field. `relPath` stays
+    // relative, which is what the plan allows and what keeps an absolute home path out of the request.
+    criteria[candidate.id] = redactSecrets(
+      `${candidate.name} (${candidate.kind}${markers === "" ? "" : `, ${markers}`}) ở ~/${candidate.relPath}`,
+    );
   }
+
+  const budget = deps.budget();
 
   const outcome = await askChoice(deps.jev, {
     state: {
       intent: redactSecrets(input.intent).slice(0, 300),
-      candidates: offered.map((candidate) => ({ id: candidate.id, name: candidate.name, kind: candidate.kind })),
+      // The directory name is the one free-text field here, and it is filesystem text the user wrote
+      // for themselves rather than for a third party. Redacting only the criteria would leave the
+      // same name travelling verbatim in the state beside it.
+      candidates: offered.map((candidate) => ({
+        id: candidate.id,
+        name: redactSecrets(candidate.name),
+        kind: candidate.kind,
+      })),
     },
     instructions: "Which directory is the user referring to? Choose none if none of them is what they meant.",
     criteria,
     questionId: "project",
-    budget: deps.budget,
+    budget,
   });
 
   if (outcome.status !== "answered") {
@@ -332,12 +363,14 @@ export async function decideSearchResult(
     criteria[`result:${result.ref}`] = redactSecrets(result.snippet).slice(0, 200);
   }
 
+  const budget = deps.budget();
+
   const choice = await askChoice(deps.jev, {
     state: { query: redactSecrets(input.query).slice(0, 300) },
     instructions: "Which of these earlier records is the one the question is about? Choose none if none of them is.",
     criteria,
     questionId: "result",
-    budget: deps.budget,
+    budget,
   });
 
   if (choice.status !== "answered") {
@@ -374,7 +407,7 @@ export async function decideSearchResult(
       "Are these search results ambiguous enough that the user should be asked which one they meant?",
     criteria: { true: "The question could plausibly mean more than one of them", false: "One of them is clearly the answer" },
     questionId: "ambiguous",
-    budget: deps.budget,
+    budget,
   });
 
   if (noul.status === "answered" && noul.verdict === "on") {
@@ -432,10 +465,11 @@ export function buildDecider(input: {
     jev: input.onTelemetry === undefined ? input.jev : { ...input.jev, onTelemetry: input.onTelemetry },
     // A decision, so it gets the decision deadline: a factory that defaulted to the composition
     // budget would hand whoever wired it next four seconds for a second opinion.
-    budget: searchDecisionBudget(input.jev.config, {
-      ...(input.timeoutMs === undefined ? {} : { timeoutMs: input.timeoutMs }),
-      ...(input.now === undefined ? {} : { now: input.now }),
-    }),
+    budget: () =>
+      searchDecisionBudget(input.jev.config, {
+        ...(input.timeoutMs === undefined ? {} : { timeoutMs: input.timeoutMs }),
+        ...(input.now === undefined ? {} : { now: input.now }),
+      }),
   };
   return {
     deps,

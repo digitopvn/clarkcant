@@ -12,6 +12,7 @@ import {
   SEARCH_DECISION_TIMEOUT_MS,
   SEARCH_TOTAL_BUDGET_MS,
   buildDecider,
+  decideProject,
   decisionTimeoutMsFromEnv,
   rankGapIsClear,
   decideRuntimeTarget,
@@ -106,7 +107,7 @@ function deps(recorded: Recorded, overrides: Partial<JevConfig> = {}): DecideDep
   const conf = config(overrides);
   return {
     jev: { config: conf, transport: recorded.transport, onTelemetry: (event) => recorded.telemetry.push(event) },
-    budget: createJevBudget(conf),
+    budget: () => createJevBudget(conf),
   };
 }
 
@@ -231,7 +232,7 @@ describe("runtime target decisions", () => {
       };
     };
     await decideRuntimeTarget(
-      { jev: { config: conf, transport: recording }, budget: createJevBudget(conf) },
+      { jev: { config: conf, transport: recording }, budget: () => createJevBudget(conf) },
       {
         intent: "dùng key sk-live-abcdef1234567890 để mở /Users/duynguyen/www/secret",
         candidates: [candidate(), candidate({ id: "runtime:lease:lease_2" })],
@@ -495,7 +496,7 @@ describe("the decision deadline", () => {
     expect(createJevBudget(config()).timeoutMs).toBe(4000);
     // The factory defaults to the decision deadline as well, so wiring it cannot silently hand a
     // decision four seconds.
-    expect(buildDecider({ jev: { config: config(), transport: async () => ({ status: 200, body: {} }) } }).deps.budget.timeoutMs).toBe(
+    expect(buildDecider({ jev: { config: config(), transport: async () => ({ status: 200, body: {} }) } }).deps.budget().timeoutMs).toBe(
       SEARCH_DECISION_TIMEOUT_MS,
     );
   });
@@ -532,7 +533,7 @@ describe("the decision deadline", () => {
     const decision = await decideSearchResult(
       {
         jev: { config: conf, transport: slow.transport, onTelemetry: (event) => slow.telemetry.push(event) },
-        budget: searchDecisionBudget(conf, { timeoutMs: 30 }),
+        budget: () => searchDecisionBudget(conf, { timeoutMs: 30 }),
       },
       {
         query: "nhãn trục",
@@ -555,5 +556,52 @@ describe("the decision deadline", () => {
     expect(slow.telemetry.at(-1)?.status).toBe("unavailable");
     // And the wait is the deadline, not whatever the provider felt like doing.
     expect(Date.now() - started).toBeLessThan(SEARCH_TOTAL_BUDGET_MS);
+  });
+});
+
+describe("what the finder's payload carries", () => {
+  it("redacts a credential-shaped name and marker, and keeps the candidate", async () => {
+    const sent: string[] = [];
+    const transport: JevTransport = async (request) => {
+      sent.push(JSON.stringify(request.body));
+      const body = request.body as {
+        questions: Record<string, { type: string; criteria?: Record<string, string | null> }>;
+      };
+      const id = Object.keys(body.questions)[0] ?? "q";
+      const question = body.questions[id];
+      if (question?.type === "noul") {
+        return { status: 200, body: { model: "jev-1.13.0", answers: { [id]: { type: "noul", noul: 0.1 } } } };
+      }
+      const options = Object.keys(question?.criteria ?? {});
+      const probabilities: Record<string, number> = {};
+      for (const option of options) probabilities[option] = option === "none" ? 1 : 0;
+      return {
+        status: 200,
+        body: { model: "jev-1.13.0", answers: { [id]: { type: "choice", choice: "none", probabilities } } },
+      };
+    };
+
+    await decideProject(
+      { jev: { config: config(), transport }, budget: () => createJevBudget(config()) },
+      {
+        intent: "mở dự án",
+        candidates: [
+          { id: "p1", name: "sk-live-abcdef1234567890-backup", relPath: "backup", kind: "code", markers: [] },
+          { id: "p2", name: "agentkit", relPath: "agentkit", kind: "code", markers: ["package.json", "token_abcdefghijkl"] },
+        ],
+      },
+    );
+
+    expect(sent.length).toBeGreaterThan(0);
+    const payload = sent.join(" ");
+    // A directory name and its markers are filesystem text the user never wrote for a third party,
+    // so this payload goes through the same boundary as every other one instead of travelling
+    // verbatim, which is what it did.
+    expect(payload).not.toContain("sk-live-abcdef1234567890");
+    expect(payload).not.toContain("token_abcdefghijkl");
+    expect(payload).toContain("[redacted]");
+    // Redaction narrows the shape; it must not remove the candidate the user might have meant.
+    expect(payload).toContain("agentkit");
+    expect(payload).toContain("package.json");
   });
 });
