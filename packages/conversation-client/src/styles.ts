@@ -224,6 +224,13 @@ button.cc-badge:hover, .cc-badge[role="button"]:hover { color: var(--cc-text); b
   color: var(--cc-text);
 }
 .cc-session-input:focus-visible { outline: 2px solid var(--cc-focus); outline-offset: 2px; }
+/* The desktop-only directory picker. Sized to its label rather than to the square icon button, so
+   "Chọn thư mục…" reads as an action instead of being clipped to a glyph. */
+.cc-session-pick {
+  width: auto;
+  padding: 0 var(--cc-space-sm);
+  white-space: nowrap;
+}
 .cc-session-options { display: flex; gap: var(--cc-space-xs); flex-wrap: wrap; }
 .cc-composer {
   /* Deliberately wider than the column above it, so the input a message is typed into reads as

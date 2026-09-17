@@ -137,6 +137,49 @@ test("a project session is started from a path the user types", async ({ page })
   await page.screenshot({ path: join(EVIDENCE, "session-01-started-from-typed-path.png"), fullPage: true });
 });
 
+test("the desktop shell picks a directory in an OS dialog instead of asking for a typed path", async ({ page }) => {
+  mkdirSync(EVIDENCE, { recursive: true });
+  const suffix = Date.now().toString(36);
+  const projectName = `bieu-mau-${suffix}`;
+  const projectPath = join(DATA_DIR, projectName);
+  mkdirSync(projectPath, { recursive: true });
+  writeFileSync(join(projectPath, "README.md"), `# ${projectName}\n`);
+  approveRoot(process.cwd());
+  forgetRecentUse();
+
+  // The shell installs this before the page script runs. It stands in for the OS dialog, which cannot
+  // be driven headlessly; what this proves is the client's branch — a present bridge is used, and the
+  // path it answers with takes exactly the route a typed one does.
+  await page.addInitScript((picked) => {
+    Object.assign(window, {
+      clarkcant: { pickDirectory: async () => ({ ok: true, canceled: false, path: picked }) },
+    });
+  }, projectPath);
+
+  await openApp(page);
+  await page.locator("[data-start-session-toggle]").click();
+  const picker = page.locator("[data-start-session-pick]");
+  await expect(picker).toBeVisible();
+
+  await picker.click();
+  const status = page.locator("[data-start-session-status]");
+  await expect(status).toHaveAttribute("data-start-session-status", "started", { timeout: 30_000 });
+  await expect(status).toContainText(projectName);
+  await expect(page.locator("[data-role='assistant']").last()).toContainText(projectName);
+
+  await page.screenshot({ path: join(EVIDENCE, "session-03-picked-in-os-dialog.png"), fullPage: true });
+});
+
+test("the web build offers no directory picker", async ({ page }) => {
+  await openApp(page);
+  await page.locator("[data-start-session-toggle]").click();
+
+  // Absent rather than inert: on the web the typed input is the only answer, and a control that
+  // cannot open a dialog would be a promise the build cannot keep.
+  await expect(page.locator("[data-start-session-pick]")).toHaveCount(0);
+  await expect(page.locator("[data-start-session-input]")).toBeVisible();
+});
+
 test("an unknown name offers the directory used last instead of opening it", async ({ page }) => {
   const suffix = Date.now().toString(36);
   const projectName = `bieu-mau-${suffix}`;

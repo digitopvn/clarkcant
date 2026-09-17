@@ -41,6 +41,36 @@ import { useImageUrls } from "./use-image-urls.ts";
  *     the label has to be visible before the click, not a footnote after it.
  */
 
+/**
+ * The slice of the desktop shell's bridge this component reads.
+ *
+ * Named methods only, because that is all the shell exposes: there is no generic `invoke` channel to
+ * reach through, which is what keeps the main process's allowlist meaningful.
+ */
+export interface DirectoryPickerBridge {
+  pickDirectory(input?: {
+    title?: string;
+  }): Promise<{ ok: boolean; path?: string; canceled?: boolean; refused?: string }>;
+}
+
+/**
+ * The desktop shell's directory dialog, when this client is running inside one.
+ *
+ * Read from the ambient bridge rather than imported, because the same component is served to a
+ * plain browser where no bridge exists. Absent means the typed path below stays the only way to
+ * answer the node's question, which is the web path; present means the user picks a directory in a
+ * host-owned OS window instead of typing a path they cannot browse.
+ *
+ * Exported so the detection can be tested without a DOM: the interesting behaviour is which shapes
+ * of ambient value count as a usable dialog, and that is a plain function.
+ */
+export function directoryPicker(): DirectoryPickerBridge["pickDirectory"] | undefined {
+  const bridge: unknown = (globalThis as { clarkcant?: unknown }).clarkcant;
+  if (typeof bridge !== "object" || bridge === null) return undefined;
+  const pick = (bridge as DirectoryPickerBridge).pickDirectory;
+  return typeof pick === "function" ? pick.bind(bridge) : undefined;
+}
+
 export interface ConversationProps {
   client: GatewayClient;
   /** Pre-existing conversation, or `undefined` to create one on first send. */
@@ -123,6 +153,13 @@ export function Conversation({
   const [sessionOptions, setSessionOptions] = useState<string[]>([]);
   const [sessionNotice, setSessionNotice] = useState<{ kind: string; text: string } | undefined>(undefined);
   const [sessionBusy, setSessionBusy] = useState(false);
+  /**
+   * The OS directory dialog, when this client is running inside the desktop shell.
+   *
+   * Resolved once: the baseline the shell installs does not change while a page is open, and
+   * re-reading it every render would only make the control flicker if it ever did.
+   */
+  const pickDirectory = useMemo(() => directoryPicker(), []);
   /**
    * Which session the interface is showing.
    *
@@ -702,6 +739,32 @@ export function Conversation({
               value={sessionText}
               onChange={(event) => setSessionText(event.target.value)}
             />
+            {pickDirectory !== undefined && (
+              //
+              // Only rendered when the shell can actually open a dialog. A control that is present
+              // and does nothing is worse than one that is absent: on the web the input above is the
+              // whole answer, and the button would be a promise the build cannot keep.
+              <button
+                type="button"
+                className="cc-icon-btn cc-session-pick"
+                data-start-session-pick="true"
+                disabled={sessionBusy}
+                onClick={() => {
+                  void (async () => {
+                    const chosen = await pickDirectory({ title: "Chọn thư mục cho phiên làm việc" });
+                    if (!chosen.ok || chosen.canceled === true) return;
+                    const path = chosen.path;
+                    if (typeof path !== "string" || path.trim() === "") return;
+                    // The chosen path is the answer to the node's own question, so it takes the same
+                    // route as a typed one rather than a second way of starting a session.
+                    setSessionText(path);
+                    await openProjectSession(path);
+                  })();
+                }}
+              >
+                Chọn thư mục…
+              </button>
+            )}
             <button
               type="submit"
               className="cc-icon-btn"
