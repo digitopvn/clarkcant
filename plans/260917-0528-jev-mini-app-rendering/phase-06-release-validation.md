@@ -1,6 +1,6 @@
 ---
 title: "Phase 6: Release validation và evidence"
-status: todo
+status: done
 ---
 
 # Phase 6: Release validation và evidence
@@ -47,10 +47,18 @@ CI tạo local records/files trong isolated DB bằng production API và assert 
 7. Update traceability: T43/T44/T47/T49/T50 giữ PASS với evidence mới; không thêm ID mới ngoài blueprint. Run `pnpm invariants` sau docs changes. Independent review khi được user yêu cầu; không tự spawn agent. Không commit/push mặc định; nếu ship được yêu cầu, dùng feature branch/PR, không main.
 
 ## Todo
-- [ ] Pass full deterministic tests/build/e2e trên isolated runtime.
-- [ ] Capture đủ hai display modes và responsive/accessibility evidence.
-- [ ] Pass opt-in live integration và calibration với model version xác định.
-- [ ] Update docs/traceability, ghi residual risks và handoff.
+- [x] Pass full deterministic tests/build/e2e trên isolated runtime. (`pnpm verify` 766 passed/5 skipped; `pnpm build` pass; `pnpm test:e2e` 20 passed, trong đó 3 journey mới của `apps/web/e2e/mini-app.spec.ts`)
+- [x] Capture đủ hai display modes và responsive/accessibility evidence. (6 PNG mini-app: desktop 1440×900 light/dark, mobile 390×844 light/dark, live-vs-snapshot, ownership refused; xem bảng trong report)
+- [ ] Pass opt-in live integration và calibration với model version xác định. — **BLOCKED**: thiếu `TYPESAFE_API_KEY` trong `.env` repo này; `jev-live.spec.ts` và `jev-calibration-live.spec.ts` in BLOCKED nêu tên biến. Default `search.decider="rank"` chốt bằng số đo lexical thay vì calibration chưa chạy.
+- [x] Update docs/traceability, ghi residual risks và handoff. (`docs/conformance-traceability.md` T43/T44/T47/T49/T50, `docs/widgets-and-extensions.md` §4.1, `docs/mini-app/jev-configuration.md` runbook, `docs/manifest.json` re-hash)
+
+## Kết quả
+
+Report: [`plans/reports/verification-260917-1732-release-validation-mini-app.md`](../reports/verification-260917-1732-release-validation-mini-app.md).
+
+Browser test tìm ra bảy lỗi thật mà unit test không thấy (dependency `datasets` bị thiếu trong `renderSurface`, container bị kiểm tra sau leaf renderer lookup, template `overview` không chọn renderer cho vùng `calendar`, `messageId` bị cấp hai lần trong nhánh composer khiến snapshot mồ côi, vùng không cần dữ liệu bị đánh "missing", read-only chặn sai phạm vi, client đọc `stale` từ document bất biến). Tất cả đã sửa kèm lý do trong code.
+
+Restart thật (không phải reload browser) xác nhận snapshot giữ nguyên `capturedAt`/`bundleRef` sau khi live lên revision 2 và sau khi tiến trình node khởi động lại, còn live state `{"period":"month"}` sống qua restart.
 
 ## Success / release gate
 

@@ -23,6 +23,7 @@ logged.
 | `CLARKCANT_JEV_ENDPOINT` | `https://api.typesafe.ai/v1/systemone` | Must be `https`, with no embedded credentials, and must not point at a loopback or private address. |
 | `CLARKCANT_JEV_TIMEOUT_MS` | `4000` | Budget for **all** selector calls made while composing one turn. |
 | `CLARKCANT_JEV_POLICY_VERSION` | `2026-09-17` | Stamped into telemetry and composition provenance so a decision can be traced to a policy. |
+| `CLARKCANT_SEARCH_DECIDER` | `rank` | `rank` uses BM25 alone; `jev` asks the selector to choose between results that are close. Any other value falls back to `rank`. |
 
 The key belongs in the runtime's environment or its local, gitignored `.env`. It does not belong in
 a `VITE_`/`NEXT_PUBLIC_` variable, a URL query, a fixture, or another repository's `.env` path
@@ -102,6 +103,47 @@ provider's error bodies are discarded for the same reason — they routinely ech
 `NodeServices.jev.providerCallCount()` exposes the count of provider calls made by the process.
 It exists so that "rendering history does not call the provider" is an assertion rather than a
 claim.
+
+## Operator runbook
+
+**The selector is one flag and one credential.** At startup the node prints one line about it:
+
+```
+selector: jev-1.13.0 pinned, 4000 ms per turn
+selector: disabled (no credential or local-only); composed surfaces use the deterministic path
+```
+
+If that line says disabled, everything still works: composed surfaces compile through the
+deterministic path, search ranks with BM25, and the finder resolves by ranking or by asking one
+question. Nothing in the product depends on the provider being reachable, which is the point of the
+fallback.
+
+**Turning it off in a hurry.** Set `CLARKCANT_JEV_LOCAL_ONLY=1` and restart. That outranks a key
+being present, so it cannot be undone by an environment that still has one.
+
+**Deciding whether to turn the search decider on.** `rank` is the default because it is the measured
+one: the labelled corpus answered 96.8% of lexical queries with BM25 alone, and the cases it misses
+are missing vocabulary, which choosing between results cannot repair. `CLARKCANT_SEARCH_DECIDER=jev`
+is opt-in, and the comparison harness is
+`CLARKCANT_JEV_LIVE=1 pnpm exec vitest run apps/runtime/test/jev-calibration-live.spec.ts`. It prints
+a per-case line and a total for both paths; the numbers belong in a report before the default
+changes.
+
+**What a composed surface costs.** One selector batch per composition when no template was named (two
+at most, if the template changes the candidate set), and zero when the model names a template. Search
+costs one call only when `decider = jev`, at least two results are close, and the ranking did not
+already separate them.
+
+**Project finder.** `workspace.roots` and `workspace.ignore` are preferences on the node (default:
+the home directory, and the system ignore list). Changing them needs no restart. What the selector
+sees from the finder is a name, a path relative to the root, a kind and marker names — never an
+absolute path and never a file's contents. The scan is bounded (depth 5, 20 000 entries), skips
+symlinks and dependency directories, and stops descending as soon as it finds a project marker.
+
+**Fixture turns.** `CC_MODEL_FIXTURE=1` replaces the model turn with a scripted one that composes an
+overview through the production pipeline. It exists so the browser suite can exercise the render path
+without a provider, it prints a line saying it is loaded, and it must never be set on a node a person
+uses: the reply it produces says a fixture produced it, and the node says so at startup.
 
 ## Running the checks
 

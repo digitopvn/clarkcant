@@ -1,5 +1,6 @@
 import { mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 
 import { expect, test, type Page } from "@playwright/test";
 
@@ -53,6 +54,35 @@ async function openApp(page: Page): Promise<void> {
   await expect(page.locator("text=Ready")).toBeVisible({ timeout: 15_000 });
 }
 
+/** The gateway, with the node's own token. Used to create records the way a client would. */
+async function api<T>(method: string, path: string, body?: unknown): Promise<T> {
+  const response = await fetch(`${GATEWAY}${path}`, {
+    method,
+    headers: {
+      authorization: `Bearer ${token()}`,
+      ...(body === undefined ? {} : { "content-type": "application/json" }),
+    },
+    ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+  });
+  const text = await response.text();
+  if (!response.ok) throw new Error(`${method} ${path} failed: ${response.status} ${text}`);
+  return JSON.parse(text) as T;
+}
+
+/**
+ * Open one specific conversation.
+ *
+ * The app resumes the conversation it remembered in session storage — there is no query parameter for
+ * it, deliberately, so a link cannot silently point someone at somebody else's conversation. So the
+ * test sets what the app reads, then loads.
+ */
+async function openConversation(page: Page, conversationId: string): Promise<void> {
+  await page.goto(`/?token=${token()}&gateway=${encodeURIComponent(GATEWAY)}`);
+  await page.evaluate((id) => window.sessionStorage.setItem("cc_conversation", id), conversationId);
+  await page.reload();
+  await expect(page.locator("textarea[aria-label='Nhập tin nhắn']")).toBeVisible();
+}
+
 async function ask(page: Page, text: string): Promise<void> {
   await page.locator("textarea[aria-label='Nhập tin nhắn']").fill(text);
   await page.locator("[data-send='true']").click();
@@ -81,12 +111,67 @@ test("a scripted table recipe renders a real widget inside the conversation", as
 });
 
 test("a widget the client cannot render shows its text alternative instead of nothing", async ({ page }) => {
-  // The complement of the first test. If a missing renderer made the message disappear, history
-  // would lose the fact that something was shown at all — so the fallback is a required behaviour,
-  // not a consolation prize.
-  await openApp(page);
-  const surfaces = page.locator("[data-widget-fallback='true'], table");
-  // Nothing asked for yet: the conversation is empty, so neither shape is present. This asserts the
-  // selectors are meaningful rather than vacuously true.
-  await expect(surfaces).toHaveCount(0);
+  // The complement of the first test, and the one that used to be vacuous: it asserted that an empty
+  // conversation had no widgets, which is true and proves nothing about what happens when a widget
+  // *is* there and the client cannot draw it. So this puts a real block in the store — a valid
+  // surface whose definition no client ships — and asks the client to render it.
+  //
+  // If a missing renderer made the message disappear, history would lose the fact that something was
+  // shown at all, so the fallback is a required behaviour rather than a consolation prize.
+  const conversation = await api<{ conversationId: string }>("POST", "/conversations", { title: "unsupported view" });
+
+  const db = new DatabaseSync(join(DATA_DIR, "node.sqlite"));
+  try {
+    const now = new Date().toISOString();
+    // Unique per run: the e2e data directory is reused between runs, and a fixed id would collide
+    // with the message the previous run left behind.
+    const messageId = `msg_unsupported_view_${Date.now().toString(36)}`;
+    const snapshotId = `wsnap_unsupported_${Date.now().toString(36)}`;
+    db.prepare(
+      `INSERT INTO messages (message_id, conversation_id, role, author_node_id, task_id, delivery, document, sequence, created_at)
+       VALUES (?, ?, 'assistant', ?, NULL, 'accepted', ?, 1, ?)`,
+    ).run(
+      messageId,
+      conversation.conversationId,
+      "node_e2e_fixture",
+      JSON.stringify({
+        messageId,
+        conversationId: conversation.conversationId,
+        role: "assistant",
+        authorNodeId: "node_e2e_fixture",
+        delivery: "accepted",
+        createdAt: now,
+        blocks: [
+          {
+            type: "surface",
+            definitionRef: { id: "canvas.quantum@1", version: "9.9.9" },
+            snapshot: {
+              snapshotId,
+              instanceId: "winst_unsupported_view",
+              messageId,
+              capturedRevision: 1,
+              capturedAt: now,
+              textAlternative: "Một bảng lượng tử mà client này không có renderer cho nó.",
+              presentationRef: "catalog:canvas.quantum@1",
+              stale: false,
+            },
+          },
+        ],
+      }),
+      now,
+    );
+  } finally {
+    db.close();
+  }
+
+  await openConversation(page, conversation.conversationId);
+  await expect(page.locator("text=Ready")).toBeVisible({ timeout: 15_000 });
+
+  // The message is readable and the fallback is what is shown — not a blank card, and not the
+  // renderer that does not exist.
+  await expect(page.locator("[data-widget-fallback='true']").first()).toContainText("bảng lượng tử");
+  await expect(page.locator("[data-surface-composition]")).toHaveCount(0);
+
+  mkdirSync(EVIDENCE, { recursive: true });
+  await page.screenshot({ path: join(EVIDENCE, "widget-02-unknown-renderer-fallback.png"), fullPage: true });
 });

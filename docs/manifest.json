@@ -16,7 +16,7 @@
       "path": "CHANGELOG.md",
       "bytes": 4679,
       "sha256": "28aed67b775de652ad41ed42bb0c535ecc892ecd35ae73da684af3d87acbfd54",
-      "reconstructed": "Reconstructed from research-and-decisions.md \u00a72 and scope-lock.md \u00a73; the original file was absent from the delivered document set. Its manifest entry was updated to match the reconstructed content."
+      "reconstructed": "Reconstructed from research-and-decisions.md §2 and scope-lock.md §3; the original file was absent from the delivered document set. Its manifest entry was updated to match the reconstructed content."
     },
     {
       "path": "README.md",
@@ -90,13 +90,13 @@
     },
     {
       "path": "widgets-and-extensions.md",
-      "bytes": 20948,
-      "sha256": "e3ce83526ce8923b9ab12d0ac40f3b490c259787b6e1f33a7cd9b70cbabdfc20"
+      "bytes": 23857,
+      "sha256": "d21da982b4516cc1d48450df1596e4750c54127f6893d8c56d11129c15623a50"
     },
     {
       "path": "mini-app/jev-configuration.md",
-      "bytes": 6682,
-      "sha256": "862926a276cdec32ea4ccbe372b841e96409d25f3c10f8ce908c565adb45aa52"
+      "bytes": 9349,
+      "sha256": "f0bccef8a393735d5a3dbb1098eb718aa90d34d68e78861d4b8f453df478f9ae"
     }
   ]
 }

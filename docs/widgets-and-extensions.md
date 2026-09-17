@@ -121,6 +121,28 @@ Core chỉ sở hữu renderer/registry/action/state primitives. Các implementa
 
 Host-only approval/credential/device consent cards không nằm trong ordinary third-party catalog. Model có thể request host mở một flow nhưng không tự định nghĩa trạng thái “đã được cấp quyền”.
 
+### 4.1 Trạng thái triển khai (2026-09-17)
+
+Ghi rõ phần nào của §4 đã có trong repo và phần nào còn là thiết kế, để không đọc bảng trên như một bản kiểm kê tính năng đã xong.
+
+**Đã có, kèm test:**
+
+- Định nghĩa catalog + family trong `packs/data-canvas`: `canvas.line/bar/donut/table`, `canvas.metrics`, `canvas.filter`, `canvas.calendar`, `canvas.image`, `canvas.cta`, và container `canvas.overview@1`.
+- Leaf renderer trong `packages/conversation-client` (donut thật, month grid, KPI tile, image, CTA) cùng text alternative cho mọi vùng.
+- **Declarative composition** (trust tier thứ hai trong bảng trên) là tier đang được dùng cho mini-app: spec có version, mỗi section pin `definitionRef.digest`, không có payload thực thi, action chỉ là tham chiếu tới binding do server compile.
+- Snapshot là **bundle bất biến** trong bảng riêng (`presentation_bundles`), không phải `catalog:id` trỏ tới dữ liệu hiện tại; xoá nguồn dữ liệu → tombstone, không đọc lại live.
+- Pin = cùng một logical instance, một live owner có lease (`widget_live_owners.lease_expires_at`), vị trí còn lại read-only.
+- **Read-only chỉ chặn action, không chặn view state**: snapshot lịch sử và surface do tab khác sở hữu vẫn đổi được ngày đang chọn / kỳ đang xem (đó là trình bày), nhưng không có `onAction` nên không có đường nào tới server; nút CTA hiện trạng thái disabled kèm lý do thay vì giả vờ bấm được.
+- Snapshot trỏ đúng message chứa nó: `messageId` được cấp **một lần** rồi dùng cho cả lời gọi composer và message được ghi, nên không có snapshot mồ côi (test `apps/web/e2e/mini-app.spec.ts` phủ đường lịch sử này).
+- Action M1 chỉ gồm `period.change`, `date.select`, `view.save` (`view` kind). `invoke`/`agent`/`workflow` bị từ chối ở `invokeMiniAppAction` và phải đi đường approval.
+- Composer tất định `CC_MODEL_FIXTURE=1` chỉ tồn tại để browser suite chạy được đường composed-surface mà không gọi provider; node in cảnh báo lúc khởi động và câu trả lời tự nói nó là fixture.
+
+**Chưa có (deferred, không được claim là đã xong):**
+
+- `isolated-app` và `mcp-app`: sandbox policy/registry có code và test, nhưng **renderer runtime cho app cách ly chưa được chứng minh**. Không có app runtime trong repo.
+- Google Calendar connector, custom iframe mini-app, và CTA dạng “agent làm việc X” đều ngoài M1.
+- Bảng family coverage trong §4 vẫn là đích đến của release gate: repo hiện có test cho các family mà composed surface cần (`metrics`, `filter`, `trend`, `calendar`, `media`, `cta`, `tables`, `layout`), không phải cho toàn bộ danh sách.
+
 ## 5. Agent-defined actions
 
 ### 5.1 Bốn loại action
