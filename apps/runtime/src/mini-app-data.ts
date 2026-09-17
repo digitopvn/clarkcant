@@ -28,6 +28,7 @@ import {
   getLocalImage,
   insertCalendarEvent,
   insertLocalImage,
+  listLocalImages,
   listCalendarEvents,
   updateCalendarEvent,
   upsertDataset,
@@ -682,6 +683,14 @@ export function publishMiniAppData(
   publish(outcomeRef, metrics.outcomeRows);
   publish(calendarRef, calendarRows);
 
+  // The newest imported image, because "the picture in this overview" means the one the user just
+  // brought in. Read rather than uploaded: a composed surface never invents an image, and an empty
+  // list is what makes the region optional-by-data instead of a placeholder box.
+  const imageRefs = listLocalImages(deps.db, input.principalId, 1).map((image) => ({
+    imageId: image.imageId,
+    altText: image.altText,
+  }));
+
   return {
     range: metrics.range,
     metricsRef,
@@ -690,7 +699,7 @@ export function publishMiniAppData(
     calendarRef,
     metrics,
     calendarRows,
-    imageRefs: [],
+    imageRefs,
   };
 }
 

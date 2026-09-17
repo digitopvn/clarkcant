@@ -94,8 +94,8 @@ export const COMPOSITION_TEMPLATES: readonly MiniAppTemplate[] = [
   {
     templateId: "overview",
     templateVersion: "1",
-    label: "Tổng quan công việc: chỉ số, khoảng thời gian, xu hướng, lịch và một hành động",
-    slots: ["metrics", "filter", "trend", "calendar", "cta"],
+    label: "Tổng quan công việc: chỉ số, khoảng thời gian, xu hướng, lịch, ảnh và một hành động",
+    slots: ["metrics", "filter", "trend", "calendar", "image", "cta"],
     fixed: [
       { slot: "metrics", definitionId: "canvas.metrics@1", props: { title: "Chỉ số" } },
       { slot: "filter", definitionId: "canvas.filter@1" },
@@ -103,10 +103,14 @@ export const COMPOSITION_TEMPLATES: readonly MiniAppTemplate[] = [
       // there are events. Leaving it out of `fixed` meant nothing ever chose one for it, so the
       // sketch's calendar was silently absent from every composed overview.
       { slot: "calendar", definitionId: "canvas.calendar@1" },
+      // The picture region is the other optional one. The sketch has it, and for a while no template
+      // named it at all — so `canvas.image@1` had no path to a user, however complete its renderer
+      // was. It is fixed so the renderer is known, and optional so it appears only with an image.
+      { slot: "image", definitionId: "canvas.image@1", props: { title: "Hình ảnh đã nhập" } },
       { slot: "cta", definitionId: "canvas.cta@1", props: { label: "Lưu bản xem", description: "Lưu khoảng thời gian đang xem và ghim lại." } },
     ],
     familiesBySlot: { trend: ["trend"] },
-    optionalSlots: ["calendar"],
+    optionalSlots: ["calendar", "image"],
   },
   {
     templateId: "focused",
@@ -292,6 +296,17 @@ function describeSection(
     return `Xu hướng theo ngày, tổng ${total} task hoàn thành trong kỳ.`;
   }
   if (slot === "calendar") return `Lịch có ${rows.length} sự kiện trong kỳ.`;
+  if (slot === "image") {
+    // The alt text is the whole accessible content of a picture, so the text alternative says the
+    // user's words rather than the definition's generic sentence. A reader who cannot see the image —
+    // because the renderer is unknown, the snapshot is text-only, or a screen reader is in use —
+    // gets the description the user actually wrote.
+    const alt = rows
+      .map((row) => (typeof row.altText === "string" ? row.altText.trim() : ""))
+      .filter((value) => value !== "")
+      .join("; ");
+    return alt === "" ? definition.textFallback : `Hình ảnh đã nhập: ${alt}`;
+  }
   return definition.textFallback;
 }
 
@@ -410,6 +425,7 @@ export async function composeMiniApp(deps: ComposeDeps, input: ComposeInput): Pr
     trend: published.metrics.trendRows,
     table: published.metrics.trendRows,
     calendar: published.calendarRows,
+    image: published.imageRefs.map((image) => ({ ...image })),
   };
 
   const compiled = compileTemplate({
@@ -418,6 +434,7 @@ export async function composeMiniApp(deps: ComposeDeps, input: ComposeInput): Pr
     registry,
     rowsBySlot,
     initialState: { period, timezone },
+    ...(published.imageRefs[0] === undefined ? {} : { imageRef: published.imageRefs[0] }),
   });
   if (!compiled.ok) {
     return { ok: false, code: "COMPILE_FAILED", message: "the template did not compile", problems: compiled.problems };

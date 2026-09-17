@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { CompositionSlot, Instant } from "@clarkcant/contracts";
 import { findCompositionByMessage, upsertTask, type Database } from "@clarkcant/storage";
 
+import { type MiniAppDataDeps, importLocalImage } from "../src/mini-app-data.ts";
 import {
   COMPOSITION_TEMPLATES,
   DEFAULT_TEMPLATE_ID,
@@ -70,6 +71,28 @@ const COUNT_STATEMENTS = {
 
 function countRows(table: keyof typeof COUNT_STATEMENTS): number {
   return Number((db().prepare(COUNT_STATEMENTS[table]).get() as { n: number }).n);
+}
+
+function png(width: number, height: number): Uint8Array {
+  const bytes = new Uint8Array(29);
+  bytes.set([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a], 0);
+  const view = new DataView(bytes.buffer);
+  view.setUint32(8, 13);
+  bytes.set([0x49, 0x48, 0x44, 0x52], 12);
+  view.setUint32(16, width);
+  view.setUint32(20, height);
+  return bytes;
+}
+
+/** The data deps an import needs, taken from the same services the composition uses. */
+function dataDeps(): MiniAppDataDeps {
+  return {
+    db: db(),
+    nodeId: services.runtime.identity.nodeId,
+    dataDir: services.runtime.dataDir,
+    now: () => AT,
+    newId: (prefix: string) => `${prefix}_image_test`,
+  };
 }
 
 /** A transport that records every call and fails the test if one is made. */
@@ -240,6 +263,53 @@ describe("composeMiniApp", () => {
     };
     expect(parsed.composition.provenance.selector.mode).toBe("explicit");
     expect(parsed.sections.some((section) => section.rows !== undefined)).toBe(true);
+  });
+
+  it("shows the imported image as a region of the overview", async () => {
+    const imported = importLocalImage(dataDeps(), {
+      principalId: PRINCIPAL,
+      bytes: png(4, 4),
+      declaredMimeType: "image/png",
+      altText: "Sơ đồ kiến trúc đã nhập",
+    });
+    expect(imported.ok).toBe(true);
+
+    const outcome = await composeMiniApp(compose, {
+      conversationId: CONVERSATION,
+      messageId: "msg_with_image",
+      principalId: PRINCIPAL,
+      intent: "cho tôi tổng quan tuần này",
+      explicitTemplateId: "overview",
+    });
+    expect(outcome.ok).toBe(true);
+
+    const bundle = db().prepare("SELECT document FROM presentation_bundles ORDER BY created_at DESC LIMIT 1").get() as { document: string };
+    const parsed = JSON.parse(bundle.document) as {
+      sections: { slot: string; props: Record<string, unknown>; textAlternative: string }[];
+    };
+    const image = parsed.sections.find((section) => section.slot === "image");
+    // The sketch has a picture region, and this is the path that reaches it: the newest imported
+    // image, with the alt text the user supplied, not a placeholder.
+    expect(image).toBeDefined();
+    expect(image?.props.alt).toBe("Sơ đồ kiến trúc đã nhập");
+    expect(String(image?.props.imageRef ?? "")).toMatch(/^img_/);
+    expect(image?.textAlternative).toContain("Sơ đồ kiến trúc đã nhập");
+  });
+
+  it("leaves the picture region out when nothing was imported", async () => {
+    const outcome = await composeMiniApp(compose, {
+      conversationId: CONVERSATION,
+      messageId: "msg_without_image",
+      principalId: PRINCIPAL,
+      intent: "cho tôi tổng quan tuần này",
+      explicitTemplateId: "overview",
+    });
+    expect(outcome.ok).toBe(true);
+
+    const bundle = db().prepare("SELECT document FROM presentation_bundles ORDER BY created_at DESC LIMIT 1").get() as { document: string };
+    const parsed = JSON.parse(bundle.document) as { sections: { slot: string }[] };
+    // Optional by data: an empty picture region would claim an image exists when none does.
+    expect(parsed.sections.map((section) => section.slot)).not.toContain("image");
   });
 
   it("writes nothing when the turn was cancelled before the commit", async () => {
