@@ -21,6 +21,8 @@ import {
   searchSessions,
   textOfSessionEntry,
 } from "../src/session-search.ts";
+import { SEARCH_TOTAL_BUDGET_MS } from "../src/jev-decider.ts";
+import type { JevConfig, JevTransport } from "../src/jev-selector.ts";
 import { parseTemporal, stripDiacritics } from "../src/temporal-parse.ts";
 
 /**
@@ -447,5 +449,65 @@ describe("baseline over a labelled corpus", () => {
     // only thing worth keeping is the measurement itself.
     expect(semantic.acceptable).toBeLessThan(SEMANTIC_CORPUS.length);
     expect(CORPUS.length).toBe(LEXICAL_CORPUS.length + SEMANTIC_CORPUS.length);
+  });
+});
+
+describe("the search deadline", () => {
+  const config = (): JevConfig => ({
+    enabled: true,
+    localOnly: false,
+    apiKey: "sk-test-not-a-real-key",
+    endpoint: "https://api.typesafe.ai/v1/systemone",
+    endpointRefusal: undefined,
+    model: "jev-1.13.0",
+    timeoutMs: 2000,
+    maxCallsPerTurn: 2,
+    policyVersion: "2026-09-17",
+    confidenceFloor: 0.85,
+    marginFloor: 0.2,
+    noulOnFloor: 0.85,
+    noulOffFloor: 0.15,
+  });
+
+  it("answers from the ranking inside the total budget when the selector is slower than its deadline", async () => {
+    // Two messages that a keyword search cannot separate, so the decision path is actually entered.
+    seed("sửa lỗi đăng nhập token hết hạn", "msg_login_a", "2026-09-16T02:00:00.000Z");
+    seed("sửa lỗi đăng nhập không vào được", "msg_login_b", "2026-09-15T02:00:00.000Z");
+
+    let calls = 0;
+    const slow: JevTransport = async (request) => {
+      calls += 1;
+      // Honours the signal, like fetch: a transport that ignored it would prove nothing about a
+      // deadline that is enforced by aborting.
+      return await new Promise((_resolve, reject) => {
+        const timer = setTimeout(() => reject(new Error("the provider never answered")), 5_000);
+        request.signal.addEventListener("abort", () => {
+          clearTimeout(timer);
+          reject(new Error("aborted"));
+        });
+      });
+    };
+
+    const started = Date.now();
+    const outcome = await searchSessions(
+      {
+        ...search,
+        decider: { jev: { config: config(), transport: slow }, budget: { deadlineAt: Date.now() + 30, timeoutMs: 30 } },
+        deciderMode: "jev",
+      },
+      { text: "sửa lỗi đăng nhập", limit: 5 },
+    );
+    const elapsed = Date.now() - started;
+
+    // The plan's rule: an unavailable or slow selector returns the ranking, and never reports the
+    // fallback as though the selector had chosen.
+    expect(outcome.mode).toBe("rank");
+    expect(outcome.chosen).toBeUndefined();
+    expect(outcome.results.length).toBeGreaterThan(0);
+    expect(outcome.decider?.reason ?? "").toContain("30 ms");
+    expect(calls).toBe(1);
+    // The whole search — ranking plus the decision that timed out — stays inside the plan's ceiling.
+    expect(elapsed).toBeLessThan(SEARCH_TOTAL_BUDGET_MS);
+    void SEARCH_TOTAL_BUDGET_MS;
   });
 });

@@ -40,6 +40,7 @@ Cả ba đều lộ ra từ việc viết browser journey — không phải từ
 | `apps/web/e2e/project-session.spec.ts` | 2 journey: nhập path → mở phiên; tên không khớp → node **hỏi** thay vì mở nhầm, chọn option → mở phiên |
 | `tools/probe-vector-extension.mjs`, `.github/workflows/ci.yml` | Probe extension trên platform CI, ba trạng thái: không cài (exit 0, có lý do), cài+dùng được (exit 0 + version), cài mà hỏng (exit 1) |
 | `packages/storage/test/storage.spec.ts` | Test bổ sung cho tiêu chí Phase 7: message giữ `conversation_id`/`role`/`sequence`/`created_at`/`delivery` qua write→read, và conversation khác không thấy |
+| `apps/runtime/test/session-search.spec.ts` | Test bổ sung cho tiêu chí Phase 9 ở mức **cả đường search**: selector chậm hơn deadline → `mode: "rank"`, không có `chosen`, lý do nêu deadline bị chặn, và tổng thời gian nằm trong `SEARCH_TOTAL_BUDGET_MS` |
 
 ## Gate
 
