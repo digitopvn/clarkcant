@@ -21,6 +21,7 @@ import { SAMPLE_DATASET } from "@clarkcant/data-canvas/sample";
 
 import { createModelTurn, type ViewDescriptor } from "./model-turn.ts";
 import { buildViewCatalog } from "./view-catalog.ts";
+import { createSearchHistoryTool } from "./session-search.ts";
 import { registerSessionFile, sessionsDirectory } from "./session-store.ts";
 import { bootNodeServices, type NodeServices } from "./services.ts";
 
@@ -82,6 +83,7 @@ async function main(): Promise<void> {
    * rather than a race.
    */
   const sessionWiring: { index?: NodeServices["sessions"]; principalId?: string } = {};
+  const searchWiring: { deps?: NodeServices["search"] } = {};
 
   const modelTurn = await createModelTurn({
     env: process.env,
@@ -103,6 +105,9 @@ async function main(): Promise<void> {
     // than a guess. The model is told these names because a view over data that is not there
     // renders as nothing, which reads as a broken widget instead of a missing fact.
     datasetRefs: () => [SAMPLE_DATASET.datasetId],
+    // The Session Manager's search surface, exposed to the main model as its own tool. Read from a
+    // closure so the services it needs, which are assembled below, exist by the time a turn runs.
+    extraTools: () => (searchWiring.deps === undefined ? [] : [createSearchHistoryTool(searchWiring.deps)]),
   });
   process.stderr.write(
     modelTurn === undefined
@@ -129,6 +134,7 @@ async function main(): Promise<void> {
 
   sessionWiring.index = services.sessions;
   sessionWiring.principalId = services.runtime.identity.ownerPrincipalId;
+  searchWiring.deps = services.search;
 
   // The model may now ask for these views. When there are none the `show_view` tool is not
   // registered at all, which is why this is reported rather than left to be discovered: a node

@@ -40,12 +40,13 @@ import {
 import {
   MAX_IMAGE_BYTES,
   createLocalEvent,
-  resolveLiveSections,
   importLocalImage,
   removeLocalEvent,
   removeLocalImage,
+  resolveLiveSections,
   updateLocalEvent,
 } from "./mini-app-data.ts";
+import { indexMessages, ingestSessionEntries, searchSessions } from "./session-search.ts";
 import { type NodeServices, buildTimeline } from "./services.ts";
 
 /**
@@ -213,12 +214,80 @@ export async function handleRequest(deps: GatewayDeps, request: GatewayRequest):
     return handleMiniAppDataRoutes(deps, request, segments, at);
   }
 
+  if (segments[0] === "search") {
+    return handleSearchRoutes(deps, request, segments);
+  }
+
   if (segments[0] === "conversations") {
     return await handleConversationRoutes(deps, request, segments, at);
   }
 
   if (request.method === "POST" && request.path === "/command") {
     return handleRawCommand(deps, request, at);
+  }
+
+  return fail(404, "NOT_FOUND", `no handler for ${request.method} ${request.path}`);
+}
+
+/**
+ * History search.
+ *
+ * The scope comes from the transport, exactly as every other route does: there is no principal in
+ * the query, so a caller cannot ask for somebody else's history by naming them. What a caller *can*
+ * narrow is the conversation, the task and the time window, all of which are filters within the
+ * principal's own history.
+ */
+function handleSearchRoutes(
+  deps: GatewayDeps,
+  request: GatewayRequest,
+  segments: string[],
+): GatewayResponse {
+  const search = deps.services.search;
+
+  // POST /search/sessions/:sessionId/ingest
+  if (segments.length === 4 && segments[1] === "sessions" && segments[3] === "ingest" && request.method === "POST") {
+    const sessionId = segments[2] ?? "";
+    const outcome = ingestSessionEntries(search, { sessionId });
+    if ("error" in outcome) {
+      const status = outcome.error.includes("another principal") ? 403 : 404;
+      return fail(status, "SESSION_NOT_INDEXED", outcome.error);
+    }
+    return json(200, outcome);
+  }
+
+  // GET /search/sessions?q=…&limit=…  and  POST /search/sessions {query}
+  if (segments.length === 2 && segments[1] === "sessions") {
+    const fromQuery = request.query.q ?? "";
+    let text = fromQuery;
+    let limit: number | undefined;
+    let conversationId: string | undefined;
+    let taskId: string | undefined;
+    let source: "message" | "session_entry" | undefined;
+
+    if (request.method === "POST") {
+      const parsed = readJson(request);
+      if (!parsed.ok) return parsed.response;
+      text = typeof parsed.value.query === "string" ? parsed.value.query : "";
+      if (typeof parsed.value.limit === "number") limit = parsed.value.limit;
+      if (typeof parsed.value.conversationId === "string") conversationId = parsed.value.conversationId;
+      if (typeof parsed.value.taskId === "string") taskId = parsed.value.taskId;
+      if (parsed.value.source === "message" || parsed.value.source === "session_entry") source = parsed.value.source;
+    } else if (request.method !== "GET") {
+      return fail(405, "METHOD_NOT_ALLOWED", `${request.method} is not supported on /search/sessions`);
+    }
+
+    if (text.trim() === "") {
+      return fail(400, "INVALID_SCHEMA", "a search must carry a non-empty query");
+    }
+
+    const outcome = searchSessions(search, {
+      text: text.slice(0, 500),
+      ...(limit === undefined ? {} : { limit: Math.max(1, Math.min(limit, 50)) }),
+      ...(conversationId === undefined ? {} : { conversationId }),
+      ...(taskId === undefined ? {} : { taskId }),
+      ...(source === undefined ? {} : { source }),
+    });
+    return json(200, outcome);
   }
 
   return fail(404, "NOT_FOUND", `no handler for ${request.method} ${request.path}`);
@@ -570,12 +639,18 @@ async function handleConversationRoutes(
       return fail(400, "INVALID_SCHEMA", "a message must carry a non-empty text field");
     }
 
+    const at_ = at() as never;
     const outcome = await handleUserMessage(services.conductor, {
       conversationId: conversationId as never,
       principal,
       text: text.slice(0, 20_000),
-      at: at() as never,
+      at: at_,
     });
+
+    // Indexed here, where the messages were just written, so a message that exists is searchable.
+    // Doing it in the same request is what keeps "the conversation shows it" and "search finds it"
+    // from disagreeing after a crash between the two.
+    indexMessages(services.search, { conversationId, messages: outcome.messages, at: at_ });
 
     // A turn the model answered is already finished, so reporting it as accepted would be a
     // lie about what the caller is holding. 202 is reserved for the paths that genuinely have

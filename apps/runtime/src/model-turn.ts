@@ -192,12 +192,20 @@ export async function createModelTurn(options: {
   sessionDir?: string;
   /** Called once a transcript exists on disk, so the runtime can index it. */
   onSessionFile?: (input: { sessionId: string; sessionFile: string }) => void;
+  /**
+   * Further tools the turn may call, read at the moment a turn starts.
+   *
+   * Supplied by the composition root rather than imported here, so this module stays the seam rather
+   * than the place that decides which capabilities exist.
+   */
+  extraTools?: () => readonly ToolDefinition[];
 }): Promise<ModelTurn | undefined> {
   const selection = modelFromEnv(options.env);
   if (selection === undefined) return undefined;
 
   const readViews = (): readonly ViewDescriptor[] => options.views?.() ?? [];
   const readDatasetRefs = (): readonly string[] => options.datasetRefs?.() ?? [];
+  const readExtraTools = (): readonly ToolDefinition[] => options.extraTools?.() ?? [];
   const budget = modelBudgetFromEnv(options.env);
   const adapter =
     options.adapter ??
@@ -302,8 +310,12 @@ export async function createModelTurn(options: {
       abort: new AbortController(),
       conversationId,
     };
-    const customTools =
-      views.length === 0 ? [] : [showViewTool(turn, principal, views, viewById, datasetRefs)];
+    // The view tool is only registered when there is a catalog; the extra tools stand on their own
+    // and are registered whatever the catalog says.
+    const customTools = [
+      ...(views.length === 0 ? [] : [showViewTool(turn, principal, views, viewById, datasetRefs)]),
+      ...readExtraTools(),
+    ];
 
     const handle = await adapter.createWorkerSession({
       // The brief is per conversation rather than per message, so the model keeps the thread

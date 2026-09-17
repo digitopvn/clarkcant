@@ -758,6 +758,41 @@ export const MIGRATIONS: readonly Migration[] = [
       `);
     },
   },
+  {
+    version: 13,
+    name: "history-fts",
+    reversible: true,
+    up: (db) => {
+      db.exec(`
+        -- Lexical retrieval over everything the node can search: what the conversation showed, and
+        -- what a worker actually did.
+        --
+        -- One table with a source column rather than two indexes, because the two are ranked
+        -- against each other and merged; keeping them apart would mean merging after ranking, which
+        -- is not the same result.
+        --
+        -- remove_diacritics 2 is what makes Vietnamese searchable at all: a query typed without
+        -- tone marks matches text written with them, in both directions.
+        CREATE VIRTUAL TABLE history_fts USING fts5(
+          text,
+          source UNINDEXED,
+          ref UNINDEXED,
+          conversation_id UNINDEXED,
+          task_id UNINDEXED,
+          principal_id UNINDEXED,
+          created_at UNINDEXED,
+          tokenize = 'unicode61 remove_diacritics 2'
+        );
+
+        -- Deletion is a trigger because a deleted message must not stay searchable, and the write
+        -- path that removes a message is not the one that indexes it. Insertion is explicit: the
+        -- text is extracted from a JSON document in TypeScript, where it is testable.
+        CREATE TRIGGER messages_history_delete AFTER DELETE ON messages BEGIN
+          DELETE FROM history_fts WHERE source = 'message' AND ref = OLD.message_id;
+        END;
+      `);
+    },
+  },
 ];
 
 export interface MigrationResult {

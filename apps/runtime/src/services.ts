@@ -30,6 +30,7 @@ import {
 
 import { type NodeModelInfo, type Runtime, type RuntimeOptions, bootRuntime } from "./node.ts";
 import { type ComposeDeps } from "./compose-mini-app.ts";
+import type { SessionSearchDeps } from "./session-search.ts";
 import {
   type SessionStoreDeps,
   ensureSessionsDirectory,
@@ -83,6 +84,8 @@ export interface NodeServices {
    * survive the swap.
    */
   sessions: SessionStoreDeps;
+  /** The lexical retrieval layer, scoped to this node's owner principal. */
+  search: SessionSearchDeps;
   /** Runtime description surfaced by the health route. Contains no node identity. */
   describe: () => { node: string; platform: string; arch: string };
 }
@@ -227,6 +230,16 @@ export function bootNodeServices(options: RuntimeOptions): NodeServices {
   // to discover that the directory is missing.
   ensureSessionsDirectory(runtime.dataDir);
 
+  const search: SessionSearchDeps = {
+    db: runtime.db,
+    nodeId,
+    // The node's own principal. Search is authorized by the transport, and this record is what the
+    // repository filters on, so the two cannot disagree.
+    principalId: runtime.identity.ownerPrincipalId,
+    timezone: new Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",
+    now: () => nowInstant() satisfies Instant,
+  };
+
   const compose: ComposeDeps = {
     ...base,
     dataDir: runtime.dataDir,
@@ -251,6 +264,7 @@ export function bootNodeServices(options: RuntimeOptions): NodeServices {
     missingFamilies: missingCompositionFamilies(catalog),
     compose,
     sessions,
+    search,
     describe: () => ({ node: process.version, platform: process.platform, arch: process.arch }),
   };
 }
