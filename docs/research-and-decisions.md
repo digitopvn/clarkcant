@@ -24,6 +24,31 @@
 
 ## 2. ADR v2
 
+### ADR 2026-09-17 — native deps tùy chọn cho semantic search, và quyết định giữ FTS-only
+
+`node:sqlite` không cần build step, nên storage không có compiled dependency nào phải audit. Semantic
+retrieval thì cần hai thứ native: `sqlite-vec` (extension loadable, prebuilt theo platform) và ONNX
+runtime cho embedding model. Quyết định: khai báo **`optionalDependencies`**, và biến "thiếu" thành
+một trạng thái có lý do thay vì lỗi cài đặt.
+
+- `pnpm install` và `pnpm verify` phải pass khi không có cả hai. Search khi đó là FTS5 thuần, và node
+  in ra lý do (`sqlite-vec is not installed`, `the local embedding runtime is not installed`).
+- Bảng vector (`history_vec`) **không** tạo trong migration: `vec0` chỉ tạo được trên connection đã load
+  extension, và migration chạy trên mọi máy. Migration chỉ tạo `history_embeddings_meta` (SQL thuần);
+  bảng vector được tạo lazy khi extension có mặt. Nếu để trong migration, một database tạo trên máy
+  thiếu extension sẽ vĩnh viễn không có bảng vector.
+- Model đổi → **reindex**, không trộn vector khác model: index ghi `model`/`dims`/`digest` trên từng
+  vector và từ chối khi model hiện tại khác.
+- `onnxruntime-node` được thêm vào `allowBuilds` (postinstall tải platform runtime). Đây là ngoại lệ có
+  chủ đích cho supply-chain policy, không phải nới policy chung.
+
+**Đo trên corpus Phase 8 (34 query, 15 history row, E5-small quantized, sqlite-vec v0.1.9):** FTS thuần
+đúng top-1 31/34; hybrid cũng 31/34 khi ceiling cosine = 0.1, và giảm còn 25/34 khi ceiling ≥ 0.2 vì
+KNN luôn trả về hàng xóm gần nhất kể cả khi câu hỏi không có kết quả đúng. Subset "semantic-only" (12
+query không trùng từ vựng) không cải thiện: 9/12 ở cả hai đường. **Kết luận: hybrid không cải thiện trên
+corpus này, nên `CLARKCANT_SEARCH_SEMANTIC` mặc định tắt**; code hybrid vẫn nằm sau flag để đo lại khi
+có corpus lớn hơn hoặc model tốt hơn.
+
 | ADR | Quyết định | Thay thế / đánh đổi |
 |---|---|---|
 | B01 | Portable Node runtime + shared web UI + optional Electron | Bỏ desktop-only coupling; thêm package/platform matrix |

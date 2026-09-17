@@ -24,6 +24,7 @@ logged.
 | `CLARKCANT_JEV_TIMEOUT_MS` | `4000` | Budget for **all** selector calls made while composing one turn. |
 | `CLARKCANT_JEV_POLICY_VERSION` | `2026-09-17` | Stamped into telemetry and composition provenance so a decision can be traced to a policy. |
 | `CLARKCANT_SEARCH_DECIDER` | `rank` | `rank` uses BM25 alone; `jev` asks the selector to choose between results that are close. Any other value falls back to `rank`. |
+| `CLARKCANT_SEARCH_SEMANTIC` | off | `1`/`true` turns on vector retrieval (sqlite-vec + local E5-small), fused with the lexical results by RRF. Off because it was measured: on the Phase 8 corpus it did not improve top-1 and cost precision when the cosine ceiling was loose. |
 
 The key belongs in the runtime's environment or its local, gitignored `.env`. It does not belong in
 a `VITE_`/`NEXT_PUBLIC_` variable, a URL query, a fixture, or another repository's `.env` path
@@ -128,6 +129,23 @@ is opt-in, and the comparison harness is
 `CLARKCANT_JEV_LIVE=1 pnpm exec vitest run apps/runtime/test/jev-calibration-live.spec.ts`. It prints
 a per-case line and a total for both paths; the numbers belong in a report before the default
 changes.
+
+**Turning semantic search on, and when not to.** It needs two optional native pieces on the machine:
+`sqlite-vec` (the vector index) and the local embedding runtime with E5-small (`@huggingface/transformers`
+plus `onnxruntime-node`). Both are `optionalDependencies` of the runtime, so a checkout without them
+installs, boots and passes `pnpm verify` — search is simply lexical and `GET /health`-style status says
+which reason applies: the extension is missing, the model could not be loaded, or the index holds
+vectors from a different model and needs a reindex.
+
+It is off by default for a measured reason, not a cautious one. On the 34-query labelled corpus the
+lexical path answered 31 top-1 correctly; the hybrid path also answered 31 when the cosine ceiling was
+0.1, and only 25 when the ceiling was 0.2 or higher — because a KNN query always returns its nearest
+neighbours, so a question whose honest answer is "nothing in your history" came back with a near-miss.
+The semantic-only subset (queries that share no vocabulary with the target) stayed at 9/12 either way.
+Turn it on with `CLARKCANT_SEARCH_SEMANTIC=1` when the history is large enough that a near-miss beats
+nothing, and re-measure with
+`CLARKCANT_EMBEDDINGS_LIVE=1 pnpm exec vitest run apps/runtime/test/hybrid-calibration-live.spec.ts`,
+which prints a per-ceiling sweep. The numbers belong in a report before the default changes.
 
 **What a composed surface costs.** One selector batch per composition when no template was named (two
 at most, if the template changes the candidate set), and zero when the model names a template. Search

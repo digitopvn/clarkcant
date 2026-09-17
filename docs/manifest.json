@@ -75,8 +75,8 @@
     },
     {
       "path": "research-and-decisions.md",
-      "bytes": 13366,
-      "sha256": "1e3e100103588e6ea009bc9df8690f1c642640eb85c04c3466a8cf8b0bf04f6f"
+      "bytes": 15506,
+      "sha256": "9997333e66511576733ded3269369b6fc2e5e132a8cc4c0e84cc94fb2e1bc277"
     },
     {
       "path": "scope-lock.md",
@@ -95,8 +95,8 @@
     },
     {
       "path": "mini-app/jev-configuration.md",
-      "bytes": 9349,
-      "sha256": "f0bccef8a393735d5a3dbb1098eb718aa90d34d68e78861d4b8f453df478f9ae"
+      "bytes": 11031,
+      "sha256": "08c8636dbbffc18af47f397c92f3ef78eb583fc5dd1fe67a79baf943e7c3d8d8"
     }
   ]
 }

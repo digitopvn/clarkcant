@@ -1,6 +1,6 @@
 ---
 title: "Phase 10: semantic-retrieval"
-status: todo
+status: done
 ---
 
 # Phase 10: Semantic retrieval + RRF
@@ -31,3 +31,13 @@ Root: `/Volumes/GOON/www/digitop/clarkcant/`.
 ## Success criteria
 - Hybrid cải thiện acceptable rate so với baseline Phase 8 trên cùng corpus, hoặc ghi rõ không cải thiện và giữ FTS-only.
 - Native deps chỉ optional; `pnpm verify` pass khi extension/model vắng; README/ADR đã cập nhật.
+
+## Kết quả
+
+Report: [`plans/reports/verification-260917-1742-semantic-retrieval-hybrid.md`](../reports/verification-260917-1742-semantic-retrieval-hybrid.md).
+
+Đã làm đủ: migration 15 (`history_embeddings_meta`), `history_vec` tạo lazy bằng `sqlite-vec` v0.1.9, `embeddings-local.ts` (E5-small q8, prefix query/passage), `hybrid-rank.ts` (RRF k=60 + ceiling cosine), `vector-index.ts` (nạp model một lần, ingest resumable, status có lý do), đường hybrid sau `CLARKCANT_SEARCH_SEMANTIC`.
+
+**Đo trên corpus Phase 8 (15 row, 34 query): FTS thuần 31/34 top-1; hybrid cũng 31/34 khi ceiling 0.1 và chỉ 25/34 khi ceiling ≥ 0.2** — KNN luôn trả hàng xóm gần nhất nên câu hỏi "không có đáp án" bị trả về kết quả gần đúng (5/5 ca ở ceiling ≥ 0.25). Subset semantic-only không tăng (9/12 ở cả hai đường). Kết luận: **giữ FTS-only làm mặc định**, `CLARKCANT_SEARCH_SEMANTIC` mặc định tắt; đã ghi ADR trong `docs/research-and-decisions.md` và runbook trong `docs/mini-app/jev-configuration.md`.
+
+Gate còn lại của phase: kích thước artifact ONNX không đo được trên máy này (không tìm thấy cache của thư viện) — ghi rõ trong report thay vì ghi số không quan sát được.
