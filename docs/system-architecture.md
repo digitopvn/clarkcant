@@ -1,6 +1,6 @@
 # System Architecture v2 — Conversation Platform
 
-**Ngày:** 16/09/2026 · **Trạng thái:** thiết kế để implement, chưa là hệ thống đã triển khai.
+**Ngày:** 16/09/2026, cập nhật 17/09/2026 · **Trạng thái:** thiết kế để implement, chưa là hệ thống đã triển khai. Sơ đồ tổng quan mới nhất: [system-architecture.png](system-architecture.png); khi văn bản và sơ đồ khác nhau, sơ đồ thắng và văn bản phải được sửa theo.
 **Phạm vi:** [scope-lock.md](scope-lock.md). Tất cả API/types có tên `agent.*`, NodeLink và CapabilityPack bên dưới là contract đề xuất của app, không phải API chính thức của Pi/MCP.
 
 ## 1. Thay đổi kiến trúc cốt lõi
@@ -166,9 +166,55 @@ Conductor mặc định chỉ thấy capability summary và search tool; khi ch�
 
 Conductor không được có tool tự accept consent, đọc secret values hoặc patch core policy. Tool discovery metadata và mô tả MCP do bên ngoài cung cấp vẫn là untrusted input.
 
+### 7.2 Memory & Search: shared service, và Jev là lớp quyết định
+
+Memory & Search là **service dùng chung trong runtime process**, sống qua Pi swap và không nằm trong worker. Nó gồm năm lớp theo sơ đồ: semantic retrieval (sqlite-vec, exact KNN), lexical retrieval (SQLite FTS5, BM25), structured filters (tasks, projects, source refs, thời gian, principal), local embeddings (E5-small quantized ONNX), và rank + verify (RRF, branches, live status). Corpus là Knowledge & History Store: bảng `messages`/summaries trong SQLite và Pi JSONL session của worker, đều đã qua redaction trước khi persist.
+
+**Jev (TypeSafe System One) là lớp quyết định đặt sau retrieval.** Nó không tìm kiếm, không sinh nội dung và không cấp quyền. Hai đường dùng:
+
+```text
+Đường A — điều phối runtime:
+  Main Pi cần giao việc → Session Manager liệt kê running runtimes/workers
+  → structured filters (node, capability, lease, live status) → ≤N candidates
+  → Jev Choice: "candidate nào phù hợp nhất cho intent này?" (+ option none)
+  → host verify: lease còn sống, grant đủ, revision khớp → dispatch hoặc hỏi user
+
+Đường B — tìm lại session/ngữ cảnh cũ:
+  Main Pi/Context Builder có query → temporal parser + FTS5 + KNN (khi có)
+  → RRF hợp nhất → top-K candidates (snippet + provenance)
+  → Jev Choice: "kết quả nào đúng ý người dùng?" / Noul: "cần hỏi lại?"
+  → host verify → đưa vào context hoặc trả câu hỏi làm rõ
+```
+
+```text
+Đường C — tìm project/thư mục để mở pi session (Workspace & Project Finder):
+  User: "thêm skill mới cho dự án agentkit đi"
+  → Finder tra **project index cache** (SQLite): repos/folders đã quét trong approved roots,
+    có tên, path, git remote, markers (.git, package.json, README, CLAUDE.md), mtime, last-used
+  → cache miss/stale → quét bounded (approved roots, depth/ignore rules, incremental theo mtime)
+  → lexical + structured (tên, alias, remote, recent-use) → ≤K candidates
+  → Jev Choice: "project nào?" (+ none) → host verify: path tồn tại, thuộc approved roots, không leased
+  → tạo WorkerBrief { goal, projectRoots:[path] } → start pi session + initial prompt
+  → 0 candidate: hỏi user chọn thư mục; uncertain: một câu hỏi làm rõ (T19), không đoán
+```
+
+Finder là control extension của Main Pi theo sơ đồ. Cache là bảng `project_index` per node, làm mới incremental khi mở app và khi user nhắc tới project không có trong cache; không quét toàn ổ đĩa, không theo symlink ra ngoài roots, không đọc nội dung file để index (chỉ metadata và markers). Recent-use và alias do user đặt là tín hiệu xếp hạng mạnh hơn tên gần giống.
+
+Ràng buộc bắt buộc cho lớp này:
+
+- Jev chỉ thấy **state đã sanitize**: intent, và mỗi candidate là một mô tả ngắn có id opaque (không raw rows, không secret, không full transcript). State là object có tên trường, giới hạn kích thước; local-only mode tắt hẳn call ngoài.
+- Output của Jev là **enum trong candidates host cung cấp**, luôn có `none`. Host validate `choice ∈ candidates`, áp ngưỡng confidence/margin, rồi **verify lại live status và authorization** trước khi hành động. Confidence không phải authority.
+- Jev **không quyết định side effect**. Với đường A, Jev chọn target; dispatch vẫn đi qua command gateway, lease/epoch fencing và consent như mọi delegation khác. Với đường B, Jev chọn context; không có effect.
+- Retrieval phải đúng trước. Jev chỉ có giá trị khi retrieval trả 2–K kết quả gần nhau; 0 hoặc 1 kết quả thì không gọi Jev. Nếu FTS/RRF thuần đã đủ tốt trên corpus thật (đo bằng calibration), lớp Jev được tắt bằng config, không gỡ code.
+- Fallback khi Jev vắng/uncertain/timeout: rank thuần từ RRF; nếu vẫn mơ hồ, main Pi hỏi lại người dùng. Không trả kết quả fallback như thể Jev đã chọn.
+- Deadline riêng cho Jev (đề xuất ≤2 s trong tổng ≤2.5 s cho search); 429/529/timeout là `unavailable` có reason, không retry storm.
+- Telemetry: request id, model id thực tế trả về, duration, tokens, enum đã chọn, reason fallback. Không body, không prompt, không header.
+
+Ba đường A/B/C dùng chung một adapter, một policy confidence và một fallback chain: Jev vắng/uncertain → rank thuần → một câu hỏi làm rõ. Jev cũng là selector cho rich widgets trong Conversation Host (chọn template/data candidates cho một surface); cùng adapter, cùng ràng buộc. Chi tiết ở plan mini-app.
+
 ## 8. Task/session routing
 
-Routing: explicit reference → aliases/project registry → recent tasks/instance focus → state/resource verification → answer/status/resume/new task/clarify/delegate.
+Routing: explicit reference → aliases/project registry → recent tasks/instance focus → state/resource verification → answer/status/resume/new task/clarify/delegate. Khi bước "recent tasks/instance focus" hoặc "delegate" còn nhiều ứng viên gần nhau, lớp quyết định Jev (§7.2) chọn trong tập đã lọc; verification vẫn là bước sau và là bước quyết định cuối.
 
 Node placement xét resource locality, allowed operations, connected credentials, OS/driver capability, active leases và user preference. Không chỉ chọn node có CPU rảnh. “Sửa ứng dụng trên máy này” không được gửi repo lên VPS chỉ vì network đang nhanh.
 
@@ -220,7 +266,7 @@ Một writer/worktree hoặc approved folder; Git operations tác động shared
 
 ## 10. Storage
 
-Mỗi node: SQLite WAL với migrations; app events/outbox/inbox; native Pi session history tách logical authority; blob store có quotas. Không cố commit atomically cùng Pi JSONL; run markers và reconciliation nối hai phần.
+Mỗi node: SQLite WAL với migrations; app events/outbox/inbox; native Pi session history (JSONL) tách logical authority nhưng được index vào Memory & Search (§7.2); blob store có quotas. Không cố commit atomically cùng Pi JSONL; run markers và reconciliation nối hai phần.
 
 Nhóm bảng: principals/nodes/grants; conversations/messages; tasks/runs/delegations; commands/events/outbox/inbox; resources/leases; effects/approvals; packages/install_plans/generations; connections/auth_transactions; widget_instances/snapshots/pins/action_bindings; datasets/artifacts; preferences/onboarding_checkpoints/usage.
 
