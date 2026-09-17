@@ -1,25 +1,38 @@
 /**
  * @clarkcant/app-web
  *
- * Browser client: mounts `@clarkcant/conversation-client` against the runtime gateway
- * over HTTPS and WSS. Deliberately has no Node dependency, so the same components can be
- * hosted by the desktop shell.
+ * Browser client for the runtime gateway.
  *
- * @implementation-status stub
- * TODO(P1): the Vite entry point, the gateway transport (fetch for commands, WebSocket
- * for events with a reconnect cursor) and the HTML shell. The gateway it talks to is
- * implemented and tested in `apps/runtime`; this client is not.
+ * @implementation-status implemented
  *
- * Note the deployment requirement the blueprint is explicit about: browser features that
- * need a secure context require HTTPS, and loopback development is not the same
- * configuration as a deployment.
+ * This header used to say the opposite: "stub", with a `TODO(P1)` claiming there was no Vite entry
+ * point, no gateway transport and no HTML shell. All three exist and are exercised by the browser
+ * suite in `apps/web/e2e/`, and the claim was left standing while the app was built around it —
+ * the same failure the renderer comments had, where a written guarantee outlives the code it
+ * described.
+ *
+ * What is here, and no more than has been checked:
+ *
+ *   - `index.html` loads `public/theme-init.js` and then `src/main.tsx`; `main.tsx` mounts `App.tsx`.
+ *   - `theme-init.js` applies the stored theme before the first paint, because a module runs after
+ *     the document has been painted and a light preference would otherwise flash dark.
+ *   - HTTP commands and the voice socket both go through `GatewayClient` in
+ *     `@clarkcant/conversation-client`, which is the only component holding the bearer token.
+ *
+ * Note the deployment requirement the blueprint is explicit about: browser features that need a
+ * secure context require HTTPS, and loopback development is not the same configuration as a
+ * deployment.
  */
 
 /** Routes the client renders. One conversation; no session picker by design. */
 export const ROUTES = ["/", "/conversation/:conversationId"] as const;
 
 /**
- * @implementation-status stub
- * TODO(P1): see above.
+ * Whether the browser client is built.
+ *
+ * **Unused.** Nothing in this repository reads it, and it was previously `"not-implemented"`, which
+ * was false. It is kept only because it is a published export of this package and changing or
+ * removing a published value is a version-visible change that deserves its own decision rather
+ * than being done quietly inside an unrelated branch.
  */
-export const WEB_CLIENT_STATUS = "not-implemented";
+export const WEB_CLIENT_STATUS = "implemented";
