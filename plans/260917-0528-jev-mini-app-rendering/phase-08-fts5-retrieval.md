@@ -11,9 +11,9 @@ status: done
 - Mục tiêu: lớp **Lexical retrieval** + **Structured filters** của Memory & Search (`docs/system-architecture.png`): SQLite FTS5 bm25, filter theo principal/conversation/task/thời gian. Semantic retrieval là Phase 10; phase này phải trả output shape ghép được vào RRF.
 
 ## Requirements
-- [ ] Truy vấn keyword trả kết quả theo BM25 rank, lọc được theo conversation/principal/khoảng thời gian.
-- [ ] Truy cập scoped theo principal; không trả kết quả từ conversation của principal khác.
-- [ ] Không index nội dung đã bị redact ở Phase 7.
+- [x] Truy vấn keyword trả kết quả theo BM25 rank, lọc được theo conversation/principal/khoảng thời gian.
+- [x] Truy cập scoped theo principal; không trả kết quả từ conversation của principal khác.
+- [x] Không index nội dung đã bị redact ở Phase 7.
 
 ## Related code files
 Root: `/Volumes/GOON/www/digitop/clarkcant/`.
@@ -54,3 +54,9 @@ Root: `/Volumes/GOON/www/digitop/clarkcant/`.
 ## Success criteria
 - Search "bug login" + khoảng "hôm qua" trả đúng messages seed, theo rank hợp lý; cross-principal trả rỗng.
 - `pnpm exec vitest run apps/runtime/test/session-search.spec.ts` + `pnpm typecheck` pass.
+
+**Bằng chứng (2026-09-17, kiểm lại):**
+
+- BM25 + filter: `apps/runtime/test/session-search.spec.ts` — thứ hạng theo `bm25()`, lọc theo conversation/task/khoảng thời gian, và corpus nhãn 34 query (lexical 30/31, 96.8%).
+- Principal scope: cùng file — kết quả của principal khác không bao giờ được trả về, kể cả khi từ khoá trùng.
+- Không index nội dung đã redact: `session-search.spec.ts` "does not return content that was redacted before it was indexed".

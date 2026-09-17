@@ -11,9 +11,9 @@ status: done
 - Mục tiêu: session/message của pi runtime được persist bền vững kèm timestamp + principal, làm corpus cho Phase 8.
 
 ## Requirements
-- [ ] Session file sống qua restart của runtime và của node.
-- [ ] Mỗi message có conversation_id, role, sequence, created_at, principal scope.
-- [ ] Không log/persist secret, token, API key vào session documents.
+- [x] Session file sống qua restart của runtime và của node.
+- [x] Mỗi message có conversation_id, role, sequence, created_at, principal scope.
+- [x] Không log/persist secret, token, API key vào session documents.
 
 ## Related code files
 Root: `/Volumes/GOON/www/digitop/clarkcant/`.
@@ -50,3 +50,9 @@ Root: `/Volumes/GOON/www/digitop/clarkcant/`.
 - Restart runtime: `sessionFile` tồn tại trên disk và `open()` resume được; `session_files` có row tương ứng; `messages` đã bền vững từ trước.
 - Session Manager là control extension của Main Pi theo sơ đồ: expose `list/resume` qua service trong `apps/runtime`, không trong worker process (service phải sống qua Pi swap).
 - `pnpm exec vitest run packages/pi-adapter/test/session-persistence.spec.ts` + `pnpm typecheck` pass.
+
+**Bằng chứng (2026-09-17, kiểm lại):**
+
+- Sống qua restart: `apps/runtime/test/session-store.spec.ts` describe "durability across a restart" — file transcript còn trên đĩa, row `session_files` còn trong database sau khi mở lại.
+- Metadata của message: `packages/storage/test/storage.spec.ts` "keeps the identity a history reader depends on" — `conversation_id`, `role`, `sequence`, `created_at`, `delivery` round-trip, và một conversation khác không đọc được message đó.
+- Không persist secret: `packages/pi-adapter/test/session-persistence.spec.ts` (redact trước khi ghi, JSON hỏng thì từ chối) và nhánh redaction trong `session-store.spec.ts`.

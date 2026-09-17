@@ -13,11 +13,11 @@ status: done
 - Jev không search, không sinh nội dung, không cấp quyền, không quyết định side effect.
 
 ## Requirements
-- [ ] Đường A: với intent + ≤12 runtime candidates (id opaque, mô tả: project, capabilities, live status, load), Jev Choice trả target hoặc `none`; host verify lease/grant/revision trước dispatch; 0–1 candidate → không gọi Jev.
-- [ ] Đường B: với query + top-K (K ≤ 10) từ Phase 8, Jev Choice chọn kết quả đúng ý hoặc `none`; Noul "cần hỏi lại?" khi mơ hồ; 0–1 kết quả hoặc rank cách xa → không gọi Jev.
-- [ ] Deadline Jev ≤2 s, tổng search ≤2.5 s; Jev unavailable/uncertain → rank RRF thuần; còn mơ hồ → main Pi hỏi lại. Không trả fallback như thể Jev đã chọn.
-- [ ] Privacy: state chỉ intent đã redact + mô tả candidate ngắn; local-only mode tắt call ngoài. Không snippet chứa secret (redaction Phase 7 là tiền đề).
-- [ ] Bật/tắt theo config (`search.decider = jev | none`); baseline Phase 8 và calibration ở đây quyết định default.
+- [x] Đường A: với intent + ≤12 runtime candidates (id opaque, mô tả: project, capabilities, live status, load), Jev Choice trả target hoặc `none`; host verify lease/grant/revision trước dispatch; 0–1 candidate → không gọi Jev.
+- [x] Đường B: với query + top-K (K ≤ 10) từ Phase 8, Jev Choice chọn kết quả đúng ý hoặc `none`; Noul "cần hỏi lại?" khi mơ hồ; 0–1 kết quả hoặc rank cách xa → không gọi Jev.
+- [x] Deadline Jev ≤2 s, tổng search ≤2.5 s; Jev unavailable/uncertain → rank RRF thuần; còn mơ hồ → main Pi hỏi lại. Không trả fallback như thể Jev đã chọn.
+- [x] Privacy: state chỉ intent đã redact + mô tả candidate ngắn; local-only mode tắt call ngoài. Không snippet chứa secret (redaction Phase 7 là tiền đề).
+- [x] Bật/tắt theo config (`search.decider = jev | none`); baseline Phase 8 và calibration ở đây quyết định default.
 
 ## Related code files
 Root: `/Volumes/GOON/www/digitop/clarkcant/`.
@@ -56,3 +56,10 @@ Root: `/Volumes/GOON/www/digitop/clarkcant/`.
 - Đường A: nhiều runtime phù hợp → chọn đúng target theo label; unauthorized/lease chết không bao giờ được dispatch dù Jev chọn.
 - Đường B: "phiên làm việc hôm qua về bug login" trả đúng kết quả; Jev timeout/disabled → search vẫn hoạt động.
 - `pnpm exec vitest run apps/runtime/test/jev-decider.spec.ts apps/runtime/test/runtime-candidates.spec.ts` + `pnpm verify` pass.
+
+**Bằng chứng (2026-09-17, kiểm lại):**
+
+- Đường A/B: `apps/runtime/test/jev-decider.spec.ts` — `decideRuntimeTarget` và `decideSearchResult` từ chối gọi provider khi 0–1 candidate hoặc khi ranking đã tách bạch; kết quả chọn luôn được verify lại.
+- Deadline: `SEARCH_DECISION_TIMEOUT_MS = 2000` và `SEARCH_TOTAL_BUDGET_MS = 2500` được assert; `decisionTimeoutMsFromEnv` bỏ qua giá trị không hợp lệ; test "falls back to the ranking when the provider is slower than the deadline" chứng minh transport chậm hơn deadline trả về `rank` (không giả vờ Jev đã chọn) và message nêu đúng deadline bị chặn. Đo live: p50 322 ms, p95 824 ms (report 1815).
+- Privacy: `jev-decider.spec.ts` "never sends a path or a raw goal to the selector" — state gửi đi chỉ có intent đã redact + mô tả candidate; local-only tắt call ngoài (đã kiểm ở Phase 2).
+- Config: `searchDeciderFromEnv` nhận `jev` để bật, `none`/`rank`/giá trị lạ đều là `rank` (một lỗi gõ không thể bật provider trả phí). Default giữ `rank` theo số đo live (search 31/34 vs 31/34).
