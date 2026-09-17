@@ -14,6 +14,13 @@ import { CAPABILITIES as PROJECT_WORK_CAPABILITIES } from "@clarkcant/project-wo
 import { validateProps } from "@clarkcant/widget-host";
 
 import { type NodeModelInfo, type Runtime, type RuntimeOptions, bootRuntime } from "./node.ts";
+import {
+  type JevConfig,
+  type JevDeps,
+  type JevTelemetry,
+  createFetchTransport,
+  jevConfigFromEnv,
+} from "./jev-selector.ts";
 
 /**
  * Composition root.
@@ -34,8 +41,24 @@ export interface NodeServices {
   conductor: ConductorDeps;
   /** The model this node is configured for, or null when it has none. */
   model: NodeModelInfo | null;
+  /** The selector, its wiring, and the counters a test or the health route can read. */
+  jev: JevRuntime;
   /** Runtime description surfaced by the health route. Contains no node identity. */
   describe: () => { node: string; platform: string; arch: string };
+}
+
+/**
+ * The selector as the rest of the node sees it.
+ *
+ * `providerCallCount` exists so that "this path never calls the provider" is an assertion rather
+ * than a claim: rendering history, changing a filter, opening a pin and replaying a turn all have
+ * to be provably silent, and the only honest way to show that is to count the calls.
+ */
+export interface JevRuntime {
+  config: JevConfig;
+  deps: JevDeps;
+  providerCallCount: () => number;
+  telemetry: () => readonly JevTelemetry[];
 }
 
 /**
@@ -66,9 +89,39 @@ export function newId(prefix: string): string {
   return `${prefix}_${idDiscriminator}${idCounter.toString(36)}`;
 }
 
+/**
+ * Wire the selector.
+ *
+ * The telemetry sink is bounded and in-memory on purpose: it is an operator's window into what the
+ * node asked a provider to decide, and it holds no request body, so nothing here needs retention
+ * or redaction at rest. It is also the counter the tests read.
+ */
+function buildJevRuntime(options: RuntimeOptions): JevRuntime {
+  const config: JevConfig = { ...jevConfigFromEnv(process.env), ...(options.jev?.config ?? {}) };
+  const telemetry: JevTelemetry[] = [];
+  let providerCalls = 0;
+
+  const deps: JevDeps = {
+    config,
+    transport: options.jev?.transport ?? createFetchTransport(),
+    newRequestId: () => newId("jevreq"),
+    onTelemetry: (event) => {
+      if (event.event === "call" || event.event === "error" || event.event === "model_drift") {
+        providerCalls += 1;
+      }
+      telemetry.push(event);
+      if (telemetry.length > 200) telemetry.shift();
+      options.jev?.onTelemetry?.(event);
+    },
+  };
+
+  return { config, deps, providerCallCount: () => providerCalls, telemetry: () => telemetry };
+}
+
 export function bootNodeServices(options: RuntimeOptions): NodeServices {
   const runtime = bootRuntime(options);
   const nodeId = runtime.identity.nodeId;
+  const jevRuntime = buildJevRuntime(options);
 
   // A capability is registered so the conductor can park a task on it honestly, but it
   // starts not-installed: no worker has loaded it yet.
@@ -124,6 +177,7 @@ export function bootNodeServices(options: RuntimeOptions): NodeServices {
     runtime,
     conductor,
     model: options.model ?? null,
+    jev: jevRuntime,
     describe: () => ({ node: process.version, platform: process.platform, arch: process.arch }),
   };
 }

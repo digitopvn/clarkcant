@@ -6,6 +6,8 @@ import { type Instant, nowInstant, nodeIdSchema, principalIdSchema } from "@clar
 import type { ModelTurnInput, ModelTurnReply } from "@clarkcant/core";
 import { type Database, migrate, openDatabase } from "@clarkcant/storage";
 
+import type { JevConfig, JevTelemetry, JevTransport } from "./jev-selector.ts";
+
 /**
  * Composition root for one runtime installation.
  *
@@ -54,6 +56,15 @@ export interface RuntimeOptions {
    * from the last reply would show the wrong thing until the first one arrived.
    */
   model?: NodeModelInfo;
+  /**
+   * Selector wiring, injectable so a test can substitute a transport instead of reaching a
+   * provider. The production path builds the config from the environment and uses fetch.
+   */
+  jev?: {
+    config?: Partial<{ [K in keyof JevConfig]: JevConfig[K] }>;
+    transport?: JevTransport;
+    onTelemetry?: (event: JevTelemetry) => void;
+  };
 }
 
 /** The model configuration, as an operator would want to see it. */
