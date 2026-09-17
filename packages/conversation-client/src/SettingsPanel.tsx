@@ -145,6 +145,14 @@ export interface SettingsPanelProps {
   open: boolean;
   onClose: () => void;
   client: GatewayClient;
+  /**
+   * The conversation a voice session started here would be recorded into.
+   *
+   * Optional because a user can open settings before the first message of a conversation exists,
+   * and voice still works in that state — the session simply is not written anywhere, and the
+   * surface says so rather than quietly discarding it.
+   */
+  conversationId?: string;
   /** What the user chose, which may be `system`. */
   themeChoice: ThemeChoice;
   /** What is currently shown, which is always `dark` or `light`. */
@@ -156,6 +164,7 @@ export function SettingsPanel({
   open,
   onClose,
   client,
+  conversationId,
   themeChoice,
   resolvedTheme,
   onThemeChoice,
@@ -406,8 +415,9 @@ export function SettingsPanel({
           <section className="cc-panel-section">
             <h3>Voice</h3>
             <VoiceSurface
-              requires="một phiên Live API đang mở"
-              unblockedBy="bật voice trong hội thoại để mở phiên tới Gemini"
+              client={client}
+              {...(conversationId === undefined ? {} : { conversationId })}
+              unblockedBy="đặt GEMINI_API_KEY cho node rồi thử lại"
             />
           </section>
         )}

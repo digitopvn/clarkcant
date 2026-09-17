@@ -6,13 +6,19 @@
  * principal, because the gateway derives the caller from the channel rather than the body.
  */
 
+import {
+  type StartVoiceSessionOptions,
+  type VoiceSession,
+  type VoiceSessionEvents,
+  startVoiceSession,
+} from "./voice-session.ts";
+
 export interface GatewayClientOptions {
   baseUrl: string;
   token: string;
   /** Injected so tests and the E2E harness can substitute a transport. */
   fetchImpl?: typeof fetch;
 }
-
 export interface TimelineMessage {
   messageId: string;
   role: "user" | "assistant" | "system" | "tool";
@@ -68,6 +74,28 @@ export class GatewayClient {
     this.#baseUrl = options.baseUrl.replace(/\/$/, "");
     this.#token = options.token;
     this.#fetch = options.fetchImpl ?? globalThis.fetch.bind(globalThis);
+  }
+
+  /**
+   * Open a live voice session against this node.
+   *
+   * The token stays here rather than being handed to the surface. That is the point: the voice
+   * socket authenticates in its first frame, and the only component that already holds the
+   * credential is this one. A surface that had to ask for it would put the token into a prop,
+   * and props end up in devtools, snapshots and logs.
+   *
+   * The injection points exist so this can be exercised without a microphone or an audio device.
+   */
+  openVoiceSession(
+    options: {
+      conversationId?: string;
+      events: VoiceSessionEvents;
+    } & Pick<
+      StartVoiceSessionOptions,
+      "mediaDevices" | "createAudioContext" | "createSocket" | "onSampleRateFallback"
+    >,
+  ): Promise<VoiceSession> {
+    return startVoiceSession({ ...options, nodeBaseUrl: this.#baseUrl, token: this.#token });
   }
 
   async #call<T>(method: string, path: string, body?: unknown): Promise<T> {

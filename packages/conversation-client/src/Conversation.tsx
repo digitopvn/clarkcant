@@ -426,6 +426,7 @@ export function Conversation({
         open={uiCheckOpen}
         onClose={() => setUiCheckOpen(false)}
         client={client}
+        {...(conversationId === undefined ? {} : { conversationId })}
         themeChoice={themeChoice}
         resolvedTheme={resolvedTheme}
         onThemeChoice={applyThemeChoice}
