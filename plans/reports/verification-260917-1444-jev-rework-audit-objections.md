@@ -87,6 +87,18 @@ Nút **không** render trên web, thay vì render rồi không làm gì: một c
 | `pnpm build` | pass (`vite build`: 151 module, 351 ms) |
 | `pnpm test:e2e` | **25 passed** (23 test cũ + 2 journey picker mới), chromium headless trên linux |
 
+## Opt-in live evidence chạy lại trên commit này
+
+Vì đường A nay mới thật sự được nối, evidence live được chạy lại trên chính commit của vòng này (`CLARKCANT_JEV_LIVE=1`, key lấy từ environment của operator, không vào repo):
+
+| Suite | Kết quả |
+|---|---|
+| `apps/runtime/test/jev-live.spec.ts` | 3 passed — Choice trả template trong danh sách được cấp; Noul trả probability 0.980 (không bịa `confidence`); model id sai bị từ chối HTTP 400 |
+| `jev-calibration-live.spec.ts` — search | `rank` 31/34 (91.2%) vs `jev` 31/34 (91.2%) → default giữ `rank` |
+| `jev-calibration-live.spec.ts` — routing | `jev` 8/16 (50.0%), 3/3 câu ngoài phạm vi abstain đúng (`none`) |
+
+Số routing không đổi so với vòng trước, đúng như dự kiến: vòng này **không sửa `jev-decider.ts`**, chỉ nối seam. Điều được chứng minh mới là *seam có được gọi trong production*, và đó là việc của `conductor-routing.spec.ts` chứ không phải của calibration.
+
 ## Còn lại / chưa đo
 
 - Browser suite chạy trên Linux headless tại máy này (khác với darwin arm64 của phiên trước), nên đây là lần đầu e2e chạy trên linux.
