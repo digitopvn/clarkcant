@@ -5,6 +5,7 @@ import {
   type ConductorDeps,
   type WidgetDeps,
   getInstance,
+  listCapabilitySummaries,
   listPinsForConversation,
   liveOwnerOf,
   liveStateOf,
@@ -44,10 +45,12 @@ import { type ComposeDeps } from "./compose-mini-app.ts";
 import { type ProjectFinderDeps } from "./project-finder.ts";
 import { type ProjectSessionStarter, createProjectSessionStarter } from "./project-session.ts";
 import {
+  decideRuntimeTarget,
   decisionTimeoutMsFromEnv,
   searchDeciderFromEnv,
   searchDecisionBudget,
 } from "./jev-decider.ts";
+import type { RuntimeCandidate } from "./runtime-candidates.ts";
 import type { SessionSearchDeps } from "./session-search.ts";
 import {
   type SessionStoreDeps,
@@ -246,6 +249,64 @@ export function bootNodeServices(options: RuntimeOptions): NodeServices {
     // Forwarded explicitly: accepting an option in the API and not wiring it into the conductor is
     // how a test seam silently does nothing.
     ...(options.composeFromIntent === undefined ? {} : { composeFromIntent: options.composeFromIntent }),
+    /**
+     * Route A: when more than one capability could do the work, Jev picks which one.
+     *
+     * The candidates are the capabilities the conductor has already filtered as usable — this is
+     * "who does this work", not "what is running" — so only the registry's own summary and effect
+     * class are described to the selector. A pair that cannot be re-read from the registry when the
+     * answer comes back is dropped rather than dispatched to, and anything other than a decisive
+     * selection returns `undefined` so the conductor keeps its deterministic order.
+     */
+    chooseExecutionNode: async ({ intent, candidates }) => {
+      const pairs = new Map<string, { capabilityRef: string; executionNodeId: string }>();
+      const offered: RuntimeCandidate[] = candidates.map((candidate) => {
+        // Opaque handle: something to echo back, never something to construct. The mapping back to
+        // the pair stays here rather than being parsed out of the id, so a ref that happens to
+        // contain the separator cannot be read as two fields.
+        const id = `${candidate.capabilityRef}@${candidate.executionNodeId}`;
+        pairs.set(id, {
+          capabilityRef: candidate.capabilityRef,
+          executionNodeId: candidate.executionNodeId,
+        });
+        return {
+          id,
+          kind: "capability",
+          label: candidate.capabilityRef,
+          describe: `${candidate.capabilityRef} — ${candidate.effectCategory}`,
+          capabilities: [candidate.capabilityRef],
+          live: true,
+          load: 0,
+        };
+      });
+
+      const decision = await decideRuntimeTarget(
+        {
+          jev: jevRuntime.deps,
+          // Choosing which capability does the work is a decision, not a composition, so it gets the
+          // decision deadline the plan sets for the selector.
+          budget: searchDecisionBudget(jevRuntime.config, { timeoutMs: decisionTimeoutMsFromEnv(process.env) }),
+        },
+        {
+          intent,
+          candidates: offered,
+          // Re-read the registry rather than trusting the list this closure was handed: a capability
+          // can be unloaded while the selector is thinking, and dispatching to it afterwards would
+          // be dispatching to something the node no longer offers.
+          verify: (id) => {
+            const pair = pairs.get(id);
+            if (pair === undefined) return false;
+            return listCapabilitySummaries({ db: runtime.db, nodeId }, { usableOnly: true }).some(
+              (summary) =>
+                summary.ref === pair.capabilityRef && summary.executionNodeId === pair.executionNodeId,
+            );
+          },
+        },
+      );
+
+      if (decision.status !== "selected") return undefined;
+      return pairs.get(decision.id);
+    },
     validateProps: (
       definition: WidgetDefinition,
       props: Record<string, unknown>,

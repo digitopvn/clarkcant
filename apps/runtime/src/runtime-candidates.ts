@@ -14,7 +14,7 @@ import { type Database, allRows, oneRow } from "@clarkcant/storage";
  * carries no paths, no goals and no credentials.
  */
 
-export type RuntimeCandidateKind = "lease" | "live-owner" | "voice-session" | "task" | "node";
+export type RuntimeCandidateKind = "lease" | "live-owner" | "voice-session" | "task" | "node" | "capability";
 
 export interface RuntimeCandidate {
   /** Opaque handle the selector may choose. Never a path or a capability name. */
@@ -24,6 +24,18 @@ export interface RuntimeCandidate {
   label: string;
   /** Capabilities the running thing can use, for structured filtering. Not sent to the selector. */
   capabilities: readonly string[];
+  /**
+   * What a selector is told about this candidate, when `kind` and `load` would not tell two of them
+   * apart.
+   *
+   * A routing candidate is a capability rather than a running thing, so "capability, đang rảnh" is
+   * the same line for every candidate and choosing between them would be a coin flip. This field
+   * carries the registry's own summary and effect class instead.
+   *
+   * Registry metadata only, never user text: `label` above is the human line, and it is deliberately
+   * not what leaves the machine.
+   */
+  describe?: string;
   /** Whether it is live now, as of this read. */
   live: boolean;
   /** How much it is already doing, so "pick the idle one" is a real tiebreak. */
@@ -210,6 +222,10 @@ export function rankRuntimeCandidates(candidates: readonly RuntimeCandidate[]): 
     task: 2,
     "voice-session": 3,
     node: 4,
+    // A routing target built from the capability registry. It never shares a list with the kinds
+    // above — the conductor asks about capabilities, `find_runtime` reports what is running — so the
+    // weight only has to exist for the record to be exhaustive.
+    capability: 5,
   };
   return [...candidates].sort((left, right) => {
     if (left.live !== right.live) return left.live ? -1 : 1;
@@ -260,6 +276,9 @@ export function createFindRuntimeTool(deps: RuntimeCandidateDeps): ToolDefinitio
         kind: {
           type: "string",
           description: "Restrict to one kind of running thing.",
+          // Deliberately not every member of `RuntimeCandidateKind`: `capability` is a routing target
+          // the conductor builds, not something this tool reads from the running state, so offering
+          // it here would advertise a filter that can never match.
           enum: ["lease", "live-owner", "voice-session", "task", "node"],
         },
       },
@@ -292,6 +311,7 @@ export function createFindRuntimeTool(deps: RuntimeCandidateDeps): ToolDefinitio
 
 /** A short, path-free description for the selector. Bounded to what the policy allows. */
 export function describeRuntimeCandidate(candidate: RuntimeCandidate): string {
+  if (candidate.describe !== undefined) return candidate.describe.slice(0, 300);
   const parts = [candidate.kind, candidate.load > 0 ? "đang bận" : "đang rảnh"];
   if (candidate.expiresAt !== undefined) parts.push("có hạn");
   return `${parts.join(", ")}`.slice(0, 300);
