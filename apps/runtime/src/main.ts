@@ -15,6 +15,8 @@ import { join } from "node:path";
 import { applyEnvFile } from "@clarkcant/pi-adapter";
 
 import { handleRequest, type GatewayResponse } from "./gateway.ts";
+import { attachVoiceGateway } from "./voice-session.ts";
+import { FixtureLiveAdapter } from "./voice-fixture.ts";
 import { SAMPLE_DATASET } from "@clarkcant/data-canvas/sample";
 
 import { createModelTurn, type ViewDescriptor } from "./model-turn.ts";
@@ -164,6 +166,35 @@ async function main(): Promise<void> {
   });
 
   /**
+   * The voice socket.
+   *
+   * Attached to the same server as the command gateway, so a browser needs one origin and one
+   * token rather than a second service to discover. The credential is read here and handed to the
+   * gateway as a function, which is what keeps it out of the module that serves the browser.
+   */
+  const voiceModel = process.env.CC_VOICE_MODEL;
+  /**
+   * A provider that answers on a script, so the browser-to-node path can be verified end to end
+   * without an account and without spending quota on every run. A node running it says so, because
+   * a fake that is indistinguishable from the real thing is worse than having no fake at all.
+   */
+  const voiceFixture = process.env.CC_VOICE_FIXTURE === "1";
+  const voice = attachVoiceGateway({
+    server,
+    services,
+    credential: () => (voiceFixture ? "fixture-credential" : process.env.GEMINI_API_KEY),
+    ...(voiceFixture ? { createAdapter: () => new FixtureLiveAdapter() } : {}),
+    ...(voiceModel === undefined ? {} : { model: voiceModel }),
+  });
+  process.stderr.write(
+    voiceFixture
+      ? "voice: FIXTURE provider loaded — audio and transcripts on /voice are scripted, not model output\n"
+      : process.env.GEMINI_API_KEY === undefined
+        ? "voice: no GEMINI_API_KEY, so a voice session will be refused with the reason rather than failing silently\n"
+        : `voice: live voice sessions available on /voice (model ${voiceModel ?? "the pinned default"})\n`,
+  );
+
+  /**
    * A port that is already taken, reported plainly.
    *
    * Node's default is an unhandled `'error'` event: twenty lines of stack trace and no
@@ -195,6 +226,7 @@ async function main(): Promise<void> {
 
   const shutdown = (signal: string): void => {
     process.stderr.write(`received ${signal}; closing the node\n`);
+    void voice.close();
     server.close(() => {
       void modelTurn?.dispose();
       services.runtime.close();

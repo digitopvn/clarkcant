@@ -207,6 +207,50 @@ function appendUser(
 }
 
 /**
+ * Record a finished voice session, without answering it.
+ *
+ * This is deliberately not `handleUserMessage`. That path runs a model turn, which is right for
+ * something the user just typed and wrong for something already said: the session has ended, the
+ * model already replied out loud, and re-asking would produce a second answer nobody heard while
+ * charging the operator for it. So this appends what was said and stops.
+ *
+ * Both halves are appended here rather than by two callers, so the order is decided in one place.
+ * They are two rows and not one transaction, which is worth knowing: a crash between them leaves
+ * a recorded question with no recorded answer.
+ *
+ * Empty sides are skipped rather than stored as empty messages, because a session of silence is
+ * not a conversation and a blank message in the timeline reads as a bug.
+ */
+export function recordVoiceTranscript(
+  deps: ConductorDeps,
+  input: {
+    conversationId: ConversationId;
+    userText: string;
+    assistantText: string;
+    at: Instant;
+  },
+): MessageRecord[] {
+  const recorded: MessageRecord[] = [];
+
+  if (input.userText.trim() !== "") {
+    recorded.push(appendUser(deps, input.conversationId, input.userText, input.at));
+  }
+
+  if (input.assistantText.trim() !== "") {
+    recorded.push(
+      appendAssistant(
+        deps,
+        input.conversationId,
+        [{ type: "text", format: "plain", content: input.assistantText, streaming: false }],
+        { at: input.at },
+      ),
+    );
+  }
+
+  return recorded;
+}
+
+/**
  * Handle one user utterance.
  *
  * The order of resolution is deliberate: a scripted sample first, then the registry. A

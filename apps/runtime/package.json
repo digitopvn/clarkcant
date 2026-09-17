@@ -31,7 +31,9 @@
     "@clarkcant/storage": "workspace:*",
     "@clarkcant/voice-adapters": "workspace:*",
     "@clarkcant/widget-host": "workspace:*",
-    "@fastify/websocket": "11.3.0",
-    "fastify": "5.12.4"
+    "ws": "8.21.3"
+  },
+  "devDependencies": {
+    "@types/ws": "8.18.1"
   }
 }
