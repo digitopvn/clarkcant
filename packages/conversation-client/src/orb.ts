@@ -84,11 +84,16 @@ function compile(
   gl.shaderSource(shader, source);
   gl.compileShader(shader);
   if (gl.getShaderParameter(shader, gl.COMPILE_STATUS) !== true) {
-    const log = gl.getShaderInfoLog(shader) ?? "no compiler log";
+    const detail = (gl.getShaderInfoLog(shader) ?? "").trim();
     gl.deleteShader(shader);
-    // The raw compiler log is the only useful thing here, so it is passed through rather than
-    // replaced with a friendlier sentence that omits the line number.
-    return { ok: false, reason: `shader did not compile: ${log.trim()}` };
+    // An empty log on a failed compile is almost never the shader's fault: it is how a lost context
+    // reports itself. Naming that possibility here is the difference between the next reader
+    // debugging GLSL and debugging the context lifecycle, which is where this actually went wrong.
+    if (detail !== "") return { ok: false, reason: `shader did not compile: ${detail}` };
+    if (gl.isContextLost()) {
+      return { ok: false, reason: "the WebGL context was lost before the orb's shader could be compiled" };
+    }
+    return { ok: false, reason: "the orb's shader did not compile and the browser gave no reason" };
   }
   return { ok: true, shader };
 }
@@ -122,6 +127,15 @@ export function createOrbRenderer(
   // Rebound after the check so the type is non-null by construction rather than by control-flow
   // analysis that has to reach into every closure below.
   const gl: WebGLRenderingContext = context;
+
+  // Checked before anything is compiled, because a lost context fails compilation with no log and
+  // the error would then name the shader instead of the context.
+  if (gl.isContextLost()) {
+    return {
+      ok: false,
+      reason: "the WebGL context for this canvas was already lost, so the orb cannot be rebuilt on it",
+    };
+  }
 
   const shape = {
     radius: options.radius ?? ORB_SHAPE.radius,
@@ -249,9 +263,18 @@ export function createOrbRenderer(
         canvas.removeEventListener("webglcontextrestored", onContextRestored);
         gl.deleteBuffer(quad);
         gl.deleteProgram(program);
-        // Explicitly losing the context is how a WebGL context is actually released; letting the
-        // canvas be collected leaves it to the browser's own timer.
-        gl.getExtension("WEBGL_lose_context")?.loseContext();
+        // The context is deliberately NOT released with WEBGL_lose_context.
+        //
+        // Releasing it looks like good hygiene and is worse than leaving it: a canvas hands out the
+        // same context to every caller, so losing it here means the next renderer built on this
+        // canvas gets a dead one. A lost context cannot be revived, and it reports the failure as a
+        // shader that did not compile with an empty compiler log — which is a misleading error
+        // pointing at GLSL that was never the problem. React's StrictMode does exactly this in
+        // development, running the effect twice on one canvas, so the orb fell back to its CSS
+        // gradient in every dev session while looking correct in production builds.
+        //
+        // The program and buffer above are deleted, which is where the GPU memory actually is. The
+        // context itself is reclaimed by the browser when the canvas is collected.
       },
     },
   };
