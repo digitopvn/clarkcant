@@ -1,6 +1,6 @@
 ---
 title: "Phase 1: Composition và snapshot contracts"
-status: todo
+status: done
 ---
 
 # Phase 1: Composition và snapshot contracts
@@ -51,10 +51,24 @@ Không xóa file. Nếu repository layer quá lớn, tách theo convention hiệ
 - Gate: `pnpm exec vitest run packages/contracts/test/surface-composition.spec.ts packages/core/test/surface-snapshot.spec.ts` rồi `pnpm typecheck`.
 
 ## Todo
-- [ ] Define bounded composition và snapshot contracts.
-- [ ] Implement migration/repositories cùng backup/restore evidence.
-- [ ] Implement atomic snapshot capture và legacy fallback.
-- [ ] Pass contract, persistence và ownership tests.
+- [x] Define bounded composition và snapshot contracts.
+- [x] Implement migration/repositories cùng backup/restore evidence.
+- [x] Implement atomic snapshot capture và legacy fallback.
+- [x] Pass contract, persistence và ownership tests.
+
+## Kết quả (2026-09-17)
+
+- `packages/contracts/src/surface-composition.ts`: `SurfaceCompositionSpecV1`, `CompiledSection`, `PresentationBundle`, `MiniAppSelection`, các pure check (`checkSurfaceCompositionSpec`, `checkPresentationBundle`, `checkSelectionAgainstCandidates`) và policy (`selectionIsDecisive`, `noulVerdict`).
+- `packages/contracts/src/widgets.ts`: snapshot có thêm `bundleRef`/`bundleSchemaVersion`/`catalogDigest` dạng optional; snapshot cũ vẫn parse.
+- Migration 10: `surface_compositions`, `presentation_bundles` (immutable, có tombstone), `calendar_events`, `local_images`, và `widget_live_owners.lease_expires_at`.
+- `repositories.ts`: upsert/read theo principal cho composition/bundle/calendar/image; bundle chỉ INSERT, không có đường update.
+- `packages/core/src/widget-service.ts`: `captureCompositeSurface` ghi instance + bindings + snapshot + composition + bundle trong **một** transaction, validate trước khi mở transaction.
+- Tests: `packages/contracts/test/surface-composition.spec.ts` (14), `packages/core/test/surface-snapshot.spec.ts` (10) — gồm restart, rollback giữa transaction, cross-principal, tombstone, upgrade từ schema 9 và backup/verify. `pnpm verify` pass (591 tests).
+
+## Ghi chú cho phase sau
+
+- `checkSurfaceCompositionSpec` là pure function dùng chung cho compiler (Phase 5) và persistence; Phase 5 phải gọi lại nó trước khi persist thay vì tin compiler.
+- `definitionCatalogKey(id, version)` là key chuẩn của catalog (`id@version`), dùng cả ở `widget-host` registry.
 
 ## Risks / security / next
 Bundle giữ dữ liệu nhạy cảm lâu hơn live source: retention/deletion phải enforce ở server. Không đưa raw rows vào timeline JSON. Phase 2 và 3 chỉ bắt đầu khi schema này ổn định; chưa cần gọi model ở phase này.

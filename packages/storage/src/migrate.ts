@@ -620,6 +620,99 @@ export const MIGRATIONS: readonly Migration[] = [
       `);
     },
   },
+  {
+    version: 10,
+    name: "composed-surfaces-bundles-calendar",
+    reversible: true,
+    up: (db) => {
+      db.exec(`
+        -- The compiled layout document for a composed surface. Held separately from
+        -- widget_instances.props because it is a document with its own lifecycle: it is written
+        -- once by the pure compiler and read back verbatim, never patched in place.
+        CREATE TABLE surface_compositions (
+          composition_id     TEXT PRIMARY KEY,
+          instance_id        TEXT NOT NULL REFERENCES widget_instances(instance_id),
+          owner_principal_id TEXT NOT NULL,
+          message_id         TEXT NOT NULL,
+          conversation_id    TEXT NOT NULL,
+          template_id        TEXT NOT NULL,
+          template_version   TEXT NOT NULL,
+          catalog_digest     TEXT NOT NULL,
+          section_count      INTEGER NOT NULL,
+          document           TEXT NOT NULL,
+          created_at         TEXT NOT NULL
+        );
+        CREATE INDEX idx_compositions_instance ON surface_compositions(instance_id);
+        CREATE INDEX idx_compositions_owner ON surface_compositions(owner_principal_id, created_at);
+
+        -- The materialised snapshot. Immutable: nothing updates the document column, and the
+        -- only mutation the schema permits is recording that the data was deleted, which turns
+        -- the bundle into a tombstone instead of quietly resurrecting deleted values through
+        -- the live source.
+        CREATE TABLE presentation_bundles (
+          bundle_id          TEXT PRIMARY KEY,
+          snapshot_id        TEXT NOT NULL REFERENCES widget_snapshots(snapshot_id),
+          message_id         TEXT NOT NULL,
+          instance_id        TEXT NOT NULL,
+          owner_principal_id TEXT NOT NULL,
+          byte_size          INTEGER NOT NULL,
+          deleted_at         TEXT,
+          tombstone_reason   TEXT,
+          document           TEXT NOT NULL,
+          created_at         TEXT NOT NULL
+        );
+        CREATE INDEX idx_bundles_snapshot ON presentation_bundles(snapshot_id);
+        CREATE INDEX idx_bundles_message ON presentation_bundles(message_id);
+        CREATE INDEX idx_bundles_owner ON presentation_bundles(owner_principal_id, created_at);
+
+        -- Local calendar events. User-entered only: nothing here is synced from a provider, and
+        -- there is no producer column that would let a task invent a due date and have it look
+        -- like something the user wrote.
+        CREATE TABLE calendar_events (
+          event_id           TEXT PRIMARY KEY,
+          owner_principal_id TEXT NOT NULL,
+          node_id            TEXT NOT NULL,
+          title              TEXT NOT NULL,
+          starts_at          TEXT NOT NULL,
+          ends_at            TEXT NOT NULL,
+          timezone           TEXT NOT NULL,
+          local_date         TEXT NOT NULL,
+          document           TEXT NOT NULL,
+          created_at         TEXT NOT NULL,
+          updated_at         TEXT NOT NULL,
+          deleted_at         TEXT
+        );
+        CREATE INDEX idx_calendar_owner_range
+          ON calendar_events(owner_principal_id, starts_at) WHERE deleted_at IS NULL;
+
+        -- Imported images. The bytes live in the blob store; this row is the authorization and
+        -- validation record, which is why the principal is on it rather than inferred from the
+        -- artifact id.
+        CREATE TABLE local_images (
+          image_id           TEXT PRIMARY KEY,
+          owner_principal_id TEXT NOT NULL,
+          node_id            TEXT NOT NULL,
+          artifact_id        TEXT NOT NULL,
+          mime_type          TEXT NOT NULL,
+          byte_size          INTEGER NOT NULL,
+          width              INTEGER,
+          height             INTEGER,
+          digest             TEXT NOT NULL,
+          alt_text           TEXT NOT NULL,
+          blob_path          TEXT NOT NULL,
+          created_at         TEXT NOT NULL,
+          deleted_at         TEXT
+        );
+        CREATE INDEX idx_images_owner ON local_images(owner_principal_id, created_at);
+
+        -- A live-owner claim without an expiry is an orphan waiting to happen: a tab that is
+        -- killed never sends its release, and the instance would then be locked forever. The
+        -- column is nullable so rows written before it exist stay readable, and a claim with no
+        -- expiry is treated as stale once it is older than the lease window.
+        ALTER TABLE widget_live_owners ADD COLUMN lease_expires_at TEXT;
+      `);
+    },
+  },
 ];
 
 export interface MigrationResult {

@@ -9,9 +9,13 @@ import {
   type MessageRecord,
   type PeerEnvelope,
   type Pin,
+  type StoredPresentationBundle,
+  type SurfaceCompositionSpec,
   type TaskRecord,
   type WidgetInstance,
   commandAckSchema,
+  storedPresentationBundleSchema,
+  surfaceCompositionSpecSchema,
 } from "@clarkcant/contracts";
 
 import { type Database, oneRow, allRows, parseJson, toJson, transaction } from "./db.ts";
@@ -929,5 +933,400 @@ export function getDataset(db: Database, datasetId: string): DatasetView | undef
     freshness: row.freshness as DatasetView["freshness"],
     updatedAt: row.updated_at,
     document: parseJson<unknown>(row.document, "datasets.document"),
+  };
+}
+
+/* ------------------------------------------------------------------ *
+ * Composed surfaces
+ * ------------------------------------------------------------------ */
+
+/**
+ * Record the compiled layout document behind a composed surface.
+ *
+ * The document is parsed on the way in as well as on the way out. A spec that is only
+ * validated when it is read means a corrupt write is discovered by a user looking at a broken
+ * surface rather than by the writer that produced it.
+ */
+export function insertSurfaceComposition(
+  db: Database,
+  input: {
+    composition: SurfaceCompositionSpec;
+    ownerPrincipalId: string;
+    messageId: string;
+    conversationId: string;
+    at: Instant;
+  },
+): void {
+  const spec = surfaceCompositionSpecSchema.parse(input.composition);
+  db.prepare(
+    `INSERT INTO surface_compositions
+       (composition_id, instance_id, owner_principal_id, message_id, conversation_id, template_id,
+        template_version, catalog_digest, section_count, document, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  ).run(
+    spec.compositionId,
+    spec.instanceId,
+    input.ownerPrincipalId,
+    input.messageId,
+    input.conversationId,
+    spec.templateId,
+    spec.templateVersion,
+    spec.catalogDigest,
+    spec.sections.length,
+    toJson(spec),
+    input.at,
+  );
+}
+
+/**
+ * Read a composition for one principal.
+ *
+ * The principal is part of the query rather than a check the caller is trusted to make. A
+ * composed surface can hold private rows, so a lookup that returns it and leaves authorization
+ * to the caller is a lookup that will eventually be called without one.
+ */
+export function getSurfaceComposition(
+  db: Database,
+  compositionId: string,
+  principalId: string,
+): SurfaceCompositionSpec | undefined {
+  const row = oneRow<{ document: string }>(
+    db,
+    "SELECT document FROM surface_compositions WHERE composition_id = ? AND owner_principal_id = ?",
+    compositionId,
+    principalId,
+  );
+  return row === undefined
+    ? undefined
+    : surfaceCompositionSpecSchema.parse(parseJson<unknown>(row.document, "surface_compositions.document"));
+}
+
+export function findCompositionByInstance(
+  db: Database,
+  instanceId: string,
+  principalId: string,
+): SurfaceCompositionSpec | undefined {
+  const row = oneRow<{ document: string }>(
+    db,
+    `SELECT document FROM surface_compositions
+      WHERE instance_id = ? AND owner_principal_id = ?
+      ORDER BY created_at DESC LIMIT 1`,
+    instanceId,
+    principalId,
+  );
+  return row === undefined
+    ? undefined
+    : surfaceCompositionSpecSchema.parse(parseJson<unknown>(row.document, "surface_compositions.document"));
+}
+
+/* ------------------------------------------------------------------ *
+ * Presentation bundles
+ * ------------------------------------------------------------------ */
+
+/**
+ * Write a materialised snapshot.
+ *
+ * A plain insert, deliberately. There is no upsert path because a bundle that can be rewritten
+ * is not a snapshot, and the failure worth engineering for here is the accidental overwrite
+ * that makes yesterday's message show today's numbers.
+ */
+export function insertPresentationBundle(db: Database, bundle: StoredPresentationBundle): void {
+  const parsed = storedPresentationBundleSchema.parse(bundle);
+  db.prepare(
+    `INSERT INTO presentation_bundles
+       (bundle_id, snapshot_id, message_id, instance_id, owner_principal_id, byte_size, document, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+  ).run(
+    parsed.bundleId,
+    parsed.snapshotId,
+    parsed.messageId,
+    parsed.instanceId,
+    parsed.ownerPrincipalId,
+    parsed.byteSize,
+    toJson(parsed),
+    parsed.capturedAt,
+  );
+}
+
+export function getPresentationBundle(
+  db: Database,
+  bundleId: string,
+  principalId: string,
+): StoredPresentationBundle | undefined {
+  const row = oneRow<{ document: string }>(
+    db,
+    "SELECT document FROM presentation_bundles WHERE bundle_id = ? AND owner_principal_id = ?",
+    bundleId,
+    principalId,
+  );
+  return row === undefined
+    ? undefined
+    : storedPresentationBundleSchema.parse(parseJson<unknown>(row.document, "presentation_bundles.document"));
+}
+
+/** Which bundle, if any, the given snapshot captured. Absent means a legacy or unbundled row. */
+export function findBundleForSnapshot(
+  db: Database,
+  snapshotId: string,
+  principalId: string,
+): StoredPresentationBundle | undefined {
+  const row = oneRow<{ document: string }>(
+    db,
+    `SELECT document FROM presentation_bundles
+      WHERE snapshot_id = ? AND owner_principal_id = ? ORDER BY created_at DESC LIMIT 1`,
+    snapshotId,
+    principalId,
+  );
+  return row === undefined
+    ? undefined
+    : storedPresentationBundleSchema.parse(parseJson<unknown>(row.document, "presentation_bundles.document"));
+}
+
+/**
+ * Replace a bundle with a tombstone.
+ *
+ * Retention and deletion are server concerns: a message outlives the data it displayed, and
+ * the honest outcomes are "still here" and "removed, and here is why". Silently dropping the
+ * bundle would make a deliberate deletion look indistinguishable from a rendering fault.
+ */
+export function tombstonePresentationBundle(
+  db: Database,
+  bundleId: string,
+  reason: string,
+  at: Instant,
+): boolean {
+  const row = oneRow<{ document: string; deleted_at: string | null }>(
+    db,
+    "SELECT document, deleted_at FROM presentation_bundles WHERE bundle_id = ?",
+    bundleId,
+  );
+  if (row === undefined || row.deleted_at !== null) return false;
+  const parsed = parseJson<Record<string, unknown>>(row.document, "presentation_bundles.document");
+  const next: Record<string, unknown> = {
+    ...parsed,
+    sections: [],
+    tombstone: { reason: reason.slice(0, 200), at },
+  };
+  db.prepare("UPDATE presentation_bundles SET deleted_at = ?, tombstone_reason = ?, document = ? WHERE bundle_id = ?").run(
+    at,
+    reason.slice(0, 200),
+    toJson(next),
+    bundleId,
+  );
+  return true;
+}
+
+/** Hard removal, for a retention job that must not leave a document behind at all. */
+export function deletePresentationBundle(db: Database, bundleId: string): boolean {
+  const result = db.prepare("DELETE FROM presentation_bundles WHERE bundle_id = ?").run(bundleId);
+  return Number(result.changes) > 0;
+}
+
+export function countPresentationBundles(db: Database, principalId: string): number {
+  const row = oneRow<{ n: number }>(
+    db,
+    "SELECT COUNT(*) AS n FROM presentation_bundles WHERE owner_principal_id = ? AND deleted_at IS NULL",
+    principalId,
+  );
+  return Number(row?.n ?? 0);
+}
+
+/* ------------------------------------------------------------------ *
+ * Local calendar
+ * ------------------------------------------------------------------ */
+
+export interface CalendarEventRecord {
+  eventId: string;
+  ownerPrincipalId: string;
+  nodeId: string;
+  title: string;
+  /** Instants are stored in UTC; `timezone` is what makes them displayable. */
+  startsAt: string;
+  endsAt: string;
+  timezone: string;
+  /** The local calendar day the event starts on, so a day query is an index hit. */
+  localDate: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export function insertCalendarEvent(db: Database, input: CalendarEventRecord): void {
+  db.prepare(
+    `INSERT INTO calendar_events
+       (event_id, owner_principal_id, node_id, title, starts_at, ends_at, timezone, local_date,
+        document, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  ).run(
+    input.eventId,
+    input.ownerPrincipalId,
+    input.nodeId,
+    input.title,
+    input.startsAt,
+    input.endsAt,
+    input.timezone,
+    input.localDate,
+    toJson(input),
+    input.createdAt,
+    input.updatedAt,
+  );
+}
+
+export function updateCalendarEvent(
+  db: Database,
+  input: CalendarEventRecord,
+): boolean {
+  const result = db
+    .prepare(
+      `UPDATE calendar_events
+          SET title = ?, starts_at = ?, ends_at = ?, timezone = ?, local_date = ?, document = ?, updated_at = ?
+        WHERE event_id = ? AND owner_principal_id = ? AND deleted_at IS NULL`,
+    )
+    .run(
+      input.title,
+      input.startsAt,
+      input.endsAt,
+      input.timezone,
+      input.localDate,
+      toJson(input),
+      input.updatedAt,
+      input.eventId,
+      input.ownerPrincipalId,
+    );
+  return Number(result.changes) > 0;
+}
+
+export function getCalendarEvent(
+  db: Database,
+  eventId: string,
+  principalId: string,
+): CalendarEventRecord | undefined {
+  const row = oneRow<{ document: string }>(
+    db,
+    "SELECT document FROM calendar_events WHERE event_id = ? AND owner_principal_id = ? AND deleted_at IS NULL",
+    eventId,
+    principalId,
+  );
+  return row === undefined ? undefined : parseJson<CalendarEventRecord>(row.document, "calendar_events.document");
+}
+
+/**
+ * List events overlapping a window.
+ *
+ * Overlap rather than containment: an event that started yesterday and ends tomorrow belongs in
+ * today's view, and a query written as `starts_at BETWEEN` would hide it.
+ */
+export function listCalendarEvents(
+  db: Database,
+  input: { principalId: string; from?: string; to?: string; limit?: number },
+): CalendarEventRecord[] {
+  const clauses = ["owner_principal_id = ?", "deleted_at IS NULL"];
+  const params: unknown[] = [input.principalId];
+  if (input.to !== undefined) {
+    clauses.push("starts_at <= ?");
+    params.push(input.to);
+  }
+  if (input.from !== undefined) {
+    clauses.push("ends_at >= ?");
+    params.push(input.from);
+  }
+  const rows = allRows<{ document: string }>(
+    db,
+    `SELECT document FROM calendar_events WHERE ${clauses.join(" AND ")} ORDER BY starts_at ASC LIMIT ?`,
+    ...params,
+    input.limit ?? 200,
+  );
+  return rows.map((row) => parseJson<CalendarEventRecord>(row.document, "calendar_events.document"));
+}
+
+/** Soft delete: an event the user removed must not silently vanish from a snapshot's provenance. */
+export function deleteCalendarEvent(db: Database, eventId: string, principalId: string, at: Instant): boolean {
+  const result = db
+    .prepare("UPDATE calendar_events SET deleted_at = ?, updated_at = ? WHERE event_id = ? AND owner_principal_id = ? AND deleted_at IS NULL")
+    .run(at, at, eventId, principalId);
+  return Number(result.changes) > 0;
+}
+
+/* ------------------------------------------------------------------ *
+ * Local images
+ * ------------------------------------------------------------------ */
+
+export interface LocalImageRecord {
+  imageId: string;
+  ownerPrincipalId: string;
+  nodeId: string;
+  artifactId: string;
+  mimeType: string;
+  byteSize: number;
+  width: number | undefined;
+  height: number | undefined;
+  digest: string;
+  altText: string;
+  blobPath: string;
+  createdAt: string;
+}
+
+export function insertLocalImage(db: Database, input: LocalImageRecord): void {
+  db.prepare(
+    `INSERT INTO local_images
+       (image_id, owner_principal_id, node_id, artifact_id, mime_type, byte_size, width, height,
+        digest, alt_text, blob_path, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  ).run(
+    input.imageId,
+    input.ownerPrincipalId,
+    input.nodeId,
+    input.artifactId,
+    input.mimeType,
+    input.byteSize,
+    input.width ?? null,
+    input.height ?? null,
+    input.digest,
+    input.altText,
+    input.blobPath,
+    input.createdAt,
+  );
+}
+
+export function getLocalImage(db: Database, imageId: string, principalId: string): LocalImageRecord | undefined {
+  const row = oneRow<Record<string, unknown>>(
+    db,
+    "SELECT * FROM local_images WHERE image_id = ? AND owner_principal_id = ? AND deleted_at IS NULL",
+    imageId,
+    principalId,
+  );
+  return row === undefined ? undefined : mapLocalImage(row);
+}
+
+export function listLocalImages(db: Database, principalId: string, limit = 100): LocalImageRecord[] {
+  const rows = allRows<Record<string, unknown>>(
+    db,
+    "SELECT * FROM local_images WHERE owner_principal_id = ? AND deleted_at IS NULL ORDER BY created_at DESC LIMIT ?",
+    principalId,
+    limit,
+  );
+  return rows.map(mapLocalImage);
+}
+
+export function deleteLocalImage(db: Database, imageId: string, principalId: string, at: Instant): boolean {
+  const result = db
+    .prepare("UPDATE local_images SET deleted_at = ? WHERE image_id = ? AND owner_principal_id = ? AND deleted_at IS NULL")
+    .run(at, imageId, principalId);
+  return Number(result.changes) > 0;
+}
+
+function mapLocalImage(row: Record<string, unknown>): LocalImageRecord {
+  return {
+    imageId: String(row.image_id),
+    ownerPrincipalId: String(row.owner_principal_id),
+    nodeId: String(row.node_id),
+    artifactId: String(row.artifact_id),
+    mimeType: String(row.mime_type),
+    byteSize: Number(row.byte_size),
+    width: row.width === null || row.width === undefined ? undefined : Number(row.width),
+    height: row.height === null || row.height === undefined ? undefined : Number(row.height),
+    digest: String(row.digest),
+    altText: String(row.alt_text),
+    blobPath: String(row.blob_path),
+    createdAt: String(row.created_at),
   };
 }

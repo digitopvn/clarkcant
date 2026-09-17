@@ -40,3 +40,4 @@ playwright-report/
 # rule is what keeps them out of the next diff. A tracked file is not ignored, which is why the
 # previously committed screenshots were removed from the index in the same commit as this rule.
 plans/reports/evidence/*.png
+plans/reports/evidence/*.wav

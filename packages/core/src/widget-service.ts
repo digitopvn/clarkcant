@@ -2,19 +2,38 @@ import {
   type ActionBinding,
   type ActionInvocation,
   type CapabilityRef,
+  type CompiledSection,
+  type CompositionActionRef,
+  type CompositionInitialState,
+  type CompositionProvenance,
   type Instant,
+  type PresentationBundle,
   type Principal,
   type SemanticView,
+  type StoredPresentationBundle,
+  type SurfaceCompositionSpec,
   type WidgetDefinition,
   type WidgetInstance,
   type WidgetSnapshot,
   bindingStillValid,
+  checkPresentationBundle,
+  checkSurfaceCompositionSpec,
   compileActionBinding,
   nowInstant,
+  toCompositionSection,
   widgetInstanceSchema,
+  widgetSnapshotSchema,
 } from "@clarkcant/contracts";
 
-import { type Database, oneRow, parseJson, toJson, transaction } from "@clarkcant/storage";
+import {
+  type Database,
+  insertPresentationBundle,
+  insertSurfaceComposition,
+  oneRow,
+  parseJson,
+  toJson,
+  transaction,
+} from "@clarkcant/storage";
 
 /**
  * Widget and action service.
@@ -269,6 +288,291 @@ export function captureSnapshot(
     );
 
   return snapshot;
+}
+
+/* ------------------------------------------------------------------ *
+ * Composed surfaces
+ * ------------------------------------------------------------------ */
+
+/**
+ * A binding with the section it belongs to.
+ *
+ * The pairing is supplied by the compiler rather than inferred from the binding, because a
+ * binding's proposal legitimately does not say which part of the layout drew the button.
+ */
+export interface SectionBinding {
+  binding: ActionBinding;
+  sectionId: string;
+}
+
+export interface CompositeCaptureInput {
+  conversationId: string;
+  messageId: string;
+  principalId: Principal["principalId"];
+  /** The container definition (`canvas.overview@1`), not a leaf. */
+  definition: WidgetDefinition;
+  packageDigest: string;
+  catalogDigest: string;
+  templateId: string;
+  templateVersion: string;
+  sections: readonly CompiledSection[];
+  /** Container props. The leaf regions live in the spec, not here. */
+  props: Record<string, unknown>;
+  initialState: CompositionInitialState;
+  provenance: CompositionProvenance;
+  textAlternative: string;
+  dataRefs?: string[];
+  bindings?: readonly SectionBinding[];
+  /** Definitions the host catalog holds, keyed `id@version`. Used to check pinned digests. */
+  knownDefinitions?: ReadonlyMap<string, string>;
+  allowedDataRefs?: ReadonlySet<string>;
+  maxSpecBytes?: number;
+  maxBundleBytes?: number;
+  at?: Instant;
+}
+
+export type CompositeCaptureResult =
+  | {
+      ok: true;
+      instance: WidgetInstance;
+      snapshot: WidgetSnapshot;
+      composition: SurfaceCompositionSpec;
+      bundle: StoredPresentationBundle;
+    }
+  | {
+      ok: false;
+      code: "SPEC_INVALID" | "BUNDLE_TOO_LARGE" | "PROPS_INVALID" | "OWNERSHIP_MISMATCH";
+      message: string;
+      problems?: string[];
+    };
+
+/**
+ * Write a composed surface: instance, spec, bindings, snapshot and bundle, in one transaction.
+ *
+ * This is the only place a `canvas.overview@1` instance is created, and the ordering is the
+ * point. A half-written composition is worse than a refused one: an instance with no spec
+ * renders as an empty card, a snapshot with no bundle looks like a snapshot but silently shows
+ * current data, and a message referencing either cannot be repaired by a retry because the
+ * message has already been appended. So every row goes in together, or none of them do.
+ *
+ * Validation happens *before* the transaction opens. A refusal has to be cheap, and a
+ * transaction that exists only to be rolled back still takes the write lock.
+ */
+export function captureCompositeSurface(
+  deps: WidgetDeps,
+  input: CompositeCaptureInput,
+): CompositeCaptureResult {
+  if (deps.validateProps) {
+    const validation = deps.validateProps(input.definition, input.props);
+    if (!validation.ok) {
+      return {
+        ok: false,
+        code: "PROPS_INVALID",
+        message: `props for ${input.definition.id} do not match its schema`,
+        problems: validation.problems,
+      };
+    }
+  }
+
+  const bindings = input.bindings ?? [];
+  for (const { binding, sectionId } of bindings) {
+    if (binding.definitionId !== input.definition.id) {
+      return {
+        ok: false,
+        code: "OWNERSHIP_MISMATCH",
+        message: `action binding ${binding.actionBindingId} belongs to ${binding.definitionId}, not ${input.definition.id}`,
+      };
+    }
+    if (!input.sections.some((section) => section.sectionId === sectionId)) {
+      return {
+        ok: false,
+        code: "SPEC_INVALID",
+        message: `action binding ${binding.actionBindingId} is attached to unknown section ${sectionId}`,
+      };
+    }
+  }
+
+  const at = input.at ?? deps.now();
+  const instanceId = deps.newId("winst");
+  const compositionId = deps.newId("comp");
+  const snapshotId = deps.newId("wsnap");
+  const bundleId = deps.newId("bundle");
+
+  const actions: CompositionActionRef[] = bindings.map(({ binding, sectionId }) => ({
+    actionBindingId: binding.actionBindingId,
+    sectionId,
+    label: binding.label,
+    kind: binding.proposal.kind,
+    effectCategory: binding.effectCategory,
+  }));
+
+  const composition: SurfaceCompositionSpec = {
+    schemaVersion: 1,
+    compositionId,
+    instanceId,
+    templateId: input.templateId,
+    templateVersion: input.templateVersion,
+    catalogDigest: input.catalogDigest,
+    sections: input.sections.map(toCompositionSection),
+    initialState: input.initialState,
+    actions,
+    provenance: input.provenance,
+  };
+
+  const specCheck = checkSurfaceCompositionSpec(composition, {
+    ...(input.knownDefinitions === undefined ? {} : { knownDefinitions: input.knownDefinitions }),
+    ...(input.allowedDataRefs === undefined ? {} : { allowedDataRefs: input.allowedDataRefs }),
+    knownActionBindingIds: new Set(bindings.map(({ binding }) => binding.actionBindingId)),
+    ...(input.maxSpecBytes === undefined ? {} : { maxBytes: input.maxSpecBytes }),
+  });
+  if (!specCheck.ok) {
+    return {
+      ok: false,
+      code: "SPEC_INVALID",
+      message: "the composition spec failed validation",
+      problems: specCheck.problems,
+    };
+  }
+
+  const bundle: PresentationBundle = {
+    schemaVersion: 1,
+    bundleId,
+    snapshotId,
+    messageId: input.messageId,
+    instanceId,
+    ownerPrincipalId: input.principalId,
+    catalogDigest: input.catalogDigest,
+    capturedAt: at,
+    composition,
+    sections: [...input.sections],
+    sourceRevisions: input.provenance.sourceRevisions,
+  };
+
+  const bundleCheck = checkPresentationBundle(bundle, {
+    ...(input.knownDefinitions === undefined ? {} : { knownDefinitions: input.knownDefinitions }),
+    ...(input.maxBundleBytes === undefined ? {} : { maxBytes: input.maxBundleBytes }),
+  });
+  if (!bundleCheck.ok) {
+    // Too large is a refusal, not a trim. A silently truncated bundle would look complete and
+    // show something the user never saw.
+    return {
+      ok: false,
+      code: "BUNDLE_TOO_LARGE",
+      message: "the presentation bundle exceeded its ceiling",
+      problems: bundleCheck.problems,
+    };
+  }
+
+  const instance: WidgetInstance = widgetInstanceSchema.parse({
+    instanceId,
+    definitionRef: {
+      id: input.definition.id,
+      version: input.definition.version,
+      packageDigest: input.packageDigest,
+    },
+    ownerNodeId: deps.nodeId,
+    ownerPrincipalId: input.principalId,
+    revision: 1,
+    presentationRevision: 1,
+    dataRevision: 1,
+    actionBindingRevision: 1,
+    props: input.props,
+    dataRefs: input.dataRefs ?? [],
+    connectionRefs: [],
+    actionBindingIds: bindings.map(({ binding }) => binding.actionBindingId),
+    lifecycle: "ready",
+  });
+
+  const snapshot: WidgetSnapshot = widgetSnapshotSchema.parse({
+    snapshotId,
+    instanceId,
+    messageId: input.messageId,
+    capturedRevision: instance.revision,
+    capturedAt: at,
+    textAlternative:
+      input.textAlternative.trim() === "" ? input.definition.textFallback : input.textAlternative,
+    presentationRef: `catalog:${input.definition.id}`,
+    bundleRef: bundleId,
+    bundleSchemaVersion: 1,
+    catalogDigest: input.catalogDigest,
+    stale: false,
+  });
+
+  const storedBundle: StoredPresentationBundle = { ...bundle, byteSize: bundleCheck.byteSize };
+
+  transaction(deps.db, () => {
+    deps.db
+      .prepare(
+        `INSERT INTO widget_instances
+           (instance_id, definition_id, definition_version, package_digest, owner_node_id, owner_principal_id,
+            revision, presentation_revision, data_revision, action_binding_revision, lifecycle, document, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        instance.instanceId,
+        instance.definitionRef.id,
+        instance.definitionRef.version,
+        instance.definitionRef.packageDigest,
+        instance.ownerNodeId,
+        instance.ownerPrincipalId,
+        instance.revision,
+        instance.presentationRevision,
+        instance.dataRevision,
+        instance.actionBindingRevision,
+        instance.lifecycle,
+        toJson(instance),
+        at,
+      );
+
+    for (const { binding } of bindings) {
+      deps.db
+        .prepare(
+          `INSERT INTO action_bindings
+             (action_binding_id, instance_id, definition_id, package_generation, binding_digest,
+              effect_category, requires_approval, document, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .run(
+          binding.actionBindingId,
+          instanceId,
+          binding.definitionId,
+          binding.packageGeneration,
+          binding.bindingDigest,
+          binding.effectCategory,
+          binding.requiresApproval ? 1 : 0,
+          toJson(binding),
+          binding.createdAt,
+        );
+    }
+
+    deps.db
+      .prepare(
+        `INSERT INTO widget_snapshots
+           (snapshot_id, instance_id, message_id, captured_revision, captured_at, stale, document)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        snapshot.snapshotId,
+        instanceId,
+        snapshot.messageId,
+        snapshot.capturedRevision,
+        snapshot.capturedAt,
+        0,
+        toJson(snapshot),
+      );
+
+    insertSurfaceComposition(deps.db, {
+      composition,
+      ownerPrincipalId: input.principalId,
+      messageId: input.messageId,
+      conversationId: input.conversationId,
+      at,
+    });
+
+    insertPresentationBundle(deps.db, storedBundle);
+  });
+
+  return { ok: true, instance, snapshot, composition, bundle: storedBundle };
 }
 
 /**
