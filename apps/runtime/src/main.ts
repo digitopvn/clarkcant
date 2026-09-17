@@ -23,8 +23,7 @@ import { SAMPLE_DATASET } from "@clarkcant/data-canvas/sample";
 import { createModelTurn, type ViewDescriptor } from "./model-turn.ts";
 import { buildViewCatalog } from "./view-catalog.ts";
 import { composeMiniApp } from "./compose-mini-app.ts";
-import { createFindRuntimeTool } from "./runtime-candidates.ts";
-import { createSearchHistoryTool } from "./session-search.ts";
+import { createNodeTools } from "./node-tools.ts";
 import { registerSessionFile, sessionsDirectory } from "./session-store.ts";
 import { bootNodeServices, type NodeServices } from "./services.ts";
 import type { ProjectSessionStarter } from "./project-session.ts";
@@ -88,6 +87,7 @@ async function main(): Promise<void> {
    */
   const sessionWiring: { index?: NodeServices["sessions"]; principalId?: string } = {};
   const searchWiring: { deps?: NodeServices["search"] } = {};
+  const projectWiring: { deps?: NodeServices["projects"] } = {};
   /** Filled once the node has booted, so the scripted turn below can compose a real surface. */
   const modelWiring: { compose?: NodeServices["compose"] } = {};
 
@@ -173,18 +173,13 @@ async function main(): Promise<void> {
     datasetRefs: () => [SAMPLE_DATASET.datasetId],
     // The Session Manager's search surface, exposed to the main model as its own tool. Read from a
     // closure so the services it needs, which are assembled below, exist by the time a turn runs.
+    // The Session Manager's read-only reports, including the project finder. Built by a function a
+    // test can call: an inline list here is how `find_project` came to exist without ever being
+    // registered, and nothing could see the difference.
     extraTools: () =>
-      searchWiring.deps === undefined
+      searchWiring.deps === undefined || projectWiring.deps === undefined
         ? []
-        : [
-            createSearchHistoryTool(searchWiring.deps),
-            // Read-only: the model can see what is running, not start or stop it.
-            createFindRuntimeTool({
-              db: searchWiring.deps.db,
-              nodeId: searchWiring.deps.nodeId,
-              now: searchWiring.deps.now,
-            }),
-          ],
+        : createNodeTools({ search: searchWiring.deps, projects: projectWiring.deps }),
   });
   process.stderr.write(
     modelTurn === undefined
@@ -216,6 +211,7 @@ async function main(): Promise<void> {
   sessionWiring.index = services.sessions;
   sessionWiring.principalId = services.runtime.identity.ownerPrincipalId;
   searchWiring.deps = services.search;
+  projectWiring.deps = services.projects;
   modelWiring.compose = services.compose;
 
   if (sessionFixture) {
