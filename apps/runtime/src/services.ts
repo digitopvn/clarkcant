@@ -29,11 +29,13 @@ import {
 } from "@clarkcant/widget-host";
 
 import { type NodeModelInfo, type Runtime, type RuntimeOptions, bootRuntime } from "./node.ts";
+import { type ComposeDeps } from "./compose-mini-app.ts";
 import {
   type JevConfig,
   type JevDeps,
   type JevTelemetry,
   createFetchTransport,
+  createJevBudget,
   jevConfigFromEnv,
 } from "./jev-selector.ts";
 
@@ -67,6 +69,8 @@ export interface NodeServices {
   catalog: CatalogRegistry;
   /** Required families this catalog cannot draw yet. Empty on a complete node. */
   missingFamilies: string[];
+  /** Everything the composition step needs, assembled once so the turn pipeline stays thin. */
+  compose: ComposeDeps;
   /** Runtime description surfaced by the health route. Contains no node identity. */
   describe: () => { node: string; platform: string; arch: string };
 }
@@ -201,6 +205,21 @@ export function bootNodeServices(options: RuntimeOptions): NodeServices {
     },
   };
 
+  const compose: ComposeDeps = {
+    ...base,
+    dataDir: runtime.dataDir,
+    registry: catalog,
+    jev: {
+      deps: jevRuntime.deps,
+      // A fresh budget per composition step, so one turn's selector calls cannot spend the next
+      // turn's deadline.
+      budget: () => createJevBudget(jevRuntime.config),
+    },
+    // The node's own display timezone, falling back to UTC so a value is always returned rather
+    // than a guess dressed up as a fact.
+    timezone: () => Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",
+  };
+
   return {
     runtime,
     conductor,
@@ -208,6 +227,7 @@ export function bootNodeServices(options: RuntimeOptions): NodeServices {
     jev: jevRuntime,
     catalog,
     missingFamilies: missingCompositionFamilies(catalog),
+    compose,
     describe: () => ({ node: process.version, platform: process.platform, arch: process.arch }),
   };
 }

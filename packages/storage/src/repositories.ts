@@ -1067,6 +1067,25 @@ export function getSurfaceComposition(
     : surfaceCompositionSpecSchema.parse(parseJson<unknown>(row.document, "surface_compositions.document"));
 }
 
+/** The composition a message produced, if any. The idempotency key for a replayed turn. */
+export function findCompositionByMessage(
+  db: Database,
+  messageId: string,
+  principalId: string,
+): SurfaceCompositionSpec | undefined {
+  const row = oneRow<{ document: string }>(
+    db,
+    `SELECT document FROM surface_compositions
+      WHERE message_id = ? AND owner_principal_id = ?
+      ORDER BY created_at DESC LIMIT 1`,
+    messageId,
+    principalId,
+  );
+  return row === undefined
+    ? undefined
+    : surfaceCompositionSpecSchema.parse(parseJson<unknown>(row.document, "surface_compositions.document"));
+}
+
 export function findCompositionByInstance(
   db: Database,
   instanceId: string,
@@ -1123,6 +1142,24 @@ export function getPresentationBundle(
     db,
     "SELECT document FROM presentation_bundles WHERE bundle_id = ? AND owner_principal_id = ?",
     bundleId,
+    principalId,
+  );
+  return row === undefined
+    ? undefined
+    : storedPresentationBundleSchema.parse(parseJson<unknown>(row.document, "presentation_bundles.document"));
+}
+
+/** The bundle a message captured, if any. */
+export function findBundleForMessage(
+  db: Database,
+  messageId: string,
+  principalId: string,
+): StoredPresentationBundle | undefined {
+  const row = oneRow<{ document: string }>(
+    db,
+    `SELECT document FROM presentation_bundles
+      WHERE message_id = ? AND owner_principal_id = ? ORDER BY created_at DESC LIMIT 1`,
+    messageId,
     principalId,
   );
   return row === undefined

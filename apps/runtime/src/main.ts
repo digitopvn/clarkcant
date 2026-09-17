@@ -107,11 +107,21 @@ async function main(): Promise<void> {
   // The model may now ask for these views. When there are none the `show_view` tool is not
   // registered at all, which is why this is reported rather than left to be discovered: a node
   // that cannot show anything should say so once at startup, not fail a turn later.
-  viewCatalog.push(...buildViewCatalog(services.conductor));
+  viewCatalog.push(...buildViewCatalog(services.conductor, services.compose));
   process.stderr.write(
     viewCatalog.length === 0
       ? "no widget definitions on this node; the model can answer in words only\n"
       : `views: ${viewCatalog.length} definition(s) the model may show — ${viewCatalog.map((view) => view.id).join(", ")}\n`,
+  );
+  process.stderr.write(
+    services.missingFamilies.length === 0
+      ? "catalog: every family a composed surface needs is drawable\n"
+      : `catalog: a composed surface would be missing ${services.missingFamilies.join(", ")}\n`,
+  );
+  process.stderr.write(
+    services.jev.config.enabled
+      ? `selector: ${services.jev.config.model} pinned, ${services.jev.config.timeoutMs} ms per turn\n`
+      : "selector: disabled (no credential or local-only); composed surfaces use the deterministic path\n",
   );
 
   const server = createServer((request, response) => {    const chunks: Buffer[] = [];

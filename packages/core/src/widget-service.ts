@@ -423,6 +423,13 @@ export interface CompositeCaptureInput {
    * caller unable to produce a consistent pair.
    */
   instanceId?: string;
+  /**
+   * The composition id, when the caller already knows it.
+   *
+   * Same reason as `instanceId`: the container's props name the composition, so a spec whose props
+   * say one id while the row holds another is a surface that cannot find its own layout.
+   */
+  compositionId?: string;
   /** The container definition (`canvas.overview@1`), not a leaf. */
   definition: WidgetDefinition;
   packageDigest: string;
@@ -515,7 +522,7 @@ export function captureCompositeSurface(
 
   const at = input.at ?? deps.now();
   const instanceId = input.instanceId ?? deps.newId("winst");
-  const compositionId = deps.newId("comp");
+  const compositionId = input.compositionId ?? deps.newId("comp");
   const snapshotId = deps.newId("wsnap");
   const bundleId = deps.newId("bundle");
 

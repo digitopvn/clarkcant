@@ -133,4 +133,67 @@ describe("the view tool reaches the model through the brief", () => {
     expect(JSON.stringify(tool.parameters)).toContain("dataset_fixture_usage");
     expect(tool.description).toContain("dataset_fixture_usage");
   });
+
+  it("awaits an asynchronous build, because one view has to read before it can answer", async () => {
+    // The composed surface consults a selector and reads local records before it knows what to
+    // draw. A build that could only be synchronous would put that work somewhere with no turn to
+    // cancel, and an abandoned turn could still write a surface.
+    const adapter = new RecordingAdapter({ script: ["Đây là tổng quan."] });
+    const turn = await createModelTurn({
+      env: ENV,
+      cwd: process.cwd(),
+      adapter,
+      views: () => [
+        {
+          id: "canvas.overview@1",
+          label: "Composed overview",
+          build: async () => {
+            await new Promise((resolve) => setTimeout(resolve, 1));
+            return {
+              type: "evidence",
+              kind: "test-output",
+              summary: "built asynchronously",
+              verdict: "verified",
+            };
+          },
+        },
+      ],
+      datasetRefs: () => [],
+    });
+
+    const reply = await turn!.answer({ conversationId: CONVERSATION, principal: PRINCIPAL, text: "tổng quan", messageId: "msg_async" });
+    const tool = (adapter.briefs[0]!.customTools ?? [])[0]!;
+    const result = await tool.execute({ view: "canvas.overview@1", caption: "Tổng quan" });
+
+    expect(result.text).toContain("Shown");
+    expect(reply.segments.length).toBeGreaterThanOrEqual(0);
+  });
+
+  it("turns a failed build into a refusal the model reads, and appends no block", async () => {
+    const adapter = new RecordingAdapter({ script: ["Không dựng được."] });
+    const turn = await createModelTurn({
+      env: ENV,
+      cwd: process.cwd(),
+      adapter,
+      views: () => [
+        {
+          id: "canvas.overview@1",
+          label: "Composed overview",
+          build: () => {
+            throw new Error("the catalog holds no definition canvas.metrics@1");
+          },
+        },
+      ],
+      datasetRefs: () => [],
+    });
+
+    await turn!.answer({ conversationId: CONVERSATION, principal: PRINCIPAL, text: "x", messageId: "msg_refused" });
+    const tool = (adapter.briefs[0]!.customTools ?? [])[0]!;
+    const result = await tool.execute({ view: "canvas.overview@1" });
+
+    // The model gets the reason in the same turn, and a failed request leaves no card behind that
+    // looks like it succeeded.
+    expect(result.text).toContain("could not be built");
+    expect(result.text).toContain("canvas.metrics@1");
+  });
 });

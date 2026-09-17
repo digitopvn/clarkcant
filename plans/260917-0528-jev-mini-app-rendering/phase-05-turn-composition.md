@@ -1,6 +1,6 @@
 ---
 title: "Phase 5: Compose trong turn pipeline"
-status: todo
+status: done
 ---
 
 # Phase 5: Compose trong turn pipeline
@@ -45,10 +45,25 @@ Root: `/Volumes/GOON/www/digitop/clarkcant/`.
 - Commands: `pnpm exec vitest run apps/runtime/test/mini-app-compose.spec.ts apps/runtime/test/view-tool.spec.ts apps/runtime/test/api.spec.ts`, rồi `pnpm verify`.
 
 ## Todo
-- [ ] Integrate explicit compose step và backward-compatible tool input.
-- [ ] Implement fallback, cancellation, replay và atomic persistence.
-- [ ] Preserve narration, host-only boundaries và data authorization.
-- [ ] Pass integration/regression gates trước browser acceptance.
+- [x] Integrate explicit compose step và backward-compatible tool input.
+- [x] Implement fallback, cancellation, replay và atomic persistence.
+- [x] Preserve narration, host-only boundaries và data authorization.
+- [x] Pass integration/regression gates trước browser acceptance.
+
+## Kết quả (2026-09-17)
+
+- `apps/runtime/src/compose-mini-app.ts` (mới): `COMPOSITION_TEMPLATES` (overview/focused/agenda), `compileTemplate` **pure** (validate props bằng `validateProps`, pin digest, bỏ region optional không có rows, báo problem cho region bắt buộc thiếu), `composeMiniApp` orchestration: candidate set → template (explicit | Jev | fallback) → leaf defaults + `selectSections` khi có lựa chọn thật → `publishMiniAppData` → compile → `checkCompositionCoverage` → `captureCompositeSurface` (một transaction). `selectorMode` = explicit | jev | fallback, luôn ghi vào provenance.
+- Idempotency: key = **message + tool call** (`findCompositionByMessage`), không hash intent; replay trả lại instance/snapshot cũ, không tạo composition thứ hai.
+- Cancellation: `ViewRequest.signal` (AbortController mỗi turn, abort cùng deadline) — compose kiểm tra trước khi persist và trả `CANCELLED`, không ghi gì.
+- `model-turn.ts`: `ViewDescriptor.build` có thể trả Promise và được **await** trong tool handler; turn mang `conversationId`; `notes` của view được nhắc trong description để model biết vocabulary template.
+- `view-catalog.ts`: entry `canvas.overview@1` gọi `composeMiniApp`; **loại trừ** container khỏi vòng lặp view thường (nếu không nó được đăng ký hai lần và bản generic dựng instance rỗng).
+- `services.ts`: `NodeServices.compose` (registry + jev budget + dataDir + timezone); `main.ts` báo catalog coverage và selector state lúc khởi động.
+- Tests: `apps/runtime/test/mini-app-compose.spec.ts` (14); mở rộng `view-tool.spec.ts` (build async được await; build lỗi → refusal có lý do, không append block) và `api.spec.ts` (timeline + route composition cho surface thật). `pnpm verify` pass (689).
+
+## Ghi chú cho phase sau
+
+- Fallback hiện là template mặc định của host + leaf default theo thứ tự catalog; provenance ghi `mode: "fallback"` kèm `fallbackReason`, không mạo danh Jev.
+- Phase 6 phải đo cả latency provider và user-visible latency; số smoke 1075 ms không phải SLO.
 
 ## Risks / next
 Turn latency tăng một bounded provider step, không được gọi mọi turn khi không cần surface. Phase 6 phải đo cả provider và user-visible latency, không dùng số smoke 1075ms làm SLO.

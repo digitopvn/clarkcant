@@ -22,7 +22,8 @@ import {
   captureSnapshot,
   createInstance,
 } from "@clarkcant/core";
-import { WIDGETS as CATALOG_WIDGETS } from "@clarkcant/data-canvas";
+import { OVERVIEW, WIDGETS as CATALOG_WIDGETS } from "@clarkcant/data-canvas";
+import { COMPOSITION_TEMPLATES, type ComposeDeps, composeMiniApp } from "./compose-mini-app.ts";
 import { definitionDigest } from "@clarkcant/widget-host";
 
 import type { ViewDescriptor } from "./model-turn.ts";
@@ -32,9 +33,17 @@ import type { ViewDescriptor } from "./model-turn.ts";
  *
  * Returning an empty list is what keeps the tool unregistered. A catalog that is present but
  * useless would have the model spend a turn discovering that every view is unavailable.
+ *
+ * The composed surface is registered last and is the only entry whose build is asynchronous: it
+ * consults the selector and reads local records before it can say what to draw. The ordinary
+ * entries are unchanged, which is what keeps the existing `show_view` path working exactly as it
+ * did.
  */
-export function buildViewCatalog(deps: WidgetDeps): ViewDescriptor[] {
-  return CATALOG_WIDGETS.map((definition) => ({
+export function buildViewCatalog(deps: WidgetDeps, compose?: ComposeDeps): ViewDescriptor[] {
+  // The container is excluded: it is not a leaf a model may place, and registering it twice would
+  // give the model a view name whose build knows nothing about the composition.
+  const simple: ViewDescriptor[] = CATALOG_WIDGETS.filter((definition) => definition.id !== OVERVIEW.id).map(
+    (definition): ViewDescriptor => ({
     id: definition.id,
     label: definition.semanticDescription,
 
@@ -71,7 +80,48 @@ export function buildViewCatalog(deps: WidgetDeps): ViewDescriptor[] {
         type: "surface",
         definitionRef: { id: definition.id, version: definition.version },
         snapshot,
-      };
+        };
+      },
+    }),
+  );
+
+  if (compose === undefined) return simple;
+
+  const overview = OVERVIEW;
+  return [
+    ...simple,
+    {
+      id: overview.id,
+      label: overview.semanticDescription,
+      notes:
+        `For the composed overview, pass props.templateId as one of: ${COMPOSITION_TEMPLATES.map((template) => template.templateId).join(", ")}, ` +
+        `and props.period as "week" or "month". Naming a template is what skips the selector.`,
+      build: async (request) => {
+        const templateId = request.props.templateId;
+        const period = request.props.period;
+        const outcome = await composeMiniApp(compose, {
+          conversationId: request.conversationId,
+          messageId: request.messageId,
+          principalId: request.principal.principalId,
+          // The caption is the model's own sentence about what it is showing, and it is the only
+          // free text the selector is offered. The user's raw message is not sent.
+          intent: request.caption,
+          ...(typeof templateId === "string" ? { explicitTemplateId: templateId } : {}),
+          ...(period === "week" || period === "month" ? { period } : {}),
+          ...(request.signal === undefined ? {} : { signal: request.signal }),
+        });
+
+        if (!outcome.ok) {
+          // Thrown rather than returned so the tool handler turns it into a refusal the model reads
+          // in the same turn; a failed request must not leave a card behind that looks like success.
+          throw new Error(
+            outcome.problems === undefined
+              ? outcome.message
+              : `${outcome.message}: ${outcome.problems.join("; ")}`,
+          );
+        }
+        return outcome.block;
+      },
     },
-  }));
+  ];
 }
