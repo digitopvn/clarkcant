@@ -95,7 +95,7 @@ Cột **Lane** đánh dấu nhóm có thể chạy song song (file ownership tá
 | 8 | [FTS5 retrieval + temporal parser + baseline đo](./phase-08-fts5-retrieval.md) | 3h | 7 | L3 (tiếp) ∥ với 4 | Done (P2) |
 | 5 | [Compose trong turn pipeline](./phase-05-turn-composition.md) | 3h | 2, 3, 4 | **J1** (join L1+L2) | Done |
 | 9 | [Jev decision layer cho search và điều phối runtime](./phase-09-jev-query-routing.md) | 3h | 2, 8 | **J2** (join L1+L3) ∥ với 5 | Done (P2) |
-| 6 | [Release validation và evidence](./phase-06-release-validation.md) | 4h + chờ user | 5 (và 9 nếu muốn gộp evidence) | **S1** (serial, cuối) | **Blocked** — deterministic ĐẠT, release gate cần live provider chưa chạy (thiếu `TYPESAFE_API_KEY`) |
+| 6 | [Release validation và evidence](./phase-06-release-validation.md) | 4h + chờ user | 5 (và 9 nếu muốn gộp evidence) | **S1** (serial, cuối) | Done — gồm live provider evidence (`jev-1.13.0`) |
 | 11 | [Workspace & Project Finder + start session](./phase-11-project-finder.md) | 4h | 2, 7 | **L3b** ∥ với 8 (sau 7) | Done (P1) |
 | 10 | [Semantic retrieval + RRF](./phase-10-semantic-retrieval.md) | 4h | 8 | sau M1 | Done (P2) — hybrid không cải thiện, giữ FTS-only |
 
@@ -117,7 +117,7 @@ Tổng agent-hours: ~21h core (1–6), ~5h search (7–8), ~3h Phase 9, ~4h Phas
 - [x] Đủ component regions, filter/calendar/save hoạt động, responsive và accessible. — 6 vùng (metrics, filter, trend, calendar, image, cta) + container; ảnh local render thật (`naturalWidth` assert); keyboard journey `apps/web/e2e/mini-app.spec.ts` ("the expanded view is operable and dismissible from the keyboard alone") + PNG desktop/mobile light/dark.
 - [x] Snapshot N không đổi theo live N+1; restart/pin/ownership/conflict pass; T43/T44/T47/T49/T50 vẫn pass. — `mini-app.spec.ts` + restart thật (snapshot giữ `capturedAt`/`bundleRef`); traceability T43/T44/T47/T49/T50 giữ PASS kèm test được nêu tên.
 - [x] Provider unavailable vẫn dùng view đã lưu; no secrets/raw private rows sent/logged. — fixture composer không gọi provider; token không vào page (`j1.spec.ts`); redaction dùng chung ở `packages/contracts/src/redaction.ts`.
-- [ ] Full `pnpm verify` + `pnpm build` + `pnpm test:e2e` và opt-in live integration pass; evidence nói rõ giới hạn. — **phần deterministic ĐẠT** (verify 796 passed/7 skipped, build pass, e2e 20 passed). **phần opt-in live CHƯA ĐẠT**: thiếu `TYPESAFE_API_KEY`, `jev-live.spec.ts` và `jev-calibration-live.spec.ts` in BLOCKED nêu tên biến. Phase 6 vì vậy là `blocked`, không phải Done.
+- [x] Full `pnpm verify` + `pnpm build` + `pnpm test:e2e` và opt-in live integration pass; evidence nói rõ giới hạn. — verify 7/7 invariant, 56 file, **798 passed / 7 skipped**; build pass; e2e **21 passed**; live: `jev-live.spec.ts` 3 passed và calibration chạy thật với `jev-1.13.0` (search `rank` 31/34 vs `jev` 31/34; routing 8/16). Giới hạn được ghi trong report: corpus 34+16 ca là nhỏ, 9 call không đủ nói về p95, và key lấy từ environment của operator chứ không nằm trong repo.
 
 ## Pre-flight trước khi cook
 

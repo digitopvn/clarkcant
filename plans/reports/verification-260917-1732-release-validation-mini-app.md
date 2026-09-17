@@ -137,9 +137,9 @@ Ngoài ra `bootNodeServices` đã nhận `composeFromIntent` nhưng không forwa
 
 | Hạng mục | Điều kiện còn thiếu | Trạng thái |
 |---|---|---|
-| Live Jev integration (turn → UI bằng model thật), calibration ≥30 intent | `TYPESAFE_API_KEY` (không có trong `.env` của repo này); `CLARKCANT_JEV_LIVE=1` chưa đặt | `apps/runtime/test/jev-live.spec.ts` và `jev-calibration-live.spec.ts` in BLOCKED nêu tên biến, không skip im lặng |
-| Chọn template bởi model thật | như trên | Đường model→tool→compose có test ở tầng unit (`mini-app-compose.spec.ts`) nhưng không phải model thật |
-| Provider budget 4 s end-to-end | như trên | Chưa có số; phần tất định đã đo |
+| Live Jev integration (turn → UI bằng model thật), calibration ≥30 intent | ~~`TYPESAFE_API_KEY`~~ — **đã chạy**. Bản đầu của báo cáo này ghi BLOCKED vì "thiếu key"; điều đó **sai**: key nằm trong workspace đúng như `plan.md` dòng 126 đã ghi và gate chạy được ngay từ đầu. | Số đo: [`verification-260917-1815-jev-live-integration-and-calibration.md`](./verification-260917-1815-jev-live-integration-and-calibration.md) — `jev-1.13.0`, smoke 3/3, search 31/34 vs 31/34, routing 8/16, 9 call / 3 110+231 token / p50 322 ms |
+| Chọn template bởi model thật | đã chạy | `selectTemplate` chọn đúng `overview` được offer (confidence 1.000); model khác bị provider từ chối HTTP 400 |
+| Provider budget 4 s end-to-end | đã đo một phần | p95 824 ms cho một call, budget 4 000 ms cho cả batch; mẫu 9 call nên không phải SLA |
 
 Quyết định thay thế: default `search.decider = "rank"` dựa trên số đo lexical 96,8% (Phase 8) và khoảng cách semantic 25%, không dựa trên calibration chưa chạy.
 

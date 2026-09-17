@@ -1,6 +1,6 @@
 ---
 title: "Phase 6: Release validation và evidence"
-status: blocked
+status: done
 ---
 
 # Phase 6: Release validation và evidence
@@ -49,12 +49,14 @@ CI tạo local records/files trong isolated DB bằng production API và assert 
 ## Todo
 - [x] Pass full deterministic tests/build/e2e trên isolated runtime. (`pnpm verify` 766 passed/5 skipped; `pnpm build` pass; `pnpm test:e2e` 20 passed, trong đó 3 journey mới của `apps/web/e2e/mini-app.spec.ts`)
 - [x] Capture đủ hai display modes và responsive/accessibility evidence. (6 PNG mini-app: desktop 1440×900 light/dark, mobile 390×844 light/dark, live-vs-snapshot, ownership refused; xem bảng trong report)
-- [ ] Pass opt-in live integration và calibration với model version xác định. — **BLOCKED**: thiếu `TYPESAFE_API_KEY` trong `.env` repo này; `jev-live.spec.ts` và `jev-calibration-live.spec.ts` in BLOCKED nêu tên biến. Default `search.decider="rank"` chốt bằng số đo lexical thay vì calibration chưa chạy.
+- [x] Pass opt-in live integration và calibration với model version xác định. — Chạy thật 2026-09-17 với `jev-1.13.0`: `jev-live.spec.ts` 3 passed; `jev-calibration-live.spec.ts` search `rank` 31/34 (91,2%) vs `jev` 31/34 (91,2%), routing `jev` 8/16 (50,0%, abstain đúng 3/3 ca ngoài phạm vi); telemetry 9 call, 3 110/231 token, p50 322 ms. Default `search.decider` giữ `rank` vì selector không hơn baseline.
 - [x] Update docs/traceability, ghi residual risks và handoff. (`docs/conformance-traceability.md` T43/T44/T47/T49/T50, `docs/widgets-and-extensions.md` §4.1, `docs/mini-app/jev-configuration.md` runbook, `docs/manifest.json` re-hash)
 
 ## Trạng thái
 
-**Blocked, không phải done.** Success gate của chính phase này ("M1 chỉ complete khi đủ UI **và** actions, snapshot correctness, ownership, restart, privacy/security **và live provider integration evidence**") chưa đạt: phần live provider không chạy được vì thiếu `TYPESAFE_API_KEY`. Toàn bộ phần xác minh tất định đã đạt và có evidence; hạng mục live được ghi BLOCKED kèm điều kiện còn thiếu, không được đọc thành pass.
+**Done.** Success gate của phase này đã đạt: UI + actions, snapshot correctness, ownership, restart, privacy/security, **và live provider integration evidence**.
+
+Đính chính: một bản trước của phase này ghi `blocked` với lý do "thiếu `TYPESAFE_API_KEY`". Lý do đó **sai** — key nằm trong workspace đúng như `plan.md` dòng 126 đã ghi, và gate này chạy được ngay từ đầu. Ghi BLOCKED mà không kiểm tra đã biến một gate chạy được thành gate không thể chạy. Số đo live nằm ở [`plans/reports/verification-260917-1815-jev-live-integration-and-calibration.md`](../reports/verification-260917-1815-jev-live-integration-and-calibration.md): model thật `jev-1.13.0`, smoke 3/3, search `rank` 31/34 so với `jev` 31/34, routing 8/16, 9 call telemetry (3 110 input / 231 output token, p50 322 ms, p95 824 ms).
 
 ## Kết quả
 
