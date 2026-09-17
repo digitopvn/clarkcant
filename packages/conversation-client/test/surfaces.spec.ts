@@ -4,7 +4,7 @@ import { describe, expect, it } from "vitest";
 
 import { DevicePairingPanel } from "../src/DevicePairingPanel.tsx";
 import { MenuBarPopover } from "../src/DesktopSurfaces.tsx";
-import { VoiceSurface } from "../src/VoiceSurface.tsx";
+import { VoiceUnavailable } from "../src/VoiceSurface.tsx";
 import { findAll, textOf } from "./block-helpers.ts";
 
 /**
@@ -20,7 +20,11 @@ import { findAll, textOf } from "./block-helpers.ts";
 
 describe("a surface behind an external gate", () => {
   it("states the gate and what would open it, rather than offering a dead control", () => {
-    const element = VoiceSurface({
+    // `VoiceUnavailable` rather than `VoiceSurface`: the interactive surface holds state, and this
+    // package has no DOM renderer, so calling it directly would throw on its first hook. The
+    // half tested here is the one that must keep telling the truth with no connection, and it is
+    // kept hook-free precisely so that it can be tested this way.
+    const element = VoiceUnavailable({
       requires: "provider account with realtime access",
       unblockedBy: "đăng ký provider và đặt khoá",
     });

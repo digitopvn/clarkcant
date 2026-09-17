@@ -32,5 +32,18 @@ export default defineConfig({
     outDir: "dist",
     emptyOutDir: true,
     sourcemap: true,
+    /**
+     * The capture worklet must be emitted as its own file, never inlined.
+     *
+     * Vite inlines small assets as `data:` URLs, and the app's policy is `script-src 'self'`, so an
+     * inlined worklet is blocked from loading — the session then reports that it is listening while
+     * capturing nothing. A `blob:` URL fails for the same reason. This function is what keeps it a
+     * same-origin file, which is the only form the policy allows.
+     *
+     * Returning `false` means "never inline"; returning `undefined` keeps Vite's default for every
+     * other asset, so nothing else about the build changes.
+     */
+    assetsInlineLimit: (filePath: string): boolean | undefined =>
+      filePath.endsWith("voice-capture-worklet.js") ? false : undefined,
   },
 });
