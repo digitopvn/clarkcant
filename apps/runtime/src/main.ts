@@ -12,6 +12,7 @@ import { createServer } from "node:http";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
+import type { MessageBlock } from "@clarkcant/contracts";
 import { applyEnvFile } from "@clarkcant/pi-adapter";
 
 import { handleRequest, type GatewayResponse } from "./gateway.ts";
@@ -21,6 +22,7 @@ import { SAMPLE_DATASET } from "@clarkcant/data-canvas/sample";
 
 import { createModelTurn, type ViewDescriptor } from "./model-turn.ts";
 import { buildViewCatalog } from "./view-catalog.ts";
+import { composeMiniApp } from "./compose-mini-app.ts";
 import { createFindRuntimeTool } from "./runtime-candidates.ts";
 import { createSearchHistoryTool } from "./session-search.ts";
 import { registerSessionFile, sessionsDirectory } from "./session-store.ts";
@@ -85,6 +87,47 @@ async function main(): Promise<void> {
    */
   const sessionWiring: { index?: NodeServices["sessions"]; principalId?: string } = {};
   const searchWiring: { deps?: NodeServices["search"] } = {};
+  /** Filled once the node has booted, so the scripted turn below can compose a real surface. */
+  const modelWiring: { compose?: NodeServices["compose"] } = {};
+
+  /**
+   * A deterministic composer, for the browser suite.
+   *
+   * It exists for the same reason the voice fixture does: a composed surface can only be produced by
+   * a turn, and a turn needs a provider — so without a deterministic path the browser code that
+   * renders a composed surface could never be exercised in CI. It answers only overview-shaped
+   * requests and returns nothing for anything else, which leaves the scripted recipes and the model
+   * path exactly as they were. Every part of the production pipeline still runs: candidates, compiler,
+   * coverage check, transactional capture, timeline.
+   */
+  const modelFixture = process.env.CC_MODEL_FIXTURE === "1";
+  const fixtureCompose = async (input: {
+    conversationId: string;
+    principal: { principalId: string };
+    text: string;
+    messageId: string;
+  }): Promise<{ block: MessageBlock; text: string } | undefined> => {
+    if (!/tổng quan|tong quan|overview/i.test(input.text)) return undefined;
+    const compose = modelWiring.compose;
+    if (compose === undefined) return undefined;
+
+    const outcome = await composeMiniApp(compose, {
+      conversationId: input.conversationId,
+      messageId: input.messageId,
+      principalId: input.principal.principalId as never,
+      intent: input.text,
+      explicitTemplateId: "overview",
+    });
+    const text = outcome.ok
+      ? "Đây là tổng quan dựng bởi fixture model trên dữ liệu thật của node này (không phải model thật)."
+      : `Fixture không dựng được tổng quan: ${outcome.message}`;
+    return {
+      text,
+      block: outcome.ok
+        ? outcome.block
+        : { type: "text", format: "plain", content: text, streaming: false },
+    };
+  };
 
   const modelTurn = await createModelTurn({
     env: process.env,
@@ -132,6 +175,9 @@ async function main(): Promise<void> {
     dataDir: options.dataDir,
     label: options.label,
     ...(modelTurn === undefined ? {} : { respondWithModel: modelTurn.answer }),
+    // The fixture is a composer rather than a model: it never displaces the model turn, and the
+    // recipes still answer everything it declines.
+    ...(modelFixture ? { composeFromIntent: fixtureCompose } : {}),
     ...(modelTurn === undefined
       ? {}
       : {
@@ -147,6 +193,15 @@ async function main(): Promise<void> {
   sessionWiring.index = services.sessions;
   sessionWiring.principalId = services.runtime.identity.ownerPrincipalId;
   searchWiring.deps = services.search;
+  modelWiring.compose = services.compose;
+
+  if (modelFixture) {
+    // Said out loud, because a fixture that is indistinguishable from a model is worse than no
+    // fixture: a screenshot from this node must not be read as model output.
+    process.stderr.write(
+      "overview: FIXTURE composer loaded — overview requests are scripted, and no provider is called for them\n",
+    );
+  }
 
   // The model may now ask for these views. When there are none the `show_view` tool is not
   // registered at all, which is why this is reported rather than left to be discovered: a node

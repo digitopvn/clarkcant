@@ -3,7 +3,7 @@ import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "n
 import { join } from "node:path";
 
 import { type Instant, nowInstant, nodeIdSchema, principalIdSchema } from "@clarkcant/contracts";
-import type { ModelTurnInput, ModelTurnReply } from "@clarkcant/core";
+import type { ConductorDeps, ModelTurnInput, ModelTurnReply } from "@clarkcant/core";
 import { type Database, migrate, openDatabase } from "@clarkcant/storage";
 
 import type { PiAdapter } from "@clarkcant/pi-adapter";
@@ -62,6 +62,13 @@ export interface RuntimeOptions {
    * Selector wiring, injectable so a test can substitute a transport instead of reaching a
    * provider. The production path builds the config from the environment and uses fetch.
    */
+  /**
+   * A deterministic composer the conductor consults before its recipes.
+   *
+   * Declared here because the conductor is assembled by `bootNodeServices`, and an option that is not
+   * forwarded is an option that silently does nothing.
+   */
+  composeFromIntent?: ConductorDeps["composeFromIntent"];
   /**
    * Builds the adapter a project session runs on, for one directory.
    *

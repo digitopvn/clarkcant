@@ -91,6 +91,22 @@ export interface ConductorDeps extends TaskServiceDeps, WidgetDeps, RegistryDeps
    */
   respondWithModel?: (input: ModelTurnInput) => Promise<ModelTurnReply>;
   /**
+   * A deterministic composer the host may provide.
+   *
+   * Consulted before the scripted recipes and before the model. It exists because a composed surface
+   * can only be produced by a turn, and a node with no provider still has to be able to show one —
+   * for the browser suite, and for any host that wants a direct "show me the overview" affordance
+   * without a model call. It returns a block or nothing: nothing means "not my message", and the
+   * ordinary path continues exactly as it did.
+   */
+  composeFromIntent?: (input: {
+    conversationId: ConversationId;
+    principal: Principal;
+    text: string;
+    messageId: string;
+    at: Instant;
+  }) => Promise<{ block: MessageBlock; text: string } | undefined>;
+  /**
    * Choose between several usable capabilities, when there is a real choice.
    *
    * A hook rather than an import because deciding is the runtime's business and this layer must not
@@ -312,6 +328,36 @@ export async function handleUserMessage(
   const at = input.at ?? nowInstant();
   const userMessage = appendUser(deps, input.conversationId, input.text, at);
   void userMessage;
+
+  // A host composer gets the first look, and only when one is configured. In production there is
+  // none, so nothing about the ordering below changes.
+  if (deps.composeFromIntent !== undefined) {
+    // The id is allocated once and used for the message that is appended. Allocating a second one
+    // inside `appendAssistant` would leave the snapshot the composer captured — which records the
+    // message it belongs to — pointing at a message id nothing ever stores, and history would then
+    // silently drop every composed surface.
+    const messageId = deps.newId("msg");
+    const composed = await deps.composeFromIntent({
+      conversationId: input.conversationId,
+      principal: input.principal,
+      text: input.text,
+      messageId,
+      at,
+    });
+    if (composed !== undefined) {
+      const message = appendAssistant(
+        deps,
+        input.conversationId,
+        [
+          { type: "text", format: "plain", content: composed.text, streaming: false },
+          composed.block,
+        ],
+        { at, messageId },
+      );
+      // No task: composing a view runs nothing, and claiming one would be a lie about what happened.
+      return { messages: [message], taskId: undefined, resolution: "sample" };
+    }
+  }
 
   const usable = listCapabilitySummaries(deps, { usableOnly: true });
   const executionNode = await chooseExecutionNode(deps, input.text, usable);

@@ -99,6 +99,10 @@ export const COMPOSITION_TEMPLATES: readonly MiniAppTemplate[] = [
     fixed: [
       { slot: "metrics", definitionId: "canvas.metrics@1", props: { title: "Chỉ số" } },
       { slot: "filter", definitionId: "canvas.filter@1" },
+      // The calendar region is fixed *and* optional: the renderer is known, and it is shown only when
+      // there are events. Leaving it out of `fixed` meant nothing ever chose one for it, so the
+      // sketch's calendar was silently absent from every composed overview.
+      { slot: "calendar", definitionId: "canvas.calendar@1" },
       { slot: "cta", definitionId: "canvas.cta@1", props: { label: "Lưu bản xem", description: "Lưu khoảng thời gian đang xem và ghim lại." } },
     ],
     familiesBySlot: { trend: ["trend"] },

@@ -224,7 +224,11 @@ export function bootNodeServices(options: RuntimeOptions): NodeServices {
   const conductor: ConductorDeps = {
     ...base,
     sampleRecipes: QUICK_PLAY_RECIPES,
-    ...(options.respondWithModel === undefined ? {} : { respondWithModel: options.respondWithModel }),    validateProps: (
+    ...(options.respondWithModel === undefined ? {} : { respondWithModel: options.respondWithModel }),
+    // Forwarded explicitly: accepting an option in the API and not wiring it into the conductor is
+    // how a test seam silently does nothing.
+    ...(options.composeFromIntent === undefined ? {} : { composeFromIntent: options.composeFromIntent }),
+    validateProps: (
       definition: WidgetDefinition,
       props: Record<string, unknown>,
     ): { ok: true } | { ok: false; problems: string[] } => {
