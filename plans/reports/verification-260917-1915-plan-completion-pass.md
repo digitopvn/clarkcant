@@ -46,7 +46,7 @@ Cả ba đều lộ ra từ việc viết browser journey — không phải từ
 
 | Lệnh | Kết quả |
 |---|---|
-| `corepack pnpm verify` | 7/7 invariant, 56 file, **811 passed / 7 skipped** (tăng từ 798 nhờ test mới) |
+| `corepack pnpm verify` | 7/7 invariant, 56 file, **812 passed / 7 skipped** (tăng từ 798 nhờ các test mới của vòng này) |
 | `corepack pnpm test:e2e` | **23 passed** (2 journey mới project-session; không hồi quy ở 21 test cũ) |
 | `node tools/probe-vector-extension.mjs` (darwin arm64) | `v0.1.9`, create/insert/KNN ok, exit 0 |
 | Probe trên Linux x64 (CI, `ubuntu-latest`) | `v0.1.9` nạp từ `sqlite-vec-linux-x64@0.1.9/vec0.so`; create, insert và KNN đều chạy — xem mục CI bên dưới |
