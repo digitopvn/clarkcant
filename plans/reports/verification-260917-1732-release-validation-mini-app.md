@@ -49,9 +49,19 @@ Ba journey mới là ba đường khác nhau, không phải ba ảnh của cùng
 
 ## Journey → evidence
 
+## Rework sau audit (2026-09-17)
+
+Audit độc lập chỉ ra ba khoảng trống; cả ba đã đóng và có evidence:
+
+1. **Vùng ảnh chưa từng tới được người dùng** — không template nào có slot `image` và `publishMiniAppData` trả `imageRefs: []`, nên `canvas.image@1` không có đường nào để render dù renderer đã xong. Đã nối end to end và thêm hai test đơn vị (có ảnh / không ảnh) + một assert browser (`naturalWidth`).
+2. **CSP chặn ảnh có xác thực** — `img-src 'self' data:` thiếu `blob:`, nên `<img>` trỏ vào blob URL bị chặn. Kiểm chứng vòng đời bytes (upload → `GET /images/:id`) cho thấy node trả **đúng từng byte** (74 byte, sha khớp, `content-type: image/png`), tức lỗi nằm ở policy của trang chứ không ở storage. Đã thêm `blob:` vào `img-src`; `connect-src` giữ nguyên vì client không fetch blob URL.
+3. **Accessibility của expanded view** — nay nhận focus khi mở, là `role="region"` có tên, đóng bằng Escape hoặc nút, và host trả focus về control đã mở nó. Journey bàn phím chạy hết trong `mini-app.spec.ts`.
+
+Trong lúc sửa (1) và (2) lộ thêm một lỗi quản lý tài nguyên: transcript và pinned view mỗi bên tự fetch rồi tự `revokeObjectURL`, nên một bên có thể thu hồi URL bên kia đang hiển thị. Đã gom về một chỗ (`packages/conversation-client/src/use-image-urls.ts`), nơi một ảnh có đúng một fetch và URL chỉ được thu hồi khi component sở hữu nó unmount.
+
 | Journey / failure (theo phase-06) | Evidence chạy được | Ghi chú |
 |---|---|---|
-| Ask overview | `e2e/mini-app.spec.ts:71`; số liệu KPI so với `GET /datasets/:id` | 4 vùng + CTA; `trend` hiện trạng thái thiếu dữ liệu thật khi node chưa có task |
+| Ask overview | `e2e/mini-app.spec.ts` test 1; số liệu KPI so với `GET /datasets/:id` | 6 vùng: metrics, filter, trend, calendar, **image**, cta; `trend` hiện trạng thái thiếu dữ liệu thật khi node chưa có task |
 | Week/month và calendar | `e2e/mini-app.spec.ts:71` (chọn ngày, chi tiết event) + `:136` (đổi kỳ ở live) + `mini-app-actions.spec.ts` | Không có provider call mới; đổi kỳ chỉ là revision mới của cùng instance |
 | Save/open/expand/pin/unpin | `e2e/j1.spec.ts:116`; `packages/core/test/mini-app-ownership.spec.ts` | Pin trỏ cùng logical instance, unpin giữ dữ liệu |
 | Snapshot vs live, kể cả restart | `e2e/mini-app.spec.ts:136` + mục "Restart" dưới đây | Restart là process thật, không phải reload browser |
@@ -60,7 +70,7 @@ Ba journey mới là ba đường khác nhau, không phải ba ảnh của cùng
 | Missing/deleted source | `packages/core/test/surface-snapshot.spec.ts` (tombstone, giữ text alternative) | Snapshot không đọc lại live |
 | Concurrent tabs | `e2e/mini-app.spec.ts:172`; `mini-app-ownership.spec.ts` (lease hết hạn thu hồi được) | Một writer, tab còn lại read-only |
 | Security | `mini-app-actions.spec.ts` (sai principal/digest/revision bị từ chối), `e2e/j1.spec.ts:161` (token không vào page) | Token live không xuất hiện trong DTO nào |
-| Accessibility | `e2e/j1.spec.ts:146` (composer bàn phím), `appearance.spec.ts` (modal, Escape trả focus) | Calendar/filter dùng control native (`select`, `button`) nên hành vi bàn phím là của nền tảng |
+| Accessibility | `e2e/mini-app.spec.ts`: "the expanded view is operable and dismissible from the keyboard alone"; `e2e/j1.spec.ts:146`; `appearance.spec.ts` (modal, Escape trả focus) | Journey bàn phím đầy đủ trên chính mini-app: Enter mở expanded → `[data-close-live]` nhận focus → đổi kỳ bằng select → Enter vào ngày lịch → Escape đóng → focus về trigger |
 
 ## Evidence PNG
 
@@ -74,6 +84,7 @@ Tất cả nằm trong `plans/reports/evidence/` (gitignored, sinh lại bởi s
 | `miniapp-04-overview-mobile-light.png` | như 01 | snapshot rev 1 | 390×844, light | cùng assertion của 01 |
 | `miniapp-05-overview-mobile-dark.png` | như 01 | snapshot rev 1 | 390×844, dark | cùng assertion của 01 |
 | `miniapp-06-ownership-refused.png` | tab thứ hai, surface pinned read-only | live rev 1 | 1280×720, light | `data-ownership="elsewhere"` + notice |
+| `miniapp-07-expanded-keyboard.png` | expanded live view, thao tác bằng bàn phím | live rev 2 (đổi kỳ) | 1280×720, light | `[data-close-live]` focused, chi tiết lịch theo ngày đã chọn |
 | `widget-01-table-in-conversation.png` | conversation, widget `canvas.table@1` | — | mặc định | bảng render từ dataset thật |
 | `widget-02-unknown-renderer-fallback.png` | conversation, definition không có renderer | — | mặc định | fallback text, không blank |
 

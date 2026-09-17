@@ -11,8 +11,9 @@ status: done
 
 ## Gates trước khi bắt đầu
 - [x] **Native dep — đã chốt 2026-09-17:** user chấp nhận optional native deps (sqlite-vec loadable extension, onnxruntime-node) cho search. Ràng buộc: khai báo `optionalDependencies`, install path mặc định không fail khi thiếu, search rơi về FTS-only có reason. Cập nhật README câu "No native modules are required" → "không bắt buộc; semantic search là optional". Ghi ADR ngắn trong `docs/research-and-decisions.md`.
-- [ ] `node:sqlite` `allowExtension: true` + `loadExtension()` đã xác minh khả dụng trên Node hiện tại (probe 2026-09-17). Cần probe load sqlite-vec thật trên macOS arm64 và Linux x64.
-- [ ] Kích thước model E5-small quantized và thời gian embed/batch trên máy dev đo thật trước khi cam kết index toàn bộ history.
+- [x] `node:sqlite` `allowExtension: true` + `loadExtension()` đã xác minh khả dụng trên Node hiện tại — **đã probe thật 2026-09-17 trên macOS arm64**: `new DatabaseSync(path, { allowExtension: true })` + `loadExtension(vec0.dylib)` → `vec_version()` `v0.1.9`, tạo `vec0` với `distance_metric=cosine`, insert và KNN đều chạy. `DatabaseSync` phải nhận `allowExtension` **lúc khởi tạo**; gọi `enableLoadExtension()` sau đó trả `ERR_INVALID_STATE`.
+- [ ] Probe trên **Linux x64 / CI matrix**: chưa chạy (máy này chỉ có darwin arm64) — cần chạy trước khi phát hành cho Linux.
+- [x] Kích thước model E5-small quantized và thời gian embed/batch trên máy dev đo thật — thời gian đã đo (batch 3 passage 435 ms, một passage ấm 50 ms), **kích thước artifact không tìm thấy** vì cache của thư viện không nằm ở đường dẫn thông thường; report ghi rõ là không đo được thay vì ghi số suy đoán.
 
 ## Related code files
 Root: `/Volumes/GOON/www/digitop/clarkcant/`.

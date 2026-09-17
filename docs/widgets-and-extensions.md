@@ -129,6 +129,7 @@ Ghi rõ phần nào của §4 đã có trong repo và phần nào còn là thi�
 
 - Định nghĩa catalog + family trong `packs/data-canvas`: `canvas.line/bar/donut/table`, `canvas.metrics`, `canvas.filter`, `canvas.calendar`, `canvas.image`, `canvas.cta`, và container `canvas.overview@1`.
 - Leaf renderer trong `packages/conversation-client` (donut thật, month grid, KPI tile, image, CTA) cùng text alternative cho mọi vùng.
+- Vùng **ảnh** của sketch nay thật sự tới được người dùng: `publishMiniAppData` trả ảnh mới nhất đã nhập, template `overview` có slot `image` (fixed, optional theo dữ liệu), và text alternative của vùng mang **alt text người dùng nhập**. Ảnh đi qua `blob:` URL vì token không thể nằm trong `<img src>`, nên CSP của `apps/web/index.html` phải cho `img-src ... blob:` — thiếu điều đó thì mọi ảnh đã nhập render thành "Chưa tải được hình ảnh" dù node trả bytes đúng.
 - **Declarative composition** (trust tier thứ hai trong bảng trên) là tier đang được dùng cho mini-app: spec có version, mỗi section pin `definitionRef.digest`, không có payload thực thi, action chỉ là tham chiếu tới binding do server compile.
 - Snapshot là **bundle bất biến** trong bảng riêng (`presentation_bundles`), không phải `catalog:id` trỏ tới dữ liệu hiện tại; xoá nguồn dữ liệu → tombstone, không đọc lại live.
 - Pin = cùng một logical instance, một live owner có lease (`widget_live_owners.lease_expires_at`), vị trí còn lại read-only.

@@ -1,6 +1,6 @@
 ---
 title: "Phase 6: Release validation và evidence"
-status: done
+status: blocked
 ---
 
 # Phase 6: Release validation và evidence
@@ -52,9 +52,21 @@ CI tạo local records/files trong isolated DB bằng production API và assert 
 - [ ] Pass opt-in live integration và calibration với model version xác định. — **BLOCKED**: thiếu `TYPESAFE_API_KEY` trong `.env` repo này; `jev-live.spec.ts` và `jev-calibration-live.spec.ts` in BLOCKED nêu tên biến. Default `search.decider="rank"` chốt bằng số đo lexical thay vì calibration chưa chạy.
 - [x] Update docs/traceability, ghi residual risks và handoff. (`docs/conformance-traceability.md` T43/T44/T47/T49/T50, `docs/widgets-and-extensions.md` §4.1, `docs/mini-app/jev-configuration.md` runbook, `docs/manifest.json` re-hash)
 
+## Trạng thái
+
+**Blocked, không phải done.** Success gate của chính phase này ("M1 chỉ complete khi đủ UI **và** actions, snapshot correctness, ownership, restart, privacy/security **và live provider integration evidence**") chưa đạt: phần live provider không chạy được vì thiếu `TYPESAFE_API_KEY`. Toàn bộ phần xác minh tất định đã đạt và có evidence; hạng mục live được ghi BLOCKED kèm điều kiện còn thiếu, không được đọc thành pass.
+
 ## Kết quả
 
 Report: [`plans/reports/verification-260917-1732-release-validation-mini-app.md`](../reports/verification-260917-1732-release-validation-mini-app.md).
+
+Rework sau audit (2026-09-17, cùng ngày) đóng ba khoảng trống mà audit chỉ ra:
+
+1. **Vùng ảnh (picture) chưa từng tới được người dùng.** Không template nào có slot `image`, `CompileInput.imageRef` không có caller, và `publishMiniAppData` trả `imageRefs: []`. Đã nối end to end: lấy ảnh mới nhất đã nhập → slot `image` (fixed, optional theo dữ liệu) → `compileTemplate` → renderer; text alternative của vùng nay mang **alt text của người dùng** thay vì câu chung của definition; có test đơn vị (có ảnh/không ảnh) và test browser (ảnh load thật, assert `naturalWidth`).
+2. **CSP chặn đường ảnh có xác thực.** `img-src 'self' data:` không có `blob:`, nên mọi ảnh đã nhập render thành "Chưa tải được hình ảnh" dù node trả bytes đúng (kiểm chứng: vòng upload→download giống nhau từng byte, sha khớp, `content-type: image/png`). Đã thêm `blob:` vào `img-src` kèm giải thích; không nới `connect-src`, vì client không cần fetch blob URL. Đây là lỗi thật đầu tiên khiến vùng ảnh **không thể** hiển thị trong browser, và nó chỉ lộ ra khi có một vùng ảnh thật để render.
+3. **Accessibility của expanded view chưa có contract.** `PinnedLiveSurface` nay nhận focus khi mở, là `role="region"` có `aria-label`, đóng bằng Escape hoặc nút hiển thị, và host trả focus về đúng control đã mở nó (fallback về transcript). Có journey bàn phím trong `mini-app.spec.ts` đi hết: mở bằng Enter → đổi kỳ bằng select → Enter vào một ngày lịch → Escape → focus về trigger.
+
+Ngoài ra, việc quản lý object URL cho ảnh được gom vào một chỗ (`use-image-urls.ts`): trước đó transcript và pinned view mỗi bên tự fetch và tự revoke, nên một bên có thể thu hồi URL bên kia đang hiển thị — đúng triệu chứng `fetch(blob:)` thất bại trong lúc `<img>` vẫn trỏ vào URL đó.
 
 Browser test tìm ra bảy lỗi thật mà unit test không thấy (dependency `datasets` bị thiếu trong `renderSurface`, container bị kiểm tra sau leaf renderer lookup, template `overview` không chọn renderer cho vùng `calendar`, `messageId` bị cấp hai lần trong nhánh composer khiến snapshot mồ côi, vùng không cần dữ liệu bị đánh "missing", read-only chặn sai phạm vi, client đọc `stale` từ document bất biến). Tất cả đã sửa kèm lý do trong code.
 
