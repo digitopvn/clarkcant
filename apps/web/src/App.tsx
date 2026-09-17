@@ -1,6 +1,6 @@
 import { type ReactElement, useMemo } from "react";
 
-import { Conversation, GatewayClient, installStyles } from "@clarkcant/conversation-client";
+import { Conversation, GatewayClient, installStyles, readStoredTheme, resolveTheme, systemPrefersLight } from "@clarkcant/conversation-client";
 
 /**
  * Browser client entry.
@@ -11,7 +11,17 @@ import { Conversation, GatewayClient, installStyles } from "@clarkcant/conversat
  * session established by the operator's ingress, and the blueprint's requirement that the
  * web UI be served over HTTPS applies there rather than on loopback.
  */
-installStyles("dark");
+
+/**
+ * Install the stylesheet for the theme the user actually chose.
+ *
+ * This was the literal `"dark"` and that was a bug with a misleading shape. The pre-paint script
+ * applied the stored choice correctly, then this line overwrote it with dark a moment later — so
+ * the preference was stored, read back, and thrown away, and a light preference returned as dark
+ * on every reload. Found by `apps/web/e2e/appearance.spec.ts`, which is the only place it was
+ * visible: reading either half of the code on its own looks right.
+ */
+installStyles(resolveTheme(readStoredTheme(), systemPrefersLight()));
 
 function readToken(): string {
   const params = new URLSearchParams(window.location.search);
