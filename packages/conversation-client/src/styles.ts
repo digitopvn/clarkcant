@@ -37,7 +37,17 @@ body {
   border-bottom: 1px solid var(--cc-border);
   background: var(--cc-canvas);
 }
-.cc-brand { display: flex; align-items: center; gap: var(--cc-space-sm); font-weight: 600; }
+.cc-brand {
+  display: flex; align-items: center; gap: var(--cc-space-sm); font-weight: 600;
+  /*
+   * A button, so that it can be reached by keyboard and announced by a screen reader — but reset
+   * back to the wordmark it looks like. A control that announces itself as a button in the header
+   * would change the layout the design asked for, and the focus ring it needs is already provided
+   * by the global :focus-visible rule.
+   */
+  background: none; border: 0; padding: 0; margin: 0; font: inherit; color: inherit; cursor: pointer;
+}
+.cc-brand:hover { opacity: 0.82; }
 .cc-header-end { display: flex; align-items: center; gap: var(--cc-space-md); }
 .cc-orb {
   width: 27px; height: 27px; border-radius: var(--cc-radius-pill);

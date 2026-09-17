@@ -41,6 +41,14 @@ export interface ConversationProps {
   onTimelineChange?: (timeline: Timeline) => void;
   /** Called once a conversation exists, so the host can remember it across reloads. */
   onConversationReady?: (conversationId: string) => void;
+  /**
+   * Called when the session is restarted, so the host can forget what it remembered.
+   *
+   * The conversation id lives in the host's storage rather than here, and a restart that left it
+   * behind would be undone by the next reload: the start screen would appear, and then the old
+   * conversation would come back. Clearing it is the host's job because remembering it is.
+   */
+  onSessionReset?: () => void;
   /** Loads an existing conversation on mount instead of starting empty. */
   initialAfter?: number;
 }
@@ -68,6 +76,7 @@ export function Conversation({
   conversationId: initialConversationId,
   onTimelineChange,
   onConversationReady,
+  onSessionReset,
 }: ConversationProps): ReactElement {
   const [conversationId, setConversationId] = useState<string | undefined>(initialConversationId);
   const [timeline, setTimeline] = useState<Timeline | undefined>(undefined);
@@ -77,6 +86,14 @@ export function Conversation({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | undefined>(undefined);
   const [uiCheckOpen, setUiCheckOpen] = useState(false);
+  /**
+   * Which session the interface is showing.
+   *
+   * Incremented by a restart, and captured by anything that is about to write a result back. A
+   * reply that arrives after the user restarted belongs to a conversation they have left, so it
+   * is dropped rather than drawn into the fresh start screen.
+   */
+  const sessionGeneration = useRef(0);
   /**
    * The theme the user chose, which is `dark`, `light` or `system`.
    *
@@ -203,15 +220,21 @@ export function Conversation({
       setBusy(true);
       setError(undefined);
       setDraft("");
+      const generation = sessionGeneration.current;
       try {
         const target = conversationId ?? (await client.createConversation("Conversation")).conversationId;
+        // The user may have restarted while the conversation was being created or the model was
+        // answering. Everything after this point belongs to the session they left.
+        if (sessionGeneration.current !== generation) return;
         if (conversationId === undefined) {
           setConversationId(target);
           onConversationReady?.(target);
         }
         const response = await client.sendMessage(target, trimmed);
+        if (sessionGeneration.current !== generation) return;
         applyTimeline(response.timeline);
       } catch (cause) {
+        if (sessionGeneration.current !== generation) return;
         // The draft is restored so a failed send does not lose the user's text.
         setDraft(trimmed);
         setError(cause instanceof Error ? cause.message : String(cause));
@@ -221,6 +244,24 @@ export function Conversation({
     },
     [applyTimeline, busy, client, conversationId, onConversationReady],
   );
+
+  /**
+   * Back to the start screen, with a new session.
+   *
+   * Deliberately not a delete: the conversation stays in the node's history, because that is a
+   * record of what happened rather than a draft to discard. This only stops the interface from
+   * showing it, and the next message opens a new one.
+   */
+  const restartSession = useCallback((): void => {
+    sessionGeneration.current += 1;
+    setConversationId(undefined);
+    setTimeline(undefined);
+    setDatasets({});
+    setDraft("");
+    setError(undefined);
+    setBusy(false);
+    onSessionReset?.();
+  }, [onSessionReset]);
 
   const instanceById = useMemo(() => {
     const map = new Map<string, Timeline["instances"][number]>();
@@ -287,10 +328,22 @@ export function Conversation({
   return (
     <div className="cc-shell">
       <header className="cc-header">
-        <div className="cc-brand">
+        {/*
+          The logo is the way back to the start screen, which is where a user looks first when
+          they want to begin again. It is a button rather than a decorated div so it can be reached
+          and announced: a click target only a mouse can find is half a control.
+        */}
+        <button
+          type="button"
+          className="cc-brand"
+          data-home="true"
+          onClick={restartSession}
+          title="Bắt đầu lại"
+          aria-label="Bắt đầu lại: về màn hình đầu và mở một phiên mới"
+        >
           <Orb size={30} className="cc-orb" label="" />
           <span>Agent</span>
-        </div>
+        </button>
         <div className="cc-header-end">
           <div className="cc-status" role="status" aria-live="polite" data-connection={connection}>
             <span className="cc-dot" data-state={connection} aria-hidden="true" />

@@ -85,6 +85,9 @@ export function App(): ReactElement {
       // prop may be absent, but may not be explicitly undefined.
       {...(existing === undefined ? {} : { conversationId: existing })}
       onConversationReady={(conversationId) => window.sessionStorage.setItem("cc_conversation", conversationId)}
+      // Remembering the conversation and forgetting it belong in the same place. Without this the
+      // start screen would appear and the next reload would pull the old conversation back.
+      onSessionReset={() => window.sessionStorage.removeItem("cc_conversation")}
     />
   );
 }
