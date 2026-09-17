@@ -159,6 +159,31 @@ sees from the finder is a name, a path relative to the root, a kind and marker n
 absolute path and never a file's contents. The scan is bounded (depth 5, 20 000 entries), skips
 symlinks and dependency directories, and stops descending as soon as it finds a project marker.
 
+When the finder finds nothing, it asks the user for a directory, and the answer is a path. Three
+rules make that question answerable and safe:
+
+- **A path is read from the user's own words, before redaction.** The redactor replaces absolute
+  paths with a placeholder — a home path is what it exists to remove — so reading it afterwards would
+  have discarded the answer and asked again. The path is used locally to open a directory; the
+  redacted text is what any search or selector call sees.
+- **A directory the user names is indexed even when nothing marks it**, because naming it is the
+  signal. It still has to be inside an approved root: a path is not a way to reach outside what the
+  user approved, and a path that is missing, outside the roots, or not a directory is refused with
+  that reason rather than met with the question again.
+- **The directory used last is offered, not opened.** A query that matches nothing but has a recent
+  project produces a question ("did you mean …?"); silently opening the last one is how asking for a
+  project that does not exist opens the wrong one.
+
+Paths travel relative to the approved root that contains them, so a workspace on another volume does
+not disclose the home directory's layout as a relative path.
+
+**Fixture turns.** `CC_MODEL_FIXTURE=1` replaces the model turn with a scripted one that composes an
+overview through the production pipeline. `CC_SESSION_FIXTURE=1` does the same for starting a worker
+session in a chosen directory: it reports a session id and spawns nothing. Both exist so the browser
+suite can exercise real paths without a provider, both print a line saying they are loaded, and
+neither belongs on a node a person uses: the reply says a fixture produced it and the node says so at
+startup.
+
 **Fixture turns.** `CC_MODEL_FIXTURE=1` replaces the model turn with a scripted one that composes an
 overview through the production pipeline. It exists so the browser suite can exercise the render path
 without a provider, it prints a line saying it is loaded, and it must never be set on a node a person
