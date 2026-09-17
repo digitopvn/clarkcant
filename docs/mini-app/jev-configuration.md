@@ -123,12 +123,13 @@ fallback.
 being present, so it cannot be undone by an environment that still has one.
 
 **Deciding whether to turn the search decider on.** `rank` is the default because it is the measured
-one: the labelled corpus answered 96.8% of lexical queries with BM25 alone, and the cases it misses
-are missing vocabulary, which choosing between results cannot repair. `CLARKCANT_SEARCH_DECIDER=jev`
-is opt-in, and the comparison harness is
+one, and it has now been measured both ways. Deterministically, the labelled corpus answered 96.8% of
+lexical queries with BM25 alone. Live, with `jev-1.13.0` on the same corpus, the selector tied it:
+31/34 (91.2%) either way, and 8/16 on the routing corpus. Nothing beat the ranking, so nothing bought
+the extra call per search. `CLARKCANT_SEARCH_DECIDER=jev` is opt-in, and the comparison harness is
 `CLARKCANT_JEV_LIVE=1 pnpm exec vitest run apps/runtime/test/jev-calibration-live.spec.ts`. It prints
 a per-case line and a total for both paths; the numbers belong in a report before the default
-changes.
+changes — see `plans/reports/verification-260917-1815-jev-live-integration-and-calibration.md`.
 
 **Turning semantic search on, and when not to.** It needs two optional native pieces on the machine:
 `sqlite-vec` (the vector index) and the local embedding runtime with E5-small (`@huggingface/transformers`
