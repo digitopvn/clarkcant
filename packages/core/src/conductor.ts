@@ -20,7 +20,7 @@ import {
   touchConversation,
 } from "@clarkcant/storage";
 
-import { type RegistryDeps, listCapabilitySummaries } from "./capability-registry.ts";
+import { type CapabilitySummary, type RegistryDeps, listCapabilitySummaries } from "./capability-registry.ts";
 import {
   type TaskServiceDeps,
   advanceResolving,
@@ -90,6 +90,35 @@ export interface ConductorDeps extends TaskServiceDeps, WidgetDeps, RegistryDeps
    * for real.
    */
   respondWithModel?: (input: ModelTurnInput) => Promise<ModelTurnReply>;
+  /**
+   * A deterministic composer the host may provide.
+   *
+   * Consulted before the scripted recipes and before the model. It exists because a composed surface
+   * can only be produced by a turn, and a node with no provider still has to be able to show one —
+   * for the browser suite, and for any host that wants a direct "show me the overview" affordance
+   * without a model call. It returns a block or nothing: nothing means "not my message", and the
+   * ordinary path continues exactly as it did.
+   */
+  composeFromIntent?: (input: {
+    conversationId: ConversationId;
+    principal: Principal;
+    text: string;
+    messageId: string;
+    at: Instant;
+  }) => Promise<{ block: MessageBlock; text: string } | undefined>;
+  /**
+   * Choose between several usable capabilities, when there is a real choice.
+   *
+   * A hook rather than an import because deciding is the runtime's business and this layer must not
+   * depend on a selector, a provider or a configuration file. It is consulted only when more than one
+   * capability is usable, and it may only name one of the candidates it was given: a decider that
+   * returns an unknown id is ignored in favour of the deterministic order. Lease and dispatch
+   * semantics are untouched — whatever is chosen here goes through the same authorization path.
+   */
+  chooseExecutionNode?: (input: {
+    intent: string;
+    candidates: readonly { capabilityRef: string; executionNodeId: string; effectCategory: string }[];
+  }) => Promise<{ capabilityRef: string; executionNodeId: string } | undefined>;
 }
 
 /** What a model turn is asked to answer. */
@@ -187,6 +216,40 @@ function appendAssistant(
   return message;
 }
 
+/**
+ * Pick the capability that will handle this message.
+ *
+ * One usable capability needs no decision. Several do, and the decider is asked — but only for a
+ * capability it was actually offered, because anything else would be a way to dispatch to something
+ * the registry never listed.
+ */
+async function chooseExecutionNode(
+  deps: ConductorDeps,
+  intent: string,
+  usable: readonly CapabilitySummary[],
+): Promise<CapabilitySummary | undefined> {
+  const first = usable[0];
+  if (first === undefined || usable.length === 1) return first;
+
+  const decide = deps.chooseExecutionNode;
+  if (decide === undefined) return first;
+
+  const candidates = usable.map((summary) => ({
+    capabilityRef: summary.ref,
+    executionNodeId: summary.executionNodeId,
+    effectCategory: summary.effectCategory,
+  }));
+  const chosen = await decide({ intent, candidates });
+  if (chosen === undefined) return first;
+  // Both halves have to match. The same capability can be registered on two nodes, and naming only
+  // the capability would leave the choice ambiguous — which is the case this hook exists for.
+  return (
+    usable.find(
+      (summary) => summary.ref === chosen.capabilityRef && summary.executionNodeId === chosen.executionNodeId,
+    ) ?? first
+  );
+}
+
 function appendUser(
   deps: ConductorDeps,
   conversationId: ConversationId,
@@ -266,8 +329,38 @@ export async function handleUserMessage(
   const userMessage = appendUser(deps, input.conversationId, input.text, at);
   void userMessage;
 
+  // A host composer gets the first look, and only when one is configured. In production there is
+  // none, so nothing about the ordering below changes.
+  if (deps.composeFromIntent !== undefined) {
+    // The id is allocated once and used for the message that is appended. Allocating a second one
+    // inside `appendAssistant` would leave the snapshot the composer captured — which records the
+    // message it belongs to — pointing at a message id nothing ever stores, and history would then
+    // silently drop every composed surface.
+    const messageId = deps.newId("msg");
+    const composed = await deps.composeFromIntent({
+      conversationId: input.conversationId,
+      principal: input.principal,
+      text: input.text,
+      messageId,
+      at,
+    });
+    if (composed !== undefined) {
+      const message = appendAssistant(
+        deps,
+        input.conversationId,
+        [
+          { type: "text", format: "plain", content: composed.text, streaming: false },
+          composed.block,
+        ],
+        { at, messageId },
+      );
+      // No task: composing a view runs nothing, and claiming one would be a lie about what happened.
+      return { messages: [message], taskId: undefined, resolution: "sample" };
+    }
+  }
+
   const usable = listCapabilitySummaries(deps, { usableOnly: true });
-  const executionNode = usable[0];
+  const executionNode = await chooseExecutionNode(deps, input.text, usable);
 
   // A scripted recipe is only considered when nothing installed can answer, so an
   // installed integration is never shadowed by a demo.

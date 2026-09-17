@@ -7,6 +7,8 @@ import { commandEnvelopeSchema, instantSchema, nodeIdSchema } from "@clarkcant/c
 import {
   acceptCommand,
   activeGrants,
+  appendMessage,
+  messagesSince,
   checkRestoreCompatibility,
   claimConversationAuthority,
   closeDatabase,
@@ -341,5 +343,52 @@ describe("consistent backup and restore (T69)", () => {
       vaultKeyBackedUpSeparately: true as const,
     };
     expect(checkRestoreCompatibility(manifest, 7)).toEqual({ ok: true, action: "migrate-forward" });
+  });
+});
+
+describe("a stored message", () => {
+  it("keeps the identity a history reader depends on", () => {
+    const db = freshDb();
+    const at = "2026-09-17T05:00:00.000Z";
+    db.prepare(
+      "INSERT INTO conversations (conversation_id, title, home_node_id, created_at, updated_at) VALUES (?, NULL, ?, ?, ?)",
+    ).run("conv_meta", "node_local", at, at);
+    db.prepare(
+      "INSERT INTO conversations (conversation_id, title, home_node_id, created_at, updated_at) VALUES (?, NULL, ?, ?, ?)",
+    ).run("conv_other", "node_local", at, at);
+
+    appendMessage(
+      db,
+      {
+        messageId: "msg_meta",
+        conversationId: "conv_meta",
+        role: "assistant",
+        blocks: [{ type: "text", format: "plain", content: "xin chào", streaming: false }],
+        authorNodeId: "node_local",
+        createdAt: at,
+        delivery: "accepted",
+      } as never,
+      // The caller supplies the sequence, so a cursor is meaningful across a restart.
+      7,
+    );
+
+    const [message] = messagesSince(db, "conv_meta" as never, 0);
+    expect(message?.messageId).toBe("msg_meta");
+    expect(message?.conversationId).toBe("conv_meta");
+    expect(message?.role).toBe("assistant");
+    expect(message?.createdAt).toBe(at);
+    expect(message?.blocks).toHaveLength(1);
+
+    const row = db.prepare("SELECT sequence, delivery FROM messages WHERE message_id = ?").get("msg_meta") as {
+      sequence: number;
+      delivery: string;
+    };
+    expect(row.sequence).toBe(7);
+    expect(row.delivery).toBe("accepted");
+
+    // Principal scope follows the conversation: another conversation never sees this message, which is
+    // the property the search path relies on when it filters by principal rather than by text.
+    expect(messagesSince(db, "conv_other" as never, 0)).toHaveLength(0);
+    expect(messagesSince(db, "conv_meta" as never, 7)).toHaveLength(0);
   });
 });

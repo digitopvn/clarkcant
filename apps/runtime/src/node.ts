@@ -3,8 +3,13 @@ import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "n
 import { join } from "node:path";
 
 import { type Instant, nowInstant, nodeIdSchema, principalIdSchema } from "@clarkcant/contracts";
-import type { ModelTurnInput, ModelTurnReply } from "@clarkcant/core";
+import type { ConductorDeps, ModelTurnInput, ModelTurnReply } from "@clarkcant/core";
 import { type Database, migrate, openDatabase } from "@clarkcant/storage";
+
+import type { PiAdapter } from "@clarkcant/pi-adapter";
+
+import type { JevConfig, JevTelemetry, JevTransport } from "./jev-selector.ts";
+import type { ProjectSessionStarter } from "./project-session.ts";
 
 /**
  * Composition root for one runtime installation.
@@ -54,6 +59,38 @@ export interface RuntimeOptions {
    * from the last reply would show the wrong thing until the first one arrived.
    */
   model?: NodeModelInfo;
+  /**
+   * Selector wiring, injectable so a test can substitute a transport instead of reaching a
+   * provider. The production path builds the config from the environment and uses fetch.
+   */
+  /**
+   * A deterministic composer the conductor consults before its recipes.
+   *
+   * Declared here because the conductor is assembled by `bootNodeServices`, and an option that is not
+   * forwarded is an option that silently does nothing.
+   */
+  composeFromIntent?: ConductorDeps["composeFromIntent"];
+  /**
+   * Builds the adapter a project session runs on, for one directory.
+   *
+   * A seam rather than an import so a journey test can assert the brief it is handed without loading
+   * the SDK and spawning a real session.
+   */
+  projectSessionAdapter?: (cwd: string) => PiAdapter;
+  /**
+   * Replaces the session starter entirely.
+   *
+   * The adapter seam above still builds a real starter around a fake adapter, which is what an
+   * integration test wants. This one exists for a node that has no worker at all — the browser suite,
+   * where starting a session must be provable without spawning a process — and for a host that brings
+   * its own session mechanism.
+   */
+  projectSessions?: ProjectSessionStarter;
+  jev?: {
+    config?: Partial<{ [K in keyof JevConfig]: JevConfig[K] }>;
+    transport?: JevTransport;
+    onTelemetry?: (event: JevTelemetry) => void;
+  };
 }
 
 /** The model configuration, as an operator would want to see it. */

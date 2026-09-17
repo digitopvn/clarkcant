@@ -1,6 +1,6 @@
 ---
 title: "Phase 6: Release validation và evidence"
-status: todo
+status: done
 ---
 
 # Phase 6: Release validation và evidence
@@ -47,10 +47,32 @@ CI tạo local records/files trong isolated DB bằng production API và assert 
 7. Update traceability: T43/T44/T47/T49/T50 giữ PASS với evidence mới; không thêm ID mới ngoài blueprint. Run `pnpm invariants` sau docs changes. Independent review khi được user yêu cầu; không tự spawn agent. Không commit/push mặc định; nếu ship được yêu cầu, dùng feature branch/PR, không main.
 
 ## Todo
-- [ ] Pass full deterministic tests/build/e2e trên isolated runtime.
-- [ ] Capture đủ hai display modes và responsive/accessibility evidence.
-- [ ] Pass opt-in live integration và calibration với model version xác định.
-- [ ] Update docs/traceability, ghi residual risks và handoff.
+- [x] Pass full deterministic tests/build/e2e trên isolated runtime. (`pnpm verify` 766 passed/5 skipped; `pnpm build` pass; `pnpm test:e2e` 20 passed, trong đó 3 journey mới của `apps/web/e2e/mini-app.spec.ts`)
+- [x] Capture đủ hai display modes và responsive/accessibility evidence. (6 PNG mini-app: desktop 1440×900 light/dark, mobile 390×844 light/dark, live-vs-snapshot, ownership refused; xem bảng trong report)
+- [x] Pass opt-in live integration và calibration với model version xác định. — Chạy thật 2026-09-17 với `jev-1.13.0`: `jev-live.spec.ts` 3 passed; `jev-calibration-live.spec.ts` search `rank` 31/34 (91,2%) vs `jev` 31/34 (91,2%), routing `jev` 8/16 (50,0%, abstain đúng 3/3 ca ngoài phạm vi); telemetry 9 call, 3 110/231 token, p50 322 ms. Default `search.decider` giữ `rank` vì selector không hơn baseline.
+- [x] Update docs/traceability, ghi residual risks và handoff. (`docs/conformance-traceability.md` T43/T44/T47/T49/T50, `docs/widgets-and-extensions.md` §4.1, `docs/mini-app/jev-configuration.md` runbook, `docs/manifest.json` re-hash)
+
+## Trạng thái
+
+**Done.** Success gate của phase này đã đạt: UI + actions, snapshot correctness, ownership, restart, privacy/security, **và live provider integration evidence**.
+
+Đính chính: một bản trước của phase này ghi `blocked` với lý do "thiếu `TYPESAFE_API_KEY`". Lý do đó **sai** — key nằm trong workspace đúng như `plan.md` dòng 126 đã ghi, và gate này chạy được ngay từ đầu. Ghi BLOCKED mà không kiểm tra đã biến một gate chạy được thành gate không thể chạy. Số đo live nằm ở [`plans/reports/verification-260917-1815-jev-live-integration-and-calibration.md`](../reports/verification-260917-1815-jev-live-integration-and-calibration.md): model thật `jev-1.13.0`, smoke 3/3, search `rank` 31/34 so với `jev` 31/34, routing 8/16, 9 call telemetry (3 110 input / 231 output token, p50 322 ms, p95 824 ms).
+
+## Kết quả
+
+Report: [`plans/reports/verification-260917-1732-release-validation-mini-app.md`](../reports/verification-260917-1732-release-validation-mini-app.md).
+
+Rework sau audit (2026-09-17, cùng ngày) đóng ba khoảng trống mà audit chỉ ra:
+
+1. **Vùng ảnh (picture) chưa từng tới được người dùng.** Không template nào có slot `image`, `CompileInput.imageRef` không có caller, và `publishMiniAppData` trả `imageRefs: []`. Đã nối end to end: lấy ảnh mới nhất đã nhập → slot `image` (fixed, optional theo dữ liệu) → `compileTemplate` → renderer; text alternative của vùng nay mang **alt text của người dùng** thay vì câu chung của definition; có test đơn vị (có ảnh/không ảnh) và test browser (ảnh load thật, assert `naturalWidth`).
+2. **CSP chặn đường ảnh có xác thực.** `img-src 'self' data:` không có `blob:`, nên mọi ảnh đã nhập render thành "Chưa tải được hình ảnh" dù node trả bytes đúng (kiểm chứng: vòng upload→download giống nhau từng byte, sha khớp, `content-type: image/png`). Đã thêm `blob:` vào `img-src` kèm giải thích; không nới `connect-src`, vì client không cần fetch blob URL. Đây là lỗi thật đầu tiên khiến vùng ảnh **không thể** hiển thị trong browser, và nó chỉ lộ ra khi có một vùng ảnh thật để render.
+3. **Accessibility của expanded view chưa có contract.** `PinnedLiveSurface` nay nhận focus khi mở, là `role="region"` có `aria-label`, đóng bằng Escape hoặc nút hiển thị, và host trả focus về đúng control đã mở nó (fallback về transcript). Có journey bàn phím trong `mini-app.spec.ts` đi hết: mở bằng Enter → đổi kỳ bằng select → Enter vào một ngày lịch → Escape → focus về trigger.
+
+Ngoài ra, việc quản lý object URL cho ảnh được gom vào một chỗ (`use-image-urls.ts`): trước đó transcript và pinned view mỗi bên tự fetch và tự revoke, nên một bên có thể thu hồi URL bên kia đang hiển thị — đúng triệu chứng `fetch(blob:)` thất bại trong lúc `<img>` vẫn trỏ vào URL đó.
+
+Browser test tìm ra bảy lỗi thật mà unit test không thấy (dependency `datasets` bị thiếu trong `renderSurface`, container bị kiểm tra sau leaf renderer lookup, template `overview` không chọn renderer cho vùng `calendar`, `messageId` bị cấp hai lần trong nhánh composer khiến snapshot mồ côi, vùng không cần dữ liệu bị đánh "missing", read-only chặn sai phạm vi, client đọc `stale` từ document bất biến). Tất cả đã sửa kèm lý do trong code.
+
+Restart thật (không phải reload browser) xác nhận snapshot giữ nguyên `capturedAt`/`bundleRef` sau khi live lên revision 2 và sau khi tiến trình node khởi động lại, còn live state `{"period":"month"}` sống qua restart.
 
 ## Success / release gate
 

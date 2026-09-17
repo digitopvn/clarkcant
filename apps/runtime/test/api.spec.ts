@@ -1,9 +1,11 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { nodeIdSchema } from "@clarkcant/contracts";
+import { FakePiAdapter, type WorkerBrief } from "@clarkcant/pi-adapter";
+import { setPreference } from "@clarkcant/core";
 
 import { handleRequest, type GatewayDeps, type GatewayRequest, type GatewayResponse } from "../src/gateway.ts";
 import { bootNodeServices, type NodeServices } from "../src/services.ts";
@@ -286,5 +288,206 @@ describe("J1 over the API", async () => {
   it("405s an unsupported method and 404s an unknown path", async () => {
     expect((await request("PUT", "/conversations")).status).toBe(405);
     expect((await request("GET", "/nope")).status).toBe(404);
+  });
+
+/**
+ * A composed surface over the wire.
+ *
+ * The composition is produced by the same service the turn pipeline uses, so what the timeline route
+ * returns here is what a client would receive after a real turn — minus the model.
+ */
+
+});
+describe("composed surface in the timeline", () => {
+  it("returns the captured snapshot and the live instance as separate lists", async () => {
+    const conversationId = await createConversation();
+    const composed = await composeForTest(conversationId);
+    expect(composed).toBeDefined();
+    if (composed === undefined) return;
+
+    const response = await request("GET", `/conversations/${conversationId}/timeline`);
+    expect(response.status).toBe(200);
+    const timeline = response.body as {
+      snapshots: { snapshotId: string; bundleRef?: string; capturedRevision: number }[];
+      instances: { instanceId: string; compositionId?: string; actionBindingIds: string[] }[];
+    };
+
+    const snapshot = timeline.snapshots.find((entry) => entry.snapshotId === composed.snapshotId);
+    expect(snapshot?.bundleRef).toBe(composed.bundleId);
+    const instance = timeline.instances.find((entry) => entry.instanceId === composed.instanceId);
+    expect(instance?.compositionId).toBe(composed.compositionId);
+    expect(instance?.actionBindingIds.length).toBeGreaterThan(0);
+
+    // The composition route answers with the same spec the snapshot was captured against.
+    const composition = await request("GET", `/conversations/${conversationId}/widgets/${composed.instanceId}/composition`);
+    expect(composition.status).toBe(200);
+    const body = composition.body as { sections: { slot: string }[]; bundleRef: string | null };
+    expect(body.bundleRef).toBe(composed.bundleId);
+    expect(body.sections.length).toBeGreaterThan(0);
+  });
+});
+
+async function composeForTest(
+  conversationId: string,
+): Promise<{ instanceId: string; snapshotId: string; bundleId: string; compositionId: string } | undefined> {
+  const { appendMessage } = await import("@clarkcant/storage");
+  const { composeMiniApp } = await import("../src/compose-mini-app.ts");
+  const outcome = await composeMiniApp(services.compose, {
+      conversationId,
+      messageId: "msg_composed",
+      principalId: services.runtime.identity.ownerPrincipalId as never,
+      intent: "tổng quan công việc",
+      explicitTemplateId: "overview",
+    },
+  );
+  if (!outcome.ok) {
+    throw new Error(`composing failed: ${outcome.message}`);
+  }
+  appendMessage(
+    services.runtime.db,
+    {
+      messageId: "msg_composed",
+      conversationId,
+      role: "assistant",
+      authorNodeId: services.runtime.identity.nodeId,
+      delivery: "accepted",
+      createdAt: "2026-09-16T04:00:00.000Z",
+      blocks: [outcome.block],
+    } as never,
+    1,
+  );
+  return outcome;
+}
+
+/**
+ * Starting a session in a project the finder chose (Phase 11).
+ *
+ * This is the journey the phase exists for: the user names a project the way they would say it out
+ * loud, and the node finds the directory, opens a session in it, and says how to change the answer.
+ * The adapter is a recording fake, so what is asserted is the brief a real adapter would have been
+ * given — which is the part that decides where the work happens.
+ */
+describe("starting a session in a project", () => {
+  class RecordingAdapter extends FakePiAdapter {
+    readonly briefs: WorkerBrief[] = [];
+
+    override async createWorkerSession(brief: WorkerBrief): Promise<{ sessionId: string; sessionFile: string | undefined; createdAt: never }> {
+      this.briefs.push(brief);
+      const handle = await super.createWorkerSession(brief);
+      return { sessionId: handle.sessionId, sessionFile: handle.sessionFile, createdAt: handle.createdAt as never };
+    }
+  }
+
+  let home: string;
+  let nodeDir: string;
+  let node: NodeServices;
+  let nodeDeps: GatewayDeps;
+  let adapter: RecordingAdapter;
+
+  beforeEach(() => {
+    nodeDir = mkdtempSync(join(tmpdir(), "clarkcant-session-"));
+    home = join(nodeDir, "home");
+    mkdirSync(join(home, "agentkit", ".git"), { recursive: true });
+    writeFileSync(join(home, "agentkit", "package.json"), "{}");
+    mkdirSync(join(home, "agentkit-docs", "docs"), { recursive: true });
+    writeFileSync(join(home, "agentkit-docs", "README.md"), "# docs");
+
+    adapter = new RecordingAdapter({ script: ["ok"] });
+    node = bootNodeServices({
+      dataDir: nodeDir,
+      label: "test node",
+      projectSessionAdapter: () => adapter,
+    });
+    nodeDeps = { services: node, now: () => AT };
+    // The approved root is the temporary home, not the real one: a test must not scan a developer's
+    // actual home directory.
+    setPreference(
+      { db: node.runtime.db, now: () => AT as never },
+      {
+        principalId: node.runtime.identity.ownerPrincipalId,
+        key: "workspace.roots",
+        scope: "global",
+        value: [home],
+        source: "user",
+      },
+    );
+  });
+
+  afterEach(() => {
+    node.runtime.close();
+    rmSync(nodeDir, { recursive: true, force: true });
+  });
+
+  async function call(method: string, path: string, body?: unknown): Promise<GatewayResponse> {
+    return handleRequest(nodeDeps, {
+      method,
+      path,
+      query: {},
+      headers: { authorization: `Bearer ${node.runtime.identity.localToken}` },
+      body: body === undefined ? "" : JSON.stringify(body),
+    });
+  }
+
+  it("finds the right directory, opens a session there, and says how to change it", async () => {
+    const created = await call("POST", "/conversations", { title: "project" });
+    const conversationId = (created.body as { conversationId: string }).conversationId;
+
+    const response = await call("POST", `/conversations/${conversationId}/start-session`, {
+      text: "thêm skill mới cho dự án agentkit đi",
+    });
+
+    // Two similarly named directories are on disk, so either a session opens or one question is
+    // asked. Both are correct; a wrong directory is not.
+    expect([201, 200]).toContain(response.status);
+    const body = response.body as {
+      status: string;
+      projectName?: string;
+      relPath?: string;
+      mode?: string;
+      sessionId?: string;
+      question?: string;
+      options?: string[];
+      timeline: { messages: { blocks: { type: string; content?: string }[] }[] };
+    };
+
+    if (body.status === "started") {
+      expect(body.projectName).toBe("agentkit");
+      expect(body.sessionId).toBeDefined();
+      expect(adapter.briefs).toHaveLength(1);
+      const brief = adapter.briefs[0]!;
+      // The directory the session runs in is the one that was found, and it is the only root granted.
+      expect(brief.projectRoots).toEqual([join(home, "agentkit")]);
+      // The prompt carries the user's own words plus what was chosen, so the session knows why it is
+      // there and the user can correct it.
+      expect(brief.goal).toContain("thêm skill mới cho dự án agentkit đi");
+      expect(brief.goal).toContain("không phải");
+      // Starting a session grants no capability: a capability is granted by the task that needs it.
+      expect(brief.allowedCapabilityRefs).toEqual([]);
+
+      const text = body.timeline.messages
+        .flatMap((message) => message.blocks)
+        .map((block) => block.content ?? "")
+        .join("\n");
+      expect(text).toContain("agentkit");
+      // The choice was recorded so the next question about this project is easier.
+      const used = node.runtime.db
+        .prepare("SELECT last_used_at FROM project_index WHERE name = 'agentkit'")
+        .get() as { last_used_at: string | null } | undefined;
+      expect(used?.last_used_at).not.toBeNull();
+    } else {
+      expect(body.status).toBe("clarify");
+      expect(body.question).toContain("Which one did you mean");
+      expect(body.options?.some((option) => option.includes("agentkit"))).toBe(true);
+      // A question is written into the conversation, so the answer has somewhere to land.
+      expect(body.timeline.messages.length).toBeGreaterThan(0);
+      expect(adapter.briefs).toHaveLength(0);
+    }
+  });
+
+  it("refuses a start-session request with no text", async () => {
+    const created = await call("POST", "/conversations", { title: "project" });
+    const conversationId = (created.body as { conversationId: string }).conversationId;
+    const response = await call("POST", `/conversations/${conversationId}/start-session`, { text: "   " });
+    expect(response.status).toBe(400);
   });
 });

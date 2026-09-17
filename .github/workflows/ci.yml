@@ -43,6 +43,13 @@ jobs:
       - name: Install
         run: pnpm install --frozen-lockfile
 
+      # The vector index needs a loadable extension, and whether it loads is a property of the
+      # platform rather than of the code: this repository is developed on darwin arm64 and this job
+      # runs on linux x64. Absent is a supported state and exits 0 with a reason; installed but
+      # unusable exits 1, which is the failure that would otherwise hide behind a lexical fallback.
+      - name: Probe the optional vector extension
+        run: node tools/probe-vector-extension.mjs
+
       - name: Repository invariants
         run: pnpm run invariants
 

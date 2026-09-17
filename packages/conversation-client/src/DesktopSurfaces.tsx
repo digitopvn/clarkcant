@@ -7,7 +7,11 @@
  * supports notifications rather than assuming a desktop shell does.
  */
 
-import { type ReactElement, useCallback, useState } from "react";
+import { type ReactElement, useCallback, useEffect, useMemo, useRef, useState } from "react";
+
+import type { GatewayClient, LiveWidgetResponse, Timeline } from "./api.ts";
+import { MiniAppSurface, type CompositeSurfaceView } from "./mini-app-surface.tsx";
+import { useImageUrls } from "./use-image-urls.ts";
 
 export interface MenuBarPopoverProps {
   nodeLabel: string;
@@ -96,4 +100,317 @@ export function DesktopNotification({ title, body }: DesktopNotificationProps): 
       {outcome === "sent" && <span className="cc-freshness">Đã gửi.</span>}
     </div>
   );
+}
+
+/* ------------------------------------------------------------------ *
+ * Pinned live surface
+ * ------------------------------------------------------------------ */
+
+export interface PinnedLiveSurfaceProps {
+  client: GatewayClient;
+  conversationId: string;
+  instanceId: string;
+  displayMode: "compact" | "expanded";
+  title?: string | undefined;
+  /** Called after any successful action, so the host can refresh its page. */
+  onTimeline: (timeline: Timeline) => void;
+  /**
+   * Present when this surface can be dismissed.
+   *
+   * The host owns what closing means (collapsing a pin, restoring focus to whatever opened it), and
+   * Escape is wired here because a keyboard user expects the expanded view to close from anywhere
+   * inside it — not only while a particular control happens to have focus.
+   */
+  onClose?: (() => void) | undefined;
+}
+
+/** How long a claim is held before it is refreshed. Shorter than the server's lease on purpose. */
+const CLAIM_REFRESH_MS = 30_000;
+
+/**
+ * The live view of a pinned instance.
+ *
+ * This is the only place a user can act on a composed surface, and it holds the single owner token
+ * while it is on screen. That is what the ownership model is for: the inline copy in the transcript
+ * is history and stays read-only, so the same data is never editable from two places at once —
+ * which is how a filter change in one tab silently rewrites what another tab is looking at.
+ *
+ * The claim is refreshed on a timer because a claim with no expiry is an orphan waiting to happen,
+ * and released on unmount so the next surface does not have to wait for the lease to lapse.
+ */
+export function PinnedLiveSurface({
+  client,
+  conversationId,
+  instanceId,
+  displayMode,
+  title,
+  onTimeline,
+  onClose,
+}: PinnedLiveSurfaceProps): ReactElement {
+  const panel = useRef<HTMLDivElement>(null);
+  const closeButton = useRef<HTMLButtonElement>(null);
+  const [live, setLive] = useState<LiveWidgetResponse | undefined>(undefined);
+  const [ownership, setOwnership] = useState<"claiming" | "owner" | "elsewhere" | "error">("claiming");
+  const [busy, setBusy] = useState(false);
+  const [notice, setNotice] = useState<string | undefined>(undefined);
+  const ownerToken = useRef<string>(newOwnerToken());
+
+  const load = useCallback(async (): Promise<void> => {
+    try {
+      const resolved = await client.liveWidget(conversationId, instanceId);
+      setLive(resolved);
+    } catch (cause) {
+      setNotice(cause instanceof Error ? cause.message : String(cause));
+      setOwnership("error");
+    }
+  }, [client, conversationId, instanceId]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const claim = async (): Promise<void> => {
+      try {
+        await client.claimLiveOwner(conversationId, instanceId, {
+          ownerToken: ownerToken.current,
+          surface: "pin",
+          leaseMs: CLAIM_REFRESH_MS * 3,
+        });
+        if (!cancelled) setOwnership("owner");
+      } catch (cause) {
+        if (cancelled) return;
+        // Refused means another surface holds it. This one still renders, read-only, and says so.
+        setOwnership("elsewhere");
+        setNotice(
+          cause instanceof Error && cause.message.includes("ALREADY_OWNED")
+            ? "Bản hiện tại đang được mở ở một vị trí khác. Ở đây chỉ xem."
+            : cause instanceof Error
+              ? cause.message
+              : String(cause),
+        );
+      }
+      await load();
+    };
+
+    void claim();
+    const timer = setInterval(() => {
+      void client
+        .claimLiveOwner(conversationId, instanceId, {
+          ownerToken: ownerToken.current,
+          surface: "pin",
+          leaseMs: CLAIM_REFRESH_MS * 3,
+        })
+        .catch(() => undefined);
+    }, CLAIM_REFRESH_MS);
+
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+      // Best effort: the lease is what makes a failed release recoverable.
+      void client.releaseLiveOwner(conversationId, instanceId, ownerToken.current).catch(() => undefined);
+    };
+  }, [client, conversationId, instanceId, load]);
+
+  /*
+   * Escape closes the expanded view, from anywhere inside it.
+   *
+   * On `window` rather than on the panel because the panel is not modal: focus can be sitting on a
+   * control the surface drew, and a listener scoped to the container would miss Escape after a click
+   * that moved focus into an iframe-like subtree. The handler is only attached when the host offered
+   * a way to close, so a compact pin never swallows the key.
+   */
+  useEffect(() => {
+    if (onClose === undefined) return;
+    const onKeyDown = (event: KeyboardEvent): void => {
+      if (event.key !== "Escape") return;
+      event.preventDefault();
+      onClose();
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [onClose]);
+
+  /*
+   * Focus moves to the close control when the expanded view appears.
+   *
+   * Otherwise a keyboard user who opened it is left at the trigger, one Tab away from content they
+   * cannot see the shape of, and Escape would be undiscoverable. It is the same reason a dialog takes
+   * focus when it opens — without the modal part, because this view is inline.
+   */
+  useEffect(() => {
+    if (displayMode !== "expanded") return;
+    closeButton.current?.focus();
+  }, [displayMode]);
+
+  /* Imported images are fetched through the authenticated client, not linked to directly. */
+  const imageRefs = useMemo(() => {
+    const refs = new Set<string>();
+    for (const section of live?.sections ?? []) {
+      const ref = section.props.imageRef;
+      if (typeof ref === "string" && ref !== "") refs.add(ref);
+    }
+    return [...refs];
+  }, [live]);
+
+  const imageUrl = useImageUrls(client, imageRefs);
+
+  const readOnly = ownership !== "owner";
+
+  const head =
+    onClose === undefined ? undefined : (
+      <div className="cc-live-head">
+        <button
+          ref={closeButton}
+          type="button"
+          className="cc-icon-btn"
+          style={{ width: "auto", padding: "0 var(--cc-space-sm)" }}
+          data-close-live="true"
+          aria-label="Đóng bản hiện tại (Escape)"
+          onClick={onClose}
+        >
+          Đóng (Esc)
+        </button>
+      </div>
+    );
+
+  if (live === undefined) {
+    return (
+      <div
+        className="cc-live-surface"
+        data-live-instance={instanceId}
+        data-ownership={ownership}
+        data-display-mode={displayMode}
+        role={displayMode === "expanded" ? "region" : undefined}
+        aria-label={displayMode === "expanded" ? `Bản hiện tại: ${title ?? instanceId}` : undefined}
+      >
+        {/* The close control is here in the loading state as well: a surface that is still opening is
+            exactly when a keyboard user wants to be able to back out. */}
+        {head}
+        <p className="cc-freshness" style={{ margin: 0 }}>
+          {notice ?? "Đang mở bản hiện tại…"}
+        </p>
+      </div>
+    );
+  }
+
+  const view = toSurfaceViewFromLive(live, readOnly);
+
+  return (
+    <div
+      ref={panel}
+      className="cc-live-surface"
+      data-live-instance={instanceId}
+      data-ownership={ownership}
+      data-display-mode={displayMode}
+      role={displayMode === "expanded" ? "region" : undefined}
+      aria-label={displayMode === "expanded" ? `Bản hiện tại: ${title ?? instanceId}` : undefined}
+    >
+      {head}
+      {notice !== undefined && (
+        <p className="cc-freshness" data-live-notice="true" style={{ margin: "0 0 var(--cc-space-xs)" }}>
+          {notice}
+        </p>
+      )}
+      <MiniAppSurface
+        view={view}
+        title={title}
+        busy={busy}
+        imageUrl={imageUrl}
+        onIntent={
+          readOnly
+            ? undefined
+            : (intent) => {
+                const action = live.spec.actions.find((entry) => entry.sectionId === intent.sectionId);
+                if (action === undefined) return;
+                setBusy(true);
+                setNotice(undefined);
+                void client
+                  .invokeAction(conversationId, instanceId, {
+                    actionBindingId: action.actionBindingId,
+                    expectedRevision: live.revision,
+                    expectedBindingDigest: digestForBinding(live, action.actionBindingId),
+                    input: intent.input,
+                    // A fresh id per attempt: the id is what makes a repeated press one effect, and
+                    // reusing it for a genuinely new attempt would be refused as a reused key.
+                    invocationId: newOwnerToken(),
+                  })
+                  .then((result) => {
+                    onTimeline(result.timeline);
+                    if (result.duplicate) setNotice("Thao tác này đã được thực hiện trước đó.");
+                    return load();
+                  })
+                  .catch((cause: unknown) => {
+                    const message = cause instanceof Error ? cause.message : String(cause);
+                    setNotice(
+                      message.includes("REVISION_MISMATCH")
+                        ? "Bản hiển thị đã cũ so với máy chủ. Đã tải lại; thao tác chưa được áp dụng."
+                        : message,
+                    );
+                    return load();
+                  })
+                  .finally(() => setBusy(false));
+              }
+        }
+      />
+    </div>
+  );
+}
+
+/**
+ * Adapt a live response into the shape the surface renders.
+ *
+ * Kept next to the pin because it is the pin's read path: history uses the bundle, and this uses
+ * current records. Both produce the same view shape, so there is one renderer.
+ */
+function toSurfaceViewFromLive(live: LiveWidgetResponse, readOnly: boolean): CompositeSurfaceView {
+  return {
+    compositionId: live.compositionId,
+    instanceId: live.spec.instanceId,
+    catalogDigest: live.spec.catalogDigest,
+    initialState: {
+      period: live.period,
+      timezone: live.timezone,
+      ...(typeof live.state.selectedDate === "string" ? { selectedDate: live.state.selectedDate } : {}),
+    },
+    actions: readOnly
+      ? []
+      : live.spec.actions.map((action) => ({
+          actionBindingId: action.actionBindingId,
+          sectionId: action.sectionId,
+          label: action.label,
+          kind: action.kind as CompositeSurfaceView["actions"][number]["kind"],
+          effectCategory: action.effectCategory,
+        })),
+    sections: live.sections.map((section) => ({
+      sectionId: section.sectionId,
+      slot: section.slot as CompositeSurfaceView["sections"][number]["slot"],
+      definitionRef: section.definitionRef,
+      props: section.props,
+      dataRefs: section.dataRefs,
+      ...(section.rows === undefined ? {} : { rows: section.rows }),
+      textAlternative: section.textAlternative,
+    })),
+    revision: live.revision,
+    stale: false,
+    availability: live.availability,
+    // Ownership is what decides this, and it is decided on the server: a surface that does not hold
+    // the claim renders read-only rather than offering controls that would be refused.
+    readOnly,
+  };
+}
+
+/**
+ * The digest a binding was compiled with, as the server last reported it.
+ *
+ * The client cannot recompile a binding, so it echoes what it was told. A binding whose digest has
+ * changed since is refused as stale, which is the intended outcome: the alternative is applying a
+ * click to an action that was replaced underneath the user.
+ */
+function digestForBinding(live: LiveWidgetResponse, actionBindingId: string): string {
+  return live.bindings.find((binding) => binding.actionBindingId === actionBindingId)?.bindingDigest ?? "";
+}
+
+/** A unique token for a claim or an invocation. */
+function newOwnerToken(): string {
+  const cryptoApi = globalThis.crypto as { randomUUID?: () => string } | undefined;
+  if (cryptoApi?.randomUUID !== undefined) return cryptoApi.randomUUID();
+  return `tok_${Date.now().toString(36)}${Math.random().toString(36).slice(2)}`;
 }

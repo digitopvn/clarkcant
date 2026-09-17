@@ -620,6 +620,254 @@ export const MIGRATIONS: readonly Migration[] = [
       `);
     },
   },
+  {
+    version: 10,
+    name: "composed-surfaces-bundles-calendar",
+    reversible: true,
+    up: (db) => {
+      db.exec(`
+        -- The compiled layout document for a composed surface. Held separately from
+        -- widget_instances.props because it is a document with its own lifecycle: it is written
+        -- once by the pure compiler and read back verbatim, never patched in place.
+        CREATE TABLE surface_compositions (
+          composition_id     TEXT PRIMARY KEY,
+          instance_id        TEXT NOT NULL REFERENCES widget_instances(instance_id),
+          owner_principal_id TEXT NOT NULL,
+          message_id         TEXT NOT NULL,
+          conversation_id    TEXT NOT NULL,
+          template_id        TEXT NOT NULL,
+          template_version   TEXT NOT NULL,
+          catalog_digest     TEXT NOT NULL,
+          section_count      INTEGER NOT NULL,
+          document           TEXT NOT NULL,
+          created_at         TEXT NOT NULL
+        );
+        CREATE INDEX idx_compositions_instance ON surface_compositions(instance_id);
+        CREATE INDEX idx_compositions_owner ON surface_compositions(owner_principal_id, created_at);
+
+        -- The materialised snapshot. Immutable: nothing updates the document column, and the
+        -- only mutation the schema permits is recording that the data was deleted, which turns
+        -- the bundle into a tombstone instead of quietly resurrecting deleted values through
+        -- the live source.
+        CREATE TABLE presentation_bundles (
+          bundle_id          TEXT PRIMARY KEY,
+          snapshot_id        TEXT NOT NULL REFERENCES widget_snapshots(snapshot_id),
+          message_id         TEXT NOT NULL,
+          instance_id        TEXT NOT NULL,
+          owner_principal_id TEXT NOT NULL,
+          byte_size          INTEGER NOT NULL,
+          deleted_at         TEXT,
+          tombstone_reason   TEXT,
+          document           TEXT NOT NULL,
+          created_at         TEXT NOT NULL
+        );
+        CREATE INDEX idx_bundles_snapshot ON presentation_bundles(snapshot_id);
+        CREATE INDEX idx_bundles_message ON presentation_bundles(message_id);
+        CREATE INDEX idx_bundles_owner ON presentation_bundles(owner_principal_id, created_at);
+
+        -- Local calendar events. User-entered only: nothing here is synced from a provider, and
+        -- there is no producer column that would let a task invent a due date and have it look
+        -- like something the user wrote.
+        CREATE TABLE calendar_events (
+          event_id           TEXT PRIMARY KEY,
+          owner_principal_id TEXT NOT NULL,
+          node_id            TEXT NOT NULL,
+          title              TEXT NOT NULL,
+          starts_at          TEXT NOT NULL,
+          ends_at            TEXT NOT NULL,
+          timezone           TEXT NOT NULL,
+          local_date         TEXT NOT NULL,
+          document           TEXT NOT NULL,
+          created_at         TEXT NOT NULL,
+          updated_at         TEXT NOT NULL,
+          deleted_at         TEXT
+        );
+        CREATE INDEX idx_calendar_owner_range
+          ON calendar_events(owner_principal_id, starts_at) WHERE deleted_at IS NULL;
+
+        -- Imported images. The bytes live in the blob store; this row is the authorization and
+        -- validation record, which is why the principal is on it rather than inferred from the
+        -- artifact id.
+        CREATE TABLE local_images (
+          image_id           TEXT PRIMARY KEY,
+          owner_principal_id TEXT NOT NULL,
+          node_id            TEXT NOT NULL,
+          artifact_id        TEXT NOT NULL,
+          mime_type          TEXT NOT NULL,
+          byte_size          INTEGER NOT NULL,
+          width              INTEGER,
+          height             INTEGER,
+          digest             TEXT NOT NULL,
+          alt_text           TEXT NOT NULL,
+          blob_path          TEXT NOT NULL,
+          created_at         TEXT NOT NULL,
+          deleted_at         TEXT
+        );
+        CREATE INDEX idx_images_owner ON local_images(owner_principal_id, created_at);
+
+        -- A live-owner claim without an expiry is an orphan waiting to happen: a tab that is
+        -- killed never sends its release, and the instance would then be locked forever. The
+        -- column is nullable so rows written before it exist stay readable, and a claim with no
+        -- expiry is treated as stale once it is older than the lease window.
+        ALTER TABLE widget_live_owners ADD COLUMN lease_expires_at TEXT;
+      `);
+    },
+  },
+  {
+    version: 11,
+    name: "dataset-principal-scope",
+    reversible: true,
+    up: (db) => {
+      db.exec(`
+        -- Datasets the node registered for itself (the sample) are node-scoped and leave this NULL.
+        -- A dataset derived for one person's composed surface names them, so a reference that leaks
+        -- into another principal's page resolves to nothing rather than to someone else's rows.
+        ALTER TABLE datasets ADD COLUMN owner_principal_id TEXT;
+        CREATE INDEX idx_datasets_owner ON datasets(owner_principal_id, updated_at);
+      `);
+    },
+  },
+  {
+    version: 12,
+    name: "session-files",
+    reversible: true,
+    up: (db) => {
+      db.exec(`
+        -- The worker's own JSONL transcript, indexed so it can be read back after a restart and
+        -- ingested into the history index in bounded batches.
+        --
+        -- Two sources of history are deliberate: the messages table is what the conversation
+        -- showed, and this is what the worker actually did — tool calls, reasoning, summaries.
+        -- Neither is derived from the other, and there is no synchronisation between them.
+        CREATE TABLE session_files (
+          session_id        TEXT PRIMARY KEY,
+          node_id           TEXT NOT NULL,
+          principal_id      TEXT NOT NULL,
+          task_id           TEXT,
+          conversation_id   TEXT,
+          path              TEXT NOT NULL,
+          byte_size         INTEGER NOT NULL DEFAULT 0,
+          -- Byte offset already ingested, so a restart resumes rather than reindexing the file.
+          ingest_cursor     INTEGER NOT NULL DEFAULT 0,
+          last_ingested_at  TEXT,
+          created_at        TEXT NOT NULL,
+          updated_at        TEXT NOT NULL
+        );
+        CREATE INDEX idx_session_files_principal ON session_files(principal_id, created_at);
+        CREATE INDEX idx_session_files_task ON session_files(task_id);
+      `);
+    },
+  },
+  {
+    version: 13,
+    name: "history-fts",
+    reversible: true,
+    up: (db) => {
+      db.exec(`
+        -- Lexical retrieval over everything the node can search: what the conversation showed, and
+        -- what a worker actually did.
+        --
+        -- One table with a source column rather than two indexes, because the two are ranked
+        -- against each other and merged; keeping them apart would mean merging after ranking, which
+        -- is not the same result.
+        --
+        -- remove_diacritics 2 is what makes Vietnamese searchable at all: a query typed without
+        -- tone marks matches text written with them, in both directions.
+        CREATE VIRTUAL TABLE history_fts USING fts5(
+          text,
+          source UNINDEXED,
+          ref UNINDEXED,
+          conversation_id UNINDEXED,
+          task_id UNINDEXED,
+          principal_id UNINDEXED,
+          created_at UNINDEXED,
+          tokenize = 'unicode61 remove_diacritics 2'
+        );
+
+        -- Deletion is a trigger because a deleted message must not stay searchable, and the write
+        -- path that removes a message is not the one that indexes it. Insertion is explicit: the
+        -- text is extracted from a JSON document in TypeScript, where it is testable.
+        CREATE TRIGGER messages_history_delete AFTER DELETE ON messages BEGIN
+          DELETE FROM history_fts WHERE source = 'message' AND ref = OLD.message_id;
+        END;
+      `);
+    },
+  },
+  {
+    version: 14,
+    name: "project-index",
+    reversible: true,
+    up: (db) => {
+      db.exec(`
+        -- What is on this machine and where, so "add a skill for the agentkit project" can find the
+        -- directory without the user typing a path.
+        --
+        -- Metadata only: the scan records markers, a name and a modification time. Nothing here is
+        -- file content, which is what makes an index over a home directory defensible.
+        CREATE TABLE project_index (
+          project_id    TEXT PRIMARY KEY,
+          node_id       TEXT NOT NULL,
+          path          TEXT NOT NULL,
+          name          TEXT NOT NULL,
+          -- Names the user or an agent has used for it. A JSON array of strings.
+          aliases       TEXT NOT NULL DEFAULT '[]',
+          git_remote    TEXT,
+          -- Markers that made this a project, as a JSON array: .git, package.json, .obsidian, …
+          markers       TEXT NOT NULL DEFAULT '[]',
+          kind          TEXT NOT NULL,
+          -- Directory mtime, which is what incremental refresh compares.
+          mtime         INTEGER NOT NULL,
+          last_used_at  TEXT,
+          indexed_at    TEXT NOT NULL
+        );
+        CREATE UNIQUE INDEX idx_project_path ON project_index(node_id, path);
+        CREATE INDEX idx_project_kind ON project_index(node_id, kind);
+        CREATE INDEX idx_project_used ON project_index(last_used_at);
+
+        -- Matching by name is a search, not a scan: a home directory holds hundreds of
+        -- directories, and a substring scan on every keystroke is the wrong shape for it.
+        CREATE VIRTUAL TABLE project_fts USING fts5(
+          name,
+          aliases,
+          path,
+          kind UNINDEXED,
+          project_id UNINDEXED,
+          tokenize = 'unicode61 remove_diacritics 2'
+        );
+      `);
+    },
+  },
+  {
+    version: 15,
+    name: "history-embeddings",
+    reversible: true,
+    up: (db) => {
+      db.exec(`
+        -- Which history rows have a vector, and which model produced it.
+        --
+        -- Separate from the vector table itself because the vector table cannot exist without a
+        -- loadable extension, and a migration runs whether or not sqlite-vec is installed on this
+        -- machine. This half is plain SQL: it always applies, so an upgrade never depends on an
+        -- optional dependency being present.
+        CREATE TABLE history_embeddings_meta (
+          source        TEXT NOT NULL,
+          ref           TEXT NOT NULL,
+          principal_id  TEXT NOT NULL,
+          model         TEXT NOT NULL,
+          dims          INTEGER NOT NULL,
+          -- Digest of the model artifact, so a silent model swap is detectable.
+          digest        TEXT NOT NULL,
+          -- The rowid in the vec0 table. Recorded here because vec0 assigns it, and a mapping kept
+          -- only inside the extension is a mapping that cannot be rebuilt or audited.
+          vec_rowid     INTEGER NOT NULL,
+          created_at    TEXT NOT NULL,
+          PRIMARY KEY (source, ref)
+        );
+        CREATE INDEX idx_embedding_model ON history_embeddings_meta(model, dims);
+        CREATE INDEX idx_embedding_vec ON history_embeddings_meta(vec_rowid);
+      `);
+    },
+  },
 ];
 
 export interface MigrationResult {

@@ -600,10 +600,30 @@ export const HOST_OWNED_BLOCK_TYPES = [
   "reconnect-card",
 ] as const;
 
+/**
+ * What a surface block knows about the capture it came from.
+ *
+ * The snapshot id and the bundle reference travel with the block so history can be rendered from
+ * exactly what was captured. Passing only the instance id and a revision would force the renderer to
+ * ask the live row for the props, which is how a transcript ends up showing today's numbers under
+ * yesterday's timestamp.
+ */
+export interface SurfaceBlockRef {
+  instanceId: string | undefined;
+  definitionId: string;
+  textAlternative: string;
+  revision: number;
+  snapshotId: string;
+  bundleRef: string | undefined;
+  catalogDigest: string | undefined;
+  capturedAt: string | undefined;
+  stale: boolean;
+}
+
 export function renderBlock(
   block: Record<string, unknown>,
   index: number,
-  surface: (props: { instanceId: string | undefined; definitionId: string; textAlternative: string; revision: number }) => ReactElement,
+  surface: (props: SurfaceBlockRef) => ReactElement,
 ): ReactElement | null {
   const type = typeof block.type === "string" ? block.type : "";
 
@@ -642,6 +662,11 @@ export function renderBlock(
         definitionId: typeof definitionRef.id === "string" ? definitionRef.id : "",
         textAlternative: typeof snapshot.textAlternative === "string" ? snapshot.textAlternative : "",
         revision: typeof snapshot.capturedRevision === "number" ? snapshot.capturedRevision : 0,
+        snapshotId: typeof snapshot.snapshotId === "string" ? snapshot.snapshotId : "",
+        bundleRef: typeof snapshot.bundleRef === "string" ? snapshot.bundleRef : undefined,
+        catalogDigest: typeof snapshot.catalogDigest === "string" ? snapshot.catalogDigest : undefined,
+        capturedAt: typeof snapshot.capturedAt === "string" ? snapshot.capturedAt : undefined,
+        stale: snapshot.stale === true,
       });
     }
     case "widget-ref": {

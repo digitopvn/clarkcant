@@ -16,6 +16,7 @@
 export const IPC_CHANNELS = Object.freeze([
   "desktop:openExternal",
   "desktop:notify",
+  "desktop:pickDirectory",
   "desktop:requestCredential",
   "desktop:setKeepRunning",
   "desktop:getStatus",

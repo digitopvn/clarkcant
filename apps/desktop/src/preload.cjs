@@ -21,6 +21,10 @@ const bridge = {
   notify(input) {
     return ipcRenderer.invoke("desktop:notify", input);
   },
+  /** Opens the OS directory dialog. Answers with the chosen path, or `canceled` when dismissed. */
+  pickDirectory(input) {
+    return ipcRenderer.invoke("desktop:pickDirectory", input);
+  },
   requestCredential(input) {
     return ipcRenderer.invoke("desktop:requestCredential", input);
   },

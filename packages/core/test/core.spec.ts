@@ -42,6 +42,7 @@ import {
   saveActionBinding,
   updateReadiness,
   applyTaskEvent,
+  handleUserMessage,
 } from "../src/index.ts";
 
 const AT = instantSchema.parse("2026-09-16T04:00:00.000Z");
@@ -736,5 +737,109 @@ describe("routing (T06, T09, T19)", () => {
 
   it("resolves without asking when only one project matches", () => {
     expect(disambiguate([{ id: "p1", label: "only project" }])).toEqual({ resolved: true, id: "p1" });
+  });
+});
+
+describe("choosing between usable capabilities (Phase 9)", () => {
+  function descriptorOn(nodeId: typeof NODE_A): CapabilityDescriptor {
+    return {
+      ref: "project.file.read@1" as CapabilityDescriptor["ref"],
+      executionNodeId: nodeId,
+      summary: "read a file",
+      resourceKinds: ["file"],
+      effectCategory: "read",
+      supportsCancellation: true,
+      requiresConnection: false,
+      readiness: { installed: true, loaded: true, authenticated: true, authorized: true, healthy: true },
+      uiAffordances: [],
+    };
+  }
+
+  const ask = async (
+    deps: ReturnType<typeof makeDeps> & {
+      sampleRecipes: never[];
+      chooseExecutionNode?: (input: {
+        intent: string;
+        candidates: readonly { capabilityRef: string; executionNodeId: string; effectCategory: string }[];
+      }) => Promise<{ capabilityRef: string; executionNodeId: string } | undefined>;
+    },
+    text = "đọc file này",
+  ) =>
+    handleUserMessage(deps, {
+      conversationId: "conv_1" as never,
+      principal: USER,
+      text,
+      at: AT,
+    });
+
+  it("does not ask when only one capability is usable", async () => {
+    const base = makeDeps();
+    registerCapability(base, descriptorOn(NODE_A));
+    let calls = 0;
+    const deps = {
+      ...base,
+      sampleRecipes: [],
+      chooseExecutionNode: async (): Promise<{ capabilityRef: string; executionNodeId: string }> => {
+        calls += 1;
+        return { capabilityRef: "project.file.read@1", executionNodeId: NODE_B };
+      },
+    };
+
+    const outcome = await ask(deps);
+    expect(outcome.resolution).toBe("task-dispatched");
+    expect(calls).toBe(0);
+    expect(JSON.stringify(outcome.messages)).toContain(NODE_A);
+  });
+
+  it("asks when there is a real choice, and uses the answer", async () => {
+    const base = makeDeps();
+    registerCapability(base, descriptorOn(NODE_A));
+    registerCapability(base, descriptorOn(NODE_B));
+    const seen: string[] = [];
+    const deps = {
+      ...base,
+      sampleRecipes: [],
+      chooseExecutionNode: async (input: {
+        intent: string;
+        candidates: readonly { capabilityRef: string; executionNodeId: string; effectCategory: string }[];
+      }): Promise<{ capabilityRef: string; executionNodeId: string }> => {
+        seen.push(...input.candidates.map((candidate) => `${candidate.capabilityRef}@${candidate.executionNodeId}`));
+        return { capabilityRef: "project.file.read@1", executionNodeId: NODE_B };
+      },
+    };
+
+    const outcome = await ask(deps);
+    expect(outcome.resolution).toBe("task-dispatched");
+    expect(seen.sort()).toEqual(["project.file.read@1@node_a", "project.file.read@1@node_b"]);
+    // The dispatch follows the decision, and the lease/grant path is untouched.
+    expect(JSON.stringify(outcome.messages)).toContain(NODE_B);
+  });
+
+  it("ignores a decider that names something it was not offered", async () => {
+    const base = makeDeps();
+    registerCapability(base, descriptorOn(NODE_A));
+    registerCapability(base, descriptorOn(NODE_B));
+    const deps = {
+      ...base,
+      sampleRecipes: [],
+      chooseExecutionNode: async (): Promise<{ capabilityRef: string; executionNodeId: string }> => ({
+        capabilityRef: "project.file.write@1",
+        executionNodeId: NODE_B,
+      }),
+    };
+
+    const outcome = await ask(deps);
+    expect(outcome.resolution).toBe("task-dispatched");
+    // The deterministic order wins, because a decider may only choose from what it was offered.
+    expect(JSON.stringify(outcome.messages)).toContain(NODE_A);
+  });
+
+  it("keeps the deterministic order when no decider is configured", async () => {
+    const base = makeDeps();
+    registerCapability(base, descriptorOn(NODE_A));
+    registerCapability(base, descriptorOn(NODE_B));
+    const outcome = await ask({ ...base, sampleRecipes: [] });
+    expect(outcome.resolution).toBe("task-dispatched");
+    expect(JSON.stringify(outcome.messages)).toContain(NODE_A);
   });
 });

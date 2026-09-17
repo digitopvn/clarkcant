@@ -10,6 +10,7 @@
  */
 
 export * from "./primitives.ts";
+export * from "./redaction.ts";
 export * from "./protocol.ts";
 export * from "./errors.ts";
 export * from "./envelope.ts";
@@ -18,6 +19,8 @@ export * from "./tasks.ts";
 export * from "./effects.ts";
 export * from "./install.ts";
 export * from "./widgets.ts";
+export * from "./surface-composition.ts";
+export * from "./period.ts";
 export * from "./automation.ts";
 export * from "./nodelink.ts";
 export * from "./voice.ts";

@@ -171,7 +171,13 @@ export function connectionBoundRefs(descriptors: readonly CapabilityDescriptor[]
  */
 export function disambiguate(
   candidates: readonly { id: string; label: string }[],
+  /** A decider's answer, when one already chose. Honoured only if it names a candidate. */
+  chosen?: string,
 ): { resolved: true; id: string } | { resolved: false; question: string; options: string[] } {
+  if (chosen !== undefined) {
+    const match = candidates.find((candidate) => candidate.id === chosen);
+    if (match !== undefined) return { resolved: true, id: match.id };
+  }
   if (candidates.length === 1) return { resolved: true, id: candidates[0]!.id };
   if (candidates.length === 0) {
     return {

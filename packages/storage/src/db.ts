@@ -43,7 +43,10 @@ export function openDatabase(options: OpenDatabaseOptions): Database {
   if (!isMemory) {
     mkdirSync(dirname(options.path), { recursive: true });
   }
-  const db = new DatabaseSync(options.path);
+  // Extension loading is permitted but never performed here. sqlite-vec is an optional dependency
+  // and this layer must open a database whether or not it is installed, so permission is granted at
+  // construction — where Node requires it — and the runtime decides whether anything gets loaded.
+  const db = new DatabaseSync(options.path, { allowExtension: true });
 
   if (options.enableWal !== false && !isMemory) {
     db.exec("PRAGMA journal_mode = WAL");

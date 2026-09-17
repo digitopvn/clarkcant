@@ -1,9 +1,58 @@
 import { timingSafeEqual } from "node:crypto";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 
-import { commandEnvelopeSchema, nowInstant, protocolRangeSchema } from "@clarkcant/contracts";
-import { listCapabilitySummaries, handleUserMessage, pinInstance, unpinInstance } from "@clarkcant/core";
-import { createConversation, getDataset, getConversation, listConversations } from "@clarkcant/storage";
+import {
+  type Instant,
+  type MessageRecord,
+  commandEnvelopeSchema,
+  nowInstant,
+  protocolRangeSchema,
+  surfaceCompositionSpecSchema,
+} from "@clarkcant/contracts";
+import {
+  claimLiveOwner,
+  getActionBinding,
+  getInstance,
+  handleUserMessage,
+  invokeMiniAppAction,
+  listCapabilitySummaries,
+  liveOwnerOf,
+  liveStateOf,
+  pinInstance,
+  readSnapshotForDisplay,
+  releaseLiveOwner,
+  sweepExpiredLiveOwners,
+  unpinInstance,
+} from "@clarkcant/core";
+import {
+  type CalendarEventRecord,
+  appendMessage,
+  createConversation,
+  findBundleForSnapshot,
+  findCompositionByInstance,
+  getConversation,
+  getDatasetForPrincipal,
+  getLocalImage,
+  listCalendarEvents,
+  listConversations,
+  listLocalImages,
+  nextMessageSequence,
+  oneRow,
+} from "@clarkcant/storage";
 
+import {
+  MAX_IMAGE_BYTES,
+  createLocalEvent,
+  importLocalImage,
+  removeLocalEvent,
+  removeLocalImage,
+  resolveLiveSections,
+  updateLocalEvent,
+} from "./mini-app-data.ts";
+import { markProjectUsed, projectContext, resolveProject } from "./project-finder.ts";
+import { initialPrompt } from "./project-session.ts";
+import { indexMessages, ingestSessionEntries, searchSessions } from "./session-search.ts";
 import { type NodeServices, buildTimeline } from "./services.ts";
 
 /**
@@ -28,6 +77,15 @@ export interface GatewayRequest {
 export interface GatewayResponse {
   status: number;
   body: unknown;
+  /**
+   * Bytes to send verbatim instead of a JSON body.
+   *
+   * Only imported images use this. Answering an image request with a base64 JSON envelope would
+   * mean the browser holds a copy of the file in memory as text and the content type is whatever
+   * the caller decides, which is the opposite of serving an approved artifact under the type the
+   * host verified.
+   */
+  binary?: { bytes: Uint8Array; contentType: string };
 }
 
 export interface GatewayDeps {
@@ -148,10 +206,22 @@ export async function handleRequest(deps: GatewayDeps, request: GatewayRequest):
 
   // /datasets/:id
   if (segments[0] === "datasets" && segments.length === 2 && request.method === "GET") {
-    const dataset = getDataset(runtime.db, segments[1] ?? "");
+    const dataset = getDatasetForPrincipal(
+      runtime.db,
+      segments[1] ?? "",
+      runtime.identity.ownerPrincipalId,
+    );
     if (!dataset) return fail(404, "RESOURCE_NOT_FOUND", "that dataset is not available on this node");
     // The freshness travels with the data so a cached read cannot be presented as live.
     return json(200, dataset);
+  }
+
+  if (segments[0] === "calendar" || segments[0] === "images") {
+    return handleMiniAppDataRoutes(deps, request, segments, at);
+  }
+
+  if (segments[0] === "search") {
+    return await handleSearchRoutes(deps, request, segments);
   }
 
   if (segments[0] === "conversations") {
@@ -163,6 +233,372 @@ export async function handleRequest(deps: GatewayDeps, request: GatewayRequest):
   }
 
   return fail(404, "NOT_FOUND", `no handler for ${request.method} ${request.path}`);
+}
+
+/**
+ * Append a host-authored reply.
+ *
+ * Written here rather than in the conductor because these are the node's own words about its own
+ * state — which project it opened, which question it is asking — not a model's answer. It is indexed
+ * for search at the same time, so what the conversation shows and what search finds cannot disagree.
+ */
+function appendHostReply(
+  services: NodeServices,
+  input: { conversationId: string; text: string; at: Instant },
+): { messageId: string } {
+  const message: MessageRecord = {
+    messageId: services.conductor.newId("msg") as MessageRecord["messageId"],
+    conversationId: input.conversationId as MessageRecord["conversationId"],
+    role: "assistant",
+    blocks: [{ type: "text", format: "plain", content: input.text, streaming: false }],
+    authorNodeId: services.runtime.identity.nodeId as MessageRecord["authorNodeId"],
+    createdAt: input.at,
+    delivery: "accepted",
+  };
+  appendMessage(services.runtime.db, message, nextMessageSequence(services.runtime.db, input.conversationId));
+  indexMessages(services.search, { conversationId: input.conversationId, messages: [message], at: input.at });
+  return { messageId: message.messageId };
+}
+
+/**
+ * History search.
+ *
+ * The scope comes from the transport, exactly as every other route does: there is no principal in
+ * the query, so a caller cannot ask for somebody else's history by naming them. What a caller *can*
+ * narrow is the conversation, the task and the time window, all of which are filters within the
+ * principal's own history.
+ */
+async function handleSearchRoutes(
+  deps: GatewayDeps,
+  request: GatewayRequest,
+  segments: string[],
+): Promise<GatewayResponse> {
+  const search = deps.services.search;
+
+  // POST /search/sessions/:sessionId/ingest
+  if (segments.length === 4 && segments[1] === "sessions" && segments[3] === "ingest" && request.method === "POST") {
+    const sessionId = segments[2] ?? "";
+    const outcome = ingestSessionEntries(search, { sessionId });
+    if ("error" in outcome) {
+      const status = outcome.error.includes("another principal") ? 403 : 404;
+      return fail(status, "SESSION_NOT_INDEXED", outcome.error);
+    }
+    return json(200, outcome);
+  }
+
+  // GET /search/sessions?q=…&limit=…  and  POST /search/sessions {query}
+  if (segments.length === 2 && segments[1] === "sessions") {
+    const fromQuery = request.query.q ?? "";
+    let text = fromQuery;
+    let limit: number | undefined;
+    let conversationId: string | undefined;
+    let taskId: string | undefined;
+    let source: "message" | "session_entry" | undefined;
+
+    if (request.method === "POST") {
+      const parsed = readJson(request);
+      if (!parsed.ok) return parsed.response;
+      text = typeof parsed.value.query === "string" ? parsed.value.query : "";
+      if (typeof parsed.value.limit === "number") limit = parsed.value.limit;
+      if (typeof parsed.value.conversationId === "string") conversationId = parsed.value.conversationId;
+      if (typeof parsed.value.taskId === "string") taskId = parsed.value.taskId;
+      if (parsed.value.source === "message" || parsed.value.source === "session_entry") source = parsed.value.source;
+    } else if (request.method !== "GET") {
+      return fail(405, "METHOD_NOT_ALLOWED", `${request.method} is not supported on /search/sessions`);
+    }
+
+    if (text.trim() === "") {
+      return fail(400, "INVALID_SCHEMA", "a search must carry a non-empty query");
+    }
+
+    const outcome = await searchSessions(search, {
+      text: text.slice(0, 500),
+      ...(limit === undefined ? {} : { limit: Math.max(1, Math.min(limit, 50)) }),
+      ...(conversationId === undefined ? {} : { conversationId }),
+      ...(taskId === undefined ? {} : { taskId }),
+      ...(source === undefined ? {} : { source }),
+    });
+    return json(200, outcome);
+  }
+
+  return fail(404, "NOT_FOUND", `no handler for ${request.method} ${request.path}`);
+}
+
+/**
+ * Local calendar and imported images.
+ *
+ * Both are principal-scoped at the query rather than checked after the fact, so a request for
+ * somebody else's event resolves to `404` — the same answer as a request for an event that does
+ * not exist. Distinguishing the two would turn this route into a way to enumerate another
+ * principal's calendar.
+ */
+function handleMiniAppDataRoutes(
+  deps: GatewayDeps,
+  request: GatewayRequest,
+  segments: string[],
+  at: () => string,
+): GatewayResponse {
+  const { runtime } = deps.services;
+  const principalId = runtime.identity.ownerPrincipalId;
+  const dataDeps = {
+    db: runtime.db,
+    nodeId: runtime.identity.nodeId,
+    dataDir: runtime.dataDir,
+    now: () => at() as never,
+    newId: deps.services.conductor.newId,
+  };
+
+  /* Calendar */
+  if (segments[0] === "calendar" && segments[1] === "events") {
+    if (segments.length === 2) {
+      if (request.method === "GET") {
+        const from = request.query.from;
+        const to = request.query.to;
+        const events = listCalendarEvents(runtime.db, {
+          principalId,
+          ...(from === undefined ? {} : { from }),
+          ...(to === undefined ? {} : { to }),
+        });
+        return json(200, {
+          events: events.map(toEventView),
+          // Stated in the response rather than only in the docs: these are local records, and a
+          // client that assumed a provider sync would be wrong about what it is showing.
+          source: "local",
+        });
+      }
+      if (request.method === "POST") {
+        const parsed = readJson(request);
+        if (!parsed.ok) return parsed.response;
+        const created = createLocalEvent(dataDeps, {
+          principalId,
+          title: parsed.value.title,
+          startsAt: parsed.value.startsAt,
+          endsAt: parsed.value.endsAt,
+          timezone: parsed.value.timezone,
+        });
+        if (!created.ok) return fail(400, created.code, created.message);
+        return json(201, { event: toEventView(created.event) });
+      }
+      return fail(405, "METHOD_NOT_ALLOWED", `${request.method} is not supported on /calendar/events`);
+    }
+
+    const eventId = segments[2];
+    if (eventId === undefined) return fail(400, "INVALID_SCHEMA", "a calendar route must name an event");
+    if (request.method === "PATCH" || request.method === "PUT") {
+      const parsed = readJson(request);
+      if (!parsed.ok) return parsed.response;
+      const existing = listCalendarEvents(runtime.db, { principalId }).find((event) => event.eventId === eventId);
+      if (existing === undefined) return fail(404, "RESOURCE_NOT_FOUND", "that event is not on this calendar");
+      const updated = updateLocalEvent(dataDeps, {
+        principalId,
+        eventId,
+        title: parsed.value.title ?? existing.title,
+        startsAt: parsed.value.startsAt ?? existing.startsAt,
+        endsAt: parsed.value.endsAt ?? existing.endsAt,
+        timezone: parsed.value.timezone ?? existing.timezone,
+      });
+      if (!updated.ok) {
+        return fail(updated.code === "EVENT_NOT_FOUND" ? 404 : 400, updated.code, updated.message);
+      }
+      return json(200, { event: toEventView(updated.event) });
+    }
+    if (request.method === "DELETE") {
+      const removed = removeLocalEvent(dataDeps, { principalId, eventId });
+      if (!removed.ok) return fail(404, removed.code, removed.message);
+      return json(200, { removed: true });
+    }
+    return fail(405, "METHOD_NOT_ALLOWED", `${request.method} is not supported on a calendar event`);
+  }
+
+  /* Images */
+  if (segments[0] === "images") {
+    if (segments.length === 1) {
+      if (request.method === "GET") {
+        return json(200, { images: listLocalImages(runtime.db, principalId).map(toImageView) });
+      }
+      if (request.method === "POST") {
+        const parsed = readJson(request);
+        if (!parsed.ok) return parsed.response;
+        const dataBase64 = typeof parsed.value.dataBase64 === "string" ? parsed.value.dataBase64 : "";
+        if (dataBase64.length === 0) {
+          return fail(400, "INVALID_SCHEMA", "an image import must carry a dataBase64 field");
+        }
+        // Checked before decoding: a 100 MB base64 string should be refused without allocating it.
+        if (dataBase64.length > Math.ceil((MAX_IMAGE_BYTES * 4) / 3) + 1024) {
+          return fail(413, "IMAGE_TOO_LARGE", `an imported image must be at most ${MAX_IMAGE_BYTES} bytes`);
+        }
+        const bytes = Buffer.from(dataBase64, "base64");
+        const imported = importLocalImage(dataDeps, {
+          principalId,
+          bytes,
+          declaredMimeType: typeof parsed.value.mimeType === "string" ? parsed.value.mimeType : "",
+          altText: parsed.value.altText,
+          ...(typeof parsed.value.filename === "string" ? { filename: parsed.value.filename } : {}),
+        });
+        if (!imported.ok) return fail(415, imported.code, imported.message);
+        return json(201, { image: toImageView(imported.image) });
+      }
+      return fail(405, "METHOD_NOT_ALLOWED", `${request.method} is not supported on /images`);
+    }
+
+    const imageId = segments[1];
+    if (imageId === undefined) return fail(400, "INVALID_SCHEMA", "an image route must name an image");
+    const image = getLocalImage(runtime.db, imageId, principalId);
+    if (image === undefined) return fail(404, "RESOURCE_NOT_FOUND", "that image is not on this node");
+
+    if (request.method === "GET") {
+      // The path was written by `importLocalImage` under the node's blob directory. It is checked
+      // anyway: a row edited by hand must not become an arbitrary file read.
+      const blobRoot = resolve(runtime.dataDir, "blobs");
+      const target = resolve(image.blobPath);
+      if (!target.startsWith(`${blobRoot}/`)) {
+        return fail(500, "BLOB_PATH_ESCAPES_ROOT", "the stored image path is outside the blob directory");
+      }
+      let bytes: Uint8Array;
+      try {
+        bytes = readFileSync(target);
+      } catch {
+        // A row whose bytes are gone is a missing image, not a server fault: the client shows its
+        // missing-image fallback and the row stays so the user can see what was there.
+        return fail(410, "BLOB_MISSING", "the stored bytes for that image are no longer on disk");
+      }
+      return {
+        status: 200,
+        body: null,
+        // The content type is the one the host verified from the magic bytes, never the one the
+        // uploader declared.
+        binary: { bytes, contentType: image.mimeType },
+      };
+    }
+    if (request.method === "DELETE") {
+      const removed = removeLocalImage(dataDeps, { principalId, imageId });
+      if (!removed) return fail(404, "RESOURCE_NOT_FOUND", "that image is not on this node");
+      return json(200, { removed: true });
+    }
+    return fail(405, "METHOD_NOT_ALLOWED", `${request.method} is not supported on an image`);
+  }
+
+  return fail(404, "NOT_FOUND", `no handler for ${request.method} ${request.path}`);
+}
+
+/**
+ * Resolve what a live composed surface shows right now.
+ *
+ * The rows are read here rather than left to the client to fetch per dataset reference, so the live
+ * view and the snapshot bundle are the same shape and the client has one render path. The state is
+ * read under the same call, which is what lets a control start at the value the server holds
+ * instead of at the default in the spec.
+ */
+function resolveLiveWidget(
+  services: NodeServices,
+  conversationId: string,
+  instanceId: string,
+  principalId: string,
+): GatewayResponse {
+  const { runtime } = services;
+  const instance = getInstance(services.conductor, instanceId);
+  if (instance === undefined) {
+    return fail(404, "RESOURCE_NOT_FOUND", "that instance is not on this node");
+  }
+  if (instance.ownerPrincipalId !== principalId) {
+    return fail(403, "NOT_AUTHORIZED", "that instance belongs to another principal");
+  }
+
+  const composition = findCompositionByInstance(runtime.db, instanceId, principalId);
+  if (composition === undefined) {
+    // A bundled composition is a state, not an error: the instance exists and the client falls back
+    // to a single-widget render or to the message's text alternative.
+    return fail(404, "RESOURCE_NOT_FOUND", "that instance has no composition on this node");
+  }
+
+  const state = liveStateOf(services.conductor, instanceId);
+  const owner = liveOwnerOf(services.conductor, instanceId);
+  const resolved = resolveLiveSections(
+    {
+      db: runtime.db,
+      nodeId: runtime.identity.nodeId,
+      dataDir: runtime.dataDir,
+      now: () => nowInstant() as never,
+      newId: services.conductor.newId,
+    },
+    { principalId: principalId as never, composition, state: state?.body ?? {} },
+  );
+
+  // Bindings are re-read here rather than taken from the stored spec, because a stored document
+  // must not be able to introduce an action after the fact. The digest travels with each one so a
+  // client can send back exactly what it displayed.
+  const bindings = instance.actionBindingIds.flatMap((bindingId) => {
+    const binding = getActionBinding(services.conductor, bindingId);
+    if (binding === undefined) return [];
+    const spec = composition.actions.find((action) => action.actionBindingId === bindingId);
+    if (spec === undefined) return [];
+    return [
+      {
+        actionBindingId: binding.actionBindingId,
+        sectionId: spec.sectionId,
+        label: binding.label,
+        kind: binding.proposal.kind,
+        effectCategory: binding.effectCategory,
+        bindingDigest: binding.bindingDigest,
+      },
+    ];
+  });
+
+  return json(200, {
+    compositionId: composition.compositionId,
+    // A live surface never mints its own authority: the bindings below are references, and every
+    // invocation is re-authorized against the instance, the digest and the current revision.
+    readOnly: false,
+    spec: composition,
+    bindings,
+    sections: resolved.sections,
+    availability: resolved.availability,
+    revision: instance.revision,
+    stateRevision: state?.revision ?? 0,
+    state: state?.body ?? {},
+    ownerSurface: owner?.surface ?? null,
+    capturedAt: null,
+    tombstone: null,
+    period: resolved.period,
+    timezone: resolved.timezone,
+    conversationId,
+  });
+}
+
+function toEventView(event: CalendarEventRecord): Record<string, unknown> {
+  return {
+    eventId: event.eventId,
+    title: event.title,
+    startsAt: event.startsAt,
+    endsAt: event.endsAt,
+    timezone: event.timezone,
+    date: event.localDate,
+    source: "local",
+  };
+}
+
+function toImageView(image: {
+  imageId: string;
+  mimeType: string;
+  byteSize: number;
+  width: number | undefined;
+  height: number | undefined;
+  digest: string;
+  altText: string;
+  createdAt: string;
+}): Record<string, unknown> {
+  return {
+    imageId: image.imageId,
+    mimeType: image.mimeType,
+    byteSize: image.byteSize,
+    width: image.width ?? null,
+    height: image.height ?? null,
+    digest: image.digest,
+    alt: image.altText,
+    createdAt: image.createdAt,
+    /** Where the bytes can be fetched. Opaque: the client never builds a blob path. */
+    url: `/images/${image.imageId}`,
+  };
 }
 
 async function handleConversationRoutes(
@@ -234,12 +670,18 @@ async function handleConversationRoutes(
       return fail(400, "INVALID_SCHEMA", "a message must carry a non-empty text field");
     }
 
+    const at_ = at() as never;
     const outcome = await handleUserMessage(services.conductor, {
       conversationId: conversationId as never,
       principal,
       text: text.slice(0, 20_000),
-      at: at() as never,
+      at: at_,
     });
+
+    // Indexed here, where the messages were just written, so a message that exists is searchable.
+    // Doing it in the same request is what keeps "the conversation shows it" and "search finds it"
+    // from disagreeing after a crash between the two.
+    indexMessages(services.search, { conversationId, messages: outcome.messages, at: at_ });
 
     // A turn the model answered is already finished, so reporting it as accepted would be a
     // lie about what the caller is holding. 202 is reserved for the paths that genuinely have
@@ -256,6 +698,73 @@ async function handleConversationRoutes(
     });
   }
 
+  // /conversations/:id/start-session
+  if (segments.length === 3 && segments[2] === "start-session" && request.method === "POST") {
+    const parsed = readJson(request);
+    if (!parsed.ok) return parsed.response;
+    const text = typeof parsed.value.text === "string" ? parsed.value.text.trim() : "";
+    if (text === "") {
+      return fail(400, "INVALID_SCHEMA", "a start-session request must carry the user's text");
+    }
+
+    const resolution = await resolveProject(services.projects, { intent: text });
+    const startedAt = at() as never;
+
+    if (resolution.status === "rejected") {
+      return fail(409, resolution.code, resolution.message);
+    }
+
+    if (resolution.status === "clarify" || resolution.status === "ask-for-directory") {
+      // One question, and it is written into the conversation so the answer has somewhere to land.
+      const message = appendHostReply(services, {
+        conversationId,
+        text:
+          resolution.status === "clarify"
+            ? `${resolution.question}\n${resolution.options.map((option: string) => `- ${option}`).join("\n")}`
+            : resolution.question,
+        at: startedAt,
+      });
+      return json(200, {
+        status: resolution.status === "clarify" ? "clarify" : "needs-path",
+        question: resolution.question,
+        options: resolution.status === "clarify" ? resolution.options : [],
+        messageId: message.messageId,
+        timeline: buildTimeline(services, { conversationId, afterSequence: 0 }),
+      });
+    }
+
+    // Resolved. The directory was verified by the finder; the session is started in it, and the brief
+    // carries the same path, which is what makes "work in this project" true.
+    const availability = services.projectSessions.available();
+    if (!availability.available) {
+      return fail(503, "SESSION_UNAVAILABLE", availability.reason ?? "this node cannot start a session");
+    }
+
+    const context = projectContext(resolution.project);
+    const session = await services.projectSessions.start({
+      goal: initialPrompt(text, resolution.project.name, context),
+      projectRoots: [resolution.project.path],
+    });
+    markProjectUsed(services.projects, resolution.project.projectId);
+
+    const message = appendHostReply(services, {
+      conversationId,
+      text: `Đã mở phiên làm việc trong ${resolution.project.name} (${resolution.relPath}). ${context}`,
+      at: startedAt,
+    });
+
+    return json(201, {
+      status: "started",
+      projectName: resolution.project.name,
+      relPath: resolution.relPath,
+      mode: resolution.mode,
+      sessionId: session.sessionId,
+      sessionFile: session.sessionFile ?? null,
+      messageId: message.messageId,
+      timeline: buildTimeline(services, { conversationId, afterSequence: 0 }),
+    });
+  }
+
   // /conversations/:id/timeline
   if (segments.length === 3 && segments[2] === "timeline" && request.method === "GET") {
     const after = Number.parseInt(request.query.after ?? "0", 10);
@@ -263,6 +772,212 @@ async function handleConversationRoutes(
       return fail(400, "INVALID_SCHEMA", "the `after` cursor must be a non-negative integer");
     }
     return json(200, buildTimeline(services, { conversationId, afterSequence: after }));
+  }
+
+  // /conversations/:id/widgets/:instanceId/actions
+  if (
+    segments.length === 5 &&
+    segments[2] === "widgets" &&
+    segments[4] === "actions" &&
+    request.method === "POST"
+  ) {
+    const parsed = readJson(request);
+    if (!parsed.ok) return parsed.response;
+    const instanceId = segments[3] ?? "";
+
+    // The URL and the body must agree. A body that names a different instance is a request that
+    // intends something other than what its own path says, and resolving which one is authoritative
+    // is a decision this route should not have to make.
+    if (typeof parsed.value.instanceId === "string" && parsed.value.instanceId !== instanceId) {
+      return fail(400, "INSTANCE_MISMATCH", "the body names a different instance than the path");
+    }
+
+    const invocation = {
+      conversationId,
+      principalId: runtime.identity.ownerPrincipalId,
+      instanceId,
+      actionBindingId: typeof parsed.value.actionBindingId === "string" ? parsed.value.actionBindingId : "",
+      expectedRevision:
+        typeof parsed.value.expectedRevision === "number" ? parsed.value.expectedRevision : Number.NaN,
+      expectedBindingDigest:
+        typeof parsed.value.expectedBindingDigest === "string" ? parsed.value.expectedBindingDigest : "",
+      input:
+        typeof parsed.value.input === "object" && parsed.value.input !== null && !Array.isArray(parsed.value.input)
+          ? (parsed.value.input as Record<string, unknown>)
+          : {},
+      invocationId: typeof parsed.value.invocationId === "string" ? parsed.value.invocationId : "",
+    };
+
+    if (invocation.actionBindingId === "" || invocation.invocationId === "") {
+      return fail(400, "INVALID_SCHEMA", "an action invocation needs an actionBindingId and an invocationId");
+    }
+    if (!Number.isFinite(invocation.expectedRevision)) {
+      return fail(400, "INVALID_SCHEMA", "an action invocation needs the expectedRevision the client saw");
+    }
+
+    const outcome = invokeMiniAppAction(services.conductor, invocation);
+    if (!outcome.ok) {
+      const status =
+        outcome.code === "INSTANCE_UNKNOWN" || outcome.code === "ACTION_UNKNOWN"
+          ? 404
+          : outcome.code === "NOT_AUTHORIZED"
+            ? 403
+            : outcome.code === "REVISION_MISMATCH"
+              ? 409
+              : outcome.code === "BINDING_STALE" || outcome.code === "INVOCATION_KEY_REUSED"
+                ? 409
+                : 400;
+      return fail(status, outcome.code, outcome.message, {
+        ...(outcome.currentRevision === undefined ? {} : { currentRevision: outcome.currentRevision }),
+      });
+    }
+
+    return json(200, {
+      duplicate: outcome.duplicate,
+      instanceId: outcome.instanceId,
+      revision: outcome.revision,
+      stateRevision: outcome.stateRevision,
+      state: outcome.state,
+      pinId: outcome.pinId ?? null,
+      // The whole page comes back after a mutation, so the client does not have to guess whether
+      // its cursor is still valid.
+      timeline: buildTimeline(services, { conversationId, afterSequence: 0 }),
+    });
+  }
+
+  // /conversations/:id/widgets/:instanceId/live
+  if (
+    segments.length === 5 &&
+    segments[2] === "widgets" &&
+    segments[4] === "live" &&
+    request.method === "GET"
+  ) {
+    const instanceId = segments[3] ?? "";
+    return resolveLiveWidget(services, conversationId, instanceId, runtime.identity.ownerPrincipalId);
+  }
+
+  // /conversations/:id/widgets/:instanceId/live-owner
+  if (
+    segments.length === 5 &&
+    segments[2] === "widgets" &&
+    segments[4] === "live-owner" &&
+    (request.method === "POST" || request.method === "DELETE")
+  ) {
+    const instanceId = segments[3] ?? "";
+    const parsed = readJson(request);
+    if (!parsed.ok) return parsed.response;
+    const ownerToken = typeof parsed.value.ownerToken === "string" ? parsed.value.ownerToken : "";
+    if (ownerToken === "") {
+      return fail(400, "INVALID_SCHEMA", "a live-owner request must carry the client's ownerToken");
+    }
+
+    if (request.method === "DELETE") {
+      // A release that names a token this client does not hold is a release of somebody else's
+      // claim, and is refused by the token comparison rather than by a principal check.
+      const released = releaseLiveOwner(services.conductor, instanceId, ownerToken);
+      if (!released) {
+        return fail(409, "NOT_OWNER", "that client does not hold the live claim on this instance");
+      }
+      return json(200, { released: true, ownerSurface: null });
+    }
+
+    const surface = parsed.value.surface === "pin" ? "pin" : "inline";
+    const leaseMs = typeof parsed.value.leaseMs === "number" && parsed.value.leaseMs > 0 ? parsed.value.leaseMs : undefined;
+    // Expired claims are cleared first so the reply distinguishes "somebody else is holding it"
+    // from "somebody else held it until a moment ago".
+    sweepExpiredLiveOwners(services.conductor);
+    const claimed = claimLiveOwner(services.conductor, {
+      instanceId,
+      surface,
+      ownerToken,
+      ...(leaseMs === undefined ? {} : { leaseMs }),
+    });
+    if (!claimed.ok) {
+      return fail(409, claimed.code, "another surface holds the live view of this instance", {
+        heldBySurface: claimed.heldBy.surface,
+        ...(claimed.expiresAt === undefined ? {} : { expiresAt: claimed.expiresAt }),
+      });
+    }
+    return json(200, {
+      claimed: true,
+      surface,
+      expiresAt: claimed.expiresAt,
+      ...(claimed.recoveredFrom === undefined ? {} : { recovered: true }),
+    });
+  }
+
+  // /conversations/:id/snapshots/:snapshotId/presentation
+  if (
+    segments.length === 5 &&
+    segments[2] === "snapshots" &&
+    segments[4] === "presentation" &&
+    request.method === "GET"
+  ) {
+    const snapshotId = segments[3] ?? "";
+    const display = readSnapshotForDisplay(services.conductor, snapshotId);
+    if (display === undefined) {
+      return fail(404, "RESOURCE_NOT_FOUND", "that snapshot is not on this node");
+    }
+    const bundle = findBundleForSnapshot(runtime.db, snapshotId, runtime.identity.ownerPrincipalId);
+    if (bundle !== undefined && bundle.instanceId !== display.snapshot.instanceId) {
+      return fail(409, "OWNERSHIP_MISMATCH", "the stored bundle does not belong to this snapshot's instance");
+    }
+    return json(200, {
+      snapshot: display.snapshot,
+      // `read-only` is the point of this route: history never carries an action binding, so a
+      // snapshot cannot be used to mutate anything even if a client tried.
+      readOnly: true,
+      text: display.text,
+      ...(bundle === undefined
+        ? { bundleRef: null, sections: [], tombstone: null }
+        : {
+            bundleRef: bundle.bundleId,
+            sections: bundle.sections,
+            // The spec travels with the bundle so a historical render shows the period and template
+            // it was captured with, not the defaults of whatever the live instance is doing now.
+            spec: bundle.composition,
+            tombstone: bundle.tombstone ?? null,
+            catalogDigest: bundle.catalogDigest,
+          }),
+    });
+  }
+
+  // /conversations/:id/widgets/:instanceId/composition
+  if (
+    segments.length === 5 &&
+    segments[2] === "widgets" &&
+    segments[4] === "composition" &&
+    request.method === "GET"
+  ) {
+    const instanceId = segments[3] ?? "";
+    const principalId = runtime.identity.ownerPrincipalId;
+    const composition = findCompositionByInstance(runtime.db, instanceId, principalId);
+    if (composition === undefined) {
+      return fail(404, "RESOURCE_NOT_FOUND", "that instance has no composition on this node");
+    }
+    const spec = surfaceCompositionSpecSchema.parse(composition);
+    // The bundle is read through the snapshot the message referenced, so a composition without a
+    // captured snapshot answers with the spec alone and the client falls back to text.
+    const snapshot = oneRow<{ snapshot_id: string }>(
+      runtime.db,
+      "SELECT snapshot_id FROM widget_snapshots WHERE instance_id = ? ORDER BY captured_at DESC LIMIT 1",
+      instanceId,
+    );
+    const bundle =
+      snapshot === undefined ? undefined : findBundleForSnapshot(runtime.db, snapshot.snapshot_id, principalId);
+    if (bundle !== undefined && bundle.instanceId !== instanceId) {
+      // A bundle that names a different instance is a malformed ownership relation, not a bundle.
+      return fail(409, "OWNERSHIP_MISMATCH", "the stored bundle does not belong to this instance");
+    }
+    return json(200, {
+      compositionId: spec.compositionId,
+      spec,
+      bundleRef: bundle?.bundleId ?? null,
+      tombstone: bundle?.tombstone ?? null,
+      sections: bundle?.sections ?? [],
+      capturedAt: bundle?.capturedAt ?? null,
+      byteSize: bundle?.byteSize ?? 0,
+    });
   }
 
   // /conversations/:id/pins

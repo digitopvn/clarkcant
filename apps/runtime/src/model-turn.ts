@@ -41,7 +41,22 @@ export interface ViewDescriptor {
   id: string;
   /** Human label, quoted back in the tool's description so the model knows it exists. */
   label: string;
-  build: (input: ViewRequest) => MessageBlock;
+  /**
+   * Extra sentence about this view's props, quoted in the tool description.
+   *
+   * A view whose props are a controlled vocabulary has to say so: a model that does not know the
+   * names it may use will invent one, and the refusal then costs the user a turn.
+   */
+  notes?: string;
+  /**
+   * Build the block.
+   *
+   * Maybe asynchronous because one view — the composed surface — has to consult a selector and read
+   * records before it can say what to draw. It is awaited inside the tool handler, which is the only
+   * place with a turn to cancel; putting that work in a React renderer or a synchronous build would
+   * mean an abandoned turn could still write a surface.
+   */
+  build: (input: ViewRequest) => MessageBlock | Promise<MessageBlock>;
 }
 
 export interface ViewRequest {
@@ -51,6 +66,10 @@ export interface ViewRequest {
   principal: Principal;
   /** The message this view will be captured into, allocated before the turn. */
   messageId: string;
+  /** The conversation the turn belongs to, so a view can be persisted against it. */
+  conversationId: string;
+  /** Aborted when the turn is stopped, so a build in flight does not persist anything. */
+  signal?: AbortSignal;
 }
 
 export const SHOW_VIEW_TOOL = "show_view";
@@ -75,6 +94,9 @@ interface Turn {
   /** The message this turn is being written into. Set before the prompt. */
   messageId?: string;
   unsubscribe: () => void;
+  /** Aborted when the turn is stopped, so an in-flight build knows not to commit. */
+  abort: AbortController;
+  conversationId: string;
 }
 
 function isTextDelta(event: WorkerEvent): event is WorkerEvent & { delta: string } {
@@ -111,7 +133,12 @@ function showViewParameters(
     properties: {
       view: {
         type: "string",
-        description: `Which view to show. One of: ${views.map((entry) => entry.id).join(", ")}.`,
+        description:
+          `Which view to show. One of: ${views.map((entry) => entry.id).join(", ")}. ` +
+          views
+            .filter((entry) => entry.notes !== undefined)
+            .map((entry) => `${entry.id}: ${entry.notes}`)
+            .join(" "),
         enum: views.map((entry) => entry.id),
       },
       caption: {
@@ -156,15 +183,39 @@ export async function createModelTurn(options: {
    * nothing — which looks like a broken widget rather than a missing fact.
    */
   datasetRefs?: () => readonly string[];
+  /**
+   * Where a worker transcript is written.
+   *
+   * A conversation turn runs in this process, so its transcript is the one that lets a restart
+   * resume the thread instead of introducing the user to a new assistant on every start.
+   */
+  sessionDir?: string;
+  /** Called once a transcript exists on disk, so the runtime can index it. */
+  onSessionFile?: (input: { sessionId: string; sessionFile: string }) => void;
+  /**
+   * Further tools the turn may call, read at the moment a turn starts.
+   *
+   * Supplied by the composition root rather than imported here, so this module stays the seam rather
+   * than the place that decides which capabilities exist.
+   */
+  extraTools?: () => readonly ToolDefinition[];
 }): Promise<ModelTurn | undefined> {
   const selection = modelFromEnv(options.env);
   if (selection === undefined) return undefined;
 
   const readViews = (): readonly ViewDescriptor[] => options.views?.() ?? [];
   const readDatasetRefs = (): readonly string[] => options.datasetRefs?.() ?? [];
+  const readExtraTools = (): readonly ToolDefinition[] => options.extraTools?.() ?? [];
   const budget = modelBudgetFromEnv(options.env);
   const adapter =
-    options.adapter ?? new RealPiAdapter({ cwd: options.cwd, model: selection, builtinTools: [] });
+    options.adapter ??
+    new RealPiAdapter({
+      cwd: options.cwd,
+      model: selection,
+      builtinTools: [],
+      ...(options.sessionDir === undefined ? {} : { sessionDir: options.sessionDir }),
+      ...(options.onSessionFile === undefined ? {} : { onSessionFile: options.onSessionFile }),
+    });
   const availability = await adapter.availability();
   const turns = new Map<string, Turn>();
 
@@ -217,12 +268,14 @@ export async function createModelTurn(options: {
             : {};
         const caption = typeof params.caption === "string" ? params.caption : descriptor.label;
         try {
-          const block = descriptor.build({
+          const block = await descriptor.build({
             props,
             caption,
             at: new Date().toISOString() as Instant,
             principal,
             messageId: turn.messageId,
+            conversationId: turn.conversationId,
+            signal: turn.abort.signal,
           });
           // Flushed first: the text the model wrote before asking for this view belongs above it.
           flushText(turn);
@@ -249,9 +302,20 @@ export async function createModelTurn(options: {
     // creation — the SDK fixes its custom tool set then, and a tool added afterwards never reaches
     // the registry the allowlist consults. The tool writes into this object, so it has to exist
     // first; the session id is filled in once there is one.
-    const turn: Turn = { sessionId: "", pending: [], segments: [], unsubscribe: () => {} };
-    const customTools =
-      views.length === 0 ? [] : [showViewTool(turn, principal, views, viewById, datasetRefs)];
+    const turn: Turn = {
+      sessionId: "",
+      pending: [],
+      segments: [],
+      unsubscribe: () => {},
+      abort: new AbortController(),
+      conversationId,
+    };
+    // The view tool is only registered when there is a catalog; the extra tools stand on their own
+    // and are registered whatever the catalog says.
+    const customTools = [
+      ...(views.length === 0 ? [] : [showViewTool(turn, principal, views, viewById, datasetRefs)]),
+      ...readExtraTools(),
+    ];
 
     const handle = await adapter.createWorkerSession({
       // The brief is per conversation rather than per message, so the model keeps the thread
@@ -294,6 +358,7 @@ export async function createModelTurn(options: {
       turn.pending.length = 0;
       turn.segments.length = 0;
       turn.messageId = input.messageId;
+      turn.abort = new AbortController();
 
       // The adapter stops a turn that overruns its brief, but this is the layer holding an open
       // HTTP request, so it does not delegate the guarantee: without a deadline here a provider
@@ -302,6 +367,9 @@ export async function createModelTurn(options: {
       let timer: NodeJS.Timeout | undefined;
       const deadline = new Promise<never>((_, reject) => {
         timer = setTimeout(() => {
+          // The build is told as well as the adapter: a composition in flight would otherwise
+          // finish its own work after the turn it belongs to has already been stopped.
+          turn.abort.abort();
           void adapter.abort(turn.sessionId, `turn exceeded ${budget.maxWallClockMs} ms`);
           reject(
             new Error(`${describe()} did not finish within ${budget.maxWallClockMs} ms; the turn was stopped`),

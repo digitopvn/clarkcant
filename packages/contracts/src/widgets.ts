@@ -105,6 +105,19 @@ export const widgetSnapshotSchema = z.strictObject({
   /** Mandatory: history must be readable when the renderer is gone. */
   textAlternative: z.string().min(1).max(4000),
   presentationRef: z.string().min(1).max(300),
+  /**
+   * Opaque reference to the immutable presentation bundle, when one was captured.
+   *
+   * Additive on purpose. `presentationRef` only ever said which renderer drew the block; it
+   * never carried the values the user saw, so a history entry could only be re-rendered by
+   * asking the live source what it currently holds. A snapshot written before this field
+   * existed still parses, and the absence of a bundle is itself the signal to fall back to the
+   * text alternative instead of substituting current props.
+   */
+  bundleRef: z.string().min(1).max(200).optional(),
+  bundleSchemaVersion: z.int().nonnegative().optional(),
+  /** Digest of the catalog the snapshot was captured against, so drift is detectable. */
+  catalogDigest: z.string().min(1).max(120).optional(),
   /** True when the snapshot predates the instance's current revision. */
   stale: z.boolean(),
 });

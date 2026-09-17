@@ -1,6 +1,6 @@
 ---
 title: "Phase 10: semantic-retrieval"
-status: todo
+status: done
 ---
 
 # Phase 10: Semantic retrieval + RRF
@@ -11,8 +11,9 @@ status: todo
 
 ## Gates trước khi bắt đầu
 - [x] **Native dep — đã chốt 2026-09-17:** user chấp nhận optional native deps (sqlite-vec loadable extension, onnxruntime-node) cho search. Ràng buộc: khai báo `optionalDependencies`, install path mặc định không fail khi thiếu, search rơi về FTS-only có reason. Cập nhật README câu "No native modules are required" → "không bắt buộc; semantic search là optional". Ghi ADR ngắn trong `docs/research-and-decisions.md`.
-- [ ] `node:sqlite` `allowExtension: true` + `loadExtension()` đã xác minh khả dụng trên Node hiện tại (probe 2026-09-17). Cần probe load sqlite-vec thật trên macOS arm64 và Linux x64.
-- [ ] Kích thước model E5-small quantized và thời gian embed/batch trên máy dev đo thật trước khi cam kết index toàn bộ history.
+- [x] `node:sqlite` `allowExtension: true` + `loadExtension()` đã xác minh khả dụng trên Node hiện tại — **đã probe thật 2026-09-17 trên macOS arm64**: `new DatabaseSync(path, { allowExtension: true })` + `loadExtension(vec0.dylib)` → `vec_version()` `v0.1.9`, tạo `vec0` với `distance_metric=cosine`, insert và KNN đều chạy. `DatabaseSync` phải nhận `allowExtension` **lúc khởi tạo**; gọi `enableLoadExtension()` sau đó trả `ERR_INVALID_STATE`.
+- [x] Probe trên **Linux x64 / CI matrix**: đã nối vào CI — `tools/probe-vector-extension.mjs` chạy ở step "Probe the optional vector extension" trên `ubuntu-latest` (linux x64), sau `pnpm install`. Probe phân biệt ba trạng thái: **không cài** → exit 0 kèm lý do (một trạng thái được hỗ trợ); **cài và dùng được** → exit 0 kèm version; **cài mà không load/create/insert/KNN được** → exit 1, vì đó là lỗi thật và một fallback im lặng sẽ giấu nó. Chạy thật trên máy dev (darwin arm64): `v0.1.9`, create/insert/KNN đều ok. Kết quả trên Linux x64 nằm ở lần chạy CI của commit này và được ghi lại trong report — không được đọc là đã xanh trước khi thấy log.
+- [x] Kích thước model E5-small quantized và thời gian embed/batch trên máy dev đo thật — thời gian đã đo (batch 3 passage 435 ms, một passage ấm 50 ms), **kích thước artifact không tìm thấy** vì cache của thư viện không nằm ở đường dẫn thông thường; report ghi rõ là không đo được thay vì ghi số suy đoán.
 
 ## Related code files
 Root: `/Volumes/GOON/www/digitop/clarkcant/`.
@@ -31,3 +32,13 @@ Root: `/Volumes/GOON/www/digitop/clarkcant/`.
 ## Success criteria
 - Hybrid cải thiện acceptable rate so với baseline Phase 8 trên cùng corpus, hoặc ghi rõ không cải thiện và giữ FTS-only.
 - Native deps chỉ optional; `pnpm verify` pass khi extension/model vắng; README/ADR đã cập nhật.
+
+## Kết quả
+
+Report: [`plans/reports/verification-260917-1742-semantic-retrieval-hybrid.md`](../reports/verification-260917-1742-semantic-retrieval-hybrid.md).
+
+Đã làm đủ: migration 15 (`history_embeddings_meta`), `history_vec` tạo lazy bằng `sqlite-vec` v0.1.9, `embeddings-local.ts` (E5-small q8, prefix query/passage), `hybrid-rank.ts` (RRF k=60 + ceiling cosine), `vector-index.ts` (nạp model một lần, ingest resumable, status có lý do), đường hybrid sau `CLARKCANT_SEARCH_SEMANTIC`.
+
+**Đo trên corpus Phase 8 (15 row, 34 query): FTS thuần 31/34 top-1; hybrid cũng 31/34 khi ceiling 0.1 và chỉ 25/34 khi ceiling ≥ 0.2** — KNN luôn trả hàng xóm gần nhất nên câu hỏi "không có đáp án" bị trả về kết quả gần đúng (5/5 ca ở ceiling ≥ 0.25). Subset semantic-only không tăng (9/12 ở cả hai đường). Kết luận: **giữ FTS-only làm mặc định**, `CLARKCANT_SEARCH_SEMANTIC` mặc định tắt; đã ghi ADR trong `docs/research-and-decisions.md` và runbook trong `docs/mini-app/jev-configuration.md`.
+
+Gate còn lại của phase: kích thước artifact ONNX không đo được trên máy này (không tìm thấy cache của thư viện) — ghi rõ trong report thay vì ghi số không quan sát được.

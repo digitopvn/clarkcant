@@ -12,6 +12,7 @@ import { createServer } from "node:http";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
+import type { MessageBlock } from "@clarkcant/contracts";
 import { applyEnvFile } from "@clarkcant/pi-adapter";
 
 import { handleRequest, type GatewayResponse } from "./gateway.ts";
@@ -21,7 +22,11 @@ import { SAMPLE_DATASET } from "@clarkcant/data-canvas/sample";
 
 import { createModelTurn, type ViewDescriptor } from "./model-turn.ts";
 import { buildViewCatalog } from "./view-catalog.ts";
-import { bootNodeServices } from "./services.ts";
+import { composeMiniApp } from "./compose-mini-app.ts";
+import { createNodeTools } from "./node-tools.ts";
+import { registerSessionFile, sessionsDirectory } from "./session-store.ts";
+import { bootNodeServices, type NodeServices } from "./services.ts";
+import type { ProjectSessionStarter } from "./project-session.ts";
 
 interface CliOptions {
   dataDir: string;
@@ -72,14 +77,109 @@ async function main(): Promise<void> {
   // once `bootNodeServices` has run, and the node is created with the model turn already in hand,
   // so the turn reads this lazily at the moment a conversation starts rather than at startup.
   const viewCatalog: ViewDescriptor[] = [];
+  /**
+   * Filled once the node has booted.
+   *
+   * The model turn is built before the services because whether the node has a model decides how
+   * the conductor is assembled, and the session store lives in the services. The callback fires on
+   * the first session creation, long after both exist, so the ordering is a fact about startup
+   * rather than a race.
+   */
+  const sessionWiring: { index?: NodeServices["sessions"]; principalId?: string } = {};
+  const searchWiring: { deps?: NodeServices["search"] } = {};
+  const projectWiring: { deps?: NodeServices["projects"] } = {};
+  /** Filled once the node has booted, so the scripted turn below can compose a real surface. */
+  const modelWiring: { compose?: NodeServices["compose"] } = {};
+
+  /**
+   * A deterministic composer, for the browser suite.
+   *
+   * It exists for the same reason the voice fixture does: a composed surface can only be produced by
+   * a turn, and a turn needs a provider — so without a deterministic path the browser code that
+   * renders a composed surface could never be exercised in CI. It answers only overview-shaped
+   * requests and returns nothing for anything else, which leaves the scripted recipes and the model
+   * path exactly as they were. Every part of the production pipeline still runs: candidates, compiler,
+   * coverage check, transactional capture, timeline.
+   */
+  const modelFixture = process.env.CC_MODEL_FIXTURE === "1";
+  const fixtureCompose = async (input: {
+    conversationId: string;
+    principal: { principalId: string };
+    text: string;
+    messageId: string;
+  }): Promise<{ block: MessageBlock; text: string } | undefined> => {
+    if (!/tổng quan|tong quan|overview/i.test(input.text)) return undefined;
+    const compose = modelWiring.compose;
+    if (compose === undefined) return undefined;
+
+    const outcome = await composeMiniApp(compose, {
+      conversationId: input.conversationId,
+      messageId: input.messageId,
+      principalId: input.principal.principalId as never,
+      intent: input.text,
+      explicitTemplateId: "overview",
+    });
+    const text = outcome.ok
+      ? "Đây là tổng quan dựng bởi fixture model trên dữ liệu thật của node này (không phải model thật)."
+      : `Fixture không dựng được tổng quan: ${outcome.message}`;
+    return {
+      text,
+      block: outcome.ok
+        ? outcome.block
+        : { type: "text", format: "plain", content: text, streaming: false },
+    };
+  };
+
+  /**
+   * A session starter that starts nothing.
+   *
+   * The same reason the model and voice fixtures exist: the flow that starts a session in a chosen
+   * directory has a browser half, and proving it must not spawn a worker process — which would need a
+   * provider, a longer wait than any test should take, and would leave a session behind on the machine
+   * running the suite. It answers the shape the gateway expects and says out loud that it is a fixture.
+   */
+  const sessionFixture = process.env.CC_SESSION_FIXTURE === "1";
+  const fixtureProjectSessions = (): ProjectSessionStarter => {
+    let started = 0;
+    return {
+      available: () => ({ available: true }),
+      start: async (input) => {
+        started += 1;
+        void input;
+        return { sessionId: `sess_fixture_${started}`, sessionFile: undefined };
+      },
+    };
+  };
+
   const modelTurn = await createModelTurn({
     env: process.env,
     cwd: process.cwd(),
+    sessionDir: join(options.dataDir, "sessions"),
+    onSessionFile: ({ sessionId, sessionFile }) => {
+      if (sessionWiring.index === undefined || sessionWiring.principalId === undefined) return;
+      const registered = registerSessionFile(sessionWiring.index, {
+        sessionId,
+        principalId: sessionWiring.principalId,
+        path: sessionFile,
+      });
+      if (!registered.ok) {
+        process.stderr.write(`session ${sessionId}: ${registered.message}\n`);
+      }
+    },
     views: () => viewCatalog,
     // The node registers the sample dataset itself, so this is the complete set it holds rather
     // than a guess. The model is told these names because a view over data that is not there
     // renders as nothing, which reads as a broken widget instead of a missing fact.
     datasetRefs: () => [SAMPLE_DATASET.datasetId],
+    // The Session Manager's search surface, exposed to the main model as its own tool. Read from a
+    // closure so the services it needs, which are assembled below, exist by the time a turn runs.
+    // The Session Manager's read-only reports, including the project finder. Built by a function a
+    // test can call: an inline list here is how `find_project` came to exist without ever being
+    // registered, and nothing could see the difference.
+    extraTools: () =>
+      searchWiring.deps === undefined || projectWiring.deps === undefined
+        ? []
+        : createNodeTools({ search: searchWiring.deps, projects: projectWiring.deps }),
   });
   process.stderr.write(
     modelTurn === undefined
@@ -88,10 +188,14 @@ async function main(): Promise<void> {
           ` (turn limit ${modelTurn.budget.maxWallClockMs} ms, ${modelTurn.budget.maxTokens} tokens)\n`,
   );
 
-  const services = bootNodeServices({
+  const services: NodeServices = bootNodeServices({
     dataDir: options.dataDir,
     label: options.label,
     ...(modelTurn === undefined ? {} : { respondWithModel: modelTurn.answer }),
+    // The fixture is a composer rather than a model: it never displaces the model turn, and the
+    // recipes still answer everything it declines.
+    ...(modelFixture ? { composeFromIntent: fixtureCompose } : {}),
+    ...(sessionFixture ? { projectSessions: fixtureProjectSessions() } : {}),
     ...(modelTurn === undefined
       ? {}
       : {
@@ -104,14 +208,45 @@ async function main(): Promise<void> {
         }),
   });
 
+  sessionWiring.index = services.sessions;
+  sessionWiring.principalId = services.runtime.identity.ownerPrincipalId;
+  searchWiring.deps = services.search;
+  projectWiring.deps = services.projects;
+  modelWiring.compose = services.compose;
+
+  if (sessionFixture) {
+    process.stderr.write(
+      "project sessions: FIXTURE starter loaded — a session is reported, and no worker is spawned\n",
+    );
+  }
+
+  if (modelFixture) {
+    // Said out loud, because a fixture that is indistinguishable from a model is worse than no
+    // fixture: a screenshot from this node must not be read as model output.
+    process.stderr.write(
+      "overview: FIXTURE composer loaded — overview requests are scripted, and no provider is called for them\n",
+    );
+  }
+
   // The model may now ask for these views. When there are none the `show_view` tool is not
   // registered at all, which is why this is reported rather than left to be discovered: a node
   // that cannot show anything should say so once at startup, not fail a turn later.
-  viewCatalog.push(...buildViewCatalog(services.conductor));
+  viewCatalog.push(...buildViewCatalog(services.conductor, services.compose));
   process.stderr.write(
     viewCatalog.length === 0
       ? "no widget definitions on this node; the model can answer in words only\n"
       : `views: ${viewCatalog.length} definition(s) the model may show — ${viewCatalog.map((view) => view.id).join(", ")}\n`,
+  );
+  process.stderr.write(
+    services.missingFamilies.length === 0
+      ? "catalog: every family a composed surface needs is drawable\n"
+      : `catalog: a composed surface would be missing ${services.missingFamilies.join(", ")}\n`,
+  );
+  process.stderr.write(`session transcripts: ${sessionsDirectory(options.dataDir)}\n`);
+  process.stderr.write(
+    services.jev.config.enabled
+      ? `selector: ${services.jev.config.model} pinned, ${services.jev.config.timeoutMs} ms per turn\n`
+      : "selector: disabled (no credential or local-only); composed surfaces use the deterministic path\n",
   );
 
   const server = createServer((request, response) => {    const chunks: Buffer[] = [];
@@ -152,15 +287,31 @@ async function main(): Promise<void> {
         };
       }
 
-      response.writeHead(result.status, {
+      const headers: Record<string, string> = {
         "content-type": "application/json",
         // The browser client is served from a different origin during development, and the
         // gateway is token-authenticated rather than cookie-authenticated, so a wildcard
         // origin here grants nothing a caller does not already need the token for.
         "access-control-allow-origin": "*",
         "access-control-allow-headers": "authorization, content-type",
-        "access-control-allow-methods": "GET, POST, DELETE, OPTIONS",
-      });
+        "access-control-allow-methods": "GET, POST, PATCH, DELETE, OPTIONS",
+      };
+
+      // Imported images are served as their own bytes under the content type the host verified
+      // from the file's magic bytes, rather than wrapped in a JSON envelope the client would have
+      // to decode and re-type.
+      if (result.binary !== undefined) {
+        headers["content-type"] = result.binary.contentType;
+        headers["content-length"] = String(result.binary.bytes.byteLength);
+        // Private: an image URL is authorized by a token, and a shared cache in front of a node
+        // must not hand one principal's image to another.
+        headers["cache-control"] = "private, max-age=300";
+        response.writeHead(result.status, headers);
+        response.end(Buffer.from(result.binary.bytes));
+        return;
+      }
+
+      response.writeHead(result.status, headers);
       response.end(`${JSON.stringify(result.body)}\n`);
     });
   });

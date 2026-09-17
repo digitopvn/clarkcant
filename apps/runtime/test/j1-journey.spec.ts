@@ -85,7 +85,7 @@ describe("J1: an empty install still does something useful", async () => {
   });
 
   it("creates a real widget instance and snapshot so the surface can be re-rendered later", async () => {
-    ask("cho tui xem biểu đồ");
+    await ask("cho tui xem biểu đồ");
     const instance = oneRow<{ instance_id: string }>(
       deps.db,
       "SELECT instance_id FROM widget_instances ORDER BY rowid DESC LIMIT 1",
@@ -102,7 +102,7 @@ describe("J1: an empty install still does something useful", async () => {
   });
 
   it("records the user's own message in the timeline before answering", async () => {
-    ask("cho tui xem biểu đồ");
+    await ask("cho tui xem biểu đồ");
     const rows = deps.db
       .prepare("SELECT role FROM messages WHERE conversation_id = ? ORDER BY sequence")
       .all(CONVERSATION) as { role: string }[];
@@ -242,7 +242,7 @@ describe("J1: run outcomes are decided by evidence, not by the worker stopping",
   });
 
   it("leaves the conversation title and update time coherent after the exchange", async () => {
-    ask("cho tui xem biểu đồ");
+    await ask("cho tui xem biểu đồ");
     const conversation = getConversation(deps.db, CONVERSATION);
     expect(conversation?.updatedAt).toBe(AT);
   });

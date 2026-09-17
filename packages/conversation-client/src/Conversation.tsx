@@ -1,7 +1,12 @@
 import { type ReactElement, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-import type { GatewayClient, ResolvedDataset, Timeline } from "./api.ts";
-import { renderBlock } from "./blocks.tsx";
+import type {
+  GatewayClient,
+  ResolvedDataset,
+  SnapshotPresentationResponse,
+  Timeline,
+} from "./api.ts";
+import { renderBlock, type SurfaceBlockRef } from "./blocks.tsx";
 import {
   applyResolvedTheme,
   readStoredTheme,
@@ -15,6 +20,9 @@ import type { ThemeName } from "@clarkcant/design-tokens";
 import { Orb } from "./Orb.tsx";
 import { SettingsPanel } from "./SettingsPanel.tsx";
 import { resolveRenderer, toRendererDataset } from "./renderers.tsx";
+import { MiniAppSurface, type CompositeSurfaceView } from "./mini-app-surface.tsx";
+import { PinnedLiveSurface } from "./DesktopSurfaces.tsx";
+import { useImageUrls } from "./use-image-urls.ts";
 
 /**
  * Conversation surface.
@@ -32,6 +40,36 @@ import { resolveRenderer, toRendererDataset } from "./renderers.tsx";
  *   - **Suggestion chips are labelled as samples.** Clicking one runs a scripted recipe, so
  *     the label has to be visible before the click, not a footnote after it.
  */
+
+/**
+ * The slice of the desktop shell's bridge this component reads.
+ *
+ * Named methods only, because that is all the shell exposes: there is no generic `invoke` channel to
+ * reach through, which is what keeps the main process's allowlist meaningful.
+ */
+export interface DirectoryPickerBridge {
+  pickDirectory(input?: {
+    title?: string;
+  }): Promise<{ ok: boolean; path?: string; canceled?: boolean; refused?: string }>;
+}
+
+/**
+ * The desktop shell's directory dialog, when this client is running inside one.
+ *
+ * Read from the ambient bridge rather than imported, because the same component is served to a
+ * plain browser where no bridge exists. Absent means the typed path below stays the only way to
+ * answer the node's question, which is the web path; present means the user picks a directory in a
+ * host-owned OS window instead of typing a path they cannot browse.
+ *
+ * Exported so the detection can be tested without a DOM: the interesting behaviour is which shapes
+ * of ambient value count as a usable dialog, and that is a plain function.
+ */
+export function directoryPicker(): DirectoryPickerBridge["pickDirectory"] | undefined {
+  const bridge: unknown = (globalThis as { clarkcant?: unknown }).clarkcant;
+  if (typeof bridge !== "object" || bridge === null) return undefined;
+  const pick = (bridge as DirectoryPickerBridge).pickDirectory;
+  return typeof pick === "function" ? pick.bind(bridge) : undefined;
+}
 
 export interface ConversationProps {
   client: GatewayClient;
@@ -81,11 +119,47 @@ export function Conversation({
   const [conversationId, setConversationId] = useState<string | undefined>(initialConversationId);
   const [timeline, setTimeline] = useState<Timeline | undefined>(undefined);
   const [datasets, setDatasets] = useState<Record<string, ResolvedDataset>>({});
+  /**
+   * The immutable presentation each message captured, keyed by snapshot.
+   *
+   * Fetched once and kept: a bundle is written once and never updated, so re-reading it on every
+   * render would be a request per keystroke for data that cannot have changed. The live instance is
+   * a different read, and it lives in the pinned surface that claims ownership of it.
+   */
+  const [snapshots, setSnapshots] = useState<Record<string, SnapshotPresentationResponse>>({});
+  /**
+   * The control that opened the expanded live view.
+   *
+   * Focus has to come back somewhere specific when that view closes: a keyboard user who lands on
+   * `<body>` after Escape has to re-navigate the whole page to get where they were.
+   */
+  const liveTrigger = useRef<HTMLElement | null>(null);
   const [connection, setConnection] = useState<ConnectionState>("connecting");
   const [draft, setDraft] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | undefined>(undefined);
   const [uiCheckOpen, setUiCheckOpen] = useState(false);
+  /**
+   * Starting a worker session in a directory the node chose.
+   *
+   * The node answers this request in three ways and the third one is the reason the state is here:
+   * `started`, `clarify` (several directories could be meant) and `needs-path` (nothing matched, so
+   * the user is asked for a directory). A control that only rendered success would leave the question
+   * on screen with nowhere to answer it, which is what made this flow unreachable before.
+   */
+  const [sessionOpen, setSessionOpen] = useState(false);
+  const [sessionText, setSessionText] = useState("");
+  const [sessionAsk, setSessionAsk] = useState<"none" | "clarify" | "needs-path">("none");
+  const [sessionOptions, setSessionOptions] = useState<string[]>([]);
+  const [sessionNotice, setSessionNotice] = useState<{ kind: string; text: string } | undefined>(undefined);
+  const [sessionBusy, setSessionBusy] = useState(false);
+  /**
+   * The OS directory dialog, when this client is running inside the desktop shell.
+   *
+   * Resolved once: the baseline the shell installs does not change while a page is open, and
+   * re-reading it every render would only make the control flicker if it ever did.
+   */
+  const pickDirectory = useMemo(() => directoryPicker(), []);
   /**
    * Which session the interface is showing.
    *
@@ -159,6 +233,50 @@ export function Conversation({
     [onTimelineChange],
   );
 
+  /**
+   * Ask the node for a session in a project, and render whatever it answers.
+   *
+   * A path the user types is the answer to the node's own question, so it is sent as the request's
+   * text — the node reads a path from the user's words and never goes looking for one.
+   */
+  const openProjectSession = useCallback(
+    async (text: string) => {
+      const trimmed = text.trim();
+      if (trimmed === "" || sessionBusy) return;
+      setSessionBusy(true);
+      setSessionNotice(undefined);
+      setSessionOptions([]);
+      try {
+        const target = conversationId ?? (await client.createConversation("Conversation")).conversationId;
+        if (conversationId === undefined) {
+          setConversationId(target);
+          onConversationReady?.(target);
+        }
+        const result = await client.startSession(target, trimmed);
+        applyTimeline(result.timeline);
+        if (result.status === "started") {
+          setSessionAsk("none");
+          setSessionText("");
+          setSessionNotice({
+            kind: "started",
+            text: `Đã mở phiên làm việc trong ${result.projectName} (${result.relPath}).`,
+          });
+        } else {
+          // One question, and the input stays open so the answer has somewhere to go.
+          setSessionAsk(result.status);
+          setSessionText("");
+          setSessionOptions(result.options);
+          setSessionNotice({ kind: result.status, text: result.question });
+        }
+      } catch (cause) {
+        setSessionNotice({ kind: "error", text: cause instanceof Error ? cause.message : String(cause) });
+      } finally {
+        setSessionBusy(false);
+      }
+    },
+    [applyTimeline, client, conversationId, onConversationReady, sessionBusy],
+  );
+
   /* Load any existing conversation once, so a reload is not a new conversation. */
   useEffect(() => {
     if (initialConversationId === undefined) return;
@@ -206,6 +324,64 @@ export function Conversation({
       cancelled = true;
     };
   }, [client, datasetRefs, datasets]);
+
+  const instanceById = useMemo(() => {
+    const map = new Map<string, Timeline["instances"][number]>();
+    for (const instance of timeline?.instances ?? []) map.set(instance.instanceId, instance);
+    return map;
+  }, [timeline]);
+
+  /**
+   * The snapshot behind every composed message, and only those with a bundle.
+   *
+   * A snapshot written before bundles existed has nothing to render from, which is why the absence
+   * of a bundle is carried forward as the reason to show the message's text alternative rather
+   * than the live instance's current props.
+   */
+  const composedSnapshots = useMemo(() => {
+    const entries: { snapshotId: string; instanceId: string | undefined }[] = [];
+    for (const block of blocksOf(timeline)) {
+      if (block.type !== "surface") continue;
+      const snapshot = (block.snapshot ?? {}) as Record<string, unknown>;
+      const definitionRef = (block.definitionRef ?? {}) as Record<string, unknown>;
+      const instanceId = typeof snapshot.instanceId === "string" ? snapshot.instanceId : undefined;
+      const definitionId =
+        typeof definitionRef.id === "string" ? definitionRef.id : instanceId === undefined ? "" : instanceById.get(instanceId)?.definitionId ?? "";
+      if (definitionId !== "canvas.overview@1") continue;
+      const snapshotId = typeof snapshot.snapshotId === "string" ? snapshot.snapshotId : "";
+      if (snapshotId === "" || typeof snapshot.bundleRef !== "string") continue;
+      entries.push({ snapshotId, instanceId });
+    }
+    return entries;
+  }, [instanceById, timeline]);
+
+  useEffect(() => {
+    if (conversationId === undefined) return;
+    for (const entry of composedSnapshots) {
+      if (snapshots[entry.snapshotId] !== undefined) continue;
+      void client
+        .snapshotPresentation(conversationId, entry.snapshotId)
+        .then((loaded) => setSnapshots((current) => ({ ...current, [entry.snapshotId]: loaded })))
+        .catch(() => {
+          // A snapshot that cannot be read is not an error state for the conversation: the message
+          // falls back to its text alternative, which is what history keeps regardless.
+        });
+    }
+  }, [client, composedSnapshots, conversationId, snapshots]);
+
+  /* Every image an inline composed surface asks for, from the snapshots it will render. */
+  const inlineImageRefs = useMemo(() => {
+    const refs = new Set<string>();
+    for (const entry of composedSnapshots) {
+      for (const section of snapshots[entry.snapshotId]?.sections ?? []) {
+        const ref = section.props.imageRef;
+        if (typeof ref === "string" && ref !== "") refs.add(ref);
+      }
+    }
+    return [...refs].sort();
+  }, [composedSnapshots, snapshots]);
+
+  const imageUrl = useImageUrls(client, inlineImageRefs);
 
   useEffect(() => {
     const node = scroller.current;
@@ -257,34 +433,86 @@ export function Conversation({
     setConversationId(undefined);
     setTimeline(undefined);
     setDatasets({});
+    setSnapshots({});
     setDraft("");
     setError(undefined);
     setBusy(false);
     onSessionReset?.();
   }, [onSessionReset]);
 
-  const instanceById = useMemo(() => {
-    const map = new Map<string, Timeline["instances"][number]>();
-    for (const instance of timeline?.instances ?? []) map.set(instance.instanceId, instance);
-    return map;
-  }, [timeline]);
-
   const renderSurface = useCallback(
-    (input: { instanceId: string | undefined; definitionId: string; textAlternative: string; revision: number }): ReactElement => {
+    (input: SurfaceBlockRef): ReactElement => {
       const instance = input.instanceId === undefined ? undefined : instanceById.get(input.instanceId);
       const definitionId = instance?.definitionId ?? input.definitionId;
-      const Renderer = resolveRenderer(definitionId);
 
-      if (!Renderer || !instance) {
-        // An unknown definition is a normal outcome, not a failure: the snapshot's text
-        // alternative is what history keeps.
+      // The container is checked before the leaf renderer lookup, because the container is not a
+      // leaf: `resolveRenderer` has no entry for it, and asking for one first would send every
+      // composed surface down the fallback path.
+      if (definitionId === "canvas.overview@1") {
+        const captured = input.snapshotId === "" ? undefined : snapshots[input.snapshotId];
+        // Staleness is the one field that changes after a snapshot is written, and it is recorded on
+        // the snapshot row rather than in the message — the message is history and stays as it was.
+        const snapshotRow = timeline?.snapshots.find((entry) => entry.snapshotId === input.snapshotId);
+        const stale = snapshotRow?.stale ?? input.stale;
+        if (instance === undefined) {
+          return (
+            <div className="cc-card cc-freshness" data-widget-fallback="true" style={{ padding: "var(--cc-space-md)" }}>
+              {input.textAlternative}
+            </div>
+          );
+        }
+        return (
+          <div
+            data-widget-instance={instance.instanceId}
+            data-widget-definition={definitionId}
+            data-snapshot={input.snapshotId}
+            data-snapshot-stale={stale ? "true" : "false"}
+          >
+            {captured === undefined ? (
+              // History without a stored bundle shows what the message itself carries. Substituting
+              // the live instance here is the failure mode this whole split exists to prevent.
+              <div className="cc-card cc-freshness" data-widget-fallback="true" style={{ padding: "var(--cc-space-md)" }}>
+                {input.textAlternative}
+              </div>
+            ) : (
+              <MiniAppSurface
+                view={toSurfaceViewFromSnapshot(captured, instance.revision)}
+                title={typeof instance.props.title === "string" ? instance.props.title : undefined}
+                imageUrl={imageUrl}
+              />
+            )}
+            {conversationId !== undefined && (
+              <button
+                className="cc-icon-btn"
+                style={{ width: "auto", padding: "0 var(--cc-space-sm)", marginTop: "var(--cc-space-xs)" }}
+                data-open-live={instance.instanceId}
+                onClick={(event) => {
+                  liveTrigger.current = event.currentTarget;
+                  // "Open the current view" is an expanded pin: the pinned surface is where the
+                  // live instance is mounted, and it is the one that claims ownership of it.
+                  void client
+                    .pin(conversationId, instance.instanceId, "expanded")
+                    .then((result) => applyTimeline(result.timeline))
+                    .catch((cause: unknown) => setError(cause instanceof Error ? cause.message : String(cause)));
+                }}
+              >
+                Mở bản hiện tại
+              </button>
+            )}
+          </div>
+        );
+      }
+
+      const Renderer = resolveRenderer(definitionId);
+      if (Renderer === undefined || instance === undefined) {
+        // An unknown definition is a normal outcome, not a failure: the snapshot's text alternative
+        // is what history keeps.
         return (
           <div className="cc-card cc-freshness" data-widget-fallback="true" style={{ padding: "var(--cc-space-md)" }}>
             {input.textAlternative}
           </div>
         );
       }
-
       const datasetRef = instance.props.datasetRef;
       const resolved = typeof datasetRef === "string" ? datasets[datasetRef] : undefined;
       const dataset = resolved === undefined ? undefined : toRendererDataset(resolved);
@@ -319,7 +547,12 @@ export function Conversation({
         </div>
       );
     },
-    [applyTimeline, client, conversationId, datasets, instanceById],
+    // `datasets` belongs here: the renderer reads the resolved rows through this closure, and a
+    // missing entry is the difference between a table and "no data to show".
+    // Every value the renderer reads through this closure belongs here. `datasets` and `imageUrl`
+    // are the two that arrive after the first paint, and leaving either out is how a table or a
+    // picture renders as "not available" while its bytes sit in the browser.
+    [applyTimeline, client, conversationId, datasets, imageUrl, instanceById, snapshots, timeline],
   );
 
   const blocks = timeline?.messages ?? [];
@@ -363,7 +596,9 @@ export function Conversation({
         </div>
       </header>
 
-      <div className="cc-scroll" ref={scroller}>
+      {/* Focusable as a fallback target: when the control that opened the live view is gone from the
+          document, focus has to land somewhere meaningful rather than on the body. */}
+      <div className="cc-scroll" ref={scroller} tabIndex={-1}>
         {blocks.length === 0 ? (
           <div className="cc-empty">
             <Orb size={148} className="cc-empty-orb" label="Đang chờ bạn nói điều muốn làm" />
@@ -411,6 +646,41 @@ export function Conversation({
         )}
       </div>
 
+      {/*
+        The expanded live view of a pinned instance. This is the only place a composed surface can
+        be acted on: the copy in the transcript is history, and mounting a second live instance
+        beside it would be two owners for one logical widget.
+      */}
+      {conversationId !== undefined &&
+        pins
+          .filter((pin) => pin.displayMode === "expanded" && instanceById.get(pin.instanceId)?.definitionId === "canvas.overview@1")
+          .map((pin) => (
+            <div key={`live-${pin.pinId}`} className="cc-pin-expanded" data-pin-live={pin.pinId}>
+              <PinnedLiveSurface
+                client={client}
+                conversationId={conversationId}
+                instanceId={pin.instanceId}
+                displayMode="expanded"
+                title={typeof instanceById.get(pin.instanceId)?.props.title === "string" ? String(instanceById.get(pin.instanceId)?.props.title) : undefined}
+                onTimeline={applyTimeline}
+                onClose={() => {
+                  // Collapsing is an unpin: the expanded view exists because the pin says so, and
+                  // leaving the pin behind would make the next render open it again.
+                  void client
+                    .unpin(conversationId, pin.pinId)
+                    .then((result) => applyTimeline(result.timeline))
+                    .catch((cause: unknown) => setError(cause instanceof Error ? cause.message : String(cause)))
+                    .finally(() => {
+                      const trigger = liveTrigger.current;
+                      liveTrigger.current = null;
+                      if (trigger !== null && trigger.isConnected) trigger.focus();
+                      else scroller.current?.focus();
+                    });
+                }}
+              />
+            </div>
+          ))}
+
       {pins.length > 0 && (
         <div className="cc-pins" data-pin-shelf="true">
           {pins.map((pin) => {
@@ -436,6 +706,100 @@ export function Conversation({
           })}
         </div>
       )}
+
+      {/*
+        Starting a session in a directory. It sits above the composer because it is a different kind
+        of action from sending a message: it opens a workspace, and the answer to it may be a
+        question the user has to answer with a path.
+      */}
+      <div className="cc-session" data-start-session="true">
+        <button
+          type="button"
+          className="cc-chip"
+          data-start-session-toggle="true"
+          aria-expanded={sessionOpen}
+          onClick={() => setSessionOpen((open) => !open)}
+        >
+          Mở phiên trong dự án
+        </button>
+        {sessionOpen && (
+          <form
+            className="cc-session-form"
+            data-start-session-form="true"
+            onSubmit={(event) => {
+              event.preventDefault();
+              void openProjectSession(sessionText);
+            }}
+          >
+            <input
+              className="cc-session-input"
+              data-start-session-input="true"
+              aria-label={sessionAsk === "needs-path" ? "Đường dẫn thư mục" : "Tên dự án"}
+              placeholder={sessionAsk === "needs-path" ? "/đường/dẫn/đến/thư-mục" : "tên dự án, hoặc đường dẫn"}
+              value={sessionText}
+              onChange={(event) => setSessionText(event.target.value)}
+            />
+            {pickDirectory !== undefined && (
+              //
+              // Only rendered when the shell can actually open a dialog. A control that is present
+              // and does nothing is worse than one that is absent: on the web the input above is the
+              // whole answer, and the button would be a promise the build cannot keep.
+              <button
+                type="button"
+                className="cc-icon-btn cc-session-pick"
+                data-start-session-pick="true"
+                disabled={sessionBusy}
+                onClick={() => {
+                  void (async () => {
+                    const chosen = await pickDirectory({ title: "Chọn thư mục cho phiên làm việc" });
+                    if (!chosen.ok || chosen.canceled === true) return;
+                    const path = chosen.path;
+                    if (typeof path !== "string" || path.trim() === "") return;
+                    // The chosen path is the answer to the node's own question, so it takes the same
+                    // route as a typed one rather than a second way of starting a session.
+                    setSessionText(path);
+                    await openProjectSession(path);
+                  })();
+                }}
+              >
+                Chọn thư mục…
+              </button>
+            )}
+            <button
+              type="submit"
+              className="cc-icon-btn"
+              style={{ width: "auto", padding: "0 var(--cc-space-sm)" }}
+              data-start-session-submit="true"
+              disabled={sessionBusy}
+            >
+              {sessionBusy ? "Đang mở…" : "Mở"}
+            </button>
+          </form>
+        )}
+        {sessionOptions.length > 0 && (
+          <div className="cc-session-options">
+            {sessionOptions.map((option) => (
+              <button
+                key={option}
+                type="button"
+                className="cc-chip"
+                data-start-session-option={option}
+                onClick={() => {
+                  setSessionText(option);
+                  void openProjectSession(option);
+                }}
+              >
+                {option}
+              </button>
+            ))}
+          </div>
+        )}
+        {sessionNotice !== undefined && (
+          <p className="cc-freshness" data-start-session-status={sessionNotice.kind}>
+            {sessionNotice.text}
+          </p>
+        )}
+      </div>
 
       <div className="cc-composer-wrap">
         <form
@@ -486,4 +850,71 @@ export function Conversation({
       />
     </div>
   );
+}
+
+/**
+ * Every block in a timeline, flattened.
+ *
+ * A small helper rather than two nested loops in each caller: the composition effect and the
+ * dataset effect both need the same walk, and writing it twice is how the two drift into
+ * disagreeing about which blocks count.
+ */
+function blocksOf(timeline: Timeline | undefined): Record<string, unknown>[] {
+  const blocks: Record<string, unknown>[] = [];
+  for (const message of timeline?.messages ?? []) {
+    for (const block of message.blocks ?? []) blocks.push(block);
+  }
+  return blocks;
+}
+
+/**
+ * Turn a captured bundle into what the surface renders.
+ *
+ * Nothing here reaches the live rows. A region with no materialised rows is reported as `missing`
+ * rather than filled from the current dataset, which is the difference between history and a view
+ * that quietly rewrites itself. `actions` is deliberately empty: a snapshot declares the bindings
+ * that existed when it was taken, and the read-only route that produced this data does not carry
+ * them, so a historical surface cannot mutate anything even if a client tried.
+ */
+function toSurfaceViewFromSnapshot(
+  captured: SnapshotPresentationResponse,
+  revision: number,
+): CompositeSurfaceView {
+  const materialised = new Map(captured.sections.map((section) => [section.sectionId, section]));
+  const availability: Record<string, "live" | "missing"> = {};
+  const sections = captured.sections.map((section) => {
+    const rows = materialised.get(section.sectionId)?.rows;
+    // A region that declares no data reference needs none — a period selector and a save button are
+    // complete on their own. Marking those "missing" because they carry no rows drew an empty card
+    // where a working control belongs.
+    availability[section.sectionId] = section.dataRefs.length === 0 || rows !== undefined ? "live" : "missing";
+    return {
+      sectionId: section.sectionId,
+      slot: section.slot as CompositeSurfaceView["sections"][number]["slot"],
+      definitionRef: section.definitionRef,
+      props: section.props,
+      dataRefs: section.dataRefs,
+      ...(rows === undefined ? {} : { rows }),
+      textAlternative: section.textAlternative,
+    };
+  });
+
+  const spec = captured.spec;
+  return {
+    compositionId: spec?.compositionId ?? "",
+    instanceId: spec?.instanceId ?? captured.snapshot.instanceId ?? "",
+    catalogDigest: captured.catalogDigest ?? "",
+    // The period a snapshot was captured at is the period it shows. A later filter change belongs
+    // to the live instance, not to this message.
+    initialState: spec?.initialState ?? { period: "week", timezone: "UTC" },
+    actions: [],
+    sections,
+    revision,
+    ...(typeof captured.snapshot.capturedAt === "string" ? { capturedAt: captured.snapshot.capturedAt } : {}),
+    stale: captured.snapshot.stale === true,
+    tombstone: captured.tombstone,
+    availability,
+    // A snapshot is history: it never acts, whatever it recorded when it was taken.
+    readOnly: true,
+  };
 }

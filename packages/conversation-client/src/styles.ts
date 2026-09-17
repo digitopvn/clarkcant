@@ -204,6 +204,34 @@ button.cc-badge:hover, .cc-badge[role="button"]:hover { color: var(--cc-text); b
 
 /* Composer */
 .cc-composer-wrap { padding: var(--cc-space-md) var(--cc-space-lg) var(--cc-space-lg); border-top: 1px solid var(--cc-border); }
+/* Starting a session in a project: a chip that opens one row of input, never a second screen. */
+.cc-session {
+  display: flex;
+  flex-direction: column;
+  gap: var(--cc-space-xs);
+  align-items: flex-start;
+  padding: var(--cc-space-sm) var(--cc-space-lg) 0;
+}
+.cc-session-form { display: flex; gap: var(--cc-space-xs); align-items: center; width: 100%; }
+.cc-session-input {
+  flex: 1;
+  min-width: 0;
+  font: inherit;
+  padding: var(--cc-space-xs) var(--cc-space-sm);
+  border: 1px solid var(--cc-border);
+  border-radius: var(--cc-radius-sm);
+  background: var(--cc-surface);
+  color: var(--cc-text);
+}
+.cc-session-input:focus-visible { outline: 2px solid var(--cc-focus); outline-offset: 2px; }
+/* The desktop-only directory picker. Sized to its label rather than to the square icon button, so
+   "Chọn thư mục…" reads as an action instead of being clipped to a glyph. */
+.cc-session-pick {
+  width: auto;
+  padding: 0 var(--cc-space-sm);
+  white-space: nowrap;
+}
+.cc-session-options { display: flex; gap: var(--cc-space-xs); flex-wrap: wrap; }
 .cc-composer {
   /* Deliberately wider than the column above it, so the input a message is typed into reads as
      the control it is rather than as one more line of the transcript. */
@@ -473,6 +501,97 @@ button:focus-visible, textarea:focus-visible, input:focus-visible, [tabindex]:fo
 .cc-panel-space code { width: 3rem; color: var(--cc-text); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: var(--cc-text-meta); }
 .cc-space-bar { height: 10px; min-width: 2px; background: var(--cc-accent); border-radius: var(--cc-radius-badge); flex: none; }
 .cc-space-value { color: var(--cc-text-tertiary); font-variant-numeric: tabular-nums; }
+
+/* ------------------------------------------------------------------ *
+ * Composed surface
+ *
+ * One container, several leaf regions. The grid is the only layout the container performs: each
+ * region is an ordinary card, so a leaf that fails still leaves the rest of the surface readable.
+ * ------------------------------------------------------------------ */
+.cc-surface { padding: 0; }
+.cc-surface-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: var(--cc-space-md);
+  align-items: start;
+}
+/* Wide regions span the full width so a chart or a month view is never cramped beside a tile. */
+.cc-surface-region[data-slot="metrics"] { grid-column: 1 / -1; }
+.cc-surface-region[data-slot="trend"] { grid-column: span 2; min-width: 0; }
+.cc-surface-region[data-slot="calendar"] { grid-column: span 2; min-width: 0; }
+.cc-surface-region[data-slot="cta"] { grid-column: 1 / -1; }
+.cc-surface-region { display: flex; flex-direction: column; gap: var(--cc-space-xs); min-width: 0; }
+.cc-surface-alt { margin: var(--cc-space-xs) 0 0; padding-left: var(--cc-space-md); color: var(--cc-text-muted); }
+
+/* One column when there is no room for two. Reading order is unchanged: it is the slot order. */
+@media (max-width: 560px) {
+  .cc-surface-grid { grid-template-columns: 1fr; }
+  .cc-surface-region[data-slot="trend"],
+  .cc-surface-region[data-slot="calendar"] { grid-column: 1 / -1; }
+}
+
+.cc-metrics {
+  list-style: none; margin: 0; padding: 0;
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: var(--cc-space-sm);
+}
+.cc-metric {
+  display: flex; flex-direction: column; gap: var(--cc-space-xxs);
+  border: 1px solid var(--cc-border); background: var(--cc-elevated);
+  border-radius: var(--cc-radius-badge); padding: var(--cc-space-sm);
+}
+.cc-metric-label { color: var(--cc-text-muted); font-size: var(--cc-text-label); }
+.cc-metric-value { font-size: var(--cc-text-heading-md); font-weight: 600; font-variant-numeric: tabular-nums; }
+.cc-metric-unit { color: var(--cc-text-muted); font-size: var(--cc-text-label); margin-left: var(--cc-space-xxs); }
+.cc-metric-hint { color: var(--cc-text-tertiary); font-size: var(--cc-text-meta); }
+
+.cc-filter { display: flex; flex-direction: column; gap: var(--cc-space-xxs); }
+.cc-filter select {
+  background: var(--cc-elevated); color: var(--cc-text); font: inherit;
+  border: 1px solid var(--cc-border); border-radius: var(--cc-radius-badge); padding: var(--cc-space-xs) var(--cc-space-sm);
+  min-height: 32px;
+}
+
+.cc-donut { width: 160px; height: 160px; transform: rotate(-90deg); }
+.cc-donut .wedge {
+  fill: none; stroke: var(--cc-accent); stroke-width: 22;
+  transform-origin: 80px 80px;
+}
+.cc-donut .wedge[data-slice-index="1"] { stroke: color-mix(in oklab, var(--cc-accent) 70%, var(--cc-text)); }
+.cc-donut .wedge[data-slice-index="2"] { stroke: color-mix(in oklab, var(--cc-accent) 45%, var(--cc-text)); }
+.cc-donut .wedge[data-slice-index="3"] { stroke: color-mix(in oklab, var(--cc-accent) 25%, var(--cc-text)); }
+.cc-legend { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--cc-space-xxs); font-size: var(--cc-text-label); }
+.cc-legend li { display: flex; gap: var(--cc-space-sm); justify-content: space-between; min-width: 140px; }
+.cc-text-alt summary { cursor: pointer; color: var(--cc-text-muted); font-size: var(--cc-text-label); }
+.cc-text-alt[open] summary { margin-bottom: var(--cc-space-xs); }
+
+.cc-calendar { width: 100%; border-collapse: collapse; table-layout: fixed; }
+.cc-calendar th { color: var(--cc-text-muted); font-weight: 500; font-size: var(--cc-text-meta); padding: var(--cc-space-xxs); }
+.cc-calendar td { padding: 1px; }
+.cc-calendar-day {
+  width: 100%; min-height: 36px; display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 1px; background: none; border: 1px solid transparent; border-radius: var(--cc-radius-badge);
+  color: var(--cc-text); font: inherit; cursor: pointer;
+}
+.cc-calendar td[data-in-month="false"] .cc-calendar-day { color: var(--cc-text-tertiary); }
+.cc-calendar-day:hover { background: var(--cc-elevated); }
+.cc-calendar-day[aria-pressed="true"] { border-color: var(--cc-accent); background: var(--cc-elevated); }
+.cc-calendar-count { font-size: var(--cc-text-meta); color: var(--cc-accent); }
+.cc-calendar-detail { font-size: var(--cc-text-label); color: var(--cc-text); }
+.cc-calendar-detail ul { margin: 0; padding-left: var(--cc-space-md); }
+
+.cc-image img { max-width: 100%; height: auto; border-radius: var(--cc-radius-badge); border: 1px solid var(--cc-border); }
+
+.cc-cta {
+  display: flex; align-items: center; justify-content: space-between; gap: var(--cc-space-md);
+  border: 1px solid var(--cc-border); background: var(--cc-elevated);
+  border-radius: var(--cc-radius-badge); padding: var(--cc-space-sm) var(--cc-space-md);
+}
+.cc-cta p { margin: 0; }
+
+/* The live view of a pinned instance, and the notice when another surface holds it. */
+.cc-live-surface { display: flex; flex-direction: column; gap: var(--cc-space-xs); }
+.cc-live-surface[data-ownership="elsewhere"] { opacity: 0.9; }
+.cc-live-surface[data-ownership="owner"] .cc-surface-region { border-left: 2px solid transparent; }
 
 @media (prefers-reduced-motion: reduce) {
   .cc-scroll { scroll-behavior: auto; }

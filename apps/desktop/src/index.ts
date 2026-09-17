@@ -19,6 +19,14 @@
 export interface DesktopBridge {
   openExternal(url: string): Promise<{ ok: boolean; opened?: string; refused?: string }>;
   showNotification(input: { title: string; body: string }): Promise<{ ok: boolean; shown?: unknown }>;
+  /**
+   * The OS directory dialog.
+   *
+   * Answers with the path the user picked in a host-owned window, or `canceled: true` when they
+   * dismissed it. A path is the answer to the node's own "which directory?" question, so it travels
+   * back as the request's text rather than as a second way to start a session.
+   */
+  pickDirectory(input?: { title?: string }): Promise<{ ok: boolean; path?: string; canceled?: boolean; refused?: string }>;
   /** Secret entry happens in a host-owned window, never in a widget frame. */
   requestCredential(input: { requestId: string; purpose: string }): Promise<{ ok: boolean; stored?: boolean }>;
   setKeepRunningOnWindowClose(keep: boolean): Promise<{ ok: boolean; keepRunningOnWindowClose?: boolean }>;
@@ -34,6 +42,7 @@ export interface DesktopBridge {
 export const DESKTOP_BRIDGE_METHODS = [
   "openExternal",
   "notify",
+  "pickDirectory",
   "requestCredential",
   "setKeepRunningOnWindowClose",
   "status",

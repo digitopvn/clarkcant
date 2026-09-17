@@ -19,10 +19,16 @@
       app at a node on another port is a supported thing to do, but the policy refused every
       value except 8765 before the request left the page. The port is the operator's choice — it
       is their node — and loopback is already the trust boundary this application assumes.
+
+      `img-src` allows `blob:` because that is how an imported image reaches the page. The bearer
+      token cannot travel in an `<img src>`, so the bytes are fetched through the authenticated
+      client and handed to the DOM as a blob URL; without `blob:` here every imported picture
+      rendered as "could not be loaded" while the node was serving it correctly. `data:` stays for
+      inline icons, and no remote origin is allowed — a picture from the node is the only picture.
     -->
     <meta
       http-equiv="Content-Security-Policy"
-      content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self' http://127.0.0.1:* http://localhost:* ws://127.0.0.1:* ws://localhost:*; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
+      content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self' http://127.0.0.1:* http://localhost:* ws://127.0.0.1:* ws://localhost:*; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
     />
   </head>
   <body>

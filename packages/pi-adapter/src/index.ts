@@ -23,6 +23,14 @@ export {
   type RealPiAdapterOptions,
 } from "./real.ts";
 export {
+  readTranscriptFrom,
+  redactSessionFile,
+  transcriptSize,
+  type RedactionResult,
+  type TranscriptEntry,
+  type TranscriptRead,
+} from "./session-file.ts";
+export {
   applyEnvFile,
   DEFAULT_MODEL_BUDGET,
   keyVariableFor,

@@ -1,9 +1,13 @@
 import {
   type MessageBlock,
+  type SurfaceCompositionSpec,
   type WidgetDefinition,
+  checkSurfaceCompositionSpec,
+  definitionCatalogKey,
   degradeUnrenderableBlocks,
   isHostOwnedBlock,
 } from "@clarkcant/contracts";
+import { createHash } from "node:crypto";
 import { z } from "zod";
 
 /**
@@ -49,6 +53,17 @@ export class CatalogRegistry {
 
   ids(): string[] {
     return [...this.#entries.keys()].sort();
+  }
+
+  /**
+   * Every registered entry.
+   *
+   * Added because the key is `id@version` and a definition id already carries an `@`, so
+   * recovering the two halves by splitting a key is exactly the kind of parsing that works until
+   * the first id with two separators in it. Callers that need both halves read them from here.
+   */
+  entries(): CatalogEntry[] {
+    return [...this.#entries.values()];
   }
 
   families(): string[] {
@@ -257,3 +272,104 @@ export const specSchema = z.strictObject({
   required: z.array(z.string()).optional(),
   additionalProperties: z.boolean().optional(),
 });
+
+/* ------------------------------------------------------------------ *
+ * Definition digests and composition coverage
+ * ------------------------------------------------------------------ */
+
+/**
+ * A digest of the exact definition an instance was created against.
+ *
+ * A widget's meaning is its schema, so an instance created under one props schema and rendered
+ * under another is a different thing wearing the same name. Computed rather than hand-maintained,
+ * because a digest somebody has to remember to update is a digest that stops being true.
+ */
+export function definitionDigest(definition: WidgetDefinition): string {
+  const canonical = {
+    id: definition.id,
+    version: definition.version,
+    propsSchema: definition.propsSchema,
+    stateSchema: definition.stateSchema ?? null,
+    stateVersion: definition.stateVersion ?? 0,
+  };
+  return `sha256:${createHash("sha256").update(JSON.stringify(canonical)).digest("hex")}`;
+}
+
+/**
+ * Register a list of definitions with their families.
+ *
+ * The family is required rather than derived: it is what the release gate checks coverage against
+ * and what a candidate set filters on, so a definition that cannot say which family it belongs to
+ * is a definition nothing can select.
+ */
+export function registerCatalog(
+  registry: CatalogRegistry,
+  entries: readonly { definition: WidgetDefinition; family: string; chunk?: string }[],
+): CatalogRegistry {
+  for (const entry of entries) {
+    registry.register({ definition: entry.definition, family: entry.family, chunk: entry.chunk ?? entry.family });
+  }
+  return registry;
+}
+
+/**
+ * Families a composed surface needs a usable renderer for.
+ *
+ * From the two sketches: summary figures, a range control, a chart, a calendar, an image and one
+ * call to action. `note` and `tables` are reusable extras, not requirements.
+ */
+export const COMPOSITION_FAMILIES = ["metrics", "filter", "trend", "calendar", "media", "cta"] as const;
+
+/** Which required families the catalog cannot yet draw. Empty means the surface is drawable. */
+export function missingCompositionFamilies(
+  registry: CatalogRegistry,
+  required: readonly string[] = COMPOSITION_FAMILIES,
+): string[] {
+  const present = new Set(registry.families());
+  return required.filter((family) => !present.has(family));
+}
+
+export type CompositionCoverage = { ok: true } | { ok: false; problems: string[] };
+
+/**
+ * Check a composed spec against the catalog that will actually draw it.
+ *
+ * This is the last boundary before persistence, and it is deliberately the same function the
+ * runtime calls: a spec that pins a definition the catalog does not hold, or a digest the catalog
+ * has moved past, must be refused here rather than stored and discovered at render time.
+ */
+export function checkCompositionCoverage(
+  spec: SurfaceCompositionSpec,
+  registry: CatalogRegistry,
+  options: {
+    allowedDataRefs?: ReadonlySet<string>;
+    knownActionBindingIds?: ReadonlySet<string>;
+    maxBytes?: number;
+  } = {},
+): CompositionCoverage {
+  const knownDefinitions = new Map<string, string>();
+  for (const entry of registry.entries()) {
+    knownDefinitions.set(
+      definitionCatalogKey(entry.definition.id, entry.definition.version),
+      definitionDigest(entry.definition),
+    );
+  }
+
+  const problems: string[] = [];
+  const missing = missingCompositionFamilies(registry);
+  if (missing.length > 0) {
+    problems.push(`the catalog cannot draw these required families: ${missing.join(", ")}`);
+  }
+
+  const result = checkSurfaceCompositionSpec(spec, {
+    knownDefinitions,
+    ...(options.allowedDataRefs === undefined ? {} : { allowedDataRefs: options.allowedDataRefs }),
+    ...(options.knownActionBindingIds === undefined
+      ? {}
+      : { knownActionBindingIds: options.knownActionBindingIds }),
+    ...(options.maxBytes === undefined ? {} : { maxBytes: options.maxBytes }),
+  });
+  if (!result.ok) problems.push(...result.problems);
+
+  return problems.length === 0 ? { ok: true } : { ok: false, problems };
+}

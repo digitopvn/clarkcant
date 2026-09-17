@@ -1,6 +1,6 @@
 ---
 title: "Phase 2: Jev selector server-side"
-status: todo
+status: done
 ---
 
 # Phase 2: Jev selector server-side
@@ -52,10 +52,25 @@ Unit tests dùng pure response parsing và controlled HTTP fault harness để e
 Commands: `pnpm exec vitest run apps/runtime/test/jev-selector.spec.ts`; live opt-in command sẽ được ghi vào configuration doc sau khi implementation định nghĩa flag. `pnpm typecheck` phải pass. Chưa có flag live test được triển khai ở thời điểm lập plan.
 
 ## Todo
-- [ ] Implement adapter/config và minimized candidate builder.
-- [ ] Verify supported exact model id hoặc ghi explicit blocker.
-- [ ] Pass selection, privacy và failure-boundary tests.
-- [ ] Record sanitized live evidence và operational configuration.
+- [x] Implement adapter/config và minimized candidate builder.
+- [x] Verify supported exact model id hoặc ghi explicit blocker.
+- [x] Pass selection, privacy và failure-boundary tests.
+- [x] Record sanitized live evidence và operational configuration.
+
+## Kết quả (2026-09-17)
+
+- `apps/runtime/src/jev-selector.ts`: `jevConfigFromEnv`, endpoint validation (https, không credentials, không loopback/private), `createFetchTransport` (không đọc error body), `askChoice`/`askNoul`, `selectTemplate`/`selectSections`, `JevBudget` một clock duy nhất qua `remainingBudget(deps, budget)`, telemetry allowlist một dòng mỗi call.
+- `apps/runtime/src/mini-app-candidates.ts`: `sanitizeIntent` (control chars, token/JWT/base64/hex/email/phone → `[redacted]`, trần 1000 ký tự), `schemaFieldSummary` (chỉ tên field + type), `buildSelectionState` + `checkSelectionStateSize` (16 KiB) + `stateLooksRedacted` kiểm tra lần hai trên state đã serialize.
+- `apps/runtime/src/services.ts`: `NodeServices.jev` với config + deps + `providerCallCount()` + telemetry bounded 200 dòng; `RuntimeOptions.jev` cho phép inject transport (test seam).
+- `docs/mini-app/jev-configuration.md`: bảng env, exact-model gate, policy, bảng failure behaviour, telemetry, lệnh chạy unit/live.
+- Tests: `apps/runtime/test/jev-selector.spec.ts` (23) — refusal path không gọi mạng, sanitize, confidence/margin, malformed/NaN/out-of-range, model drift, không retry, timeout 40 ms, oversized state, section combination, telemetry không chứa key/intent. `apps/runtime/test/jev-live.spec.ts` opt-in hai lớp (`CLARKCANT_JEV_LIVE=1` + key) và báo BLOCKED khi thiếu.
+- `pnpm verify` pass (615 passed, 3 skipped là live tests). Exact model `jev-1.13.0` giữ nguyên là gate đã smoke 2026-09-17; adapter từ chối mọi response mang model khác.
+
+## Ghi chú cho phase sau
+
+- `selectTemplate` trả `probedAt`; Phase 5 dùng nó cho provenance và **không** gọi lại provider khi replay.
+- `selectSections` chỉ hỏi slot không nằm trong `fixedSlots`; Phase 5 truyền `fixedSlots` cho các region do template tự quyết (metrics/filter/cta).
+- `askChoice`/`askNoul` là API chung cho Phase 9; policy nằm ở đây, không nhân bản.
 
 ## Risks / next
 Threshold chưa calibrated; Phase 6 đánh giá corpus trước release. Một request smoke không đủ SLO. Adapter có thể phát triển song song Phase 3 sau Phase 1; chỉ tích hợp turn sau Phase 4.

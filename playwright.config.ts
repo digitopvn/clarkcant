@@ -63,13 +63,24 @@ export default defineConfig({
       // for real without a provider account and without spending quota on every run. The adapter
       // that talks to the real provider is covered by unit tests instead, which is the only way
       // those two things can both be true.
-      command: `CC_VOICE_FIXTURE=1 node apps/runtime/src/main.ts --data-dir ${DATA_DIR} --port ${NODE_PORT} --label e2e-node`,
+      // `CC_MODEL_FIXTURE` replaces the model turn with a scripted one that composes a real surface
+      // through the production pipeline. Two reasons it is set here rather than per-test: a composed
+      // surface can only be produced by a turn, so without it the browser path that renders one could
+      // never be exercised in CI; and a checked-out `.env` with provider keys in it must not turn
+      // every local e2e run into a paid provider call.
+      // `CC_SESSION_FIXTURE` answers a project-session request without spawning a worker. Starting
+      // one for real needs a provider, takes far longer than a browser assertion should, and would
+      // leave a session behind on whatever machine ran the suite.
+      command: `CC_VOICE_FIXTURE=1 CC_MODEL_FIXTURE=1 CC_SESSION_FIXTURE=1 node apps/runtime/src/main.ts --data-dir ${DATA_DIR} --port ${NODE_PORT} --label e2e-node`,
       url: `http://127.0.0.1:${NODE_PORT}/health`,
       reuseExistingServer: false,
       stdout: "pipe",
     },
     {
-      command: `pnpm --filter @clarkcant/app-web run build && pnpm --filter @clarkcant/app-web exec vite preview --port ${WEB_PORT} --strictPort --host 127.0.0.1`,
+      // `corepack pnpm` rather than `pnpm`: the workspace pins pnpm 12 through `packageManager`, and a
+      // globally installed older pnpm tries to switch to it and fails when its own managed copy is not
+      // present. Going through Corepack asks for the pinned version directly.
+      command: `corepack pnpm --filter @clarkcant/app-web run build && corepack pnpm --filter @clarkcant/app-web exec vite preview --port ${WEB_PORT} --strictPort --host 127.0.0.1`,
       url: `http://127.0.0.1:${WEB_PORT}`,
       reuseExistingServer: false,
       timeout: 180_000,

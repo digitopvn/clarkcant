@@ -28,9 +28,14 @@ const aliases: Record<string, string> = {
 
 export default defineConfig({
   resolve: {
-    alias: Object.fromEntries(
-      Object.entries(aliases).map(([name, rel]) => [name, `${root}${rel}`]),
-    ),
+    alias: [
+      // An exact match, listed first. A prefix alias for this pack would also rewrite its subpath
+      // export (`@clarkcant/data-canvas/sample`), which the runtime imports, into a path that does
+      // not exist. The pack is aliased at all so a test asserting catalog coverage can read the
+      // definitions without every package having to depend on a pack.
+      { find: /^@clarkcant\/data-canvas$/, replacement: `${root}packs/data-canvas/src/index.ts` },
+      ...Object.entries(aliases).map(([name, rel]) => ({ find: name, replacement: `${root}${rel}` })),
+    ],
   },
   test: {
     // Single-level globs on purpose: `packages/**/test/**` also matches the workspace

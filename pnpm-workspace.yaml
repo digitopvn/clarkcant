@@ -32,6 +32,9 @@ dangerouslyAllowAllBuilds: false
 allowBuilds:
   # Required: vite and vitest load the platform binary this install step places.
   esbuild: true
+  # Required for semantic search: its install step places the platform ONNX runtime that
+  # @huggingface/transformers loads. Optional dependency — a checkout without it searches lexically.
+  onnxruntime-node: true
   # Required for the desktop shell: downloads the Electron runtime for this
   # platform. The Pi SDK's transitive dependencies (@google/genai, protobufjs)
   # are deliberately left unlisted — they ship prebuilt, and their install
