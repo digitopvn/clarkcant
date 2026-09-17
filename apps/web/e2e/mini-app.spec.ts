@@ -17,6 +17,16 @@ import { expect, test, type Page } from "@playwright/test";
  * values asserted in the UI are read back from the same store rather than hardcoded.
  */
 
+/**
+ * A real 2×2 PNG, with correct chunk CRCs.
+ *
+ * The region has to load actual bytes, so the assertion is `naturalWidth > 0` — and a decoded
+ * image is the only thing that proves it. The commonly copied 1×1 base64 string has a broken IDAT
+ * CRC, which browsers refuse to decode, so the fixture is generated rather than pasted.
+ */
+const TEST_PNG_BASE64 =
+  "iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAYAAABytg0kAAAAEUlEQVR4nGP4z8DwH4QZYAwAR8oH+WdZbrcAAAAASUVORK5CYII=";
+
 const DATA_DIR = join(process.cwd(), ".data", "e2e");
 const EVIDENCE = join(process.cwd(), "plans", "reports", "evidence");
 
@@ -82,6 +92,14 @@ test("renders a composed overview whose figures come from the node's own records
     timezone: "Asia/Saigon",
   });
 
+  // And an imported image, through the production upload route, because the sketch has a picture
+  // region and a region nothing can fill is a region that does not exist.
+  const uploaded = await api<{ image: { imageId: string; altText: string } }>("POST", "/images", {
+    dataBase64: TEST_PNG_BASE64,
+    mimeType: "image/png",
+    altText: "Sơ đồ kiến trúc đã nhập",
+  });
+
   await openApp(page);
   await openOverview(page);
 
@@ -101,6 +119,20 @@ test("renders a composed overview whose figures come from the node's own records
   // The tile renders the value and its unit together, so this asserts the shape rather than a
   // formatted number.
   expect(completedLabel.trim()).toMatch(/^\d+/);
+
+  // The picture region carries the image's own alt text and bytes that actually load: an `<img>` whose
+  // source failed would still be a visible figure, which is what makes this assertion worth making.
+  const image = page.locator("[data-slot='image']");
+  await expect(image).toBeVisible();
+  await expect(image).toContainText("Sơ đồ kiến trúc đã nhập");
+  const picture = image.locator(`img[data-image-ref='${uploaded.image.imageId}']`);
+  await expect(picture).toBeVisible();
+  // Scrolled into view first, because the renderer loads images lazily: an image below the fold
+  // reports `complete: true` with `naturalWidth: 0` until the browser decides to fetch it, and that
+  // is indistinguishable from a broken picture if the assertion is written carelessly.
+  await picture.scrollIntoViewIfNeeded();
+  await expect(picture).toHaveJSProperty("naturalWidth", 2);
+  await expect(picture).toHaveJSProperty("height", 2);
 
   // The calendar region is the region that proves data reached the composition: it is only shown
   // when it has rows, and the marker names the day the event was created on.
@@ -167,6 +199,60 @@ test("the live view changes while the transcript keeps what it showed", async ({
   await page.reload();
   await expect(page.locator("[data-pin-live] [data-surface-composition]").first()).toBeVisible({ timeout: 30_000 });
   await expect(page.locator("[data-pin-live] [data-slot='filter'] select")).toHaveValue("month");
+});
+
+test("the expanded view is operable and dismissible from the keyboard alone", async ({ page, context }) => {
+  mkdirSync(EVIDENCE, { recursive: true });
+
+  const now = new Date();
+  const created = await api<{ event: { date: string } }>("POST", "/calendar/events", {
+    title: "Họp kế hoạch tuần",
+    startsAt: new Date(now.getTime() + 60 * 60 * 1000).toISOString(),
+    endsAt: new Date(now.getTime() + 2 * 60 * 60 * 1000).toISOString(),
+    timezone: "Asia/Saigon",
+  });
+
+  await openApp(page);
+  // Typed and sent with the keyboard, so the whole journey below is one a keyboard user can make.
+  await page.locator("textarea[aria-label='Nhập tin nhắn']").click();
+  await page.keyboard.type("cho tui xem tổng quan công việc tuần này");
+  await page.keyboard.press("Enter");
+  await expect(page.locator("[data-surface-composition]").first()).toBeVisible({ timeout: 30_000 });
+
+  const trigger = page.locator("[data-open-live]").first();
+  await trigger.focus();
+  await page.keyboard.press("Enter");
+  const live = page.locator("[data-pin-live]").first();
+  await expect(live).toBeVisible({ timeout: 30_000 });
+
+  // Focus lands on the close control, so Escape is discoverable rather than something to be guessed.
+  await expect(page.locator("[data-close-live]")).toBeFocused();
+  // The region is announced with a name, not as an unlabelled div. The label sits on the surface
+  // itself; the wrapper is the host's slot for it.
+  const surface = live.locator("[data-display-mode='expanded']");
+  await expect(surface).toHaveAttribute("role", "region");
+  expect(await surface.getAttribute("aria-label")).toContain("Bản hiện tại");
+
+  // A native select is operable without a mouse; the assertion is that the change reached the server.
+  const period = live.locator("[data-slot='filter'] select");
+  await period.focus();
+  await period.selectOption("month");
+  await expect(live.locator("[data-slot='filter'] select")).toHaveValue("month");
+
+  // And a calendar day, activated with Enter from a focused button.
+  const day = live.locator(`td[data-date='${created.event.date}'] .cc-calendar-day`);
+  await day.focus();
+  await page.keyboard.press("Enter");
+  await expect(live.locator(".cc-calendar-detail")).toContainText("Họp kế hoạch tuần");
+
+  await page.screenshot({ path: join(EVIDENCE, "miniapp-07-expanded-keyboard.png"), fullPage: true });
+
+  await page.keyboard.press("Escape");
+  await expect(page.locator("[data-pin-live]")).toHaveCount(0);
+  // Focus goes back to the control that opened it, so the next Tab continues from where the user was.
+  await expect(page.locator("[data-open-live]").first()).toBeFocused();
+
+  await context.close();
 });
 
 test("a second surface is refused the live view and says so instead of taking over", async ({ browser }) => {
