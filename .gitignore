@@ -32,3 +32,11 @@ playwright-report/
 .pi/
 .vitest/
 .vitest-report/
+
+# Evidence screenshots. The browser suite writes these on every run (`apps/web/e2e/*.spec.ts`),
+# so they are regenerated artifacts rather than sources: committing them meant each run produced
+# a binary diff that said nothing about the change beside it, and the same screenshot was stored
+# a second time one commit later. They stay on disk as the evidence a reviewer looks at, and this
+# rule is what keeps them out of the next diff. A tracked file is not ignored, which is why the
+# previously committed screenshots were removed from the index in the same commit as this rule.
+plans/reports/evidence/*.png
