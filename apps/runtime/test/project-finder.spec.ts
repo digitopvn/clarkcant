@@ -11,6 +11,8 @@ import {
   type ProjectFinderDeps,
   createFindProjectTool,
   findProjectCandidates,
+  indexDirectoryPath,
+  pathFromIntent,
   projectContext,
   refreshProjectIndex,
   resolveProject,
@@ -489,5 +491,116 @@ describe("the index surface", () => {
     // Listing is a database read, so it does not depend on the filesystem being readable.
     rmSync(home, { recursive: true, force: true });
     expect(listProjects(db, "node_local", 100).length).toBeGreaterThanOrEqual(4);
+  });
+});
+
+describe("a directory the user typed", () => {
+  it("recognises a path in what the user said, quoted or bare", () => {
+    expect(pathFromIntent("mở /Users/duy/proj đi")).toBe("/Users/duy/proj");
+    expect(pathFromIntent('dùng "~/my vault" nhé')).toBe("~/my vault");
+    // A path at the end of a sentence carries the sentence's punctuation.
+    expect(pathFromIntent("dùng /Users/duy/proj.")).toBe("/Users/duy/proj");
+    // Words are not paths, and neither is a relative path: nothing here is a directory to open.
+    expect(pathFromIntent("kế hoạch tuần này")).toBeUndefined();
+    expect(pathFromIntent("proj/sub")).toBeUndefined();
+  });
+
+  it("indexes a named directory even when nothing marks it", async () => {
+    mkdirSync(join(home, "plain-folder"), { recursive: true });
+    const outcome = indexDirectoryPath(deps, join(home, "plain-folder"));
+
+    expect(outcome.ok).toBe(true);
+    if (!outcome.ok) return;
+    const projects = listProjects(db, "node_local", 10);
+    const indexed = projects.find((project) => project.projectId === outcome.projectId);
+    // The scanner would have skipped this directory — no marker, no media. The user naming it is the
+    // signal that makes it a project, which is what "nhập path" has to mean.
+    expect(indexed?.path).toBe(join(home, "plain-folder"));
+    expect(indexed?.name).toBe("plain-folder");
+    expect(indexed?.kind).toBe("generic");
+  });
+
+  it("accepts a home-relative path and refuses one outside the approved roots", () => {
+    mkdirSync(join(home, "vault"), { recursive: true });
+    expect(indexDirectoryPath(deps, "~/vault").ok).toBe(true);
+
+    const outside = indexDirectoryPath(deps, "/tmp");
+    expect(outside.ok).toBe(false);
+    if (!outside.ok) expect(outside.code).toBe("OUTSIDE_APPROVED_ROOTS");
+  });
+
+  it("reports a path that is missing or is not a directory", () => {
+    const missing = indexDirectoryPath(deps, join(home, "not-here"));
+    expect(missing.ok).toBe(false);
+    if (!missing.ok) expect(missing.code).toBe("PATH_MISSING");
+
+    writeFileSync(join(home, "a-file.md"), "# not a directory");
+    const file = indexDirectoryPath(deps, join(home, "a-file.md"));
+    expect(file.ok).toBe(false);
+    if (!file.ok) expect(file.code).toBe("NOT_A_DIRECTORY");
+  });
+
+  it("does not index the same directory twice", () => {
+    mkdirSync(join(home, "twice"), { recursive: true });
+    const first = indexDirectoryPath(deps, join(home, "twice"));
+    const second = indexDirectoryPath(deps, join(home, "twice"));
+    expect(first.ok && second.ok).toBe(true);
+    if (first.ok && second.ok) expect(second.projectId).toBe(first.projectId);
+    expect(listProjects(db, "node_local", 100).filter((project) => project.name === "twice")).toHaveLength(1);
+  });
+
+  it("resolves a typed path without searching, so the directory question is answered once", async () => {
+    mkdirSync(join(home, "typed-target"), { recursive: true });
+    let selectorCalls = 0;
+    const resolution = await resolveProject(
+      {
+        ...deps,
+        decider: {
+          jev: {
+            config: {
+              enabled: true,
+              localOnly: false,
+              apiKey: "sk-test-not-a-real-key",
+              endpoint: "https://api.typesafe.ai/v1/systemone",
+              endpointRefusal: undefined,
+              model: "jev-1.13.0",
+              timeoutMs: 2000,
+              maxCallsPerTurn: 2,
+              policyVersion: "2026-09-17",
+              confidenceFloor: 0.85,
+              marginFloor: 0.2,
+              noulOnFloor: 0.85,
+              noulOffFloor: 0.15,
+            },
+            transport: async () => {
+              selectorCalls += 1;
+              return { status: 200, body: {} };
+            },
+          },
+          budget: { deadlineAt: Date.now() + 2000, timeoutMs: 2000 },
+        },
+      },
+      { intent: `mở giúp tui ${join(home, "typed-target")}` },
+    );
+
+    expect(resolution.status).toBe("resolved");
+    if (resolution.status !== "resolved") return;
+    // `path` rather than `rank`: the answer records that the user named it, which is what a later
+    // reader needs to tell a typed directory from a searched one.
+    expect(resolution.mode).toBe("path");
+    expect(resolution.relPath).toBe("typed-target");
+    expect(resolution.project.path).toBe(join(home, "typed-target"));
+    // A path is not a query: nothing was searched and the selector was never asked.
+    expect(selectorCalls).toBe(0);
+  });
+
+  it("rejects a typed path it cannot use instead of asking for a path again", async () => {
+    const outside = await resolveProject(deps, { intent: `dùng /tmp đi` });
+    expect(outside.status).toBe("rejected");
+    if (outside.status === "rejected") expect(outside.code).toBe("OUTSIDE_APPROVED_ROOTS");
+
+    const missing = await resolveProject(deps, { intent: `dùng ${join(home, "gone")} đi` });
+    expect(missing.status).toBe("rejected");
+    if (missing.status === "rejected") expect(missing.code).toBe("PATH_MISSING");
   });
 });

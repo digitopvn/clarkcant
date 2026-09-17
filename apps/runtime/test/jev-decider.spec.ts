@@ -9,10 +9,15 @@ import { migrate, openDatabase, upsertTask, type Database } from "@clarkcant/sto
 
 import {
   type DecideDeps,
+  SEARCH_DECISION_TIMEOUT_MS,
+  SEARCH_TOTAL_BUDGET_MS,
+  buildDecider,
+  decisionTimeoutMsFromEnv,
   rankGapIsClear,
   decideRuntimeTarget,
   decideSearchResult,
   searchDeciderFromEnv,
+  searchDecisionBudget,
 } from "../src/jev-decider.ts";
 import { type JevConfig, type JevTelemetry, type JevTransport, createJevBudget } from "../src/jev-selector.ts";
 import {
@@ -459,5 +464,96 @@ describe("runtime candidates", () => {
 
     const filtered = await tool.execute({ labelContains: "không có gì" });
     expect(filtered.text).toContain("Nothing matching");
+  });
+});
+
+describe("the decision deadline", () => {
+  it("keeps the plan's numbers, and leaves the ranking room inside the total", () => {
+    // The plan puts a Jev decision at 2 s and the whole search under 2.5 s. Both are asserted rather
+    // than described, because a budget that drifted upward would look like nothing at all.
+    expect(SEARCH_DECISION_TIMEOUT_MS).toBe(2000);
+    expect(SEARCH_TOTAL_BUDGET_MS).toBe(2500);
+    expect(SEARCH_DECISION_TIMEOUT_MS).toBeLessThan(SEARCH_TOTAL_BUDGET_MS);
+  });
+
+  it("reads an override, and never reads a typo as one", () => {
+    expect(decisionTimeoutMsFromEnv({})).toBe(SEARCH_DECISION_TIMEOUT_MS);
+    expect(decisionTimeoutMsFromEnv({ CLARKCANT_JEV_SEARCH_TIMEOUT_MS: "1500" })).toBe(1500);
+    // An unparsable or non-positive value must not become a deadline of zero, and must not be read as
+    // "no deadline" either: both would silently change whether the selector runs at all.
+    for (const value of ["soon", "0", "-5", " "]) {
+      expect(decisionTimeoutMsFromEnv({ CLARKCANT_JEV_SEARCH_TIMEOUT_MS: value })).toBe(
+        SEARCH_DECISION_TIMEOUT_MS,
+      );
+    }
+  });
+
+  it("gives a decision the decision deadline, not the composition one", () => {
+    expect(searchDecisionBudget(config()).timeoutMs).toBe(SEARCH_DECISION_TIMEOUT_MS);
+    expect(searchDecisionBudget(config(), { timeoutMs: 750 }).timeoutMs).toBe(750);
+    // The two budgets are deliberately different numbers: composing may spend two calls inside 4 s.
+    expect(createJevBudget(config()).timeoutMs).toBe(4000);
+    // The factory defaults to the decision deadline as well, so wiring it cannot silently hand a
+    // decision four seconds.
+    expect(buildDecider({ jev: { config: config(), transport: async () => ({ status: 200, body: {} }) } }).deps.budget.timeoutMs).toBe(
+      SEARCH_DECISION_TIMEOUT_MS,
+    );
+  });
+
+  it("accepts the plan's `none`, and refuses to let a typo enable the selector", () => {
+    expect(searchDeciderFromEnv({})).toBe("rank");
+    expect(searchDeciderFromEnv({ CLARKCANT_SEARCH_DECIDER: "none" })).toBe("rank");
+    expect(searchDeciderFromEnv({ CLARKCANT_SEARCH_DECIDER: "rank" })).toBe("rank");
+    expect(searchDeciderFromEnv({ CLARKCANT_SEARCH_DECIDER: "jev" })).toBe("jev");
+    for (const value of ["JE V", "true", "on", "yes"]) {
+      expect(searchDeciderFromEnv({ CLARKCANT_SEARCH_DECIDER: value })).toBe("rank");
+    }
+  });
+
+  it("falls back to the ranking when the provider is slower than the deadline", async () => {
+    const slow: Recorded = {
+      calls: 0,
+      telemetry: [],
+      // Honours the signal the selector passes, like fetch does. A transport that ignored the abort
+      // would leave the request running and the test would prove nothing about the deadline.
+      transport: async (request) => {
+        slow.calls += 1;
+        return await new Promise((_resolve, reject) => {
+          const timer = setTimeout(() => reject(new Error("the provider never answered")), 5_000);
+          request.signal.addEventListener("abort", () => {
+            clearTimeout(timer);
+            reject(new Error("aborted"));
+          });
+        });
+      },
+    };
+    const conf = config();
+    const started = Date.now();
+    const decision = await decideSearchResult(
+      {
+        jev: { config: conf, transport: slow.transport, onTelemetry: (event) => slow.telemetry.push(event) },
+        budget: searchDecisionBudget(conf, { timeoutMs: 30 }),
+      },
+      {
+        query: "nhãn trục",
+        results: [
+          { ref: "msg_a", snippet: "sửa lỗi đăng nhập", score: -0.000002, source: "message" },
+          { ref: "msg_b", snippet: "thêm nhãn trục cho biểu đồ", score: -0.00000195, source: "message" },
+        ],
+      },
+    );
+
+    // The answer is the ranking, and it says it is the ranking: a timeout must not be reported as a
+    // choice the selector made. Narrowed by an explicit check rather than by an assertion, because
+    // `expect` does not narrow a union for the compiler.
+    if (decision.status !== "rank") throw new Error(`expected the ranking, got ${decision.status}`);
+    // The reason names the deadline that was actually enforced, not the configured composition one —
+    // a log line claiming 4000 ms while 30 ms was enforced sends the reader to the wrong setting.
+    expect(decision.reason).toContain("30 ms");
+    expect(decision.reason).not.toContain("4000");
+    expect(slow.calls).toBe(1);
+    expect(slow.telemetry.at(-1)?.status).toBe("unavailable");
+    // And the wait is the deadline, not whatever the provider felt like doing.
+    expect(Date.now() - started).toBeLessThan(SEARCH_TOTAL_BUDGET_MS);
   });
 });

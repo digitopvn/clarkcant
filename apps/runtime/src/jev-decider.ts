@@ -2,6 +2,7 @@ import { redactSecrets } from "@clarkcant/contracts";
 
 import {
   type JevBudget,
+  type JevConfig,
   type JevDeps,
   type JevTelemetry,
   NONE_OPTION,
@@ -32,12 +33,56 @@ import { describeRuntimeCandidate, type RuntimeCandidate } from "./runtime-candi
 export type SearchDeciderMode = "rank" | "jev";
 
 /**
+ * How long a *decision* may take.
+ *
+ * Deliberately shorter than the composition budget. Composing may legitimately spend two calls inside
+ * four seconds, but a search has already produced a ranked answer before the selector is consulted,
+ * and the plan puts that decision at two seconds with the whole path under two and a half. Waiting
+ * four seconds for a second opinion on a list that is already on screen is the worst case a user
+ * actually feels, and the selector is never load-bearing here: running out of time returns the
+ * ranking, not an error. The measured live p95 for a call was 824 ms, so the deadline is not tight.
+ */
+export const SEARCH_DECISION_TIMEOUT_MS = 2000;
+
+/** The plan's ceiling for the whole search path: ranking plus one decision. */
+export const SEARCH_TOTAL_BUDGET_MS = 2500;
+
+/**
+ * The decision deadline, overridable by an operator.
+ *
+ * A value that is not a positive number falls back to the default rather than to zero: an unparsable
+ * override must not silently disable the selector, and it must not be read as "no deadline".
+ */
+export function decisionTimeoutMsFromEnv(env: NodeJS.ProcessEnv = process.env): number {
+  const raw = env.CLARKCANT_JEV_SEARCH_TIMEOUT_MS;
+  if (raw === undefined) return SEARCH_DECISION_TIMEOUT_MS;
+  const parsed = Number.parseInt(raw, 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : SEARCH_DECISION_TIMEOUT_MS;
+}
+
+/** A budget for one decision call, on the decision deadline rather than the composition one. */
+export function searchDecisionBudget(
+  config: JevConfig,
+  options: { timeoutMs?: number; now?: () => number } = {},
+): JevBudget {
+  return createJevBudget(
+    { ...config, timeoutMs: options.timeoutMs ?? SEARCH_DECISION_TIMEOUT_MS },
+    options.now ?? Date.now,
+  );
+}
+
+/**
  * Which decider runs on the search path.
  *
  * Defaults to `rank`, and that default is a measurement rather than a preference: the Phase 8
- * baseline answered 96.8% of lexical queries correctly with BM25 alone, and the cases it missed were
- * missing vocabulary, which choosing between the results cannot repair. `jev` is opt-in and its
- * calibration is recorded in the phase report.
+ * baseline answered 96.8% of lexical queries correctly with BM25 alone, the live calibration with
+ * `jev-1.13.0` tied it at 31/34, and the cases both miss are missing vocabulary — which choosing
+ * between the results cannot repair. `jev` is opt-in and its calibration is recorded in the phase
+ * report.
+ *
+ * `none` is the plan's name for the off switch and `rank` is what this code calls the same thing, so
+ * both are accepted. Anything unrecognised is also `rank`, because a typo in an environment variable
+ * must not be able to switch a paid provider on.
  */
 export function searchDeciderFromEnv(env: NodeJS.ProcessEnv = process.env): SearchDeciderMode {
   return env.CLARKCANT_SEARCH_DECIDER?.trim().toLowerCase() === "jev" ? "jev" : "rank";
@@ -380,10 +425,17 @@ export function buildDecider(input: {
   jev: JevDeps;
   now?: () => number;
   onTelemetry?: (event: JevTelemetry) => void;
+  /** Overrides the decision deadline; defaults to the plan's value, not the composition one. */
+  timeoutMs?: number;
 }): DeciderWiring {
   const deps: DecideDeps = {
     jev: input.onTelemetry === undefined ? input.jev : { ...input.jev, onTelemetry: input.onTelemetry },
-    budget: createJevBudget(input.jev.config, input.now),
+    // A decision, so it gets the decision deadline: a factory that defaulted to the composition
+    // budget would hand whoever wired it next four seconds for a second opinion.
+    budget: searchDecisionBudget(input.jev.config, {
+      ...(input.timeoutMs === undefined ? {} : { timeoutMs: input.timeoutMs }),
+      ...(input.now === undefined ? {} : { now: input.now }),
+    }),
   };
   return {
     deps,

@@ -275,10 +275,17 @@ export type JevAnswer = z.infer<typeof jevAnswerSchema>;
 export interface JevBudget {
   /** Absolute deadline for the whole composition step, in the caller's clock. */
   deadlineAt: number;
+  /**
+   * The total this budget was created with.
+   *
+   * Recorded because a decision budget is shorter than the configured composition timeout, and a
+   * refusal that reported the configured value would name a deadline that was never enforced.
+   */
+  timeoutMs?: number;
 }
 
 export function createJevBudget(config: JevConfig, now: () => number = Date.now): JevBudget {
-  return { deadlineAt: now() + config.timeoutMs };
+  return { deadlineAt: now() + config.timeoutMs, timeoutMs: config.timeoutMs };
 }
 
 /**
@@ -497,7 +504,7 @@ async function callProvider(
     const durationMs = now() - startedAt;
     const aborted = controller.signal.aborted;
     const reason = aborted
-      ? `the selector call exceeded the ${deps.config.timeoutMs} ms budget for this turn`
+      ? `the selector call exceeded the ${input.budget.timeoutMs ?? deps.config.timeoutMs} ms deadline for this decision`
       : "the selector call failed before a response arrived";
     emit(deps, {
       event: "error",

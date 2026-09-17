@@ -43,7 +43,11 @@ import { getPreference } from "@clarkcant/core";
 import { type ComposeDeps } from "./compose-mini-app.ts";
 import { type ProjectFinderDeps } from "./project-finder.ts";
 import { type ProjectSessionStarter, createProjectSessionStarter } from "./project-session.ts";
-import { searchDeciderFromEnv } from "./jev-decider.ts";
+import {
+  decisionTimeoutMsFromEnv,
+  searchDeciderFromEnv,
+  searchDecisionBudget,
+} from "./jev-decider.ts";
 import type { SessionSearchDeps } from "./session-search.ts";
 import {
   type SessionStoreDeps,
@@ -288,7 +292,9 @@ export function bootNodeServices(options: RuntimeOptions): NodeServices {
     // call per search until the calibration says otherwise.
     decider: {
       jev: jevRuntime.deps,
-      budget: createJevBudget(jevRuntime.config),
+      // The decision deadline, not the composition one: a search already has a ranked answer, and
+      // the plan puts a decision at 2 s with the whole path under 2.5 s.
+      budget: searchDecisionBudget(jevRuntime.config, { timeoutMs: decisionTimeoutMsFromEnv(process.env) }),
     },
     deciderMode: searchDeciderFromEnv(process.env),
     // A getter, not a snapshot: the model is loaded after boot, and a search issued in the meantime
@@ -338,11 +344,12 @@ export function bootNodeServices(options: RuntimeOptions): NodeServices {
     home: homedir,
     decider: {
       jev: jevRuntime.deps,
-      budget: createJevBudget(jevRuntime.config),
+      // Choosing a directory is a decision, not a composition, so it gets the decision deadline.
+      budget: searchDecisionBudget(jevRuntime.config, { timeoutMs: decisionTimeoutMsFromEnv(process.env) }),
     },
   };
 
-  const projectSessions = createProjectSessionStarter({
+  const projectSessions = options.projectSessions ?? createProjectSessionStarter({
     sessionDir: sessionsDirectory(runtime.dataDir),
     ...(options.model === undefined
       ? {}

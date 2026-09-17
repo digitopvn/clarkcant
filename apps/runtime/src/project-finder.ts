@@ -378,11 +378,15 @@ export function findProjectCandidates(
 
   // Recent use is a signal even when the query does not match the name: "the project I was in" is a
   // real request, and the plan ranks recent-use above a fuzzy name match.
+  // Recent use is a different signal from a match, and it is labelled as one. Calling it a search hit
+  // made an unmatched query indistinguishable from a matched one, and the caller then opened whatever
+  // directory had been used last — "the project I was in" and "a project that does not exist" looked
+  // the same, and the second one silently opened the wrong directory.
   const recent =
     matches.length === 0
       ? listProjects(deps.db, deps.nodeId, limit)
           .filter((project) => project.lastUsedAt !== undefined)
-          .map((project) => ({ project, score: undefined, how: "search" as const }))
+          .map((project) => ({ project, score: undefined, how: "recent" as const }))
       : [];
 
   const combined = [...matches, ...recent]
@@ -398,7 +402,9 @@ function toCandidate(
   deps: ProjectFinderDeps,
   project: ProjectRecord,
   score: number | undefined,
-  how: "alias" | "search",
+  // The declaration's own union, so a signal added to the type cannot be silently left out here —
+  // which is how `recent` came to be reported as a search hit in the first place.
+  how: ProjectCandidate["how"],
 ): ProjectCandidate {
   return {
     id: project.projectId,
@@ -412,10 +418,21 @@ function toCandidate(
   };
 }
 
+/**
+ * The path as it travels: relative to the approved root that contains it.
+ *
+ * Relative to the root rather than to the home directory, because a workspace is not always inside
+ * home — this repository lives on another volume, and a home-relative path escaped as
+ * `../../Volumes/…`, which is both useless to read and a description of the machine's layout. The
+ * plan's rule is `relPath-from-root`, and the reason is that the selector and the model see this
+ * string: a relative path from an approved root says where something is without saying where the
+ * user's home is.
+ */
 function relativePaths(deps: ProjectFinderDeps, path: string): string {
-  const home = deps.home();
-  const relativeToHome = relative(home, path);
-  return relativeToHome === "" ? "." : relativeToHome;
+  const roots = deps.roots().map((root) => resolve(root));
+  const containing = roots.find((root) => path === root || path.startsWith(`${root}/`));
+  const relativeToRoot = relative(containing ?? deps.home(), path);
+  return relativeToRoot === "" ? "." : relativeToRoot;
 }
 
 /** Exact alias, then recent use, then kind, then the search score, then the shorter name. */
@@ -487,11 +504,105 @@ export function verifyProject(deps: ProjectFinderDeps, projectId: string): Proje
   return { ok: true, project };
 }
 
+/** How a directory was chosen. `path` means the user gave it, not that it was searched for. */
+export type ProjectResolutionMode = "jev" | "rank" | "alias" | "path";
+
 export type ProjectResolution =
-  | { status: "resolved"; project: ProjectRecord; relPath: string; mode: "jev" | "rank" | "alias"; candidates: number }
+  | { status: "resolved"; project: ProjectRecord; relPath: string; mode: ProjectResolutionMode; candidates: number }
   | { status: "clarify"; question: string; options: string[] }
   | { status: "ask-for-directory"; question: string }
   | { status: "rejected"; code: string; message: string };
+
+/**
+ * A path the user typed, if their words contain one.
+ *
+ * The answer to "which directory?" is a path, and a finder that treats it as a search query asks the
+ * question again — which is exactly the loop this closes. `~/…` and absolute paths are recognised,
+ * quoted or bare; a path containing a space has to be quoted, and that is a rule the user can see
+ * rather than one that silently truncates their answer. Trailing punctuation is dropped, because a
+ * path rarely ends a sentence without a full stop after it.
+ */
+export function pathFromIntent(intent: string): string | undefined {
+  const quoted = /"([^"]+)"|'([^']+)'/.exec(intent);
+  const candidates: string[] = [];
+  const quotedValue = quoted?.[1] ?? quoted?.[2];
+  if (quotedValue !== undefined) candidates.push(quotedValue);
+  for (const match of intent.match(/(?:^|\s)(~\/[^\s]*|\/[^\s]*)/g) ?? []) {
+    candidates.push(match.trim());
+  }
+  for (const raw of candidates) {
+    const trimmed = raw.replace(/[.,;:]+$/, "");
+    if (trimmed.startsWith("~/") || trimmed.startsWith("/")) return trimmed;
+  }
+  return undefined;
+}
+
+/**
+ * Index one directory the user named.
+ *
+ * A named directory is indexed even when it carries no marker, because the user saying "this one" is
+ * the signal — the scanner's marker rule exists to keep a home directory from offering hundreds of
+ * unremarkable folders, not to tell a user their own folder is not a folder. Everything still has to
+ * be inside an approved root: a path is not a way to reach outside what the user approved.
+ */
+export function indexDirectoryPath(
+  deps: ProjectFinderDeps,
+  raw: string,
+): { ok: true; projectId: string } | { ok: false; code: string; message: string } {
+  const path = resolve(raw.startsWith("~/") ? join(deps.home(), raw.slice(2)) : raw);
+  const roots = deps.roots().map((root) => resolve(root));
+  if (!roots.some((root) => path === root || path.startsWith(`${root}/`))) {
+    return {
+      ok: false,
+      code: "OUTSIDE_APPROVED_ROOTS",
+      message: "that directory is not inside a root this node is allowed to use",
+    };
+  }
+
+  let stats;
+  try {
+    stats = statSync(path);
+  } catch {
+    return { ok: false, code: "PATH_MISSING", message: "there is no directory at that path" };
+  }
+  if (!stats.isDirectory()) {
+    return { ok: false, code: "NOT_A_DIRECTORY", message: "that path is not a directory" };
+  }
+
+  const existing = findProjectByPath(deps.db, deps.nodeId, path);
+  if (existing !== undefined) return { ok: true, projectId: existing.projectId };
+
+  let entries: { name: string; isDirectory: () => boolean }[];
+  try {
+    entries = readdirSync(path, { withFileTypes: true });
+  } catch {
+    return { ok: false, code: "PATH_UNREADABLE", message: "that directory could not be read" };
+  }
+  const markers = markersOf(entries);
+  const extensionCounts = new Map<string, number>();
+  for (const entry of entries) {
+    if (entry.isDirectory()) continue;
+    const extension = extensionOf(entry.name);
+    if (extension === "") continue;
+    extensionCounts.set(extension, (extensionCounts.get(extension) ?? 0) + 1);
+  }
+
+  const projectId = deps.newId("prj");
+  upsertProject(deps.db, {
+    projectId,
+    nodeId: deps.nodeId,
+    path,
+    name: basename(path),
+    aliases: [],
+    gitRemote: markers.includes(".git") ? readGitRemote(path) : undefined,
+    markers,
+    kind: kindFrom({ markers, extensionCounts }),
+    mtime: stats.mtimeMs,
+    lastUsedAt: undefined,
+    indexedAt: deps.now(),
+  });
+  return { ok: true, projectId };
+}
 
 /**
  * Resolve what the user meant to a directory.
@@ -504,7 +615,32 @@ export async function resolveProject(
   deps: ProjectFinderDeps,
   input: { intent: string; kind?: ProjectKind },
 ): Promise<ProjectResolution> {
+  // The path is read from the user's own words, *before* redaction, and everything that travels keeps
+  // using the redacted form below. Two reasons, and the first one was a live defect: the redactor
+  // replaces an absolute path with a placeholder — a home path is exactly what it is built to remove —
+  // so extracting after it meant a typed directory never resolved and the user was asked for it again,
+  // forever. The second is that this is the answer to a question the node asked: it is used locally to
+  // open a directory, never sent to a provider, and Phase 11 requires the selector's state to carry no
+  // absolute home path at all.
+  const typedPath = pathFromIntent(input.intent.slice(0, 500));
   const usableIntent = redactSecrets(input.intent).slice(0, 300);
+
+  // A path is checked first, and deliberately: searching on the words of a path returns whatever else
+  // happens to share them, and then the user is asked for the directory they just gave.
+  if (typedPath !== undefined) {
+    const indexed = indexDirectoryPath(deps, typedPath);
+    if (!indexed.ok) return { status: "rejected", code: indexed.code, message: indexed.message };
+    const verified = verifyProject(deps, indexed.projectId);
+    if (!verified.ok) return { status: "rejected", code: verified.code, message: verified.message };
+    return {
+      status: "resolved",
+      project: verified.project,
+      relPath: relativePaths(deps, verified.project.path),
+      mode: "path",
+      candidates: 1,
+    };
+  }
+
   let { candidates } = findProjectCandidates(deps, { query: usableIntent, ...(input.kind === undefined ? {} : { kind: input.kind }) });
 
   // A miss on a cold index is a scan, not a failure. The scan is awaited here because the caller is
@@ -522,7 +658,7 @@ export async function resolveProject(
     };
   }
 
-  const pick = (id: string, mode: "jev" | "rank" | "alias"): ProjectResolution => {
+  const pick = (id: string, mode: ProjectResolutionMode): ProjectResolution => {
     const verified = verifyProject(deps, id);
     if (!verified.ok) return { status: "rejected", code: verified.code, message: verified.message };
     return {
@@ -536,6 +672,16 @@ export async function resolveProject(
 
   const single = candidates[0];
   if (candidates.length === 1 && single !== undefined) {
+    if (single.how === "recent") {
+      // Nothing matched the words; this is only the directory used last. Opening it silently is how
+      // asking for a project that does not exist opens the wrong one, and the plan is explicit that a
+      // directory is never invented — so the candidate is offered as the answer to a question.
+      return {
+        status: "clarify",
+        question: `Tui không tìm thấy thư mục nào khớp. Có phải bạn muốn dùng ${single.relPath} (thư mục dùng gần đây nhất) không?`,
+        options: [single.relPath],
+      };
+    }
     return pick(single.id, single.how === "alias" ? "alias" : "rank");
   }
 
