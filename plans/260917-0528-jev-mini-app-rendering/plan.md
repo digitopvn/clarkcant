@@ -1,7 +1,7 @@
 ---
 title: "Jev mini-app rendering — implementation plan"
 description: "Jev chọn presentation; host compile catalog surface với snapshot bất biến và live actions."
-status: pending
+status: done
 priority: P1
 effort: "~33 agent-hours tuần tự, ~19h wall-clock với lanes song song (Phase 10 sau M1 +4h)"
 branch: "main"
@@ -16,7 +16,7 @@ updated: 2026-09-17
 
 ## Overview
 
-Kế hoạch cho mini-app đủ sketch với dữ liệu local thật: KPI, filter, chart, calendar, image, CTA trong conversation và expanded/pinned. **Đây là plan chưa triển khai.**
+Kế hoạch cho mini-app đủ sketch với dữ liệu local thật: KPI, filter, chart, calendar, image, CTA trong conversation và expanded/pinned. **Plan đã triển khai xong** — cả 11 phase file ở trạng thái `done`; bằng chứng và giới hạn nằm ở [report vòng hoàn thiện](../reports/verification-260917-1915-plan-completion-pass.md).
 
 [Đề xuất và gap analysis](../reports/analysis-260917-1211-jev-mini-app-rendering.md) là design contract chi tiết. Jev cung cấp typed selection; host validate/compile/persist spec; React chỉ render. Snapshot lịch sử giữ exact data; mở live dùng cùng logical instance.
 
@@ -117,7 +117,7 @@ Tổng agent-hours: ~21h core (1–6), ~5h search (7–8), ~3h Phase 9, ~4h Phas
 - [x] Đủ component regions, filter/calendar/save hoạt động, responsive và accessible. — 6 vùng (metrics, filter, trend, calendar, image, cta) + container; ảnh local render thật (`naturalWidth` assert); keyboard journey `apps/web/e2e/mini-app.spec.ts` ("the expanded view is operable and dismissible from the keyboard alone") + PNG desktop/mobile light/dark.
 - [x] Snapshot N không đổi theo live N+1; restart/pin/ownership/conflict pass; T43/T44/T47/T49/T50 vẫn pass. — `mini-app.spec.ts` + restart thật (snapshot giữ `capturedAt`/`bundleRef`); traceability T43/T44/T47/T49/T50 giữ PASS kèm test được nêu tên.
 - [x] Provider unavailable vẫn dùng view đã lưu; no secrets/raw private rows sent/logged. — fixture composer không gọi provider; token không vào page (`j1.spec.ts`); redaction dùng chung ở `packages/contracts/src/redaction.ts`.
-- [x] Full `pnpm verify` + `pnpm build` + `pnpm test:e2e` và opt-in live integration pass; evidence nói rõ giới hạn. — verify 7/7 invariant, 56 file, **798 passed / 7 skipped**; build pass; e2e **21 passed**; live: `jev-live.spec.ts` 3 passed và calibration chạy thật với `jev-1.13.0` (search `rank` 31/34 vs `jev` 31/34; routing 8/16). Giới hạn được ghi trong report: corpus 34+16 ca là nhỏ, 9 call không đủ nói về p95, và key lấy từ environment của operator chứ không nằm trong repo.
+- [x] Full `pnpm verify` + `pnpm build` + `pnpm test:e2e` và opt-in live integration pass; evidence nói rõ giới hạn. — verify 7/7 invariant, **825 passed / 7 skipped (60 file)**; build pass; e2e **25 passed**; live: `jev-live.spec.ts` 3 passed và calibration chạy thật với `jev-1.13.0` (search `rank` 31/34 vs `jev` 31/34; routing 8/16). Giới hạn được ghi trong report: corpus 34+16 ca là nhỏ, 9 call không đủ nói về p95, và key lấy từ environment của operator chứ không nằm trong repo.
 
 ## Pre-flight trước khi cook
 
@@ -134,7 +134,8 @@ Tổng agent-hours: ~21h core (1–6), ~5h search (7–8), ~3h Phase 9, ~4h Phas
 
 ## Validation log
 
-- 2026-09-17 (v5 — vòng hoàn thiện sau khi 11 phase xong): mọi acceptance criterion trong phase files được đối chiếu và tick kèm con trỏ bằng chứng. Phase 9: deadline quyết định 2 s / tổng 2,5 s nay enforce bằng hằng số + test ở cả mức một quyết định và cả đường search; `search.decider` nhận `none` đúng như plan viết. Phase 11: câu hỏi "thư mục nào?" nay trả lời được bằng path (server + web + 2 browser journey), kèm 3 lỗi thật được sửa — redaction thay path người dùng bằng placeholder, `relPath` tính từ home nên rò `../../Volumes/…` cho workspace ngoài home, và recent-use tự mở thư mục dùng gần nhất thay vì hỏi. Phase 10: probe `sqlite-vec` chạy trên CI linux x64 — `v0.1.9`, create/insert/KNN đều chạy. `docs/system-architecture.md` §7.2 ghi trạng thái đo được. **Không làm:** file dialog native trên desktop (web dùng ô nhập path; Electron host chính UI đó).
+- 2026-09-17 (v6 — vòng rework sau audit, phiên thứ hai): bốn objection của auditor đã đóng. (1) `find_project` nay được đăng ký cho Main Pi qua `apps/runtime/src/node-tools.ts` (`createNodeTools`), có test đúng ba tên tool. (2) **Đường A đã được tích hợp thật:** `services.ts` cấp `chooseExecutionNode`, dựng candidate từ danh sách capability conductor đã lọc (id `<ref>@<node>`, mô tả chỉ gồm summary + effect class), gọi `decideRuntimeTarget` với `verify` đọc lại registry; `selected` + cặp còn hợp lệ mới dispatch, còn `fallback`/`none`/id lạ thì trả `undefined` để conductor giữ thứ tự xác định. `RuntimeCandidateKind` thêm `"capability"` và `RuntimeCandidate.describe` (metadata registry, không phải chữ của user). Test nghiệm thu: `apps/runtime/test/conductor-routing.spec.ts` (7) chạy qua `bootNodeServices` + `handleUserMessage` thật. (3) File dialog native trên desktop đã làm: `desktop:pickDirectory` + `dialog.showOpenDialog({properties:["openDirectory"]})` + `pickDirectory()` qua preload/bridge; client chỉ render nút khi bridge tồn tại và trả path qua đúng đường của path gõ tay; journey browser chứng minh cả hai nhánh. (4) front matter của plan này đổi `pending` → `done` và câu "plan chưa triển khai" trong Overview đã bỏ.
+- 2026-09-17 (v5 — vòng hoàn thiện sau khi 11 phase xong): mọi acceptance criterion trong phase files được đối chiếu và tick kèm con trỏ bằng chứng. Phase 9: deadline quyết định 2 s / tổng 2,5 s nay enforce bằng hằng số + test ở cả mức một quyết định và cả đường search; `search.decider` nhận `none` đúng như plan viết. Phase 11: câu hỏi "thư mục nào?" nay trả lời được bằng path (server + web + 2 browser journey), kèm 3 lỗi thật được sửa — redaction thay path người dùng bằng placeholder, `relPath` tính từ home nên rò `../../Volumes/…` cho workspace ngoài home, và recent-use tự mở thư mục dùng gần nhất thay vì hỏi. Phase 10: probe `sqlite-vec` chạy trên CI linux x64 — `v0.1.9`, create/insert/KNN đều chạy. `docs/system-architecture.md` §7.2 ghi trạng thái đo được. **Cập nhật ở v6:** file dialog native trên desktop nay đã làm, không còn mục "không làm".
 - 2026-09-17 (v1): ba quyết định user: Jev chọn + code ghép; snapshot + mở live; đủ sketch với local data. Advisor review tiếp thu (compose trong turn step, contracts trước adapter).
 - 2026-09-17 (v4): smoke exact model pass; approved root = `~` (đa tác vụ, không chỉ code); Phase 11 đổi sang index thư mục tổng quát với ignore list hệ thống; Phase 10 chấp nhận optional native deps; đường C ghi vào docs §7.2.
 - 2026-09-17 (v3): user chỉ định `docs/system-architecture.png` là kiến trúc mới nhất thay `system-architecture.md`. Điều chỉnh: Phase 7–9 tái định vị thành các lớp của "Memory & Search" shared service; corpus gồm JSONL session + `messages`; thêm Phase 10 semantic retrieval; FTS output shape sẵn cho RRF. Đã kiểm tra `node:sqlite` hỗ trợ `allowExtension`/`loadExtension` (cần cho sqlite-vec).

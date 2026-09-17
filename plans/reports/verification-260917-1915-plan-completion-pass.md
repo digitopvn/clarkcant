@@ -65,7 +65,7 @@ Bảy ảnh `miniapp-0*.png` của Phase 6 vẫn được sinh lại bởi `mini
 
 Toàn bộ `- [ ]` trong `plans/260917-0528-jev-mini-app-rendering/*.md` đã được đối chiếu và tick kèm con trỏ bằng chứng (Phase 7/8/9/11), Phase 10 ghi rõ probe nào chạy ở đâu.
 
-**Một hạng mục được ghi là KHÔNG LÀM, không tick:** file dialog native trên desktop. Web dùng ô nhập đường dẫn và Electron host chính UI đó, nên đường nhập path là đường duy nhất hiện có; một dialog native là việc riêng của shell desktop.
+**Một hạng mục từng được ghi là KHÔNG LÀM, và nay đã làm:** file dialog native trên desktop. Vòng rework sau audit đã thêm `desktop:pickDirectory` (allowlist + `dialog.showOpenDialog({properties:["openDirectory"]})` + bridge `pickDirectory()`), và client chỉ render nút khi bridge tồn tại — xem [`verification-260917-1444-jev-rework-audit-objections.md`](./verification-260917-1444-jev-rework-audit-objections.md) mục #3. Các số trong bảng Gate bên trên là của vòng 1915, không phải của vòng này.
 
 ## CI
 
