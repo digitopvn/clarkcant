@@ -48,7 +48,7 @@ Cả ba đều lộ ra từ việc viết browser journey — không phải từ
 | `corepack pnpm verify` | 7/7 invariant, 56 file, **811 passed / 7 skipped** (tăng từ 798 nhờ test mới) |
 | `corepack pnpm test:e2e` | **23 passed** (2 journey mới project-session; không hồi quy ở 21 test cũ) |
 | `node tools/probe-vector-extension.mjs` (darwin arm64) | `v0.1.9`, create/insert/KNN ok, exit 0 |
-| Probe trên Linux x64 | Chạy ở CI của commit này (`ubuntu-latest`); kết quả ghi ở mục dưới sau khi CI xong — không đọc là đã xanh trước khi có log |
+| Probe trên Linux x64 (CI, `ubuntu-latest`) | `v0.1.9` nạp từ `sqlite-vec-linux-x64@0.1.9/vec0.so`; create, insert và KNN đều chạy — xem mục CI bên dưới |
 
 ## Tiêu chí của plan
 
@@ -56,9 +56,19 @@ Toàn bộ `- [ ]` trong `plans/260917-0528-jev-mini-app-rendering/*.md` đã đ
 
 **Một hạng mục được ghi là KHÔNG LÀM, không tick:** file dialog native trên desktop. Web dùng ô nhập đường dẫn và Electron host chính UI đó, nên đường nhập path là đường duy nhất hiện có; một dialog native là việc riêng của shell desktop.
 
+## CI
+
+Dòng log của step "Probe the optional vector extension" trên `ubuntu-latest` (linux x64), node 22.19:
+
+```text
+vector extension: v0.1.9 loaded from /home/runner/work/clarkcant/clarkcant/node_modules/.pnpm/sqlite-vec-linux-x64@0.1.9/node_modules/sqlite-vec-linux-x64/vec0.so; create, insert and KNN all work on linux/x64
+```
+
+Đây là câu trả lời cho pre-gate của Phase 10: extension cài và dùng được trên linux x64, không chỉ trên máy dev darwin arm64. Lần chạy CI đầu tiên của nhánh bị **cancel bởi chính concurrency group của workflow** (một push sau đó thay thế nó), không phải fail; step probe đã chạy xong và in dòng trên trước khi bị huỷ.
+
 ## Chưa đo / còn lại
 
-- Probe extension trên Linux x64: chờ CI của commit này.
+- Browser suite (`pnpm test:e2e`) chỉ chạy trên máy dev darwin arm64; CI chạy unit/invariant/typecheck/lint và các driver test, không chạy e2e web.
 - `pnpm test:e2e` chạy trên máy dev (darwin arm64) với node cô lập; Linux e2e không chạy ở đây.
 - Corpus calibration vẫn nhỏ (34 search + 16 routing): đủ để chốt default, không đủ để nói về chất lượng Jev nói chung.
 
