@@ -33,7 +33,7 @@ Từ sơ đồ mới, những gì ràng buộc plan này:
 - **Session Manager** (search, resume, spawn, monitor) là control extension của Main Pi. Search session phải expose được cho Main Pi như tool, không chỉ là route HTTP cho client.
 - **Knowledge & History Store** = Pi JSONL + operational SQLite: conversation history, session summaries, code embeddings, docs & notes, preferences. Corpus search gồm cả JSONL session của worker, không chỉ bảng `messages`.
 - **Thin Lifecycle Supervisor** (drain, checkpoint, swap; không LLM) là lý do search service không được sống trong pi worker process.
-- **Jev = lớp quyết định sau retrieval** (chốt với user 2026-09-17, ghi tại `docs/system-architecture.md` §7.2). Hai đường: (A) điều phối runtime: Session Manager liệt kê running runtimes → structured filters → Jev Choice chọn target → host verify lease/grant → dispatch qua gateway; (B) tìm session cũ: FTS5 + KNN → RRF → top-K → Jev Choice/Noul chọn context hoặc yêu cầu hỏi lại. (C) tìm project/thư mục để mở pi session: project index cache → quét bounded khi miss → lexical + recent-use → Jev Choice → verify path/roots → `WorkerBrief.projectRoots` + initial prompt (yêu cầu user 2026-09-17, vì UX chỉ có một màn hình conversation). Jev không search, không sinh nội dung, không cấp quyền, không quyết định side effect. Cùng adapter Phase 2 dùng cho selector rich widgets.
+- **Jev = lớp quyết định sau retrieval** (chốt với user 2026-09-17, ghi tại `docs/system-architecture.md` §7.2). Hai đường: (A) điều phối runtime: Session Manager liệt kê running runtimes → structured filters → Jev Choice chọn target → host verify lease/grant → dispatch qua gateway; (B) tìm session cũ: FTS5 + KNN → RRF → top-K → Jev Choice/Noul chọn context hoặc yêu cầu hỏi lại. (C) tìm project/thư mục để mở pi session: index cache trên **toàn thư mục home** (không chỉ code, vì app hướng đa tác vụ) → quét bounded khi miss → lexical + recent-use → Jev Choice → verify path/roots → `WorkerBrief.projectRoots` + initial prompt (yêu cầu user 2026-09-17, vì UX chỉ có một màn hình conversation). Jev không search, không sinh nội dung, không cấp quyền, không quyết định side effect. Cùng adapter Phase 2 dùng cho selector rich widgets.
 
 - **Composition = "Declarative composition" tier** (widgets §7 trust tiers): không executable payload, chỉ existing components + bound actions. Đây chính là `canvas.overview@1`.
 - **Action model** (widgets §5.3): client gửi `instanceId + actionId + expectedRevision + input + commandId`; host reauthorize. Plan dùng `ActionInvocation` schema đã có, không tạo action model mới. Filter/calendar là `view` action; save-view là `view` + pin; **không** có `invoke`/`agent` CTA trong M1.
@@ -54,7 +54,7 @@ Từ sơ đồ mới, những gì ràng buộc plan này:
 | Score | `criteria` là **ordered array** (breaking từ SDK v0.6.0, 2026-09-15) | Không dùng Score trong M1; nếu dùng sau, theo array shape |
 | Noul | trả probability 0–1, **không có `confidence`** | Policy Noul dùng probability trực tiếp (≥0.85 bật, ≤0.15 tắt) |
 | Batching | Nhiều questions cùng request, cùng state, **đánh giá độc lập** | Một batch cho template + optional sections; validate combination sau |
-| Model | Docs chỉ liệt kê `jev-latest`; smoke trả `jev-1.13.0` | **Gate:** thử exact id trước Phase 2; nếu 422 → xin duyệt alias + log model drift từ response `model` |
+| Model | **Smoke 2026-09-17 14:40:** `model: "jev-1.13.0"` → HTTP 200, response `model = jev-1.13.0`, 999 ms; `jev-latest` → 200, resolve `jev-1.13.0`, 673 ms | **Gate đã mở.** Pin exact `jev-1.13.0`; adapter vẫn so `model` trả về với config và log drift |
 | Errors | 401 key, 422 validation, 429 rate limit, 529 overloaded | 429/529 → `unavailable` có reason; không retry trong budget 4s |
 | Limits | Docs không nêu size/rate limits/timeouts | Tự enforce: state ≤16 KiB, deadline 4 s, 1–2 calls/turn |
 | JS SDK | `@typesafe-ai/sdk` v0.6.0, `TypeSafeClient.systemOne()`, đọc `TYPESAFE_API_KEY` | **Quyết định:** không cài SDK; adapter fetch riêng để kiểm soát timeout/redaction |
@@ -119,11 +119,11 @@ Tổng agent-hours: ~21h core (1–6), ~5h search (7–8), ~3h Phase 9, ~4h Phas
 - [ ] Provider unavailable vẫn dùng view đã lưu; no secrets/raw private rows sent/logged.
 - [ ] Full `pnpm verify` + `pnpm build` + `pnpm test:e2e` và opt-in live integration pass; evidence nói rõ giới hạn.
 
-## Pre-flight trước khi cook (≤15 phút)
+## Pre-flight trước khi cook
 
-1. Tạo feature branch từ `main` (không commit thẳng `main`).
-2. Smoke exact model id: gửi 1 request `model: "jev-1.13.0"` với state tổng hợp không chứa user data. 200 → pin; 422 → ghi blocker, xin duyệt alias `jev-latest` + drift monitoring. Không bắt đầu Phase 2 khi chưa có kết quả.
-3. Xác nhận `TYPESAFE_API_KEY` có trong env runtime dev (không commit, không ghi path).
+1. Branch: user chọn commit thẳng `main` cho plan/docs (2026-09-17). Code implementation vẫn nên đi feature branch + PR theo CLAUDE.md, trừ khi user nói khác.
+2. ~~Smoke exact model id~~ **Đã chạy 2026-09-17 14:40**, state tổng hợp không chứa user data: exact `jev-1.13.0` 200/999 ms, Choice `c1` confidence 1.0, Noul calendar 0.58 (vùng uncertain, đúng kỳ vọng "không đoán"), usage 412/58 tokens. Alias `jev-latest` resolve về cùng id.
+3. `TYPESAFE_API_KEY` **chưa có** trong `.env` của repo này; hiện nằm ở `.env` của một repo demo khác trong workspace. Trước Phase 2: thêm `TYPESAFE_API_KEY` vào `.env` local của repo này (đã gitignore) hoặc export trong shell runtime. Implementation không được hardcode path repo khác.
 
 ## Gates còn mở
 
@@ -135,6 +135,7 @@ Tổng agent-hours: ~21h core (1–6), ~5h search (7–8), ~3h Phase 9, ~4h Phas
 ## Validation log
 
 - 2026-09-17 (v1): ba quyết định user: Jev chọn + code ghép; snapshot + mở live; đủ sketch với local data. Advisor review tiếp thu (compose trong turn step, contracts trước adapter).
+- 2026-09-17 (v4): smoke exact model pass; approved root = `~` (đa tác vụ, không chỉ code); Phase 11 đổi sang index thư mục tổng quát với ignore list hệ thống; Phase 10 chấp nhận optional native deps; đường C ghi vào docs §7.2.
 - 2026-09-17 (v3): user chỉ định `docs/system-architecture.png` là kiến trúc mới nhất thay `system-architecture.md`. Điều chỉnh: Phase 7–9 tái định vị thành các lớp của "Memory & Search" shared service; corpus gồm JSONL session + `messages`; thêm Phase 10 semantic retrieval; FTS output shape sẵn cho RRF. Đã kiểm tra `node:sqlite` hỗ trợ `allowExtension`/`loadExtension` (cần cho sqlite-vec).
 - 2026-09-17 (v2 review): đọc docs/ blueprint, đối chiếu source, đọc TypeSafe live docs; chốt 7 quyết định ở trên; sửa priority Phase 7–8 về P2; đổi effort sang agent-hours; ghi chú branch cũ (`feat/restart-session-on-logo`) đã lỗi thời, checkout hiện ở `main`.
 - `ak plan validate` pass.

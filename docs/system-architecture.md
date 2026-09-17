@@ -198,7 +198,7 @@ Memory & Search là **service dùng chung trong runtime process**, sống qua Pi
   → 0 candidate: hỏi user chọn thư mục; uncertain: một câu hỏi làm rõ (T19), không đoán
 ```
 
-Finder là control extension của Main Pi theo sơ đồ. Cache là bảng `project_index` per node, làm mới incremental khi mở app và khi user nhắc tới project không có trong cache; không quét toàn ổ đĩa, không theo symlink ra ngoài roots, không đọc nội dung file để index (chỉ metadata và markers). Recent-use và alias do user đặt là tín hiệu xếp hạng mạnh hơn tên gần giống.
+Finder là control extension của Main Pi theo sơ đồ. Root mặc định là **thư mục home của user**, vì app hướng đa tác vụ (tài liệu, ảnh, dự án viết, không chỉ code); ignore list hệ thống là bắt buộc và người dùng chỉnh roots/ignore qua chat. Cache là bảng `project_index` per node, làm mới incremental khi mở app và khi user nhắc tới thư mục không có trong cache; không quét ngoài roots, không theo symlink ra ngoài, không descend vào trong một project đã nhận diện, không đọc nội dung file để index (chỉ metadata và markers). Recent-use và alias do user đặt là tín hiệu xếp hạng mạnh hơn tên gần giống.
 
 Ràng buộc bắt buộc cho lớp này:
 

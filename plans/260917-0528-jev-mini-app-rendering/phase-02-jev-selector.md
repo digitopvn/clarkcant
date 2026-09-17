@@ -29,7 +29,7 @@ Root: `/Volumes/GOON/www/digitop/clarkcant/`.
 
 ## Implementation steps
 1. Server config: `TYPESAFE_API_KEY`, model id, enabled/local-only mode. Không hardcode external repo .env path; không copy secret vào docs/fixtures/frontend.
-2. Exact `jev-1.13.0` đã được smoke ở pre-flight (plan.md). Adapter đọc `model` từ response và so với config; lệch → telemetry `model_drift` + reason, không silent accept.
+2. Exact `jev-1.13.0` đã smoke pass 2026-09-17 (200, 999 ms; alias `jev-latest` cũng resolve về id này). Adapter đọc `model` từ response và so với config; lệch → telemetry `model_drift` + reason, không silent accept. Lưu ý từ smoke: Noul trả 0.58 cho câu hỏi calendar với intent tổng quát — vùng uncertain là có thật, policy phải xử lý, không ép về boolean.
 3. State là object có tên trường (`{intent, candidates:[{id, kind, schemaSummary}], locale}`) ≤16 KiB, chỉ intent đã sanitize, schema metadata và authorized opaque candidate IDs; không raw rows, private titles, image bytes hoặc full history. Nếu policy không cho third-party intent processing → local-only fallback.
 4. Choice threshold đề xuất top ≥0.85, margin ≥0.20 (tính trên `probabilities`, không chỉ `confidence`); Noul dùng probability trực tiếp ≥0.85 bật, ≤0.15 tắt; còn lại uncertain. `none` luôn có mặt. Không coi confidence là authority hay joint probability.
 5. Một batch mặc định; tối đa hai batch nếu template làm thay đổi candidate set. Total deadline 4 giây bao gồm toàn bộ calls; cancellation propagated; retry không làm vượt budget. 429/server/transport failures → unavailable có reason.
