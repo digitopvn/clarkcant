@@ -162,7 +162,7 @@ Pack đóng góp tools, instructions, presenters, custom widgets, drivers, auth/
 
 Mỗi capability có stable ID, package/version, execution node, input/output schema, resource kinds, compatibility, auth readiness, invocation route, cancellation, effect category và UI affordances. `installed`, `loaded`, `authenticated`, `authorized`, `healthy` là các trạng thái riêng.
 
-Conductor mặc định chỉ thấy capability summary và search tool; khi chọn một capability mới nạp schema/skill liên quan. Không dump toàn bộ MCP tools vào mọi lượt model. Dynamic tool activation của Pi có thể được dùng qua adapter khi phù hợp [R03].
+Conductor mặc định chỉ thấy capability summary và danh sách tool chỉ-đọc ngắn mà node đăng ký cho Main Pi (`apps/runtime/src/node-tools.ts`); khi chọn một capability mới nạp schema/skill liên quan. Không dump toàn bộ MCP tools vào mọi lượt model. Dynamic tool activation của Pi có thể được dùng qua adapter khi phù hợp [R03].
 
 Conductor không được có tool tự accept consent, đọc secret values hoặc patch core policy. Tool discovery metadata và mô tả MCP do bên ngoài cung cấp vẫn là untrusted input.
 

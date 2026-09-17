@@ -22,6 +22,7 @@ logged.
 | `CLARKCANT_JEV_MODEL` | `jev-1.13.0` | Exact model id. `jev-latest` resolves to the same id today but drifts by definition. |
 | `CLARKCANT_JEV_ENDPOINT` | `https://api.typesafe.ai/v1/systemone` | Must be `https`, with no embedded credentials, and must not point at a loopback or private address. |
 | `CLARKCANT_JEV_TIMEOUT_MS` | `4000` | Budget for **all** selector calls made while composing one turn. |
+| `CLARKCANT_JEV_SEARCH_TIMEOUT_MS` | `2000` | Budget for **one decision** rather than a whole composition: the selector choosing between close search results, or between usable capabilities. A value that is not a positive number falls back to the default. |
 | `CLARKCANT_JEV_POLICY_VERSION` | `2026-09-17` | Stamped into telemetry and composition provenance so a decision can be traced to a policy. |
 | `CLARKCANT_SEARCH_DECIDER` | `rank` | `rank` uses BM25 alone; `jev` asks the selector to choose between results that are close. Any other value falls back to `rank`. |
 | `CLARKCANT_SEARCH_SEMANTIC` | off | `1`/`true` turns on vector retrieval (sqlite-vec + local E5-small), fused with the lexical results by RRF. Off because it was measured: on the Phase 8 corpus it did not improve top-1 and cost precision when the cosine ceiling was loose. |
@@ -72,8 +73,9 @@ deterministic path and the default-model fallback, exactly as it does when the p
 The floors and the margin are applied together. A 0.90 winner beside a 0.85 runner-up passes the
 floor and fails the margin, and is treated as a coin toss rather than a choice.
 
-These numbers are proposed, not calibrated. Calibration against a labelled corpus happens in
-Phase 6, and the numbers are recorded in the release evidence rather than tuned to taste.
+These numbers are proposed, not calibrated: the live calibration against the labelled corpus on
+2026-09-17 left them unchanged for want of cases in the middle band, and its outcome is recorded in
+the release evidence rather than tuned to taste.
 
 ## Failure behaviour
 
@@ -134,9 +136,10 @@ changes — see `plans/reports/verification-260917-1815-jev-live-integration-and
 **Turning semantic search on, and when not to.** It needs two optional native pieces on the machine:
 `sqlite-vec` (the vector index) and the local embedding runtime with E5-small (`@huggingface/transformers`
 plus `onnxruntime-node`). Both are `optionalDependencies` of the runtime, so a checkout without them
-installs, boots and passes `pnpm verify` — search is simply lexical and `GET /health`-style status says
-which reason applies: the extension is missing, the model could not be loaded, or the index holds
-vectors from a different model and needs a reindex.
+installs, boots and passes `pnpm verify` — search is simply lexical, and the search answer says which
+reason applies (a `semantic.reason` on a `/search/sessions` response, and
+`NodeServices.vectors.status()` in process): the extension is missing, the model could not be loaded,
+or the index holds vectors from a different model and needs a reindex.
 
 It is off by default for a measured reason, not a cautious one. On the 34-query labelled corpus the
 lexical path answered 31 top-1 correctly; the hybrid path also answered 31 when the cosine ceiling was
@@ -159,8 +162,11 @@ sees from the finder is a name, a path relative to the root, a kind and marker n
 absolute path and never a file's contents. The scan is bounded (depth 5, 20 000 entries), skips
 symlinks and dependency directories, and stops descending as soon as it finds a project marker.
 
-When the finder finds nothing, it asks the user for a directory, and the answer is a path. Three
-rules make that question answerable and safe:
+When the finder finds nothing, it asks the user for a directory, and the answer is a path. On the
+desktop build the client also offers the OS directory dialog for that answer (`pickDirectory()` on
+the shell's bridge, channel `desktop:pickDirectory`), and the path it returns is submitted through
+the same route as a typed one; the web build has no bridge, so the text field is the whole answer
+there. Three rules make that question answerable and safe:
 
 - **A path is read from the user's own words, before redaction.** The redactor replaces absolute
   paths with a placeholder — a home path is what it exists to remove — so reading it afterwards would
@@ -183,11 +189,6 @@ session in a chosen directory: it reports a session id and spawns nothing. Both 
 suite can exercise real paths without a provider, both print a line saying they are loaded, and
 neither belongs on a node a person uses: the reply says a fixture produced it and the node says so at
 startup.
-
-**Fixture turns.** `CC_MODEL_FIXTURE=1` replaces the model turn with a scripted one that composes an
-overview through the production pipeline. It exists so the browser suite can exercise the render path
-without a provider, it prints a line saying it is loaded, and it must never be set on a node a person
-uses: the reply it produces says a fixture produced it, and the node says so at startup.
 
 ## Running the checks
 

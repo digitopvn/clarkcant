@@ -79,8 +79,8 @@ Core features need no native modules: SQLite comes from Node's built-in `node:sq
 Semantic search is the one exception, and it is optional. When `sqlite-vec` and the local embedding
 runtime are installed, history can be indexed as vectors and fused with the lexical results by
 reciprocal rank fusion; when they are not, the node searches lexically and reports why. Neither is
-required to install, boot, or pass the test suite — see §"Semantic search" in
-`docs/mini-app/jev-configuration.md`.
+required to install, boot, or pass the test suite — see "Turning semantic search on, and when not
+to" in `docs/mini-app/jev-configuration.md`.
 
 ## Getting started
 
