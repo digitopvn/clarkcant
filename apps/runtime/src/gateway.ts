@@ -38,8 +38,14 @@ export interface GatewayDeps {
   newConversationId?: () => string;
 }
 
-/** Constant-time comparison, so the gate does not leak a token's length or prefix. */
-function tokenMatches(expected: string, presented: string | undefined): boolean {
+/**
+ * Constant-time comparison, so the gate does not leak a token's length or prefix.
+ *
+ * Exported because the voice socket has to make the identical decision, and a second comparison
+ * written beside this one is a second comparison that can drift: the failure mode of two
+ * well-meant token checks is that one of them quietly stops being constant-time.
+ */
+export function tokenMatches(expected: string, presented: string | undefined): boolean {
   if (presented === undefined) return false;
   const a = Buffer.from(expected);
   const b = Buffer.from(presented);
