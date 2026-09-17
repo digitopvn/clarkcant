@@ -82,6 +82,19 @@ let installed = false;
  * Idempotent because both the web client and the desktop shell may mount more than one
  * surface, and injecting the sheet twice would make every override fight itself.
  */
+export {
+  DEFAULT_THEME_CHOICE,
+  THEME_CHOICES,
+  THEME_STORAGE_KEY,
+  type ThemeChoice,
+  isThemeChoice,
+  readDocumentTheme,
+  readStoredTheme,
+  resolveTheme,
+  storeTheme,
+  systemPrefersLight,
+} from "./theme.ts";
+
 export function installStyles(theme: "dark" | "light" = "dark"): void {
   if (typeof document === "undefined") return;
   if (!installed) {
