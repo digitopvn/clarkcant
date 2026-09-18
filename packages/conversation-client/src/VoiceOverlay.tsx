@@ -93,6 +93,14 @@ export interface VoiceOverlayProps {
    * be told to read it again.
    */
   onAnswered?: () => void;
+  /**
+   * Called while a spoken turn is still running, so the conversation behind the overlay can show the message
+   * and the answer as they arrive rather than all at once at the end.
+   *
+   * Separate from `onAnswered` because the two have different weights: this one fires per transcript update
+   * and the caller is expected to throttle it, while `onAnswered` fires once and is the end of the turn.
+   */
+  onProgress?: () => void;
   requires?: string;
   unblockedBy?: string;
 }
@@ -102,6 +110,7 @@ export function VoiceOverlay({
   conversationId,
   onClose,
   onAnswered,
+  onProgress,
   requires = "một phiên Live API đang mở",
   unblockedBy = "đặt GEMINI_API_KEY cho node rồi thử lại",
 }: VoiceOverlayProps): ReactElement {
@@ -168,9 +177,14 @@ export function VoiceOverlay({
             // no longer news.
             setAnswerProblem(undefined);
             setUtterances((current) => foldTranscriptUpdate(current, update));
-            // The agent's words are the message it just wrote to the conversation, so this is the moment
-            // the transcript above is worth re-reading - once, when the turn is done, rather than on every
-            // delta of it.
+            //
+            // The conversation is re-read as the turn runs, not only when it ends.
+            //
+            // It used to be read once, at the end, on the reasoning that a stored message is the record and a
+            // delta is not. True, and beside the point: someone who has just spoken sees nothing at all until
+            // the whole turn finishes, which reads as the interface having ignored them. The caller throttles
+            // this, so "as it arrives" costs a handful of reads per turn rather than one per token.
+            onProgress?.();
             if (update.role === "assistant" && update.final) onAnswered?.();
           },
           onLevel: ({ level: heard }) => {

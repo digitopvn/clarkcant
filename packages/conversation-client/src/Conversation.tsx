@@ -110,6 +110,8 @@ const PLACEHOLDER_PHRASES = [
  * doubles the room around it.
  */
 const ORB_DRAW_SIZE = 960;
+/** How often the conversation is re-read while a spoken turn runs, at most. */
+const VOICE_REFRESH_INTERVAL_MS = 400;
 
 /** The ball's radius as a fraction of the canvas half-height: 0.54 x 960 is the 518 pixel ball. */
 const ORB_RADIUS = 0.54;
@@ -445,6 +447,30 @@ export function Conversation({
       .then((loaded) => applyTimeline(loaded))
       .catch(() => undefined);
   }, [applyTimeline, client, conversationId]);
+
+  /**
+   * The same read, while a spoken turn is still running.
+   *
+   * A sentence someone has just spoken should appear as a message, and the answer should grow as it is written,
+   * instead of both arriving when the turn ends - which reads as the interface having ignored the person who
+   * spoke. Throttled, because the transcript updates per delta and reading the whole conversation per delta
+   * would be a request storm that adds no information.
+   */
+  const voiceRefreshTimer = useRef<number | undefined>(undefined);
+  const scheduleVoiceRefresh = useCallback((): void => {
+    if (voiceRefreshTimer.current !== undefined) return;
+    voiceRefreshTimer.current = window.setTimeout(() => {
+      voiceRefreshTimer.current = undefined;
+      refreshTimeline();
+    }, VOICE_REFRESH_INTERVAL_MS);
+  }, [refreshTimeline]);
+
+  useEffect(
+    () => () => {
+      if (voiceRefreshTimer.current !== undefined) window.clearTimeout(voiceRefreshTimer.current);
+    },
+    [],
+  );
 
 
   /* Load any existing conversation once, so a reload is not a new conversation. */
@@ -1206,6 +1232,7 @@ export function Conversation({
           client={client}
           {...(conversationId === undefined ? {} : { conversationId })}
           onAnswered={refreshTimeline}
+          onProgress={scheduleVoiceRefresh}
           onClose={({ focusComposer }) => {
             setVoiceOpen(false);
             if (focusComposer) composerInput.current?.focus();
