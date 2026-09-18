@@ -99,6 +99,20 @@ body {
  * what happened without saying what was typed.
  */
 .cc-credential-form { display: flex; flex-direction: column; gap: var(--cc-space-sm); margin: var(--cc-space-sm) 0; }
+
+/*
+ * The microphone check.
+ *
+ * The bar is a reading rather than a decoration: a muted microphone and a broken one look identical from the
+ * outside, and the level is the difference. It is drawn from the same measurement the voice session uses, so a
+ * level that moves here is a level that will move there.
+ */
+.cc-mic-check { display: flex; flex-direction: column; gap: var(--cc-space-sm); align-items: flex-start; }
+.cc-mic-level {
+  width: 100%; height: 6px; overflow: hidden;
+  background: var(--cc-elevated); border-radius: var(--cc-radius-pill);
+}
+.cc-mic-level > span { display: block; height: 100%; background: currentColor; opacity: 0.7; transition: width 80ms linear; }
 .cc-credential-field { display: flex; flex-direction: column; gap: var(--cc-space-xs); font-size: var(--cc-font-small); }
 .cc-credential-field input {
   font: inherit; color: inherit; padding: var(--cc-space-sm);

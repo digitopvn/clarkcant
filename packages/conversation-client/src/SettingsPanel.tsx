@@ -18,6 +18,8 @@
 
 import { useCallback, useEffect, useState, type ReactElement, type ReactNode } from "react";
 
+import { MicrophoneCheck } from "./microphone-check.tsx";
+
 import { contrastRatio, AA_NORMAL_TEXT, DARK, LIGHT, type ThemeName } from "@clarkcant/design-tokens";
 
 import { DevicePairingPanel } from "./DevicePairingPanel.tsx";
@@ -458,6 +460,7 @@ export function SettingsPanel({
               runtime is not something the browser ships. A name is cheaper to keep in step than a package.
             */}
             <h3>Giọng nói</h3>
+            <MicrophoneCheck />
             <p className="cc-panel-note">
               Khoá dùng cho Gemini Live khi bạn nói. Nó được lưu ở node, không đi vào hội thoại, và không hiện lại
               lần nào nữa — kể cả trong thông báo lưu thành công.
