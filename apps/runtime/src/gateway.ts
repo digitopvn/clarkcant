@@ -46,6 +46,7 @@ import {
 import { credentialNames, putCredential } from "@clarkcant/storage";
 
 import { nodeBackgroundSessions } from "./background-sessions.ts";
+import { PI_BUILTIN_TOOLS, nodeToolCatalogue } from "./tool-catalogue.ts";
 
 import { isWithinRoot } from "./path-roots.ts";
 
@@ -289,6 +290,22 @@ export async function handleRequest(deps: GatewayDeps, request: GatewayRequest):
    * "what is running, and did the last one finish". Newest first, and empty when nothing has been started - an
    * invented placeholder entry would make the count meaningless.
    */
+  /*
+   * What this node can do, and what the agent it drives can do.
+   *
+   * Two lists rather than one, because they are two different things and a reader needs to know which is which: the
+   * harness's tools are this node's own, and the agent's are pi's. An extension's tools are not listed because they
+   * depend on pi's own configuration, and a list that guessed at them would be wrong in the one direction that
+   * matters - claiming a capability this node does not have.
+   */
+  if (segments.length === 1 && segments[0] === "tools" && request.method === "GET") {
+    return json(200, {
+      self: nodeToolCatalogue(),
+      agent: PI_BUILTIN_TOOLS,
+      agentNote: "Công cụ gốc của pi. Extension mà pi tự nạp thêm thì không liệt kê ở đây.",
+    });
+  }
+
   if (segments.length === 1 && segments[0] === "background-sessions" && request.method === "GET") {
     return json(200, {
       running: nodeBackgroundSessions.running(),
