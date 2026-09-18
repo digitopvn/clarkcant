@@ -19,6 +19,7 @@ import {
   messagesSince,
   upsertDataset,
 } from "@clarkcant/storage";
+import { readCredential } from "@clarkcant/storage";
 import { FAMILY_BY_DEFINITION, WIDGETS as CATALOG_WIDGETS } from "@clarkcant/data-canvas";
 import { QUICK_PLAY_RECIPES, SAMPLE_DATASET } from "@clarkcant/data-canvas/sample";
 import { CAPABILITIES as PROJECT_WORK_CAPABILITIES } from "@clarkcant/project-work";
@@ -174,8 +175,8 @@ export function newId(prefix: string): string {
  * node asked a provider to decide, and it holds no request body, so nothing here needs retention
  * or redaction at rest. It is also the counter the tests read.
  */
-function buildJevRuntime(options: RuntimeOptions): JevRuntime {
-  const config: JevConfig = { ...jevConfigFromEnv(process.env), ...(options.jev?.config ?? {}) };
+function buildJevRuntime(options: RuntimeOptions, storedJevKey?: () => string | undefined): JevRuntime {
+  const config: JevConfig = { ...jevConfigFromEnv(process.env, storedJevKey), ...(options.jev?.config ?? {}) };
   const telemetry: JevTelemetry[] = [];
   let providerCalls = 0;
 
@@ -217,7 +218,11 @@ function indexRoots(): string[] {
 export function bootNodeServices(options: RuntimeOptions): NodeServices {
   const runtime = bootRuntime(options);
   const nodeId = runtime.identity.nodeId;
-  const jevRuntime = buildJevRuntime(options);
+  // The key a person typed into the interface, so the decider uses it without a restart. Read from the vault here
+  // rather than passed in as a value, because the point of storing one is that the node is already running.
+  const jevRuntime = buildJevRuntime(options, () =>
+    readCredential(runtime.db, runtime.identity.ownerPrincipalId, "typesafe"),
+  );
   const catalog = registerCatalog(
     new CatalogRegistry(),
     CATALOG_WIDGETS.map((definition) => ({ definition, family: FAMILY_BY_DEFINITION[definition.id] ?? "unknown" })),
