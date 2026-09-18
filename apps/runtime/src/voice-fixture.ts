@@ -44,6 +44,7 @@ export class FixtureLiveAdapter implements VoiceProviderAdapter {
   #turns = 0;
   #disconnected = false;
   #sequence = 0;
+  readonly #spoken: string[] = [];
   readonly #now: () => Instant;
 
   readonly #transcriptListeners = new Set<(fragment: VoiceTranscriptFragment) => void>();
@@ -88,6 +89,27 @@ export class FixtureLiveAdapter implements VoiceProviderAdapter {
     this.#emit("assistant", ASSISTANT_WORDS);
     this.#sendTone();
     this.#setState("listening");
+  }
+
+  /**
+   * Read the agent's reply out loud.
+   *
+   * Recorded as the fixture's own transcript of what it said and answered with a tone, so a caller
+   * cannot pass by sending nothing: `spoken` is what it was asked to say, and the tone proves the
+   * playback path received something to play.
+   */
+  speak(text: string): void {
+    if (this.#disconnected || text.trim() === "") return;
+    this.#spoken.push(text);
+    this.#turns += 1;
+    this.#emit("assistant", text);
+    this.#sendTone();
+    this.#setState("listening");
+  }
+
+  /** Everything this session was asked to say, in order. */
+  get spoken(): readonly string[] {
+    return this.#spoken;
   }
 
   setMuted(muted: boolean): void {

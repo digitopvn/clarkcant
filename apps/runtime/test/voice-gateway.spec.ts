@@ -8,7 +8,12 @@ import { WebSocket } from "ws";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import type { NodeServices } from "../src/services.ts";
-import { attachVoiceGateway, type VoiceGateway } from "../src/voice-session.ts";
+import {
+  attachVoiceGateway,
+  voiceAdapterDefaults,
+  type VoiceGateway,
+  type VoiceGatewayOptions,
+} from "../src/voice-session.ts";
 
 /**
  * The voice socket's boundary.
@@ -74,14 +79,22 @@ class FakeAdapter implements VoiceProviderAdapter {
     this.muted = muted;
   }
 
-  speak(text: string, final = false): void {
+  /** Everything the gateway asked this session to say out loud. */
+  readonly spoken: string[] = [];
+
+  speak(text: string): void {
+    this.spoken.push(text);
+  }
+
+  /** A transcript fragment the provider would have produced, for either side. */
+  emitTranscript(text: string, role: "user" | "assistant" = "assistant", final = false): void {
     this.#onTranscript?.({
       voiceSessionId: "session",
-      utteranceId: "session:a0",
+      utteranceId: role === "user" ? "session:u0" : "session:a0",
       fragmentIndex: 0,
       isFinal: final,
       text,
-      role: "assistant",
+      role,
       at: AT,
       sequence: 0,
     });
@@ -99,6 +112,7 @@ type Received = { binary: true; bytes: Uint8Array } | { binary: false; control: 
 async function startGateway(
   credential: () => string | undefined,
   adapter: FakeAdapter,
+  options: Partial<VoiceGatewayOptions> = {},
 ): Promise<{ url: string; gateway: VoiceGateway; server: Server; deps: ReturnType<typeof buildDeps> }> {
   const deps = buildDeps();
   const services = {
@@ -109,7 +123,7 @@ async function startGateway(
   } as unknown as NodeServices;
 
   const server = createServer();
-  const gateway = attachVoiceGateway({ server, services, credential, createAdapter: () => adapter });
+  const gateway = attachVoiceGateway({ server, services, credential, createAdapter: () => adapter, ...options });
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
   const { port } = server.address() as AddressInfo;
   return { url: `ws://127.0.0.1:${port}/voice`, gateway, server, deps };
@@ -299,7 +313,7 @@ describe("a live session", () => {
     await new Promise((resolve) => setTimeout(resolve, 50));
     expect(adapter.frames.map((frame) => [...frame])).toEqual([[7, 8, 9]]);
 
-    adapter.speak("hello from the model");
+    adapter.emitTranscript("hello from the model");
     const transcript = await client.control("transcript");
     expect(transcript.binary === false && transcript.control).toMatchObject({
       role: "assistant",
@@ -342,7 +356,7 @@ describe("recording the transcript", () => {
     await client.control("ready");
 
     // The user's side comes from the adapter's transcript events, as it does in production.
-    adapter.speak("what is the weather", false);
+    adapter.emitTranscript("what is the weather", "user", false);
     // ...and the model's. The adapter distinguishes the roles; the socket only forwards them.
     await new Promise((resolve) => setTimeout(resolve, 20));
 
@@ -366,7 +380,7 @@ describe("recording the transcript", () => {
     client.auth(TOKEN, CONVERSATION);
     await client.control("ready");
 
-    adapter.speak("an answer nobody needs to regenerate");
+    adapter.emitTranscript("an answer nobody needs to regenerate");
     await new Promise((resolve) => setTimeout(resolve, 20));
     client.send({ type: "end" });
     await client.control("ended");
@@ -401,7 +415,7 @@ describe("the conversation a session targets", () => {
     client.auth(TOKEN, CONVERSATION);
     await client.control("ready");
 
-    adapter.speak("the only thing said");
+    adapter.emitTranscript("the only thing said");
     await new Promise((resolve) => setTimeout(resolve, 20));
     client.send({ type: "end" });
 
@@ -412,6 +426,210 @@ describe("the conversation a session targets", () => {
   });
 });
 
+/**
+ * A sentence becoming a message.
+ *
+ * Voice is an input channel to the agent rather than a second assistant: what is said becomes a
+ * message in the conversation, the agent answers it with whatever tools it needs, and the words that
+ * come back are read aloud by the session. These tests are about that path and about the two ways it
+ * could quietly go wrong - answering twice, or going silent after one failure.
+ */
+describe("a spoken sentence the agent answers", () => {
+  const REPLY = "Đã chuyển xong ba tệp.";
+
+  function clientFor(): ReturnType<typeof connect> {
+    return context === undefined ? (undefined as never) : connect(context.url);
+  }
+
+  async function opened(options: Partial<VoiceGatewayOptions>, adapter: FakeAdapter) {
+    context = await startGateway(() => "credential", adapter, options);
+    const client = clientFor();
+    await client.opened;
+    client.auth(TOKEN, CONVERSATION);
+    await client.control("ready");
+    return client;
+  }
+
+  /** A finished utterance, the way the adapter reports one: text, then an empty closing fragment. */
+  const say = (adapter: FakeAdapter, text: string): void => {
+    adapter.emitTranscript(text, "user", false);
+    adapter.emitTranscript("", "user", true);
+  };
+
+  it("sends the utterance to the agent and reads its answer back", async () => {
+    const adapter = new FakeAdapter();
+    const asked: string[] = [];
+    const client = await opened(
+      {
+        answer: async ({ text }) => {
+          asked.push(text);
+          return { reply: REPLY, recordedMessages: 2 };
+        },
+      },
+      adapter,
+    );
+
+    say(adapter, "chuyển ba tệp giúp tôi");
+
+    const transcript = await client.waitFor(
+      (message) =>
+        !message.binary &&
+        message.control["type"] === "transcript" &&
+        message.control["role"] === "assistant" &&
+        message.control["text"] === REPLY,
+      "the agent's answer",
+    );
+    expect(transcript.binary === false && transcript.control["final"]).toBe(true);
+    // The agent was asked once, with what was said and nothing else.
+    expect(asked).toEqual(["chuyển ba tệp giúp tôi"]);
+    // And the words are the agent's: the session is only the voice that reads them.
+    expect(adapter.spoken).toEqual([REPLY]);
+  });
+
+  it("sends one message per utterance, however many fragments it arrived in", async () => {
+    const adapter = new FakeAdapter();
+    const asked: string[] = [];
+    const client = await opened(
+      {
+        answer: async ({ text }) => {
+          asked.push(text);
+          return { reply: REPLY, recordedMessages: 1 };
+        },
+      },
+      adapter,
+    );
+
+    // A provider transcribes as the person speaks, so an utterance arrives in pieces and is closed
+    // by an empty final fragment rather than by the text being repeated.
+    adapter.emitTranscript("chuyển ", "user", false);
+    adapter.emitTranscript("ba tệp ", "user", false);
+    adapter.emitTranscript("giúp tôi", "user", false);
+    adapter.emitTranscript("", "user", true);
+
+    await client.waitFor(
+      (message) => !message.binary && message.control["type"] === "transcript" && message.control["role"] === "assistant",
+      "the agent's answer",
+    );
+    expect(asked).toEqual(["chuyển ba tệp giúp tôi"]);
+  });
+
+  it("does not repeat the live model's own words once the agent is answering", async () => {
+    const adapter = new FakeAdapter();
+    const client = await opened({ answer: async () => ({ reply: REPLY, recordedMessages: 1 }) }, adapter);
+
+    say(adapter, "câu hỏi");
+    await client.waitFor(
+      (message) => !message.binary && message.control["type"] === "transcript" && message.control["role"] === "assistant",
+      "the agent's answer",
+    );
+    // The session reads the reply back, so its own transcription of that reading is the same words a
+    // second time. Two answers in the transcript is the failure this avoids.
+    adapter.emitTranscript("Đã chuyển xong ba tệp.");
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    const answers = client.received.filter(
+      (message) => !message.binary && message.control["type"] === "transcript" && message.control["role"] === "assistant",
+    );
+    expect(answers.length).toBe(1);
+  });
+
+  it("reports what the agent wrote, not nothing, when the session ends", async () => {
+    const adapter = new FakeAdapter();
+    const client = await opened({ answer: async () => ({ reply: REPLY, recordedMessages: 3 }) }, adapter);
+
+    say(adapter, "câu hỏi");
+    await client.waitFor(
+      (message) => !message.binary && message.control["type"] === "transcript" && message.control["role"] === "assistant",
+      "the agent's answer",
+    );
+
+    client.send({ type: "end" });
+    const ended = await client.control("ended");
+    // The messages were written while the sentence was being answered, so the closing report counts
+    // them rather than recording the transcript a second time.
+    expect(ended.binary === false && ended.control["recordedMessages"]).toBe(3);
+  });
+
+  it("stays open when the agent fails, so the next sentence gets its own attempt", async () => {
+    const adapter = new FakeAdapter();
+    let attempt = 0;
+    const client = await opened(
+      {
+        answer: async () => {
+          attempt += 1;
+          if (attempt === 1) throw new Error("the model was unreachable");
+          return { reply: REPLY, recordedMessages: 1 };
+        },
+      },
+      adapter,
+    );
+
+    say(adapter, "câu hỏi đầu");
+    const failure = await client.control("error");
+    expect(failure.binary === false && failure.control["code"]).toBe("VOICE_ANSWER_FAILED");
+
+    say(adapter, "câu hỏi thứ hai");
+    await client.waitFor(
+      (message) => !message.binary && message.control["type"] === "transcript" && message.control["role"] === "assistant",
+      "the second answer",
+    );
+    expect(adapter.spoken).toEqual([REPLY]);
+  });
+
+  it("answers in the order the sentences were said, even when the first one is slow", async () => {
+    const adapter = new FakeAdapter();
+    const asked: string[] = [];
+    const client = await opened(
+      {
+        answer: async ({ text }) => {
+          asked.push(text);
+          if (text === "câu thứ nhất") await new Promise((resolve) => setTimeout(resolve, 40));
+          return { reply: `đáp cho: ${text}`, recordedMessages: 1 };
+        },
+      },
+      adapter,
+    );
+
+    say(adapter, "câu thứ nhất");
+    say(adapter, "câu thứ hai");
+
+    await client.waitFor(
+      (message) =>
+        !message.binary &&
+        message.control["type"] === "transcript" &&
+        message.control["text"] === "đáp cho: câu thứ hai",
+      "the second answer",
+    );
+    // Asked in order, and read back in order: a reply spoken over the question before it is worse
+    // than a reply that arrives late.
+    expect(asked).toEqual(["câu thứ nhất", "câu thứ hai"]);
+    expect(adapter.spoken).toEqual(["đáp cho: câu thứ nhất", "đáp cho: câu thứ hai"]);
+  });
+});
+
 beforeEach(() => {
   counter = 0;
+});
+
+/**
+ * What the live session is told to be.
+ *
+ * A requirement rather than a detail: left to itself the model answers whatever it hears, and the
+ * same question then has two answers in the room - the model's guess, made without a tool and
+ * without the conversation, next to the agent's, which is the only one that could read the file.
+ */
+describe("the instruction the live session runs under", () => {
+  it("makes it the voice, not the mind: transcribe, read back, do not answer", () => {
+    const defaults = voiceAdapterDefaults({});
+
+    expect(defaults?.systemInstruction).toBeTruthy();
+    expect(defaults?.systemInstruction).toMatch(/không tự trả lời/i);
+    expect(defaults?.systemInstruction).toMatch(/đọc nguyên văn/i);
+  });
+
+  it("still pins the model it was configured with", () => {
+    expect(voiceAdapterDefaults({ model: "gemini-live-test-model" })).toMatchObject({
+      model: "gemini-live-test-model",
+    });
+  });
 });

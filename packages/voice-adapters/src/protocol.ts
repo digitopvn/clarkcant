@@ -102,8 +102,9 @@ export function buildAudioMessage(pcm16: Uint8Array): Record<string, unknown> {
 /**
  * A text turn.
  *
- * Used for tests and for opening a scripted session. Live voice does not need it, because audio
- * is committed by the provider's own activity detection.
+ * Two callers, for two reasons. Tests and scripted sessions use it to open a conversation without a
+ * microphone, and the adapter itself uses it to read the agent's reply out loud: the session's voice
+ * is the provider's, the words are not.
  */
 export function buildTextMessage(text: string): Record<string, unknown> {
   return { clientContent: { turns: [{ role: "user", parts: [{ text }] }], turnComplete: true } };

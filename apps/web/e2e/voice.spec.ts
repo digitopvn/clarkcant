@@ -33,7 +33,19 @@ if (NODE_PORT === undefined || NODE_PORT === "") {
 const GATEWAY = `http://127.0.0.1:${NODE_PORT}`;
 
 /** The words the fixture provider answers with. Kept here so the assertion and the fixture agree. */
+/**
+ * The live model's own scripted answer.
+ *
+ * It must not appear anywhere: the session is told to transcribe and to read back, and the agent is the
+ * one that answers. Two answers to one question is the failure this guards against.
+ */
 const FIXTURE_REPLY = "node đã nhận được audio và trả lời bằng fixture";
+
+/** What the voice fixture says once a second of real audio has reached the node. */
+const FIXTURE_SPOKEN = "audio giả lập từ thiết bị micro";
+
+/** What the agent answers to those words, scripted by the node's model fixture. */
+const AGENT_REPLY = "Fixture đã nhận câu bạn nói và trả lời qua hội thoại, không phải model thật.";
 
 function token(): string {
   const path = join(DATA_DIR, "identity.json");
@@ -90,9 +102,14 @@ test("a microphone session carries audio both ways and records the transcript", 
     })
     .toBeGreaterThan(0);
 
-  // The reply arrives only if a second of real audio reached the node from the page. This is the
-  // assertion that would fail if capture were wired to nothing.
-  await expect(page.locator(".cc-voice")).toContainText(FIXTURE_REPLY, { timeout: 20_000 });
+  // What was said is transcribed, so the person can read their own sentence back while speaking.
+  await expect(page.locator(".cc-voice")).toContainText(FIXTURE_SPOKEN, { timeout: 20_000 });
+
+  // The answer arrives only if a second of real audio reached the node from the page, and it is the
+  // agent's answer: the sentence was spoken, became a message, and the session read the reply back.
+  await expect(page.locator(".cc-voice")).toContainText(AGENT_REPLY, { timeout: 20_000 });
+  // The live model's own words never arrive, because it is no longer the one answering.
+  await expect(page.locator(".cc-voice")).not.toContainText(FIXTURE_REPLY);
 
   // Audio came back and was scheduled for playback, in more than one frame.
   const frames = Number(await page.locator("[data-voice-state]").getAttribute("data-voice-audio-frames"));
@@ -121,10 +138,11 @@ test("a microphone session carries audio both ways and records the transcript", 
   await page.screenshot({ path: join(EVIDENCE, "voice-02-after-ending.png"), fullPage: true });
 
   // The stored transcript survives a reload, which is the difference between showing a transcript
-  // and recording a session.
+  // and recording a session. It is the assistant's answer that is stored, because that is the message
+  // the agent's turn wrote while the sentence was being said.
   await page.reload();
   await expect(page.locator("text=Ready")).toBeVisible({ timeout: 15_000 });
-  await expect(page.locator('[data-role="assistant"]').last()).toContainText(FIXTURE_REPLY, {
+  await expect(page.locator('[data-role="assistant"]').last()).toContainText(AGENT_REPLY, {
     timeout: 15_000,
   });
   await page.screenshot({ path: join(EVIDENCE, "voice-03-recorded-after-reload.png"), fullPage: true });

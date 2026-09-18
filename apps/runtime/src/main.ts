@@ -20,8 +20,9 @@ import { machineRoots } from "./fs-search.ts";
 import { resolveProject } from "./project-finder.ts";
 import { commandDigest } from "./run-command.ts";
 import { listProjects } from "@clarkcant/storage";
-import { requestApproval, setPreference, type CoordinationDeps } from "@clarkcant/core";
+import { handleUserMessage, requestApproval, setPreference, type CoordinationDeps } from "@clarkcant/core";
 import { attachVoiceGateway } from "./voice-session.ts";
+import { indexMessages, textOfMessage } from "./session-search.ts";
 import { FixtureLiveAdapter } from "./voice-fixture.ts";
 import { SAMPLE_DATASET } from "@clarkcant/data-canvas/sample";
 
@@ -153,6 +154,18 @@ async function main(): Promise<void> {
           payload: JSON.stringify({ command, cwd }),
         },
       };
+    }
+
+    /*
+     * A spoken sentence, answered.
+     *
+     * The voice fixture says exactly these words once a second of audio has reached the node, so this is
+     * what makes the whole loop provable in a real browser without a provider account: a sentence spoken
+     * into a microphone becomes a message, the agent answers it, and the session reads the answer back.
+     */
+    if (/audio giả lập|thiết bị micro/i.test(input.text)) {
+      const reply = "Fixture đã nhận câu bạn nói và trả lời qua hội thoại, không phải model thật.";
+      return { text: reply, block: { type: "text", format: "plain", content: reply, streaming: false } };
     }
 
     if (!/tổng quan|tong quan|overview/i.test(input.text)) return undefined;
@@ -487,6 +500,36 @@ async function main(): Promise<void> {
     credential: () => (voiceFixture ? "fixture-credential" : process.env.GEMINI_API_KEY),
     ...(voiceFixture ? { createAdapter: () => new FixtureLiveAdapter() } : {}),
     ...(voiceModel === undefined ? {} : { model: voiceModel }),
+    /**
+     * What a finished sentence does.
+     *
+     * It becomes a message in the conversation and the agent answers it, with whatever tools the
+     * answer needs. The words that come back are what the voice session reads aloud, which is why the
+     * live model is told not to answer anything itself: this is the only answer in the room.
+     */
+    answer: async ({ conversationId, text, at: spokenAt }) => {
+      const outcome = await handleUserMessage(services.conductor, {
+        conversationId: conversationId as never,
+        principal: {
+          principalId: services.runtime.identity.ownerPrincipalId as never,
+          kind: "user",
+          nodeId: services.runtime.identity.nodeId as never,
+        },
+        text,
+        at: spokenAt as never,
+      });
+      // Indexed where the messages were just written, for the same reason the typed route does it:
+      // a sentence that was spoken is a message like any other, and search must not disagree with the
+      // conversation about what was said.
+      indexMessages(services.search, { conversationId, messages: outcome.messages, at: spokenAt });
+
+      const reply = outcome.messages
+        .filter((message) => message.role === "assistant")
+        .map((message) => textOfMessage(message))
+        .join("\n\n")
+        .trim();
+      return { reply, recordedMessages: outcome.messages.length };
+    },
   });
   process.stderr.write(
     voiceFixture

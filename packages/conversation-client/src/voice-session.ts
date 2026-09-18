@@ -47,6 +47,14 @@ export interface VoiceSessionEvents {
    */
   onAudioFrame?(received: number): void;
   /**
+   * A sentence the agent could not answer.
+   *
+   * Deliberately not `onError`: the session is still open and the microphone still works, so this is
+   * one sentence that did not get through rather than a session that failed. The next sentence is
+   * already being listened for.
+   */
+  onAnswerFailed?(input: { code: string; message: string }): void;
+  /**
    * Called once per capture frame handed to the socket.
    *
    * The counterpart of `onAudioFrame`, and needed for the same reason: "the microphone is open"
@@ -239,6 +247,13 @@ export async function startVoiceSession(options: StartVoiceSessionOptions): Prom
         }
         case "ended": {
           void finish(typeof control["recordedMessages"] === "number" ? control["recordedMessages"] : 0);
+          return;
+        }
+        case "error": {
+          events.onAnswerFailed?.({
+            code: typeof control["code"] === "string" ? control["code"] : "VOICE_ERROR",
+            message: typeof control["message"] === "string" ? control["message"] : "node báo một lỗi không rõ",
+          });
           return;
         }
         default:

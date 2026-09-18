@@ -32,6 +32,7 @@ import type { NodeServices } from "./services.ts";
  *   `{ type: "denied", code, message, heldBy? }`
  *   `{ type: "state", state }`
  *   `{ type: "transcript", role, text, final }`
+ *   `{ type: "error", code, message }`
  *   `{ type: "ended", recordedMessages }`
  *   binary                                     — PCM16, 24 kHz, mono
  *
@@ -64,6 +65,21 @@ export interface VoiceGatewayOptions {
   credential: () => string | undefined;
   /** Model id, without the `models/` prefix. */
   model?: string;
+  /**
+   * What the person said, sent to the conversation the agent answers in.
+   *
+   * Injected rather than imported, because what this module needs from the rest of the node is one
+   * function: here is a sentence, tell me what to say back. Injecting it is also what keeps the whole
+   * voice path testable without a provider account and without a model.
+   *
+   * Absent means no agent is wired, and then the live model's own words are the answer, exactly as
+   * before this channel existed.
+   */
+  answer?: (input: {
+    conversationId: ConversationId;
+    text: string;
+    at: Instant;
+  }) => Promise<VoiceAnswerResult | undefined>;
   /** Injected by tests so the transport can be exercised without a provider. */
   createAdapter?: () => VoiceProviderAdapter;
   now?: () => Instant;
@@ -79,14 +95,43 @@ export interface VoiceGateway {
   close(): Promise<void>;
 }
 
+/** What the agent answered, and what its turn added to the conversation. */
+export interface VoiceAnswerResult {
+  /** The words to read back. Empty when the agent produced nothing worth saying. */
+  reply: string;
+  /**
+   * Messages this turn wrote to the conversation.
+   *
+   * Reported rather than recounted here, because the node knows what it stored and this module would
+   * have to re-read the conversation to learn it.
+   */
+  recordedMessages: number;
+}
+
 /** Close codes. 1008 is a policy refusal; 1013 is "try again when something changes". */
 const CLOSE_POLICY = 1008;
 const CLOSE_TRY_LATER = 1013;
 
+/**
+ * What the live session is for.
+ *
+ * It is the voice, not the mind. Left to itself the model answers whatever it hears, and then the
+ * same question has two answers in the room: the model's guess, made without any tool and without
+ * the conversation, and the agent's, which is the only one of the two that read the files, ran the
+ * command or knows what was said five minutes ago. So the session is told to transcribe and to read
+ * back, and to leave answering to the agent.
+ */
+const VOICE_INSTRUCTION = [  "Bạn là giọng nói của trợ lý, không phải bộ não của nó.",
+  "Bạn chỉ làm hai việc: nghe và chép lại lời người dùng, và đọc nguyên văn câu trả lời mà trợ lý đưa cho bạn.",
+  "Không tự trả lời, không hỏi lại, không tóm tắt, và khi đọc thì không thêm bớt chữ nào.",
+  "Khi người dùng vừa nói xong, hãy im lặng và chờ câu trả lời của trợ lý.",
+].join(" ");
+
 export function attachVoiceGateway(options: VoiceGatewayOptions): VoiceGateway {
   const path = options.path ?? "/voice";
   const now = options.now ?? nowInstant;
-  const createAdapter = options.createAdapter ?? ((): VoiceProviderAdapter => new GeminiLiveAdapter(defaultsFrom(options)));
+  const createAdapter =
+    options.createAdapter ?? ((): VoiceProviderAdapter => new GeminiLiveAdapter(voiceAdapterDefaults(options)));
 
   const wss = new WebSocketServer({ noServer: true });
   let active: { sessionId: string; holder: string } | undefined;
@@ -112,6 +157,16 @@ export function attachVoiceGateway(options: VoiceGatewayOptions): VoiceGateway {
     let userText = "";
     let assistantText = "";
     let recorded = false;
+    /** Messages the agent's turns wrote, so the closing report counts what actually happened. */
+    let answeredMessages = 0;
+    /**
+     * Utterances are answered one at a time, in the order they were said.
+     *
+     * A second question asked while the first is still being answered would be spoken over it, and the
+     * two replies would arrive in whatever order the work finished rather than the order the person
+     * spoke. Chaining keeps the conversation in the order it happened.
+     */
+    let answerQueue: Promise<void> = Promise.resolve();
 
     const send = (payload: unknown): void => {
       if (ws.readyState === ws.OPEN) ws.send(JSON.stringify(payload));
@@ -132,6 +187,11 @@ export function attachVoiceGateway(options: VoiceGatewayOptions): VoiceGateway {
       if (recorded || !authenticated) return 0;
       recorded = true;
       if (conversationId === undefined) return 0;
+      // With an agent in the path every utterance is already a message in the conversation, written
+      // while it was being said. Recording the transcript again at the end would put the same
+      // conversation in twice, so what is reported is what the agent's turns wrote. Without an agent
+      // the transcript is all there is, and this is where it is kept.
+      if (options.answer !== undefined) return answeredMessages;
       if (userText.trim() === "" && assistantText.trim() === "") return 0;
 
       const messages = recordVoiceTranscript(options.services.conductor, {
@@ -141,6 +201,42 @@ export function attachVoiceGateway(options: VoiceGatewayOptions): VoiceGateway {
         at: now(),
       });
       return messages.length;
+    };
+
+    /**
+     * Send one finished utterance to the agent, then read its answer back.
+     *
+     * The utterance is taken from the accumulated fragments, because the adapter closes an utterance
+     * with an empty final fragment rather than repeating the text in it.
+     */
+    const ask = (at: Instant): void => {
+      const text = userText.trim();
+      userText = "";
+      const askIn = conversationId;
+      const answer = options.answer;
+      if (text === "" || askIn === undefined || answer === undefined) return;
+
+      answerQueue = answerQueue
+        .then(async () => {
+          const result = await answer({ conversationId: askIn, text, at });
+          if (result === undefined) return;
+          answeredMessages += result.recordedMessages;
+          const reply = result.reply.trim();
+          if (reply === "") return;
+          // Shown as the assistant's words before it is spoken, so the transcript matches what is
+          // heard even if playback never happens.
+          send({ type: "transcript", role: "assistant", text: reply, final: true });
+          adapter?.speak(reply);
+        })
+        .catch((cause: unknown) => {
+          // A failed answer must not end the session. The microphone still works and the next sentence
+          // deserves its own attempt, so this is reported and the queue moves on.
+          send({
+            type: "error",
+            code: "VOICE_ANSWER_FAILED",
+            message: cause instanceof Error ? cause.message : "the agent could not answer",
+          });
+        });
     };
 
     const finish = async (): Promise<void> => {
@@ -226,8 +322,18 @@ export function attachVoiceGateway(options: VoiceGatewayOptions): VoiceGateway {
         if (ws.readyState === ws.OPEN) ws.send(pcm16, { binary: true });
       });
       adapter.onTranscript((fragment) => {
-        if (fragment.role === "user") userText += fragment.text;
-        else if (fragment.role === "assistant") assistantText += fragment.text;
+        if (fragment.role === "user") {
+          userText += fragment.text;
+          // The final fragment of an utterance is the adapter saying this one is complete, so this is
+          // where a sentence becomes a message.
+          if (fragment.isFinal) ask(fragment.at);
+        } else if (fragment.role === "assistant") {
+          assistantText += fragment.text;
+        }
+        // The live model's own words are only the answer when there is no agent. With one in the path
+        // they are the model reading back what it was given, and forwarding them would show the reply
+        // twice.
+        if (fragment.role === "assistant" && options.answer !== undefined) return;
         send({ type: "transcript", role: fragment.role, text: fragment.text, final: fragment.isFinal });
       });
 
@@ -279,8 +385,20 @@ export function attachVoiceGateway(options: VoiceGatewayOptions): VoiceGateway {
 }
 
 /** Options for the real adapter, resolved once so every session is configured the same way. */
-function defaultsFrom(options: VoiceGatewayOptions): ConstructorParameters<typeof GeminiLiveAdapter>[0] {
-  return options.model === undefined ? {} : { model: options.model };
+/**
+ * The options the node's own live adapter is built with.
+ *
+ * Exported because the instruction it carries is a requirement, not a detail: without it the live model
+ * answers on its own and the room gets two answers to one question. A test asserts it rather than
+ * trusting the reader to notice its absence.
+ */
+export function voiceAdapterDefaults(options: {
+  model?: string;
+}): ConstructorParameters<typeof GeminiLiveAdapter>[0] {
+  return {
+    systemInstruction: VOICE_INSTRUCTION,
+    ...(options.model === undefined ? {} : { model: options.model }),
+  };
 }
 
 function safeJson(raw: string): Record<string, unknown> | undefined {

@@ -81,6 +81,13 @@ export function VoiceOverlay({
   const [state, setState] = useState<VoiceState>("connecting");
   const [muted, setMuted] = useState(false);
   const [problem, setProblem] = useState<string | undefined>(undefined);
+  /**
+   * A sentence the agent could not answer.
+   *
+   * Kept apart from `problem`, which means the session itself failed: this one leaves the microphone
+   * open and the next sentence gets its own attempt, so it must not read as a broken session.
+   */
+  const [answerProblem, setAnswerProblem] = useState<string | undefined>(undefined);
   const [utterances, setUtterances] = useState<VoiceTranscriptUpdate[]>([]);
   const [recordedMessages, setRecordedMessages] = useState<number | undefined>(undefined);
   const [bars, setBars] = useState<number[]>(() => waveformBars([0, 0, 0, 0, 0]));
@@ -112,6 +119,7 @@ export function VoiceOverlay({
   const start = useCallback((): void => {
     if (client === undefined || sessionRef.current !== undefined) return;
     setProblem(undefined);
+    setAnswerProblem(undefined);
     setRecordedMessages(undefined);
     setUtterances([]);
     levels.current = new Array(WAVEFORM_BARS).fill(0);
@@ -122,7 +130,12 @@ export function VoiceOverlay({
         ...(conversationId === undefined ? {} : { conversationId }),
         events: {
           onState: setState,
-          onTranscript: (update) => setUtterances((current) => [...current, update]),
+          onTranscript: (update) => {
+            // A transcript means the path is working again, so a failure from an earlier sentence is
+            // no longer news.
+            setAnswerProblem(undefined);
+            setUtterances((current) => [...current, update]);
+          },
           onLevel: ({ level: heard }) => {
             const history = levels.current;
             history.push(heard);
@@ -131,6 +144,7 @@ export function VoiceOverlay({
             setBars(waveformBars(history));
           },
           onCaptureFrame: (sent) => setFrames((current) => ({ ...current, captured: sent })),
+          onAnswerFailed: (failure) => setAnswerProblem(failure.message),
           onAudioFrame: (received) => setFrames((current) => ({ ...current, heard: received })),
           onError: (message) => {
             setProblem(message);
@@ -239,6 +253,12 @@ export function VoiceOverlay({
             </p>
           )}
 
+          {problem === undefined && answerProblem !== undefined && (
+            <p className="cc-voice-problem" data-voice-answer-problem="true">
+              Câu vừa rồi chưa trả lời được: {answerProblem}. Cứ nói tiếp, câu sau sẽ được thử lại.
+            </p>
+          )}
+
           {problem === undefined && latestUser !== undefined && (
             <p className="cc-voice-transcript" data-voice-transcript="true">
               “{latestUser.text === "" ? "…" : latestUser.text}”
@@ -255,6 +275,11 @@ export function VoiceOverlay({
               {recordedMessages === 0
                 ? "Phiên đã kết thúc; không có nội dung nào được ghi vào hội thoại."
                 : `Phiên đã kết thúc; ${recordedMessages} tin nhắn đã được ghi vào hội thoại.`}
+            </p>
+          )}
+          {live && conversationId !== undefined && (
+            <p className="cc-voice-note" data-voice-records-as-spoken="true">
+              Mỗi câu bạn nói được ghi vào hội thoại ngay khi nói, và trợ lý trả lời ở đó.
             </p>
           )}
           {live && conversationId === undefined && (
