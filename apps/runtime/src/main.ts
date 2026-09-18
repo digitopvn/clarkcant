@@ -183,6 +183,29 @@ async function main(): Promise<void> {
     }
 
     /*
+     * A card asking for a secret.
+     *
+     * The fixture exists for the same reason the approval one does: the browser half of this needs a way to be
+     * reached without a provider account, and a node that never happens to need a key would leave the whole input
+     * path tested by nothing at all. The field is host-owned, so it is drawn by the host and not by a widget.
+     */
+    if (/nhập key thử|nhap key thu/i.test(input.text)) {
+      const reply = "Fixture: node này cần một khoá để thử đường nhập secret (không phải model thật).";
+      return {
+        text: reply,
+        block: {
+          type: "credential-card",
+          owner: "host",
+          requestId: `cred_${input.messageId}`,
+          purpose: "Khoá thử cho fixture, để kiểm tra ô nhập secret.",
+          destination: "vault-node",
+          fields: [{ name: "fixture_key", label: "Khoá thử", masked: true, hostOwned: true }],
+          expiresAt: new Date(Date.now() + 900_000).toISOString(),
+        },
+      };
+    }
+
+    /*
      * A video somebody else hosts, named by identifier.
      *
      * The embed is the one surface whose content comes from outside the node, which makes it the one worth a
