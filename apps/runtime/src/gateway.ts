@@ -249,6 +249,37 @@ export async function handleRequest(deps: GatewayDeps, request: GatewayRequest):
     return await handleConversationRoutes(deps, request, segments, at);
   }
 
+  /*
+   * A secret a person typed.
+   *
+   * The response says what happened and nothing about what was said: the names that are now set, never the values
+   * and never how long they were. A length is a fact about a secret, and a card that printed one would be the
+   * first place it leaked from. Nothing here logs the body either, which is why an invalid request names the
+   * shape it wanted rather than echoing what it got.
+   */
+  if (segments.length === 1 && segments[0] === "credentials" && request.method === "POST") {
+    const parsed = readJson(request);
+    if (!parsed.ok) return parsed.response;
+    const fields = parsed.value.fields;
+    if (!Array.isArray(fields) || fields.length === 0) {
+      return fail(400, "INVALID_SCHEMA", "a credential request must carry at least one field");
+    }
+    const at = nowInstant();
+    // The node's owner, read here rather than from the conversation-scoped binding the routes below use: this
+    // route is not about a conversation, and a secret is stored against the person who typed it, not against
+    // the thread they happened to be in.
+    const owner = services.runtime.identity.ownerPrincipalId;
+    for (const field of fields as { name?: unknown; value?: unknown }[]) {
+      const name = typeof field.name === "string" ? field.name.trim() : "";
+      const value = typeof field.value === "string" ? field.value : "";
+      if (name === "" || value === "") {
+        return fail(400, "INVALID_SCHEMA", "every credential field needs a name and a value");
+      }
+      putCredential(services.runtime.db, { principalId: owner, name, value, at });
+    }
+    return json(201, { ok: true, names: credentialNames(services.runtime.db, owner) });
+  }
+
   if (request.method === "POST" && request.path === "/command") {
     return handleRawCommand(deps, request, at);
   }
@@ -1098,33 +1129,6 @@ async function handleConversationRoutes(
       capturedAt: bundle?.capturedAt ?? null,
       byteSize: bundle?.byteSize ?? 0,
     });
-  }
-
-  /*
-   * A secret a person typed.
-   *
-   * The response says what happened and nothing about what was said: the names that are now set, never the values
-   * and never how long they were. A length is a fact about a secret, and a card that printed one would be the
-   * first place it leaked from. Nothing here logs the body either, which is why an invalid request names the
-   * shape it wanted rather than echoing what it got.
-   */
-  if (segments.length === 2 && segments[0] === "credentials" && request.method === "POST") {
-    const parsed = readJson(request);
-    if (!parsed.ok) return parsed.response;
-    const fields = parsed.value.fields;
-    if (!Array.isArray(fields) || fields.length === 0) {
-      return fail(400, "INVALID_SCHEMA", "a credential request must carry at least one field");
-    }
-    const at = nowInstant();
-    for (const field of fields as { name?: unknown; value?: unknown }[]) {
-      const name = typeof field.name === "string" ? field.name.trim() : "";
-      const value = typeof field.value === "string" ? field.value : "";
-      if (name === "" || value === "") {
-        return fail(400, "INVALID_SCHEMA", "every credential field needs a name and a value");
-      }
-      putCredential(services.runtime.db, { principalId, name, value, at });
-    }
-    return json(201, { ok: true, names: credentialNames(services.runtime.db, principalId) });
   }
 
   // /conversations/:id/pins

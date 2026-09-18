@@ -6,7 +6,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { nodeIdSchema } from "@clarkcant/contracts";
 import { FakePiAdapter, type WorkerBrief } from "@clarkcant/pi-adapter";
 import { requestApproval, setPreference, type ModelTurnInput } from "@clarkcant/core";
-import { appendMessage, nextMessageSequence } from "@clarkcant/storage";
+import { appendMessage, nextMessageSequence, readCredential } from "@clarkcant/storage";
 
 import { handleRequest, type GatewayDeps, type GatewayRequest, type GatewayResponse } from "../src/gateway.ts";
 import { commandDigest } from "../src/run-command.ts";
@@ -731,5 +731,47 @@ describe("a command runs only when the user approves the one that was displayed"
     const blocks = blocksOf(response);
     expect(blocks.some((block) => block.type === "tool-activity")).toBe(false);
     expect(JSON.stringify(blocks)).toContain("Đã từ chối");
+  });
+});
+
+/**
+ * A secret a person typed.
+ *
+ * The assertions about what the answer does *not* contain carry as much weight as the one about what was stored:
+ * a response that carried the value would be the first place it leaked from, and nothing downstream would
+ * notice, because a key in a card looks like a key in a card.
+ */
+describe("a secret a person types", () => {
+  const owner = (): string => services.runtime.identity.ownerPrincipalId;
+
+  it("is stored, and the answer says only what is now set", async () => {
+    const response = await request("POST", "/credentials", {
+      body: { fields: [{ name: "gemini", value: "AIza-not-a-real-key" }] },
+    });
+
+    expect(response.status).toBe(201);
+    const body = response.body as { ok?: boolean; names?: string[] };
+    expect(body.ok).toBe(true);
+    expect(body.names).toEqual(["gemini"]);
+    expect(JSON.stringify(body)).not.toContain("AIza");
+    // Reachable through the host's reader, which is the only door out of the vault.
+    expect(readCredential(services.runtime.db, owner(), "gemini")).toBe("AIza-not-a-real-key");
+  });
+
+  it("replaces a name instead of adding a second one", async () => {
+    await request("POST", "/credentials", { body: { fields: [{ name: "typesafe", value: "first" }] } });
+    const second = await request("POST", "/credentials", { body: { fields: [{ name: "typesafe", value: "second" }] } });
+
+    expect((second.body as { names?: string[] }).names).toEqual(["typesafe"]);
+    expect(readCredential(services.runtime.db, owner(), "typesafe")).toBe("second");
+  });
+
+  it("refuses a body it cannot use without repeating what it got", async () => {
+    const response = await request("POST", "/credentials", {
+      body: { fields: [{ name: "", value: "secret-shaped" }] },
+    });
+
+    expect(response.status).toBe(400);
+    expect(JSON.stringify(response.body)).not.toContain("secret-shaped");
   });
 });
