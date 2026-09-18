@@ -108,6 +108,13 @@ interface Turn {
   /** Aborted when the turn is stopped, so an in-flight build knows not to commit. */
   abort: AbortController;
   conversationId: string;
+  /**
+   * Whether the session behind this turn was just created, and so knows nothing about the conversation.
+   *
+   * A session is dropped when a turn fails, because a session that failed a turn is the thing that is broken.
+   * The thread is not broken, so a new session has to be told what it is joining.
+   */
+  fresh: boolean;
 }
 
 function isTextDelta(event: WorkerEvent): event is WorkerEvent & { type: "text-delta"; delta: string } {
@@ -127,6 +134,49 @@ function isTextDelta(event: WorkerEvent): event is WorkerEvent & { type: "text-d
  * part of the message answers a question nobody asked. Today the only caller that sets one is the voice path,
  * which asks for the short version - the session has to read it aloud.
  */
+/** Reads the conversation so far, newest last, for briefing a session that has just been created. */
+type HistoryReader = (
+  conversationId: string,
+) => Promise<readonly { role: "user" | "assistant"; text: string }[]>;
+
+/**
+ * The note a turn is prompted with: the brief for a new session first, then whatever this turn was given.
+ *
+ * Both are instructions to the model rather than things the user said, and the brief goes first because it is
+ * the context the rest is read in.
+ */
+function withRecap(recap: string, note: string | undefined): string | undefined {
+  const parts = [recap, note ?? ""]
+    .map((part) => part.trim())
+    .filter((part) => part !== "");
+  return parts.length === 0 ? undefined : parts.join("\n\n");
+}
+
+/**
+ * A brief of the conversation so far, short enough to read and specific enough to continue from.
+ *
+ * The last few messages only: a brief that grows with the conversation stops being a brief, and the point is
+ * to place the model in the thread rather than to reproduce it. Each line is clipped for the same reason.
+ */
+async function recapFor(options: { history?: HistoryReader }, conversationId: string): Promise<string> {
+  if (options.history === undefined) return "";
+  let messages: readonly { role: "user" | "assistant"; text: string }[];
+  try {
+    messages = await options.history(conversationId);
+  } catch {
+    // A brief that cannot be read is not a reason to refuse the turn: the answer is still an answer, only a
+    // less informed one, and failing here would turn a storage hiccup into a conversation that stops.
+    return "";
+  }
+  const recent = messages.slice(-12);
+  if (recent.length === 0) return "";
+  const lines = recent.map(
+    (message) =>
+      `${message.role === "user" ? "Người dùng" : "Trợ lý"}: ${message.text.replace(/\s+/g, " ").trim().slice(0, 400)}`,
+  );
+  return `Mạch hội thoại trước đó, để bạn tiếp tục đúng việc đang làm:\n${lines.join("\n")}`;
+}
+
 function promptForTurn(input: { text: string; note?: string }): string {
   const note = input.note?.trim() ?? "";
   return note === "" ? input.text : `${input.text}\n\n[Hướng dẫn cho lượt này: ${note}]`;
@@ -321,6 +371,14 @@ export async function createModelTurn(options: {
    */
   views?: () => readonly ViewDescriptor[];
   /**
+   * The conversation so far, newest last, for briefing a session that has just been created.
+   *
+   * A session dropped after a failure, or one created for a conversation resumed on a node that has since
+   * restarted, starts empty. Without this the next message meets an agent that has never heard of the thread,
+   * which is what "it forgot we had just done that" looks like from the outside.
+   */
+  history?: HistoryReader;
+  /**
    * Dataset references the node actually holds.
    *
    * Told to the model rather than left to be guessed. A view that needs data can only be honest if
@@ -457,6 +515,7 @@ export async function createModelTurn(options: {
       unsubscribe: () => {},
       abort: new AbortController(),
       conversationId,
+      fresh: true,
     };
     // The view tool is only registered when there is a catalog; the extra tools stand on their own
     // and are registered whatever the catalog says.
@@ -515,6 +574,14 @@ export async function createModelTurn(options: {
 
       const startedAt = Date.now();
       const turn = await turnFor(input.conversationId, input.principal);
+      // Once, on the first turn this session answers: the second turn already has the first in its context,
+      // and repeating the brief each time would push the conversation out with its own summary.
+      const recap = turn.fresh ? await recapFor(options, input.conversationId) : "";
+      turn.fresh = false;
+      // Built here rather than at the call, because `note` is optional under exactOptionalPropertyTypes: a
+      // present key holding undefined is a different type from an absent key, and only one of them means
+      // "this turn carries no extra instruction".
+      const note = withRecap(recap, input.note);
       // Cleared before the prompt rather than after, so a turn that throws still leaves the
       // buffer empty for the next one instead of prepending the previous reply to it.
       turn.pending.length = 0;
@@ -543,7 +610,10 @@ export async function createModelTurn(options: {
       });
 
       try {
-        await Promise.race([adapter.prompt(turn.sessionId, promptForTurn(input)), deadline]);
+        await Promise.race([
+          adapter.prompt(turn.sessionId, promptForTurn(note === undefined ? input : { ...input, note })),
+          deadline,
+        ]);
       } catch (cause) {
         /*
          * A failed turn takes its session with it.

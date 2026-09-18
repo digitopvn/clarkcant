@@ -20,6 +20,7 @@ import { machineRoots } from "./fs-search.ts";
 import { resolveProject, refreshProjectIndex } from "./project-finder.ts";
 import { commandDigest } from "./run-command.ts";
 import { handleUserMessage, requestApproval, setPreference, type CoordinationDeps } from "@clarkcant/core";
+import { messagesSince, type MessageRecord } from "@clarkcant/storage";
 import { attachVoiceGateway, VOICE_ANSWER_NOTE } from "./voice-session.ts";
 import { indexMessages, textOfMessage } from "./session-search.ts";
 import { FixtureLiveAdapter } from "./voice-fixture.ts";
@@ -238,6 +239,17 @@ async function main(): Promise<void> {
       }
     },
     views: () => viewCatalog,
+    // The conversation so far, for a session that has just been created.
+    //
+    // A session is dropped when a turn fails, because a session that failed a turn is the thing that is broken;
+    // the thread is not, so the next message is answered by an agent that has been told what it is joining
+    // rather than by one that has never heard of it.
+    history: async (conversationId) => {
+      const records = messagesSince(services.runtime.db, conversationId, 0, 40);
+      return records
+        .filter((record): record is MessageRecord & { role: "user" | "assistant" } => record.role === "user" || record.role === "assistant")
+        .map((record) => ({ role: record.role, text: textOfMessage(record) }));
+    },
     // The node registers the sample dataset itself, so this is the complete set it holds rather
     // than a guess. The model is told these names because a view over data that is not there
     // renders as nothing, which reads as a broken widget instead of a missing fact.
