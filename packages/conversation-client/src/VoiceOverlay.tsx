@@ -124,6 +124,15 @@ export function VoiceOverlay({
   const [collapsed, setCollapsed] = useState(false);
   const [problem, setProblem] = useState<string | undefined>(undefined);
   /**
+   * The credential the node refused the session for, when it refused for one.
+   *
+   * A refusal is not the same as a failure: a node with no key for the live provider is asking a question, and the
+   * person can answer it here rather than reading that voice does not work and guessing why.
+   */
+  const [needsKey, setNeedsKey] = useState<string | undefined>(undefined);
+  const [keyDraft, setKeyDraft] = useState("");
+  const [keyStatus, setKeyStatus] = useState<string | undefined>(undefined);
+  /**
    * A sentence the agent could not answer.
    *
    * Kept apart from `problem`, which means the session itself failed: this one leaves the microphone
@@ -208,6 +217,13 @@ export function VoiceOverlay({
             setProblem(message);
             setState("failed");
             sessionRef.current = undefined;
+          },
+          onRefused: (refusal) => {
+            // Only the refusal that has something to do about it sets this: the name comes from the node, so the field
+            // asks for the credential the node actually wants rather than for one this code assumes.
+            if (refusal.reason === "missing-credential" && refusal.credentialName !== undefined) {
+              setNeedsKey(refusal.credentialName);
+            }
           },
           onEnded: (count) => {
             setRecordedMessages(count);
@@ -311,6 +327,56 @@ export function VoiceOverlay({
           {problem !== undefined && (
             <p className="cc-voice-problem" data-voice-problem="true">
               {problem} — {unblockedBy}
+            </p>
+          )}
+          {needsKey !== undefined && client !== undefined && (
+            <form
+              className="cc-credential-form"
+              data-voice-key-ask={needsKey}
+              onSubmit={(event) => {
+                event.preventDefault();
+                const value = keyDraft.trim();
+                if (value === "") return;
+                const name = needsKey;
+                client
+                  .putCredential({ fields: [{ name, value }] })
+                  .then((result) => {
+                    // The draft is cleared the moment it is sent, and only the name comes back: the node never hands a
+                    // secret back, so there is nothing here to show a second time.
+                    setKeyDraft("");
+                    setKeyStatus(
+                      result.names.includes(name)
+                        ? "Đã lưu khoá. Mở lại giọng nói để dùng nó."
+                        : "Đã gửi, nhưng node không ghi nhận tên khoá nào.",
+                    );
+                  })
+                  .catch(() => setKeyStatus("Không lưu được khoá. Thử lại."));
+              }}
+            >
+              <label className="cc-credential-field">
+                <span>Khoá cho {needsKey}</span>
+                <input
+                  type="password"
+                  name={needsKey}
+                  autoComplete="off"
+                  data-voice-key-field={needsKey}
+                  value={keyDraft}
+                  onChange={(event) => setKeyDraft(event.target.value)}
+                />
+              </label>
+              <button
+                type="submit"
+                className="cc-voice-action"
+                disabled={keyDraft.trim() === ""}
+                data-voice-key-submit="true"
+              >
+                Lưu khoá
+              </button>
+            </form>
+          )}
+          {keyStatus !== undefined && (
+            <p className="cc-freshness" data-voice-key-status="true">
+              {keyStatus}
             </p>
           )}
 
