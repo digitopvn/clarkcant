@@ -1099,6 +1099,28 @@ button:focus-visible, textarea:focus-visible, input:focus-visible, [tabindex]:fo
 
 .cc-image img { max-width: 100%; height: auto; border-radius: var(--cc-radius-badge); border: 1px solid var(--cc-border); }
 
+/*
+ * Pictures in numbers, and moving pictures.
+ *
+ * The gallery decides its own columns from the space it has, because a fixed column count is wrong at exactly
+ * one width. The carousel puts its controls below the picture rather than over it: a control that covers part
+ * of the thing it steps through hides the thing being looked at.
+ */
+.cc-gallery {
+  display: grid; gap: var(--cc-space-md); margin: 0; padding: 0; list-style: none;
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+}
+.cc-gallery img { width: 100%; aspect-ratio: 1 / 1; object-fit: cover; display: block; }
+.cc-carousel { display: flex; flex-direction: column; gap: var(--cc-space-sm); }
+.cc-carousel-controls { display: flex; align-items: center; justify-content: center; gap: var(--cc-space-md); }
+.cc-carousel-controls button {
+  background: none; border: 1px solid var(--cc-border); color: inherit; cursor: pointer;
+  border-radius: var(--cc-radius-pill); width: 28px; height: 28px; line-height: 1;
+}
+.cc-embed { position: relative; aspect-ratio: 16 / 9; }
+.cc-embed iframe { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; border-radius: var(--cc-radius-card); }
+.cc-video video { width: 100%; display: block; border-radius: var(--cc-radius-card); }
+
 .cc-cta {
   display: flex; align-items: center; justify-content: space-between; gap: var(--cc-space-md);
   border: 1px solid var(--cc-border); background: var(--cc-elevated);

@@ -12,7 +12,7 @@ import { createServer } from "node:http";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
-import type { MessageBlock } from "@clarkcant/contracts";
+import type { MessageBlock, MessageRecord } from "@clarkcant/contracts";
 import { applyEnvFile } from "@clarkcant/pi-adapter";
 
 import { handleRequest, decideApprovalForNode, type GatewayResponse } from "./gateway.ts";
@@ -20,7 +20,7 @@ import { machineRoots } from "./fs-search.ts";
 import { resolveProject, refreshProjectIndex } from "./project-finder.ts";
 import { commandDigest } from "./run-command.ts";
 import { handleUserMessage, requestApproval, setPreference, type CoordinationDeps } from "@clarkcant/core";
-import { messagesSince, type MessageRecord } from "@clarkcant/storage";
+import { messagesSince } from "@clarkcant/storage";
 import { attachVoiceGateway, VOICE_ANSWER_NOTE } from "./voice-session.ts";
 import { indexMessages, textOfMessage } from "./session-search.ts";
 import { FixtureLiveAdapter } from "./voice-fixture.ts";
