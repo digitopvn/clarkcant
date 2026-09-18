@@ -76,3 +76,28 @@ test("a chip sends a real message and the empty state goes away", async ({ page 
   // And the node answered rather than the client rendering an optimistic echo.
   await expect(page.locator("text=dữ liệu mẫu").first()).toBeVisible({ timeout: 20_000 });
 });
+
+test.describe("the first run", () => {
+  // The state every other spec starts with, cleared here: this screen exists for somebody who has not seen it, and a
+  // suite that marked everybody as already onboarded would never look at it at all.
+  test.use({ storageState: { cookies: [], origins: [] } });
+
+  test("shows the name, the tagline and one way in, and does not come back", async ({ page }) => {
+    // Its own navigation rather than the shared helper: that one waits for the connection status in the header, and this
+    // screen deliberately has no header - which is exactly what made the first version of this test fail, and the
+    // failure looked like the screen not rendering.
+    await page.goto(`/?token=${token()}&gateway=${encodeURIComponent(GATEWAY)}`);
+
+    await expect(page.locator("[data-onboarding='true']")).toBeVisible({ timeout: 15_000 });
+    await expect(page.locator("[data-onboarding='true'] h1")).toHaveText("ClarkCant");
+    await expect(page.locator("[data-onboarding='true'] p")).toContainText("Clark Cant Can");
+
+    await page.locator("[data-onboarding-start='true']").click();
+    await expect(page.locator("[data-onboarding='true']")).toHaveCount(0);
+
+    // And it stays gone: a screen somebody has dismissed is dismissed, not shown again on the next load.
+    await page.reload();
+    await expect(page.locator("[data-onboarding='true']")).toHaveCount(0);
+  });
+});
+

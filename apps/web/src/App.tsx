@@ -1,4 +1,4 @@
-import { type ReactElement, useMemo } from "react";
+import { type ReactElement, useMemo, useState } from "react";
 
 import { Conversation, GatewayClient, installStyles, readStoredTheme, resolveTheme, systemPrefersLight } from "@clarkcant/conversation-client";
 
@@ -46,6 +46,49 @@ export function App(): ReactElement {
   // Memoised: passing a fresh client into the conversation on every render would make its
   // load effect depend on a new object each time and re-run without end.
   const client = useMemo(() => new GatewayClient({ baseUrl, token }), [baseUrl, token]);
+
+  /*
+   * Whether this browser has been through the first-run screen.
+   *
+   * In the browser rather than on the node, deliberately: the question is whether this person has seen it, and a node
+   * that answered would answer for every browser that ever connects to it.
+   */
+  const [onboarded, setOnboarded] = useState(() => window.localStorage.getItem("cc_onboarded") === "1");
+
+  /*
+   * What somebody sees the first time.
+   *
+   * The product's name, one sentence about what it is, and one button. Everything else this interface needs - a
+   * provider, a model, a key - is asked for when it is needed and with the reason in front of the person, rather than
+   * as a form in front of a thing they have not used yet.
+   */
+  if (!onboarded) {
+    return (
+      <div className="cc-shell" data-view="hero" data-onboarding="true">
+        <div className="cc-body">
+          <div className="cc-scroll">
+            <div className="cc-empty">
+              <h1>ClarkCant</h1>
+              <p>Clark Cant Can. The Most Minimal Yet Powerful Harness You&apos;ve Ever Need.</p>
+              <div className="cc-chip-row">
+                <button
+                  type="button"
+                  className="cc-chip"
+                  data-onboarding-start="true"
+                  onClick={() => {
+                    window.localStorage.setItem("cc_onboarded", "1");
+                    setOnboarded(true);
+                  }}
+                >
+                  Get Started
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   if (token === "") {
     return (
