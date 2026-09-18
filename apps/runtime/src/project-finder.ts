@@ -49,6 +49,24 @@ import {
 export const SYSTEM_IGNORES: readonly string[] = [
   "Library",
   "Applications",
+  //
+  // Operating-system and installer trees.
+  //
+  // Once every drive is a root, these are walked first, and their contents were reported as projects: the first
+  // full index on this machine offered Pester and a folder called Assets as findings, which is not an index of
+  // anybody's work. Excluded by name, which is enough here because they are top-level directories on every
+  // Windows install.
+  //
+  "Windows",
+  "Windows.old",
+  "Program Files",
+  "Program Files (x86)",
+  "ProgramData",
+  "PerfLogs",
+  "Recovery",
+  "$Recycle.Bin",
+  "System Volume Information",
+  "AppData",
   "node_modules",
   "dist",
   "build",
@@ -80,6 +98,30 @@ const CODE_MARKERS = [
 ];
 
 const DOC_MARKERS = [".obsidian", "docs", "README.md", "README", "CLAUDE.md", "AGENTS.md", "notes"];
+
+/**
+ * The markers that mean "this directory is one project; do not look inside it".
+ *
+ * The distinction is not cosmetic. A folder holding a `docs` folder is not a project, it is a folder with
+ * documentation in it - and because a directory with any marker is recorded and **not** descended into, one
+ * such folder turned a whole tree invisible: `D:\www` holds `docs`, was classified as a documentation project,
+ * and every repository beneath it disappeared from the index, including the one this node runs from.
+ *
+ * A repository marker is different. What is inside a repository is that repository's own packages, and offering
+ * `packages/core` when the user named the repository is exactly the mistake the stop exists to prevent.
+ */
+const STRONG_MARKERS: ReadonlySet<string> = new Set([
+  ".git",
+  "package.json",
+  "pyproject.toml",
+  "Cargo.toml",
+  "go.mod",
+  "pom.xml",
+  "build.gradle",
+  "docker-compose.yml",
+  "tsconfig.json",
+  ".obsidian",
+]);
 
 const IMAGE_EXTENSIONS = [".png", ".jpg", ".jpeg", ".webp", ".gif", ".heic", ".tiff", ".svg"];
 const MEDIA_EXTENSIONS = [...IMAGE_EXTENSIONS, ".mp4", ".mov", ".mkv", ".mp3", ".wav", ".m4a"];
@@ -172,7 +214,10 @@ export function readGitRemote(path: string): string | undefined {
 export async function scanProjects(options: ScanOptions): Promise<ScanOutcome> {
   const startedAt = Date.now();
   const maxDepth = options.maxDepth ?? 5;
-  const maxEntries = options.maxEntries ?? 20_000;
+  // Bounded, but bounded where a real machine fits: the ceiling used to be twenty thousand entries, which a
+  // developer's disk passes in seconds, so the scan reported itself truncated and the index was missing most of
+  // what is actually on the machine. It still stops, and it still says so when it does.
+  const maxEntries = options.maxEntries ?? 200_000;
   const ignores = new Set([...SYSTEM_IGNORES, ...(options.ignore ?? [])]);
   const projects: ScannedProject[] = [];
   let visited = 0;
@@ -233,7 +278,9 @@ export async function scanProjects(options: ScanOptions): Promise<ScanOutcome> {
         mtime,
         ...(remote === undefined ? {} : { gitRemote: remote }),
       });
-      return;
+      // Recorded, and then: stop only for a marker that means this directory *is* the project. A weak marker is
+      // a hint, and a folder of documentation is where people keep their repositories too.
+      if (markers.some((marker) => STRONG_MARKERS.has(marker))) return;
     }
 
     if (depth >= maxDepth) return;
@@ -792,7 +839,9 @@ export function createFindProjectTool(deps: ProjectFinderDeps): ToolDefinition {
     label: "Find a project directory",
     description:
       "Find a project or folder on this machine by name, alias or topic. Returns names and paths " +
-      "relative to the home directory. Use it when the user names a project without giving a path.",
+      "relative to the home directory. Use it when the user names a project without giving a path. " +
+      "Pass refresh: true when you can see a folder on disk that this tool does not know yet — that rebuilds " +
+      "the index from the machine's folders first, and a full scan takes a while.",
     parameters: {
       type: "object",
       additionalProperties: false,
@@ -800,6 +849,11 @@ export function createFindProjectTool(deps: ProjectFinderDeps): ToolDefinition {
       properties: {
         query: { type: "string", description: "What the user called the project, in their words." },
         kind: { type: "string", description: "Restrict to one kind.", enum: ["code", "docs", "media", "generic"] },
+        refresh: {
+          type: "boolean",
+          description:
+            "Rebuild the index from the machine before searching, when you can see something this tool does not know.",
+        },
       },
     },
     promptSnippet: "find_project — locate a project directory on this machine",
@@ -810,16 +864,36 @@ export function createFindProjectTool(deps: ProjectFinderDeps): ToolDefinition {
         params.kind === "code" || params.kind === "docs" || params.kind === "media" || params.kind === "generic"
           ? params.kind
           : undefined;
+
+      /*
+       * A rebuild on request.
+       *
+       * The index is built at startup, so anything created since then — a clone, most often — is invisible to
+       * this tool until the node restarts. The model is the one that can see the disk, through search_files, so
+       * the model is the one that should be able to say "look again". Opt-in, because a scan of every drive is
+       * slow enough that doing it on every lookup would be worse than a stale index.
+       */
+      let rebuilt: string | undefined;
+      if (params.refresh === true) {
+        const outcome = await refreshProjectIndex(deps, {});
+        rebuilt =
+          `Rebuilt the index: ${outcome.scanned} scanned, ${outcome.kept} already known, ${outcome.removed} gone` +
+          (outcome.truncated || outcome.stoppedEarly ? " — the scan stopped early, so it is still partial" : "");
+      }
+      const prefix = rebuilt === undefined ? "" : `${rebuilt}\n`;
+
       const { candidates } = findProjectCandidates(deps, { query, ...(kind === undefined ? {} : { kind }) });
       if (candidates.length === 0) {
         return {
-          text: `No indexed directory matches "${query}". The index holds ${listProjects(deps.db, deps.nodeId).length} directories.`,
+          text:
+            prefix +
+            `No indexed directory matches "${query}". The index holds ${listProjects(deps.db, deps.nodeId).length} directories.`,
         };
       }
       const lines = candidates.map(
         (candidate) => `- ${candidate.name} (${candidate.kind}) at ~/${candidate.relPath}`,
       );
-      return { text: `${candidates.length} match(es):\n${lines.join("\n")}` };
+      return { text: `${prefix}${candidates.length} match(es):\n${lines.join("\n")}` };
     },
   };
 }

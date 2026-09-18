@@ -17,7 +17,7 @@ import { applyEnvFile } from "@clarkcant/pi-adapter";
 
 import { handleRequest, decideApprovalForNode, type GatewayResponse } from "./gateway.ts";
 import { machineRoots } from "./fs-search.ts";
-import { resolveProject } from "./project-finder.ts";
+import { resolveProject, refreshProjectIndex } from "./project-finder.ts";
 import { commandDigest } from "./run-command.ts";
 import { handleUserMessage, requestApproval, setPreference, type CoordinationDeps } from "@clarkcant/core";
 import { attachVoiceGateway, VOICE_ANSWER_NOTE } from "./voice-session.ts";
@@ -355,6 +355,34 @@ async function main(): Promise<void> {
   process.stderr.write(
     `filesystem search: read-only over ${machineRoots().join(", ")} — no index is built; matches are sent to the model provider\n`,
   );
+
+  /*
+   * Build the project index, in the background and after the node is listening.
+   *
+   * Nothing at runtime ever refreshed it before this: it was written only when somebody picked a project, so
+   * asking which projects are on this machine answered with the two folders that had already been opened, and an
+   * agent looking for a folder it could see on disk found nothing.
+   *
+   * Bounded in time as well as in entries, because one of this machine's roots is a cloud drive and a scan that
+   * waits for it can run for minutes. An aborted scan is not allowed to prune - the finder checks that itself -
+   * so stopping early leaves the previous index alone rather than emptying it.
+   */
+  const indexScan = new AbortController();
+  const indexBudget = setTimeout(() => indexScan.abort(), 60_000);
+  void refreshProjectIndex(services.projects, { signal: indexScan.signal })
+    .then((outcome) => {
+      clearTimeout(indexBudget);
+      process.stderr.write(
+        `project index: ${outcome.scanned} scanned, ${outcome.kept} kept, ${outcome.removed} removed` +
+          (outcome.truncated || outcome.stoppedEarly ? " — the scan stopped early, so the index is partial\n" : "\n"),
+      );
+    })
+    .catch((cause: unknown) => {
+      clearTimeout(indexBudget);
+      process.stderr.write(
+        `project index: not built — ${cause instanceof Error ? cause.message : String(cause)}\n`,
+      );
+    });
   process.stderr.write(
     viewCatalog.length === 0
       ? "no widget definitions on this node; the model can answer in words only\n"

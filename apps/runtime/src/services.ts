@@ -38,6 +38,7 @@ import {
   semanticSearchFromEnv,
 } from "./vector-index.ts";
 import { homedir } from "node:os";
+import { parse } from "node:path";
 
 import { getPreference } from "@clarkcant/core";
 
@@ -193,6 +194,24 @@ function buildJevRuntime(options: RuntimeOptions): JevRuntime {
   };
 
   return { config, deps, providerCallCount: () => providerCalls, telemetry: () => telemetry };
+}
+
+/**
+ * Where the project index looks.
+ *
+ * Not every drive, which is what it looked like it should be. One of this machine's roots is a cloud mount, and
+ * a walk that waits for it never finishes: the index spent minutes still holding the previous run's contents,
+ * because a scan that does not complete is not allowed to apply its results. That guard is deliberate - a scan
+ * that did not see everything cannot say what is gone - so the answer is to look somewhere a walk can finish.
+ *
+ * So the index covers where work happens: the home folder and the drive this node runs from, which for an
+ * operator who started the app inside their project tree is where their projects are. Anywhere else is a
+ * preference away (workspace.roots), and the agent can rebuild the index on request. Searching the whole
+ * machine is a separate path and still covers every drive.
+ */
+function indexRoots(): string[] {
+  const drive = parse(process.cwd()).root;
+  return [...new Set([homedir(), drive])].filter((root) => root !== "");
 }
 
 export function bootNodeServices(options: RuntimeOptions): NodeServices {
@@ -404,7 +423,7 @@ export function bootNodeServices(options: RuntimeOptions): NodeServices {
     nodeId,
     now: () => nowInstant() satisfies Instant,
     newId,
-    roots: () => stringList("workspace.roots", [homedir()]),
+    roots: () => stringList("workspace.roots", indexRoots()),
     ignore: () => stringList("workspace.ignore", []),
     home: homedir,
     decider: {

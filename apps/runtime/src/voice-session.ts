@@ -102,6 +102,16 @@ export interface VoiceGatewayOptions {
   /** Injected by tests so the transport can be exercised without a provider. */
   createAdapter?: () => VoiceProviderAdapter;
   now?: () => Instant;
+  /**
+   * How long the transcription has to be quiet before the sentence is taken as finished.
+   *
+   * Measured rather than assumed: the provider sends the user's sentence once, whole, with no interim text on
+   * the way, and its closing marker arrives only when the model's own turn ends - which was six point eight
+   * seconds later in the probe, with the agent's answer waiting behind it. Closing on the transcription's own
+   * silence takes the model's turn off the critical path. Short enough to feel immediate, long enough that a
+   * provider which does send partials is not cut off mid-sentence.
+   */
+  utteranceSettleMs?: number;
   /** Path the socket is served on. */
   path?: string;
 }
@@ -218,6 +228,14 @@ export function attachVoiceGateway(options: VoiceGatewayOptions): VoiceGateway {
     let conversationId: ConversationId | undefined;
     let adapter: VoiceProviderAdapter | undefined;
     let userText = "";
+    /**
+     * Closes the sentence when the transcription stops growing.
+     *
+     * The provider's own end-of-utterance marker is tied to the model's turn, so waiting for it puts a full
+     * model turn between the person stopping and the agent starting. This is the same decision made from
+     * evidence that arrives first.
+     */
+    let settle: ReturnType<typeof setTimeout> | undefined;
     let assistantText = "";
     let recorded = false;
     /** Messages the agent's turns wrote, so the closing report counts what actually happened. */
@@ -251,6 +269,12 @@ export function attachVoiceGateway(options: VoiceGatewayOptions): VoiceGateway {
     const record = (): number => {
       if (recorded || !authenticated) return 0;
       recorded = true;
+      // A sentence still settling when the session closes belongs to the session, not to a turn that will never
+      // arrive, so the pending close is dropped and whatever was transcribed is left for the fallback to keep.
+      if (settle !== undefined) {
+        clearTimeout(settle);
+        settle = undefined;
+      }
       if (conversationId === undefined) return 0;
       // With an agent in the path every answered utterance is already a message in the conversation,
       // written while it was being said. What the agent wrote is reported as it is, and whatever is
@@ -462,7 +486,18 @@ export function attachVoiceGateway(options: VoiceGatewayOptions): VoiceGateway {
           userText += fragment.text;
           // The final fragment of an utterance is the adapter saying this one is complete, so this is
           // where a sentence becomes a message.
-          if (fragment.isFinal) ask(fragment.at);
+          if (fragment.isFinal) {
+            ask(fragment.at);
+          } else if (fragment.text.trim() !== "") {
+            // Transcribed words arrived and more may still be coming: wait for the quiet, then take the sentence.
+            // Restarted on every fragment, so a provider that streams partials extends the same sentence rather
+            // than being cut off in the middle of it.
+            if (settle !== undefined) clearTimeout(settle);
+            settle = setTimeout(() => {
+              settle = undefined;
+              ask(now());
+            }, options.utteranceSettleMs ?? 400);
+          }
         } else if (fragment.role === "assistant") {
           assistantText += fragment.text;
         }

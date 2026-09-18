@@ -493,6 +493,33 @@ describe("a spoken sentence the agent answers", () => {
     expect(adapter.spoken).toEqual([REPLY]);
   });
 
+  it("takes the sentence when the transcription goes quiet, without waiting for the model's turn", async () => {
+    // Measured against a real session: the provider sends the user's sentence once, whole, with no closing
+    // marker, and its marker arrives only when the model's own turn ends - six point eight seconds later in the
+    // probe, with the agent's answer queued behind it.
+    const adapter = new FakeAdapter();
+    const asked: string[] = [];
+    context = await startGateway(() => "credential", adapter, {
+      utteranceSettleMs: 20,
+      answer: async ({ text }) => {
+        asked.push(text);
+        return { reply: REPLY, recordedMessages: 1 };
+      },
+    });
+    const client = connect(context.url);
+    await client.opened;
+    client.auth(TOKEN, CONVERSATION);
+    await client.control("ready");
+
+    adapter.emitTranscript("chuyển ba tệp giúp tôi", "user", false);
+
+    await client.waitFor(
+      (message) => !message.binary && message.control["type"] === "transcript" && message.control["role"] === "assistant",
+      "the agent's answer",
+    );
+    expect(asked).toEqual(["chuyển ba tệp giúp tôi"]);
+  });
+
   it("sends one message per utterance, however many fragments it arrived in", async () => {
     const adapter = new FakeAdapter();
     const asked: string[] = [];
