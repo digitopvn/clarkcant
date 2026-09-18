@@ -1296,6 +1296,13 @@ export function Conversation({
         container={scroller}
         onAttach={(text) => setDraft((current) => attachedPrompt(text, current))}
         onExplain={(text) => void send(explainPrompt(text))}
+        // Offered only once there is a conversation to attach background work to, and the handler refuses quietly when
+        // there is none rather than sending a request the node would answer 400 to.
+        canBackground={conversationId !== undefined}
+        onBackground={async (text) => {
+          if (conversationId === undefined) return;
+          await client.startBackground({ conversationId, text });
+        }}
       />
 
       {voiceOpen && (

@@ -201,3 +201,23 @@ test("a highlighted passage can be attached to the next prompt", async ({ page }
   await expect(page.locator("[data-selection-menu='true']")).toHaveCount(0);
 });
 
+test("a selected passage can be sent to a background session", async ({ page }) => {
+  await openApp(page);
+  await page.locator("[data-composer]").click();
+  await page.keyboard.type("tổng quan");
+  await page.keyboard.press("Enter");
+
+  const reply = page.locator('[data-role="assistant"]').last();
+  await expect(reply).toBeVisible({ timeout: 20_000 });
+  await reply.locator("p").first().selectText();
+
+  const button = page.locator("[data-selection-action='background']");
+  await expect(button).toBeVisible();
+  await button.click();
+
+  // A fixture node does have a model turn, so this is the accepted path rather than a refusal, and the status is what
+  // says so. It outlives the menu it was clicked in: the menu goes away with the selection, and an answer that vanished
+  // with it would be an answer nobody could read.
+  await expect(page.locator("[data-selection-status='true']")).toContainText(/phiên nền/i);
+});
+

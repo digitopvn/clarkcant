@@ -690,4 +690,28 @@ export class GatewayClient {
       names: Array.isArray(body.names) ? body.names.filter((name): name is string => typeof name === "string") : [],
     };
   }
+
+  /**
+   * Starts one request in a worker of its own, so it happens while the conversation carries on.
+   *
+   * The node answers 409 when it has no model to run a worker with, and that is a refusal to report rather than an
+   * error to hide: the alternative is a caller showing work that will never happen.
+   */
+  async startBackground(input: { conversationId: string; text: string }): Promise<{ sessionId: string }> {
+    const response = await this.#fetch(`${this.#baseUrl}/background-sessions`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${this.#token}`, "content-type": "application/json" },
+      body: JSON.stringify({ conversationId: input.conversationId, text: input.text }),
+    });
+    if (!response.ok) {
+      const detail = (await response.json().catch(() => ({}))) as { message?: unknown };
+      throw new GatewayError(
+        response.status,
+        "BACKGROUND_REFUSED",
+        typeof detail.message === "string" ? detail.message : "việc nền không bắt đầu được",
+      );
+    }
+    const body = (await response.json()) as { sessionId?: unknown };
+    return { sessionId: typeof body.sessionId === "string" ? body.sessionId : "" };
+  }
 }

@@ -22,13 +22,25 @@ export function SelectionToolbar({
   container,
   onAttach,
   onExplain,
+  onBackground,
+  canBackground = false,
 }: {
   /** The transcript. A selection anywhere else on the page is not what this is for. */
   container: RefObject<HTMLElement | null>;
   onAttach: (text: string) => void;
   onExplain: (text: string) => void;
+  /** Runs the passage in a worker of its own, when this node can start one. */
+  onBackground?: (text: string) => Promise<void>;
+  /**
+   * Whether the third action can be offered at all.
+   *
+   * A background request names a conversation, so before there is one there is nothing to attach the work to. The
+   * button is absent rather than disabled, because a control that cannot be used yet reads as a broken one.
+   */
+  canBackground?: boolean;
 }): ReactElement | null {
   const [placement, setPlacement] = useState<Placement | undefined>(undefined);
+  const [status, setStatus] = useState<string | undefined>(undefined);
 
   useEffect(() => {
     const read = (): void => {
@@ -58,7 +70,15 @@ export function SelectionToolbar({
     return () => document.removeEventListener("selectionchange", read);
   }, [container]);
 
-  if (placement === undefined) return null;
+  if (placement === undefined) {
+    // The status outlives the menu: the menu goes away with the selection, and an answer that vanished with it would
+    // be an answer nobody could read - which is exactly what happened when this line lived inside the menu.
+    return status === undefined ? null : (
+      <div className="cc-selection-status cc-freshness" data-selection-status="true">
+        {status}
+      </div>
+    );
+  }
 
   return (
     <div
@@ -92,6 +112,30 @@ export function SelectionToolbar({
       >
         Giải thích
       </button>
+      {canBackground && onBackground !== undefined && (
+        <button
+          type="button"
+          data-selection-action="background"
+          onClick={() => {
+            const text = placement.text;
+            // The menu stays open for this one: the answer takes a moment and may be a refusal, and a menu that closed
+            // on a failure would leave the person with nothing to read.
+            void onBackground(text)
+              .then(() => setStatus("Đã gửi vào một phiên nền. Kết quả sẽ hiện trong hội thoại khi xong."))
+              .catch((cause: unknown) =>
+                setStatus(cause instanceof Error ? cause.message : "Không bắt đầu được việc nền."),
+              );
+            window.getSelection()?.removeAllRanges();
+          }}
+        >
+          Chạy ở phiên nền
+        </button>
+      )}
+      {status !== undefined && (
+        <span className="cc-freshness" data-selection-status="true">
+          {status}
+        </span>
+      )}
     </div>
   );
 }
