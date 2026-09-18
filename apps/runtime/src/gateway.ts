@@ -45,6 +45,8 @@ import {
 } from "@clarkcant/storage";
 import { credentialNames, putCredential } from "@clarkcant/storage";
 
+import { nodeBackgroundSessions } from "./background-sessions.ts";
+
 import { isWithinRoot } from "./path-roots.ts";
 
 import {
@@ -278,6 +280,20 @@ export async function handleRequest(deps: GatewayDeps, request: GatewayRequest):
       putCredential(services.runtime.db, { principalId: owner, name, value, at });
     }
     return json(201, { ok: true, names: credentialNames(services.runtime.db, owner) });
+  }
+
+  /*
+   * The work running behind the conversation.
+   *
+   * A count and a list rather than a single flag, because the useful question is not "is something running" but
+   * "what is running, and did the last one finish". Newest first, and empty when nothing has been started - an
+   * invented placeholder entry would make the count meaningless.
+   */
+  if (segments.length === 1 && segments[0] === "background-sessions" && request.method === "GET") {
+    return json(200, {
+      running: nodeBackgroundSessions.running(),
+      sessions: nodeBackgroundSessions.list(),
+    });
   }
 
   if (request.method === "POST" && request.path === "/command") {
