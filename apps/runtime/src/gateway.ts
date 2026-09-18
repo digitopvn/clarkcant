@@ -46,6 +46,7 @@ import {
 import { credentialNames, putCredential } from "@clarkcant/storage";
 
 import { nodeBackgroundSessions } from "./background-sessions.ts";
+import { decideTurnAction, decisionTimeoutMsFromEnv, searchDecisionBudget } from "./jev-decider.ts";
 import { PI_BUILTIN_TOOLS, nodeToolCatalogue } from "./tool-catalogue.ts";
 
 import { isWithinRoot } from "./path-roots.ts";
@@ -778,6 +779,38 @@ async function handleConversationRoutes(
     const text = parsed.value.text;
     if (typeof text !== "string" || text.trim().length === 0) {
       return fail(400, "INVALID_SCHEMA", "a message must carry a non-empty text field");
+    }
+
+    /*
+     * A message sent while the assistant is still working.
+     *
+     * The three answers are not interchangeable, so the decider chooses rather than a rule. Two of them need nothing
+     * new and are handled here: joining the turn already running, and stopping it so this message takes its place. The
+     * third - doing this in the background while the current work carries on - still needs a worker, so a background
+     * answer is treated as an interrupt, because running the message is what sending it asked for.
+     *
+     * A turn's elapsed time is not tracked yet, so the decider is told zero. That biases it toward interrupt, which is
+     * the recoverable direction rather than the silent one.
+     */
+    const control = services.turnControl;
+    if (control !== undefined && control.running().includes(conversationId)) {
+      const decided = await decideTurnAction(
+        {
+          jev: services.jev.deps,
+          budget: () => searchDecisionBudget(services.jev.config, { timeoutMs: decisionTimeoutMsFromEnv(process.env) }),
+        },
+        { text, runningMs: 0 },
+      );
+      const action = decided.status === "decided" ? decided.action : "interrupt";
+      if (action === "steer" && (await control.steer(conversationId, text))) {
+        return json(202, {
+          accepted: true,
+          resolution: "steered",
+          ...(decided.status === "decided" ? {} : { reason: decided.reason }),
+        });
+      }
+      // An interrupt, or a steer that found nothing left to join: either way this message becomes its own turn.
+      control.interrupt(conversationId);
     }
 
     const at_ = at() as never;
