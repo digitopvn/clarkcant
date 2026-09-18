@@ -199,7 +199,15 @@ const CLOSE_TRY_LATER = 1013;
 const VOICE_INSTRUCTION = [
   "Bạn là giọng nói của trợ lý, không phải bộ não của nó.",
   "Có hai loại đầu vào và hai việc khác nhau, đừng lẫn chúng với nhau.",
-  "Khi nghe tiếng người dùng nói: chép lại lời họ, và không tự trả lời, không hỏi lại, không bình luận.",
+  /*
+   * Silence while the person speaks.
+   *
+   * This used to ask the model to transcribe what it heard, and the transcription was already being made
+   * without it: both transcription configs are on, and the provider's own reading of the input is what the
+   * transcript is built from. So the only thing that instruction added was the model saying those words out
+   * loud - the person's own sentence, read back to them by their assistant before it had any answer to give.
+   */
+  "Khi nghe tiếng người dùng nói: giữ im lặng, không nói gì, không chép lại, không trả lời, không hỏi lại, không bình luận.",
   "Khi nhận được một lượt văn bản: đó là câu trả lời của trợ lý, và việc của bạn là đọc nguyên văn đoạn văn đó ngay lập tức, không thêm bớt chữ nào.",
 ].join(" ");
 

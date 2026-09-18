@@ -722,11 +722,15 @@ beforeEach(() => {
  * without the conversation, next to the agent's, which is the only one that could read the file.
  */
 describe("the instruction the live session runs under", () => {
-  it("makes it the voice, not the mind: transcribe, read back, do not answer", () => {
+  it("makes it the voice, not the mind: silent while the person speaks, and reading back what it is given", () => {
     const defaults = voiceAdapterDefaults({});
 
     expect(defaults?.systemInstruction).toBeTruthy();
-    expect(defaults?.systemInstruction).toMatch(/không tự trả lời/i);
+    // The provider transcribes the input on its own, so the model is told to say nothing at all while somebody
+    // speaks. Asking it to transcribe as well is what had it reading the person's own sentence back to them,
+    // before it had any answer to give.
+    expect(defaults?.systemInstruction).toMatch(/giữ im lặng/i);
+    expect(defaults?.systemInstruction).toMatch(/không chép lại/i);
     expect(defaults?.systemInstruction).toMatch(/đọc nguyên văn/i);
   });
 
