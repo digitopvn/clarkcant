@@ -20,7 +20,7 @@ import { machineRoots } from "./fs-search.ts";
 import { resolveProject, refreshProjectIndex } from "./project-finder.ts";
 import { commandDigest } from "./run-command.ts";
 import { captureSnapshot, createInstance, handleUserMessage, requestApproval, setPreference, type CoordinationDeps } from "@clarkcant/core";
-import { GALLERY } from "@clarkcant/data-canvas";
+import { GALLERY, YOUTUBE } from "@clarkcant/data-canvas";
 import { definitionDigest } from "@clarkcant/widget-host";
 import { listLocalImages, messagesSince } from "@clarkcant/storage";
 import { attachVoiceGateway, VOICE_ANSWER_NOTE } from "./voice-session.ts";
@@ -180,6 +180,37 @@ async function main(): Promise<void> {
     if (/audio giả lập|thiết bị micro/i.test(input.text)) {
       const reply = "Fixture đã nhận câu bạn nói và trả lời qua hội thoại, không phải model thật.";
       return { text: reply, block: { type: "text", format: "plain", content: reply, streaming: false } };
+    }
+
+    /*
+     * A video somebody else hosts, named by identifier.
+     *
+     * The embed is the one surface whose content comes from outside the node, which makes it the one worth a
+     * browser assertion: the address is built by the host from an identifier it validated, and a client that
+     * turned an address the model chose into an embed would be a different thing entirely.
+     */
+    if (/video youtube|youtube/i.test(input.text)) {
+      const instance = createInstance(services.conductor, {
+        definition: YOUTUBE,
+        packageDigest: definitionDigest(YOUTUBE),
+        ownerPrincipalId: input.principal.principalId,
+        props: {
+          videoId: "dQw4w9WgXcQ",
+          title: "Video thử (fixture)",
+          description: "Fixture: một video nhúng, không phải model thật.",
+        },
+      });
+      const snapshot = captureSnapshot(services.conductor, {
+        messageId: input.messageId,
+        instance,
+        textAlternative: YOUTUBE.textFallback,
+        presentationRef: `catalog:${YOUTUBE.id}`,
+      });
+      const reply = "Fixture: một video YouTube, để thử đường nhúng (không phải model thật).";
+      return {
+        text: reply,
+        block: { type: "surface", definitionRef: { id: YOUTUBE.id, version: YOUTUBE.version }, snapshot },
+      };
     }
 
     /*

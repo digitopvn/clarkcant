@@ -220,3 +220,24 @@ test("a gallery widget draws pictures the node actually holds", async ({ page })
 
   await page.screenshot({ path: join(EVIDENCE, "widget-03-gallery.png"), fullPage: true });
 });
+
+test("a youtube widget embeds the video the host named, and nothing else", async ({ page }) => {
+  await openApp(page);
+  await page.locator("[data-composer]").click();
+  await page.keyboard.type("video youtube");
+  await page.keyboard.press("Enter");
+
+  const frame = page.locator('[data-widget-role="media"]').first();
+  await expect(frame).toBeVisible({ timeout: 20_000 });
+
+  const iframe = frame.locator("iframe[data-video-id]");
+  await expect(iframe).toBeVisible();
+  const source = await iframe.getAttribute("src");
+  // The address is the host's, built from the identifier it validated. Asserting both halves is the point:
+  // a client that embedded a `src` the model supplied would satisfy the first and fail the second.
+  expect(source ?? "").toContain("youtube-nocookie.com/embed/");
+  expect(await iframe.getAttribute("data-video-id")).toBe("dQw4w9WgXcQ");
+
+  await page.screenshot({ path: join(EVIDENCE, "widget-04-youtube.png"), fullPage: true });
+});
+
