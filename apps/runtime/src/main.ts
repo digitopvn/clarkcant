@@ -156,6 +156,18 @@ async function main(): Promise<void> {
     }
 
     /*
+     * The turn that follows an approved command.
+     *
+     * An approval hands the real output back to the agent so it can carry on, and on a fixture node that turn
+     * has to have an answer too: without one the request waits for a model that is not there, and the browser
+     * suite measures a timeout instead of a continuation.
+     */
+    if (/Lệnh đã được duyệt/i.test(input.text)) {
+      const reply = "Fixture: lệnh đã chạy xong, tui đã đọc kết quả và tiếp tục công việc.";
+      return { text: reply, block: { type: "text", format: "plain", content: reply, streaming: false } };
+    }
+
+    /*
      * A spoken sentence, answered.
      *
      * The voice fixture says exactly these words once a second of audio has reached the node, so this is
