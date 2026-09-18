@@ -104,13 +104,15 @@ test("typing a message works, and the answer comes back from the node", async ({
 
   const composer = page.locator("[data-composer]");
   await composer.click();
-  await composer.fill("cho tui xem bảng dữ liệu");
+  // A typed message is answered by the model, and on this node that is a fixture which composes an overview out
+  // of the node's own records. It used to be answered by a scripted sample recipe, which is precisely what a real
+  // message must never get again: a widget shows real data or it does not exist.
+  await composer.fill("cho tui xem tổng quan");
   await page.locator("[data-send]").click();
 
-  await expect(page.locator(".cc-table").first()).toBeVisible();
-  await expect(page.locator('[data-role="user"]')).toContainText("bảng dữ liệu");
-  await expect(page.locator('[data-widget-role="table"]').first()).toBeVisible();
-  await page.screenshot({ path: join(EVIDENCE, "j1-03-table.png") });
+  await expect(page.locator("[data-slot='metrics']")).toBeVisible({ timeout: 20_000 });
+  await expect(page.locator('[data-role="user"]')).toContainText("tổng quan");
+  await page.screenshot({ path: join(EVIDENCE, "j1-03-overview.png") });
 });
 
 test("pinning and unpinning keeps the widget data", async ({ page }) => {
@@ -146,11 +148,16 @@ test("reopening the app resumes the same conversation", async ({ page }) => {
 test("the composer is keyboard operable end to end", async ({ page }) => {
   await openApp(page);
 
-  await page.locator("[data-composer]").click();
-  await page.keyboard.type("tạo note nhanh cho tui");
-  await page.keyboard.press("Enter");
+  // The note surface first, from the demo chip: the chips live on the start screen and it is the only path that
+  // runs a scripted sample now that a typed message is answered with the node's own data.
+  await page.locator("[data-suggestion]").nth(1).click();
+  await expect(page.locator('[data-widget-role="note"]').first()).toBeVisible({ timeout: 20_000 });
 
-  await expect(page.locator('[data-widget-role="note"]').first()).toBeVisible();
+  // And the composer, typed into and sent with the keyboard alone.
+  await page.locator("[data-composer]").click();
+  await page.keyboard.type("cho tui xem tổng quan");
+  await page.keyboard.press("Enter");
+  await expect(page.locator("[data-slot='metrics']")).toBeVisible({ timeout: 20_000 });
   const area = page.locator(".cc-note-area").first();
   await area.click();
   await page.keyboard.type("ghi chú thử");
