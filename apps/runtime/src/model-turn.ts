@@ -115,6 +115,14 @@ interface Turn {
    * The thread is not broken, so a new session has to be told what it is joining.
    */
   fresh: boolean;
+  /**
+   * Whether a turn is running for this conversation right now.
+   *
+   * On the turn rather than in a map keyed by conversation, because the lifetime is the turn's own: the session and
+   * this flag are cleared by different paths, and a marker kept somewhere else is a marker that can outlive what it
+   * describes - which is exactly what a first attempt at this did.
+   */
+  inFlight: boolean;
 }
 
 function isTextDelta(event: WorkerEvent): event is WorkerEvent & { type: "text-delta"; delta: string } {
@@ -516,6 +524,7 @@ export async function createModelTurn(options: {
       abort: new AbortController(),
       conversationId,
       fresh: true,
+      inFlight: false,
     };
     // The view tool is only registered when there is a catalog; the extra tools stand on their own
     // and are registered whatever the catalog says.
@@ -565,6 +574,35 @@ export async function createModelTurn(options: {
     budget,
     viewCatalogSize: () => readViews().length,
 
+    /** The conversations with a turn still running. */
+    running: (): string[] => [...turns.values()].filter((turn) => turn.inFlight).map((turn) => turn.conversationId),
+
+    /**
+     * Stops the running turn for a conversation, answering whether there was one.
+     *
+     * The turn's own controller rather than a new one, because the point is to stop the work that is happening, and
+     * the paths that watch for cancellation already watch this one.
+     */
+    interrupt: (conversationId: string): boolean => {
+      const turn = turns.get(conversationId);
+      if (turn === undefined || !turn.inFlight) return false;
+      turn.abort.abort();
+      return true;
+    },
+
+    /**
+     * Adds a sentence to the turn that is already running, answering whether there was one to add it to.
+     *
+     * What the adapter does with it is the adapter's business; the answer is what lets a caller decide what to do
+     * when there was nothing to steer.
+     */
+    steer: async (conversationId: string, text: string): Promise<boolean> => {
+      const turn = turns.get(conversationId);
+      if (turn === undefined || !turn.inFlight || turn.sessionId === "") return false;
+      await adapter.steer(turn.sessionId, text);
+      return true;
+    },
+
     async answer(input: ModelTurnInput): Promise<ModelTurnReply> {
       if (!availability.available) {
         throw new Error(
@@ -582,6 +620,9 @@ export async function createModelTurn(options: {
       // present key holding undefined is a different type from an absent key, and only one of them means
       // "this turn carries no extra instruction".
       const note = withRecap(recap, input.note);
+      // Set before the prompt rather than after it, so a message arriving while the first tokens are being written
+      // already sees a turn in flight.
+      turn.inFlight = true;
       // Cleared before the prompt rather than after, so a turn that throws still leaves the
       // buffer empty for the next one instead of prepending the previous reply to it.
       turn.pending.length = 0;
@@ -636,6 +677,9 @@ export async function createModelTurn(options: {
         // Detached before the segments are read, so an event arriving after the race resolved cannot
         // be delivered to a reader that has already been told the answer is complete.
         turn.onEvent = undefined;
+        // Cleared here, in the one path that every outcome goes through: success, failure and cancellation all leave
+        // `answer` through this block, and a stale marker would make the next message think a turn was still running.
+        turn.inFlight = false;
       }
 
       // Trailing prose after the last view, and reasoning that never got closed by a later block.
