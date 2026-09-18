@@ -781,6 +781,25 @@ async function main(): Promise<void> {
     process.exit(1);
   });
 
+  /*
+   * A failure nobody caught is written down rather than fatal, and this is the one that was actually killing the node.
+   *
+   * The evidence was narrow: a full browser suite saw the process disappear partway through and every request after it
+   * fail with "connection refused", while a guard on unhandled *rejections* caught nothing at all. No rejection means
+   * an exception - a thrown error on a path nobody wrapped, most likely a child process reporting a failure of its own
+   * - and Node's default for that is also to exit.
+   *
+   * A node that exits takes every connected client with it, which is strictly worse than a line of stderr. The node's
+   * job is to stay up and answer; a bad turn should end that turn, not every conversation at once.
+   */
+  const noteFailure = (what: string, reason: unknown): void => {
+    process.stderr.write(
+      `${what} (the node stays up): ${reason instanceof Error ? reason.message : String(reason)}\n`,
+    );
+  };
+  process.on("unhandledRejection", (reason) => noteFailure("unhandled rejection", reason));
+  process.on("uncaughtException", (error) => noteFailure("uncaught exception", error));
+
   server.listen(options.port, options.host, () => {
     /*
      * Publish what this node can do, at boot rather than at the first turn.
