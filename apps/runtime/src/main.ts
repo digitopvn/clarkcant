@@ -420,6 +420,16 @@ async function main(): Promise<void> {
   sessionWiring.index = services.sessions;
   sessionWiring.principalId = services.runtime.identity.ownerPrincipalId;
   searchWiring.deps = services.search;
+  // The turn control the gateway needs to answer a message that arrives while something is running. Assigned here
+  // rather than passed into bootNodeServices, because the model turn is built above and the services just below it,
+  // and this is the first line where both exist.
+  if (modelTurn !== undefined) {
+    services.turnControl = {
+      running: () => modelTurn.running(),
+      interrupt: (conversationId) => modelTurn.interrupt(conversationId),
+      steer: (conversationId, text) => modelTurn.steer(conversationId, text),
+    };
+  }
   projectWiring.deps = services.projects;
   approvalWiring.deps = {
     db: services.runtime.db,

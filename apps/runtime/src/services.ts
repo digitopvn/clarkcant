@@ -87,6 +87,17 @@ import {
 export interface NodeServices {
   runtime: Runtime;
   conductor: ConductorDeps;
+  /**
+   * Control of the turn that is running for a conversation, when one is.
+   *
+   * Optional because a node with no model has no turns to control. Assigned after boot rather than passed in, because
+   * the model turn is built before the services are and the wiring runs one way.
+   */
+  turnControl?: {
+    running(): string[];
+    interrupt(conversationId: string): boolean;
+    steer(conversationId: string, text: string): Promise<boolean>;
+  };
   /** The model this node is configured for, or null when it has none. */
   model: NodeModelInfo | null;
   /** The selector, its wiring, and the counters a test or the health route can read. */
