@@ -190,7 +190,19 @@ void main() {
   // The pool of light at the pointer. It is added on both sides of the silhouette, because a
   // highlight that stops dead at the edge reads as something painted inside the ball; what is
   // being drawn is light arriving from wherever the mouse is.
-  vec3 flare = (u_highlight * 0.30 + u_glowColor * 0.45) * pow(touch, 1.5) * pointerLight;
+  //
+  // Which is also why it has to give way at the edge. Outside the shell this light is drawn as its own
+  // additive layer, so a pointer taken to the rim paints a wide pool whose outer boundary is the canvas's -
+  // the round edge that should never be visible. Reach is where the pointer is as a share of the shell's
+  // radius: full light inside 60% of it, nothing at the rim, and what survives in between is concentrated
+  // into a smaller pool rather than spread as wide as before.
+  float pointerReach = clamp(length(u_pointer) / max(R, 0.0001), 0.0, 1.4);
+  float reachFalloff = 1.0 - smoothstep(0.60, 0.97, pointerReach);
+  vec3 flare =
+    (u_highlight * 0.30 + u_glowColor * 0.45) *
+    pow(touch, mix(1.5, 4.5, 1.0 - reachFalloff)) *
+    pointerLight *
+    reachFalloff;
   glass += flare;
 
   // --- alpha -------------------------------------------------------------
