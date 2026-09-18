@@ -144,7 +144,13 @@ export class RealPiAdapter implements PiAdapter {
       loader: SdkModule["DefaultResourceLoader"] extends new (options: infer _O) => infer R ? R : never;
       registeredTools: Set<string>;
       brief: WorkerBrief;
-      startedAtMs: number;
+      /**
+       * Turns this session has run.
+       *
+       * There is deliberately no `startedAtMs` here any more. The wall-clock budget used to be measured
+       * against the session's age, which meant a session older than its budget refused every message for
+       * the rest of its life; keeping the timestamp invites the same mistake back.
+       */
       turns: number;
     }
   >();
@@ -285,7 +291,6 @@ export class RealPiAdapter implements PiAdapter {
       loader,
       registeredTools: new Set(),
       brief,
-      startedAtMs: Date.now(),
       turns: 0,
     });
 
@@ -408,30 +413,49 @@ export class RealPiAdapter implements PiAdapter {
   /**
    * Send a prompt and resolve when the run settles.
    *
-   * The brief's wall-clock budget is enforced here, at the only place a run is
-   * started, so a runaway worker stops on its own rather than being noticed later.
+   * The brief's wall-clock budget bounds **this run**, and the timer below is what enforces it, so a
+   * runaway run stops on its own rather than being noticed later.
+   *
+   * It used to be measured from the session's creation and checked before the prompt, which read the
+   * wrong clock: a session older than its budget refused every message for the rest of its life. A
+   * conversation works for two minutes and then fails every message afterwards, on the same session id,
+   * with the same "exceeded its wall-clock budget" — however fast each individual turn was. That is a
+   * long conversation, not a runaway run, and it was reported exactly that way: an error in the middle
+   * of a chat that then repeated for every message after it.
    */
   async prompt(sessionId: string, text: string): Promise<void> {
     const entry = this.#require(sessionId);
-    const elapsedMs = Date.now() - entry.startedAtMs;
     const budgetMs = entry.brief.maxWallClockMs;
-    if (budgetMs !== undefined && elapsedMs > budgetMs) {
-      await this.abort(
-        sessionId,
-        `wall-clock budget of ${budgetMs} ms exceeded after ${elapsedMs} ms`,
-      );
+
+    let timer: NodeJS.Timeout | undefined;
+    let expired = false;
+    if (budgetMs !== undefined) {
+      timer = setTimeout(() => {
+        expired = true;
+        void this.abort(sessionId, `wall-clock budget of ${budgetMs} ms exceeded`);
+      }, budgetMs);
+    }
+
+    entry.turns += 1;
+    try {
+      await entry.session.prompt(text);
+      await entry.session.agent.waitForIdle();
+    } finally {
+      if (timer !== undefined) clearTimeout(timer);
+    }
+
+    if (expired && budgetMs !== undefined) {
       throw new Error(
         `worker ${sessionId} exceeded its ${budgetMs} ms wall-clock budget; it was stopped instead of continuing without a limit`,
       );
     }
-    // TODO(P2): scope filesystem access to brief.projectRoots. The SDK's read and
-    // search tools resolve paths themselves, so containment has to be applied by
-    // wrapping them rather than by inspection here. Until that exists, callers must
-    // only pass project roots the user already approved and must not treat this
-    // adapter as path-confining.
-    entry.turns += 1;
-    await entry.session.prompt(text);
-    await entry.session.agent.waitForIdle();
+
+    // TODO(P2): scope filesystem access to brief.projectRoots. The SDK's read and search tools resolve
+    // paths themselves, so containment has to be applied by wrapping them rather than by inspection here.
+    // Until that exists, callers must only pass project roots the user already approved and must not treat
+    // this adapter as path-confining. (The conversation path's own `run_command` applies containment at the
+    // point it runs something; that does not cover the worker's built-in tools, which is what this note is
+    // about.)
   }
 
   /** Number of live listeners, so a leak is observable rather than argued about. */

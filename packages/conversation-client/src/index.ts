@@ -59,7 +59,8 @@ export { Conversation, type ConversationProps } from "./Conversation.tsx";
 export { SettingsPanel, SettingsRow, ToolRow, type SettingsPanelProps, type SettingsRowProps, type ToolRowProps } from "./SettingsPanel.tsx";
 export { TokenSpecimens, readVar } from "./TokenSpecimens.tsx";
 export { Modal, type ModalProps } from "./Modal.tsx";
-export { VoiceSurface, VoiceUnavailable, type VoiceSurfaceProps } from "./VoiceSurface.tsx";
+export { VoiceUnavailable } from "./voice-unavailable.tsx";
+export { VoiceOverlay, waveformBars, WAVEFORM_BARS, type VoiceOverlayProps } from "./VoiceOverlay.tsx";
 export {
   type StartVoiceSessionOptions,
   type VoiceSession,

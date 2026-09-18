@@ -75,7 +75,7 @@ test("a theme choice changes the surface, follows the system, and survives a rel
   await page.screenshot({ path: join(EVIDENCE, "theme-03-light-after-reload.png"), fullPage: true });
 });
 
-test("settings is a modal with four distinct tabs, and Escape returns focus to the gear", async ({ page }) => {
+test("settings is a modal with three distinct tabs, and Escape returns focus to the gear", async ({ page }) => {
   mkdirSync(EVIDENCE, { recursive: true });
   await openApp(page);
 
@@ -84,10 +84,12 @@ test("settings is a modal with four distinct tabs, and Escape returns focus to t
 
   const dialog = page.locator('[data-modal="true"]');
   await expect(dialog).toBeVisible();
-  await expect(page.locator('[role="tab"]')).toHaveCount(4);
+  // Three, not four: voice is a mode of the conversation, not a setting, and it left this dialog for the
+  // composer's microphone button.
+  await expect(page.locator('[role="tab"]')).toHaveCount(3);
 
   // Each tab shows its own content. Asserted by comparing what is rendered rather than by checking
-  // that a heading exists, since four labels over one shared panel would pass the weaker check.
+  // that a heading exists, since three labels over one shared panel would pass the weaker check.
   const general = await page.locator("#cc-tabpanel-general").innerText();
   await page.screenshot({ path: join(EVIDENCE, "settings-01-general.png"), fullPage: true });
 
@@ -97,10 +99,6 @@ test("settings is a modal with four distinct tabs, and Escape returns focus to t
   expect(tools).not.toBe(general);
   expect(tools.length).toBeGreaterThan(0);
   await page.screenshot({ path: join(EVIDENCE, "settings-02-tools.png"), fullPage: true });
-
-  // The voice tab is a real control now rather than a note about a missing provider.
-  await page.locator("#cc-tab-voice").click();
-  await expect(page.locator("[data-voice-start='true']")).toBeVisible();
 
   // Escape closes, and focus goes back to what opened it rather than to the top of the page.
   await page.keyboard.press("Escape");

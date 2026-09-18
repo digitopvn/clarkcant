@@ -367,3 +367,64 @@ describe("a tool call is reported while it runs and kept afterwards", () => {
     expect(reply.text).toBe("Không xong.");
   });
 });
+
+/**
+ * A failed turn must not wedge the conversation.
+ *
+ * The report was a conversation that answered once, then failed every message after it with the same
+ * worker id and the same budget message. The session was the cause: a run stopped mid-flight is not
+ * usable again, and the turn map kept handing it back. This asserts the recovery, because the failure
+ * is invisible from the code that produces it — nothing throws twice.
+ */
+class FlakyAdapter extends FakePiAdapter {
+  readonly briefs: WorkerBrief[] = [];
+  /** Fail the next prompt, the way a provider going away mid-run does. */
+  fail = true;
+
+  override async createWorkerSession(brief: WorkerBrief): Promise<{ sessionId: string; sessionFile: string | undefined; createdAt: Instant }> {
+    this.briefs.push(brief);
+    return super.createWorkerSession(brief);
+  }
+
+  override async prompt(sessionId: string, text: string): Promise<void> {
+    if (this.fail) {
+      this.fail = false;
+      throw new Error("worker 01a0b4db exceeded its 120000 ms wall-clock budget; it was stopped");
+    }
+    await super.prompt(sessionId, text);
+  }
+}
+
+describe("a conversation survives a failed turn", () => {
+  it("drops the broken session, so the next message opens a fresh one", async () => {
+    const adapter = new FlakyAdapter({ script: ["Lần này thì được."] });
+    const turn = await createModelTurn({ env: ENV, cwd: process.cwd(), adapter });
+    expect(turn).toBeDefined();
+
+    let failed: unknown;
+    try {
+      await turn!.answer({ conversationId: CONVERSATION, principal: PRINCIPAL, text: "một", messageId: "msg_f1" });
+    } catch (cause) {
+      failed = cause;
+    }
+    expect(failed).toBeInstanceOf(Error);
+    expect(adapter.briefs).toHaveLength(1);
+
+    const reply = await turn!.answer({ conversationId: CONVERSATION, principal: PRINCIPAL, text: "hai", messageId: "msg_f2" });
+    // The point: a second session was created rather than the wedged one being reused, which is what
+    // made every later message fail identically.
+    expect(adapter.briefs, "the failed session was reused").toHaveLength(2);
+    expect(reply.text).toBe("Lần này thì được.");
+  });
+
+  it("keeps using one session while turns succeed", async () => {
+    // The recovery must not turn every turn into a new session: continuity is the thing being kept.
+    const adapter = new FlakyAdapter({ script: ["ok"] });
+    adapter.fail = false;
+    const turn = await createModelTurn({ env: ENV, cwd: process.cwd(), adapter });
+
+    await turn!.answer({ conversationId: CONVERSATION, principal: PRINCIPAL, text: "một", messageId: "msg_s1" });
+    await turn!.answer({ conversationId: CONVERSATION, principal: PRINCIPAL, text: "hai", messageId: "msg_s2" });
+    expect(adapter.briefs).toHaveLength(1);
+  });
+});

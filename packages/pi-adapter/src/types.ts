@@ -66,7 +66,17 @@ export interface ToolDefinition {
    * asked to use one.
    */
   promptSnippet?: string;
-  execute: (params: Record<string, unknown>) => Promise<{ text: string }>;
+  execute: (params: Record<string, unknown>) => Promise<{
+    text: string;
+    /**
+     * A block the host builds as a result of the call, recorded in the reply.
+     *
+     * Typed loosely here rather than against the message-block union, because this package must not take
+     * a dependency on the contracts package: the SDK only ever receives `text`, and the node that wraps
+     * these tools validates the block against the schema before it reaches a transcript.
+     */
+    hostCard?: Record<string, unknown>;
+  }>;
 }
 
 export interface ResourceRefreshRequest {

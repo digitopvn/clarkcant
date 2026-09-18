@@ -188,6 +188,11 @@ function withActivity(turn: Turn, tool: ToolDefinition): ToolDefinition {
       try {
         const answer = await tool.execute(params);
         turn.onEvent?.({ type: "tool-end", toolCallId, status: "done", result: answer.text });
+        // A card the host built during the call goes in before the call's own receipt: it is the thing the
+        // user has to act on, and the receipt is the record that it was asked.
+        if (answer.hostCard !== undefined) {
+          turn.segments.push({ kind: "host-card", block: answer.hostCard });
+        }
         turn.segments.push({ kind: "block", block: record("done", answer.text) });
         return answer;
       } catch (cause) {
@@ -494,6 +499,23 @@ export async function createModelTurn(options: {
 
       try {
         await Promise.race([adapter.prompt(turn.sessionId, input.text), deadline]);
+      } catch (cause) {
+        /*
+         * A failed turn takes its session with it.
+         *
+         * A run that was stopped mid-flight — over its budget, or with an error from the provider —
+         * leaves a session that is not usable again, and reusing it means every later message fails the
+         * same way. That is what a user experiences as the conversation breaking and never coming back,
+         * and it is what this drops: the next message opens a fresh session instead of inheriting a
+         * wedged one. The transcript is unaffected; it lives in the database, not in the session.
+         *
+         * Disposed rather than kept for a retry, because there is no retry that could work: the session
+         * is the thing that is broken.
+         */
+        turns.delete(input.conversationId);
+        turn.unsubscribe();
+        void adapter.dispose(turn.sessionId).catch(() => undefined);
+        throw cause;
       } finally {
         if (timer !== undefined) clearTimeout(timer);
         // Detached before the segments are read, so an event arriving after the race resolved cannot

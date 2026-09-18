@@ -57,8 +57,7 @@ body {
 .cc-row,
 .cc-card,
 .cc-chip,
-.cc-pin,
-.cc-session {
+.cc-pin {
   animation: cc-enter var(--cc-motion-enter) var(--cc-motion-bounce) both;
   animation-delay: var(--cc-enter-delay, 0ms);
 }
@@ -163,7 +162,9 @@ body {
  * orb itself lives in the layer behind the composer, because one element that moves between two
  * places cannot also be a layout child of both.
  */
-.cc-hero-orb { width: 148px; height: 148px; flex: none; visibility: hidden; }
+/* The ball is drawn at 0.54 of the canvas, so a 197 pixel anchor reserves the space a 148 pixel ball
+   occupied before the canvas grew. */
+.cc-hero-orb { width: 197px; height: 197px; flex: none; visibility: hidden; }
 .cc-empty-orb {
   border-radius: var(--cc-radius-pill);
   display: block;
@@ -435,34 +436,6 @@ button.cc-badge:hover, .cc-badge[role="button"]:hover { color: var(--cc-text); b
 }
 /* The start screen has no bar either: the composer floats under the chips as one composition. */
 .cc-shell[data-view="hero"] .cc-composer-wrap { padding-bottom: var(--cc-space-md); }
-/* Starting a session in a project: a chip that opens one row of input, never a second screen. */
-.cc-session {
-  display: flex;
-  flex-direction: column;
-  gap: var(--cc-space-xs);
-  align-items: flex-start;
-  padding: var(--cc-space-sm) var(--cc-space-lg) 0;
-}
-.cc-session-form { display: flex; gap: var(--cc-space-xs); align-items: center; width: 100%; }
-.cc-session-input {
-  flex: 1;
-  min-width: 0;
-  font: inherit;
-  padding: var(--cc-space-xs) var(--cc-space-sm);
-  border: 1px solid var(--cc-border);
-  border-radius: var(--cc-radius-sm);
-  background: var(--cc-surface);
-  color: var(--cc-text);
-}
-.cc-session-input:focus-visible { outline: 2px solid var(--cc-focus); outline-offset: 2px; }
-/* The desktop-only directory picker. Sized to its label rather than to the square icon button, so
-   "Chọn thư mục…" reads as an action instead of being clipped to a glyph. */
-.cc-session-pick {
-  width: auto;
-  padding: 0 var(--cc-space-sm);
-  white-space: nowrap;
-}
-.cc-session-options { display: flex; gap: var(--cc-space-xs); flex-wrap: wrap; }
 /*
  * The composer's frame, and the light that travels around it.
  *
@@ -682,6 +655,82 @@ button.cc-badge:hover, .cc-badge[role="button"]:hover { color: var(--cc-text); b
 .cc-tool-body { padding: 0 var(--cc-space-md) var(--cc-space-md); display: flex; flex-direction: column; gap: var(--cc-space-sm); }
 .cc-tool[open] > .cc-tool-body { border-top: 1px solid var(--cc-border); padding-top: var(--cc-space-sm); }
 .cc-reasoning-body { color: var(--cc-text-muted); }
+
+/*
+ * Voice mode.
+ *
+ * A screen rather than a panel: speaking and reading are different modes, and half of each is worse than
+ * either. The waveform is driven by the loudness of real frames in both directions, so its movement means
+ * something — a decorative equaliser would be a picture of a microphone, which is exactly what the
+ * disabled button it replaces was.
+ */
+.cc-voice-scrim { position: fixed; inset: 0; z-index: 66; background: var(--cc-canvas); }
+.cc-voice {
+  position: absolute; inset: 0; display: flex; flex-direction: column;
+  background: var(--cc-canvas); color: var(--cc-text);
+}
+.cc-voice-head {
+  display: flex; align-items: center; justify-content: space-between;
+  min-height: var(--cc-topbar-height);
+  padding: var(--cc-space-md) var(--cc-space-lg);
+  border-bottom: 1px solid var(--cc-border);
+}
+.cc-voice-status {
+  display: flex; align-items: center; gap: var(--cc-space-xs);
+  color: var(--cc-text-muted); font-size: var(--cc-text-label);
+}
+.cc-voice-body {
+  flex: 1; min-height: 0; overflow-y: auto;
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: var(--cc-space-md); padding: var(--cc-space-xl) var(--cc-space-lg); text-align: center;
+}
+/* The orb grows a little with the voice, which is the one reaction the design's sphere has. */
+.cc-voice-orb {
+  border-radius: var(--cc-radius-pill); transition: transform 90ms linear;
+  animation: cc-enter var(--cc-motion-enter) var(--cc-motion-bounce) both;
+}
+.cc-voice-orb-canvas { border-radius: var(--cc-radius-pill); display: block; }
+.cc-voice-headline { margin: 0; font-size: var(--cc-text-heading-md); font-weight: 600; }
+.cc-voice-sub { margin: 0; color: var(--cc-text-muted); }
+.cc-voice-wave {
+  display: flex; align-items: center; justify-content: center; gap: 4px;
+  height: 64px; width: min(420px, 100%);
+}
+.cc-voice-bar {
+  width: 4px; border-radius: var(--cc-radius-pill); background: var(--cc-accent);
+  /* Short, so the bars follow the voice rather than lagging behind it. */
+  transition: height 80ms linear;
+}
+/* The live transcript of what the user said, as the design quotes it back to them. */
+.cc-voice-transcript {
+  margin: 0; max-width: 46ch; color: var(--cc-text); font-size: var(--cc-text-body-lg, var(--cc-text-body-md));
+  line-height: var(--cc-leading-body-md);
+}
+.cc-voice-transcript-agent { margin: 0; max-width: 46ch; color: var(--cc-text-muted); font-size: var(--cc-text-body-sm); }
+.cc-voice-note { margin: 0; color: var(--cc-text-tertiary); font-size: var(--cc-text-label); }
+.cc-voice-problem { margin: 0; max-width: 52ch; color: var(--cc-warning); font-size: var(--cc-text-body-sm); }
+.cc-voice-controls {
+  display: flex; align-items: flex-start; justify-content: center; gap: var(--cc-space-xl);
+  padding: var(--cc-space-lg) var(--cc-space-lg) var(--cc-space-xxl);
+}
+.cc-voice-action {
+  display: flex; flex-direction: column; align-items: center; gap: var(--cc-space-xs);
+  background: none; border: 0; cursor: pointer; color: var(--cc-text-muted);
+  font: inherit; font-size: var(--cc-text-label);
+}
+.cc-voice-action-icon {
+  display: grid; place-items: center; width: 52px; height: 52px;
+  border: 1px solid var(--cc-border); border-radius: var(--cc-radius-pill);
+  background: var(--cc-elevated); color: var(--cc-text); font-size: 18px;
+  transition: border-color var(--cc-motion-micro) var(--cc-motion-easing), color var(--cc-motion-micro) var(--cc-motion-easing);
+}
+.cc-voice-action:hover:not(:disabled) .cc-voice-action-icon { border-color: var(--cc-accent); }
+.cc-voice-action:disabled { cursor: default; opacity: 0.5; }
+.cc-voice-action:focus-visible { outline: 2px solid var(--cc-focus); outline-offset: 2px; border-radius: var(--cc-radius-badge); }
+.cc-voice-action-end .cc-voice-action-icon {
+  border-color: color-mix(in oklab, var(--cc-danger) 45%, transparent);
+  color: var(--cc-danger); background: color-mix(in oklab, var(--cc-danger) 12%, transparent);
+}
 
 /*
  * The modal. The specification's numbers: 700px wide, radius 20. Focus is trapped inside while it

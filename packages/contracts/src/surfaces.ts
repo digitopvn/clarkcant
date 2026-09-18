@@ -192,6 +192,14 @@ export const approvalCardBlockSchema = z.strictObject({
    * swapped for a different one between display and execution.
    */
   operationDigest: z.string().min(1).max(120),
+  /**
+   * The exact operation, as JSON, so that approving it runs what was displayed.
+   *
+   * The digest proves the payload is the one that was shown; this field is what actually runs. Keeping
+   * it in the message rather than in a table means the approved operation and its receipt travel
+   * together, and there is no second copy to drift.
+   */
+  payload: z.string().min(1).max(4000).optional(),
   effectCategory: z.enum([
     "read",
     "local-write",

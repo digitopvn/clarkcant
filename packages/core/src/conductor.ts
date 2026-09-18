@@ -9,6 +9,7 @@ import {
   type TaskRecord,
   type WidgetDefinition,
   assertBlockProvenance,
+  messageBlockSchema,
   nowInstant,
 } from "@clarkcant/contracts";
 
@@ -155,7 +156,18 @@ export interface ModelTurnInput {
  */
 export type ModelSegment =
   | { kind: "text"; text: string }
-  | { kind: "block"; block: MessageBlock };
+  | { kind: "block"; block: MessageBlock }
+  /**
+   * A block the **host** built during the turn, not the model.
+   *
+   * An approval card is the case this exists for: the model may ask for an operation, and only the host
+   * may put the card that asks the user about it into the transcript. `block` travels through the
+   * provenance screen unexamined because the screen's rule is "a model turn may not mint a host card" and
+   * this segment is by construction not model output — it is produced by a tool the host registered, and
+   * the model has no vocabulary for segments at all. The kind is validated by the schema where it is
+   * built, so a malformed one is dropped rather than drawn.
+   */
+  | { kind: "host-card"; block: Record<string, unknown> };
 
 /** What a model turn produced.
  *
@@ -609,6 +621,15 @@ function modelSegmentsToBlocks(reply: ModelTurnReply): MessageBlock[] {
       // A settled turn is not a stream: `prompt()` resolves when the run finishes, so nothing
       // here is still arriving and claiming otherwise would make the UI wait for more.
       blocks.push({ type: "text", format: "markdown", content: segment.text, streaming: false });
+      continue;
+    }
+
+    if (segment.kind === "host-card") {
+      // Validated rather than trusted by type: the segment comes from a tool result, and a shape that
+      // does not satisfy the schema is dropped instead of drawn. There is no provenance screen here
+      // because the screen protects against model output, and this is not model output.
+      const parsed = messageBlockSchema.safeParse(segment.block);
+      if (parsed.success) blocks.push(parsed.data as MessageBlock);
       continue;
     }
 

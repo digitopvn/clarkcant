@@ -4,6 +4,7 @@ import { resolve } from "node:path";
 
 import {
   type Instant,
+  type MessageBlock,
   type MessageRecord,
   type Principal,
   commandEnvelopeSchema,
@@ -13,6 +14,7 @@ import {
 } from "@clarkcant/contracts";
 import {
   claimLiveOwner,
+  decideApproval,
   getActionBinding,
   getInstance,
   handleUserMessage,
@@ -38,6 +40,7 @@ import {
   listCalendarEvents,
   listConversations,
   listLocalImages,
+  listProjects,
   nextMessageSequence,
   oneRow,
 } from "@clarkcant/storage";
@@ -54,6 +57,7 @@ import {
   updateLocalEvent,
 } from "./mini-app-data.ts";
 import { markProjectUsed, projectContext, resolveProject } from "./project-finder.ts";
+import { runApprovedCommand, type CommandPlacement } from "./run-command.ts";
 import { initialPrompt } from "./project-session.ts";
 import { indexMessages, ingestSessionEntries, searchSessions } from "./session-search.ts";
 import { type NodeServices, buildTimeline } from "./services.ts";
@@ -259,15 +263,54 @@ export async function handleRequest(deps: GatewayDeps, request: GatewayRequest):
  * state — which project it opened, which question it is asking — not a model's answer. It is indexed
  * for search at the same time, so what the conversation shows and what search finds cannot disagree.
  */
+/**
+ * Where a command may run, computed at the moment it is decided.
+ *
+ * Both halves are read fresh rather than captured when the request was made: an approval can sit for a
+ * quarter of an hour, and a project that was indexed then may not be known now.
+ */
+function commandPlacement(services: NodeServices): CommandPlacement {
+  return {
+    approvedRoots: services.projects.roots(),
+    knownProjects: listProjects(services.runtime.db, services.runtime.identity.nodeId).map((project) => project.path),
+  };
+}
+
+/**
+ * Every block of every message in a conversation, flattened.
+ *
+ * Used by the approval route to find the card that holds the approved operation. Deliberately not part of
+ * the timeline response: the block is already in the transcript, and asking for it through the same read
+ * path is what keeps the two from disagreeing.
+ */
+function blocksOfConversation(services: NodeServices, conversationId: string): Record<string, unknown>[] {
+  const timeline = buildTimeline(services, { conversationId, afterSequence: 0 });
+  const blocks: Record<string, unknown>[] = [];
+  // SAFETY: the timeline type describes a message's blocks as unparsed JSON. The node wrote them, and
+  // every route that renders a block validates the ones claiming host ownership before drawing it.
+  const messages = timeline.messages as unknown as { blocks?: Record<string, unknown>[] }[];
+  for (const message of messages) blocks.push(...(message.blocks ?? []));
+  return blocks;
+}
+
+/**
+ * Append a message the host wrote — a question, a notice, or the receipt of an operation.
+ *
+ * `blocks` is what a receipt needs: a command's outcome is a tool record and an evidence line, not a
+ * paragraph. `text` stays because most host replies are one sentence, and a caller that has to build a
+ * text block by hand is a caller that will eventually build it wrong.
+ */
 function appendHostReply(
   services: NodeServices,
-  input: { conversationId: string; text: string; at: Instant },
+  input: { conversationId: string; text?: string; blocks?: MessageBlock[]; at: Instant },
 ): { messageId: string } {
+  const blocks: MessageBlock[] =
+    input.blocks ?? [{ type: "text", format: "plain", content: input.text ?? "", streaming: false }];
   const message: MessageRecord = {
     messageId: services.conductor.newId("msg") as MessageRecord["messageId"],
     conversationId: input.conversationId as MessageRecord["conversationId"],
     role: "assistant",
-    blocks: [{ type: "text", format: "plain", content: input.text, streaming: false }],
+    blocks,
     authorNodeId: services.runtime.identity.nodeId as MessageRecord["authorNodeId"],
     createdAt: input.at,
     delivery: "accepted",
@@ -738,6 +781,74 @@ async function handleConversationRoutes(
         run: (send) => streamUserMessage(services, { conversationId, principal, text: text.slice(0, 20_000), at: at_ }, send),
       },
     };
+  }
+
+  // /conversations/:id/approvals/:approvalId/decide
+  //
+  // The one route that can start a command, and it starts nothing without a decision from a user: the
+  // principal comes from the transport, `decideApproval` refuses a non-user decider, the digest the
+  // approver saw must match the stored one, and the payload it covers is re-hashed here again before
+  // anything runs. A refusal is never a block — a message describing something that did not happen is how
+  // a transcript starts lying.
+  if (segments.length === 5 && segments[2] === "approvals" && segments[4] === "decide" && request.method === "POST") {
+    const approvalId = segments[3];
+    const parsed = readJson(request);
+    if (!parsed.ok) return parsed.response;
+    const decisionValue = parsed.value.decision;
+    const decision = decisionValue === "granted" || decisionValue === "denied" ? decisionValue : undefined;
+    const digest = typeof parsed.value.digest === "string" ? parsed.value.digest : "";
+    if (approvalId === undefined || decision === undefined || digest === "") {
+      return fail(400, "INVALID_SCHEMA", "a decision must carry decision: granted|denied and the digest it was shown");
+    }
+
+    const coordination = {
+      db: services.runtime.db,
+      nodeId: services.runtime.identity.nodeId,
+      now: () => at() as never,
+      newId: services.conductor.newId,
+    };
+    const decided = decideApproval(coordination, {
+      approvalId: approvalId as never,
+      decision,
+      decidingPrincipal: principal,
+      seenOperationDigest: digest,
+    });
+    if (!decided.ok) return fail(409, decided.code, decided.message);
+
+    const at_ = at() as never;
+    if (decision === "denied") {
+      appendHostReply(services, {
+        conversationId,
+        text: "Đã từ chối chạy lệnh đó. Không có gì được chạy.",
+        at: at_,
+      });
+      return json(200, { decision, timeline: buildTimeline(services, { conversationId, afterSequence: 0 }) });
+    }
+
+    // The payload lives with the card that displayed it, so the operation approved and the operation run
+    // are the same record rather than two copies that can drift.
+    const card = blocksOfConversation(services, conversationId).find(
+      (block) => block.type === "approval-card" && block.approvalId === approvalId,
+    );
+    const payload = card !== undefined && typeof card.payload === "string" ? card.payload : undefined;
+    if (payload === undefined) {
+      return fail(409, "APPROVAL_PAYLOAD_MISSING", "the approved operation is not in this conversation");
+    }
+
+    const ran = await runApprovedCommand({
+      payload,
+      expectedDigest: decided.approval.operationDigest,
+      placement: commandPlacement(services),
+      approvalId,
+    });
+    if (!ran.ok) return fail(409, ran.code, ran.message);
+
+    appendHostReply(services, { conversationId, blocks: ran.blocks, at: at_ });
+    return json(200, {
+      decision,
+      outcome: ran.description,
+      timeline: buildTimeline(services, { conversationId, afterSequence: 0 }),
+    });
   }
 
   // /conversations/:id/start-session
