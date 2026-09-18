@@ -57,6 +57,25 @@ const TABS = [
 
 type TabId = (typeof TABS)[number]["id"];
 
+/**
+ * The keys this panel can hold, and what each one is for.
+ *
+ * A list rather than one field per provider, because the third one is a copy and paste of the second: the names are
+ * what the node stores them under, and each is entered the same way and reported the same way.
+ */
+const KEY_FIELDS = [
+  {
+    name: "gemini",
+    label: "Gemini API key",
+    purpose: "Dùng cho Gemini Live khi bạn nói. Lần mở voice kế tiếp sẽ dùng khoá này.",
+  },
+  {
+    name: "typesafe",
+    label: "TypeSafe API key (Jev)",
+    purpose: "Dùng cho Jev khi nó phải quyết định cách xử lý một việc.",
+  },
+] as const;
+
 /** Nodes the settings surface needs, loaded once when it opens. */
 interface NodeFacts {
   nodeId: string;
@@ -164,14 +183,13 @@ export function SettingsPanel({
   const [tools, setTools] = useState<ToolFacts[] | undefined>(undefined);
   const [problem, setProblem] = useState<string | undefined>(undefined);
   /**
-   * The live provider's key, on its way to the node and nowhere else.
+   * What has been typed into each key field, and what the node said about it.
    *
-   * The draft is cleared the moment it is sent, and nothing here ever holds the stored value: the node answers
-   * with the names it has and never with a value, so there is nothing to show a second time.
+   * A draft is cleared the moment it is sent, and nothing here ever holds a stored value: the node answers with the
+   * names it has and never with a value, so there is nothing to show a second time.
    */
-  const [keyDraft, setKeyDraft] = useState("");
-  const [keyStatus, setKeyStatus] = useState<string | undefined>(undefined);
-  const [accentIndex, setAccentIndex] = useState(0);
+  const [keyDrafts, setKeyDrafts] = useState<Record<string, string>>({});
+  const [keyStatuses, setKeyStatuses] = useState<Record<string, string>>({});  const [accentIndex, setAccentIndex] = useState(0);
   const [tab, setTab] = useState<TabId>("general");
   // Bumped after a theme or accent change so the contrast readout re-reads computed values.
   const [revision, setRevision] = useState(0);
@@ -459,61 +477,71 @@ export function SettingsPanel({
               voice-session.ts exports as VOICE_CREDENTIAL_NAME - and it cannot be imported here, because the
               runtime is not something the browser ships. A name is cheaper to keep in step than a package.
             */}
-            <h3>Giọng nói</h3>
+            <h3>Giọng nói và khoá</h3>
             <MicrophoneCheck />
-            <p className="cc-panel-note">
-              Khoá dùng cho Gemini Live khi bạn nói. Nó được lưu ở node, không đi vào hội thoại, và không hiện lại
-              lần nào nữa — kể cả trong thông báo lưu thành công.
-            </p>
-            <form
-              className="cc-credential-form"
-              onSubmit={(event) => {
-                event.preventDefault();
-                const value = keyDraft.trim();
-                if (value === "") return;
-                client
-                  .putCredential({ fields: [{ name: "gemini", value }] })
-                  .then((result) => {
-                    setKeyDraft("");
-                    setKeyStatus(
-                      result.names.includes("gemini")
-                        ? "Đã lưu khoá cho giọng nói. Lần mở voice kế tiếp sẽ dùng khoá này."
-                        : "Đã gửi, nhưng node không ghi nhận tên khoá nào.",
+            {/*
+              One field per key: entered here, stored by the node, and never shown again.
+
+              A list rather than one hand-written form per provider, because the second is a copy of the first and a
+              third would be too. The names are the node's own - it is the node that reads a value when it needs one -
+              and the purpose under each field says what breaks without it.
+            */}
+            {KEY_FIELDS.map((entry) => (
+              <form
+                key={entry.name}
+                className="cc-credential-form"
+                data-settings-key-form={entry.name}
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  const value = (keyDrafts[entry.name] ?? "").trim();
+                  if (value === "") return;
+                  client
+                    .putCredential({ fields: [{ name: entry.name, value }] })
+                    .then((result) => {
+                      // Cleared the moment it is sent, so nothing later can read it off the screen or out of state.
+                      setKeyDrafts((current) => ({ ...current, [entry.name]: "" }));
+                      setKeyStatuses((current) => ({
+                        ...current,
+                        [entry.name]: result.names.includes(entry.name)
+                          ? "Đã lưu khoá."
+                          : "Đã gửi, nhưng node không ghi nhận tên khoá nào.",
+                      }));
+                    })
+                    .catch(() =>
+                      // The message says nothing about what was typed: an error that repeated the value would be the
+                      // leak this field exists to avoid.
+                      setKeyStatuses((current) => ({ ...current, [entry.name]: "Không lưu được khoá. Thử lại." })),
                     );
-                  })
-                  .catch(() => {
-                    // The message says nothing about what was typed: an error that repeated the value would be the
-                    // leak this field exists to avoid.
-                    setKeyStatus("Không lưu được khoá. Thử lại.");
-                  });
-              }}
-            >
-              <label className="cc-credential-field">
-                <span>Gemini API key</span>
-                <input
-                  type="password"
-                  name="gemini"
-                  autoComplete="off"
-                  data-settings-key-field="gemini"
-                  value={keyDraft}
-                  onChange={(event) => setKeyDraft(event.target.value)}
-                />
-              </label>
-              <button
-                type="submit"
-                className="cc-icon-btn"
-                style={{ width: "auto", padding: "0 var(--cc-space-sm)" }}
-                disabled={keyDraft.trim() === ""}
-                data-settings-key-submit="true"
+                }}
               >
-                Lưu khoá
-              </button>
-            </form>
-            {keyStatus !== undefined && (
-              <p className="cc-freshness" data-settings-key-status="true">
-                {keyStatus}
-              </p>
-            )}
+                <label className="cc-credential-field">
+                  <span>{entry.label}</span>
+                  <input
+                    type="password"
+                    name={entry.name}
+                    autoComplete="off"
+                    data-settings-key-field={entry.name}
+                    value={keyDrafts[entry.name] ?? ""}
+                    onChange={(event) => setKeyDrafts((current) => ({ ...current, [entry.name]: event.target.value }))}
+                  />
+                </label>
+                <button
+                  type="submit"
+                  className="cc-icon-btn"
+                  style={{ width: "auto", padding: "0 var(--cc-space-sm)" }}
+                  disabled={(keyDrafts[entry.name] ?? "").trim() === ""}
+                  data-settings-key-submit={entry.name}
+                >
+                  Lưu khoá
+                </button>
+                <p className="cc-freshness">{entry.purpose}</p>
+                {keyStatuses[entry.name] !== undefined && (
+                  <p className="cc-freshness" data-settings-key-status={entry.name}>
+                    {keyStatuses[entry.name]}
+                  </p>
+                )}
+              </form>
+            ))}
           </section>
         )}
       </div>
