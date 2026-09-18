@@ -750,13 +750,45 @@ export function Conversation({
     return [...decided];
   }, [timeline]);
 
+  /**
+   * What the node said about the last secret submitted through a card.
+   *
+   * Held here rather than in the card because the card is a message in a transcript: it is re-rendered from
+   * stored blocks on every load, and a status that lived inside it would be a status that changed what history
+   * says. This is a fact about now, so it lives with the other facts about now.
+   */
+  const [credentialStatus, setCredentialStatus] = useState<{ requestId: string; message: string } | undefined>(undefined);
+  const submitCredential = useCallback(
+    (input: { requestId: string; fields: { name: string; value: string }[] }): void => {
+      client
+        .putCredential({ fields: input.fields })
+        .then((result) =>
+          setCredentialStatus({
+            requestId: input.requestId,
+            message:
+              result.names.length === 0
+                ? "Đã gửi, nhưng node không ghi nhận tên nào."
+                : `Đã lưu: ${result.names.join(", ")}.`,
+          }),
+        )
+        .catch(() =>
+          // The failure message says nothing about what was typed. An error that repeated the value would be the
+          // leak this card exists to prevent, and it would be the easiest one to write by accident.
+          setCredentialStatus({ requestId: input.requestId, message: "Không lưu được. Thử lại." }),
+        );
+    },
+    [client],
+  );
+
   const blockActions: BlockActions = useMemo(
     () => ({
       onApprovalDecide: decideApproval,
       decidedApprovals,
       ...(decidingApprovalId === undefined ? {} : { decidingApprovalId }),
+      onCredentialSubmit: submitCredential,
+      ...(credentialStatus === undefined ? {} : { credentialStatus }),
     }),
-    [decideApproval, decidedApprovals, decidingApprovalId],
+    [credentialStatus, decideApproval, decidedApprovals, decidingApprovalId, submitCredential],
   );
 
   const renderSurface = useCallback(

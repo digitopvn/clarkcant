@@ -654,4 +654,26 @@ export class GatewayClient {
     const blob = await response.blob();
     return URL.createObjectURL(blob);
   }
+
+  /**
+   * Store a secret the person typed.
+   *
+   * The answer is a status, not the value: the node never hands a secret back, so there is nothing here to
+   * cache, redisplay or log. The value travels once, in the request body, and that is the only place it exists
+   * on this side of the wire.
+   */
+  async putCredential(input: { fields: { name: string; value: string }[] }): Promise<{ names: string[] }> {
+    const response = await this.#fetch(`${this.#baseUrl}/credentials`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${this.#token}`, "content-type": "application/json" },
+      body: JSON.stringify({ fields: input.fields }),
+    });
+    if (!response.ok) {
+      throw new GatewayError(response.status, "CREDENTIAL_REFUSED", "that credential was not stored");
+    }
+    const body = (await response.json()) as { names?: unknown };
+    return {
+      names: Array.isArray(body.names) ? body.names.filter((name): name is string => typeof name === "string") : [],
+    };
+  }
 }

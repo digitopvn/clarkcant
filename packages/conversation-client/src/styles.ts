@@ -90,6 +90,20 @@ body {
 }
 .cc-brand:hover { opacity: 0.82; }
 .cc-header-end { display: flex; align-items: center; gap: var(--cc-space-md); }
+
+/*
+ * A secret being typed.
+ *
+ * The field is a password input and the form is a column, because the thing being typed is not part of the
+ * conversation and should not look like it is: one field per name, a save button, and a status line that says
+ * what happened without saying what was typed.
+ */
+.cc-credential-form { display: flex; flex-direction: column; gap: var(--cc-space-sm); margin: var(--cc-space-sm) 0; }
+.cc-credential-field { display: flex; flex-direction: column; gap: var(--cc-space-xs); font-size: var(--cc-font-small); }
+.cc-credential-field input {
+  font: inherit; color: inherit; padding: var(--cc-space-sm);
+  background: var(--cc-elevated); border: 1px solid var(--cc-border); border-radius: var(--cc-radius-card);
+}
 .cc-orb {
   width: 27px; height: 27px; border-radius: var(--cc-radius-pill);
   display: block; flex: none;
