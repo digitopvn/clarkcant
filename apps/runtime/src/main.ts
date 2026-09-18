@@ -22,8 +22,8 @@ import { commandDigest } from "./run-command.ts";
 import { captureSnapshot, createInstance, handleUserMessage, requestApproval, setPreference, type CoordinationDeps } from "@clarkcant/core";
 import { GALLERY, YOUTUBE } from "@clarkcant/data-canvas";
 import { definitionDigest } from "@clarkcant/widget-host";
-import { listLocalImages, messagesSince } from "@clarkcant/storage";
-import { attachVoiceGateway, VOICE_ANSWER_NOTE } from "./voice-session.ts";
+import { listLocalImages, messagesSince, readCredential } from "@clarkcant/storage";
+import { attachVoiceGateway, VOICE_ANSWER_NOTE, VOICE_CREDENTIAL_NAME } from "./voice-session.ts";
 import { indexMessages, textOfMessage } from "./session-search.ts";
 import { FixtureLiveAdapter } from "./voice-fixture.ts";
 import { SAMPLE_DATASET } from "@clarkcant/data-canvas/sample";
@@ -634,7 +634,14 @@ async function main(): Promise<void> {
   const voice = attachVoiceGateway({
     server,
     services,
-    credential: () => (voiceFixture ? "fixture-credential" : process.env.GEMINI_API_KEY),
+    credential: () =>
+      voiceFixture
+        ? "fixture-credential"
+        : // The vault first, then the environment. A key typed into the credential card is a key the person
+          // expects to be used, and an environment variable that happens to be absent must not make that
+          // expectation false. Read at open time rather than cached, so the next attempt after typing one finds it.
+          process.env.GEMINI_API_KEY ??
+          readCredential(services.runtime.db, services.runtime.identity.ownerPrincipalId, VOICE_CREDENTIAL_NAME),
     ...(voiceFixture ? { createAdapter: () => new FixtureLiveAdapter() } : {}),
     ...(voiceModel === undefined ? {} : { model: voiceModel }),
     /**

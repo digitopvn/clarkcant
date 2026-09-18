@@ -212,6 +212,14 @@ const VOICE_INSTRUCTION = [
 ].join(" ");
 
 /**
+ * The name the live provider's credential is stored under.
+ *
+ * One name in one place, because three things have to agree about it: the node reads it at open time, the card asks
+ * the person for it by this name, and the interface names it when voice cannot start without it.
+ */
+export const VOICE_CREDENTIAL_NAME = "gemini";
+
+/**
  * What a spoken turn asks the agent for.
  *
  * The session reads the answer out loud, and a long answer is not a conversation: the person waits through it,
@@ -491,7 +499,14 @@ export function attachVoiceGateway(options: VoiceGatewayOptions): VoiceGateway {
 
       const credential = options.credential();
       if (credential === undefined || credential === "") {
-        deny("VOICE_NOT_CONFIGURED", "this node has no credential for the live voice provider", {}, CLOSE_TRY_LATER);
+        deny(
+          "VOICE_NOT_CONFIGURED",
+          "this node has no credential for the live voice provider",
+          // Machine-readable, because the interface has something useful to do about it: the name is what a
+          // credential card asks for, and a person reading "no credential" alone has to guess which one.
+          { reason: "missing-credential", credentialName: VOICE_CREDENTIAL_NAME },
+          CLOSE_TRY_LATER,
+        );
         return;
       }
 
