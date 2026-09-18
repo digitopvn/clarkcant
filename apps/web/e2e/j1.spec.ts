@@ -180,3 +180,24 @@ test("an unauthenticated client is told what it needs instead of failing silentl
   await expect(page.locator("[data-needs-token='true']")).toBeVisible();
   await expect(page.locator(".cc-status")).toContainText("Chưa có token");
 });
+
+test("a highlighted passage can be attached to the next prompt", async ({ page }) => {
+  // The menu is placed from the selection's own rectangle, so this asserts the whole path: a text selection inside
+  // the transcript, the menu appearing over it, and the passage arriving in the composer quoted rather than bare.
+  await openApp(page);
+  await page.locator("[data-composer]").click();
+  await page.keyboard.type("tổng quan");
+  await page.keyboard.press("Enter");
+
+  const reply = page.locator('[data-role="assistant"]').last();
+  await expect(reply).toBeVisible({ timeout: 20_000 });
+  await reply.locator("p").first().selectText();
+
+  const attach = page.locator("[data-selection-action='attach']");
+  await expect(attach).toBeVisible();
+  await attach.click();
+
+  await expect(page.locator("[data-composer]")).toHaveValue(/>\s/);
+  await expect(page.locator("[data-selection-menu='true']")).toHaveCount(0);
+});
+

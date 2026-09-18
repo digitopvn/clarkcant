@@ -113,6 +113,25 @@ body {
   background: var(--cc-elevated); border-radius: var(--cc-radius-pill);
 }
 .cc-mic-level > span { display: block; height: 100%; background: currentColor; opacity: 0.7; transition: width 80ms linear; }
+
+/*
+ * The menu that appears over a highlighted passage.
+ *
+ * Fixed rather than absolute, because it is placed from the range's own rectangle in viewport coordinates, and it
+ * sits above the transcript: a menu that scrolled away with the text would be a menu that is gone by the time
+ * somebody reaches for it.
+ */
+.cc-selection-menu {
+  position: fixed; transform: translate(-50%, -100%); z-index: 5;
+  display: flex; gap: var(--cc-space-xs); padding: var(--cc-space-xs);
+  background: var(--cc-elevated); border: 1px solid var(--cc-border);
+  border-radius: var(--cc-radius-pill); box-shadow: 0 8px 24px rgb(0 0 0 / 35%);
+}
+.cc-selection-menu button {
+  background: none; border: 0; color: inherit; font: inherit; cursor: pointer;
+  padding: var(--cc-space-xs) var(--cc-space-sm); border-radius: var(--cc-radius-pill);
+}
+.cc-selection-menu button:hover { background: var(--cc-card); }
 .cc-credential-field { display: flex; flex-direction: column; gap: var(--cc-space-xs); font-size: var(--cc-font-small); }
 .cc-credential-field input {
   font: inherit; color: inherit; padding: var(--cc-space-sm);

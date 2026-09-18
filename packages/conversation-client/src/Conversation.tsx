@@ -22,6 +22,8 @@ import { ReasoningBlock, ToolActivityBlock, type BlockActions } from "./blocks.t
 import { composerTextareaHeight } from "./composer-height.ts";
 import { followsBottom } from "./follow-bottom.ts";
 import { latestTurnMetrics, statuslineParts } from "./statusline.ts";
+import { attachedPrompt, explainPrompt } from "./selection.ts";
+import { SelectionToolbar } from "./selection-toolbar.tsx";
 import { applyLiveEvent, type LiveSegment } from "./live-reply.ts";
 import { Markdown } from "./markdown.tsx";
 import { Orb } from "./Orb.tsx";
@@ -1284,6 +1286,18 @@ export function Conversation({
         surface may not keep a microphone open — and the only difference between them is where the caret
         goes afterwards.
       */}
+      {/*
+        What a highlighted passage can be turned into.
+
+        Beside the transcript rather than inside it, and beside the voice screen rather than within it: a selection
+        belongs to the text on screen, not to whichever surface happens to be open over it.
+      */}
+      <SelectionToolbar
+        container={scroller}
+        onAttach={(text) => setDraft((current) => attachedPrompt(text, current))}
+        onExplain={(text) => void send(explainPrompt(text))}
+      />
+
       {voiceOpen && (
         <VoiceOverlay
           client={client}
