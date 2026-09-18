@@ -115,6 +115,27 @@ body {
 .cc-mic-level > span { display: block; height: 100%; background: currentColor; opacity: 0.7; transition: width 80ms linear; }
 
 /*
+ * The background mark in the header.
+ *
+ * The list appears on hover or on focus, which is why the mark is focusable at all: a count that can only be inspected
+ * with a pointer is a count half the people cannot inspect. The list is positioned below the mark so it does not cover
+ * the connection status beside it.
+ */
+.cc-bg-mark {
+  position: relative; display: flex; align-items: center; gap: var(--cc-space-xs);
+  font-size: var(--cc-font-small); outline: none;
+}
+.cc-bg-list {
+  position: absolute; top: 100%; right: 0; margin: var(--cc-space-xs) 0 0; padding: var(--cc-space-sm);
+  min-width: 220px; max-width: 360px; list-style: none;
+  background: var(--cc-elevated); border: 1px solid var(--cc-border); border-radius: var(--cc-radius-card);
+  box-shadow: 0 8px 24px rgb(0 0 0 / 35%);
+  opacity: 0; visibility: hidden; transition: opacity 120ms ease;
+}
+.cc-bg-mark:hover .cc-bg-list, .cc-bg-mark:focus-within .cc-bg-list { opacity: 1; visibility: visible; }
+.cc-bg-list li { padding: 2px 0; }
+
+/*
  * The menu that appears over a highlighted passage.
  *
  * Fixed rather than absolute, because it is placed from the range's own rectangle in viewport coordinates, and it

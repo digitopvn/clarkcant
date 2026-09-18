@@ -219,5 +219,16 @@ test("a selected passage can be sent to a background session", async ({ page }) 
   // says so. It outlives the menu it was clicked in: the menu goes away with the selection, and an answer that vanished
   // with it would be an answer nobody could read.
   await expect(page.locator("[data-selection-status='true']")).toContainText(/phiên nền/i);
+
+  // And the header now reports the work it started: this is the count the mark exists for, and it is the only way the
+  // number is verifiable in a browser - the registry fills when something asks for background work, not on its own.
+  await expect(page.locator("[data-background-count='true']")).toBeVisible({ timeout: 20_000 });
+});
+
+test("the header says nothing about background work when there is none", async ({ page }) => {
+  // The empty case, asserted rather than assumed: a mark that showed "0" would be a permanent line of noise, and the
+  // count only matters when it is not zero.
+  await openApp(page);
+  await expect(page.locator("[data-background-sessions]")).toHaveCount(0);
 });
 

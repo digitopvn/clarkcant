@@ -714,4 +714,28 @@ export class GatewayClient {
     const body = (await response.json()) as { sessionId?: unknown };
     return { sessionId: typeof body.sessionId === "string" ? body.sessionId : "" };
   }
+
+  /**
+   * The work running behind the conversation, newest first.
+   *
+   * Polled rather than streamed, which is the honest description of what this is: a count that a person glances at,
+   * not a value anything depends on. A stream for it would be a connection held open to watch a number change.
+   */
+  async backgroundSessions(): Promise<{
+    running: number;
+    sessions: { sessionId: string; title: string; status: string }[];
+  }> {
+    const body = (await this.#call("GET", "/background-sessions")) as {
+      running?: unknown;
+      sessions?: { sessionId?: unknown; title?: unknown; status?: unknown }[];
+    };
+    return {
+      running: typeof body.running === "number" ? body.running : 0,
+      sessions: (Array.isArray(body.sessions) ? body.sessions : []).flatMap((entry) =>
+        typeof entry?.sessionId === "string" && typeof entry.title === "string"
+          ? [{ sessionId: entry.sessionId, title: entry.title, status: typeof entry.status === "string" ? entry.status : "running" }]
+          : [],
+      ),
+    };
+  }
 }

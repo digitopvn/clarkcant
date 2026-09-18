@@ -24,6 +24,7 @@ import { followsBottom } from "./follow-bottom.ts";
 import { latestTurnMetrics, statuslineParts } from "./statusline.ts";
 import { attachedPrompt, explainPrompt } from "./selection.ts";
 import { SelectionToolbar } from "./selection-toolbar.tsx";
+import { BackgroundSessionsMark } from "./background-sessions-mark.tsx";
 import { applyLiveEvent, type LiveSegment } from "./live-reply.ts";
 import { Markdown } from "./markdown.tsx";
 import { Orb } from "./Orb.tsx";
@@ -972,6 +973,9 @@ export function Conversation({
             <span className="cc-dot" data-state={connection} aria-hidden="true" />
             {connection === "ready" ? "Ready" : connection === "connecting" ? "Đang kết nối" : "Mất kết nối"}
           </div>
+          {/* The work behind the conversation. Absent while there is none: a header that always said "0" would be a
+              permanent line of noise, and the count only matters when it is not zero. */}
+          <BackgroundSessionsMark client={client} />
           {/*
             The gear is the only settings affordance, which is why it is here rather than in a
             menu: a setting that is two clicks deep is a setting nobody checks. It opens a panel
