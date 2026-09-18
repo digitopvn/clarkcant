@@ -83,11 +83,6 @@ async function openConversation(page: Page, conversationId: string): Promise<voi
   await expect(page.locator("textarea[aria-label='Nhập tin nhắn']")).toBeVisible();
 }
 
-async function ask(page: Page, text: string): Promise<void> {
-  await page.locator("textarea[aria-label='Nhập tin nhắn']").fill(text);
-  await page.locator("[data-send='true']").click();
-}
-
 test("a scripted table recipe renders a real widget inside the conversation", async ({ page }) => {
   mkdirSync(EVIDENCE, { recursive: true });
   await openApp(page);
