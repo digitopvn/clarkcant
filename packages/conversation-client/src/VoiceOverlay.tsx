@@ -175,7 +175,14 @@ export function VoiceOverlay({
           },
           onLevel: ({ level: heard }) => {
             const history = levels.current;
-            history.push(heard);
+            //
+            // Held for a few frames rather than shown for one.
+            //
+            // The session reports a level for the microphone and for its own voice, and audio arrives in bursts:
+            // a bar that falls straight back to zero between them is a bar that looks broken while the thing it
+            // is following is still talking - which is what the reading voice looked like.
+            const previous = history[history.length - 1] ?? 0;
+            history.push(Math.max(heard, previous * 0.6));
             if (history.length > WAVEFORM_BARS) history.shift();
             setLevel(heard);
             setBars(waveformBars(history));

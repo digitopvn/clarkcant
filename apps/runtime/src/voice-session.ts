@@ -87,6 +87,18 @@ export interface VoiceGatewayOptions {
      */
     onText?: (text: string) => void;
   }) => Promise<VoiceAnswerResult | undefined>;
+  /**
+   * Record the user's spoken decision on an operation.
+   *
+   * Injected for the same reason `answer` is: the node owns what a decision means - the digest, the expiry, the
+   * receipt - and this module owns only the conversation that produced it.
+   */
+  decideApproval?: (input: {
+    conversationId: ConversationId;
+    approvalId: string;
+    decision: "granted" | "denied";
+    digest: string;
+  }) => Promise<{ ok: boolean; message: string }>;
   /** Injected by tests so the transport can be exercised without a provider. */
   createAdapter?: () => VoiceProviderAdapter;
   now?: () => Instant;
@@ -107,12 +119,40 @@ export interface VoiceAnswerResult {
   /** The words to read back. Empty when the agent produced nothing worth saying. */
   reply: string;
   /**
+   * An operation the agent asked for, still waiting on a decision.
+   *
+   * A turn that proposes a command ends with a card nobody has decided. The person holding a microphone is not
+   * going to click it, so the session asks about it out loud and takes the spoken answer as the decision; the
+   * alternative is a card that waits for a press the voice mode never offers.
+   */
+  pendingApproval?: { approvalId: string; digest: string; description: string };
+  /**
    * Messages this turn wrote to the conversation.
    *
    * Reported rather than recounted here, because the node knows what it stored and this module would
    * have to re-read the conversation to learn it.
    */
   recordedMessages: number;
+}
+
+/**
+ * Whether a spoken answer meant yes or no.
+ *
+ * A keyword match rather than a model call, and deliberately so: this decides whether a command runs on the
+ * machine, and a decision that a provider could paraphrase is a decision nobody can predict. Only recognised
+ * words decide anything - anything else is not guessed at, and the session asks again, which is the honest
+ * response to a mumble about something that is going to run.
+ *
+ * Both accented and unaccented spellings are listed because speech transcription is inconsistent about marks.
+ */
+export function interpretDecision(text: string): "granted" | "denied" | undefined {
+  const said = text.toLowerCase();
+  const denied = ["không", "khong", "đừng", "thôi", "thoi", "từ chối", "tu choi", "hủy", "huy", "no"];
+  const granted = ["đồng ý", "dong y", "cho phép", "cho phep", "duyệt", "duyet", "được", "duoc", "ok", "yes"];
+  // Refusal is tested first: "không được" contains a word that would otherwise read as permission.
+  if (denied.some((word) => said.includes(word))) return "denied";
+  if (granted.some((word) => said.includes(word))) return "granted";
+  return undefined;
 }
 
 /** Close codes. 1008 is a policy refusal; 1013 is "try again when something changes". */
@@ -133,6 +173,21 @@ const VOICE_INSTRUCTION = [
   "Có hai loại đầu vào và hai việc khác nhau, đừng lẫn chúng với nhau.",
   "Khi nghe tiếng người dùng nói: chép lại lời họ, và không tự trả lời, không hỏi lại, không bình luận.",
   "Khi nhận được một lượt văn bản: đó là câu trả lời của trợ lý, và việc của bạn là đọc nguyên văn đoạn văn đó ngay lập tức, không thêm bớt chữ nào.",
+].join(" ");
+
+/**
+ * What a spoken turn asks the agent for.
+ *
+ * The session reads the answer out loud, and a long answer is not a conversation: the person waits through it,
+ * cannot skim it, and cannot skip a part they already understood. So the spoken turn asks for the short
+ * version - the same facts in fewer words - while the full answer still belongs to the conversation, where it
+ * can be read at whatever length it needs.
+ */
+export const VOICE_ANSWER_NOTE = [
+  "Câu trả lời này sẽ được đọc to lên trong một phiên thoại.",
+  "Hãy trả lời thật ngắn gọn: một tới ba câu, hoặc một đoạn dưới 60 từ.",
+  "Vẫn phải đủ ý và không bỏ sót thông tin quan trọng; nếu thiếu chỗ nào thì nói ngắn rằng còn chi tiết trong hội thoại.",
+  "Không dùng bảng, không liệt kê dài, không khối mã; nhiều bước thì nói gọn bằng lời.",
 ].join(" ");
 
 export function attachVoiceGateway(options: VoiceGatewayOptions): VoiceGateway {
@@ -167,6 +222,8 @@ export function attachVoiceGateway(options: VoiceGatewayOptions): VoiceGateway {
     let recorded = false;
     /** Messages the agent's turns wrote, so the closing report counts what actually happened. */
     let answeredMessages = 0;
+    /** An operation the agent asked for and is waiting on, if the person has not answered yet. */
+    let waiting: { approvalId: string; digest: string; description: string } | undefined;
     /**
      * Utterances are answered one at a time, in the order they were said.
      *
@@ -239,6 +296,39 @@ export function attachVoiceGateway(options: VoiceGatewayOptions): VoiceGateway {
       // the only copy of something that was said, and the closing report would then have nothing to keep.
       userText = "";
 
+      // A sentence said while an approval is waiting is a decision, not a question for the agent.
+      const pending = waiting;
+      const decide = options.decideApproval;
+      if (pending !== undefined && decide !== undefined) {
+        const decision = interpretDecision(text);
+        if (decision === undefined) {
+          // One more try, in the same words: the operation is going to run on the machine, so a sentence that
+          // could have meant anything does not decide it.
+          const again = "Tui chưa rõ ý bạn. Bạn cho phép chạy hay là không?";
+          send({ type: "transcript", role: "assistant", text: again, final: true });
+          adapter?.speak(again);
+          return;
+        }
+
+        waiting = undefined;
+        answerQueue = answerQueue.then(async () => {
+          const decided = await decide({
+            conversationId: askIn,
+            approvalId: pending.approvalId,
+            decision,
+            digest: pending.digest,
+          });
+          const said = decided.ok
+            ? decision === "granted"
+              ? "Đã duyệt. Tui chạy lệnh đó ngay."
+              : "Đã từ chối. Không có gì được chạy."
+            : `Không thực hiện được: ${decided.message}`;
+          send({ type: "transcript", role: "assistant", text: said, final: true });
+          adapter?.speak(said);
+        });
+        return;
+      }
+
       answerQueue = answerQueue
         .then(async () => {
           // The answer so far, accumulated here so the surface showing it never has to decide whether two
@@ -263,6 +353,16 @@ export function attachVoiceGateway(options: VoiceGatewayOptions): VoiceGateway {
           // that counts when a stream stops early.
           send({ type: "transcript", role: "assistant", text: reply, final: true });
           adapter?.speak(reply);
+
+          // A proposed command waits for a person. Asked here, in the same turn that produced it, because the
+          // card is otherwise a click the voice mode cannot offer.
+          const proposed = result.pendingApproval;
+          if (proposed !== undefined) {
+            waiting = proposed;
+            const question = `${proposed.description}. Bạn cho phép chạy hay là không?`;
+            send({ type: "transcript", role: "assistant", text: question, final: true });
+            adapter?.speak(question);
+          }
         })
         .catch((cause: unknown) => {
           // A failed answer must not end the session. The microphone still works and the next sentence

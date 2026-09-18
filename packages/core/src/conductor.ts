@@ -137,6 +137,13 @@ export interface ModelTurnInput {
    */
   messageId: string;
   /**
+   * Guidance for this turn, appended to the prompt by whoever runs it.
+   *
+   * Carried through rather than interpreted here: the conductor decides what is asked and the runner decides
+   * how the model is addressed, and a mode enum would have to be taught to both.
+   */
+  note?: string;
+  /**
    * Everything the turn does while it runs: text, reasoning, and tool calls.
    *
    * Separate from `ModelTurnReply` rather than a replacement for it. The reply is what the message is
@@ -212,6 +219,14 @@ export interface UserMessageInput {
    * message is still the one appended below, built from the same segments.
    */
   emit?: (event: ConductorEmit) => void;
+  /**
+   * Extra guidance for this turn, appended to the prompt.
+   *
+   * It exists because a turn that will be read aloud has to be shorter than one that will be read, and only
+   * the caller knows which it is. Nothing else about the turn changes - the same model, the same tools, the
+   * same stored message - so this is a sentence of guidance rather than a mode.
+   */
+  note?: string;
 }
 
 /**
@@ -535,6 +550,7 @@ async function runModelTurn(
       principal: input.principal,
       text: input.text,
       messageId,
+      ...(input.note === undefined ? {} : { note: input.note }),
       // Always supplied, and a no-op when nobody is streaming. A conditional spread here would have
       // to exist only to keep the optional field absent, which is a distinction nothing reads.
       onEvent: (event: ModelTurnEvent) => input.emit?.(event),

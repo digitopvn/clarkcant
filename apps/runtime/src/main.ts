@@ -15,13 +15,12 @@ import { join } from "node:path";
 import type { MessageBlock } from "@clarkcant/contracts";
 import { applyEnvFile } from "@clarkcant/pi-adapter";
 
-import { handleRequest, type GatewayResponse } from "./gateway.ts";
+import { handleRequest, decideApprovalForNode, type GatewayResponse } from "./gateway.ts";
 import { machineRoots } from "./fs-search.ts";
 import { resolveProject } from "./project-finder.ts";
 import { commandDigest } from "./run-command.ts";
-import { listProjects } from "@clarkcant/storage";
 import { handleUserMessage, requestApproval, setPreference, type CoordinationDeps } from "@clarkcant/core";
-import { attachVoiceGateway } from "./voice-session.ts";
+import { attachVoiceGateway, VOICE_ANSWER_NOTE } from "./voice-session.ts";
 import { indexMessages, textOfMessage } from "./session-search.ts";
 import { FixtureLiveAdapter } from "./voice-fixture.ts";
 import { SAMPLE_DATASET } from "@clarkcant/data-canvas/sample";
@@ -245,16 +244,6 @@ async function main(): Promise<void> {
         search,
         projects,
         approvals: () => approvals,
-        // A command may run in a folder the user approved, in a project the finder has indexed, or in the
-        // folder those projects live in — which is where a clone lands. Read fresh at each call, because
-        // the index changes while the node runs.
-        placement: () => ({
-          approvedRoots: projects.roots(),
-          knownProjects: listProjects(services.runtime.db, services.runtime.identity.nodeId).map((project) => project.path),
-          // The node's own folder, so a command can run where the operator is actually working even when
-          // the finder's scan has not reached it.
-          nodeDirectory: process.cwd(),
-        }),
         // "Where should this go?" goes through the finder, which is where Jev decides when several folders
         // could be meant. The model is told to look before it proposes, and an ambiguous answer comes back
         // as a question rather than as a guess.
@@ -520,6 +509,8 @@ async function main(): Promise<void> {
         },
         text,
         at: spokenAt as never,
+        // Spoken turns are answered briefly: the session has to read the answer out loud.
+        note: VOICE_ANSWER_NOTE,
         // The voice surface is a caller holding an open stream like any other, so it gets the same
         // events the typed path gets. Only text is forwarded: the reasoning and tool events belong to
         // the conversation, which is refreshed when the turn ends.
@@ -541,7 +532,52 @@ async function main(): Promise<void> {
         .map((message) => textOfMessage(message))
         .join("\n\n")
         .trim();
-      return { reply, recordedMessages: outcome.messages.length };
+      // A turn can end with an operation waiting for a decision. The voice session asks about it out loud, and
+      // needs the digest the card was shown with: it is the same binding the button sends.
+      const proposed = outcome.messages
+        .flatMap((message) => message.blocks)
+        .find((block) => block.type === "approval-card" && block.decision === "pending");
+      // `find` returns the union it searched, so the block is narrowed again here: nothing else may be read
+      // off an approval card.
+      const pending = proposed !== undefined && proposed.type === "approval-card" ? proposed : undefined;
+      return {
+        reply,
+        recordedMessages: outcome.messages.length,
+        ...(pending === undefined
+          ? {}
+          : {
+              pendingApproval: {
+                approvalId: pending.approvalId,
+                digest: pending.operationDigest,
+                description: pending.operationDescription,
+              },
+            }),
+      };
+    },
+    /**
+     * Carry out what the user just said yes or no to.
+     *
+     * The same function the HTTP route calls, so a decision made by voice and a decision made by pressing the
+     * card mean exactly the same thing: the same digest check, the same receipt in the same conversation.
+     */
+    decideApproval: async ({ conversationId, approvalId, decision, digest }) => {
+      const result = await decideApprovalForNode(services, {
+        conversationId,
+        approvalId,
+        decision,
+        digest,
+        principal: {
+          principalId: services.runtime.identity.ownerPrincipalId,
+          kind: "user",
+          nodeId: services.runtime.identity.nodeId,
+        },
+        at: new Date().toISOString() as never,
+      });
+      return result.ok
+        ? // The agent's continuation is what the person should hear: the command ran, and this is what the agent
+          // made of it. `message` is spoken by the session.
+          { ok: true, message: result.continuation ?? result.outcome ?? "Đã chạy xong lệnh đó." }
+        : { ok: false, message: result.message };
     },
   });
   process.stderr.write(

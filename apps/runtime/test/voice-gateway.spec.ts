@@ -10,6 +10,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { NodeServices } from "../src/services.ts";
 import {
   attachVoiceGateway,
+  interpretDecision,
   voiceAdapterDefaults,
   type VoiceGateway,
   type VoiceGatewayOptions,
@@ -127,6 +128,12 @@ async function startGateway(
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
   const { port } = server.address() as AddressInfo;
   return { url: `ws://127.0.0.1:${port}/voice`, gateway, server, deps };
+}
+
+/** A finished utterance, the way the adapter reports one: the words, then an empty closing fragment. */
+function sayFor(adapter: FakeAdapter, text: string): void {
+  adapter.emitTranscript(text, "user", false);
+  adapter.emitTranscript("", "user", true);
 }
 
 function connect(url: string) {
@@ -700,5 +707,130 @@ describe("the instruction the live session runs under", () => {
     expect(voiceAdapterDefaults({ model: "gemini-live-test-model" })).toMatchObject({
       model: "gemini-live-test-model",
     });
+  });
+});
+
+/**
+ * A command the user approves by speaking.
+ *
+ * A voice session is a person holding a microphone, not a mouse: a turn that proposes a command ends with a
+ * card nobody is going to click. So the session asks out loud, takes the spoken answer as the decision, and
+ * carries it out through the same path the button uses - the same digest, the same receipt.
+ */
+describe("approving a command by voice", () => {
+  const PROPOSAL = {
+    approvalId: "appr_9",
+    digest: "sha256:abc123",
+    description: "Chạy git clone trong D:/work",
+  };
+
+  async function withProposal(
+    decideApproval: (input: { approvalId: string; decision: string; digest: string }) => Promise<{
+      ok: boolean;
+      message: string;
+    }>,
+  ) {
+    const adapter = new FakeAdapter();
+    const calls: Array<{ approvalId: string; decision: string; digest: string }> = [];
+    context = await startGateway(() => "credential", adapter, {
+      answer: async () => ({ reply: "Tui cần chạy một lệnh.", recordedMessages: 2, pendingApproval: PROPOSAL }),
+      decideApproval: async (input) => {
+        // Only what the decision consists of: the conversation is implied by the session.
+        calls.push({ approvalId: input.approvalId, decision: input.decision, digest: input.digest });
+        return decideApproval(input);
+      },
+    });
+    const client = connect(context.url);
+    await client.opened;
+    client.auth(TOKEN, CONVERSATION);
+    await client.control("ready");
+    return { adapter, client, calls };
+  }
+
+  const asked = (message: Received): boolean =>
+    !message.binary &&
+    message.control["type"] === "transcript" &&
+    typeof message.control["text"] === "string" &&
+    message.control["text"].includes("cho phép chạy");
+
+  const said = (text: string) => (message: Received): boolean =>
+    !message.binary && message.control["type"] === "transcript" && message.control["text"] === text;
+
+  it("asks about the operation, and takes a spoken yes as the decision", async () => {
+    const { adapter, client, calls } = await withProposal(async () => ({ ok: true, message: "đã chạy" }));
+
+    sayFor(adapter, "clone giúp tui một repo");
+    // The question names the operation and reaches the person as words, not as a card they cannot press.
+    await client.waitFor(asked, "the approval question");
+    await client.waitFor(asked, "the approval question");
+
+    sayFor(adapter, "đồng ý");
+    await client.waitFor(said("Đã duyệt. Tui chạy lệnh đó ngay."), "the decision");
+
+    // Exactly the binding the button sends: the same approval and the same digest that was displayed.
+    expect(calls).toEqual([{ approvalId: PROPOSAL.approvalId, decision: "granted", digest: PROPOSAL.digest }]);
+  });
+
+  it("carries out a spoken refusal, and runs nothing", async () => {
+    const { adapter, client, calls } = await withProposal(async () => ({ ok: true, message: "" }));
+
+    sayFor(adapter, "clone giúp tui một repo");
+    await client.waitFor(asked, "the approval question");
+    sayFor(adapter, "không cho phép đâu");
+
+    await client.waitFor(said("Đã từ chối. Không có gì được chạy."), "the refusal");
+    expect(calls.map((call) => call.decision)).toEqual(["denied"]);
+  });
+
+  it("asks again when the answer could have meant anything, and decides nothing", async () => {
+    const { adapter, client, calls } = await withProposal(async () => ({ ok: true, message: "" }));
+
+    sayFor(adapter, "clone giúp tui một repo");
+    await client.waitFor(asked, "the approval question");
+    sayFor(adapter, "để tui suy nghĩ thêm đã");
+    await new Promise((resolve) => setTimeout(resolve, 30));
+
+    const questions = client.received.filter(asked);
+    // Asked twice, and nothing was decided: an operation that is about to run on the machine is not decided by
+    // a sentence that could have meant anything.
+    expect(questions.length).toBe(2);
+    expect(calls).toEqual([]);
+  });
+
+  it("reports what the node said when a decision is refused", async () => {
+    const { adapter, client } = await withProposal(async () => ({ ok: false, message: "đã hết hạn" }));
+
+    sayFor(adapter, "clone giúp tui một repo");
+    await client.waitFor(asked, "the approval question");
+    sayFor(adapter, "ok");
+
+    await client.waitFor(
+      (message) =>
+        !message.binary &&
+        message.control["type"] === "transcript" &&
+        typeof message.control["text"] === "string" &&
+        message.control["text"].includes("đã hết hạn"),
+      "the node's refusal",
+    );
+  });
+});
+
+/**
+ * What a spoken answer means.
+ *
+ * This decides whether a command runs, so it is a keyword match rather than a model call: a decision a
+ * provider could paraphrase is a decision nobody can predict.
+ */
+describe("reading a spoken decision", () => {
+  it("reads a refusal before a permission, because one word can contain the other", () => {
+    expect(interpretDecision("không được")).toBe("denied");
+    expect(interpretDecision("ừ, đồng ý")).toBe("granted");
+    expect(interpretDecision("cho phép chạy đi")).toBe("granted");
+    expect(interpretDecision("để tui xem lại đã")).toBeUndefined();
+  });
+
+  it("accepts the spellings a transcriber may drop the marks from", () => {
+    expect(interpretDecision("dong y")).toBe("granted");
+    expect(interpretDecision("tu choi")).toBe("denied");
   });
 });

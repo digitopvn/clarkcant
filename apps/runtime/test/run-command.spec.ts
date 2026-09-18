@@ -16,81 +16,25 @@ import {
  * recomputed from the payload at execution time and a mismatch is refused rather than executed.
  */
 
-const ROOTS = ["D:/www/digitop", "D:/work"] as const;
-/** A node that has approved two folders and indexed one project inside the first of them. */
-const PLACEMENT = { approvedRoots: ROOTS, knownProjects: ["D:/www/digitop/clarkcant"] } as const;
 
 describe("whether a command may be proposed at all", () => {
-  it("accepts a command in an approved root, and defaults to the first place it knows", () => {
-    expect(guardCommand({ command: "git status", cwd: "D:/www/digitop/clarkcant", placement: PLACEMENT })).toMatchObject({
+  it("runs where it was asked, because there is no folder allowlist", () => {
+    // The operator's decision, made after the gate refused the tree this product itself runs from: the
+    // agent's runtime carries the instruction out, permission belongs to the host, and the control that
+    // actually has a person behind it is the approval card.
+    expect(guardCommand({ command: "git clone repo", cwd: "D:/somewhere/else" })).toMatchObject({
       ok: true,
-      cwd: "D:/www/digitop/clarkcant",
+      cwd: "D:/somewhere/else",
     });
-    expect(guardCommand({ command: "git status", placement: PLACEMENT })).toMatchObject({ ok: true, cwd: ROOTS[0] });
+    // And the card says so in words, because that is what the person approving reads.
+    expect(guardCommand({ command: "git status" }).because).toContain("không giới hạn thư mục");
   });
 
-  it("accepts the folder the projects live in, because that is where a clone lands", () => {
-    // The operator's decision: the agent may work where it can justify, not only in a folder they approved
-    // beforehand. A project folder is the evidence, and the folder it sits in is where a clone goes.
-    const placement = { approvedRoots: [] as string[], knownProjects: ["D:/www/digitop/clarkcant"] };
-    const result = guardCommand({ command: "git clone repo", cwd: "D:/www/digitop", placement });
-    expect(result.ok).toBe(true);
-    // And it says why, because the card shows this to the person approving.
-    expect(result.because).toContain("chứa các dự án");
-    // A sibling that merely shares a prefix is not that folder.
-    expect(guardCommand({ command: "x", cwd: "D:/www/digitop-other", placement }).ok).toBe(false);
-  });
-
-  it("accepts the folder the node itself runs in, even when the finder never reached it", () => {
-    // What this fixes, and it was found in use rather than in review: the finder's scan stops at a file
-    // ceiling, so the tree the app itself runs from was neither approved nor indexed, and every command in
-    // the operator's own working directory was refused with "not a folder I know".
-    const placement = {
-      approvedRoots: [] as string[],
-      knownProjects: [] as string[],
-      nodeDirectory: "D:/www/digitop/clarkcant",
-    };
-    const result = guardCommand({ command: "git log -3", cwd: "D:/www/digitop/clarkcant/apps/runtime", placement });
-    expect(result.ok).toBe(true);
-    expect(result.because).toContain("node đang chạy");
-  });
-
-  it("accepts the folder beside the node, which is where a clone belongs", () => {
-    const placement = {
-      approvedRoots: [] as string[],
-      knownProjects: [] as string[],
-      nodeDirectory: "D:/www/digitop/clarkcant",
-    };
-    const result = guardCommand({ command: "git clone https://example.com/x.git", cwd: "D:/www/digitop", placement });
-    expect(result.ok).toBe(true);
-    expect(result.because).toContain("chứa nơi node đang chạy");
-    // A sibling that merely shares a prefix is not that folder.
-    expect(guardCommand({ command: "x", cwd: "D:/www/digitop-other", placement }).ok).toBe(false);
-  });
-
-  it("accepts a folder inside an indexed project", () => {
-    const placement = { approvedRoots: [] as string[], knownProjects: ["D:/www/digitop/clarkcant"] };
-    expect(guardCommand({ command: "npm test", cwd: "D:/www/digitop/clarkcant/packages/core", placement })).toMatchObject({
-      ok: true,
-    });
-  });
-
-  it("refuses a directory that is neither approved nor known", () => {
-    const result = guardCommand({ command: "rm -rf /", cwd: "D:/somewhere/else", placement: PLACEMENT });
-    expect(result.ok).toBe(false);
-    expect(result.code).toBe("OUTSIDE_APPROVED_ROOTS");
-    // The refusal tells the model what would make it possible, rather than only that it failed.
-    expect(result.message).toContain("find_project");
-  });
-
-  it("refuses an empty command, an over-long one, and a node that knows no folder", () => {
-    expect(guardCommand({ command: "   ", placement: PLACEMENT }).code).toBe("EMPTY_COMMAND");
-    expect(
-      guardCommand({ command: "x".repeat(COMMAND_LIMITS.maxCommandLength + 1), placement: PLACEMENT }).code,
-    ).toBe("COMMAND_TOO_LONG");
-    expect(
-      guardCommand({ command: "ls", placement: { approvedRoots: [], knownProjects: [] } }).code,
-    ).toBe("NO_PLACE_TO_RUN");
+  it("still refuses an empty command and an over-long one", () => {
+    expect(guardCommand({ command: "   " }).code).toBe("EMPTY_COMMAND");
+    expect(guardCommand({ command: "x".repeat(COMMAND_LIMITS.maxCommandLength + 1) }).code).toBe(
+      "COMMAND_TOO_LONG",
+    );
   });
 });
 
@@ -111,7 +55,6 @@ describe("running an approved operation", () => {
     const result = await runApprovedCommand({
       payload,
       expectedDigest: digest,
-      placement: { approvedRoots: ROOTS, knownProjects: [] },
       approvalId: "appr_1",
       run: async () => ({ exitCode: 0, stdout: "Cloning into 'orchestrate'...\n", stderr: "", durationMs: 12, timedOut: false }),
     });
@@ -133,7 +76,6 @@ describe("running an approved operation", () => {
     const result = await runApprovedCommand({
       payload: JSON.stringify({ command: "git clone something-else", cwd: "D:/work/orchestrate" }),
       expectedDigest: digest,
-      placement: { approvedRoots: ROOTS, knownProjects: [] },
       approvalId: "appr_1",
       run: async () => {
         ran = true;
@@ -147,13 +89,14 @@ describe("running an approved operation", () => {
     expect(ran).toBe(false);
   });
 
-  it("refuses an approved directory that is no longer inside an approved root", async () => {
-    // The roots can change between the proposal and the decision; this is the moment that matters.
+  it("refuses an operation whose directory changed after it was displayed", async () => {
+    // What protects this now that the folder restriction is gone: what runs must hash to what the person
+    // approved. Swapping the directory afterwards makes it a different operation, and it is refused before
+    // anything is spawned.
     let ran = false;
     const result = await runApprovedCommand({
-      payload,
+      payload: JSON.stringify({ command: "git clone repo", cwd: "D:/somewhere/else" }),
       expectedDigest: digest,
-      placement: { approvedRoots: ["D:/elsewhere"], knownProjects: [] },
       approvalId: "appr_1",
       run: async () => {
         ran = true;
@@ -162,6 +105,7 @@ describe("running an approved operation", () => {
     });
 
     expect(result.ok).toBe(false);
+    expect(result.ok === false && result.code).toBe("APPROVAL_FORGED");
     expect(ran).toBe(false);
   });
 
@@ -169,7 +113,6 @@ describe("running an approved operation", () => {
     const result = await runApprovedCommand({
       payload,
       expectedDigest: digest,
-      placement: { approvedRoots: ROOTS, knownProjects: [] },
       approvalId: "appr_2",
       run: async () => ({ exitCode: 128, stdout: "", stderr: "Permission denied (publickey)", durationMs: 30, timedOut: false }),
     });

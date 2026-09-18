@@ -40,7 +40,6 @@ import {
   listCalendarEvents,
   listConversations,
   listLocalImages,
-  listProjects,
   nextMessageSequence,
   oneRow,
 } from "@clarkcant/storage";
@@ -57,9 +56,9 @@ import {
   updateLocalEvent,
 } from "./mini-app-data.ts";
 import { markProjectUsed, projectContext, resolveProject } from "./project-finder.ts";
-import { runApprovedCommand, type CommandPlacement } from "./run-command.ts";
+import { runApprovedCommand } from "./run-command.ts";
 import { initialPrompt } from "./project-session.ts";
-import { indexMessages, ingestSessionEntries, searchSessions } from "./session-search.ts";
+import { indexMessages, ingestSessionEntries, searchSessions, textOfMessage } from "./session-search.ts";
 import { type NodeServices, buildTimeline } from "./services.ts";
 
 /**
@@ -268,22 +267,6 @@ export async function handleRequest(deps: GatewayDeps, request: GatewayRequest):
  *
  * Both halves are read fresh rather than captured when the request was made: an approval can sit for a
  * quarter of an hour, and a project that was indexed then may not be known now.
- */
-function commandPlacement(services: NodeServices): CommandPlacement {
-  return {
-    approvedRoots: services.projects.roots(),
-    knownProjects: listProjects(services.runtime.db, services.runtime.identity.nodeId).map((project) => project.path),
-    // Where the node was started, which is where its operator is working.
-    nodeDirectory: process.cwd(),
-  };
-}
-
-/**
- * Every block of every message in a conversation, flattened.
- *
- * Used by the approval route to find the card that holds the approved operation. Deliberately not part of
- * the timeline response: the block is already in the transcript, and asking for it through the same read
- * path is what keeps the two from disagreeing.
  */
 function blocksOfConversation(services: NodeServices, conversationId: string): Record<string, unknown>[] {
   const timeline = buildTimeline(services, { conversationId, afterSequence: 0 });
@@ -803,55 +786,23 @@ async function handleConversationRoutes(
       return fail(400, "INVALID_SCHEMA", "a decision must carry decision: granted|denied and the digest it was shown");
     }
 
-    const coordination = {
-      db: services.runtime.db,
-      nodeId: services.runtime.identity.nodeId,
-      now: () => at() as never,
-      newId: services.conductor.newId,
-    };
-    const decided = decideApproval(coordination, {
-      approvalId: approvalId as never,
+    const decided = await decideApprovalForNode(services, {
+      conversationId,
+      approvalId,
       decision,
-      decidingPrincipal: principal,
-      seenOperationDigest: digest,
+      digest,
+      principal,
+      at: at() as never,
     });
     if (!decided.ok) return fail(409, decided.code, decided.message);
 
-    const at_ = at() as never;
-    if (decision === "denied") {
-      appendHostReply(services, {
-        conversationId,
-        text: "Đã từ chối chạy lệnh đó. Không có gì được chạy.",
-        at: at_,
-      });
-      return json(200, { decision, timeline: buildTimeline(services, { conversationId, afterSequence: 0 }) });
-    }
-
-    // The payload lives with the card that displayed it, so the operation approved and the operation run
-    // are the same record rather than two copies that can drift.
-    const card = blocksOfConversation(services, conversationId).find(
-      (block) => block.type === "approval-card" && block.approvalId === approvalId,
-    );
-    const payload = card !== undefined && typeof card.payload === "string" ? card.payload : undefined;
-    if (payload === undefined) {
-      return fail(409, "APPROVAL_PAYLOAD_MISSING", "the approved operation is not in this conversation");
-    }
-
-    const ran = await runApprovedCommand({
-      payload,
-      expectedDigest: decided.approval.operationDigest,
-      placement: commandPlacement(services),
-      approvalId,
-    });
-    if (!ran.ok) return fail(409, ran.code, ran.message);
-
-    appendHostReply(services, { conversationId, blocks: ran.blocks, at: at_ });
     return json(200, {
       decision,
-      outcome: ran.description,
+      ...(decided.outcome === undefined ? {} : { outcome: decided.outcome }),
       timeline: buildTimeline(services, { conversationId, afterSequence: 0 }),
     });
   }
+
 
   // /conversations/:id/start-session
   if (segments.length === 3 && segments[2] === "start-session" && request.method === "POST") {
@@ -1166,6 +1117,104 @@ async function handleConversationRoutes(
   }
 
   return fail(404, "NOT_FOUND", `no handler for ${request.method} ${request.path}`);
+}
+
+/**
+ * Carry out a decision on an operation the agent asked for.
+ *
+ * Shared by the HTTP route and the voice session, because "the user approved this" has to mean exactly the
+ * same thing in both places: the decider must be a user, the digest the approver saw must match the one
+ * stored with the request, the payload comes from the card that displayed it rather than from the caller,
+ * and that payload is hashed again before anything runs. A refusal is never a block - a message describing
+ * something that did not happen is how a transcript starts lying.
+ */
+export async function decideApprovalForNode(
+  services: NodeServices,
+  input: {
+    conversationId: string;
+    approvalId: string;
+    decision: "granted" | "denied";
+    digest: string;
+    principal: { principalId: string; kind: "user"; nodeId: string };
+    at: Instant;
+  },
+): Promise<{ ok: true; outcome?: string; continuation?: string } | { ok: false; code: string; message: string }> {
+  const coordination = {
+    db: services.runtime.db,
+    nodeId: services.runtime.identity.nodeId,
+    now: () => input.at as never,
+    newId: services.conductor.newId,
+  };
+  const decided = decideApproval(coordination, {
+    approvalId: input.approvalId as never,
+    decision: input.decision,
+    decidingPrincipal: input.principal as never,
+    seenOperationDigest: input.digest,
+  });
+  if (!decided.ok) return { ok: false, code: decided.code, message: decided.message };
+
+  if (input.decision === "denied") {
+    appendHostReply(services, {
+      conversationId: input.conversationId,
+      text: "Đã từ chối chạy lệnh đó. Không có gì được chạy.",
+      at: input.at,
+    });
+    return { ok: true };
+  }
+
+  // The payload lives with the card that displayed it, so the operation approved and the operation run are
+  // the same record rather than two copies that can drift.
+  const card = blocksOfConversation(services, input.conversationId).find(
+    (block) => block.type === "approval-card" && block.approvalId === input.approvalId,
+  );
+  const payload = card !== undefined && typeof card.payload === "string" ? card.payload : undefined;
+  if (payload === undefined) {
+    return { ok: false, code: "APPROVAL_PAYLOAD_MISSING", message: "the approved operation is not in this conversation" };
+  }
+
+  const ran = await runApprovedCommand({
+    payload,
+    expectedDigest: decided.approval.operationDigest,
+    approvalId: input.approvalId,
+  });
+  if (!ran.ok) return { ok: false, code: ran.code, message: ran.message };
+
+  appendHostReply(services, { conversationId: input.conversationId, blocks: ran.blocks, at: input.at });
+
+  /*
+   * Hand the outcome back to the agent.
+   *
+   * The turn that proposed this command ended with the card: the model asked, the tool returned an
+   * acknowledgement, and the turn was over. Nothing else will ever tell it what happened, so without this the
+   * transcript shows a command that ran and an agent that never noticed - a receipt, and then silence, which is
+   * exactly what it looked like.
+   *
+   * The result is fed back as what it is: real output rather than a prediction, with the instruction to carry
+   * on. It is a new turn in the same conversation, so it costs a model call, and that cost is the difference
+   * between an agent that asked for help and one that stops at the asking.
+   */
+  const receipt = textOfMessage({ blocks: ran.blocks });
+  const continued = await handleUserMessage(services.conductor, {
+    conversationId: input.conversationId as never,
+    principal: input.principal as never,
+    text:
+      `Lệnh đã được duyệt và đã chạy xong:\n${receipt}\n\n` +
+      "Đây là kết quả thật, không phải dự đoán. Hãy tiếp tục công việc đang làm dở.",
+    at: input.at,
+  });
+  // Indexed where the messages were written, so a continuation is findable like anything else said.
+  indexMessages(services.search, {
+    conversationId: input.conversationId,
+    messages: continued.messages,
+    at: input.at,
+  });
+  const said = continued.messages
+    .filter((message) => message.role === "assistant")
+    .map((message) => textOfMessage(message))
+    .join("\n\n")
+    .trim();
+
+  return { ok: true, outcome: ran.description, ...(said === "" ? {} : { continuation: said }) };
 }
 
 /**

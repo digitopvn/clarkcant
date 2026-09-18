@@ -120,6 +120,18 @@ function isTextDelta(event: WorkerEvent): event is WorkerEvent & { type: "text-d
  * Called before a block is appended, so a block lands where the model actually asked for it
  * rather than below the whole reply.
  */
+/**
+ * The prompt for one turn: what the person said, plus whatever guidance the caller attached.
+ *
+ * The note is marked as an instruction rather than left as plain text, because a model that reads guidance as
+ * part of the message answers a question nobody asked. Today the only caller that sets one is the voice path,
+ * which asks for the short version - the session has to read it aloud.
+ */
+function promptForTurn(input: { text: string; note?: string }): string {
+  const note = input.note?.trim() ?? "";
+  return note === "" ? input.text : `${input.text}\n\n[Hướng dẫn cho lượt này: ${note}]`;
+}
+
 function flushText(turn: Turn): void {
   if (turn.pending.length === 0) return;
   const text = turn.pending.join("");
@@ -498,7 +510,7 @@ export async function createModelTurn(options: {
       });
 
       try {
-        await Promise.race([adapter.prompt(turn.sessionId, input.text), deadline]);
+        await Promise.race([adapter.prompt(turn.sessionId, promptForTurn(input)), deadline]);
       } catch (cause) {
         /*
          * A failed turn takes its session with it.

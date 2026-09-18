@@ -1,13 +1,10 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { createHash } from "node:crypto";
-import { dirname, resolve } from "node:path";
 
 import type { Instant, MessageBlock } from "@clarkcant/contracts";
 
-import { isWithinRoot } from "./path-roots.ts";
-
 /**
- * Running one command, in a directory the user approved.
+ * Running one command, in the directory it was asked for, once a person has approved it.
  *
  * This is the module the design deliberately did not have: a conversation turn had no way to touch the
  * machine at all, so an agent asked to clone a repository could only explain, accurately, that it had
@@ -37,43 +34,12 @@ export const COMMAND_LIMITS = {
 
 export interface CommandGuardResult {
   ok: boolean;
-  code?: "EMPTY_COMMAND" | "COMMAND_TOO_LONG" | "OUTSIDE_APPROVED_ROOTS" | "NO_PLACE_TO_RUN";
+  code?: "EMPTY_COMMAND" | "COMMAND_TOO_LONG";
   message?: string;
   /** The resolved directory the command would run in. */
   cwd?: string;
   /** Why this directory is allowed, written for the card: the user is approving a place as well as a command. */
   because?: string;
-}
-
-/**
- * Where a command may run.
- *
- * Not an allowlist the operator maintains: the operator's decision was that the agent should be able to
- * work anywhere it can justify, provided it looks for the right place first and the choice is visible
- * before anything runs. So a directory qualifies when it is one the node already recognises as a place
- * work happens — a folder the user approved, a folder the finder indexed as a project, or the folder such
- * a project lives in (which is where a clone lands: beside the other repositories rather than inside one).
- *
- * The approval card still stands in front of the command, and it names the directory, so the person who
- * approves sees where it will run rather than trusting this function.
- */
-export interface CommandPlacement {
-  /** Folders the user approved explicitly. */
-  approvedRoots: readonly string[];
-  /** Folders the finder has indexed as projects on this node. */
-  knownProjects: readonly string[];
-  /**
-   * The folder this node itself runs in, and where a clone therefore belongs: beside it.
-   *
-   * This is not a guess about intent. It is the folder the operator chose when they launched the product,
-   * and a gate that refuses to run a command where the product itself lives ends up refusing the working
-   * directory its own operator is sitting in - which is exactly what happened: the finder's scan hit its
-   * file ceiling before it reached the tree the app was running from, so the folder was neither approved
-   * nor indexed, and every command in it was refused.
-   *
-   * Absent on a node that has no meaningful directory of its own, as in a test.
-   */
-  nodeDirectory?: string;
 }
 
 /**
@@ -89,12 +55,19 @@ export function commandDigest(command: string, cwd: string): string {
   return `sha256:${createHash("sha256").update(canonical).digest("hex").slice(0, 40)}`;
 }
 
-/** Whether a command may be proposed at all, and where it would run. */
-export function guardCommand(input: {
-  command: unknown;
-  cwd?: unknown;
-  placement: CommandPlacement;
-}): CommandGuardResult {
+/*
+ * The folder restriction is gone.
+ *
+ * A node used to decide where a command was allowed to run: a folder the user approved, a project the
+ * finder had indexed, or the folder those live in. In use that refused the tree this product itself runs
+ * from - the finder's scan stops at a file ceiling, so it had never reached the directory the operator
+ * launched the app in, and every command there came back as somewhere the agent did not know.
+ *
+ * The decision now belongs to whoever is holding the approval card, which is the only control with a
+ * person behind it, and permission management belongs to the host that runs the agent. Pi here is the
+ * runtime that carries the instruction out, not the thing that decides whether it is allowed to.
+ */
+export function guardCommand(input: { command: unknown; cwd?: unknown }): CommandGuardResult {
   const command = typeof input.command === "string" ? input.command.trim() : "";
   if (command === "") {
     return { ok: false, code: "EMPTY_COMMAND", message: "Cần một lệnh để chạy." };
@@ -107,65 +80,11 @@ export function guardCommand(input: {
     };
   }
 
-  const { approvedRoots, knownProjects, nodeDirectory } = input.placement;
-  // `dirname("")` is `.`, which would make this list look non-empty on a node that knows nothing — the
-  // branch below would never fire and a command would be proposed for `.`. The parent is only considered
-  // when there is a project to take the parent of.
-  const firstProject = knownProjects[0];
-  const candidates = [
-    approvedRoots[0],
-    nodeDirectory,
-    firstProject,
-    firstProject === undefined ? undefined : dirname(firstProject),
-  ].filter((value): value is string => value !== undefined && value.trim() !== "");
-  if (candidates.length === 0) {
-    return {
-      ok: false,
-      code: "NO_PLACE_TO_RUN",
-      message:
-        "Node này chưa biết thư mục nào để làm việc. Hãy để tui tìm dự án trước, hoặc nói rõ thư mục cần dùng.",
-    };
-  }
-
-  const requested =
-    typeof input.cwd === "string" && input.cwd.trim() !== "" ? input.cwd.trim() : (candidates[0] ?? "");
-
-  for (const root of approvedRoots) {
-    if (isWithinRoot(root, requested)) {
-      return { ok: true, cwd: requested, because: `nằm trong thư mục bạn đã duyệt (${root})` };
-    }
-  }
-
-  if (nodeDirectory !== undefined && nodeDirectory.trim() !== "") {
-    if (isWithinRoot(nodeDirectory, requested)) {
-      return { ok: true, cwd: requested, because: `nằm trong thư mục node đang chạy (${nodeDirectory})` };
-    }
-    // Beside it, which is where a clone lands: a repository cloned into the product's own working tree
-    // would be a different mistake.
-    const nodeParent = dirname(nodeDirectory);
-    if (nodeParent !== "" && resolve(nodeParent) === resolve(requested)) {
-      return { ok: true, cwd: requested, because: `là thư mục chứa nơi node đang chạy (${nodeDirectory})` };
-    }
-  }
-
-  for (const project of knownProjects) {
-    if (isWithinRoot(project, requested)) {
-      return { ok: true, cwd: requested, because: `nằm trong dự án đã biết (${project})` };
-    }
-    // The folder the projects live in: where a clone lands, beside the repositories rather than inside
-    // one of them. This is the case the request was about.
-    const parent = dirname(project);
-    if (parent !== "" && resolve(parent) === resolve(requested)) {
-      return { ok: true, cwd: requested, because: `là thư mục chứa các dự án đã biết (${project})` };
-    }
-  }
-
+  const requested = typeof input.cwd === "string" && input.cwd.trim() !== "" ? input.cwd.trim() : process.cwd();
   return {
-    ok: false,
-    code: "OUTSIDE_APPROVED_ROOTS",
-    message:
-      `Thư mục ${requested} không nằm trong thư mục đã duyệt hay dự án nào tui biết. ` +
-      `Hãy tìm dự án trước (find_project) hoặc chọn một thư mục nằm cạnh các dự án hiện có.`,
+    ok: true,
+    cwd: requested,
+    because: "node không giới hạn thư mục nữa, nên thẻ duyệt này là chỗ bạn quyết định",
   };
 }
 
@@ -321,7 +240,6 @@ export function describeCommandOutcome(command: string, outcome: CommandOutcome)
 export async function runApprovedCommand(input: {
   payload: string;
   expectedDigest: string;
-  placement: CommandPlacement;
   approvalId: string;
   /** Injected so the whole decision path can be tested without spawning anything. */
   run?: (request: { command: string; cwd: string }) => Promise<CommandOutcome>;
@@ -352,9 +270,9 @@ export async function runApprovedCommand(input: {
     };
   }
 
-  const guard = guardCommand({ command, cwd, placement: input.placement });
+  const guard = guardCommand({ command, cwd });
   if (!guard.ok || guard.cwd === undefined) {
-    return { ok: false, code: guard.code ?? "OUTSIDE_APPROVED_ROOTS", message: guard.message ?? "refused" };
+    return { ok: false, code: guard.code ?? "COMMAND_REFUSED", message: guard.message ?? "refused" };
   }
 
   const at = input.now ?? (() => new Date().toISOString() as Instant);

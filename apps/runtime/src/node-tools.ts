@@ -2,7 +2,7 @@ import type { ToolDefinition } from "@clarkcant/pi-adapter";
 import { requestApproval, type CoordinationDeps } from "@clarkcant/core";
 
 import { describeSearch, machineRoots, searchFileSystem } from "./fs-search.ts";
-import { commandDigest, guardCommand, type CommandPlacement } from "./run-command.ts";
+import { commandDigest, guardCommand } from "./run-command.ts";
 import type { ProjectFinderDeps } from "./project-finder.ts";
 import { createFindProjectTool } from "./project-finder.ts";
 import { createFindRuntimeTool } from "./runtime-candidates.ts";
@@ -34,8 +34,6 @@ export function createNodeTools(input: {
    * ask for one, and a tool that could only refuse is worse than no tool.
    */
   approvals?: () => CoordinationDeps;
-  /** Where a command may run, and why. */
-  placement?: () => CommandPlacement;
   /** Resolve a folder from the model's words, through the finder and its decider. */
   resolveFolder?: (intent: string) => Promise<
     | { status: "resolved"; cwd: string; relPath: string }
@@ -43,16 +41,14 @@ export function createNodeTools(input: {
   >;
 }): ToolDefinition[] {
   const roots = input.roots ?? machineRoots;
-  const placement = input.placement;
   return [
     createSearchHistoryTool(input.search),
     createSearchFilesTool(roots),
-    ...(input.approvals === undefined || placement === undefined
+    ...(input.approvals === undefined
       ? []
       : [
           createRunCommandTool({
             approvals: input.approvals,
-            placement,
             ...(input.resolveFolder === undefined ? {} : { resolveFolder: input.resolveFolder }),
           }),
         ]),
@@ -79,7 +75,6 @@ export function createNodeTools(input: {
  */
 export function createRunCommandTool(input: {
   approvals: () => CoordinationDeps;
-  placement: () => CommandPlacement;
   /**
    * Resolve a folder from the model's words, through the finder and its decider.
    *
@@ -93,7 +88,7 @@ export function createRunCommandTool(input: {
 }): ToolDefinition {
   return {
     name: "run_command",
-    label: "Chạy lệnh trong thư mục đã duyệt",
+    label: "Chạy một lệnh, sau khi bạn duyệt",
     description:
       "Ask to run one shell command. Nothing runs until the user approves the exact command and folder in " +
       "the card this creates, so say that you are asking rather than that you did it. Pass `where` with the " +
@@ -136,7 +131,7 @@ export function createRunCommandTool(input: {
         because = `được tìm thấy từ “${where}” (${found.relPath})`;
       }
 
-      const guard = guardCommand({ command, cwd, placement: input.placement() });
+      const guard = guardCommand({ command, cwd });
       if (!guard.ok || guard.cwd === undefined) {
         // Refused here, in the same turn, so the model can correct itself rather than the user finding out
         // that a command cannot run where it asked.
