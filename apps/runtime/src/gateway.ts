@@ -299,7 +299,7 @@ export async function handleRequest(deps: GatewayDeps, request: GatewayRequest):
    * count is right while somebody is looking at it, and a failure comes back into the conversation as a message too -
    * background work that fails in silence is worse than work that never started.
    */
-  const startBackgroundWork = (conversationId: string, text: string): { sessionId: string } | { refusal: string } => {
+  function startBackgroundWork(conversationId: string, text: string): { sessionId: string } | { refusal: string } {
     const control = services.turnControl;
     if (control === undefined) return { refusal: "node này không có model để chạy việc nền" };
 
@@ -320,7 +320,7 @@ export async function handleRequest(deps: GatewayDeps, request: GatewayRequest):
       }
     })();
     return { sessionId };
-  };
+  }
 
   /*
    * One request, run somewhere else, asked for directly.
