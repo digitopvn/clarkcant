@@ -161,6 +161,14 @@ export function SettingsPanel({
   const [facts, setFacts] = useState<NodeFacts | undefined>(undefined);
   const [tools, setTools] = useState<ToolFacts[] | undefined>(undefined);
   const [problem, setProblem] = useState<string | undefined>(undefined);
+  /**
+   * The live provider's key, on its way to the node and nowhere else.
+   *
+   * The draft is cleared the moment it is sent, and nothing here ever holds the stored value: the node answers
+   * with the names it has and never with a value, so there is nothing to show a second time.
+   */
+  const [keyDraft, setKeyDraft] = useState("");
+  const [keyStatus, setKeyStatus] = useState<string | undefined>(undefined);
   const [accentIndex, setAccentIndex] = useState(0);
   const [tab, setTab] = useState<TabId>("general");
   // Bumped after a theme or accent change so the contrast readout re-reads computed values.
@@ -440,6 +448,69 @@ export function SettingsPanel({
               nodeLabel={facts?.label ?? "(chưa đọc được)"}
               unblockedBy="chạy node thứ hai trên máy khác rồi ghép nối"
             />
+
+            {/*
+              The key the live voice provider needs.
+              
+              It lives beside the device settings because that is what it is for: a microphone session that cannot
+              start without it. The name it is stored under is the node's - `gemini`, the same string
+              voice-session.ts exports as VOICE_CREDENTIAL_NAME - and it cannot be imported here, because the
+              runtime is not something the browser ships. A name is cheaper to keep in step than a package.
+            */}
+            <h3>Giọng nói</h3>
+            <p className="cc-panel-note">
+              Khoá dùng cho Gemini Live khi bạn nói. Nó được lưu ở node, không đi vào hội thoại, và không hiện lại
+              lần nào nữa — kể cả trong thông báo lưu thành công.
+            </p>
+            <form
+              className="cc-credential-form"
+              onSubmit={(event) => {
+                event.preventDefault();
+                const value = keyDraft.trim();
+                if (value === "") return;
+                client
+                  .putCredential({ fields: [{ name: "gemini", value }] })
+                  .then((result) => {
+                    setKeyDraft("");
+                    setKeyStatus(
+                      result.names.includes("gemini")
+                        ? "Đã lưu khoá cho giọng nói. Lần mở voice kế tiếp sẽ dùng khoá này."
+                        : "Đã gửi, nhưng node không ghi nhận tên khoá nào.",
+                    );
+                  })
+                  .catch(() => {
+                    // The message says nothing about what was typed: an error that repeated the value would be the
+                    // leak this field exists to avoid.
+                    setKeyStatus("Không lưu được khoá. Thử lại.");
+                  });
+              }}
+            >
+              <label className="cc-credential-field">
+                <span>Gemini API key</span>
+                <input
+                  type="password"
+                  name="gemini"
+                  autoComplete="off"
+                  data-settings-key-field="gemini"
+                  value={keyDraft}
+                  onChange={(event) => setKeyDraft(event.target.value)}
+                />
+              </label>
+              <button
+                type="submit"
+                className="cc-icon-btn"
+                style={{ width: "auto", padding: "0 var(--cc-space-sm)" }}
+                disabled={keyDraft.trim() === ""}
+                data-settings-key-submit="true"
+              >
+                Lưu khoá
+              </button>
+            </form>
+            {keyStatus !== undefined && (
+              <p className="cc-freshness" data-settings-key-status="true">
+                {keyStatus}
+              </p>
+            )}
           </section>
         )}
       </div>
