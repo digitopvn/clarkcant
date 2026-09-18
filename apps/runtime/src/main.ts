@@ -771,6 +771,24 @@ async function main(): Promise<void> {
   });
 
   server.listen(options.port, options.host, () => {
+    /*
+     * Publish what this node can do, at boot rather than at the first turn.
+     *
+     * The tools are built on demand for a turn, and that is the right time for a turn. It is the wrong time for the
+     * Tools tab, which asks the question before anything has been sent: publishing only inside the lazy builder meant
+     * the answer was "none" exactly when somebody looked, which is what a probe against a running node showed.
+     *
+     * Built from the same wirings the turn uses, and without the folder-resolution refinement, which changes how
+     * run_command picks a folder rather than whether it exists.
+     */
+    const bootApprovals = approvalWiring.deps;
+    if (bootApprovals !== undefined) {
+      registerNodeTools(
+        createNodeTools({ search: services.search, projects: services.projects, approvals: () => bootApprovals }).map(
+          (tool) => ({ name: tool.name, label: tool.label, description: tool.description }),
+        ),
+      );
+    }
     process.stderr.write(
       `clarkcant node "${services.runtime.identity.label}" listening on http://${options.host}:${options.port}\n`,
     );
