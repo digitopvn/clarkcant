@@ -31,7 +31,7 @@ afterEach(() => {
 describe("the node's tools", () => {
   it("offers the model every read-only report, including the project finder", () => {
     const tools = createNodeTools({ search: services.search, projects: services.projects });
-    expect(tools.map((tool) => tool.name)).toEqual(["search_history", "find_runtime", "find_project"]);
+    expect(tools.map((tool) => tool.name)).toEqual(["search_history", "search_files", "find_runtime", "find_project"]);
 
     for (const tool of tools) {
       // A tool with no description is a tool the model cannot decide to use.

@@ -135,6 +135,14 @@ export interface ModelTurnInput {
    * message that does not exist.
    */
   messageId: string;
+  /**
+   * Everything the turn does while it runs: text, reasoning, and tool calls.
+   *
+   * Separate from `ModelTurnReply` rather than a replacement for it. The reply is what the message is
+   * built from, and these are the events on the way there: a provider that emits nothing still produces
+   * a reply, and a caller that ignores this still gets one.
+   */
+  onEvent?: (event: ModelTurnEvent) => void;
 }
 
 /**
@@ -183,7 +191,37 @@ export interface UserMessageInput {
   principal: Principal;
   text: string;
   at?: Instant;
+  /**
+   * Called as the answer is produced, for a caller holding an open stream.
+   *
+   * Absent for every other caller, and nothing about the turn changes when it is absent: a turn that
+   * streams produces exactly the same message as one that does not. What arrives here is text as the
+   * model emits it, before it is stored, which is why it is reported rather than kept — the durable
+   * message is still the one appended below, built from the same segments.
+   */
+  emit?: (event: ConductorEmit) => void;
 }
+
+/**
+ * One thing that happened while a turn was still running.
+ *
+ * The same union is what the conductor forwards to a streaming caller, because there is nothing to
+ * translate: a caller watching a turn sees exactly the events the turn produced, in order.
+ */
+export type ModelTurnEvent =
+  | { type: "text-delta"; text: string }
+  | { type: "reasoning-delta"; text: string }
+  | {
+      type: "tool-start";
+      toolCallId: string;
+      name: string;
+      label: string;
+      args: Record<string, unknown>;
+    }
+  | { type: "tool-end"; toolCallId: string; status: "done" | "failed"; result: string };
+
+/** What the conductor reports to a caller that is watching. */
+export type ConductorEmit = ModelTurnEvent;
 
 export interface ConductorOutcome {
   /** Messages the host appended, in timeline order. */
@@ -260,7 +298,10 @@ function appendUser(
     messageId: deps.newId("msg") as MessageRecord["messageId"],
     conversationId,
     role: "user",
-    blocks: [{ type: "text", format: "plain", content: text, streaming: false }],
+    // Markdown, because the transcript renders both sides the same way and a message typed into a
+    // field is markdown anyway: `breaks` keeps its real newlines, and its punctuation formats. Blocks
+    // stored before this was changed carry `plain` and keep rendering as pre-wrapped text.
+    blocks: [{ type: "text", format: "markdown", content: text, streaming: false }],
     authorNodeId: deps.nodeId as MessageRecord["authorNodeId"],
     createdAt: at,
     delivery: "accepted",
@@ -482,6 +523,9 @@ async function runModelTurn(
       principal: input.principal,
       text: input.text,
       messageId,
+      // Always supplied, and a no-op when nobody is streaming. A conditional spread here would have
+      // to exist only to keep the optional field absent, which is a distinction nothing reads.
+      onEvent: (event: ModelTurnEvent) => input.emit?.(event),
     });
   } catch (cause) {
     // A throw is turned into a message. The user has already been told their message was
@@ -513,6 +557,12 @@ async function runModelTurn(
     deps,
     input.conversationId,
     [
+      // The card that records what answered comes last, not first.
+      //
+      // It is bookkeeping: which model, how long it took. At the top of a reply it is the first thing
+      // read and it is not the answer — the interface then leads with provenance and buries the text.
+      // The renderer draws it as one muted line that expands (see `SystemCardBlock`).
+      ...modelSegmentsToBlocks(reply),
       {
         type: "system-card",
         owner: "host",
@@ -530,7 +580,6 @@ async function runModelTurn(
         cancellable: false,
         updatedAt: input.at,
       },
-      ...modelSegmentsToBlocks(reply),
     ],
     { at: input.at, messageId },
   );

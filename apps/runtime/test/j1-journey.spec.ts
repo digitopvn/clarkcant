@@ -344,9 +344,12 @@ describe("a catch-all recipe never displaces a configured model", () => {
     });
 
     const blocks = blocksOf(outcome.messages);
-    // The host card recording the turn comes first, then the reply in the model's own order.
-    const replyKinds = blocks.slice(1).map((block) => block.type);
+    // The reply in the model's own own order, then the host card that records the turn.
+    const replyKinds = blocks.slice(0, -1).map((block) => block.type);
     expect(replyKinds).toEqual(["text", "evidence", "text"]);
+    // The card comes last: it is bookkeeping about the turn, and leading with it put provenance where
+    // the answer should be.
+    expect(blocks.at(-1)?.type).toBe("system-card");
     const texts = blocks.filter((block) => block.type === "text").map((block) => block.content);
     expect(texts).toEqual(["Trước.", "Sau."]);
   });

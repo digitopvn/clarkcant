@@ -39,6 +39,17 @@ uniform float u_chromatic;
 uniform float u_glow;
 uniform float u_sheen;
 
+  /**
+   * Where the pointer is, how close it is, and how much the shell is still ringing from it.
+   *
+   * u_wobble is signed: it alternates as the spring rings, so the shell squashes and then stretches
+   * rather than only ever squashing. These three are what make the orb answer to a mouse rather than
+   * merely animate near it.
+   */
+  uniform vec2  u_pointer;
+  uniform float u_pointerStrength;
+  uniform float u_wobble;
+
 uniform vec3  u_canvas;
 uniform vec3  u_glowColor;
 uniform vec3  u_highlight;
@@ -71,16 +82,43 @@ void main() {
   float aspect = u_resolution.x / max(u_resolution.y, 1.0);
   // y spans -1..1 with the origin at the centre, and x is stretched to match the real aspect so
   // the ball stays round whatever shape the canvas is.
-  vec2 p = (v_uv - 0.5) * vec2(aspect, 1.0) * 2.0;
+  vec2 raw = (v_uv - 0.5) * vec2(aspect, 1.0) * 2.0;
 
   float R = u_radius;
+
+  // --- the shape, before the light -------------------------------------
+  //
+  // A soft body with volume does not just wobble in place: pushed anywhere, it compresses along the
+  // line of the push and bulges sideways, and it rings back and forth past its rest shape. That is what
+  // this does — squash along the direction of the pointer, bulge across it — and the sign flip comes
+  // from the spring in the renderer, which is what makes it jelly rather than a dent.
+  vec2 direction = length(u_pointer) > 0.0001 ? normalize(u_pointer) : vec2(1.0, 0.0);
+  float squash = clamp(u_wobble, -1.0, 1.0) * u_pointerStrength;
+  float along = dot(raw, direction);
+  vec2 sideways = raw - direction * along;
+  vec2 p = direction * (along * (1.0 - 0.20 * squash)) + sideways * (1.0 + 0.14 * squash);
   float r = length(p);
+
+  // --- what the pointer is doing to the shell --------------------------
+  //
+  // Measured in the undeformed space, because it is about where the pointer is rather than about where
+  // the surface ended up: the ring travels outward from the touch, and the light gathers there.
+  float pointerDist = length(raw - u_pointer);
+  // A soft, local falloff. Steep enough that the far side of the ball is untouched, wide enough
+  // that the lit area is a pool rather than a pixel.
+  float touch = exp(-pointerDist * 2.4);
+  float pointerLight = u_pointerStrength * (0.55 + 0.45 * abs(u_wobble));
+
+  // A travelling ripple on top of the squash, so the surface itself reads as a membrane rather than
+  // as a scaled shape. The wave runs outward from the touch point.
+  float ripple = sin(pointerDist * 13.0 - u_time * 5.0) * 0.022 * abs(u_wobble) * exp(-pointerDist * 2.0);
+  float R_local = R + ripple;
 
   // The shell boundary. The reference exposes this as edgeSoftness; it stays small because a
   // blurred silhouette reads as a smudge rather than as glass. Backticks are avoided inside these
   // shader strings because the GLSL lives in a TypeScript template literal and one would end it.
   float edge = 0.006;
-  float inside = 1.0 - smoothstep(R - edge, R + edge, r);
+  float inside = 1.0 - smoothstep(R_local - edge, R_local + edge, r);
   float outside = 1.0 - inside;
 
   // --- the band ---------------------------------------------------------
@@ -95,7 +133,11 @@ void main() {
   float sway = pow(lens, 1.30);
   float drift = sin(nx * 3.2 + u_time * 1.15) * 0.045 * sway
               + sin(nx * 6.1 - u_time * 0.70) * 0.016 * sway;
-  float y = p.y - drift;
+  // The band is dragged towards the pointer's height, most strongly right under it: this is the
+  // refraction a real bubble shows, where the thing behind it appears to bend towards the touch.
+  // Capped, because an uncapped pull would fold the band onto itself and read as a glitch.
+  float pull = clamp(u_pointer.y - p.y, -0.16, 0.16) * 0.9 * touch * u_pointerStrength;
+  float y = p.y - drift - pull;
 
   // Two vertical profiles: a broad halo that lights the glass around the band, and a thin core
   // that is the bright line itself. The exponents matter more than the amplitudes — a low power
@@ -134,15 +176,22 @@ void main() {
                 + u_highlight * pow(core, 2.6) * 0.55;
 
   // A soft brightening just inside the silhouette, kept low: the edge should read as glass, not
-  // as a neon tube.
-  float rim = smoothstep(R * 0.88, R, r) * inside;
-  vec3 rimTint = mix(u_shellMid, u_shellEdge, 0.35) * rim * 0.14;
+  // as a neon tube. It brightens where the pointer is, which is the rim of the bubble catching the
+  // light at the point it is being touched.
+  float rim = smoothstep(R_local * 0.88, R_local, r) * inside;
+  vec3 rimTint = mix(u_shellMid, u_shellEdge, 0.35) * rim * (0.14 + 0.55 * touch * u_pointerStrength);
 
   // A sheen where the shell catches the light, biased to the upper left as the reference does.
   float sheen = pow(max(0.0, 1.0 - length(p - vec2(-R * 0.42, R * 0.52)) / (R * 0.95)), 3.0);
   vec3 sheenTint = u_sheenColor * sheen * inside * u_sheen * 0.30;
 
   vec3 glass = body + emissive * inside * (u_exposure * 0.5) + rimTint + sheenTint;
+
+  // The pool of light at the pointer. It is added on both sides of the silhouette, because a
+  // highlight that stops dead at the edge reads as something painted inside the ball; what is
+  // being drawn is light arriving from wherever the mouse is.
+  vec3 flare = (u_highlight * 0.30 + u_glowColor * 0.45) * pow(touch, 1.5) * pointerLight;
+  glass += flare;
 
   // --- alpha -------------------------------------------------------------
   //
@@ -157,8 +206,11 @@ void main() {
   // The falloff is steep so the orb sits in its own light without washing purple over the whole
   // canvas — which is only visible at all now that the canvas is transparent.
   float glowMask = exp(-max(0.0, r - R) * 16.0) * outside;
-  vec3 col = mix(u_glowColor * u_glow * 1.1, glass, inside);
-  float alpha = clamp(inside + glowMask * 0.9, 0.0, 1.0);
+  vec3 col = mix(u_glowColor * u_glow * 1.1 + flare, glass, inside);
+  // The flare carries its own opacity outside the shell, or a premultiplied colour added where
+  // alpha is zero is invisible: the light would be computed every frame and never drawn.
+  float flareAlpha = clamp(dot(flare, vec3(0.3333)) * 1.8, 0.0, 0.85) * outside;
+  float alpha = clamp(inside + glowMask * 0.9 + flareAlpha, 0.0, 1.0);
 
   gl_FragColor = vec4(col * alpha, alpha);
 }

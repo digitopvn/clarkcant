@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { nodeIdSchema } from "@clarkcant/contracts";
 import { FakePiAdapter, type WorkerBrief } from "@clarkcant/pi-adapter";
-import { setPreference } from "@clarkcant/core";
+import { setPreference, type ModelTurnInput } from "@clarkcant/core";
 
 import { handleRequest, type GatewayDeps, type GatewayRequest, type GatewayResponse } from "../src/gateway.ts";
 import { bootNodeServices, type NodeServices } from "../src/services.ts";
@@ -489,5 +489,132 @@ describe("starting a session in a project", () => {
     const conversationId = (created.body as { conversationId: string }).conversationId;
     const response = await call("POST", `/conversations/${conversationId}/start-session`, { text: "   " });
     expect(response.status).toBe(400);
+  });
+});
+
+/**
+ * A message that is watched while it is answered.
+ *
+ * The route is the same turn as the one above it with a different way of reporting it, so what these
+ * tests are about is the reporting: the events reach the client in the order they happened, the last
+ * one carries the same record the plain route would have returned, and a request that cannot be
+ * satisfied is refused with a status code rather than inside a stream that has already begun.
+ */
+describe("a message can be watched while it is answered", () => {
+  /** The frames of an event stream, parsed here rather than with the client's parser. */
+  function frames(raw: string): { event: string; data: Record<string, unknown> }[] {
+    return raw
+      .split("\n\n")
+      .filter((frame) => frame.trim() !== "" && !frame.startsWith(":"))
+      .map((frame) => {
+        const lines = frame.split("\n");
+        const event = lines.find((line) => line.startsWith("event:"))?.slice("event:".length).trim() ?? "message";
+        const data = lines
+          .filter((line) => line.startsWith("data:"))
+          .map((line) => line.slice("data:".length).replace(/^ /, ""))
+          .join("\n");
+        return { event, data: JSON.parse(data) as Record<string, unknown> };
+      });
+  }
+
+  async function streamOf(deps_: GatewayDeps, conversationId: string, text: string) {
+    const response = await handleRequest(deps_, {
+      method: "POST",
+      path: `/conversations/${conversationId}/messages/stream`,
+      query: {},
+      headers: { authorization: `Bearer ${services.runtime.identity.localToken}` },
+      body: JSON.stringify({ text }),
+    });
+    const chunks: string[] = [];
+    await response.stream?.run((chunk) => chunks.push(chunk));
+    return { response, events: frames(chunks.join("")) };
+  }
+
+  it("reports each piece of the reply as it arrives, then the stored timeline", async () => {
+    const conversationId = await createConversation();
+    // A model stub on the conductor rather than a provider: what is under test is the path from a
+    // delta to a frame on the wire, and that path does not care who produced the delta.
+    const streamed = await streamOf(
+      {
+        ...deps,
+        services: {
+          ...services,
+          conductor: {
+            ...services.conductor,
+            respondWithModel: async (input: ModelTurnInput) => {
+              input.onEvent?.({ type: "text-delta", text: "Thủ đô" });
+              input.onEvent?.({ type: "text-delta", text: " là Paris." });
+              return {
+                text: "Thủ đô là Paris.",
+                segments: [{ kind: "text" as const, text: "Thủ đô là Paris." }],
+                provider: "test-provider",
+                model: "test-model",
+                elapsedMs: 5,
+              };
+            },
+          },
+        },
+      },
+      conversationId,
+      "thủ đô của Pháp là gì?",
+    );
+
+    expect(streamed.response.status).toBe(200);
+    expect(streamed.response.stream?.contentType).toBe("text/event-stream");
+
+    const deltas = streamed.events.filter((event) => event.event === "delta").map((event) => event.data.text);
+    expect(deltas.join("")).toBe("Thủ đô là Paris.");
+
+    // The last frame is the record, not a summary of one: a client that discards the deltas ends up
+    // holding exactly what the non-streaming route returns.
+    const done = streamed.events.at(-1);
+    expect(done?.event).toBe("done");
+    const timeline = done?.data.timeline as { messages: { role: string; blocks: { type: string; content?: string }[] }[] };
+    expect(timeline.messages.map((message) => message.role)).toEqual(["user", "assistant"]);
+    expect(timeline.messages[1]?.blocks.some((block) => block.content === "Thủ đô là Paris.")).toBe(true);
+
+    // And it is a stored message, so the timeline route agrees with the frame that announced it.
+    const stored = await request("GET", `/conversations/${conversationId}/timeline`);
+    const storedMessages = (stored.body as { messages: { role: string }[] }).messages;
+    expect(storedMessages.map((message) => message.role)).toEqual(["user", "assistant"]);
+  });
+
+  it("refuses an empty message before the stream starts, so the refusal has a status code", async () => {
+    const conversationId = await createConversation();
+    const response = await request("POST", `/conversations/${conversationId}/messages/stream`, { body: { text: "   " } });
+    expect(response.status).toBe(400);
+    expect(response.stream).toBeUndefined();
+  });
+
+  it("refuses a conversation that does not exist", async () => {
+    const response = await request("POST", "/conversations/conv_missing/messages/stream", { body: { text: "hi" } });
+    expect(response.status).toBe(404);
+    expect(response.stream).toBeUndefined();
+  });
+
+  it("reports a turn that failed as an error frame, because the status has been sent by then", async () => {
+    const conversationId = await createConversation();
+    const streamed = await streamOf(
+      {
+        ...deps,
+        services: {
+          ...services,
+          conductor: {
+            ...services.conductor,
+            respondWithModel: async () => {
+              throw new Error("provider exploded before any message existed");
+            },
+          },
+        },
+      },
+      conversationId,
+      "một câu mà không recipe nào khớp",
+    );
+
+    // A thrown turn is turned into a host card by the conductor, so the stream ends with the record
+    // of that card rather than with an error — the user is told, and the reply is in the timeline.
+    const done = streamed.events.at(-1);
+    expect(done?.event).toBe("done");
+    expect(done?.data.resolution).toBe("model-failed");
   });
 });

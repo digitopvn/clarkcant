@@ -31,6 +31,49 @@ export const textBlockSchema = z.strictObject({
   streaming: z.boolean(),
 });
 
+/**
+ * A tool call, as the transcript recorded it.
+ *
+ * Built by the node, because the node is what ran the tool: the model asks and this is the record of
+ * what happened, carrying the arguments and the result so the widget can show them again after the
+ * fact. It is deliberately not a host-owned card — it makes no claim about the node's state, and the
+ * host-owned list is the set of things a widget must not be able to mint.
+ */
+export const toolActivityBlockSchema = z.strictObject({
+  type: z.literal("tool-activity"),
+  /** The provider's identifier for this call, so a start and an end can be the same widget. */
+  toolCallId: z.string().min(1).max(128),
+  /** The tool's own name, e.g. `show_view` or `search_files`. */
+  name: z.string().min(1).max(120),
+  /** One line for a reader: what this call was for. */
+  label: z.string().min(1).max(300),
+  status: z.enum(["running", "done", "failed"]),
+  /** The arguments the model passed, as data rather than as a string to be parsed again. */
+  args: z.record(z.string(), z.unknown()),
+  /** What the tool returned, once it has. */
+  result: z.string().max(20_000).optional(),
+  /** A language hint for the arguments and the result, so the widget can colour them. */
+  language: z.string().max(40).optional(),
+  /** The path the call touched, when it touched one. */
+  path: z.string().max(1000).optional(),
+  startedAt: instantSchema,
+  endedAt: instantSchema.optional(),
+});
+
+/**
+ * The model's own reasoning, when the provider exposes it.
+ *
+ * Separate from a `text` block because it is not the reply: it is what the model said to itself on the
+ * way there, and an interface that mixes the two shows the user something the model did not address to
+ * them. Collapsed by default for the same reason.
+ */
+export const reasoningBlockSchema = z.strictObject({
+  type: z.literal("reasoning"),
+  content: z.string().max(100_000),
+  startedAt: instantSchema,
+  endedAt: instantSchema.optional(),
+});
+
 export const surfaceBlockSchema = z.strictObject({
   type: z.literal("surface"),
   /** Which widget definition rendered this, for history fidelity. */
@@ -404,6 +447,8 @@ export const reconnectCardSchema = z.strictObject({
 
 export const messageBlockSchema = z.discriminatedUnion("type", [
   textBlockSchema,
+  toolActivityBlockSchema,
+  reasoningBlockSchema,
   surfaceBlockSchema,
   widgetRefBlockSchema,
   artifactBlockSchema,

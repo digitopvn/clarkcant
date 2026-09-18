@@ -1,4 +1,4 @@
-import { type ReactElement, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { type CSSProperties, type ReactElement, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 
 import type {
   GatewayClient,
@@ -17,7 +17,13 @@ import {
   type ThemeChoice,
 } from "./theme.ts";
 import type { ThemeName } from "@clarkcant/design-tokens";
+import { AgentAvatar } from "./AgentAvatar.tsx";
+import { ReasoningBlock, ToolActivityBlock } from "./blocks.tsx";
+import { composerTextareaHeight } from "./composer-height.ts";
+import { applyLiveEvent, type LiveSegment } from "./live-reply.ts";
+import { Markdown } from "./markdown.tsx";
 import { Orb } from "./Orb.tsx";
+import { useTypewriterPlaceholder, prefersReducedMotion } from "./typewriter.ts";
 import { SettingsPanel } from "./SettingsPanel.tsx";
 import { resolveRenderer, toRendererDataset } from "./renderers.tsx";
 import { MiniAppSurface, type CompositeSurfaceView } from "./mini-app-surface.tsx";
@@ -109,6 +115,39 @@ const SUGGESTIONS = [
   { label: "Chỉ trò chuyện", text: "chào bạn, bạn làm được gì?", detail: "cần model" },
 ] as const;
 
+/**
+ * The questions the empty composer types at the user, one at a time.
+ *
+ * Asked as questions rather than shown as commands, because the empty state is a prompt for what to
+ * say and a list of instructions reads as a menu of the only four things that work.
+ */
+const PLACEHOLDER_PHRASES = [
+  "có cập nhật gì mới không?",
+  "cần làm gì hôm nay?",
+  "phân tích các commit gần nhất",
+] as const;
+
+/**
+ * The orb's diameter once it is docked behind the composer.
+ *
+ * One size for both states: the orb is a canvas whose drawing buffer is fixed at creation, so moving
+ * it is a transform on an element that never changes size. A buffer that resized with the animation
+ * would reallocate GPU memory on every frame of it.
+ */
+const ORB_DOCK_SIZE = 720;
+
+/** How long each suggestion waits behind the one before it as they leave. */
+const HERO_CHIP_STAGGER_MS = 90;
+
+/** Where the orb is drawn, in the shell's own coordinates. */
+export interface OrbPlacement {
+  x: number;
+  y: number;
+  /** Drawn at `ORB_DOCK_SIZE` and scaled, so the docked size is the reference. */
+  scale: number;
+  docked: boolean;
+}
+
 export function Conversation({
   client,
   conversationId: initialConversationId,
@@ -138,6 +177,34 @@ export function Conversation({
   const [draft, setDraft] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | undefined>(undefined);
+  /**
+   * Which of the two shapes the interface is in.
+   *
+   * `shown` is the start screen, `gone` is a conversation, and `leaving` is the few hundred
+   * milliseconds between them — during which the hero is still drawn, out of the flow, so its chips
+   * can leave one at a time instead of disappearing with the same layout change that starts the exit.
+   */
+  const [heroPhase, setHeroPhase] = useState<"shown" | "leaving" | "gone">("shown");
+  /** The message the user just sent, drawn before the node has confirmed anything about it. */
+  const [pendingUser, setPendingUser] = useState<{ text: string } | undefined>(undefined);
+  /** The reply as it arrives, in the order the turn produces it. */
+  const [live, setLive] = useState<LiveSegment[]>([]);
+  /** Where the orb is drawn, once the layout has been measured. */
+  const [orbPlacement, setOrbPlacement] = useState<OrbPlacement | undefined>(undefined);
+  /** The element the orb answers pointer movement anywhere inside. */
+  const shell = useRef<HTMLDivElement>(null);
+  /** The space the hero reserves for the orb, which is where the orb measures itself from. */
+  const heroOrb = useRef<HTMLDivElement>(null);
+  const composerWrap = useRef<HTMLDivElement>(null);
+  const composerInput = useRef<HTMLTextAreaElement>(null);
+  /**
+   * The composer's top edge before the hero left.
+   *
+   * Read in the same event that starts the exit, because it is the last moment at which the old
+   * position still exists: the alternative is measuring after the fact and animating from a value
+   * that is no longer anywhere.
+   */
+  const composerFrom = useRef<number | undefined>(undefined);
   const [uiCheckOpen, setUiCheckOpen] = useState(false);
   /**
    * Starting a worker session in a directory the node chose.
@@ -208,6 +275,145 @@ export function Conversation({
     });
   }, [themeChoice]);
   const scroller = useRef<HTMLDivElement>(null);
+
+  /**
+   * How long the hero takes to leave, read from the motion tokens.
+   *
+   * The duration the stylesheet runs and the duration the timer waits have to be the same number, so
+   * it is read back off the document instead of repeated here — and it is zero for a reduced-motion
+   * user, whose animations the stylesheet has already shortened to nothing.
+   */
+  const heroExitMs =
+    prefersReducedMotion() ? 0 : motionDurationMs("--cc-motion-exit", 320) + HERO_CHIP_STAGGER_MS * (SUGGESTIONS.length - 1);
+
+  /**
+   * Remember where the composer is, before anything moves it.
+   *
+   * Read in the same event that changes the layout, because that is the last moment the old position
+   * exists: measuring afterwards and animating from a value that is no longer anywhere is not a
+   * transition. Both directions need it — leaving the start screen moves it down, and returning to it
+   * moves it back up.
+   */
+  const rememberComposerTop = useCallback((): void => {
+    const node = composerWrap.current;
+    composerFrom.current = node === null ? undefined : node.getBoundingClientRect().top;
+  }, []);
+
+  /**
+   * Start the hero leaving.
+   *
+   * Driven by a timer rather than by the exit animation's end event, because the chips finish at
+   * different times and the event from the shortest of them would take the hero away while the rest
+   * were still leaving.
+   */
+  const beginHeroExit = useCallback((): void => {
+    if (heroPhase !== "shown") return;
+    rememberComposerTop();
+    setHeroPhase("leaving");
+    window.setTimeout(
+      () => setHeroPhase((phase) => (phase === "leaving" ? "gone" : phase)),
+      heroExitMs,
+    );
+  }, [heroExitMs, heroPhase, rememberComposerTop]);
+
+  /**
+   * Grow the input to fit what is typed into it, and stop at five lines.
+   *
+   * A layout effect rather than an effect so the growth lands in the same frame as the keystroke: an
+   * effect would let the browser paint the old height first, and the box would visibly trail the text
+   * by one frame on every line.
+   */
+  useLayoutEffect(() => {
+    const node = composerInput.current;
+    if (node === null) return;
+    // The height is released before measuring, because the scroll height of a box that is already as
+    // tall as its content reports that height rather than the content's — which would make the box
+    // only ever grow.
+    node.style.height = "auto";
+    const lineHeight = Number.parseFloat(getComputedStyle(node).lineHeight);
+    const { height, scrolls } = composerTextareaHeight(node.scrollHeight, lineHeight);
+    node.style.height = `${height}px`;
+    node.style.overflowY = scrolls ? "auto" : "hidden";
+  }, [draft]);
+
+  /**
+   * Replay the composer's move from the middle of the screen to the bottom.
+   *
+   * The Web Animations API rather than a CSS transition, because the composer has no property to
+   * transition — where it sits comes from the document's flow, and the flow changed in one step. A
+   * transform from the old position to none is the same movement, and it is applied to an element
+   * whose layout position is already final, so nothing else is displaced while it plays.
+   */
+  useLayoutEffect(() => {
+    const node = composerWrap.current;
+    const from = composerFrom.current;
+    composerFrom.current = undefined;
+    if (node === null || from === undefined || prefersReducedMotion()) return;
+    const delta = from - node.getBoundingClientRect().top;
+    if (Math.abs(delta) < 2) return;
+    node.animate([{ transform: `translateY(${delta}px)` }, { transform: "none" }], {
+      duration: motionDurationMs("--cc-motion-orb", 600),
+      easing: motionEasing(),
+    });
+  }, [heroPhase]);
+
+  /**
+   * Keep the orb where the layout says it belongs.
+   *
+   * The orb is one element that moves between two places, so its position is measured from the thing
+   * it belongs to rather than declared in CSS: the hero's reserved space while the start screen is
+   * up, and the composer's frame once it is docked. A ResizeObserver rather than a list of events,
+   * because what moves it is a change in either of those frames — a font arriving, a chip wrapping,
+   * the input growing a line — and a list of causes is a list that goes stale.
+   */
+  const measureOrb = useCallback((): void => {
+    const shellBox = shell.current?.getBoundingClientRect();
+    if (shellBox === undefined) return;
+    const docked = heroPhase !== "shown";
+    const frame = (docked ? composerWrap.current : heroOrb.current)?.getBoundingClientRect();
+    if (frame === undefined) return;
+    const next: OrbPlacement = docked
+      ? {
+          x: frame.left + frame.width / 2 - shellBox.left,
+          // A third of the orb above the composer's frame, the rest behind it: that is what "the orb
+          // sits behind the input" means as a number.
+          y: frame.top + ORB_DOCK_SIZE / 6 - shellBox.top,
+          scale: 1,
+          docked: true,
+        }
+      : {
+          x: frame.left + frame.width / 2 - shellBox.left,
+          y: frame.top + frame.height / 2 - shellBox.top,
+          scale: frame.width / ORB_DOCK_SIZE,
+          docked: false,
+        };
+    // Compared before storing, because this runs on every resize of a frame that moves on nearly
+    // every keystroke: a fresh object each time would re-render the conversation per character.
+    setOrbPlacement((current) =>
+      current !== undefined &&
+      Math.abs(current.x - next.x) < 0.5 &&
+      Math.abs(current.y - next.y) < 0.5 &&
+      current.scale === next.scale
+        ? current
+        : next,
+    );
+  }, [heroPhase]);
+
+  useLayoutEffect(() => {
+    measureOrb();
+    window.addEventListener("resize", measureOrb);
+    const observer = typeof ResizeObserver === "function" ? new ResizeObserver(() => measureOrb()) : undefined;
+    for (const node of [heroOrb.current, composerWrap.current]) {
+      if (node !== null && observer !== undefined) observer.observe(node);
+    }
+    // The webfont arrives after the first paint and changes how tall the hero's text is, which moves
+    // the reserved space the orb is placed against.
+    void document.fonts?.ready.then(() => measureOrb());
+    return () => {
+      observer?.disconnect();
+      window.removeEventListener("resize", measureOrb);
+    };
+  }, [measureOrb]);
 
   /* Connectivity is checked once, so the status reflects reality rather than optimism. */
   useEffect(() => {
@@ -386,7 +592,9 @@ export function Conversation({
   useEffect(() => {
     const node = scroller.current;
     if (node) node.scrollTop = node.scrollHeight;
-  }, [timeline]);
+    // The streamed reply is as much a reason to follow the bottom as a stored message is: without it
+    // the answer grows below the fold while the view stays where the question was.
+  }, [live, pendingUser, timeline]);
 
   const send = useCallback(
     async (text: string) => {
@@ -396,6 +604,11 @@ export function Conversation({
       setBusy(true);
       setError(undefined);
       setDraft("");
+      // Drawn from here rather than from the node's answer: the user's own message is not in doubt,
+      // and waiting for the round trip to show it makes the interface feel slower than it is.
+      setPendingUser({ text: trimmed });
+      setLive([]);
+      beginHeroExit();
       const generation = sessionGeneration.current;
       try {
         const target = conversationId ?? (await client.createConversation("Conversation")).conversationId;
@@ -406,19 +619,32 @@ export function Conversation({
           setConversationId(target);
           onConversationReady?.(target);
         }
-        const response = await client.sendMessage(target, trimmed);
-        if (sessionGeneration.current !== generation) return;
-        applyTimeline(response.timeline);
+        await client.streamMessage(target, trimmed, {
+          onEvent: (event) => {
+            if (sessionGeneration.current !== generation) return;
+            setLive((segments) => applyLiveEvent(segments, event));
+          },
+          onDone: (result) => {
+            if (sessionGeneration.current !== generation) return;
+            // The node's own record replaces both placeholders in one update, so the reply is never
+            // on screen twice: the stored message and the text that stood in for it change together.
+            applyTimeline(result.timeline);
+            setPendingUser(undefined);
+            setLive([]);
+          },
+        });
       } catch (cause) {
         if (sessionGeneration.current !== generation) return;
         // The draft is restored so a failed send does not lose the user's text.
         setDraft(trimmed);
+        setPendingUser(undefined);
+        setLive([]);
         setError(cause instanceof Error ? cause.message : String(cause));
       } finally {
         setBusy(false);
       }
     },
-    [applyTimeline, busy, client, conversationId, onConversationReady],
+    [applyTimeline, beginHeroExit, busy, client, conversationId, onConversationReady],
   );
 
   /**
@@ -429,6 +655,9 @@ export function Conversation({
    * showing it, and the next message opens a new one.
    */
   const restartSession = useCallback((): void => {
+    // Measured first, so the composer's return to the middle of the screen is a move rather than a
+    // jump: a restart is the same layout change in the opposite direction.
+    rememberComposerTop();
     sessionGeneration.current += 1;
     setConversationId(undefined);
     setTimeline(undefined);
@@ -437,8 +666,13 @@ export function Conversation({
     setDraft("");
     setError(undefined);
     setBusy(false);
+    // Back to the start screen, with the orb returning to the middle: the phase is the same fact as
+    // an empty timeline, and leaving it behind is what would strand the orb at the foot of the page.
+    setPendingUser(undefined);
+    setLive([]);
+    setHeroPhase("shown");
     onSessionReset?.();
-  }, [onSessionReset]);
+  }, [onSessionReset, rememberComposerTop]);
 
   const renderSurface = useCallback(
     (input: SurfaceBlockRef): ReactElement => {
@@ -558,8 +792,43 @@ export function Conversation({
   const blocks = timeline?.messages ?? [];
   const pins = timeline?.pins ?? [];
 
+  /**
+   * A conversation that arrived with messages was never the start screen.
+   *
+   * Loading history is not the hero leaving — nothing was sent — so this skips the exit entirely
+   * rather than replaying it for a conversation the user was already in.
+   */
+  useEffect(() => {
+    if (blocks.length > 0) setHeroPhase((phase) => (phase === "shown" ? "gone" : phase));
+  }, [blocks.length]);
+
+  const placeholder = useTypewriterPlaceholder(PLACEHOLDER_PHRASES, heroPhase === "shown" && draft === "");
+  const showTimeline = blocks.length > 0 || pendingUser !== undefined || busy;
+  /**
+   * The newest reply, which is the one whose avatar is allowed to be a live canvas.
+   *
+   * Computed once here rather than inside the map so the rule is visible: one animated orb per
+   * conversation, not one per message.
+   */
+  const newestAssistant = blocks.reduce((last, message, index) => (message.role === "assistant" ? index : last), -1);
+
   return (
-    <div className="cc-shell">
+    <div
+      className="cc-shell"
+      // The two shapes the interface takes, and the three measurements the motion needs: how long the
+      // hero takes to leave, how far apart its chips go, and how big the orb is when docked. They are
+      // custom properties on the shell so the stylesheet and the JavaScript that times the same
+      // animation are reading one number instead of two copies of it.
+      data-view={heroPhase === "shown" ? "hero" : "conversation"}
+      ref={shell}
+      style={
+        {
+          "--cc-hero-exit": `${heroExitMs}ms`,
+          "--cc-chip-stagger": `${HERO_CHIP_STAGGER_MS}ms`,
+          "--cc-orb-dock": `${ORB_DOCK_SIZE}px`,
+        } as CSSProperties
+      }
+    >
       <header className="cc-header">
         {/*
           The logo is the way back to the start screen, which is where a user looks first when
@@ -574,7 +843,7 @@ export function Conversation({
           title="Bắt đầu lại"
           aria-label="Bắt đầu lại: về màn hình đầu và mở một phiên mới"
         >
-          <Orb size={30} className="cc-orb" label="" />
+          <Orb size={30} className="cc-orb" label="" pointerTarget={shell} />
           <span>Agent</span>
         </button>
         <div className="cc-header-end">
@@ -598,53 +867,129 @@ export function Conversation({
 
       {/* Focusable as a fallback target: when the control that opened the live view is gone from the
           document, focus has to land somewhere meaningful rather than on the body. */}
-      <div className="cc-scroll" ref={scroller} tabIndex={-1}>
-        {blocks.length === 0 ? (
-          <div className="cc-empty">
-            <Orb size={148} className="cc-empty-orb" label="Đang chờ bạn nói điều muốn làm" />
-            <h1>Bạn đang nghĩ gì?</h1>
-            <p>Nói việc bạn muốn làm, hoặc bắt đầu từ một trong bốn gợi ý dưới đây.</p>
-            <div className="cc-chip-row" data-suggestion-count={SUGGESTIONS.length}>
-              {SUGGESTIONS.map((suggestion) => (
-                <button
-                  key={suggestion.text}
-                  type="button"
-                  className="cc-chip"
-                  data-suggestion={suggestion.text}
-                  data-suggestion-detail={suggestion.detail}
-                  // The detail is in the accessible name as well as visible text, because a person
-                  // using a screen reader has the same question about which chips need a model.
-                  aria-label={`${suggestion.label} — ${suggestion.detail}`}
-                  onClick={() => void send(suggestion.text)}
-                >
-                  <span className="cc-chip-label">{suggestion.label}</span>
-                  <span className="cc-chip-detail">{suggestion.detail}</span>
-                </button>
-              ))}
+      <div className="cc-body">
+        <div className="cc-scroll" ref={scroller} tabIndex={-1}>
+          {/*
+            The start screen. It stays mounted while it leaves, out of the flow, so that the chips can
+            go one at a time: unmounting it with the message that replaced it would take all four with
+            it in the same frame, which is a disappearance rather than an exit.
+          */}
+          {heroPhase !== "gone" && (
+            <div className="cc-empty" data-leaving={heroPhase === "leaving" ? "true" : "false"}>
+              {/*
+                Where the orb goes while the start screen is up. The orb itself is drawn in the layer
+                behind the composer, and this is the space it is measured against — which is why it is
+                reserved rather than drawn: the same element has to be able to be in two places, and
+                only one of them can be a layout child.
+              */}
+              <div className="cc-hero-orb" ref={heroOrb} aria-hidden="true" />
+              <h1>Bạn đang nghĩ gì?</h1>
+              <p>Nói việc bạn muốn làm, hoặc bắt đầu từ một trong bốn gợi ý dưới đây.</p>
+              <div className="cc-chip-row" data-suggestion-count={SUGGESTIONS.length}>
+                {SUGGESTIONS.map((suggestion, index) => (
+                  <button
+                    key={suggestion.text}
+                    type="button"
+                    className="cc-chip"
+                    data-suggestion={suggestion.text}
+                    data-suggestion-detail={suggestion.detail}
+                    style={{ "--cc-chip-index": index } as CSSProperties}
+                    // The detail is in the accessible name as well as visible text, because a person
+                    // using a screen reader has the same question about which chips need a model.
+                    aria-label={`${suggestion.label} — ${suggestion.detail}`}
+                    onClick={() => void send(suggestion.text)}
+                  >
+                    <span className="cc-chip-label">{suggestion.label}</span>
+                    <span className="cc-chip-detail">{suggestion.detail}</span>
+                  </button>
+                ))}
+              </div>
+              <p className="cc-freshness">
+                Gợi ý đánh dấu “cần model” sẽ báo lỗi nếu node này chưa cấu hình model.
+              </p>
             </div>
-            <p className="cc-freshness">
-              Gợi ý đánh dấu “cần model” sẽ báo lỗi nếu node này chưa cấu hình model.
-            </p>
-          </div>
-        ) : (
-          <div className="cc-timeline" aria-live="polite" aria-relevant="additions">
-            {blocks.map((message, index) => (
-              <article key={`${message.messageId}-${index}`} className="cc-row" data-role={message.role}>
-                {message.role === "assistant" ? (
-                  <div className="cc-assistant">
-                    <span className="cc-avatar" aria-hidden="true" />
-                    <div style={{ display: "flex", flexDirection: "column", gap: "var(--cc-space-sm)", minWidth: 0, flex: 1 }}>
+          )}
+
+          {showTimeline && (
+            <div className="cc-timeline" aria-live="polite" aria-relevant="additions">
+              {blocks.map((message, index) => (
+                <article
+                  key={`${message.messageId}-${index}`}
+                  className="cc-row"
+                  data-role={message.role}
+                  // Staggered so a reply with several parts arrives as a sequence rather than as one
+                  // block; capped, because the tenth row should not wait a second to appear.
+                  style={{ "--cc-enter-delay": `${Math.min(index, 6) * 60}ms` } as CSSProperties}
+                >
+                  {message.role === "assistant" ? (
+                    // Full width, with the agent's mark beside it: a reply is the agent talking, and
+                    // boxing it like the user's message would make both sides look like utterances.
+                    <div className="cc-assistant">
+                      <AgentAvatar animated={index === newestAssistant} pointerTarget={shell} />
+                      <div className="cc-assistant-body">
+                        {message.blocks.map((block, blockIndex) => renderBlock(block, blockIndex, renderSurface))}
+                      </div>
+                    </div>
+                  ) : (
+                    // A bubble, because it is the user's own words coming back to them at a glance.
+                    <div className="cc-bubble" data-bubble="user">
                       {message.blocks.map((block, blockIndex) => renderBlock(block, blockIndex, renderSurface))}
                     </div>
+                  )}
+                </article>
+              ))}
+
+              {pendingUser !== undefined && (
+                <article className="cc-row" data-role="user" data-pending="true" style={{ "--cc-enter-delay": "0ms" } as CSSProperties}>
+                  <div className="cc-bubble" data-bubble="user">
+                    <Markdown text={pendingUser.text} />
                   </div>
-                ) : (
-                  message.blocks.map((block, blockIndex) => renderBlock(block, blockIndex, renderSurface))
-                )}
-              </article>
-            ))}
-          </div>
-        )}
-      </div>
+                </article>
+              )}
+
+              {/*
+                The reply while it is being written. A blinking marker until the first token arrives,
+                then the text itself: an indicator that stayed after the text started would be
+                claiming the model has not begun, which is the opposite of what is on screen.
+              */}
+              {busy && (
+                <article className="cc-row" data-role="assistant" data-live="true" style={{ "--cc-enter-delay": "0ms" } as CSSProperties}>
+                  <div className="cc-assistant">
+                    <AgentAvatar animated pointerTarget={shell} />
+                    <div className="cc-assistant-body">
+                      {live.length === 0 ? (
+                        <div className="cc-thinking" data-thinking="true" role="status" aria-label="Agent đang trả lời">
+                          <span className="cc-thinking-dot" aria-hidden="true" />
+                          <span className="cc-thinking-dot" aria-hidden="true" />
+                          <span className="cc-thinking-dot" aria-hidden="true" />
+                        </div>
+                      ) : (
+                        // Drawn in the order the turn produced it, so a tool call the model makes
+                        // halfway through a sentence appears where it happened rather than under the
+                        // whole reply — which is also where the stored message will put it.
+                        live.map((segment, index) => {
+                          const last = index === live.length - 1;
+                          if (segment.kind === "tool") {
+                            return <ToolActivityBlock key={`live-tool-${String(segment.block.toolCallId ?? index)}`} block={segment.block} />;
+                          }
+                          if (segment.kind === "reasoning") {
+                            return <ReasoningBlock key={`live-reasoning-${index}`} block={{ type: "reasoning", content: segment.text }} />;
+                          }
+                          return (
+                            <div key={`live-text-${index}`} className="cc-text" data-streaming={last ? "true" : undefined}>
+                              <Markdown text={segment.text} />
+                              {last && <span className="cc-caret" aria-hidden="true" />}
+                            </div>
+                          );
+                        })
+                      )}
+                    </div>
+                  </div>
+                </article>
+              )}
+            </div>
+          )}
+        </div>
 
       {/*
         The expanded live view of a pinned instance. This is the only place a composed surface can
@@ -801,43 +1146,81 @@ export function Conversation({
         )}
       </div>
 
-      <div className="cc-composer-wrap">
-        <form
-          className="cc-composer"
-          onSubmit={(event) => {
-            event.preventDefault();
-            void send(draft);
-          }}
-        >
-          <button type="button" className="cc-icon-btn" aria-label="Đính kèm" disabled title="Chưa hỗ trợ đính kèm">
-            +
-          </button>
-          <textarea
-            value={draft}
-            aria-label="Nhập tin nhắn"
-            placeholder="Message anything…"
-            rows={1}
-            data-composer="true"
-            onChange={(event) => setDraft(event.target.value)}
-            onKeyDown={(event) => {
-              if (event.key === "Enter" && !event.shiftKey) {
-                event.preventDefault();
-                void send(draft);
-              }
+      <div className="cc-composer-wrap" ref={composerWrap}>
+        {/* The ring, drawn under the composer so the light travels around its edge rather than across it. */}
+        <div className="cc-composer-shell">
+          <span className="cc-composer-glow" aria-hidden="true" />
+          <form
+            className="cc-composer"
+            onSubmit={(event) => {
+              event.preventDefault();
+              void send(draft);
             }}
-          />
-          <button type="button" className="cc-icon-btn" aria-label="Nhập bằng giọng nói" disabled title="Live voice cần provider account">
-            ◉
-          </button>
-          <button type="submit" className="cc-icon-btn" aria-label="Gửi" disabled={busy || draft.trim() === ""} data-send="true">
-            ↑
-          </button>
-        </form>
+          >
+            <button type="button" className="cc-icon-btn" aria-label="Đính kèm" disabled title="Chưa hỗ trợ đính kèm">
+              +
+            </button>
+            <textarea
+              ref={composerInput}
+              value={draft}
+              aria-label="Nhập tin nhắn"
+              // The typed placeholder, and the plain one as soon as there is nothing to type — which
+              // is also what a reduced-motion user sees, unchanged.
+              placeholder={placeholder === "" ? "Message anything…" : placeholder}
+              rows={1}
+              data-composer="true"
+              onChange={(event) => setDraft(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter" && !event.shiftKey) {
+                  event.preventDefault();
+                  void send(draft);
+                }
+              }}
+            />
+            <button type="button" className="cc-icon-btn" aria-label="Nhập bằng giọng nói" disabled title="Live voice cần provider account">
+              ◉
+            </button>
+            <button type="submit" className="cc-icon-btn" aria-label="Gửi" disabled={busy || draft.trim() === ""} data-send="true">
+              ↑
+            </button>
+          </form>
+        </div>
         <div className="cc-hint">
           <span>{error === undefined ? "Một hội thoại. Mọi thứ trong tầm với." : error}</span>
           <span>Enter để gửi · Shift+Enter xuống dòng</span>
         </div>
       </div>
+      </div>
+
+      {/*
+        The one orb. It is not two elements that swap places with a transition between them: it is a
+        single canvas that moves, which is what makes the move look like one, and what keeps the
+        shader's own animation continuous across the change of screen.
+      */}
+      {orbPlacement !== undefined && (
+        <div className="cc-orb-stage">
+          <div
+            className="cc-stage-orb"
+            data-docked={orbPlacement.docked ? "true" : "false"}
+            style={{
+              left: `${orbPlacement.x}px`,
+              top: `${orbPlacement.y}px`,
+              transform: `translate(-50%, -50%) scale(${orbPlacement.scale})`,
+            }}
+          >
+            <Orb
+              size={ORB_DOCK_SIZE}
+              className="cc-empty-orb"
+              label="Đang chờ bạn nói điều muốn làm"
+              // The docked orb is 720 pixels across. At two device pixels per CSS pixel that is four
+              // million fragments a frame for a soft glow, so it is drawn at a lower ratio than the small
+              // orbs, where the difference is actually visible.
+              maxPixelRatio={1.25}
+              pointerTarget={shell}
+            />
+          </div>
+        </div>
+      )}
 
       <SettingsPanel
         open={uiCheckOpen}
@@ -850,6 +1233,28 @@ export function Conversation({
       />
     </div>
   );
+}
+
+/**
+ * Read a motion duration off the document, in milliseconds.
+ *
+ * Timings belong to the stylesheet, and so does the reduced-motion override: reading the value back
+ * means an animation this file drives lasts exactly as long as the one the stylesheet would have run.
+ * A second copy of `600` in the TypeScript is how the two come apart, and the symptom is an element
+ * that finishes moving before its own fade does.
+ */
+function motionDurationMs(variable: string, fallbackMs: number): number {
+  if (typeof getComputedStyle !== "function") return fallbackMs;
+  const raw = getComputedStyle(document.documentElement).getPropertyValue(variable).trim();
+  const value = Number.parseFloat(raw);
+  if (!Number.isFinite(value)) return fallbackMs;
+  return raw.endsWith("ms") ? value : value * 1000;
+}
+
+/** The shared easing curve, by the same argument as the durations above. */
+function motionEasing(): string {
+  if (typeof getComputedStyle !== "function") return "ease";
+  return getComputedStyle(document.documentElement).getPropertyValue("--cc-motion-easing").trim() || "ease";
 }
 
 /**

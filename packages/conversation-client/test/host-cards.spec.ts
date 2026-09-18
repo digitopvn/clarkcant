@@ -6,6 +6,7 @@ import {
   CodeDiffCardBlock,
   ProjectPickerCardBlock,
   ReconnectCardBlock,
+  SystemCardBlock,
   renderBlock,
 } from "../src/blocks.tsx";
 import { findAll, nonHost, textOf } from "./block-helpers.ts";
@@ -192,5 +193,59 @@ describe("a card's actions", () => {
     expect(reasons).toHaveLength(1);
     // A limitation the user cannot read is a limitation they will report as a bug.
     expect(textOf(reasons[0]!)).toContain("chưa nối được");
+  });
+});
+
+/**
+ * The record of which model answered.
+ *
+ * It used to be a full card at the top of the reply — the largest thing on screen and the first thing
+ * read, which put bookkeeping in front of the answer. It is now one muted line at the end, and the two
+ * assertions that matter are that it is small by default and that its facts are still reachable.
+ */
+describe("the model answer note", () => {
+  const note = {
+    type: "system-card",
+    owner: "host",
+    cardId: "card_1",
+    subject: "connection",
+    title: "Trả lời bằng model",
+    status: "done",
+    detail: "Câu trả lời này do model sinh ra.",
+    fields: [
+      { label: "Provider", value: "deepseek" },
+      { label: "Model", value: "deepseek-v4-flash" },
+      { label: "Thời gian", value: "1042 ms" },
+    ],
+    cancellable: false,
+    updatedAt: "2026-09-18T00:00:00.000Z",
+  };
+
+  it("is a single collapsed line carrying the facts that identify the turn", () => {
+    const element = SystemCardBlock({ block: note });
+    expect(element?.type).toBe("details");
+    expect(element?.props as Record<string, unknown>).toMatchObject({ "data-model-note": "true" });
+    // Collapsed by default: the disclosure is closed until it is asked for, which is the whole point of
+    // moving this from a card at the top of the reply to a line at the bottom.
+    expect((element?.props as { open?: boolean }).open).toBeUndefined();
+
+    // The visible line, not the whole widget: the explanation lives inside the disclosure, so a reader
+    // who never opens it never reads it.
+    const summary = findAll(element, "className").find((node) => node.type === "summary");
+    const line = textOf(summary);
+    expect(line).toContain("Trả lời bằng model");
+    expect(line).toContain("deepseek");
+    expect(line).toContain("1042 ms");
+    expect(line).not.toContain("Câu trả lời này do model sinh ra.");
+    // And it is reachable once opened.
+    expect(textOf(element)).toContain("Câu trả lời này do model sinh ra.");
+  });
+
+  it("still says a turn failed, at full size", () => {
+    // A failure is not bookkeeping: the reason is the message, and it is not hidden behind a click.
+    const failed = { ...note, status: "blocked", title: "Không gọi được model", detail: "provider exploded" };
+    const element = SystemCardBlock({ block: failed });
+    expect(element?.type).toBe("section");
+    expect(textOf(element)).toContain("provider exploded");
   });
 });

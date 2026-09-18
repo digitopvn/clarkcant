@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { themeStylesheet } from "../src/css.ts";
-import { RADIUS, SPACE, TYPE_SCALE } from "../src/tokens.ts";
+import { MOTION, MOTION_REDUCED, RADIUS, SPACE, TYPE_SCALE } from "../src/tokens.ts";
 
 /**
  * The generated stylesheet.
@@ -58,5 +58,25 @@ describe("the generated stylesheet", () => {
     expect(CSS).toContain("--cc-composer-max-width: 840px;");
     expect(CSS).toContain("--cc-composer-min-height: 70px;");
     expect(CSS).toContain("--cc-topbar-height: 62px;");
+  });
+
+  it("emits every motion token, and a reduced value for each", () => {
+    // The reduced block only overrides the names it declares, so a token that is missing there
+    // does not lose its animation — it keeps the full-motion one. That is the failure this
+    // asserts against, and it is invisible from either object on its own.
+    for (const name of Object.keys(MOTION)) {
+      expect(CSS, `${name} is not emitted`).toContain(`--cc-motion-${name}: ${MOTION[name as keyof typeof MOTION]};`);
+      expect(
+        Object.keys(MOTION_REDUCED),
+        `${name} has no reduced counterpart, so it keeps its full-motion value for a reduced-motion user`,
+      ).toContain(name);
+    }
+    // Names rather than a string test: `bounce` is an easing too, and guessing which keys are
+    // durations from their spelling is how a duration slips through as a curve.
+    const curves = new Set(["easing", "bounce"]);
+    for (const [name, value] of Object.entries(MOTION_REDUCED)) {
+      if (!curves.has(name)) expect(value, `${name} still moves under reduced motion`).toBe("0ms");
+      else expect(value, `${name} must stay a timing function`).toBeTypeOf("string");
+    }
   });
 });

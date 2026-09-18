@@ -36,7 +36,70 @@ export interface OrbOptions {
   sheen?: number;
   /** Animation rate. */
   speed?: number;
+  /**
+   * Ceiling on the drawing buffer's pixel ratio.
+   *
+   * Two by default, because past that the orb is drawn for pixels nobody can see. A very large orb can
+   * afford to be lower still: it is a soft glow, and doubling the buffer on a 720 pixel orb quadruples
+   * the fragments the shader runs per frame for a difference nobody can point at.
+   */
+  maxPixelRatio?: number;
   palette?: Partial<Record<keyof typeof ORB_PALETTE, readonly number[]>>;
+}
+
+/**
+ * The spring constants of the shell.
+ *
+ * Underdamped on purpose: the damping ratio is below one, which is what makes it overshoot and ring
+ * rather than approach its rest shape from one side. Stiff enough to answer a flick immediately, soft
+ * enough that the ringing is visible as jelly rather than as a glitch.
+ */
+const SPRING_STIFFNESS = 90;
+const SPRING_DAMPING = 7.5;
+
+export interface OrbPointerSample {
+  /** Pointer position in the shader's own space: 1 is half the canvas, y pointing up. */
+  x: number;
+  y: number;
+  /** 1 while the pointer is over the orb, fading to 0 well outside it. */
+  strength: number;
+}
+
+/** The part of a DOM rect this needs, so a test can pass four numbers instead of a DOM. */
+export interface OrbPointerRect {
+  left: number;
+  top: number;
+  width: number;
+  height: number;
+}
+
+/**
+ * Turn a pointer position on the page into the orb's own coordinates.
+ *
+ * Exported because it is the one part of the interaction that is pure arithmetic, and the arithmetic
+ * has two traps in it that are invisible by reading the shader: the fragment coordinate's y points
+ * up while the page's points down, and x is scaled by the aspect ratio, so a pointer over a wide
+ * canvas is not at the x the shader would read from an unscaled value. Both mistakes show up only as
+ * a glow that lights the wrong part of the orb — or the opposite side of it.
+ */
+export function orbPointerFromClient(input: OrbPointerRect & { clientX: number; clientY: number }): OrbPointerSample {
+  // Guarded against a zero-sized canvas, which is what an orb inside a collapsed container reports.
+  const width = Math.max(input.width, 1);
+  const height = Math.max(input.height, 1);
+  const u = (input.clientX - input.left) / width;
+  const v = 1 - (input.clientY - input.top) / height;
+  const aspect = width / height;
+
+  const dx = u * width - width / 2;
+  const dy = input.clientY - input.top - height / 2;
+  const distance = Math.hypot(dx, dy);
+  // The radius of the drawn sphere is `ORB_SHAPE.radius` of the half-height, not the whole element,
+  // so the reaction starts before the pointer reaches the visible silhouette and fades out well
+  // beyond it: light arriving from nearby is what this is, not a hover state on a box.
+  const radius = (Math.min(width, height) / 2) * ORB_SHAPE.radius;
+  const strength = Math.max(0, Math.min(1, (radius * 2.4 - distance) / (radius * 1.6)));
+
+  return { x: (u - 0.5) * 2 * aspect, y: (v - 0.5) * 2, strength };
 }
 
 export interface OrbRenderer {
@@ -44,6 +107,14 @@ export interface OrbRenderer {
   frame(timeMs: number): void;
   /** Match the drawing buffer to the element's size and pixel ratio. */
   resize(): void;
+  /**
+   * Where the pointer is and how strongly it is acting on the orb.
+   *
+   * Called once per frame rather than on every pointer event, so the smoothing below is a function
+   * of time and not of how often the mouse reports. A renderer that never receives one draws at
+   * rest, which is what a reduced-motion single frame and a touch device both want.
+   */
+  setPointer(sample: OrbPointerSample): void;
   dispose(): void;
 }
 
@@ -70,6 +141,9 @@ const UNIFORM_NAMES = [
   "u_colorB",
   "u_colorC",
   "u_colorD",
+  "u_pointer",
+  "u_pointerStrength",
+  "u_wobble",
 ] as const;
 
 type UniformName = (typeof UNIFORM_NAMES)[number];
@@ -186,6 +260,23 @@ export function createOrbRenderer(
   let disposed = false;
   let contextLost = false;
 
+  /*
+   * Pointer state, all of it per renderer rather than per option.
+   *
+   * `strength` is eased and `wobble` is driven by how fast the pointer travelled since the previous
+   * frame, with a fast attack and a slow release. That asymmetry is the whole behaviour: a bubble
+   * answers a moving finger immediately and keeps ringing briefly after it stops, while a symmetric
+   * filter would look like a value catching up with a target.
+   */
+  const pointer = { x: 0, y: 0 };
+  let pointerTargetStrength = 0;
+  let pointerStrength = 0;
+  let wobble = 0;
+  let wobbleVelocity = 0;
+  let lastPointerX = 0;
+  let lastPointerY = 0;
+  let lastFrameMs: number | undefined;
+
   const onContextLost = (event: Event): void => {
     // Prevented so the browser will restore the context; without this the canvas stays blank.
     event.preventDefault();
@@ -203,6 +294,45 @@ export function createOrbRenderer(
 
   function draw(timeMs: number): void {
     if (disposed || contextLost) return;
+
+    // Clamped: a frame arriving after the tab was hidden for a minute is not a minute of motion,
+    // and folding it in would spike the wobble the moment the user came back.
+    const dt = lastFrameMs === undefined ? 0 : Math.min(Math.max((timeMs - lastFrameMs) / 1000, 0), 0.1);
+    lastFrameMs = timeMs;
+
+    const strengthEase = dt === 0 ? 1 : 1 - Math.exp(-dt / 0.10);
+    pointerStrength += (pointerTargetStrength - pointerStrength) * strengthEase;
+
+    const travelled = Math.hypot(pointer.x - lastPointerX, pointer.y - lastPointerY);
+    lastPointerX = pointer.x;
+    lastPointerY = pointer.y;
+    // In orb units per second: crossing the whole orb in a fifth of a second is 10. Deliberately not
+    // called `speed`, which is the animation rate this renderer was built with: shadowing it here
+    // would make the shader's clock follow the pointer, and the orb would stand still whenever the
+    // mouse did.
+    const travelSpeed = dt > 0 ? travelled / dt : 0;
+
+    /*
+     * The shell is a spring, not a filter.
+     *
+     * A value eased towards a target approaches it and stops, which is what a dent does. Jelly overshoots
+     * and rings back the other way, and the difference between those two is entirely in whether the state
+     * has a velocity: this one is integrated, underdamped, and pulled towards a target that is how fast
+     * the pointer is moving right now. Stillness lets it settle on its own, so the ball comes to rest
+     * without anything having to decide that it has.
+     *
+     * The target is kept below the clamp on purpose. A spring driven to its limit has nowhere to overshoot
+     * to, and the overshoot — the part that goes past the rest shape and comes back — is the jelly.
+     */
+    const target = Math.min(0.6, travelSpeed * 0.10) * pointerTargetStrength;
+    wobbleVelocity += ((target - wobble) * SPRING_STIFFNESS - wobbleVelocity * SPRING_DAMPING) * dt;
+    wobble += wobbleVelocity * dt;
+    // Clamped so a fast flick cannot turn the orb into something unrecognisable, and the velocity is
+    // dropped with it so it does not bounce off the limit.
+    if (wobble > 1 || wobble < -1) {
+      wobble = Math.sign(wobble);
+      wobbleVelocity = 0;
+    }
 
     gl.viewport(0, 0, canvas.width, canvas.height);
     gl.clearColor(0, 0, 0, 0);
@@ -223,6 +353,9 @@ export function createOrbRenderer(
     gl.uniform1f(uniforms.u_chromatic ?? null, shape.chromatic);
     gl.uniform1f(uniforms.u_glow ?? null, shape.glow);
     gl.uniform1f(uniforms.u_sheen ?? null, shape.sheen);
+    gl.uniform2f(uniforms.u_pointer ?? null, pointer.x, pointer.y);
+    gl.uniform1f(uniforms.u_pointerStrength ?? null, pointerStrength);
+    gl.uniform1f(uniforms.u_wobble ?? null, wobble);
 
     setVector3("u_canvas", palette.canvas);
     setVector3("u_glowColor", palette.glowColor);
@@ -243,12 +376,18 @@ export function createOrbRenderer(
     ok: true,
     renderer: {
       frame: draw,
+      setPointer(sample: OrbPointerSample): void {
+        if (disposed) return;
+        pointer.x = sample.x;
+        pointer.y = sample.y;
+        pointerTargetStrength = Math.max(0, Math.min(1, sample.strength));
+      },
       resize(): void {
         if (disposed) return;
         const rect = canvas.getBoundingClientRect();
-        // Capped at 2: past that the orb is being drawn for pixels nobody can see, and the glow
-        // is soft enough that the extra samples change nothing.
-        const ratio = Math.min(window.devicePixelRatio || 1, 2);
+        // Capped, and the cap is an option because the orb's size is not fixed: the docked orb is an
+        // order of magnitude larger than the one in the header, and the same ratio is wasteful there.
+        const ratio = Math.min(window.devicePixelRatio || 1, options.maxPixelRatio ?? 2);
         const width = Math.max(1, Math.round(rect.width * ratio));
         const height = Math.max(1, Math.round(rect.height * ratio));
         if (canvas.width !== width || canvas.height !== height) {

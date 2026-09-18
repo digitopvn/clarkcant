@@ -28,7 +28,7 @@ import {
   type WorkerEvent,
 } from "@clarkcant/pi-adapter";
 
-import type { ModelSegment, ModelTurnInput, ModelTurnReply } from "@clarkcant/core";
+import type { ModelSegment, ModelTurnEvent, ModelTurnInput, ModelTurnReply } from "@clarkcant/core";
 
 /**
  * One view a model may ask for.
@@ -89,17 +89,28 @@ interface Turn {
   sessionId: string;
   /** Text deltas since the last block, not yet turned into a segment. */
   pending: string[];
+  /** Reasoning deltas since the last block. Flushed into a segment the same way text is. */
+  reasoning: string[];
   /** Finished segments, in the order the model produced them. */
   segments: ModelSegment[];
   /** The message this turn is being written into. Set before the prompt. */
   messageId?: string;
+  /**
+   * Where events go while the turn is still running, when somebody is watching.
+   *
+   * Held per turn rather than per session because it belongs to the request that is waiting, and a
+   * request that has ended must not keep receiving events: the session outlives the stream.
+   */
+  onEvent: ((event: ModelTurnEvent) => void) | undefined;
+  /** Numbers the tool calls this turn made, so a start and an end can name the same widget. */
+  toolSequence: number;
   unsubscribe: () => void;
   /** Aborted when the turn is stopped, so an in-flight build knows not to commit. */
   abort: AbortController;
   conversationId: string;
 }
 
-function isTextDelta(event: WorkerEvent): event is WorkerEvent & { delta: string } {
+function isTextDelta(event: WorkerEvent): event is WorkerEvent & { type: "text-delta"; delta: string } {
   return event.type === "text-delta";
 }
 
@@ -115,6 +126,90 @@ function flushText(turn: Turn): void {
   turn.pending.length = 0;
   if (text.trim() === "") return;
   turn.segments.push({ kind: "text", text });
+}
+
+/**
+ * Move accumulated reasoning into a segment, and note how long it took.
+ *
+ * Reasoning is kept apart from the reply rather than folded into it. It is what the model said to
+ * itself, and an interface that prints the two together is showing the user text the model did not
+ * address to them.
+ */
+function flushReasoning(turn: Turn): void {
+  if (turn.reasoning.length === 0) return;
+  const content = turn.reasoning.join("");
+  turn.reasoning.length = 0;
+  if (content.trim() === "") return;
+  turn.segments.push({
+    kind: "block",
+    block: {
+      type: "reasoning",
+      content,
+      startedAt: new Date().toISOString() as Instant,
+      endedAt: new Date().toISOString() as Instant,
+    },
+  });
+}
+
+/**
+ * Wrap a tool so the transcript records what it was asked and what it answered.
+ *
+ * The adapter reports that a tool ran, but not its arguments or its result — which is most of what a
+ * reader wants when they open a call afterwards. Wrapping is the only place that has all three, and it
+ * is why tool activity is captured here rather than from the adapter's own events: forwarding both
+ * would draw every call twice.
+ */
+function withActivity(turn: Turn, tool: ToolDefinition): ToolDefinition {
+  return {
+    ...tool,
+    execute: async (params: Record<string, unknown>): Promise<{ text: string }> => {
+      turn.toolSequence += 1;
+      const toolCallId = `${tool.name}-${turn.toolSequence}`;
+      const startedAt = new Date().toISOString() as Instant;
+      // Text written before the call belongs above it, and the call belongs above whatever the model
+      // says next: flushing here is what keeps the transcript in the order the turn actually ran.
+      flushText(turn);
+      flushReasoning(turn);
+      turn.onEvent?.({ type: "tool-start", toolCallId, name: tool.name, label: tool.label, args: params });
+
+      const record = (status: "done" | "failed", result: string): MessageBlock => ({
+        type: "tool-activity",
+        toolCallId,
+        name: tool.name,
+        label: tool.label,
+        status,
+        args: params,
+        result: result.slice(0, 20_000),
+        ...(pathOf(params) === undefined ? {} : { path: pathOf(params) as string }),
+        startedAt,
+        endedAt: new Date().toISOString() as Instant,
+      });
+
+      try {
+        const answer = await tool.execute(params);
+        turn.onEvent?.({ type: "tool-end", toolCallId, status: "done", result: answer.text });
+        turn.segments.push({ kind: "block", block: record("done", answer.text) });
+        return answer;
+      } catch (cause) {
+        // Returned rather than re-thrown, which is what `show_view` already does by hand: the model
+        // gets the reason in the same turn and can correct itself, instead of the turn failing with
+        // nothing said. The transcript records it as a failure either way.
+        const message = cause instanceof Error ? cause.message : String(cause);
+        turn.onEvent?.({ type: "tool-end", toolCallId, status: "failed", result: message });
+        turn.segments.push({ kind: "block", block: record("failed", message) });
+        return { text: `${tool.name} lỗi: ${message}` };
+      }
+    },
+  };
+}
+
+/** The path a call touched, when one of its arguments is one. */
+function pathOf(params: Record<string, unknown>): string | undefined {
+  for (const key of ["path", "file", "projectPath", "directory", "cwd"]) {
+    const value = params[key];
+    if (typeof value === "string" && value !== "") return value.slice(0, 1000);
+  }
+  return undefined;
 }
 
 /** The JSON Schema the model sees. Deliberately carries no field it could use to claim state. */
@@ -305,7 +400,10 @@ export async function createModelTurn(options: {
     const turn: Turn = {
       sessionId: "",
       pending: [],
+      reasoning: [],
       segments: [],
+      onEvent: undefined,
+      toolSequence: 0,
       unsubscribe: () => {},
       abort: new AbortController(),
       conversationId,
@@ -315,7 +413,7 @@ export async function createModelTurn(options: {
     const customTools = [
       ...(views.length === 0 ? [] : [showViewTool(turn, principal, views, viewById, datasetRefs)]),
       ...readExtraTools(),
-    ];
+    ].map((tool) => withActivity(turn, tool));
 
     const handle = await adapter.createWorkerSession({
       // The brief is per conversation rather than per message, so the model keeps the thread
@@ -332,7 +430,21 @@ export async function createModelTurn(options: {
 
     turn.sessionId = handle.sessionId;
     turn.unsubscribe = adapter.subscribe(handle.sessionId, (event) => {
-      if (isTextDelta(event)) turn.pending.push(event.delta);
+      if (isTextDelta(event)) {
+        // Both, and in this order: the buffer is what the stored message is built from, and the
+        // callback is what the reader sees now. Dropping the buffer to stream would lose the text a
+        // caller that is not watching never receives.
+        // Reasoning already in hand is closed first, so the two never interleave inside one block.
+        flushReasoning(turn);
+        turn.pending.push(event.delta);
+        turn.onEvent?.({ type: "text-delta", text: event.delta });
+        return;
+      }
+      if (event.type === "thinking-delta") {
+        flushText(turn);
+        turn.reasoning.push(event.delta);
+        turn.onEvent?.({ type: "reasoning-delta", text: event.delta });
+      }
     });
 
     turns.set(conversationId, turn);
@@ -356,8 +468,11 @@ export async function createModelTurn(options: {
       // Cleared before the prompt rather than after, so a turn that throws still leaves the
       // buffer empty for the next one instead of prepending the previous reply to it.
       turn.pending.length = 0;
+      turn.reasoning.length = 0;
       turn.segments.length = 0;
       turn.messageId = input.messageId;
+      turn.onEvent = input.onEvent;
+      turn.toolSequence = 0;
       turn.abort = new AbortController();
 
       // The adapter stops a turn that overruns its brief, but this is the layer holding an open
@@ -381,10 +496,14 @@ export async function createModelTurn(options: {
         await Promise.race([adapter.prompt(turn.sessionId, input.text), deadline]);
       } finally {
         if (timer !== undefined) clearTimeout(timer);
+        // Detached before the segments are read, so an event arriving after the race resolved cannot
+        // be delivered to a reader that has already been told the answer is complete.
+        turn.onEvent = undefined;
       }
 
-      // Trailing prose after the last view.
+      // Trailing prose after the last view, and reasoning that never got closed by a later block.
       flushText(turn);
+      flushReasoning(turn);
       const segments = [...turn.segments];
       const elapsedMs = Date.now() - startedAt;
       const text = segments

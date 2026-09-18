@@ -16,6 +16,7 @@ import type { MessageBlock } from "@clarkcant/contracts";
 import { applyEnvFile } from "@clarkcant/pi-adapter";
 
 import { handleRequest, type GatewayResponse } from "./gateway.ts";
+import { machineRoots } from "./fs-search.ts";
 import { attachVoiceGateway } from "./voice-session.ts";
 import { FixtureLiveAdapter } from "./voice-fixture.ts";
 import { SAMPLE_DATASET } from "@clarkcant/data-canvas/sample";
@@ -232,6 +233,12 @@ async function main(): Promise<void> {
   // registered at all, which is why this is reported rather than left to be discovered: a node
   // that cannot show anything should say so once at startup, not fail a turn later.
   viewCatalog.push(...buildViewCatalog(services.conductor, services.compose));
+  // Said out loud because it is a capability with a privacy shape: the model may search this machine's
+  // files, the walk is read-only and bounded, and the lines it finds go to the provider as the tool's
+  // result. An operator who did not want that should be able to learn it from the startup line.
+  process.stderr.write(
+    `filesystem search: read-only over ${machineRoots().join(", ")} — no index is built; matches are sent to the model provider\n`,
+  );
   process.stderr.write(
     viewCatalog.length === 0
       ? "no widget definitions on this node; the model can answer in words only\n"
@@ -296,6 +303,51 @@ async function main(): Promise<void> {
         "access-control-allow-headers": "authorization, content-type",
         "access-control-allow-methods": "GET, POST, PATCH, DELETE, OPTIONS",
       };
+
+      // A body that is written over time: the status line and headers go out now, and the handler
+      // sends the rest as it produces it. The turn keeps running even if the client leaves, because
+      // the answer is stored either way — stopping it would discard work the user paid for because
+      // they closed a tab.
+      if (result.stream !== undefined) {
+        headers["content-type"] = result.stream.contentType;
+        // `no-transform` as well as `no-cache`: the point of this response is its timing, so an
+        // intermediary that may buffer and re-chunk it is being told not to.
+        headers["cache-control"] = "no-cache, no-transform";
+        response.writeHead(result.status, headers);
+        response.flushHeaders();
+
+        // `writableFinished` is what distinguishes a finished response from a client that hung up:
+        // the 'close' event fires for both, and only the second one means there is nobody to write
+        // to. Without this check the flag would latch on the first completed write and the stream
+        // would silently stop reporting.
+        let clientGone = false;
+        response.on("close", () => {
+          if (!response.writableFinished) clientGone = true;
+        });
+        // A write to a socket the peer has dropped reports itself here rather than throwing, and an
+        // unhandled 'error' on a response stream takes the process with it.
+        response.on("error", () => {
+          clientGone = true;
+        });
+
+        // A comment frame every fifteen seconds. A stream that is waiting on a model looks like an
+        // idle connection to anything between here and the browser, and an idle connection is what
+        // gets closed; a comment is valid SSE that the parser ignores.
+        const keepAlive = setInterval(() => {
+          if (!clientGone) response.write(": keep-alive\n\n");
+        }, 15_000);
+        keepAlive.unref();
+
+        try {
+          await result.stream.run((chunk) => {
+            if (!clientGone) response.write(chunk);
+          });
+        } finally {
+          clearInterval(keepAlive);
+          response.end();
+        }
+        return;
+      }
 
       // Imported images are served as their own bytes under the content type the host verified
       // from the file's magic bytes, rather than wrapped in a JSON envelope the client would have
