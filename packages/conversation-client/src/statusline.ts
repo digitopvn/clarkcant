@@ -10,12 +10,28 @@ export type TurnMetrics = Extract<MessageBlock, { type: "system-card" }>["metric
  * card that carried numbers. Cards are read newest first because a turn that reported nothing - a scripted
  * sample, a capability - must not wipe what the last real turn said.
  */
-export function latestTurnMetrics(blocks: readonly MessageBlock[]): TurnMetrics | undefined {
-	for (let index = blocks.length - 1; index >= 0; index -= 1) {
-		const block = blocks[index];
-		if (block?.type === "system-card" && block.metrics !== undefined) return block.metrics;
+export function latestTurnMetrics(messages: readonly { blocks?: readonly unknown[] }[]): TurnMetrics | undefined {
+	for (let index = messages.length - 1; index >= 0; index -= 1) {
+		const blocks = messages[index]?.blocks ?? [];
+		for (let inner = blocks.length - 1; inner >= 0; inner -= 1) {
+			const block = blocks[inner];
+			if (isCardWithMetrics(block)) return block.metrics;
+		}
 	}
 	return undefined;
+}
+
+/**
+ * Whether a block is a status card that carried numbers.
+ *
+ * The transcript's blocks arrive as plain records - they crossed a wire and were validated against the
+ * contract on the way in - so this narrows by shape rather than casting: a cast would turn a card of the
+ * wrong shape into a statusline of the wrong numbers, and nothing would say so.
+ */
+function isCardWithMetrics(block: unknown): block is { type: "system-card"; metrics: NonNullable<TurnMetrics> } {
+	if (typeof block !== "object" || block === null) return false;
+	const candidate = block as { type?: unknown; metrics?: unknown };
+	return candidate.type === "system-card" && typeof candidate.metrics === "object" && candidate.metrics !== null;
 }
 
 /** Tokens at a glance: nobody reads six digits when four will do. */

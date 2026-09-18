@@ -522,6 +522,17 @@ button.cc-badge:hover, .cc-badge[role="button"]:hover { color: var(--cc-text); b
 }
 
 /*
+ * The statusline reads as data rather than as prose, because it is data: a tabular figure, a separator, and
+ * no sentence. Monospaced numbers keep the line from shifting as they change, and the gaps are wide enough
+ * that two figures never read as one.
+ */
+.cc-hint[data-statusline="true"] {
+  display: flex; flex-wrap: wrap; gap: var(--cc-space-md);
+  font-variant-numeric: tabular-nums; letter-spacing: 0.01em;
+}
+.cc-statusline-part { white-space: nowrap; }
+
+/*
  * Task cards.
  *
  * The step marker is a glyph and a status attribute, not a coloured dot: the state has to

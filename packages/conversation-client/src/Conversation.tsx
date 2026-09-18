@@ -21,6 +21,7 @@ import { AgentAvatar } from "./AgentAvatar.tsx";
 import { ReasoningBlock, ToolActivityBlock, type BlockActions } from "./blocks.tsx";
 import { composerTextareaHeight } from "./composer-height.ts";
 import { followsBottom } from "./follow-bottom.ts";
+import { latestTurnMetrics, statuslineParts } from "./statusline.ts";
 import { applyLiveEvent, type LiveSegment } from "./live-reply.ts";
 import { Markdown } from "./markdown.tsx";
 import { Orb } from "./Orb.tsx";
@@ -1133,9 +1134,24 @@ export function Conversation({
             </button>
           </form>
         </div>
-        <div className="cc-hint">
-          <span>{error === undefined ? "Một hội thoại. Mọi thứ trong tầm với." : error}</span>
-          <span>Enter để gửi · Shift+Enter xuống dòng</span>
+        {/*
+          A statusline, not a motto.
+
+          This line used to hold a slogan and a keyboard hint, in the one place a harness reports itself: what
+          the session has spent, how full its context is, how much came back from the cache, what it has cost.
+          The numbers are the newest turn's, so a turn that reported nothing cannot wipe what the last real
+          one said.
+        */}
+        <div className="cc-hint" data-statusline={error === undefined ? "true" : "false"}>
+          {error === undefined ? (
+            statuslineParts({ metrics: latestTurnMetrics(timeline?.messages ?? []) }).map((part) => (
+              <span key={part} className="cc-statusline-part">
+                {part}
+              </span>
+            ))
+          ) : (
+            <span>{error}</span>
+          )}
         </div>
       </div>
       </div>
