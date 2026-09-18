@@ -19,8 +19,10 @@ import { handleRequest, decideApprovalForNode, type GatewayResponse } from "./ga
 import { machineRoots } from "./fs-search.ts";
 import { resolveProject, refreshProjectIndex } from "./project-finder.ts";
 import { commandDigest } from "./run-command.ts";
-import { handleUserMessage, requestApproval, setPreference, type CoordinationDeps } from "@clarkcant/core";
-import { messagesSince } from "@clarkcant/storage";
+import { captureSnapshot, createInstance, handleUserMessage, requestApproval, setPreference, type CoordinationDeps } from "@clarkcant/core";
+import { GALLERY } from "@clarkcant/data-canvas";
+import { definitionDigest } from "@clarkcant/widget-host";
+import { listLocalImages, messagesSince } from "@clarkcant/storage";
 import { attachVoiceGateway, VOICE_ANSWER_NOTE } from "./voice-session.ts";
 import { indexMessages, textOfMessage } from "./session-search.ts";
 import { FixtureLiveAdapter } from "./voice-fixture.ts";
@@ -178,6 +180,43 @@ async function main(): Promise<void> {
     if (/audio giả lập|thiết bị micro/i.test(input.text)) {
       const reply = "Fixture đã nhận câu bạn nói và trả lời qua hội thoại, không phải model thật.";
       return { text: reply, block: { type: "text", format: "plain", content: reply, streaming: false } };
+    }
+
+    /*
+     * Pictures this node holds, as a gallery.
+     *
+     * The picture widgets draw references the host minted, so the only way to reach them without a provider
+     * account is a fixture that reads what this node actually has. The browser suite uploads a real image and
+     * then asks for this, which is the difference between a widget that was drawn and one that was mentioned:
+     * a fixture carrying its own pictures would prove nothing about the resolver behind them.
+     */
+    if (/thư viện ảnh|thu vien anh|gallery/i.test(input.text)) {
+      const images = listLocalImages(services.runtime.db, input.principal.principalId, 12);
+      if (images.length === 0) {
+        const empty = "Fixture: node này chưa có ảnh nào để dựng thư viện.";
+        return { text: empty, block: { type: "text", format: "plain", content: empty, streaming: false } };
+      }
+      const instance = createInstance(services.conductor, {
+        definition: GALLERY,
+        packageDigest: definitionDigest(GALLERY),
+        ownerPrincipalId: input.principal.principalId,
+        props: {
+          imageRefs: images.map((image) => image.imageId),
+          alts: images.map((image) => image.altText),
+          title: "Thư viện ảnh (fixture)",
+        },
+      });
+      const snapshot = captureSnapshot(services.conductor, {
+        messageId: input.messageId,
+        instance,
+        textAlternative: GALLERY.textFallback,
+        presentationRef: `catalog:${GALLERY.id}`,
+      });
+      const reply = "Fixture: thư viện ảnh dựng từ những ảnh node này đang giữ, không phải model thật.";
+      return {
+        text: reply,
+        block: { type: "surface", definitionRef: { id: GALLERY.id, version: GALLERY.version }, snapshot },
+      };
     }
 
     if (!/tổng quan|tong quan|overview/i.test(input.text)) return undefined;

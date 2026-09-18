@@ -565,9 +565,29 @@ export function Conversation({
     }
   }, [client, composedSnapshots, conversationId, snapshots]);
 
-  /* Every image an inline composed surface asks for, from the snapshots it will render. */
+  /**
+   * Every picture any surface asks for, from the props it asks in.
+   *
+   * A single reference, a list of them, or the poster beside a video: a renderer cannot fetch, it can only draw
+   * a URL it was handed, so whatever shape the request takes has to be recognised here or the widget shows its
+   * text alternative while the picture sits on the node unread.
+   */
   const inlineImageRefs = useMemo(() => {
     const refs = new Set<string>();
+    const collect = (value: unknown): void => {
+      if (typeof value === "string") {
+        if (value !== "") refs.add(value);
+        return;
+      }
+      if (Array.isArray(value)) for (const entry of value) collect(entry);
+    };
+    for (const instance of timeline?.instances ?? []) {
+      const props = (instance as { props?: Record<string, unknown> }).props ?? {};
+      collect(props.imageRef);
+      collect(props.imageRefs);
+      collect(props.videoRef);
+      collect(props.posterRef);
+    }
     for (const entry of composedSnapshots) {
       for (const section of snapshots[entry.snapshotId]?.sections ?? []) {
         const ref = section.props.imageRef;
@@ -575,7 +595,7 @@ export function Conversation({
       }
     }
     return [...refs].sort();
-  }, [composedSnapshots, snapshots]);
+  }, [composedSnapshots, snapshots, timeline]);
 
   const imageUrl = useImageUrls(client, inlineImageRefs);
 
@@ -822,6 +842,11 @@ export function Conversation({
             definitionId={definitionId}
             props={instance.props}
             dataset={dataset}
+            // The picture resolver, which used to reach only the composed surface. A widget that draws a picture
+            // cannot fetch one: it can only draw a URL it was handed, so leaving this out made every picture
+            // widget - the imported image included - show its text alternative while the bytes sat unread on the
+            // node.
+            imageUrl={imageUrl}
             onAction={(action) => {
               // View actions only for now: an action that would cause an effect goes through
               // the approval route, and there is no code path here that bypasses it.
