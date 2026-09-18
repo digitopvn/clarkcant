@@ -291,37 +291,6 @@ export async function handleRequest(deps: GatewayDeps, request: GatewayRequest):
    * "what is running, and did the last one finish". Newest first, and empty when nothing has been started - an
    * invented placeholder entry would make the count meaningless.
    */
-  /**
-   * Starts one request in a worker of its own, and reports it when the worker settles.
-   *
-   * One implementation for the two ways this happens: the decider choosing background for a message sent mid-turn, and
-   * a person asking for one from a selection. The registry is written before the worker starts rather than after, so the
-   * count is right while somebody is looking at it, and a failure comes back into the conversation as a message too -
-   * background work that fails in silence is worse than work that never started.
-   */
-  function startBackgroundWork(conversationId: string, text: string): { sessionId: string } | { refusal: string } {
-    const control = services.turnControl;
-    if (control === undefined) return { refusal: "node này không có model để chạy việc nền" };
-
-    const sessionId = services.conductor.newId("bg");
-    nodeBackgroundSessions.start({ sessionId, title: text.slice(0, 120), at: at() as never });
-    void (async () => {
-      try {
-        const said = await control.runInBackground({ conversationId, principal, text });
-        nodeBackgroundSessions.finish({ sessionId, status: "done", at: at() as never });
-        if (said !== "") appendHostReply(services, { conversationId, text: said, at: at() as never });
-      } catch (cause) {
-        nodeBackgroundSessions.finish({ sessionId, status: "failed", at: at() as never });
-        appendHostReply(services, {
-          conversationId,
-          text: `Việc nền không xong: ${cause instanceof Error ? cause.message : String(cause)}`,
-          at: at() as never,
-        });
-      }
-    })();
-    return { sessionId };
-  }
-
   /*
    * One request, run somewhere else, asked for directly.
    *
@@ -336,7 +305,7 @@ export async function handleRequest(deps: GatewayDeps, request: GatewayRequest):
     if (text === "" || requested === "") {
       return fail(400, "INVALID_SCHEMA", "a background request needs a conversationId and a non-empty text");
     }
-    const started = startBackgroundWork(requested, text);
+    const started = startBackgroundWork(services, principal, at, requested, text);
     if ("refusal" in started) return fail(409, "BACKGROUND_UNAVAILABLE", started.refusal);
     return json(202, { accepted: true, sessionId: started.sessionId });
   }
@@ -401,6 +370,47 @@ function blocksOfConversation(services: NodeServices, conversationId: string): R
  * paragraph. `text` stays because most host replies are one sentence, and a caller that has to build a
  * text block by hand is a caller that will eventually build it wrong.
  */
+/**
+ * Starts one request in a worker of its own, and reports it when the worker settles.
+ *
+ * One implementation for the two ways this happens: the decider choosing background for a message sent mid-turn, and a
+ * person asking for one from a selection. At module scope rather than inside the request handler, because the handler
+ * has blocks that do not contain each other and a declaration in one of them is invisible from another - which is what
+ * a first attempt at this did.
+ *
+ * The registry is written before the worker starts rather than after, so the count is right while somebody is looking at
+ * it, and a failure comes back into the conversation as a message too: background work that fails in silence is worse
+ * than work that never started.
+ */
+function startBackgroundWork(
+  services: NodeServices,
+  principal: Principal,
+  at: () => Instant,
+  conversationId: string,
+  text: string,
+): { sessionId: string } | { refusal: string } {
+  const control = services.turnControl;
+  if (control === undefined) return { refusal: "node này không có model để chạy việc nền" };
+
+  const sessionId = services.conductor.newId("bg");
+  nodeBackgroundSessions.start({ sessionId, title: text.slice(0, 120), at: at() });
+  void (async () => {
+    try {
+      const said = await control.runInBackground({ conversationId, principal, text });
+      nodeBackgroundSessions.finish({ sessionId, status: "done", at: at() });
+      if (said !== "") appendHostReply(services, { conversationId, text: said, at: at() });
+    } catch (cause) {
+      nodeBackgroundSessions.finish({ sessionId, status: "failed", at: at() });
+      appendHostReply(services, {
+        conversationId,
+        text: `Việc nền không xong: ${cause instanceof Error ? cause.message : String(cause)}`,
+        at: at(),
+      });
+    }
+  })();
+  return { sessionId };
+}
+
 function appendHostReply(
   services: NodeServices,
   input: { conversationId: string; text?: string; blocks?: MessageBlock[]; at: Instant },
@@ -860,7 +870,7 @@ async function handleConversationRoutes(
         });
       }
       if (action === "background") {
-        const started = startBackgroundWork(conversationId, text);
+        const started = startBackgroundWork(services, principal, at, conversationId, text);
         // No worker to run it in: the message is what the person asked for, so it becomes the turn instead.
         if ("refusal" in started) {
           control.interrupt(conversationId);
