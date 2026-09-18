@@ -373,8 +373,11 @@ export class GatewayClient {
     return this.#call("GET", "/conversations");
   }
 
-  sendMessage(conversationId: string, text: string): Promise<SendMessageResult> {
-    return this.#call("POST", `/conversations/${conversationId}/messages`, { text });
+  sendMessage(conversationId: string, text: string, options: { demo?: boolean } = {}): Promise<SendMessageResult> {
+    return this.#call("POST", `/conversations/${conversationId}/messages`, {
+      text,
+      ...(options.demo === true ? { demo: true } : {}),
+    });
   }
 
   /**
@@ -393,6 +396,7 @@ export class GatewayClient {
     conversationId: string,
     text: string,
     listeners: { onEvent: (event: ReplyStreamEvent) => void; onDone: (result: SendMessageResult) => void; signal?: AbortSignal },
+    options: { demo?: boolean } = {},
   ): Promise<void> {
     const response = await this.#fetch(`${this.#baseUrl}/conversations/${conversationId}/messages/stream`, {
       method: "POST",
@@ -401,7 +405,7 @@ export class GatewayClient {
         "content-type": "application/json",
         accept: "text/event-stream",
       },
-      body: JSON.stringify({ text }),
+      body: JSON.stringify({ text, ...(options.demo === true ? { demo: true } : {}) }),
       ...(listeners.signal === undefined ? {} : { signal: listeners.signal }),
     });
 

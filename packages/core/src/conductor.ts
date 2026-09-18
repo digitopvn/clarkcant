@@ -227,6 +227,15 @@ export interface UserMessageInput {
    * same stored message - so this is a sentence of guidance rather than a mode.
    */
   note?: string;
+  /**
+   * Whether this message is the onboarding demo asking for a scripted sample.
+   *
+   * The samples are labelled and useful, and they are also fake data. A message in a real conversation that merely
+   * sounded like a request for a chart was answered with a sample chart and no model at all: the person could not
+   * tell it apart from a real answer until they read the small print, and the agent's own follow-up work was
+   * replaced by a fixture. So the demo path has to say that it is the demo path, and nothing else gets samples.
+   */
+  demo?: boolean;
 }
 
 /**
@@ -439,7 +448,9 @@ export async function handleUserMessage(
     const candidates = deps.sampleRecipes.filter(
       (candidate) => !(candidate.catchAll === true && deps.respondWithModel !== undefined),
     );
-    const recipe = candidates.find((candidate) => candidate.matches(input.text));
+    // And no sample runs unless the message came from the demo path: a scripted reply is fake data, and a real
+    // conversation must never be answered with it by accident.
+    const recipe = input.demo === true ? candidates.find((candidate) => candidate.matches(input.text)) : undefined;
     if (recipe) {
       return runSampleRecipe(deps, { ...input, at }, recipe);
     }

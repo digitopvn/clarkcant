@@ -721,6 +721,8 @@ async function handleConversationRoutes(
       principal,
       text: text.slice(0, 20_000),
       at: at_,
+      // Only the demo path asks for a scripted sample; a real message never gets one.
+      ...(parsed.value.demo === true ? { demo: true } : {}),
     });
 
     // Indexed here, where the messages were just written, so a message that exists is searchable.
@@ -763,7 +765,18 @@ async function handleConversationRoutes(
       body: null,
       stream: {
         contentType: "text/event-stream",
-        run: (send) => streamUserMessage(services, { conversationId, principal, text: text.slice(0, 20_000), at: at_ }, send),
+        run: (send) =>
+          streamUserMessage(
+            services,
+            {
+              conversationId,
+              principal,
+              text: text.slice(0, 20_000),
+              at: at_,
+              ...(parsed.value.demo === true ? { demo: true } : {}),
+            },
+            send,
+          ),
       },
     };
   }
@@ -1240,7 +1253,7 @@ function sse(event: string, payload: unknown): string {
  */
 async function streamUserMessage(
   services: NodeServices,
-  input: { conversationId: string; principal: Principal; text: string; at: Instant },
+  input: { conversationId: string; principal: Principal; text: string; at: Instant; demo?: boolean },
   send: (chunk: string) => void,
 ): Promise<void> {
   try {
@@ -1249,6 +1262,7 @@ async function streamUserMessage(
       principal: input.principal,
       text: input.text,
       at: input.at,
+      ...(input.demo === true ? { demo: true } : {}),
       emit: (event) => {
         // One frame per event the turn produced, named as the turn named it. Translating here would
         // mean two vocabularies for the same facts, and the transcript stores one of them.

@@ -78,10 +78,12 @@ type ConnectionState = "connecting" | "ready" | "offline";
  * missing, and the fourth chip says which of those is true.
  */
 const SUGGESTIONS = [
-  { label: "Làm gì đó", text: "cho tui xem biểu đồ", detail: "chạy trên dữ liệu mẫu" },
-  { label: "Sửa một lỗi", text: "tạo note nhanh cho tui", detail: "chạy trên dữ liệu mẫu" },
-  { label: "Xem dự án của tui", text: "cho tui xem bảng dữ liệu", detail: "chạy trên dữ liệu mẫu" },
-  { label: "Chỉ trò chuyện", text: "chào bạn, bạn làm được gì?", detail: "cần model" },
+  // `demo: true` is what makes these chips the only way a scripted sample runs: the label says the data is sample
+  // data, and the flag is what the node reads to decide whether a scripted reply is allowed at all.
+  { label: "Làm gì đó", text: "cho tui xem biểu đồ", detail: "chạy trên dữ liệu mẫu", demo: true },
+  { label: "Sửa một lỗi", text: "tạo note nhanh cho tui", detail: "chạy trên dữ liệu mẫu", demo: true },
+  { label: "Xem dự án của tui", text: "cho tui xem bảng dữ liệu", detail: "chạy trên dữ liệu mẫu", demo: true },
+  { label: "Chỉ trò chuyện", text: "chào bạn, bạn làm được gì?", detail: "cần model", demo: false },
 ] as const;
 
 /**
@@ -541,7 +543,7 @@ export function Conversation({
   }, [live, pendingUser, timeline]);
 
   const send = useCallback(
-    async (text: string) => {
+    async (text: string, options: { demo?: boolean } = {}) => {
       const trimmed = text.trim();
       if (trimmed === "" || busy) return;
 
@@ -563,20 +565,25 @@ export function Conversation({
           setConversationId(target);
           onConversationReady?.(target);
         }
-        await client.streamMessage(target, trimmed, {
-          onEvent: (event) => {
-            if (sessionGeneration.current !== generation) return;
-            setLive((segments) => applyLiveEvent(segments, event));
+        await client.streamMessage(
+          target,
+          trimmed,
+          {
+            onEvent: (event) => {
+              if (sessionGeneration.current !== generation) return;
+              setLive((segments) => applyLiveEvent(segments, event));
+            },
+            onDone: (result) => {
+              if (sessionGeneration.current !== generation) return;
+              // The node's own record replaces both placeholders in one update, so the reply is never
+              // on screen twice: the stored message and the text that stood in for it change together.
+              applyTimeline(result.timeline);
+              setPendingUser(undefined);
+              setLive([]);
+            },
           },
-          onDone: (result) => {
-            if (sessionGeneration.current !== generation) return;
-            // The node's own record replaces both placeholders in one update, so the reply is never
-            // on screen twice: the stored message and the text that stood in for it change together.
-            applyTimeline(result.timeline);
-            setPendingUser(undefined);
-            setLive([]);
-          },
-        });
+          options,
+        );
       } catch (cause) {
         if (sessionGeneration.current !== generation) return;
         // The draft is restored so a failed send does not lose the user's text.
@@ -889,7 +896,7 @@ export function Conversation({
                     // The detail is in the accessible name as well as visible text, because a person
                     // using a screen reader has the same question about which chips need a model.
                     aria-label={`${suggestion.label} — ${suggestion.detail}`}
-                    onClick={() => void send(suggestion.text)}
+                    onClick={() => void send(suggestion.text, { demo: suggestion.demo === true })}
                   >
                     <span className="cc-chip-label">{suggestion.label}</span>
                     <span className="cc-chip-detail">{suggestion.detail}</span>

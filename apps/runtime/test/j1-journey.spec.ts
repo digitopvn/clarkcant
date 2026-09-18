@@ -42,12 +42,15 @@ beforeEach(() => {
   deps = build();
 });
 
+// The demo path: a scheduled sample is only ever run when the message says it is the demo, so these tests - which
+// are about the scripted samples - say so.
 const ask = async (text: string) =>
   handleUserMessage(deps, {
     conversationId: CONVERSATION,
     principal: { principalId: OWNER, kind: "user", nodeId: NODE },
     text,
     at: AT,
+    demo: true,
   });
 
 function blocksOf(messages: MessageRecord[]) {
@@ -267,6 +270,7 @@ describe("a catch-all recipe never displaces a configured model", () => {
       principal: { principalId: OWNER, kind: "user", nodeId: NODE },
       text: askAboutAnything,
       at: AT,
+      demo: true,
     });
 
     // The demo default is the whole point of an empty install, so it must still fire here.
@@ -416,6 +420,7 @@ describe("a catch-all recipe never displaces a configured model", () => {
       principal: { principalId: OWNER, kind: "user", nodeId: NODE },
       text: "cho tui xem biểu đồ",
       at: AT,
+      demo: true,
     });
 
     expect(outcome.resolution).toBe("sample");
@@ -440,5 +445,25 @@ describe("a catch-all recipe never displaces a configured model", () => {
     const card = blocksOf(outcome.messages).find((block) => block.type === "system-card");
     if (card?.type !== "system-card") throw new Error("a failed turn must record a host card");
     expect(card.detail).toContain("provider is unreachable");
+  });
+});
+
+/**
+ * What a real message never gets.
+ *
+ * This is the requirement, stated as a test: every widget shows real data. A message in a real conversation that
+ * merely sounded like a request for a chart was once answered with a sample chart, no model call at all, and a
+ * label small enough to miss - and the agent's own follow-up work was replaced by a fixture.
+ */
+describe("a real message never gets a sample", () => {
+  it("does not answer from a recipe when the words happen to match one", async () => {
+    const outcome = await handleUserMessage(deps, {
+      conversationId: CONVERSATION,
+      principal: { principalId: OWNER, kind: "user", nodeId: NODE },
+      text: "cho tui xem biểu đồ",
+      at: AT,
+    });
+
+    expect(outcome.resolution).not.toBe("sample");
   });
 });

@@ -144,7 +144,7 @@ describe("J1 over the API", async () => {
   it("answers a first message with a labelled sample and a renderable widget", async () => {
     conversationId = await createConversation();
     const response = await request("POST", `/conversations/${conversationId}/messages`, {
-      body: { text: "cho tui xem biểu đồ" },
+      body: { text: "cho tui xem biểu đồ", demo: true },
     });
     expect(response.status).toBe(202);
 
@@ -166,7 +166,7 @@ describe("J1 over the API", async () => {
 
   it("returns the instances the timeline references, with props", async () => {
     conversationId = await createConversation();
-    await request("POST", `/conversations/${conversationId}/messages`, { body: { text: "cho tui xem bảng" } });
+    await request("POST", `/conversations/${conversationId}/messages`, { body: { text: "cho tui xem bảng", demo: true } });
     const timeline = await request("GET", `/conversations/${conversationId}/timeline`);
     expect(timeline.status).toBe(200);
 
@@ -199,7 +199,7 @@ describe("J1 over the API", async () => {
 
   it("supports the whole pin lifecycle, and unpinning keeps the widget data", async () => {
     conversationId = await createConversation();
-    await request("POST", `/conversations/${conversationId}/messages`, { body: { text: "cho tui xem biểu đồ" } });
+    await request("POST", `/conversations/${conversationId}/messages`, { body: { text: "cho tui xem biểu đồ", demo: true } });
     const timeline = (await request("GET", `/conversations/${conversationId}/timeline`)).body as {
       instances: { instanceId: string }[];
     };
