@@ -176,6 +176,26 @@ export const systemCardBlockSchema = z.strictObject({
       freshness: z.enum(["live", "cached", "sample", "unknown"]).optional(),
     }),
   ).max(64),
+  /**
+   * The same numbers as `fields`, typed, for interfaces that draw a statusline of their own.
+   *
+   * The card shows them as rows for a reader; the composer shows a subset of them on one line. Reading the
+   * rows back would mean parsing prose written for a person, so the numbers travel as numbers.
+   */
+  metrics: z
+    .strictObject({
+      thinkingLevel: z.string().max(40).optional(),
+      inputTokens: z.number().int().nonnegative().optional(),
+      outputTokens: z.number().int().nonnegative().optional(),
+      cacheReadTokens: z.number().int().nonnegative().optional(),
+      cacheWriteTokens: z.number().int().nonnegative().optional(),
+      costUsd: z.number().nonnegative().optional(),
+      contextTokens: z.number().int().nonnegative().optional(),
+      contextWindow: z.number().int().positive().optional(),
+      tokensPerSecond: z.number().nonnegative().optional(),
+      cwd: z.string().max(500).optional(),
+    })
+    .optional(),
   /** Whether the user can back out, and what that does. */
   cancellable: z.boolean(),
   updatedAt: instantSchema,

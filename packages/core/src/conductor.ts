@@ -701,6 +701,8 @@ async function runModelTurn(
           { label: "Thời gian", value: `${reply.elapsedMs} ms` },
           ...turnMetricFields(reply.metrics),
         ],
+        // The typed copy, for the statusline: the rows above are written to be read, these to be drawn.
+        ...(reply.metrics === undefined ? {} : { metrics: reply.metrics }),
         cancellable: false,
         updatedAt: input.at,
       },
