@@ -67,6 +67,14 @@ export interface VoiceOverlayProps {
   conversationId?: string;
   /** Leaves the voice mode. The session is ended with it, never left recording behind a closed view. */
   onClose: (intent: { focusComposer: boolean }) => void;
+  /**
+   * The conversation gained a message while this session was open.
+   *
+   * The voice socket writes its messages through the same turn a typed message takes, but it is a
+   * different socket: nothing on it draws the conversation, so the surface that owns the timeline has to
+   * be told to read it again.
+   */
+  onAnswered?: () => void;
   requires?: string;
   unblockedBy?: string;
 }
@@ -75,11 +83,18 @@ export function VoiceOverlay({
   client,
   conversationId,
   onClose,
+  onAnswered,
   requires = "một phiên Live API đang mở",
   unblockedBy = "đặt GEMINI_API_KEY cho node rồi thử lại",
 }: VoiceOverlayProps): ReactElement {
   const [state, setState] = useState<VoiceState>("connecting");
   const [muted, setMuted] = useState(false);
+  /**
+   * Whether the session is out of the way.
+   *
+   * The session keeps running while it is collapsed: this hides the body, not the microphone.
+   */
+  const [collapsed, setCollapsed] = useState(false);
   const [problem, setProblem] = useState<string | undefined>(undefined);
   /**
    * A sentence the agent could not answer.
@@ -135,6 +150,9 @@ export function VoiceOverlay({
             // no longer news.
             setAnswerProblem(undefined);
             setUtterances((current) => [...current, update]);
+            // The agent's words are the message it just wrote to the conversation, so this is the moment
+            // the transcript above is worth re-reading.
+            if (update.role === "assistant") onAnswered?.();
           },
           onLevel: ({ level: heard }) => {
             const history = levels.current;
@@ -155,6 +173,9 @@ export function VoiceOverlay({
             setRecordedMessages(count);
             setState("ended");
             sessionRef.current = undefined;
+            // A sentence the agent could not answer is still written, by the fallback, when the session
+            // closes. Asking once more here is what makes that visible without a reload.
+            onAnswered?.();
           },
         },
       })
@@ -168,7 +189,7 @@ export function VoiceOverlay({
         setState("failed");
         sessionRef.current = undefined;
       });
-  }, [client, conversationId]);
+  }, [client, conversationId, onAnswered]);
 
   // Opening the view is the act of starting to talk: the button that opened it said "voice", and a
   // surface that then waits for a second confirmation is a step nobody asked for.
@@ -205,7 +226,7 @@ export function VoiceOverlay({
   }
 
   return (
-    <div className="cc-voice-scrim" role="presentation">
+    <div className="cc-voice-scrim" role="presentation" data-voice-collapsed={collapsed ? "true" : "false"}>
       <section
         className="cc-voice"
         role="dialog"
@@ -300,6 +321,17 @@ export function VoiceOverlay({
           >
             <span className="cc-voice-action-icon" aria-hidden="true">{muted ? "🎙" : "🔇"}</span>
             {muted ? "Bật micro" : "Tắt micro"}
+          </button>
+          <button
+            type="button"
+            className="cc-voice-action"
+            data-voice-minimize="true"
+            aria-pressed={collapsed}
+            aria-expanded={!collapsed}
+            onClick={() => setCollapsed((current) => !current)}
+          >
+            <span className="cc-voice-action-icon" aria-hidden="true">{collapsed ? "▣" : "▭"}</span>
+            {collapsed ? "Mở rộng" : "Thu gọn"}
           </button>
           <button
             type="button"

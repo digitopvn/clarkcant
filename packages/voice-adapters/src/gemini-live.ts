@@ -303,7 +303,9 @@ export class GeminiLiveAdapter implements VoiceProviderAdapter {
         return;
       }
       case "transcript": {
-        this.#emitFragment(event.role, event.text, false);
+        // The provider's own end-of-utterance flag is passed through: it is what closes a sentence when
+        // the model says nothing, which is the normal case here.
+        this.#emitFragment(event.role, event.text, event.final);
         return;
       }
       case "turnComplete": {

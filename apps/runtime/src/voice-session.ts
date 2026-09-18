@@ -121,10 +121,11 @@ const CLOSE_TRY_LATER = 1013;
  * command or knows what was said five minutes ago. So the session is told to transcribe and to read
  * back, and to leave answering to the agent.
  */
-const VOICE_INSTRUCTION = [  "Bạn là giọng nói của trợ lý, không phải bộ não của nó.",
-  "Bạn chỉ làm hai việc: nghe và chép lại lời người dùng, và đọc nguyên văn câu trả lời mà trợ lý đưa cho bạn.",
-  "Không tự trả lời, không hỏi lại, không tóm tắt, và khi đọc thì không thêm bớt chữ nào.",
-  "Khi người dùng vừa nói xong, hãy im lặng và chờ câu trả lời của trợ lý.",
+const VOICE_INSTRUCTION = [
+  "Bạn là giọng nói của trợ lý, không phải bộ não của nó.",
+  "Có hai loại đầu vào và hai việc khác nhau, đừng lẫn chúng với nhau.",
+  "Khi nghe tiếng người dùng nói: chép lại lời họ, và không tự trả lời, không hỏi lại, không bình luận.",
+  "Khi nhận được một lượt văn bản: đó là câu trả lời của trợ lý, và việc của bạn là đọc nguyên văn đoạn văn đó ngay lập tức, không thêm bớt chữ nào.",
 ].join(" ");
 
 export function attachVoiceGateway(options: VoiceGatewayOptions): VoiceGateway {
@@ -187,12 +188,12 @@ export function attachVoiceGateway(options: VoiceGatewayOptions): VoiceGateway {
       if (recorded || !authenticated) return 0;
       recorded = true;
       if (conversationId === undefined) return 0;
-      // With an agent in the path every utterance is already a message in the conversation, written
-      // while it was being said. Recording the transcript again at the end would put the same
-      // conversation in twice, so what is reported is what the agent's turns wrote. Without an agent
-      // the transcript is all there is, and this is where it is kept.
-      if (options.answer !== undefined) return answeredMessages;
-      if (userText.trim() === "" && assistantText.trim() === "") return 0;
+      // With an agent in the path every answered utterance is already a message in the conversation,
+      // written while it was being said. What the agent wrote is reported as it is, and whatever is
+      // left over is what never became a message - a sentence the agent could not answer, or one that
+      // arrived while no answer was possible. That is the floor this session must not fall through:
+      // leaving it out once made a broken answer path look like a session where nobody spoke.
+      if (userText.trim() === "" && assistantText.trim() === "") return answeredMessages;
 
       const messages = recordVoiceTranscript(options.services.conductor, {
         conversationId,
@@ -200,7 +201,7 @@ export function attachVoiceGateway(options: VoiceGatewayOptions): VoiceGateway {
         assistantText,
         at: now(),
       });
-      return messages.length;
+      return answeredMessages + messages.length;
     };
 
     /**
@@ -210,11 +211,13 @@ export function attachVoiceGateway(options: VoiceGatewayOptions): VoiceGateway {
      * with an empty final fragment rather than repeating the text in it.
      */
     const ask = (at: Instant): void => {
-      const text = userText.trim();
-      userText = "";
       const askIn = conversationId;
       const answer = options.answer;
+      const text = userText.trim();
       if (text === "" || askIn === undefined || answer === undefined) return;
+      // Cleared only when this sentence really is being answered. Clearing it earlier would throw away
+      // the only copy of something that was said, and the closing report would then have nothing to keep.
+      userText = "";
 
       answerQueue = answerQueue
         .then(async () => {

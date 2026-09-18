@@ -665,6 +665,26 @@ button.cc-badge:hover, .cc-badge[role="button"]:hover { color: var(--cc-text); b
  * disabled button it replaces was.
  */
 .cc-voice-scrim { position: fixed; inset: 0; z-index: 66; background: var(--cc-canvas); }
+/*
+ * Collapsed.
+ *
+ * A voice session that hides the conversation is the wrong trade while the agent is answering into it:
+ * the person is talking about what they are looking at, and the answer belongs to the same
+ * conversation. Collapsed keeps the session running and takes only the composer's height, and the scrim
+ * stops swallowing clicks so the transcript above stays readable and scrollable.
+ */
+.cc-voice-scrim[data-voice-collapsed="true"] {
+  display: flex; align-items: flex-end; justify-content: center;
+  background: transparent; pointer-events: none;
+}
+.cc-voice-scrim[data-voice-collapsed="true"] .cc-voice {
+  position: static; inset: auto; pointer-events: auto;
+  width: min(100%, var(--cc-composer-max-width));
+  margin: 0 auto var(--cc-space-lg);
+  border: 1px solid color-mix(in oklab, var(--cc-accent) 30%, transparent);
+  border-radius: var(--cc-radius-pill);
+}
+.cc-voice-scrim[data-voice-collapsed="true"] .cc-voice-body { display: none; }
 .cc-voice {
   position: absolute; inset: 0; display: flex; flex-direction: column;
   background: var(--cc-canvas); color: var(--cc-text);

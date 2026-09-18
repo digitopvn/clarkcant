@@ -111,6 +111,20 @@ test("a microphone session carries audio both ways and records the transcript", 
   // The live model's own words never arrive, because it is no longer the one answering.
   await expect(page.locator(".cc-voice")).not.toContainText(FIXTURE_REPLY);
 
+  // The answer is in the conversation behind the session, while the session is still open. The failure
+  // this covers is real: the messages were written, and only a reload made them appear.
+  await expect(page.locator('[data-role="assistant"]').last()).toContainText(AGENT_REPLY, { timeout: 20_000 });
+
+  // Collapsed, the session stays running and stops hiding the conversation it is answering into.
+  await page.locator('[data-voice-minimize="true"]').click();
+  await expect(page.locator('[data-voice-collapsed="true"]')).toBeVisible({ timeout: 15_000 });
+  await expect(page.locator(".cc-voice-body")).toBeHidden();
+  // Still the same conversation, still the answer, and still updating rather than frozen.
+  await expect(page.locator('[data-role="assistant"]').last()).toContainText(AGENT_REPLY);
+  await page.screenshot({ path: join(EVIDENCE, "voice-01b-collapsed-over-conversation.png"), fullPage: true });
+  await page.locator('[data-voice-minimize="true"]').click();
+  await expect(page.locator('[data-voice-collapsed="false"]')).toBeVisible({ timeout: 15_000 });
+
   // Audio came back and was scheduled for playback, in more than one frame.
   const frames = Number(await page.locator("[data-voice-state]").getAttribute("data-voice-audio-frames"));
   expect(frames).toBeGreaterThan(1);

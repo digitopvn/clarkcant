@@ -411,6 +411,21 @@ export function Conversation({
     [onTimelineChange],
   );
 
+  /**
+   * Read the conversation again.
+   *
+   * A voice session answers through the conductor like any other message, but over its own socket, so
+   * nothing draws the result here. This is the ask that keeps the two views of one conversation from
+   * disagreeing until someone reloads the page.
+   */
+  const refreshTimeline = useCallback((): void => {
+    if (conversationId === undefined) return;
+    void client
+      .timeline(conversationId)
+      .then((loaded) => applyTimeline(loaded))
+      .catch(() => undefined);
+  }, [applyTimeline, client, conversationId]);
+
 
   /* Load any existing conversation once, so a reload is not a new conversation. */
   useEffect(() => {
@@ -1127,6 +1142,7 @@ export function Conversation({
         <VoiceOverlay
           client={client}
           {...(conversationId === undefined ? {} : { conversationId })}
+          onAnswered={refreshTimeline}
           onClose={({ focusComposer }) => {
             setVoiceOpen(false);
             if (focusComposer) composerInput.current?.focus();
