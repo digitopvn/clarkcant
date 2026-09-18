@@ -66,12 +66,16 @@ test("a microphone session carries audio both ways and records the transcript", 
   await openApp(page);
   await startConversation(page);
 
-  await page.locator('[data-settings="true"]').click();
-  await page.locator("#cc-tab-voice").click();
+  // Opened from the composer, which is where a person looks to start talking. This button used to be
+  // disabled with a tooltip while the working session sat in a settings tab.
+  await page.locator('[data-voice-open="true"]').click();
 
-  // Before starting, the surface must not claim to be listening.
-  await expect(page.locator("[data-voice-start='true']")).toBeVisible();
-  await page.locator("[data-voice-start='true']").click();
+  // The screen appears, and the assertion that matters is the next one: the node accepted the session
+  // and capture opened. There is deliberately no assertion on the `connecting` state in between — it
+  // lasts as long as the handshake, and a test that races a handshake fails on a fast machine and
+  // passes on a slow one, which is the worst way for a test to be wrong.
+  const voice = page.locator("[data-voice-state]");
+  await expect(voice).toBeVisible();
 
   // Capture really opened, and the node accepted the session.
   await expect(page.locator('[data-voice-state="listening"]')).toBeVisible({ timeout: 15_000 });
@@ -88,13 +92,18 @@ test("a microphone session carries audio both ways and records the transcript", 
 
   // The reply arrives only if a second of real audio reached the node from the page. This is the
   // assertion that would fail if capture were wired to nothing.
-  await expect(page.locator("[data-voice-transcript='true']")).toContainText(FIXTURE_REPLY, {
-    timeout: 20_000,
-  });
+  await expect(page.locator(".cc-voice")).toContainText(FIXTURE_REPLY, { timeout: 20_000 });
 
   // Audio came back and was scheduled for playback, in more than one frame.
   const frames = Number(await page.locator("[data-voice-state]").getAttribute("data-voice-audio-frames"));
   expect(frames).toBeGreaterThan(1);
+
+  // The waveform is driven by the frames themselves, so a row of bars that never moves would be a
+  // picture of a microphone rather than a reaction to one.
+  await expect.poll(async () => Number(await page.locator(".cc-voice").getAttribute("data-voice-level")), {
+    timeout: 15_000,
+    message: "no audio level was ever reported",
+  }).toBeGreaterThan(0);
 
   await page.screenshot({ path: join(EVIDENCE, "voice-01-listening-with-transcript.png"), fullPage: true });
 
@@ -104,9 +113,11 @@ test("a microphone session carries audio both ways and records the transcript", 
   await page.locator("[data-voice-mute='true']").click();
   await expect(page.locator("[data-voice-mute='true']")).toHaveAttribute("data-muted", "false");
 
-  // Ending records the session into the conversation.
+  // Ending leaves the voice mode; the recording is what proves the session was real, and that is
+  // asserted after the reload rather than on a panel that no longer exists.
   await page.locator("[data-voice-end='true']").click();
-  await expect(page.locator("[data-voice-ended='true']")).toContainText("ghi lại", { timeout: 15_000 });
+  await expect(page.locator(".cc-voice")).toBeHidden({ timeout: 15_000 });
+  await expect(page.locator("[data-composer='true']")).toBeVisible();
   await page.screenshot({ path: join(EVIDENCE, "voice-02-after-ending.png"), fullPage: true });
 
   // The stored transcript survives a reload, which is the difference between showing a transcript

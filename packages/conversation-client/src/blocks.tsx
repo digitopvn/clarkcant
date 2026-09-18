@@ -269,15 +269,56 @@ export function SystemCardBlock({ block }: { block: Record<string, unknown> }): 
  * The decider is always the user. There is no code path that renders an approval as
  * already decided by the model, because the schema has no such value.
  */
-export function ApprovalCardBlock({ block }: { block: Record<string, unknown> }): ReactElement | null {
+/**
+ * What a card can ask the host to do.
+ *
+ * Passed down through `renderBlock` rather than handled inside the card, because the card is rendered from
+ * history as well as from live turns and only the conversation knows whether a decision is possible right
+ * now. A card with no handler draws the decision buttons disabled instead of pretending.
+ */
+export interface BlockActions {
+  onApprovalDecide?: (input: { approvalId: string; digest: string; decision: "granted" | "denied" }) => void;
+  /** Which approval is waiting on the node, so its own card says so rather than all of them. */
+  decidingApprovalId?: string;
+  /**
+   * Approvals this conversation already has a receipt for.
+   *
+   * Derived from the transcript rather than from the node: messages are history and are never rewritten,
+   * so a card that has been answered keeps saying `pending` in storage. The receipt of the operation is
+   * what says the decision happened, and it carries the approval id — which is why the buttons go away
+   * here instead of inviting a second press that the node would refuse.
+   */
+  decidedApprovals?: readonly string[];
+}
+
+/**
+ * The approval card.
+ *
+ * The decider is always the user. There is no code path that renders an approval as already decided by
+ * the model, because the schema has no such value — `decider` is the literal `"user"`. The digest is
+ * shown because it is what the decision is bound to: the operation that runs is compared against it, so
+ * a plan that changed after display is refused rather than executed.
+ */
+export function ApprovalCardBlock({
+  block,
+  actions,
+}: {
+  block: Record<string, unknown>;
+  actions?: BlockActions;
+}): ReactElement | null {
   if (block.owner !== "host") return null;
   const description = typeof block.operationDescription === "string" ? block.operationDescription : "";
-  const digest = typeof block.operationDigest === "string" ? block.operationDigest.slice(0, 20) : "";
+  const digest = typeof block.operationDigest === "string" ? block.operationDigest : "";
   const effect = typeof block.effectCategory === "string" ? block.effectCategory : "external-write";
   const decision = typeof block.decision === "string" ? block.decision : "pending";
+  const approvalId = typeof block.approvalId === "string" ? block.approvalId : "";
+  const payload = typeof block.payload === "string" ? block.payload : undefined;
+  const deciding = actions?.decidingApprovalId === approvalId && approvalId !== "";
+  const decided = approvalId !== "" && actions?.decidedApprovals?.includes(approvalId) === true;
+  const canDecide = decision === "pending" && !decided && approvalId !== "" && actions?.onApprovalDecide !== undefined;
 
   return (
-    <section className="cc-card" data-host-card="approval" data-owner="host" data-decision={decision}>
+    <section className="cc-card" data-host-card="approval" data-owner="host" data-decision={decision} data-approval-id={approvalId}>
       <header className="cc-card-head">
         <span className="cc-card-title">Cần bạn xác nhận</span>
         <span className="cc-badge" data-tone={effect === "destructive" ? "danger" : "warn"}>
@@ -286,30 +327,59 @@ export function ApprovalCardBlock({ block }: { block: Record<string, unknown> })
       </header>
       <div className="cc-card-body">
         <p style={{ margin: 0 }}>{description}</p>
+        {payload !== undefined && (
+          <CodeBlock
+            code={commandOf(payload) ?? payload}
+            {...(commandOf(payload) === undefined ? {} : { language: "bash" })}
+            label="lệnh sẽ chạy"
+          />
+        )}
         {/* The digest is shown so an approved plan cannot be swapped for another one. */}
         <p className="cc-freshness" style={{ margin: 0 }}>
-          operation {digest}…
+          operation {digest.slice(0, 20)}…
         </p>
         <p className="cc-freshness" style={{ margin: 0 }}>
           Chỉ bạn xác nhận được. Model không thể tự duyệt.
         </p>
-        {decision === "pending" ? (
-          <button
-            className="cc-icon-btn"
-            style={{ width: "auto", padding: "0 var(--cc-space-md)" }}
-            // Wired to the approval route once the decide endpoint lands; until then it is
-            // visibly disabled rather than pretending to work.
-            disabled
-            title="Đường duyệt sẽ bật khi endpoint approval.decide được nối"
-          >
-            Duyệt
-          </button>
+        {decision === "pending" && !decided ? (
+          <div className="cc-card-actions">
+            <button
+              type="button"
+              className="cc-action"
+              data-approve={approvalId}
+              disabled={!canDecide || deciding}
+              onClick={() => actions?.onApprovalDecide?.({ approvalId, digest, decision: "granted" })}
+            >
+              {deciding ? "Đang chạy…" : "Duyệt và chạy"}
+            </button>
+            <button
+              type="button"
+              className="cc-action"
+              data-deny={approvalId}
+              disabled={!canDecide || deciding}
+              onClick={() => actions?.onApprovalDecide?.({ approvalId, digest, decision: "denied" })}
+            >
+              Từ chối
+            </button>
+          </div>
         ) : (
-          <span className="cc-badge">{decision}</span>
+          <span className="cc-badge" data-approval-decision={decided ? "answered" : decision}>
+            {decided ? "đã quyết định" : decision}
+          </span>
         )}
       </div>
     </section>
   );
+}
+
+/** The command inside an operation payload, when the payload is one of ours. */
+function commandOf(payload: string): string | undefined {
+  try {
+    const parsed = JSON.parse(payload) as { command?: unknown };
+    return typeof parsed.command === "string" ? parsed.command : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 export function ConnectionCardBlock({ block }: { block: Record<string, unknown> }): ReactElement | null {
@@ -766,6 +836,7 @@ export function renderBlock(
   block: Record<string, unknown>,
   index: number,
   surface: (props: SurfaceBlockRef) => ReactElement,
+  actions?: BlockActions,
 ): ReactElement | null {
   const type = typeof block.type === "string" ? block.type : "";
 
@@ -783,7 +854,7 @@ export function renderBlock(
     case "system-card":
       return <SystemCardBlock key={index} block={block} />;
     case "approval-card":
-      return <ApprovalCardBlock key={index} block={block} />;
+      return <ApprovalCardBlock key={index} block={block} {...(actions === undefined ? {} : { actions })} />;
     case "connection-card":
       return <ConnectionCardBlock key={index} block={block} />;
     case "credential-card":

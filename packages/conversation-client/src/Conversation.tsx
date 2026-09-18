@@ -18,13 +18,13 @@ import {
 } from "./theme.ts";
 import type { ThemeName } from "@clarkcant/design-tokens";
 import { AgentAvatar } from "./AgentAvatar.tsx";
-import { ReasoningBlock, ToolActivityBlock } from "./blocks.tsx";
+import { ReasoningBlock, ToolActivityBlock, type BlockActions } from "./blocks.tsx";
 import { composerTextareaHeight } from "./composer-height.ts";
 import { applyLiveEvent, type LiveSegment } from "./live-reply.ts";
 import { Markdown } from "./markdown.tsx";
 import { Orb } from "./Orb.tsx";
 import { useTypewriterPlaceholder, prefersReducedMotion } from "./typewriter.ts";
-import { SettingsPanel } from "./SettingsPanel.tsx";
+import { VoiceOverlay } from "./VoiceOverlay.tsx";import { SettingsPanel } from "./SettingsPanel.tsx";
 import { resolveRenderer, toRendererDataset } from "./renderers.tsx";
 import { MiniAppSurface, type CompositeSurfaceView } from "./mini-app-surface.tsx";
 import { PinnedLiveSurface } from "./DesktopSurfaces.tsx";
@@ -46,37 +46,6 @@ import { useImageUrls } from "./use-image-urls.ts";
  *   - **Suggestion chips are labelled as samples.** Clicking one runs a scripted recipe, so
  *     the label has to be visible before the click, not a footnote after it.
  */
-
-/**
- * The slice of the desktop shell's bridge this component reads.
- *
- * Named methods only, because that is all the shell exposes: there is no generic `invoke` channel to
- * reach through, which is what keeps the main process's allowlist meaningful.
- */
-export interface DirectoryPickerBridge {
-  pickDirectory(input?: {
-    title?: string;
-  }): Promise<{ ok: boolean; path?: string; canceled?: boolean; refused?: string }>;
-}
-
-/**
- * The desktop shell's directory dialog, when this client is running inside one.
- *
- * Read from the ambient bridge rather than imported, because the same component is served to a
- * plain browser where no bridge exists. Absent means the typed path below stays the only way to
- * answer the node's question, which is the web path; present means the user picks a directory in a
- * host-owned OS window instead of typing a path they cannot browse.
- *
- * Exported so the detection can be tested without a DOM: the interesting behaviour is which shapes
- * of ambient value count as a usable dialog, and that is a plain function.
- */
-export function directoryPicker(): DirectoryPickerBridge["pickDirectory"] | undefined {
-  const bridge: unknown = (globalThis as { clarkcant?: unknown }).clarkcant;
-  if (typeof bridge !== "object" || bridge === null) return undefined;
-  const pick = (bridge as DirectoryPickerBridge).pickDirectory;
-  return typeof pick === "function" ? pick.bind(bridge) : undefined;
-}
-
 export interface ConversationProps {
   client: GatewayClient;
   /** Pre-existing conversation, or `undefined` to create one on first send. */
@@ -128,11 +97,24 @@ const PLACEHOLDER_PHRASES = [
 ] as const;
 
 /**
+ * The orb's canvas, which is deliberately larger than the ball drawn inside it.
+ *
+ * The ball's radius is a fraction of the canvas, so the margin around it is what the pointer's flare and
+ * the jelly deformation have to grow into. At 720 pixels the margin was about a hundred pixels a side,
+ * and a flare that followed the pointer to the edge was cut off by the canvas — a straight line across a
+ * glow that is meant to fade. 960 with a smaller radius keeps the ball exactly the size it was and nearly
+ * doubles the room around it.
+ */
+const ORB_DRAW_SIZE = 960;
+
+/** The ball's radius as a fraction of the canvas half-height: 0.54 x 960 is the 518 pixel ball. */
+const ORB_RADIUS = 0.54;
+
+/**
  * The orb's diameter once it is docked behind the composer.
  *
- * One size for both states: the orb is a canvas whose drawing buffer is fixed at creation, so moving
- * it is a transform on an element that never changes size. A buffer that resized with the animation
- * would reallocate GPU memory on every frame of it.
+ * One reference size for the placement and the room reserved in the transcript, rather than the canvas
+ * size: what a reader sees and what the layout has to make space for is the ball, not the buffer.
  */
 const ORB_DOCK_SIZE = 720;
 
@@ -207,26 +189,15 @@ export function Conversation({
   const composerFrom = useRef<number | undefined>(undefined);
   const [uiCheckOpen, setUiCheckOpen] = useState(false);
   /**
-   * Starting a worker session in a directory the node chose.
+   * Whether the voice surface is up.
    *
-   * The node answers this request in three ways and the third one is the reason the state is here:
-   * `started`, `clarify` (several directories could be meant) and `needs-path` (nothing matched, so
-   * the user is asked for a directory). A control that only rendered success would leave the question
-   * on screen with nowhere to answer it, which is what made this flow unreachable before.
+   * Opened from the composer's microphone button, which used to be disabled with a tooltip: the one
+   * control a person would press to start talking was the one that did nothing, while the working
+   * session sat in a settings tab. Speaking is a mode of the conversation, so it belongs here.
    */
-  const [sessionOpen, setSessionOpen] = useState(false);
-  const [sessionText, setSessionText] = useState("");
-  const [sessionAsk, setSessionAsk] = useState<"none" | "clarify" | "needs-path">("none");
-  const [sessionOptions, setSessionOptions] = useState<string[]>([]);
-  const [sessionNotice, setSessionNotice] = useState<{ kind: string; text: string } | undefined>(undefined);
-  const [sessionBusy, setSessionBusy] = useState(false);
-  /**
-   * The OS directory dialog, when this client is running inside the desktop shell.
-   *
-   * Resolved once: the baseline the shell installs does not change while a page is open, and
-   * re-reading it every render would only make the control flicker if it ever did.
-   */
-  const pickDirectory = useMemo(() => directoryPicker(), []);
+  const [voiceOpen, setVoiceOpen] = useState(false);
+  /** Which approval is in flight, so one card says so rather than every card looking busy. */
+  const [decidingApprovalId, setDecidingApprovalId] = useState<string | undefined>(undefined);
   /**
    * Which session the interface is showing.
    *
@@ -384,7 +355,8 @@ export function Conversation({
       : {
           x: frame.left + frame.width / 2 - shellBox.left,
           y: frame.top + frame.height / 2 - shellBox.top,
-          scale: frame.width / ORB_DOCK_SIZE,
+          // The anchor reserves the space the ball occupies, so the canvas is scaled to that width.
+          scale: frame.width / ORB_DRAW_SIZE,
           docked: false,
         };
     // Compared before storing, because this runs on every resize of a frame that moves on nearly
@@ -439,49 +411,6 @@ export function Conversation({
     [onTimelineChange],
   );
 
-  /**
-   * Ask the node for a session in a project, and render whatever it answers.
-   *
-   * A path the user types is the answer to the node's own question, so it is sent as the request's
-   * text — the node reads a path from the user's words and never goes looking for one.
-   */
-  const openProjectSession = useCallback(
-    async (text: string) => {
-      const trimmed = text.trim();
-      if (trimmed === "" || sessionBusy) return;
-      setSessionBusy(true);
-      setSessionNotice(undefined);
-      setSessionOptions([]);
-      try {
-        const target = conversationId ?? (await client.createConversation("Conversation")).conversationId;
-        if (conversationId === undefined) {
-          setConversationId(target);
-          onConversationReady?.(target);
-        }
-        const result = await client.startSession(target, trimmed);
-        applyTimeline(result.timeline);
-        if (result.status === "started") {
-          setSessionAsk("none");
-          setSessionText("");
-          setSessionNotice({
-            kind: "started",
-            text: `Đã mở phiên làm việc trong ${result.projectName} (${result.relPath}).`,
-          });
-        } else {
-          // One question, and the input stays open so the answer has somewhere to go.
-          setSessionAsk(result.status);
-          setSessionText("");
-          setSessionOptions(result.options);
-          setSessionNotice({ kind: result.status, text: result.question });
-        }
-      } catch (cause) {
-        setSessionNotice({ kind: "error", text: cause instanceof Error ? cause.message : String(cause) });
-      } finally {
-        setSessionBusy(false);
-      }
-    },
-    [applyTimeline, client, conversationId, onConversationReady, sessionBusy],
-  );
 
   /* Load any existing conversation once, so a reload is not a new conversation. */
   useEffect(() => {
@@ -674,6 +603,57 @@ export function Conversation({
     onSessionReset?.();
   }, [onSessionReset, rememberComposerTop]);
 
+  /**
+   * Answer an operation the agent asked for.
+   *
+   * The decision goes to the node, which recomputes the digest of what it is about to run and refuses a
+   * mismatch; the client's job is to send back exactly what the card displayed and to draw the timeline
+   * that comes back. Nothing here can approve anything: the card's buttons are the only entry, and a
+   * model cannot press them.
+   */
+  const decideApproval = useCallback(
+    (input: { approvalId: string; digest: string; decision: "granted" | "denied" }) => {
+      if (conversationId === undefined) return;
+      setDecidingApprovalId(input.approvalId);
+      setError(undefined);
+      void client
+        .decideApproval(conversationId, input.approvalId, { decision: input.decision, digest: input.digest })
+        .then((result) => applyTimeline(result.timeline))
+        .catch((cause: unknown) => setError(cause instanceof Error ? cause.message : String(cause)))
+        .finally(() => setDecidingApprovalId(undefined));
+    },
+    [applyTimeline, client, conversationId],
+  );
+
+  /**
+   * Approvals that already have a receipt in this transcript.
+   *
+   * The card in storage stays `pending` because messages are never rewritten, so the decision is read
+   * from the receipt instead: the operation the user approved carries its approval id.
+   */
+  const decidedApprovals = useMemo(() => {
+    const decided = new Set<string>();
+    // Read from the timeline rather than from `blocks`, which is declared further down this component:
+    // a hook that depends on a later `const` is a temporal dead zone, not a style preference.
+    for (const message of timeline?.messages ?? []) {
+      for (const block of message.blocks) {
+        if (block.type !== "tool-activity") continue;
+        const args = (block.args ?? {}) as Record<string, unknown>;
+        if (typeof args.approvalId === "string") decided.add(args.approvalId);
+      }
+    }
+    return [...decided];
+  }, [timeline]);
+
+  const blockActions: BlockActions = useMemo(
+    () => ({
+      onApprovalDecide: decideApproval,
+      decidedApprovals,
+      ...(decidingApprovalId === undefined ? {} : { decidingApprovalId }),
+    }),
+    [decideApproval, decidedApprovals, decidingApprovalId],
+  );
+
   const renderSurface = useCallback(
     (input: SurfaceBlockRef): ReactElement => {
       const instance = input.instanceId === undefined ? undefined : instanceById.get(input.instanceId);
@@ -804,13 +784,6 @@ export function Conversation({
 
   const placeholder = useTypewriterPlaceholder(PLACEHOLDER_PHRASES, heroPhase === "shown" && draft === "");
   const showTimeline = blocks.length > 0 || pendingUser !== undefined || busy;
-  /**
-   * The newest reply, which is the one whose avatar is allowed to be a live canvas.
-   *
-   * Computed once here rather than inside the map so the rule is visible: one animated orb per
-   * conversation, not one per message.
-   */
-  const newestAssistant = blocks.reduce((last, message, index) => (message.role === "assistant" ? index : last), -1);
 
   return (
     <div
@@ -925,15 +898,15 @@ export function Conversation({
                     // Full width, with the agent's mark beside it: a reply is the agent talking, and
                     // boxing it like the user's message would make both sides look like utterances.
                     <div className="cc-assistant">
-                      <AgentAvatar animated={index === newestAssistant} pointerTarget={shell} />
+                      <AgentAvatar />
                       <div className="cc-assistant-body">
-                        {message.blocks.map((block, blockIndex) => renderBlock(block, blockIndex, renderSurface))}
+                        {message.blocks.map((block, blockIndex) => renderBlock(block, blockIndex, renderSurface, blockActions))}
                       </div>
                     </div>
                   ) : (
                     // A bubble, because it is the user's own words coming back to them at a glance.
                     <div className="cc-bubble" data-bubble="user">
-                      {message.blocks.map((block, blockIndex) => renderBlock(block, blockIndex, renderSurface))}
+                      {message.blocks.map((block, blockIndex) => renderBlock(block, blockIndex, renderSurface, blockActions))}
                     </div>
                   )}
                 </article>
@@ -955,7 +928,7 @@ export function Conversation({
               {busy && (
                 <article className="cc-row" data-role="assistant" data-live="true" style={{ "--cc-enter-delay": "0ms" } as CSSProperties}>
                   <div className="cc-assistant">
-                    <AgentAvatar animated pointerTarget={shell} />
+                    <AgentAvatar />
                     <div className="cc-assistant-body">
                       {live.length === 0 ? (
                         <div className="cc-thinking" data-thinking="true" role="status" aria-label="Agent đang trả lời">
@@ -1052,100 +1025,6 @@ export function Conversation({
         </div>
       )}
 
-      {/*
-        Starting a session in a directory. It sits above the composer because it is a different kind
-        of action from sending a message: it opens a workspace, and the answer to it may be a
-        question the user has to answer with a path.
-      */}
-      <div className="cc-session" data-start-session="true">
-        <button
-          type="button"
-          className="cc-chip"
-          data-start-session-toggle="true"
-          aria-expanded={sessionOpen}
-          onClick={() => setSessionOpen((open) => !open)}
-        >
-          Mở phiên trong dự án
-        </button>
-        {sessionOpen && (
-          <form
-            className="cc-session-form"
-            data-start-session-form="true"
-            onSubmit={(event) => {
-              event.preventDefault();
-              void openProjectSession(sessionText);
-            }}
-          >
-            <input
-              className="cc-session-input"
-              data-start-session-input="true"
-              aria-label={sessionAsk === "needs-path" ? "Đường dẫn thư mục" : "Tên dự án"}
-              placeholder={sessionAsk === "needs-path" ? "/đường/dẫn/đến/thư-mục" : "tên dự án, hoặc đường dẫn"}
-              value={sessionText}
-              onChange={(event) => setSessionText(event.target.value)}
-            />
-            {pickDirectory !== undefined && (
-              //
-              // Only rendered when the shell can actually open a dialog. A control that is present
-              // and does nothing is worse than one that is absent: on the web the input above is the
-              // whole answer, and the button would be a promise the build cannot keep.
-              <button
-                type="button"
-                className="cc-icon-btn cc-session-pick"
-                data-start-session-pick="true"
-                disabled={sessionBusy}
-                onClick={() => {
-                  void (async () => {
-                    const chosen = await pickDirectory({ title: "Chọn thư mục cho phiên làm việc" });
-                    if (!chosen.ok || chosen.canceled === true) return;
-                    const path = chosen.path;
-                    if (typeof path !== "string" || path.trim() === "") return;
-                    // The chosen path is the answer to the node's own question, so it takes the same
-                    // route as a typed one rather than a second way of starting a session.
-                    setSessionText(path);
-                    await openProjectSession(path);
-                  })();
-                }}
-              >
-                Chọn thư mục…
-              </button>
-            )}
-            <button
-              type="submit"
-              className="cc-icon-btn"
-              style={{ width: "auto", padding: "0 var(--cc-space-sm)" }}
-              data-start-session-submit="true"
-              disabled={sessionBusy}
-            >
-              {sessionBusy ? "Đang mở…" : "Mở"}
-            </button>
-          </form>
-        )}
-        {sessionOptions.length > 0 && (
-          <div className="cc-session-options">
-            {sessionOptions.map((option) => (
-              <button
-                key={option}
-                type="button"
-                className="cc-chip"
-                data-start-session-option={option}
-                onClick={() => {
-                  setSessionText(option);
-                  void openProjectSession(option);
-                }}
-              >
-                {option}
-              </button>
-            ))}
-          </div>
-        )}
-        {sessionNotice !== undefined && (
-          <p className="cc-freshness" data-start-session-status={sessionNotice.kind}>
-            {sessionNotice.text}
-          </p>
-        )}
-      </div>
-
       <div className="cc-composer-wrap" ref={composerWrap}>
         {/* The ring, drawn under the composer so the light travels around its edge rather than across it. */}
         <div className="cc-composer-shell">
@@ -1177,7 +1056,14 @@ export function Conversation({
                 }
               }}
             />
-            <button type="button" className="cc-icon-btn" aria-label="Nhập bằng giọng nói" disabled title="Live voice cần provider account">
+            <button
+              type="button"
+              className="cc-icon-btn"
+              aria-label="Nói bằng giọng nói"
+              title="Nói bằng giọng nói"
+              data-voice-open="true"
+              onClick={() => setVoiceOpen(true)}
+            >
               ◉
             </button>
             <button type="submit" className="cc-icon-btn" aria-label="Gửi" disabled={busy || draft.trim() === ""} data-send="true">
@@ -1209,12 +1095,13 @@ export function Conversation({
             }}
           >
             <Orb
-              size={ORB_DOCK_SIZE}
+              size={ORB_DRAW_SIZE}
+              radius={ORB_RADIUS}
               className="cc-empty-orb"
               label="Đang chờ bạn nói điều muốn làm"
-              // The docked orb is 720 pixels across. At two device pixels per CSS pixel that is four
-              // million fragments a frame for a soft glow, so it is drawn at a lower ratio than the small
-              // orbs, where the difference is actually visible.
+              // The canvas is 960 across. At two device pixels per CSS pixel that is nearly four million
+              // fragments a frame for a soft glow, so it is drawn at a lower ratio than the small orbs,
+              // where the difference is actually visible.
               maxPixelRatio={1.25}
               pointerTarget={shell}
             />
@@ -1226,11 +1113,26 @@ export function Conversation({
         open={uiCheckOpen}
         onClose={() => setUiCheckOpen(false)}
         client={client}
-        {...(conversationId === undefined ? {} : { conversationId })}
         themeChoice={themeChoice}
         resolvedTheme={resolvedTheme}
         onThemeChoice={applyThemeChoice}
       />
+
+      {/*
+        Voice, as its own screen over the conversation. Both ways out of it stop the session — a closed
+        surface may not keep a microphone open — and the only difference between them is where the caret
+        goes afterwards.
+      */}
+      {voiceOpen && (
+        <VoiceOverlay
+          client={client}
+          {...(conversationId === undefined ? {} : { conversationId })}
+          onClose={({ focusComposer }) => {
+            setVoiceOpen(false);
+            if (focusComposer) composerInput.current?.focus();
+          }}
+        />
+      )}
     </div>
   );
 }

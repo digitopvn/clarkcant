@@ -17,6 +17,10 @@ import { applyEnvFile } from "@clarkcant/pi-adapter";
 
 import { handleRequest, type GatewayResponse } from "./gateway.ts";
 import { machineRoots } from "./fs-search.ts";
+import { resolveProject } from "./project-finder.ts";
+import { commandDigest } from "./run-command.ts";
+import { listProjects } from "@clarkcant/storage";
+import { requestApproval, setPreference, type CoordinationDeps } from "@clarkcant/core";
 import { attachVoiceGateway } from "./voice-session.ts";
 import { FixtureLiveAdapter } from "./voice-fixture.ts";
 import { SAMPLE_DATASET } from "@clarkcant/data-canvas/sample";
@@ -89,6 +93,13 @@ async function main(): Promise<void> {
   const sessionWiring: { index?: NodeServices["sessions"]; principalId?: string } = {};
   const searchWiring: { deps?: NodeServices["search"] } = {};
   const projectWiring: { deps?: NodeServices["projects"] } = {};
+  /**
+   * Where an approval request is recorded, filled once the node has booted.
+   *
+   * `run_command` is registered only with these: a node that cannot record a decision cannot ask for one,
+   * and a tool that could only refuse is worse than no tool at all.
+   */
+  const approvalWiring: { deps?: CoordinationDeps } = {};
   /** Filled once the node has booted, so the scripted turn below can compose a real surface. */
   const modelWiring: { compose?: NodeServices["compose"] } = {};
 
@@ -109,6 +120,41 @@ async function main(): Promise<void> {
     text: string;
     messageId: string;
   }): Promise<{ block: MessageBlock; text: string } | undefined> => {
+    /*
+     * A command proposal, scripted.
+     *
+     * The same reason the other fixtures exist: the browser half of this feature — a card with two
+     * buttons and a receipt — needs a way to be reached without a provider account, and a fixture that
+     * cannot produce the card would leave the client wiring tested by nothing at all.
+     */
+    if (/chạy lệnh thử|thử chạy lệnh/i.test(input.text)) {
+      const approvals = approvalWiring.deps;
+      if (approvals === undefined) return undefined;
+      const cwd = options.dataDir;
+      const command = `node -e "process.stdout.write('fixture ran')"`;
+      const approval = requestApproval(approvals, {
+        operationDigest: commandDigest(command, cwd),
+        operationDescription: `Chạy lệnh trong ${cwd} (fixture) - chỉ để thử đường duyệt`,
+        effectCategory: "local-write",
+        ttlMs: 900_000,
+      });
+      return {
+        text: "Đây là yêu cầu duyệt do fixture tạo, không phải model thật. Chưa có gì chạy cả.",
+        block: {
+          type: "approval-card",
+          owner: "host",
+          approvalId: approval.approvalId,
+          operationDescription: approval.operationDescription,
+          operationDigest: approval.operationDigest,
+          effectCategory: "local-write",
+          expiresAt: approval.expiresAt,
+          decider: "user",
+          decision: "pending",
+          payload: JSON.stringify({ command, cwd }),
+        },
+      };
+    }
+
     if (!/tổng quan|tong quan|overview/i.test(input.text)) return undefined;
     const compose = modelWiring.compose;
     if (compose === undefined) return undefined;
@@ -177,10 +223,41 @@ async function main(): Promise<void> {
     // The Session Manager's read-only reports, including the project finder. Built by a function a
     // test can call: an inline list here is how `find_project` came to exist without ever being
     // registered, and nothing could see the difference.
-    extraTools: () =>
-      searchWiring.deps === undefined || projectWiring.deps === undefined
-        ? []
-        : createNodeTools({ search: searchWiring.deps, projects: projectWiring.deps }),
+    extraTools: () => {
+      const search = searchWiring.deps;
+      const projects = projectWiring.deps;
+      const approvals = approvalWiring.deps;
+      if (search === undefined || projects === undefined || approvals === undefined) return [];
+      return createNodeTools({
+        search,
+        projects,
+        approvals: () => approvals,
+        // A command may run in a folder the user approved, in a project the finder has indexed, or in the
+        // folder those projects live in — which is where a clone lands. Read fresh at each call, because
+        // the index changes while the node runs.
+        placement: () => ({
+          approvedRoots: projects.roots(),
+          knownProjects: listProjects(services.runtime.db, services.runtime.identity.nodeId).map((project) => project.path),
+        }),
+        // "Where should this go?" goes through the finder, which is where Jev decides when several folders
+        // could be meant. The model is told to look before it proposes, and an ambiguous answer comes back
+        // as a question rather than as a guess.
+        resolveFolder: async (intent) => {
+          const resolution = await resolveProject(projects, { intent });
+          if (resolution.status === "resolved") {
+            return { status: "resolved", cwd: resolution.project.path, relPath: resolution.relPath };
+          }
+          if (resolution.status === "clarify") {
+            return { status: "ask", message: resolution.question, options: resolution.options };
+          }
+          return {
+            status: "ask",
+            message: resolution.status === "rejected" ? resolution.message : resolution.question,
+            options: [],
+          };
+        },
+      });
+    },
   });
   process.stderr.write(
     modelTurn === undefined
@@ -213,6 +290,28 @@ async function main(): Promise<void> {
   sessionWiring.principalId = services.runtime.identity.ownerPrincipalId;
   searchWiring.deps = services.search;
   projectWiring.deps = services.projects;
+  approvalWiring.deps = {
+    db: services.runtime.db,
+    nodeId: services.runtime.identity.nodeId,
+    now: () => new Date().toISOString() as never,
+    // The conductor's own id generator, so an approval id looks like every other id this node writes.
+    newId: services.conductor.newId,
+  };
+
+  // A fixture node arranges its own precondition: the scripted command proposal has to have somewhere to
+  // run, and a browser run must never depend on a developer's real approved folders.
+  if (modelFixture) {
+    setPreference(
+      { db: services.runtime.db, now: () => new Date().toISOString() as never },
+      {
+        principalId: services.runtime.identity.ownerPrincipalId,
+        key: "workspace.roots",
+        scope: "global",
+        value: [options.dataDir],
+        source: "user",
+      },
+    );
+  }
   modelWiring.compose = services.compose;
 
   if (sessionFixture) {

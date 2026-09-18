@@ -5,9 +5,11 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { nodeIdSchema } from "@clarkcant/contracts";
 import { FakePiAdapter, type WorkerBrief } from "@clarkcant/pi-adapter";
-import { setPreference, type ModelTurnInput } from "@clarkcant/core";
+import { requestApproval, setPreference, type ModelTurnInput } from "@clarkcant/core";
+import { appendMessage, nextMessageSequence } from "@clarkcant/storage";
 
 import { handleRequest, type GatewayDeps, type GatewayRequest, type GatewayResponse } from "../src/gateway.ts";
+import { commandDigest } from "../src/run-command.ts";
 import { bootNodeServices, type NodeServices } from "../src/services.ts";
 
 /**
@@ -616,5 +618,118 @@ describe("a message can be watched while it is answered", () => {
     const done = streamed.events.at(-1);
     expect(done?.event).toBe("done");
     expect(done?.data.resolution).toBe("model-failed");
+  });
+});
+
+/**
+ * An approved command, over the wire.
+ *
+ * The unit tests cover the gate and the runner. This covers the wiring between them: that a decision
+ * from a user is what starts a command, that the payload which runs is the one that was displayed, and
+ * that a refusal leaves no trace of something having run.
+ */
+describe("a command runs only when the user approves the one that was displayed", () => {
+  /** The card a model turn would have produced, written the way the node writes a message. */
+  async function propose(conversationId: string, command: string, cwd: string) {
+    const approval = requestApproval(
+      {
+        db: services.runtime.db,
+        nodeId: services.runtime.identity.nodeId,
+        now: () => AT as never,
+        newId: services.conductor.newId,
+      },
+      {
+        operationDigest: commandDigest(command, cwd),
+        operationDescription: `Chạy lệnh trong ${cwd}`,
+        effectCategory: "local-write",
+        ttlMs: 900_000,
+      },
+    );
+    const message = {
+      messageId: services.conductor.newId("msg"),
+      conversationId,
+      role: "assistant" as const,
+      blocks: [
+        {
+          type: "approval-card",
+          owner: "host",
+          approvalId: approval.approvalId,
+          operationDescription: approval.operationDescription,
+          operationDigest: approval.operationDigest,
+          effectCategory: "local-write",
+          expiresAt: approval.expiresAt,
+          decider: "user",
+          decision: "pending",
+          payload: JSON.stringify({ command, cwd }),
+        },
+      ],
+      authorNodeId: services.runtime.identity.nodeId,
+      createdAt: AT,
+      delivery: "accepted" as const,
+    };
+    appendMessage(services.runtime.db, message as never, nextMessageSequence(services.runtime.db, conversationId));
+    return approval;
+  }
+
+  function blocksOf(response: GatewayResponse): Record<string, unknown>[] {
+    const timeline = (response.body as { timeline?: { messages?: { blocks?: Record<string, unknown>[] }[] } }).timeline;
+    return (timeline?.messages ?? []).flatMap((message) => message.blocks ?? []);
+  }
+
+  beforeEach(() => {
+    // The command runs in the node's own temporary directory, which is this test's approved root.
+    setPreference(
+      { db: services.runtime.db, now: () => AT as never },
+      {
+        principalId: services.runtime.identity.ownerPrincipalId,
+        key: "workspace.roots",
+        scope: "global",
+        value: [dir],
+        source: "user",
+      },
+    );
+  });
+
+  it("runs it on approval, and appends the output with its evidence", async () => {
+    const conversationId = await createConversation();
+    const command = `node -e "process.stdout.write('ngon')"`;
+    const approval = await propose(conversationId, command, dir);
+
+    const response = await request("POST", `/conversations/${conversationId}/approvals/${approval.approvalId}/decide`, {
+      body: { decision: "granted", digest: approval.operationDigest },
+    });
+
+    expect(response.status).toBe(200);
+    const blocks = blocksOf(response);
+    const activity = blocks.find((block) => block.type === "tool-activity");
+    expect(activity, "the transcript must show what ran").toBeDefined();
+    expect(String(activity?.result)).toContain("ngon");
+    expect(blocks.some((block) => block.type === "evidence" && block.verdict === "verified")).toBe(true);
+  });
+
+  it("refuses a decision whose digest is not the one that was displayed", async () => {
+    const conversationId = await createConversation();
+    const approval = await propose(conversationId, `node -e "process.stdout.write('khong-duoc-chay')"`, dir);
+
+    const response = await request("POST", `/conversations/${conversationId}/approvals/${approval.approvalId}/decide`, {
+      body: { decision: "granted", digest: "sha256:khong-phai-digest-da-hien" },
+    });
+
+    expect(response.status).toBe(409);
+    expect((response.body as { code: string }).code).toBe("APPROVAL_FORGED");
+  });
+
+  it("records a refusal, and nothing runs", async () => {
+    const conversationId = await createConversation();
+    const approval = await propose(conversationId, `node -e "process.stdout.write('khong-chay')"`, dir);
+
+    const response = await request("POST", `/conversations/${conversationId}/approvals/${approval.approvalId}/decide`, {
+      body: { decision: "denied", digest: approval.operationDigest },
+    });
+
+    expect(response.status).toBe(200);
+    const blocks = blocksOf(response);
+    expect(blocks.some((block) => block.type === "tool-activity")).toBe(false);
+    expect(JSON.stringify(blocks)).toContain("Đã từ chối");
   });
 });

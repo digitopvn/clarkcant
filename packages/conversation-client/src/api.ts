@@ -560,6 +560,22 @@ export class GatewayClient {
     return this.#call("DELETE", `/images/${imageId}`);
   }
 
+  /**
+   * Approve or refuse an operation the agent asked for.
+   *
+   * The digest the card showed is sent back with the decision, because the node compares it against a
+   * digest recomputed from the operation it is about to run: an approval is bound to the exact thing
+   * that was displayed, so a payload that changed between display and decision is refused rather than
+   * executed. This is the only route that can start a command, and it takes a decision from a user.
+   */
+  decideApproval(
+    conversationId: string,
+    approvalId: string,
+    decision: { decision: "granted" | "denied"; digest: string },
+  ): Promise<{ decision: string; timeline: Timeline; outcome?: string }> {
+    return this.#call("POST", `/conversations/${conversationId}/approvals/${approvalId}/decide`, decision);
+  }
+
   /** Resolve the live surface for an instance: current state, sections and ownership. */
   liveWidget(conversationId: string, instanceId: string): Promise<LiveWidgetResponse> {
     return this.#call("GET", `/conversations/${conversationId}/widgets/${instanceId}/live`);

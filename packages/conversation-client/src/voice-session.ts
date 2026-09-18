@@ -54,6 +54,15 @@ export interface VoiceSessionEvents {
    * work. A surface can show it; a test asserts it.
    */
   onCaptureFrame?(sent: number): void;
+  /**
+   * The loudness of each frame, in each direction, from 0 to 1.
+   *
+   * A voice interface with no reaction to the voice is a picture of a microphone. This is what lets a
+   * surface show two facts a caller otherwise cannot see: that the microphone is hearing something, and
+   * that the model is speaking. Reported per frame in both directions, and never derived from the frame
+   * counts, which only say that audio is moving.
+   */
+  onLevel?(update: { source: "microphone" | "agent"; level: number }): void;
   /** A refusal or transport failure, already worded for a person. */
   onError(message: string): void;
   onEnded(recordedMessages: number): void;
@@ -161,6 +170,7 @@ export async function startVoiceSession(options: StartVoiceSessionOptions): Prom
     source.onended = () => playing.delete(source);
     framesReceived += 1;
     events.onAudioFrame?.(framesReceived);
+    events.onLevel?.({ source: "agent", level: rmsLevel(pcm) });
   };
 
   const finish = async (recordedMessages: number): Promise<void> => {
@@ -285,6 +295,7 @@ export async function startVoiceSession(options: StartVoiceSessionOptions): Prom
       socket.send(pcm);
       captureFrames += 1;
       events.onCaptureFrame?.(captureFrames);
+      events.onLevel?.({ source: "microphone", level: rmsLevel(event.data.frame) });
     };
 
     const sourceNode = context.createMediaStreamSource(stream);
@@ -361,6 +372,27 @@ export function voiceSocketUrl(nodeBaseUrl: string): string {
  * Clamped rather than wrapped: an out-of-range sample that wraps becomes a loud click, and a click
  * in a speech stream is exactly the kind of artefact that makes a recogniser produce nonsense.
  */
+/**
+ * The loudness of one frame, from 0 to 1.
+ *
+ * Root mean square rather than peak: a peak meter jumps to full on a single click, so a table being set
+down reads as loud as speech. Normalised by the sample format's full scale, then scaled up, because the
+ * RMS of ordinary speech is around 0.05 — on a bar chart that is indistinguishable from silence, and a
+ * waveform nobody can see is worse than no waveform.
+ */
+export function rmsLevel(frame: Float32Array | Int16Array): number {
+  if (frame.length === 0) return 0;
+  // Scaled once rather than per sample: an `instanceof` inside the loop is a megabyte of comparisons a
+  // second at this frame rate.
+  const scale = frame instanceof Int16Array ? 1 / 32768 : 1;
+  let sum = 0;
+  for (let index = 0; index < frame.length; index += 1) {
+    const sample = (frame[index] ?? 0) * scale;
+    sum += sample * sample;
+  }
+  return Math.min(1, Math.sqrt(sum / frame.length) * 4);
+}
+
 export function toPcm16(frame: Float32Array, actualSampleRateHz: number): Int16Array {
   const samples =
     actualSampleRateHz === INPUT_SAMPLE_RATE_HZ ? frame : resample(frame, actualSampleRateHz, INPUT_SAMPLE_RATE_HZ);
