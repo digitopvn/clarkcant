@@ -20,6 +20,7 @@ import type { ThemeName } from "@clarkcant/design-tokens";
 import { AgentAvatar } from "./AgentAvatar.tsx";
 import { ReasoningBlock, ToolActivityBlock, type BlockActions } from "./blocks.tsx";
 import { composerTextareaHeight } from "./composer-height.ts";
+import { followsBottom } from "./follow-bottom.ts";
 import { applyLiveEvent, type LiveSegment } from "./live-reply.ts";
 import { Markdown } from "./markdown.tsx";
 import { Orb } from "./Orb.tsx";
@@ -248,6 +249,14 @@ export function Conversation({
     });
   }, [themeChoice]);
   const scroller = useRef<HTMLDivElement>(null);
+  /**
+   * Whether the reader is at the bottom of the transcript.
+   *
+   * Following is something the reader chooses by being at the bottom, not a property of the transcript: a
+   * streamed answer grows on every delta, and a view that follows it unconditionally pulls the page back down
+   * each time someone scrolls up to read what came before. That is the fight this records, and ends.
+   */
+  const followBottom = useRef(true);
 
   /**
    * How long the hero takes to leave, read from the motion tokens.
@@ -545,10 +554,27 @@ export function Conversation({
 
   useEffect(() => {
     const node = scroller.current;
-    if (node) node.scrollTop = node.scrollHeight;
+    if (node === null || !followBottom.current) return;
+    node.scrollTop = node.scrollHeight;
     // The streamed reply is as much a reason to follow the bottom as a stored message is: without it
-    // the answer grows below the fold while the view stays where the question was.
+    // the answer grows below the fold while the view stays where the question was. It is conditional
+    // because that is a reason to follow, not a licence to interrupt someone reading further up.
   }, [live, pendingUser, timeline]);
+
+  /* Reading away from the bottom stops the following; coming back to it starts it again. */
+  useEffect(() => {
+    const node = scroller.current;
+    if (node === null) return;
+    const onScroll = (): void => {
+      followBottom.current = followsBottom({
+        scrollHeight: node.scrollHeight,
+        scrollTop: node.scrollTop,
+        clientHeight: node.clientHeight,
+      });
+    };
+    node.addEventListener("scroll", onScroll, { passive: true });
+    return () => node.removeEventListener("scroll", onScroll);
+  }, []);
 
   const send = useCallback(
     async (text: string, options: { demo?: boolean } = {}) => {
@@ -561,6 +587,8 @@ export function Conversation({
       // Drawn from here rather than from the node's answer: the user's own message is not in doubt,
       // and waiting for the round trip to show it makes the interface feel slower than it is.
       setPendingUser({ text: trimmed });
+      // Sending is a decision to be at the newest turn, whatever the view was doing before it.
+      followBottom.current = true;
       setLive([]);
       beginHeroExit();
       const generation = sessionGeneration.current;
