@@ -210,19 +210,27 @@ export async function runCommand(
 /**
  * What the conversation says about a finished command.
  *
- * Written for a reader who has to decide whether it worked, so the exit code and the truncation are
- * stated before the output rather than after it — a wall of text with the verdict at the bottom is a
- * wall of text.
+ * The verdict only. The output itself belongs in the block's result, which the interface draws as a code
+ * block, and saying it in both places is what made a receipt print its own output twice.
  */
 export function describeCommandOutcome(command: string, outcome: CommandOutcome): string {
   const verdict = outcome.timedOut
     ? `hết thời gian sau ${outcome.durationMs} ms và bị dừng`
     : `thoát với mã ${outcome.exitCode ?? "không rõ"} sau ${outcome.durationMs} ms`;
-  const parts = [`\`${command}\` ${verdict}.`];
+  return `\`${command}\` ${verdict}.`;
+}
+
+/**
+ * What the command printed, as the result a reader can copy.
+ *
+ * Labelled by stream, because which of the two a line came from is often the whole question, and "Không có
+ * output." rather than an empty block, because a command that printed nothing is a fact worth stating.
+ */
+export function commandOutput(outcome: CommandOutcome): string {
+  const parts: string[] = [];
   if (outcome.stdout.trim() !== "") parts.push(`stdout:\n${outcome.stdout.trimEnd()}`);
   if (outcome.stderr.trim() !== "") parts.push(`stderr:\n${outcome.stderr.trimEnd()}`);
-  if (outcome.stdout.trim() === "" && outcome.stderr.trim() === "") parts.push("Không có output.");
-  return parts.join("\n\n");
+  return parts.length === 0 ? "Không có output." : parts.join("\n\n");
 }
 
 /**
@@ -280,10 +288,6 @@ export async function runApprovedCommand(input: {
   const outcome = await (input.run ?? ((request) => runCommand(request)))({ command, cwd: guard.cwd });
   const description = describeCommandOutcome(command, outcome);
   const succeeded = outcome.exitCode === 0 && !outcome.timedOut;
-  const output = [outcome.stdout, outcome.stderr]
-    .map((part) => part.trim())
-    .filter((part) => part !== "")
-    .join("\n");
 
   const blocks: MessageBlock[] = [
     {
@@ -295,7 +299,7 @@ export async function runApprovedCommand(input: {
       // The approval id travels with the receipt so the interface can mark the card it answered as
       // decided, including after a reload.
       args: { command, cwd: guard.cwd, approvalId: input.approvalId, decision: "granted" },
-      result: description,
+      result: commandOutput(outcome),
       path: guard.cwd,
       startedAt,
       endedAt: at(),
@@ -310,24 +314,6 @@ export async function runApprovedCommand(input: {
       verdict: succeeded ? "verified" : "contradicted",
       ref: input.approvalId,
     },
-    ...(output === ""
-      ? []
-      : [
-          {
-            type: "text" as const,
-            format: "plain" as const,
-            /*
-             * What the command actually printed.
-             *
-             * Without this the receipt said "exit 0" and nothing else, and the cost was measured in use: the agent
-             * asked to run `git log`, was given the receipt, and answered - twice - that the log never reached it,
-             * because it never did. The person could not read the output either. A receipt for a command that
-             * prints something is not a receipt without the printing.
-             */
-            content: output,
-            streaming: false,
-          },
-        ]),
   ];
 
   return { ok: true, blocks, outcome, description };

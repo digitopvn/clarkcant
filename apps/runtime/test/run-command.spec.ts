@@ -67,10 +67,12 @@ describe("running an approved operation", () => {
     // The approval id is in the receipt so the interface can mark the card it answered as decided.
     expect(activity?.type === "tool-activity" ? activity.args.approvalId : undefined).toBe("appr_1");
     expect(evidence).toMatchObject({ type: "evidence", kind: "exit-status", verdict: "verified" });
-    // And what the command printed. The receipt said "exit 0" and nothing else, which is what the agent reported
-    // twice as "the log never reached me" - the person could not read their own output either.
-    const printed = result.blocks.find((block) => block.type === "text");
-    expect(printed?.type === "text" ? printed.content : undefined).toContain("Cloning into");
+    // The output is in the result and nowhere else. It used to be in the result *and* in a text block of its own,
+    // which the interface drew as a second copy of the same output under a receipt that already showed it.
+    expect(result.blocks.filter((block) => block.type === "text")).toHaveLength(0);
+    // And the verdict on its own, because the output has a place of its own now.
+    expect(result.description).toContain("thoát với mã 0");
+    expect(result.description).not.toContain("Cloning into");
   });
 
   it("leaves the output out when the command printed nothing", async () => {
@@ -83,7 +85,10 @@ describe("running an approved operation", () => {
 
     expect(result.ok).toBe(true);
     if (!result.ok) return;
-    // A command that prints nothing adds no block: an empty block would look like output that failed to arrive.
+    // Silence is stated rather than shown as an empty block, which would look like output that failed to arrive,
+    // and there is still no second copy of it anywhere.
+    const activity = result.blocks[0];
+    expect(activity?.type === "tool-activity" ? activity.result : undefined).toBe("Không có output.");
     expect(result.blocks.some((block) => block.type === "text")).toBe(false);
   });
 
@@ -139,7 +144,10 @@ describe("running an approved operation", () => {
     if (!result.ok) return;
     expect(result.blocks[0]).toMatchObject({ type: "tool-activity", status: "failed" });
     expect(result.blocks[1]).toMatchObject({ type: "evidence", verdict: "contradicted" });
-    expect(result.description).toContain("Permission denied");
+    // What it printed is in the result, and the verdict says which command failed and how.
+    const activity = result.blocks[0];
+    expect(activity?.type === "tool-activity" ? activity.result : undefined).toContain("Permission denied");
+    expect(result.description).toContain("thoát với mã 128");
   });
 });
 

@@ -1210,9 +1210,15 @@ export async function decideApprovalForNode(
   const continued = await handleUserMessage(services.conductor, {
     conversationId: input.conversationId as never,
     principal: input.principal as never,
-    text:
-      `Lệnh đã được duyệt và đã chạy xong:\n${receipt}\n\n` +
-      "Đây là kết quả thật, không phải dự đoán. Hãy tiếp tục công việc đang làm dở.",
+    text: "Lệnh đã được duyệt và đã chạy xong.",
+    /*
+     * The receipt goes to the model rather than into the transcript.
+     *
+     * The card above the line already shows the command, its verdict and its output as a code block, and the
+     * model needs the output to carry on. Putting it in the message as well printed the same output twice -
+     * once in the receipt, once in the message that followed it - which is what a reader complained about.
+     */
+    note: `${receipt}\n\nĐây là kết quả thật, không phải dự đoán. Hãy tiếp tục công việc đang làm dở.`,
     at: input.at,
   });
   // Indexed where the messages were written, so a continuation is findable like anything else said.
