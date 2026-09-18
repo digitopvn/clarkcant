@@ -516,6 +516,20 @@ export class GatewayClient {
   }
 
   /**
+   * What this node offers, and what the agent it drives offers.
+   *
+   * Two lists rather than one, because a reader deciding whether something is possible needs to know which half would
+   * do it: a tool the node holds works here, and one the agent holds works wherever the agent was pointed.
+   */
+  tools(): Promise<{
+    self: { name: string; label: string; description: string }[];
+    agent: { name: string; label: string; description: string }[];
+    agentNote?: string;
+  }> {
+    return this.#call("GET", "/tools");
+  }
+
+  /**
    * The stored composition and the bundle captured with it.
    *
    * The snapshot's rows travel here rather than through the message, so the transcript keeps its

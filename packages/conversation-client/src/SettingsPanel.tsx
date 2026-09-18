@@ -19,6 +19,7 @@
 import { useCallback, useEffect, useState, type ReactElement, type ReactNode } from "react";
 
 import { MicrophoneCheck } from "./microphone-check.tsx";
+import { ToolLists } from "./tool-lists.tsx";
 
 import { contrastRatio, AA_NORMAL_TEXT, DARK, LIGHT, type ThemeName } from "@clarkcant/design-tokens";
 
@@ -457,6 +458,14 @@ export function SettingsPanel({
                 />
               ))
             )}
+            {/*
+              The tools, told apart by which half holds them.
+
+              The capability list above is what this node has registered as a capability; these two are the tools
+              themselves - the node's own and the agent's - because a person asking "can this thing do X" is asking
+              about both and needs to know which one would be doing it.
+            */}
+            <ToolLists client={client} />
           </section>
         )}
 
