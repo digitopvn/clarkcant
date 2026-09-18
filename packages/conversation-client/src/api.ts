@@ -205,6 +205,70 @@ export interface ImageView {
   url: string;
 }
 
+/** What a message that was accepted produced, streamed or not. */
+export interface SendMessageResult {
+  resolution: string;
+  taskId: string | null;
+  /** The messages this request wrote, in order. */
+  messageIds: string[];
+  /** Every message in the conversation, so the client never has to guess whether its cursor is valid. */
+  timeline: Timeline;
+}
+
+/** One event from a turn that is still running, as the client receives it. */
+export type ReplyStreamEvent =
+  | { type: "text-delta"; text: string }
+  | { type: "reasoning-delta"; text: string }
+  | { type: "tool-start"; toolCallId: string; name: string; label: string; args: Record<string, unknown> }
+  | { type: "tool-end"; toolCallId: string; status: "done" | "failed"; result: string };
+
+/** One frame of a server-sent event stream. */
+export interface SseEvent {
+  event: string;
+  data: string;
+}
+
+/**
+ * Split one chunk of an event stream into complete frames, keeping the incomplete tail.
+ *
+ * Incremental by design: a chunk boundary can fall anywhere, including in the middle of the event
+ * name or of a multi-byte character, so a parser that only understands whole frames would drop text
+ * at exactly the sizes nobody tests with.
+ *
+ * Comment frames — the ones a server sends to keep a connection alive — carry no data and are
+ * dropped. Returning them would mean every keep-alive arrived at the caller as an empty event.
+ */
+export function parseSseChunk(buffer: string): { events: SseEvent[]; rest: string } {
+  const events: SseEvent[] = [];
+  let rest = buffer;
+  for (;;) {
+    // The frame separator is the transport's to choose, so both spellings are accepted.
+    const separator = /\r?\n\r?\n/.exec(rest);
+    if (separator === null) break;
+    const frame = rest.slice(0, separator.index);
+    rest = rest.slice(separator.index + separator[0].length);
+    const parsed = parseSseFrame(frame);
+    if (parsed !== undefined) events.push(parsed);
+  }
+  return { events, rest };
+}
+
+function parseSseFrame(frame: string): SseEvent | undefined {
+  let event = "message";
+  const data: string[] = [];
+  for (const line of frame.split(/\r?\n/)) {
+    // A line starting with a colon is a comment, and an empty line inside a frame is padding.
+    if (line === "" || line.startsWith(":")) continue;
+    const colon = line.indexOf(":");
+    const field = colon === -1 ? line : line.slice(0, colon);
+    // One optional space after the colon belongs to the format, not to the value.
+    const value = colon === -1 ? "" : line.slice(colon + 1).replace(/^ /, "");
+    if (field === "event") event = value;
+    else if (field === "data") data.push(value);
+  }
+  return data.length === 0 ? undefined : { event, data: data.join("\n") };
+}
+
 export class GatewayError extends Error {
   readonly status: number;
   readonly code: string;
@@ -309,8 +373,123 @@ export class GatewayClient {
     return this.#call("GET", "/conversations");
   }
 
-  sendMessage(conversationId: string, text: string): Promise<{ resolution: string; taskId: string | null; timeline: Timeline }> {
+  sendMessage(conversationId: string, text: string): Promise<SendMessageResult> {
     return this.#call("POST", `/conversations/${conversationId}/messages`, { text });
+  }
+
+  /**
+   * Send a message and read the reply while it is being written.
+   *
+   * The same request as `sendMessage`, against the route that reports it as it happens. `done`
+   * carries the identical timeline the plain route returns, so a caller ends up with the node's own
+   * record either way and the stream is only a view of something that would have arrived whole.
+   *
+   * Resolves when the stream ends. Throws on a refusal that has a status code, on an `error` event
+   * (which is the only way the node can report a failure once the status line has been sent), and on
+   * a stream that ends without a `done` — that last one because a truncated reply shown as a
+   * finished answer is worse than an error the user can see.
+   */
+  async streamMessage(
+    conversationId: string,
+    text: string,
+    listeners: { onEvent: (event: ReplyStreamEvent) => void; onDone: (result: SendMessageResult) => void; signal?: AbortSignal },
+  ): Promise<void> {
+    const response = await this.#fetch(`${this.#baseUrl}/conversations/${conversationId}/messages/stream`, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${this.#token}`,
+        "content-type": "application/json",
+        accept: "text/event-stream",
+      },
+      body: JSON.stringify({ text }),
+      ...(listeners.signal === undefined ? {} : { signal: listeners.signal }),
+    });
+
+    if (!response.ok) {
+      const body = await response.text();
+      let parsed: { code?: string; message?: string } = {};
+      try {
+        parsed = JSON.parse(body) as { code?: string; message?: string };
+      } catch {
+        // The refusal is still a refusal; only its wording is missing.
+      }
+      throw new GatewayError(response.status, parsed.code ?? "UNKNOWN", parsed.message ?? "the request failed");
+    }
+
+    const body = response.body;
+    if (body === null) {
+      throw new GatewayError(response.status, "STREAM_UNAVAILABLE", "the node answered without a body to stream");
+    }
+
+    const reader = body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    let finished = false;
+
+    for (;;) {
+      const chunk = await reader.read();
+      if (chunk.done) break;
+      buffer += decoder.decode(chunk.value, { stream: true });
+      const parsed = parseSseChunk(buffer);
+      buffer = parsed.rest;
+      for (const frame of parsed.events) {
+        let payload: Record<string, unknown>;
+        try {
+          payload = JSON.parse(frame.data) as Record<string, unknown>;
+        } catch {
+          throw new GatewayError(response.status, "MALFORMED_FRAME", `the node sent an ${frame.event} event that is not JSON`);
+        }
+        if (frame.event === "delta") {
+          listeners.onEvent({ type: "text-delta", text: typeof payload.text === "string" ? payload.text : "" });
+        } else if (frame.event === "reasoning") {
+          listeners.onEvent({ type: "reasoning-delta", text: typeof payload.text === "string" ? payload.text : "" });
+        } else if (frame.event === "tool-start") {
+          listeners.onEvent({
+            type: "tool-start",
+            toolCallId: typeof payload.toolCallId === "string" ? payload.toolCallId : "",
+            name: typeof payload.name === "string" ? payload.name : "tool",
+            label: typeof payload.label === "string" ? payload.label : "",
+            args: typeof payload.args === "object" && payload.args !== null ? (payload.args as Record<string, unknown>) : {},
+          });
+        } else if (frame.event === "tool-end") {
+          listeners.onEvent({
+            type: "tool-end",
+            toolCallId: typeof payload.toolCallId === "string" ? payload.toolCallId : "",
+            status: payload.status === "failed" ? "failed" : "done",
+            result: typeof payload.result === "string" ? payload.result : "",
+          });
+        } else if (frame.event === "done") {
+          finished = true;
+          listeners.onDone({
+            resolution: typeof payload.resolution === "string" ? payload.resolution : "unknown",
+            taskId: typeof payload.taskId === "string" ? payload.taskId : null,
+            messageIds: Array.isArray(payload.messageIds)
+              ? payload.messageIds.filter((id): id is string => typeof id === "string")
+              : [],
+            // SAFETY: the timeline is the node's own record and this client has no schema for it — the
+            // same position every other route here takes, since the channel is authenticated and the
+            // node is the authority on its own timeline. Its fields are read defensively at each use.
+            timeline: payload.timeline as Timeline,
+          });
+        } else if (frame.event === "error") {
+          throw new GatewayError(
+            response.status,
+            typeof payload.code === "string" ? payload.code : "TURN_FAILED",
+            typeof payload.message === "string" ? payload.message : "the turn failed",
+          );
+        }
+        // Any other event is one this client does not know about yet, which is not a reason to fail
+        // a reply that is otherwise arriving: the `done` frame is what makes it complete.
+      }
+    }
+
+    if (!finished) {
+      throw new GatewayError(
+        response.status,
+        "STREAM_INCOMPLETE",
+        "the node ended the stream before the answer was finished",
+      );
+    }
   }
 
   timeline(conversationId: string, after = 0): Promise<Timeline> {

@@ -5,6 +5,7 @@ import { resolve } from "node:path";
 import {
   type Instant,
   type MessageRecord,
+  type Principal,
   commandEnvelopeSchema,
   nowInstant,
   protocolRangeSchema,
@@ -40,6 +41,8 @@ import {
   nextMessageSequence,
   oneRow,
 } from "@clarkcant/storage";
+
+import { isWithinRoot } from "./path-roots.ts";
 
 import {
   MAX_IMAGE_BYTES,
@@ -77,6 +80,20 @@ export interface GatewayRequest {
 export interface GatewayResponse {
   status: number;
   body: unknown;
+  /**
+   * A body written over time rather than returned at once.
+   *
+   * A conversation turn takes as long as the model takes, and the whole point of streaming it is that
+   * the text is readable while that happens. The alternative — a promise that resolves with the whole
+   * reply — cannot express "here is part of it", so the shape has to allow the transport to write
+   * before the handler returns. Validation still happens in the handler, so a malformed request or a
+   * missing conversation is still an ordinary JSON refusal with a status code; only the events are
+   * streamed, because by the time they exist the status has been sent.
+   */
+  stream?: {
+    contentType: string;
+    run: (send: (chunk: string) => void) => Promise<void>;
+  };
   /**
    * Bytes to send verbatim instead of a JSON body.
    *
@@ -451,7 +468,7 @@ function handleMiniAppDataRoutes(
       // anyway: a row edited by hand must not become an arbitrary file read.
       const blobRoot = resolve(runtime.dataDir, "blobs");
       const target = resolve(image.blobPath);
-      if (!target.startsWith(`${blobRoot}/`)) {
+      if (!isWithinRoot(blobRoot, target)) {
         return fail(500, "BLOB_PATH_ESCAPES_ROOT", "the stored image path is outside the blob directory");
       }
       let bytes: Uint8Array;
@@ -696,6 +713,31 @@ async function handleConversationRoutes(
       // its cursor is still valid after its own write.
       timeline: buildTimeline(services, { conversationId, afterSequence: 0 }),
     });
+  }
+
+  // /conversations/:id/messages/stream
+  //
+  // The same message, reported while it is being answered. It shares everything with the route above
+  // except the reporting: the same validation, the same conductor, the same indexing and the same
+  // final timeline in the last event, so a client that ignores the deltas sees exactly what the
+  // non-streaming route would have returned.
+  if (segments.length === 4 && segments[2] === "messages" && segments[3] === "stream" && request.method === "POST") {
+    const parsed = readJson(request);
+    if (!parsed.ok) return parsed.response;
+    const text = parsed.value.text;
+    if (typeof text !== "string" || text.trim().length === 0) {
+      return fail(400, "INVALID_SCHEMA", "a message must carry a non-empty text field");
+    }
+
+    const at_ = at() as never;
+    return {
+      status: 200,
+      body: null,
+      stream: {
+        contentType: "text/event-stream",
+        run: (send) => streamUserMessage(services, { conversationId, principal, text: text.slice(0, 20_000), at: at_ }, send),
+      },
+    };
   }
 
   // /conversations/:id/start-session
@@ -1011,6 +1053,74 @@ async function handleConversationRoutes(
   }
 
   return fail(404, "NOT_FOUND", `no handler for ${request.method} ${request.path}`);
+}
+
+/**
+ * Write one server-sent event.
+ *
+ * The payload is JSON on a single `data:` line rather than a raw string, because a delta can contain
+ * a newline and a bare newline ends the event: the reader would then see the rest of the text as a
+ * malformed frame and drop it. JSON encodes that character, and the size cost is a few bytes.
+ */
+function sse(event: string, payload: unknown): string {
+  return `event: ${event}\ndata: ${JSON.stringify(payload)}\n\n`;
+}
+
+/**
+ * Answer one message, reporting the reply as it is written.
+ *
+ * `done` carries the same timeline the non-streaming route returns, so the caller replaces its
+ * optimistic view with the node's own record rather than keeping two accounts of the conversation.
+ * It is sent on every path that produced a message, including a failed model turn: the failure is a
+ * host card in the timeline, which is a result and not a stream error. `error` is reserved for the
+ * case where there is no message at all, and it is sent on the stream because the status line has
+ * long since been written.
+ */
+async function streamUserMessage(
+  services: NodeServices,
+  input: { conversationId: string; principal: Principal; text: string; at: Instant },
+  send: (chunk: string) => void,
+): Promise<void> {
+  try {
+    const outcome = await handleUserMessage(services.conductor, {
+      conversationId: input.conversationId as never,
+      principal: input.principal,
+      text: input.text,
+      at: input.at,
+      emit: (event) => {
+        // One frame per event the turn produced, named as the turn named it. Translating here would
+        // mean two vocabularies for the same facts, and the transcript stores one of them.
+        if (event.type === "text-delta") send(sse("delta", { text: event.text }));
+        else if (event.type === "reasoning-delta") send(sse("reasoning", { text: event.text }));
+        else if (event.type === "tool-start") {
+          send(sse("tool-start", { toolCallId: event.toolCallId, name: event.name, label: event.label, args: event.args }));
+        } else if (event.type === "tool-end") {
+          send(sse("tool-end", { toolCallId: event.toolCallId, status: event.status, result: event.result }));
+        }
+      },
+    });
+
+    // Indexed here for the same reason the non-streaming route indexes here: a message that the
+    // conversation shows has to be one that search finds, and a crash between the two is the gap
+    // this ordering closes.
+    indexMessages(services.search, { conversationId: input.conversationId, messages: outcome.messages, at: input.at });
+
+    send(
+      sse("done", {
+        resolution: outcome.resolution,
+        taskId: outcome.taskId ?? null,
+        messageIds: outcome.messages.map((message) => message.messageId),
+        timeline: buildTimeline(services, { conversationId: input.conversationId, afterSequence: 0 }),
+      }),
+    );
+  } catch (cause) {
+    send(
+      sse("error", {
+        code: "TURN_FAILED",
+        message: cause instanceof Error ? cause.message : String(cause),
+      }),
+    );
+  }
 }
 
 /**

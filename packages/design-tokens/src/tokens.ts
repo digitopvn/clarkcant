@@ -196,21 +196,47 @@ export const BORDER_WIDTH = { hairline: "1px" } as const;
  * `orb` is the one long duration in the system. The orb is a background element and reads
  * as broken when it moves at interface speed, so it is allowed a range an order of
  * magnitude slower than a panel transition.
+ *
+ * `enter` and `exit` cover an element arriving on a screen and leaving it. Two separate
+ * durations rather than one because they are not symmetric: leaving should clear the way
+ * quickly, while arriving is the moment the user is meant to notice.
+ *
+ * `glow` is the slow orbit of the ring around the composer. Slow on purpose: it sits beside
+ * text the user is reading, so it has to be findable rather than attention-grabbing.
+ *
+ * `bounce` is the one easing with overshoot, and it is offered as a token rather than written
+ * into the stylesheet so the amount of overshoot stays a design decision. It is deliberately
+ * mild — a spring whose overshoot is obvious reads as a toy at this size.
  */
 export const MOTION = {
   micro: "120ms",
   normal: "180ms",
   panel: "280ms",
   orb: "600ms",
+  enter: "560ms",
+  exit: "320ms",
+  glow: "7200ms",
   easing: "cubic-bezier(0.2, 0, 0.2, 1)",
+  bounce: "cubic-bezier(0.22, 1.28, 0.36, 1)",
 } as const;
 
+/**
+ * The reduced-motion counterparts.
+ *
+ * Every key above has a key here, and a test asserts it. The alternative — leaving one out —
+ * does not remove the animation, it silently keeps the full-motion value, because the media
+ * query only overrides what it declares.
+ */
 export const MOTION_REDUCED = {
   micro: "0ms",
   normal: "0ms",
   panel: "0ms",
   orb: "0ms",
+  enter: "0ms",
+  exit: "0ms",
+  glow: "0ms",
   easing: "linear",
+  bounce: "linear",
 } as const;
 
 export const MIN_TARGET_SIZE_PX = 24;

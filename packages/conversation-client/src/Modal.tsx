@@ -10,7 +10,7 @@
  * leaves a keyboard user somewhere they did not choose.
  */
 
-import { type ReactElement, type ReactNode, useCallback, useEffect, useRef } from "react";
+import { type CSSProperties, type ReactElement, type ReactNode, useCallback, useEffect, useRef } from "react";
 
 export interface ModalProps {
   open: boolean;
@@ -21,13 +21,21 @@ export interface ModalProps {
   children: ReactNode;
   /** The row of actions at the bottom. Omitted when the dialog is purely informational. */
   actions?: ReactNode;
+  /**
+   * Overrides the specification's width for this dialog.
+   *
+   * The 700px in the token set is the width of a decision — an approval, a credential — where the point is
+   * that it interrupts. A settings surface is read rather than decided, and the design draws it narrower so
+   * the eye does not have to travel from a label to a control on the far side of a wide box.
+   */
+  width?: string;
 }
 
 /** Elements a modal is allowed to move focus between. */
 const FOCUSABLE =
   'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
 
-export function Modal({ open, onClose, title, description, children, actions }: ModalProps): ReactElement | null {
+export function Modal({ open, onClose, title, description, children, actions, width }: ModalProps): ReactElement | null {
   const dialog = useRef<HTMLDivElement>(null);
   // Captured on open so focus can go back where it came from rather than to the top of the page.
   const opener = useRef<Element | null>(null);
@@ -96,6 +104,7 @@ export function Modal({ open, onClose, title, description, children, actions }: 
         ref={dialog}
         tabIndex={-1}
         data-modal="true"
+        {...(width === undefined ? {} : { style: { "--cc-modal-width": width } as CSSProperties })}
       >
         <header className="cc-modal-head">
           <h2 id="cc-modal-title">{title}</h2>

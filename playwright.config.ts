@@ -59,7 +59,7 @@ export default defineConfig({
   ],
   webServer: [
     {
-      // CC_VOICE_FIXTURE loads a scripted voice provider, so the browser-to-node path is exercised
+      // `CC_VOICE_FIXTURE` loads a scripted voice provider, so the browser-to-node path is exercised
       // for real without a provider account and without spending quota on every run. The adapter
       // that talks to the real provider is covered by unit tests instead, which is the only way
       // those two things can both be true.
@@ -71,7 +71,14 @@ export default defineConfig({
       // `CC_SESSION_FIXTURE` answers a project-session request without spawning a worker. Starting
       // one for real needs a provider, takes far longer than a browser assertion should, and would
       // leave a session behind on whatever machine ran the suite.
-      command: `CC_VOICE_FIXTURE=1 CC_MODEL_FIXTURE=1 CC_SESSION_FIXTURE=1 node apps/runtime/src/main.ts --data-dir ${DATA_DIR} --port ${NODE_PORT} --label e2e-node`,
+      //
+      // Passed through `env` rather than as a `VAR=value` prefix on the command. The prefix is shell
+      // syntax, and this command is run by whatever shell the platform's test runner uses: on Windows
+      // that is cmd.exe, which reads `CC_VOICE_FIXTURE=1` as a program name and refuses to start the
+      // server at all. The suite was unrunnable there, which is a worse failure than a failing test —
+      // it looks like an infrastructure problem and so nobody reads it as a missing verification.
+      command: `node apps/runtime/src/main.ts --data-dir ${DATA_DIR} --port ${NODE_PORT} --label e2e-node`,
+      env: { CC_VOICE_FIXTURE: "1", CC_MODEL_FIXTURE: "1", CC_SESSION_FIXTURE: "1" },
       url: `http://127.0.0.1:${NODE_PORT}/health`,
       reuseExistingServer: false,
       stdout: "pipe",

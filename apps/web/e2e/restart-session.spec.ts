@@ -34,10 +34,21 @@ async function openApp(page: Page): Promise<void> {
   await expect(page.locator("text=Ready")).toBeVisible({ timeout: 15_000 });
 }
 
-/** Start a conversation the account-free way: a scripted suggestion. */
+/**
+ * Start a conversation the account-free way: a scripted suggestion.
+ *
+ * Waits for the remembered id as well as for the message, because those are two different moments. The
+ * message is drawn the instant it is sent — the client no longer waits for the node to echo it back —
+ * while the id exists only once the node has created the conversation. Reading session storage as soon
+ * as the message appears is racing that round trip, and a test that races is a test that passes on a
+ * slow day and fails on a fast one.
+ */
 async function startConversation(page: Page, suggestion: string): Promise<void> {
   await page.locator(`[data-suggestion='${suggestion}']`).click();
   await expect(page.locator('[data-role="user"]')).toHaveCount(1, { timeout: 15_000 });
+  await expect
+    .poll(() => page.evaluate(() => window.sessionStorage.getItem("cc_conversation")), { timeout: 15_000 })
+    .not.toBeNull();
 }
 
 test("the logo returns to the start screen, and the fresh start survives a reload", async ({ page }) => {

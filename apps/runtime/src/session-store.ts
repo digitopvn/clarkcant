@@ -1,6 +1,7 @@
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 
+import { isWithinRoot } from "./path-roots.ts";
 import { type Instant, nowInstant } from "@clarkcant/contracts";
 import { redactSessionFile, transcriptSize } from "@clarkcant/pi-adapter";
 import {
@@ -68,7 +69,10 @@ export function registerSessionFile(
   input: RegisterSessionInput,
 ): RegisterSessionResult {
   const root = sessionsDirectory(deps.dataDir);
-  if (!input.path.startsWith(`${root}/`)) {
+  // Checked with the platform's own rules rather than by comparing string prefixes: a prefix ending in
+  // a slash never matched a Windows path, so every transcript was refused as being outside the session
+  // directory it was in.
+  if (!isWithinRoot(root, input.path)) {
     return {
       ok: false,
       code: "PATH_OUTSIDE_SESSION_DIR",

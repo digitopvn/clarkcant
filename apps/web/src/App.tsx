@@ -49,7 +49,10 @@ export function App(): ReactElement {
 
   if (token === "") {
     return (
-      <div className="cc-shell">
+      // The same shape the start screen uses, so the two screens centre their content the same way:
+      // `data-view="hero"` is what tells the layout to centre the group rather than stack it from the
+      // top, and `.cc-body` is the region that does the centring.
+      <div className="cc-shell" data-view="hero">
         <header className="cc-header">
           <div className="cc-brand">
             <span className="cc-orb" aria-hidden="true" />
@@ -60,14 +63,15 @@ export function App(): ReactElement {
             Chưa có token
           </div>
         </header>
-        <div className="cc-scroll">
-          <div className="cc-empty">
-            <span className="cc-empty-orb" aria-hidden="true" />
-            <h1>Chưa kết nối tới runtime</h1>
-            <p data-needs-token="true">
-              Mở trang này kèm token của node, ví dụ{" "}
-              <code>?token=&lt;token trong identity.json&gt;</code>. Token chỉ được giữ trong tab này.
-            </p>
+        <div className="cc-body">
+          <div className="cc-scroll">
+            <div className="cc-empty">
+              <h1>Chưa kết nối tới runtime</h1>
+              <p data-needs-token="true">
+                Mở trang này kèm token của node, ví dụ{" "}
+                <code>?token=&lt;token trong identity.json&gt;</code>. Token chỉ được giữ trong tab này.
+              </p>
+            </div>
           </div>
         </div>
       </div>

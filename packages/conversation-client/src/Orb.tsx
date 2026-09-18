@@ -1,6 +1,6 @@
-import { useEffect, useRef, useState, useSyncExternalStore, type ReactElement } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore, type ReactElement, type RefObject } from "react";
 
-import { createOrbRenderer, type OrbOptions } from "./orb.ts";
+import { createOrbRenderer, orbPointerFromClient, type OrbOptions, type OrbPointerRect, type OrbPointerSample } from "./orb.ts";
 import { readDocumentTheme, subscribeToDocumentTheme } from "./theme.ts";
 
 /**
@@ -26,6 +26,16 @@ export interface OrbProps extends OrbOptions {
   className?: string;
   /** Describes the orb for a screen reader, which otherwise reads an empty canvas. */
   label?: string;
+  /**
+   * Element whose pointer movement the orb answers to.
+   *
+   * A ref rather than the orb's own listeners because the orb is not always reachable: docked behind
+   * the composer it is covered by the input, so the movement that should light it up happens over
+   * the composer instead. Given the surface the whole orb lives in, the reaction is a function of
+   * how close the pointer is rather than of which element it is over, and it is correct in both
+   * placements.
+   */
+  pointerTarget?: RefObject<HTMLElement | null>;
 }
 
 /**
@@ -65,7 +75,7 @@ function readCanvasColor(): readonly number[] | undefined {
   return raw === "" ? undefined : parseCssColor(raw);
 }
 
-export function Orb({ size, className, label, ...options }: OrbProps): ReactElement {
+export function Orb({ size, className, label, pointerTarget, ...options }: OrbProps): ReactElement {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const [failed, setFailed] = useState<string | undefined>(undefined);
   /*
@@ -99,7 +109,52 @@ export function Orb({ size, className, label, ...options }: OrbProps): ReactElem
     let frameHandle = 0;
     let visible = true;
 
+    /*
+     * Pointer tracking.
+     *
+     * The sample is a plain value updated by the listener and consumed once per frame, so no React
+     * state is involved: a mouse crossing the orb at 120 Hz would otherwise re-render the whole
+     * conversation a hundred times a second to move a highlight.
+     */
+    const target = pointerTarget?.current ?? null;
+    let sample: OrbPointerSample = { x: 0, y: 0, strength: 0 };
+    let rect: OrbPointerRect = { left: 0, top: 0, width: 0, height: 0 };
+    let rectStale = true;
+    let rectReadAt = 0;
+
+    const readRect = (): void => {
+      const box = canvas.getBoundingClientRect();
+      rect = { left: box.left, top: box.top, width: box.width, height: box.height };
+      rectStale = false;
+      rectReadAt = performance.now();
+    };
+
+    const onPointerMove = (event: PointerEvent): void => {
+      // Re-read on a budget instead of on every event. A layout read per pointer event is how a
+      // smooth interaction starts to stutter, and the orb can only move when the layout moves it.
+      if (rectStale || performance.now() - rectReadAt > 120) readRect();
+      sample = orbPointerFromClient({ ...rect, clientX: event.clientX, clientY: event.clientY });
+    };
+    // Leaving the surface is a sample at zero rather than the last position held: without it the
+    // glow stays lit at wherever the pointer left, which reads as a stuck highlight.
+    const onPointerLeave = (): void => {
+      sample = { x: 0, y: 0, strength: 0 };
+    };
+
+    if (target !== null) {
+      target.addEventListener("pointermove", onPointerMove);
+      target.addEventListener("pointerleave", onPointerLeave);
+    }
+
+    const invalidateRect = (): void => {
+      rectStale = true;
+    };
+    // Capture phase, because a scroll does not bubble: without it, scrolling the transcript would
+    // leave the cached rect behind and the glow would answer a pointer position that has moved.
+    window.addEventListener("scroll", invalidateRect, true);
+
     const loop = (time: number): void => {
+      renderer.setPointer(sample);
       renderer.frame(time);
       frameHandle = window.requestAnimationFrame(loop);
     };
@@ -123,6 +178,7 @@ export function Orb({ size, className, label, ...options }: OrbProps): ReactElem
 
     const onResize = (): void => {
       renderer.resize();
+      invalidateRect();
       if (reduceMotion) renderer.frame(0);
     };
     window.addEventListener("resize", onResize);
@@ -142,12 +198,17 @@ export function Orb({ size, className, label, ...options }: OrbProps): ReactElem
       stop();
       observer.disconnect();
       window.removeEventListener("resize", onResize);
+      window.removeEventListener("scroll", invalidateRect, true);
+      if (target !== null) {
+        target.removeEventListener("pointermove", onPointerMove);
+        target.removeEventListener("pointerleave", onPointerLeave);
+      }
       renderer.dispose();
     };
     // The options are read once, when the renderer is built. Re-creating the context whenever a
     // new options object identity arrives would drop and rebuild the GPU program on every keystroke
     // in the composer, which is why the dependency list here is deliberately empty.
-  }, [theme]);
+  }, [theme, pointerTarget]);
 
   return (
     <canvas

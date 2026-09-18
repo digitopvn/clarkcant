@@ -1,4 +1,6 @@
-import { type ReactElement } from "react";
+import { useEffect, useState, type ReactElement } from "react";
+
+import { CodeBlock, Markdown } from "./markdown.tsx";
 
 /**
  * Block renderers.
@@ -25,10 +27,104 @@ function textOf(block: Record<string, unknown>): string {
 export function TextBlock({ block }: { block: Record<string, unknown> }): ReactElement {
   const content = textOf(block);
   const streaming = block.streaming === true;
+  // Markdown for anything the node marked as such, plain text otherwise. A block written before this
+  // existed is plain, and rendering it as markdown would silently reformat history.
+  if (block.format === "markdown") {
+    return (
+      <div className="cc-text" data-streaming={streaming} data-format="markdown">
+        <Markdown text={content} />
+      </div>
+    );
+  }
   return (
     <p className="cc-text" data-streaming={streaming} style={{ margin: 0, whiteSpace: "pre-wrap" }}>
       {content}
     </p>
+  );
+}
+
+/**
+ * A tool call, drawn as a widget that opens and closes.
+ *
+ * Open while it runs, closed once it is done: a call in flight is the thing the user is waiting on, and
+ * a call that finished is a receipt they can open if they want it. A failure stays open, because the
+ * one thing nobody wants collapsed is the reason something did not work.
+ *
+ * The state is a `details` element with React driving its open attribute, rather than a div with a click
+ * handler: a disclosure built from the platform is keyboard operable, announced as one, and reachable
+ * by a screen reader without anything extra to remember.
+ */
+export function ToolActivityBlock({ block }: { block: Record<string, unknown> }): ReactElement {
+  const status = typeof block.status === "string" ? block.status : "done";
+  const name = typeof block.name === "string" ? block.name : "tool";
+  const label = typeof block.label === "string" && block.label !== "" ? block.label : name;
+  const path = typeof block.path === "string" ? block.path : undefined;
+  const result = typeof block.result === "string" ? block.result : "";
+  const args = typeof block.args === "object" && block.args !== null ? (block.args as Record<string, unknown>) : {};
+  const language = typeof block.language === "string" ? block.language : undefined;
+  const [open, setOpen] = useState(status === "running" || status === "failed");
+
+  // A call that finishes closes itself — keyed on the status so it happens once, and so a widget the
+  // user opened by hand is not closed again underneath them.
+  useEffect(() => {
+    if (status === "done") setOpen(false);
+  }, [status]);
+
+  return (
+    <details
+      className="cc-tool"
+      data-tool-name={name}
+      data-tool-status={status}
+      data-tool-call={typeof block.toolCallId === "string" ? block.toolCallId : undefined}
+      open={open}
+      onToggle={(event) => setOpen((event.currentTarget as HTMLDetailsElement).open)}
+    >
+      <summary className="cc-tool-head">
+        <span className="cc-tool-mark" data-status={status} aria-hidden="true">
+          {status === "running" ? "◐" : status === "failed" ? "✕" : "✓"}
+        </span>
+        <span className="cc-tool-label">{label}</span>
+        {path !== undefined && <code className="cc-tool-path">{path}</code>}
+        <span className="cc-sr-only">
+          {status === "running" ? "đang chạy" : status === "failed" ? "lỗi" : "xong"}
+        </span>
+      </summary>
+      <div className="cc-tool-body">
+        {Object.keys(args).length > 0 && <CodeBlock code={JSON.stringify(args, null, 2)} language="json" label="tham số" />}
+        {result !== "" && <CodeBlock code={result} {...(language === undefined ? {} : { language })} label="kết quả" />}
+      </div>
+    </details>
+  );
+}
+
+/**
+ * The model's own reasoning, collapsed.
+ *
+ * Collapsed by default and in its own widget, because it is not the reply: someone who wants to know how
+ * the answer was reached can open it, and someone who does not is never shown text the model did not
+ * address to them.
+ */
+export function ReasoningBlock({ block }: { block: Record<string, unknown> }): ReactElement {
+  const content = typeof block.content === "string" ? block.content : "";
+  const [open, setOpen] = useState(false);
+
+  return (
+    <details
+      className="cc-tool cc-reasoning"
+      data-reasoning="true"
+      open={open}
+      onToggle={(event) => setOpen((event.currentTarget as HTMLDetailsElement).open)}
+    >
+      <summary className="cc-tool-head">
+        <span className="cc-tool-mark" data-status="done" aria-hidden="true">
+          ✳
+        </span>
+        <span className="cc-tool-label">Suy luận của agent</span>
+      </summary>
+      <div className="cc-tool-body cc-reasoning-body">
+        <Markdown text={content} />
+      </div>
+    </details>
   );
 }
 
@@ -90,6 +186,52 @@ export function SystemCardBlock({ block }: { block: Record<string, unknown> }): 
   const status = typeof block.status === "string" ? block.status : "working";
   const subject = typeof block.subject === "string" ? block.subject : "task";
   const fields = Array.isArray(block.fields) ? (block.fields as Record<string, unknown>[]) : [];
+
+  /**
+   * The record of which model answered, drawn as one muted line that opens on demand.
+   *
+   * It is bookkeeping, not the answer: at full card size it was the largest thing on screen and the
+   * first thing read, which put provenance in front of the reply. Its own facts are the summary, so
+   * opening it is only ever about the sentence underneath.
+   */
+  if (subject === "connection" && status === "done") {
+    const valueOf = (label: string): string | undefined => {
+      const field = fields.find((entry) => entry.label === label);
+      return typeof field?.value === "string" ? field.value : undefined;
+    };
+    const summary = [valueOf("Provider"), valueOf("Model"), valueOf("Thời gian")].filter(
+      (value): value is string => value !== undefined,
+    );
+    const rest = fields.filter((field) => !["Provider", "Model", "Thời gian"].includes(String(field.label)));
+    return (
+      <details
+        className="cc-model-note"
+        data-host-card="system"
+        data-owner="host"
+        data-subject={subject}
+        data-status={status}
+        data-model-note="true"
+      >
+        <summary className="cc-model-note-summary">
+          <span>{title}</span>
+          {summary.length > 0 && <span className="cc-model-note-meta">{summary.join(" · ")}</span>}
+        </summary>
+        <div className="cc-model-note-body">
+          <p style={{ margin: 0 }}>{detail}</p>
+          {rest.length > 0 && (
+            <dl className="cc-fields">
+              {rest.map((field, index) => (
+                <Fragment key={index}>
+                  <dt>{String(field.label ?? "")}</dt>
+                  <dd>{String(field.value ?? "")}</dd>
+                </Fragment>
+              ))}
+            </dl>
+          )}
+        </div>
+      </details>
+    );
+  }
 
   return (
     <section className="cc-card" data-host-card="system" data-owner="host" data-status={status} data-subject={subject}>
@@ -630,6 +772,10 @@ export function renderBlock(
   switch (type) {
     case "text":
       return <TextBlock key={index} block={block} />;
+    case "tool-activity":
+      return <ToolActivityBlock key={index} block={block} />;
+    case "reasoning":
+      return <ReasoningBlock key={index} block={block} />;
     case "evidence":
       return <EvidenceBlock key={index} block={block} />;
     case "artifact":

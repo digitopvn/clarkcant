@@ -1,10 +1,11 @@
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { homedir } from "node:os";
-import { basename, join, relative, resolve } from "node:path";
+import { basename, join, relative, resolve, sep } from "node:path";
 
 import { disambiguate } from "@clarkcant/core";
 import { type Instant, redactSecrets } from "@clarkcant/contracts";
 import type { ToolDefinition } from "@clarkcant/pi-adapter";
+import { isWithinRoot, looksLikePath } from "./path-roots.ts";
 import {
   type Database,
   type ProjectKind,
@@ -433,9 +434,16 @@ function toCandidate(
  */
 function relativePaths(deps: ProjectFinderDeps, path: string): string {
   const roots = deps.roots().map((root) => resolve(root));
-  const containing = roots.find((root) => path === root || path.startsWith(`${root}/`));
+  const containing = roots.find((root) => isWithinRoot(root, path));
   const relativeToRoot = relative(containing ?? deps.home(), path);
-  return relativeToRoot === "" ? "." : relativeToRoot;
+  // Forward slashes, always.
+  //
+  // This value is read by a person and by the model — it is what a question offers as a choice and what
+  // the transcript shows as "the directory in use" — so it is a name for a location rather than a path
+  // for this machine. `path.relative` answers with the platform's separator, which made the same project
+  // read as `.data/e2e/x` on one machine and `.data\e2e\x` on another; the branch was found by a browser
+  // test that types one and looks for the other.
+  return relativeToRoot === "" ? "." : relativeToRoot.split(sep).join("/");
 }
 
 /** Exact alias, then recent use, then kind, then the search score, then the shorter name. */
@@ -475,7 +483,7 @@ export function verifyProject(deps: ProjectFinderDeps, projectId: string): Proje
   }
 
   const roots = deps.roots();
-  if (!roots.some((root) => project.path === resolve(root) || project.path.startsWith(`${resolve(root)}/`))) {
+  if (!roots.some((root) => isWithinRoot(root, project.path))) {
     return {
       ok: false,
       code: "OUTSIDE_APPROVED_ROOTS",
@@ -530,14 +538,31 @@ export function pathFromIntent(intent: string): string | undefined {
   const candidates: string[] = [];
   const quotedValue = quoted?.[1] ?? quoted?.[2];
   if (quotedValue !== undefined) candidates.push(quotedValue);
-  for (const match of intent.match(/(?:^|\s)(~\/[^\s]*|\/[^\s]*)/g) ?? []) {
+  // Every spelling of a path a person might type: a home-relative one, a Windows drive letter, a UNC
+  // share, and a rooted path. The first version of this matched only the slash forms, so on Windows a
+  // typed `D:\...` was treated as a search query and the finder asked the question again — the loop
+  // this function exists to close.
+  for (const match of intent.match(/(?:^|\s)(~[\\/][^\s]*|[A-Za-z]:[\\/][^\s]*|\\\\[^\s]*|\/[^\s]*)/g) ?? []) {
     candidates.push(match.trim());
   }
   for (const raw of candidates) {
     const trimmed = raw.replace(/[.,;:]+$/, "");
-    if (trimmed.startsWith("~/") || trimmed.startsWith("/")) return trimmed;
+    if (looksLikePath(trimmed)) return trimmed;
   }
   return undefined;
+}
+
+/**
+ * A tilde at the front of a path, expanded the way the platform would.
+ *
+ * Both separators are accepted, because the tilde form is typed by hand and `~\` is what a Windows
+ * shell offers to complete.
+ */
+function expandHome(raw: string, home: string): string {
+  if (!raw.startsWith("~")) return raw;
+  const rest = raw.slice(1);
+  if (rest !== "" && !rest.startsWith("/") && !rest.startsWith("\\")) return raw;
+  return join(home, rest.replace(/^[\\/]/, ""));
 }
 
 /**
@@ -552,9 +577,9 @@ export function indexDirectoryPath(
   deps: ProjectFinderDeps,
   raw: string,
 ): { ok: true; projectId: string } | { ok: false; code: string; message: string } {
-  const path = resolve(raw.startsWith("~/") ? join(deps.home(), raw.slice(2)) : raw);
+  const path = resolve(expandHome(raw, deps.home()));
   const roots = deps.roots().map((root) => resolve(root));
-  if (!roots.some((root) => path === root || path.startsWith(`${root}/`))) {
+  if (!roots.some((root) => isWithinRoot(root, path))) {
     return {
       ok: false,
       code: "OUTSIDE_APPROVED_ROOTS",
@@ -673,19 +698,28 @@ export async function resolveProject(
     };
   };
 
+  /** The question asked instead of opening the directory used last. */
+  const offerRecent = (candidate: { relPath: string }): ProjectResolution => ({
+    status: "clarify",
+    question: `Tui không tìm thấy thư mục nào khớp. Có phải bạn muốn dùng ${candidate.relPath} (thư mục dùng gần đây nhất) không?`,
+    options: [candidate.relPath],
+  });
+
+  /**
+   * Resolve a candidate, unless it is only the directory used last.
+   *
+   * A recent candidate is a proposal and not a match, so it is never opened silently — asking for a
+   * project that does not exist must not open whatever was used before it. The single-candidate path
+   * has always refused it; the decider path did not, so a selector choosing from a list could do exactly
+   * what the rule forbids. Found by the browser test that types a name nothing matches and expects a
+   * question rather than a session.
+   */
+  const resolve = (candidate: { how: string; id: string; relPath: string }, mode: ProjectResolutionMode): ProjectResolution =>
+    candidate.how === "recent" ? offerRecent(candidate) : pick(candidate.id, mode);
+
   const single = candidates[0];
   if (candidates.length === 1 && single !== undefined) {
-    if (single.how === "recent") {
-      // Nothing matched the words; this is only the directory used last. Opening it silently is how
-      // asking for a project that does not exist opens the wrong one, and the plan is explicit that a
-      // directory is never invented — so the candidate is offered as the answer to a question.
-      return {
-        status: "clarify",
-        question: `Tui không tìm thấy thư mục nào khớp. Có phải bạn muốn dùng ${single.relPath} (thư mục dùng gần đây nhất) không?`,
-        options: [single.relPath],
-      };
-    }
-    return pick(single.id, single.how === "alias" ? "alias" : "rank");
+    return resolve(single, single.how === "alias" ? "alias" : "rank");
   }
 
   if (deps.decider !== undefined) {
@@ -700,10 +734,16 @@ export async function resolveProject(
       })),
       verify: (id) => verifyProject(deps, id).ok,
     });
-    if (decision.status === "selected") return pick(decision.id, "jev");
+    if (decision.status === "selected") {
+      const chosen = candidates.find((candidate) => candidate.id === decision.id);
+      return chosen === undefined ? pick(decision.id, "jev") : resolve(chosen, "jev");
+    }
     if (decision.status === "none" || decision.status === "fallback") {
       const asked = disambiguate(candidates.map((candidate) => ({ id: candidate.id, label: candidate.relPath })));
-      if (asked.resolved) return pick(asked.id, "rank");
+      if (asked.resolved) {
+        const chosen = candidates.find((candidate) => candidate.id === asked.id);
+        return chosen === undefined ? pick(asked.id, "rank") : resolve(chosen, "rank");
+      }
       return { status: "clarify", question: asked.question, options: asked.options };
     }
   }
@@ -711,7 +751,10 @@ export async function resolveProject(
   // One question, never a guess: two directories with similar names is exactly the case the plan
   // names, and answering with the wrong repository is worse than asking.
   const asked = disambiguate(candidates.map((candidate) => ({ id: candidate.id, label: candidate.relPath })));
-  if (asked.resolved) return pick(asked.id, "rank");
+  if (asked.resolved) {
+    const chosen = candidates.find((candidate) => candidate.id === asked.id);
+    return chosen === undefined ? pick(asked.id, "rank") : resolve(chosen, "rank");
+  }
   return { status: "clarify", question: asked.question, options: asked.options };
 }
 

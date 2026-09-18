@@ -21,8 +21,8 @@ BLOCKED or NOT-IMPLEMENTED, and the evidence for each. Nothing there is marked c
 
 Of the 72 acceptance tests in the blueprint: **44 pass**, 4 are blocked on external
 infrastructure or credentials, and 24 belong to phases this bootstrap did not build. The
-184 tests in this repository are unit and integration tests of individual layers; passing
-them is not the same as passing a journey, and no journey runs end to end yet.
+unit and integration tests of individual layers passing is not the same as a journey
+passing; the journeys that do run end to end are the browser suite in `apps/web/e2e`.
 
 ## What actually works
 
@@ -51,6 +51,20 @@ These are exercised by tests in this repository, not described in prose:
 - **Real Pi SDK integration.** `packages/pi-adapter` is typed against the installed SDK
   and the P0.1 probe records which lifecycle steps actually ran.
   (`docs/research/compatibility-lock.md`)
+- **A conversation client.** A reply streams in as the model writes it, markdown and fenced
+  code render with their language highlighted, a tool the turn calls appears as a widget the
+  reader can open, and the composer grows to five lines before it scrolls. The message frame
+  — a bubble for the user, the agent's own mark for a reply — follows the design reference in
+  `docs/demo-ui`. Exercised end to end by `apps/web/e2e/`, which drives a production build
+  against a real node. (`packages/conversation-client`)
+- **Tool calls as widgets.** Every tool a turn calls is recorded with the arguments it was
+  given and the result it returned, reported on the stream while it runs, and drawn as a
+  disclosure that is open while it works and closed once it is done. Reasoning is its own
+  collapsed widget, because it is not what the model said to the user.
+  (`apps/runtime/src/model-turn.ts`, `packages/contracts/src/surfaces.ts`)
+- **Machine-wide search, read-only.** A bounded walk of the filesystem that builds no index,
+  skips dependency and system trees, reports what it scanned and why it stopped, and sends
+  only the matching lines to the model. (`apps/runtime/src/fs-search.ts`)
 - **A headless node that boots.** `node apps/runtime/src/main.ts` runs a node with its own
   identity and database, and refuses any command without its bearer token.
 - **Verifiable backups.** SQLite `VACUUM INTO`, integrity and foreign-key checks, row-count
@@ -60,14 +74,16 @@ These are exercised by tests in this repository, not described in prose:
 
 Stated plainly, because a bootstrap that hides this is worse than useless:
 
-- The **React conversation client** and therefore the web and desktop clients.
+- The **desktop shell** beyond the surface its typed IPC bridge exposes: the browser suite
+  proves the client's branch when a directory dialog is present, not an Electron build.
 - The **conductor** and a live worker pool; the state machine exists but nothing drives it
   end to end.
 - Live **OAuth**, **Google Calendar**, **MCP transport**, **voice transport**, the
   **Playwright** binding, and the **macOS/Linux native drivers**. Their contracts, state
   machines and refusals are implemented and tested; the transports are not.
 - **Quarantine download and isolated build** for installs.
-- Everything downstream of those: onboarding, the widget catalog renderers, pins in the UI.
+- The **install and capability lifecycle** in the interface: the cards render and the
+  refusals are honest, and no install has been run end to end from the browser.
 
 ## Requirements
 

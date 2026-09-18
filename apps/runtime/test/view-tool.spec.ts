@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { HOST_OWNED_BLOCK_TYPES, type ConversationId, type Instant, type Principal } from "@clarkcant/contracts";
 import { FakePiAdapter, type WorkerBrief } from "@clarkcant/pi-adapter";
+import type { ModelTurnEvent } from "@clarkcant/core";
 
 import { createModelTurn, type ViewDescriptor } from "../src/model-turn.ts";
 
@@ -195,5 +196,174 @@ describe("the view tool reaches the model through the brief", () => {
     // looks like it succeeded.
     expect(result.text).toContain("could not be built");
     expect(result.text).toContain("canvas.metrics@1");
+  });
+});
+
+/**
+ * A turn that is being watched.
+ *
+ * The deltas are what the browser draws while the model is still writing, and the two ways this can
+ * go silently wrong are both tested here: a turn that reports nothing (a stream that shows nothing
+ * until it is over, which is the feature not working), and a turn that keeps reporting after it has
+ * ended (text arriving in the next reply, from the previous one).
+ */
+describe("a turn reports its text while it is being written", () => {
+  it("passes every delta on, and still returns the whole reply", async () => {
+    const adapter = new FakePiAdapter({ script: ["Xin chào, đây là câu trả lời."] });
+    const turn = await createModelTurn({ env: ENV, cwd: process.cwd(), adapter });
+    expect(turn).toBeDefined();
+
+    const deltas: string[] = [];
+    const reply = await turn!.answer({
+      conversationId: CONVERSATION,
+      principal: PRINCIPAL,
+      text: "chào bạn",
+      messageId: "msg_stream_1",
+      onEvent: (event) => {
+        if (event.type === "text-delta") deltas.push(event.text);
+      },
+    });
+
+    // More than one, because a single delta at the end would be a reply that arrives all at once and
+    // is reported as if it had streamed.
+    expect(deltas.length).toBeGreaterThan(1);
+    expect(deltas.join("")).toBe("Xin chào, đây là câu trả lời.");
+    // The reply is built from the buffered segments, not from the deltas: a caller that is not
+    // watching still receives the whole answer.
+    expect(reply.text).toBe("Xin chào, đây là câu trả lời.");
+  });
+
+  it("stops reporting to a caller whose turn has ended", async () => {
+    const adapter = new FakePiAdapter({ script: ["câu trả lời đầu tiên", "câu trả lời thứ hai"] });
+    const turn = await createModelTurn({ env: ENV, cwd: process.cwd(), adapter });
+
+    const first: string[] = [];
+    await turn!.answer({
+      conversationId: CONVERSATION,
+      principal: PRINCIPAL,
+      text: "một",
+      messageId: "msg_stream_2",
+      onEvent: (event) => {
+        if (event.type === "text-delta") first.push(event.text);
+      },
+    });
+
+    // The second turn has no watcher, so nothing may reach the first one's callback.
+    const afterFirstTurn = first.join("");
+    await turn!.answer({ conversationId: CONVERSATION, principal: PRINCIPAL, text: "hai", messageId: "msg_stream_3" });
+    expect(first.join("")).toBe(afterFirstTurn);
+  });
+});
+
+/**
+ * A tool call, captured while it is happening.
+ *
+ * The adapter reports that a tool ran but not its arguments or its result, so the transcript has to be
+ * built where all three exist: around the call itself. Two things follow from that, and both are
+ * asserted below — the events a watching client receives, and the widget the message keeps.
+ */
+class ToolCallingAdapter extends FakePiAdapter {
+  readonly briefs: WorkerBrief[] = [];
+  /** The call the "model" decides to make, and what it received back. */
+  call: { name: string; params: Record<string, unknown> } | undefined;
+  readonly returned: string[] = [];
+
+  override async createWorkerSession(brief: WorkerBrief): Promise<{ sessionId: string; sessionFile: string | undefined; createdAt: Instant }> {
+    this.briefs.push(brief);
+    return super.createWorkerSession(brief);
+  }
+
+  override async prompt(sessionId: string, text: string): Promise<void> {
+    const tool = (this.briefs.at(-1)?.customTools ?? []).find((entry) => entry.name === this.call?.name);
+    if (tool !== undefined && this.call !== undefined) {
+      this.returned.push((await tool.execute(this.call.params)).text);
+    }
+    // The scripted words come after the call, which is what the order assertion below is about.
+    await super.prompt(sessionId, text);
+  }
+}
+
+describe("a tool call is reported while it runs and kept afterwards", () => {
+  it("emits a start and a matching end, and stores the call as a widget", async () => {
+    const adapter = new ToolCallingAdapter({ script: ["Đây là bảng."] });
+    adapter.call = { name: "show_view", params: { view: VIEW.id, caption: "bảng", props: {} } };
+    const turn = await createModelTurn({
+      env: ENV,
+      cwd: process.cwd(),
+      adapter,
+      views: () => [VIEW],
+      datasetRefs: () => [],
+    });
+
+    const events: ModelTurnEvent[] = [];
+    const reply = await turn!.answer({
+      conversationId: CONVERSATION,
+      principal: PRINCIPAL,
+      text: "vẽ gì đó",
+      messageId: "msg_tool_1",
+      onEvent: (event) => events.push(event),
+    });
+
+    const starts = events.filter((event) => event.type === "tool-start");
+    const ends = events.filter((event) => event.type === "tool-end");
+    expect(starts).toHaveLength(1);
+    expect(ends).toHaveLength(1);
+    // The same identifier on both, which is what lets a client update one widget instead of drawing two.
+    expect(ends[0]?.toolCallId).toBe(starts[0]?.toolCallId);
+    expect(starts[0]).toMatchObject({ name: "show_view", label: "Show a view", args: { view: VIEW.id } });
+    expect(ends[0]).toMatchObject({ status: "done" });
+
+    const widget = reply.segments
+      .filter((segment) => segment.kind === "block")
+      .map((segment) => (segment.kind === "block" ? segment.block : undefined))
+      .find((block) => block?.type === "tool-activity");
+    expect(widget).toMatchObject({ status: "done", name: "show_view", args: { view: VIEW.id } });
+    expect(String(widget?.result)).toContain(VIEW.id);
+
+    // The call sits where it happened: its own result first, then the receipt, then the words the model
+    // wrote after it.
+    const shape = reply.segments.map((segment) => (segment.kind === "text" ? "text" : segment.block.type));
+    expect(shape).toEqual(["evidence", "tool-activity", "text"]);
+  });
+
+  it("records a tool that threw as a failure, and gives the model the reason", async () => {
+    const adapter = new ToolCallingAdapter({ script: ["Không xong."] });
+    adapter.call = { name: "boom", params: { path: "/tmp/x" } };
+    const turn = await createModelTurn({
+      env: ENV,
+      cwd: process.cwd(),
+      adapter,
+      views: () => [],
+      datasetRefs: () => [],
+      extraTools: () => [
+        {
+          name: "boom",
+          label: "Làm nổ",
+          description: "always fails",
+          parameters: { type: "object", properties: {} },
+          execute: async () => {
+            throw new Error("nổ rồi");
+          },
+        },
+      ],
+    });
+
+    const events: ModelTurnEvent[] = [];
+    const reply = await turn!.answer({
+      conversationId: CONVERSATION,
+      principal: PRINCIPAL,
+      text: "làm nổ đi",
+      messageId: "msg_tool_2",
+      onEvent: (event) => events.push(event),
+    });
+
+    expect(events.filter((event) => event.type === "tool-end")[0]).toMatchObject({ status: "failed" });
+    const widget = reply.segments.map((segment) => (segment.kind === "block" ? segment.block : undefined)).find((block) => block?.type === "tool-activity");
+    expect(widget).toMatchObject({ status: "failed", path: "/tmp/x" });
+    expect(String(widget?.result)).toContain("nổ rồi");
+    // Returned to the model rather than thrown out of the turn: a failed tool is a turn that can still
+    // answer, and the user is not handed a stack trace.
+    expect(adapter.returned[0]).toContain("boom lỗi");
+    expect(reply.text).toBe("Không xong.");
   });
 });

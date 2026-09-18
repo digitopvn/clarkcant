@@ -283,7 +283,14 @@ export function SettingsPanel({
   };
 
   return (
-    <Modal open={open} onClose={onClose} title="Cài đặt" description="Vài tuỳ chọn. Mọi thứ khác nằm trong hội thoại.">
+    <Modal
+      open={open}
+      onClose={onClose}
+      title="Cài đặt"
+      description="Vài tuỳ chọn. Mọi thứ khác nằm trong hội thoại."
+      // Narrower than a decision dialog: see the note on the prop. 560 is the design's number.
+      width="560px"
+    >
       <div className="cc-tabs" role="tablist" aria-label="Nhóm cài đặt">
         {TABS.map((entry) => (
           <button
