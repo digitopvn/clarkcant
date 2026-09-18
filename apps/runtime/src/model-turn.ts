@@ -81,6 +81,12 @@ export interface ModelTurn {
   budget: ModelBudget;
   /** Whether a view catalog is available, so the interface can say so rather than guess. */
   viewCatalogSize: () => number;
+  /** The conversations with a turn still running. */
+  running: () => string[];
+  /** Stops the running turn for a conversation, answering whether there was one. */
+  interrupt: (conversationId: string) => boolean;
+  /** Adds a sentence to the running turn, answering whether there was one to add it to. */
+  steer: (conversationId: string, text: string) => Promise<boolean>;
   answer: (input: ModelTurnInput) => Promise<ModelTurnReply>;
   dispose: () => Promise<void>;
 }
