@@ -73,6 +73,13 @@ export interface VoiceSessionEvents {
   onLevel?(update: { source: "microphone" | "agent"; level: number }): void;
   /** A refusal or transport failure, already worded for a person. */
   onError(message: string): void;
+  /**
+   * The node refused to open the session, with what it refused for.
+   *
+   * Separate from `onError` because a refusal is a thing the interface can act on rather than a failure: a node
+   * with no credential for the live provider says which one it needs, and the person can supply it and try again.
+   */
+  onRefused?: (input: { code: string; message: string; reason?: string; credentialName?: string }) => void;
   onEnded(recordedMessages: number): void;
 }
 
@@ -228,6 +235,15 @@ export async function startVoiceSession(options: StartVoiceSessionOptions): Prom
           return;
         }
         case "denied": {
+          // Reported with what the node refused for, because a refusal is something the interface can act on: a node
+          // with no credential for the live provider says which one it needs, and the person can supply it and try
+          // again. The session still fails, so the failure path below runs unchanged.
+          events.onRefused?.({
+            code: typeof control["code"] === "string" ? control["code"] : "VOICE_REFUSED",
+            message: typeof control["message"] === "string" ? control["message"] : "node từ chối mở phiên thoại",
+            ...(typeof control["reason"] === "string" ? { reason: control["reason"] } : {}),
+            ...(typeof control["credentialName"] === "string" ? { credentialName: control["credentialName"] } : {}),
+          });
           fail(typeof control["message"] === "string" ? control["message"] : "the node refused the voice session");
           socket.close();
           return;
