@@ -28,7 +28,7 @@ import {
   type WorkerEvent,
 } from "@clarkcant/pi-adapter";
 
-import type { ModelSegment, ModelTurnEvent, ModelTurnInput, ModelTurnReply } from "@clarkcant/core";
+import type { ModelSegment, ModelTurnEvent, ModelTurnInput, ModelTurnReply, TurnMetrics } from "@clarkcant/core";
 
 /**
  * One view a model may ask for.
@@ -273,6 +273,39 @@ function showViewParameters(
  * "no model here" is a state the interface can show, and "a model is configured and cannot be
  * reached" is a fault the operator has to see, with the reason.
  */
+/**
+ * What the turn cost, from the adapter's own accounting.
+ *
+ * Read after the run settles, because that is when the provider has reported it. Anything the SDK did not
+ * report is left out rather than defaulted: a cache hit rate of "0%" for a provider that never mentioned a
+ * cache is a number that is wrong on purpose, and this card exists to be trusted.
+ */
+function turnMetrics(input: { adapter: PiAdapter; sessionId: string; elapsedMs: number; model: string }): TurnMetrics {
+  const usage = input.adapter.usage(input.sessionId);
+  const seconds = input.elapsedMs / 1000;
+  const effort = effortFromModel(input.model);
+  return {
+    ...(effort === undefined ? {} : { thinkingLevel: effort }),
+    ...(usage.inputTokens === undefined ? {} : { inputTokens: usage.inputTokens }),
+    ...(usage.outputTokens === undefined ? {} : { outputTokens: usage.outputTokens }),
+    ...(usage.cacheReadTokens === undefined ? {} : { cacheReadTokens: usage.cacheReadTokens }),
+    ...(usage.cacheWriteTokens === undefined ? {} : { cacheWriteTokens: usage.cacheWriteTokens }),
+    ...(usage.costUsd === undefined ? {} : { costUsd: usage.costUsd }),
+    ...(usage.contextTokens === undefined ? {} : { contextTokens: usage.contextTokens }),
+    ...(usage.contextWindow === undefined ? {} : { contextWindow: usage.contextWindow }),
+    ...(usage.outputTokens === undefined || seconds <= 0 ? {} : { tokensPerSecond: usage.outputTokens / seconds }),
+    cwd: process.cwd(),
+  };
+}
+
+/** The reasoning effort a model identifier carries, if it carries one (`model:high`). */
+function effortFromModel(model: string): string | undefined {
+  const separator = model.lastIndexOf(":");
+  if (separator === -1) return undefined;
+  const effort = model.slice(separator + 1);
+  return effort === "" ? undefined : effort;
+}
+
 export async function createModelTurn(options: {
   env: NodeJS.ProcessEnv;
   cwd: string;
@@ -554,7 +587,14 @@ export async function createModelTurn(options: {
 
       // A reply that is only a view is a reply. Refusing it would make the one thing this node
       // was just taught to do look like a failure.
-      return { text, segments, provider: selection.provider, model: selection.id, elapsedMs };
+      return {
+        text,
+        segments,
+        provider: selection.provider,
+        model: selection.id,
+        elapsedMs,
+        metrics: turnMetrics({ adapter, sessionId: turn.sessionId, elapsedMs, model: selection.id }),
+      };
     },
 
     async dispose(): Promise<void> {

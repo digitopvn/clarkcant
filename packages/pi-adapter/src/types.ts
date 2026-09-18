@@ -136,7 +136,28 @@ export interface PiAdapter {
   dispose(sessionId: string): Promise<void>;
 
   /** Turn count and cost for budget enforcement, when the SDK reports them. */
-  usage(sessionId: string): { turns: number; tokens?: number };
+  usage(sessionId: string): WorkerUsage;
+}
+
+/**
+ * What the SDK knows about a session's consumption.
+ *
+ * Every field but `turns` is optional, and stays absent when the SDK did not report it: a number invented
+ * for a missing field is worse than a missing field, because a statusline reading "cache 0%" when the
+ * provider never mentioned a cache is a lie told calmly.
+ */
+export interface WorkerUsage {
+  turns: number;
+  /** Total tokens, when the SDK reports a total rather than components. */
+  tokens?: number;
+  inputTokens?: number;
+  outputTokens?: number;
+  cacheReadTokens?: number;
+  cacheWriteTokens?: number;
+  /** What the session has cost so far, in US dollars, when the provider prices it. */
+  costUsd?: number;
+  contextTokens?: number;
+  contextWindow?: number;
 }
 
 export class NotImplementedError extends Error {

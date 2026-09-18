@@ -1,7 +1,7 @@
 import type { Instant } from "@clarkcant/contracts";
 import { nowInstant } from "@clarkcant/contracts";
 
-import { NotImplementedError, type PiAdapter, type ResourceRefreshRequest, type ToolDefinition, type WorkerBrief, type WorkerEvent, type WorkerSessionHandle } from "./types.ts";
+import { NotImplementedError, type PiAdapter, type ResourceRefreshRequest, type ToolDefinition, type WorkerBrief, type WorkerEvent, type WorkerSessionHandle, type WorkerUsage } from "./types.ts";
 
 /**
  * Real Pi SDK adapter.
@@ -406,8 +406,20 @@ export class RealPiAdapter implements PiAdapter {
     this.#sessions.delete(sessionId);
   }
 
-  usage(sessionId: string): { turns: number; tokens?: number } {
-    return { turns: this.#require(sessionId).turns };
+  usage(sessionId: string): WorkerUsage {
+    const entry = this.#require(sessionId);
+    const stats = entry.session.getSessionStats();
+    const context = stats.contextUsage;
+    return {
+      turns: entry.turns,
+      inputTokens: stats.tokens.input,
+      outputTokens: stats.tokens.output,
+      cacheReadTokens: stats.tokens.cacheRead,
+      cacheWriteTokens: stats.tokens.cacheWrite,
+      costUsd: stats.cost,
+      ...(context === undefined || context.tokens === null ? {} : { contextTokens: context.tokens }),
+      ...(context === undefined ? {} : { contextWindow: context.contextWindow }),
+    };
   }
 
   /**
