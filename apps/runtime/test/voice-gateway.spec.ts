@@ -774,11 +774,13 @@ describe("approving a command by voice", () => {
     return { adapter, client, calls };
   }
 
+  // A question the session asked about the decision: the first one names the operation, and the second teaches the
+  // two words that would decide it.
   const asked = (message: Received): boolean =>
     !message.binary &&
     message.control["type"] === "transcript" &&
     typeof message.control["text"] === "string" &&
-    message.control["text"].includes("cho phép chạy");
+    (message.control["text"].includes("cho phép chạy") || message.control["text"].includes("chưa rõ ý bạn"));
 
   const said = (text: string) => (message: Received): boolean =>
     !message.binary && message.control["type"] === "transcript" && message.control["text"] === text;

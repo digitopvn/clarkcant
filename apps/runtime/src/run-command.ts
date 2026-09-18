@@ -280,6 +280,10 @@ export async function runApprovedCommand(input: {
   const outcome = await (input.run ?? ((request) => runCommand(request)))({ command, cwd: guard.cwd });
   const description = describeCommandOutcome(command, outcome);
   const succeeded = outcome.exitCode === 0 && !outcome.timedOut;
+  const output = [outcome.stdout, outcome.stderr]
+    .map((part) => part.trim())
+    .filter((part) => part !== "")
+    .join("\n");
 
   const blocks: MessageBlock[] = [
     {
@@ -306,6 +310,24 @@ export async function runApprovedCommand(input: {
       verdict: succeeded ? "verified" : "contradicted",
       ref: input.approvalId,
     },
+    ...(output === ""
+      ? []
+      : [
+          {
+            type: "text" as const,
+            format: "plain" as const,
+            /*
+             * What the command actually printed.
+             *
+             * Without this the receipt said "exit 0" and nothing else, and the cost was measured in use: the agent
+             * asked to run `git log`, was given the receipt, and answered - twice - that the log never reached it,
+             * because it never did. The person could not read the output either. A receipt for a command that
+             * prints something is not a receipt without the printing.
+             */
+            content: output,
+            streaming: false,
+          },
+        ]),
   ];
 
   return { ok: true, blocks, outcome, description };

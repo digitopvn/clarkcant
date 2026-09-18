@@ -673,6 +673,15 @@ button.cc-badge:hover, .cc-badge[role="button"]:hover { color: var(--cc-text); b
  * conversation. Collapsed keeps the session running and takes only the composer's height, and the scrim
  * stops swallowing clicks so the transcript above stays readable and scrollable.
  */
+/*
+ * While voice is open.
+ *
+ * The panel is narrower than the input beneath it, so the input showed at both ends - and a mode where two things
+ * look ready to receive the same sentence is a mode nobody can read. Hidden rather than covered: opacity keeps the
+ * element focusable, which matters because leaving voice focuses the composer again.
+ */
+.cc-shell[data-voice-open="true"] .cc-composer-wrap { opacity: 0; pointer-events: none; }
+
 .cc-voice-scrim[data-voice-collapsed="true"] {
   display: flex; align-items: flex-end; justify-content: center;
   background: transparent; pointer-events: none;
@@ -683,9 +692,9 @@ button.cc-badge:hover, .cc-badge[role="button"]:hover { color: var(--cc-text); b
   /* The composer's own spacing, so the bar sits exactly where the input it replaces sits. */
   margin: 0 auto var(--cc-space-lg);
   border: 1px solid color-mix(in oklab, var(--cc-accent) 34%, transparent);
-  border-radius: var(--cc-radius-pill);
+  border-radius: var(--cc-radius-lg);
   background: var(--cc-card);
-  /* Clipped: a pill holding a row of labels lets the last one spill past the curve. */
+  /* Clipped: the bar is smaller than the screen it replaces, and a stray pixel outside the curve reads as a bug. */
   overflow: hidden;
 }
 /*
@@ -695,6 +704,17 @@ button.cc-badge:hover, .cc-badge[role="button"]:hover { color: var(--cc-text); b
  * that the microphone is live, and hiding it with the rest of the body left a silent-looking session.
  */
 .cc-voice-scrim[data-voice-collapsed="true"] .cc-voice-body > *:not(.cc-voice-wave) { display: none; }
+/*
+ * One line, and nothing cut in half.
+ *
+ * The word beside the orb and the labels under the buttons are the first things to go: a status reading "Đang
+ * nghâ¦" and a brand reading "Age" are worse than their absence, because they look like a rendering fault.
+ */
+.cc-voice-scrim[data-voice-collapsed="true"] .cc-brand span { display: none; }
+.cc-voice-scrim[data-voice-collapsed="true"] .cc-voice-status {
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 46%;
+}
+.cc-voice-scrim[data-voice-collapsed="true"] .cc-voice-action-text { display: none; }
 .cc-voice-scrim[data-voice-collapsed="true"] .cc-voice-head {
   min-height: 0; padding: var(--cc-space-sm) var(--cc-space-md) 0; border-bottom: none;
 }
@@ -704,6 +724,8 @@ button.cc-badge:hover, .cc-badge[role="button"]:hover { color: var(--cc-text); b
 .cc-voice-scrim[data-voice-collapsed="true"] .cc-voice-wave { height: 22px; width: 100%; }
 .cc-voice-scrim[data-voice-collapsed="true"] .cc-voice-controls {
   padding: 0 var(--cc-space-sm) var(--cc-space-sm); gap: var(--cc-space-md);
+  /* Icon buttons are narrower than labelled ones, and the row still has to hold three of them. */
+  flex-wrap: nowrap;
 }
 .cc-voice {
   position: absolute; inset: 0; display: flex; flex-direction: column;

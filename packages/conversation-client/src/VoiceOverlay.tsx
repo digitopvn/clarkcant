@@ -342,11 +342,12 @@ export function VoiceOverlay({
             className="cc-voice-action"
             data-voice-mute="true"
             data-muted={muted ? "true" : "false"}
+            aria-label={muted ? "Bật micro" : "Tắt micro"}
             onClick={toggleMute}
             disabled={!live}
           >
             <span className="cc-voice-action-icon" aria-hidden="true">{muted ? "🎙" : "🔇"}</span>
-            {muted ? "Bật micro" : "Tắt micro"}
+            <span className="cc-voice-action-text">{muted ? "Bật micro" : "Tắt micro"}</span>
           </button>
           <button
             type="button"
@@ -354,22 +355,24 @@ export function VoiceOverlay({
             data-voice-minimize="true"
             aria-pressed={collapsed}
             aria-expanded={!collapsed}
+            aria-label={collapsed ? "Mở rộng" : "Thu gọn"}
             onClick={() => setCollapsed((current) => !current)}
           >
             <span className="cc-voice-action-icon" aria-hidden="true">{collapsed ? "▣" : "▭"}</span>
-            {collapsed ? "Mở rộng" : "Thu gọn"}
+            <span className="cc-voice-action-text">{collapsed ? "Mở rộng" : "Thu gọn"}</span>
           </button>
           <button
             type="button"
             className="cc-voice-action cc-voice-action-end"
             data-voice-end="true"
+            aria-label="Kết thúc"
             onClick={() => {
               endSession();
               onClose({ focusComposer: false });
             }}
           >
             <span className="cc-voice-action-icon" aria-hidden="true">✕</span>
-            Kết thúc
+            <span className="cc-voice-action-text">Kết thúc</span>
           </button>
           <button
             type="button"

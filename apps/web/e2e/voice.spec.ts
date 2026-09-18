@@ -92,6 +92,10 @@ test("a microphone session carries audio both ways and records the transcript", 
   // Capture really opened, and the node accepted the session.
   await expect(page.locator('[data-voice-state="listening"]')).toBeVisible({ timeout: 15_000 });
 
+  // The composer steps aside for the whole session. It is narrower than the panel over it, so half of it stayed
+  // visible at both ends - and two things that look ready to receive the same sentence is a mode nobody can read.
+  await expect(page.locator(".cc-composer-wrap")).toHaveCSS("opacity", "0");
+
   // Audio is leaving the browser. Asserted separately from the reply because otherwise a failure
   // cannot tell "nothing was captured" apart from "nothing was answered", and the two look the
   // same on screen while having nothing in common as bugs.
@@ -122,6 +126,9 @@ test("a microphone session carries audio both ways and records the transcript", 
   // still live, and hiding it is what made a collapsed session look silent.
   await expect(page.locator(".cc-voice-orb")).toBeHidden();
   await expect(page.locator(".cc-voice-wave")).toBeVisible();
+  // And the labels are gone, because the bar is one line tall: a status reading "Đang ngh…" looks like a fault
+  // rather than a status, which is what the screenshots showed.
+  await expect(page.locator("[data-voice-mute='true'] .cc-voice-action-text")).toBeHidden();
   // Still the same conversation, still the answer, and still updating rather than frozen.
   await expect(page.locator('[data-role="assistant"]').last()).toContainText(AGENT_REPLY);
   await page.screenshot({ path: join(EVIDENCE, "voice-01b-collapsed-over-conversation.png"), fullPage: true });

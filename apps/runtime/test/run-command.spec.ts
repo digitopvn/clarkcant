@@ -67,6 +67,24 @@ describe("running an approved operation", () => {
     // The approval id is in the receipt so the interface can mark the card it answered as decided.
     expect(activity?.type === "tool-activity" ? activity.args.approvalId : undefined).toBe("appr_1");
     expect(evidence).toMatchObject({ type: "evidence", kind: "exit-status", verdict: "verified" });
+    // And what the command printed. The receipt said "exit 0" and nothing else, which is what the agent reported
+    // twice as "the log never reached me" - the person could not read their own output either.
+    const printed = result.blocks.find((block) => block.type === "text");
+    expect(printed?.type === "text" ? printed.content : undefined).toContain("Cloning into");
+  });
+
+  it("leaves the output out when the command printed nothing", async () => {
+    const result = await runApprovedCommand({
+      payload,
+      expectedDigest: digest,
+      approvalId: "appr_1",
+      run: async () => ({ exitCode: 0, stdout: "", stderr: "", durationMs: 1, timedOut: false }),
+    });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    // A command that prints nothing adds no block: an empty block would look like output that failed to arrive.
+    expect(result.blocks.some((block) => block.type === "text")).toBe(false);
   });
 
   it("refuses an operation whose payload changed after it was displayed", async () => {

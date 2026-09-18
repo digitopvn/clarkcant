@@ -808,6 +808,10 @@ export function Conversation({
       // custom properties on the shell so the stylesheet and the JavaScript that times the same
       // animation are reading one number instead of two copies of it.
       data-view={heroPhase === "shown" ? "hero" : "conversation"}
+      // The composer steps aside while a voice session is open. It cannot be covered reliably - the panel is
+      // narrower than the input it sits over - so it is taken out of the way instead, which is also what the
+      // mode means: while the microphone is open, the thing you talk to is not the text box.
+      data-voice-open={voiceOpen ? "true" : "false"}
       ref={shell}
       style={
         {

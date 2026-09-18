@@ -157,8 +157,26 @@ export interface VoiceAnswerResult {
  */
 export function interpretDecision(text: string): "granted" | "denied" | undefined {
   const said = text.toLowerCase();
-  const denied = ["không", "khong", "đừng", "thôi", "thoi", "từ chối", "tu choi", "hủy", "huy", "no"];
-  const granted = ["đồng ý", "dong y", "cho phép", "cho phep", "duyệt", "duyet", "được", "duoc", "ok", "yes"];
+  const denied = ["không", "khong", "đừng", "thôi", "thoi", "từ chối", "tu choi", "hủy", "huy", "khoan", "no"];
+  const granted = [
+    "đồng ý",
+    "dong y",
+    "cho phép",
+    "cho phep",
+    "duyệt",
+    "duyet",
+    "được",
+    "duoc",
+    "ừ",
+    "ok",
+    "yes",
+    "chạy đi",
+    "chay di",
+    "làm đi",
+    "lam di",
+    "tiến hành",
+    "tien hanh",
+  ];
   // Refusal is tested first: "không được" contains a word that would otherwise read as permission.
   if (denied.some((word) => said.includes(word))) return "denied";
   if (granted.some((word) => said.includes(word))) return "granted";
@@ -326,9 +344,10 @@ export function attachVoiceGateway(options: VoiceGatewayOptions): VoiceGateway {
       if (pending !== undefined && decide !== undefined) {
         const decision = interpretDecision(text);
         if (decision === undefined) {
-          // One more try, in the same words: the operation is going to run on the machine, so a sentence that
-          // could have meant anything does not decide it.
-          const again = "Tui chưa rõ ý bạn. Bạn cho phép chạy hay là không?";
+          // One more try, in the same words. The operation is going to run on the machine, so a sentence that could
+          // have meant anything does not decide it - and this says which two words would, because a person who just
+          // said something reasonable should not have to guess why it was not understood.
+          const again = "Tui chưa rõ ý bạn. Bạn nói “đồng ý” hoặc “không” giúp tui nhé.";
           send({ type: "transcript", role: "assistant", text: again, final: true });
           adapter?.speak(again);
           return;
