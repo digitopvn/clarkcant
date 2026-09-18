@@ -868,6 +868,31 @@ export const MIGRATIONS: readonly Migration[] = [
       `);
     },
   },
+  {
+    version: 16,
+    name: "credentials",
+    reversible: true,
+    up: (db) => {
+      db.exec(`
+        -- Secrets a person typed into the host, by name.
+        --
+        -- Named after what a credential is *for* rather than after a provider, because one provider can need
+        -- two: a key for the assistant and a key for voice. The value is stored as given and is read only by
+        -- the host when it calls that provider; no route returns it, no listing includes it, and no log line
+        -- carries it.
+        --
+        -- At-rest encryption is not claimed here. The database sits in the node's own data directory, and
+        -- encrypting with a key stored beside the ciphertext would be a promise this code cannot keep.
+        CREATE TABLE credentials (
+          principal_id  TEXT NOT NULL,
+          name          TEXT NOT NULL,
+          value         TEXT NOT NULL,
+          updated_at    TEXT NOT NULL,
+          PRIMARY KEY (principal_id, name)
+        );
+      `);
+    },
+  },
 ];
 
 export interface MigrationResult {
