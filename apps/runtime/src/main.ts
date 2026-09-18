@@ -13,6 +13,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 
 import type { MessageBlock, MessageRecord } from "@clarkcant/contracts";
+import { instantSchema } from "@clarkcant/contracts";
 import { applyEnvFile } from "@clarkcant/pi-adapter";
 
 import { handleRequest, decideApprovalForNode, type GatewayResponse } from "./gateway.ts";
@@ -200,7 +201,10 @@ async function main(): Promise<void> {
           purpose: "Khoá thử cho fixture, để kiểm tra ô nhập secret.",
           destination: "vault-node",
           fields: [{ name: "fixture_key", label: "Khoá thử", masked: true, hostOwned: true }],
-          expiresAt: new Date(Date.now() + 900_000).toISOString(),
+          // A card that never expires would be a card that asks forever, so the fixture's does expire. Built through
+          // the contract's own schema rather than asserted into the branded type, because an assertion here would be
+          // the place a malformed instant got in.
+          expiresAt: instantSchema.parse(new Date(Date.now() + 900_000).toISOString()),
         },
       };
     }
