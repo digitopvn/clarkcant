@@ -153,3 +153,19 @@ test("the header is a gradient rather than a bar above the page", async ({ page 
   expect(header?.borderBottom).toBe("0px");
   expect(header?.background).toContain("linear-gradient");
 });
+
+test("the tools tab tells the node's tools from the agent's", async ({ page }) => {
+  // The list is the node's own, published by the same call that hands the tools to the model. An empty node list
+  // here would mean the publishing is missing rather than that this node can do nothing, which is why both lists are
+  // asserted rather than one.
+  await openApp(page);
+  await page.locator("[data-settings='true']").click();
+  await page.getByRole("tab", { name: "Tools" }).click();
+
+  await expect(page.locator("[data-tool-list='Công cụ của agent (pi)'] code").first()).toHaveText("read");
+  const nodeTool = page.locator("[data-tool-list='Công cụ của node này'] code").first();
+  await expect(nodeTool).toBeVisible({ timeout: 20_000 });
+  await expect(nodeTool).toHaveText(/command|search|project|history/);
+
+  await page.screenshot({ path: join(EVIDENCE, "tools-tab.png") });
+});

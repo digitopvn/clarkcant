@@ -31,6 +31,7 @@ import { SAMPLE_DATASET } from "@clarkcant/data-canvas/sample";
 
 import { createModelTurn, type ViewDescriptor } from "./model-turn.ts";
 import { buildViewCatalog } from "./view-catalog.ts";
+import { registerNodeTools } from "./tool-catalogue.ts";
 import { composeMiniApp } from "./compose-mini-app.ts";
 import { createNodeTools } from "./node-tools.ts";
 import { registerSessionFile, sessionsDirectory } from "./session-store.ts";
@@ -361,7 +362,7 @@ async function main(): Promise<void> {
       const projects = projectWiring.deps;
       const approvals = approvalWiring.deps;
       if (search === undefined || projects === undefined || approvals === undefined) return [];
-      return createNodeTools({
+      const tools = createNodeTools({
         search,
         projects,
         approvals: () => approvals,
@@ -383,6 +384,10 @@ async function main(): Promise<void> {
           };
         },
       });
+      // Published for the Tools tab, from the same call that hands them to the model: a tab that built its own list
+      // would be a second source of truth for what this node can do, and the first thing to drift from it.
+      registerNodeTools(tools.map((tool) => ({ name: tool.name, label: tool.label, description: tool.description })));
+      return tools;
     },
   });
   process.stderr.write(
