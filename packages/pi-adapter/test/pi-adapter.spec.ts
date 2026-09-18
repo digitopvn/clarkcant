@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vitest";
 
-import { FakePiAdapter, RealPiAdapter, READ_ONLY_TOOLS, mapPiEvent } from "../src/index.ts";
+import {
+  FakePiAdapter,
+  RealPiAdapter,
+  READ_ONLY_TOOLS,
+  mapPiEvent,
+  type RealPiAdapterOptions,
+} from "../src/index.ts";
 
 describe("fake adapter used by CI and E2E", () => {
   it("runs a scripted turn and emits the same event shapes as the real adapter", async () => {
@@ -128,5 +134,112 @@ describe("SDK event mapping", () => {
       toolCallId: "c1",
       isError: true,
     });
+  });
+});
+
+/**
+ * The SDK surface `createWorkerSession` and `prompt` actually use.
+ *
+ * A stub rather than the real SDK, because the behaviour under test is a clock: whether the budget is
+ * measured from the run or from the session's creation. That cannot be asserted against a real provider
+ * without spending minutes of wall clock, and the assertion would then be about the provider.
+ */
+function stubSdk(options: { idleDelayMs?: number } = {}) {
+  const prompts: string[] = [];
+  let aborts = 0;
+  let release: (() => void) | undefined;
+
+  const session = {
+    sessionId: "pi-session-stub",
+    sessionFile: undefined,
+    subscribe: () => () => undefined,
+    prompt: async (text: string) => {
+      prompts.push(text);
+    },
+    abort: async () => {
+      aborts += 1;
+      release?.();
+    },
+    dispose: () => undefined,
+    agent: {
+      state: { tools: [] as { name: string }[] },
+      waitForIdle: () =>
+        new Promise<void>((resolve) => {
+          release = resolve;
+          // No configured delay means the run settles at once; a stub that hangs by default would make
+          // "the fast case" impossible to write.
+          if (options.idleDelayMs === undefined) resolve();
+          else setTimeout(resolve, options.idleDelayMs);
+        }),
+    },
+  };
+
+  const module_ = {
+    getAgentDir: () => process.cwd(),
+    DefaultResourceLoader: class {
+      async reload(): Promise<void> {
+        return undefined;
+      }
+    },
+    SessionManager: { inMemory: () => ({}), create: () => ({}) },
+    createAgentSession: async () => ({ session }),
+    ModelRuntime: { create: async () => ({ getModels: () => [] }) },
+  };
+
+  return { module: module_, prompts, aborts: () => aborts };
+}
+
+function adapterWith(sdk: ReturnType<typeof stubSdk>): RealPiAdapter {
+  // SAFETY: the stub implements exactly the SDK surface this adapter touches — a resource loader, a
+  // session manager, `createAgentSession` and the session's own methods. TypeScript cannot verify a
+  // deliberate partial stand-in against the SDK's whole module type, and loading the real SDK here
+  // would turn a clock assertion into a provider call.
+  return new RealPiAdapter({
+    cwd: process.cwd(),
+    sdk: sdk.module as unknown as NonNullable<RealPiAdapterOptions["sdk"]>,
+  });
+}
+
+describe("the wall-clock budget bounds a run, not a session's age", () => {
+  const brief = (maxWallClockMs: number) => ({
+    goal: "answer the user",
+    projectRoots: [],
+    allowedCapabilityRefs: [],
+    maxWallClockMs,
+  });
+
+  it("keeps answering in a session older than its budget, as long as each run is fast", async () => {
+    const sdk = stubSdk();
+    const adapter = adapterWith(sdk);
+    const handle = await adapter.createWorkerSession(brief(40));
+
+    // The session is now twice its budget old while every run is instantaneous. The check this replaces
+    // read that age and refused every prompt for the rest of the session's life, which is the reported
+    // symptom: a conversation that fails every message after working for two minutes.
+    await new Promise((resolve) => setTimeout(resolve, 80));
+
+    await expect(adapter.prompt(handle.sessionId, "còn đó không?")).resolves.toBeUndefined();
+    expect(sdk.prompts).toEqual(["còn đó không?"]);
+    expect(sdk.aborts()).toBe(0);
+    await adapter.dispose(handle.sessionId);
+  });
+
+  it("still stops a run that overruns the budget", async () => {
+    // The guarantee the old check was trying to provide, kept: a run that never settles is aborted by
+    // the clock rather than left running.
+    const sdk = stubSdk({ idleDelayMs: 5_000 });
+    const adapter = adapterWith(sdk);
+    const handle = await adapter.createWorkerSession(brief(40));
+
+    let failure: unknown;
+    try {
+      await adapter.prompt(handle.sessionId, "chạy mãi đi");
+    } catch (cause) {
+      failure = cause;
+    }
+
+    expect(String(failure)).toContain("exceeded its 40 ms wall-clock budget");
+    expect(sdk.aborts()).toBe(1);
+    await adapter.dispose(handle.sessionId);
   });
 });
