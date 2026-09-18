@@ -64,13 +64,19 @@ body {
 /* The four suggestions land one after another instead of all at once. */
 .cc-chip-row > .cc-chip { animation-delay: calc(var(--cc-chip-index, 0) * 70ms + 120ms); }
 
-/* Header: identity and honest status. The gear is the only settings affordance. */
+/*
+ * Header: identity and honest status. The gear is the only settings affordance.
+ *
+ * No border and no solid fill: a bar with an edge under it makes the page two surfaces, and the wordmark
+ * does not need a bar to sit on. What is left is a gradient that is opaque where the identity is and
+ * transparent by the bottom, so the transcript reads as continuing behind it.
+ */
 .cc-header {
   display: flex; align-items: center; justify-content: space-between;
   min-height: var(--cc-topbar-height);
   padding: var(--cc-space-md) var(--cc-space-lg);
-  border-bottom: 1px solid var(--cc-border);
-  background: var(--cc-canvas);
+  background: linear-gradient(to bottom, var(--cc-canvas) 0%, transparent 100%);
+  position: relative; z-index: 3;
 }
 .cc-brand {
   display: flex; align-items: center; gap: var(--cc-space-sm); font-weight: 600;

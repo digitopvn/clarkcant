@@ -137,3 +137,19 @@ test("the orb is centred on the screen it is drawn over", async ({ page }) => {
     )
     .toBeLessThanOrEqual(1);
 });
+
+test("the header is a gradient rather than a bar above the page", async ({ page }) => {
+  // Measured rather than assumed: a bar and a fading header look similar in a screenshot and differ in
+  // exactly these two properties, which is what someone complained about.
+  await openApp(page);
+  const header = await page.evaluate(() => {
+    const node = document.querySelector(".cc-header");
+    if (node === null) return null;
+    const style = getComputedStyle(node);
+    return { borderBottom: style.borderBottomWidth, background: style.backgroundImage };
+  });
+
+  expect(header).not.toBeNull();
+  expect(header?.borderBottom).toBe("0px");
+  expect(header?.background).toContain("linear-gradient");
+});
