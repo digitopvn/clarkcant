@@ -67,7 +67,7 @@ test.beforeAll(() => {
 test("the client loads, reports a real connection, and asks what to do", async ({ page }) => {
   await openApp(page);
 
-  await expect(page.locator(".cc-brand")).toContainText("Agent");
+  await expect(page.locator(".cc-brand")).toContainText("ClarkCant");
   // "Ready" must mean the node answered, not that the client rendered.
   await expect(page.locator(".cc-status")).toHaveAttribute("data-connection", "ready");
   // The structure rather than the exact words. Copy is a design decision that keeps changing, and a
@@ -141,7 +141,7 @@ test("reopening the app resumes the same conversation", async ({ page }) => {
 
   await page.reload();
   await expect(page.locator('[data-widget-role="chart"]').first()).toBeVisible();
-  await expect(page.locator(".cc-brand")).toContainText("Agent");
+  await expect(page.locator(".cc-brand")).toContainText("ClarkCant");
   await page.screenshot({ path: join(EVIDENCE, "j1-05-after-reload.png") });
 });
 

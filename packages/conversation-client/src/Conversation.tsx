@@ -851,7 +851,7 @@ export function Conversation({
           aria-label="Bắt đầu lại: về màn hình đầu và mở một phiên mới"
         >
           <Orb size={30} className="cc-orb" label="" pointerTarget={shell} />
-          <span>Agent</span>
+          <span>ClarkCant</span>
         </button>
         <div className="cc-header-end">
           <div className="cc-status" role="status" aria-live="polite" data-connection={connection}>
@@ -965,7 +965,7 @@ export function Conversation({
                     <AgentAvatar />
                     <div className="cc-assistant-body">
                       {live.length === 0 ? (
-                        <div className="cc-thinking" data-thinking="true" role="status" aria-label="Agent đang trả lời">
+                        <div className="cc-thinking" data-thinking="true" role="status" aria-label="ClarkCant đang trả lời">
                           <span className="cc-thinking-dot" aria-hidden="true" />
                           <span className="cc-thinking-dot" aria-hidden="true" />
                           <span className="cc-thinking-dot" aria-hidden="true" />

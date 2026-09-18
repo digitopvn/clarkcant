@@ -266,7 +266,7 @@ export function VoiceOverlay({
         <header className="cc-voice-head">
           <div className="cc-brand">
             <Orb size={22} className="cc-orb" label="" />
-            <span>Agent</span>
+            <span>ClarkCant</span>
           </div>
           <div className="cc-voice-status">
             <span className="cc-dot" data-state={muted ? "connecting" : live ? "ready" : "offline"} aria-hidden="true" />

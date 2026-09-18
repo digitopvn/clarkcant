@@ -56,7 +56,7 @@ export function App(): ReactElement {
         <header className="cc-header">
           <div className="cc-brand">
             <span className="cc-orb" aria-hidden="true" />
-            <span>Agent</span>
+            <span>ClarkCant</span>
           </div>
           <div className="cc-status">
             <span className="cc-dot" data-state="offline" aria-hidden="true" />
