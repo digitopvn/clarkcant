@@ -92,7 +92,9 @@ test("a scripted table recipe renders a real widget inside the conversation", as
   mkdirSync(EVIDENCE, { recursive: true });
   await openApp(page);
 
-  await ask(page, "cho tui xem bảng dữ liệu");
+  // The scripted table is the demo path: a typed message is answered with the node's own data now, so this
+  // journey starts from the chip that says its data is a sample. Chip three is the table request.
+  await page.locator("[data-suggestion]").nth(2).click();
 
   // A surface block that the client could not render falls back to its text alternative, and that
   // fallback is marked. Asserting the table is present *and* the fallback is absent is the
