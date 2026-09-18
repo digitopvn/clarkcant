@@ -107,3 +107,33 @@ test("settings is a modal with three distinct tabs, and Escape returns focus to 
     .poll(() => page.evaluate(() => document.activeElement?.getAttribute("data-settings") ?? null))
     .toBe("true");
 });
+
+test("the orb is centred on the screen it is drawn over", async ({ page }) => {
+  // This is a measurement, not a style assertion: the orb's position is computed from the box it
+  // belongs to, and the canvas inside that box is larger than it, so "the rule is present" would not
+  // have caught the canvas overflowing to the right and drawing the ball 24 pixels off centre.
+  await openApp(page);
+  await page.waitForSelector(".cc-stage-orb canvas");
+
+  // Polled rather than read once: the placement is re-measured while the layout settles over the first
+  // second, so the question this asserts is whether the orb ends up centred, not whether it was centred
+  // in the frame the canvas first appeared in.
+  await expect
+    .poll(
+      async () => {
+        const boxes = await page.evaluate(() => {
+          const centreOf = (selector: string): { x: number; middle: number } | null => {
+            const node = document.querySelector(selector);
+            if (node === null) return null;
+            const rect = node.getBoundingClientRect();
+            return { x: rect.left + rect.width / 2, middle: rect.top + rect.height / 2 };
+          };
+          return { anchor: centreOf(".cc-hero-orb"), canvas: centreOf(".cc-stage-orb canvas") };
+        });
+        if (boxes.anchor === null || boxes.canvas === null) return Number.POSITIVE_INFINITY;
+        return Math.max(Math.abs(boxes.canvas.x - boxes.anchor.x), Math.abs(boxes.canvas.middle - boxes.anchor.middle));
+      },
+      { message: "the drawn canvas should come to rest on the space reserved for it", timeout: 10_000 },
+    )
+    .toBeLessThanOrEqual(1);
+});

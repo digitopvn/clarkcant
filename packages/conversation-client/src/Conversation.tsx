@@ -377,13 +377,21 @@ export function Conversation({
     measureOrb();
     window.addEventListener("resize", measureOrb);
     const observer = typeof ResizeObserver === "function" ? new ResizeObserver(() => measureOrb()) : undefined;
-    for (const node of [heroOrb.current, composerWrap.current]) {
-      if (node !== null && observer !== undefined) observer.observe(node);
+    // The hero's own box is observed as well as the reserved space inside it, because what moves the
+    // anchor is the text around it growing - the heading arriving with the webfont, the paragraph
+    // wrapping - and a resize of the anchor's parent re-measures where the anchor ended up.
+    for (const node of [heroOrb.current?.parentElement, heroOrb.current, composerWrap.current]) {
+      if (node !== null && node !== undefined && observer !== undefined) observer.observe(node);
     }
+    // And again as the layout settles over the first second - the health check returning, the composer's
+    // own line arriving - because the first measurement describes the page before any of that. Bounded
+    // on purpose: a settle window, not a loop.
+    const settleTimers = [0, 50, 150, 400, 900].map((ms) => setTimeout(() => measureOrb(), ms));
     // The webfont arrives after the first paint and changes how tall the hero's text is, which moves
     // the reserved space the orb is placed against.
     void document.fonts?.ready.then(() => measureOrb());
     return () => {
+      for (const timer of settleTimers) clearTimeout(timer);
       observer?.disconnect();
       window.removeEventListener("resize", measureOrb);
     };

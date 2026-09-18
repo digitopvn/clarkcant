@@ -617,7 +617,14 @@ button.cc-badge:hover, .cc-badge[role="button"]:hover { color: var(--cc-text); b
  * In the dock the orb is dimmed and slightly out of focus. It is behind the input rather than beside
  * it, and an orb at full strength under the text being typed competes with the text.
  */
+/*
+ * The canvas is drawn at ORB_DRAW_SIZE, which is larger than the box the dock arithmetic uses, so it has
+ * to be centred on that box explicitly. Left to itself it overflows to the right and downwards, which
+ * puts the ball 24 pixels right of and below the point the component measured - the lean a person sees.
+ * A grid track is not the way: the track grows to the canvas, so centring an item inside it moves nothing.
+ */
 .cc-stage-orb > .cc-empty-orb {
+  position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%);
   transition: opacity var(--cc-motion-orb) var(--cc-motion-easing), filter var(--cc-motion-orb) var(--cc-motion-easing);
 }
 .cc-stage-orb[data-docked="true"] > .cc-empty-orb { opacity: 0.5; filter: blur(1px) brightness(0.85); }
