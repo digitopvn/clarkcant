@@ -428,6 +428,7 @@ async function main(): Promise<void> {
       running: () => modelTurn.running(),
       interrupt: (conversationId) => modelTurn.interrupt(conversationId),
       steer: (conversationId, text) => modelTurn.steer(conversationId, text),
+      runInBackground: (input) => modelTurn.runInBackground(input),
     };
   }
   projectWiring.deps = services.projects;

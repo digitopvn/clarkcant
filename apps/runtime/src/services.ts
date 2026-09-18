@@ -20,6 +20,7 @@ import {
   upsertDataset,
 } from "@clarkcant/storage";
 import { readCredential } from "@clarkcant/storage";
+import type { Principal } from "@clarkcant/contracts";
 import { FAMILY_BY_DEFINITION, WIDGETS as CATALOG_WIDGETS } from "@clarkcant/data-canvas";
 import { QUICK_PLAY_RECIPES, SAMPLE_DATASET } from "@clarkcant/data-canvas/sample";
 import { CAPABILITIES as PROJECT_WORK_CAPABILITIES } from "@clarkcant/project-work";
@@ -97,6 +98,8 @@ export interface NodeServices {
     running(): string[];
     interrupt(conversationId: string): boolean;
     steer(conversationId: string, text: string): Promise<boolean>;
+    /** Runs one request in a worker of its own, answering with what it said. */
+    runInBackground(input: { conversationId: string; principal: Principal; text: string }): Promise<string>;
   };
   /** The model this node is configured for, or null when it has none. */
   model: NodeModelInfo | null;

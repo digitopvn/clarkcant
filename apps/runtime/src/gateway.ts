@@ -809,6 +809,34 @@ async function handleConversationRoutes(
           ...(decided.status === "decided" ? {} : { reason: decided.reason }),
         });
       }
+      if (action === "background") {
+        /*
+         * The request runs in a worker of its own while the conversation carries on.
+         *
+         * Registered before it starts, not after: a count that only learns about work once it has finished is a count
+         * that is wrong exactly while somebody is looking at it. The result comes back into the conversation as an
+         * assistant message when the worker settles, and a failure comes back as one too - a background request that
+         * fails silently is worse than one that never started.
+         */
+        const startedAt = at() as never;
+        const sessionId = services.conductor.newId("bg");
+        nodeBackgroundSessions.start({ sessionId, title: text.slice(0, 120), at: startedAt });
+        void (async () => {
+          try {
+            const said = await control.runInBackground({ conversationId, principal, text });
+            nodeBackgroundSessions.finish({ sessionId, status: "done", at: at() as never });
+            if (said !== "") appendHostReply(services, { conversationId, text: said, at: at() as never });
+          } catch (cause) {
+            nodeBackgroundSessions.finish({ sessionId, status: "failed", at: at() as never });
+            appendHostReply(services, {
+              conversationId,
+              text: `Việc nền không xong: ${cause instanceof Error ? cause.message : String(cause)}`,
+              at: at() as never,
+            });
+          }
+        })();
+        return json(202, { accepted: true, resolution: "background", sessionId });
+      }
       // An interrupt, or a steer that found nothing left to join: either way this message becomes its own turn.
       control.interrupt(conversationId);
     }

@@ -87,6 +87,15 @@ export interface ModelTurn {
   interrupt: (conversationId: string) => boolean;
   /** Adds a sentence to the running turn, answering whether there was one to add it to. */
   steer: (conversationId: string, text: string) => Promise<boolean>;
+  /**
+   * Runs one request in a worker of its own, answering with what that worker said.
+   *
+   * The request does not belong to the conversation's session and does not wait for it: this is what lets a person
+   * ask for something else while the assistant is busy, and it is deliberately not part of the turn machinery -
+   * nothing here touches `turns` or the in-flight marker, so a background request cannot make the conversation look
+   * busy or steal the turn that is running.
+   */
+  runInBackground: (input: { conversationId: string; principal: Principal; text: string }) => Promise<string>;
   answer: (input: ModelTurnInput) => Promise<ModelTurnReply>;
   dispose: () => Promise<void>;
 }
@@ -607,6 +616,28 @@ export async function createModelTurn(options: {
       if (turn === undefined || !turn.inFlight || turn.sessionId === "") return false;
       await adapter.steer(turn.sessionId, text);
       return true;
+    },
+
+    runInBackground: async (input: { conversationId: string; principal: Principal; text: string }): Promise<string> => {
+      const handle = await adapter.createWorkerSession({
+        goal: input.text.slice(0, 2000),
+        // No folders and no capabilities: starting a worker is not a way to acquire either, and the request that
+        // needs them goes through the same approval path as any other.
+        projectRoots: [],
+        allowedCapabilityRefs: [],
+      });
+      let said = "";
+      const unsubscribe = adapter.subscribe(handle.sessionId, (event) => {
+        if (event.type === "text-delta") said += event.delta;
+      });
+      try {
+        await adapter.prompt(handle.sessionId, input.text);
+      } finally {
+        unsubscribe();
+        // Disposed whatever happened: a worker nobody will ask again is a provider connection held open for nothing.
+        void adapter.dispose(handle.sessionId).catch(() => undefined);
+      }
+      return said.trim();
     },
 
     async answer(input: ModelTurnInput): Promise<ModelTurnReply> {
