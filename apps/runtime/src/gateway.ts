@@ -305,7 +305,14 @@ export async function handleRequest(deps: GatewayDeps, request: GatewayRequest):
     if (text === "" || requested === "") {
       return fail(400, "INVALID_SCHEMA", "a background request needs a conversationId and a non-empty text");
     }
-    const started = startBackgroundWork(services, principal, at, requested, text);
+    // The owner of this node, built here because this route sits above the branch where the request's own principal is
+    // resolved: a background request from a selection is the owner's, and there is no other person it could be.
+    const owner: Principal = {
+      principalId: runtime.identity.ownerPrincipalId as Principal["principalId"],
+      kind: "user",
+      nodeId: runtime.identity.nodeId as Principal["nodeId"],
+    };
+    const started = startBackgroundWork(services, owner, () => at() as never, requested, text);
     if ("refusal" in started) return fail(409, "BACKGROUND_UNAVAILABLE", started.refusal);
     return json(202, { accepted: true, sessionId: started.sessionId });
   }
@@ -870,7 +877,7 @@ async function handleConversationRoutes(
         });
       }
       if (action === "background") {
-        const started = startBackgroundWork(services, principal, at, conversationId, text);
+        const started = startBackgroundWork(services, principal, () => at() as never, conversationId, text);
         // No worker to run it in: the message is what the person asked for, so it becomes the turn instead.
         if ("refusal" in started) {
           control.interrupt(conversationId);
