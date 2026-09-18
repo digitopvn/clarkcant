@@ -533,6 +533,75 @@ describe("a spoken sentence the agent answers", () => {
     expect(answers.length).toBe(1);
   });
 
+  it("shows the answer while it is being written, not only once the turn is done", async () => {
+    const adapter = new FakeAdapter();
+    const client = await opened(
+      {
+        answer: async ({ onText }) => {
+          onText?.("Đang");
+          onText?.("Đang chuyển");
+          return { reply: REPLY, recordedMessages: 1 };
+        },
+      },
+      adapter,
+    );
+
+    say(adapter, "câu hỏi");
+    await client.waitFor(
+      (message) => !message.binary && message.control["type"] === "transcript" && message.control["text"] === "Đang chuyển",
+      "a partial answer",
+    );
+
+    // The text so far, not a fragment: the surface replaces what it shows rather than pasting pieces.
+    const partials = client.received
+      .filter(
+        (message) =>
+          !message.binary &&
+          message.control["type"] === "transcript" &&
+          message.control["role"] === "assistant" &&
+          message.control["final"] === false,
+      )
+      .map((message) => (!message.binary ? message.control["text"] : undefined));
+    expect(partials).toEqual(["Đang", "Đang chuyển"]);
+
+    // And the durable answer still arrives, once, marked final.
+    const final = await client.waitFor(
+      (message) =>
+        !message.binary &&
+        message.control["type"] === "transcript" &&
+        message.control["role"] === "assistant" &&
+        message.control["final"] === true,
+      "the final answer",
+    );
+    expect(final.binary === false && final.control["text"]).toBe(REPLY);
+  });
+
+  it("does not store the session's own reading of the answer as a second message", async () => {
+    const adapter = new FakeAdapter();
+    const client = await opened({ answer: async () => ({ reply: REPLY, recordedMessages: 2 }) }, adapter);
+
+    say(adapter, "câu hỏi");
+    await client.waitFor(
+      (message) =>
+        !message.binary &&
+        message.control["type"] === "transcript" &&
+        message.control["role"] === "assistant" &&
+        message.control["final"] === true,
+      "the answer",
+    );
+
+    // The session reads the answer back, and its own transcription of that reading arrives here. Keeping
+    // it would store the same answer twice - the duplicate that appeared when the fallback was added.
+    adapter.emitTranscript(REPLY);
+    client.send({ type: "end" });
+
+    const ended = await client.control("ended");
+    expect(ended.binary === false && ended.control["recordedMessages"]).toBe(2);
+    const gateway = context;
+    if (gateway === undefined) throw new Error("the gateway was not started");
+    expect(messagesSince(gateway.deps.db, CONVERSATION as never, 0).length).toBe(0);
+  });
+
   it("reports what the agent wrote, not nothing, when the session ends", async () => {
     const adapter = new FakeAdapter();
     const client = await opened({ answer: async () => ({ reply: REPLY, recordedMessages: 3 }) }, adapter);

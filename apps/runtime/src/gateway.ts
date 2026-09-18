@@ -273,6 +273,8 @@ function commandPlacement(services: NodeServices): CommandPlacement {
   return {
     approvedRoots: services.projects.roots(),
     knownProjects: listProjects(services.runtime.db, services.runtime.identity.nodeId).map((project) => project.path),
+    // Where the node was started, which is where its operator is working.
+    nodeDirectory: process.cwd(),
   };
 }
 

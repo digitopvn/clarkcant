@@ -680,11 +680,31 @@ button.cc-badge:hover, .cc-badge[role="button"]:hover { color: var(--cc-text); b
 .cc-voice-scrim[data-voice-collapsed="true"] .cc-voice {
   position: static; inset: auto; pointer-events: auto;
   width: min(100%, var(--cc-composer-max-width));
+  /* The composer's own spacing, so the bar sits exactly where the input it replaces sits. */
   margin: 0 auto var(--cc-space-lg);
-  border: 1px solid color-mix(in oklab, var(--cc-accent) 30%, transparent);
+  border: 1px solid color-mix(in oklab, var(--cc-accent) 34%, transparent);
   border-radius: var(--cc-radius-pill);
+  background: var(--cc-card);
+  /* Clipped: a pill holding a row of labels lets the last one spill past the curve. */
+  overflow: hidden;
 }
-.cc-voice-scrim[data-voice-collapsed="true"] .cc-voice-body { display: none; }
+/*
+ * Everything the full screen shows, except the one thing that has to keep moving.
+ *
+ * The waveform is the reason a collapsed bar is not just a status line: it is the only evidence on screen
+ * that the microphone is live, and hiding it with the rest of the body left a silent-looking session.
+ */
+.cc-voice-scrim[data-voice-collapsed="true"] .cc-voice-body > *:not(.cc-voice-wave) { display: none; }
+.cc-voice-scrim[data-voice-collapsed="true"] .cc-voice-head {
+  min-height: 0; padding: var(--cc-space-sm) var(--cc-space-md) 0; border-bottom: none;
+}
+.cc-voice-scrim[data-voice-collapsed="true"] .cc-voice-body {
+  flex: 0 0 auto; padding: var(--cc-space-xs) var(--cc-space-md);
+}
+.cc-voice-scrim[data-voice-collapsed="true"] .cc-voice-wave { height: 22px; width: 100%; }
+.cc-voice-scrim[data-voice-collapsed="true"] .cc-voice-controls {
+  padding: 0 var(--cc-space-sm) var(--cc-space-sm); gap: var(--cc-space-md);
+}
 .cc-voice {
   position: absolute; inset: 0; display: flex; flex-direction: column;
   background: var(--cc-canvas); color: var(--cc-text);

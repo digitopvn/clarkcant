@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
-import { WAVEFORM_BARS, waveformBars } from "../src/VoiceOverlay.tsx";
-import { rmsLevel } from "../src/voice-session.ts";
+import { WAVEFORM_BARS, foldTranscriptUpdate, waveformBars } from "../src/VoiceOverlay.tsx";
+import { rmsLevel, type VoiceTranscriptUpdate } from "../src/voice-session.ts";
 
 /**
  * What the voice screen shows when somebody speaks.
@@ -81,5 +81,31 @@ describe("the waveform", () => {
     expect(loud[middle] ?? 0).toBeGreaterThan(quiet[middle] ?? 0);
     // The floor is what keeps a silent microphone visible as an open one.
     expect(Math.min(...waveformBars([0, 0, 0], WAVEFORM_BARS))).toBeGreaterThan(0);
+  });
+});
+
+/**
+ * How a streamed answer lands on screen.
+ *
+ * The node sends the text so far, not a fragment to append, so an update in the middle of a sentence
+ * replaces the line it belongs to. Appending would produce one line per delta - the answer as it stood a
+ * moment ago, over and over.
+ */
+describe("folding a streamed answer into the transcript", () => {
+  const partial = (text: string): VoiceTranscriptUpdate => ({ role: "assistant", text, final: false });
+  const done = (text: string): VoiceTranscriptUpdate => ({ role: "assistant", text, final: true });
+
+  it("replaces the line a non-final update belongs to", () => {
+    expect(foldTranscriptUpdate([partial("Đang")], partial("Đang chuyển"))).toEqual([partial("Đang chuyển")]);
+  });
+
+  it("starts a new line once the previous one is final", () => {
+    const first = [done("xong rồi")];
+    expect(foldTranscriptUpdate(first, partial("câu tiếp"))).toEqual([done("xong rồi"), partial("câu tiếp")]);
+  });
+
+  it("starts a new line when the speaker changes", () => {
+    const heard = [{ role: "user" as const, text: "tôi nói", final: false }];
+    expect(foldTranscriptUpdate(heard, partial("và"))).toEqual([...heard, partial("và")]);
   });
 });

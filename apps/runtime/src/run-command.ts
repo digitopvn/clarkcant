@@ -62,6 +62,18 @@ export interface CommandPlacement {
   approvedRoots: readonly string[];
   /** Folders the finder has indexed as projects on this node. */
   knownProjects: readonly string[];
+  /**
+   * The folder this node itself runs in, and where a clone therefore belongs: beside it.
+   *
+   * This is not a guess about intent. It is the folder the operator chose when they launched the product,
+   * and a gate that refuses to run a command where the product itself lives ends up refusing the working
+   * directory its own operator is sitting in - which is exactly what happened: the finder's scan hit its
+   * file ceiling before it reached the tree the app was running from, so the folder was neither approved
+   * nor indexed, and every command in it was refused.
+   *
+   * Absent on a node that has no meaningful directory of its own, as in a test.
+   */
+  nodeDirectory?: string;
 }
 
 /**
@@ -95,14 +107,17 @@ export function guardCommand(input: {
     };
   }
 
-  const { approvedRoots, knownProjects } = input.placement;
+  const { approvedRoots, knownProjects, nodeDirectory } = input.placement;
   // `dirname("")` is `.`, which would make this list look non-empty on a node that knows nothing — the
   // branch below would never fire and a command would be proposed for `.`. The parent is only considered
   // when there is a project to take the parent of.
   const firstProject = knownProjects[0];
-  const candidates = [approvedRoots[0], firstProject, firstProject === undefined ? undefined : dirname(firstProject)].filter(
-    (value): value is string => value !== undefined && value.trim() !== "",
-  );
+  const candidates = [
+    approvedRoots[0],
+    nodeDirectory,
+    firstProject,
+    firstProject === undefined ? undefined : dirname(firstProject),
+  ].filter((value): value is string => value !== undefined && value.trim() !== "");
   if (candidates.length === 0) {
     return {
       ok: false,
@@ -118,6 +133,18 @@ export function guardCommand(input: {
   for (const root of approvedRoots) {
     if (isWithinRoot(root, requested)) {
       return { ok: true, cwd: requested, because: `nằm trong thư mục bạn đã duyệt (${root})` };
+    }
+  }
+
+  if (nodeDirectory !== undefined && nodeDirectory.trim() !== "") {
+    if (isWithinRoot(nodeDirectory, requested)) {
+      return { ok: true, cwd: requested, because: `nằm trong thư mục node đang chạy (${nodeDirectory})` };
+    }
+    // Beside it, which is where a clone lands: a repository cloned into the product's own working tree
+    // would be a different mistake.
+    const nodeParent = dirname(nodeDirectory);
+    if (nodeParent !== "" && resolve(nodeParent) === resolve(requested)) {
+      return { ok: true, cwd: requested, because: `là thư mục chứa nơi node đang chạy (${nodeDirectory})` };
     }
   }
 

@@ -118,7 +118,10 @@ test("a microphone session carries audio both ways and records the transcript", 
   // Collapsed, the session stays running and stops hiding the conversation it is answering into.
   await page.locator('[data-voice-minimize="true"]').click();
   await expect(page.locator('[data-voice-collapsed="true"]')).toBeVisible({ timeout: 15_000 });
-  await expect(page.locator(".cc-voice-body")).toBeHidden();
+  // The body's parts go, except the waveform: it is the only evidence on screen that the microphone is
+  // still live, and hiding it is what made a collapsed session look silent.
+  await expect(page.locator(".cc-voice-orb")).toBeHidden();
+  await expect(page.locator(".cc-voice-wave")).toBeVisible();
   // Still the same conversation, still the answer, and still updating rather than frozen.
   await expect(page.locator('[data-role="assistant"]').last()).toContainText(AGENT_REPLY);
   await page.screenshot({ path: join(EVIDENCE, "voice-01b-collapsed-over-conversation.png"), fullPage: true });

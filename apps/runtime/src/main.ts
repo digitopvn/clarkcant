@@ -251,6 +251,9 @@ async function main(): Promise<void> {
         placement: () => ({
           approvedRoots: projects.roots(),
           knownProjects: listProjects(services.runtime.db, services.runtime.identity.nodeId).map((project) => project.path),
+          // The node's own folder, so a command can run where the operator is actually working even when
+          // the finder's scan has not reached it.
+          nodeDirectory: process.cwd(),
         }),
         // "Where should this go?" goes through the finder, which is where Jev decides when several folders
         // could be meant. The model is told to look before it proposes, and an ambiguous answer comes back
@@ -507,7 +510,7 @@ async function main(): Promise<void> {
      * answer needs. The words that come back are what the voice session reads aloud, which is why the
      * live model is told not to answer anything itself: this is the only answer in the room.
      */
-    answer: async ({ conversationId, text, at: spokenAt }) => {
+    answer: async ({ conversationId, text, at: spokenAt, onText }) => {
       const outcome = await handleUserMessage(services.conductor, {
         conversationId: conversationId as never,
         principal: {
@@ -517,6 +520,16 @@ async function main(): Promise<void> {
         },
         text,
         at: spokenAt as never,
+        // The voice surface is a caller holding an open stream like any other, so it gets the same
+        // events the typed path gets. Only text is forwarded: the reasoning and tool events belong to
+        // the conversation, which is refreshed when the turn ends.
+        ...(onText === undefined
+          ? {}
+          : {
+              emit: (event: { type: string; text?: string }) => {
+                if (event.type === "text-delta" && typeof event.text === "string") onText(event.text);
+              },
+            }),
       });
       // Indexed where the messages were just written, for the same reason the typed route does it:
       // a sentence that was spoken is a message like any other, and search must not disagree with the

@@ -60,6 +60,24 @@ const STATE_WORDS: Record<VoiceState, string> = {
   failed: "Không mở được",
 };
 
+/**
+ * Fold one transcript update into what is on screen.
+ *
+ * A non-final update is the same sentence still being written, and it carries the text so far rather than a
+ * fragment to append - so it replaces the entry before it. Appending instead produces a wall of fragments,
+ * each one the answer as it stood a moment ago, which is what "streaming" looks like when it is done wrong.
+ */
+export function foldTranscriptUpdate(
+  current: readonly VoiceTranscriptUpdate[],
+  update: VoiceTranscriptUpdate,
+): VoiceTranscriptUpdate[] {
+  const last = current[current.length - 1];
+  if (update.final || last === undefined || last.role !== update.role || last.final) {
+    return [...current, update];
+  }
+  return [...current.slice(0, -1), update];
+}
+
 export interface VoiceOverlayProps {
   /** Absent when this surface has no node to talk to; it can then only describe the gap. */
   client?: GatewayClient;
@@ -149,10 +167,11 @@ export function VoiceOverlay({
             // A transcript means the path is working again, so a failure from an earlier sentence is
             // no longer news.
             setAnswerProblem(undefined);
-            setUtterances((current) => [...current, update]);
+            setUtterances((current) => foldTranscriptUpdate(current, update));
             // The agent's words are the message it just wrote to the conversation, so this is the moment
-            // the transcript above is worth re-reading.
-            if (update.role === "assistant") onAnswered?.();
+            // the transcript above is worth re-reading - once, when the turn is done, rather than on every
+            // delta of it.
+            if (update.role === "assistant" && update.final) onAnswered?.();
           },
           onLevel: ({ level: heard }) => {
             const history = levels.current;

@@ -79,6 +79,13 @@ export interface VoiceGatewayOptions {
     conversationId: ConversationId;
     text: string;
     at: Instant;
+    /**
+     * The answer as it is being written, for a caller already showing it.
+     *
+     * What arrives is the text so far rather than a fragment to append: the node accumulates, so a
+     * consumer replaces what it shows instead of having to guess whether two updates overlap.
+     */
+    onText?: (text: string) => void;
   }) => Promise<VoiceAnswerResult | undefined>;
   /** Injected by tests so the transport can be exercised without a provider. */
   createAdapter?: () => VoiceProviderAdapter;
@@ -193,7 +200,20 @@ export function attachVoiceGateway(options: VoiceGatewayOptions): VoiceGateway {
       // left over is what never became a message - a sentence the agent could not answer, or one that
       // arrived while no answer was possible. That is the floor this session must not fall through:
       // leaving it out once made a broken answer path look like a session where nobody spoke.
-      if (userText.trim() === "" && assistantText.trim() === "") return answeredMessages;
+      if (options.answer !== undefined) {
+        // Only the user's side can be a leftover here. The live model's own words are its reading of the
+        // reply the agent already wrote, so keeping them would store the same answer twice - which is
+        // exactly the duplicate that appeared when this fallback was added.
+        if (userText.trim() === "") return answeredMessages;
+        const leftover = recordVoiceTranscript(options.services.conductor, {
+          conversationId,
+          userText,
+          assistantText: "",
+          at: now(),
+        });
+        return answeredMessages + leftover.length;
+      }
+      if (userText.trim() === "" && assistantText.trim() === "") return 0;
 
       const messages = recordVoiceTranscript(options.services.conductor, {
         conversationId,
@@ -221,13 +241,26 @@ export function attachVoiceGateway(options: VoiceGatewayOptions): VoiceGateway {
 
       answerQueue = answerQueue
         .then(async () => {
-          const result = await answer({ conversationId: askIn, text, at });
+          // The answer so far, accumulated here so the surface showing it never has to decide whether two
+          // updates overlap.
+          let draft = "";
+          const result = await answer({
+            conversationId: askIn,
+            text,
+            at,
+            onText: (textSoFar) => {
+              draft = textSoFar;
+              if (draft.trim() === "") return;
+              send({ type: "transcript", role: "assistant", text: draft, final: false });
+            },
+          });
           if (result === undefined) return;
           answeredMessages += result.recordedMessages;
           const reply = result.reply.trim();
           if (reply === "") return;
           // Shown as the assistant's words before it is spoken, so the transcript matches what is
-          // heard even if playback never happens.
+          // heard even if playback never happens. The final text is the stored one, which is the one
+          // that counts when a stream stops early.
           send({ type: "transcript", role: "assistant", text: reply, final: true });
           adapter?.speak(reply);
         })

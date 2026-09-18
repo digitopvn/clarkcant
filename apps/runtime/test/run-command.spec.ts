@@ -41,6 +41,33 @@ describe("whether a command may be proposed at all", () => {
     expect(guardCommand({ command: "x", cwd: "D:/www/digitop-other", placement }).ok).toBe(false);
   });
 
+  it("accepts the folder the node itself runs in, even when the finder never reached it", () => {
+    // What this fixes, and it was found in use rather than in review: the finder's scan stops at a file
+    // ceiling, so the tree the app itself runs from was neither approved nor indexed, and every command in
+    // the operator's own working directory was refused with "not a folder I know".
+    const placement = {
+      approvedRoots: [] as string[],
+      knownProjects: [] as string[],
+      nodeDirectory: "D:/www/digitop/clarkcant",
+    };
+    const result = guardCommand({ command: "git log -3", cwd: "D:/www/digitop/clarkcant/apps/runtime", placement });
+    expect(result.ok).toBe(true);
+    expect(result.because).toContain("node đang chạy");
+  });
+
+  it("accepts the folder beside the node, which is where a clone belongs", () => {
+    const placement = {
+      approvedRoots: [] as string[],
+      knownProjects: [] as string[],
+      nodeDirectory: "D:/www/digitop/clarkcant",
+    };
+    const result = guardCommand({ command: "git clone https://example.com/x.git", cwd: "D:/www/digitop", placement });
+    expect(result.ok).toBe(true);
+    expect(result.because).toContain("chứa nơi node đang chạy");
+    // A sibling that merely shares a prefix is not that folder.
+    expect(guardCommand({ command: "x", cwd: "D:/www/digitop-other", placement }).ok).toBe(false);
+  });
+
   it("accepts a folder inside an indexed project", () => {
     const placement = { approvedRoots: [] as string[], knownProjects: ["D:/www/digitop/clarkcant"] };
     expect(guardCommand({ command: "npm test", cwd: "D:/www/digitop/clarkcant/packages/core", placement })).toMatchObject({
