@@ -1,7 +1,7 @@
 ---
 phase: 4
 title: "Journey đính kèm và evidence"
-status: pending
+status: done
 priority: P1
 effort: "3h"
 dependencies: [3]

@@ -80,10 +80,10 @@ không phải thứ tự đánh số ban đầu: vòng red-team đã đảo Stag
 
 | Phase | Name | Status |
 |-------|------|--------|
-| 1 | [Contract đính kèm, blob store dùng chung và quota](./phase-01-attachments-contract-and-store.md) | Pending |
-| 2 | [Route upload/download, header transport và seam server](./phase-02-uploads-and-blob-store.md) | Pending |
-| 3 | [Composer, timeline và nội dung tới agent](./phase-03-composer-timeline-and-agent-content.md) | Pending |
-| 4 | [Journey đính kèm và evidence](./phase-04-attachments-journey-and-evidence.md) | Pending |
+| 1 | [Contract đính kèm, blob store dùng chung và quota](./phase-01-attachments-contract-and-store.md) | Done |
+| 2 | [Route upload/download, header transport và seam server](./phase-02-uploads-and-blob-store.md) | Done |
+| 3 | [Composer, timeline và nội dung tới agent](./phase-03-composer-timeline-and-agent-content.md) | Done |
+| 4 | [Journey đính kèm và evidence](./phase-04-attachments-journey-and-evidence.md) | Done |
 | 5 | [Registry app-intent dùng chung cho chat, click và voice](./phase-05-shared-app-control-intents.md) | Pending |
 | 6 | [T66 — voice và click chạm cùng một widget action state](./phase-06-voice-widget-action-parity.md) | Pending |
 | 7 | [Cửa sổ desktop compact, shell load client và bridge có tên](./phase-07-desktop-compact-window.md) | Pending |

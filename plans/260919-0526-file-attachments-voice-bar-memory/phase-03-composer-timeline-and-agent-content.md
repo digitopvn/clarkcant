@@ -1,7 +1,7 @@
 ---
 phase: 3
 title: "Composer, timeline và nội dung tới agent"
-status: pending
+status: done
 priority: P1
 effort: "7h"
 dependencies: [1, 2]

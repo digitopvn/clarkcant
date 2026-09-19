@@ -1,7 +1,7 @@
 ---
 phase: 2
 title: "Route upload/download, header transport và seam server"
-status: pending
+status: done
 priority: P1
 effort: "5h"
 dependencies: [1]

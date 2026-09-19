@@ -1,7 +1,7 @@
 ---
 phase: 1
 title: "Contract đính kèm, blob store dùng chung và quota"
-status: pending
+status: done
 priority: P1
 effort: "6h"
 dependencies: []
