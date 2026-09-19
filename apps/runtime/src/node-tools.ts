@@ -221,6 +221,18 @@ export interface CommandToolDeps {
   /** Ids for the receipts this tool writes. */
   newId: () => string;
   /**
+   * Where a finished command is written down, when this node keeps a trail.
+   *
+   * Optional because the audit trail is a node's decision: a test, or an embedder, may run this tool without one.
+   * What is *not* optional is what it may contain — a summary and an outcome, never the command's output and never a
+   * secret that was injected into it.
+   */
+  audit?: (event: {
+    summary: string;
+    outcome: "done" | "failed" | "stopped" | "refused";
+    ref?: string;
+  }) => void;
+  /**
    * The interaction manager, when this node may ask the person something.
    *
    * Optional because a node can run commands without being able to ask: in that case a folder the finder cannot
@@ -516,9 +528,15 @@ export function createRunCommandTool(
       let guarded = envelope;
       if (policy === "guarded") {
         const decision = await decideGuardrailForCommand(input, { settings, envelope, why });
-        if (decision.kind === "refuse") return { text: decision.text };
+        if (decision.kind === "refuse") {
+          // A refusal is an effect too: it is the thing a person asks about later, when work they expected did not
+          // happen and nobody can remember why.
+          input.audit?.({ summary: decision.text, outcome: "refused" });
+          return { text: decision.text };
+        }
         guarded = decision.envelope;
       }
+      const operationId = input.newId();
 
       /*
        * A secret this command needs, injected just in time.
@@ -544,13 +562,27 @@ export function createRunCommandTool(
       }
 
       const ran = await runGuardedCommand({
-        operationId: input.newId(),
+        operationId,
         envelope: guarded,
         ...(reason === "" ? {} : { reason }),
         ...(why === "" ? {} : { why }),
         ...(env === undefined ? {} : { env }),
         ...(input.now === undefined ? {} : { now: input.now }),
         ...(input.run === undefined ? {} : { run: input.run }),
+      });
+
+      /*
+       * Written down, with what it produced.
+       *
+       * The summary is the verdict line rather than the command's output: a trail that held output would be a second
+       * copy of everything the receipt exists to bound, and a stopped command is recorded as stopped rather than as a
+       * failure, because those are the two things a reader needs to tell apart.
+       */
+      input.audit?.({
+        summary: ran.description,
+        outcome:
+          ran.outcome.stopped === true ? "stopped" : ran.outcome.exitCode === 0 && !ran.outcome.timedOut ? "done" : "failed",
+        ref: operationId,
       });
 
       return {

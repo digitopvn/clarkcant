@@ -104,6 +104,15 @@ export interface ModelTurn {
   runInBackground: (input: { conversationId: string; principal: Principal; text: string }) => Promise<string>;
 
   /**
+   * Stops every background worker this process started, answering how many there were.
+   *
+   * The other half of the emergency stop. A background request returns as soon as it is accepted, so this is the only
+   * reference to a worker nobody is awaiting — without it a stop would reach the foreground and leave the rest
+   * running, which is the shape of an emergency control that cannot be trusted.
+   */
+  stopBackgroundSessions: () => Promise<number>;
+
+  /**
    * The providers and models this node can run, read from the SDK's own catalogue.
    *
    * Read on demand rather than held as a snapshot, for the same reason the view catalog is: the list belongs to the
@@ -516,6 +525,13 @@ export async function createModelTurn(options: {
   const availability = await adapter.availability();
   const turns = new Map<string, Turn>();
   /**
+   * Background workers this process started, by conversation.
+   *
+   * Held so a stop can reach a worker nobody is awaiting: a background request returns as soon as it is accepted, so
+   * the only reference to that session is the one kept here.
+   */
+  const backgroundSessions = new Map<string, string>();
+  /**
    * Which model each conversation's current generation runs.
    *
    * Kept beside the sessions rather than on the turn, because it is the one fact that outlives a session: a model
@@ -766,6 +782,7 @@ export async function createModelTurn(options: {
         // which is exactly why the model for it is a decision rather than a setting.
         ...(routed === undefined ? {} : { model: routed }),
       });
+      backgroundSessions.set(input.conversationId, handle.sessionId);
       let said = "";
       const unsubscribe = adapter.subscribe(handle.sessionId, (event) => {
         if (event.type === "text-delta") said += event.delta;
@@ -774,10 +791,27 @@ export async function createModelTurn(options: {
         await adapter.prompt(handle.sessionId, input.text);
       } finally {
         unsubscribe();
+        backgroundSessions.delete(input.conversationId);
         // Disposed whatever happened: a worker nobody will ask again is a provider connection held open for nothing.
         void adapter.dispose(handle.sessionId).catch(() => undefined);
       }
       return said.trim();
+    },
+
+    /**
+     * Stop every background worker this process started.
+     *
+     * The other half of the emergency stop. Aborted *and* disposed, in that order, because an abort that leaves the
+     * session registered would let a later turn reach a worker the person has already stopped.
+     */
+    stopBackgroundSessions: async (): Promise<number> => {
+      const started = [...backgroundSessions.entries()];
+      for (const [conversationId, sessionId] of started) {
+        backgroundSessions.delete(conversationId);
+        await adapter.abort(sessionId, "người dùng đã dừng công việc đang chạy").catch(() => undefined);
+        void adapter.dispose(sessionId).catch(() => undefined);
+      }
+      return started.length;
     },
 
     async answer(input: ModelTurnInput): Promise<ModelTurnReply> {

@@ -50,7 +50,7 @@ import {
   deleteCredential,
   putPreference,
 } from "@clarkcant/storage";
-import { credentialNames, putCredential, putSecretMetadata, secretKindOr } from "@clarkcant/storage";
+import { credentialNames, putCredential, putSecretMetadata, secretKindOr, appendAuditEvent } from "@clarkcant/storage";
 import { DEFAULT_NARROWING, readAutonomySettings, saveAutonomySettings } from "./autonomy-settings.ts";
 import { type OwnedResources, ownedResources } from "./preflight.ts";
 import { cycleModelPool, readCurrentAlias, readModelPool, writeModelPool } from "./model-registry.ts";
@@ -75,7 +75,7 @@ import {
 import { readBlob, sniffContentType, writeBlob } from "./blobs.ts";
 import { attachmentRefFromRecord, resolveAttachmentRefs } from "./attachments.ts";
 import { markProjectUsed, projectContext, resolveProject } from "./project-finder.ts";
-import { receiptForModel, runApprovedCommand } from "./run-command.ts";
+import { receiptForModel, runApprovedCommand, stopRunningCommands } from "./run-command.ts";
 import { initialPrompt } from "./project-session.ts";
 import { indexMessages, ingestSessionEntries, searchSessions, textOfMessage } from "./session-search.ts";
 import { type NodeServices, buildTimeline } from "./services.ts";
@@ -310,6 +310,44 @@ export async function handleRequest(deps: GatewayDeps, request: GatewayRequest):
     // The scope is stated rather than implied: this node reads the policy per command, so the next command
     // already runs under it, and a panel that said "restart to apply" would be lying about that.
     return json(200, { ok: true, settings: stored, applies: "the next command this node runs" });
+  }
+
+  /*
+   * The emergency stop.
+   *
+   * It kills rather than asks, because the point of a stop is that it works on something that is not listening. The
+   * order is the order of reach: a child process is the one thing that outlives this node's turn, then the turns
+   * themselves, then the background workers nobody is awaiting.
+   */
+  if (request.method === "POST" && request.path === "/stop") {
+    const commands = stopRunningCommands();
+    const control = services.turnControl;
+    let turns = 0;
+    let background = 0;
+    if (control !== undefined) {
+      for (const runningIn of control.running()) {
+        if (control.interrupt(runningIn)) turns += 1;
+      }
+      // SAFETY: the stop is optional on the control object because a node can be built without background workers at
+      // all; reading it through a narrow shape keeps every other caller of `control` typed as it was.
+      const stopBackground = (control as { stopBackgroundSessions?: () => Promise<number> }).stopBackgroundSessions;
+      background = stopBackground === undefined ? 0 : await stopBackground.call(control);
+    }
+
+    const stopped = commands + turns + background;
+    if (stopped > 0) {
+      // Written down whether or not anybody was watching: a stop is the event most likely to need explaining later.
+      appendAuditEvent(services.runtime.db, {
+        auditId: services.conductor.newId("audit"),
+        principalId: services.runtime.identity.ownerPrincipalId,
+        nodeId: services.runtime.identity.nodeId,
+        kind: "stop",
+        summary: `dừng khẩn cấp: ${commands} lệnh, ${turns} lượt, ${background} việc nền`,
+        outcome: "stopped",
+        at: nowInstant(),
+      });
+    }
+    return json(200, { ok: true, stopped: { commands, turns, background } });
   }
 
   if (request.method === "GET" && request.path === "/capabilities") {
@@ -1879,6 +1917,19 @@ export async function decideApprovalForNode(
   if (!ran.ok) return { ok: false, code: ran.code, message: ran.message };
 
   appendHostReply(services, { conversationId: input.conversationId, blocks: ran.blocks, at: input.at });
+
+  // The approved path is audited here rather than in the runner, because this is where the decision and the outcome
+  // are both known: what a person approved, and what came of running it.
+  appendAuditEvent(services.runtime.db, {
+    auditId: services.conductor.newId("audit"),
+    principalId: services.runtime.identity.ownerPrincipalId,
+    nodeId: services.runtime.identity.nodeId,
+    kind: "command",
+    summary: ran.description,
+    outcome: ran.outcome.exitCode === 0 && !ran.outcome.timedOut ? "done" : "failed",
+    ref: input.approvalId,
+    at: input.at,
+  });
 
   /*
    * Hand the outcome back to the agent.

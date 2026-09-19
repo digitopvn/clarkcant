@@ -966,6 +966,35 @@ export const MIGRATIONS: readonly Migration[] = [
       `);
     },
   },
+  {
+    version: 19,
+    name: "audit_log",
+    reversible: true,
+    up: (db) => {
+      db.exec(`
+        -- What this node did, in order, in words.
+        --
+        -- Append-only by convention rather than by trigger: nothing in the codebase updates or deletes a row here,
+        -- and the reason to keep it is the question asked after something surprising happened. A row says what was
+        -- done and how it ended; it never holds a secret value, an argument dump or a transcript, because an audit
+        -- trail that leaked is worse than the failure it was kept for.
+        --
+        -- Separate from the effect ledger, which tracks how far an external effect got. This is the human-readable
+        -- record of what a person or an agent asked this node to do and what came of it.
+        CREATE TABLE audit_log (
+          audit_id     TEXT PRIMARY KEY,
+          principal_id TEXT NOT NULL,
+          node_id      TEXT,
+          at           TEXT NOT NULL,
+          kind         TEXT NOT NULL,
+          summary      TEXT NOT NULL,
+          outcome      TEXT NOT NULL,
+          ref          TEXT
+        );
+        CREATE INDEX idx_audit_principal_at ON audit_log(principal_id, at);
+      `);
+    },
+  },
 ];
 
 export interface MigrationResult {

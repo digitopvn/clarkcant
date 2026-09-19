@@ -56,6 +56,14 @@ export interface SecretBrokerDeps {
   db: Database;
   principalId: string;
   now: () => Instant;
+  /**
+   * Where a use is written down, when this node keeps a trail.
+   *
+   * Called with the secret's *name* and who used it — never the value, and never anything derived from it. That is
+   * the whole reason a use is auditable at all: an operator can see that `github_token` was handed to `command:git`
+   * without the record being another copy of the secret.
+   */
+  audit?: (event: { summary: string; ref: string }) => void;
 }
 
 /**
@@ -113,6 +121,10 @@ function resolve(
   }
 
   markSecretUsed(deps.db, deps.principalId, request.name, deps.now());
+  deps.audit?.({
+    summary: `dùng secret “${request.name}” cho ${request.consumer} qua ${request.exposure}`,
+    ref: request.name,
+  });
   return { ok: true, metadata, value };
 }
 

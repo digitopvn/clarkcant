@@ -7,7 +7,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { Instant } from "@clarkcant/contracts";
 
 import { openDatabase, type Database } from "../src/db.ts";
-import { currentSchemaVersion, migrate } from "../src/migrate.ts";
+import { migrate } from "../src/migrate.ts";
 import {
   deleteSecretMetadata,
   getSecretMetadata,
@@ -61,9 +61,10 @@ function add(name = "github_token", overrides: Partial<Parameters<typeof putSecr
 
 describe("what the node remembers about a secret", () => {
   it("applies the migration that adds the table", () => {
-    // The migration is the newest one and it ran: a node upgrading from the previous schema is the case that
-    // must not depend on the table already existing.
-    expect(currentSchemaVersion(db)).toBe(18);
+    // Asserted against the table rather than the schema version, so a later migration does not have to remember to
+    // come back and update this line.
+    const table = db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'secrets'").get();
+    expect(table).toBeDefined();
   });
 
   it("keeps the description, the consumers and the policy", () => {

@@ -40,6 +40,42 @@ export interface CommandOutcome {
   stderr: string;
   durationMs: number;
   timedOut: boolean;
+  /**
+   * Killed because somebody stopped this node's work, rather than because it ran out of time.
+   *
+   * A distinct fact on purpose: a timeout is the command's own failure and a stop is a person's decision, and an
+   * audit trail that could not tell them apart would be a trail that misleads the next reader.
+   */
+  stopped?: boolean;
+}
+
+/**
+ * Every command this process is running.
+ *
+ * Kept here rather than on the command's caller because a stop has to reach a child process nobody is holding a
+ * reference to: the promise is what the caller awaits, and killing it needs the process, not the promise.
+ */
+const liveCommands = new Set<ChildProcess>();
+const stoppedByRequest = new Set<ChildProcess>();
+
+/**
+ * Kill everything running, and say how many there were.
+ *
+ * The emergency stop's command half. It kills rather than asks: the point of a stop is that it works on a command
+ * that is not listening, and a well-behaved shutdown is what a deadline is for.
+ */
+export function stopRunningCommands(): number {
+  const running = [...liveCommands];
+  for (const child of running) {
+    stoppedByRequest.add(child);
+    killTree(child);
+  }
+  return running.length;
+}
+
+/** How many commands are running right now, for a status line or a test. */
+export function runningCommandCount(): number {
+  return liveCommands.size;
 }
 
 export interface RunCommandOptions {
@@ -129,12 +165,22 @@ export async function runCommand(
 
     child.stdout?.on("data", (chunk: Buffer) => collect(chunk, "stdout"));
     child.stderr?.on("data", (chunk: Buffer) => collect(chunk, "stderr"));
+    // Registered before anything can finish, so a stop issued while the command is starting still reaches it.
+    liveCommands.add(child);
 
     const finish = (exitCode: number | null): void => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
-      resolve({ exitCode, stdout, stderr, durationMs: Date.now() - startedAt, timedOut });
+      liveCommands.delete(child);
+      resolve({
+        exitCode,
+        stdout,
+        stderr,
+        durationMs: Date.now() - startedAt,
+        timedOut,
+        ...(stoppedByRequest.delete(child) ? { stopped: true } : {}),
+      });
     };
 
     const timer = setTimeout(() => {
@@ -160,9 +206,11 @@ export async function runCommand(
  * block, and saying it in both places is what made a receipt print its own output twice.
  */
 export function describeCommandOutcome(command: string, outcome: CommandOutcome): string {
-  const verdict = outcome.timedOut
-    ? `hết thời gian sau ${outcome.durationMs} ms và bị dừng`
-    : `thoát với mã ${outcome.exitCode ?? "không rõ"} sau ${outcome.durationMs} ms`;
+  const verdict = outcome.stopped === true
+    ? `bị dừng theo yêu cầu sau ${outcome.durationMs} ms`
+    : outcome.timedOut
+      ? `hết thời gian sau ${outcome.durationMs} ms và bị dừng`
+      : `thoát với mã ${outcome.exitCode ?? "không rõ"} sau ${outcome.durationMs} ms`;
   return `\`${command}\` ${verdict}.`;
 }
 

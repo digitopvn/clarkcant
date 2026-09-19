@@ -25,7 +25,7 @@ import { commandDigest } from "./run-command.ts";
 import { captureSnapshot, createInstance, handleUserMessage, requestApproval, setPreference, type CoordinationDeps } from "@clarkcant/core";
 import { GALLERY, YOUTUBE } from "@clarkcant/data-canvas";
 import { definitionDigest } from "@clarkcant/widget-host";
-import { listLocalImages, messagesSince, credentialNames, readCredential,
+import { listLocalImages, messagesSince, credentialNames, appendAuditEvent, readCredential,
   readPreference,
 } from "@clarkcant/storage";
 import { attachVoiceGateway, VOICE_ANSWER_NOTE, VOICE_CREDENTIAL_NAME } from "./voice-session.ts";
@@ -47,6 +47,7 @@ import { writeCurrentAlias, writeModelPool, readCurrentAlias, readModelPool } fr
 import { filterBackgroundCandidates, routeBackgroundModel } from "./model-router.ts";
 import { createAskUserQuestionTool } from "./ask-user-question.ts";
 import { createRequestSecretTool } from "./request-secret.ts";
+import { createSecretBroker } from "./secret-broker.ts";
 import type { RequestSecretDeps } from "./request-secret.ts";
 import { registerSessionFile, sessionsDirectory } from "./session-store.ts";
 import { bootNodeServices, type NodeServices } from "./services.ts";
@@ -669,7 +670,43 @@ async function main(): Promise<void> {
       return guardOperation(decider, input);
     },
     narrowing: DEFAULT_NARROWING,
+    /**
+     * The secret broker, with the trail attached.
+     *
+     * Wired here rather than inside the tool because the broker is the only thing that reads a value: every use of a
+     * secret passes through `withSecret` or `environmentFor`, so this is the one place an audit entry cannot be
+     * forgotten.
+     */
+    broker: createSecretBroker({
+      db: services.runtime.db,
+      principalId: services.runtime.identity.ownerPrincipalId,
+      now: () => new Date().toISOString() as Instant,
+      audit: (event) =>
+        appendAuditEvent(services.runtime.db, {
+          auditId: services.conductor.newId("audit"),
+          principalId: services.runtime.identity.ownerPrincipalId,
+          nodeId: services.runtime.identity.nodeId,
+          kind: "secret-use",
+          summary: event.summary,
+          outcome: "done",
+          ref: event.ref,
+          at: new Date().toISOString() as Instant,
+        }),
+    }),
     newId: () => services.conductor.newId("run"),
+    // Where a finished command is written down. The trail is the node's, and the sink is how a tool that does not know
+    // about the database still ends up in it.
+    audit: (event) =>
+      appendAuditEvent(services.runtime.db, {
+        auditId: services.conductor.newId("audit"),
+        principalId: services.runtime.identity.ownerPrincipalId,
+        nodeId: services.runtime.identity.nodeId,
+        kind: "command",
+        summary: event.summary,
+        outcome: event.outcome,
+        ...(event.ref === undefined ? {} : { ref: event.ref }),
+        at: new Date().toISOString() as Instant,
+      }),
   };
   interactionWiring.deps = (conversationId) => interactionDepsFor(services, conversationId);
   secretWiring.deps = {
