@@ -55,7 +55,7 @@ export type AppIntentKind = z.infer<typeof appIntentKindSchema>;
  * - which is worse than being told the command cannot be done. Stage C adds the tab and this list together, so the
  * two cannot disagree.
  */
-export const SETTINGS_TABS = ["general", "models", "tools", "devices"] as const;
+export const SETTINGS_TABS = ["general", "models", "tools", "memory", "devices"] as const;
 export const settingsTabSchema = z.enum(SETTINGS_TABS);
 export type SettingsTab = z.infer<typeof settingsTabSchema>;
 
@@ -102,6 +102,7 @@ const TAB_LABELS: Record<SettingsTab, string> = {
   general: "Chung",
   models: "Model",
   tools: "Công cụ",
+  memory: "Memory",
   devices: "Thiết bị",
 };
 

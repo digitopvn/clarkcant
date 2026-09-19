@@ -21,7 +21,7 @@ import {
 
 const NOW = "2026-09-19T12:00:00.000Z";
 
-function record(overrides: Partial<MemoryRecord> = {}): MemoryRecord {
+function record(overrides: Record<string, unknown> = {}): MemoryRecord {
   return {
     memoryId: "mem_one",
     kind: "decision",

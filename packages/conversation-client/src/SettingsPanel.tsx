@@ -26,6 +26,7 @@ import { contrastRatio, DARK, LIGHT, type ThemeName } from "@clarkcant/design-to
 
 import { DevicePairingPanel } from "./DevicePairingPanel.tsx";
 import { Modal } from "./Modal.tsx";
+import { MemoryPanel } from "./memory-panel.tsx";
 import type { GatewayClient } from "./api.ts";
 import { THEME_CHOICES, type ThemeChoice } from "./theme.ts";
 
@@ -55,6 +56,7 @@ const TABS = [
   // Provider and model together, because choosing one means choosing the other: the second list belongs to the first.
   { id: "models", label: "Models" },
   { id: "tools", label: "Tools" },
+  { id: "memory", label: "Memory" },
   { id: "devices", label: "Devices" },
 ] as const;
 
@@ -738,6 +740,12 @@ export function SettingsPanel({
             </section>
           </section>
         )}
+
+        {/*
+          Loaded when this tab is opened, not when Settings is: reading what is remembered is a request, and a
+          dialog should not spend one on a screen nobody asked for.
+        */}
+        {tab === "memory" && <MemoryPanel client={client} />}
 
         {tab === "devices" && (
           <section className="cc-panel-section">

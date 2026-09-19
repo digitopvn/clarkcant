@@ -1,3 +1,4 @@
+import { SETTINGS_TABS } from "@clarkcant/contracts";
 import { beforeEach, describe, expect, it } from "vitest";
 
 import {
@@ -140,8 +141,11 @@ describe("a command the registry does not know", () => {
     expect(match?.kind).toBe("refused");
     if (match?.kind !== "refused") throw new Error("unreachable");
     expect(match.say).toContain("tools");
-    // And it names only tabs that exist: the Memory tab is not in the list until it is.
-    expect(match.say).not.toContain("memory");
+    // And it names only tabs that exist. This used to read "not memory", which was true while the Memory tab did
+    // not exist; now that it does, the durable property is that the sentence comes from the list rather than that
+    // one particular tab is missing from it.
+    for (const tab of SETTINGS_TABS) expect(match.say).toContain(tab);
+    expect(match.say).not.toContain("plugins");
   });
 });
 

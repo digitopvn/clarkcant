@@ -13,7 +13,7 @@ import {
   type ConfirmationDecision,
   type SettingsTab,
 } from "@clarkcant/contracts";
-import { suggestionsResponseSchema, type Suggestion } from "@clarkcant/contracts";
+import { memoryListSchema, suggestionsResponseSchema, type MemoryRecord, type Suggestion } from "@clarkcant/contracts";
 
 import {
   type StartVoiceSessionOptions,
@@ -400,6 +400,37 @@ export class GatewayClient {
   async suggestions(): Promise<Suggestion[]> {
     const body = await this.#call<unknown>("GET", "/suggestions");
     return suggestionsResponseSchema.parse(body).items;
+  }
+
+  /**
+   * What this node remembers, or why it could not be read.
+   *
+   * Failure is an answer rather than a throw, because the Memory tab has a state for it: a screen that cannot
+   * list what is remembered still has to render, with the reason and a way to try again. A thrown error here
+   * would be a blank panel with nothing to act on.
+   */
+  async listMemories(): Promise<
+    | { ok: true; items: MemoryRecord[]; counts: Record<string, number> }
+    | { ok: false; reason: string }
+  > {
+    try {
+      const body = await this.#call<unknown>("GET", "/memory");
+      const parsed = memoryListSchema.safeParse(body);
+      if (!parsed.success) return { ok: false, reason: "the node's answer was not a list of remembered things" };
+      return { ok: true, items: parsed.data.items, counts: parsed.data.counts };
+    } catch (cause) {
+      return { ok: false, reason: cause instanceof Error ? cause.message : "the node did not answer" };
+    }
+  }
+
+  /** Remove one, and say whether it went. */
+  async deleteMemory(memoryId: string): Promise<{ ok: true } | { ok: false; reason: string }> {
+    try {
+      await this.#call<unknown>("DELETE", `/memory/${encodeURIComponent(memoryId)}`);
+      return { ok: true };
+    } catch (cause) {
+      return { ok: false, reason: cause instanceof Error ? cause.message : "the node did not answer" };
+    }
   }
 
   sendMessage(
