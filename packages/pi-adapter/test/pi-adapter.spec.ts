@@ -183,7 +183,7 @@ function stubSdk(options: { idleDelayMs?: number } = {}) {
     },
     SessionManager: { inMemory: () => ({}), create: () => ({}) },
     createAgentSession: async () => ({ session }),
-    ModelRuntime: { create: async () => ({ getModels: () => [] }) },
+    ModelRuntime: { create: async () => ({ getModels: () => [], getProviders: () => [] }) },
   };
 
   return { module: module_, prompts, aborts: () => aborts };
@@ -262,3 +262,21 @@ describe("the model catalogue", () => {
   });
 });
 
+  it("resolves the model a brief carries, not only the one the adapter was built with", async () => {
+    const sdk = stubSdk();
+    const adapter = adapterWith(sdk);
+
+    // The stub offers no models for any provider, which is what makes this testable without a provider account: the
+    // refusal names the provider that was asked about, so the provider the adapter resolved is visible in the failure.
+    // A brief carrying a model that was then ignored would name the adapter's own provider instead - and that is the
+    // bug this covers, because a choice stored in the interface reaches a session only through this brief.
+    await expect(
+      adapter.createWorkerSession({
+        goal: "answer the user",
+        projectRoots: [],
+        allowedCapabilityRefs: [],
+        maxWallClockMs: 40,
+        model: { provider: "from-the-brief", id: "any-model" },
+      }),
+    ).rejects.toThrow(/from-the-brief/);
+  });

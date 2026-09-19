@@ -434,6 +434,14 @@ export async function createModelTurn(options: {
    * than the place that decides which capabilities exist.
    */
   extraTools?: () => readonly ToolDefinition[];
+  /**
+   * The model to run for sessions created from now on, when somebody chose one.
+   *
+   * A function rather than a value, and read at session creation rather than here: the composition root builds the
+   * model turn before the services that own the database and the identity the choice is stored against, so a value
+   * would have to exist before the thing it comes from does.
+   */
+  model?: () => ModelTurn["selection"] | undefined;
 }): Promise<ModelTurn | undefined> {
   const selection = modelFromEnv(options.env);
   if (selection === undefined) return undefined;
@@ -557,12 +565,17 @@ export async function createModelTurn(options: {
       ...readExtraTools(),
     ].map((tool) => withActivity(turn, tool));
 
+    const chosen = options.model?.();
+
     const handle = await adapter.createWorkerSession({
       // The brief is per conversation rather than per message, so the model keeps the thread
       // it is already in instead of meeting the user again on every turn.
       goal: "Answer the user in this conversation.",
       projectRoots: [],
       allowedCapabilityRefs: [],
+      // Resolved here rather than when the turn was built: this is the moment a model can actually be chosen for a
+      // session, and it is also the moment `services` exists to say what was chosen.
+      ...(chosen === undefined ? {} : { model: chosen }),
       ...(customTools.length === 0 ? {} : { customTools }),
       // Carried on the brief as well as held here, because the adapter enforces it at the
       // turn boundary and that is where a runaway turn is actually stopped.

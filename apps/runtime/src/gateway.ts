@@ -234,11 +234,9 @@ export async function handleRequest(deps: GatewayDeps, request: GatewayRequest):
   /*
    * A model a person chose.
    *
-   * Stored, and the answer says only that. It is deliberately not claimed to apply: the model turn is built before the
-   * services are - a node exists with its model already in hand - and the boot path does not read this preference yet,
-   * so the running node still runs what its own configuration names. The half that is missing is named here rather than
-   * papered over in the answer, because a route that said "applies next start" while nothing read it would be lying at
-   * the one place a person checks afterwards.
+   * Stored, and applied to sessions created afterwards: the model is resolved when a session is created, which is the
+   * only moment a choice can reach one, so the answer names that scope rather than implying a conversation already
+   * running changed underneath somebody. A conversation that is open keeps the model it started with.
    *
    * The choice is still checked against the catalogue first: a stored model this installation cannot run would fail
    * every later turn with a message about a provider rather than about the choice that caused it.
@@ -264,7 +262,7 @@ export async function handleRequest(deps: GatewayDeps, request: GatewayRequest):
       source: "settings",
       at: nowInstant(),
     });
-    return json(200, { ok: true, stored: { provider, id } });
+    return json(200, { ok: true, stored: { provider, id }, applies: "conversations started after this" });
   }
 
   if (request.method === "GET" && request.path === "/capabilities") {

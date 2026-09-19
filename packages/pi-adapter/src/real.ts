@@ -170,8 +170,10 @@ export class RealPiAdapter implements PiAdapter {
    * through would defer the failure to the model runtime, whose complaint names neither the
    * provider nor what it does have, and that is the error an operator would have to debug.
    */
-  async #resolveModel(sdk: SdkModule): Promise<{ runtime?: SdkModelRuntime; model?: SdkModel }> {
-    const wanted = this.#options.model;
+  async #resolveModel(
+    sdk: SdkModule,
+    wanted: RealPiAdapterOptions["model"] = this.#options.model,
+  ): Promise<{ runtime?: SdkModelRuntime; model?: SdkModel }> {
     if (wanted === undefined) return {};
 
     // No options: the credentials this resolves against are the process environment's, which is
@@ -268,7 +270,7 @@ export class RealPiAdapter implements PiAdapter {
     this.#loader = loader;
     await loader.reload();
 
-    const selection = await this.#resolveModel(sdk);
+    const selection = await this.#resolveModel(sdk, brief.model ?? this.#options.model);
 
     const customTools = brief.customTools ?? [];
     const builtinTools = [...(this.#options.builtinTools ?? READ_ONLY_TOOLS)];

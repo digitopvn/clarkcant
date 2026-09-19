@@ -33,6 +33,13 @@ export interface WorkerBrief {
   /** Token budget for the run. */
   maxTokens?: number;
   maxWallClockMs?: number;
+  /**
+   * The model this session should run, when it was chosen rather than configured.
+   *
+   * Per session rather than per adapter: a choice made in the interface can only reach a session that does not exist
+   * yet, and the adapter is constructed once, long before anybody chooses anything.
+   */
+  model?: { provider: string; id: string };
 }
 
 export interface WorkerSessionHandle {

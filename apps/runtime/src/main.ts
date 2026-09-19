@@ -23,7 +23,9 @@ import { commandDigest } from "./run-command.ts";
 import { captureSnapshot, createInstance, handleUserMessage, requestApproval, setPreference, type CoordinationDeps } from "@clarkcant/core";
 import { GALLERY, YOUTUBE } from "@clarkcant/data-canvas";
 import { definitionDigest } from "@clarkcant/widget-host";
-import { listLocalImages, messagesSince, readCredential } from "@clarkcant/storage";
+import { listLocalImages, messagesSince, readCredential,
+  readPreference,
+} from "@clarkcant/storage";
 import { attachVoiceGateway, VOICE_ANSWER_NOTE, VOICE_CREDENTIAL_NAME } from "./voice-session.ts";
 import { indexMessages, textOfMessage } from "./session-search.ts";
 import { FixtureLiveAdapter } from "./voice-fixture.ts";
@@ -321,9 +323,25 @@ async function main(): Promise<void> {
     };
   };
 
+  /*
+   * The model a person chose, read when a session is created rather than at boot.
+   *
+   * Lazily because `services` - which owns the database and the identity the preference is keyed by - is built below
+   * this line; a value would be the same ordering mistake the typecheck refused twice. By the time anybody sends a
+   * message this node is fully built, so the read happens against a node that exists.
+   */
+  const chosenModel = (): { provider: string; id: string } | undefined => {
+    const stored = readPreference(services.runtime.db, services.runtime.identity.ownerPrincipalId, "model", "node");
+    const [provider, id] = (stored ?? "").split("/");
+    return provider === undefined || provider === "" || id === undefined || id === ""
+      ? undefined
+      : { provider, id };
+  };
+
   const modelTurn = await createModelTurn({
     env: process.env,
     cwd: process.cwd(),
+    model: chosenModel,
     sessionDir: join(options.dataDir, "sessions"),
     onSessionFile: ({ sessionId, sessionFile }) => {
       if (sessionWiring.index === undefined || sessionWiring.principalId === undefined) return;
