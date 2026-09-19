@@ -927,6 +927,34 @@ export const MIGRATIONS: readonly Migration[] = [
       `);
     },
   },
+  {
+    version: 18,
+    name: "memory-records",
+    reversible: true,
+    up: (db) => {
+      db.exec(`
+        -- One thing the node remembered, and the conversation it was learned in.
+        --
+        -- Deleted for real rather than flagged: the Memory tab removes a row, and a soft-delete column
+        -- would make every read remember to filter it out - which is one forgotten filter away from
+        -- showing somebody something they had removed.
+        --
+        -- A row is a sentence the agent chose to keep, not a copy of the conversation, and the
+        -- conversation it came from is kept by id so a person reading the list can tell what it was for.
+        CREATE TABLE memory_records (
+          memory_id TEXT PRIMARY KEY,
+          principal_id TEXT NOT NULL,
+          conversation_id TEXT NOT NULL,
+          source_message_id TEXT,
+          kind TEXT NOT NULL,
+          scope TEXT NOT NULL,
+          text TEXT NOT NULL,
+          created_at TEXT NOT NULL
+        );
+        CREATE INDEX memory_records_principal ON memory_records(principal_id, created_at DESC);
+      `);
+    },
+  },
 ];
 
 export interface MigrationResult {
