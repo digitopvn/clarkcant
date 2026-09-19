@@ -430,6 +430,14 @@ export async function createModelTurn(options: {
    */
   views?: () => readonly ViewDescriptor[];
   /**
+   * Which model a background worker should run, when the node routes that instead of configuring it.
+   *
+   * A function rather than a value, and asynchronous, because routing consults the pool, the catalogue and possibly
+   * the policy layer — all of which are read at the moment a worker is about to start rather than at boot. Absent
+   * means workers run whatever the node is configured with.
+   */
+  backgroundModel?: () => Promise<{ provider: string; id: string } | undefined>;
+  /**
    * The conversation so far, newest last, for briefing a session that has just been created.
    *
    * A session dropped after a failure, or one created for a conversation resumed on a node that has since
@@ -747,12 +755,16 @@ export async function createModelTurn(options: {
     },
 
     runInBackground: async (input: { conversationId: string; principal: Principal; text: string }): Promise<string> => {
+      const routed = options.backgroundModel === undefined ? undefined : await options.backgroundModel();
       const handle = await adapter.createWorkerSession({
         goal: input.text.slice(0, 2000),
         // No folders and no capabilities: starting a worker is not a way to acquire either, and the request that
         // needs them goes through the same approval path as any other.
         projectRoots: [],
         allowedCapabilityRefs: [],
+        // Routed only for background work. Foreground honours the person's choice, and nobody is watching this run —
+        // which is exactly why the model for it is a decision rather than a setting.
+        ...(routed === undefined ? {} : { model: routed }),
       });
       let said = "";
       const unsubscribe = adapter.subscribe(handle.sessionId, (event) => {

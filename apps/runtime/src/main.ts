@@ -25,7 +25,7 @@ import { commandDigest } from "./run-command.ts";
 import { captureSnapshot, createInstance, handleUserMessage, requestApproval, setPreference, type CoordinationDeps } from "@clarkcant/core";
 import { GALLERY, YOUTUBE } from "@clarkcant/data-canvas";
 import { definitionDigest } from "@clarkcant/widget-host";
-import { listLocalImages, messagesSince, readCredential,
+import { listLocalImages, messagesSince, credentialNames, readCredential,
   readPreference,
 } from "@clarkcant/storage";
 import { attachVoiceGateway, VOICE_ANSWER_NOTE, VOICE_CREDENTIAL_NAME } from "./voice-session.ts";
@@ -40,10 +40,11 @@ import { registerNodeTools } from "./tool-catalogue.ts";
 import { composeMiniApp } from "./compose-mini-app.ts";
 import { createNodeTools, type CommandToolDeps } from "./node-tools.ts";
 import type { InteractionDeps } from "./interactions.ts";
-import { guardOperation } from "./jev-decider.ts";
+import { guardOperation, decideModelRoute } from "./jev-decider.ts";
 import { ownedResources } from "./preflight.ts";
 import { DEFAULT_NARROWING, readAutonomySettings } from "./autonomy-settings.ts";
-import { writeCurrentAlias, writeModelPool } from "./model-registry.ts";
+import { writeCurrentAlias, writeModelPool, readCurrentAlias, readModelPool } from "./model-registry.ts";
+import { filterBackgroundCandidates, routeBackgroundModel } from "./model-router.ts";
 import { createAskUserQuestionTool } from "./ask-user-question.ts";
 import { createRequestSecretTool } from "./request-secret.ts";
 import type { RequestSecretDeps } from "./request-secret.ts";
@@ -457,10 +458,58 @@ async function main(): Promise<void> {
       : { provider, id };
   };
 
+  /**
+   * Which model a background worker runs.
+   *
+   * Deterministic filters first — the pool's own settings, the credentials this node has, provider health, context and
+   * tool needs — and only then the policy layer, which may choose among what survived. When nothing is eligible, or
+   * when the policy layer cannot be reached, this returns nothing and the worker runs what the node is configured
+   * with: routing must never be the reason a job does not start.
+   */
+  const routeBackground = async (): Promise<{ provider: string; id: string } | undefined> => {
+    const owner = services.runtime.identity.ownerPrincipalId;
+    const pool = readModelPool(services.runtime.db, owner);
+    if (pool.profiles.length === 0) return undefined;
+    const catalogue = await (services.modelCatalogue?.() ?? Promise.resolve([]));
+    const credentials = credentialNames(services.runtime.db, owner);
+    const currentAlias = readCurrentAlias(services.runtime.db, owner);
+
+    const filtered = filterBackgroundCandidates({
+      pool,
+      // The mapping from a provider to the name its credential is stored under is the adapter's business; until it
+      // exposes one, a provider counts as credentialed when it is the one this node runs, or when a credential is
+      // stored under the provider's own name.
+      hasCredential: (provider) => services.model?.provider === provider || credentials.includes(provider),
+      isHealthy: () => true,
+      contextWindowFor: (provider, modelId) =>
+        catalogue.find((entry) => entry.id === provider)?.models.find((model) => model.id === modelId)?.contextWindow,
+      // Unknown rather than false: this build cannot confirm tool support per model, and filtering on a guess would
+      // empty the pool on any installation whose catalogue is thin.
+      supportsTools: () => undefined,
+      needsTools: true,
+    });
+
+    const decider = services.projects.decider;
+    const routed = await routeBackgroundModel({
+      eligible: filtered.eligible,
+      ...(decider === undefined
+        ? {}
+        : {
+            decide: async (candidates) =>
+              await decideModelRoute(decider, { task: "background worker", role: "background", candidates }),
+          }),
+      ...(currentAlias === undefined ? {} : { foregroundAlias: currentAlias }),
+      // Checked after the decision as well as before it: a pool can change while a selector is thinking.
+      verify: (alias) => pool.profiles.some((profile) => profile.alias === alias && profile.enabled),
+    });
+    return routed === undefined ? undefined : { provider: routed.provider, id: routed.modelId };
+  };
+
   const modelTurn = await createModelTurn({
     env: process.env,
     cwd: process.cwd(),
     model: chosenModel,
+    backgroundModel: routeBackground,
     sessionDir: join(options.dataDir, "sessions"),
     onSessionFile: ({ sessionId, sessionFile }) => {
       if (sessionWiring.index === undefined || sessionWiring.principalId === undefined) return;

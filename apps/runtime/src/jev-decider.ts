@@ -502,6 +502,64 @@ function sanitizeState(state: Readonly<Record<string, string>>): Record<string, 
   return out;
 }
 
+/**
+ * Which model a background worker should run.
+ *
+ * The seventh decision, and the only one whose subject is a preference rather than a fact: nothing about a provider's
+ * catalogue says which of two eligible models suits this job. What the caller guarantees is the important half — the
+ * candidates have already been filtered to models that can run — so this may only choose among them, and anything
+ * else it returns is refused rather than accepted.
+ */
+export async function decideModelRoute(
+  deps: DecideDeps,
+  input: {
+    /** What the work is, in the host's words. Short, and redacted before it leaves the node. */
+    task: string;
+    role: string;
+    candidates: readonly { alias: string; description: string }[];
+  },
+): Promise<{ status: "chosen"; alias: string; model: string } | { status: "unavailable"; reason: string }> {
+  if (input.candidates.length < 2) {
+    return { status: "unavailable", reason: "một candidate thì không phải một quyết định" };
+  }
+  const refused = jevCallRefusal(deps.jev.config);
+  if (refused !== undefined) return { status: "unavailable", reason: refused };
+
+  const criteria: Record<string, string | null> = {};
+  for (const candidate of input.candidates.slice(0, 12)) criteria[candidate.alias] = candidate.description;
+
+  const outcome = await askChoice(deps.jev, {
+    state: { task: sanitizeIntent(input.task, 400), role: input.role },
+    instructions:
+      "Chọn model phù hợp nhất cho công việc chạy nền này. Chỉ được chọn trong danh sách; chọn none nếu không có cái nào phù hợp.",
+    criteria,
+    questionId: "model-route",
+    budget: deps.budget(),
+  });
+
+  if (outcome.status !== "answered") {
+    return {
+      status: "unavailable",
+      reason: outcome.status === "unavailable" ? outcome.reason : `bộ chọn không quyết định: ${outcome.reason}`,
+    };
+  }
+  if (!outcome.value.substantive) return { status: "unavailable", reason: "bộ chọn không có ý kiến" };
+
+  const decisive = isDecisive(
+    outcome.value.top,
+    outcome.value.runnerUp,
+    deps.jev.config.confidenceFloor,
+    deps.jev.config.marginFloor,
+  );
+  if (!decisive.decisive) return { status: "unavailable", reason: decisive.reason };
+
+  const chosen = input.candidates.find((candidate) => candidate.alias === outcome.value.choice);
+  if (chosen === undefined) {
+    return { status: "unavailable", reason: `bộ chọn trả về ${outcome.value.choice}, không nằm trong danh sách được đưa` };
+  }
+  return { status: "chosen", alias: chosen.alias, model: deps.jev.config.model };
+}
+
 /** The three things that can happen to a message that arrives while something is running. */
 export type TurnAction = "steer" | "interrupt" | "background";
 
