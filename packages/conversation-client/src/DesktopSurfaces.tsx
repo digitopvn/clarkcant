@@ -159,7 +159,34 @@ export function PinnedLiveSurface({
   const [ownership, setOwnership] = useState<"claiming" | "owner" | "elsewhere" | "error">("claiming");
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<string | undefined>(undefined);
+  /*
+   * Whether the surface is near the viewport.
+   *
+   * Two things hang off this, and they are the same thing seen twice: a heavy surface is not mounted until it is
+   * close, and an offscreen one does not keep a live subscription. The second is the one that matters — a pinned
+   * surface left open in a tab nobody is looking at would otherwise keep claiming the lease and re-reading the
+   * widget on a timer, which is work nobody asked for and a lease nobody is using.
+   */
+  const [inView, setInView] = useState(false);
   const ownerToken = useRef<string>(newOwnerToken());
+
+  useEffect(() => {
+    const element = panel.current;
+    if (element === null) return;
+    /*
+     * `rootMargin` rather than a bare threshold: mounting exactly at the edge would make the surface appear only
+     * once the user has already scrolled to it, which turns lazy mounting into a visible pop-in. A screen's worth of
+     * margin means it is ready before it is looked at.
+     */
+    const observer = new IntersectionObserver(
+      (entries) => {
+        setInView(entries[0]?.isIntersecting ?? true);
+      },
+      { rootMargin: "400px 0px", threshold: 0 },
+    );
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, []);
 
   const load = useCallback(async (): Promise<void> => {
     try {
@@ -182,6 +209,17 @@ export function PinnedLiveSurface({
   }, [refreshSignal, load]);
 
   useEffect(() => {
+    /*
+     * Offscreen means no subscription. The cleanup below releases the lease and clears the timer, so leaving the
+     * viewport suspends the surface the same way unmounting it does — and returning re-claims with the *same* owner
+     * token, which is the same owner rather than a second one.
+     */
+    if (!inView) {
+      // The cleanup below released the lease, so the surface must stop saying it holds the live view. Saying
+      // "owner" while holding nothing is the exact claim this component exists to avoid making.
+      setOwnership("claiming");
+      return;
+    }
     let cancelled = false;
     const claim = async (): Promise<void> => {
       try {
@@ -223,7 +261,7 @@ export function PinnedLiveSurface({
       // Best effort: the lease is what makes a failed release recoverable.
       void client.releaseLiveOwner(conversationId, instanceId, ownerToken.current).catch(() => undefined);
     };
-  }, [client, conversationId, instanceId, load]);
+  }, [client, conversationId, instanceId, inView, load]);
 
   /*
    * Escape closes the expanded view, from anywhere inside it.
@@ -287,21 +325,35 @@ export function PinnedLiveSurface({
       </div>
     );
 
-  if (live === undefined) {
+  /*
+   * Offscreen means unmounted. Not polling while still rendering the surface would leave the heavy part on screen
+   * doing nothing — and the point of both items is that a surface nobody is looking at costs nothing.
+   */
+  if (live === undefined || !inView) {
     return (
       <div
+        ref={panel}
         className="cc-live-surface"
         data-live-instance={instanceId}
         data-ownership={ownership}
         data-display-mode={displayMode}
+        data-lazy={inView ? "false" : "true"}
         role={displayMode === "expanded" ? "region" : undefined}
         aria-label={displayMode === "expanded" ? `Bản hiện tại: ${title ?? instanceId}` : undefined}
       >
         {/* The close control is here in the loading state as well: a surface that is still opening is
             exactly when a keyboard user wants to be able to back out. */}
         {head}
-        <p className="cc-freshness" style={{ margin: 0 }}>
-          {notice ?? "Đang mở bản hiện tại…"}
+        {/*
+          Two different waits, said differently. "Chưa hiển thị" is the lazy state and it names what is missing
+          rather than looking like a failure; a reader who cannot see the surface still gets the title, so the
+          placeholder is a text alternative rather than an empty box.
+        */}
+        <p className="cc-freshness" data-live-waiting={inView ? "opening" : "offscreen"} style={{ margin: 0 }}>
+          {notice ??
+            (inView
+              ? "Đang mở bản hiện tại…"
+              : `Chưa hiển thị${title === undefined ? "" : `: ${title}`} — cuộn tới để mở.`)}
         </p>
       </div>
     );
@@ -316,6 +368,7 @@ export function PinnedLiveSurface({
       data-live-instance={instanceId}
       data-ownership={ownership}
       data-display-mode={displayMode}
+      data-lazy="false"
       role={displayMode === "expanded" ? "region" : undefined}
       aria-label={displayMode === "expanded" ? `Bản hiện tại: ${title ?? instanceId}` : undefined}
     >
