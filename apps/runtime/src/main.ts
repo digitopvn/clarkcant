@@ -12,15 +12,21 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 
 import type { MessageBlock, MessageRecord } from "@clarkcant/contracts";
-import { instantSchema } from "@clarkcant/contracts";
+import { instantSchema, describeAppIntent } from "@clarkcant/contracts";
 import { applyEnvFile } from "@clarkcant/pi-adapter";
 
 import { decideApprovalForNode } from "./gateway.ts";
+import {
+  type AppIntentDeps,
+  consumeConfirmation,
+  decideAppIntent,
+  mintConfirmation,
+} from "./app-intents.ts";
 import { createNodeServer } from "./server.ts";
 import { machineRoots } from "./fs-search.ts";
 import { resolveProject, refreshProjectIndex } from "./project-finder.ts";
 import { commandDigest } from "./run-command.ts";
-import { captureSnapshot, createInstance, handleUserMessage, requestApproval, setPreference, type CoordinationDeps } from "@clarkcant/core";
+import { captureSnapshot, createInstance, handleUserMessage, recordAppIntentEvent, requestApproval, setPreference, type CoordinationDeps } from "@clarkcant/core";
 import { GALLERY, YOUTUBE } from "@clarkcant/data-canvas";
 import { definitionDigest } from "@clarkcant/widget-host";
 import { listLocalImages, messagesSince, readCredential,
@@ -60,6 +66,20 @@ function parseArgs(argv: string[]): CliOptions {
     port: Number.parseInt(get("port") ?? "8765", 10),
     label: get("label") ?? "local runtime",
     allowPublicBind: argv.includes("--allow-public-bind"),
+  };
+}
+
+/**
+ * The registry's dependencies.
+ *
+ * A function rather than a constant so the clock is read when a decision is made, not when the node booted.
+ */
+function appIntentDepsFor(services: NodeServices): AppIntentDeps {
+  return {
+    db: services.runtime.db,
+    nodeId: services.runtime.identity.nodeId,
+    now: () => new Date().toISOString() as never,
+    newId: services.conductor.newId,
   };
 }
 
@@ -681,6 +701,47 @@ async function main(): Promise<void> {
           // made of it. `message` is spoken by the session.
           { ok: true, message: result.continuation ?? result.outcome ?? "Đã chạy xong lệnh đó." }
         : { ok: false, message: result.message };
+    },
+    /**
+     * What a spoken sentence means to the application.
+     *
+     * The same registry the typed route and a click go through, with source "voice" so the audit answers "was this
+     * clicked or heard". `none` is returned unchanged and the session then treats the sentence as a question for the
+     * agent, which is what keeps ordinary speech out of the app-control path.
+     */
+    resolveAppIntent: ({ text, conversationId }) => {
+      const deps = appIntentDepsFor(services);
+      const principalId = services.runtime.identity.ownerPrincipalId;
+      return decideAppIntent(
+        deps,
+        { principalId, request: { text, source: "voice" }, conversationId },
+        (intent) => mintConfirmation(deps, { principalId, intent, source: "voice" }),
+      );
+    },
+    /**
+     * Turn a spoken confirmation into permission, once.
+     *
+     * A refusal as well as a failure comes back as a non-executable decision, because the page must never be handed
+     * something it would act on when the answer was no or the token was stale.
+     */
+    confirmAppIntent: ({ token, decision }) => {
+      const deps = appIntentDepsFor(services);
+      const outcome = consumeConfirmation(deps, { principalId: services.runtime.identity.ownerPrincipalId, token });
+      if (!outcome.ok) {
+        const say =
+          outcome.code === "CONFIRMATION_EXPIRED"
+            ? "Lời xác nhận đã quá hạn. Bạn nói lại câu lệnh nhé."
+            : "Tôi không còn lời xác nhận nào đang chờ.";
+        return { kind: "refused", say };
+      }
+      if (decision === "denied") return { kind: "refused", say: "Tôi đã bỏ qua câu lệnh đó." };
+      recordAppIntentEvent(deps, { intent: outcome.intent, source: outcome.source, confirmed: true });
+      return {
+        kind: "intent",
+        intent: outcome.intent,
+        requiresConfirmation: false,
+        readBack: describeAppIntent(outcome.intent),
+      };
     },
   });
   process.stderr.write(

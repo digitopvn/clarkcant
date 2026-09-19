@@ -1,6 +1,13 @@
 import type { IncomingMessage, Server } from "node:http";
 
-import { type ConversationId, type Instant, nowInstant } from "@clarkcant/contracts";
+import {
+  type AppIntentDecision,
+  type AppIntentResolution,
+  type ConfirmationDecision,
+  type ConversationId,
+  type Instant,
+  nowInstant,
+} from "@clarkcant/contracts";
 import { recordVoiceTranscript } from "@clarkcant/core";
 import { GeminiLiveAdapter, type VoiceProviderAdapter } from "@clarkcant/voice-adapters";
 import { type RawData, WebSocketServer, type WebSocket } from "ws";
@@ -32,6 +39,7 @@ import type { NodeServices } from "./services.ts";
  *   `{ type: "denied", code, message, heldBy? }`
  *   `{ type: "state", state }`
  *   `{ type: "transcript", role, text, final }`
+ *   `{ type: "app-intent", decision }`          — the application's answer to a command it was given
  *   `{ type: "error", code, message }`
  *   `{ type: "ended", recordedMessages }`
  *   binary                                     — PCM16, 24 kHz, mono
@@ -99,6 +107,22 @@ export interface VoiceGatewayOptions {
     decision: "granted" | "denied";
     digest: string;
   }) => Promise<{ ok: boolean; message: string }>;
+  /**
+   * What a sentence means to the application, as opposed to what it means to the agent.
+   *
+   * Injected for the same reason `answer` is: the node owns the registry and the matching rules, and this
+   * module owns the conversation. `none` means the sentence was not a command and belongs to the agent, which
+   * is what keeps "how do I look at the settings of this host" out of the app-control path.
+   */
+  resolveAppIntent?: (input: { text: string; conversationId: ConversationId }) => AppIntentResolution;
+  /**
+   * Turn a pending confirmation into permission, or refuse it.
+   *
+   * This is the only way an executable decision reaches the page, and it can only be reached by a sentence said
+   * while a token was waiting. A denial comes back as a refusal rather than as an error, because declining is a
+   * complete answer to the question that was asked.
+   */
+  confirmAppIntent?: (input: { token: string; decision: ConfirmationDecision }) => AppIntentDecision;
   /** Injected by tests so the transport can be exercised without a provider. */
   createAdapter?: () => VoiceProviderAdapter;
   now?: () => Instant;
@@ -291,6 +315,13 @@ export function attachVoiceGateway(options: VoiceGatewayOptions): VoiceGateway {
     /** An operation the agent asked for and is waiting on, if the person has not answered yet. */
     let waiting: { approvalId: string; digest: string; description: string } | undefined;
     /**
+     * A token for a command that asked a question first.
+     *
+     * Held in the session rather than in the page, which is the point of the whole two-step: the page never
+     * receives an executable quit, so nothing a page can do on its own ends the application.
+     */
+    let waitingIntent: string | undefined;
+    /**
      * Utterances are answered one at a time, in the order they were said.
      *
      * A second question asked while the first is still being answered would be spoken over it, and the
@@ -363,7 +394,10 @@ export function attachVoiceGateway(options: VoiceGatewayOptions): VoiceGateway {
       const askIn = conversationId;
       const answer = options.answer;
       const text = userText.trim();
-      if (text === "" || askIn === undefined || answer === undefined) return;
+      // Only a sentence and a conversation are required to get this far. Whether an agent is wired is checked
+      // further down, at the point that needs one: the command channel has nothing to do with the model, and a
+      // node with no agent can still open Settings or resize its own window when asked out loud.
+      if (text === "" || askIn === undefined) return;
       // Cleared only when this sentence really is being answered. Clearing it earlier would throw away
       // the only copy of something that was said, and the closing report would then have nothing to keep.
       userText = "";
@@ -401,6 +435,62 @@ export function attachVoiceGateway(options: VoiceGatewayOptions): VoiceGateway {
         });
         return;
       }
+
+      /*
+       * A sentence said while the application is waiting to confirm a command answers that question.
+       *
+       * This sits after the approval branch on purpose: an operation that is about to run on the machine is the
+       * more dangerous of the two questions waiting, so it is answered first and a sentence cannot decide both.
+       * Only recognised words decide anything, and the confirmation is sent to the node, which spends the token -
+       * so the executable decision comes back from the node rather than being assembled here.
+       */
+      const pendingIntent = waitingIntent;
+      const confirmIntent = options.confirmAppIntent;
+      if (pendingIntent !== undefined && confirmIntent !== undefined) {
+        const decision = interpretDecision(text);
+        if (decision === undefined) {
+          const again = "Tui chưa rõ ý bạn. Bạn nói “đồng ý” hoặc “không” giúp tui nhé.";
+          send({ type: "transcript", role: "assistant", text: again, final: true });
+          say(again);
+          return;
+        }
+
+        waitingIntent = undefined;
+        answerQueue = answerQueue.then(() => {
+          const decided = confirmIntent({ token: pendingIntent, decision });
+          send({ type: "app-intent", decision: decided });
+          const said = decided.kind === "refused" ? decided.say : decided.readBack;
+          send({ type: "transcript", role: "assistant", text: said, final: true });
+          say(said);
+          return Promise.resolve();
+        });
+        return;
+      }
+
+      /*
+       * A spoken command to the application.
+       *
+       * Checked before the agent sees the sentence, because "mở settings" is not a question to answer. A refusal
+       * is spoken and nothing happens, which is the issue's rule about not guessing at a command; `none` leaves the
+       * sentence to the agent exactly as before.
+       */
+      const resolveIntent = options.resolveAppIntent;
+      if (resolveIntent !== undefined) {
+        const resolved = resolveIntent({ text, conversationId: askIn });
+        if (resolved.kind !== "none") {
+          if (resolved.kind === "needs-confirmation") waitingIntent = resolved.confirmationToken;
+          // The decision is sent as its own frame so the page can act on the one member that is executable, and the
+          // transcript carries the sentence so the timeline reads like a conversation.
+          send({ type: "app-intent", decision: resolved });
+          const said = resolved.kind === "refused" ? resolved.say : resolved.readBack;
+          send({ type: "transcript", role: "assistant", text: said, final: true });
+          say(said);
+          return;
+        }
+      }
+
+      // The agent path needs an agent. This is the only branch that does, so the check lives here.
+      if (answer === undefined) return;
 
       answerQueue = answerQueue
         .then(async () => {
