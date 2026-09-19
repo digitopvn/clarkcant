@@ -42,6 +42,26 @@ body {
 .cc-shell[data-view="hero"] .cc-scroll { flex: 0 0 auto; overflow: visible; }
 
 /*
+ * The first-run screen can be taller than the window - this machine's catalogue alone lists a provider with more models
+ * than fit on a screen - and a screen that cannot be scrolled leaves its own controls unreachable. That is not a
+ * hypothesis: the model list was unclickable for exactly this reason, and the browser test said "element is outside of
+ * the viewport" rather than anything a reader would have guessed from the source.
+ */
+.cc-shell[data-view="hero"][data-onboarding="true"] { overflow-y: auto; }
+
+/* Built for choosing from a long list, and dressed so it belongs to this surface rather than to the operating system. */
+.cc-select {
+  background: var(--cc-elevated);
+  color: inherit;
+  border: 1px solid var(--cc-border);
+  border-radius: 10px;
+  padding: 10px 12px;
+  font: inherit;
+  max-width: 100%;
+}
+.cc-select:focus-visible { outline: 2px solid var(--cc-focus); outline-offset: 2px; }
+
+/*
  * Entrances.
  *
  * One movement, used by everything that arrives: an element comes up a little and settles, with the

@@ -1,4 +1,4 @@
-import { type ReactElement, useMemo, useState } from "react";
+import { type ReactElement, useEffect, useMemo, useState } from "react";
 
 import { Conversation, GatewayClient, installStyles, readStoredTheme, resolveTheme, systemPrefersLight } from "@clarkcant/conversation-client";
 
@@ -55,6 +55,36 @@ export function App(): ReactElement {
    */
   const [onboarded, setOnboarded] = useState(() => window.localStorage.getItem("cc_onboarded") === "1");
 
+  /**
+   * Which of the first-run steps is showing, and the choices made so far.
+   *
+   * A step machine rather than one screen, because these are genuinely two questions: which provider, and which of
+   * that provider's models. The provider list is read from the node, so it is pi's own catalogue rather than one
+   * written here and a provider added by upgrading pi appears without this file changing.
+   */
+  const [onboardStep, setOnboardStep] = useState<"welcome" | "provider" | "model">("welcome");
+  const [pickedProvider, setPickedProvider] = useState<string | undefined>(undefined);
+  const [pickedModel, setPickedModel] = useState<string | undefined>(undefined);
+  const [catalogue, setCatalogue] = useState<{ id: string; models: { id: string }[] }[] | undefined>(undefined);
+
+  useEffect(() => {
+    if (onboarded || onboardStep !== "provider" || catalogue !== undefined) return;
+    let cancelled = false;
+    void client
+      .model()
+      .then((answer) => {
+        if (!cancelled) setCatalogue(answer.catalogue);
+      })
+      .catch(() => {
+        // An empty list rather than an error. What this step needs is a choice, and a node that cannot answer the
+        // question still leaves the person able to carry on instead of staring at a failure they cannot act on.
+        if (!cancelled) setCatalogue([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [onboarded, onboardStep, catalogue, client]);
+
   /*
    * What somebody sees the first time.
    *
@@ -63,26 +93,129 @@ export function App(): ReactElement {
    * as a form in front of a thing they have not used yet.
    */
   if (!onboarded) {
+    const finish = (provider?: string, model?: string): void => {
+      if (provider !== undefined && model !== undefined) {
+        window.localStorage.setItem("cc_model", `${provider}/${model}`);
+      }
+      // Written before the state flips, so a reload during the transition does not show this screen again.
+      window.localStorage.setItem("cc_onboarded", "1");
+      setOnboarded(true);
+    };
+    const pickedModels = catalogue?.find((provider) => provider.id === pickedProvider)?.models ?? [];
+
     return (
-      <div className="cc-shell" data-view="hero" data-onboarding="true">
+      <div className="cc-shell" data-view="hero" data-onboarding="true" data-onboarding-step={onboardStep}>
         <div className="cc-body">
           <div className="cc-scroll">
             <div className="cc-empty">
-              <h1>ClarkCant</h1>
-              <p>Clark Cant Can. The Most Minimal Yet Powerful Harness You&apos;ve Ever Need.</p>
-              <div className="cc-chip-row">
-                <button
-                  type="button"
-                  className="cc-chip"
-                  data-onboarding-start="true"
-                  onClick={() => {
-                    window.localStorage.setItem("cc_onboarded", "1");
-                    setOnboarded(true);
-                  }}
-                >
-                  Get Started
-                </button>
-              </div>
+              {onboardStep === "welcome" ? (
+                <>
+                  <h1>ClarkCant</h1>
+                  <p>Clark Cant Can. The Most Minimal Yet Powerful Harness You&apos;ve Ever Need.</p>
+                  <div className="cc-chip-row">
+                    <button
+                      type="button"
+                      className="cc-chip"
+                      data-onboarding-start="true"
+                      onClick={() => setOnboardStep("provider")}
+                    >
+                      Get Started
+                    </button>
+                  </div>
+                </>
+              ) : onboardStep === "provider" ? (
+                <>
+                  <h1>Provider</h1>
+                  <p>Chọn provider để chạy phiên chính. Danh sách này đọc từ pi trên máy.</p>
+                  {catalogue === undefined ? (
+                    <p className="cc-panel-note">Đang đọc…</p>
+                  ) : catalogue.length === 0 ? (
+                    <>
+                      {/*
+                       * A node that reports no provider is still a working node: it answers from recipes and installed
+                       * capabilities. Saying that, and letting the person carry on, beats a step that cannot be
+                       * completed - which is what an onboarding that dead-ends amounts to.
+                       */}
+                      <p className="cc-panel-note" data-onboarding-none="true">
+                        Node chưa thấy provider nào. Harness vẫn dùng được: nó trả lời bằng recipe và capability đã cài.
+                        Cấu hình provider cho pi rồi mở lại, hoặc đi tiếp.
+                      </p>
+                      <div className="cc-chip-row">
+                        <button
+                          type="button"
+                          className="cc-chip"
+                          data-onboarding-finish="true"
+                          onClick={() => finish()}
+                        >
+                          Tiếp tục
+                        </button>
+                      </div>
+                    </>
+                  ) : (
+                    <div className="cc-chip-row">
+                      {catalogue.map((provider) => (
+                        <button
+                          key={provider.id}
+                          type="button"
+                          className="cc-chip"
+                          data-onboarding-provider={provider.id}
+                          onClick={() => {
+                            setPickedProvider(provider.id);
+                            setOnboardStep("model");
+                          }}
+                        >
+                          {provider.id}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </>
+              ) : (
+                <>
+                  <h1>Model</h1>
+                  <p>Chọn model cho phiên chính.</p>
+                  {/*
+                   * A select rather than a row of chips. A provider can offer dozens of models - the first provider in
+                   * this machine's catalogue alone offers more than the screen is tall - and a wall of buttons that has
+                   * to be scrolled is worse than a control built for choosing from a long list.
+                   */}
+                  <label className="cc-panel-note" htmlFor="cc-onboarding-model">
+                    Model của {pickedProvider}
+                  </label>
+                  <select
+                    id="cc-onboarding-model"
+                    className="cc-select"
+                    data-onboarding-model-select="true"
+                    value={pickedModel ?? pickedModels[0]?.id ?? ""}
+                    onChange={(event) => setPickedModel(event.target.value)}
+                  >
+                    {pickedModels.map((model) => (
+                      <option key={model.id} value={model.id}>
+                        {model.id}
+                      </option>
+                    ))}
+                  </select>
+                  <div className="cc-chip-row">
+                    <button
+                      type="button"
+                      className="cc-chip"
+                      data-onboarding-finish="true"
+                      onClick={() => finish(pickedProvider, pickedModel ?? pickedModels[0]?.id)}
+                    >
+                      Bắt đầu
+                    </button>
+                  </div>
+                  {/*
+                   * Said here rather than left to be discovered: the node runs the model its own configuration names,
+                   * so this choice is remembered for this browser and is not a remote control for the node. An
+                   * onboarding that implied otherwise would be lying at the first screen a person ever sees.
+                   */}
+                  <p className="cc-panel-note">
+                    Node lấy model từ cấu hình của chính nó (CC_MODEL_PROVIDER / CC_MODEL_ID). Lựa chọn ở đây được ghi
+                    nhớ cho trình duyệt này.
+                  </p>
+                </>
+              )}
             </div>
           </div>
         </div>

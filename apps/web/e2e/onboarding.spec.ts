@@ -92,7 +92,30 @@ test.describe("the first run", () => {
     await expect(page.locator("[data-onboarding='true'] h1")).toHaveText("ClarkCant");
     await expect(page.locator("[data-onboarding='true'] p")).toContainText("Clark Cant Can");
 
+    // Then the two choices, in order. Both are walked here rather than assumed: this node may report no provider at
+    // all, in which case the honest branch is the one that explains that and lets the person carry on.
     await page.locator("[data-onboarding-start='true']").click();
+    await expect(page.locator("[data-onboarding-step='provider']")).toBeVisible();
+
+    // Wait for the step to settle before branching: the catalogue is read from the node, so a count taken the instant
+    // the step appears sees zero and would take the wrong branch. Reading it too early is what made this test fail
+    // once already, and the failure looked like the screen not rendering.
+    await page.locator("[data-onboarding-provider], [data-onboarding-none='true']").first().waitFor({ timeout: 20_000 });
+
+    const provider = page.locator("[data-onboarding-provider]").first();
+    if ((await provider.count()) > 0) {
+      await provider.click();
+      await expect(page.locator("[data-onboarding-step='model']")).toBeVisible();
+      // A select rather than chips, because a provider can offer dozens of models: the first provider in this
+      // machine's catalogue offers more than a screenful, and chips that cannot be reached cannot be clicked.
+      await page.locator("[data-onboarding-model-select]").selectOption({ index: 1 });
+      await page.locator("[data-onboarding-finish='true']").click();
+    } else {
+      // No provider on this node, and it says so in words rather than showing an empty list.
+      await expect(page.locator("[data-onboarding-none='true']")).toBeVisible();
+      await page.locator("[data-onboarding-finish='true']").click();
+    }
+
     await expect(page.locator("[data-onboarding='true']")).toHaveCount(0);
 
     // And it stays gone: a screen somebody has dismissed is dismissed, not shown again on the next load.
