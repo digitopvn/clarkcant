@@ -1,5 +1,6 @@
 import {
   type ActionProposal,
+  type AttachmentRef,
   type CapabilityRef,
   type ConversationId,
   type Instant,
@@ -9,6 +10,7 @@ import {
   type TaskRecord,
   type WidgetDefinition,
   assertBlockProvenance,
+  attachmentRefSchema,
   messageBlockSchema,
   nowInstant,
 } from "@clarkcant/contracts";
@@ -254,6 +256,16 @@ export interface UserMessageInput {
    */
   note?: string;
   /**
+   * Files this message carries.
+   *
+   * The refs arrive already authorised — the gateway resolves each id against the conversation and the
+   * principal before the turn is asked for — and they are stored on the message rather than passed
+   * alongside the turn. That is the whole point: the timeline and the prompt then read the same rows, so
+   * a reloaded conversation shows the attachment and a model turn over it sees the same files. Passed
+   * separately, the two could disagree the moment either one changed.
+   */
+  attachmentRefs?: readonly AttachmentRef[];
+  /**
    * Whether this message is the onboarding demo asking for a scripted sample.
    *
    * The samples are labelled and useful, and they are also fake data. A message in a real conversation that merely
@@ -355,6 +367,7 @@ function appendUser(
   conversationId: ConversationId,
   text: string,
   at: Instant,
+  extraBlocks: readonly MessageBlock[] = [],
 ): MessageRecord {
   const message: MessageRecord = {
     messageId: deps.newId("msg") as MessageRecord["messageId"],
@@ -363,13 +376,37 @@ function appendUser(
     // Markdown, because the transcript renders both sides the same way and a message typed into a
     // field is markdown anyway: `breaks` keeps its real newlines, and its punctuation formats. Blocks
     // stored before this was changed carry `plain` and keep rendering as pre-wrapped text.
-    blocks: [{ type: "text", format: "markdown", content: text, streaming: false }],
+    //
+    // Attachments follow the text in the same message rather than becoming messages of their own: one
+    // thing a person sent is one turn, and two rows would make the model answer the file instead of the
+    // request.
+    blocks: [
+      { type: "text", format: "markdown", content: text, streaming: false },
+      ...extraBlocks,
+    ],
     authorNodeId: deps.nodeId as MessageRecord["authorNodeId"],
     createdAt: at,
     delivery: "accepted",
   };
   appendMessage(deps.db, message, nextMessageSequence(deps.db, conversationId));
   return message;
+}
+
+/**
+ * The blocks an authorised set of refs becomes.
+ *
+ * Each ref is re-validated against the schema rather than trusted because it came from this process:
+ * the ref is read back from a row that a client's ids selected, and a row is storage, which is not a
+ * type. A ref that does not validate is dropped instead of stored, because an attachment block that
+ * cannot be rendered is a gap in the timeline that no later phase can repair.
+ */
+function attachmentBlocks(refs: readonly AttachmentRef[]): MessageBlock[] {
+  const blocks: MessageBlock[] = [];
+  for (const ref of refs) {
+    const parsed = attachmentRefSchema.safeParse(ref);
+    if (parsed.success) blocks.push({ type: "attachment", attachment: parsed.data });
+  }
+  return blocks;
 }
 
 /**
@@ -429,7 +466,13 @@ export async function handleUserMessage(
   input: UserMessageInput,
 ): Promise<ConductorOutcome> {
   const at = input.at ?? nowInstant();
-  const userMessage = appendUser(deps, input.conversationId, input.text, at);
+  const userMessage = appendUser(
+    deps,
+    input.conversationId,
+    input.text,
+    at,
+    attachmentBlocks(input.attachmentRefs ?? []),
+  );
   void userMessage;
 
   // A host composer gets the first look, and only when one is configured. In production there is

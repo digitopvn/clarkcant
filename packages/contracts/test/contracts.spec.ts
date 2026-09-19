@@ -26,6 +26,9 @@ import {
   taskEventSchema,
   validatePeerEnvelope,
   allStatesReachable,
+  attachmentRefSchema,
+  isHostOwnedBlock,
+  messageBlockSchema,
 } from "../src/index.ts";
 
 // Branded values are produced through their own schema so the fixtures cannot drift
@@ -633,6 +636,42 @@ describe("surface provenance (T41, T44)", () => {
       maxSurfaceBytes: 256 * 1024,
     });
     expect(degraded[0]?.type).toBe("text");
+  });
+});
+
+describe("attachment blocks", () => {
+  // Built by parsing rather than as an object literal, so the test cannot drift from the schema: an
+  // id here is the branded id the contract defines, not any string that looks like one.
+  const ref = attachmentRefSchema.parse({
+    attachmentId: "att_1",
+    blobRef: `${"a".repeat(32)}.png`,
+    kind: "image",
+    filename: "anh.png",
+    mime: "image/png",
+    sizeBytes: 2048,
+    sha256: `sha256:${"b".repeat(64)}`,
+  });
+
+  it("an attachment block round-trips through the message schema", () => {
+    const block = { type: "attachment" as const, attachment: ref };
+    const parsed = messageBlockSchema.parse(block);
+    expect(parsed).toEqual(block);
+    expect(messageBlockSchema.safeParse({ type: "attachment" }).success).toBe(false);
+  });
+
+  it("a block that carries a disk path instead of a ref is refused", () => {
+    // The shape is strict for this reason: an attachment block is the one place a path could arrive
+    // in the timeline, and a path in a stored message is a path the client would then be able to ask
+    // the node to read.
+    const withPath = { type: "attachment" as const, attachment: ref, blobPath: "/var/lib/blobs/a.png" };
+    expect(messageBlockSchema.safeParse(withPath).success).toBe(false);
+    expect(attachmentRefSchema.safeParse({ ...ref, blobRef: "/var/lib/blobs/a.png" }).success).toBe(false);
+  });
+
+  it("an attachment is not a host-owned block", () => {
+    // A person put the file there. Treating it as host-owned would mean a widget could mint one, and
+    // a model could then describe a file that was never uploaded.
+    expect(isHostOwnedBlock({ type: "attachment", attachment: ref })).toBe(false);
   });
 });
 

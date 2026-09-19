@@ -41,6 +41,25 @@ describe("the node's tools", () => {
     }
   });
 
+  it("offers read_attachment only when there is a conversation to check against", () => {
+    // Two states, both correct: a turn inside a conversation can read the files attached to it, and a turn
+    // with no conversation has nothing to check an id against, so it is not offered the tool at all.
+    const without = createNodeTools({ search: services.search, projects: services.projects });
+    expect(without.map((tool) => tool.name)).not.toContain("read_attachment");
+
+    const with_ = createNodeTools({
+      search: services.search,
+      projects: services.projects,
+      attachments: { dataDir: dir, conversationId: "conv_1" },
+    });
+    expect(with_.map((tool) => tool.name)).toContain("read_attachment");
+    const tool = with_.find((candidate) => candidate.name === "read_attachment");
+    expect(tool?.description.length).toBeGreaterThan(20);
+    // The id and nothing else: the schema is the boundary, so a path parameter cannot be added without
+    // this failing.
+    expect(Object.keys(tool?.parameters.properties ?? {})).toEqual(["attachmentId"]);
+  });
+
   it("answers find_project without opening anything", async () => {
     const tool = createNodeTools({ search: services.search, projects: services.projects }).find(
       (candidate) => candidate.name === "find_project",

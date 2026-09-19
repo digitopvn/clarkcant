@@ -1,6 +1,7 @@
 import { timingSafeEqual } from "node:crypto";
 
 import {
+  type AttachmentRef,
   type Instant,
   type MessageBlock,
   type MessageRecord,
@@ -66,7 +67,7 @@ import {
   updateLocalEvent,
 } from "./mini-app-data.ts";
 import { readBlob, sniffContentType, writeBlob } from "./blobs.ts";
-import { attachmentRefFromRecord } from "./attachments.ts";
+import { attachmentRefFromRecord, resolveAttachmentRefs } from "./attachments.ts";
 import { markProjectUsed, projectContext, resolveProject } from "./project-finder.ts";
 import { receiptForModel, runApprovedCommand } from "./run-command.ts";
 import { initialPrompt } from "./project-session.ts";
@@ -1134,11 +1135,20 @@ async function handleConversationRoutes(
     }
 
     const at_ = at() as never;
+    const attachments = resolveAttachmentRefs({
+      db: services.runtime.db,
+      principalId: runtime.identity.ownerPrincipalId,
+      conversationId,
+      ids: parsed.value.attachmentIds,
+    });
+    if (!attachments.ok) return fail(400, "ATTACHMENT_NOT_AVAILABLE", attachments.message);
+
     const outcome = await handleUserMessage(services.conductor, {
       conversationId: conversationId as never,
       principal,
       text: text.slice(0, 20_000),
       at: at_,
+      attachmentRefs: attachments.refs,
       // Only the demo path asks for a scripted sample; a real message never gets one.
       ...(parsed.value.demo === true ? { demo: true } : {}),
     });
@@ -1178,6 +1188,13 @@ async function handleConversationRoutes(
     }
 
     const at_ = at() as never;
+    const attachments = resolveAttachmentRefs({
+      db: services.runtime.db,
+      principalId: runtime.identity.ownerPrincipalId,
+      conversationId,
+      ids: parsed.value.attachmentIds,
+    });
+    if (!attachments.ok) return fail(400, "ATTACHMENT_NOT_AVAILABLE", attachments.message);
     return {
       status: 200,
       body: null,
@@ -1191,6 +1208,7 @@ async function handleConversationRoutes(
               principal,
               text: text.slice(0, 20_000),
               at: at_,
+              attachmentRefs: attachments.refs,
               ...(parsed.value.demo === true ? { demo: true } : {}),
             },
             send,
@@ -1677,7 +1695,14 @@ function sse(event: string, payload: unknown): string {
  */
 async function streamUserMessage(
   services: NodeServices,
-  input: { conversationId: string; principal: Principal; text: string; at: Instant; demo?: boolean },
+  input: {
+    conversationId: string;
+    principal: Principal;
+    text: string;
+    at: Instant;
+    attachmentRefs?: readonly AttachmentRef[];
+    demo?: boolean;
+  },
   send: (chunk: string) => void,
 ): Promise<void> {
   try {
@@ -1686,6 +1711,7 @@ async function streamUserMessage(
       principal: input.principal,
       text: input.text,
       at: input.at,
+      attachmentRefs: input.attachmentRefs ?? [],
       ...(input.demo === true ? { demo: true } : {}),
       emit: (event) => {
         // One frame per event the turn produced, named as the turn named it. Translating here would

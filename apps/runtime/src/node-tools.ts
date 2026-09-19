@@ -1,6 +1,11 @@
+import { join } from "node:path";
+
+import { ATTACHMENT_LIMITS, attachmentIdSchema } from "@clarkcant/contracts";
+import { getAttachment } from "@clarkcant/storage";
 import type { ToolDefinition } from "@clarkcant/pi-adapter";
 import { requestApproval, type CoordinationDeps } from "@clarkcant/core";
 
+import { blobsDir, readBlob } from "./blobs.ts";
 import { describeSearch, machineRoots, searchFileSystem } from "./fs-search.ts";
 import { commandDigest, guardCommand } from "./run-command.ts";
 import type { ProjectFinderDeps } from "./project-finder.ts";
@@ -39,6 +44,14 @@ export function createNodeTools(input: {
     | { status: "resolved"; cwd: string; relPath: string }
     | { status: "ask"; message: string; options: readonly string[] }
   >;
+  /**
+   * The conversation this turn belongs to, when the node may read attachments at all.
+   *
+   * Absent means `read_attachment` is not registered, which is the honest state for a turn that belongs
+   * to no conversation: the tool's whole check is that an attachment belongs to *this* conversation and
+   * *this* principal, and a turn with no conversation has nothing to check against.
+   */
+  attachments?: { dataDir: string; conversationId: string };
 }): ToolDefinition[] {
   const roots = input.roots ?? machineRoots;
   return [
@@ -58,7 +71,94 @@ export function createNodeTools(input: {
       now: input.search.now,
     }),
     createFindProjectTool(input.projects),
+    ...(input.attachments === undefined
+      ? []
+      : [
+          createReadAttachmentTool({
+            db: input.search.db,
+            principalId: input.search.principalId,
+            conversationId: input.attachments.conversationId,
+            dataDir: input.attachments.dataDir,
+          }),
+        ]),
   ];
+}
+
+/**
+ * Reading a file a person attached, as the model may ask for it.
+ *
+ * This is the only reading path a prompt's attachment section points at, and it takes an attachment id
+ * and nothing else. That is the whole design: there is no path parameter to escape from, and no relative
+ * form to resolve against anything, so a file's content cannot be used to steer the model into reading a
+ * different file. The two checks — the row belongs to this principal, and to this conversation — happen
+ * against storage, not against the argument.
+ *
+ * A binary attachment is answered honestly rather than silently: this node has no extractor for images or
+ * PDFs, and a tool that returned nothing for a picture would read as a file that was empty.
+ */
+export function createReadAttachmentTool(input: {
+  db: SessionSearchDeps["db"];
+  principalId: string;
+  conversationId: string;
+  dataDir: string;
+}): ToolDefinition {
+  return {
+    name: "read_attachment",
+    label: "Đọc một tệp đính kèm",
+    description:
+      "Read a file the user attached to this conversation, by the attachment id you were given in the " +
+      "prompt. Use it when a text file's content was too long to include, or when you need to re-read it. " +
+      "It only accepts an id from this conversation: it cannot open any other file, and it takes no path. " +
+      "Images and PDFs have no reader on this node yet and say so.",
+    parameters: {
+      type: "object",
+      additionalProperties: false,
+      required: ["attachmentId"],
+      properties: {
+        attachmentId: { type: "string", description: "The attachment id from the prompt, e.g. att_abc123." },
+      },
+    },
+    promptSnippet: "read_attachment — read the content of a file the user attached to this conversation",
+    execute: async (params: Record<string, unknown>): Promise<{ text: string }> => {
+      const parsed = attachmentIdSchema.safeParse(params.attachmentId);
+      if (!parsed.success) {
+        // Refused in the same turn so the model can correct itself. Saying what an id looks like is not
+        // saying which ids exist.
+        return { text: "Cần một attachment id, dạng att_… như trong prompt. Công cụ này không nhận đường dẫn tệp." };
+      }
+
+      const record = getAttachment(input.db, parsed.data, input.principalId);
+      // One answer for absent, someone else's, and another conversation's. Distinguishing them would turn
+      // this tool into a way to ask which attachment ids exist on the node.
+      if (record === undefined || record.conversationId !== input.conversationId) {
+        return { text: "Không có tệp đính kèm nào với id đó trong cuộc hội thoại này." };
+      }
+
+      if (record.kind !== "text") {
+        return {
+          text:
+            `Tệp “${record.filename}” là ${record.mime} (${record.sizeBytes} byte). Node này chưa có bộ trích ` +
+            `nội dung cho ảnh và PDF, nên tui không đọc được nội dung của nó. Đừng đoán nội dung.`,
+        };
+      }
+
+      const blob = readBlob({
+        dataDir: input.dataDir,
+        blobPath: join(blobsDir(input.dataDir), record.blobPath.split(/[/\\]/).at(-1) ?? ""),
+      });
+      if (!blob.ok) return { text: `${record.filename}: ${blob.message}` };
+
+      // The same ceiling the prompt's attachment section uses, so a file read here cannot be larger than
+      // one that would have been inlined there.
+      const allowed = Math.min(blob.bytes.byteLength, ATTACHMENT_LIMITS.inlineBudgetBytesPerTurn);
+      const text = new TextDecoder("utf-8", { fatal: false }).decode(blob.bytes.subarray(0, allowed));
+      const truncated =
+        allowed < blob.bytes.byteLength
+          ? `\n[đã lược bớt: tệp dài ${blob.bytes.byteLength} byte, chỉ đọc ${allowed} byte đầu]`
+          : "";
+      return { text: `Nội dung của “${record.filename}”:\n${text}${truncated}` };
+    },
+  };
 }
 
 /**

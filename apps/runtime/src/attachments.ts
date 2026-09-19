@@ -9,6 +9,8 @@ import {
   type AttachmentRecord,
   type Database,
   deleteAttachmentsForConversation,
+  getAttachment,
+  messagesSince,
 } from "@clarkcant/storage";
 
 import { blobsDir, readBlob, removeBlob } from "./blobs.ts";
@@ -78,6 +80,71 @@ export function releaseConversationAttachments(deps: {
     removeBlob({ dataDir: deps.dataDir, blobPath });
   }
   return { removed: deleted.removed };
+}
+
+/**
+ * Turn the ids a client sent into refs this conversation is allowed to carry.
+ *
+ * This is the one place an attachment stops being a client's claim and becomes something the node will
+ * store on a message. Both the plain and the streaming message route go through it, because the two
+ * routes differ only in how the answer is reported — a security check written twice is a check that
+ * will be right in one of them.
+ *
+ * Every refusal is the same refusal. "No such attachment" and "not yours" and "belongs to another
+ * conversation" all answer `ATTACHMENT_NOT_AVAILABLE` with one sentence, because a message naming the
+ * wrong id would let a caller learn which ids exist.
+ */
+export function resolveAttachmentRefs(input: {
+  db: Database;
+  principalId: string;
+  conversationId: string;
+  ids: unknown;
+}): { ok: true; refs: AttachmentRef[] } | { ok: false; message: string } {
+  if (input.ids === undefined) return { ok: true, refs: [] };
+  if (!Array.isArray(input.ids)) return { ok: false, message: "attachmentIds must be an array of ids" };
+  if (input.ids.length > ATTACHMENT_LIMITS.maxPerMessage) {
+    return { ok: false, message: `a message may carry at most ${ATTACHMENT_LIMITS.maxPerMessage} files` };
+  }
+
+  const refs: AttachmentRef[] = [];
+  // A set, so the same file named twice is one attachment: the client sends ids and two identical ids
+  // are a client's slip, not a request for the timeline to show the file twice.
+  for (const id of new Set(input.ids)) {
+    if (typeof id !== "string") return { ok: false, message: "attachmentIds must be a list of ids" };
+    // Scoped by principal in the query itself rather than filtered afterwards, so a row that belongs to
+    // somebody else is simply not found.
+    const record = getAttachment(input.db, id, input.principalId);
+    if (record === undefined || record.conversationId !== input.conversationId) {
+      return { ok: false, message: "one of those files is not available in this conversation" };
+    }
+    refs.push(attachmentRefFromRecord(record));
+  }
+  return { ok: true, refs };
+}
+
+/**
+ * The files the most recent user message of a conversation carries.
+ *
+ * This is how a turn learns what was attached to it: by reading the row the message was stored as,
+ * rather than by being handed the refs alongside the turn. One source of truth is the whole reason: the
+ * timeline renders these blocks and the prompt inlines these blocks, so a conversation reopened at any
+ * later date attaches exactly what its own message says it attached.
+ *
+ * The window matches the history reader's — the last few messages rather than the whole thread — because
+ * the message being answered is by definition among them, and a second policy for "how far back to look"
+ * would be a second thing to keep right.
+ */
+export function attachmentRefsForLastUserMessage(input: {
+  db: Database;
+  conversationId: string;
+}): AttachmentRef[] {
+  const records = messagesSince(input.db, input.conversationId, 0, 40);
+  for (let index = records.length - 1; index >= 0; index -= 1) {
+    const record = records[index];
+    if (record === undefined || record.role !== "user") continue;
+    return record.blocks.flatMap((block) => (block.type === "attachment" ? [block.attachment] : []));
+  }
+  return [];
 }
 
 /**

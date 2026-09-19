@@ -32,6 +32,7 @@ import { FixtureLiveAdapter } from "./voice-fixture.ts";
 import { SAMPLE_DATASET } from "@clarkcant/data-canvas/sample";
 
 import { createModelTurn, type ViewDescriptor } from "./model-turn.ts";
+import { attachmentRefsForLastUserMessage } from "./attachments.ts";
 import { buildViewCatalog } from "./view-catalog.ts";
 import { registerNodeTools } from "./tool-catalogue.ts";
 import { composeMiniApp } from "./compose-mini-app.ts";
@@ -366,6 +367,15 @@ async function main(): Promise<void> {
         .filter((record): record is MessageRecord & { role: "user" | "assistant" } => record.role === "user" || record.role === "assistant")
         .map((record) => ({ role: record.role, text: textOfMessage(record) }));
     },
+    // The files the current message carries, read back from the row that message was stored as. The
+    // timeline and this prompt are then the same reading, so a conversation reopened tomorrow attaches
+    // the same files to the same turn. `attachmentBrief` inlines a text file's content and names anything
+    // binary by id; no path is ever part of it.
+    attachments: {
+      dataDir: options.dataDir,
+      refsFor: (conversationId) =>
+        attachmentRefsForLastUserMessage({ db: services.runtime.db, conversationId }),
+    },
     // The node registers the sample dataset itself, so this is the complete set it holds rather
     // than a guess. The model is told these names because a view over data that is not there
     // renders as nothing, which reads as a broken widget instead of a missing fact.
@@ -375,7 +385,7 @@ async function main(): Promise<void> {
     // The Session Manager's read-only reports, including the project finder. Built by a function a
     // test can call: an inline list here is how `find_project` came to exist without ever being
     // registered, and nothing could see the difference.
-    extraTools: () => {
+    extraTools: (turn) => {
       const search = searchWiring.deps;
       const projects = projectWiring.deps;
       const approvals = approvalWiring.deps;
@@ -384,6 +394,9 @@ async function main(): Promise<void> {
         search,
         projects,
         approvals: () => approvals,
+        // Reading an attached file is scoped to the conversation this turn belongs to, which is the
+        // only thing the tool needs to check beyond the principal.
+        attachments: { dataDir: options.dataDir, conversationId: turn.conversationId },
         // "Where should this go?" goes through the finder, which is where Jev decides when several folders
         // could be meant. The model is told to look before it proposes, and an ambiguous answer comes back
         // as a question rather than as a guess.
