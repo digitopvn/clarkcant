@@ -11,6 +11,7 @@ trên cây đã merge `main`**, không phải số của lần chạy cũ.
 | Invariant | `pnpm run invariants` | 7/7 PASS |
 | Typecheck + lint + unit test | `pnpm verify` | **1427 passed, 7 skipped (1434)** |
 | Browser suite | `pnpm test:e2e` | **83 passed, 0 failed** |
+| CI trên `main` | `.github/workflows/ci.yml`, run 35461135410 ở commit `bac2f2e` | **cả năm job xanh**: `verify` (node 22.19 và 24), `secret scan`, `e2e (browser suite)`, `desktop smoke (xvfb)` |
 | Smoke desktop | `pnpm --filter @clarkcant/app-desktop run smoke` | **exit 0**, mọi check `true`, `"failed": []` (Electron 44.3.0, Chrome 152) |
 | Đồng bộ với `main` | `git rev-list HEAD..origin/main` | 0 (merge `7d9caea`, PR #38 squash thành `9e90535`; sau đó `main` nhận PR #39 và bản sửa tài liệu này) |
 
