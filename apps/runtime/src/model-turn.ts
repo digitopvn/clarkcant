@@ -25,6 +25,7 @@ import {
   type ModelSelection,
   type ModelCatalogue,
   type PiExtension,
+  type PiSetting,
   type PiAdapter,
   type ToolDefinition,
   type WorkerEvent,
@@ -115,6 +116,9 @@ export interface ModelTurn {
    * is the adapter this turn holds.
    */
   extensions: () => Promise<readonly PiExtension[]>;
+
+  /** pi's own configuration, as far as it is safe to report it. */
+  piSettings: () => Promise<readonly PiSetting[]>;
   answer: (input: ModelTurnInput) => Promise<ModelTurnReply>;
   dispose: () => Promise<void>;
 }
@@ -622,6 +626,7 @@ export async function createModelTurn(options: {
     viewCatalogSize: () => readViews().length,
     catalogue: (): Promise<ModelCatalogue> => adapter.catalogue(),
     extensions: (): Promise<readonly PiExtension[]> => adapter.extensions(),
+    piSettings: (): Promise<readonly PiSetting[]> => adapter.piSettings(),
 
     /** The conversations with a turn still running. */
     running: (): string[] => [...turns.values()].filter((turn) => turn.inFlight).map((turn) => turn.conversationId),

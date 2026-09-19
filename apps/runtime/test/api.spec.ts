@@ -860,3 +860,17 @@ describe("the extension listing", () => {
   });
 });
 
+describe("pi's own configuration over the API", () => {
+  it("reports settings apart from tools, and an empty list when it has been told nothing", async () => {
+    const empty = await request("GET", "/pi-settings");
+    expect(empty.status).toBe(200);
+    expect(empty.body).toEqual({ settings: [] });
+
+    services.piSettings = async () => [{ key: "defaultModel", value: "a-model" }];
+    const listed = await request("GET", "/pi-settings");
+    expect(listed.body).toEqual({ settings: [{ key: "defaultModel", value: "a-model" }] });
+    // Its own key rather than a shared one: this answer is about pi's configuration, not about this node's tools.
+    expect(listed.body).not.toHaveProperty("extensions");
+  });
+});
+

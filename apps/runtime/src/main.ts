@@ -454,6 +454,7 @@ async function main(): Promise<void> {
     services.modelCatalogue = modelTurn.catalogue;
     // The same line, for the same reason: the adapter exists above this and the services below it.
     services.extensions = modelTurn.extensions;
+    services.piSettings = modelTurn.piSettings;
   }
   projectWiring.deps = services.projects;
   approvalWiring.deps = {

@@ -397,6 +397,17 @@ export async function handleRequest(deps: GatewayDeps, request: GatewayRequest):
     return json(200, { extensions: await (services.extensions?.() ?? Promise.resolve([])) });
   }
 
+  /*
+   * pi's own configuration.
+   *
+   * Scalars, with anything whose name sounds like a secret already redacted by the adapter, which is also where the
+   * decision not to read auth.json lives. A panel showing configuration has no business near a credentials file, and the
+   * redaction happens at the one place that can see the file rather than on the way out of here.
+   */
+  if (segments.length === 1 && segments[0] === "pi-settings" && request.method === "GET") {
+    return json(200, { settings: await (services.piSettings?.() ?? Promise.resolve([])) });
+  }
+
   if (segments.length === 1 && segments[0] === "tools" && request.method === "GET") {
     return json(200, {
       self: nodeToolCatalogue(),

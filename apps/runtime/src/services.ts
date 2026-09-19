@@ -107,6 +107,9 @@ export interface NodeServices {
   /** What pi loads on this machine. Names and kinds, never contents. */
   extensions?: () => Promise<readonly { readonly name: string; readonly kind: "directory" | "file" }[]>;
 
+  /** pi's own configuration, as far as it is safe to report it: scalars, secrets redacted. */
+  piSettings?: () => Promise<readonly { readonly key: string; readonly value: string }[]>;
+
   turnControl?: {
     running(): string[];
     interrupt(conversationId: string): boolean;
