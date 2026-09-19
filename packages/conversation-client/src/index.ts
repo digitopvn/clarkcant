@@ -56,7 +56,14 @@ export {
   renderBlock,
 } from "./blocks.tsx";
 export { Conversation, type ConversationProps } from "./Conversation.tsx";
-export { SettingsPanel, SettingsRow, ToolRow, type SettingsPanelProps, type SettingsRowProps, type ToolRowProps } from "./SettingsPanel.tsx";
+export {
+  SettingsPanel,
+  type SettingsPanelProps,
+  SettingsRow,
+  type SettingsRowProps,
+  ToolRow,
+  type ToolRowProps,
+} from "./settings/SettingsPanel.tsx";
 export { TokenSpecimens, readVar } from "./TokenSpecimens.tsx";
 export { Modal, type ModalProps } from "./Modal.tsx";
 export { VoiceUnavailable } from "./voice-unavailable.tsx";

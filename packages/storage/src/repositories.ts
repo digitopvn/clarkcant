@@ -232,6 +232,37 @@ export function eventsSince(
   return rows.map((row) => parseJson<unknown>(row.document, "events.document"));
 }
 
+export interface RecentEvent {
+  kind: string;
+  occurredAt: string;
+  document: unknown;
+}
+
+/**
+ * The most recent events on one stream, newest first.
+ *
+ * Separate from `eventsSince` rather than a flag on it, because the two questions are opposites: that one
+ * replays a conversation forwards from a cursor, and this one answers "what happened lately" for a surface
+ * that shows the last few things and nothing else. It also carries the kind and the time, which the replay
+ * does not need but a list of effects is meaningless without.
+ */
+export function recentEvents(
+  db: Database,
+  filter: { stream: string; limit?: number },
+): RecentEvent[] {
+  const rows = allRows<{ kind: string; occurred_at: string; document: string }>(
+    db,
+    "SELECT kind, occurred_at, document FROM events WHERE stream = ? ORDER BY source_sequence DESC LIMIT ?",
+    filter.stream,
+    filter.limit ?? 20,
+  );
+  return rows.map((row) => ({
+    kind: row.kind,
+    occurredAt: row.occurred_at,
+    document: parseJson<unknown>(row.document, "events.document"),
+  }));
+}
+
 /* ------------------------------------------------------------------ *
  * Outbox
  * ------------------------------------------------------------------ */

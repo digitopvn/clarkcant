@@ -41,7 +41,8 @@ import type { ResolvedOrbProfile } from "./orb-profile.ts";
 import { Markdown } from "./markdown.tsx";
 import { Orb } from "./Orb.tsx";
 import { useTypewriterPlaceholder, prefersReducedMotion } from "./typewriter.ts";
-import { VoiceOverlay } from "./VoiceOverlay.tsx";import { SettingsPanel } from "./SettingsPanel.tsx";
+import { VoiceOverlay } from "./VoiceOverlay.tsx";
+import { SettingsPanel } from "./settings/SettingsPanel.tsx";
 import { resolveRenderer, toRendererDataset } from "./renderers.tsx";
 import { MiniAppSurface, type CompositeSurfaceView } from "./mini-app-surface.tsx";
 import { PinnedLiveSurface } from "./DesktopSurfaces.tsx";
@@ -89,6 +90,13 @@ export interface ConversationProps {
    * re-renders happened to follow.
    */
   orbProfile?: ResolvedOrbProfile;
+  /**
+   * Called after a settings write that changes the orb.
+   *
+   * Writing a profile has to change the orb that is on screen rather than the one that appears after a
+   * reload, and only the host that resolved the profile can re-resolve it.
+   */
+  onOrbChange?: () => void;
 }
 
 type ConnectionState = "connecting" | "ready" | "offline";
@@ -166,6 +174,7 @@ export function Conversation({
   onConversationReady,
   onSessionReset,
   orbProfile,
+  onOrbChange,
 }: ConversationProps): ReactElement {
   const [conversationId, setConversationId] = useState<string | undefined>(initialConversationId);
   const [timeline, setTimeline] = useState<Timeline | undefined>(undefined);
@@ -1510,6 +1519,7 @@ export function Conversation({
         themeChoice={themeChoice}
         resolvedTheme={resolvedTheme}
         onThemeChoice={applyThemeChoice}
+        {...(onOrbChange === undefined ? {} : { onOrbChange })}
       />
 
       {/*
