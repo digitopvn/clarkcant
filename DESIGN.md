@@ -102,6 +102,34 @@ UI phản hồi khác nhau theo cách tương tác:
 - **Voice:** focused element/widget có semantic context để Clark thao tác thay user.
 - **Agent activity:** ambient state phản ánh thinking/tool/answering/error nhưng không lấn át nội dung.
 
+### 1.7 Orb is the signature
+
+**Orb là nhận diện thị giác bắt buộc của ClarkCant và không được loại bỏ khỏi sản phẩm.**
+
+Orb phải xuất hiện ở các điểm nhận diện chính: onboarding, hero, header/avatar, voice mode và minimal/orb window mode. Một redesign không được thay Orb bằng logo tĩnh, spinner hoặc avatar khác như default.
+
+User được cá nhân hoá **cách Orb thể hiện**, không xoá semantic identity của nó:
+
+- palette / gradient / glow;
+- exposure, chromatic fringe, sheen;
+- idle animation speed;
+- pointer response strength;
+- spring preset hoặc bounded stiffness/damping;
+- agent-state reactions;
+- reduced-effects preset.
+
+Personalization phải đi qua typed preferences và bounded ranges/presets. Không cho arbitrary shader source, arbitrary GLSL, CSS injection hoặc unbounded physics values từ Settings/widget/theme package.
+
+Các preset built-in tối thiểu:
+
+- Clark — default signature;
+- Calm — ít glow/chromatic, damping cao hơn;
+- Jelly — spring mềm và overshoot rõ hơn nhưng vẫn bounded;
+- Glass — sheen/exposure rõ hơn, motion thấp;
+- Custom — chỉnh advanced values trong range an toàn.
+
+prefers-reduced-motion luôn thắng preference animation: Orb vẫn hiện nhưng đứng yên hoặc chỉ phản hồi trạng thái không chuyển động.
+
 ---
 
 ## 2. Application shape
@@ -796,8 +824,11 @@ Không hiển thị contrast debugging cho consumer; đưa vào Developer sectio
 - Background-session routing preference: Auto / Same model / Cheap / Fast / Quality.
 - Jev model/adapter settings trong Advanced.
 - Context/memory strategy chỉ dùng user-friendly terms.
+- **Personal instructions:** textarea/editor cho system instructions của user, mặc định là append vào product/system prompt; có Enable, Reset, character/token estimate và preview phần sẽ được inject.
+- Personal instructions là preference của ClarkCant, không sửa trực tiếp file SYSTEM.md của Pi.
+- Product/security/tool instructions có precedence cao hơn personal instructions; UI không được gọi chúng là cách “bypass guardrails”.
 
-Provider/model switch nên autosave sau selection.
+Provider/model switch nên autosave sau selection. Personal instructions áp dụng từ turn/session boundary gần nhất mà Pi hỗ trợ; UI phải nói rõ nếu cần mở session kế tiếp thay vì giả hot-swap.
 
 ### 11.3 Control
 
@@ -847,12 +878,16 @@ Tool references kỹ thuật nằm trong expandable details, không phải list 
 
 - microphone status/test;
 - voice provider status;
+- **voice picker khi provider hỗ trợ**; client lấy options/capability từ provider adapter, không giữ một danh sách provider-specific ở component;
+- preview voice bằng một câu ngắn, chỉ mở provider session khi cần và không ghi transcript preview vào conversation;
 - wake phrase;
 - input/output device;
 - paired nodes/devices;
 - current device label;
 - voice credential status;
 - device pairing.
+
+Gemini Live hiện hỗ trợ chọn preset voice bằng speechConfig.voiceConfig.prebuiltVoiceConfig.voiceName; implementation phải giữ contract provider-neutral để provider khác có thể không hỗ trợ voice selection.
 
 Secret value không hiển thị lại.
 

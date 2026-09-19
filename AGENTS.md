@@ -24,6 +24,7 @@ user must learn.
 
 Hard UI rules:
 
+- **The animated Orb is ClarkCant's signature and must not be removed or replaced as the default identity.** It may be personalized only through bounded, typed palette/effect/physics preferences defined by DESIGN.md; reduced-motion still wins.
 - Conversation remains the primary application surface. Do not add a permanent
   sidebar, session picker or dashboard as the default navigation model.
 - Settings, marketplace, widget details and diagnostics are secondary surfaces;
@@ -145,6 +146,8 @@ Rules:
   question/form/task/artifact/diff and browser/computer surfaces.
 
 ### Widget marketplace
+
+Before changing Widget SDK, authoring templates, package metadata, conformance or publish flows, read `docs/widget-development.md`; it is the canonical developer-UX target.
 
 Follow Pi's successful package ergonomics — small core, package facets, npm/git/
 local sources, easy install/update — without copying Pi native extension trust

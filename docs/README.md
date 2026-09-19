@@ -14,13 +14,14 @@ Tên “Agent” chỉ là tên làm việc, không khóa thương hiệu/domain
 2. [System architecture](system-architecture.md): stack, process, domain, contracts, security và dữ liệu.
 3. [Distributed runtime](distributed-runtime.md): cài VPS, pairing, remote delegation, disconnect/recovery.
 4. [Widgets & extensions](widgets-and-extensions.md): rich catalog, agent-defined actions, custom mini-apps, pin và lifecycle.
-5. [Integration & onboarding](integration-onboarding.md): research/install/auth/reload, Google Calendar, quick play và setup theo nhu cầu.
-6. [Browser & Computer Use](browser-computer-use.md): core/pack boundary, driver, node targeting và takeover.
-7. [Implementation plan](implementation-plan.md): dependencies, work packages, gates, acceptance scenarios.
-8. [Research & decisions](research-and-decisions.md): kết quả kiểm chứng upstream, lựa chọn/rejected alternatives, nguồn.
-9. [Jev selector](mini-app/jev-configuration.md): vận hành và privacy của lớp quyết định — cấu hình, phần gửi ra ngoài, telemetry, fallback.
-10. [ADR-001 — Gemini Live cho voice](research/adr-001-gemini-live-provider.md) và [P0.1 compatibility lock](research/compatibility-lock.md): quyết định thay thế blueprint, và lifecycle Pi SDK đã đo thật.
-11. [Changelog](CHANGELOG.md): những ràng buộc cũ đã bị thay thế.
+5. [Widget developer standard](widget-development.md): authoring contract, SDK UX, conformance, package/publish flow và directory metadata.
+6. [Integration & onboarding](integration-onboarding.md): research/install/auth/reload, Google Calendar, quick play và setup theo nhu cầu.
+7. [Browser & Computer Use](browser-computer-use.md): core/pack boundary, driver, node targeting và takeover.
+8. [Implementation plan](implementation-plan.md): dependencies, work packages, gates, acceptance scenarios.
+9. [Research & decisions](research-and-decisions.md): kết quả kiểm chứng upstream, lựa chọn/rejected alternatives, nguồn.
+10. [Jev selector](mini-app/jev-configuration.md): vận hành và privacy của lớp quyết định — cấu hình, phần gửi ra ngoài, telemetry, fallback.
+11. [ADR-001 — Gemini Live cho voice](research/adr-001-gemini-live-provider.md) và [P0.1 compatibility lock](research/compatibility-lock.md): quyết định thay thế blueprint, và lifecycle Pi SDK đã đo thật.
+12. [Changelog](CHANGELOG.md): những ràng buộc cũ đã bị thay thế.
 
 Các JSON trong [examples](examples/) chỉ minh họa **contract riêng của app**, không phải wire protocol chính thức của Pi/MCP/A2A, cũng không phải cấu hình chạy được trước khi app được implement.
 
