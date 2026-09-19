@@ -67,6 +67,7 @@ import { runApprovedCommand } from "./run-command.ts";
 import { initialPrompt } from "./project-session.ts";
 import { indexMessages, ingestSessionEntries, searchSessions, textOfMessage } from "./session-search.ts";
 import { type NodeServices, buildTimeline } from "./services.ts";
+import { availableCredentials } from "./readiness.ts";
 
 /**
  * Authenticated command gateway.
@@ -404,6 +405,22 @@ export async function handleRequest(deps: GatewayDeps, request: GatewayRequest):
    * decision not to read auth.json lives. A panel showing configuration has no business near a credentials file, and the
    * redaction happens at the one place that can see the file rather than on the way out of here.
    */
+  /*
+   * What this node has already been told.
+   *
+   * Built for the first run, which should not ask for a provider, a model and a key that are already configured - and it
+   * says nothing an operator could not read out of their own .env file. Names only, never values, and never a length.
+   */
+  if (segments.length === 1 && segments[0] === "readiness" && request.method === "GET") {
+    return json(200, {
+      model: services.model !== null,
+      credentials: availableCredentials({
+        env: process.env,
+        vault: credentialNames(services.runtime.db, services.runtime.identity.ownerPrincipalId),
+      }),
+    });
+  }
+
   if (segments.length === 1 && segments[0] === "pi-settings" && request.method === "GET") {
     return json(200, { settings: await (services.piSettings?.() ?? Promise.resolve([])) });
   }
