@@ -98,11 +98,37 @@ chính e2e sinh ra, gitignored, đã mở kiểm: không có token của node tr
   - `j1.spec.ts:204` `"a selected passage can be sent to a background session"` — node trả
     `BACKGROUND_REFUSED: node này không có model để chạy việc nền`. Thuộc background worker (Stage B).
 
-  Cả bốn nằm trong danh sách chưa làm của plan. `git diff --stat 7f3127f..HEAD` cho thấy thay đổi của
-  Stage A không chạm `SettingsPanel.tsx`, `App.tsx` (onboarding), `selection-toolbar` hay đường chạy nền.
-  **Giới hạn của kết luận này:** chưa chạy lại bốn test đó ở commit cơ sở `7f3127f` trong worktree riêng,
-  nên "có trước" dựa trên phân tích diff cộng với tên điều kiện còn thiếu ở trên, không phải trên một lần
-  chạy đối chứng. Nếu muốn chắc chắn tuyệt đối thì đó là việc phải làm trước khi merge PR Stage A.
+  Cả bốn nằm ngoài Stage A. `git diff --stat 7f3127f..HEAD` cho thấy thay đổi của Stage A không chạm
+  `SettingsPanel.tsx`, `App.tsx` (onboarding), `selection-toolbar` hay đường chạy nền.
+
+### Chạy đối chứng ở commit cơ sở — "có trước" là số đo, không phải suy luận
+
+Đã chạy lại **đúng ba file đó** ở `7f3127f` trong một worktree riêng (`D:/orca/clarkcant/base-control`),
+cài đặt riêng, cùng lệnh (`pnpm exec playwright test apps/web/e2e/appearance.spec.ts
+apps/web/e2e/onboarding.spec.ts apps/web/e2e/j1.spec.ts`) và cùng fixture của config:
+
+```
+23 passed, 4 failed
+```
+
+Bốn test đỏ ở commit cơ sở **trùng đúng** bốn test đỏ trên nhánh, cùng dòng và cùng assertion:
+`appearance.spec.ts:229` (`[data-search-input='model']` không có), `j1.spec.ts:204`
+(`BACKGROUND_REFUSED`), `onboarding.spec.ts:86` (`[data-onboarding='true']` còn 1 phần tử),
+`onboarding.spec.ts:110` (`[data-onboarding-key='typesafe']` không có). Vậy chúng có trước nhánh này và
+không do Stage A gây ra.
+
+Nguyên nhân gần của `appearance.spec.ts:229`, đọc từ code: `SettingsPanel.tsx` chỉ render ô đó khi
+catalogue provider **không rỗng**, mà catalogue đến từ `services.modelCatalogue()` — chỉ được nối sau
+khi boot dựng được model turn. Node của suite này chạy `CC_MODEL_FIXTURE=1` nên tab hiện câu “Node chưa
+báo provider nào”. Đây là điều kiện của fixture test, không phải tính năng còn thiếu — **không** sửa
+nó trong PR này: sửa một test đỏ không liên quan bên trong diff của một tính năng là trộn hai việc mà
+người review không tách được.
+
+### CI có phải cổng chặn không
+
+`.github/workflows/ci.yml` chạy `pnpm run invariants`, `typecheck`, `lint`, `pnpm run test` (unit),
+probe Pi SDK và secret scan — **không** chạy `pnpm test:e2e`. Bốn test đỏ ở trên không chặn merge; chúng
+cần một quyết định (ai sở hữu, sửa fixture hay sửa kỳ vọng), không phải một cổng.
 
 ## Ghi chú an toàn
 
