@@ -158,7 +158,12 @@ jobs:
       - name: Install a virtual display and the libraries Electron loads
         run: |
           sudo apt-get update
-          sudo apt-get install -y xvfb libgtk-3-0 libnss3 libgbm1 libasound2t64             || sudo apt-get install -y xvfb libgtk-3-0 libnss3 libgbm1 libasound2
+          common="xvfb libgtk-3-0 libnss3 libgbm1"
+          sudo apt-get install -y $common libasound2t64 || sudo apt-get install -y $common libasound2
 
+      # The SUID sandbox helper cannot be configured the way Electron asks for on a GitHub runner, and Electron
+      # aborts rather than run unsandboxed: "The SUID sandbox helper binary was found, but is not configured
+      # correctly". This job opens one window to read its bounds back, so the sandbox is disabled here and the reason
+      # is written down; the alternative is chowning a binary inside node_modules to root, which no test should need.
       - name: Desktop smoke
-        run: xvfb-run -a pnpm --filter @clarkcant/app-desktop run smoke
+        run: xvfb-run -a env ELECTRON_DISABLE_SANDBOX=1 pnpm --filter @clarkcant/app-desktop run smoke
