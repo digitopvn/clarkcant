@@ -1,7 +1,7 @@
 ---
 title: "Issue #17 — đính kèm file, thanh voice tối giản, voice điều khiển app, gợi ý từ việc gần đây, tab Memory"
 description: "Năm tính năng của issue #17, chia ba chặng ship: đính kèm file; cửa sổ desktop tối giản + voice điều khiển app; gợi ý theo việc gần đây + tab Memory."
-status: in-progress
+status: completed
 priority: P1
 effort: "~52h agent-hours tuần tự; ba PR tuần tự trên cùng một nhánh"
 issue: 17
@@ -132,7 +132,7 @@ Phase 12 là cổng cuối, không sửa giữa các stage ship.
 
 ## Success Criteria
 
-- [x] `pnpm verify` xanh: invariant + typecheck + lint + unit test. — chạy trên cây đã merge `main`: **1344 passed | 7 skipped (1351)**.
+- [x] `pnpm verify` xanh: invariant + typecheck + lint + unit test. — chạy trên cây đã merge `main`: **1397 passed, 7 skipped (1404)**.
 - [x] Prompt của lượt có attachment **không** chứa path đĩa, chỉ chứa `att_…`. — chứng minh ở ranh giới adapter: `FakePiAdapter.promptsFor()`.
 - [x] Ảnh đính kèm render trong timeline **sau reload** (đọc từ history). — `apps/web/e2e/attachments.spec.ts`.
 - [x] Voice chạy được cả nhóm lệnh điều khiển app; lệnh dạng lệnh mà không khớp intent thì nói chưa
@@ -149,7 +149,7 @@ Một tiêu chí ở trên vẫn để trống có chủ định, và đây là 
 
 Đã sửa xong và đo được, không còn là tiêu chí chưa đạt:
 
-- **`pnpm test:e2e` xanh** — **78 passed, 0 failed**. Bốn lỗi đỏ sằn ở `7f3127f` đã được sửa tại gốc:
+- **`pnpm test:e2e` xanh** — **80 passed, 0 failed**. Bốn lỗi đỏ sằn ở `7f3127f` đã được sửa tại gốc:
   T66 (trang thiếu handler cho frame `widget-action-result`), T73 (panel có hai effect cùng trigger, effect sau ghi đè
   tab vừa được gọi tên), `appearance.spec.ts:277` (spec đòi ô model trong khi chính file này có journey khác khẳng định
   node không có model — một node dùng chung không thể vừa có catalogue vừa báo không có), và `j1.spec.ts` (node fixture không có
