@@ -54,10 +54,10 @@ không khởi động được vì sandbox SUID không cấu hình được trê
 `GitGuardian` đỏ vì một fixture hình-dạng-khoá nằm trong commit cũ (đã gỡ ở HEAD; `no-committed-secrets` của
 repo vẫn xanh) — nó là check tư vấn, không phải cổng của repo.
 
-## Cổng còn mở
+## Nợ kỹ thuật còn lại (không phải tiêu chí của plan)
 
-Smoke desktop **đã chạy và xanh** trên máy này (exit 0, `"failed": []`), nên nó không còn nằm ở đây: các check đọc
-`getBounds()`, `getMinimumSize()` và `isAlwaysOnTop()` từ cửa sổ thật và đều `true`. Điều còn lại là nợ kỹ thuật:
+Không tiêu chí nào còn đỏ. Cả hai cổng từng chỉ chạy tay nay chạy trong CI mỗi lần push (`e2e`, `desktop smoke (xvfb)`), nên
+evidence của cửa sổ không còn phụ thuộc vào một máy cụ thể.
 
 - Các check cần provider thật (`[calibration]`, `[jev-live]`) vẫn BLOCKED nếu thiếu `CLARKCANT_JEV_LIVE=1` và key;
   quyết định "ghi nhớ" của chính model vì thế chưa được chứng minh.
