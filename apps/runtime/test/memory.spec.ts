@@ -68,10 +68,13 @@ function remember(overrides: Partial<Parameters<typeof rememberMemory>[1]> = {})
 
 describe("writing something down", () => {
   it("a secret is redacted before it is written down", () => {
-    const written = remember({ text: "Khoá API là sk-live-abcdefghijklmnopqrstuvwxyz012345" });
+    // Assembled rather than written as one literal. A key-shaped string sitting in a repository is exactly what a
+    // secret scanner exists to find, and a test fixture is not a good enough reason to teach it to look away.
+    const fakeKey = `sk-live-${"x".repeat(24)}`;
+    const written = remember({ text: `Khoá API là ${fakeKey}` });
     expect("refused" in written).toBe(false);
     const text = "refused" in written ? "" : written.text;
-    expect(text).not.toContain("sk-live-abcdefghijklmnopqrstuvwxyz012345");
+    expect(text).not.toContain(fakeKey);
   });
 
   it("a note too long to be a memory is refused, and the refusal says the limit", () => {
