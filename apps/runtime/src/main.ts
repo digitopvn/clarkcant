@@ -304,8 +304,9 @@ async function main(): Promise<void> {
      * over rather than a card carrying an id nothing has heard of.
      */
     if (/browser|trình duyệt/i.test(input.text)) {
-      const created = services.browserSessions.create({
+      const created = services.controlSessions.create({
         sessionId: services.conductor.newId("bs"),
+        surface: "browser",
         label: "đang mở form thanh toán",
       });
       return {
@@ -319,6 +320,39 @@ async function main(): Promise<void> {
           driver: created.owner,
           status: created.status,
           leaseEpoch: created.leaseEpoch,
+          updatedAt: instantSchema.parse(new Date().toISOString()),
+        },
+      };
+    }
+
+    /*
+     * A desktop session, scripted — created in the node's registry, and left in the state a real one starts in.
+     *
+     * The screen permission belongs to the operating system, so the honest default is "not granted yet" and the
+     * card has to say so. A fixture that pretended the preview was available would let the journey pass while the
+     * one thing that matters about this surface went unasserted.
+     */
+    if (/màn hình|desktop|điều khiển máy/i.test(input.text)) {
+      const created = services.controlSessions.create({
+        sessionId: services.conductor.newId("cs"),
+        surface: "computer",
+        label: "đang sửa bảng tính",
+        preview: "needs-permission",
+        previewReason: "ứng dụng chưa được cấp quyền ghi màn hình",
+      });
+      return {
+        text: "Đây là phiên điều khiển màn hình do fixture tạo, không phải model thật.",
+        block: {
+          type: "computer-session-card",
+          owner: "host",
+          cardId: services.conductor.newId("card"),
+          sessionId: created.sessionId,
+          label: created.label,
+          driver: created.owner,
+          status: created.status,
+          leaseEpoch: created.leaseEpoch,
+          preview: created.preview,
+          ...(created.previewReason === undefined ? {} : { previewReason: created.previewReason }),
           updatedAt: instantSchema.parse(new Date().toISOString()),
         },
       };

@@ -292,13 +292,21 @@ function parseSseFrame(frame: string): SseEvent | undefined {
 }
 
 /** What the node reports about an artifact. No path, deliberately: see `artifact()`. */
-/** A browser session as the node holds it. The epoch is the fencing token, so it is on the wire. */
-export interface BrowserSessionView {
+/**
+ * A controlled surface as the node holds it.
+ *
+ * The epoch is the fencing token and `preview` is whether the surface can currently be observed, so both are on
+ * the wire: a client that cannot see them cannot say whether the agent may still act.
+ */
+export interface ControlSessionView {
   sessionId: string;
+  surface: "browser" | "computer";
   label: string;
   owner: "agent" | "user";
   status: "running" | "stopped";
   leaseEpoch: number;
+  preview: "available" | "needs-permission" | "unavailable";
+  previewReason?: string;
   takenOverAt?: string;
   stoppedAt?: string;
 }
@@ -906,19 +914,19 @@ export class GatewayClient {
   }
 
   /**
-   * Take the wheel of a browser session.
+   * Take the wheel of a controlled surface.
    *
    * Resolves with the session as the node now holds it, including the new lease epoch — which is the part that
    * makes the takeover real: the agent's already-planned action is refused because its lease is stale, not
    * because something was interrupted.
    */
-  browserTakeover(sessionId: string): Promise<{ session: BrowserSessionView }> {
-    return this.#call("POST", `/browser-sessions/${encodeURIComponent(sessionId)}/takeover`, {});
+  controlTakeover(sessionId: string): Promise<{ session: ControlSessionView }> {
+    return this.#call("POST", `/control-sessions/${encodeURIComponent(sessionId)}/takeover`, {});
   }
 
   /** End a browser session. Refused rather than reported as done when there is nothing left to stop. */
-  browserStop(sessionId: string): Promise<{ session: BrowserSessionView }> {
-    return this.#call("POST", `/browser-sessions/${encodeURIComponent(sessionId)}/stop`, {});
+  controlStop(sessionId: string): Promise<{ session: ControlSessionView }> {
+    return this.#call("POST", `/control-sessions/${encodeURIComponent(sessionId)}/stop`, {});
   }
 
   claimLiveOwner(

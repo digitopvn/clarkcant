@@ -47,11 +47,11 @@ test("a takeover changes who may act, and a stop ends the session", async ({ pag
   await expect(card).toBeVisible({ timeout: 20_000 });
 
   // The agent is driving, at the epoch its plan was made under.
-  await expect(card).toHaveAttribute("data-browser-driver", "agent");
-  await expect(card).toHaveAttribute("data-browser-status", "running");
+  await expect(card).toHaveAttribute("data-control-driver", "agent");
+  await expect(card).toHaveAttribute("data-control-status", "running");
   await expect(card).toContainText("agent");
 
-  const takeover = card.locator("[data-browser-takeover]");
+  const takeover = card.locator("[data-control-takeover]");
   await expect(takeover).toHaveCount(1);
   await takeover.click();
 
@@ -60,23 +60,23 @@ test("a takeover changes who may act, and a stop ends the session", async ({ pag
    * says the agent's earlier action was refused for a stale lease. Without the second, nothing here would show
    * that anything about the agent's ability to act had changed.
    */
-  await expect(card).toHaveAttribute("data-browser-driver", "user", { timeout: 20_000 });
-  const notice = card.locator("[data-browser-session-notice='taken-over']");
+  await expect(card).toHaveAttribute("data-control-driver", "user", { timeout: 20_000 });
+  const notice = card.locator("[data-control-notice='taken-over']");
   await expect(notice).toBeVisible();
   await expect(notice).toContainText("bị từ chối");
   await expect(card).toContainText("Lease epoch");
 
   // Nothing offers a takeover the user already has: a control with nothing left to do is worse than no control.
-  await expect(card.locator("[data-browser-takeover]")).toHaveCount(0);
+  await expect(card.locator("[data-control-takeover]")).toHaveCount(0);
 
   // And the session stops when asked.
-  const stop = card.locator("[data-browser-stop]");
+  const stop = card.locator("[data-control-stop]");
   await expect(stop).toHaveCount(1);
   await stop.click();
 
-  await expect(card).toHaveAttribute("data-browser-status", "stopped", { timeout: 20_000 });
-  await expect(card.locator("[data-browser-session-notice='stopped']")).toBeVisible();
+  await expect(card).toHaveAttribute("data-control-status", "stopped", { timeout: 20_000 });
+  await expect(card.locator("[data-control-notice='stopped']")).toBeVisible();
   // A stopped session has no verbs left, so none are drawn.
-  await expect(card.locator("[data-browser-stop]")).toHaveCount(0);
-  await expect(card.locator("[data-browser-takeover]")).toHaveCount(0);
+  await expect(card.locator("[data-control-stop]")).toHaveCount(0);
+  await expect(card.locator("[data-control-takeover]")).toHaveCount(0);
 });
