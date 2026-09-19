@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 
 import type { RegisteredPreference } from "@clarkcant/contracts";
 
-import type { GatewayClient } from "../api.ts";
+import type { GatewayClient } from "../../api.ts";
 
 /**
  * The registered preferences, read and written through the gateway.

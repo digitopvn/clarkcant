@@ -193,7 +193,30 @@ export function SettingsPanel({
             aria-selected={tab === entry.id}
             aria-controls={`cc-tabpanel-${entry.id}`}
             data-selected={tab === entry.id}
+            /*
+             * Roving tabindex: one stop in the tab order for the whole group, and arrows move within it. The
+             * ARIA tabs pattern requires this — a tablist where every tab is separately tabbable makes a
+             * keyboard user press Tab six times to get past the settings header.
+             */
+            tabIndex={tab === entry.id ? 0 : -1}
             onClick={() => setTab(entry.id)}
+            onKeyDown={(event) => {
+              const index = TABS.findIndex((candidate) => candidate.id === tab);
+              const move = (next: number): void => {
+                event.preventDefault();
+                // Wraps, which is what the pattern asks for and what a user expects at the end of a list.
+                const target = TABS[(next + TABS.length) % TABS.length];
+                if (target === undefined) return;
+                setTab(target.id);
+                // Focus follows selection, so the next arrow press starts from where the eye is.
+                document.getElementById(`cc-tab-${target.id}`)?.focus();
+              };
+              if (event.key === "ArrowRight") move(index + 1);
+              else if (event.key === "ArrowLeft") move(index - 1);
+              // Home and End are part of the pattern, and cheap: they are what a long list needs.
+              else if (event.key === "Home") move(0);
+              else if (event.key === "End") move(TABS.length - 1);
+            }}
           >
             {entry.label}
           </button>
@@ -206,6 +229,9 @@ export function SettingsPanel({
         aria-labelledby={`cc-tab-${tab}`}
         className="cc-tabpanel"
         data-active-tab={tab}
+        // Focusable so a keyboard user can move from the tab strip into the panel's content, which is what the
+        // pattern expects when the panel does not begin with a focusable control.
+        tabIndex={-1}
       >
         {/*
           One error banner for the node read, above whichever tab is open, because it explains why several tabs

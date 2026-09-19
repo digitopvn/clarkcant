@@ -2,7 +2,7 @@ import { type ReactElement, isValidElement } from "react";
 
 import { describe, expect, it } from "vitest";
 
-import { SettingsRow, ToolRow } from "../src/SettingsPanel.tsx";
+import { SettingsRow, ToolRow } from "../src/settings/controls/SettingsRow.tsx";
 
 /**
  * Settings rows and capability rows.

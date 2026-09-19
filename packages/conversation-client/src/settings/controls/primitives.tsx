@@ -1,5 +1,9 @@
 import type { ReactElement } from "react";
 
+// Re-exported so a tab imports one module for its controls, and so a caller cannot end up with two copies of the
+// row component that look identical and drift.
+export { SettingsRow, ToolRow, type SettingsRowProps, type ToolRowProps } from "./SettingsRow.tsx";
+
 /**
  * The settings controls, each for one shape of decision.
  *
