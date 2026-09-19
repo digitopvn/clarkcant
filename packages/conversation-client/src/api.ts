@@ -291,6 +291,37 @@ function parseSseFrame(frame: string): SseEvent | undefined {
   return data.length === 0 ? undefined : { event, data: data.join("\n") };
 }
 
+/** What the node reports about an artifact. No path, deliberately: see `artifact()`. */
+/**
+ * A controlled surface as the node holds it.
+ *
+ * The epoch is the fencing token and `preview` is whether the surface can currently be observed, so both are on
+ * the wire: a client that cannot see them cannot say whether the agent may still act.
+ */
+export interface ControlSessionView {
+  sessionId: string;
+  surface: "browser" | "computer";
+  label: string;
+  owner: "agent" | "user";
+  status: "running" | "stopped";
+  leaseEpoch: number;
+  preview: "available" | "needs-permission" | "unavailable";
+  previewReason?: string;
+  takenOverAt?: string;
+  stoppedAt?: string;
+}
+
+export interface ArtifactView {
+  artifactId: string;
+  digest: string;
+  sizeBytes: number;
+  mimeType: string;
+  originNodeId: string;
+  createdAt: string;
+  expiresAt: string | null;
+  expired: boolean;
+}
+
 export class GatewayError extends Error {
   readonly status: number;
   readonly code: string;
@@ -868,6 +899,34 @@ export class GatewayClient {
    */
   cancelTask(taskId: string): Promise<{ taskId: string; state: string; confirmed: boolean }> {
     return this.#call("POST", `/tasks/${encodeURIComponent(taskId)}/cancel`, {});
+  }
+
+  /**
+   * Open an artifact.
+   *
+   * Resolves with facts about it and never with where its bytes live: the node's own data directory is not
+   * something a client needs in order to show a file. `expired` is reported separately from a missing artifact,
+   * because "the node had it and a retention window passed" and "there is no such file" are different answers
+   * to the user.
+   */
+  artifact(artifactId: string): Promise<{ artifact: ArtifactView }> {
+    return this.#call("GET", `/artifacts/${encodeURIComponent(artifactId)}`);
+  }
+
+  /**
+   * Take the wheel of a controlled surface.
+   *
+   * Resolves with the session as the node now holds it, including the new lease epoch — which is the part that
+   * makes the takeover real: the agent's already-planned action is refused because its lease is stale, not
+   * because something was interrupted.
+   */
+  controlTakeover(sessionId: string): Promise<{ session: ControlSessionView }> {
+    return this.#call("POST", `/control-sessions/${encodeURIComponent(sessionId)}/takeover`, {});
+  }
+
+  /** End a browser session. Refused rather than reported as done when there is nothing left to stop. */
+  controlStop(sessionId: string): Promise<{ session: ControlSessionView }> {
+    return this.#call("POST", `/control-sessions/${encodeURIComponent(sessionId)}/stop`, {});
   }
 
   claimLiveOwner(

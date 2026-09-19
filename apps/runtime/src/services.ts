@@ -10,6 +10,8 @@ import {
   liveOwnerOf,
   liveStateOf,
   registerCapability,
+  createControlSessionRegistry,
+  type ControlSessionRegistry,
 } from "@clarkcant/core";
 import {
   conversationMetadata,
@@ -88,6 +90,13 @@ import {
 
 export interface NodeServices {
   runtime: Runtime;
+  /**
+   * Who is driving each controlled surface — a browser session or a desktop session.
+   *
+   * On the services rather than in a module-level map, so a node's authority records live and die with the node
+   * and two nodes in one process cannot answer for each other's sessions.
+   */
+  controlSessions: ControlSessionRegistry;
   conductor: ConductorDeps;
   /**
    * Control of the turn that is running for a conversation, when one is.
@@ -522,6 +531,7 @@ export function bootNodeServices(options: RuntimeOptions): NodeServices {
 
   return {
     runtime,
+    controlSessions: createControlSessionRegistry(),
     conductor,
     model: options.model ?? null,
     jev: jevRuntime,

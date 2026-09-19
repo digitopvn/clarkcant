@@ -373,3 +373,5 @@ export function checkCompositionCoverage(
 
   return problems.length === 0 ? { ok: true } : { ok: false, problems };
 }
+
+export * from "./session.ts";

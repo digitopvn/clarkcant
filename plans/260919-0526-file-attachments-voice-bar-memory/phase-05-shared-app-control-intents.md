@@ -240,8 +240,11 @@ Luật này được viết ở một chỗ (`isAppCommandShaped`) và có test 
      `"A spoken app command and the same click reach the same settings state"`, kèm tên test ở journey 1.
   2. **Không** sửa dòng T66 — T66 thuộc Phase 6.
   3. Chạy `pnpm run invariants` (invariant yêu cầu T01–T72 hiện diện và cho phép thêm T-id mới).
-- **Success criteria**: `pnpm run invariants` xanh; T66 vẫn `NOT-IMPLEMENTED` sau phase này.
+- **Success criteria**: `pnpm run invariants` xanh; phase này **không** đụng dòng T66 (lúc đó T66 vẫn
+  `NOT-IMPLEMENTED`; Phase 6 đưa nó sang `PASS` kèm tên test, và ledger hiện ghi `PASS`).
 - **Verify**: `pnpm run invariants` exits 0 và `grep -n "^| T66" docs/conformance-traceability.md` in ra `NOT-IMPLEMENTED`.
+  Ghi chú sau đó: Phase 6 đã đưa T66 sang `PASS` kèm tên test, nên ledger hiện ghi `PASS`; dòng này là
+  tiêu chí của riêng Phase 5 và vẫn đúng ở thời điểm đó.
 
 ## Refactor
 

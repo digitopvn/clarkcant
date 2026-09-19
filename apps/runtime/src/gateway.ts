@@ -49,6 +49,7 @@ import {
   createConversation,
   findBundleForSnapshot,
   findCompositionByInstance,
+  getArtifact,
   getAttachment,
   getConversation,
   getDatasetForPrincipal,
@@ -631,6 +632,67 @@ export async function handleRequest(deps: GatewayDeps, request: GatewayRequest):
         : `Đã ghi nhận yêu cầu dừng task ${taskId}. Việc đang chạy vẫn có thể đang hoàn tất, nên task chưa được coi là đã dừng cho tới khi nơi chạy xác nhận.`,
     });
     return json(200, { taskId: outcome.task.taskId, state: outcome.task.state, confirmed: outcome.confirmed });
+  }
+
+  /*
+   * Open an artifact.
+   *
+   * Expiry is reported rather than folded into "not found": an artifact that reads as missing tells the user
+   * their file never existed, when the truth is that the node had it and a retention window passed. That
+   * difference decides whether they ask for it again or go looking for a fault.
+   *
+   * The reply describes the artifact and never says where its bytes live — the node's data directory is not
+   * something a client needs in order to show a file, and handing it over would only describe somebody's disk.
+   */
+  if (segments.length === 2 && segments[0] === "artifacts" && request.method === "GET") {
+    const artifactId = decodeURIComponent(segments[1] ?? "");
+    const artifact = getArtifact(runtime.db, artifactId);
+    if (artifact === undefined) {
+      return fail(404, "ARTIFACT_NOT_FOUND", "Không có artifact nào với id này trên node.", { artifactId });
+    }
+    return json(200, {
+      artifact: {
+        artifactId: artifact.artifactId,
+        digest: artifact.digest,
+        sizeBytes: artifact.sizeBytes,
+        mimeType: artifact.mimeType,
+        originNodeId: artifact.originNodeId,
+        createdAt: artifact.createdAt,
+        expiresAt: artifact.expiresAt ?? null,
+        // ISO instants compare correctly as strings, and both sides are UTC.
+        expired: artifact.expiresAt !== undefined && artifact.expiresAt <= at(),
+      },
+    });
+  }
+
+  /*
+   * Who is driving a controlled surface — a browser session or a desktop session.
+   *
+   * Takeover hands the wheel to the user by bumping the lease epoch, which invalidates the action the agent had
+   * already planned rather than reaching into a process this node does not control. Stop ends the session and
+   * bumps the epoch for the same reason: an action already in flight must not land on a session that has ended.
+   *
+   * A session that is missing or already stopped is refused rather than quietly reported as done, because a
+   * takeover that silently did nothing leaves the user believing they have the wheel.
+   */
+  if (
+    segments.length === 3 &&
+    segments[0] === "control-sessions" &&
+    (segments[2] === "takeover" || segments[2] === "stop") &&
+    request.method === "POST"
+  ) {
+    const sessionId = decodeURIComponent(segments[1] ?? "");
+    const at = nowInstant();
+    const session =
+      segments[2] === "takeover"
+        ? services.controlSessions.takeover(sessionId, at)
+        : services.controlSessions.stop(sessionId, at);
+    if (session === undefined) {
+      return fail(409, "CONTROL_SESSION_UNAVAILABLE", "Không đổi được phiên này vì phiên không tồn tại hoặc đã dừng.", {
+        sessionId,
+      });
+    }
+    return json(200, { session });
   }
 
   if (request.method === "POST" && request.path === "/command") {

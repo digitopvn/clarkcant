@@ -123,7 +123,11 @@ test("the settings tabs are operable from the keyboard alone", async ({ page }) 
   await openApp(page);
   await page.locator("[data-settings='true']").click();
 
-  // Focus the selected tab, which is where a keyboard user arrives from the modal's own focus handling.
+  // Focus the selected tab, which is where a keyboard user arrives from the modal's own focus handling. Waiting for
+  // it to be visible first is what makes this deterministic: a focus() call taken while the panel is still animating
+  // in is dropped, and the element stays unfocused for the whole assertion timeout. Measured in CI, where this test
+  // passed on one run and failed on the next for exactly that reason.
+  await expect(page.locator("#cc-tab-experience")).toBeVisible();
   await page.locator("#cc-tab-experience").focus();
   await expect(page.locator("#cc-tab-experience")).toBeFocused();
 

@@ -95,6 +95,54 @@ export const widgetRefBlockSchema = z.strictObject({
   textAlternative: z.string().min(1).max(4000),
 });
 
+/**
+ * A browser session the node is driving, and who has the wheel.
+ *
+ * This card exists because the one capability that runs unsupervised is also the one where "the agent is still
+ * driving" has to be something the host can change rather than something the user waits out. The card states who
+ * is driving and offers the two verbs that change it; it never claims a session stopped because a button was
+ * pressed.
+ *
+ * `leaseEpoch` is carried so a card can be reasoned about next to the action it describes: an action planned
+ * under an older epoch than the card shows was planned before the last change of hands.
+ */
+export const browserSessionCardSchema = z.strictObject({
+  type: z.literal("browser-session-card"),
+  owner: z.literal("host"),
+  cardId: z.string().min(1).max(128),
+  sessionId: z.string().min(1).max(128),
+  label: z.string().min(1).max(300),
+  driver: z.enum(["agent", "user"]),
+  status: z.enum(["running", "stopped"]),
+  leaseEpoch: z.int().nonnegative(),
+  updatedAt: instantSchema,
+});
+export type BrowserSessionCard = z.infer<typeof browserSessionCardSchema>;
+
+/**
+ * A desktop session the node is driving.
+ *
+ * The same lease model as a browser session, and the same two verbs, because the question "who may act on this"
+ * does not change with the surface. What differs is observation: on a desktop the operating system owns the
+ * permission to see the screen, so `preview` is a first-class state rather than an error, and a card that showed a
+ * blank or stale view as if it were live would be claiming a view of somebody's screen that nobody has.
+ */
+export const computerSessionCardSchema = z.strictObject({
+  type: z.literal("computer-session-card"),
+  owner: z.literal("host"),
+  cardId: z.string().min(1).max(128),
+  sessionId: z.string().min(1).max(128),
+  label: z.string().min(1).max(300),
+  driver: z.enum(["agent", "user"]),
+  status: z.enum(["running", "stopped"]),
+  leaseEpoch: z.int().nonnegative(),
+  preview: z.enum(["available", "needs-permission", "unavailable"]),
+  /** Why the screen cannot be observed. Shown, because the fix is something the user has to do. */
+  previewReason: z.string().min(1).max(500).optional(),
+  updatedAt: instantSchema,
+});
+export type ComputerSessionCard = z.infer<typeof computerSessionCardSchema>;
+
 export const artifactBlockSchema = z.strictObject({
   type: z.literal("artifact"),
   artifactId: z.string().min(1).max(128),
@@ -568,6 +616,8 @@ export const messageBlockSchema = z.discriminatedUnion("type", [
   surfaceBlockSchema,
   widgetRefBlockSchema,
   artifactBlockSchema,
+  browserSessionCardSchema,
+  computerSessionCardSchema,
   evidenceBlockSchema,
   systemCardBlockSchema,
   approvalCardBlockSchema,
@@ -584,7 +634,16 @@ export const messageBlockSchema = z.discriminatedUnion("type", [
 ]);
 export type MessageBlock = z.infer<typeof messageBlockSchema>;
 
-/** Blocks whose trust state is owned by the host, never by a pack or a model. */
+/**
+ * Blocks whose trust state is owned by the host, never by a pack or a model.
+ *
+ * The single list. A second copy of it lived in the renderer and had already drifted: it knew about two card types
+ * this one did not, and neither knew about the session cards. Since this list is what refuses a host-owned block
+ * that arrived from somewhere other than the host, a type missing from it is a card a pack or a model could mint.
+ *
+ * Every card whose schema says `owner: z.literal("host")` belongs here, and the test beside it walks the list so a
+ * new one cannot be added in one place and forgotten in the other.
+ */
 export const HOST_OWNED_BLOCK_TYPES = [
   "system-card",
   "approval-card",
@@ -596,6 +655,10 @@ export const HOST_OWNED_BLOCK_TYPES = [
   "code-diff-card",
   "project-picker-card",
   "reconnect-card",
+  "question-card",
+  "form-card",
+  "browser-session-card",
+  "computer-session-card",
 ] as const satisfies readonly MessageBlock["type"][];
 
 export function isHostOwnedBlock(block: MessageBlock): boolean {

@@ -101,3 +101,69 @@ jobs:
             exit 1
           fi
           echo "no credential-shaped strings found"
+
+  # The browser suite was the only gate that exercises the five features of issue #17 end to end, and until this
+  # job existed it was run by hand on whichever machine happened to run it. That is why the release report had to
+  # say CI told nobody anything about it. It boots its own node and web server on fixed ports, so it needs nothing
+  # from this runner beyond the browser it launches.
+  e2e:
+    name: e2e (browser suite)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+
+      - name: Enable corepack
+        run: corepack enable
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "22.19"
+          cache: pnpm
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Install the browser the suite launches
+        run: pnpm exec playwright install --with-deps chromium
+
+      - name: Browser suite
+        run: pnpm test:e2e
+
+  # The desktop shell's own behaviour - the bounds it reports, the floor it enforces, whether it is always on top -
+  # can only be read back from a real window. Electron needs a display and a set of shared libraries a bare runner
+  # does not carry, so the display is virtual and named here rather than left as an operator's manual step.
+  desktop-smoke:
+    name: desktop smoke (xvfb)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+
+      - name: Enable corepack
+        run: corepack enable
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "22.19"
+          cache: pnpm
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      # ubuntu 24.04 renamed the ALSA package, and this runner image has moved between the two, so both names are
+      # tried rather than pinning to whichever one this image happens to carry today.
+      - name: Install a virtual display and the libraries Electron loads
+        run: |
+          sudo apt-get update
+          common="xvfb libgtk-3-0 libnss3 libgbm1"
+          sudo apt-get install -y $common libasound2t64 || sudo apt-get install -y $common libasound2
+
+      # The SUID sandbox helper cannot be configured the way Electron asks for on a GitHub runner, and Electron
+      # aborts rather than run unsandboxed: "The SUID sandbox helper binary was found, but is not configured
+      # correctly". This job opens one window to read its bounds back, so the sandbox is disabled here and the reason
+      # is written down; the alternative is chowning a binary inside node_modules to root, which no test should need.
+      - name: Desktop smoke
+        run: xvfb-run -a env ELECTRON_DISABLE_SANDBOX=1 pnpm --filter @clarkcant/app-desktop run smoke

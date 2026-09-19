@@ -147,19 +147,84 @@ export function EvidenceBlock({ block }: { block: Record<string, unknown> }): Re
   );
 }
 
-export function ArtifactBlock({ block }: { block: Record<string, unknown> }): ReactElement {
+export function ArtifactBlock({
+  block,
+  actions,
+}: {
+  block: Record<string, unknown>;
+  actions?: BlockActions;
+}): ReactElement {
   const labelValue = typeof block.label === "string" ? block.label : "artifact";
   const mimeType = typeof block.mimeType === "string" ? block.mimeType : "application/octet-stream";
   const sizeBytes = typeof block.sizeBytes === "number" ? block.sizeBytes : 0;
   const originNodeId = typeof block.originNodeId === "string" ? block.originNodeId : undefined;
+  const artifactId = typeof block.artifactId === "string" ? block.artifactId : "";
+  const state = artifactId === "" ? undefined : actions?.artifactOpen?.[artifactId];
+
   return (
-    <div className="cc-card" data-artifact="true">
+    <div className="cc-card" data-artifact="true" data-artifact-id={artifactId}>
       <div className="cc-card-head">
         <span className="cc-card-title">{labelValue}</span>
         <span>
-          {mimeType} · {sizeBytes} B{originNodeId === undefined ? "" : ` · từ ${originNodeId}`}
+          {/* A node id is an internal name; "a node khác" says the same useful thing without exposing one. */}
+          {mimeType} · {sizeBytes} B{originNodeId === undefined ? "" : " · từ một node khác"}
         </span>
       </div>
+      {/*
+        The snapshot is what the message recorded. What the node holds now is a separate question, and only the
+        node can answer it — an artifact can expire between the message being written and somebody reading it.
+      */}
+      {artifactId !== "" && actions?.onArtifactOpen !== undefined ? (
+        <div className="cc-chip-row">
+          <button
+            type="button"
+            className="cc-chip"
+            data-artifact-open={artifactId}
+            /*
+             * Disabled only while a request is in flight. Unlike stopping a task, reopening is a question rather
+             * than a state change: the answer can have changed since it was asked — an artifact that had expired
+             * may have been produced again — so asking a second time has to stay possible.
+             */
+            disabled={state?.status === "pending"}
+            onClick={() => actions.onArtifactOpen?.({ artifactId })}
+          >
+            {state?.status === "pending" ? "Đang mở…" : "Mở lại"}
+          </button>
+        </div>
+      ) : null}
+      {state === undefined || state.status === "pending" ? null : state.status === "failed" ? (
+        <p className="cc-freshness" data-artifact-error="true">
+          {state.message}
+        </p>
+      ) : (
+        <dl className="cc-fields" data-artifact-opened="true" data-artifact-expired={String(state.expired)}>
+          {/*
+            An expired artifact is reported as a distinct outcome rather than as a failure: the node had the
+            file and a retention window passed, which calls for asking for it again rather than for looking for
+            a fault.
+          */}
+          {state.expired ? (
+            <p className="cc-freshness" data-artifact-expiry="true">
+              Node đã từng giữ artifact này nhưng đã hết hạn lưu trữ{state.expiresAt === null ? "" : ` từ ${state.expiresAt}`}.
+              Nội dung không còn, nên hãy yêu cầu tạo lại nếu vẫn cần.
+            </p>
+          ) : null}
+          <dt>Kích thước</dt>
+          <dd>{state.sizeBytes} B</dd>
+          <dt>Loại</dt>
+          <dd>{state.mimeType}</dd>
+          <dt>Digest</dt>
+          <dd>
+            <code>{state.digest}</code>
+          </dd>
+          <dt>Tạo lúc</dt>
+          <dd>{state.createdAt}</dd>
+          <dt>Nguồn</dt>
+          <dd>{state.originNodeId}</dd>
+          <dt>Hết hạn</dt>
+          <dd>{state.expiresAt ?? "không"}</dd>
+        </dl>
+      )}
     </div>
   );
 }
@@ -338,7 +403,48 @@ export interface BlockActions {
   onTaskStop?: (input: { taskId: string }) => void;
   /** What the node said about each stop request, keyed by task id. */
   taskStop?: Readonly<Record<string, TaskStopState>>;
+  /**
+   * Open an artifact from the snapshot of it in the transcript.
+   *
+   * The inline block is history and stays read-only; reopening asks the node what it still has, which is the
+   * only place that can answer — an artifact may have expired since the message was written, and a snapshot
+   * cannot know that.
+   */
+  onArtifactOpen?: (input: { artifactId: string }) => void;
+  artifactOpen?: Readonly<Record<string, ArtifactOpenState>>;
+  /** Hand the wheel of a browser session to the user. */
+  onControlTakeover?: (input: { sessionId: string }) => void;
+  /** End a browser session. */
+  onControlStop?: (input: { sessionId: string }) => void;
+  controlSession?: Readonly<Record<string, ControlSessionActionState>>;
 }
+
+/**
+ * What the node said about a browser session after a verb was applied to it.
+ *
+ * `taken-over` carries the epoch rather than a boolean, because the epoch is what decides whether an action the
+ * agent planned earlier is still admissible — a card that only said "you have control" would leave a reader unable
+ * to tell whether the agent's in-flight action had been refused.
+ */
+export type ControlSessionActionState =
+  | { status: "pending" }
+  | { status: "taken-over"; leaseEpoch: number }
+  | { status: "stopped" }
+  | { status: "failed"; message: string };
+
+export type ArtifactOpenState =
+  | { status: "pending" }
+  | {
+      status: "opened";
+      digest: string;
+      sizeBytes: number;
+      mimeType: string;
+      originNodeId: string;
+      createdAt: string;
+      expiresAt: string | null;
+      expired: boolean;
+    }
+  | { status: "failed"; message: string };
 
 export type TaskStopState =
   | { status: "pending" }
@@ -654,7 +760,8 @@ export function TaskProgressCardBlock({
             <>
               {/* Named, because a task running elsewhere must not read as a local one. */}
               <dt>Chạy trên</dt>
-              <dd>{fieldText(targetNode.label, fieldText(targetNode.nodeId))}</dd>
+              {/* Named only if it has a name a person would recognise; otherwise "một node khác", not an id. */}
+              <dd>{fieldText(targetNode.label, "một node khác")}</dd>
             </>
           )}
           <dt>Dừng được</dt>
@@ -981,20 +1088,14 @@ export function ReconnectCardBlock({ block }: { block: Record<string, unknown> }
   );
 }
 
-export const HOST_OWNED_BLOCK_TYPES = [
-  "system-card",
-  "approval-card",
-  "credential-card",
-  "connection-card",
-  "task-progress-card",
-  "task-summary-card",
-  "task-overview-card",
-  "code-diff-card",
-  "project-picker-card",
-  "reconnect-card",
-  "question-card",
-  "form-card",
-] as const;
+/*
+ * Re-exported rather than redeclared.
+ *
+ * There were two copies of this list and they had already drifted — this one knew about two card types the
+ * contract's did not, and neither knew about the session cards. The contract's is the one the provenance check
+ * reads, so a type missing there is a host-owned card an untrusted source could mint.
+ */
+export { HOST_OWNED_BLOCK_TYPES } from "@clarkcant/contracts";
 
 /**
  * What a surface block knows about the capture it came from.
@@ -1126,7 +1227,9 @@ export function renderBlock(
     case "evidence":
       return <EvidenceBlock key={index} block={block} />;
     case "artifact":
-      return <ArtifactBlock key={index} block={block} />;
+      // Forwarded, for the reason the task card's control taught: a component tested by calling it directly
+      // passes whether or not the dispatcher hands it anything.
+      return <ArtifactBlock key={index} block={block} {...(actions === undefined ? {} : { actions })} />;
     case "system-card":
       return <SystemCardBlock key={index} block={block} />;
     case "approval-card":
@@ -1153,6 +1256,11 @@ export function renderBlock(
       return <QuestionCardBlock key={index} block={block} {...(actions === undefined ? {} : { actions })} />;
     case "form-card":
       return <FormCardBlock key={index} block={block} {...(actions === undefined ? {} : { actions })} />;
+    case "browser-session-card":
+    case "computer-session-card":
+      // One renderer for both surfaces: the question "who may act on this" does not change with the surface, and
+      // two components would be two places for the answer to drift.
+      return <ControlSessionCardBlock key={index} block={block} {...(actions === undefined ? {} : { actions })} />;
     case "reconnect-card":
       return <ReconnectCardBlock key={index} block={block} />;
     case "surface": {
@@ -1405,6 +1513,141 @@ export function FormCardBlock({
           )}
         </>
       )}
+    </section>
+  );
+}
+
+/**
+ * A browser session the node is driving, and who has the wheel.
+ *
+ * The card exists because the one capability that runs unsupervised is the one where "the agent is still driving"
+ * has to be something the user can change. Two verbs, and the copy distinguishes them, because they do different
+ * things: takeover leaves the session running and its page intact while making the agent's next action invalid,
+ * and stop ends the session.
+ *
+ * The epoch is shown rather than kept internal. It is what decides whether an action the agent planned earlier is
+ * still admissible, so a reader who cannot see it cannot tell whether a takeover actually took effect.
+ */
+export function ControlSessionCardBlock({
+  block,
+  actions,
+}: {
+  block: Record<string, unknown>;
+  actions?: BlockActions;
+}): ReactElement | null {
+  if (block.owner !== "host") return null;
+
+  const sessionId = fieldText(block.sessionId);
+  const surface = block.type === "computer-session-card" ? "computer" : "browser";
+  const declaredPreview = fieldText(block.preview, surface === "browser" ? "available" : "needs-permission");
+  const previewReason = typeof block.previewReason === "string" ? block.previewReason : undefined;
+  const observable = declaredPreview === "available";
+  const label = fieldText(block.label);
+  const declaredDriver = fieldText(block.driver, "agent");
+  const declaredStatus = fieldText(block.status, "running");
+  const declaredEpoch = typeof block.leaseEpoch === "number" ? block.leaseEpoch : 0;
+  const state = sessionId === "" ? undefined : actions?.controlSession?.[sessionId];
+
+  // The card's own values are a snapshot; what the node said later wins where the two disagree, because only the
+  // node knows who is driving now.
+  const stopped = state?.status === "stopped" || declaredStatus === "stopped";
+  const driver = state?.status === "taken-over" ? "user" : declaredDriver;
+  const leaseEpoch = state?.status === "taken-over" ? state.leaseEpoch : declaredEpoch;
+  const running = !stopped;
+  const busy = state?.status === "pending";
+
+  return (
+    <section
+      className="cc-card"
+      data-host-card={surface === "computer" ? "computer-session" : "browser-session"}
+      data-owner="host"
+      data-control-session={sessionId}
+      data-control-surface={surface}
+      data-control-preview={declaredPreview}
+      /* Machine-facing only: an assertion can read the epoch, a reader never sees it. */
+      data-control-epoch={leaseEpoch}
+      data-control-driver={driver}
+      data-control-status={stopped ? "stopped" : "running"}
+      aria-label={`Phiên browser: ${label}`}
+    >
+      <header className="cc-card-head">
+        <span className="cc-card-title">{label}</span>
+        <span className="cc-badge" data-tone={stopped ? "" : "ok"}>
+          {stopped ? "đã dừng" : "đang chạy"}
+        </span>
+      </header>
+      <dl className="cc-fields">
+        <dt>Ai đang điều khiển</dt>
+        <dd data-control-driver-label="true">{driver === "user" ? "bạn" : "agent"}</dd>
+
+      </dl>
+      {/*
+        Reported before any control, because it decides whether acting is possible at all. A desktop whose screen
+        the operating system has not granted to this node cannot be driven, and the permission is not the node's to
+        assume — so the card says what is missing and who owns it.
+      */}
+      {observable ? null : (
+        <p className="cc-freshness" data-control-preview-notice={declaredPreview}>
+          {declaredPreview === "needs-permission" ? "Chưa được cấp quyền xem màn hình" : "Không xem được màn hình"}
+          {previewReason === undefined ? "" : `: ${previewReason}`}. Quyền này do hệ điều hành cấp, node không tự cấp
+          được, và node sẽ không hành động khi không nhìn thấy gì.
+        </p>
+      )}
+      {running ? (
+        <div className="cc-chip-row">
+          {/*
+            Offered only while the agent still has the wheel, and only when something can carry the verb out: a
+            takeover control on a session the user already drives would be a control with nothing left to do.
+          */}
+          {driver === "agent" && actions?.onControlTakeover !== undefined ? (
+            <button
+              type="button"
+              className="cc-chip"
+              data-control-takeover={sessionId}
+              disabled={busy}
+              onClick={() => actions.onControlTakeover?.({ sessionId })}
+            >
+              {busy ? "Đang chuyển…" : "Tôi tự điều khiển"}
+            </button>
+          ) : null}
+          {actions?.onControlStop !== undefined ? (
+            <button
+              type="button"
+              className="cc-chip"
+              data-control-stop={sessionId}
+              disabled={busy}
+              onClick={() => actions.onControlStop?.({ sessionId })}
+            >
+              Dừng phiên
+            </button>
+          ) : null}
+        </div>
+      ) : null}
+      {/*
+        Exactly one notice, decided in one place. Two overlapping branches would render two answers to the same
+        question — which is what a duplicate marker caught in the browser, and a reader would have seen the same
+        thing twice.
+      */}
+      {state?.status === "failed" ? (
+        <p className="cc-freshness" data-control-error="true">
+          {state.message}
+        </p>
+      ) : !running ? (
+        <p className="cc-freshness" data-control-notice="stopped">
+          {state?.status === "stopped"
+            ? "Phiên đã dừng theo yêu cầu của bạn. Không có hành động nào của agent còn được nhận cho phiên này."
+            : "Phiên này đã dừng. Không có hành động nào của agent còn được nhận cho phiên này."}
+        </p>
+      ) : state?.status === "taken-over" ? (
+        /*
+         * What takeover actually did. Not "you have control" alone: the user needs to know the agent's already
+         * planned action was refused, because that is the part that makes the browser theirs.
+         */
+        <p className="cc-freshness" data-control-notice="taken-over">
+          Bạn đang điều khiển. Hành động agent đã lên kế hoạch từ trước đã bị từ chối vì lease cũ, và agent chỉ
+          lấy lại được khi bạn dừng phiên rồi mở phiên mới.
+        </p>
+      ) : null}
     </section>
   );
 }

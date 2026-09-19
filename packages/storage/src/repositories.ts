@@ -937,6 +937,100 @@ export interface DatasetView {
  * a large result set never enters the transcript and the client can be told how fresh the
  * data is at the moment it renders it.
  */
+/**
+ * An artifact as the node records it.
+ *
+ * `blobPath` is deliberately absent. It is a path inside the node's own data directory, and a
+ * client has no use for it beyond learning the layout of somebody's disk — so the one place that
+ * reads bytes from it is the node, and everything downstream sees facts about the artifact rather
+ * than where it happens to live.
+ */
+export interface ArtifactRecord {
+  artifactId: string;
+  digest: string;
+  sizeBytes: number;
+  mimeType: string;
+  classification: string;
+  originNodeId: string;
+  createdAt: Instant;
+  /** Absent means it does not expire. */
+  expiresAt: Instant | undefined;
+}
+
+export function upsertArtifact(
+  db: Database,
+  input: {
+    artifactId: string;
+    digest: string;
+    sizeBytes: number;
+    mimeType: string;
+    classification: string;
+    originNodeId: string;
+    blobPath?: string;
+    createdAt: Instant;
+    expiresAt?: Instant;
+  },
+): void {
+  db.prepare(
+    `INSERT INTO artifacts (artifact_id, digest, size_bytes, mime_type, classification, origin_node_id, blob_path, created_at, expires_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT(artifact_id) DO UPDATE SET
+       digest = excluded.digest,
+       size_bytes = excluded.size_bytes,
+       mime_type = excluded.mime_type,
+       classification = excluded.classification,
+       origin_node_id = excluded.origin_node_id,
+       blob_path = excluded.blob_path,
+       expires_at = excluded.expires_at`,
+  ).run(
+    input.artifactId,
+    input.digest,
+    input.sizeBytes,
+    input.mimeType,
+    input.classification,
+    input.originNodeId,
+    input.blobPath ?? null,
+    input.createdAt,
+    input.expiresAt ?? null,
+  );
+}
+
+/**
+ * Read an artifact, expired or not.
+ *
+ * Expiry is reported rather than filtered out on purpose: an expired artifact that reads as `missing` tells
+ * the user their file never existed, when the truth is that the node had it and a retention window passed.
+ * The distinction is the difference between "ask for it again" and "something is wrong".
+ */
+export function getArtifact(db: Database, artifactId: string): ArtifactRecord | undefined {
+  const row = oneRow<{
+    artifact_id: string;
+    digest: string;
+    size_bytes: number;
+    mime_type: string;
+    classification: string;
+    origin_node_id: string;
+    created_at: string;
+    expires_at: string | null;
+  }>(
+    db,
+    `SELECT artifact_id, digest, size_bytes, mime_type, classification, origin_node_id, created_at, expires_at
+       FROM artifacts WHERE artifact_id = ?`,
+    artifactId,
+  );
+  if (row === undefined) return undefined;
+  return {
+    artifactId: row.artifact_id,
+    digest: row.digest,
+    sizeBytes: row.size_bytes,
+    mimeType: row.mime_type,
+    classification: row.classification,
+    originNodeId: row.origin_node_id,
+    createdAt: row.created_at as Instant,
+    expiresAt: (row.expires_at ?? undefined) as Instant | undefined,
+  };
+}
+
 export function upsertDataset(
   db: Database,
   input: {

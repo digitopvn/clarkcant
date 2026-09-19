@@ -22,7 +22,7 @@ import { hasDesktopChrome, requestWindowMode } from "./desktop-compact.ts";
 import { DesktopChrome } from "./desktop-chrome.tsx";
 import { fetchSuggestions } from "./suggestions.ts";
 import type { Suggestion } from "@clarkcant/contracts";
-import { ReasoningBlock, ToolActivityBlock, type BlockActions, type TaskStopState } from "./blocks.tsx";
+import { ReasoningBlock, ToolActivityBlock, type BlockActions, type ArtifactOpenState, type ControlSessionActionState, type TaskStopState } from "./blocks.tsx";
 import { composerTextareaHeight } from "./composer-height.ts";
 import {
   attachmentReducer,
@@ -1191,6 +1191,85 @@ export function Conversation({
     [client],
   );
 
+  /**
+   * What the node still holds for each artifact somebody reopened.
+   *
+   * `opened` carries facts rather than a status, because the interesting answer is not "it worked" but what the
+   * node has: an artifact can expire between the message that mentioned it and somebody reading it, and the
+   * snapshot in the transcript cannot know that.
+   */
+  const [artifactOpen, setArtifactOpen] = useState<Record<string, ArtifactOpenState>>({});
+
+  const openArtifact = useCallback(
+    (artifactId: string) => {
+      setArtifactOpen((current) => ({ ...current, [artifactId]: { status: "pending" } }));
+      void client.artifact(artifactId).then(
+        (result) => {
+          const { artifact } = result;
+          setArtifactOpen((current) => ({
+            ...current,
+            [artifactId]: {
+              status: "opened",
+              digest: artifact.digest,
+              sizeBytes: artifact.sizeBytes,
+              mimeType: artifact.mimeType,
+              originNodeId: artifact.originNodeId,
+              createdAt: artifact.createdAt,
+              expiresAt: artifact.expiresAt,
+              expired: artifact.expired,
+            },
+          }));
+        },
+        (error: unknown) =>
+          setArtifactOpen((current) => ({
+            ...current,
+            [artifactId]: {
+              status: "failed",
+              message: error instanceof Error ? error.message : "Không mở được artifact này.",
+            },
+          })),
+      );
+    },
+    [client],
+  );
+
+  /**
+   * What the node said after a verb was applied to a browser session.
+   *
+   * `taken-over` carries the epoch, because the epoch is the evidence that the takeover took effect: the agent's
+   * already-planned action is refused for having a stale lease. A boolean here would show that a button worked
+   * without showing that the browser changed hands.
+   */
+  const [controlSession, setControlSession] = useState<Record<string, ControlSessionActionState>>({});
+
+  const changeBrowserSession = useCallback(
+    (sessionId: string, verb: "takeover" | "stop") => {
+      setControlSession((current) => ({ ...current, [sessionId]: { status: "pending" } }));
+      const call = verb === "takeover" ? client.controlTakeover(sessionId) : client.controlStop(sessionId);
+      void call.then(
+        (result) =>
+          setControlSession((current) => ({
+            ...current,
+            [sessionId]:
+              verb === "takeover"
+                ? { status: "taken-over", leaseEpoch: result.session.leaseEpoch }
+                : { status: "stopped" },
+          })),
+        (error: unknown) =>
+          // Refused rather than reported as done: a takeover that silently did nothing would leave the user
+          // believing they have the wheel while the agent keeps driving.
+          setControlSession((current) => ({
+            ...current,
+            [sessionId]: {
+              status: "failed",
+              message: error instanceof Error ? error.message : "Không đổi được phiên browser này.",
+            },
+          })),
+      );
+    },
+    [client],
+  );
+
   const blockActions: BlockActions = useMemo(
     () => ({
       onApprovalDecide: decideApproval,
@@ -1209,8 +1288,13 @@ export function Conversation({
       openFormIds: openCardIds.forms,
       onTaskStop: ({ taskId }) => stopTask(taskId),
       taskStop,
+      onArtifactOpen: ({ artifactId }) => openArtifact(artifactId),
+      artifactOpen,
+      onControlTakeover: ({ sessionId }) => changeBrowserSession(sessionId, "takeover"),
+      onControlStop: ({ sessionId }) => changeBrowserSession(sessionId, "stop"),
+      controlSession,
     }),
-    [credentialStatus, decideApproval, decidedApprovals, decidingApprovalId, openCardIds, send, stopTask, submitCredential, taskStop],
+    [artifactOpen, controlSession, changeBrowserSession, credentialStatus, decideApproval, decidedApprovals, decidingApprovalId, openArtifact, openCardIds, send, stopTask, submitCredential, taskStop],
   );
 
   const renderSurface = useCallback(

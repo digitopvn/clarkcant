@@ -1,5 +1,9 @@
 # Báo cáo Stage B — voice điều khiển app và cửa sổ tối giản
 
+> Ảnh chụp của Stage B tại thời điểm đó. Trạng thái cuối của hai claim journey (T66, T73) nằm ở
+> `plans/reports/verification-260919-issue-17-release.md`: cả hai đã `PASS`, có tên test, và nằm trong suite.
+
+
 Phạm vi: phase 5 → phase 8 của `plans/260919-0526-file-attachments-voice-bar-memory`. Gồm registry app-intent dùng
 chung cho chat/click/voice, parity widget-action (T66), cửa sổ desktop compact với bridge có tên, và thanh voice tối
 giản.
