@@ -10,6 +10,8 @@ import {
   readStoredTheme,
   resolveTheme,
   systemPrefersLight,
+  firstRunSteps,
+  type FirstRunStep,
 } from "@clarkcant/conversation-client";
 
 /**
@@ -64,6 +66,14 @@ export function App(): ReactElement {
    * that answered would answer for every browser that ever connects to it.
    */
   const [onboarded, setOnboarded] = useState(() => window.localStorage.getItem("cc_onboarded") === "1");
+
+  /**
+   * What the node says it already has.
+   *
+   * Undefined until it answers, and the full walk is the fallback: asking is the recoverable failure, because a question
+   * skipped by mistake cannot be asked again, and the answer decides which steps are worth showing at all.
+   */
+  const [readiness, setReadiness] = useState<{ model: boolean; credentials: string[] } | undefined>(undefined);
 
   /**
    * Which of the first-run steps is showing, and the choices made so far.
@@ -132,6 +142,24 @@ export function App(): ReactElement {
   }, [onboarded, onboardStep]);
 
   useEffect(() => {
+    if (onboarded) return;
+    let cancelled = false;
+    void client
+      .readiness()
+      .then((answer) => {
+        if (!cancelled) setReadiness(answer);
+      })
+      .catch(() => {
+        // A node that cannot answer is treated as unanswered rather than as ready: the cost of asking unnecessarily is a
+        // skipped question, and the cost of not asking is a step nobody can complete.
+        if (!cancelled) setReadiness({ model: false, credentials: [] });
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [onboarded, client]);
+
+  useEffect(() => {
     if (onboarded || onboardStep !== "provider" || catalogue !== undefined) return;
     let cancelled = false;
     void client
@@ -163,6 +191,18 @@ export function App(): ReactElement {
       setOnboarded(true);
     };
     const pickedModels = catalogue?.find((provider) => provider.id === pickedProvider)?.models ?? [];
+    /*
+     * The steps worth showing, decided once from what the node reported. A node started from a filled-in environment
+     * needs nothing, so Get Started goes straight into the app rather than asking for a provider, a model and a key it
+     * already has - and asking anyway asks somebody to retype a key, which is how a real key ends up in a screenshot.
+     */
+    const steps = firstRunSteps(readiness ?? { model: false, credentials: [] });
+    /** Moves to whatever comes next in that list, or opens the app when nothing does. */
+    const advanceFrom = (current: FirstRunStep): void => {
+      const next = steps[steps.indexOf(current) + 1];
+      if (next === undefined) finish();
+      else setOnboardStep(next);
+    };
 
     return (
       <div
@@ -214,7 +254,7 @@ export function App(): ReactElement {
                       type="button"
                       className="cc-chip"
                       data-onboarding-start="true"
-                      onClick={() => setOnboardStep("provider")}
+                      onClick={() => advanceFrom("welcome")}
                     >
                       Get Started
                     </button>
@@ -242,7 +282,7 @@ export function App(): ReactElement {
                           type="button"
                           className="cc-chip"
                           data-onboarding-finish="true"
-                          onClick={() => setOnboardStep("key")}
+                          onClick={() => advanceFrom("provider")}
                         >
                           Tiếp tục
                         </button>
@@ -302,7 +342,7 @@ export function App(): ReactElement {
                         if (pickedProvider !== undefined && model !== undefined) {
                           window.localStorage.setItem("cc_model", `${pickedProvider}/${model}`);
                         }
-                        setOnboardStep("key");
+                        advanceFrom("model");
                       }}
                     >
                       Tiếp tục

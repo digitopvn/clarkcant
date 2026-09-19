@@ -554,6 +554,16 @@ export class GatewayClient {
   }
 
   /**
+   * What this node has already been told: whether it can run a model, and which credentials it already holds.
+   *
+   * Names only, never values. The first run reads this to skip questions the machine has already answered, and a client
+   * that asked for a value here would be asking for exactly the thing the asking exists to avoid.
+   */
+  readiness(): Promise<{ model: boolean; credentials: string[] }> {
+    return this.#call("GET", "/readiness");
+  }
+
+  /**
    * What pi loads on this machine.
    *
    * Names and kinds only: an extension can hold a credential, and a surface that reported more would be the place it

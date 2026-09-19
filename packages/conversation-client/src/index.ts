@@ -123,3 +123,4 @@ export function installStyles(theme: "dark" | "light" = "dark"): void {
   }
   document.documentElement.dataset.ccTheme = theme;
 }
+export { firstRunSteps, type FirstRunStep, type NodeReadiness } from "./first-run.ts";

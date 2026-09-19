@@ -93,26 +93,41 @@ test.describe("the first run", () => {
     await expect(page.locator("[data-onboarding='true'] h1")).toHaveText("ClarkCant");
     await expect(page.locator("[data-onboarding='true'] p")).toContainText("Clark Cant Can");
 
-    // Then the choices, in order, and then the key. All of it is walked here rather than assumed: this node may report
-    // no provider at all, in which case the honest branch is the one that explains that and lets the person carry on.
+    // A node whose environment already answers goes straight in. The provider, the model and the key were configured
+    // before the browser opened, and asking again would be asking somebody to retype a key this machine already holds.
+    await page.locator("[data-onboarding-start='true']").click();
+    await expect(page.locator("[data-onboarding='true']")).toHaveCount(0);
+
+    // And it stays gone: a screen somebody has dismissed is dismissed, not shown again on the next load.
+    await page.reload();
+    await expect(page.locator("[data-onboarding='true']")).toHaveCount(0);
+  });
+});
+
+test.describe("the first run on a node that has been told nothing", () => {
+  test.use({ storageState: { cookies: [], origins: [] } });
+
+  test("walks the steps it still needs, in order, and never echoes the key", async ({ page }) => {
+    // Answered here rather than by starting a second node: what an answer says is the thing under test, not where the
+    // answer came from, and this suite's node has a filled-in environment by design.
+    await page.route("**/readiness", (route) => route.fulfill({ json: { model: false, credentials: [] } }));
+    await page.goto(`/?token=${token()}&gateway=${encodeURIComponent(GATEWAY)}`);
+    await expect(page.locator("[data-onboarding='true']")).toBeVisible({ timeout: 20_000 });
+
     await page.locator("[data-onboarding-start='true']").click();
     await expect(page.locator("[data-onboarding-step='provider']")).toBeVisible();
 
-    // Wait for the step to settle before branching: the catalogue is read from the node, so a count taken the instant
-    // the step appears sees zero and would take the wrong branch. Reading it too early is what made this test fail
-    // once already, and the failure looked like the screen not rendering.
+    // Wait for the step to settle before branching: the catalogue is read from the node, so a count taken the instant the
+    // step appears sees zero and would take the wrong branch.
     await page.locator("[data-onboarding-provider], [data-onboarding-none='true']").first().waitFor({ timeout: 20_000 });
 
     const provider = page.locator("[data-onboarding-provider]").first();
     if ((await provider.count()) > 0) {
       await provider.click();
       await expect(page.locator("[data-onboarding-step='model']")).toBeVisible();
-      // A select rather than chips, because a provider can offer dozens of models: the first provider in this
-      // machine's catalogue offers more than a screenful, and chips that cannot be reached cannot be clicked.
       await page.locator("[data-onboarding-model-select]").selectOption({ index: 1 });
       await page.locator("[data-onboarding-continue='true']").click();
     } else {
-      // No provider on this node, and it says so in words rather than showing an empty list.
       await expect(page.locator("[data-onboarding-none='true']")).toBeVisible();
       await page.locator("[data-onboarding-finish='true']").click();
     }
@@ -122,19 +137,13 @@ test.describe("the first run", () => {
     const secret = "not-a-real-typesafe-key";
     await page.locator("[data-onboarding-key-input='true']").fill(secret);
     await expect(page.locator("[data-onboarding-key-input='true']")).toHaveValue(secret);
-    // Skipped rather than saved, and not because saving is untested: this suite shares one node, so a credential written
-    // here changes what a later spec sees. That is exactly how this test broke secret-input.spec.ts, whose node answered
-    // with one more credential name than it expected. The save path is covered there, through the same client method
-    // and the same route, so the coverage is kept and the side effect is not.
+    // Skipped rather than saved: this suite shares one node, so a credential written here changes what a later spec
+    // sees. The save path is covered by secret-input.spec.ts through the same client method and the same route.
     await page.locator("[data-onboarding-finish='true']").click();
 
     await expect(page.locator("[data-onboarding='true']")).toHaveCount(0);
     // The value must not appear anywhere on the page: a secret echoed into a surface is a secret in a screenshot.
     await expect(page.locator(`text=${secret}`)).toHaveCount(0);
-
-    // And it stays gone: a screen somebody has dismissed is dismissed, not shown again on the next load.
-    await page.reload();
-    await expect(page.locator("[data-onboarding='true']")).toHaveCount(0);
   });
 });
 
