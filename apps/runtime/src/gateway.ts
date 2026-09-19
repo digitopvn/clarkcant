@@ -22,6 +22,7 @@ import {
 } from "@clarkcant/contracts";
 import {
   claimLiveOwner,
+  cancelTask,
   decideApproval,
   getActionBinding,
   getInstance,
@@ -606,6 +607,30 @@ export async function handleRequest(deps: GatewayDeps, request: GatewayRequest):
       running: nodeBackgroundSessions.running(),
       sessions: nodeBackgroundSessions.list(),
     });
+  }
+
+  /*
+   * Ask a task to stop, and record the answer in the conversation.
+   *
+   * A stop that only lived in the response to this call would leave the transcript showing a task still going,
+   * so the node writes what it did. `confirmed` is the part a caller must not round up: with an executor still
+   * running the task holds `cancel_requested` until that executor says what happened.
+   */
+  if (segments.length === 3 && segments[0] === "tasks" && segments[2] === "cancel" && request.method === "POST") {
+    const taskId = decodeURIComponent(segments[1] ?? "");
+    const outcome = cancelTask(
+      { db: runtime.db, nodeId: runtime.identity.nodeId, now: nowInstant, newId: services.conductor.newId },
+      taskId,
+    );
+    if (!outcome.ok) return fail(409, outcome.code, outcome.message, { taskId });
+    appendHostReply(services, {
+      conversationId: outcome.task.conversationId,
+      at: nowInstant(),
+      text: outcome.confirmed
+        ? `Đã dừng task ${taskId}. Không có việc nào đang chạy nên không còn gì đang chờ.`
+        : `Đã ghi nhận yêu cầu dừng task ${taskId}. Việc đang chạy vẫn có thể đang hoàn tất, nên task chưa được coi là đã dừng cho tới khi nơi chạy xác nhận.`,
+    });
+    return json(200, { taskId: outcome.task.taskId, state: outcome.task.state, confirmed: outcome.confirmed });
   }
 
   if (request.method === "POST" && request.path === "/command") {
