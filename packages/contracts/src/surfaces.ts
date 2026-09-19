@@ -474,6 +474,40 @@ export const reconnectCardSchema = z.strictObject({
   reason: z.string().min(1).max(2000).optional(),
 });
 
+
+/**
+ * A question the agent is asking, with the answers it will accept.
+ *
+ * Host-owned, like the other cards a model may propose but not mint for itself: the block is the host's record
+ * of what was asked, and a widget cannot produce one to put words in the agent's mouth.
+ *
+ * The chosen answer does not travel through this block. It becomes the user's own next message — the same thing
+ * a typed reply is — which is why the block carries no answer field: the transcript is history, and an answer
+ * written back into it would be the host editing what the user said.
+ *
+ * Bounded to six options because a list is not a question: past that the agent should be asking something
+ * narrower, and a wall of buttons is a form.
+ */
+export const questionCardSchema = z.strictObject({
+  type: z.literal("question-card"),
+  owner: z.literal("host"),
+  /** Unique for as long as the transcript that carries it, which is what the answerability rule keys on. */
+  questionId: z.string().min(1).max(128),
+  question: z.string().min(1).max(500),
+  options: z
+    .array(
+      z.strictObject({
+        id: z.string().min(1).max(64),
+        /** What the user sees, and what is sent as their reply. */
+        label: z.string().min(1).max(200),
+        detail: z.string().min(1).max(300).optional(),
+      }),
+    )
+    .min(2)
+    .max(6),
+});
+export type QuestionCard = z.infer<typeof questionCardSchema>;
+
 /**
  * A file a person attached, as it appears in the timeline.
  *
@@ -509,6 +543,7 @@ export const messageBlockSchema = z.discriminatedUnion("type", [
   codeDiffCardSchema,
   projectPickerCardSchema,
   reconnectCardSchema,
+  questionCardSchema,
 ]);
 export type MessageBlock = z.infer<typeof messageBlockSchema>;
 

@@ -1117,6 +1117,30 @@ export function Conversation({
     [client],
   );
 
+  /**
+   * Questions that may still be answered.
+   *
+   * A question is open exactly while nothing has come after the message that asked it. Derived from the
+   * transcript rather than tracked as state, because the messages are history and are never rewritten: a card
+   * that stayed answerable after a reply would invite a second answer the node would take as a second message.
+   */
+  const openQuestionIds = useMemo(() => {
+    const messages = timeline?.messages ?? [];
+    let lastUserIndex = -1;
+    messages.forEach((message, index) => {
+      if (message.role === "user") lastUserIndex = index;
+    });
+    const open: string[] = [];
+    messages.forEach((message, index) => {
+      if (index <= lastUserIndex) return;
+      for (const block of message.blocks) {
+        const record = block as Record<string, unknown>;
+        if (record.type === "question-card" && typeof record.questionId === "string") open.push(record.questionId);
+      }
+    });
+    return open;
+  }, [timeline]);
+
   const blockActions: BlockActions = useMemo(
     () => ({
       onApprovalDecide: decideApproval,
@@ -1124,8 +1148,14 @@ export function Conversation({
       ...(decidingApprovalId === undefined ? {} : { decidingApprovalId }),
       onCredentialSubmit: submitCredential,
       ...(credentialStatus === undefined ? {} : { credentialStatus }),
+      /*
+       * A chosen answer is sent as the user's own message — the same call the composer makes — so a click and a
+       * typed reply are one act. Nothing here invents a second route into the agent for a click to take.
+       */
+      onQuestionAnswer: ({ answer }) => void send(answer),
+      openQuestionIds,
     }),
-    [credentialStatus, decideApproval, decidedApprovals, decidingApprovalId, submitCredential],
+    [credentialStatus, decideApproval, decidedApprovals, decidingApprovalId, openQuestionIds, send, submitCredential],
   );
 
   const renderSurface = useCallback(

@@ -303,6 +303,22 @@ export interface BlockActions {
    * here instead of inviting a second press that the node would refuse.
    */
   decidedApprovals?: readonly string[];
+  /**
+   * The answer to a question the agent asked, on its way back as the user's own message.
+   *
+   * Not a new action route. The answer travels the path a typed reply takes — the same `send` the composer
+   * calls — which is what makes a click, a keystroke and a spoken answer the same thing rather than three
+   * implementations that have to be kept in step.
+   */
+  onQuestionAnswer?: (input: { questionId: string; answer: string }) => void;
+  /**
+   * Questions that may still be answered.
+   *
+   * Computed from the transcript rather than kept as state: a question is open exactly while the conversation
+   * has not moved past it, and the messages are history that never gets rewritten. Without this a card would
+   * stay answerable forever, inviting a second answer to a question the node already received one for.
+   */
+  openQuestionIds?: readonly string[];
 }
 
 /**
@@ -894,6 +910,7 @@ export const HOST_OWNED_BLOCK_TYPES = [
   "code-diff-card",
   "project-picker-card",
   "reconnect-card",
+  "question-card",
 ] as const;
 
 /**
@@ -1045,6 +1062,8 @@ export function renderBlock(
       return <CodeDiffCardBlock key={index} block={block} />;
     case "project-picker-card":
       return <ProjectPickerCardBlock key={index} block={block} />;
+    case "question-card":
+      return <QuestionCardBlock key={index} block={block} {...(actions === undefined ? {} : { actions })} />;
     case "reconnect-card":
       return <ReconnectCardBlock key={index} block={block} />;
     case "surface": {
@@ -1075,4 +1094,86 @@ export function renderBlock(
       // client does not understand must not reach the DOM.
       return null;
   }
+}
+
+/**
+ * A question the agent is asking, with the answers it will accept.
+ *
+ * The primitive the plan singles out, and the reason is structural rather than cosmetic. An agent that needs a
+ * decision otherwise writes a paragraph and then guesses which sentence answered it — or asks again. Here the
+ * answers are a list the agent itself named, and the chosen one travels back **as the user's own message**: the
+ * same `send` the composer calls, so a click, a keystroke and a spoken answer are the same act rather than three
+ * implementations to keep in step.
+ *
+ * Read-only once the conversation has moved past it. The transcript is immutable, so a card that stayed
+ * answerable would invite a second answer to a question the node already received one for — and the node would
+ * take it as a second message, which is a duplicate the user never intended to send.
+ *
+ * The options are always rendered as text, which is what makes this card's text alternative the same thing as
+ * its control: a snapshot, a screen reader and an answered card all read the same list.
+ */
+export function QuestionCardBlock({
+  block,
+  actions,
+}: {
+  block: Record<string, unknown>;
+  actions?: BlockActions;
+}): ReactElement | null {
+  if (block.owner !== "host") return null;
+
+  const questionId = typeof block.questionId === "string" ? block.questionId : "";
+  const question = typeof block.question === "string" ? block.question : "";
+  const raw = Array.isArray(block.options) ? (block.options as Record<string, unknown>[]) : [];
+  const options = raw
+    .filter((entry) => typeof entry.id === "string" && typeof entry.label === "string")
+    .map((entry) => ({
+      id: entry.id as string,
+      label: entry.label as string,
+      ...(typeof entry.detail === "string" ? { detail: entry.detail } : {}),
+    }));
+
+  const answerable =
+    questionId !== "" &&
+    actions?.onQuestionAnswer !== undefined &&
+    actions.openQuestionIds?.includes(questionId) === true;
+
+  return (
+    <section
+      className="cc-card"
+      data-host-card="question"
+      data-owner="host"
+      data-question-id={questionId}
+      data-answerable={answerable ? "true" : "false"}
+      aria-label={question}
+    >
+      <div className="cc-card-title">{question}</div>
+      <ul className="cc-question-options" data-question-options={options.length}>
+        {options.map((option) => (
+          <li key={option.id}>
+            {answerable ? (
+              <button
+                type="button"
+                className="cc-chip"
+                data-question-answer={option.id}
+                onClick={() => actions?.onQuestionAnswer?.({ questionId, answer: option.label })}
+              >
+                {option.label}
+              </button>
+            ) : (
+              <span className="cc-chip" data-question-option={option.id}>
+                {option.label}
+              </span>
+            )}
+            {option.detail === undefined ? null : <span className="cc-freshness"> {option.detail}</span>}
+          </li>
+        ))}
+      </ul>
+      {answerable ? null : (
+        // Says why the buttons are gone rather than leaving a reader to wonder whether the card broke.
+        <p className="cc-freshness" data-question-closed="true">
+          Hội thoại đã đi tiếp, nên câu hỏi này không còn nhận câu trả lời.
+        </p>
+      )}
+    </section>
+  );
 }
