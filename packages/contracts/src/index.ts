@@ -28,3 +28,4 @@ export * from "./attachments.ts";
 export * from "./surfaces.ts";
 export * from "./execution.ts";
 export * from "./interactions.ts";
+export * from "./models.ts";

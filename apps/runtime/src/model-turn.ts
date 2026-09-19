@@ -15,7 +15,7 @@
  * approval, evidence and budgets live, and a conversation turn has none of them.
  */
 
-import { type AttachmentRef, type Instant, type MessageBlock, type Principal } from "@clarkcant/contracts";
+import { type AttachmentRef, type Instant, type MessageBlock, type Principal, modelChangeNeedsGeneration } from "@clarkcant/contracts";
 
 import {
   RealPiAdapter,
@@ -28,6 +28,7 @@ import {
   type PiSetting,
   type PiAdapter,
   type ToolDefinition,
+  type WorkerBrief,
   type WorkerEvent,
 } from "@clarkcant/pi-adapter";
 
@@ -506,6 +507,14 @@ export async function createModelTurn(options: {
     });
   const availability = await adapter.availability();
   const turns = new Map<string, Turn>();
+  /**
+   * Which model each conversation's current generation runs.
+   *
+   * Kept beside the sessions rather than on the turn, because it is the one fact that outlives a session: a model
+   * change creates a successor, and the comparison that decides whether a change is needed is between what the
+   * conversation is running and what the person has asked for.
+   */
+  const generationModels = new Map<string, string>();
 
   const describe = (): string => `${selection.provider}/${selection.id}`;
 
@@ -580,7 +589,21 @@ export async function createModelTurn(options: {
 
   async function turnFor(conversationId: string, principal: Principal): Promise<Turn> {
     const existing = turns.get(conversationId);
-    if (existing !== undefined) return existing;
+    const preferred = options.model?.();
+    const preferredModel = preferred === undefined ? undefined : `${preferred.provider}/${preferred.id}`;
+
+    /*
+     * The fast path, and the only one that may return a session untouched.
+     *
+     * A model change is answered below rather than here, because it needs the brief and the listener that a session
+     * is created with — and those are built after this line so a cached turn costs nothing to reuse.
+     */
+    if (
+      existing !== undefined &&
+      modelChangeNeedsGeneration({ currentModel: generationModels.get(conversationId), preferredModel }) === "none"
+    ) {
+      return existing;
+    }
 
     const views = readViews();
     const viewById = new Map(views.map((entry) => [entry.id, entry]));
@@ -612,7 +635,13 @@ export async function createModelTurn(options: {
 
     const chosen = options.model?.();
 
-    const handle = await adapter.createWorkerSession({
+    /**
+     * The brief this conversation's session is created with — and re-created with after a model change.
+     *
+     * One function rather than two literals, because a successor session created by a handoff with a different
+     * brief would be a generation with different tools, and the model would find out mid-conversation.
+     */
+    const briefFor = (model: { provider: string; id: string } | undefined): WorkerBrief => ({
       // The brief is per conversation rather than per message, so the model keeps the thread
       // it is already in instead of meeting the user again on every turn.
       goal: "Answer the user in this conversation.",
@@ -620,7 +649,7 @@ export async function createModelTurn(options: {
       allowedCapabilityRefs: [],
       // Resolved here rather than when the turn was built: this is the moment a model can actually be chosen for a
       // session, and it is also the moment `services` exists to say what was chosen.
-      ...(chosen === undefined ? {} : { model: chosen }),
+      ...(model === undefined ? {} : { model }),
       ...(customTools.length === 0 ? {} : { customTools }),
       // Carried on the brief as well as held here, because the adapter enforces it at the
       // turn boundary and that is where a runaway turn is actually stopped.
@@ -628,24 +657,53 @@ export async function createModelTurn(options: {
       maxTokens: budget.maxTokens,
     });
 
+    /**
+     * The one listener, so a session created by a handoff is watched exactly like the first one.
+     *
+     * A successor that nothing subscribed to would stream into nowhere: the swap would look successful and the
+     * conversation would go quiet, which is the failure this function exists to make impossible.
+     */
+    const listen = (target: Turn, sessionId: string): (() => void) =>
+      adapter.subscribe(sessionId, (event) => {
+        if (isTextDelta(event)) {
+          // Both, and in this order: the buffer is what the stored message is built from, and the
+          // callback is what the reader sees now. Dropping the buffer to stream would lose the text a
+          // caller that is not watching never receives.
+          // Reasoning already in hand is closed first, so the two never interleave inside one block.
+          flushReasoning(target);
+          target.pending.push(event.delta);
+          target.onEvent?.({ type: "text-delta", text: event.delta });
+          return;
+        }
+        if (event.type === "thinking-delta") {
+          flushText(target);
+          target.reasoning.push(event.delta);
+          target.onEvent?.({ type: "reasoning-delta", text: event.delta });
+        }
+      });
+
+    /*
+     * A model change becomes a new generation, at the turn boundary.
+     *
+     * Pi resolves the model when a session is created, so it cannot be applied to the session underneath a running
+     * turn — and this function is only reached when a turn is starting, which is the boundary the design names.
+     * Nothing is mutated in place: the adapter creates a successor and keeps the previous session subscribed until
+     * the swap is finished, which is what makes a change mid-conversation safe to observe.
+     */
+    if (existing !== undefined) {
+      const successor = await adapter.handoff(existing.sessionId, briefFor(preferred));
+      existing.unsubscribe();
+      existing.sessionId = successor.successor.sessionId;
+      existing.unsubscribe = listen(existing, existing.sessionId);
+      generationModels.set(conversationId, preferredModel ?? "");
+      return existing;
+    }
+
+    const handle = await adapter.createWorkerSession(briefFor(chosen));
+
     turn.sessionId = handle.sessionId;
-    turn.unsubscribe = adapter.subscribe(handle.sessionId, (event) => {
-      if (isTextDelta(event)) {
-        // Both, and in this order: the buffer is what the stored message is built from, and the
-        // callback is what the reader sees now. Dropping the buffer to stream would lose the text a
-        // caller that is not watching never receives.
-        // Reasoning already in hand is closed first, so the two never interleave inside one block.
-        flushReasoning(turn);
-        turn.pending.push(event.delta);
-        turn.onEvent?.({ type: "text-delta", text: event.delta });
-        return;
-      }
-      if (event.type === "thinking-delta") {
-        flushText(turn);
-        turn.reasoning.push(event.delta);
-        turn.onEvent?.({ type: "reasoning-delta", text: event.delta });
-      }
-    });
+    turn.unsubscribe = listen(turn, handle.sessionId);
+    generationModels.set(conversationId, preferredModel ?? "");
 
     turns.set(conversationId, turn);
     return turn;

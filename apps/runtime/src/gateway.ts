@@ -52,6 +52,7 @@ import {
 } from "@clarkcant/storage";
 import { credentialNames, putCredential, putSecretMetadata, secretKindOr } from "@clarkcant/storage";
 import { DEFAULT_NARROWING, readAutonomySettings, saveAutonomySettings } from "./autonomy-settings.ts";
+import { cycleModelPool, readCurrentAlias, readModelPool, writeModelPool } from "./model-registry.ts";
 import type { InteractionDeps } from "./interactions.ts";
 import { answerQuestion, cancelQuestion } from "./interactions.ts";
 
@@ -310,12 +311,6 @@ export async function handleRequest(deps: GatewayDeps, request: GatewayRequest):
   }
 
   if (request.method === "GET" && request.path === "/capabilities") {
-    return json(200, {
-      // Summaries only: dumping every tool schema into every turn is both expensive and a
-      // prompt-injection surface, so a schema is loaded once a capability is chosen.
-      capabilities: listCapabilitySummaries({ db: runtime.db, nodeId: runtime.identity.nodeId }),
-    });
-  }
 
   // /datasets/:id
   if (segments[0] === "datasets" && segments.length === 2 && request.method === "GET") {
