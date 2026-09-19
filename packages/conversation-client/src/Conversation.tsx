@@ -18,6 +18,7 @@ import {
 } from "./theme.ts";
 import type { ThemeName } from "@clarkcant/design-tokens";
 import { AgentAvatar } from "./AgentAvatar.tsx";
+import { DesktopChrome } from "./desktop-chrome.tsx";
 import { ReasoningBlock, ToolActivityBlock, type BlockActions } from "./blocks.tsx";
 import { composerTextareaHeight } from "./composer-height.ts";
 import {
@@ -1532,6 +1533,12 @@ export function Conversation({
         </div>
       </div>
       </div>
+
+      {/*
+        The window's own chrome, when there is a window to be dragged and resized. It renders nothing in a
+        browser, so this is one line rather than a branch around the whole conversation.
+      */}
+      <DesktopChrome />
 
       {/*
         The one orb. It is not two elements that swap places with a transition between them: it is a
