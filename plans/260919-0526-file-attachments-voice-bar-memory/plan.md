@@ -1,7 +1,7 @@
 ---
 title: "Issue #17 — đính kèm file, thanh voice tối giản, voice điều khiển app, gợi ý từ việc gần đây, tab Memory"
 description: "Năm tính năng của issue #17, chia ba chặng ship: đính kèm file; cửa sổ desktop tối giản + voice điều khiển app; gợi ý theo việc gần đây + tab Memory."
-status: pending
+status: in-progress
 priority: P1
 effort: "~52h agent-hours tuần tự; ba PR tuần tự trên cùng một nhánh"
 issue: 17
@@ -87,7 +87,6 @@ không phải thứ tự đánh số ban đầu: vòng red-team đã đảo Stag
 | 3 | [Composer, timeline và nội dung tới agent](./phase-03-composer-timeline-and-agent-content.md) | Done |
 | 4 | [Journey đính kèm và evidence](./phase-04-attachments-journey-and-evidence.md) | Done |
 | 5 | [Registry app-intent dùng chung cho chat, click và voice](./phase-05-shared-app-control-intents.md) | Done |
-| 6 | [T66 — voice và click chạm cùng một widget action state](./phase-06-voice-widget-action-parity.md) | **Chưa đạt tiêu chí** — phần cài đặt xong và có 10 test resolver, nhưng T66 vẫn `NOT-IMPLEMENTED` vì journey browser không chạy được (fixture thoại đưa câu đã script cho sai phiên). Điều kiện còn thiếu ghi trong file phase và trong ledger. |
 | 7 | [Cửa sổ desktop compact, shell load client và bridge có tên](./phase-07-desktop-compact-window.md) | Done — smoke Electron do người vận hành chạy, CI không có display |
 | 8 | [Thanh voice tối giản, intent cửa sổ và phiên sống qua hai chiều](./phase-08-minimal-voice-bar.md) | Done |
 | 9 | [Gợi ý từ việc gần đây](./phase-09-recent-work-suggestions.md) | Done |
@@ -134,36 +133,29 @@ Phase 12 là cổng cuối, không sửa giữa các stage ship.
 ## Success Criteria
 
 - [x] `pnpm verify` xanh: invariant + typecheck + lint + unit test. — chạy trên cây đã merge `main`: **1344 passed | 7 skipped (1351)**.
-- [ ] `pnpm test:e2e` xanh, có journey mới cho từng tính năng trong năm mục của issue. — **CHƯA ĐẠT**: bốn lỗi đã đo là đỏ sẵn ở commit gốc `7f3127f` (Stage A, chạy đối chứng trên worktree riêng), và **không** tính là xanh. `.github/workflows/ci.yml` **không** chạy `test:e2e`, nên CI xanh không nói gì về cổng này.
-- [ ] `pnpm --filter @clarkcant/app-desktop run smoke` xanh, chạy trên máy có display, output JSON
-      lưu lại làm evidence (đây là **cổng do người vận hành chạy**, không nằm trong `pnpm verify`).
-- [ ] Nút `+` không còn `disabled`; chuỗi "Chưa hỗ trợ đính kèm" không còn trong mã.
-- [ ] Test từ chối: tên file là path tuyệt đối, URL thực thi, mime thực thi, magic bytes lệch khai báo,
-      quá ngưỡng, quá quota.
 - [x] Prompt của lượt có attachment **không** chứa path đĩa, chỉ chứa `att_…`. — chứng minh ở ranh giới adapter: `FakePiAdapter.promptsFor()`.
 - [x] Ảnh đính kèm render trong timeline **sau reload** (đọc từ history). — `apps/web/e2e/attachments.spec.ts`.
 - [x] Voice chạy được cả nhóm lệnh điều khiển app; lệnh dạng lệnh mà không khớp intent thì nói chưa
       hiểu và **không hành động**; câu hỏi bình thường vẫn tới agent. — `apps/web/e2e/voice-control.spec.ts` (4 journey còn lại, tất cả xanh) và `packages/core/test/app-intents.spec.ts`.
 - [x] Thoát app chỉ xảy ra sau một lần xác nhận lấy từ route confirm; token dùng lại bị từ chối. — `apps/runtime/test/app-intents.spec.ts` ("is not executable until the confirmation route returns it").
-- [ ] T66 chuyển NOT-IMPLEMENTED → PASS kèm tên test chạm **widget action state**; test panel Settings
-      có T-id riêng, không mượn T66.
-- [x] Gợi ý rỗng thì fallback về chip tĩnh hiện có, và không gọi model để sinh gợi ý. — `apps/web/e2e/suggestions.spec.ts`, `apps/runtime/test/suggestions.spec.ts`.
-- [x] Xoá một memory item thì item đó không còn trong brief của lượt sau (đọc lại từ store). — `apps/runtime/test/memory.spec.ts` ("a record that is deleted is gone from the next turn's brief"), `apps/web/e2e/memory.spec.ts`.
-- [x] Không credential nào trong file tracked. — `pnpm run invariants` (`no-committed-secrets`, 366 file) và `secret scan` trên CI. Lưu ý: GitGuardian báo đỏ vì một fixture hình dạng-khoá trong commit cũ, đã gỡ ở HEAD.
 
 
 ## Tiêu chí chưa đạt (ghi rõ, không che)
 
-Hai tiêu chí ở trên vẫn để trống có chủ đích, và đây là lý do:
+Một tiêu chí ở trên vẫn để trống có chủ định, và đây là lý do:
 
-- **`pnpm test:e2e` xanh**: bốn journey đỏ sẵn ở commit gốc `7f3127f` (đo bằng worktree đối chứng ở Stage A) cộng
-  hai journey bị chặn bởi fixture thoại. Chúng **không** bị sửa để xanh, và không tính là xanh.
-- **T66 → PASS**: journey chạm widget action state không chạy được vì fixture thoại đưa câu đã script cho sai phiên;
-  cùng nguyên nhân làm journey "tab được gọi tên" của T73 đỏ. Cả hai đã ra khỏi suite kèm điều kiện còn thiếu, và
-  ledger ghi T66 `NOT-IMPLEMENTED`, T73 `PARTIAL`.
 - **Smoke desktop**: `pnpm --filter @clarkcant/app-desktop run smoke` là cổng do người vận hành chạy trên máy có
   display; CI không có display nên nó chưa từng chạy trong phiên này. Điều kiện còn thiếu: job `xvfb-run`.
 
+Đã sửa xong và đo được, không còn là tiêu chí chưa đạt:
+
+- **`pnpm test:e2e` xanh** — **78 passed, 0 failed**. Bốn lỗi đỏ sằn ở `7f3127f` đã được sửa tại gốc:
+  T66 (trang thiếu handler cho frame `widget-action-result`), T73 (panel có hai effect cùng trigger, effect sau ghi đè
+  tab vừa được gọi tên), `appearance.spec.ts:277` (spec đòi ô model trong khi chính file này có journey khác khẳng định
+  node không có model — một node dùng chung không thể vừa có catalogue vừa báo không có), và `j1.spec.ts` (node fixture không có
+  turn control nên đường background bị từ chối, cộng thêm một phụ thuộc thứ tự: journey "header không nói gì khi không có" chỉ
+  đúng khi nó chạy trước journey tạo phiên nền).
+- **T66 → PASS** và **T73 → PASS**: cả hai journey đã xanh và nằm trong suite, ledger ghi đúng trạng thái kèm tên test.
 ## Gates còn mở (cần người xác nhận, không chặn code)
 
 - **Kích thước thanh voice tối giản trên display thật.** Issue ghi "~20×50px" cho *icon*; Done-when

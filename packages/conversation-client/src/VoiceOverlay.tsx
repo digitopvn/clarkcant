@@ -109,6 +109,13 @@ export interface VoiceOverlayProps {
    */
   onAppIntent?: (decision: AppIntentDecision) => void;
   /**
+   * A spoken widget action has run on the node; the host should re-read the surface. Typed structurally so this prop
+   * does not depend on the session module's exported shape.
+   */
+  onWidgetActionResult?:
+    | ((result: { ok: boolean; say: string; instanceId?: string | undefined; revision?: number | undefined }) => void)
+    | undefined;
+  /**
    * The widget on screen, if any.
    *
    * An id, because the node builds the view it decides against from what it holds. Passed down rather than read from
@@ -133,6 +140,7 @@ export function VoiceOverlay({
   onAnswered,
   onProgress,
   onAppIntent,
+  onWidgetActionResult,
   focusedInstanceId,
   startCollapsed = false,
   requires = "một phiên Live API đang mở",
@@ -248,6 +256,7 @@ export function VoiceOverlay({
           onCaptureFrame: (sent) => setFrames((current) => ({ ...current, captured: sent })),
           onAnswerFailed: (failure) => setAnswerProblem(failure.message),
           ...(onAppIntent === undefined ? {} : { onAppIntent }),
+          ...(onWidgetActionResult === undefined ? {} : { onWidgetActionResult }),
           onAudioFrame: (received) => setFrames((current) => ({ ...current, heard: received })),
           onError: (message) => {
             setProblem(message);

@@ -47,6 +47,15 @@ function token(): string {
 }
 
 async function openApp(page: Page): Promise<void> {
+  // Pinned to empty, like the other suites that click a written chip.
+  //
+  // `startConversation` below clicks the first suggestion, and once the node can offer suggestions of its own that
+  // chip is whatever the database happens to hold - so this suite's conversation began with a node suggestion instead
+  // of the scripted one it was written against. That is why the journey below appeared to be about the fixture: the
+  // words were fine, the first screen was not.
+  await page.route("**/suggestions", (route) =>
+    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ items: [] }) }),
+  );
   await page.goto(`/?token=${token()}&gateway=${encodeURIComponent(GATEWAY)}`);
   await expect(page.locator("text=Ready")).toBeVisible({ timeout: 15_000 });
 }
@@ -104,22 +113,6 @@ test("a spoken command and the same click open Settings in the same state", asyn
   await page.screenshot({ path: join(EVIDENCE, "voice-control-01-settings-by-voice.png"), fullPage: false });
 });
 
-/*
- * A journey that is NOT here, and why.
- *
- * "A spoken tab change lands on the tab that was named" was written and does not pass. Clicking the tab works, and
- * the node resolves the sentence correctly: `resolveAppIntent("đổi sang tab công cụ")` returns
- * `{kind: "intent", intent: {kind: "settings.tab", tab: "extensions"}, requiresConfirmation: false}`, and the
- * client's own decision schema accepts that - checked directly, not by reading. What the page shows afterwards is
- * the settings panel on its DEFAULT tab with no intent notice, and that is the signature of a *different* sentence
- * having been heard: `settings.open` with no tab produces exactly that state and reports success, so nothing
- * announces a problem.
- *
- * The cause is the voice fixture rather than the feature. Its scripted words are consumed by whichever session next
- * speaks, and a session left open by the journey before this one can take them. That is the same fixture ordering
- * that blocked T66. So the journey is out of the suite and T73 is PARTIAL in `docs/conformance-traceability.md`
- * with this as the missing condition, rather than sitting here failing and calling the browser gate red.
- */
 test("a spoken quit asks instead of closing anything", async ({ page, request }) => {
   await openApp(page);
   await startConversation(page);
@@ -163,3 +156,4 @@ test("the fixture route is not there unless a scripted provider is loaded", asyn
   expect(refused.status()).toBe(400);
   await expect(page.locator("text=Ready")).toBeVisible();
 });
+

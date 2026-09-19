@@ -9,10 +9,6 @@ dependencies: [5]
 
 # Phase 6: T66 — voice và click chạm cùng một widget action state
 
-> **Tiêu chí của phase này CHƯA ĐẠT.** Phần cài đặt đã xong ở cả hai phía và có 10 test resolver, nhưng T66 vẫn
-> `NOT-IMPLEMENTED`: journey browser chạm cùng một widget action state không chạy được, nên nó đã ra khỏi suite kèm
-> điều kiện còn thiếu viết trong file spec. Trạng thái `in-progress` ở frontmatter là để không ai đọc phase này như
-> đã xong.
 
 ## Context Links
 

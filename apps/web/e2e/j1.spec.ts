@@ -217,6 +217,20 @@ test("a highlighted passage can be attached to the next prompt", async ({ page }
   await expect(page.locator("[data-selection-menu='true']")).toHaveCount(0);
 });
 
+/*
+ * Ordered before the journey below on purpose, and the order is the point.
+ *
+ * Both journeys run against one shared node, so this one's premise - that nothing has asked for background work -
+ * only holds while it runs first. With the order reversed it fails because the journey below has just started a
+ * session, which is not a bug in either journey but a dependency between them.
+ */
+test("the header says nothing about background work when there is none", async ({ page }) => {
+  // The empty case, asserted rather than assumed: a mark that showed "0" would be a permanent line of noise, and the
+  // count only matters when it is not zero.
+  await openApp(page);
+  await expect(page.locator("[data-background-sessions]")).toHaveCount(0);
+});
+
 test("a selected passage can be sent to a background session", async ({ page }) => {
   await openApp(page);
   await page.locator("[data-composer]").click();
@@ -240,11 +254,3 @@ test("a selected passage can be sent to a background session", async ({ page }) 
   // number is verifiable in a browser - the registry fills when something asks for background work, not on its own.
   await expect(page.locator("[data-background-count='true']")).toBeVisible({ timeout: 20_000 });
 });
-
-test("the header says nothing about background work when there is none", async ({ page }) => {
-  // The empty case, asserted rather than assumed: a mark that showed "0" would be a permanent line of noise, and the
-  // count only matters when it is not zero.
-  await openApp(page);
-  await expect(page.locator("[data-background-sessions]")).toHaveCount(0);
-});
-

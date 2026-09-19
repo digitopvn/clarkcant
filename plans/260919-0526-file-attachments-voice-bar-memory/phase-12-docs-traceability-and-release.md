@@ -1,7 +1,7 @@
 ---
 phase: 12
 title: "Docs, traceability, evidence và release validation"
-status: done
+status: in-progress
 priority: P1
 effort: "4h"
 dependencies: [4, 6, 8, 11]
