@@ -255,6 +255,13 @@ export async function runGuardedCommand(input: {
   reason?: string;
   /** The model's own one-liner for why this is being run. */
   why?: string;
+  /**
+   * The environment this one command runs with, when a secret was injected for it.
+   *
+   * Passed in rather than built here: the broker is what knows which secret a command may use and under which
+   * consumer, and a command runner that resolved secrets itself would be a second place that could read one.
+   */
+  env?: Record<string, string>;
   now?: () => Instant;
   /** Injected so the whole path can be tested without spawning anything. */
   run?: (request: {
@@ -262,6 +269,8 @@ export async function runGuardedCommand(input: {
     cwd: string;
     timeoutMs: number;
     maxOutputBytes: number;
+    /** The environment for this one child process, when a secret was injected for it. */
+    env?: Record<string, string>;
   }) => Promise<CommandOutcome>;
 }): Promise<{ blocks: MessageBlock[]; outcome: CommandOutcome; description: string; receipt: string }> {
   const at = input.now ?? (() => new Date().toISOString() as Instant);
@@ -273,9 +282,21 @@ export async function runGuardedCommand(input: {
     ((request) =>
       runCommand(
         { command: request.command, cwd: request.cwd },
-        { timeoutMs: request.timeoutMs, maxOutputBytes: request.maxOutputBytes },
+        {
+          timeoutMs: request.timeoutMs,
+          maxOutputBytes: request.maxOutputBytes,
+          // The environment is passed whole, so an injected variable exists for this child process and nowhere else:
+          // not in the parent, not in a file, and not in anything this module returns.
+          ...(request.env === undefined ? {} : { env: { ...process.env, ...request.env } }),
+        },
       ))
-  )({ command, cwd, timeoutMs: input.envelope.budget.timeoutMs, maxOutputBytes: input.envelope.budget.maxOutputBytes });
+  )({
+    command,
+    cwd,
+    timeoutMs: input.envelope.budget.timeoutMs,
+    maxOutputBytes: input.envelope.budget.maxOutputBytes,
+    ...(input.env === undefined ? {} : { env: input.env }),
+  });
 
   const description = describeCommandOutcome(command, outcome);
   const succeeded = outcome.exitCode === 0 && !outcome.timedOut;

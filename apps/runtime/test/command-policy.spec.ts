@@ -6,10 +6,12 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { type AutonomySettings, DEFAULT_AUTONOMY_SETTINGS, type Instant, type MessageBlock } from "@clarkcant/contracts";
 import type { CoordinationDeps } from "@clarkcant/core";
-import { migrate, openDatabase, type Database } from "@clarkcant/storage";
+import { migrate, openDatabase, nodeStoreSecretBackend, putSecretMetadata, type Database } from "@clarkcant/storage";
 
 import type { CommandOutcome } from "../src/run-command.ts";
 import type { InteractionDeps } from "../src/interactions.ts";
+import type { SecretBroker } from "../src/secret-broker.ts";
+import { createSecretBroker } from "../src/secret-broker.ts";
 import type { OperationGuardOutcome } from "../src/jev-decider.ts";
 import { createRunCommandTool, policyForEffect } from "../src/node-tools.ts";
 import { ownedResources } from "../src/preflight.ts";
@@ -44,16 +46,17 @@ function makeTool(options: {
   guard?: OperationGuardOutcome | ((input: unknown) => Promise<OperationGuardOutcome>);
   approvals?: () => CoordinationDeps;
   interactions?: InteractionDeps;
+  broker?: SecretBroker;
   resolveFolder?: (intent: string) => Promise<
     | { status: "resolved"; cwd: string; relPath: string }
     | { status: "ask"; message: string; options: readonly string[] }
   >;
 } = {}): {
   tool: ReturnType<typeof createRunCommandTool>;
-  runs: { command: string; cwd: string; timeoutMs: number; maxOutputBytes: number }[];
+  runs: { command: string; cwd: string; timeoutMs: number; maxOutputBytes: number; env?: Record<string, string> }[];
   guardCalls: () => number;
 } {
-  const runs: { command: string; cwd: string; timeoutMs: number; maxOutputBytes: number }[] = [];
+  const runs: { command: string; cwd: string; timeoutMs: number; maxOutputBytes: number; env?: Record<string, string> }[] = [];
   let guardCalls = 0;
   const settings: AutonomySettings = { ...DEFAULT_AUTONOMY_SETTINGS, ...options.settings };
 
@@ -69,6 +72,7 @@ function makeTool(options: {
     },
     narrowing: [{ id: "timeout-30s", description: "chạy tối đa 30 giây", constraint: { kind: "timeout-ms", value: 30_000 } }],
     newId: () => "run_test_1",
+    ...(options.broker === undefined ? {} : { broker: options.broker }),
     ...(options.interactions === undefined ? {} : { interactions: options.interactions }),
     ...(options.resolveFolder === undefined ? {} : { resolveFolder: options.resolveFolder }),
     run: async (request) => {
@@ -236,6 +240,64 @@ describe("a folder the finder cannot choose between", () => {
     const answer = await tool.execute({ command: "pnpm test", where: "dự án agentkit" });
     expect(answer.hostBlocks).toBeUndefined();
     expect(answer.text).toContain("Hãy chọn một thư mục");
+  });
+});
+
+describe("a secret injected for one command", () => {
+  const SECRET_VALUE = "fixture-value-that-must-stay-in-the-child";
+
+  function seededBroker(): { broker: SecretBroker; close: () => void } {
+    const secretDir = mkdtempSync(join(tmpdir(), "clarkcant-command-secret-"));
+    const database = openDatabase({ path: join(secretDir, "node.sqlite") });
+    migrate(database);
+    putSecretMetadata(database, {
+      secretId: "secret_github_token",
+      principalId: "owner_1",
+      name: "github_token",
+      description: "GitHub PAT",
+      kind: "token",
+      backend: "node-store",
+      backendRef: "github_token",
+      allowedConsumers: ["command:git"],
+      injectionPolicy: "process-env",
+      at: "2026-09-19T10:00:00.000Z" as Instant,
+    });
+    nodeStoreSecretBackend(database, "owner_1").write("github_token", SECRET_VALUE, "2026-09-19T10:00:00.000Z" as Instant);
+    return {
+      broker: createSecretBroker({ db: database, principalId: "owner_1", now: () => "2026-09-19T10:00:00.000Z" as Instant }),
+      close: () => {
+        database.close();
+        rmSync(secretDir, { recursive: true, force: true });
+      },
+    };
+  }
+
+  it("puts it in the child's environment and nowhere in the receipt", async () => {
+    const seeded = seededBroker();
+    try {
+      const { tool, runs } = makeTool({ broker: seeded.broker });
+      const answer = await tool.execute({ command: "git push origin main", secretRef: "github_token" });
+
+      // The consumer is derived from the command, so this is the injection a `command:git` allowlist permits.
+      expect(runs[0]?.env).toEqual({ GITHUB_TOKEN: SECRET_VALUE });
+      // And the value is nowhere in what the turn records or hands back to the model.
+      expect(JSON.stringify(answer)).not.toContain(SECRET_VALUE);
+    } finally {
+      seeded.close();
+    }
+  });
+
+  it("refuses a secret whose consumer does not cover this command", async () => {
+    const seeded = seededBroker();
+    try {
+      const { tool, runs } = makeTool({ broker: seeded.broker });
+      const answer = await tool.execute({ command: "curl https://example.test", secretRef: "github_token" });
+      expect(runs).toHaveLength(0);
+      expect(answer.text).toContain("không cho phép");
+      expect(answer.text).not.toContain(SECRET_VALUE);
+    } finally {
+      seeded.close();
+    }
   });
 });
 

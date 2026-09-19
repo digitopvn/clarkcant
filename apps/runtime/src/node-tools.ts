@@ -12,6 +12,7 @@ import type { InteractionDeps } from "./interactions.ts";
 import { describeSearch, machineRoots, searchFileSystem } from "./fs-search.ts";
 import { applyGuardrailConstraints, preflightCommand, type CommandEnvelope, type OwnedResources } from "./preflight.ts";
 import { createQuestion } from "./interactions.ts";
+import type { SecretBroker } from "./secret-broker.ts";
 import type { OperationGuardInput, OperationGuardOutcome } from "./jev-decider.ts";
 import { commandDigest, runGuardedCommand, type CommandOutcome } from "./run-command.ts";
 import type { ProjectFinderDeps } from "./project-finder.ts";
@@ -233,7 +234,15 @@ export interface CommandToolDeps {
     cwd: string;
     timeoutMs: number;
     maxOutputBytes: number;
+    env?: Record<string, string>;
   }) => Promise<CommandOutcome>;
+  /**
+   * The secret broker, when a command may be given a secret it needs.
+   *
+   * Absent means `secretRef` is refused rather than ignored: a command that ran without the credential it asked
+   * for would fail in a way that looks like the command's fault.
+   */
+  broker?: SecretBroker;
 }
 
 /**
@@ -390,6 +399,16 @@ export function createRunCommandTool(
         },
         cwd: { type: "string", description: "An exact directory, when you already know one." },
         why: { type: "string", description: "One sentence for the card: what this is for." },
+        secretRef: {
+          type: "string",
+          description:
+            "Name of a secret this command needs, e.g. github_token. It goes into this one child process's " +
+            "environment and you never see the value. Ask for it with request_secret first if the node may not have it.",
+        },
+        secretEnvVar: {
+          type: "string",
+          description: "The environment variable to put it in. Defaults to the secret's name in upper case.",
+        },
       },
     },
     promptSnippet: "run_command — propose a shell command; the user must approve it before it runs",
@@ -501,11 +520,35 @@ export function createRunCommandTool(
         guarded = decision.envelope;
       }
 
+      /*
+       * A secret this command needs, injected just in time.
+       *
+       * The consumer is derived from the command itself rather than taken from the model, so a secret allowed for
+       * `command:git` cannot be handed to `curl` by asking nicely. The value goes into this one child process's
+       * environment and exists nowhere else — not in the receipt, not in the tool result, not in the turn.
+       */
+      let env: Record<string, string> | undefined;
+      const secretRef = typeof params.secretRef === "string" ? params.secretRef.trim() : "";
+      if (secretRef !== "") {
+        if (input.broker === undefined) {
+          return { text: "Node này chưa nối secret broker, nên không inject được secret cho lệnh này." };
+        }
+        const executable = guarded.command.split(/\s+/)[0] ?? "";
+        const variable =
+          typeof params.secretEnvVar === "string" && params.secretEnvVar.trim() !== ""
+            ? params.secretEnvVar.trim()
+            : secretRef.toUpperCase();
+        const built = input.broker.environmentFor({ name: secretRef, consumer: `command:${executable}` }, variable);
+        if (!built.ok) return { text: `${built.message} Lệnh không chạy.` };
+        env = built.env;
+      }
+
       const ran = await runGuardedCommand({
         operationId: input.newId(),
         envelope: guarded,
         ...(reason === "" ? {} : { reason }),
         ...(why === "" ? {} : { why }),
+        ...(env === undefined ? {} : { env }),
         ...(input.now === undefined ? {} : { now: input.now }),
         ...(input.run === undefined ? {} : { run: input.run }),
       });
