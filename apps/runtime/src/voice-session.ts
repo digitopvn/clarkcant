@@ -8,8 +8,8 @@ import {
   type Instant,
   type SemanticView,
   nowInstant,
-  semanticViewSchema,
 } from "@clarkcant/contracts";
+import { semanticViewOf } from "@clarkcant/core";
 import { recordVoiceTranscript } from "@clarkcant/core";
 import { GeminiLiveAdapter, type VoiceProviderAdapter } from "@clarkcant/voice-adapters";
 import { type RawData, WebSocketServer, type WebSocket } from "ws";
@@ -40,7 +40,7 @@ import type { NodeServices } from "./services.ts";
  *
  * Client to node:
  *   `{ type: "auth", token, conversationId? }` — must be the first frame, see below
- *   `{ type: "focus", view }`                  — the widget the person is looking at, if any
+ *   `{ type: "focus", instanceId }`            — which widget the person is looking at, if any
  *   `{ type: "end" }`                          — end the session politely
  *   binary                                     — PCM16, 16 kHz, mono
  *
@@ -346,12 +346,14 @@ export function attachVoiceGateway(options: VoiceGatewayOptions): VoiceGateway {
      */
     let waitingIntent: string | undefined;
     /**
-     * The widget the person is looking at, as the page last described it.
+     * The widget the person is looking at, as an id and nothing else.
      *
-     * Held rather than asked for per sentence, because the page sends it with the utterance and a node that re-asked
-     * would be inventing what the person can see. Only the contracted fields are kept: no user data, no contents.
+     * Only the id crosses the wire, and the node builds the semantic view from what it holds. That is stricter than it
+     * first looks: a page cannot describe an instance into existence, cannot describe one it does not own, and cannot
+     * hand over a stale view - the view that decides what a sentence may do is the node's own reading. It is also less
+     * to send, and the client has no mapper to keep in step with the contract.
      */
-    let focusedView: SemanticView | undefined;
+    let focusedInstanceId: string | undefined;
     /** A widget action that is waiting for a spoken yes, when the widget says it needs one. */
     let waitingWidget: VoiceWidgetAction | undefined;
     /**
@@ -424,6 +426,18 @@ export function attachVoiceGateway(options: VoiceGatewayOptions): VoiceGateway {
      * with an empty final fragment rather than repeating the text in it.
      */
     /**
+     * The focused instance's semantic view, built from what this node holds.
+     *
+     * Built on demand rather than kept, so what decides a sentence is the node's current reading of the instance
+     * instead of a description a page sent earlier and may have outgrown. `semanticViewOf` is the same function the
+     * agent's semantic view comes from, so a spoken action and an agent action see one account of the widget.
+     */
+    const focusedViewNow = (): SemanticView | undefined =>
+      focusedInstanceId === undefined
+        ? undefined
+        : semanticViewOf(options.services.conductor, focusedInstanceId, { source: "live" });
+
+    /**
      * Run a widget action and report what came of it.
      *
      * One place, shared by the sentence that needs no confirmation and the one that does, so a confirmed action cannot
@@ -434,7 +448,7 @@ export function attachVoiceGateway(options: VoiceGatewayOptions): VoiceGateway {
       const runIn = conversationId;
       if (run === undefined || runIn === undefined) return;
       answerQueue = answerQueue.then(async () => {
-        const outcome = await run({ conversationId: runIn, action, focused: focusedView });
+        const outcome = await run({ conversationId: runIn, action, focused: focusedViewNow() });
         // The page is told what changed rather than that something changed: it updates the same state a click updates,
         // and it can only do that from the node's own account of the revision it landed on.
         send({
@@ -583,7 +597,7 @@ export function attachVoiceGateway(options: VoiceGatewayOptions): VoiceGateway {
        * one "I did not understand".
        */
       if (options.widgetAction !== undefined) {
-        const resolved = resolveVoiceWidgetAction({ utterance: text, focused: focusedView });
+        const resolved = resolveVoiceWidgetAction({ utterance: text, focused: focusedViewNow() });
         if (resolved.ok) {
           if (resolved.action.requiresApproval) {
             // Asked before anything runs. A widget says which of its actions need a person, and a spoken sentence is
@@ -691,11 +705,12 @@ export function attachVoiceGateway(options: VoiceGatewayOptions): VoiceGateway {
         return;
       }
       if (control?.["type"] === "focus") {
-        // Validated against the contract rather than trusted: this arrives from a page, and a view that does not parse
-        // is not a description of anything. An unparseable view clears the focus, which makes a spoken action say
-        // "nothing is open" instead of acting on a made-up instance.
-        const parsed = semanticViewSchema.safeParse(control["view"]);
-        focusedView = parsed.success ? parsed.data : undefined;
+        // The id is all this takes, and the view is built from the node's own state when a sentence needs it. A frame
+        // without a usable id clears the focus, so a spoken action then answers that nothing is open rather than
+        // acting on an instance named by a page.
+        const named = control["instanceId"];
+        focusedInstanceId = typeof named === "string" && named.trim() !== "" ? named : undefined;
+        return;
       }
     });
 
