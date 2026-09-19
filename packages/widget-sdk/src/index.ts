@@ -152,7 +152,11 @@ export function acceptBridgeMessage(input: {
  * ------------------------------------------------------------------ */
 
 export interface WidgetAuthorApi {
-  props: { read(): Record<string, unknown> };
+  props: {
+    read(): Record<string, unknown>;
+    /** Called whenever the host sends new props, so a widget can re-render without polling. */
+    subscribe(handler: (props: Record<string, unknown>) => void): void;
+  };
   state: { get(): Record<string, unknown>; update(expectedRevision: number, patch: Record<string, unknown>): Promise<void> };
   events: { emit(name: string, payload: Record<string, unknown>): void };
   actions: { invoke(actionBindingId: string, input: Record<string, unknown>, invocationId: string): Promise<void> };
@@ -185,10 +189,15 @@ export const FORBIDDEN_API_SURFACE = [
 ] as const;
 
 /**
- * @implementation-status stub
- * TODO(P6): the browser-side implementation of `WidgetAuthorApi` and the
- * MessagePort handshake. The message codec, nonce validation and the API surface
- * declaration above are implemented and tested; the runtime that a real mini-app
- * imports is not.
+ * @implementation-status implemented
+ *
+ * The codec, nonce validation and API surface above, plus the runtime a mini-app imports
+ * (`runtime.ts`) and the host end of one frame (`@clarkcant/widget-host`, `session.ts`). The handshake,
+ * the refusals and the lifecycle are tested on both sides.
+ *
+ * Two things this does *not* claim, because they are not true yet: no mini-app ships against it, and the
+ * conversation client does not yet mount one in a frame. Phase 12 is where an author gets a way to run
+ * one, and that is when this status stops being a description of the packages and becomes a description
+ * of something a user can reach.
  */
-export const WIDGET_RUNTIME_STATUS = "bridge-codec-implemented-runtime-pending";
+export const WIDGET_RUNTIME_STATUS = "runtime-and-host-session-implemented";
