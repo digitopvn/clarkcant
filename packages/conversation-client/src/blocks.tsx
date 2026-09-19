@@ -954,7 +954,12 @@ function AttachmentCard({
 
   if (attachment.kind === "image") {
     return (
-      <figure className="cc-attachment" data-attachment-kind="image" data-attachment-id={attachment.attachmentId}>
+      <figure
+        className="cc-attachment"
+        data-attachment-block="true"
+        data-attachment-kind="image"
+        data-attachment-id={attachment.attachmentId}
+      >
         {url === undefined ? (
           // A sentence with the file's name, not an empty frame: bytes that cannot be read are a description.
           <div className="cc-attachment-missing" data-attachment-missing="true">
@@ -973,7 +978,12 @@ function AttachmentCard({
   // Text and PDF: a card with a way to open it. A pdf is not rendered in place, because the node serves it as
   // a download and drawing it inline here would claim a preview this node does not produce.
   return (
-    <div className="cc-attachment" data-attachment-kind={attachment.kind} data-attachment-id={attachment.attachmentId}>
+    <div
+      className="cc-attachment"
+      data-attachment-block="true"
+      data-attachment-kind={attachment.kind}
+      data-attachment-id={attachment.attachmentId}
+    >
       <span className="cc-attachment-name">{attachment.filename}</span>
       <span className="cc-attachment-size">{size}</span>
       {url === undefined ? (
