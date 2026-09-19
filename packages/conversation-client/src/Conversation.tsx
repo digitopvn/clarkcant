@@ -20,6 +20,8 @@ import type { ThemeName } from "@clarkcant/design-tokens";
 import { AgentAvatar } from "./AgentAvatar.tsx";
 import { hasDesktopChrome, requestWindowMode } from "./desktop-compact.ts";
 import { DesktopChrome } from "./desktop-chrome.tsx";
+import { fetchSuggestions } from "./suggestions.ts";
+import type { Suggestion } from "@clarkcant/contracts";
 import { ReasoningBlock, ToolActivityBlock, type BlockActions } from "./blocks.tsx";
 import { composerTextareaHeight } from "./composer-height.ts";
 import {
@@ -262,9 +264,28 @@ export function Conversation({
     () => new URLSearchParams(window.location.search).get("cc-compact") === "1",
   );
 
+  /**
+   * What the node suggests, which is nothing until it answers and nothing if it cannot.
+   *
+   * Empty is the ordinary state rather than a failure: the four chips below are the fallback and they are drawn
+   * whenever this is empty, so a node that is slow, old or unreachable costs the person a suggestion list and
+   * never the screen.
+   */
+  const [dynamicSuggestions, setDynamicSuggestions] = useState<Suggestion[]>([]);
+
   useEffect(() => {
     if (compactSurface) setVoiceOpen(true);
   }, [compactSurface]);
+
+  useEffect(() => {
+    let cancelled = false;
+    void fetchSuggestions(client).then((items) => {
+      if (!cancelled) setDynamicSuggestions(items);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [client]);
   /** Which approval is in flight, so one card says so rather than every card looking busy. */
   const [decidingApprovalId, setDecidingApprovalId] = useState<string | undefined>(undefined);
   /**
@@ -1269,8 +1290,37 @@ export function Conversation({
               */}
               <div className="cc-hero-orb" ref={heroOrb} aria-hidden="true" />
               <h1>Bạn đang nghĩ gì?</h1>
-              <p>Nói việc bạn muốn làm, hoặc bắt đầu từ một trong bốn gợi ý dưới đây.</p>
-              <div className="cc-chip-row" data-suggestion-count={SUGGESTIONS.length}>
+              <p>Nói việc bạn muốn làm, hoặc bắt đầu từ một gợi ý dưới đây.</p>
+              {/*
+                Two rows, not one row with two shapes in it. What the node offers is what the person was
+                actually doing, and it is only shown when there is some; the four written chips are the floor,
+                and saying so in the markup is what lets a test tell an empty node from a broken one.
+              */}
+              {dynamicSuggestions.length > 0 ? (
+                <div className="cc-chip-row" data-suggestion-count={dynamicSuggestions.length}>
+                  {dynamicSuggestions.map((suggestion, index) => (
+                    <button
+                      key={suggestion.suggestionId}
+                      type="button"
+                      className="cc-chip"
+                      data-suggestion={suggestion.text}
+                      data-suggestion-source={suggestion.source}
+                      data-suggestion-source-label={suggestion.sourceLabel}
+                      style={{ "--cc-chip-index": index } as CSSProperties}
+                      aria-label={`${suggestion.label} — ${suggestion.sourceLabel}`}
+                      onClick={() => void send(suggestion.text)}
+                    >
+                      <span className="cc-chip-label">{suggestion.label}</span>
+                      <span className="cc-chip-detail">{suggestion.sourceLabel}</span>
+                    </button>
+                  ))}
+                </div>
+              ) : (
+                <div
+                  className="cc-chip-row"
+                  data-suggestion-count={SUGGESTIONS.length}
+                  data-suggestion-static="true"
+                >
                 {SUGGESTIONS.map((suggestion, index) => (
                   <button
                     key={suggestion.text}
@@ -1288,7 +1338,8 @@ export function Conversation({
                     <span className="cc-chip-detail">{suggestion.detail}</span>
                   </button>
                 ))}
-              </div>
+                </div>
+              )}
               <p className="cc-freshness">
                 Gợi ý đánh dấu “cần model” sẽ báo lỗi nếu node này chưa cấu hình model.
               </p>
