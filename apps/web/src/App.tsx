@@ -9,6 +9,7 @@ import {
   installStyles,
   readStoredTheme,
   resolveTheme,
+  sessionFromBridge,
   systemPrefersLight,
   firstRunSteps,
   type FirstRunStep,
@@ -52,8 +53,28 @@ function readGateway(): string {
 }
 
 export function App(): ReactElement {
-  const token = readToken();
+  /**
+   * The token, from the desktop shell when there is one and from the page otherwise.
+   *
+   * The shell hands it over through a named bridge rather than through the URL, where it would be visible in
+   * history and in the address bar. That answer arrives over IPC, so the client exists unauthenticated for the
+   * moment it takes and is rebuilt when the token arrives; a browser has no bridge and answers nothing, which
+   * leaves the URL and session storage exactly as they were.
+   */
+  const [token, setToken] = useState(readToken);
   const baseUrl = readGateway();
+
+  useEffect(() => {
+    let cancelled = false;
+    void sessionFromBridge().then((session) => {
+      if (cancelled || session === undefined) return;
+      window.sessionStorage.setItem("cc_token", session.token);
+      setToken(session.token);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   // Memoised: passing a fresh client into the conversation on every render would make its
   // load effect depend on a new object each time and re-run without end.

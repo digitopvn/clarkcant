@@ -56,6 +56,14 @@ export {
   renderBlock,
 } from "./blocks.tsx";
 export { Conversation, type ConversationProps } from "./Conversation.tsx";
+export { desktopBridge, requestWindowMode, sessionFromBridge } from "./desktop-compact.ts";
+export type {
+  SessionHandover,
+  WindowBounds,
+  WindowMode,
+  WindowModeAction,
+  WindowModeAnswer,
+} from "./desktop-compact.ts";
 export { SettingsPanel, SettingsRow, ToolRow, type SettingsPanelProps, type SettingsRowProps, type ToolRowProps } from "./SettingsPanel.tsx";
 export { TokenSpecimens, readVar } from "./TokenSpecimens.tsx";
 export { Modal, type ModalProps } from "./Modal.tsx";

@@ -24,7 +24,7 @@ describe("whether there is a desktop shell at all", () => {
   it("a shell that answers nothing useful is still refused rather than assumed", async () => {
     const answer = await requestWindowMode({ type: "enter-compact" }, scopeWith({}));
     expect(answer.ok).toBe(false);
-    expect(answer.refused).toBeTruthy();
+    expect(answer.ok === false && answer.refused).toBeTruthy();
   });
 });
 
@@ -43,8 +43,8 @@ describe("asking the shell for a window mode", () => {
 
     const answer = await requestWindowMode({ type: "enter-compact" }, scope);
     expect(answer.ok).toBe(true);
-    expect(answer.mode).toBe("normal");
-    expect(answer.bounds).toEqual({ x: 1, y: 2, width: 1100, height: 760 });
+    expect(answer.ok === true && answer.mode).toBe("normal");
+    expect(answer.ok === true && answer.bounds).toEqual({ x: 1, y: 2, width: 1100, height: 760 });
   });
 
   it("a shell that throws is refused rather than taking the caller down with it", async () => {
@@ -56,7 +56,7 @@ describe("asking the shell for a window mode", () => {
 
     const answer = await requestWindowMode({ type: "expand" }, scope);
     expect(answer.ok).toBe(false);
-    expect(answer.refused).toBeTruthy();
+    expect(answer.ok === false && answer.refused).toBeTruthy();
   });
 
   it("a malformed answer is refused instead of believed", async () => {
