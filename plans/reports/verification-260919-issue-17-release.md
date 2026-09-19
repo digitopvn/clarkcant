@@ -20,6 +20,15 @@ của `main`. Trước đó mọi PR đều được squash, nên nội dung đ�
 `git merge-base --is-ancestor <nhánh> main` trả về sai. Merge này làm điều đó thành đúng, và nó không đổi một byte
 nội dung nào ngoài ghi chú này.
 
+## Tiêu chí của chính issue, không chỉ của plan
+
+Issue #17 §1 ghi điều kiện hoàn thành là: đính 2 tệp (1 text, 1 ảnh) → gửi → agent trả lời dùng nội dung tệp → reload vẫn thấy
+attachment. Journey `apps/web/e2e/attachments.spec.ts` — "the agent answers using the content of an attached file" —
+làm đúng chuỗi đó: hai tệp được đính, câu trả lời chứa nội dung của tệp văn bản, và cả hai tệp còn trong timeline sau khi
+reload. Model ở đó là fixture của node, nên điều được chứng minh là đường ống — tệp tới node, node đọc được nội dung,
+câu trả lời mang nó — chứ không phải phán đoán của model. Nội dung ảnh/PDF thì **chưa** tới model: chúng được nêu bằng
+id, và điều kiện còn thiếu ghi ở `docs/widgets-and-extensions.md` §4.1.
+
 ## Hai journey từng bị chặn, và đã sửa tại gốc
 
 Cả hai **đã xanh và nằm trong suite**, mỗi cái có tên test riêng trong ledger. Nguyên nhân của cả hai đều là lỗi mã
