@@ -66,6 +66,7 @@ import {
   decideAppIntent,
   mintConfirmation,
 } from "./app-intents.ts";
+import { buildSuggestions } from "./suggestions.ts";
 import { decideTurnAction, decisionTimeoutMsFromEnv, searchDecisionBudget } from "./jev-decider.ts";
 import { PI_BUILTIN_TOOLS, nodeToolCatalogue } from "./tool-catalogue.ts";
 
@@ -322,6 +323,10 @@ export async function handleRequest(deps: GatewayDeps, request: GatewayRequest):
   }
 
   if (segments[0] === "app-intents") {
+    if (segments.length === 1 && segments[0] === "suggestions" && request.method === "GET") {
+      return handleSuggestionsRoute(deps);
+    }
+
     return await handleAppIntentRoutes(deps, request, segments, at);
   }
 
@@ -623,6 +628,28 @@ const DECLINED_SAY = "Tôi đã bỏ qua câu lệnh đó.";
  * end the application on its own. A request that maps to nothing is answered `none`, which means "not my business,
  * carry on as before" and is deliberately not the same answer as a refusal.
  */
+/**
+ * What to offer next.
+ *
+ * Read on demand rather than cached, and the response says so: a suggestion list that a proxy or a browser kept
+ * would offer somebody the work they just finished. An empty store is an empty list and a 200, not a 404 - there
+ * is nothing wrong with having nothing to suggest, and a 404 would make the client treat a normal state as an
+ * error it has to recover from.
+ */
+function handleSuggestionsRoute(deps: GatewayDeps): GatewayResponse {
+  const { runtime } = deps.services;
+  const items = buildSuggestions({
+    db: runtime.db,
+    nodeId: runtime.identity.nodeId,
+    now: () => new Date().toISOString(),
+  });
+  return {
+    status: 200,
+    body: { items },
+    headers: { "cache-control": "no-store" },
+  };
+}
+
 async function handleAppIntentRoutes(
   deps: GatewayDeps,
   request: GatewayRequest,
