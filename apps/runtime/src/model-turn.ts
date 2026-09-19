@@ -15,7 +15,7 @@
  * approval, evidence and budgets live, and a conversation turn has none of them.
  */
 
-import { type Instant, type MessageBlock, type Principal } from "@clarkcant/contracts";
+import { type AttachmentRef, type Instant, type MessageBlock, type Principal } from "@clarkcant/contracts";
 
 import {
   RealPiAdapter,
@@ -32,6 +32,8 @@ import {
 } from "@clarkcant/pi-adapter";
 
 import type { ModelSegment, ModelTurnEvent, ModelTurnInput, ModelTurnReply, TurnMetrics } from "@clarkcant/core";
+
+import { attachmentBrief } from "./attachments.ts";
 
 /**
  * One view a model may ask for.
@@ -223,9 +225,16 @@ async function recapFor(options: { history?: HistoryReader }, conversationId: st
   return `Mạch hội thoại trước đó, để bạn tiếp tục đúng việc đang làm:\n${lines.join("\n")}`;
 }
 
-function promptForTurn(input: { text: string; note?: string }): string {
+function promptForTurn(input: { text: string; note?: string; brief?: string }): string {
   const note = input.note?.trim() ?? "";
-  return note === "" ? input.text : `${input.text}\n\n[Hướng dẫn cho lượt này: ${note}]`;
+  const brief = input.brief?.trim() ?? "";
+  const parts = [input.text];
+  if (note !== "") parts.push(`[Hướng dẫn cho lượt này: ${note}]`);
+  // The attachment section is appended, never prepended: the person's own words stay first, so a file
+  // whose content contains something that reads like an instruction is still arriving after the request
+  // it belongs to.
+  if (brief !== "") parts.push(brief);
+  return parts.join("\n\n");
 }
 
 function flushText(turn: Turn): void {
@@ -425,6 +434,20 @@ export async function createModelTurn(options: {
    */
   history?: HistoryReader;
   /**
+   * The files the current message carries, read back from the stored message.
+   *
+   * Read from storage rather than handed in by the caller on purpose. The refs were written into the
+   * message the conductor stored, so the timeline after a reload and the prompt for this turn are two
+   * readings of one row; passing them alongside the turn would make them two accounts that can disagree.
+   *
+   * `dataDir` is here so a text attachment's content can be inlined, and it is the one thing this option
+   * must never leak into a prompt: `attachmentBrief` names ids and never a path.
+   */
+  attachments?: {
+    dataDir: string;
+    refsFor: (conversationId: string) => readonly AttachmentRef[];
+  };
+  /**
    * Dataset references the node actually holds.
    *
    * Told to the model rather than left to be guessed. A view that needs data can only be honest if
@@ -446,8 +469,12 @@ export async function createModelTurn(options: {
    *
    * Supplied by the composition root rather than imported here, so this module stays the seam rather
    * than the place that decides which capabilities exist.
+   *
+   * Given the conversation, because one of those tools reads the files attached to *this* conversation
+   * and has nothing to check without it. A tool that took the conversation from somewhere else would be a
+   * second source of truth for which turn is running.
    */
-  extraTools?: () => readonly ToolDefinition[];
+  extraTools?: (turn: { conversationId: string }) => readonly ToolDefinition[];
   /**
    * The model to run for sessions created from now on, when somebody chose one.
    *
@@ -462,7 +489,8 @@ export async function createModelTurn(options: {
 
   const readViews = (): readonly ViewDescriptor[] => options.views?.() ?? [];
   const readDatasetRefs = (): readonly string[] => options.datasetRefs?.() ?? [];
-  const readExtraTools = (): readonly ToolDefinition[] => options.extraTools?.() ?? [];
+  const readExtraTools = (conversationId: string): readonly ToolDefinition[] =>
+    options.extraTools?.({ conversationId }) ?? [];
   const budget = modelBudgetFromEnv(options.env);
   const adapter =
     options.adapter ??
@@ -576,7 +604,7 @@ export async function createModelTurn(options: {
     // and are registered whatever the catalog says.
     const customTools = [
       ...(views.length === 0 ? [] : [showViewTool(turn, principal, views, viewById, datasetRefs)]),
-      ...readExtraTools(),
+      ...readExtraTools(conversationId),
     ].map((tool) => withActivity(turn, tool));
 
     const chosen = options.model?.();
@@ -696,6 +724,14 @@ export async function createModelTurn(options: {
       // present key holding undefined is a different type from an absent key, and only one of them means
       // "this turn carries no extra instruction".
       const note = withRecap(recap, input.note);
+      // Read once, before the prompt, from the message the conductor has already stored.
+      const brief =
+        options.attachments === undefined
+          ? ""
+          : attachmentBrief({
+              refs: options.attachments.refsFor(input.conversationId),
+              dataDir: options.attachments.dataDir,
+            });
       // Set before the prompt rather than after it, so a message arriving while the first tokens are being written
       // already sees a turn in flight.
       turn.inFlight = true;
@@ -728,7 +764,14 @@ export async function createModelTurn(options: {
 
       try {
         await Promise.race([
-          adapter.prompt(turn.sessionId, promptForTurn(note === undefined ? input : { ...input, note })),
+          adapter.prompt(
+            turn.sessionId,
+            promptForTurn({
+              text: input.text,
+              ...(note === undefined ? {} : { note }),
+              ...(brief === "" ? {} : { brief }),
+            }),
+          ),
           deadline,
         ]);
       } catch (cause) {

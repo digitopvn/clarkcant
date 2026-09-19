@@ -373,10 +373,17 @@ export class GatewayClient {
     return this.#call("GET", "/conversations");
   }
 
-  sendMessage(conversationId: string, text: string, options: { demo?: boolean } = {}): Promise<SendMessageResult> {
+  sendMessage(
+    conversationId: string,
+    text: string,
+    options: { demo?: boolean; attachmentIds?: readonly string[] } = {},
+  ): Promise<SendMessageResult> {
     return this.#call("POST", `/conversations/${conversationId}/messages`, {
       text,
       ...(options.demo === true ? { demo: true } : {}),
+      ...(options.attachmentIds === undefined || options.attachmentIds.length === 0
+        ? {}
+        : { attachmentIds: [...options.attachmentIds] }),
     });
   }
 
@@ -396,7 +403,7 @@ export class GatewayClient {
     conversationId: string,
     text: string,
     listeners: { onEvent: (event: ReplyStreamEvent) => void; onDone: (result: SendMessageResult) => void; signal?: AbortSignal },
-    options: { demo?: boolean } = {},
+    options: { demo?: boolean; attachmentIds?: readonly string[] } = {},
   ): Promise<void> {
     const response = await this.#fetch(`${this.#baseUrl}/conversations/${conversationId}/messages/stream`, {
       method: "POST",
@@ -405,7 +412,15 @@ export class GatewayClient {
         "content-type": "application/json",
         accept: "text/event-stream",
       },
-      body: JSON.stringify({ text, ...(options.demo === true ? { demo: true } : {}) }),
+      body: JSON.stringify({
+        text,
+        ...(options.demo === true ? { demo: true } : {}),
+        // Omitted rather than sent as an empty array: a node that predates attachments validates this field
+        // when it is present, and an empty list is not worth an extra rule on either side.
+        ...(options.attachmentIds === undefined || options.attachmentIds.length === 0
+          ? {}
+          : { attachmentIds: [...options.attachmentIds] }),
+      }),
       ...(listeners.signal === undefined ? {} : { signal: listeners.signal }),
     });
 
@@ -736,6 +751,52 @@ export class GatewayClient {
     });
     if (!response.ok) {
       throw new GatewayError(response.status, "IMAGE_UNAVAILABLE", "that image could not be read");
+    }
+    const blob = await response.blob();
+    return URL.createObjectURL(blob);
+  }
+
+  /**
+   * Send one file to the node and get back the id a message may refer to it by.
+   *
+   * The body is base64 inside JSON rather than a multipart upload, because this node's transport already
+   * speaks one content type and a second parser is a second thing to get right. The cost is a third more
+   * bytes on the wire, which the route's body ceiling is sized for.
+   *
+   * A refusal throws `GatewayError` carrying the node's own code, so the composer can show the node's
+   * sentence rather than inventing its own version of the same rule.
+   */
+  async uploadAttachment(input: {
+    conversationId: string;
+    filename: string;
+    mime: string;
+    contentBase64: string;
+  }): Promise<{ attachmentId: string }> {
+    const response = await this.#call<{ attachmentRef?: { attachmentId?: unknown } }>(
+      "POST",
+      "/attachments",
+      input,
+    );
+    const attachmentId = response.attachmentRef?.attachmentId;
+    if (typeof attachmentId !== "string") {
+      throw new GatewayError(502, "MALFORMED_RESPONSE", "the node accepted the file but returned no attachment id");
+    }
+    return { attachmentId };
+  }
+
+  /**
+   * Fetch an attachment's bytes and return an object URL for it.
+   *
+   * The same reason `imageObjectUrl` exists: an `<img src="/attachments/x/content">` cannot carry the
+   * bearer token, so the bytes come through the authenticated client and the DOM gets a blob URL. The
+   * caller owns the URL and must revoke it.
+   */
+  async attachmentObjectUrl(attachmentId: string): Promise<string> {
+    const response = await this.#fetch(`${this.#baseUrl}/attachments/${encodeURIComponent(attachmentId)}/content`, {
+      headers: { authorization: `Bearer ${this.#token}` },
+    });
+    if (!response.ok) {
+      throw new GatewayError(response.status, "ATTACHMENT_UNAVAILABLE", "that attachment could not be read");
     }
     const blob = await response.blob();
     return URL.createObjectURL(blob);

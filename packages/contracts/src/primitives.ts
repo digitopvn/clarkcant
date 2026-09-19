@@ -45,6 +45,7 @@ export const pinIdSchema = prefixed("pin");
 export const actionIdSchema = prefixed("act");
 export const datasetIdSchema = prefixed("ds");
 export const artifactIdSchema = prefixed("art");
+export const attachmentIdSchema = prefixed("att");
 export const capabilityIdSchema = prefixed("cap");
 export const targetIdSchema = prefixed("tgt");
 /** Descriptive alias for the automation contract, where `target` alone is ambiguous. */
@@ -75,6 +76,7 @@ export type PinId = z.infer<typeof pinIdSchema>;
 export type ActionId = z.infer<typeof actionIdSchema>;
 export type DatasetId = z.infer<typeof datasetIdSchema>;
 export type ArtifactId = z.infer<typeof artifactIdSchema>;
+export type AttachmentId = z.infer<typeof attachmentIdSchema>;
 export type CapabilityId = z.infer<typeof capabilityIdSchema>;
 export type AutomationTargetId = z.infer<typeof targetIdSchema>;
 export type ObservationId = z.infer<typeof observationIdSchema>;

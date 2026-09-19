@@ -204,6 +204,26 @@ function adapterWith(sdk: ReturnType<typeof stubSdk>): RealPiAdapter {
   });
 }
 
+describe("the fake records what it was told", () => {
+  it("the fake records the prompt it was given", async () => {
+    // A test double that forgets its input cannot be used to assert what the node sent, which is the
+    // only place some claims can be checked at all.
+    const adapter = new FakePiAdapter({ script: ["ok"] });
+    const handle = await adapter.createWorkerSession({ goal: "g", projectRoots: [], allowedCapabilityRefs: [] });
+    await adapter.prompt(handle.sessionId, "first prompt");
+    await adapter.prompt(handle.sessionId, "second prompt");
+    expect(adapter.promptsFor(handle.sessionId)).toEqual(["first prompt", "second prompt"]);
+    // A copy, so a caller cannot reach in and change the record of what was sent.
+    expect(adapter.promptsFor(handle.sessionId)).not.toBe(adapter.promptsFor(handle.sessionId));
+  });
+
+  it("answers an unknown session with nothing rather than throwing", () => {
+    const adapter = new FakePiAdapter();
+    expect(adapter.promptsFor("fake-session-does-not-exist")).toEqual([]);
+    expect(adapter.allPrompts()).toEqual([]);
+  });
+});
+
 describe("the wall-clock budget bounds a run, not a session's age", () => {
   const brief = (maxWallClockMs: number) => ({
     goal: "answer the user",

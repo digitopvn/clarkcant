@@ -1,5 +1,6 @@
 import { z } from "zod";
 
+import { attachmentRefSchema } from "./attachments.ts";
 import { instantSchema } from "./primitives.ts";
 import { widgetSnapshotSchema } from "./widgets.ts";
 
@@ -473,8 +474,25 @@ export const reconnectCardSchema = z.strictObject({
   reason: z.string().min(1).max(2000).optional(),
 });
 
+/**
+ * A file a person attached, as it appears in the timeline.
+ *
+ * The block carries the whole ref rather than an id, so a reloaded conversation draws the attachment
+ * from the stored message alone — there is no second lookup that can fail and leave a gap in the
+ * timeline, and no state that exists only in the tab that sent it.
+ *
+ * Deliberately **not** host-owned: host-owned blocks are the ones a model may not mint, and an
+ * attachment is something a person put there, so the model has no way to produce one either — it
+ * reaches this block type only by way of a stored user message.
+ */
+export const attachmentBlockSchema = z.strictObject({
+  type: z.literal("attachment"),
+  attachment: attachmentRefSchema,
+});
+
 export const messageBlockSchema = z.discriminatedUnion("type", [
   textBlockSchema,
+  attachmentBlockSchema,
   toolActivityBlockSchema,
   reasoningBlockSchema,
   surfaceBlockSchema,

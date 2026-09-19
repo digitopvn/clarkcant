@@ -893,6 +893,40 @@ export const MIGRATIONS: readonly Migration[] = [
       `);
     },
   },
+  {
+    version: 17,
+    name: "attachments",
+    reversible: true,
+    up: (db) => {
+      db.exec(`
+        -- Files a person attached to a message.
+        --
+        -- The bytes live in the node's blob directory under a content-addressed name; this table is the
+        -- record of which principal attached which file to which conversation, and it is what the quota
+        -- is summed from. A row is a reference, never an authority: reading the bytes checks containment
+        -- against the blob root first.
+        --
+        -- No ON DELETE CASCADE, deliberately. conversations has no cascade either and foreign_keys is ON,
+        -- so deleting a conversation is a change that needs its own policy (what happens to a running
+        -- task?) rather than something an attachments migration decides quietly. Removal is explicit,
+        -- through releaseConversationAttachments.
+        CREATE TABLE attachments (
+          attachment_id   TEXT PRIMARY KEY,
+          principal_id    TEXT NOT NULL,
+          conversation_id TEXT NOT NULL,
+          filename        TEXT NOT NULL,
+          mime            TEXT NOT NULL,
+          kind            TEXT NOT NULL,
+          size_bytes      INTEGER NOT NULL,
+          sha256          TEXT NOT NULL,
+          blob_path       TEXT NOT NULL,
+          created_at      TEXT NOT NULL
+        );
+        CREATE INDEX attachments_conversation ON attachments(conversation_id);
+        CREATE INDEX attachments_principal ON attachments(principal_id);
+      `);
+    },
+  },
 ];
 
 export interface MigrationResult {

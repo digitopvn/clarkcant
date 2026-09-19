@@ -1,6 +1,4 @@
 import { createHash } from "node:crypto";
-import { mkdirSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
 
 import {
   type CompositionPeriod,
@@ -33,6 +31,8 @@ import {
   updateCalendarEvent,
   upsertDataset,
 } from "@clarkcant/storage";
+
+import { ALLOWED_IMAGE_TYPES, detectImageFormat, writeBlob } from "./blobs.ts";
 
 /**
  * Local data for composed surfaces.
@@ -412,8 +412,13 @@ export function calendarRowsForRange(
 
 export const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
 export const MAX_IMAGE_DIMENSION = 8192;
-/** Raster only. An SVG or an HTML file served as an image is a script, not a picture. */
-export const ALLOWED_IMAGE_TYPES = ["image/png", "image/jpeg", "image/webp", "image/gif"] as const;
+/**
+ * Raster only. An SVG or an HTML file served as an image is a script, not a picture.
+ *
+ * Owned by `blobs.ts`, which is where the bytes are read: the importer and the attachment path must
+ * not disagree about which formats exist.
+ */
+export { ALLOWED_IMAGE_TYPES };
 
 export type ImageSniff =
   | { ok: true; mimeType: (typeof ALLOWED_IMAGE_TYPES)[number]; width: number | undefined; height: number | undefined }
@@ -439,7 +444,7 @@ export function sniffImage(bytes: Uint8Array, declaredType: string): ImageSniff 
     };
   }
 
-  const detected = detectFormat(bytes);
+  const detected = detectImageFormat(bytes);
   if (detected === undefined) {
     return {
       ok: false,
@@ -468,72 +473,6 @@ export function sniffImage(bytes: Uint8Array, declaredType: string): ImageSniff 
   return { ok: true, mimeType: detected.mimeType, width: detected.width, height: detected.height };
 }
 
-function detectFormat(
-  bytes: Uint8Array,
-): { mimeType: (typeof ALLOWED_IMAGE_TYPES)[number]; width: number | undefined; height: number | undefined } | undefined {
-  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
-
-  // PNG: 89 50 4E 47 0D 0A 1A 0A, then IHDR at offset 16.
-  if (
-    bytes.byteLength >= 24 &&
-    bytes[0] === 0x89 &&
-    bytes[1] === 0x50 &&
-    bytes[2] === 0x4e &&
-    bytes[3] === 0x47 &&
-    bytes[4] === 0x0d &&
-    bytes[5] === 0x0a &&
-    bytes[6] === 0x1a &&
-    bytes[7] === 0x0a
-  ) {
-    return { mimeType: "image/png", width: view.getUint32(16), height: view.getUint32(20) };
-  }
-
-  // JPEG: FF D8 FF, then scan for a start-of-frame marker carrying the dimensions.
-  if (bytes.byteLength >= 4 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) {
-    let offset = 2;
-    while (offset + 9 < bytes.byteLength) {
-      if (bytes[offset] !== 0xff) {
-        offset += 1;
-        continue;
-      }
-      const marker = bytes[offset + 1] ?? 0;
-      const isStartOfFrame = marker >= 0xc0 && marker <= 0xcf && marker !== 0xc4 && marker !== 0xc8 && marker !== 0xcc;
-      if (isStartOfFrame) {
-        return {
-          mimeType: "image/jpeg",
-          height: view.getUint16(offset + 5),
-          width: view.getUint16(offset + 7),
-        };
-      }
-      const length = view.getUint16(offset + 2);
-      if (length < 2) break;
-      offset += 2 + length;
-    }
-    return { mimeType: "image/jpeg", width: undefined, height: undefined };
-  }
-
-  // GIF: "GIF87a" or "GIF89a", little-endian dimensions.
-  if (bytes.byteLength >= 10 && String.fromCharCode(...bytes.subarray(0, 3)) === "GIF") {
-    return { mimeType: "image/gif", width: view.getUint16(6, true), height: view.getUint16(8, true) };
-  }
-
-  // WebP: "RIFF" .... "WEBP".
-  if (
-    bytes.byteLength >= 16 &&
-    String.fromCharCode(...bytes.subarray(0, 4)) === "RIFF" &&
-    String.fromCharCode(...bytes.subarray(8, 12)) === "WEBP"
-  ) {
-    const chunk = String.fromCharCode(...bytes.subarray(12, 16));
-    if (chunk === "VP8X") {
-      const width = 1 + (bytes[24] ?? 0) + ((bytes[25] ?? 0) << 8) + ((bytes[26] ?? 0) << 16);
-      const height = 1 + (bytes[27] ?? 0) + ((bytes[28] ?? 0) << 8) + ((bytes[29] ?? 0) << 16);
-      return { mimeType: "image/webp", width, height };
-    }
-    return { mimeType: "image/webp", width: undefined, height: undefined };
-  }
-
-  return undefined;
-}
 
 export interface ImportImageInput {
   principalId: Principal["principalId"];
@@ -571,12 +510,13 @@ export function importLocalImage(deps: MiniAppDataDeps, input: ImportImageInput)
   const sniffed = sniffImage(input.bytes, input.declaredMimeType);
   if (!sniffed.ok) return sniffed;
 
-  const digest = `sha256:${createHash("sha256").update(input.bytes).digest("hex")}`;
-  const extension = sniffed.mimeType === "image/jpeg" ? "jpg" : sniffed.mimeType.split("/")[1] ?? "bin";
-  const directory = join(deps.dataDir, "blobs");
-  mkdirSync(directory, { recursive: true });
-  const blobPath = join(directory, `${digest.slice("sha256:".length, "sha256:".length + 32)}.${extension}`);
-  writeFileSync(blobPath, input.bytes, { mode: 0o600 });
+  // One writer for every blob this node keeps: content-addressed name, `mode: 0o600`, under the
+  // node's blob directory. The extension comes from the sniffed type, never from the file name.
+  const written = writeBlob({
+    dataDir: deps.dataDir,
+    bytes: input.bytes,
+    extension: sniffed.mimeType === "image/jpeg" ? "jpg" : sniffed.mimeType.split("/")[1] ?? "bin",
+  });
 
   const image: LocalImageRecord = {
     imageId: deps.newId("img"),
@@ -587,9 +527,9 @@ export function importLocalImage(deps: MiniAppDataDeps, input: ImportImageInput)
     byteSize: input.bytes.byteLength,
     width: sniffed.width,
     height: sniffed.height,
-    digest,
+    digest: written.digest,
     altText,
-    blobPath,
+    blobPath: written.blobPath,
     createdAt: deps.now(),
   };
   insertLocalImage(deps.db, image);

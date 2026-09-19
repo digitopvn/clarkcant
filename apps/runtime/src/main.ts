@@ -8,7 +8,6 @@
  * authorization is required regardless of how private the network looks.
  */
 import { readFileSync } from "node:fs";
-import { createServer } from "node:http";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
@@ -16,7 +15,8 @@ import type { MessageBlock, MessageRecord } from "@clarkcant/contracts";
 import { instantSchema } from "@clarkcant/contracts";
 import { applyEnvFile } from "@clarkcant/pi-adapter";
 
-import { handleRequest, decideApprovalForNode, type GatewayResponse } from "./gateway.ts";
+import { decideApprovalForNode } from "./gateway.ts";
+import { createNodeServer } from "./server.ts";
 import { machineRoots } from "./fs-search.ts";
 import { resolveProject, refreshProjectIndex } from "./project-finder.ts";
 import { commandDigest } from "./run-command.ts";
@@ -32,6 +32,7 @@ import { FixtureLiveAdapter } from "./voice-fixture.ts";
 import { SAMPLE_DATASET } from "@clarkcant/data-canvas/sample";
 
 import { createModelTurn, type ViewDescriptor } from "./model-turn.ts";
+import { attachmentRefsForLastUserMessage } from "./attachments.ts";
 import { buildViewCatalog } from "./view-catalog.ts";
 import { registerNodeTools } from "./tool-catalogue.ts";
 import { composeMiniApp } from "./compose-mini-app.ts";
@@ -366,6 +367,15 @@ async function main(): Promise<void> {
         .filter((record): record is MessageRecord & { role: "user" | "assistant" } => record.role === "user" || record.role === "assistant")
         .map((record) => ({ role: record.role, text: textOfMessage(record) }));
     },
+    // The files the current message carries, read back from the row that message was stored as. The
+    // timeline and this prompt are then the same reading, so a conversation reopened tomorrow attaches
+    // the same files to the same turn. `attachmentBrief` inlines a text file's content and names anything
+    // binary by id; no path is ever part of it.
+    attachments: {
+      dataDir: options.dataDir,
+      refsFor: (conversationId) =>
+        attachmentRefsForLastUserMessage({ db: services.runtime.db, conversationId }),
+    },
     // The node registers the sample dataset itself, so this is the complete set it holds rather
     // than a guess. The model is told these names because a view over data that is not there
     // renders as nothing, which reads as a broken widget instead of a missing fact.
@@ -375,7 +385,7 @@ async function main(): Promise<void> {
     // The Session Manager's read-only reports, including the project finder. Built by a function a
     // test can call: an inline list here is how `find_project` came to exist without ever being
     // registered, and nothing could see the difference.
-    extraTools: () => {
+    extraTools: (turn) => {
       const search = searchWiring.deps;
       const projects = projectWiring.deps;
       const approvals = approvalWiring.deps;
@@ -384,6 +394,9 @@ async function main(): Promise<void> {
         search,
         projects,
         approvals: () => approvals,
+        // Reading an attached file is scoped to the conversation this turn belongs to, which is the
+        // only thing the tool needs to check beyond the principal.
+        attachments: { dataDir: options.dataDir, conversationId: turn.conversationId },
         // "Where should this go?" goes through the finder, which is where Jev decides when several folders
         // could be meant. The model is told to look before it proposes, and an ambiguous answer comes back
         // as a question rather than as a guess.
@@ -550,116 +563,9 @@ async function main(): Promise<void> {
       : "selector: disabled (no credential or local-only); composed surfaces use the deterministic path\n",
   );
 
-  const server = createServer((request, response) => {    const chunks: Buffer[] = [];
-    request.on("data", (chunk: Buffer) => chunks.push(chunk));
-    request.on("end", async () => {
-      const url = new URL(request.url ?? "/", `http://${options.host}:${options.port}`);
-
-      // The handler is guarded. A request that cannot be satisfied is the request's problem, and
-      // answering it with a 500 is the whole job of this boundary — letting it reach the process
-      // means one bad message takes the node down and every other conversation with it. That is
-      // exactly how this was found: a duplicate id killed the node the user was reviewing.
-      let result: GatewayResponse;
-      try {
-        result = await handleRequest(
-          { services },
-          {
-            method: request.method ?? "GET",
-            path: url.pathname,
-            query: Object.fromEntries(url.searchParams),
-            headers: request.headers as Record<string, string | string[] | undefined>,
-            body: Buffer.concat(chunks).toString("utf8"),
-          },
-        );
-      } catch (cause) {
-        // The message is reported rather than swallowed, because a caller that cannot see why a
-        // request failed will retry it unchanged.
-        process.stderr.write(
-          `request ${request.method ?? "GET"} ${url.pathname} failed: ${cause instanceof Error ? cause.stack ?? cause.message : String(cause)}\n`,
-        );
-        result = {
-          status: 500,
-          body: {
-            error: {
-              code: "INTERNAL_ERROR",
-              message: cause instanceof Error ? cause.message : String(cause),
-            },
-          },
-        };
-      }
-
-      const headers: Record<string, string> = {
-        "content-type": "application/json",
-        // The browser client is served from a different origin during development, and the
-        // gateway is token-authenticated rather than cookie-authenticated, so a wildcard
-        // origin here grants nothing a caller does not already need the token for.
-        "access-control-allow-origin": "*",
-        "access-control-allow-headers": "authorization, content-type",
-        "access-control-allow-methods": "GET, POST, PATCH, DELETE, OPTIONS",
-      };
-
-      // A body that is written over time: the status line and headers go out now, and the handler
-      // sends the rest as it produces it. The turn keeps running even if the client leaves, because
-      // the answer is stored either way — stopping it would discard work the user paid for because
-      // they closed a tab.
-      if (result.stream !== undefined) {
-        headers["content-type"] = result.stream.contentType;
-        // `no-transform` as well as `no-cache`: the point of this response is its timing, so an
-        // intermediary that may buffer and re-chunk it is being told not to.
-        headers["cache-control"] = "no-cache, no-transform";
-        response.writeHead(result.status, headers);
-        response.flushHeaders();
-
-        // `writableFinished` is what distinguishes a finished response from a client that hung up:
-        // the 'close' event fires for both, and only the second one means there is nobody to write
-        // to. Without this check the flag would latch on the first completed write and the stream
-        // would silently stop reporting.
-        let clientGone = false;
-        response.on("close", () => {
-          if (!response.writableFinished) clientGone = true;
-        });
-        // A write to a socket the peer has dropped reports itself here rather than throwing, and an
-        // unhandled 'error' on a response stream takes the process with it.
-        response.on("error", () => {
-          clientGone = true;
-        });
-
-        // A comment frame every fifteen seconds. A stream that is waiting on a model looks like an
-        // idle connection to anything between here and the browser, and an idle connection is what
-        // gets closed; a comment is valid SSE that the parser ignores.
-        const keepAlive = setInterval(() => {
-          if (!clientGone) response.write(": keep-alive\n\n");
-        }, 15_000);
-        keepAlive.unref();
-
-        try {
-          await result.stream.run((chunk) => {
-            if (!clientGone) response.write(chunk);
-          });
-        } finally {
-          clearInterval(keepAlive);
-          response.end();
-        }
-        return;
-      }
-
-      // Imported images are served as their own bytes under the content type the host verified
-      // from the file's magic bytes, rather than wrapped in a JSON envelope the client would have
-      // to decode and re-type.
-      if (result.binary !== undefined) {
-        headers["content-type"] = result.binary.contentType;
-        headers["content-length"] = String(result.binary.bytes.byteLength);
-        // Private: an image URL is authorized by a token, and a shared cache in front of a node
-        // must not hand one principal's image to another.
-        headers["cache-control"] = "private, max-age=300";
-        response.writeHead(result.status, headers);
-        response.end(Buffer.from(result.binary.bytes));
-        return;
-      }
-
-      response.writeHead(result.status, headers);
-      response.end(`${JSON.stringify(result.body)}\n`);
-    });
+  const server = createNodeServer({
+    services,
+    origin: `http://${options.host}:${options.port}`,
   });
 
   /**

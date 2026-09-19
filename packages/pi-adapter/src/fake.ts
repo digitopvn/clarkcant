@@ -35,6 +35,15 @@ export class FakePiAdapter implements PiAdapter {
       disposed: boolean;
       turns: number;
       tokens: number;
+      /**
+       * Every prompt this session was given, in order.
+       *
+       * A seam of the test double, not behaviour of the adapter. It exists because some properties can
+       * only be observed at this boundary: what the model was actually told, and — more importantly —
+       * what it was not. "The prompt names the attachment and no disk path" has no other place to be
+       * checked, since the composer's fixture output runs before the turn and never sees the prompt.
+       */
+      prompts: string[];
     }
   >();
 
@@ -109,6 +118,7 @@ export class FakePiAdapter implements PiAdapter {
       disposed: false,
       turns: 0,
       tokens: 0,
+      prompts: [],
     });
     return handle;
   }
@@ -189,9 +199,22 @@ export class FakePiAdapter implements PiAdapter {
     await this.run(sessionId, text);
   }
 
+  /** Test-only driver: the prompts a session has been given, oldest first. */
+  promptsFor(sessionId: string): readonly string[] {
+    // An unknown session answers with nothing rather than throwing: a test asking "what was it told?"
+    // about a session that was disposed is asking a question with an empty answer, not reporting a bug.
+    return [...(this.#sessions.get(sessionId)?.prompts ?? [])];
+  }
+
+  /** Test-only driver: every prompt across every session, oldest session first. */
+  allPrompts(): readonly string[] {
+    return [...this.#sessions.values()].flatMap((session) => session.prompts);
+  }
+
   /** Test-only driver: run the scripted reply for a session. */
   async run(sessionId: string, prompt: string): Promise<string> {
     const session = this.#require(sessionId);
+    session.prompts.push(prompt);
     const scripted = session.script.shift() ?? `scripted reply to: ${prompt}`;
     session.turns += 1;
     session.tokens += Math.ceil(scripted.length / 4);
