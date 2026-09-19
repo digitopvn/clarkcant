@@ -859,6 +859,17 @@ export class GatewayClient {
     });
   }
 
+  /**
+   * Ask a task to stop.
+   *
+   * Resolves with what the node actually did, not with what was asked for. Cancellation is two steps so the
+   * executor can confirm what happened, so `state: "cancel_requested"` with `confirmed: false` means the request
+   * is recorded and the work may still be finishing — it does not mean the task stopped.
+   */
+  cancelTask(taskId: string): Promise<{ taskId: string; state: string; confirmed: boolean }> {
+    return this.#call("POST", `/tasks/${encodeURIComponent(taskId)}/cancel`, {});
+  }
+
   claimLiveOwner(
     conversationId: string,
     instanceId: string,
