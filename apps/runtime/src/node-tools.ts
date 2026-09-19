@@ -6,6 +6,8 @@ import type { ToolDefinition } from "@clarkcant/pi-adapter";
 import { requestApproval, type CoordinationDeps } from "@clarkcant/core";
 
 import { blobsDir, readBlob } from "./blobs.ts";
+import { createAskUserQuestionTool } from "./ask-user-question.ts";
+import type { InteractionDeps } from "./interactions.ts";
 import { describeSearch, machineRoots, searchFileSystem } from "./fs-search.ts";
 import { applyGuardrailConstraints, preflightCommand, type CommandEnvelope, type OwnedResources } from "./preflight.ts";
 import type { OperationGuardInput, OperationGuardOutcome } from "./jev-decider.ts";
@@ -35,6 +37,13 @@ export function createNodeTools(input: {
   /** Where a machine-wide search starts. Defaults to every drive, or the filesystem root. */
   roots?: () => readonly string[];
   /**
+   * The interaction manager for the conversation this turn belongs to.
+   *
+   * Absent means `ask_user_question` is not registered: a turn with no conversation has no transcript to
+   * record a question in, and a card nobody can answer is worse than no tool.
+   */
+  interactions?: InteractionDeps;
+  /**
    * The command path, when this node may run commands at all.
    *
    * Absent means `run_command` is not registered. Note what is *not* required: an approval route. A node
@@ -61,6 +70,7 @@ export function createNodeTools(input: {
   return [
     createSearchHistoryTool(input.search),
     createSearchFilesTool(roots),
+    ...(input.interactions === undefined ? [] : [createAskUserQuestionTool(input.interactions)]),
     ...(input.command === undefined
       ? []
       : [

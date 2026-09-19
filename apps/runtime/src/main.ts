@@ -15,7 +15,7 @@ import type { MessageBlock, MessageRecord } from "@clarkcant/contracts";
 import { instantSchema } from "@clarkcant/contracts";
 import { applyEnvFile } from "@clarkcant/pi-adapter";
 
-import { decideApprovalForNode } from "./gateway.ts";
+import { decideApprovalForNode, interactionDepsFor } from "./gateway.ts";
 import { createNodeServer } from "./server.ts";
 import { machineRoots } from "./fs-search.ts";
 import { resolveProject, refreshProjectIndex } from "./project-finder.ts";
@@ -37,6 +37,7 @@ import { buildViewCatalog } from "./view-catalog.ts";
 import { registerNodeTools } from "./tool-catalogue.ts";
 import { composeMiniApp } from "./compose-mini-app.ts";
 import { createNodeTools, type CommandToolDeps } from "./node-tools.ts";
+import type { InteractionDeps } from "./interactions.ts";
 import { guardOperation } from "./jev-decider.ts";
 import { ownedResources } from "./preflight.ts";
 import { DEFAULT_NARROWING, readAutonomySettings } from "./autonomy-settings.ts";
@@ -120,6 +121,13 @@ async function main(): Promise<void> {
    * the tool list has to exist before it.
    */
   const commandWiring: { deps?: CommandToolDeps } = {};
+  /**
+   * The interaction manager, per conversation, filled once the node has booted.
+   *
+   * A function of the conversation rather than a value, because a question belongs to the transcript it was
+   * asked in: two conversations waiting on two different answers must not share one manager.
+   */
+  const interactionWiring: { deps?: (conversationId: string) => InteractionDeps } = {};
   /** Filled once the node has booted, so the scripted turn below can compose a real surface. */
   const modelWiring: { compose?: NodeServices["compose"] } = {};
 
@@ -441,6 +449,9 @@ async function main(): Promise<void> {
         // Reading an attached file is scoped to the conversation this turn belongs to, which is the
         // only thing the tool needs to check beyond the principal.
         attachments: { dataDir: options.dataDir, conversationId: turn.conversationId },
+        // And the same conversation is what a question is recorded against, which is why this is built from
+        // the turn rather than once for the node.
+        ...(interactionWiring.deps === undefined ? {} : { interactions: interactionWiring.deps(turn.conversationId) }),
         // "Where should this go?" goes through the finder, which is where Jev decides when several folders
         // could be meant. The model is told to look before it proposes, and an ambiguous answer comes back
         // as a question rather than as a guess.
@@ -544,6 +555,7 @@ async function main(): Promise<void> {
     narrowing: DEFAULT_NARROWING,
     newId: () => services.conductor.newId("run"),
   };
+  interactionWiring.deps = (conversationId) => interactionDepsFor(services, conversationId);
 
   // A fixture node arranges its own precondition: the scripted command proposal has to have somewhere to
   // run, and a browser run must never depend on a developer's real approved folders.

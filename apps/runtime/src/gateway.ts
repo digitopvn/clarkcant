@@ -52,6 +52,8 @@ import {
 } from "@clarkcant/storage";
 import { credentialNames, putCredential } from "@clarkcant/storage";
 import { DEFAULT_NARROWING, readAutonomySettings, saveAutonomySettings } from "./autonomy-settings.ts";
+import type { InteractionDeps } from "./interactions.ts";
+import { answerQuestion, cancelQuestion } from "./interactions.ts";
 
 import { nodeBackgroundSessions } from "./background-sessions.ts";
 import { decideTurnAction, decisionTimeoutMsFromEnv, searchDecisionBudget } from "./jev-decider.ts";
@@ -513,6 +515,29 @@ function blocksOfConversation(services: NodeServices, conversationId: string): R
   const messages = timeline.messages as unknown as { blocks?: Record<string, unknown>[] }[];
   for (const message of messages) blocks.push(...(message.blocks ?? []));
   return blocks;
+}
+
+/**
+ * The interaction manager for one conversation.
+ *
+ * Built per conversation rather than once per node, because every question belongs to a conversation: the
+ * durable state is that conversation's transcript, and an answer only means something against the card that
+ * asked. The two halves are the ones the approval route already uses — read the blocks, append a message — so
+ * a question and an approval cannot end up disagreeing about what the timeline is.
+ */
+export function interactionDepsFor(services: NodeServices, conversationId: string): InteractionDeps {
+  return {
+    conversationId,
+    now: () => nowInstant(),
+    newId: services.conductor.newId,
+    // SAFETY: the timeline hands back a message's blocks as unparsed JSON, exactly as it does for the approval
+    // route above. The node wrote these rows, and the manager reads only `question-card` and `tool-activity`
+    // fields after checking `type`, so a block of any other shape is skipped rather than trusted.
+    blocks: () => blocksOfConversation(services, conversationId) as unknown as MessageBlock[],
+    append: ({ at, blocks }) => {
+      appendHostReply(services, { conversationId, blocks, at });
+    },
+  };
 }
 
 /**
@@ -1281,6 +1306,66 @@ async function handleConversationRoutes(
       ...(decided.outcome === undefined ? {} : { outcome: decided.outcome }),
       timeline: buildTimeline(services, { conversationId, afterSequence: 0 }),
     });
+  }
+
+  /*
+   * /conversations/:id/questions/:questionId/answer
+   *
+   * The other half of `ask_user_question`, and the reason that tool can return immediately: the answer is its
+   * own request, arriving whenever the person gets to it. Nothing was waiting on the node for it — the turn
+   * that asked ended — so this route starts a new turn rather than resuming anything.
+   *
+   * Text and voice both land here. The client posts a click and the voice session posts an utterance it has
+   * already matched against the question's own options; there is no second path that could disagree about what
+   * an answer means.
+   */
+  if (segments.length === 5 && segments[2] === "questions" && segments[4] === "answer" && request.method === "POST") {
+    const questionId = segments[3];
+    if (questionId === undefined) return fail(400, "INVALID_SCHEMA", "an answer needs the question it answers");
+    const parsed = readJson(request);
+    if (!parsed.ok) return parsed.response;
+
+    const answered = answerQuestion(interactionDepsFor(services, conversationId), questionId, {
+      text: parsed.value.text,
+      optionIds: parsed.value.optionIds,
+      confirmed: parsed.value.confirmed,
+      viaVoice: parsed.value.viaVoice === true,
+    });
+    if (!answered.ok) {
+      const status = answered.code === "QUESTION_NOT_FOUND" ? 404 : 409;
+      return fail(status, answered.code, answered.message);
+    }
+
+    /*
+     * What the person sees, and what the model gets.
+     *
+     * The visible message states the answer; the note carries the same sentence plus the instruction to carry
+     * on. The note travels to the model rather than into the transcript, for the same reason the command
+     * receipt does: the transcript already says what happened, and saying it twice is what made a reader
+     * complain about a receipt printed twice.
+     */
+    await handleUserMessage(services.conductor, {
+      conversationId: conversationId as never,
+      principal: principal as never,
+      text: answered.note,
+      note: `${answered.note}\n\nĐây là câu trả lời của người dùng cho câu hỏi bạn đã hỏi. Hãy tiếp tục công việc đang làm dở.`,
+      at: at() as never,
+    });
+
+    return json(200, {
+      ok: true,
+      note: answered.note,
+      timeline: buildTimeline(services, { conversationId, afterSequence: 0 }),
+    });
+  }
+
+  // /conversations/:id/questions/:questionId/cancel
+  if (segments.length === 5 && segments[2] === "questions" && segments[4] === "cancel" && request.method === "POST") {
+    const questionId = segments[3];
+    if (questionId === undefined) return fail(400, "INVALID_SCHEMA", "a cancellation needs the question it drops");
+    const cancelled = cancelQuestion(interactionDepsFor(services, conversationId), questionId);
+    if (!cancelled) return fail(404, "RESOURCE_NOT_FOUND", "that question is not waiting in this conversation");
+    return json(200, { ok: true, timeline: buildTimeline(services, { conversationId, afterSequence: 0 }) });
   }
 
 

@@ -151,3 +151,23 @@ Thiết kế đã chốt, dựa trên đúng mẫu mà approval card đang dùng
 
 Điểm nối P1→P2 cần đổi: `decideGuardrailForCommand` hiện trả `{kind:"refuse", text}` cho `clarify`; P2 nên
 tạo `QuestionInteraction` thật ở đó.
+
+## 9. Trạng thái t2 (cập nhật)
+
+Đã xanh: `apps/runtime/src/interactions.ts` (createQuestion/answerQuestion/cancelQuestion/expireQuestions/
+pendingForConversation/interactionFromBlock) + 13 test; `packages/contracts/src/interactions.ts` + 16 test;
+`apps/runtime/src/ask-user-question.ts` (host tool) + 3 test; block `question-card` trong union; route
+`POST /conversations/:id/questions/:questionId/answer` và `/cancel`; `interactionDepsFor(services, conversationId)`
+export từ gateway; tool đã đăng ký trong `createNodeTools` khi có `interactions`, và main.ts đã nối
+`interactionWiring` theo conversation.
+
+Còn lại của t2:
+1. Client: render `question-card` (4 kind) + `api.answerQuestion()`/`cancelQuestion()`.
+2. E2E: card hiện, trả lời, turn tiếp theo nhận answer (cần một fixture `ask_user_question` như fixture
+   `chạy lệnh tự động` đã làm cho P1).
+3. Chuyển `clarify` của project-finder/search (và của guardrail P1) thành `QuestionInteraction` thật
+   thay vì text trả về cho model.
+
+Quyết định đáng nhớ: câu trả lời KHÔNG append một text block thứ hai — chỉ ghi `tool-activity`
+(`name: "ask_user_question"`, `args.questionId`, `decision: answered|cancelled|expired`), còn message
+người dùng thấy do route tạo qua `handleUserMessage` (text = note, note = note + "hãy tiếp tục").
