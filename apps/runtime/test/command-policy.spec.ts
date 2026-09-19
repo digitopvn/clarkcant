@@ -169,11 +169,11 @@ describe("what stops a command", () => {
     expect(answer.text).toContain("Guardrail từ chối");
   });
 
-  it("asks rather than running when the guardrail cannot tell which target is meant", async () => {
+  it("asks rather than running when the guardrail cannot tell which target is meant, on a node that cannot ask", async () => {
     const { tool, runs } = makeTool({ guard: { status: "clarify", question: "Bạn muốn xoá project nào?" } });
     const answer = await tool.execute({ command: "rm -rf old" });
     expect(runs).toHaveLength(0);
-    // A clarification is a question, not a refusal: the model can carry it back and re-propose.
+    // No interaction manager on this node, so the question stays with the model. The card path is the test below.
     expect(answer.text).toContain("Bạn muốn xoá project nào?");
     expect(answer.text).toContain("Hỏi người dùng");
   });
@@ -233,6 +233,24 @@ describe("a folder the finder cannot choose between", () => {
     expect(answer.hostBlocks?.map((block) => block.type)).toEqual(["question-card"]);
     // The model is told the turn is over, not that it has an answer.
     expect(answer.text).toContain("Đã hỏi người dùng");
+  });
+
+  it("opens a question card when the guardrail cannot tell which target is meant", async () => {
+    /*
+     * The same judgement as the refusal next to it, held by the node instead of by the model. This is the difference
+     * that matters in practice: a question the model is asked to repeat is a question that may never be asked, and the
+     * answer to a card comes back as its own turn whether it was clicked or spoken.
+     */
+    const { tool, runs } = makeTool({
+      guard: { status: "clarify", question: "Bạn muốn xoá project nào?" },
+      interactions: interactionsFixture(),
+    });
+    const answer = await tool.execute({ command: "rm -rf old" });
+
+    expect(runs).toHaveLength(0);
+    expect(answer.hostBlocks?.map((block) => block.type)).toEqual(["question-card"]);
+    expect((answer.hostBlocks?.[0] as { prompt?: string }).prompt).toContain("Bạn muốn xoá project nào?");
+    expect(answer.text).toContain("Đừng nói là đã chạy");
   });
 
   it("falls back to a question for the model when the node cannot ask", async () => {

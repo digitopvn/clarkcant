@@ -241,3 +241,21 @@ tiếp theo. Tổng unit test mới của t2: 51 (gồm cả regression của P1
 **Hai bản sửa nguyên nhân (không sửa assertion).** `playwright.config.ts` xoá `.data/e2e` trước khi node khởi động, vì nhiều spec khẳng định một tập bản ghi **đúng bằng** (node có đúng một credential, transcript có đúng một thẻ) và một data dir giữ lại từ lần trước làm những khẳng định đó sai vì lý do không liên quan tới code. `AGENTS.md` ghi thêm yêu cầu giải phóng port 8876/4273 trước khi chạy.
 
 **Điều chưa đạt tuyệt đối:** contract ghi "0 failure", nhưng 4 test e2e đã fail từ trước refactor và không liên quan tới P1–P8; chúng tôi giữ nguyên, không sửa, cũng không bỏ qua — tên test và điều kiện thiếu nằm ở mục 7 và mục này.
+
+## 14. Việc còn lại sau audit — đã xong, e2e 0 failure
+
+Bốn test e2e từng được ghi là "có sẵn từ trước, không liên quan P1–P8" đã được xử lý tận gốc cùng hai điểm auditor nêu. Kết quả cuối: `pnpm test:e2e` **56 passed / 0 failed** (exit=0), `pnpm verify` **1278 pass / 7 skip** (99 file, 1 skip), invariants 7/7.
+
+**`clarify` mở thẻ câu hỏi thật.** Auditor ghi §7.4 mô tả rộng hơn thực tế: guardrail `clarify` trả text cho model để model tự hỏi lại. Nay `GuardDecisionForCommand` có thêm kind `ask`, và `askClarify` dựng một `question-card` kiểu `text` qua Interaction Manager — lượt kết thúc ở câu hỏi, câu trả lời về ở lượt sau, và một cú bấm với một câu nói đi vào cùng một đường. Node không hỏi được thì vẫn giữ fallback text (nói rõ là đường kém hơn). Test mới trong `command-policy.spec.ts` (22 test) khẳng định card được dựng và không có gì chạy. §7.4 vốn đã viết đúng nên chỉ code phải sửa.
+
+**§7.5 (voice).** Câu "Voice hiện chỉ hiểu một dạng chờ duyệt" đã bỏ; §7.5 nay nói voice hiểu mọi interaction đang pending qua `answerFromUtterance` và trả lời qua đúng một đường (`answerQuestionForNode`). §7.6 thêm luật hai lượt của `role`. `docs/manifest.json` cập nhật, invariants 7/7 PASS.
+
+**appearance.spec.ts:231.** Hai nguyên nhân, cả hai đều là lỗi thật: node fixture không nối catalogue (nên tab Models chỉ có bảng pool kèm cảnh báo "không có provider", còn node thì lại khai pool dùng chính provider đó — fixture tự mâu thuẫn), và khi node chưa cấu hình model thì `chosenProvider` rỗng nên danh sách model rỗng dù select provider đang hiển thị provider đầu tiên. Sửa: fixture mode báo catalogue của `FakePiAdapter` (chỉ khi chưa có gì khác trả lời), và `chosenProvider` fallback về provider đầu tiên trong catalogue.
+
+**j1.spec.ts:204 (việc nền).** Nguyên nhân thật không phải bộ lọc model: `gateway.startBackgroundWork` từ chối khi `services.turnControl` vắng, mà node fixture cố ý không dựng model turn (nó trả lời bằng recipe). Fixture mode nay có một `turnControl` tối thiểu — không phải model, trả lời bằng câu fixture sau 1,5 giây, và độ trễ đó là chủ ý vì một phiên bắt đầu và kết thúc trong cùng một mili giây là phiên không client nào vẽ được. Kèm đó `filterBackgroundCandidates` xét `role` hai lượt: profile khai báo đúng role thắng khi có; khi không ai khai báo thì capability quyết, vì từ chối chạy việc nền vì một lý do không hiện trên màn hình là rút mất một tính năng cốt lõi (+2 test).
+
+**onboarding.spec.ts:86 và :110.** Cả hai là giả định cũ trong spec, không phải lỗi client. Test ":86" khẳng định màn hình first-run được bỏ qua khi node đã sẵn sàng, nhưng node fixture cố ý không có provider/key nên client đi từng bước là đúng — spec nay stub `/readiness` thành node đã sẵn sàng (cách spec anh em vẫn dùng). Test ":110" chỉ xử lý bước model trong nhánh có provider, trong khi bước model có ở cả hai nhánh (nó ghi lựa chọn cho trình duyệt, không chỉ cho node) — nay xử lý chung cho cả hai.
+
+**j1.spec.ts:228 (phát sinh khi việc nền chạy được).** Node cố ý giữ cả phiên nền đã xong ("did the last one finish"), nên sau test tạo phiên thì header còn mark suốt run. Test "không có việc nền" khẳng định đúng trạng thái đó nhưng phải được quan sát trước khi node có lịch sử; nó được chuyển lên trước test tạo phiên, kèm lý do.
+
+**Câu hỏi mở.** Node giữ phiên nền đã xong vô thời hạn, nên trên một node thật, header sẽ luôn có mark sau lần đầu ai đó chạy việc nền — ngược với ý "mark chỉ hiện khi có việc". Có nên prune theo tuổi hoặc theo số lượng (ví dụ chỉ giữ phiên đang chạy và phiên vừa xong) không? Chưa đổi vì đó là quyết định sản phẩm.

@@ -57,6 +57,36 @@ describe("the profiles a background job could run on", () => {
     expect(outcome.rejected.map((entry) => entry.alias)).toEqual(["off", "foreground-only"]);
   });
 
+  it("runs anyway when no profile declares the role, because the alternative is doing nothing", () => {
+    /*
+     * The shape almost every node is in: a pool whose owner gave no thought to roles. Refusing here would withdraw
+     * background work — sending a passage to a worker, which is a core thing this node does — for a reason nobody can
+     * see on screen. Capability still decides, so an unusable profile is still left out.
+     */
+    const outcome = filterBackgroundCandidates(
+      filterInput({
+        pool: pool(
+          profile({ alias: "only-one", roles: ["foreground"], priority: 10 }),
+          profile({ alias: "broken", roles: ["foreground"], priority: 5, provider: "broken-provider", modelId: "gone" }),
+        ),
+        hasCredential: (provider) => provider !== "broken-provider",
+      }),
+    );
+    expect(outcome.eligible.map((entry) => entry.alias)).toEqual(["only-one"]);
+  });
+
+  it("still says why when the role was required and nothing matched", () => {
+    // The reasons are what a settings panel shows; a relaxed pass that found nothing must not replace them with
+    // silence, or the panel lists nothing and explains nothing.
+    const outcome = filterBackgroundCandidates(
+      filterInput({
+        pool: pool(profile({ alias: "off", roles: ["background"], enabled: false })),
+      }),
+    );
+    expect(outcome.eligible).toEqual([]);
+    expect(outcome.rejected.map((entry) => entry.reason)).toEqual(["đang tắt"]);
+  });
+
   it("orders the survivors by priority, not by the order the store returned", () => {
     const outcome = filterBackgroundCandidates(
       filterInput({ pool: pool(profile({ alias: "slow", priority: 30 }), profile({ alias: "quick", priority: 1 })) }),

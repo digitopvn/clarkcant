@@ -13,7 +13,7 @@ import { join } from "node:path";
 
 import type { MessageBlock, MessageRecord } from "@clarkcant/contracts";
 import { instantSchema } from "@clarkcant/contracts";
-import { applyEnvFile } from "@clarkcant/pi-adapter";
+import { FakePiAdapter, applyEnvFile } from "@clarkcant/pi-adapter";
 
 import { answerQuestionForNode, decideApprovalForNode, interactionDepsFor } from "./gateway.ts";
 import type { PendingVoiceInteraction } from "./voice-session.ts";
@@ -641,6 +641,31 @@ async function main(): Promise<void> {
     services.extensions = modelTurn.extensions;
     services.piSettings = modelTurn.piSettings;
   }
+
+  /*
+   * A turn control for a fixture node.
+   *
+   * Starting a background session is the one path a node cannot answer from a recipe: it goes through the turn control,
+   * which only exists when a model turn does — and a fixture node has none by design, because it answers with scripts
+   * rather than a provider. Without this, the browser half of that path is untestable: the client would report the
+   * node's refusal, which is correct behaviour and not the thing a test of the selection menu should be measuring.
+   *
+   * It is not a model. It says so, waits a moment, and answers with a fixture sentence. The wait is the point: a session
+   * that starts and finishes inside the same millisecond is a session no client can ever draw, and drawing it — the
+   * chip in the header, the reply in the conversation — is exactly what the browser test asserts.
+   */
+  if (services.turnControl === undefined && modelFixture) {
+    services.turnControl = {
+      running: () => [],
+      interrupt: () => false,
+      steer: async () => false,
+      runInBackground: async () => {
+        await new Promise((resolve) => setTimeout(resolve, 1_500));
+        const reply = "Fixture: việc nền đã xong, tui đã đọc kết quả và tiếp tục công việc.";
+        return reply;
+      },
+    };
+  }
   projectWiring.deps = services.projects;
   approvalWiring.deps = {
     db: services.runtime.db,
@@ -768,6 +793,18 @@ async function main(): Promise<void> {
       at,
     );
     writeCurrentAlias(services.runtime.db, services.runtime.identity.ownerPrincipalId, "fast", at);
+
+    /*
+     * And the catalogue those providers are supposed to come from.
+     *
+     * Without it the fixture contradicts itself: the pool above names `fake` and `fake-other`, while the Models tab
+     * reports that this node has no such provider and draws no picker, because the catalogue is read from a model turn
+     * that a fixture node deliberately does not build. The list is the fake adapter's, which exists for exactly this —
+     * being read on a machine with no provider account — so the panel, the pool validation and the chooser all have
+     * something real to be exercised against. Only when nothing else answered, so a fixture node that does build a
+     * model turn keeps its own catalogue.
+     */
+    services.modelCatalogue ??= () => new FakePiAdapter().catalogue();
   }
   modelWiring.compose = services.compose;
 

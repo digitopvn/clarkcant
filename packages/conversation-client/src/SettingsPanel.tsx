@@ -492,7 +492,15 @@ export function SettingsPanel({
   const [modelDraft, setModelDraft] = useState<string | undefined>(undefined);
 
   /** The provider whose models the second field offers: what was typed, or what the node is running. */
-  const chosenProvider = providerDraft ?? facts?.model?.provider ?? "";
+  /*
+   * The provider the panel is working on, and the reason for the third fallback.
+   *
+   * When the node has a model, that is the one to show. When it has none, the first provider it could run is what the
+   * select already draws — an HTML select whose value is in none of its options displays the first one anyway — and
+   * leaving the state empty left the model list empty with it, so the pair could not be chosen in the order the panel
+   * requires. This is the case a node is in before anybody has configured anything, which is the case that matters.
+   */
+  const chosenProvider = providerDraft ?? facts?.model?.provider ?? catalogue?.[0]?.id ?? "";
   const chosenModels = catalogue?.find((provider) => provider.id === chosenProvider)?.models ?? [];
 
   /** Store the pair somebody typed, refusing one this node cannot run before it leaves the page. */

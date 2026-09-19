@@ -275,7 +275,9 @@ export function policyForEffect(settings: AutonomySettings, guardClass: GuardCla
 
 export type GuardDecisionForCommand =
   | { kind: "proceed"; envelope: CommandEnvelope }
-  | { kind: "refuse"; text: string };
+  | { kind: "refuse"; text: string }
+  /** The policy layer could not tell what the command is aimed at and said so. A question, not a verdict. */
+  | { kind: "ask"; question: string };
 
 /**
  * Consult the policy layer about one command, and turn its answer into something the turn can act on.
@@ -319,7 +321,15 @@ export async function decideGuardrailForCommand(
     return { kind: "refuse", text: `Guardrail từ chối lệnh này (${outcome.reason}). Không có gì được chạy.` };
   }
   if (outcome.status === "clarify") {
-    return { kind: "refuse", text: `${outcome.question} Hỏi người dùng rồi đề xuất lại.` };
+    /*
+     * A question rather than a refusal.
+     *
+     * This used to be handed to the model as prose — "ask the user and propose again" — which made whether anybody
+     * was actually asked depend on the model remembering to ask. It is the same judgement either way; what changes is
+     * who holds the question. The interaction manager holds it, so the turn ends on it and the answer arrives as its
+     * own turn, which is also what lets a click and a spoken sentence be the same answer.
+     */
+    return { kind: "ask", question: outcome.question };
   }
   if (outcome.status === "constrain") {
     const offered = (input.narrowing ?? []).find((entry) => entry.id === outcome.constraintId);
@@ -361,6 +371,30 @@ function askWhichFolder(
     text: "Đã hỏi người dùng muốn dùng thư mục nào. Lượt này kết thúc ở đây; câu trả lời sẽ tới ở lượt sau.",
     // SAFETY: built against the message-block union by `createQuestion`; the adapter's shape is loose because it
     // must not depend on contracts, and the node validates every block before it reaches a transcript.
+    hostBlocks: [created.block as unknown as Record<string, unknown>],
+  };
+}
+
+/**
+ * Turn a guardrail's request to clarify into a question card.
+ *
+ * A `text` question rather than a choice, because what the policy layer could not tell apart is the intent itself —
+ * offering it options would be pretending it had narrowed the possibilities down. Returns nothing when the node cannot
+ * ask, so the caller keeps its text fallback rather than inventing a card nobody can answer.
+ */
+function askClarify(
+  input: { interactions?: InteractionDeps },
+  question: string,
+): { text: string; hostBlocks: Record<string, unknown>[] } | undefined {
+  if (input.interactions === undefined) return undefined;
+  const created = createQuestion(input.interactions, { question, kind: "text", allowOther: true });
+  if (!created.ok) return undefined;
+  return {
+    text:
+      "Đã hỏi người dùng cho rõ trước khi chạy. Lượt này kết thúc ở đây; câu trả lời sẽ tới ở lượt sau, và không có gì " +
+      "chạy trước khi có câu trả lời. Đừng nói là đã chạy.",
+    // SAFETY: built against the message-block union by `createQuestion`; the adapter's shape is loose because it must
+    // not depend on contracts, and the node validates every block before it reaches a transcript.
     hostBlocks: [created.block as unknown as Record<string, unknown>],
   };
 }
@@ -533,6 +567,14 @@ export function createRunCommandTool(
           // happen and nobody can remember why.
           input.audit?.({ summary: decision.text, outcome: "refused" });
           return { text: decision.text };
+        }
+        if (decision.kind === "ask") {
+          const asked = askClarify(input, decision.question);
+          // No trail entry: the question and its answer are blocks in the transcript, which is the durable record of
+          // this conversation. An audit kind here would be a second, shallower copy of the same fact.
+          if (asked !== undefined) return asked;
+          // A node that cannot ask leaves the question with the model. Worse, and said so.
+          return { text: `${decision.question} Hỏi người dùng rồi đề xuất lại.` };
         }
         guarded = decision.envelope;
       }

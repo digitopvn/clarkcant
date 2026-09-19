@@ -87,6 +87,12 @@ test.describe("the first run", () => {
     // Its own navigation rather than the shared helper: that one waits for the connection status in the header, and this
     // screen deliberately has no header - which is exactly what made the first version of this test fail, and the
     // failure looked like the screen not rendering.
+    //
+    // The node's answer is stubbed, and it has to be: this suite's node is a fixture with no provider and no key, so on
+    // its real answer the client correctly walks the steps instead of going straight in, and the claim this test makes -
+    // that the screen is dismissed and stays dismissed - is about the ready path. The steps path has its own test below,
+    // which stubs the opposite answer.
+    await page.route("**/readiness", (route) => route.fulfill({ json: { model: true, credentials: ["typesafe"] } }));
     await page.goto(`/?token=${token()}&gateway=${encodeURIComponent(GATEWAY)}`);
 
     await expect(page.locator("[data-onboarding='true']")).toBeVisible({ timeout: 15_000 });
@@ -124,13 +130,20 @@ test.describe("the first run on a node that has been told nothing", () => {
     const provider = page.locator("[data-onboarding-provider]").first();
     if ((await provider.count()) > 0) {
       await provider.click();
-      await expect(page.locator("[data-onboarding-step='model']")).toBeVisible();
-      await page.locator("[data-onboarding-model-select]").selectOption({ index: 1 });
-      await page.locator("[data-onboarding-continue='true']").click();
     } else {
       await expect(page.locator("[data-onboarding-none='true']")).toBeVisible();
       await page.locator("[data-onboarding-finish='true']").click();
     }
+
+    // Both branches land on the model step, and the model step belongs to both: what it records is which model *this
+    // browser* should ask for, which is a choice a node with no provider can still offer - the node's own model comes
+    // from its environment either way. Skipping the provider step is not skipping this one.
+    await expect(page.locator("[data-onboarding-step='model']")).toBeVisible();
+    const modelSelect = page.locator("[data-onboarding-model-select]");
+    // Only when there is something to choose between: an empty list is a legitimate answer here, and selecting an
+    // option that does not exist would fail the test for the node's configuration rather than for the client.
+    if ((await modelSelect.locator("option").count()) > 1) await modelSelect.selectOption({ index: 1 });
+    await page.locator("[data-onboarding-continue='true']").click();
 
     // The key, which is skippable and never echoed back.
     await expect(page.locator("[data-onboarding-key='typesafe']")).toBeVisible();

@@ -60,9 +60,29 @@ function candidateFor(profile: UserModelProfile): ModelCandidate {
  *
  * Ordered by the pool's own priority, so the fallback below is deterministic rather than whatever the store
  * happened to return.
+ *
+ * The role is decided in two passes, and that is deliberate. A profile that declares the role is the right answer when
+ * there is one, so the strict pass runs first. When nothing declares it, the alternative is not "this node cannot run
+ * background work" — it is "this node never said which profile is for that", which is the state of every node whose
+ * owner has one profile and gave no thought to roles. Refusing then would withdraw a core feature for a reason nobody
+ * can see, and the capability checks below are what actually keep a choice safe. So when the strict pass finds nothing,
+ * capability alone decides; the strict pass's rejections are kept only when it found something, because a stated reason
+ * is worth more than a longer list.
  */
 export function filterBackgroundCandidates(input: CandidateFilterInput): FilterOutcome {
   const role = input.role ?? "background";
+  const strict = filterByCapability(input, role, true);
+  if (strict.eligible.length > 0) return strict;
+  const relaxed = filterByCapability(input, role, false);
+  return relaxed.eligible.length > 0 ? relaxed : strict;
+}
+
+/** One pass of the filter above, with the role either required or advisory. */
+function filterByCapability(
+  input: CandidateFilterInput,
+  role: NonNullable<CandidateFilterInput["role"]>,
+  requireRole: boolean,
+): FilterOutcome {
   const eligible: ModelCandidate[] = [];
   const rejected: { alias: string; reason: string }[] = [];
 
@@ -71,7 +91,7 @@ export function filterBackgroundCandidates(input: CandidateFilterInput): FilterO
       rejected.push({ alias: profile.alias, reason: "đang tắt" });
       continue;
     }
-    if (!profile.roles.includes(role)) {
+    if (requireRole && !profile.roles.includes(role)) {
       rejected.push({ alias: profile.alias, reason: `không nhận vai trò ${role}` });
       continue;
     }
