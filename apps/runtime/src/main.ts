@@ -15,7 +15,8 @@ import type { MessageBlock, MessageRecord } from "@clarkcant/contracts";
 import { instantSchema } from "@clarkcant/contracts";
 import { applyEnvFile } from "@clarkcant/pi-adapter";
 
-import { decideApprovalForNode, interactionDepsFor } from "./gateway.ts";
+import { answerQuestionForNode, decideApprovalForNode, interactionDepsFor } from "./gateway.ts";
+import type { PendingVoiceInteraction } from "./voice-session.ts";
 import { createNodeServer } from "./server.ts";
 import { machineRoots } from "./fs-search.ts";
 import { resolveProject, refreshProjectIndex } from "./project-finder.ts";
@@ -748,26 +749,39 @@ async function main(): Promise<void> {
         .map((message) => textOfMessage(message))
         .join("\n\n")
         .trim();
-      // A turn can end with an operation waiting for a decision. The voice session asks about it out loud, and
-      // needs the digest the card was shown with: it is the same binding the button sends.
-      const proposed = outcome.messages
-        .flatMap((message) => message.blocks)
-        .find((block) => block.type === "approval-card" && block.decision === "pending");
-      // `find` returns the union it searched, so the block is narrowed again here: nothing else may be read
-      // off an approval card.
-      const pending = proposed !== undefined && proposed.type === "approval-card" ? proposed : undefined;
+      /*
+       * A turn can end with something waiting for an answer: an operation to approve, or a question card. The voice
+       * session asks out loud either way, and needs enough of the card to phrase it — the digest for an approval,
+       * the options for a question — because it sends its answer back through the same function the button does.
+       */
+      let pending: PendingVoiceInteraction | undefined;
+      for (const block of outcome.messages.flatMap((message) => message.blocks)) {
+        if (block.type === "approval-card" && block.decision === "pending") {
+          pending = {
+            kind: "approval",
+            approvalId: block.approvalId,
+            digest: block.operationDigest,
+            description: block.operationDescription,
+          };
+          break;
+        }
+        if (block.type === "question-card" && block.status === "waiting") {
+          pending = {
+            kind: "question",
+            questionId: block.questionId,
+            questionType: block.questionType,
+            prompt: block.prompt,
+            options: block.options.map((option) => ({ id: option.id, label: option.label })),
+            allowOther: block.allowOther,
+            voicePrompt: block.voicePrompt,
+          };
+          break;
+        }
+      }
       return {
         reply,
         recordedMessages: outcome.messages.length,
-        ...(pending === undefined
-          ? {}
-          : {
-              pendingApproval: {
-                approvalId: pending.approvalId,
-                digest: pending.operationDigest,
-                description: pending.operationDescription,
-              },
-            }),
+        ...(pending === undefined ? {} : { pendingInteraction: pending }),
       };
     },
     /**
@@ -794,6 +808,30 @@ async function main(): Promise<void> {
           // made of it. `message` is spoken by the session.
           { ok: true, message: result.continuation ?? result.outcome ?? "Đã chạy xong lệnh đó." }
         : { ok: false, message: result.message };
+    },
+    /**
+     * Record what the person just said, through the same function the HTTP route calls.
+     *
+     * That is the whole of "voice and a click mean the same thing": not a second path that is kept in step with the
+     * first, but the same function. By the time this is called the session has already matched the words against
+     * the question's own options, so nothing here has to be lenient about speech.
+     */
+    answerQuestion: async ({ conversationId, questionId, text, optionIds, confirmed }) => {
+      const result = await answerQuestionForNode(services, {
+        conversationId,
+        questionId,
+        principal: {
+          principalId: services.runtime.identity.ownerPrincipalId,
+          kind: "user",
+          nodeId: services.runtime.identity.nodeId,
+        },
+        ...(text === undefined ? {} : { text }),
+        ...(optionIds === undefined ? {} : { optionIds }),
+        ...(confirmed === undefined ? {} : { confirmed }),
+        viaVoice: true,
+        at: new Date().toISOString() as never,
+      });
+      return result.ok ? { ok: true, message: "Đã ghi câu trả lời." } : { ok: false, message: result.message };
     },
   });
   process.stderr.write(

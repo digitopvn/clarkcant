@@ -541,8 +541,54 @@ export function interactionDepsFor(services: NodeServices, conversationId: strin
 }
 
 /**
- * Append a message the host wrote — a question, a notice, or the receipt of an operation.
+ * Record an answer and open the turn it starts.
  *
+ * One function, called by the HTTP route and by the voice session, because "voice and a click mean the same thing"
+ * has to be structurally true rather than a claim two code paths keep in step. What a caller can differ on is the
+ * answer's shape: an utterance has already been matched against the question's own options before it arrives here.
+ */
+export async function answerQuestionForNode(
+  services: NodeServices,
+  input: {
+    conversationId: string;
+    principal: { principalId: string; kind: "user"; nodeId: string };
+    questionId: string;
+    text?: unknown;
+    optionIds?: unknown;
+    confirmed?: unknown;
+    viaVoice?: boolean;
+    at: Instant;
+  },
+): Promise<{ ok: true; note: string } | { ok: false; code: string; message: string }> {
+  const answered = answerQuestion(interactionDepsFor(services, input.conversationId), input.questionId, {
+    text: input.text,
+    optionIds: input.optionIds,
+    confirmed: input.confirmed,
+    ...(input.viaVoice === true ? { viaVoice: true } : {}),
+  });
+  if (!answered.ok) return { ok: false, code: answered.code, message: answered.message };
+
+  /*
+   * What the person sees, and what the model gets.
+   *
+   * The visible message states the answer; the note carries the same sentence plus the instruction to carry on.
+   * The note travels to the model rather than into the transcript, for the same reason the command receipt does:
+   * the transcript already says what happened, and saying it twice is what made a reader complain about a receipt
+   * printed twice.
+   */
+  await handleUserMessage(services.conductor, {
+    conversationId: input.conversationId as never,
+    principal: input.principal as never,
+    text: answered.note,
+    note: `${answered.note}\n\nĐây là câu trả lời của người dùng cho câu hỏi bạn đã hỏi. Hãy tiếp tục công việc đang làm dở.`,
+    at: input.at,
+  });
+  return { ok: true, note: answered.note };
+}
+
+/**
+ * Append a message the host wrote — a question, a notice, or the receipt of an operation.
+ * *
  * `blocks` is what a receipt needs: a command's outcome is a tool record and an evidence line, not a
  * paragraph. `text` stays because most host replies are one sentence, and a caller that has to build a
  * text block by hand is a caller that will eventually build it wrong.
@@ -1325,32 +1371,20 @@ async function handleConversationRoutes(
     const parsed = readJson(request);
     if (!parsed.ok) return parsed.response;
 
-    const answered = answerQuestion(interactionDepsFor(services, conversationId), questionId, {
+    const answered = await answerQuestionForNode(services, {
+      conversationId,
+      principal,
+      questionId,
       text: parsed.value.text,
       optionIds: parsed.value.optionIds,
       confirmed: parsed.value.confirmed,
       viaVoice: parsed.value.viaVoice === true,
+      at: at() as never,
     });
     if (!answered.ok) {
       const status = answered.code === "QUESTION_NOT_FOUND" ? 404 : 409;
       return fail(status, answered.code, answered.message);
     }
-
-    /*
-     * What the person sees, and what the model gets.
-     *
-     * The visible message states the answer; the note carries the same sentence plus the instruction to carry
-     * on. The note travels to the model rather than into the transcript, for the same reason the command
-     * receipt does: the transcript already says what happened, and saying it twice is what made a reader
-     * complain about a receipt printed twice.
-     */
-    await handleUserMessage(services.conductor, {
-      conversationId: conversationId as never,
-      principal: principal as never,
-      text: answered.note,
-      note: `${answered.note}\n\nĐây là câu trả lời của người dùng cho câu hỏi bạn đã hỏi. Hãy tiếp tục công việc đang làm dở.`,
-      at: at() as never,
-    });
 
     return json(200, {
       ok: true,

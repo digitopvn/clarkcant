@@ -798,7 +798,11 @@ describe("approving a command by voice", () => {
     const adapter = new FakeAdapter();
     const calls: Array<{ approvalId: string; decision: string; digest: string }> = [];
     context = await startGateway(() => "credential", adapter, {
-      answer: async () => ({ reply: "Tui cần chạy một lệnh.", recordedMessages: 2, pendingApproval: PROPOSAL }),
+      answer: async () => ({
+        reply: "Tui cần chạy một lệnh.",
+        recordedMessages: 2,
+        pendingInteraction: { kind: "approval", ...PROPOSAL },
+      }),
       decideApproval: async (input) => {
         // Only what the decision consists of: the conversation is implied by the session.
         calls.push({ approvalId: input.approvalId, decision: input.decision, digest: input.digest });
@@ -899,5 +903,91 @@ describe("reading a spoken decision", () => {
   it("accepts the spellings a transcriber may drop the marks from", () => {
     expect(interpretDecision("dong y")).toBe("granted");
     expect(interpretDecision("tu choi")).toBe("denied");
+  });
+});
+
+/**
+ * Answering a question by voice.
+ *
+ * The same path a click takes: the session matches the words against the question's own options and hands the
+ * result to the one function the HTTP route also calls. What only this suite shows is that a spoken sentence
+ * becomes exactly the answer a button would have sent — the option id, not the word that was heard.
+ */
+describe("answering a question by voice", () => {
+  const QUESTION = {
+    kind: "question" as const,
+    questionId: "q_1",
+    questionType: "single-choice" as const,
+    prompt: "Chọn môi trường triển khai.",
+    options: [
+      { id: "staging", label: "Staging" },
+      { id: "production", label: "Production" },
+    ],
+    allowOther: false,
+    voicePrompt: "Chọn môi trường triển khai. Staging hay Production?",
+  };
+
+  const spoken = (text: string) => (message: Received): boolean =>
+    !message.binary && message.control["type"] === "transcript" && message.control["text"] === text;
+
+  async function withQuestion(): Promise<{
+    adapter: FakeAdapter;
+    client: ReturnType<typeof connect>;
+    calls: Array<{ questionId: string; optionIds?: string[]; confirmed?: boolean }>;
+  }> {
+    const adapter = new FakeAdapter();
+    const calls: Array<{ questionId: string; optionIds?: string[]; confirmed?: boolean }> = [];
+    context = await startGateway(() => "credential", adapter, {
+      answer: async () => ({
+        reply: "Tui cần biết bạn muốn môi trường nào.",
+        recordedMessages: 1,
+        pendingInteraction: QUESTION,
+      }),
+      answerQuestion: async (input) => {
+        calls.push({
+          questionId: input.questionId,
+          ...(input.optionIds === undefined ? {} : { optionIds: input.optionIds }),
+          ...(input.confirmed === undefined ? {} : { confirmed: input.confirmed }),
+        });
+        return { ok: true, message: "đã ghi" };
+      },
+    });
+    const client = connect(context.url);
+    await client.opened;
+    client.auth(TOKEN, CONVERSATION);
+    await client.control("ready");
+    return { adapter, client, calls };
+  }
+
+  it("reads the question out with its own options, and takes a spoken option as the answer", async () => {
+    const { adapter, client, calls } = await withQuestion();
+
+    sayFor(adapter, "triển khai giúp tui");
+    await client.waitFor(spoken(QUESTION.voicePrompt), "the question read out loud");
+
+    sayFor(adapter, "production");
+    await client.waitFor(spoken("Đã ghi câu trả lời của bạn."), "the answer being recorded");
+
+    expect(calls).toEqual([{ questionId: "q_1", optionIds: ["production"] }]);
+  });
+
+  it("asks again when the words do not fit the question, and records nothing", async () => {
+    const { adapter, client, calls } = await withQuestion();
+
+    sayFor(adapter, "triển khai giúp tui");
+    await client.waitFor(spoken(QUESTION.voicePrompt), "the question read out loud");
+    sayFor(adapter, "cái gì cũng được");
+    await new Promise((resolve) => setTimeout(resolve, 30));
+
+    const asked = client.received.filter(
+      (message) =>
+        !message.binary &&
+        message.control["type"] === "transcript" &&
+        typeof message.control["text"] === "string" &&
+        message.control["text"].includes("chưa khớp được câu trả lời"),
+    );
+    // Asked again rather than guessed at, because a misheard choice is not recoverable the way a second question is.
+    expect(asked.length).toBe(1);
+    expect(calls).toEqual([]);
   });
 });

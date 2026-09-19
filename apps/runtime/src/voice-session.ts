@@ -1,6 +1,6 @@
 import type { IncomingMessage, Server } from "node:http";
 
-import { type ConversationId, type Instant, nowInstant } from "@clarkcant/contracts";
+import { answerFromUtterance, type ConversationId, type Instant, type QuestionKind, nowInstant } from "@clarkcant/contracts";
 import { recordVoiceTranscript } from "@clarkcant/core";
 import { GeminiLiveAdapter, type VoiceProviderAdapter } from "@clarkcant/voice-adapters";
 import { type RawData, WebSocketServer, type WebSocket } from "ws";
@@ -99,6 +99,20 @@ export interface VoiceGatewayOptions {
     decision: "granted" | "denied";
     digest: string;
   }) => Promise<{ ok: boolean; message: string }>;
+  /**
+   * Answer a question the agent asked, through the same route a click uses.
+   *
+   * Injected for the same reason `decideApproval` is, and to the same end: voice is a surface, not a second
+   * mechanism. If this grew its own way of recording an answer, the two surfaces would eventually disagree about
+   * what a person chose — and the transcript would be the place that disagreement showed up.
+   */
+  answerQuestion?: (input: {
+    conversationId: ConversationId;
+    questionId: string;
+    text?: string;
+    optionIds?: string[];
+    confirmed?: boolean;
+  }) => Promise<{ ok: boolean; message: string }>;
   /** Injected by tests so the transport can be exercised without a provider. */
   createAdapter?: () => VoiceProviderAdapter;
   now?: () => Instant;
@@ -124,18 +138,39 @@ export interface VoiceGateway {
   close(): Promise<void>;
 }
 
+/**
+ * What the node is waiting for, as far as a voice session is concerned.
+ *
+ * One union for both shapes, because voice has exactly one job when something is pending: read it out and take
+ * the spoken answer. An approval is a yes-or-no question; a question card is four kinds of question. The session
+ * does not need to know more than how to phrase each one, and it deliberately does not get its own way of
+ * recording either answer.
+ */
+export type PendingVoiceInteraction =
+  | { kind: "approval"; approvalId: string; digest: string; description: string }
+  | {
+      kind: "question";
+      questionId: string;
+      questionType: QuestionKind;
+      prompt: string;
+      options: { id: string; label: string }[];
+      allowOther: boolean;
+      /** Spoken by the host, derived from the options so the words cannot drift from the card. */
+      voicePrompt: string;
+    };
+
 /** What the agent answered, and what its turn added to the conversation. */
 export interface VoiceAnswerResult {
   /** The words to read back. Empty when the agent produced nothing worth saying. */
   reply: string;
   /**
-   * An operation the agent asked for, still waiting on a decision.
+   * What the agent asked for and is waiting on, if the person has not answered yet.
    *
-   * A turn that proposes a command ends with a card nobody has decided. The person holding a microphone is not
-   * going to click it, so the session asks about it out loud and takes the spoken answer as the decision; the
-   * alternative is a card that waits for a press the voice mode never offers.
+   * A turn can end with something nobody has answered: a proposed command, or a question card. The person holding
+   * a microphone is not going to click either, so the session asks out loud and takes the spoken answer — the
+   * alternative is a card waiting for a press that voice mode never offers.
    */
-  pendingApproval?: { approvalId: string; digest: string; description: string };
+  pendingInteraction?: PendingVoiceInteraction;
   /**
    * Messages this turn wrote to the conversation.
    *
@@ -288,8 +323,8 @@ export function attachVoiceGateway(options: VoiceGatewayOptions): VoiceGateway {
     let recorded = false;
     /** Messages the agent's turns wrote, so the closing report counts what actually happened. */
     let answeredMessages = 0;
-    /** An operation the agent asked for and is waiting on, if the person has not answered yet. */
-    let waiting: { approvalId: string; digest: string; description: string } | undefined;
+    /** What the agent asked for and is waiting on, if the person has not answered yet. */
+    let waiting: PendingVoiceInteraction | undefined;
     /**
      * Utterances are answered one at a time, in the order they were said.
      *
@@ -368,10 +403,10 @@ export function attachVoiceGateway(options: VoiceGatewayOptions): VoiceGateway {
       // the only copy of something that was said, and the closing report would then have nothing to keep.
       userText = "";
 
-      // A sentence said while an approval is waiting is a decision, not a question for the agent.
+      // A sentence said while something is pending is an answer, not a new request for the agent.
       const pending = waiting;
-      const decide = options.decideApproval;
-      if (pending !== undefined && decide !== undefined) {
+      if (pending !== undefined && pending.kind === "approval" && options.decideApproval !== undefined) {
+        const decide = options.decideApproval;
         const decision = interpretDecision(text);
         if (decision === undefined) {
           // One more try, in the same words. The operation is going to run on the machine, so a sentence that could
@@ -396,6 +431,44 @@ export function attachVoiceGateway(options: VoiceGatewayOptions): VoiceGateway {
               ? "Đã duyệt. Tui chạy lệnh đó ngay."
               : "Đã từ chối. Không có gì được chạy."
             : `Không thực hiện được: ${decided.message}`;
+          send({ type: "transcript", role: "assistant", text: said, final: true });
+          say(said);
+        });
+        return;
+      }
+
+      /*
+       * A question, read against its own options.
+       *
+       * `answerFromUtterance` can only produce an answer the card offered, which is what lets the same route serve
+       * a click and a sentence without being lenient about either. When the words do not fit, the question is asked
+       * again with its options named: a question asked twice is recoverable, a misheard choice is not.
+       */
+      if (pending !== undefined && pending.kind === "question" && options.answerQuestion !== undefined) {
+        const record = options.answerQuestion;
+        const answer = answerFromUtterance(
+          { questionType: pending.questionType, options: pending.options, allowOther: pending.allowOther },
+          text,
+        );
+        if (answer === undefined) {
+          const named =
+            pending.options.length === 0 ? "" : ` Có thể là: ${pending.options.map((option) => option.label).join(", ")}.`;
+          const again = `Tui chưa khớp được câu trả lời với câu hỏi. ${pending.prompt}${named}`;
+          send({ type: "transcript", role: "assistant", text: again, final: true });
+          say(again);
+          return;
+        }
+
+        waiting = undefined;
+        answerQueue = answerQueue.then(async () => {
+          const recorded = await record({
+            conversationId: askIn,
+            questionId: pending.questionId,
+            ...(answer.text === undefined ? {} : { text: answer.text }),
+            ...(answer.optionIds === undefined ? {} : { optionIds: answer.optionIds }),
+            ...(answer.confirmed === undefined ? {} : { confirmed: answer.confirmed }),
+          });
+          const said = recorded.ok ? "Đã ghi câu trả lời của bạn." : `Không ghi được câu trả lời: ${recorded.message}`;
           send({ type: "transcript", role: "assistant", text: said, final: true });
           say(said);
         });
@@ -429,10 +502,15 @@ export function attachVoiceGateway(options: VoiceGatewayOptions): VoiceGateway {
 
           // A proposed command waits for a person. Asked here, in the same turn that produced it, because the
           // card is otherwise a click the voice mode cannot offer.
-          const proposed = result.pendingApproval;
+          const proposed = result.pendingInteraction;
           if (proposed !== undefined) {
             waiting = proposed;
-            const question = `${proposed.description}. Bạn cho phép chạy hay là không?`;
+            // Read from the card's own wording, so what is heard is what is on screen: an approval keeps its
+            // yes-or-no phrasing, and a question is read through the host-generated voice prompt.
+            const question =
+              proposed.kind === "approval"
+                ? `${proposed.description}. Bạn cho phép chạy hay là không?`
+                : proposed.voicePrompt;
             send({ type: "transcript", role: "assistant", text: question, final: true });
             say(question);
           }

@@ -2,7 +2,9 @@ import { describe, expect, it } from "vitest";
 
 import {
   ANSWER_TEXT_LIMIT,
+  answerFromUtterance,
   answerNote,
+  foldWords,
   isWaiting,
   normalizeAnswer,
   voicePromptFor,
@@ -148,6 +150,66 @@ describe("the turn an answer becomes", () => {
     expect(
       answerNote({ questionId: "q_1", prompt: "Thêm gì?", options: OPTIONS }, { kind: "multi-choice", optionIds: [] }),
     ).toContain("Không chọn lựa chọn nào");
+  });
+});
+
+describe("what somebody said, read against the question", () => {
+  it("matches an option by its label, however the sentence is wrapped", () => {
+    expect(answerFromUtterance({ questionType: "single-choice", options: OPTIONS, allowOther: false }, "production")).toEqual({
+      optionIds: ["production"],
+    });
+    expect(
+      answerFromUtterance({ questionType: "single-choice", options: OPTIONS, allowOther: false }, "cho tôi production nhé"),
+    ).toEqual({ optionIds: ["production"] });
+  });
+
+  it("ignores case and diacritics, because a transcript is not typed", () => {
+    const folders = [
+      { id: "old", label: "Dự án cũ" },
+      { id: "v2", label: "AgentKit V2" },
+    ];
+    expect(foldWords("Dự  Án CŨ")).toBe("du an cu");
+    expect(answerFromUtterance({ questionType: "single-choice", options: folders, allowOther: true }, "du an cu")).toEqual({
+      optionIds: ["old"],
+    });
+  });
+
+  it("prefers the longer label, so one option cannot swallow another", () => {
+    const folders = [
+      { id: "plain", label: "agentkit" },
+      { id: "v2", label: "agentkit-v2" },
+    ];
+    expect(answerFromUtterance({ questionType: "single-choice", options: folders, allowOther: true }, "agentkit-v2")).toEqual({
+      optionIds: ["v2"],
+    });
+  });
+
+  it("takes several options out of one sentence", () => {
+    expect(
+      answerFromUtterance({ questionType: "multi-choice", options: OPTIONS, allowOther: true }, "staging và production"),
+    ).toEqual({ optionIds: ["staging", "production"] });
+  });
+
+  it("answers a confirmation with yes or no, and refuses anything in between", () => {
+    const confirm = { questionType: "confirm" as const, options: [], allowOther: false };
+    expect(answerFromUtterance(confirm, "đồng ý")).toEqual({ confirmed: true });
+    expect(answerFromUtterance(confirm, "yes")).toEqual({ confirmed: true });
+    expect(answerFromUtterance(confirm, "không")).toEqual({ confirmed: false });
+    expect(answerFromUtterance(confirm, "thôi")).toEqual({ confirmed: false });
+    // Both, or neither: a question asked again is recoverable, a misheard decision is not.
+    expect(answerFromUtterance(confirm, "chắc")).toBeUndefined();
+    expect(answerFromUtterance(confirm, "ừ nhưng mà không")).toBeUndefined();
+  });
+
+  it("returns nothing when the words do not fit the question", () => {
+    expect(answerFromUtterance({ questionType: "single-choice", options: OPTIONS, allowOther: false }, "cái gì cũng được")).toBeUndefined();
+    expect(answerFromUtterance({ questionType: "single-choice", options: OPTIONS, allowOther: false }, "   ")).toBeUndefined();
+  });
+
+  it("takes a free-text question verbatim", () => {
+    expect(answerFromUtterance({ questionType: "text", options: [], allowOther: false }, "  gọi nó là Bình Minh  ")).toEqual({
+      text: "gọi nó là Bình Minh",
+    });
   });
 });
 

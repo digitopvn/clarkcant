@@ -235,3 +235,74 @@ export const interactionStatusUpdateSchema = z.object({
   status: interactionStatusSchema,
   at: instantSchema,
 });
+
+/**
+ * Words that mean yes and no, folded and without diacritics.
+ *
+ * A closed list rather than a model call, because this runs on the path where somebody is waiting for an answer
+ * and a provider round trip would be the latency they notice. Deliberately short: a word that is not here falls
+ * through to "ask again", which is better than a guess that runs the wrong thing.
+ */
+const YES_WORDS = ["yes", "yeah", "yep", "ok", "okay", "dong y", "dung roi", "u", "vang", "chay di", "lam di", "duyet"];
+const NO_WORDS = ["no", "nope", "khong", "thoi", "dung", "huy", "khong dong y", "khong chay", "stop", "cancel"];
+
+/** Case- and diacritic-insensitive form, for comparing what a person said with what a card offered. */
+export function foldWords(text: string): string {
+  return text
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/đ/g, "d")
+    .replace(/Đ/g, "D")
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+/**
+ * Read an answer out of what somebody said.
+ *
+ * The voice half of the one answer path: a click arrives as ids, an utterance arrives as words, and this is the
+ * only place that turns the second into the first. It matches against the question's *own* options, so an
+ * utterance can only ever produce an answer the card offered — which is why the node's validator does not have
+ * to be lenient about speech.
+ *
+ * Returns nothing when the words do not fit the question. That is not a failure: the caller asks again, and a
+ * question asked twice is recoverable in a way that a misheard option is not.
+ */
+export function answerFromUtterance(
+  interaction: { questionType: QuestionKind; options: readonly QuestionOption[]; allowOther: boolean },
+  utterance: string,
+): { text?: string; optionIds?: string[]; confirmed?: boolean } | undefined {
+  const said = foldWords(utterance);
+  if (said === "") return undefined;
+
+  if (interaction.questionType === "text") return { text: utterance.trim() };
+
+  if (interaction.questionType === "confirm") {
+    const yes = YES_WORDS.some((word) => said === word || said.startsWith(`${word} `) || said.endsWith(` ${word}`));
+    const no = NO_WORDS.some((word) => said === word || said.startsWith(`${word} `) || said.endsWith(` ${word}`));
+    // Both, or neither, means the words did not answer this question. Refusing is the whole point: "không, ý tôi
+    // là có" must not become a decision.
+    if (yes === no) return undefined;
+    return { confirmed: yes };
+  }
+
+  // Choice kinds match on the labels the card showed, longest first so "agentkit-v2" cannot be answered by the
+  // option "agentkit".
+  const offered = [...interaction.options].sort((left, right) => right.label.length - left.label.length);
+  const chosen: string[] = [];
+  let remaining = said;
+  for (const option of offered) {
+    const label = foldWords(option.label);
+    if (label === "" || !remaining.includes(label)) continue;
+    chosen.push(option.id);
+    remaining = remaining.replace(label, " ");
+  }
+  if (chosen.length === 0) return undefined;
+  // In the order the card offered them, not the order they were matched: the answer is compared against the
+  // question a person looked at, so the same choice has to serialise the same way whether it was clicked or said.
+  const ordered = interaction.options.filter((option) => chosen.includes(option.id)).map((option) => option.id);
+  if (interaction.questionType === "single-choice") return ordered.length === 1 ? { optionIds: ordered } : undefined;
+  return { optionIds: ordered };
+}
