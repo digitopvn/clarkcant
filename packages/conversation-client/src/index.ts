@@ -116,6 +116,16 @@ export {
   type InputSignal,
 } from "./input-modality.ts";
 export { prefersReducedMotion } from "./typewriter.ts";
+export {
+  WAKE_STATUSES,
+  WAKE_UNAVAILABLE_REASON,
+  agentStateForWake,
+  createFixtureWakeDetector,
+  wakeAvailability,
+  type WakeAvailability,
+  type WakeStatus,
+  type WakeWordDetector,
+} from "./wake-word.ts";
 export { useOrbProfile, type OrbProfileHandle } from "./use-orb-profile.ts";
 export { usePreferences, type PreferencesHandle, type PreferenceStatus } from "./settings/controls/use-preferences.ts";
 export {

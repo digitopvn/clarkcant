@@ -5,6 +5,7 @@ import type { VoiceCapabilities } from "@clarkcant/contracts";
 import { DevicePairingPanel } from "../DevicePairingPanel.tsx";
 import { MicrophoneCheck } from "../microphone-check.tsx";
 import { SearchSelect } from "../search-select.tsx";
+import { wakeAvailability } from "../wake-word.ts";
 import type { GatewayClient } from "../api.ts";
 import { InlineStatus, SettingsRow } from "./controls/primitives.tsx";
 import type { PreferencesHandle } from "./controls/use-preferences.ts";
@@ -34,6 +35,13 @@ export interface DevicesVoiceSettingsProps {
 export function DevicesVoiceSettings({ client, prefs, facts }: DevicesVoiceSettingsProps): ReactElement {
   const [keyDraft, setKeyDraft] = useState("");
   const [keyStatus, setKeyStatus] = useState<string | undefined>(undefined);
+  /*
+   * Asked rather than assumed.
+   *
+   * The surface reports whatever the seam answers, so wiring a detector later changes this row without changing
+   * this component — and today's answer, with its reason, is the seam's rather than a sentence written here.
+   */
+  const wake = wakeAvailability();
 
   return (
     <>
@@ -52,18 +60,30 @@ export function DevicesVoiceSettings({ client, prefs, facts }: DevicesVoiceSetti
         <InlineStatus status={prefs.status} forKey="voice.voiceName" />
 
         {/*
-          A wake phrase has no control, and its reason is its own: there is no local detector on this platform,
-          and the fallback — listening through a remote model — is the one the plan forbids outright.
+          The wake phrase, reported from the seam rather than decided here.
+
+          This build ships with no local detector, and the fallback — streaming ambient audio to a provider so it
+          can listen for a phrase — is the one the plan forbids. So the row is disabled with the seam's own
+          reason instead of a toggle: a switch that could only turn on a remote listening mode would be a
+          privacy decision disguised as a preference.
         */}
-        <SettingsRow
-          label="“Hey Clark”"
-          description="Chưa có bộ nhận diện chạy cục bộ trên máy này. Không dùng cách nghe liên tục qua mạng thay thế."
-          state="absent"
-        >
-          <span className="cc-badge" data-tone="warn">
-            chưa có
-          </span>
-        </SettingsRow>
+        {wake.available ? (
+          <SettingsRow label="“Hey Clark”" description="Nghe cục bộ bằng bộ nhận diện trên máy này.">
+            <span className="cc-badge">{wake.detector?.id ?? "cục bộ"}</span>
+          </SettingsRow>
+        ) : (
+          <SettingsRow
+            label="“Hey Clark”"
+            /* Spread rather than passing `undefined`: with exactOptionalPropertyTypes an optional prop may be
+               absent, but may not be explicitly undefined. */
+            {...(wake.reason === undefined ? {} : { description: wake.reason })}
+            state="absent"
+          >
+            <span className="cc-badge" data-tone="warn" data-wake-unavailable="true">
+              chưa có
+            </span>
+          </SettingsRow>
+        )}
 
         {/*
           The key the live voice provider needs.
