@@ -47,6 +47,7 @@ export {
   EvidenceBlock,
   HOST_OWNED_BLOCK_TYPES,
   ProjectPickerCardBlock,
+  QuestionCardBlock,
   ReconnectCardBlock,
   SystemCardBlock,
   TaskOverviewCardBlock,
