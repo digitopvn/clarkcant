@@ -103,11 +103,11 @@ A status here is never upgraded without the corresponding test appearing alongsi
 | V05 | PARTIAL | Remote collaboration | Delivery semantics, dedup and grant narrowing are implemented and tested. A live two-node delegation is not exercised. |
 | V06 | PARTIAL | Workspace registry | Node-qualified resource references, locality routing and lease serialization are implemented and tested. Explicit file transfer is not built. |
 | V07 | PARTIAL | Capability platform | Registry và readiness có bằng chứng trong [core tests](../packages/core/test/). MCP stdio có [test với tiến trình server thật](../packages/mcp-adapters/test/stdio.spec.ts); streamable-HTTP vẫn chưa được triển khai. |
-| V08 | PARTIAL | Conversational install | Plan creation, join-or-create, digest-bound consent, generation activation and rollback are implemented and tested. Quarantine download and isolated build are not built. |
+| V08 | PARTIAL | Conversational install | Plan creation, join-or-create, digest-bound consent, generation activation and rollback are implemented and tested. Marketplace reuses that path rather than adding an installer: a source resolves to an exact artifact ([package-sources](../packages/core/test/package-sources.spec.ts)) and the install runs through the same lifecycle ([install-from-source](../packages/core/test/install-from-source.spec.ts)), with the branch/range/missing-digest refusals and a rollback that is reported as refused rather than claimed when it comes too late. Quarantine download and isolated build are not built. |
 | V09 | PARTIAL | Credential/auth setup | An encrypted vault, redaction, PKCE generation, state comparison, scope verification and endpoint allowlisting are implemented and tested. A live token exchange is not built. |
 | V10 | PARTIAL | Reference integration (Google Calendar) | Scope planning, time normalisation, agenda building, conflict detection, write-outcome classification and freshness labelling are implemented and tested. No live account is connected. |
 | V11 | PARTIAL | Rich built-ins | Đối chiếu [catalog](../packs/data-canvas/src/index.ts) với [widget tests](../apps/web/e2e/widget.spec.ts) và [composition tests](../apps/web/e2e/mini-app.spec.ts); không suy ra toàn bộ catalog thiết kế đã hoàn thành từ các family có test. |
-| V12 | PARTIAL | Custom widgets | Declarative composition có [browser tests](../apps/web/e2e/mini-app.spec.ts). Không đồng nhất đường này với executable widgets: renderer runtime cho isolated-app/MCP Apps chưa được chứng minh; xem [ranh giới widget](widgets-and-extensions.md). |
+| V12 | PARTIAL | Custom widgets | Declarative composition có [browser tests](../apps/web/e2e/mini-app.spec.ts). Renderer runtime cho isolated-app giờ đã được chứng minh: handshake với nonce + đúng source window và mọi từ chối ([widget-sdk runtime](../packages/widget-sdk/test/runtime.spec.ts), [widget-host session](../packages/widget-host/test/session.spec.ts)), và bộ conformance chạy được các check đó trên một package thật ([widget-cli conformance](../packages/widget-cli/test/conformance.spec.ts)). Phần **chưa** được chứng minh: MCP Apps dùng chung đường này, các check cần frame đã render (keyboard, touch, layout, reduced motion) được `clark widget test` báo `requires-dev-host` chứ không phải pass, và script trong trang của dev host chỉ chạy được trong browser; xem [ranh giới widget](widgets-and-extensions.md). |
 | V13 | PARTIAL | Pins | Pin persistence and single-live-owner enforcement are verified in a browser. Restore-without-autoplay returns the stored position and does not play, verified in core. The pinned media surface itself is a synthetic fixture, not a vendor player. |
 | V14 | PARTIAL | Browser Use | Bằng chứng driver Chromium nằm trong [driver.spec.ts](../packs/browser-playwright/test/driver.spec.ts); prompt injection và submit không lặp có [injection.spec.ts](../packs/browser-playwright/test/injection.spec.ts) và [submit-once.spec.ts](../packs/browser-playwright/test/submit-once.spec.ts). Takeover preview UI vẫn chưa được triển khai. |
 | V15 | PARTIAL | Computer Use | Permission gating, containment labelling, target validation and profile validation are implemented and tested. The native bindings need a signed bundle and a container engine. |
@@ -116,6 +116,21 @@ A status here is never upgraded without the corresponding test appearing alongsi
 | V18 | PARTIAL | Operations/security | Forward-only migrations (`packages/storage/src/migrate.ts`), verifiable consistent backup, restore compatibility checks, credential redaction and durable dedup are implemented and tested. Failure injection and soak testing belong to P10. |
 
 ## Summary
+
+### Khoảng trống đã biết: performance của widget (Phase 14)
+
+Ba mục performance của Phase 14 nằm ở đây thay vì trong bảng, vì chúng **chưa có gì để gắn vào**:
+
+- **pointer Orb loop ngoài React state** — đã có và đã test (`apps/web/e2e/orb.spec.ts`, canvas không bị dựng
+  lại khi pointer quét qua 20 lần).
+- **không duplicate live subscription sau detach** — đã có và đã test từ trước
+  (`core.spec.ts`: "holds the one-owner rule across a detached surface too (V20)"). Detach trình bày cùng một
+  instance ở chỗ khác, không tạo instance thứ hai, và lease từ chối chủ thứ hai kèm tên surface đang giữ.
+- **heavy widget lazy mount** và **offscreen suspend** — **BLOCKED**: conversation client không mount frame
+  isolated nào cả (`mini-app-surface.tsx` vẽ `figure` từ snapshot đã chụp; không có `iframe` và không có
+  `sandbox=` trong client). Điều kiện thiếu được nêu tên: một frame chỉ có thể lazy-mount và suspend khi nó
+  tồn tại, và để nó tồn tại thì node phải phục vụ được entry của một package đã cài — phần đó chưa có. Viết
+  wiring rồi tự test nó trong cùng một change là tự xác nhận, nên hai mục này được báo là thiếu.
 
 Các bảng trên là nơi tra trạng thái từng yêu cầu; không scope item nào được tuyên bố
 hoàn tất. Fixture chứng minh đường nối của ứng dụng, không thay thế kiểm chứng với

@@ -285,3 +285,49 @@ test("a second surface is refused the live view and says so instead of taking ov
 
   await context.close();
 });
+
+/**
+ * Lazy mount, and suspension when the surface leaves.
+ *
+ * The two are the same decision seen twice: a pinned surface that nobody is looking at should cost nothing. So
+ * what is asserted is not that a flag flipped but that the heavy surface is **gone** from the DOM while offscreen,
+ * that the lease is not being claimed, and that the wait is described rather than looking like a failure.
+ *
+ * Visibility is driven by the viewport rather than by scrolling, because the pin's position depends on the layout
+ * and a scroll would be asserting the layout instead of the behaviour.
+ */
+test("a pinned surface mounts near the viewport and suspends when it leaves", async ({ page }) => {
+  await openApp(page);
+  await openOverview(page);
+  await page.locator("[data-open-live]").first().click();
+
+  const surface = page.locator("[data-pin-live] [data-lazy]").first();
+  await expect(surface).toHaveAttribute("data-lazy", "false", { timeout: 30_000 });
+  await expect(surface.locator("[data-surface-composition]").first()).toBeVisible();
+
+  /*
+   * Pushed out of the viewport directly rather than by scrolling. The surface sits inside a scroll container that
+   * is not the window, so a `window.scrollTo` moves nothing and the assertion would be about the layout instead of
+   * the behaviour. Moving the element is what the observer actually watches.
+   */
+  await surface.evaluate((element) => {
+    (element as HTMLElement).style.marginTop = "3000px";
+  });
+
+  await expect(surface).toHaveAttribute("data-lazy", "true", { timeout: 20_000 });
+  // Unmounted, not merely unpolled: the heavy part is what lazy mounting is for.
+  await expect(surface.locator("[data-surface-composition]")).toHaveCount(0);
+  // And it stops claiming the live view, because the lease was released when it suspended.
+  await expect(surface.locator("[data-ownership='owner']")).toHaveCount(0);
+  // The wait is described, with the title, rather than an empty box.
+  const waiting = surface.locator("[data-live-waiting='offscreen']");
+  await expect(waiting).toBeVisible();
+  await expect(waiting).toContainText("cuộn tới để mở");
+
+  // Coming back mounts it again, with the same owner token — one subscription, not a second one.
+  await surface.evaluate((element) => {
+    (element as HTMLElement).style.marginTop = "0px";
+  });
+  await expect(surface).toHaveAttribute("data-lazy", "false", { timeout: 20_000 });
+  await expect(surface.locator("[data-surface-composition]").first()).toBeVisible({ timeout: 30_000 });
+});
