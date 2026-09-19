@@ -554,6 +554,16 @@ export class GatewayClient {
   }
 
   /**
+   * What pi loads on this machine.
+   *
+   * Names and kinds only: an extension can hold a credential, and a surface that reported more would be the place it
+   * leaked from. Read from the node, because which extensions exist belongs to the machine pi runs on.
+   */
+  extensions(): Promise<{ extensions: { name: string; kind: "directory" | "file" }[] }> {
+    return this.#call("GET", "/extensions");
+  }
+
+  /**
    * The providers and models this node can run, and the one it is configured for.
    *
    * Read from the node's own catalogue rather than from a list kept here, so upgrading pi on the node makes a new

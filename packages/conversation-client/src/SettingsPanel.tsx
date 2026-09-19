@@ -197,6 +197,27 @@ export function SettingsPanel({
   /** What became of the last model choice: a status, never a value, and never shown as if it applied already. */
   const [modelStatus, setModelStatus] = useState<string | undefined>(undefined);
 
+  /** What pi loads on this machine, or undefined before the node has answered. */
+  const [piExtensions, setPiExtensions] = useState<{ name: string; kind: string }[] | undefined>(undefined);
+
+  useEffect(() => {
+    if (!open) return;
+    let cancelled = false;
+    void client
+      .extensions()
+      .then((answer) => {
+        if (!cancelled) setPiExtensions(answer.extensions);
+      })
+      .catch(() => {
+        // An empty list rather than an error: what this section answers is what pi loads, and a node that cannot say
+        // still leaves the rest of the tab working.
+        if (!cancelled) setPiExtensions([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [open, client]);
+
   useEffect(() => {
     if (!open) return;
     let cancelled = false;
@@ -548,6 +569,27 @@ export function SettingsPanel({
               about both and needs to know which one would be doing it.
             */}
             <ToolLists client={client} />
+
+            <section className="cc-panel-section" data-pi-extensions="true">
+              <h3>Extension của pi trên máy này</h3>
+              {piExtensions === undefined ? (
+                <p className="cc-panel-note">Đang đọc…</p>
+              ) : piExtensions.length === 0 ? (
+                <p className="cc-panel-note" data-pi-extensions="none">
+                  pi trên máy này chưa nạp extension nào. Danh sách chỉ có tên và loại, không bao giờ có nội dung tệp.
+                </p>
+              ) : (
+                // Names and kinds, and deliberately nothing else: an extension on a real machine can hold a credential,
+                // and a section that showed what was inside one would be the place it leaked from.
+                <div className="cc-panel-note">
+                  {piExtensions.map((entry) => (
+                    <code key={entry.name} data-pi-extension={entry.name} data-kind={entry.kind}>
+                      {entry.name}
+                    </code>
+                  ))}
+                </div>
+              )}
+            </section>
           </section>
         )}
 

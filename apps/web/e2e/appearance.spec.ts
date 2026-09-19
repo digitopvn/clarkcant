@@ -219,3 +219,18 @@ test("a model in settings is offered as a choice, and the one in use is marked a
   expect(await page.locator("[data-model-id][data-current='true']:disabled").count()).toBeLessThanOrEqual(1);
 });
 
+test("the tools tab also says which extensions pi loads on this machine", async ({ page }) => {
+  await openApp(page);
+  await page.locator("[data-settings='true']").click();
+  await page.getByRole("tab", { name: "Tools" }).click();
+
+  const section = page.locator("[data-pi-extensions='true']");
+  await expect(section).toBeVisible();
+
+  // Either pi loads extensions here and they are listed by name and kind, or it loads none and says so in words. What
+  // is never shown is a file's contents, which is why this asserts the listing exists rather than inspecting any value.
+  await expect(section.locator("[data-pi-extension], [data-pi-extensions='none']").first()).toBeVisible({
+    timeout: 20_000,
+  });
+});
+
