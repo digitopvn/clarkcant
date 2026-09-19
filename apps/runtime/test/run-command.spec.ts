@@ -1,4 +1,9 @@
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
 import {
+  afterAll,
   describe,
   expect,
   it,
@@ -7,11 +12,11 @@ import {
 import {
   COMMAND_LIMITS,
   commandDigest,
-  guardCommand,
   runApprovedCommand,
   runCommand,
   receiptForModel,
 } from "../src/run-command.ts";
+import { ownedResources } from "../src/preflight.ts";
 
 /**
  * Running a command, and the two things that make it safe to offer.
@@ -22,24 +27,41 @@ import {
  */
 
 
-describe("whether a command may be proposed at all", () => {
-  it("runs where it was asked, because there is no folder allowlist", () => {
-    // The operator's decision, made after the gate refused the tree this product itself runs from: the
-    // agent's runtime carries the instruction out, permission belongs to the host, and the control that
-    // actually has a person behind it is the approval card.
-    expect(guardCommand({ command: "git clone repo", cwd: "D:/somewhere/else" })).toMatchObject({
-      ok: true,
-      cwd: "D:/somewhere/else",
+describe("an approved command is still checked against what this node owns", () => {
+  it("refuses an operation whose folder this node does not own", async () => {
+    // Asking a person is a policy about whether to ask, not a different kind of gate: the same containment the
+    // guarded path runs is run here, at the moment of the decision rather than when the card was drawn.
+    const payload = JSON.stringify({ command: "git status", cwd: "D:/somewhere/else" });
+    const refused = await runApprovedCommand({
+      payload,
+      expectedDigest: commandDigest("git status", "D:/somewhere/else"),
+      approvalId: "appr_1",
+      resources: ownedResources([process.cwd()]),
     });
-    // And the card says so in words, because that is what the person approving reads.
-    expect(guardCommand({ command: "git status" }).because).toContain("không giới hạn thư mục");
+
+    expect(refused.ok).toBe(false);
+    if (!refused.ok) expect(refused.code).toBe("OUTSIDE_OWNED_RESOURCES");
   });
 
-  it("still refuses an empty command and an over-long one", () => {
-    expect(guardCommand({ command: "   " }).code).toBe("EMPTY_COMMAND");
-    expect(guardCommand({ command: "x".repeat(COMMAND_LIMITS.maxCommandLength + 1) }).code).toBe(
-      "COMMAND_TOO_LONG",
-    );
+  it("refuses an empty command and one long enough to be a script", async () => {
+    const owned = ownedResources([process.cwd()]);
+    const empty = await runApprovedCommand({
+      payload: JSON.stringify({ command: "   ", cwd: process.cwd() }),
+      expectedDigest: commandDigest("   ", process.cwd()),
+      approvalId: "appr_1",
+      resources: owned,
+    });
+    expect(empty.ok).toBe(false);
+
+    const long = "x".repeat(COMMAND_LIMITS.maxCommandLength + 1);
+    const tooLong = await runApprovedCommand({
+      payload: JSON.stringify({ command: long, cwd: process.cwd() }),
+      expectedDigest: commandDigest(long, process.cwd()),
+      approvalId: "appr_1",
+      resources: owned,
+    });
+    expect(tooLong.ok).toBe(false);
+    if (!tooLong.ok) expect(tooLong.code).toBe("COMMAND_TOO_LONG");
   });
 });
 
@@ -53,14 +75,20 @@ describe("the digest a decision is bound to", () => {
 });
 
 describe("running an approved operation", () => {
-  const payload = JSON.stringify({ command: "git clone repo", cwd: "D:/work/orchestrate" });
-  const digest = commandDigest("git clone repo", "D:/work/orchestrate");
+  // A real directory, because the preflight checks that the folder exists as well as that this node owns it: an
+  // approved command that would run nowhere is refused before anything is spawned.
+  const workdir = mkdtempSync(join(tmpdir(), "clarkcant-approved-"));
+  const payload = JSON.stringify({ command: "git clone repo", cwd: workdir });
+  const digest = commandDigest("git clone repo", workdir);
+  const owned = ownedResources([workdir]);
+  afterAll(() => rmSync(workdir, { recursive: true, force: true }));
 
   it("runs it and returns the receipt the transcript keeps", async () => {
     const result = await runApprovedCommand({
       payload,
       expectedDigest: digest,
       approvalId: "appr_1",
+      resources: owned,
       run: async () => ({ exitCode: 0, stdout: "Cloning into 'orchestrate'...\n", stderr: "", durationMs: 12, timedOut: false }),
     });
 
@@ -85,6 +113,7 @@ describe("running an approved operation", () => {
       payload,
       expectedDigest: digest,
       approvalId: "appr_1",
+      resources: owned,
       run: async () => ({ exitCode: 0, stdout: "", stderr: "", durationMs: 1, timedOut: false }),
     });
 
@@ -102,9 +131,10 @@ describe("running an approved operation", () => {
     // display-then-execute gap — has to fail here, and nothing may run.
     let ran = false;
     const result = await runApprovedCommand({
-      payload: JSON.stringify({ command: "git clone something-else", cwd: "D:/work/orchestrate" }),
+      payload: JSON.stringify({ command: "git clone something-else", cwd: workdir }),
       expectedDigest: digest,
       approvalId: "appr_1",
+      resources: owned,
       run: async () => {
         ran = true;
         return { exitCode: 0, stdout: "", stderr: "", durationMs: 1, timedOut: false };
@@ -126,6 +156,7 @@ describe("running an approved operation", () => {
       payload: JSON.stringify({ command: "git clone repo", cwd: "D:/somewhere/else" }),
       expectedDigest: digest,
       approvalId: "appr_1",
+      resources: owned,
       run: async () => {
         ran = true;
         return { exitCode: 0, stdout: "", stderr: "", durationMs: 1, timedOut: false };
@@ -142,6 +173,7 @@ describe("running an approved operation", () => {
       payload,
       expectedDigest: digest,
       approvalId: "appr_2",
+      resources: owned,
       run: async () => ({ exitCode: 128, stdout: "", stderr: "Permission denied (publickey)", durationMs: 30, timedOut: false }),
     });
 

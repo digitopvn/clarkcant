@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 
 import type { Instant, MessageBlock } from "@clarkcant/contracts";
 
-import type { CommandEnvelope } from "./preflight.ts";
+import { preflightCommand, type CommandEnvelope, type OwnedResources } from "./preflight.ts";
 
 /**
  * Running one command, in the directory it was asked for, once a person has approved it.
@@ -33,62 +33,6 @@ export const COMMAND_LIMITS = {
   /** Per stream. The output is quoted back into the conversation, which is not a log viewer. */
   maxOutputBytes: 8_000,
 } as const;
-
-export interface CommandGuardResult {
-  ok: boolean;
-  code?: "EMPTY_COMMAND" | "COMMAND_TOO_LONG";
-  message?: string;
-  /** The resolved directory the command would run in. */
-  cwd?: string;
-  /** Why this directory is allowed, written for the card: the user is approving a place as well as a command. */
-  because?: string;
-}
-
-/**
- * The digest the user approves.
- *
- * It covers the command *and* the directory, so approving "clone this here" cannot become running it
- * somewhere else: the stored digest is compared against a digest recomputed from what will actually
- * run, and a mismatch is refused rather than executed. That is the whole point of showing it.
- */
-export function commandDigest(command: string, cwd: string): string {
-  // Canonical form, so the same request always hashes the same way regardless of key order or spacing.
-  const canonical = JSON.stringify({ command: command.trim(), cwd });
-  return `sha256:${createHash("sha256").update(canonical).digest("hex").slice(0, 40)}`;
-}
-
-/*
- * The folder restriction is gone.
- *
- * A node used to decide where a command was allowed to run: a folder the user approved, a project the
- * finder had indexed, or the folder those live in. In use that refused the tree this product itself runs
- * from - the finder's scan stops at a file ceiling, so it had never reached the directory the operator
- * launched the app in, and every command there came back as somewhere the agent did not know.
- *
- * The decision now belongs to whoever is holding the approval card, which is the only control with a
- * person behind it, and permission management belongs to the host that runs the agent. Pi here is the
- * runtime that carries the instruction out, not the thing that decides whether it is allowed to.
- */
-export function guardCommand(input: { command: unknown; cwd?: unknown }): CommandGuardResult {
-  const command = typeof input.command === "string" ? input.command.trim() : "";
-  if (command === "") {
-    return { ok: false, code: "EMPTY_COMMAND", message: "Cần một lệnh để chạy." };
-  }
-  if (command.length > COMMAND_LIMITS.maxCommandLength) {
-    return {
-      ok: false,
-      code: "COMMAND_TOO_LONG",
-      message: `Lệnh dài hơn ${COMMAND_LIMITS.maxCommandLength} ký tự. Hãy đưa nó vào một tệp để đọc trước khi duyệt.`,
-    };
-  }
-
-  const requested = typeof input.cwd === "string" && input.cwd.trim() !== "" ? input.cwd.trim() : process.cwd();
-  return {
-    ok: true,
-    cwd: requested,
-    because: "node không giới hạn thư mục nữa, nên thẻ duyệt này là chỗ bạn quyết định",
-  };
-}
 
 export interface CommandOutcome {
   exitCode: number | null;
@@ -334,7 +278,19 @@ export async function runGuardedCommand(input: {
 }
 
 /**
- * Run an operation a user approved, having checked it is still the operation they approved.
+ * The digest the user approves.
+ *
+ * It covers the command *and* the directory, so approving "clone this here" cannot become running it
+ * somewhere else: the stored digest is compared against a digest recomputed from what will actually
+ * run, and a mismatch is refused rather than executed. That is the whole point of showing it.
+ */
+export function commandDigest(command: string, cwd: string): string {
+  // Canonical form, so the same request always hashes the same way regardless of key order or spacing.
+  const canonical = JSON.stringify({ command: command.trim(), cwd });
+  return `sha256:${createHash("sha256").update(canonical).digest("hex").slice(0, 40)}`;
+}
+
+/**
  *
  * The digest is recomputed from the payload that will actually run and compared with the digest the
  * decision was bound to, so a payload that changed between display and approval is refused instead of
@@ -377,6 +333,13 @@ export async function runApprovedCommand(input: {
   payload: string;
   expectedDigest: string;
   approvalId: string;
+  /**
+   * The folders this node owns, checked again here rather than trusted from when the card was drawn.
+   *
+   * The same check the guarded path runs, which is what makes `confirm` a policy about *asking* rather than a
+   * different kind of gate: an approved operation is still an operation this node may perform.
+   */
+  resources: OwnedResources;
   /** Injected so the whole decision path can be tested without spawning anything. */
   run?: (request: { command: string; cwd: string }) => Promise<CommandOutcome>;
   now?: () => Instant;
@@ -406,14 +369,19 @@ export async function runApprovedCommand(input: {
     };
   }
 
-  const guard = guardCommand({ command, cwd });
-  if (!guard.ok || guard.cwd === undefined) {
-    return { ok: false, code: guard.code ?? "COMMAND_REFUSED", message: guard.message ?? "refused" };
+  const preflight = preflightCommand({ command, cwd, resources: input.resources });
+  if (!preflight.ok || preflight.envelope.kind !== "command") {
+    return {
+      ok: false,
+      code: preflight.ok ? "COMMAND_REFUSED" : preflight.code,
+      message: preflight.ok ? "refused" : preflight.message,
+    };
   }
+  const resolvedCwd = preflight.envelope.cwd;
 
   const at = input.now ?? (() => new Date().toISOString() as Instant);
   const startedAt = at();
-  const outcome = await (input.run ?? ((request) => runCommand(request)))({ command, cwd: guard.cwd });
+  const outcome = await (input.run ?? ((request) => runCommand(request)))({ command, cwd: resolvedCwd });
   const description = describeCommandOutcome(command, outcome);
   const succeeded = outcome.exitCode === 0 && !outcome.timedOut;
 
@@ -422,13 +390,13 @@ export async function runApprovedCommand(input: {
       type: "tool-activity",
       toolCallId: `run-${input.approvalId}`,
       name: "run_command",
-      label: `Chạy lệnh trong ${guard.cwd}`,
+      label: `Chạy lệnh trong ${resolvedCwd}`,
       status: succeeded ? "done" : "failed",
       // The approval id travels with the receipt so the interface can mark the card it answered as
       // decided, including after a reload.
-      args: { command, cwd: guard.cwd, approvalId: input.approvalId, decision: "granted" },
+      args: { command, cwd: resolvedCwd, approvalId: input.approvalId, decision: "granted" },
       result: commandOutput(outcome),
-      path: guard.cwd,
+      path: resolvedCwd,
       startedAt,
       endedAt: at(),
     },

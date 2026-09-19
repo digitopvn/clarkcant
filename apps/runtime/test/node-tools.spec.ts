@@ -4,7 +4,10 @@ import { join } from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
+import { DEFAULT_AUTONOMY_SETTINGS } from "@clarkcant/contracts";
+
 import { createNodeTools } from "../src/node-tools.ts";
+import { ownedResources } from "../src/preflight.ts";
 import { bootNodeServices, type NodeServices } from "../src/services.ts";
 
 /**
@@ -58,6 +61,28 @@ describe("the node's tools", () => {
     // The id and nothing else: the schema is the boundary, so a path parameter cannot be added without
     // this failing.
     expect(Object.keys(tool?.parameters.properties ?? {})).toEqual(["attachmentId"]);
+  });
+
+  it("offers run_command even when this node has no approval route", () => {
+    // The change this phase makes: a node that cannot record a decision is not a node that cannot run a command.
+    // Registration follows the command path now, and the approval route is only what the `confirm` policy needs —
+    // which is why there is no `approvals` in this call at all.
+    const withoutApproval = createNodeTools({
+      search: services.search,
+      projects: services.projects,
+      command: {
+        autonomy: () => DEFAULT_AUTONOMY_SETTINGS,
+        resources: () => ownedResources([dir]),
+        fallbackCwd: () => dir,
+        newId: () => "run_1",
+      },
+    });
+    expect(withoutApproval.map((tool) => tool.name)).toContain("run_command");
+  });
+
+  it("offers no command tool when this node cannot run commands at all", () => {
+    const none = createNodeTools({ search: services.search, projects: services.projects });
+    expect(none.map((tool) => tool.name)).not.toContain("run_command");
   });
 
   it("answers find_project without opening anything", async () => {

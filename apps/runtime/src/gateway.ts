@@ -52,6 +52,7 @@ import {
 } from "@clarkcant/storage";
 import { credentialNames, putCredential, putSecretMetadata, secretKindOr } from "@clarkcant/storage";
 import { DEFAULT_NARROWING, readAutonomySettings, saveAutonomySettings } from "./autonomy-settings.ts";
+import { type OwnedResources, ownedResources } from "./preflight.ts";
 import { cycleModelPool, readCurrentAlias, readModelPool, writeModelPool } from "./model-registry.ts";
 import { parseModelPool, validateProfileAgainstCatalogue } from "@clarkcant/contracts";
 import type { InteractionDeps } from "./interactions.ts";
@@ -673,8 +674,18 @@ export async function answerQuestionForNode(
 }
 
 /**
+ * The folders this node owns, for the path that runs an approved command.
+ *
+ * The same set the guarded path uses — configured workspace roots, the node's own data directory, and the directory
+ * the operator launched it from — because asking a person is not a reason to widen what this node may touch.
+ */
+export function ownedResourcesFor(services: NodeServices): OwnedResources {
+  return ownedResources([...services.projects.roots(), services.runtime.dataDir, process.cwd()]);
+}
+
+/**
  * Append a message the host wrote — a question, a notice, or the receipt of an operation.
- * *
+ * * *
  * `blocks` is what a receipt needs: a command's outcome is a tool record and an evidence line, not a
  * paragraph. `text` stays because most host replies are one sentence, and a caller that has to build a
  * text block by hand is a caller that will eventually build it wrong.
@@ -1861,6 +1872,9 @@ export async function decideApprovalForNode(
     payload,
     expectedDigest: decided.approval.operationDigest,
     approvalId: input.approvalId,
+    // Re-checked here rather than trusted from the card: the folders this node owns can change between the card being
+    // drawn and the decision being made, and this is the moment it matters.
+    resources: ownedResourcesFor(services),
   });
   if (!ran.ok) return { ok: false, code: ran.code, message: ran.message };
 
