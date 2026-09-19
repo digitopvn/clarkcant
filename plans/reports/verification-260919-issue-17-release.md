@@ -28,18 +28,21 @@ Năm lỗi nữa do bộ đầy đủ tìm ra là **của chính công việc n�
 vi mà tính năng mới thay đổi có chủ đích. Cả năm đã sửa tại nguyên nhân: số tab lấy từ `SETTINGS_TABS`, và bốn suite
 ghim `/suggestions` về rỗng vì chúng kiểm bốn chip viết sẵn chứ không kiểm danh sách động.
 
-## Hai journey bị chặn, và điều kiện còn thiếu
+## Hai journey từng bị chặn, và đã sửa tại gốc
 
-Cả hai **đã ra khỏi suite** kèm lý do viết ngay trong file spec, không bị skip âm thầm, và ledger ghi đúng trạng thái.
+Cả hai journey **đã xanh và nằm trong suite**, mỗi cái có tên test riêng trong ledger. Nguyên nhân của cả hai đều là
+lỗi mã trong chính repo này, và cả hai đều được **đo trước khi sửa** — hai ghi chú cũ trong file spec đã đoán sai.
 
-- **T66** (voice và click chạm cùng một widget action state) — `NOT-IMPLEMENTED`. Phần cài đặt xong: một hàm
-  `invokeWidgetAction` dùng chung cho cả click và câu nói, resolver 10 test, khung `focus` chỉ mang instance id.
-  Journey browser không chạy được. Điều kiện còn thiếu: fixture thoại đưa câu đã script tới đúng phiên.
-- **T73** journey thứ hai (tab được gọi tên) — `PARTIAL`, với journey thứ nhất xanh. Đo được: node giải đúng câu
-  `"đổi sang tab công cụ"` thành `settings.tab` với `tab: "extensions"` và schema của client chấp nhận quyết định đó
-  (kiểm trực tiếp, không đọc code). Trang hiện ra panel ở tab mặc định và **không** có `data-intent-notice` — dấu hiệu
-  của một câu **khác** đã được nghe: `settings.open` không kèm tab cho đúng trạng thái đó và báo thành công, nên không
-  có gì báo lỗi. Cùng nguyên nhân fixture như T66.
+- **T66** (voice và click chạm cùng một widget action state) — `PASS`, journey
+  `apps/web/e2e/voice-widget-action.spec.ts` ("a spoken action and the same click reach the same state"). Đo bằng log
+  đặt ở node: câu nói **có** được resolve (`ok: true`, args `{period: "month"}`) và action **có** chạy (`ok: true`,
+  revision 7 → 8, "Đã Đổi khoảng thời gian"). Chỗ hỏng: trang **không có** handler cho frame `widget-action-result`,
+  nên surface vẫn hiển thị period cũ. Đã thêm handler và cho surface đọc lại đúng như đường click làm sau khi invoke.
+- **T73** journey thứ hai (tab được gọi tên) — `PASS`. Đo được trong browser: node giải đúng câu thành `settings.tab`
+  với `tab: "extensions"`, schema client chấp nhận, `runAppIntent` gọi `host.openSettings("extensions")` và trả
+  `ran: true` — mà panel vẫn ở tab mặc định. Chỗ hỏng: panel có **hai** effect cùng trigger, effect thứ hai reset tab
+  về `experience` mỗi lần panel mở, ghi đè tab vừa được gọi tên trong cùng một commit. Đã gộp thành một effect:
+  tôn trọng `openAt`, vẫn mặc định `experience`.
 
 ## CI phủ những gì
 

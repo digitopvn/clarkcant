@@ -270,6 +270,14 @@ export function Conversation({
    */
   const composerFrom = useRef<number | undefined>(undefined);
   const [uiCheckOpen, setUiCheckOpen] = useState(false);
+  /*
+   * Bumped when the node reports that a spoken action has run.
+   *
+   * The pinned surface watches it and re-reads itself, which is what the click path does after its own invoke. The
+   * alternative - the voice path writing the surface's state directly - would be a second way to change the same
+   * state, and the two would drift.
+   */
+  const [liveRefresh, setLiveRefresh] = useState(0);
   /**
    * A tab a command named, if one did.
    *
@@ -1572,6 +1580,7 @@ export function Conversation({
                 conversationId={conversationId}
                 instanceId={pin.instanceId}
                 displayMode="expanded"
+                refreshSignal={liveRefresh}
                 title={typeof instanceById.get(pin.instanceId)?.props.title === "string" ? String(instanceById.get(pin.instanceId)?.props.title) : undefined}
                 onTimeline={applyTimeline}
                 onClose={() => {
@@ -1848,6 +1857,9 @@ export function Conversation({
           onAnswered={refreshTimeline}
           onProgress={scheduleVoiceRefresh}
           onAppIntent={runIntent}
+          onWidgetActionResult={() => {
+            setLiveRefresh((count) => count + 1);
+          }}
           {...(focusedInstanceId === undefined ? {} : { focusedInstanceId })}
           onClose={({ focusComposer }) => {
             setVoiceOpen(false);

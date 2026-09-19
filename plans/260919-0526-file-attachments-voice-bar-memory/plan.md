@@ -87,7 +87,7 @@ không phải thứ tự đánh số ban đầu: vòng red-team đã đảo Stag
 | 3 | [Composer, timeline và nội dung tới agent](./phase-03-composer-timeline-and-agent-content.md) | Done |
 | 4 | [Journey đính kèm và evidence](./phase-04-attachments-journey-and-evidence.md) | Done |
 | 5 | [Registry app-intent dùng chung cho chat, click và voice](./phase-05-shared-app-control-intents.md) | Done |
-| 6 | [T66 — voice và click chạm cùng một widget action state](./phase-06-voice-widget-action-parity.md) | **Chưa đạt tiêu chí** — phần cài đặt xong và có 10 test resolver, nhưng T66 vẫn `NOT-IMPLEMENTED` vì journey browser không chạy được (fixture thoại đưa câu đã script cho sai phiên). Điều kiện còn thiếu ghi trong file phase và trong ledger. |
+| 6 | [T66 — voice và click chạm cùng một widget action state](./phase-06-voice-widget-action-parity.md) Done — T66 `PASS`, journey xanh trong suite (`apps/web/e2e/voice-widget-action.spec.ts`). Sửa tại gốc: trang thiếu handler cho frame `widget-action-result`. |
 | 7 | [Cửa sổ desktop compact, shell load client và bridge có tên](./phase-07-desktop-compact-window.md) | Done — smoke Electron do người vận hành chạy, CI không có display |
 | 8 | [Thanh voice tối giản, intent cửa sổ và phiên sống qua hai chiều](./phase-08-minimal-voice-bar.md) | Done |
 | 9 | [Gợi ý từ việc gần đây](./phase-09-recent-work-suggestions.md) | Done |
@@ -138,15 +138,15 @@ Phase 12 là cổng cuối, không sửa giữa các stage ship.
 - [ ] `pnpm --filter @clarkcant/app-desktop run smoke` xanh, chạy trên máy có display, output JSON
       lưu lại làm evidence (đây là **cổng do người vận hành chạy**, không nằm trong `pnpm verify`).
 - [x] Nút `+` không còn `disabled`; chuỗi "Chưa hỗ trợ đính kèm" không còn trong mã. — `apps/web/e2e/attachments.spec.ts` (chip đính kèm xuất hiện và tệp đi được tới agent).
-- [ ] Test từ chối: tên file là path tuyệt đối, URL thực thi, mime thực thi, magic bytes lệch khai báo,
-      quá ngưỡng, quá quota.
+- [x] Test từ chối: tên file là path tuyệt đối, URL thực thi, mime thực thi, magic bytes lệch khai báo,
+      quá ngưỡng, quá quota. — `apps/runtime/test/attachment-routes.spec.ts` (absolute path, executable URL, executable content type, ceiling, quota) và `apps/runtime/test/attachments.spec.ts` (magic bytes lệch khai báo).
 - [x] Prompt của lượt có attachment **không** chứa path đĩa, chỉ chứa `att_…`. — chứng minh ở ranh giới adapter: `FakePiAdapter.promptsFor()`.
 - [x] Ảnh đính kèm render trong timeline **sau reload** (đọc từ history). — `apps/web/e2e/attachments.spec.ts`.
 - [x] Voice chạy được cả nhóm lệnh điều khiển app; lệnh dạng lệnh mà không khớp intent thì nói chưa
       hiểu và **không hành động**; câu hỏi bình thường vẫn tới agent. — `apps/web/e2e/voice-control.spec.ts` (4 journey còn lại, tất cả xanh) và `packages/core/test/app-intents.spec.ts`.
 - [x] Thoát app chỉ xảy ra sau một lần xác nhận lấy từ route confirm; token dùng lại bị từ chối. — `apps/runtime/test/app-intents.spec.ts` ("is not executable until the confirmation route returns it").
-- [ ] T66 chuyển NOT-IMPLEMENTED → PASS kèm tên test chạm **widget action state**; test panel Settings
-      có T-id riêng, không mượn T66.
+- [x] T66 chuyển NOT-IMPLEMENTED → PASS kèm tên test chạm **widget action state**; test panel Settings
+      có T-id riêng, không mượn T66. — `apps/web/e2e/voice-widget-action.spec.ts` ("a spoken action and the same click reach the same state"), xanh trong suite.
 - [x] Gợi ý rỗng thì fallback về chip tĩnh hiện có, và không gọi model để sinh gợi ý. — `apps/web/e2e/suggestions.spec.ts`, `apps/runtime/test/suggestions.spec.ts`.
 - [x] Xoá một memory item thì item đó không còn trong brief của lượt sau (đọc lại từ store). — `apps/runtime/test/memory.spec.ts` ("a record that is deleted is gone from the next turn's brief"), `apps/web/e2e/memory.spec.ts`.
 - [x] Không credential nào trong file tracked. — `pnpm run invariants` (`no-committed-secrets`, 366 file) và `secret scan` trên CI. Lưu ý: GitGuardian báo đỏ vì một fixture hình dạng-khoá trong commit cũ, đã gỡ ở HEAD.

@@ -113,23 +113,24 @@ test("a spoken command and the same click open Settings in the same state", asyn
   await page.screenshot({ path: join(EVIDENCE, "voice-control-01-settings-by-voice.png"), fullPage: false });
 });
 
-/*
- * A journey that is NOT here, and why - measured, not assumed.
- *
- * "A spoken tab change lands on the tab that was named" does not pass. What is known from diagnostics rather than
- * from reading: clicking the tab selects it, Escape closes the panel, and after the voice command the panel is open
- * on its DEFAULT tab with NO `data-intent-notice` and NO user bubble. That combination is what `settings.open` with
- * no tab produces - the intent succeeds, so nothing announces a problem - which means the sentence the session acted
- * on was not the sentence this journey scripted.
- *
- * The node is not at fault: `resolveAppIntent("đổi sang tab công cụ")` returns `settings.tab` with
- * `tab: "extensions"` and `requiresConfirmation: false`, and the client's decision schema accepts that. Both were
- * checked directly. So the gap is between what the test scripts into the voice fixture and what the session is
- * handed, and it is a defect in this repository's test harness rather than an external condition.
- *
- * It is left out of the suite with this written down, rather than sitting here failing and calling the browser gate
- * red, and T73 is PARTIAL in `docs/conformance-traceability.md` with this as the missing condition.
- */
+test("a spoken tab change lands on the tab that was named", async ({ page, request }) => {
+  await openApp(page);
+  await startConversation(page);
+  // Clicking the same tab first is what makes this a parity claim rather than a shortcut: the sentence has to
+  // reach what the click reaches, including with the panel closed in between.
+  await page.locator('[data-settings="true"]').click();
+  await page.locator("#cc-tab-extensions").click();
+  const afterClick = await selectedTab(page);
+  expect(afterClick).toBe("cc-tab-extensions");
+  await page.keyboard.press("Escape");
+
+  await scriptVoice(request, "đổi sang tab công cụ");
+  await openVoice(page);
+
+  await expect(page.locator("#cc-tab-extensions")).toHaveAttribute("data-selected", "true");
+  expect(await selectedTab(page)).toBe(afterClick);
+});
+
 test("a spoken quit asks instead of closing anything", async ({ page, request }) => {
   await openApp(page);
   await startConversation(page);
@@ -173,5 +174,4 @@ test("the fixture route is not there unless a scripted provider is loaded", asyn
   expect(refused.status()).toBe(400);
   await expect(page.locator("text=Ready")).toBeVisible();
 });
-
 

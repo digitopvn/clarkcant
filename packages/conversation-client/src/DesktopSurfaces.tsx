@@ -122,6 +122,11 @@ export interface PinnedLiveSurfaceProps {
    * inside it — not only while a particular control happens to have focus.
    */
   onClose?: (() => void) | undefined;
+  /**
+   * Changes when a spoken action has run elsewhere and this surface should re-read. A signal rather than a value,
+   * because the surface's truth is the node's answer and nothing the caller could hand it.
+   */
+  refreshSignal?: number | undefined;
 }
 
 /** How long a claim is held before it is refreshed. Shorter than the server's lease on purpose. */
@@ -146,6 +151,7 @@ export function PinnedLiveSurface({
   title,
   onTimeline,
   onClose,
+  refreshSignal,
 }: PinnedLiveSurfaceProps): ReactElement {
   const panel = useRef<HTMLDivElement>(null);
   const closeButton = useRef<HTMLButtonElement>(null);
@@ -164,6 +170,16 @@ export function PinnedLiveSurface({
       setOwnership("error");
     }
   }, [client, conversationId, instanceId]);
+
+  // Skipped on the first render on purpose: the claim effect already reads the surface, and a second read of the
+  // same revision would be noise. Only a change means a spoken action landed.
+  const lastRefresh = useRef(refreshSignal ?? 0);
+  useEffect(() => {
+    const signal = refreshSignal ?? 0;
+    if (signal === lastRefresh.current) return;
+    lastRefresh.current = signal;
+    void load();
+  }, [refreshSignal, load]);
 
   useEffect(() => {
     let cancelled = false;

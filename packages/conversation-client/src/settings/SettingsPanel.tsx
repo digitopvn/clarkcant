@@ -120,11 +120,6 @@ export function SettingsPanel({
   const [effectsProblem, setEffectsProblem] = useState<string | undefined>(undefined);
   const [tab, setTab] = useState<TabId>(openAt ?? "experience");
 
-  // Followed while open as well as at first render: a command that names a tab after the panel is already showing
-  // has to move to it, and that is the case a session open across a settings change produces.
-  useEffect(() => {
-    if (open && openAt !== undefined) setTab(openAt);
-  }, [open, openAt]);
   const prefs = usePreferences(client, open);
 
   useEffect(() => {
@@ -172,12 +167,20 @@ export function SettingsPanel({
     };
   }, [open, client]);
 
-  // Opened on Experience each time. Remembering the last tab sounds helpful and is not: someone who opened
-  // Developer once to check a node id would land there every time they wanted the theme.
+  /*
+   * Opened on the tab a command named, and on Experience otherwise - and on Experience each time it is opened by
+   * hand. Remembering the last tab sounds helpful and is not: someone who opened Developer once to check a node id
+   * would land there every time they wanted the theme.
+   *
+   * This is one effect rather than two. It was two, and the second reset to Experience whenever the panel opened,
+   * so a spoken "doi sang tab cong cu" set the named tab and then had it overwritten in the same commit - the
+   * command was understood and quietly ignored, which reads as the microphone not working. The decision, the
+   * schema, the executor and the host were all correct; the loss was here.
+   */
   useEffect(() => {
     if (!open) return;
-    setTab("experience");
-  }, [open]);
+    setTab(openAt ?? "experience");
+  }, [open, openAt]);
 
   const orbChanged = useCallback(() => {
     onOrbChange?.();

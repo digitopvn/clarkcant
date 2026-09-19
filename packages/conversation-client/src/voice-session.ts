@@ -62,6 +62,16 @@ export interface VoiceSessionEvents {
    */
   onAppIntent?(decision: AppIntentDecision): void;
   /**
+   * The node's account of a spoken widget action, once it has run.
+   *
+   * The node performs the action and reports the revision it landed on; the host re-reads the surface from that.
+   * Without this the action really runs and the screen never shows it, which was measured: the node reported ok,
+   * revision 7 to 8, "Da Doi khoang thoi gian", and the surface kept showing the week.
+   */
+  onWidgetActionResult?(
+    result: { ok: boolean; say: string; instanceId?: string | undefined; revision?: number | undefined },
+  ): void;
+  /**
    * Called once per capture frame handed to the socket.
    *
    * The counterpart of `onAudioFrame`, and needed for the same reason: "the microphone is open"
@@ -283,6 +293,20 @@ export async function startVoiceSession(options: StartVoiceSessionOptions): Prom
           // two independent checks that a page cannot act on a question.
           const parsed = appIntentDecisionSchema.safeParse(decision);
           if (parsed.success) events.onAppIntent?.(parsed.data);
+          return;
+        }
+        case "widget-action-result": {
+          // Already run on the node, which is why this reports rather than acts: re-reading the surface is the
+          // host's job, and there is one host.
+          const said = control["say"];
+          const instanceId = control["instanceId"];
+          const revision = control["revision"];
+          events.onWidgetActionResult?.({
+            ok: control["ok"] === true,
+            say: typeof said === "string" ? said : "",
+            ...(typeof instanceId === "string" ? { instanceId } : {}),
+            ...(typeof revision === "number" ? { revision } : {}),
+          });
           return;
         }
         case "ended": {

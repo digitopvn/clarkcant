@@ -107,3 +107,35 @@ test("a spoken action the widget does not offer changes nothing", async ({ page,
   ).toBeVisible({ timeout: 20_000 });
   await expect(period).toHaveValue("week");
 });
+
+
+/**
+ * T66: one real action, reached two ways, landing in the same state.
+ *
+ * Measured rather than assumed, and the note above was wrong about why: the sentence does resolve and the action
+ * does run - the node reported ok, revision 7 to 8, "Da Doi khoang thoi gian". What was missing was that the page
+ * had no handler for the node's report, so the surface kept showing the old period. The sentence also has to carry
+ * the argument: this action takes a period, and a sentence naming only the action cannot choose one.
+ */
+test("a spoken action and the same click reach the same state", async ({ page, request }) => {
+  await openApp(page);
+  await ask(page, "cho tui xem tổng quan công việc tuần này");
+  await page.locator("[data-open-live]").first().click();
+  const live = page.locator("[data-pin-live]").first();
+  await expect(live.locator("[data-surface-composition]").first()).toBeVisible({ timeout: 30_000 });
+  const period = live.locator("[data-slot='filter'] select");
+  await expect(period).toHaveValue("week", { timeout: 30_000 });
+
+  // The click path, through the surface's own control.
+  await period.selectOption("month");
+  await expect(period).toHaveValue("month", { timeout: 30_000 });
+
+  // Put it back, so the spoken path has to do the work rather than inherit it. Without this the journey would
+  // pass on a surface that ignored the second command.
+  await period.selectOption("week");
+  await expect(period).toHaveValue("week", { timeout: 30_000 });
+
+  await scriptVoice(request, "xem theo tháng");
+  await openVoice(page);
+  await expect(period).toHaveValue("month", { timeout: 30_000 });
+});
