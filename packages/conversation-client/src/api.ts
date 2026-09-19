@@ -6,16 +6,19 @@
  * principal, because the gateway derives the caller from the channel rather than the body.
  */
 
-import { type RegisteredPreference, type VoiceCapabilities } from "@clarkcant/contracts";
-
 import {
+  memoryListSchema,
+  suggestionsResponseSchema,
   type AppIntentDecision,
   type AppIntentKind,
   type AppIntentResolution,
   type ConfirmationDecision,
+  type MemoryRecord,
+  type RegisteredPreference,
   type SettingsTab,
+  type Suggestion,
+  type VoiceCapabilities,
 } from "@clarkcant/contracts";
-import { memoryListSchema, suggestionsResponseSchema, type MemoryRecord, type Suggestion } from "@clarkcant/contracts";
 
 import {
   type StartVoiceSessionOptions,
