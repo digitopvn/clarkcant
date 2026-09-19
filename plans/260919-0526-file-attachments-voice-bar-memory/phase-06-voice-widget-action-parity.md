@@ -167,3 +167,36 @@ người dùng. Không bao giờ tiếp tục bằng cách tự suy luận.
 - Semantic view chỉ chứa id/nhãn/action khả dụng, không chứa dữ liệu người dùng.
 - Voice dùng đúng authorization của click: binding, revision, owner, lease.
 - Không có action nào mới được sinh từ câu nói; chỉ những action instance đã công bố.
+
+## Ghi chú thực thi (cập nhật sau khi làm)
+
+T66 vẫn là `NOT-IMPLEMENTED`. Phần cài đặt đã xong ở cả hai phía: node dùng chung `invokeWidgetAction` cho cả
+đường click lẫn đường nói, resolver có 10 test đơn vị, khung `focus` chỉ mang một instance id, và phía client có
+`VoiceSession.focus`. Hành trình trình duyệt để chứng minh T66 thì chưa có, và lý do đã được thu hẹp bằng đo lường
+chứ không phải suy đoán:
+
+- Instance đang được focus có thật trong `.data/e2e/node.sqlite` và mang ba binding id.
+- Nhãn của binding bộ lọc là `Đổi khoảng thời gian`; `normaliseIntentText` biến nó thành `doi khoang thoi gian`,
+  đúng bằng khoá trong bảng phrasing (đã so từng code point).
+- `xem theo tháng` chuẩn hoá thành `xem theo thang`, đúng cặp mà test đơn vị của resolver giải được.
+- Câu người dùng nói tới được client: nó xuất hiện như một bubble trong timeline.
+
+Nghĩa là nhãn, câu nói, phép so khớp và đường dây đều đúng. Việc còn lại là tại sao nhánh widget không hành động
+theo câu đó trong phiên thoại thật. `[data-intent-notice]` không phải chỗ hiển thị câu trả lời thoại (đọc ở đó
+trả về rỗng), nên bước kế tiếp là đọc câu trả lời từ chính overlay.
+
+Một thay đổi đã thử và **hoàn nguyên**: cho fixture chỉ trả lời một lần mỗi phiên (`e350a69`). Nó không làm hành
+trình parity xanh, và nó làm hành trình từ chối đỏ, nên việc fixture trả lời lặp lại là có vai trò thật trong luồng
+transcript, không phải hiện tượng thừa.
+
+Bốn sai lệch so với kế hoạch cần ghi nhận:
+
+1. Hành động nói dùng revision và binding digest của chính node, không nhận con trỏ từ trang: một câu nói không
+   mang theo cursor, còn một cú click thì có.
+2. Resolver so khớp theo **nhãn** mà instance đang mời, không theo `actionId`, vì `actionProposal` không có trường
+   đó.
+3. Khung `focus` chỉ mang instance id; node tự dựng view bằng `semanticViewOf`, nên trang không thể mô tả một
+   instance không tồn tại.
+4. Không có route nào đọc bảng `action_invocations`, nên yêu cầu "mỗi đường đúng một lần gọi" không thể đếm được
+   từ một lần chạy trình duyệt. Hành trình tương lai chỉ khẳng định được trạng thái cuối, và phần đếm được ghi rõ
+   là thiếu.
