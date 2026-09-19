@@ -1,6 +1,6 @@
 # Agent — Conversation Platform Blueprint v2
 
-**Ngày:** 16/09/2026 · **Trạng thái:** thiết kế để triển khai, chưa có implementation/benchmark được xác nhận.
+**Ngày:** 16/09/2026 · **Trạng thái:** blueprint thiết kế. Repo này đã có bootstrap implementation: hành vi thật do code trong `apps/` và `packages/` sở hữu, trạng thái verify nằm ở [conformance-traceability.md](conformance-traceability.md) và `README.md` ở gốc repo.
 
 ## Quyết định sản phẩm
 
@@ -18,7 +18,9 @@ Tên “Agent” chỉ là tên làm việc, không khóa thương hiệu/domain
 6. [Browser & Computer Use](browser-computer-use.md): core/pack boundary, driver, node targeting và takeover.
 7. [Implementation plan](implementation-plan.md): dependencies, work packages, gates, acceptance scenarios.
 8. [Research & decisions](research-and-decisions.md): kết quả kiểm chứng upstream, lựa chọn/rejected alternatives, nguồn.
-9. [Changelog](CHANGELOG.md): những ràng buộc cũ đã bị thay thế.
+9. [Jev selector](mini-app/jev-configuration.md): vận hành và privacy của lớp quyết định — cấu hình, phần gửi ra ngoài, telemetry, fallback.
+10. [ADR-001 — Gemini Live cho voice](research/adr-001-gemini-live-provider.md) và [P0.1 compatibility lock](research/compatibility-lock.md): quyết định thay thế blueprint, và lifecycle Pi SDK đã đo thật.
+11. [Changelog](CHANGELOG.md): những ràng buộc cũ đã bị thay thế.
 
 Các JSON trong [examples](examples/) chỉ minh họa **contract riêng của app**, không phải wire protocol chính thức của Pi/MCP/A2A, cũng không phải cấu hình chạy được trước khi app được implement.
 

@@ -1,6 +1,6 @@
 # System Architecture v2 — Conversation Platform
 
-**Ngày:** 16/09/2026, cập nhật 17/09/2026 · **Trạng thái:** thiết kế để implement, chưa là hệ thống đã triển khai. Sơ đồ tổng quan mới nhất: [system-architecture.png](system-architecture.png); khi văn bản và sơ đồ khác nhau, sơ đồ thắng và văn bản phải được sửa theo.
+**Ngày:** 16/09/2026, cập nhật 19/09/2026 · **Trạng thái:** thiết kế; phần đã implement nằm trong `apps/` và `packages/` của repo này, và code là nguồn sự thật cho hành vi — tài liệu này giữ ranh giới, quyết định và nơi cư trú của từng phần. Sơ đồ tổng quan mới nhất: [system-architecture.png](system-architecture.png); khi văn bản và sơ đồ khác nhau, sơ đồ thắng và văn bản phải được sửa theo.
 **Phạm vi:** [scope-lock.md](scope-lock.md). Tất cả API/types có tên `agent.*`, NodeLink và CapabilityPack bên dưới là contract đề xuất của app, không phải API chính thức của Pi/MCP.
 
 ## 1. Thay đổi kiến trúc cốt lõi
@@ -80,7 +80,7 @@ Media arrows không có nghĩa mọi widget được tự kết nối mọi prov
 | Mini-apps | Isolated origins/iframes, MCP Apps host adapter | UI tùy biến không ở privileged renderer; host-mediated actions [R06–R08] |
 | Execution | Child processes + OS isolation khi cần | Process riêng không phải sandbox; untrusted tool services chạy container/VM phù hợp |
 | Linux delivery | Non-root OCI image + optional native bundle/service | Runtime không yêu cầu display; browser/virtual desktop tách images |
-| Voice | GPT-Live adapter đầu tiên, WebRTC + trusted backend | Gate real account/event/interrupt; không lấy provider voice state làm app DB [R29] |
+| Voice | Gemini Live (`gemini-3.8-live`) sau proxy WebSocket phía node | Browser không giữ credential provider, kể cả token ngắn hạn; [ADR-001](research/adr-001-gemini-live-provider.md) thay lựa chọn GPT-Live của blueprint [R29] |
 | Connectivity | Reachable HTTPS hoặc private-network adapter | Tailscale là một lựa chọn đã có NAT traversal; không bắt buộc để dùng local [R28] |
 
 Không đổi toàn bộ runtime sang Go/Rust chỉ vì có VPS: yêu cầu portability được giải quyết bằng headless boundary, packaging và OS adapters. Native helper chỉ dùng khi thực sự cần OS APIs, không là lần viết lại Pi thứ hai.
@@ -210,7 +210,17 @@ Ràng buộc bắt buộc cho lớp này:
 - Deadline riêng cho Jev (đề xuất ≤2 s trong tổng ≤2.5 s cho search); 429/529/timeout là `unavailable` có reason, không retry storm.
 - Telemetry: request id, model id thực tế trả về, duration, tokens, enum đã chọn, reason fallback. Không body, không prompt, không header.
 
-Ba đường A/B/C dùng chung một adapter, một policy confidence và một fallback chain: Jev vắng/uncertain → rank thuần → một câu hỏi làm rõ. Jev cũng là selector cho rich widgets trong Conversation Host (chọn template/data candidates cho một surface); cùng adapter, cùng ràng buộc. Chi tiết ở plan mini-app.
+Ba đường A/B/C dùng chung một adapter, một policy confidence và một fallback chain: Jev vắng/uncertain → rank thuần → một câu hỏi làm rõ. Lớp quyết định nay có năm chỗ dùng, khác nhau chỉ ở tập candidate mà host đã lọc trước:
+
+| Đường | Câu hỏi | Code sở hữu |
+|---|---|---|
+| A — điều phối runtime | worker/instance nào cho intent này? | `decideRuntimeTarget` |
+| B — tìm lại session/ngữ cảnh | kết quả nào đúng ý, hay phải hỏi lại? | `decideSearchResult` (+ Noul) |
+| C — tìm project/thư mục | thư mục nào? | `decideProject` |
+| D — rich widget | template/section nào cho surface này? | `selectTemplate`, `selectSections` |
+| E — tin đến khi đang chạy | steer, interrupt hay background? | `decideTurnAction` |
+
+A, B, C và E nằm ở `apps/runtime/src/jev-decider.ts`; D ở `apps/runtime/src/jev-selector.ts`, cùng adapter và cùng policy. E là một quyết định chứ không phải một quy tắc vì ba câu trả lời không thay thế được cho nhau: steer đổi việc đang làm, interrupt vứt nó đi, background tiêu thêm một call cho việc người dùng có thể không định tách ra. Khi không đủ chắc, E nghiêng về `interrupt` — hướng lấy lại được, thay vì hướng im lặng. Cấu hình và vận hành: [mini-app/jev-configuration.md](mini-app/jev-configuration.md).
 
 **Trạng thái đo được (2026-09-17).** Cấu trúc trên đã có trong repo, và ba con số quyết định cấu hình đã đo thay vì suy đoán:
 
@@ -221,6 +231,27 @@ Ba đường A/B/C dùng chung một adapter, một policy confidence và một 
 | Semantic (sqlite-vec + E5-small) và RRF | Triển khai xong, **tắt mặc định** | Hybrid 31/34 ở ceiling cosine 0,1 nhưng 25/34 khi ceiling ≥0,2: KNN luôn trả hàng xóm gần nhất nên câu hỏi "không có đáp án" bị trả về kết quả gần đúng |
 
 Deadline trong bảng ràng buộc ở trên nay là hằng số được enforce: 2 s cho một quyết định, tổng 2,5 s cho đường search (`SEARCH_DECISION_TIMEOUT_MS`, `SEARCH_TOTAL_BUDGET_MS`), và hết hạn thì trả về rank thuần kèm reason chứ không giả vờ Jev đã chọn. Extension `sqlite-vec` được probe trên cả hai platform repo chạy: `v0.1.9` trên darwin arm64 (máy dev) và linux x64 (CI), với create/insert/KNN đều chạy. Ở đường C, câu hỏi "thư mục nào?" nay trả lời được bằng path người dùng gõ: path đọc từ câu gốc (trước redaction vì redactor thay path bằng placeholder), thư mục được nêu tên vẫn phải nằm trong approved root, và thư mục dùng gần nhất được **hỏi** thay vì tự mở.
+
+### 7.3 Pi runtime: Main Pi, control extension và worker
+
+Sơ đồ tách "Pi Runtime — MAIN SESSION" khỏi "Other pi Workers". Mục này không thay sơ đồ — nó chỉ bổ sung nơi cư trú trong code và những ranh giới mà một sơ đồ không hiển thị được, nên chỗ nào sơ đồ mô tả khác thì sơ đồ vẫn thắng.
+
+**Seam SDK.** `packages/pi-adapter` là package duy nhất import SDK Pi. Mọi phần khác phụ thuộc interface `PiAdapter` (`packages/pi-adapter/src/types.ts`), nên một breaking change của SDK là thay đổi adapter chứ không phải refactor core. Hai implementation: `RealPiAdapter` (typed theo declaration của SDK) và `FakePiAdapter` (in-process, tất định, cho test và CI — đây là thứ cho phép chạy cả ứng dụng mà không cần provider account). Các bước lifecycle mà SDK thực sự làm được ghi ở [research/compatibility-lock.md](research/compatibility-lock.md), sinh bởi `packages/pi-adapter/src/probe-cli.ts`; file đó ghi môi trường đã đo nên không sửa tay.
+
+**Main Pi và control extension.** Main Pi là session chính của hội thoại; các control extension dưới đây là code của node, sống trong `apps/runtime` chứ không trong worker — đó chính là điều kiện để chúng sống qua một lần Pi swap.
+
+| Trên sơ đồ | Code sở hữu | Ranh giới giữ nguyên |
+|---|---|---|
+| Task planning | conductor trong `packages/core`, `apps/runtime/src/runtime-candidates.ts` | chọn node/worker theo resource locality, grant và lease còn sống, không theo CPU rảnh |
+| Session Manager | `apps/runtime/src/session-store.ts` (list/resume), `session-search.ts` (search) | liệt kê session không đọc nội dung transcript |
+| Process Controller | `apps/runtime/src/model-turn.ts`, `background-sessions.ts` | turn control (`running`/`interrupt`/`steer`) nằm trên chính object turn, không ở map bên cạnh |
+| Workspace & Project Finder | `apps/runtime/src/project-finder.ts` | chỉ metadata và marker; không đọc nội dung file để index |
+
+**Tool Main Pi thấy.** Node công bố tool của mình **lúc boot** (`apps/runtime/src/tool-catalogue.ts`), không dựng theo yêu cầu: một danh sách chỉ tồn tại trong closure thì không có gì khẳng định được nó. Tool chỉ-đọc cấp cho Main Pi ở `apps/runtime/src/node-tools.ts`; tool built-in của Pi được liệt kê riêng. Không dump toàn bộ MCP tools vào mọi lượt model (§7.1).
+
+**Worker.** Mỗi project một worker pi session với brief riêng (`WorkerBrief`: goal, `projectRoots` đã được duyệt, capability refs, tool set, model). Tool set phải đăng ký lúc tạo session: SDK cố định nó tại thời điểm đó, và một tool thêm sau vừa lọt allowlist vừa không xuất hiện trong system prompt. Pi chạy trong process của runtime; chỗ duy nhất runtime spawn process là `apps/runtime/src/run-command.ts`, và chỉ sau khi một người duyệt.
+
+**Session file.** Transcript là JSONL dưới `<dataDir>/sessions`; không cấu hình `sessionDir` thì session là in-memory và không có gì để search. Adapter báo đường dẫn qua `onSessionFile`, node kiểm tra nó nằm trong thư mục session rồi mới đăng ký index. Resume đi qua `checkResumable` trước: một row còn trong DB mà file đã mất là lỗi được trả về, không phải một lần mở hỏng sâu trong SDK.
 
 ## 8. Task/session routing
 
@@ -278,6 +309,12 @@ Một writer/worktree hoặc approved folder; Git operations tác động shared
 
 Mỗi node: SQLite WAL với migrations; app events/outbox/inbox; native Pi session history (JSONL) tách logical authority nhưng được index vào Memory & Search (§7.2); blob store có quotas. Không cố commit atomically cùng Pi JSONL; run markers và reconciliation nối hai phần.
 
+Memory & Search giữ hai corpus với hai authority khác nhau: bảng `messages` là nguồn sự thật của timeline, còn JSONL transcript của worker là thứ worker đã thực sự làm. Hai nguồn vào cùng một service nhưng không đồng bộ hai chiều: một row `session_files` cho mỗi transcript, con trỏ ingest chỉ tiến, và redaction chạy ở boundary do adapter chọn (cuối một lượt, khi không còn gì đang ghi) trước khi nội dung vào index. Tập bảng cụ thể do `packages/storage/src/migrate.ts` sở hữu; đừng chép lại ở đây.
+
+Hai thứ cố ý **không** bền vững, và lý do là một phần của thiết kế: danh sách background session sống trong bộ nhớ (`apps/runtime/src/background-sessions.ts`), vì một session sống lâu hơn process đã sinh ra nó là session không ai với tới; và telemetry của Jev bị chặn ở 200 dòng trong bộ nhớ, không ghi xuống DB.
+
+Khi một session mới được tạo cho hội thoại đã có mạch, lượt đầu được nhắc bằng brief của 12 message gần nhất, mỗi dòng cắt ngắn (`apps/runtime/src/model-turn.ts`). Đó là cách đặt model vào mạch đang làm, không phải chép lại hội thoại: một brief dài theo hội thoại thì không còn là brief.
+
 Nhóm bảng: principals/nodes/grants; conversations/messages; tasks/runs/delegations; commands/events/outbox/inbox; resources/leases; effects/approvals; packages/install_plans/generations; connections/auth_transactions; widget_instances/snapshots/pins/action_bindings; datasets/artifacts; preferences/onboarding_checkpoints/usage.
 
 Secrets lưu trong vault abstraction: macOS Keychain hoặc server secret store/encrypted-at-rest storage với key nằm ngoài DB backup. File permissions không thay encryption; container env cũng không là giải pháp tránh mọi leak. Bootstrap/recovery key và backup procedure phải có test; không tự sinh key rồi lưu cùng plaintext DB và gọi là bảo mật đầy đủ.
@@ -294,7 +331,7 @@ Chi tiết pin/live vs snapshot, custom app sandbox và action schema ở [widge
 
 ## 12. Voice/media
 
-GPT-Live là adapter đầu, không phải dependency trong core state model. Client mic/playback ↔ provider; runtime giữ durable intent và trusted control path. Transcript fragments/delegation cần correlate/dedup; correction đổi task revision; barge-in chỉ nhường audio, không tự hủy job [R29].
+Voice chạy trên Gemini Live (`gemini-3.8-live`) sau proxy WebSocket phía node, không phải dependency trong core state model; [ADR-001](research/adr-001-gemini-live-provider.md) thay lựa chọn GPT-Live của blueprint. Client mic/playback ↔ node ↔ provider; runtime giữ durable intent và trusted control path. Transcript fragments/delegation cần correlate/dedup; correction đổi task revision; barge-in chỉ nhường audio, không tự hủy job [R29].
 
 Một call widget, music widget và assistant voice không được tranh microphone/speaker ngầm. `MediaFocusService` thể hiện ai đang dùng mic/camera, duck/pause chỉ theo rule được user chấp thuận. Audio trong Zoom call không tự được gửi vào voice model để “tiện phân tích”. Mute/end có local host control, không phụ thuộc remote node hoặc model.
 
@@ -335,7 +372,7 @@ packages/
   mcp-adapters/            # Tools/auth and MCP Apps host support
   host-adapters/           # macOS/Linux/web OS and vault capabilities
   execution-supervisor/    # Process/container/virtual desktop adapters
-  voice-adapters/          # GPT-Live first, provider-neutral internal events
+  voice-adapters/          # Gemini Live first behind a node-side proxy, provider-neutral internal events
 packs/
   project-work/
   data-canvas/

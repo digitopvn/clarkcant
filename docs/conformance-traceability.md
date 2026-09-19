@@ -110,7 +110,7 @@ A status here is never upgraded without the corresponding test appearing alongsi
 | V14 | PARTIAL | Browser Use | A real Playwright driver runs against a real Chromium: managed profile, origin policy, observation correlation, staleness refusal, local stop, human takeover and secret-entry suspension, 12 integration tests. Takeover preview UI and the injection fixture are not built. |
 | V15 | PARTIAL | Computer Use | Permission gating, containment labelling, target validation and profile validation are implemented and tested. The native bindings need a signed bundle and a container engine. |
 | V16 | PARTIAL | Onboarding/personalisation | Quick play works with no credentials and is labelled as sample in a host-owned card, verified in a browser. Needs-based setup and preference undo are not built. |
-| V17 | PARTIAL | Live voice | Transcript assembly, intent routing, media-focus arbitration and mute/end semantics are implemented and tested. The WebRTC transport needs a provider account. |
+| V17 | PARTIAL | Live voice | Transcript assembly, intent routing, media-focus arbitration and mute/end semantics are implemented and tested. The transport is a node-proxied WebSocket to Gemini Live (`packages/voice-adapters/src/gemini-live.ts`, `apps/runtime/src/voice-session.ts`), not browser-direct WebRTC, and the browser holds no provider credential (`docs/research/adr-001-gemini-live-provider.md`). |
 | V18 | PARTIAL | Operations/security | Forward-only migrations (`packages/storage/src/migrate.ts`), verifiable consistent backup, restore compatibility checks, credential redaction and durable dedup are implemented and tested. Failure injection and soak testing belong to P10. |
 
 ## Summary

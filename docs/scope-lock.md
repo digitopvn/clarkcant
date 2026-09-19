@@ -33,7 +33,7 @@ Mỗi cài đặt runtime là một **node tự chủ**, có state, credentials 
 | Computer Use | Optional first-party driver packs: macOS desktop + Linux virtual desktop; core giữ lease, permissions, cancellation |
 | Auth | Guided flow trong chat, nhưng OAuth/OS consent có thể mở system browser/settings rồi quay lại |
 | Onboarding | Hai đường: quick play bằng sample rõ nhãn, hoặc setup theo nhu cầu; không questionnaire dài |
-| Voice | GPT-Live adapter đầu tiên theo tài khoản kiểm chứng; cùng command gateway; không restart voice khi reload Pi |
+| Voice | Gemini Live (`gemini-3.8-live`) sau proxy WebSocket phía node theo tài khoản kiểm chứng; cùng command gateway; không restart voice khi reload Pi. Provider đã đổi khỏi GPT-Live theo [ADR-001](research/adr-001-gemini-live-provider.md) |
 | Personalization | Preferences/skills/recipes/widgets/extensions; scope/source/undo; không hidden memory |
 
 ## 4. IN — đầy đủ trong v0.2 foundation beta

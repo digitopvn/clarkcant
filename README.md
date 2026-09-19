@@ -19,8 +19,8 @@ ledger: every scope item (V01–V18) and every acceptance test (T01–T72) from
 [`docs/implementation-plan.md`](docs/implementation-plan.md) with a status of PASS,
 BLOCKED or NOT-IMPLEMENTED, and the evidence for each. Nothing there is marked complete.
 
-Of the 72 acceptance tests in the blueprint: **44 pass**, 4 are blocked on external
-infrastructure or credentials, and 24 belong to phases this bootstrap did not build. The
+Of the 72 acceptance tests in the blueprint: **64 pass**, 4 are blocked on external
+infrastructure or credentials, and 4 belong to phases this bootstrap did not build. The
 unit and integration tests of individual layers passing is not the same as a journey
 passing; the journeys that do run end to end are the browser suite in `apps/web/e2e`.
 
@@ -76,11 +76,12 @@ Stated plainly, because a bootstrap that hides this is worse than useless:
 
 - The **desktop shell** beyond the surface its typed IPC bridge exposes: the browser suite
   proves the client's branch when a directory dialog is present, not an Electron build.
-- The **conductor** and a live worker pool; the state machine exists but nothing drives it
-  end to end.
-- Live **OAuth**, **Google Calendar**, **MCP transport**, **voice transport**, the
-  **Playwright** binding, and the **macOS/Linux native drivers**. Their contracts, state
-  machines and refusals are implemented and tested; the transports are not.
+- The **conductor's task dispatch** and a live worker pool: the conductor is wired and the
+  task state machine runs, but no worker loads a capability on this node, so a dispatched
+  task has nothing to execute it. `apps/worker` is a CLI the runtime does not spawn.
+- Live **OAuth**, **Google Calendar**, the **MCP streamable-HTTP transport** (stdio is built
+  and tested), and the **macOS/Linux native drivers**. Their contracts, state machines and
+  refusals are implemented and tested; those transports are not.
 - **Quarantine download and isolated build** for installs.
 - The **install and capability lifecycle** in the interface: the cards render and the
   refusals are honest, and no install has been run end to end from the browser.

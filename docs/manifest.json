@@ -1,7 +1,7 @@
 {
   "name": "Agent Conversation Platform Blueprint v2",
-  "date": "2026-09-16",
-  "status": "Architecture/design documents; no application implementation",
+  "date": "2026-09-19",
+  "status": "Architecture and design documents plus the implementation records they were reconciled against; the repository holds a bootstrap implementation and code owns behaviour",
   "validation": {
     "jsonSyntax": "passed",
     "markdownFenceBalance": "passed",
@@ -20,8 +20,8 @@
     },
     {
       "path": "README.md",
-      "bytes": 3803,
-      "sha256": "2dc9d6533f9fbbf58824f1a81816deb7b25f9d989eb3ba27b16e403b09ee28c0"
+      "bytes": 4356,
+      "sha256": "ef5d0d0f832bdb6ab2b8cafd410c51cc888260b73ced5fc280a0c85c2a3c596c"
     },
     {
       "path": "browser-computer-use.md",
@@ -65,8 +65,8 @@
     },
     {
       "path": "implementation-plan.md",
-      "bytes": 25236,
-      "sha256": "b06fb2d320bf94f6786e5d7ef4d0019487c6966a119f7a917fb20594ab849d91"
+      "bytes": 25407,
+      "sha256": "a1807c622cd7a18b8474b486e6e5ab79a1ff67c235feb547a086dcd183a1d626"
     },
     {
       "path": "integration-onboarding.md",
@@ -75,18 +75,18 @@
     },
     {
       "path": "research-and-decisions.md",
-      "bytes": 15506,
-      "sha256": "9997333e66511576733ded3269369b6fc2e5e132a8cc4c0e84cc94fb2e1bc277"
+      "bytes": 15838,
+      "sha256": "e6b071f48a70c2a274345850503627366173efb8c63f724ea9d59ba29cfc9028"
     },
     {
       "path": "scope-lock.md",
-      "bytes": 10306,
-      "sha256": "3ee95d4c6db6a8603ed3bb3989ae92a9aa87b12a0682c9ac5ed8b2627349bd3b"
+      "bytes": 10434,
+      "sha256": "6654a3acb2d2a25b55f74d33e4e6cbe039f6c824754ace9faba0998775ae54c2"
     },
     {
       "path": "system-architecture.md",
-      "bytes": 29977,
-      "sha256": "ad91b7a71b8978b59031d899b9d855e363ad62cba21c4337c48f2e51a3e084fa"
+      "bytes": 36410,
+      "sha256": "467c6e642e0495debc7e3bd321ddee253b06b5a8a2ca2df5e52ad60f065b872a"
     },
     {
       "path": "widgets-and-extensions.md",

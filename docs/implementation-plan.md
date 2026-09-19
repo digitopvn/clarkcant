@@ -78,7 +78,7 @@ Playwright DOM/screenshot on macOS/Linux; install binary on-demand test; Peekabo
 
 ### P0.6 Voice
 
-GPT-Live real account với backend fake long task; actual events, barge-in, correction, mute/end, reconnect. Giữ permanent key ngoài renderer, test voice does not restart when worker replaced. Live access unavailable là blocker/ADR change, không âm thầm đổi thành STT+TTS rồi giữ tên live conversation.
+Gemini Live real account với backend fake long task (provider đổi khỏi GPT-Live theo [ADR-001](../docs/research/adr-001-gemini-live-provider.md)); actual events, barge-in, correction, mute/end, reconnect. Giữ permanent key ngoài renderer, test voice does not restart when worker replaced. Live access unavailable là blocker/ADR change, không âm thầm đổi thành STT+TTS rồi giữ tên live conversation.
 
 **P0 gate:** each required risk has pass/blocked/fail + reproducible evidence. Stop production commitment to exact dependency until its spike passes; scope change phải ADR, không quietly remove requirement.
 
@@ -170,7 +170,7 @@ Gate: all three functional examples (browser, Mac native, Linux desktop) run on 
 
 ## 12. P9 — Voice & media coordination
 
-Finish GPT-Live adapter, transcript/delegation correlation, source roles, correction vs barge-in vs cancel, partial-playout awareness, session reconnect/context hydrate and text fallback.
+Finish the Gemini Live adapter ([ADR-001](../docs/research/adr-001-gemini-live-provider.md)), transcript/delegation correlation, source roles, correction vs barge-in vs cancel, partial-playout awareness, session reconnect/context hydrate and text fallback.
 
 Semantic actions focus a pinned widget or selected event identically to click. Music/video call/assistant microphone ownership modeled; no call audio copied to model without explicit feature and consent. Short-lived SDK token exception goes through isolated auth bridge, never props/history.
 

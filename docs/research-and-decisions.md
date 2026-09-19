@@ -20,7 +20,7 @@
 | Vendor player/call/message/editor có account/platform/SDK giới hạn [R22–R25] | Rich SDK ≠ mọi vendor app hoạt động ngay trên mọi client |
 | Electron privileged renderer/IPC cần hardening; node:vm không là security [R26–R27] | Custom UI chạy isolated origin; tool code isolation ở OS/service boundary |
 | Existing private-network connectivity đã xử lý direct/relay paths [R28] | Optional adapter, không tự xây custom internet relay ở release đầu |
-| GPT-Live tách voice frontend và delegated backend [R29] | Voice không sở hữu task state; Pi reload không hủy media session |
+| Voice tách frontend và delegated backend [R29] | Voice không sở hữu task state; Pi reload không hủy media session. Provider hiện là Gemini Live, không phải GPT-Live: [ADR-001](research/adr-001-gemini-live-provider.md) |
 
 ## 2. ADR v2
 
@@ -278,6 +278,8 @@ https://developers.openai.com/api/docs/guides/live
 https://developers.openai.com/api/docs/guides/live-delegation
 
 Voice frontend, delegated backend và app responsibilities cho context/cancellation. Account/model/version access cần test thật.
+
+Nguyên tắc tách frontend/backend ở trên vẫn giữ, nhưng **lựa chọn provider đã bị thay**: voice chạy trên Gemini Live với proxy phía node ([ADR-001](research/adr-001-gemini-live-provider.md), 2026-09-17).
 
 ### R30 — MCP Registry
 
