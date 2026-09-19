@@ -476,6 +476,42 @@ export const reconnectCardSchema = z.strictObject({
 
 
 /**
+ * A form the agent is asking the user to fill in.
+ *
+ * The second half of the same primitive: a question offers named answers, and a form asks for values the agent
+ * cannot enumerate. Both exist for one reason — an agent that needs several facts otherwise writes them as prose,
+ * gets a paragraph back, and has to guess which sentence answered which request.
+ *
+ * Host-owned, and submitted as the user's own next message rather than through a route of its own, for the same
+ * reason the question card is: the transcript stays a conversation, and there is one way into the agent.
+ *
+ * `kind` is a closed set of three rather than free-form field definitions, so the renderer cannot be talked into
+ * drawing a control it does not have a safe implementation for.
+ */
+export const formCardSchema = z.strictObject({
+  type: z.literal("form-card"),
+  owner: z.literal("host"),
+  formId: z.string().min(1).max(128),
+  title: z.string().min(1).max(300),
+  fields: z
+    .array(
+      z.strictObject({
+        id: z.string().min(1).max(64),
+        label: z.string().min(1).max(200),
+        kind: z.enum(["text", "textarea", "select"]),
+        /** Required for `select`; ignored otherwise. */
+        options: z.array(z.string().min(1).max(200)).min(1).max(20).optional(),
+        required: z.boolean().optional(),
+        placeholder: z.string().min(1).max(200).optional(),
+      }),
+    )
+    .min(1)
+    .max(12),
+  submitLabel: z.string().min(1).max(60).optional(),
+});
+export type FormCard = z.infer<typeof formCardSchema>;
+
+/**
  * A question the agent is asking, with the answers it will accept.
  *
  * Host-owned, like the other cards a model may propose but not mint for itself: the block is the host's record
@@ -544,6 +580,7 @@ export const messageBlockSchema = z.discriminatedUnion("type", [
   projectPickerCardSchema,
   reconnectCardSchema,
   questionCardSchema,
+  formCardSchema,
 ]);
 export type MessageBlock = z.infer<typeof messageBlockSchema>;
 

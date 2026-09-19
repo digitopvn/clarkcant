@@ -319,6 +319,15 @@ export interface BlockActions {
    * stay answerable forever, inviting a second answer to a question the node already received one for.
    */
   openQuestionIds?: readonly string[];
+  /**
+   * A filled-in form, on its way back as the user's own message.
+   *
+   * The summary is the answers as lines of text, which is what a reader would have typed — not a JSON blob, which
+   * would put a machine shape into the transcript and lose the labels that make it readable.
+   */
+  onFormSubmit?: (input: { formId: string; summary: string; values: Record<string, string> }) => void;
+  /** Forms that may still be submitted: the same rule as questions, from the same computation. */
+  openFormIds?: readonly string[];
 }
 
 /**
@@ -911,6 +920,7 @@ export const HOST_OWNED_BLOCK_TYPES = [
   "project-picker-card",
   "reconnect-card",
   "question-card",
+  "form-card",
 ] as const;
 
 /**
@@ -1064,6 +1074,8 @@ export function renderBlock(
       return <ProjectPickerCardBlock key={index} block={block} />;
     case "question-card":
       return <QuestionCardBlock key={index} block={block} {...(actions === undefined ? {} : { actions })} />;
+    case "form-card":
+      return <FormCardBlock key={index} block={block} {...(actions === undefined ? {} : { actions })} />;
     case "reconnect-card":
       return <ReconnectCardBlock key={index} block={block} />;
     case "surface": {
@@ -1173,6 +1185,148 @@ export function QuestionCardBlock({
         <p className="cc-freshness" data-question-closed="true">
           Hội thoại đã đi tiếp, nên câu hỏi này không còn nhận câu trả lời.
         </p>
+      )}
+    </section>
+  );
+}
+
+/**
+ * A form the agent asked for, filled in by the user.
+ *
+ * The same primitive as the question card, for values the agent cannot enumerate: a question offers named answers,
+ * a form asks for text. Both exist because an agent that needs several facts otherwise writes them as prose, gets
+ * a paragraph back, and has to guess which sentence answered which request.
+ *
+ * The draft is component state and nothing else. That is deliberate: a half-typed form must survive a rerender —
+ * a turn streaming behind it, a widget resolving, the window resizing — and it must **not** survive as a
+ * preference, because a form is a message being composed, not a setting. Submitting sends the answers as the
+ * user's own next message, so the transcript stays a conversation and there is one way into the agent.
+ *
+ * Read-only once the conversation has moved past it, for the reason the question card is: the transcript is
+ * immutable, and a form that stayed open would invite a second submission of answers already sent.
+ */
+export function FormCardBlock({
+  block,
+  actions,
+}: {
+  block: Record<string, unknown>;
+  actions?: BlockActions;
+}): ReactElement | null {
+  if (block.owner !== "host") return null;
+
+  const formId = typeof block.formId === "string" ? block.formId : "";
+  const title = typeof block.title === "string" ? block.title : "";
+  const submitLabel = typeof block.submitLabel === "string" ? block.submitLabel : "Gửi";
+  const raw = Array.isArray(block.fields) ? (block.fields as Record<string, unknown>[]) : [];
+  const fields = raw
+    .filter((entry) => typeof entry.id === "string" && typeof entry.label === "string")
+    .map((entry) => ({
+      id: entry.id as string,
+      label: entry.label as string,
+      kind: entry.kind === "textarea" || entry.kind === "select" ? entry.kind : ("text" as const),
+      options: Array.isArray(entry.options) ? entry.options.filter((o): o is string => typeof o === "string") : [],
+      required: entry.required === true,
+      ...(typeof entry.placeholder === "string" ? { placeholder: entry.placeholder } : {}),
+    }));
+
+  const open =
+    formId !== "" && actions?.onFormSubmit !== undefined && actions.openFormIds?.includes(formId) === true;
+
+  // Keyed by field id, so the draft is exactly the answers and nothing else survives a rerender.
+  const [values, setValues] = useState<Record<string, string>>({});
+  const missing = fields.filter((field) => field.required && (values[field.id] ?? "").trim() === "");
+  const complete = missing.length === 0 && fields.length > 0;
+
+  const summary = (): string => {
+    const lines = fields
+      .map((field) => {
+        const value = (values[field.id] ?? "").trim();
+        return value === "" ? undefined : `${field.label}: ${value}`;
+      })
+      .filter((line): line is string => line !== undefined);
+    return [title, ...lines].join("\n");
+  };
+
+  return (
+    <section
+      className="cc-card"
+      data-host-card="form"
+      data-owner="host"
+      data-form-id={formId}
+      data-form-open={open ? "true" : "false"}
+      aria-label={title}
+    >
+      <div className="cc-card-title">{title}</div>
+      <div className="cc-form-fields" data-form-fields={fields.length}>
+        {fields.map((field) => (
+          <label key={field.id} className="cc-credential-field">
+            <span>
+              {field.label}
+              {field.required ? <span aria-hidden="true"> *</span> : null}
+            </span>
+            {/*
+              Rendered as text once the form is closed. The value the user gave stays readable — it is what the
+              conversation is about — and the control goes, because there is nothing left to submit.
+            */}
+            {!open ? (
+              <span className="cc-chip" data-form-answer={field.id}>
+                {(values[field.id] ?? "").trim() === "" ? "—" : values[field.id]}
+              </span>
+            ) : field.kind === "textarea" ? (
+              <textarea
+                className="cc-personal-instructions"
+                data-form-input={field.id}
+                rows={3}
+                value={values[field.id] ?? ""}
+                placeholder={field.placeholder}
+                onChange={(event) => setValues((current) => ({ ...current, [field.id]: event.target.value }))}
+              />
+            ) : field.kind === "select" ? (
+              <select
+                className="cc-select"
+                data-form-input={field.id}
+                value={values[field.id] ?? ""}
+                onChange={(event) => setValues((current) => ({ ...current, [field.id]: event.target.value }))}
+              >
+                <option value="">—</option>
+                {field.options.map((option) => (
+                  <option key={option} value={option}>
+                    {option}
+                  </option>
+                ))}
+              </select>
+            ) : (
+              <input
+                type="text"
+                data-form-input={field.id}
+                value={values[field.id] ?? ""}
+                placeholder={field.placeholder}
+                onChange={(event) => setValues((current) => ({ ...current, [field.id]: event.target.value }))}
+              />
+            )}
+          </label>
+        ))}
+      </div>
+      {!open ? null : (
+        <>
+          <div className="cc-chip-row">
+            <button
+              type="button"
+              className="cc-chip"
+              data-form-submit="true"
+              // Disabled with the reason shown, rather than submitting a form with holes in it.
+              disabled={!complete}
+              onClick={() => actions?.onFormSubmit?.({ formId, summary: summary(), values })}
+            >
+              {submitLabel}
+            </button>
+          </div>
+          {complete ? null : (
+            <p className="cc-freshness" data-form-incomplete="true">
+              Còn thiếu: {missing.map((field) => field.label).join(", ")}
+            </p>
+          )}
+        </>
       )}
     </section>
   );
