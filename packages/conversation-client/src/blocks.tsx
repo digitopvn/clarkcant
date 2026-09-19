@@ -166,7 +166,8 @@ export function ArtifactBlock({
       <div className="cc-card-head">
         <span className="cc-card-title">{labelValue}</span>
         <span>
-          {mimeType} · {sizeBytes} B{originNodeId === undefined ? "" : ` · từ ${originNodeId}`}
+          {/* A node id is an internal name; "a node khác" says the same useful thing without exposing one. */}
+          {mimeType} · {sizeBytes} B{originNodeId === undefined ? "" : " · từ một node khác"}
         </span>
       </div>
       {/*
@@ -759,7 +760,8 @@ export function TaskProgressCardBlock({
             <>
               {/* Named, because a task running elsewhere must not read as a local one. */}
               <dt>Chạy trên</dt>
-              <dd>{fieldText(targetNode.label, fieldText(targetNode.nodeId))}</dd>
+              {/* Named only if it has a name a person would recognise; otherwise "một node khác", not an id. */}
+              <dd>{fieldText(targetNode.label, "một node khác")}</dd>
             </>
           )}
           <dt>Dừng được</dt>
@@ -1562,6 +1564,8 @@ export function ControlSessionCardBlock({
       data-control-session={sessionId}
       data-control-surface={surface}
       data-control-preview={declaredPreview}
+      /* Machine-facing only: an assertion can read the epoch, a reader never sees it. */
+      data-control-epoch={leaseEpoch}
       data-control-driver={driver}
       data-control-status={stopped ? "stopped" : "running"}
       aria-label={`Phiên browser: ${label}`}
@@ -1575,8 +1579,7 @@ export function ControlSessionCardBlock({
       <dl className="cc-fields">
         <dt>Ai đang điều khiển</dt>
         <dd data-control-driver-label="true">{driver === "user" ? "bạn" : "agent"}</dd>
-        <dt>Lease epoch</dt>
-        <dd>{leaseEpoch}</dd>
+
       </dl>
       {/*
         Reported before any control, because it decides whether acting is possible at all. A desktop whose screen

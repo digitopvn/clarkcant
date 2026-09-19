@@ -64,7 +64,7 @@ test("a takeover changes who may act, and a stop ends the session", async ({ pag
   const notice = card.locator("[data-control-notice='taken-over']");
   await expect(notice).toBeVisible();
   await expect(notice).toContainText("bị từ chối");
-  await expect(card).toContainText("Lease epoch");
+  await expect(card).toHaveAttribute("data-control-epoch", "1");
 
   // Nothing offers a takeover the user already has: a control with nothing left to do is worse than no control.
   await expect(card.locator("[data-control-takeover]")).toHaveCount(0);
