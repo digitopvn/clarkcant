@@ -62,9 +62,17 @@ export function App(): ReactElement {
    * that provider's models. The provider list is read from the node, so it is pi's own catalogue rather than one
    * written here and a provider added by upgrading pi appears without this file changing.
    */
-  const [onboardStep, setOnboardStep] = useState<"welcome" | "provider" | "model">("welcome");
+  const [onboardStep, setOnboardStep] = useState<"welcome" | "provider" | "model" | "key">("welcome");
   const [pickedProvider, setPickedProvider] = useState<string | undefined>(undefined);
   const [pickedModel, setPickedModel] = useState<string | undefined>(undefined);
+  /**
+   * The key being typed, and what became of the last attempt.
+   *
+   * Held in state only long enough to send it, and cleared once the node has it: a secret that stays in the page is a
+   * secret in a screenshot, a devtools panel and whatever else reads the DOM.
+   */
+  const [keyDraft, setKeyDraft] = useState("");
+  const [keyStatus, setKeyStatus] = useState<string | undefined>(undefined);
   const [catalogue, setCatalogue] = useState<{ id: string; models: { id: string }[] }[] | undefined>(undefined);
 
   useEffect(() => {
@@ -93,10 +101,7 @@ export function App(): ReactElement {
    * as a form in front of a thing they have not used yet.
    */
   if (!onboarded) {
-    const finish = (provider?: string, model?: string): void => {
-      if (provider !== undefined && model !== undefined) {
-        window.localStorage.setItem("cc_model", `${provider}/${model}`);
-      }
+    const finish = (): void => {
       // Written before the state flips, so a reload during the transition does not show this screen again.
       window.localStorage.setItem("cc_onboarded", "1");
       setOnboarded(true);
@@ -145,7 +150,7 @@ export function App(): ReactElement {
                           type="button"
                           className="cc-chip"
                           data-onboarding-finish="true"
-                          onClick={() => finish()}
+                          onClick={() => setOnboardStep("key")}
                         >
                           Tiếp tục
                         </button>
@@ -170,7 +175,7 @@ export function App(): ReactElement {
                     </div>
                   )}
                 </>
-              ) : (
+              ) : onboardStep === "model" ? (
                 <>
                   <h1>Model</h1>
                   <p>Chọn model cho phiên chính.</p>
@@ -199,10 +204,16 @@ export function App(): ReactElement {
                     <button
                       type="button"
                       className="cc-chip"
-                      data-onboarding-finish="true"
-                      onClick={() => finish(pickedProvider, pickedModel ?? pickedModels[0]?.id)}
+                      data-onboarding-continue="true"
+                      onClick={() => {
+                        const model = pickedModel ?? pickedModels[0]?.id;
+                        if (pickedProvider !== undefined && model !== undefined) {
+                          window.localStorage.setItem("cc_model", `${pickedProvider}/${model}`);
+                        }
+                        setOnboardStep("key");
+                      }}
                     >
-                      Bắt đầu
+                      Tiếp tục
                     </button>
                   </div>
                   {/*
@@ -214,6 +225,60 @@ export function App(): ReactElement {
                     Node lấy model từ cấu hình của chính nó (CC_MODEL_PROVIDER / CC_MODEL_ID). Lựa chọn ở đây được ghi
                     nhớ cho trình duyệt này.
                   </p>
+                </>
+              ) : (
+                <>
+                  <h1>TypeSafe</h1>
+                  <p>
+                    Jev dùng TypeSafe khi nó phải quyết định cách xử lý một việc. Bỏ qua được: nhập sau trong Cài đặt
+                    cũng không sao.
+                  </p>
+                  <form
+                    className="cc-credential-form"
+                    data-onboarding-key="typesafe"
+                    onSubmit={(event) => {
+                      event.preventDefault();
+                      const value = keyDraft.trim();
+                      if (value === "") return;
+                      void client
+                        .putCredential({ fields: [{ name: "typesafe", value }] })
+                        .then((answer) => {
+                          // Cleared, and the confirmation names the credential rather than repeating what was typed: a
+                          // secret echoed into a status line is a secret written to a screenshot and a log.
+                          setKeyDraft("");
+                          setKeyStatus(`Đã lưu khoá: ${answer.names.join(", ")}`);
+                          finish();
+                        })
+                        .catch((cause: unknown) => {
+                          setKeyStatus(
+                            `Không lưu được: ${cause instanceof Error ? cause.message : String(cause)}`,
+                          );
+                        });
+                    }}
+                  >
+                    <input
+                      type="password"
+                      className="cc-select"
+                      autoComplete="off"
+                      placeholder="TypeSafe API key"
+                      data-onboarding-key-input="true"
+                      value={keyDraft}
+                      onChange={(event) => setKeyDraft(event.target.value)}
+                    />
+                    <div className="cc-chip-row">
+                      <button type="submit" className="cc-chip" data-onboarding-key-save="true">
+                        Lưu
+                      </button>
+                      <button type="button" className="cc-chip" data-onboarding-finish="true" onClick={() => finish()}>
+                        Bỏ qua
+                      </button>
+                    </div>
+                  </form>
+                  {keyStatus === undefined ? null : (
+                    <p className="cc-panel-note" data-onboarding-key-status="true">
+                      {keyStatus}
+                    </p>
+                  )}
                 </>
               )}
             </div>

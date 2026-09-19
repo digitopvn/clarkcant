@@ -92,8 +92,8 @@ test.describe("the first run", () => {
     await expect(page.locator("[data-onboarding='true'] h1")).toHaveText("ClarkCant");
     await expect(page.locator("[data-onboarding='true'] p")).toContainText("Clark Cant Can");
 
-    // Then the two choices, in order. Both are walked here rather than assumed: this node may report no provider at
-    // all, in which case the honest branch is the one that explains that and lets the person carry on.
+    // Then the choices, in order, and then the key. All of it is walked here rather than assumed: this node may report
+    // no provider at all, in which case the honest branch is the one that explains that and lets the person carry on.
     await page.locator("[data-onboarding-start='true']").click();
     await expect(page.locator("[data-onboarding-step='provider']")).toBeVisible();
 
@@ -109,18 +109,25 @@ test.describe("the first run", () => {
       // A select rather than chips, because a provider can offer dozens of models: the first provider in this
       // machine's catalogue offers more than a screenful, and chips that cannot be reached cannot be clicked.
       await page.locator("[data-onboarding-model-select]").selectOption({ index: 1 });
-      await page.locator("[data-onboarding-finish='true']").click();
+      await page.locator("[data-onboarding-continue='true']").click();
     } else {
       // No provider on this node, and it says so in words rather than showing an empty list.
       await expect(page.locator("[data-onboarding-none='true']")).toBeVisible();
       await page.locator("[data-onboarding-finish='true']").click();
     }
 
+    // The key, which is skippable and never echoed back.
+    await expect(page.locator("[data-onboarding-key='typesafe']")).toBeVisible();
+    const secret = "not-a-real-typesafe-key";
+    await page.locator("[data-onboarding-key-input='true']").fill(secret);
+    await page.locator("[data-onboarding-key-save='true']").click();
+
     await expect(page.locator("[data-onboarding='true']")).toHaveCount(0);
+    // The value must not appear anywhere on the page: a secret echoed into a surface is a secret in a screenshot.
+    await expect(page.locator(`text=${secret}`)).toHaveCount(0);
 
     // And it stays gone: a screen somebody has dismissed is dismissed, not shown again on the next load.
     await page.reload();
     await expect(page.locator("[data-onboarding='true']")).toHaveCount(0);
   });
 });
-
