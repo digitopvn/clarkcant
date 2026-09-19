@@ -854,8 +854,16 @@ export function Conversation({
    * The window commands are absent, and that is the honest state of a page: a host omits what it cannot do, and the
    * executor then answers that the command needs the desktop app rather than appearing to work.
    */
-  const intentHost = useMemo<AppIntentHost>(
-    () => ({
+  const intentHost = useMemo<AppIntentHost>(() => {
+    /*
+     * The window intents are offered only where there is a window.
+     *
+     * `runAppIntent` refuses a desktop intent when the host has no method for it, so a browser saying "thu nhỏ
+     * cửa sổ" is refused with a reason rather than reported as done. Defining these unconditionally would report
+     * success for a resize that never happened, because the bridge call itself fails quietly.
+     */
+    const desktop = hasDesktopChrome();
+    return {
       openSettings: (tab?: SettingsTab) => {
         setSettingsTab(tab);
         setUiCheckOpen(true);
@@ -863,9 +871,27 @@ export function Conversation({
       goHome: restartSession,
       openFilePicker: () => attachmentInput.current?.click(),
       endVoice: () => setVoiceOpen(false),
-    }),
-    [restartSession],
-  );
+      ...(desktop
+        ? {
+            expandWindow: () => {
+              void requestWindowMode({ type: "expand" });
+            },
+            minimiseWindow: () => {
+              void requestWindowMode({ type: "enter-compact" });
+            },
+            setMinimal: () => {
+              // This build has one compact size, so "thu nhỏ" and "thu nhỏ tối thiểu" reach the same bar. They
+              // diverge when the shell gains a way to minimise to the taskbar, which is named as a gap.
+              void requestWindowMode({ type: "enter-compact" });
+            },
+            quit: () => {
+              // The shell decides whether closing the window ends the work; the renderer only asks it to close.
+              window.close();
+            },
+          }
+        : {}),
+    };
+  }, [restartSession]);
 
   /**
    * Carry out a decision.
