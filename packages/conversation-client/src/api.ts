@@ -530,6 +530,24 @@ export class GatewayClient {
   }
 
   /**
+   * The providers and models this node can run, and the one it is configured for.
+   *
+   * Read from the node's own catalogue rather than from a list kept here, so upgrading pi on the node makes a new
+   * provider appear in the interface without the interface changing. `current` is reported beside the catalogue rather
+   * than inferred from it, because a node configured for a model its installation no longer offers is a state worth
+   * showing plainly.
+   */
+  model(): Promise<{
+    current: { provider: string; id: string } | null;
+    catalogue: {
+      id: string;
+      models: { provider: string; id: string; contextWindow?: number; current: boolean }[];
+    }[];
+  }> {
+    return this.#call("GET", "/model");
+  }
+
+  /**
    * The stored composition and the bundle captured with it.
    *
    * The snapshot's rows travel here rather than through the message, so the transcript keeps its

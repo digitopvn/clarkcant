@@ -174,3 +174,23 @@ test("the tools tab tells the node's tools from the agent's", async ({ page }) =
 
   await page.screenshot({ path: join(EVIDENCE, "tools-tab.png") });
 });
+
+test("the settings panel lists what this node can run, or says plainly that it can run nothing", async ({ page }) => {
+  await openApp(page);
+  await page.locator("[data-settings='true']").click();
+
+  const section = page.locator("[data-providers='true']");
+  await expect(section).toBeVisible();
+
+  // Either pi on this machine offers providers and they are listed, or the node reports none and says so in words.
+  // An empty section that explains nothing is the one dishonest outcome, so the two acceptable states are both
+  // named here rather than one of them being assumed.
+  await expect(section.locator("[data-provider], [data-providers='none']").first()).toBeVisible();
+
+  const providers = page.locator("[data-provider]");
+  if ((await providers.count()) > 0) {
+    // At most one model is the current one: marking two would make the mark say nothing.
+    expect(await page.locator("[data-model-id][data-current='true']").count()).toBeLessThanOrEqual(1);
+  }
+});
+

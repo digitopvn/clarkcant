@@ -181,6 +181,36 @@ export function SettingsPanel({
   onThemeChoice,
 }: SettingsPanelProps): ReactElement | null {
   const [facts, setFacts] = useState<NodeFacts | undefined>(undefined);
+
+  /**
+   * The providers and models this node can run, or undefined before the node has answered.
+   *
+   * Kept apart from `facts`, which is a snapshot of what the node is: this comes from pi's own catalogue, so a
+   * provider added by upgrading pi appears here without the node changing. Undefined means not read yet, which is a
+   * different thing from an empty list, and the two are shown differently.
+   */
+  const [catalogue, setCatalogue] = useState<
+    | { id: string; models: { provider: string; id: string; contextWindow?: number; current: boolean }[] }[]
+    | undefined
+  >(undefined);
+
+  useEffect(() => {
+    if (!open) return;
+    let cancelled = false;
+    void client
+      .model()
+      .then((answer) => {
+        if (!cancelled) setCatalogue(answer.catalogue);
+      })
+      .catch(() => {
+        // Reported as an empty list rather than as an error. The question this section answers is what can be chosen,
+        // and a failure to read the list is not something the person in front of the panel can act on.
+        if (!cancelled) setCatalogue([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [open, client]);
   const [tools, setTools] = useState<ToolFacts[] | undefined>(undefined);
   const [problem, setProblem] = useState<string | undefined>(undefined);
   /**
@@ -413,6 +443,39 @@ export function SettingsPanel({
                     </code>
                   </SettingsRow>
                 </>
+              )}
+            </section>
+
+            <section className="cc-panel-section" data-providers="true">
+              <h3>Provider và model có thể chạy</h3>
+              {catalogue === undefined ? (
+                <p className="cc-panel-note">Đang đọc…</p>
+              ) : catalogue.length === 0 ? (
+                <p className="cc-panel-note" data-providers="none">
+                  Node chưa báo provider nào. Danh sách này đọc từ pi trên máy, nên nó rỗng khi pi chưa
+                  thấy provider nào — hoặc khi node không dựng được model turn.
+                </p>
+              ) : (
+                // Grouped by provider with every model spelled out, because choosing means reading the model names, and
+                // the current one is marked here rather than inferred by comparing against the facts above.
+                catalogue.map((provider) => (
+                  <div key={provider.id} data-provider={provider.id}>
+                    <SettingsRow label={provider.id} description={`${provider.models.length} model`}>
+                      <span className="cc-provider-models">
+                        {provider.models.map((model) => (
+                          <code
+                            key={model.id}
+                            data-model-id={model.id}
+                            data-current={model.current ? "true" : "false"}
+                          >
+                            {model.id}
+                            {model.current ? " · đang dùng" : ""}
+                          </code>
+                        ))}
+                      </span>
+                    </SettingsRow>
+                  </div>
+                ))
               )}
             </section>
 
