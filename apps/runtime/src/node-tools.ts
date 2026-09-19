@@ -535,9 +535,28 @@ export function createAskUserTool(newId: (prefix: string) => string): ToolDefini
     parameters: {
       type: "object",
       additionalProperties: false,
-      required: ["question", "options"],
+      required: ["question"],
       properties: {
         question: { type: "string", description: "The question, in the user's own language, as one sentence." },
+        title: { type: "string", description: "For a form: what the form is for, as one sentence." },
+        fields: {
+          type: "array",
+          maxItems: 12,
+          description:
+            "For a form instead of a question: the values you need. Each needs a label; `kind` is text, textarea or select, and a select needs `options`.",
+          items: {
+            type: "object",
+            additionalProperties: false,
+            required: ["label"],
+            properties: {
+              label: { type: "string" },
+              kind: { type: "string", enum: ["text", "textarea", "select"] },
+              options: { type: "array", items: { type: "string" } },
+              required: { type: "boolean" },
+              placeholder: { type: "string" },
+            },
+          },
+        },
         options: {
           type: "array",
           minItems: 2,
@@ -574,9 +593,46 @@ export function createAskUserTool(newId: (prefix: string) => string): ToolDefini
         })
         .filter((entry): entry is { id: string; label: string; detail?: string } => entry !== undefined);
 
+      /*
+       * Fields make it a form; options make it a question. One tool rather than two, because the agent's
+       * decision is "I need something from the user" and which shape fits is a detail of that.
+       */
+      const rawFields = Array.isArray(params.fields) ? params.fields : [];
+      const fields = rawFields
+        .map((entry, index) => {
+          const record = (entry ?? {}) as Record<string, unknown>;
+          const label = typeof record.label === "string" ? record.label.trim() : "";
+          if (label === "") return undefined;
+          const kind = record.kind === "textarea" || record.kind === "select" ? record.kind : ("text" as const);
+          const choices = Array.isArray(record.options)
+            ? record.options.filter((option): option is string => typeof option === "string" && option.trim() !== "")
+            : [];
+          // A select with nothing to choose from is a control the user cannot use, so it becomes text.
+          const usable = kind === "select" && choices.length === 0 ? ("text" as const) : kind;
+          return {
+            id: `field-${index + 1}`,
+            label,
+            kind: usable,
+            ...(usable === "select" ? { options: choices } : {}),
+            ...(record.required === true ? { required: true } : {}),
+            ...(typeof record.placeholder === "string" && record.placeholder.trim() !== ""
+              ? { placeholder: record.placeholder.trim() }
+              : {}),
+          };
+        })
+        .filter((entry): entry is NonNullable<typeof entry> => entry !== undefined);
+
+      if (fields.length > 0) {
+        const title = typeof params.title === "string" && params.title.trim() !== "" ? params.title.trim() : question;
+        return {
+          text: `Đã gửi một biểu mẫu để hỏi người dùng: “${title}”. Câu trả lời sẽ đến ở lượt kế tiếp — kết thúc lượt này.`,
+          hostCard: { type: "form-card", owner: "host", formId: newId("form"), title, fields },
+        };
+      }
+
       if (question === "" || options.length < 2) {
         // Refused in the same turn, so the model corrects itself rather than the user seeing an empty card.
-        return { text: "Cần một câu hỏi và ít nhất hai lựa chọn để người dùng chọn." };
+        return { text: "Cần một câu hỏi kèm ít nhất hai lựa chọn, hoặc một biểu mẫu có ít nhất một trường." };
       }
 
       return {

@@ -48,6 +48,7 @@ export {
   HOST_OWNED_BLOCK_TYPES,
   ProjectPickerCardBlock,
   QuestionCardBlock,
+  FormCardBlock,
   ReconnectCardBlock,
   SystemCardBlock,
   TaskOverviewCardBlock,

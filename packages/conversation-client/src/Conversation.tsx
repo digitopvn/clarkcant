@@ -1124,21 +1124,31 @@ export function Conversation({
    * transcript rather than tracked as state, because the messages are history and are never rewritten: a card
    * that stayed answerable after a reply would invite a second answer the node would take as a second message.
    */
-  const openQuestionIds = useMemo(() => {
+  /**
+   * Cards that may still be answered: a question's or a form's id, while nothing has come after the message
+   * that asked. One computation for both kinds rather than two that could disagree — the rule is about the
+   * conversation, not about which shape the card has.
+   *
+   * Derived from the transcript rather than tracked as state, because the messages are history and are never
+   * rewritten: a card that stayed live would invite a second answer the node would take as a second message.
+   */
+  const openCardIds = useMemo(() => {
     const messages = timeline?.messages ?? [];
     let lastUserIndex = -1;
     messages.forEach((message, index) => {
       if (message.role === "user") lastUserIndex = index;
     });
-    const open: string[] = [];
+    const questions: string[] = [];
+    const forms: string[] = [];
     messages.forEach((message, index) => {
       if (index <= lastUserIndex) return;
       for (const block of message.blocks) {
         const record = block as Record<string, unknown>;
-        if (record.type === "question-card" && typeof record.questionId === "string") open.push(record.questionId);
+        if (record.type === "question-card" && typeof record.questionId === "string") questions.push(record.questionId);
+        if (record.type === "form-card" && typeof record.formId === "string") forms.push(record.formId);
       }
     });
-    return open;
+    return { questions, forms };
   }, [timeline]);
 
   const blockActions: BlockActions = useMemo(
@@ -1153,9 +1163,12 @@ export function Conversation({
        * typed reply are one act. Nothing here invents a second route into the agent for a click to take.
        */
       onQuestionAnswer: ({ answer }) => void send(answer),
-      openQuestionIds,
+      openQuestionIds: openCardIds.questions,
+      /* The same path as a question: the answers become the user's own next message. */
+      onFormSubmit: ({ summary }) => void send(summary),
+      openFormIds: openCardIds.forms,
     }),
-    [credentialStatus, decideApproval, decidedApprovals, decidingApprovalId, openQuestionIds, send, submitCredential],
+    [credentialStatus, decideApproval, decidedApprovals, decidingApprovalId, openCardIds, send, submitCredential],
   );
 
   const renderSurface = useCallback(

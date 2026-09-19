@@ -167,6 +167,23 @@ async function main(): Promise<void> {
      * becomes the user's next message, and a card nothing can produce would leave that wiring tested by
      * nothing at all.
      */
+    if (/biểu mẫu|thử form|fill a form/i.test(input.text)) {
+      const formId = `form_fixture_${fixtureQuestionCounter += 1}`;
+      return {
+        text: "Đây là biểu mẫu do fixture tạo, không phải model thật.",
+        block: {
+          type: "form-card",
+          owner: "host",
+          formId,
+          title: "Cho tôi biết vài thông tin",
+          fields: [
+            { id: "field-1", label: "Tên dự án", kind: "text", required: true, placeholder: "ví dụ: clarkcant" },
+            { id: "field-2", label: "Ghi chú", kind: "textarea" },
+          ],
+        },
+      };
+    }
+
     if (/hỏi tôi|thử hỏi|ask me/i.test(input.text)) {
       const questionId = `q_fixture_${fixtureQuestionCounter += 1}`;
       return {
