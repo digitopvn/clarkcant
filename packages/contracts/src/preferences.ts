@@ -199,10 +199,16 @@ export const modelFavoritesPreferenceSchema = z.array(z.string().trim().min(1).m
  * The bound is the whole safety story of the text field: it is a section inside the system prompt,
  * never a replacement for it, so it cannot be used to delete the tool or security instructions
  * that precede it.
+ *
+ * The number is exported rather than written twice, because the settings field shows the count against
+ * it: a control that reported a different limit from the one the node enforces would refuse a value the
+ * user had been told was acceptable.
  */
+export const PERSONAL_INSTRUCTIONS_MAX_CHARS = 2_000;
+
 export const personalInstructionsPreferenceSchema = z.strictObject({
   enabled: z.boolean(),
-  text: z.string().max(2000),
+  text: z.string().max(PERSONAL_INSTRUCTIONS_MAX_CHARS),
 });
 export type PersonalInstructionsPreference = z.infer<typeof personalInstructionsPreferenceSchema>;
 

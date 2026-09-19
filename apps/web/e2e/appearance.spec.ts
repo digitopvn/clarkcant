@@ -341,3 +341,94 @@ test("pi's own configuration is in the developer tab, behind a disclosure, as li
   });
 });
 
+
+test("personal instructions can be written, survive a reload, and are never sent as the user's message", async ({
+  page,
+}) => {
+  /*
+   * The control that phase 5 added, checked where it matters.
+   *
+   * Three claims, and the third is the one a unit test cannot make: the text reaches the system prompt
+   * rather than being prefixed onto the user's message. Prefixing is the tempting shortcut, and it would
+   * look identical from the settings screen while making the user's own words part of their request.
+   *
+   * Reset first rather than assuming a fresh node: the suite shares one database across runs, so a run that
+   * left this enabled would make the next run's first assertion wrong — which is exactly what happened the
+   * first time this test was written.
+   */
+  await fetch(`${GATEWAY}/preferences/ai.personalInstructions/undo`, {
+    method: "POST",
+    headers: { authorization: `Bearer ${token()}` },
+  }).catch(() => undefined);
+
+  await openApp(page);
+  await page.locator("[data-settings='true']").click();
+  await page.getByRole("tab", { name: "AI & Routing" }).click();
+
+  const section = page.locator("[data-personal-instructions='true']");
+  await expect(section).toBeVisible();
+
+  const field = page.locator("[data-personal-instructions-input='true']");
+  // Disabled while the toggle is off, and still visible: turning it off must not look like it discarded
+  // what was typed.
+  await expect(field).toBeDisabled();
+
+  /*
+   * Clicked through the label rather than the input.
+   *
+   * The checkbox itself is visually hidden on purpose — `position: absolute` at one pixel with zero opacity, so
+   * it stays in the tab order and readable by a screen reader while the switch is drawn by its sibling. A real
+   * user clicks the switch, so this does too; driving the hidden input instead would be testing a control nobody
+   * can reach with a mouse.
+   */
+  await page.locator("[data-toggle='personal-instructions']").click();
+  await expect(page.locator("[data-toggle='personal-instructions'] input")).toBeChecked();
+  await expect(field).toBeEnabled();
+
+  const text = "Trả lời ngắn gọn, và dùng TypeScript cho ví dụ code.";
+  await field.fill(text);
+  // Committed on blur rather than per keystroke, so the write happens when the field is left.
+  await field.blur();
+
+  // The node stored it, which is what makes the next turn read it.
+  await expect
+    .poll(
+      async () => {
+        const response = await fetch(`${GATEWAY}/preferences`, {
+          headers: { authorization: `Bearer ${token()}` },
+        });
+        const body = (await response.json()) as {
+          preferences: { key: string; value: unknown }[];
+        };
+        const stored = body.preferences.find((entry) => entry.key === "ai.personalInstructions")?.value;
+        return JSON.stringify(stored);
+      },
+      { timeout: 10_000 },
+    )
+    .toContain("TypeScript");
+
+  // And it comes back after a reload, rather than being a value only this tab knew about.
+  await page.reload();
+  await expect(page.locator("text=Ready")).toBeVisible({ timeout: 15_000 });
+  await page.locator("[data-settings='true']").click();
+  await page.getByRole("tab", { name: "AI & Routing" }).click();
+  await expect(page.locator("[data-personal-instructions-input='true']")).toHaveValue(text);
+
+  // Reset returns it to the state before any of this, which for a key written once means the default.
+  await page.locator("[data-personal-instructions-reset='true']").click();
+  await expect
+    .poll(
+      async () => {
+        const response = await fetch(`${GATEWAY}/preferences`, {
+          headers: { authorization: `Bearer ${token()}` },
+        });
+        const body = (await response.json()) as {
+          preferences: { key: string; value: unknown; isDefault: boolean }[];
+        };
+        const entry = body.preferences.find((candidate) => candidate.key === "ai.personalInstructions");
+        return entry?.isDefault === true;
+      },
+      { timeout: 10_000 },
+    )
+    .toBe(true);
+});
