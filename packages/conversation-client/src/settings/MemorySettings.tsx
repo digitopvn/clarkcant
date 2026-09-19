@@ -2,8 +2,8 @@ import { type ReactElement, useCallback, useEffect, useState } from "react";
 
 import type { MemoryRecord } from "@clarkcant/contracts";
 
-import type { GatewayClient } from "./api.ts";
-import { memoryView, type MemoryGroupView } from "./memory-groups.ts";
+import type { GatewayClient } from "../api.ts";
+import { memoryView, type MemoryGroupView } from "../memory-groups.ts";
 
 /**
  * What this node remembers, and the way to remove it.
@@ -25,11 +25,11 @@ type PanelState =
   | { state: "ready"; records: MemoryRecord[] }
   | { state: "failed"; reason: string };
 
-export interface MemoryPanelProps {
+export interface MemorySettingsProps {
   client: GatewayClient;
 }
 
-export function MemoryPanel({ client }: MemoryPanelProps): ReactElement {
+export function MemorySettings({ client }: MemorySettingsProps): ReactElement {
   const [panel, setPanel] = useState<PanelState>({ state: "loading" });
   const [deletingId, setDeletingId] = useState<string | undefined>(undefined);
 

@@ -179,10 +179,15 @@ const PHRASES: readonly { phrase: string; kind: AppIntentKind }[] = [
 
 /** Words that name a Settings tab, longest first so "cong cu" is not read as "cong". */
 const TAB_WORDS: readonly { words: readonly string[]; tab: SettingsTab }[] = [
-  { words: ["general", "chung", "co ban"], tab: "general" },
-  { words: ["models", "model"], tab: "models" },
-  { words: ["tools", "tool", "cong cu"], tab: "tools" },
+  { words: ["experience", "trai nghiem"], tab: "experience" },
+  { words: ["ai", "model", "models", "dinh tuyen"], tab: "ai" },
+  { words: ["control", "kiem soat"], tab: "control" },
+  // "cong cu" moved here with the tab: Extensions & Widgets is where the capability list now lives, and a word
+  // that still pointed at a tab named Tools would send somebody to a screen that no longer exists.
+  { words: ["extensions", "extension", "tien ich", "cong cu"], tab: "extensions" },
   { words: ["devices", "device", "thiet bi"], tab: "devices" },
+  { words: ["memory", "ghi nho"], tab: "memory" },
+  { words: ["developer", "nha phat trien"], tab: "developer" },
 ];
 
 /** Text that asks to change tabs. Present without a tab name, the request is refused rather than guessed. */

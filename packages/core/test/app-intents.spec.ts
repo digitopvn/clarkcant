@@ -140,7 +140,7 @@ describe("a command the registry does not know", () => {
     const match = matchAppIntent("đổi sang tab");
     expect(match?.kind).toBe("refused");
     if (match?.kind !== "refused") throw new Error("unreachable");
-    expect(match.say).toContain("tools");
+    expect(match.say).toContain("extensions");
     // And it names only tabs that exist. This used to read "not memory", which was true while the Memory tab did
     // not exist; now that it does, the durable property is that the sentence comes from the list rather than that
     // one particular tab is missing from it.
@@ -216,10 +216,10 @@ describe("quitting always asks first", () => {
 
   it("carries the tab on a settings intent and nothing extra on the others", () => {
     const resolution = resolveAppIntent({
-      intent: { kind: "settings.tab", tab: "tools" },
+      intent: { kind: "settings.tab", tab: "extensions" },
       mintConfirmationToken: mint,
     });
-    expect(resolution.kind === "intent" && resolution.intent).toEqual({ kind: "settings.tab", tab: "tools" });
+    expect(resolution.kind === "intent" && resolution.intent).toEqual({ kind: "settings.tab", tab: "extensions" });
   });
 });
 
@@ -247,7 +247,7 @@ describe("the audit record", () => {
   });
 
   it("records what was done, from where, and never the words that were said", () => {
-    recordAppIntentEvent(deps, { intent: { kind: "settings.tab", tab: "tools" }, source: "voice", confirmed: false });
+    recordAppIntentEvent(deps, { intent: { kind: "settings.tab", tab: "extensions" }, source: "voice", confirmed: false });
 
     const row = deps.db
       .prepare("SELECT kind, document, conversation_id FROM events WHERE kind = ?")
@@ -255,7 +255,7 @@ describe("the audit record", () => {
 
     expect(JSON.parse(row.document)).toEqual({
       kind: "settings.tab",
-      tab: "tools",
+      tab: "extensions",
       source: "voice",
       confirmed: false,
     });

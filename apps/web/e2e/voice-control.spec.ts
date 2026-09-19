@@ -91,7 +91,7 @@ test("a spoken command and the same click open Settings in the same state", asyn
   await page.locator('[data-settings="true"]').click();
   await expect(page.locator('[role="tab"][data-selected="true"]')).toBeVisible({ timeout: 10_000 });
   const afterClick = await selectedTab(page);
-  expect(afterClick).toBe("cc-tab-general");
+  expect(afterClick).toBe("cc-tab-experience");
   await page.keyboard.press("Escape");
   await expect(page.locator('[role="tab"][data-selected="true"]')).toHaveCount(0);
 
@@ -110,15 +110,15 @@ test("a spoken tab change lands on the tab that was named", async ({ page, reque
 
   // What clicking that tab produces, for comparison.
   await page.locator('[data-settings="true"]').click();
-  await page.locator("#cc-tab-tools").click();
+  await page.locator("#cc-tab-extensions").click();
   const afterClick = await selectedTab(page);
-  expect(afterClick).toBe("cc-tab-tools");
+  expect(afterClick).toBe("cc-tab-extensions");
   await page.keyboard.press("Escape");
 
   await scriptVoice(request, "đổi sang tab công cụ");
   await openVoice(page);
 
-  await expect(page.locator("#cc-tab-tools[data-selected='true']")).toBeVisible({ timeout: 20_000 });
+  await expect(page.locator("#cc-tab-extensions[data-selected='true']")).toBeVisible({ timeout: 20_000 });
   expect(await selectedTab(page)).toBe(afterClick);
 });
 

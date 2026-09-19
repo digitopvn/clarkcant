@@ -90,12 +90,12 @@ describe("carrying out an intent", () => {
 
     runAppIntent(executable({ kind: "intent", intent: { kind: "settings.open" }, readBack: "mở" }), host);
     runAppIntent(
-      executable({ kind: "intent", intent: { kind: "settings.tab", tab: "tools" }, readBack: "tab" }),
+      executable({ kind: "intent", intent: { kind: "settings.tab", tab: "extensions" }, readBack: "tab" }),
       host,
     );
 
     // The same method twice: there is no second path for a tab change to drift down.
-    expect(calls.settings).toEqual([undefined, "tools"]);
+    expect(calls.settings).toEqual([undefined, "extensions"]);
   });
 
   it("runs the window commands when the host has them", () => {

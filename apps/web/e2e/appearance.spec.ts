@@ -91,16 +91,25 @@ test("settings is a modal whose tabs each show their own content, and Escape ret
   await expect(page.locator('[role="tab"]')).toHaveCount(SETTINGS_TABS.length);
 
   // Each tab shows its own content. Asserted by comparing what is rendered rather than by checking
-  // that a heading exists, since three labels over one shared panel would pass the weaker check.
-  const general = await page.locator("#cc-tabpanel-general").innerText();
-  await page.screenshot({ path: join(EVIDENCE, "settings-01-general.png"), fullPage: true });
+  // that a heading exists, since six labels over one shared panel would pass the weaker check.
+  const experience = await page.locator("#cc-tabpanel-experience").innerText();
+  await page.screenshot({ path: join(EVIDENCE, "settings-01-experience.png"), fullPage: true });
 
-  await page.locator("#cc-tab-tools").click();
-  await expect(page.locator("#cc-tabpanel-tools")).toBeVisible();
-  const tools = await page.locator("#cc-tabpanel-tools").innerText();
-  expect(tools).not.toBe(general);
-  expect(tools.length).toBeGreaterThan(0);
-  await page.screenshot({ path: join(EVIDENCE, "settings-02-tools.png"), fullPage: true });
+  await page.locator("#cc-tab-extensions").click();
+  await expect(page.locator("#cc-tabpanel-extensions")).toBeVisible();
+  const extensions = await page.locator("#cc-tabpanel-extensions").innerText();
+  expect(extensions).not.toBe(experience);
+  expect(extensions.length).toBeGreaterThan(0);
+  await page.screenshot({ path: join(EVIDENCE, "settings-02-extensions.png"), fullPage: true });
+
+  // Every tab has content of its own, which is the claim the old comment made and this now checks for all six.
+  // A tab that exists but is empty teaches the user that the tabs are decoration.
+  for (const tab of ["ai", "control", "devices", "developer"] as const) {
+    await page.locator(`#cc-tab-${tab}`).click();
+    const panel = page.locator(`#cc-tabpanel-${tab}`);
+    await expect(panel).toBeVisible();
+    expect((await panel.innerText()).length, `${tab} is empty`).toBeGreaterThan(0);
+  }
 
   // Escape closes, and focus goes back to what opened it rather than to the top of the page.
   await page.keyboard.press("Escape");
@@ -108,6 +117,43 @@ test("settings is a modal whose tabs each show their own content, and Escape ret
   await expect
     .poll(() => page.evaluate(() => document.activeElement?.getAttribute("data-settings") ?? null))
     .toBe("true");
+});
+
+test("the settings tabs are operable from the keyboard alone", async ({ page }) => {
+  await openApp(page);
+  await page.locator("[data-settings='true']").click();
+
+  // Focus the selected tab, which is where a keyboard user arrives from the modal's own focus handling.
+  await page.locator("#cc-tab-experience").focus();
+  await expect(page.locator("#cc-tab-experience")).toBeFocused();
+
+  // Arrows move between tabs, which is what the ARIA tabs pattern requires. Without this, a keyboard user has to
+  // press Tab through every tab to get past the strip — and with six tabs that is now six presses, not four.
+  await page.keyboard.press("ArrowRight");
+  await expect(page.locator("#cc-tab-ai")).toBeFocused();
+  await expect(page.locator("#cc-tabpanel-ai")).toBeVisible();
+
+  await page.keyboard.press("ArrowRight");
+  await expect(page.locator("#cc-tab-control")).toBeFocused();
+  await page.keyboard.press("ArrowLeft");
+  await expect(page.locator("#cc-tab-ai")).toBeFocused();
+
+  // End and Home are part of the pattern, and they are what makes a six-tab strip navigable.
+  await page.keyboard.press("End");
+  await expect(page.locator("#cc-tab-developer")).toBeFocused();
+  await page.keyboard.press("Home");
+  await expect(page.locator("#cc-tab-experience")).toBeFocused();
+
+  /*
+   * Roving tabindex: the whole strip is one stop in the tab order.
+   *
+   * Asserted because a tablist where every tab is separately tabbable passes the arrow-key check above and is still
+   * wrong: the user has to press Tab six times to get from the strip into the panel.
+   */
+  const tabbable = await page.evaluate(() =>
+    [...document.querySelectorAll('[role="tab"]')].filter((tab) => tab.getAttribute("tabindex") === "0").length,
+  );
+  expect(tabbable).toBe(1);
 });
 
 test("the orb is centred on the screen it is drawn over", async ({ page }) => {
@@ -156,13 +202,13 @@ test("the header is a gradient rather than a bar above the page", async ({ page 
   expect(header?.background).toContain("linear-gradient");
 });
 
-test("the tools tab tells the node's tools from the agent's", async ({ page }) => {
+test("the extensions tab tells the node's tools from the agent's", async ({ page }) => {
   // The list is the node's own, published by the same call that hands the tools to the model. An empty node list
   // here would mean the publishing is missing rather than that this node can do nothing, which is why both lists are
   // asserted rather than one.
   await openApp(page);
   await page.locator("[data-settings='true']").click();
-  await page.getByRole("tab", { name: "Tools" }).click();
+  await page.getByRole("tab", { name: "Extensions" }).click();
 
   // The agent's built-ins are a fixed list, so this half is exact.
   await expect(page.locator("[data-tool-list='Công cụ của agent (pi)'] code").first()).toHaveText("read");
@@ -181,8 +227,8 @@ test("the settings panel lists what this node can run, or says plainly that it c
   await openApp(page);
   await page.locator("[data-settings='true']").click();
 
-  // Provider and model have a tab of their own now, because choosing one means choosing the other.
-  await page.getByRole("tab", { name: "Models" }).click();
+  // Provider and model live together under AI & Routing now, because choosing one means choosing the other.
+  await page.getByRole("tab", { name: "AI & Routing" }).click();
   const section = page.locator("[data-providers='true']");
   await expect(section).toBeVisible();
 
@@ -215,7 +261,7 @@ test("the settings panel lists what this node can run, or says plainly that it c
 test("every key in settings can be taken back again, which is how a provider is logged out of", async ({ page }) => {
   await openApp(page);
   await page.locator("[data-settings='true']").click();
-  await page.getByRole("tab", { name: "Devices" }).click();
+  await page.getByRole("tab", { name: "Devices & Voice" }).click();
 
   // Both keys, because a logout for one and not the other is the kind of half-wired surface that looks finished.
   // Gemini is the voice provider's key, so it stays beside the microphone. TypeSafe is asked for where a model is
@@ -223,7 +269,7 @@ test("every key in settings can be taken back again, which is how a provider is 
   await expect(page.locator("[data-settings-key-form='gemini']")).toBeVisible();
   await expect(page.locator("[data-settings-key-remove='gemini']")).toBeVisible();
 
-  await page.getByRole("tab", { name: "Models" }).click();
+  await page.getByRole("tab", { name: "AI & Routing" }).click();
   await expect(page.locator("[data-settings-key-form='typesafe']")).toBeVisible();
   await expect(page.locator("[data-settings-key-remove='typesafe']")).toBeVisible();
 });
@@ -231,7 +277,7 @@ test("every key in settings can be taken back again, which is how a provider is 
 test("the model in use is what the fields show before anybody types", async ({ page }) => {
   await openApp(page);
   await page.locator("[data-settings='true']").click();
-  await page.getByRole("tab", { name: "Models" }).click();
+  await page.getByRole("tab", { name: "AI & Routing" }).click();
 
   const model = page.locator("[data-search-input='model']");
   await expect(model).toBeVisible({ timeout: 20_000 });
@@ -250,10 +296,10 @@ test("the model in use is what the fields show before anybody types", async ({ p
   expect(await model.inputValue()).toBe(picked);
 });
 
-test("the tools tab also says which extensions pi loads on this machine", async ({ page }) => {
+test("the extensions tab says which extensions pi loads on this machine", async ({ page }) => {
   await openApp(page);
   await page.locator("[data-settings='true']").click();
-  await page.getByRole("tab", { name: "Tools" }).click();
+  await page.getByRole("tab", { name: "Extensions" }).click();
 
   const section = page.locator("[data-pi-extensions='true']");
   await expect(section).toBeVisible();
@@ -265,13 +311,23 @@ test("the tools tab also says which extensions pi loads on this machine", async 
   });
 });
 
-test("the tools tab also shows pi's own configuration, as lines rather than as a file", async ({ page }) => {
+test("pi's own configuration is in the developer tab, behind a disclosure, as lines rather than as a file", async ({
+  page,
+}) => {
   await openApp(page);
   await page.locator("[data-settings='true']").click();
-  await page.getByRole("tab", { name: "Tools" }).click();
+  /*
+   * Developer, not the tab a normal user reads. Raw pi configuration is progressive disclosure: genuinely useful when
+   * something is wrong, and noise the rest of the time.
+   */
+  await page.getByRole("tab", { name: "Developer" }).click();
 
   const section = page.locator("[data-pi-settings='true']");
   await expect(section).toBeVisible();
+
+  // Read on request rather than on open: a tab that reads a configuration file every time somebody glances at it is
+  // doing work nobody asked for.
+  await page.locator("[data-pi-settings-toggle='true']").click();
 
   // Either the node read a configuration and it is shown as key and value lines, or it read none and says so. What must
   // never appear is a credential: the node redacts by name before this ever leaves it, and the adapter test covers that

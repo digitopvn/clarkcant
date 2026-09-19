@@ -1370,6 +1370,78 @@ button:focus-visible, textarea:focus-visible, input:focus-visible, [tabindex]:fo
 .cc-live-surface[data-ownership="elsewhere"] { opacity: 0.9; }
 .cc-live-surface[data-ownership="owner"] .cc-surface-region { border-left: 2px solid transparent; }
 
+/*
+ * The settings controls, one shape per kind of decision.
+ *
+ * Each wraps its own note rather than putting it in a tooltip: a control whose meaning is only visible on
+ * hover is a control most people never understand. The pending state is a dimming rather than a spinner,
+ * because the write is fast and a spinner appearing for a keystroke is noise.
+ */
+.cc-segmented-wrap { display: flex; flex-direction: column; gap: var(--cc-space-xxs); align-items: flex-end; }
+.cc-segmented { display: flex; flex-wrap: wrap; gap: var(--cc-space-xs); justify-content: flex-end; }
+.cc-segmented[data-pending="true"] { opacity: 0.6; }
+/* The note belongs to the whole group, so it is aligned with the controls rather than with the label. */
+.cc-segmented-wrap > .cc-panel-note { margin: 0; text-align: right; max-width: 34ch; }
+
+.cc-toggle-wrap { display: flex; flex-direction: column; gap: var(--cc-space-xxs); align-items: flex-end; }
+.cc-toggle { display: flex; align-items: center; gap: var(--cc-space-sm); cursor: pointer; }
+.cc-toggle input {
+  /* The real checkbox stays in the layout for keyboard and screen-reader behaviour, and is hidden visually
+     rather than with display:none, which would take it out of the tab order. */
+  position: absolute; width: 1px; height: 1px; opacity: 0; margin: 0;
+}
+.cc-toggle-track {
+  width: 38px; height: 22px; border-radius: var(--cc-radius-pill);
+  background: var(--cc-card); border: 1px solid var(--cc-border); position: relative;
+  transition: background var(--cc-motion-micro) var(--cc-motion-easing), border-color var(--cc-motion-micro) var(--cc-motion-easing);
+}
+.cc-toggle-track::after {
+  content: ""; position: absolute; top: 2px; left: 2px; width: 16px; height: 16px;
+  border-radius: var(--cc-radius-pill); background: var(--cc-text-muted);
+  transition: transform var(--cc-motion-micro) var(--cc-motion-bounce), background var(--cc-motion-micro) var(--cc-motion-easing);
+}
+.cc-toggle input:checked + .cc-toggle-track { background: color-mix(in oklab, var(--cc-accent) 30%, transparent); border-color: var(--cc-accent); }
+.cc-toggle input:checked + .cc-toggle-track::after { transform: translateX(16px); background: var(--cc-accent); }
+.cc-toggle input:disabled + .cc-toggle-track { opacity: 0.45; }
+.cc-toggle input:focus-visible + .cc-toggle-track { outline: 2px solid var(--cc-focus); outline-offset: 2px; }
+/* A word beside the switch, so the state does not depend on the knob's position or on a colour. */
+.cc-toggle-state { font-size: var(--cc-text-label); color: var(--cc-text-muted); min-width: 2.4ch; }
+.cc-toggle-wrap > .cc-panel-note { margin: 0; text-align: right; max-width: 34ch; }
+
+.cc-inline-status[data-tone="error"] { color: var(--cc-danger); }
+.cc-inline-status[data-tone="ok"] { color: var(--cc-success); }
+
+.cc-range { display: flex; flex-direction: column; gap: var(--cc-space-xxs); align-items: flex-end; min-width: 200px; }
+.cc-range-row { display: flex; align-items: center; gap: var(--cc-space-sm); width: 100%; }
+.cc-range input[type="range"] { flex: 1; accent-color: var(--cc-accent); min-width: 110px; }
+/* Narrow, because the number is a value to confirm rather than a field to type a sentence into. */
+.cc-range input[type="number"] {
+  width: 72px; padding: var(--cc-space-xxs) var(--cc-space-xs);
+  background: var(--cc-card); color: var(--cc-text); border: 1px solid var(--cc-border);
+  border-radius: var(--cc-radius-badge); font: inherit; font-variant-numeric: tabular-nums;
+}
+.cc-range input[type="number"]:focus-visible { outline: 2px solid var(--cc-focus); outline-offset: 1px; }
+.cc-range > .cc-setting-desc { align-self: flex-end; }
+
+/*
+ * The orb preview: one live renderer, not a grid of them.
+ *
+ * A WebGL context per preset would be a GPU program each for a difference the label already states. The
+ * selected preset feeds this one canvas, and the stage behind it carries the palette so a machine without
+ * WebGL still shows the colours that were chosen.
+ */
+.cc-orb-preview { display: flex; align-items: center; gap: var(--cc-space-md); padding: var(--cc-space-sm) 0; }
+.cc-orb-preview-stage {
+  width: 96px; height: 96px; flex: none; border-radius: var(--cc-radius-pill);
+  display: flex; align-items: center; justify-content: center;
+  background: var(--cc-card); border: 1px solid var(--cc-border);
+}
+.cc-orb-preview-canvas { display: block; }
+
+.cc-effect-list { list-style: none; margin: var(--cc-space-sm) 0 0; padding: 0; display: flex; flex-direction: column; gap: var(--cc-space-xs); }
+.cc-effect-list li { font-size: var(--cc-text-label); color: var(--cc-text-muted); overflow-wrap: anywhere; }
+.cc-effect-list code { color: var(--cc-text); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: var(--cc-text-mono-sm); }
+
 @media (prefers-reduced-motion: reduce) {
   .cc-scroll { scroll-behavior: auto; }
   * { transition-duration: var(--cc-motion-micro) !important; animation-duration: var(--cc-motion-micro) !important; }

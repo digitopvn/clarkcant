@@ -55,7 +55,7 @@ export type AppIntentKind = z.infer<typeof appIntentKindSchema>;
  * - which is worse than being told the command cannot be done. Stage C adds the tab and this list together, so the
  * two cannot disagree.
  */
-export const SETTINGS_TABS = ["general", "models", "tools", "memory", "devices"] as const;
+export const SETTINGS_TABS = ["experience", "ai", "control", "extensions", "devices", "memory", "developer"] as const;
 export const settingsTabSchema = z.enum(SETTINGS_TABS);
 export type SettingsTab = z.infer<typeof settingsTabSchema>;
 
@@ -98,12 +98,20 @@ export type ConfirmationDecision = z.infer<typeof confirmationDecisionSchema>;
 export const APP_INTENT_NOT_UNDERSTOOD =
   "Tôi chưa hiểu câu lệnh đó, nên tôi chưa làm gì cả. Bạn nói lại rõ hơn giúp tôi nhé.";
 
+/**
+ * What each tab is called, matching the panel rather than translating it.
+ *
+ * A spoken command names a tab the person is looking at, so the words here are the words on screen. Reading back
+ * a Vietnamese name for a tab labelled in English would make the read-back a second vocabulary to learn.
+ */
 const TAB_LABELS: Record<SettingsTab, string> = {
-  general: "Chung",
-  models: "Model",
-  tools: "Công cụ",
+  experience: "Experience",
+  ai: "AI & Routing",
+  control: "Control",
+  extensions: "Extensions",
+  devices: "Devices & Voice",
   memory: "Memory",
-  devices: "Thiết bị",
+  developer: "Developer",
 };
 
 /**
@@ -126,7 +134,7 @@ export function describeAppIntent(intent: AppIntent): string {
     case "settings.open":
       return "Tôi mở Settings nhé.";
     case "settings.tab":
-      return `Tôi mở Settings ở tab ${TAB_LABELS[intent.tab ?? "general"]} nhé.`;
+      return `Tôi mở Settings ở tab ${TAB_LABELS[intent.tab ?? "experience"]} nhé.`;
     case "nav.home":
       return "Tôi về màn hình bắt đầu nhé.";
     case "composer.attach":

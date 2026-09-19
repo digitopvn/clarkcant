@@ -64,7 +64,14 @@ export type {
   WindowModeAction,
   WindowModeAnswer,
 } from "./desktop-compact.ts";
-export { SettingsPanel, SettingsRow, ToolRow, type SettingsPanelProps, type SettingsRowProps, type ToolRowProps } from "./SettingsPanel.tsx";
+export {
+  SettingsPanel,
+  type SettingsPanelProps,
+  SettingsRow,
+  type SettingsRowProps,
+  ToolRow,
+  type ToolRowProps,
+} from "./settings/SettingsPanel.tsx";
 export { TokenSpecimens, readVar } from "./TokenSpecimens.tsx";
 export { Modal, type ModalProps } from "./Modal.tsx";
 export { VoiceUnavailable } from "./voice-unavailable.tsx";
@@ -109,6 +116,19 @@ export {
   type InputSignal,
 } from "./input-modality.ts";
 export { prefersReducedMotion } from "./typewriter.ts";
+export { useOrbProfile, type OrbProfileHandle } from "./use-orb-profile.ts";
+export { usePreferences, type PreferencesHandle, type PreferenceStatus } from "./settings/controls/use-preferences.ts";
+export {
+  InlineStatus,
+  RangeField,
+  SegmentedControl,
+  ToggleSwitch,
+  type InlineStatusProps,
+  type RangeFieldProps,
+  type SegmentedControlProps,
+  type SegmentedOption,
+  type ToggleSwitchProps,
+} from "./settings/controls/primitives.tsx";
 // Re-exported so a host can type the preference it reads without depending on the contracts package for one
 // shape it only passes through.
 export type { RegisteredPreference } from "@clarkcant/contracts";

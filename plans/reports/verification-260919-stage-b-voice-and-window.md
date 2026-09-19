@@ -65,3 +65,23 @@ tính năng này đã thay đổi có chủ đích:
 Sau khi sửa, hai spec đó xanh (`13 passed`), và **bốn** lỗi còn lại của bộ đầy đủ đúng bằng bốn lỗi đã đo được ở
 commit gốc `7f3127f` trong Stage A: `appearance.spec.ts` (journey model đang dùng), `j1.spec.ts` (journey gửi đoạn
 chọn vào background session), và hai journey first-run trong `onboarding.spec.ts`. Không có lỗi nào khác.
+
+
+## Regression found on the merged `main` (PR #25 renamed the settings tabs)
+
+Merging `main` a second time — after PR #25 rebuilt settings as one file per section with six renamed tabs
+(`experience`, `ai`, `control`, `extensions`, `devices`, `developer`) — broke one of T73's two journeys, and it is
+recorded as broken rather than fixed:
+
+- `voice-control.spec.ts` "a spoken tab change lands on the tab that was named" fails. Clicking the tab works; the
+  spoken path does not. Measured: the node resolves "cổi sang tab công cụ" to `settings.tab` with
+  `tab: "extensions"` and the read-back appears on the page, so the sentence is understood and the decision is
+  executable; the panel nevertheless stays on its default tab.
+- `openAt` was added to main's rebuilt `SettingsPanel`, which previously seeded its tab as `useState("experience")`
+  and ignored the prop — my conversation passes it through a spread, so the typechecker had not seen the mismatch.
+  That did not settle it, and the remaining cause is not yet known.
+
+What was **not** broken by the merge: the parity journey for opening Settings by voice, the three memory journeys,
+the appearance journeys, and the rest of voice-control (quit asking first, an unknown command refused, the fixture
+route). The settings vocabulary was realigned to main's tab names, including `công cụ` moving to `extensions`, since
+the capability list lives there now.
