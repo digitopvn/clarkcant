@@ -41,6 +41,8 @@ const rendererUrl =
     : `file://${join(here, "shell.html")}`;
 const dataDirFlag = argv.indexOf("--data-dir");
 const dataDir = dataDirFlag >= 0 ? argv[dataDirFlag + 1] : undefined;
+const nodeUrlFlag = argv.indexOf("--node-url");
+const nodeUrl = nodeUrlFlag >= 0 ? argv[nodeUrlFlag + 1] : undefined;
 
 /** Closing the window stops the window, not the work. Default is to keep running. */
 let keepRunningOnWindowClose = true;
@@ -180,7 +182,9 @@ function applyContentSecurityPolicy() {
     callback({
       responseHeaders: {
         ...details.responseHeaders,
-        "Content-Security-Policy": [contentSecurityPolicy()],
+        "Content-Security-Policy": [
+          contentSecurityPolicy({ appOrigin: rendererUrl, nodeOrigin: nodeUrl }),
+        ],
       },
     });
   });
