@@ -11,6 +11,7 @@ trên cây đã merge `main`**, không phải số của lần chạy cũ.
 | Invariant | `pnpm run invariants` | 7/7 PASS |
 | Typecheck + lint + unit test | `pnpm verify` | **1410 passed, 7 skipped (1417)** |
 | Browser suite | `pnpm test:e2e` | **82 passed, 0 failed** |
+| Smoke desktop | `pnpm --filter @clarkcant/app-desktop run smoke` | **exit 0**, mọi check `true`, `"failed": []` (Electron 44.3.0, Chrome 152) |
 | Đồng bộ với `main` | `git rev-list HEAD..origin/main` | 0 (merge `7d9caea`, PR #38 squash thành `9e90535`; sau đó `main` nhận PR #39 và bản sửa tài liệu này) |
 
 ## Hai journey từng bị chặn, và đã sửa tại gốc
@@ -51,10 +52,11 @@ node 24, `secret scan` xanh. `GitGuardian` đỏ vì một fixture hình-dạng-
 
 ## Cổng còn mở
 
-- Smoke desktop: cần display, tức một job `xvfb-run` hoặc một lần người vận hành chạy. Các check đã viết đọc
-  `getBounds()`, `getMinimumSize()`, `isAlwaysOnTop()` từ cửa sổ thật, nhưng chưa từng chạy trong phiên này.
-- Kích thước `MINIMAL_BAR` chưa được nghiệm thu trên display thật.
-- Kiểm tra với provider thật (`[calibration]`, `[jev-live]`) vẫn BLOCKED nếu thiếu `CLARKCANT_JEV_LIVE=1` và key;
+Smoke desktop **đã chạy và xanh** trên máy này (exit 0, `"failed": []`), nên nó không còn nằm ở đây: các check đọc
+`getBounds()`, `getMinimumSize()` và `isAlwaysOnTop()` từ cửa sổ thật và đều `true`. Điều còn lại là nợ kỹ thuật:
+
+- Các check cần provider thật (`[calibration]`, `[jev-live]`) vẫn BLOCKED nếu thiếu `CLARKCANT_JEV_LIVE=1` và key;
   quyết định "ghi nhớ" của chính model vì thế chưa được chứng minh.
 - Extractor PDF/ảnh, route xoá conversation, nguồn `memory` trong gợi ý, scoped session token: mỗi cái có tên và
   điều kiện còn thiếu trong `docs/widgets-and-extensions.md` §4.1.
+- `nodeReachable` là `false` trong smoke: cổng này kiểm tra shell và cửa sổ, không cần node đang chạy.
