@@ -86,6 +86,32 @@ export {
   type MenuBarPopoverProps,
 } from "./DesktopSurfaces.tsx";
 export { Orb, type OrbProps } from "./Orb.tsx";
+export {
+  DEFAULT_ORB_PROFILE,
+  orbFallbackBackground,
+  resolveOrbProfile,
+  type OrbOptical,
+  type OrbPaletteOverride,
+  type OrbPhysics,
+  type ResolvedOrbProfile,
+} from "./orb-profile.ts";
+export {
+  AGENT_STATES,
+  INPUT_MODALITIES,
+  agentStateAttribute,
+  agentStateFrom,
+  attachInputModality,
+  isAgentState,
+  modalityFor,
+  type AgentState,
+  type InputModality,
+  type InputModalityHandle,
+  type InputSignal,
+} from "./input-modality.ts";
+export { prefersReducedMotion } from "./typewriter.ts";
+// Re-exported so a host can type the preference it reads without depending on the contracts package for one
+// shape it only passes through.
+export type { RegisteredPreference } from "@clarkcant/contracts";
 export { ORB_DRAW_SIZE, ORB_RADIUS } from "./Conversation.tsx";
 export { createOrbRenderer, type OrbOptions, type OrbRenderer } from "./orb.ts";
 export { ORB_PALETTE, ORB_SHAPE, ORB_SHADER_STATUS } from "./orb-shader.ts";

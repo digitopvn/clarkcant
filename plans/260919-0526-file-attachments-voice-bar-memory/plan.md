@@ -27,6 +27,8 @@ khai". Plan chia **ba chặng ship** trên cùng một nhánh. Thứ tự trong 
 không phải thứ tự đánh số ban đầu: vòng red-team đã đảo Stage B để phần chỉ chạy trong trình duyệt
 (registry + T66) land trước phần cần shell desktop.
 
+> **Supersession 2026-09-19:** phases pending 5–8 (shared app-control, voice/widget parity, desktop compact window, minimal voice bar) được thay bởi `../260919-1833-conversation-first-ux-widget-platform/plan.md`, vì UX mới cần chung typed preferences, execution policy, window modes, detach và voice capabilities. Không implement hai registry/desktop bridge song song. Phases 1–4 đã done giữ nguyên; phases 9–11 recent-work/memory vẫn còn hiệu lực nhưng Settings UI phải theo `DESIGN.md` mới.
+
 ## Quyết định đã chốt với user (2026-09-19)
 
 | # | Câu hỏi | Chốt | Hệ quả |

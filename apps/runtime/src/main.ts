@@ -28,7 +28,7 @@ import { createNodeServer } from "./server.ts";
 import { machineRoots } from "./fs-search.ts";
 import { resolveProject, refreshProjectIndex } from "./project-finder.ts";
 import { commandDigest } from "./run-command.ts";
-import { captureSnapshot, createInstance, handleUserMessage, recordAppIntentEvent, requestApproval, setPreference, type CoordinationDeps } from "@clarkcant/core";
+import { captureSnapshot, createInstance, handleUserMessage, readExecutionPolicy, recordAppIntentEvent, requestApproval, setPreference, type CoordinationDeps } from "@clarkcant/core";
 import { GALLERY, YOUTUBE } from "@clarkcant/data-canvas";
 import { definitionDigest } from "@clarkcant/widget-host";
 import { listLocalImages, messagesSince, readCredential,
@@ -450,10 +450,39 @@ async function main(): Promise<void> {
       const projects = projectWiring.deps;
       const approvals = approvalWiring.deps;
       if (search === undefined || projects === undefined || approvals === undefined) return [];
+      // Built through the contract's own schema rather than asserted into the branded type: an assertion
+      // here would be the place a malformed instant got in.
+      const now = () => instantSchema.parse(new Date().toISOString());
       const tools = createNodeTools({
         search,
         projects,
         approvals: () => approvals,
+        /*
+         * The policy is read when a tool call happens rather than captured when this node booted: the
+         * promise of the setting is that it changes what happens next, and a captured value would make it
+         * a restart instead.
+         */
+        policy: () =>
+          readExecutionPolicy(
+            { db: services.runtime.db, now },
+            services.runtime.identity.ownerPrincipalId,
+          ),
+        /*
+         * Where a command that runs without a card leaves its record.
+         *
+         * The same event log the task lifecycle writes to, because autonomy is only checkable if the
+         * effects it performed are findable afterwards.
+         */
+        audit: () => ({
+          deps: {
+            db: services.runtime.db,
+            nodeId: services.runtime.identity.nodeId,
+            newId: services.conductor.newId,
+            now,
+          },
+          principalId: search.principalId,
+          conversationId: turn.conversationId,
+        }),
         // Reading an attached file is scoped to the conversation this turn belongs to, which is the
         // only thing the tool needs to check beyond the principal.
         attachments: { dataDir: options.dataDir, conversationId: turn.conversationId },

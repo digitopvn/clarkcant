@@ -28,14 +28,18 @@ import {
   handleUserMessage,
   invokeMiniAppAction,
   listCapabilitySummaries,
+  listRegisteredPreferences,
   liveOwnerOf,
   liveStateOf,
   pinInstance,
+  readExecutionPolicy,
   readSnapshotForDisplay,
   recordAppIntentEvent,
   releaseLiveOwner,
   sweepExpiredLiveOwners,
+  undoRegisteredPreference,
   unpinInstance,
+  writeRegisteredPreference,
 } from "@clarkcant/core";
 import {
   type CalendarEventRecord,
@@ -297,6 +301,69 @@ export async function handleRequest(deps: GatewayDeps, request: GatewayRequest):
       // prompt-injection surface, so a schema is loaded once a capability is chosen.
       capabilities: listCapabilitySummaries({ db: runtime.db, nodeId: runtime.identity.nodeId }),
     });
+  }
+
+  // `at` answers a plain string; a preference write is stamped with a branded instant, and the
+  // gateway's own clock is the one every other write on this path already uses.
+  const preferenceDeps = { db: runtime.db, now: () => at() as Instant };
+
+  /*
+   * The registered preferences, their current values, and when each change takes effect.
+   *
+   * A registry rather than a free-form store. A key nothing declares is refused by name, because a
+   * stored value nothing reads is a setting that silently does nothing — and because answering only
+   * for declared keys is what keeps credentials, which have their own store and their own routes,
+   * out of this response by construction rather than by remembering to filter them.
+   *
+   * A preference the user has never set is answered with the default the product would use and
+   * `isDefault: true`, so the surface renders a real current state instead of inventing one and
+   * cannot present a default as a choice somebody made.
+   */
+  if (segments.length === 1 && segments[0] === "preferences" && request.method === "GET") {
+    return json(200, {
+      preferences: listRegisteredPreferences(preferenceDeps, runtime.identity.ownerPrincipalId),
+    });
+  }
+
+  if (segments.length === 2 && segments[0] === "preferences" && request.method === "PUT") {
+    const parsed = readJson(request);
+    if (!parsed.ok) return parsed.response;
+    // Presence, not truthiness: `false` and `""` are values a preference may legitimately hold, so
+    // the only thing refused here is a body that names no value at all.
+    if (!("value" in parsed.value)) {
+      return fail(400, "INVALID_SCHEMA", "a preference write needs a value");
+    }
+    const outcome = writeRegisteredPreference(preferenceDeps, {
+      principalId: runtime.identity.ownerPrincipalId,
+      key: segments[1] ?? "",
+      value: parsed.value.value,
+    });
+    if (!outcome.ok) {
+      // A key this node does not have is not found; a value it does not accept is a bad request.
+      // The message names the field and never echoes what arrived.
+      return fail(
+        outcome.code === "PREFERENCE_UNKNOWN" ? 404 : 400,
+        outcome.code,
+        outcome.message,
+      );
+    }
+    return json(200, { preference: outcome.preference });
+  }
+
+  if (
+    segments.length === 3 &&
+    segments[0] === "preferences" &&
+    segments[2] === "undo" &&
+    request.method === "POST"
+  ) {
+    const outcome = undoRegisteredPreference(preferenceDeps, {
+      principalId: runtime.identity.ownerPrincipalId,
+      key: segments[1] ?? "",
+    });
+    if (!outcome.ok) return fail(404, outcome.code, outcome.message);
+    // `undone: false` travels as a success, because a key nobody has written has nothing to undo:
+    // reporting a change that did not happen would be worse than reporting that there was none.
+    return json(200, outcome);
   }
 
   // /datasets/:id
@@ -777,7 +844,23 @@ export type WidgetActionResult =
  * looks like is the transport's business, and whether an action may run is not.
  */
 export function invokeWidgetAction(services: NodeServices, request: WidgetActionRequest): WidgetActionResult {
-  const outcome = invokeMiniAppAction(services.conductor, request);
+  // The guard main added at the route, kept where the invocation actually happens so both callers get it.
+  if (!Number.isFinite(request.expectedRevision)) {
+    return {
+      ok: false,
+      status: 400,
+      code: "INVALID_SCHEMA",
+      message: "an action invocation needs the expectedRevision the client saw",
+    };
+  }
+
+  // Read at the invocation rather than captured, so a mode the user changed applies to the next action they take
+  // instead of the next time the node starts.
+  const policy = readExecutionPolicy(
+    { db: services.runtime.db, now: () => new Date().toISOString() as Instant },
+    services.runtime.identity.ownerPrincipalId,
+  );
+  const outcome = invokeMiniAppAction(services.conductor, { ...request, policy });
   if (!outcome.ok) {
     const status =
       outcome.code === "INSTANCE_UNKNOWN" || outcome.code === "ACTION_UNKNOWN"

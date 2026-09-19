@@ -11,6 +11,7 @@
 
 export * from "./primitives.ts";
 export * from "./redaction.ts";
+export * from "./preferences.ts";
 export * from "./protocol.ts";
 export * from "./errors.ts";
 export * from "./envelope.ts";

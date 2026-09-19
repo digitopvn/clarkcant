@@ -143,8 +143,18 @@ export function undoPreference(
     if (!existing) {
       return { undone: false, key: input.key, reason: "this preference has never been set" };
     }
-    if (existing.revision <= 1 && existing.previousValue === undefined) {
-      // Revision 1 with no previous value means this was the first write, so undoing removes it.
+    /*
+     * No previous value means there is nothing to restore, so the row is removed rather than written back
+     * with a plausible-looking value.
+     *
+     * The condition is `previousValue === undefined` alone, and not also `revision <= 1`. `previous_value` is
+     * NULL in exactly two situations — a key that was never written before, and one whose undo already
+     * restored what it had — and both mean the same thing here: the history is exhausted. Keying this on the
+     * revision instead left the second undo of a preference taking the restore branch with `undefined`, which
+     * reached SQLite as an unbound parameter and came back as a 500 from the preferences route. The header of
+     * this file already described the intended behaviour; this is the code catching up to it.
+     */
+    if (existing.previousValue === undefined) {
       deps.db
         .prepare("DELETE FROM preferences WHERE principal_id = ? AND key = ? AND scope = ?")
         .run(input.principalId, input.key, input.scope);

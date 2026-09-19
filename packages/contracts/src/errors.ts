@@ -72,6 +72,10 @@ export const errorCodeSchema = z.enum([
   "WIDGET_ACTION_UNKNOWN",
   "WIDGET_ISOLATION_VIOLATION",
 
+  // Preferences
+  "PREFERENCE_UNKNOWN",
+  "PREFERENCE_INVALID",
+
   // Voice and media
   "MEDIA_FOCUS_CONFLICT",
   "VOICE_TRANSPORT_UNAVAILABLE",
@@ -147,6 +151,11 @@ const RETRYABILITY: Record<ErrorCode, Retryability> = {
   WIDGET_PROPS_INVALID: "never",
   WIDGET_ACTION_UNKNOWN: "never",
   WIDGET_ISOLATION_VIOLATION: "never",
+
+  // A key nothing reads: re-sending it would refuse again, so the caller has to change the key.
+  PREFERENCE_UNKNOWN: "never",
+  // The shape, not the request, was wrong: a corrected value may be sent unchanged otherwise.
+  PREFERENCE_INVALID: "after-user-action",
 
   MEDIA_FOCUS_CONFLICT: "after-user-action",
   VOICE_TRANSPORT_UNAVAILABLE: "after-user-action",

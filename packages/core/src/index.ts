@@ -17,6 +17,8 @@ export * from "./install-lifecycle.ts";
 export * from "./widget-service.ts";
 export * from "./widget-lifecycle.ts";
 export * from "./preferences.ts";
+export * from "./preference-registry.ts";
+export * from "./execution-policy.ts";
 export * from "./onboarding.ts";
 export * from "./limits.ts";
 export * from "./consent.ts";
