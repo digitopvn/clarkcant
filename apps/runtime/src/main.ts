@@ -44,6 +44,7 @@ import { createModelTurn, type ViewDescriptor } from "./model-turn.ts";
 import { memoryBrief, rememberMemory } from "./memory.ts";
 import { attachmentRefsForLastUserMessage } from "./attachments.ts";
 import { blobsDir, readBlob } from "./blobs.ts";
+import { extractPdfText } from "./pdf-text.ts";
 import { buildViewCatalog } from "./view-catalog.ts";
 import { registerNodeTools } from "./tool-catalogue.ts";
 import { composeMiniApp } from "./compose-mini-app.ts";
@@ -169,7 +170,7 @@ async function main(): Promise<void> {
       db: services.runtime.db,
       conversationId: input.conversationId,
     });
-    const readable = attached.filter((ref) => ref.kind === "text");
+    const readable = attached.filter((ref) => ref.kind === "text" || ref.kind === "pdf");
     if (readable.length > 0) {
       const quoted = readable
         .map((ref) => {
@@ -178,6 +179,12 @@ async function main(): Promise<void> {
             blobPath: join(blobsDir(options.dataDir), ref.blobRef),
           });
           if (!blob.ok) return `${ref.filename}: ${blob.message}`;
+          // A PDF is read through the same extractor the tool and the prompt use, so this journey exercises the
+          // production path rather than a shortcut written for the fixture.
+          if (ref.kind === "pdf") {
+            const extracted = extractPdfText(blob.bytes);
+            return extracted.ok ? `${ref.filename}:\n${extracted.text}` : `${ref.filename}: ${extracted.reason}`;
+          }
           return `${ref.filename}:\n${new TextDecoder("utf-8", { fatal: false }).decode(blob.bytes)}`;
         })
         .join("\n\n");

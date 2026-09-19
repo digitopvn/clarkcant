@@ -200,9 +200,27 @@ describe("a binary attachment", () => {
     expect(text).not.toContain(dir);
   });
 
-  it("treats a pdf the same way, and still names it precisely", async () => {
+  it("reads the text out of a pdf rather than naming it", async () => {
     const id = store({
       attachmentId: "att_pdf",
+      filename: "tai-lieu.pdf",
+      mime: "application/pdf",
+      kind: "pdf",
+      bytes: new TextEncoder().encode(
+        "%PDF-1.4\n4 0 obj << /Length 40 >>\nstream\nBT (Noi dung trong PDF) Tj ET\nendstream\nendobj\n%%EOF\n",
+      ),
+      extension: "pdf",
+    });
+
+    const text = await read(id);
+    // The file's own words, which is what the issue asks an attachment to give the agent.
+    expect(text).toContain("Noi dung trong PDF");
+    expect(text).toContain("tai-lieu.pdf");
+  });
+
+  it("names a pdf it cannot read, with the reason rather than an empty answer", async () => {
+    const id = store({
+      attachmentId: "att_pdf_flat",
       filename: "tai-lieu.pdf",
       mime: "application/pdf",
       kind: "pdf",
@@ -212,8 +230,7 @@ describe("a binary attachment", () => {
 
     const text = await read(id);
     expect(text).toContain("tai-lieu.pdf");
-    expect(text).toContain("application/pdf");
-    expect(text).toContain("chưa có bộ trích");
+    expect(text).toMatch(/no text operators/i);
   });
 });
 
