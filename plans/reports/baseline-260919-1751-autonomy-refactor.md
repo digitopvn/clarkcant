@@ -217,3 +217,17 @@ tiếp theo. Tổng unit test mới của t2: 51 (gồm cả regression của P1
   `node-store` chạy trên chính bảng `credentials` (backend_ref = tên credential); repository chỉ trả metadata;
   host tool `request_secret` (có → `available`, chưa có → credential-card); nâng `credential-card` thêm
   description/consumer/scope. E2E: value không xuất hiện trong DOM và không có trong continuation payload.
+
+## 12. t4–t10 — đã hoàn tất (chi tiết dùng cho audit)
+
+| Phase | Bằng chứng chính |
+|---|---|
+| t4 Secret Broker metadata | migration 18 (`secrets`), `packages/storage/src/secrets.ts` + 11 test; `request-secret.ts` + 5 test (available chỉ kèm metadata; `JSON.stringify(answer)` không chứa value; metadata còn value mất → không claim available); credential-card có description/consumer/scope/secretKind; route `/credentials` ghi cả value lẫn metadata; e2e `secrets.spec.ts` (value không xuất hiện trong `page.content()` sau submit, lượt sau trả "available") |
+| t5 JIT injection | `secret-broker.ts` + 11 test (4 exposure mode; tool-only default; agent-context chỉ khi metadata cho phép; allowlist consumer; backend lạ → BACKEND_UNAVAILABLE; audit chỉ ghi tên) + nối thật vào `run_command` (`secretRef` → env của đúng child process, consumer suy từ lệnh) + 2 test |
+| t6 Model Registry | `packages/contracts/src/models.ts` + 16 test; `model-registry.ts` (pool trong preferences); `model-turn.ts` tạo generation mới bằng `handoff()` ở ranh giới lượt + 3 test (`model-generation.spec.ts`); route `/model-pool` (GET/POST validate với catalogue) và `/model-pool/cycle`; hotkey ⌘] + nhãn `data-model-label`; bảng pool trong Settings; e2e `model-pool.spec.ts` |
+| t7 route.model | `model-router.ts` + 16 test (filter deterministic, chỉ chọn trong candidate set, verify lại sau khi chọn, fallback background-default → foreground → first-eligible, Jev vắng không fail task); `decideModelRoute` = quyết định thứ 7 của Jev; nối vào `runInBackground` |
+| t8 approval thành policy mode | `createNodeTools` đăng ký `run_command` **không** cần approvals (+2 test); đường duyệt chạy lại `preflightCommand` (containment) thay cho `guardCommand` (đã xoá); `run-command.spec` 12 test + 2 test mới; e2e `approval.spec.ts` 2/2 xanh |
+| t9 stop + audit | registry child process + `stopRunningCommands()`, `CommandOutcome.stopped`; `stopBackgroundSessions()`; route `POST /stop`; migration 19 `audit_log` + `packages/storage/src/audit.ts` (+7 test, đọc lại sau close/reopen); sink nối ở command (guarded + approved), secret use, stop; `stop-and-audit.spec.ts` 5 test |
+| t10 chốt | README thêm mục Autonomy; `docs/system-architecture.md` §7.3/§7.4/§7.6 cập nhật trạng thái đã triển khai + mô tả stop/audit; `docs/manifest.json` bytes+sha256 cập nhật; `pnpm invariants` 7/7 PASS; `pnpm verify:full` (kết quả ở mục 13) |
+
+**Ghi chú trung thực còn lại:** 4 test e2e fail có sẵn từ trước (mục 7) vẫn fail trong `verify:full`, nên gate không thể "0 failure" theo nghĩa tuyệt đối; chúng đã được chứng minh trên base commit `e1c67d4` với `.data/e2e` sạch. Các spec e2e mới của goal này (autonomy, interactions, secrets, model-pool) đều xanh.
