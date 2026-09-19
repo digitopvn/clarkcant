@@ -1,10 +1,12 @@
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
 import { join, relative } from "node:path";
+import { pathToFileURL } from "node:url";
 
 import { definitionDigest } from "@clarkcant/widget-host";
 
 import { runConformance, type ConformanceReport } from "./conformance.ts";
+import { startDevHost } from "./dev-host.ts";
 import { readPackage } from "./manifest.ts";
 
 /**
@@ -228,7 +230,7 @@ function pack(root: string): number {
 
 /* ------------------------------------------------------------------- run */
 
-export function runCli(argv: readonly string[]): number {
+export async function runCli(argv: readonly string[]): Promise<number> {
   const [group, command, ...rest] = argv;
   if (group !== "widget" || command === undefined) {
     process.stdout.write(`${usage()}\n`);
@@ -253,11 +255,15 @@ export function runCli(argv: readonly string[]): number {
   }
   if (command === "pack") return pack(dir);
   if (command === "dev") {
-    process.stderr.write(
-      "clark widget dev is not implemented yet: the dev host is a browser application, and a command that\n" +
-        "printed a placeholder would be a control that looks usable before its action exists.\n",
-    );
-    return 2;
+    const requested = Number(flag(rest, "--port") ?? "0");
+    const host = await startDevHost({ root: dir, port: Number.isInteger(requested) ? requested : 0 });
+    process.stdout.write(`dev host: ${host.url}
+  package: ${dir}
+  ctrl-c để dừng
+`);
+    // Stay alive until ctrl-c: the listening server keeps the event loop busy, which is the whole of "running".
+    await new Promise(() => {});
+    return 0;
   }
   if (command === "publish") {
     process.stderr.write("clark widget publish arrives with the directory (phase 13); local paths need no account.\n");
@@ -268,4 +274,16 @@ export function runCli(argv: readonly string[]): number {
 }
 
 export { runConformance } from "./conformance.ts";
+export { startDevHost } from "./dev-host.ts";
+export { applyShellAction, auditFrame, initialState, renderShell } from "./dev-shell.ts";
+
+/*
+ * The bin entry.
+ *
+ * Guarded by comparing the module URL to argv[1], so importing this file — which the exports above exist for — does
+ * not start a server or run a command.
+ */
+if (process.argv[1] !== undefined && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  process.exitCode = await runCli(process.argv.slice(2));
+}
 export { readPackage, manifestSchema } from "./manifest.ts";

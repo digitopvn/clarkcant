@@ -23,10 +23,10 @@ import { readPackage } from "../src/manifest.ts";
 
 const created: string[] = [];
 
-function tempPackage(template: "blank" | "form" | "dashboard" = "blank"): string {
+async function tempPackage(template: "blank" | "form" | "dashboard" = "blank"): Promise<string> {
   const root = mkdtempSync(join(tmpdir(), "clark-widget-"));
   created.push(root);
-  const code = runCli(["widget", "init", root, "--template", template]);
+  const code = await runCli(["widget", "init", root, "--template", template]);
   expect(code).toBe(0);
   return root;
 }
@@ -36,8 +36,8 @@ afterEach(() => {
 });
 
 describe("clark widget init", () => {
-  it("scaffolds the layout the standard describes", () => {
-    const root = tempPackage("dashboard");
+  it("scaffolds the layout the standard describes", async () => {
+    const root = await tempPackage("dashboard");
 
     for (const path of [
       "clarkcant.json",
@@ -54,8 +54,8 @@ describe("clark widget init", () => {
     }
   });
 
-  it("creates a package that passes its own conformance suite", () => {
-    const result = runConformance(tempPackage("form"));
+  it("creates a package that passes its own conformance suite", async () => {
+    const result = runConformance(await tempPackage("form"));
 
     // The template is the first thing an author runs the suite against, so a template that fails would teach them
     // the wrong lesson about what the suite is for.
@@ -63,9 +63,9 @@ describe("clark widget init", () => {
     expect(result.ok).toBe(true);
   });
 
-  it("refuses an unknown template instead of quietly scaffolding blank", () => {
+  it("refuses an unknown template instead of quietly scaffolding blank", async () => {
     const root = join(tmpdir(), "clark-widget-unknown");
-    const code = runCli(["widget", "init", root, "--template", "nope"]);
+    const code = await runCli(["widget", "init", root, "--template", "nope"]);
 
     expect(code).toBe(2);
     expect(existsSync(root)).toBe(false);
@@ -73,8 +73,8 @@ describe("clark widget init", () => {
 });
 
 describe("the conformance status split", () => {
-  it("reports the browser checks as unverified rather than as passing", () => {
-    const result = runConformance(tempPackage());
+  it("reports the browser checks as unverified rather than as passing", async () => {
+    const result = runConformance(await tempPackage());
     const unverified = result.checks.filter((check) => check.status === "requires-dev-host").map((check) => check.id);
 
     // Named individually: the point is that this command does not claim them.
@@ -86,8 +86,8 @@ describe("the conformance status split", () => {
     expect(result.summary["requires-dev-host"]).toBe(unverified.length);
   });
 
-  it("does the checks Node can honestly do", () => {
-    const result = runConformance(tempPackage());
+  it("does the checks Node can honestly do", async () => {
+    const result = runConformance(await tempPackage());
     const passed = result.checks.filter((check) => check.status === "pass").map((check) => check.id);
 
     // These are real: the runtime, the frame session and the codec are the same code in a browser and in a test.
@@ -106,8 +106,8 @@ describe("the conformance status split", () => {
 });
 
 describe("what the suite refuses", () => {
-  it("refuses a package whose manifest does not match the schema", () => {
-    const root = tempPackage();
+  it("refuses a package whose manifest does not match the schema", async () => {
+    const root = await tempPackage();
     writeFileSync(join(root, "clarkcant.json"), JSON.stringify({ schemaVersion: 1, id: "x" }));
 
     const result = runConformance(root);
@@ -116,8 +116,8 @@ describe("what the suite refuses", () => {
     expect(result.checks.some((check) => check.id === "package.readable" && check.status === "fail")).toBe(true);
   });
 
-  it("refuses a package missing the fixtures the standard requires", () => {
-    const root = tempPackage();
+  it("refuses a package missing the fixtures the standard requires", async () => {
+    const root = await tempPackage();
     rmSync(join(root, "fixtures", "error.json"));
 
     const result = runConformance(root);
@@ -129,8 +129,8 @@ describe("what the suite refuses", () => {
     expect(check?.detail).toContain("error");
   });
 
-  it("refuses an entry that reaches an origin the manifest does not declare", () => {
-    const root = tempPackage();
+  it("refuses an entry that reaches an origin the manifest does not declare", async () => {
+    const root = await tempPackage();
     const entry = join(root, "widgets", "main", "index.html");
     writeFileSync(entry, `${readFileSync(entry, "utf8")}\n<script src="https://cdn.example.test/x.js"></script>\n`);
 
@@ -142,8 +142,8 @@ describe("what the suite refuses", () => {
     expect(check?.detail).toContain("https://cdn.example.test");
   });
 
-  it("refuses props the schema does not allow", () => {
-    const root = tempPackage();
+  it("refuses props the schema does not allow", async () => {
+    const root = await tempPackage();
     // A fixture that violates the schema it is a fixture for: the suite's job is to notice, not to trust the file.
     writeFileSync(join(root, "fixtures", "default.json"), JSON.stringify({ title: "ok", undeclared: true }));
 
@@ -154,8 +154,8 @@ describe("what the suite refuses", () => {
     expect(check?.detail).toContain("undeclared");
   });
 
-  it("fails a package whose facet id disagrees with its definition id", () => {
-    const root = tempPackage();
+  it("fails a package whose facet id disagrees with its definition id", async () => {
+    const root = await tempPackage();
     const definitionPath = join(root, "widgets", "main", "widget.json");
     const definition = JSON.parse(readFileSync(definitionPath, "utf8")) as Record<string, unknown>;
     definition["id"] = "com.example.something-else@1";
@@ -167,10 +167,10 @@ describe("what the suite refuses", () => {
 });
 
 describe("clark widget pack", () => {
-  it("writes an artifact with a digest, and records what was not verified", () => {
-    const root = tempPackage();
+  it("writes an artifact with a digest, and records what was not verified", async () => {
+    const root = await tempPackage();
 
-    expect(runCli(["widget", "pack", root])).toBe(0);
+    expect(await runCli(["widget", "pack", root])).toBe(0);
 
     const artifact = JSON.parse(readFileSync(join(root, "dist", "artifact.json"), "utf8")) as {
       digest: string;
@@ -186,35 +186,36 @@ describe("clark widget pack", () => {
     expect(artifact.unverifiedChecks).toContain("rendering.reducedMotion");
   });
 
-  it("refuses to repack the same version after its bytes changed", () => {
-    const root = tempPackage();
-    expect(runCli(["widget", "pack", root])).toBe(0);
+  it("refuses to repack the same version after its bytes changed", async () => {
+    const root = await tempPackage();
+    expect(await runCli(["widget", "pack", root])).toBe(0);
 
     const entry = join(root, "widgets", "main", "index.html");
     writeFileSync(entry, `${readFileSync(entry, "utf8")}\n<!-- changed after packing -->\n`);
 
     // A version whose bytes changed is a different package wearing the same number, and the install path assumes
     // the opposite.
-    expect(runCli(["widget", "pack", root])).toBe(1);
+    expect(await runCli(["widget", "pack", root])).toBe(1);
   });
 
-  it("refuses to pack a package that fails conformance", () => {
-    const root = tempPackage();
+  it("refuses to pack a package that fails conformance", async () => {
+    const root = await tempPackage();
     rmSync(join(root, "fixtures", "empty.json"));
 
-    expect(runCli(["widget", "pack", root])).toBe(1);
+    expect(await runCli(["widget", "pack", root])).toBe(1);
     expect(existsSync(join(root, "dist", "artifact.json"))).toBe(false);
   });
 });
 
 describe("commands that are not implemented", () => {
-  it("says so for dev, rather than printing a placeholder", () => {
-    // A command that printed "coming soon" would be a control that looks usable before its action exists.
-    expect(runCli(["widget", "dev", tempPackage()])).toBe(2);
+  it("prints usage for an unknown command", async () => {
+    expect(await runCli(["widget"])).toBe(2);
+    expect(await runCli(["nonsense"])).toBe(2);
   });
 
-  it("prints usage for an unknown command", () => {
-    expect(runCli(["widget"])).toBe(2);
-    expect(runCli(["nonsense"])).toBe(2);
+  it("says publish arrives with the directory, and that a local path needs no account", async () => {
+    // Named rather than stubbed: a command that printed a placeholder would be a control that looks usable before
+    // its action exists.
+    expect(await runCli(["widget", "publish", await tempPackage()])).toBe(2);
   });
 });
