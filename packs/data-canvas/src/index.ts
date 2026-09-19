@@ -237,6 +237,115 @@ export const IMAGE: WidgetDefinition = {
   datasetRefs: [],
 };
 
+/**
+ * Several imported images, seen one at a time.
+ *
+ * The alternative texts are required and paired with the pictures by position, because an image without one is
+ * an image some people cannot use at all: the catalog's single-image widget already refuses to be drawn without
+ * alt text, and a carousel that did not would be the same failure with more pictures.
+ */
+export const CAROUSEL: WidgetDefinition = {
+  id: "canvas.carousel@1",
+  version: "1.0.0",
+  renderer: "catalog",
+  propsSchema: {
+    type: "object",
+    additionalProperties: false,
+    properties: {
+      imageRefs: { type: "array", items: datasetProp, minItems: 1, maxItems: 24 },
+      alts: { type: "array", items: { type: "string", maxLength: 300 }, maxItems: 24 },
+      title: { type: "string", maxLength: 200 },
+    },
+    required: ["imageRefs", "alts"],
+  },
+  eventSchemas: {},
+  sizing: { compact: true, expanded: true, minHeight: 200 },
+  semanticDescription: "A set of imported images shown one at a time, each with its own description",
+  requestedCapabilities: [],
+  textFallback: "The pictures in this set are listed in text when they cannot be displayed.",
+  effectCategories: ["read"],
+  datasetRefs: [],
+};
+
+/** The same pictures as a grid, for when seeing them together is the point. */
+export const GALLERY: WidgetDefinition = {
+  id: "canvas.gallery@1",
+  version: "1.0.0",
+  renderer: "catalog",
+  propsSchema: {
+    type: "object",
+    additionalProperties: false,
+    properties: {
+      imageRefs: { type: "array", items: datasetProp, minItems: 1, maxItems: 48 },
+      alts: { type: "array", items: { type: "string", maxLength: 300 }, maxItems: 48 },
+      title: { type: "string", maxLength: 200 },
+    },
+    required: ["imageRefs", "alts"],
+  },
+  eventSchemas: {},
+  sizing: { compact: true, expanded: true, minHeight: 200 },
+  semanticDescription: "A grid of imported images, each with its own description",
+  requestedCapabilities: [],
+  textFallback: "The pictures in this gallery are listed in text when they cannot be displayed.",
+  effectCategories: ["read"],
+  datasetRefs: [],
+};
+
+/**
+ * A video on YouTube, named by its identifier rather than by a URL.
+ *
+ * The model supplies the identifier and never the address, so the surface cannot be pointed at an arbitrary
+ * page: an embed is a request the reader's browser makes to somebody else's server, and the vocabulary for
+ * where it may point is the host's, not the model's.
+ */
+export const YOUTUBE: WidgetDefinition = {
+  id: "canvas.youtube@1",
+  version: "1.0.0",
+  renderer: "catalog",
+  propsSchema: {
+    type: "object",
+    additionalProperties: false,
+    properties: {
+      videoId: { type: "string", pattern: "^[A-Za-z0-9_-]{6,20}$" },
+      title: { type: "string", maxLength: 200 },
+      description: { type: "string", maxLength: 300 },
+    },
+    required: ["videoId", "title"],
+  },
+  eventSchemas: {},
+  sizing: { compact: true, expanded: true, minHeight: 220 },
+  semanticDescription: "A YouTube video, embedded from YouTube when it is displayed",
+  requestedCapabilities: [],
+  textFallback: "A YouTube video is named in text, with its identifier, when it cannot be embedded.",
+  effectCategories: ["read"],
+  datasetRefs: [],
+};
+
+/** A video the host holds, served under an opaque reference like an imported image. */
+export const VIDEO: WidgetDefinition = {
+  id: "canvas.video@1",
+  version: "1.0.0",
+  renderer: "catalog",
+  propsSchema: {
+    type: "object",
+    additionalProperties: false,
+    properties: {
+      videoRef: datasetProp,
+      alt: { type: "string", maxLength: 300 },
+      title: { type: "string", maxLength: 200 },
+      posterRef: datasetProp,
+    },
+    required: ["videoRef", "alt"],
+  },
+  eventSchemas: {},
+  sizing: { compact: true, expanded: true, minHeight: 220 },
+  semanticDescription: "A video the host holds, described by its required description text",
+  requestedCapabilities: [],
+  textFallback: "A video is described in text when it cannot be played.",
+  effectCategories: ["read"],
+  datasetRefs: [],
+};
+
 /** The one action in the M1 vocabulary: save the current view and pin it. */
 export const CTA: WidgetDefinition = {
   id: "canvas.cta@1",
@@ -271,6 +380,10 @@ export const WIDGETS = [
   FILTER,
   CALENDAR,
   IMAGE,
+  CAROUSEL,
+  GALLERY,
+  YOUTUBE,
+  VIDEO,
   CTA,
 ];
 
@@ -291,6 +404,10 @@ export const FAMILY_BY_DEFINITION: Record<string, string> = {
   "canvas.table@1": "tables",
   "canvas.calendar@1": "calendar",
   "canvas.image@1": "media",
+  "canvas.carousel@1": "media",
+  "canvas.gallery@1": "media",
+  "canvas.youtube@1": "media",
+  "canvas.video@1": "media",
   "canvas.cta@1": "cta",
 };
 

@@ -18,11 +18,14 @@
 
 import { useCallback, useEffect, useState, type ReactElement, type ReactNode } from "react";
 
-import { contrastRatio, AA_NORMAL_TEXT, DARK, LIGHT, type ThemeName } from "@clarkcant/design-tokens";
+import { MicrophoneCheck } from "./microphone-check.tsx";
+import { SearchSelect } from "./search-select.tsx";
+import { ToolLists } from "./tool-lists.tsx";
+
+import { contrastRatio, DARK, LIGHT, type ThemeName } from "@clarkcant/design-tokens";
 
 import { DevicePairingPanel } from "./DevicePairingPanel.tsx";
 import { Modal } from "./Modal.tsx";
-import { TokenSpecimens, readVar } from "./TokenSpecimens.tsx";
 import type { GatewayClient } from "./api.ts";
 import { THEME_CHOICES, type ThemeChoice } from "./theme.ts";
 
@@ -49,11 +52,32 @@ const THEME_LABELS: Record<ThemeChoice, string> = {
 
 const TABS = [
   { id: "general", label: "General" },
+  // Provider and model together, because choosing one means choosing the other: the second list belongs to the first.
+  { id: "models", label: "Models" },
   { id: "tools", label: "Tools" },
   { id: "devices", label: "Devices" },
 ] as const;
 
 type TabId = (typeof TABS)[number]["id"];
+
+/**
+ * The keys this panel can hold, and what each one is for.
+ *
+ * A list rather than one field per provider, because the third one is a copy and paste of the second: the names are
+ * what the node stores them under, and each is entered the same way and reported the same way.
+ */
+const KEY_FIELDS = [
+  {
+    name: "gemini",
+    label: "Gemini API key",
+    purpose: "Dùng cho Gemini Live khi bạn nói. Lần mở voice kế tiếp sẽ dùng khoá này.",
+  },
+  {
+    name: "typesafe",
+    label: "TypeSafe API key (Jev)",
+    purpose: "Dùng cho Jev khi nó phải quyết định cách xử lý một việc.",
+  },
+] as const;
 
 /** Nodes the settings surface needs, loaded once when it opens. */
 interface NodeFacts {
@@ -159,12 +183,201 @@ export function SettingsPanel({
   onThemeChoice,
 }: SettingsPanelProps): ReactElement | null {
   const [facts, setFacts] = useState<NodeFacts | undefined>(undefined);
+
+  /**
+   * The providers and models this node can run, or undefined before the node has answered.
+   *
+   * Kept apart from `facts`, which is a snapshot of what the node is: this comes from pi's own catalogue, so a
+   * provider added by upgrading pi appears here without the node changing. Undefined means not read yet, which is a
+   * different thing from an empty list, and the two are shown differently.
+   */
+  const [catalogue, setCatalogue] = useState<
+    | { id: string; models: { provider: string; id: string; contextWindow?: number; current: boolean }[] }[]
+    | undefined
+  >(undefined);
+
+  /** What became of the last model choice: a status, never a value, and never shown as if it applied already. */
+
+  /** What the two fields hold while somebody types: nothing is stored until it is asked for. */
+  const [providerDraft, setProviderDraft] = useState<string | undefined>(undefined);
+  const [modelDraft, setModelDraft] = useState<string | undefined>(undefined);
+
+  /** The provider whose models the second field offers: what was typed, or what the node is running. */
+  const chosenProvider = providerDraft ?? facts?.model?.provider ?? "";
+  const chosenModels = catalogue?.find((provider) => provider.id === chosenProvider)?.models ?? [];
+
+  /** Store the pair somebody typed, refusing one this node cannot run before it leaves the page. */
+  const saveModelChoice = (): void => {
+    const provider = chosenProvider.trim();
+    const id = (modelDraft ?? facts?.model?.id ?? "").trim();
+    if (provider === "" || id === "") {
+      setModelStatus("Chọn một provider và một model trước đã.");
+      return;
+    }
+    if (catalogue !== undefined && catalogue.length > 0 && !chosenModels.some((model) => model.id === id)) {
+      // Refused in front of the field it was typed into, rather than by the node after a round trip.
+      setModelStatus(`${provider} không có model ${id}.`);
+      return;
+    }
+    client
+      .chooseModel({ provider, id })
+      .then(() => setModelStatus(`Đã lưu ${provider}/${id}. Áp dụng cho hội thoại mới.`))
+      .catch(() => setModelStatus("Không lưu được lựa chọn."));
+  };
+
+  /**
+   * One key's form: entered here, stored by the node, and never shown again.
+   *
+   * A function rather than a copy, because the same field appears in two tabs and a second copy of a credential
+   * form is the one kind of duplication that goes wrong quietly.
+   */
+  const keyForm = (entry: (typeof KEY_FIELDS)[number]) => (
+              <form
+                key={entry.name}
+                className="cc-credential-form"
+                data-settings-key-form={entry.name}
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  const value = (keyDrafts[entry.name] ?? "").trim();
+                  if (value === "") return;
+                  client
+                    .putCredential({ fields: [{ name: entry.name, value }] })
+                    .then((result) => {
+                      // Cleared the moment it is sent, so nothing later can read it off the screen or out of state.
+                      setKeyDrafts((current) => ({ ...current, [entry.name]: "" }));
+                      setKeyStatuses((current) => ({
+                        ...current,
+                        [entry.name]: result.names.includes(entry.name)
+                          ? "Đã lưu khoá."
+                          : "Đã gửi, nhưng node không ghi nhận tên khoá nào.",
+                      }));
+                    })
+                    .catch(() =>
+                      // The message says nothing about what was typed: an error that repeated the value would be the
+                      // leak this field exists to avoid.
+                      setKeyStatuses((current) => ({ ...current, [entry.name]: "Không lưu được khoá. Thử lại." })),
+                    );
+                }}
+              >
+                <label className="cc-credential-field">
+                  <span>{entry.label}</span>
+                  <input
+                    type="password"
+                    name={entry.name}
+                    autoComplete="off"
+                    data-settings-key-field={entry.name}
+                    value={keyDrafts[entry.name] ?? ""}
+                    onChange={(event) => setKeyDrafts((current) => ({ ...current, [entry.name]: event.target.value }))}
+                  />
+                </label>
+                <button
+                  type="submit"
+                  className="cc-icon-btn"
+                  style={{ width: "auto", padding: "0 var(--cc-space-sm)" }}
+                  disabled={(keyDrafts[entry.name] ?? "").trim() === ""}
+                  data-settings-key-submit={entry.name}
+                >
+                  Lưu khoá
+                </button>
+                <p className="cc-freshness">{entry.purpose}</p>
+                {keyStatuses[entry.name] !== undefined && (
+                  <p className="cc-freshness" data-settings-key-status={entry.name}>
+                    {keyStatuses[entry.name]}
+                  </p>
+                )}
+                              <button
+                  type="button"
+                  className="cc-chip"
+                  data-settings-key-remove={entry.name}
+                  onClick={() => {
+                    client
+                      .deleteCredential(entry.name)
+                      .then(() => {
+                        setKeyStatuses((current) => ({
+                          ...current,
+                          [entry.name]: "Đã đăng xuất: node không còn giữ khoá này.",
+                        }));
+                      })
+                      .catch(() =>
+                        // A refusal here usually means there was nothing to remove, which is a different answer from a
+                        // failure and is said as one rather than dressed up as an error.
+                        setKeyStatuses((current) => ({
+                          ...current,
+                          [entry.name]: "Không xoá được — có thể node chưa giữ khoá này.",
+                        })),
+                      );
+                  }}
+                >
+                  Đăng xuất
+                </button>
+                </form>
+  );
+
+  const [modelStatus, setModelStatus] = useState<string | undefined>(undefined);
+
+  /** What pi loads on this machine, or undefined before the node has answered. */
+  const [piExtensions, setPiExtensions] = useState<{ name: string; kind: string }[] | undefined>(undefined);
+
+  /** pi's own configuration, read from the same place and shown as lines: a key and a value, never a secret. */
+  const [piSettingLines, setPiSettingLines] = useState<{ key: string; value: string }[] | undefined>(undefined);
+
+  useEffect(() => {
+    if (!open) return;
+    let cancelled = false;
+    void client
+      .extensions()
+      .then((answer) => {
+        if (!cancelled) setPiExtensions(answer.extensions);
+      })
+      .catch(() => {
+        // An empty list rather than an error: what this section answers is what pi loads, and a node that cannot say
+        // still leaves the rest of the tab working.
+        if (!cancelled) setPiExtensions([]);
+      });
+    void client
+      .piSettings()
+      .then((answer) => {
+        if (!cancelled) setPiSettingLines(answer.settings);
+      })
+      .catch(() => {
+        // The same reasoning: configuration that cannot be read is reported as none rather than as a failure, because
+        // the person in front of the panel cannot act on a read error either way.
+        if (!cancelled) setPiSettingLines([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [open, client]);
+
+  useEffect(() => {
+    if (!open) return;
+    let cancelled = false;
+    void client
+      .model()
+      .then((answer) => {
+        if (!cancelled) setCatalogue(answer.catalogue);
+      })
+      .catch(() => {
+        // Reported as an empty list rather than as an error. The question this section answers is what can be chosen,
+        // and a failure to read the list is not something the person in front of the panel can act on.
+        if (!cancelled) setCatalogue([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [open, client]);
   const [tools, setTools] = useState<ToolFacts[] | undefined>(undefined);
   const [problem, setProblem] = useState<string | undefined>(undefined);
-  const [accentIndex, setAccentIndex] = useState(0);
+  /**
+   * What has been typed into each key field, and what the node said about it.
+   *
+   * A draft is cleared the moment it is sent, and nothing here ever holds a stored value: the node answers with the
+   * names it has and never with a value, so there is nothing to show a second time.
+   */
+  const [keyDrafts, setKeyDrafts] = useState<Record<string, string>>({});
+  const [keyStatuses, setKeyStatuses] = useState<Record<string, string>>({});  const [accentIndex, setAccentIndex] = useState(0);
   const [tab, setTab] = useState<TabId>("general");
   // Bumped after a theme or accent change so the contrast readout re-reads computed values.
-  const [revision, setRevision] = useState(0);
 
   useEffect(() => {
     if (!open) return;
@@ -199,7 +412,6 @@ export function SettingsPanel({
   const chooseTheme = useCallback(
     (next: ThemeChoice) => {
       onThemeChoice(next);
-      setRevision((n) => n + 1);
     },
     [onThemeChoice],
   );
@@ -224,7 +436,6 @@ export function SettingsPanel({
         contrastRatio("#ffffff", value) >= contrastRatio(tokens.canvas, value) ? "#ffffff" : tokens.canvas,
       );
       setAccentIndex(index);
-      setRevision((n) => n + 1);
     },
     [resolvedTheme],
   );
@@ -240,30 +451,6 @@ export function SettingsPanel({
 
   if (!open) return null;
 
-  const contrastReadout = (): { label: string; ratio: number }[] => {
-    void revision;
-    const pairs: { label: string; foreground: string; background: string }[] = [
-      { label: "body text on canvas", foreground: readVar("--cc-text"), background: readVar("--cc-canvas") },
-      { label: "caption text on a card", foreground: readVar("--cc-text-muted"), background: readVar("--cc-card") },
-      {
-        label: "tertiary text on canvas",
-        foreground: readVar("--cc-text-tertiary"),
-        background: readVar("--cc-canvas"),
-      },
-      { label: "label on accent", foreground: readVar("--cc-on-accent"), background: readVar("--cc-accent") },
-    ];
-    const measured: { label: string; ratio: number }[] = [];
-    for (const pair of pairs) {
-      if (pair.foreground === "" || pair.background === "") continue;
-      try {
-        measured.push({ label: pair.label, ratio: contrastRatio(pair.foreground, pair.background) });
-      } catch {
-        // A value the parser does not understand is left out rather than reported as a pass.
-        continue;
-      }
-    }
-    return measured;
-  };
 
   const nodeStatus = (): string => {
     if (problem !== undefined) return "Không đọc được trạng thái node";
@@ -360,6 +547,11 @@ export function SettingsPanel({
               <p className="cc-panel-note">{ACCENT_CHOICES[accentIndex]?.note ?? ""}</p>
             </section>
 
+          </>
+        )}
+
+        {tab === "models" && (
+          <>
             <section className="cc-panel-section">
               <h3>Model</h3>
               {facts === undefined ? (
@@ -387,23 +579,78 @@ export function SettingsPanel({
               )}
             </section>
 
-            <section className="cc-panel-section">
-              <h3>Độ tương phản, đo trực tiếp</h3>
-              <ul className="cc-panel-readout">
-                {contrastReadout().map((row) => (
-                  <li key={row.label} data-pass={row.ratio >= AA_NORMAL_TEXT}>
-                    <span>{row.label}</span>
-                    <span>
-                      {row.ratio.toFixed(2)}:1 {row.ratio >= AA_NORMAL_TEXT ? "✓" : "✗ dưới 4.5"}
-                    </span>
-                  </li>
-                ))}
-              </ul>
+            <section className="cc-panel-section" data-providers="true">
+              <h3>Chọn provider và model</h3>
+              {catalogue === undefined ? (
+                <p className="cc-panel-note">Đang đọc…</p>
+              ) : catalogue.length === 0 ? (
+                <p className="cc-panel-note" data-providers="none">
+                  Node chưa báo provider nào. Danh sách này đọc từ pi trên máy, nên nó rỗng khi pi chưa
+                  thấy provider nào — hoặc khi node không dựng được model turn.
+                </p>
+              ) : (
+                <>
+                  <label className="cc-credential-field">
+                    <span>Provider</span>
+                    <SearchSelect
+                      name="provider"
+                      placeholder="Gõ để tìm provider"
+                      value={chosenProvider}
+                      options={catalogue.map((provider) => ({
+                        value: provider.id,
+                        label: provider.id,
+                        note: `${provider.models.length} model`,
+                      }))}
+                      onChange={(next) => {
+                        setProviderDraft(next);
+                        // A different provider is a different catalogue, so a model chosen for the old one is not a
+                        // choice any more - keeping it would offer a pair this node cannot run.
+                        setModelDraft("");
+                      }}
+                      emptyNote="Không có provider nào khớp."
+                    />
+                  </label>
+
+                  <label className="cc-credential-field">
+                    <span>Model</span>
+                    <SearchSelect
+                      name="model"
+                      placeholder="Gõ để tìm model"
+                      value={modelDraft ?? facts?.model?.id ?? ""}
+                      options={chosenModels.map((model) => ({
+                        value: model.id,
+                        label: model.id,
+                        ...(model.contextWindow === undefined
+                          ? {}
+                          : { note: `${Math.round(model.contextWindow / 1000)}K` }),
+                      }))}
+                      onChange={setModelDraft}
+                      emptyNote="Không có model nào khớp."
+                    />
+                  </label>
+
+                  <div className="cc-chip-row">
+                    <button type="button" className="cc-chip" data-model-save="true" onClick={saveModelChoice}>
+                      Lưu lựa chọn
+                    </button>
+                  </div>
+                </>
+              )}
+              {modelStatus === undefined ? null : (
+                <p className="cc-panel-note" data-model-status="true">
+                  {modelStatus}
+                </p>
+              )}
             </section>
 
-            {/* The same specimens the UI panel shows. A user checking what the interface is built
-                from should not have to open a second tool to find out. */}
-            <TokenSpecimens />
+            <section className="cc-panel-section" data-models-key="true">
+              <h3>Khoá TypeSafe</h3>
+              <p className="cc-panel-note">
+                Jev dùng TypeSafe khi nó phải quyết định cách xử lý một việc. Ở đây cùng provider và model, vì cả ba
+                đều là chuyện chọn cái gì để chạy.
+              </p>
+              {KEY_FIELDS.filter((entry) => entry.name === "typesafe").map(keyForm)}
+            </section>
           </>
         )}
 
@@ -429,6 +676,56 @@ export function SettingsPanel({
                 />
               ))
             )}
+            {/*
+              The tools, told apart by which half holds them.
+
+              The capability list above is what this node has registered as a capability; these two are the tools
+              themselves - the node's own and the agent's - because a person asking "can this thing do X" is asking
+              about both and needs to know which one would be doing it.
+            */}
+            <ToolLists client={client} />
+
+            <section className="cc-panel-section" data-pi-extensions="true">
+              <h3>Extension của pi trên máy này</h3>
+              {piExtensions === undefined ? (
+                <p className="cc-panel-note">Đang đọc…</p>
+              ) : piExtensions.length === 0 ? (
+                <p className="cc-panel-note" data-pi-extensions="none">
+                  pi trên máy này chưa nạp extension nào. Danh sách chỉ có tên và loại, không bao giờ có nội dung tệp.
+                </p>
+              ) : (
+                // Names and kinds, and deliberately nothing else: an extension on a real machine can hold a credential,
+                // and a section that showed what was inside one would be the place it leaked from.
+                <div className="cc-panel-note">
+                  {piExtensions.map((entry) => (
+                    <code key={entry.name} data-pi-extension={entry.name} data-kind={entry.kind}>
+                      {entry.name}
+                    </code>
+                  ))}
+                </div>
+              )}
+            </section>
+
+            <section className="cc-panel-section" data-pi-settings="true">
+              <h3>Cấu hình pi trên máy này</h3>
+              {piSettingLines === undefined ? (
+                <p className="cc-panel-note">Đang đọc…</p>
+              ) : piSettingLines.length === 0 ? (
+                <p className="cc-panel-note" data-pi-settings="none">
+                  Chưa đọc được cấu hình nào từ pi trên máy này.
+                </p>
+              ) : (
+                // A key and a value per line. Anything whose name sounds like a secret arrives already redacted by the
+                // node, because the node is the only thing that can see the file it came from.
+                <div className="cc-panel-note">
+                  {piSettingLines.map((line) => (
+                    <code key={line.key} data-pi-setting={line.key}>
+                      {line.key}: {line.value}
+                    </code>
+                  ))}
+                </div>
+              )}
+            </section>
           </section>
         )}
 
@@ -440,6 +737,25 @@ export function SettingsPanel({
               nodeLabel={facts?.label ?? "(chưa đọc được)"}
               unblockedBy="chạy node thứ hai trên máy khác rồi ghép nối"
             />
+
+            {/*
+              The key the live voice provider needs.
+              
+              It lives beside the device settings because that is what it is for: a microphone session that cannot
+              start without it. The name it is stored under is the node's - `gemini`, the same string
+              voice-session.ts exports as VOICE_CREDENTIAL_NAME - and it cannot be imported here, because the
+              runtime is not something the browser ships. A name is cheaper to keep in step than a package.
+            */}
+            <h3>Giọng nói và khoá</h3>
+            {KEY_FIELDS.filter((entry) => entry.name !== "typesafe").map(keyForm)}
+            <MicrophoneCheck />
+            {/*
+              One field per key: entered here, stored by the node, and never shown again.
+
+              A list rather than one hand-written form per provider, because the second is a copy of the first and a
+              third would be too. The names are the node's own - it is the node that reads a value when it needs one -
+              and the purpose under each field says what breaks without it.
+            */}
           </section>
         )}
       </div>

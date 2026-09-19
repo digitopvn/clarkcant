@@ -182,9 +182,12 @@ export async function searchFileSystem(
   options: FileSearchOptions,
 ): Promise<FileSearchOutcome> {
   const query = request.query.trim();
-  const limit = Math.max(1, Math.min(request.limit ?? 20, 100));
-  const maxFiles = Math.max(1, Math.min(request.maxFiles ?? 4000, 50_000));
-  const budgetMs = Math.max(50, Math.min(request.budgetMs ?? 4000, 30_000));
+  // The operator's decision: a search that hides results is worse than one that takes a moment. The ceilings
+  // are still reported when they are hit (see `stoppedBecause`), because a partial answer the caller knows is
+  // partial is useful and one that looks complete is not.
+  const limit = Math.max(1, Math.min(request.limit ?? 100, 500));
+  const maxFiles = Math.max(1, Math.min(request.maxFiles ?? 200_000, 1_000_000));
+  const budgetMs = Math.max(50, Math.min(request.budgetMs ?? 20_000, 120_000));
   const now = options.now ?? (() => Date.now());
   const startedAt = now();
 

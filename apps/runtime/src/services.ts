@@ -19,6 +19,9 @@ import {
   messagesSince,
   upsertDataset,
 } from "@clarkcant/storage";
+import { readCredential } from "@clarkcant/storage";
+import type { ModelCatalogue } from "@clarkcant/pi-adapter";
+import type { Principal } from "@clarkcant/contracts";
 import { FAMILY_BY_DEFINITION, WIDGETS as CATALOG_WIDGETS } from "@clarkcant/data-canvas";
 import { QUICK_PLAY_RECIPES, SAMPLE_DATASET } from "@clarkcant/data-canvas/sample";
 import { CAPABILITIES as PROJECT_WORK_CAPABILITIES } from "@clarkcant/project-work";
@@ -38,6 +41,7 @@ import {
   semanticSearchFromEnv,
 } from "./vector-index.ts";
 import { homedir } from "node:os";
+import { parse } from "node:path";
 
 import { getPreference } from "@clarkcant/core";
 
@@ -85,6 +89,34 @@ import {
 export interface NodeServices {
   runtime: Runtime;
   conductor: ConductorDeps;
+  /**
+   * Control of the turn that is running for a conversation, when one is.
+   *
+   * Optional because a node with no model has no turns to control. Assigned after boot rather than passed in, because
+   * the model turn is built before the services are and the wiring runs one way.
+   */
+  /**
+   * Every provider and model this node can run, read from the SDK's own catalogue when asked.
+   *
+   * Optional and assigned after boot, like turn control: the model turn is built before the services are, so the
+   * wiring runs one way. Absent on a node whose model turn failed to build, which the route reports as an empty list
+   * rather than as an error - the node is still a node.
+   */
+  modelCatalogue?: () => Promise<ModelCatalogue>;
+
+  /** What pi loads on this machine. Names and kinds, never contents. */
+  extensions?: () => Promise<readonly { readonly name: string; readonly kind: "directory" | "file" }[]>;
+
+  /** pi's own configuration, as far as it is safe to report it: scalars, secrets redacted. */
+  piSettings?: () => Promise<readonly { readonly key: string; readonly value: string }[]>;
+
+  turnControl?: {
+    running(): string[];
+    interrupt(conversationId: string): boolean;
+    steer(conversationId: string, text: string): Promise<boolean>;
+    /** Runs one request in a worker of its own, answering with what it said. */
+    runInBackground(input: { conversationId: string; principal: Principal; text: string }): Promise<string>;
+  };
   /** The model this node is configured for, or null when it has none. */
   model: NodeModelInfo | null;
   /** The selector, its wiring, and the counters a test or the health route can read. */
@@ -173,8 +205,8 @@ export function newId(prefix: string): string {
  * node asked a provider to decide, and it holds no request body, so nothing here needs retention
  * or redaction at rest. It is also the counter the tests read.
  */
-function buildJevRuntime(options: RuntimeOptions): JevRuntime {
-  const config: JevConfig = { ...jevConfigFromEnv(process.env), ...(options.jev?.config ?? {}) };
+function buildJevRuntime(options: RuntimeOptions, storedJevKey?: () => string | undefined): JevRuntime {
+  const config: JevConfig = { ...jevConfigFromEnv(process.env, storedJevKey), ...(options.jev?.config ?? {}) };
   const telemetry: JevTelemetry[] = [];
   let providerCalls = 0;
 
@@ -195,10 +227,32 @@ function buildJevRuntime(options: RuntimeOptions): JevRuntime {
   return { config, deps, providerCallCount: () => providerCalls, telemetry: () => telemetry };
 }
 
+/**
+ * Where the project index looks.
+ *
+ * Not every drive, which is what it looked like it should be. One of this machine's roots is a cloud mount, and
+ * a walk that waits for it never finishes: the index spent minutes still holding the previous run's contents,
+ * because a scan that does not complete is not allowed to apply its results. That guard is deliberate - a scan
+ * that did not see everything cannot say what is gone - so the answer is to look somewhere a walk can finish.
+ *
+ * So the index covers where work happens: the home folder and the drive this node runs from, which for an
+ * operator who started the app inside their project tree is where their projects are. Anywhere else is a
+ * preference away (workspace.roots), and the agent can rebuild the index on request. Searching the whole
+ * machine is a separate path and still covers every drive.
+ */
+function indexRoots(): string[] {
+  const drive = parse(process.cwd()).root;
+  return [...new Set([homedir(), drive])].filter((root) => root !== "");
+}
+
 export function bootNodeServices(options: RuntimeOptions): NodeServices {
   const runtime = bootRuntime(options);
   const nodeId = runtime.identity.nodeId;
-  const jevRuntime = buildJevRuntime(options);
+  // The key a person typed into the interface, so the decider uses it without a restart. Read from the vault here
+  // rather than passed in as a value, because the point of storing one is that the node is already running.
+  const jevRuntime = buildJevRuntime(options, () =>
+    readCredential(runtime.db, runtime.identity.ownerPrincipalId, "typesafe"),
+  );
   const catalog = registerCatalog(
     new CatalogRegistry(),
     CATALOG_WIDGETS.map((definition) => ({ definition, family: FAMILY_BY_DEFINITION[definition.id] ?? "unknown" })),
@@ -404,7 +458,7 @@ export function bootNodeServices(options: RuntimeOptions): NodeServices {
     nodeId,
     now: () => nowInstant() satisfies Instant,
     newId,
-    roots: () => stringList("workspace.roots", [homedir()]),
+    roots: () => stringList("workspace.roots", indexRoots()),
     ignore: () => stringList("workspace.ignore", []),
     home: homedir,
     decider: {

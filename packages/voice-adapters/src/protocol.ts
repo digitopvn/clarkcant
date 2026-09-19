@@ -102,8 +102,9 @@ export function buildAudioMessage(pcm16: Uint8Array): Record<string, unknown> {
 /**
  * A text turn.
  *
- * Used for tests and for opening a scripted session. Live voice does not need it, because audio
- * is committed by the provider's own activity detection.
+ * Two callers, for two reasons. Tests and scripted sessions use it to open a conversation without a
+ * microphone, and the adapter itself uses it to read the agent's reply out loud: the session's voice
+ * is the provider's, the words are not.
  */
 export function buildTextMessage(text: string): Record<string, unknown> {
   return { clientContent: { turns: [{ role: "user", parts: [{ text }] }], turnComplete: true } };
@@ -190,9 +191,14 @@ function transcriptsFrom(server: Record<string, unknown>): LiveEvent[] {
 
   const events: LiveEvent[] = [];
   for (const [field, role] of fields) {
-    const text = asString(asRecord(server[field])?.["text"]);
+    const record = asRecord(server[field]);
+    const text = asString(record?.["text"]);
     if (text === undefined || text === "") continue;
-    events.push({ kind: "transcript", role, text, final: false });
+    // `finished` is the provider saying this utterance is whole. It is the only end-of-utterance signal
+    // that does not depend on the model producing a turn: a session whose model has been told to stay
+    // quiet still finishes transcribing, while a boundary read from the model's turn never arrives - and
+    // that is exactly how a sentence was heard and then lost.
+    events.push({ kind: "transcript", role, text, final: record?.["finished"] === true });
   }
   return events;
 }

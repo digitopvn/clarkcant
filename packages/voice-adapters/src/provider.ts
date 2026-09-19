@@ -18,6 +18,15 @@ export interface VoiceProviderAdapter {
   disconnect(): Promise<void>;
   sendAudio(frame: Uint8Array): void;
   /**
+   * Say this text, in the provider's voice.
+   *
+   * The words belong to whoever produced the reply and the voice belongs to the provider, so the
+   * call carries the exact text and nothing else: it is not a prompt, and nothing in it invites the
+   * model to add, rephrase, answer or comment. Reading a reply aloud is the whole of its job, which
+   * is why the reply itself is produced somewhere else.
+   */
+  speak(text: string): void;
+  /**
    * Audio coming back from the provider, as PCM16 at the provider's output rate.
    *
    * A callback rather than a queue the caller polls: the caller is a socket that has to forward

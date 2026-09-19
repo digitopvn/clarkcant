@@ -40,10 +40,16 @@ import {
   listCalendarEvents,
   listConversations,
   listLocalImages,
-  listProjects,
   nextMessageSequence,
   oneRow,
+  deleteCredential,
+  putPreference,
 } from "@clarkcant/storage";
+import { credentialNames, putCredential } from "@clarkcant/storage";
+
+import { nodeBackgroundSessions } from "./background-sessions.ts";
+import { decideTurnAction, decisionTimeoutMsFromEnv, searchDecisionBudget } from "./jev-decider.ts";
+import { PI_BUILTIN_TOOLS, nodeToolCatalogue } from "./tool-catalogue.ts";
 
 import { isWithinRoot } from "./path-roots.ts";
 
@@ -57,10 +63,11 @@ import {
   updateLocalEvent,
 } from "./mini-app-data.ts";
 import { markProjectUsed, projectContext, resolveProject } from "./project-finder.ts";
-import { runApprovedCommand, type CommandPlacement } from "./run-command.ts";
+import { receiptForModel, runApprovedCommand } from "./run-command.ts";
 import { initialPrompt } from "./project-session.ts";
-import { indexMessages, ingestSessionEntries, searchSessions } from "./session-search.ts";
+import { indexMessages, ingestSessionEntries, searchSessions, textOfMessage } from "./session-search.ts";
 import { type NodeServices, buildTimeline } from "./services.ts";
+import { availableCredentials } from "./readiness.ts";
 
 /**
  * Authenticated command gateway.
@@ -217,6 +224,48 @@ export async function handleRequest(deps: GatewayDeps, request: GatewayRequest):
     });
   }
 
+  if (request.method === "GET" && request.path === "/model") {
+    // The catalogue comes from the SDK, so a provider added by upgrading pi appears here without this node changing,
+    // and the current selection is reported beside it rather than inferred from it: a node configured for a model its
+    // installation no longer offers is a state worth showing plainly instead of hiding.
+    const catalogue = await (services.modelCatalogue?.() ?? Promise.resolve([]));
+    return json(200, { current: services.model, catalogue });
+  }
+
+  /*
+   * A model a person chose.
+   *
+   * Stored, and applied to sessions created afterwards: the model is resolved when a session is created, which is the
+   * only moment a choice can reach one, so the answer names that scope rather than implying a conversation already
+   * running changed underneath somebody. A conversation that is open keeps the model it started with.
+   *
+   * The choice is still checked against the catalogue first: a stored model this installation cannot run would fail
+   * every later turn with a message about a provider rather than about the choice that caused it.
+   */
+  if (segments.length === 1 && segments[0] === "model" && request.method === "POST") {
+    const parsed = readJson(request);
+    if (!parsed.ok) return parsed.response;
+    const provider = typeof parsed.value.provider === "string" ? parsed.value.provider.trim() : "";
+    const id = typeof parsed.value.id === "string" ? parsed.value.id.trim() : "";
+    if (provider === "" || id === "") {
+      return fail(400, "INVALID_SCHEMA", "a model choice needs a provider and a model id");
+    }
+    const catalogue = await (services.modelCatalogue?.() ?? Promise.resolve([]));
+    const offered = catalogue.find((entry) => entry.id === provider);
+    if (catalogue.length > 0 && (offered === undefined || !offered.models.some((model) => model.id === id))) {
+      return fail(400, "INVALID_SCHEMA", `provider "${provider}" does not offer a model "${id}"`);
+    }
+    putPreference(services.runtime.db, {
+      principalId: services.runtime.identity.ownerPrincipalId,
+      key: "model",
+      value: `${provider}/${id}`,
+      scope: "node",
+      source: "settings",
+      at: nowInstant(),
+    });
+    return json(200, { ok: true, stored: { provider, id }, applies: "conversations started after this" });
+  }
+
   if (request.method === "GET" && request.path === "/capabilities") {
     return json(200, {
       // Summaries only: dumping every tool schema into every turn is both expensive and a
@@ -249,6 +298,148 @@ export async function handleRequest(deps: GatewayDeps, request: GatewayRequest):
     return await handleConversationRoutes(deps, request, segments, at);
   }
 
+  /*
+   * A secret a person typed.
+   *
+   * The response says what happened and nothing about what was said: the names that are now set, never the values
+   * and never how long they were. A length is a fact about a secret, and a card that printed one would be the
+   * first place it leaked from. Nothing here logs the body either, which is why an invalid request names the
+   * shape it wanted rather than echoing what it got.
+   */
+  if (segments.length === 1 && segments[0] === "credentials" && request.method === "POST") {
+    const parsed = readJson(request);
+    if (!parsed.ok) return parsed.response;
+    const fields = parsed.value.fields;
+    if (!Array.isArray(fields) || fields.length === 0) {
+      return fail(400, "INVALID_SCHEMA", "a credential request must carry at least one field");
+    }
+    const at = nowInstant();
+    // The node's owner, read here rather than from the conversation-scoped binding the routes below use: this
+    // route is not about a conversation, and a secret is stored against the person who typed it, not against
+    // the thread they happened to be in.
+    const owner = services.runtime.identity.ownerPrincipalId;
+    for (const field of fields as { name?: unknown; value?: unknown }[]) {
+      const name = typeof field.name === "string" ? field.name.trim() : "";
+      const value = typeof field.value === "string" ? field.value : "";
+      if (name === "" || value === "") {
+        return fail(400, "INVALID_SCHEMA", "every credential field needs a name and a value");
+      }
+      putCredential(services.runtime.db, { principalId: owner, name, value, at });
+    }
+    return json(201, { ok: true, names: credentialNames(services.runtime.db, owner) });
+  }
+
+  /*
+   * The work running behind the conversation.
+   *
+   * A count and a list rather than a single flag, because the useful question is not "is something running" but
+   * "what is running, and did the last one finish". Newest first, and empty when nothing has been started - an
+   * invented placeholder entry would make the count meaningless.
+   */
+  /*
+   * One request, run somewhere else, asked for directly.
+   *
+   * The decider is one way a background request happens; a person highlighting a passage and saying "do this
+   * elsewhere" is the other, and it must not depend on the decider having an opinion about it.
+   */
+  /*
+   * A secret a person takes back.
+   *
+   * This is what logging out of a provider is: the key is the only thing the node holds, so a node that has forgotten
+   * it stops using that provider on the next turn. The answer names what remains, never a value and never a length.
+   */
+  if (segments.length === 2 && segments[0] === "credentials" && request.method === "DELETE") {
+    const name = decodeURIComponent(segments[1] ?? "").trim();
+    if (name === "") return fail(400, "INVALID_SCHEMA", "a credential name is required");
+    const owner = services.runtime.identity.ownerPrincipalId;
+    const removed = deleteCredential(services.runtime.db, owner, name);
+    // 404 rather than a cheerful 200 for a name that was not there: "I removed it" and "there was nothing to remove"
+    // are different answers, and a surface that cannot tell them apart cannot say why nothing changed.
+    if (!removed) return fail(404, "RESOURCE_NOT_FOUND", `no credential named ${name}`);
+    return json(200, { ok: true, names: credentialNames(services.runtime.db, owner) });
+  }
+
+  if (segments.length === 1 && segments[0] === "background-sessions" && request.method === "POST") {
+    const parsed = readJson(request);
+    if (!parsed.ok) return parsed.response;
+    const text = typeof parsed.value.text === "string" ? parsed.value.text.trim() : "";
+    const requested = typeof parsed.value.conversationId === "string" ? parsed.value.conversationId : "";
+    if (text === "" || requested === "") {
+      return fail(400, "INVALID_SCHEMA", "a background request needs a conversationId and a non-empty text");
+    }
+    // The owner of this node, built here because this route sits above the branch where the request's own principal is
+    // resolved: a background request from a selection is the owner's, and there is no other person it could be.
+    const owner: Principal = {
+      principalId: runtime.identity.ownerPrincipalId as Principal["principalId"],
+      kind: "user",
+      nodeId: runtime.identity.nodeId as Principal["nodeId"],
+    };
+    const started = startBackgroundWork(services, owner, () => at() as never, requested, text);
+    if ("refusal" in started) return fail(409, "BACKGROUND_UNAVAILABLE", started.refusal);
+    return json(202, { accepted: true, sessionId: started.sessionId });
+  }
+
+  /*
+   * What this node can do, and what the agent it drives can do.
+   *
+   * Two lists rather than one, because they are two different things and a reader needs to know which is which: the
+   * harness's tools are this node's own, and the agent's are pi's. An extension's tools are not listed because they
+   * depend on pi's own configuration, and a list that guessed at them would be wrong in the one direction that
+   * matters - claiming a capability this node does not have.
+   */
+  /*
+   * What pi loads on this machine.
+   *
+   * Names and kinds, never contents: an extension can hold a credential, and a listing that read files would be the place
+   * it leaked from. Reported apart from this harness's own tools for the same reason the tab reports two lists - a reader
+   * deciding whether something is possible needs to know which half would do it.
+   */
+  if (segments.length === 1 && segments[0] === "extensions" && request.method === "GET") {
+    return json(200, { extensions: await (services.extensions?.() ?? Promise.resolve([])) });
+  }
+
+  /*
+   * pi's own configuration.
+   *
+   * Scalars, with anything whose name sounds like a secret already redacted by the adapter, which is also where the
+   * decision not to read auth.json lives. A panel showing configuration has no business near a credentials file, and the
+   * redaction happens at the one place that can see the file rather than on the way out of here.
+   */
+  /*
+   * What this node has already been told.
+   *
+   * Built for the first run, which should not ask for a provider, a model and a key that are already configured - and it
+   * says nothing an operator could not read out of their own .env file. Names only, never values, and never a length.
+   */
+  if (segments.length === 1 && segments[0] === "readiness" && request.method === "GET") {
+    return json(200, {
+      model: services.model !== null,
+      credentials: availableCredentials({
+        env: process.env,
+        vault: credentialNames(services.runtime.db, services.runtime.identity.ownerPrincipalId),
+      }),
+    });
+  }
+
+  if (segments.length === 1 && segments[0] === "pi-settings" && request.method === "GET") {
+    return json(200, { settings: await (services.piSettings?.() ?? Promise.resolve([])) });
+  }
+
+  if (segments.length === 1 && segments[0] === "tools" && request.method === "GET") {
+    return json(200, {
+      self: nodeToolCatalogue(),
+      agent: PI_BUILTIN_TOOLS,
+      agentNote: "Công cụ gốc của pi. Extension mà pi tự nạp thêm thì không liệt kê ở đây.",
+    });
+  }
+
+  if (segments.length === 1 && segments[0] === "background-sessions" && request.method === "GET") {
+    return json(200, {
+      running: nodeBackgroundSessions.running(),
+      sessions: nodeBackgroundSessions.list(),
+    });
+  }
+
   if (request.method === "POST" && request.path === "/command") {
     return handleRawCommand(deps, request, at);
   }
@@ -269,20 +460,6 @@ export async function handleRequest(deps: GatewayDeps, request: GatewayRequest):
  * Both halves are read fresh rather than captured when the request was made: an approval can sit for a
  * quarter of an hour, and a project that was indexed then may not be known now.
  */
-function commandPlacement(services: NodeServices): CommandPlacement {
-  return {
-    approvedRoots: services.projects.roots(),
-    knownProjects: listProjects(services.runtime.db, services.runtime.identity.nodeId).map((project) => project.path),
-  };
-}
-
-/**
- * Every block of every message in a conversation, flattened.
- *
- * Used by the approval route to find the card that holds the approved operation. Deliberately not part of
- * the timeline response: the block is already in the transcript, and asking for it through the same read
- * path is what keeps the two from disagreeing.
- */
 function blocksOfConversation(services: NodeServices, conversationId: string): Record<string, unknown>[] {
   const timeline = buildTimeline(services, { conversationId, afterSequence: 0 });
   const blocks: Record<string, unknown>[] = [];
@@ -300,6 +477,47 @@ function blocksOfConversation(services: NodeServices, conversationId: string): R
  * paragraph. `text` stays because most host replies are one sentence, and a caller that has to build a
  * text block by hand is a caller that will eventually build it wrong.
  */
+/**
+ * Starts one request in a worker of its own, and reports it when the worker settles.
+ *
+ * One implementation for the two ways this happens: the decider choosing background for a message sent mid-turn, and a
+ * person asking for one from a selection. At module scope rather than inside the request handler, because the handler
+ * has blocks that do not contain each other and a declaration in one of them is invisible from another - which is what
+ * a first attempt at this did.
+ *
+ * The registry is written before the worker starts rather than after, so the count is right while somebody is looking at
+ * it, and a failure comes back into the conversation as a message too: background work that fails in silence is worse
+ * than work that never started.
+ */
+function startBackgroundWork(
+  services: NodeServices,
+  principal: Principal,
+  at: () => Instant,
+  conversationId: string,
+  text: string,
+): { sessionId: string } | { refusal: string } {
+  const control = services.turnControl;
+  if (control === undefined) return { refusal: "node này không có model để chạy việc nền" };
+
+  const sessionId = services.conductor.newId("bg");
+  nodeBackgroundSessions.start({ sessionId, title: text.slice(0, 120), at: at() });
+  void (async () => {
+    try {
+      const said = await control.runInBackground({ conversationId, principal, text });
+      nodeBackgroundSessions.finish({ sessionId, status: "done", at: at() });
+      if (said !== "") appendHostReply(services, { conversationId, text: said, at: at() });
+    } catch (cause) {
+      nodeBackgroundSessions.finish({ sessionId, status: "failed", at: at() });
+      appendHostReply(services, {
+        conversationId,
+        text: `Việc nền không xong: ${cause instanceof Error ? cause.message : String(cause)}`,
+        at: at(),
+      });
+    }
+  })();
+  return { sessionId };
+}
+
 function appendHostReply(
   services: NodeServices,
   input: { conversationId: string; text?: string; blocks?: MessageBlock[]; at: Instant },
@@ -730,12 +948,55 @@ async function handleConversationRoutes(
       return fail(400, "INVALID_SCHEMA", "a message must carry a non-empty text field");
     }
 
+    /*
+     * A message sent while the assistant is still working.
+     *
+     * The three answers are not interchangeable, so the decider chooses rather than a rule. Two of them need nothing
+     * new and are handled here: joining the turn already running, and stopping it so this message takes its place. The
+     * third - doing this in the background while the current work carries on - still needs a worker, so a background
+     * answer is treated as an interrupt, because running the message is what sending it asked for.
+     *
+     * A turn's elapsed time is not tracked yet, so the decider is told zero. That biases it toward interrupt, which is
+     * the recoverable direction rather than the silent one.
+     */
+    const control = services.turnControl;
+    if (control !== undefined && control.running().includes(conversationId)) {
+      const decided = await decideTurnAction(
+        {
+          jev: services.jev.deps,
+          budget: () => searchDecisionBudget(services.jev.config, { timeoutMs: decisionTimeoutMsFromEnv(process.env) }),
+        },
+        { text, runningMs: 0 },
+      );
+      const action = decided.status === "decided" ? decided.action : "interrupt";
+      if (action === "steer" && (await control.steer(conversationId, text))) {
+        return json(202, {
+          accepted: true,
+          resolution: "steered",
+          ...(decided.status === "decided" ? {} : { reason: decided.reason }),
+        });
+      }
+      if (action === "background") {
+        const started = startBackgroundWork(services, principal, () => at() as never, conversationId, text);
+        // No worker to run it in: the message is what the person asked for, so it becomes the turn instead.
+        if ("refusal" in started) {
+          control.interrupt(conversationId);
+        } else {
+          return json(202, { accepted: true, resolution: "background", sessionId: started.sessionId });
+        }
+      }
+      // An interrupt, or a steer that found nothing left to join: either way this message becomes its own turn.
+      control.interrupt(conversationId);
+    }
+
     const at_ = at() as never;
     const outcome = await handleUserMessage(services.conductor, {
       conversationId: conversationId as never,
       principal,
       text: text.slice(0, 20_000),
       at: at_,
+      // Only the demo path asks for a scripted sample; a real message never gets one.
+      ...(parsed.value.demo === true ? { demo: true } : {}),
     });
 
     // Indexed here, where the messages were just written, so a message that exists is searchable.
@@ -778,7 +1039,18 @@ async function handleConversationRoutes(
       body: null,
       stream: {
         contentType: "text/event-stream",
-        run: (send) => streamUserMessage(services, { conversationId, principal, text: text.slice(0, 20_000), at: at_ }, send),
+        run: (send) =>
+          streamUserMessage(
+            services,
+            {
+              conversationId,
+              principal,
+              text: text.slice(0, 20_000),
+              at: at_,
+              ...(parsed.value.demo === true ? { demo: true } : {}),
+            },
+            send,
+          ),
       },
     };
   }
@@ -801,55 +1073,23 @@ async function handleConversationRoutes(
       return fail(400, "INVALID_SCHEMA", "a decision must carry decision: granted|denied and the digest it was shown");
     }
 
-    const coordination = {
-      db: services.runtime.db,
-      nodeId: services.runtime.identity.nodeId,
-      now: () => at() as never,
-      newId: services.conductor.newId,
-    };
-    const decided = decideApproval(coordination, {
-      approvalId: approvalId as never,
+    const decided = await decideApprovalForNode(services, {
+      conversationId,
+      approvalId,
       decision,
-      decidingPrincipal: principal,
-      seenOperationDigest: digest,
+      digest,
+      principal,
+      at: at() as never,
     });
     if (!decided.ok) return fail(409, decided.code, decided.message);
 
-    const at_ = at() as never;
-    if (decision === "denied") {
-      appendHostReply(services, {
-        conversationId,
-        text: "Đã từ chối chạy lệnh đó. Không có gì được chạy.",
-        at: at_,
-      });
-      return json(200, { decision, timeline: buildTimeline(services, { conversationId, afterSequence: 0 }) });
-    }
-
-    // The payload lives with the card that displayed it, so the operation approved and the operation run
-    // are the same record rather than two copies that can drift.
-    const card = blocksOfConversation(services, conversationId).find(
-      (block) => block.type === "approval-card" && block.approvalId === approvalId,
-    );
-    const payload = card !== undefined && typeof card.payload === "string" ? card.payload : undefined;
-    if (payload === undefined) {
-      return fail(409, "APPROVAL_PAYLOAD_MISSING", "the approved operation is not in this conversation");
-    }
-
-    const ran = await runApprovedCommand({
-      payload,
-      expectedDigest: decided.approval.operationDigest,
-      placement: commandPlacement(services),
-      approvalId,
-    });
-    if (!ran.ok) return fail(409, ran.code, ran.message);
-
-    appendHostReply(services, { conversationId, blocks: ran.blocks, at: at_ });
     return json(200, {
       decision,
-      outcome: ran.description,
+      ...(decided.outcome === undefined ? {} : { outcome: decided.outcome }),
       timeline: buildTimeline(services, { conversationId, afterSequence: 0 }),
     });
   }
+
 
   // /conversations/:id/start-session
   if (segments.length === 3 && segments[2] === "start-session" && request.method === "POST") {
@@ -1167,6 +1407,110 @@ async function handleConversationRoutes(
 }
 
 /**
+ * Carry out a decision on an operation the agent asked for.
+ *
+ * Shared by the HTTP route and the voice session, because "the user approved this" has to mean exactly the
+ * same thing in both places: the decider must be a user, the digest the approver saw must match the one
+ * stored with the request, the payload comes from the card that displayed it rather than from the caller,
+ * and that payload is hashed again before anything runs. A refusal is never a block - a message describing
+ * something that did not happen is how a transcript starts lying.
+ */
+export async function decideApprovalForNode(
+  services: NodeServices,
+  input: {
+    conversationId: string;
+    approvalId: string;
+    decision: "granted" | "denied";
+    digest: string;
+    principal: { principalId: string; kind: "user"; nodeId: string };
+    at: Instant;
+  },
+): Promise<{ ok: true; outcome?: string; continuation?: string } | { ok: false; code: string; message: string }> {
+  const coordination = {
+    db: services.runtime.db,
+    nodeId: services.runtime.identity.nodeId,
+    now: () => input.at as never,
+    newId: services.conductor.newId,
+  };
+  const decided = decideApproval(coordination, {
+    approvalId: input.approvalId as never,
+    decision: input.decision,
+    decidingPrincipal: input.principal as never,
+    seenOperationDigest: input.digest,
+  });
+  if (!decided.ok) return { ok: false, code: decided.code, message: decided.message };
+
+  if (input.decision === "denied") {
+    appendHostReply(services, {
+      conversationId: input.conversationId,
+      text: "Đã từ chối chạy lệnh đó. Không có gì được chạy.",
+      at: input.at,
+    });
+    return { ok: true };
+  }
+
+  // The payload lives with the card that displayed it, so the operation approved and the operation run are
+  // the same record rather than two copies that can drift.
+  const card = blocksOfConversation(services, input.conversationId).find(
+    (block) => block.type === "approval-card" && block.approvalId === input.approvalId,
+  );
+  const payload = card !== undefined && typeof card.payload === "string" ? card.payload : undefined;
+  if (payload === undefined) {
+    return { ok: false, code: "APPROVAL_PAYLOAD_MISSING", message: "the approved operation is not in this conversation" };
+  }
+
+  const ran = await runApprovedCommand({
+    payload,
+    expectedDigest: decided.approval.operationDigest,
+    approvalId: input.approvalId,
+  });
+  if (!ran.ok) return { ok: false, code: ran.code, message: ran.message };
+
+  appendHostReply(services, { conversationId: input.conversationId, blocks: ran.blocks, at: input.at });
+
+  /*
+   * Hand the outcome back to the agent.
+   *
+   * The turn that proposed this command ended with the card: the model asked, the tool returned an
+   * acknowledgement, and the turn was over. Nothing else will ever tell it what happened, so without this the
+   * transcript shows a command that ran and an agent that never noticed - a receipt, and then silence, which is
+   * exactly what it looked like.
+   *
+   * The result is fed back as what it is: real output rather than a prediction, with the instruction to carry
+   * on. It is a new turn in the same conversation, so it costs a model call, and that cost is the difference
+   * between an agent that asked for help and one that stops at the asking.
+   */
+  const receipt = receiptForModel(ran.blocks);
+  const continued = await handleUserMessage(services.conductor, {
+    conversationId: input.conversationId as never,
+    principal: input.principal as never,
+    text: "Lệnh đã được duyệt và đã chạy xong.",
+    /*
+     * The receipt goes to the model rather than into the transcript.
+     *
+     * The card above the line already shows the command, its verdict and its output as a code block, and the
+     * model needs the output to carry on. Putting it in the message as well printed the same output twice -
+     * once in the receipt, once in the message that followed it - which is what a reader complained about.
+     */
+    note: `${receipt}\n\nĐây là kết quả thật, không phải dự đoán. Hãy tiếp tục công việc đang làm dở.`,
+    at: input.at,
+  });
+  // Indexed where the messages were written, so a continuation is findable like anything else said.
+  indexMessages(services.search, {
+    conversationId: input.conversationId,
+    messages: continued.messages,
+    at: input.at,
+  });
+  const said = continued.messages
+    .filter((message) => message.role === "assistant")
+    .map((message) => textOfMessage(message))
+    .join("\n\n")
+    .trim();
+
+  return { ok: true, outcome: ran.description, ...(said === "" ? {} : { continuation: said }) };
+}
+
+/**
  * Write one server-sent event.
  *
  * The payload is JSON on a single `data:` line rather than a raw string, because a delta can contain
@@ -1189,7 +1533,7 @@ function sse(event: string, payload: unknown): string {
  */
 async function streamUserMessage(
   services: NodeServices,
-  input: { conversationId: string; principal: Principal; text: string; at: Instant },
+  input: { conversationId: string; principal: Principal; text: string; at: Instant; demo?: boolean },
   send: (chunk: string) => void,
 ): Promise<void> {
   try {
@@ -1198,6 +1542,7 @@ async function streamUserMessage(
       principal: input.principal,
       text: input.text,
       at: input.at,
+      ...(input.demo === true ? { demo: true } : {}),
       emit: (event) => {
         // One frame per event the turn produced, named as the turn named it. Translating here would
         // mean two vocabularies for the same facts, and the transcript stores one of them.

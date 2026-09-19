@@ -14,6 +14,7 @@ import {
   type VoiceRole,
   buildAudioMessage,
   buildSetupMessage,
+  buildTextMessage,
   parseServerMessage,
 } from "./protocol.ts";
 
@@ -196,6 +197,21 @@ export class GeminiLiveAdapter implements VoiceProviderAdapter {
   }
 
   /**
+   * Read a given text out loud.
+   *
+   * A text turn, which the provider speaks in the session's voice. Mute is deliberately not consulted:
+   * mute stops the microphone, and a reply that went unspoken because the user had muted their own
+   * microphone would be a bug shaped like a feature. Dropped before setup completes, because the setup
+   * message has to be first on the socket, and dropped when empty because a silent turn still costs a
+   * round trip and produces a stretch of silence that looks like a stall.
+   */
+  speak(text: string): void {
+    const socket = this.#socket;
+    if (socket === undefined || this.#state === "connecting" || text.trim() === "") return;
+    socket.send(JSON.stringify(buildTextMessage(text)));
+  }
+
+  /**
    * Mute, locally.
    *
    * The flag stops frames at this adapter, and the surface stops capture as well. Two places
@@ -287,7 +303,9 @@ export class GeminiLiveAdapter implements VoiceProviderAdapter {
         return;
       }
       case "transcript": {
-        this.#emitFragment(event.role, event.text, false);
+        // The provider's own end-of-utterance flag is passed through: it is what closes a sentence when
+        // the model says nothing, which is the normal case here.
+        this.#emitFragment(event.role, event.text, event.final);
         return;
       }
       case "turnComplete": {

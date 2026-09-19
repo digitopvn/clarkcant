@@ -65,6 +65,12 @@ test("a proposed command runs only after the user approves it", async ({ page })
   // from the receipt rather than from the card itself.
   await expect(card.locator("[data-approve]")).toHaveCount(0);
   await expect(card.locator('[data-approval-decision="answered"]')).toBeVisible();
+
+  // And the agent picked the work back up. The turn that proposed the command ended with the card, so nothing
+  // else would ever tell it what happened: the outcome is fed back and this is the answer to it.
+  await expect(page.locator('[data-role="assistant"]').last()).toContainText("tiếp tục công việc", {
+    timeout: 20_000,
+  });
 });
 
 test("refusing runs nothing and says so", async ({ page }) => {

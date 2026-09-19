@@ -6,7 +6,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { nodeIdSchema } from "@clarkcant/contracts";
 import { FakePiAdapter, type WorkerBrief } from "@clarkcant/pi-adapter";
 import { requestApproval, setPreference, type ModelTurnInput } from "@clarkcant/core";
-import { appendMessage, nextMessageSequence } from "@clarkcant/storage";
+import { appendMessage, nextMessageSequence, readCredential, readPreference } from "@clarkcant/storage";
 
 import { handleRequest, type GatewayDeps, type GatewayRequest, type GatewayResponse } from "../src/gateway.ts";
 import { commandDigest } from "../src/run-command.ts";
@@ -144,7 +144,7 @@ describe("J1 over the API", async () => {
   it("answers a first message with a labelled sample and a renderable widget", async () => {
     conversationId = await createConversation();
     const response = await request("POST", `/conversations/${conversationId}/messages`, {
-      body: { text: "cho tui xem biểu đồ" },
+      body: { text: "cho tui xem biểu đồ", demo: true },
     });
     expect(response.status).toBe(202);
 
@@ -166,7 +166,7 @@ describe("J1 over the API", async () => {
 
   it("returns the instances the timeline references, with props", async () => {
     conversationId = await createConversation();
-    await request("POST", `/conversations/${conversationId}/messages`, { body: { text: "cho tui xem bảng" } });
+    await request("POST", `/conversations/${conversationId}/messages`, { body: { text: "cho tui xem bảng", demo: true } });
     const timeline = await request("GET", `/conversations/${conversationId}/timeline`);
     expect(timeline.status).toBe(200);
 
@@ -199,7 +199,7 @@ describe("J1 over the API", async () => {
 
   it("supports the whole pin lifecycle, and unpinning keeps the widget data", async () => {
     conversationId = await createConversation();
-    await request("POST", `/conversations/${conversationId}/messages`, { body: { text: "cho tui xem biểu đồ" } });
+    await request("POST", `/conversations/${conversationId}/messages`, { body: { text: "cho tui xem biểu đồ", demo: true } });
     const timeline = (await request("GET", `/conversations/${conversationId}/timeline`)).body as {
       instances: { instanceId: string }[];
     };
@@ -733,3 +733,144 @@ describe("a command runs only when the user approves the one that was displayed"
     expect(JSON.stringify(blocks)).toContain("Đã từ chối");
   });
 });
+
+/**
+ * A secret a person typed.
+ *
+ * The assertions about what the answer does *not* contain carry as much weight as the one about what was stored:
+ * a response that carried the value would be the first place it leaked from, and nothing downstream would
+ * notice, because a key in a card looks like a key in a card.
+ */
+describe("a secret a person types", () => {
+  const owner = (): string => services.runtime.identity.ownerPrincipalId;
+
+  it("is stored, and the answer says only what is now set", async () => {
+    const response = await request("POST", "/credentials", {
+      body: { fields: [{ name: "gemini", value: "AIza-not-a-real-key" }] },
+    });
+
+    expect(response.status).toBe(201);
+    const body = response.body as { ok?: boolean; names?: string[] };
+    expect(body.ok).toBe(true);
+    expect(body.names).toEqual(["gemini"]);
+    expect(JSON.stringify(body)).not.toContain("AIza");
+    // Reachable through the host's reader, which is the only door out of the vault.
+    expect(readCredential(services.runtime.db, owner(), "gemini")).toBe("AIza-not-a-real-key");
+  });
+
+  it("replaces a name instead of adding a second one", async () => {
+    await request("POST", "/credentials", { body: { fields: [{ name: "typesafe", value: "first" }] } });
+    const second = await request("POST", "/credentials", { body: { fields: [{ name: "typesafe", value: "second" }] } });
+
+    expect((second.body as { names?: string[] }).names).toEqual(["typesafe"]);
+    expect(readCredential(services.runtime.db, owner(), "typesafe")).toBe("second");
+  });
+
+  it("refuses a body it cannot use without repeating what it got", async () => {
+    const response = await request("POST", "/credentials", {
+      body: { fields: [{ name: "", value: "secret-shaped" }] },
+    });
+
+    expect(response.status).toBe(400);
+    expect(JSON.stringify(response.body)).not.toContain("secret-shaped");
+  });
+});
+
+describe("the model catalogue route", () => {
+  it("reports what the model turn offers, and an honest empty list on a node with none", async () => {
+    // A node whose model turn failed to build offers nothing, and an empty list is the honest answer - the route is
+    // still a working route. This is also the state the fixture e2e node boots in, so asserting it beats assuming it.
+    const empty = await request("GET", "/model");
+    expect(empty.status).toBe(200);
+    expect(empty.body).toEqual({ current: null, catalogue: [] });
+
+    services.modelCatalogue = async () => [
+      { id: "fake", models: [{ provider: "fake", id: "fake-model", current: true }] },
+    ];
+
+    // Read on demand rather than held as a snapshot: a provider added by upgrading pi is visible without a restart.
+    const listed = await request("GET", "/model");
+    expect(listed.status).toBe(200);
+    expect(listed.body).toEqual({
+      current: null,
+      catalogue: [{ id: "fake", models: [{ provider: "fake", id: "fake-model", current: true }] }],
+    });
+  });
+});
+
+describe("taking a credential back", () => {
+  it("removes a name it holds, reports what remains, and 404s a name it never had", async () => {
+    const saved = await request("POST", "/credentials", {
+      body: { fields: [{ name: "probe_key", value: "not-a-real-key" }] },
+    });
+    expect(saved.status).toBe(201);
+
+    const removed = await request("DELETE", "/credentials/probe_key");
+    expect(removed.status).toBe(200);
+    // Names, never values and never lengths: a length is a fact about a secret.
+    expect((removed.body as { names: string[] }).names).not.toContain("probe_key");
+
+    // "I removed it" and "there was nothing to remove" are different answers, and a surface that cannot tell them
+    // apart cannot tell a person why nothing changed.
+    const again = await request("DELETE", "/credentials/probe_key");
+    expect(again.status).toBe(404);
+  });
+});
+
+describe("choosing a model", () => {
+  it("stores the choice, claims nothing more, and refuses one this node cannot run", async () => {
+    const response = await request("POST", "/model", { body: { provider: "fake", id: "fake-model" } });
+    expect(response.status).toBe(200);
+    expect(response.body as Record<string, unknown>).toMatchObject({
+      ok: true,
+      stored: { provider: "fake", id: "fake-model" },
+    });
+
+    // Read back through the same layer the node reads at boot: the running session is deliberately not swapped
+    // underneath the person, so this fact is the one that matters.
+    expect(
+      readPreference(services.runtime.db, services.runtime.identity.ownerPrincipalId, "model", "node"),
+    ).toBe("fake/fake-model");
+
+    // A half-made choice is refused rather than stored as something the next boot cannot use.
+    const incomplete = await request("POST", "/model", { body: { provider: "fake" } });
+    expect(incomplete.status).toBe(400);
+
+    // And with a catalogue in hand, a model outside it is refused by name: a stored model this installation cannot run
+    // would fail every later turn with a message about a provider rather than about the choice that caused it.
+    services.modelCatalogue = async () => [
+      { id: "fake", models: [{ provider: "fake", id: "fake-model", current: false }] },
+    ];
+    const unknown = await request("POST", "/model", { body: { provider: "fake", id: "not-offered" } });
+    expect(unknown.status).toBe(400);
+  });
+});
+
+describe("the extension listing", () => {
+  it("reports what pi loads, and an empty list on a node that has been told nothing", async () => {
+    const empty = await request("GET", "/extensions");
+    expect(empty.status).toBe(200);
+    expect(empty.body).toEqual({ extensions: [] });
+
+    services.extensions = async () => [{ name: "an-extension", kind: "directory" as const }];
+    const listed = await request("GET", "/extensions");
+    // Two lists, two answers: this one is pi's own and never claims to be this harness's tools.
+    expect(listed.body).toEqual({ extensions: [{ name: "an-extension", kind: "directory" }] });
+    expect(listed.body).not.toHaveProperty("self");
+  });
+});
+
+describe("pi's own configuration over the API", () => {
+  it("reports settings apart from tools, and an empty list when it has been told nothing", async () => {
+    const empty = await request("GET", "/pi-settings");
+    expect(empty.status).toBe(200);
+    expect(empty.body).toEqual({ settings: [] });
+
+    services.piSettings = async () => [{ key: "defaultModel", value: "a-model" }];
+    const listed = await request("GET", "/pi-settings");
+    expect(listed.body).toEqual({ settings: [{ key: "defaultModel", value: "a-model" }] });
+    // Its own key rather than a shared one: this answer is about pi's configuration, not about this node's tools.
+    expect(listed.body).not.toHaveProperty("extensions");
+  });
+});
+

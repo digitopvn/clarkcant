@@ -47,6 +47,14 @@ export interface VoiceSessionEvents {
    */
   onAudioFrame?(received: number): void;
   /**
+   * A sentence the agent could not answer.
+   *
+   * Deliberately not `onError`: the session is still open and the microphone still works, so this is
+   * one sentence that did not get through rather than a session that failed. The next sentence is
+   * already being listened for.
+   */
+  onAnswerFailed?(input: { code: string; message: string }): void;
+  /**
    * Called once per capture frame handed to the socket.
    *
    * The counterpart of `onAudioFrame`, and needed for the same reason: "the microphone is open"
@@ -65,6 +73,13 @@ export interface VoiceSessionEvents {
   onLevel?(update: { source: "microphone" | "agent"; level: number }): void;
   /** A refusal or transport failure, already worded for a person. */
   onError(message: string): void;
+  /**
+   * The node refused to open the session, with what it refused for.
+   *
+   * Separate from `onError` because a refusal is a thing the interface can act on rather than a failure: a node
+   * with no credential for the live provider says which one it needs, and the person can supply it and try again.
+   */
+  onRefused?: (input: { code: string; message: string; reason?: string; credentialName?: string }) => void;
   onEnded(recordedMessages: number): void;
 }
 
@@ -220,6 +235,15 @@ export async function startVoiceSession(options: StartVoiceSessionOptions): Prom
           return;
         }
         case "denied": {
+          // Reported with what the node refused for, because a refusal is something the interface can act on: a node
+          // with no credential for the live provider says which one it needs, and the person can supply it and try
+          // again. The session still fails, so the failure path below runs unchanged.
+          events.onRefused?.({
+            code: typeof control["code"] === "string" ? control["code"] : "VOICE_REFUSED",
+            message: typeof control["message"] === "string" ? control["message"] : "node từ chối mở phiên thoại",
+            ...(typeof control["reason"] === "string" ? { reason: control["reason"] } : {}),
+            ...(typeof control["credentialName"] === "string" ? { credentialName: control["credentialName"] } : {}),
+          });
           fail(typeof control["message"] === "string" ? control["message"] : "the node refused the voice session");
           socket.close();
           return;
@@ -239,6 +263,13 @@ export async function startVoiceSession(options: StartVoiceSessionOptions): Prom
         }
         case "ended": {
           void finish(typeof control["recordedMessages"] === "number" ? control["recordedMessages"] : 0);
+          return;
+        }
+        case "error": {
+          events.onAnswerFailed?.({
+            code: typeof control["code"] === "string" ? control["code"] : "VOICE_ERROR",
+            message: typeof control["message"] === "string" ? control["message"] : "node báo một lỗi không rõ",
+          });
           return;
         }
         default:
@@ -376,7 +407,7 @@ export function voiceSocketUrl(nodeBaseUrl: string): string {
  * The loudness of one frame, from 0 to 1.
  *
  * Root mean square rather than peak: a peak meter jumps to full on a single click, so a table being set
-down reads as loud as speech. Normalised by the sample format's full scale, then scaled up, because the
+ * down reads as loud as speech. Normalised by the sample format's full scale, then scaled up, because the
  * RMS of ordinary speech is around 0.05 — on a bar chart that is indistinguishable from silence, and a
  * waveform nobody can see is worse than no waveform.
  */

@@ -20,6 +20,11 @@ import type { ThemeName } from "@clarkcant/design-tokens";
 import { AgentAvatar } from "./AgentAvatar.tsx";
 import { ReasoningBlock, ToolActivityBlock, type BlockActions } from "./blocks.tsx";
 import { composerTextareaHeight } from "./composer-height.ts";
+import { followsBottom } from "./follow-bottom.ts";
+import { latestTurnMetrics, statuslineParts } from "./statusline.ts";
+import { attachedPrompt, explainPrompt } from "./selection.ts";
+import { SelectionToolbar } from "./selection-toolbar.tsx";
+import { BackgroundSessionsMark } from "./background-sessions-mark.tsx";
 import { applyLiveEvent, type LiveSegment } from "./live-reply.ts";
 import { Markdown } from "./markdown.tsx";
 import { Orb } from "./Orb.tsx";
@@ -78,10 +83,12 @@ type ConnectionState = "connecting" | "ready" | "offline";
  * missing, and the fourth chip says which of those is true.
  */
 const SUGGESTIONS = [
-  { label: "Làm gì đó", text: "cho tui xem biểu đồ", detail: "chạy trên dữ liệu mẫu" },
-  { label: "Sửa một lỗi", text: "tạo note nhanh cho tui", detail: "chạy trên dữ liệu mẫu" },
-  { label: "Xem dự án của tui", text: "cho tui xem bảng dữ liệu", detail: "chạy trên dữ liệu mẫu" },
-  { label: "Chỉ trò chuyện", text: "chào bạn, bạn làm được gì?", detail: "cần model" },
+  // `demo: true` is what makes these chips the only way a scripted sample runs: the label says the data is sample
+  // data, and the flag is what the node reads to decide whether a scripted reply is allowed at all.
+  { label: "Làm gì đó", text: "cho tui xem biểu đồ", detail: "chạy trên dữ liệu mẫu", demo: true },
+  { label: "Sửa một lỗi", text: "tạo note nhanh cho tui", detail: "chạy trên dữ liệu mẫu", demo: true },
+  { label: "Xem dự án của tui", text: "cho tui xem bảng dữ liệu", detail: "chạy trên dữ liệu mẫu", demo: true },
+  { label: "Chỉ trò chuyện", text: "chào bạn, bạn làm được gì?", detail: "cần model", demo: false },
 ] as const;
 
 /**
@@ -105,10 +112,12 @@ const PLACEHOLDER_PHRASES = [
  * glow that is meant to fade. 960 with a smaller radius keeps the ball exactly the size it was and nearly
  * doubles the room around it.
  */
-const ORB_DRAW_SIZE = 960;
+export const ORB_DRAW_SIZE = 960;
+/** How often the conversation is re-read while a spoken turn runs, at most. */
+const VOICE_REFRESH_INTERVAL_MS = 400;
 
 /** The ball's radius as a fraction of the canvas half-height: 0.54 x 960 is the 518 pixel ball. */
-const ORB_RADIUS = 0.54;
+export const ORB_RADIUS = 0.54;
 
 /**
  * The orb's diameter once it is docked behind the composer.
@@ -246,6 +255,14 @@ export function Conversation({
     });
   }, [themeChoice]);
   const scroller = useRef<HTMLDivElement>(null);
+  /**
+   * Whether the reader is at the bottom of the transcript.
+   *
+   * Following is something the reader chooses by being at the bottom, not a property of the transcript: a
+   * streamed answer grows on every delta, and a view that follows it unconditionally pulls the page back down
+   * each time someone scrolls up to read what came before. That is the fight this records, and ends.
+   */
+  const followBottom = useRef(true);
 
   /**
    * How long the hero takes to leave, read from the motion tokens.
@@ -375,13 +392,21 @@ export function Conversation({
     measureOrb();
     window.addEventListener("resize", measureOrb);
     const observer = typeof ResizeObserver === "function" ? new ResizeObserver(() => measureOrb()) : undefined;
-    for (const node of [heroOrb.current, composerWrap.current]) {
-      if (node !== null && observer !== undefined) observer.observe(node);
+    // The hero's own box is observed as well as the reserved space inside it, because what moves the
+    // anchor is the text around it growing - the heading arriving with the webfont, the paragraph
+    // wrapping - and a resize of the anchor's parent re-measures where the anchor ended up.
+    for (const node of [heroOrb.current?.parentElement, heroOrb.current, composerWrap.current]) {
+      if (node !== null && node !== undefined && observer !== undefined) observer.observe(node);
     }
+    // And again as the layout settles over the first second - the health check returning, the composer's
+    // own line arriving - because the first measurement describes the page before any of that. Bounded
+    // on purpose: a settle window, not a loop.
+    const settleTimers = [0, 50, 150, 400, 900].map((ms) => setTimeout(() => measureOrb(), ms));
     // The webfont arrives after the first paint and changes how tall the hero's text is, which moves
     // the reserved space the orb is placed against.
     void document.fonts?.ready.then(() => measureOrb());
     return () => {
+      for (const timer of settleTimers) clearTimeout(timer);
       observer?.disconnect();
       window.removeEventListener("resize", measureOrb);
     };
@@ -409,6 +434,45 @@ export function Conversation({
       onTimelineChange?.(next);
     },
     [onTimelineChange],
+  );
+
+  /**
+   * Read the conversation again.
+   *
+   * A voice session answers through the conductor like any other message, but over its own socket, so
+   * nothing draws the result here. This is the ask that keeps the two views of one conversation from
+   * disagreeing until someone reloads the page.
+   */
+  const refreshTimeline = useCallback((): void => {
+    if (conversationId === undefined) return;
+    void client
+      .timeline(conversationId)
+      .then((loaded) => applyTimeline(loaded))
+      .catch(() => undefined);
+  }, [applyTimeline, client, conversationId]);
+
+  /**
+   * The same read, while a spoken turn is still running.
+   *
+   * A sentence someone has just spoken should appear as a message, and the answer should grow as it is written,
+   * instead of both arriving when the turn ends - which reads as the interface having ignored the person who
+   * spoke. Throttled, because the transcript updates per delta and reading the whole conversation per delta
+   * would be a request storm that adds no information.
+   */
+  const voiceRefreshTimer = useRef<number | undefined>(undefined);
+  const scheduleVoiceRefresh = useCallback((): void => {
+    if (voiceRefreshTimer.current !== undefined) return;
+    voiceRefreshTimer.current = window.setTimeout(() => {
+      voiceRefreshTimer.current = undefined;
+      refreshTimeline();
+    }, VOICE_REFRESH_INTERVAL_MS);
+  }, [refreshTimeline]);
+
+  useEffect(
+    () => () => {
+      if (voiceRefreshTimer.current !== undefined) window.clearTimeout(voiceRefreshTimer.current);
+    },
+    [],
   );
 
 
@@ -504,9 +568,29 @@ export function Conversation({
     }
   }, [client, composedSnapshots, conversationId, snapshots]);
 
-  /* Every image an inline composed surface asks for, from the snapshots it will render. */
+  /**
+   * Every picture any surface asks for, from the props it asks in.
+   *
+   * A single reference, a list of them, or the poster beside a video: a renderer cannot fetch, it can only draw
+   * a URL it was handed, so whatever shape the request takes has to be recognised here or the widget shows its
+   * text alternative while the picture sits on the node unread.
+   */
   const inlineImageRefs = useMemo(() => {
     const refs = new Set<string>();
+    const collect = (value: unknown): void => {
+      if (typeof value === "string") {
+        if (value !== "") refs.add(value);
+        return;
+      }
+      if (Array.isArray(value)) for (const entry of value) collect(entry);
+    };
+    for (const instance of timeline?.instances ?? []) {
+      const props = (instance as { props?: Record<string, unknown> }).props ?? {};
+      collect(props.imageRef);
+      collect(props.imageRefs);
+      collect(props.videoRef);
+      collect(props.posterRef);
+    }
     for (const entry of composedSnapshots) {
       for (const section of snapshots[entry.snapshotId]?.sections ?? []) {
         const ref = section.props.imageRef;
@@ -514,19 +598,36 @@ export function Conversation({
       }
     }
     return [...refs].sort();
-  }, [composedSnapshots, snapshots]);
+  }, [composedSnapshots, snapshots, timeline]);
 
   const imageUrl = useImageUrls(client, inlineImageRefs);
 
   useEffect(() => {
     const node = scroller.current;
-    if (node) node.scrollTop = node.scrollHeight;
+    if (node === null || !followBottom.current) return;
+    node.scrollTop = node.scrollHeight;
     // The streamed reply is as much a reason to follow the bottom as a stored message is: without it
-    // the answer grows below the fold while the view stays where the question was.
+    // the answer grows below the fold while the view stays where the question was. It is conditional
+    // because that is a reason to follow, not a licence to interrupt someone reading further up.
   }, [live, pendingUser, timeline]);
 
+  /* Reading away from the bottom stops the following; coming back to it starts it again. */
+  useEffect(() => {
+    const node = scroller.current;
+    if (node === null) return;
+    const onScroll = (): void => {
+      followBottom.current = followsBottom({
+        scrollHeight: node.scrollHeight,
+        scrollTop: node.scrollTop,
+        clientHeight: node.clientHeight,
+      });
+    };
+    node.addEventListener("scroll", onScroll, { passive: true });
+    return () => node.removeEventListener("scroll", onScroll);
+  }, []);
+
   const send = useCallback(
-    async (text: string) => {
+    async (text: string, options: { demo?: boolean } = {}) => {
       const trimmed = text.trim();
       if (trimmed === "" || busy) return;
 
@@ -536,6 +637,8 @@ export function Conversation({
       // Drawn from here rather than from the node's answer: the user's own message is not in doubt,
       // and waiting for the round trip to show it makes the interface feel slower than it is.
       setPendingUser({ text: trimmed });
+      // Sending is a decision to be at the newest turn, whatever the view was doing before it.
+      followBottom.current = true;
       setLive([]);
       beginHeroExit();
       const generation = sessionGeneration.current;
@@ -548,20 +651,25 @@ export function Conversation({
           setConversationId(target);
           onConversationReady?.(target);
         }
-        await client.streamMessage(target, trimmed, {
-          onEvent: (event) => {
-            if (sessionGeneration.current !== generation) return;
-            setLive((segments) => applyLiveEvent(segments, event));
+        await client.streamMessage(
+          target,
+          trimmed,
+          {
+            onEvent: (event) => {
+              if (sessionGeneration.current !== generation) return;
+              setLive((segments) => applyLiveEvent(segments, event));
+            },
+            onDone: (result) => {
+              if (sessionGeneration.current !== generation) return;
+              // The node's own record replaces both placeholders in one update, so the reply is never
+              // on screen twice: the stored message and the text that stood in for it change together.
+              applyTimeline(result.timeline);
+              setPendingUser(undefined);
+              setLive([]);
+            },
           },
-          onDone: (result) => {
-            if (sessionGeneration.current !== generation) return;
-            // The node's own record replaces both placeholders in one update, so the reply is never
-            // on screen twice: the stored message and the text that stood in for it change together.
-            applyTimeline(result.timeline);
-            setPendingUser(undefined);
-            setLive([]);
-          },
-        });
+          options,
+        );
       } catch (cause) {
         if (sessionGeneration.current !== generation) return;
         // The draft is restored so a failed send does not lose the user's text.
@@ -645,13 +753,45 @@ export function Conversation({
     return [...decided];
   }, [timeline]);
 
+  /**
+   * What the node said about the last secret submitted through a card.
+   *
+   * Held here rather than in the card because the card is a message in a transcript: it is re-rendered from
+   * stored blocks on every load, and a status that lived inside it would be a status that changed what history
+   * says. This is a fact about now, so it lives with the other facts about now.
+   */
+  const [credentialStatus, setCredentialStatus] = useState<{ requestId: string; message: string } | undefined>(undefined);
+  const submitCredential = useCallback(
+    (input: { requestId: string; fields: { name: string; value: string }[] }): void => {
+      client
+        .putCredential({ fields: input.fields })
+        .then((result) =>
+          setCredentialStatus({
+            requestId: input.requestId,
+            message:
+              result.names.length === 0
+                ? "Đã gửi, nhưng node không ghi nhận tên nào."
+                : `Đã lưu: ${result.names.join(", ")}.`,
+          }),
+        )
+        .catch(() =>
+          // The failure message says nothing about what was typed. An error that repeated the value would be the
+          // leak this card exists to prevent, and it would be the easiest one to write by accident.
+          setCredentialStatus({ requestId: input.requestId, message: "Không lưu được. Thử lại." }),
+        );
+    },
+    [client],
+  );
+
   const blockActions: BlockActions = useMemo(
     () => ({
       onApprovalDecide: decideApproval,
       decidedApprovals,
       ...(decidingApprovalId === undefined ? {} : { decidingApprovalId }),
+      onCredentialSubmit: submitCredential,
+      ...(credentialStatus === undefined ? {} : { credentialStatus }),
     }),
-    [decideApproval, decidedApprovals, decidingApprovalId],
+    [credentialStatus, decideApproval, decidedApprovals, decidingApprovalId, submitCredential],
   );
 
   const renderSurface = useCallback(
@@ -737,6 +877,11 @@ export function Conversation({
             definitionId={definitionId}
             props={instance.props}
             dataset={dataset}
+            // The picture resolver, which used to reach only the composed surface. A widget that draws a picture
+            // cannot fetch one: it can only draw a URL it was handed, so leaving this out made every picture
+            // widget - the imported image included - show its text alternative while the bytes sat unread on the
+            // node.
+            imageUrl={imageUrl}
             onAction={(action) => {
               // View actions only for now: an action that would cause an effect goes through
               // the approval route, and there is no code path here that bypasses it.
@@ -793,6 +938,10 @@ export function Conversation({
       // custom properties on the shell so the stylesheet and the JavaScript that times the same
       // animation are reading one number instead of two copies of it.
       data-view={heroPhase === "shown" ? "hero" : "conversation"}
+      // The composer steps aside while a voice session is open. It cannot be covered reliably - the panel is
+      // narrower than the input it sits over - so it is taken out of the way instead, which is also what the
+      // mode means: while the microphone is open, the thing you talk to is not the text box.
+      data-voice-open={voiceOpen ? "true" : "false"}
       ref={shell}
       style={
         {
@@ -817,13 +966,16 @@ export function Conversation({
           aria-label="Bắt đầu lại: về màn hình đầu và mở một phiên mới"
         >
           <Orb size={30} className="cc-orb" label="" pointerTarget={shell} />
-          <span>Agent</span>
+          <span>ClarkCant</span>
         </button>
         <div className="cc-header-end">
           <div className="cc-status" role="status" aria-live="polite" data-connection={connection}>
             <span className="cc-dot" data-state={connection} aria-hidden="true" />
             {connection === "ready" ? "Ready" : connection === "connecting" ? "Đang kết nối" : "Mất kết nối"}
           </div>
+          {/* The work behind the conversation. Absent while there is none: a header that always said "0" would be a
+              permanent line of noise, and the count only matters when it is not zero. */}
+          <BackgroundSessionsMark client={client} />
           {/*
             The gear is the only settings affordance, which is why it is here rather than in a
             menu: a setting that is two clicks deep is a setting nobody checks. It opens a panel
@@ -870,7 +1022,7 @@ export function Conversation({
                     // The detail is in the accessible name as well as visible text, because a person
                     // using a screen reader has the same question about which chips need a model.
                     aria-label={`${suggestion.label} — ${suggestion.detail}`}
-                    onClick={() => void send(suggestion.text)}
+                    onClick={() => void send(suggestion.text, { demo: suggestion.demo === true })}
                   >
                     <span className="cc-chip-label">{suggestion.label}</span>
                     <span className="cc-chip-detail">{suggestion.detail}</span>
@@ -931,7 +1083,7 @@ export function Conversation({
                     <AgentAvatar />
                     <div className="cc-assistant-body">
                       {live.length === 0 ? (
-                        <div className="cc-thinking" data-thinking="true" role="status" aria-label="Agent đang trả lời">
+                        <div className="cc-thinking" data-thinking="true" role="status" aria-label="ClarkCant đang trả lời">
                           <span className="cc-thinking-dot" aria-hidden="true" />
                           <span className="cc-thinking-dot" aria-hidden="true" />
                           <span className="cc-thinking-dot" aria-hidden="true" />
@@ -1071,9 +1223,24 @@ export function Conversation({
             </button>
           </form>
         </div>
-        <div className="cc-hint">
-          <span>{error === undefined ? "Một hội thoại. Mọi thứ trong tầm với." : error}</span>
-          <span>Enter để gửi · Shift+Enter xuống dòng</span>
+        {/*
+          A statusline, not a motto.
+
+          This line used to hold a slogan and a keyboard hint, in the one place a harness reports itself: what
+          the session has spent, how full its context is, how much came back from the cache, what it has cost.
+          The numbers are the newest turn's, so a turn that reported nothing cannot wipe what the last real
+          one said.
+        */}
+        <div className="cc-hint" data-statusline={error === undefined ? "true" : "false"}>
+          {error === undefined ? (
+            statuslineParts({ metrics: latestTurnMetrics(timeline?.messages ?? []) }).map((part) => (
+              <span key={part} className="cc-statusline-part">
+                {part}
+              </span>
+            ))
+          ) : (
+            <span>{error}</span>
+          )}
         </div>
       </div>
       </div>
@@ -1123,10 +1290,31 @@ export function Conversation({
         surface may not keep a microphone open — and the only difference between them is where the caret
         goes afterwards.
       */}
+      {/*
+        What a highlighted passage can be turned into.
+
+        Beside the transcript rather than inside it, and beside the voice screen rather than within it: a selection
+        belongs to the text on screen, not to whichever surface happens to be open over it.
+      */}
+      <SelectionToolbar
+        container={scroller}
+        onAttach={(text) => setDraft((current) => attachedPrompt(text, current))}
+        onExplain={(text) => void send(explainPrompt(text))}
+        // Offered only once there is a conversation to attach background work to, and the handler refuses quietly when
+        // there is none rather than sending a request the node would answer 400 to.
+        canBackground={conversationId !== undefined}
+        onBackground={async (text) => {
+          if (conversationId === undefined) return;
+          await client.startBackground({ conversationId, text });
+        }}
+      />
+
       {voiceOpen && (
         <VoiceOverlay
           client={client}
           {...(conversationId === undefined ? {} : { conversationId })}
+          onAnswered={refreshTimeline}
+          onProgress={scheduleVoiceRefresh}
           onClose={({ focusComposer }) => {
             setVoiceOpen(false);
             if (focusComposer) composerInput.current?.focus();

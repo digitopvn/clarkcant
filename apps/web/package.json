@@ -16,7 +16,7 @@
     "blueprint": "docs/system-architecture.md"
   },
   "scripts": {
-    "dev": "vite",
+    "dev": "vite --force",
     "build": "vite build --outDir dist",
     "preview": "vite preview"
   },

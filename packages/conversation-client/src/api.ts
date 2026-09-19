@@ -373,8 +373,11 @@ export class GatewayClient {
     return this.#call("GET", "/conversations");
   }
 
-  sendMessage(conversationId: string, text: string): Promise<SendMessageResult> {
-    return this.#call("POST", `/conversations/${conversationId}/messages`, { text });
+  sendMessage(conversationId: string, text: string, options: { demo?: boolean } = {}): Promise<SendMessageResult> {
+    return this.#call("POST", `/conversations/${conversationId}/messages`, {
+      text,
+      ...(options.demo === true ? { demo: true } : {}),
+    });
   }
 
   /**
@@ -393,6 +396,7 @@ export class GatewayClient {
     conversationId: string,
     text: string,
     listeners: { onEvent: (event: ReplyStreamEvent) => void; onDone: (result: SendMessageResult) => void; signal?: AbortSignal },
+    options: { demo?: boolean } = {},
   ): Promise<void> {
     const response = await this.#fetch(`${this.#baseUrl}/conversations/${conversationId}/messages/stream`, {
       method: "POST",
@@ -401,7 +405,7 @@ export class GatewayClient {
         "content-type": "application/json",
         accept: "text/event-stream",
       },
-      body: JSON.stringify({ text }),
+      body: JSON.stringify({ text, ...(options.demo === true ? { demo: true } : {}) }),
       ...(listeners.signal === undefined ? {} : { signal: listeners.signal }),
     });
 
@@ -509,6 +513,92 @@ export class GatewayClient {
   }
 
   capabilities(): Promise<{ capabilities: { ref: string; summary: string; usable: boolean; blockedReason?: string }[] }> {    return this.#call("GET", "/capabilities");
+  }
+
+  /**
+   * Chooses the model to run for sessions created from now on.
+   *
+   * The node stores the choice and answers with the scope it reaches: a conversation already open keeps the model it
+   * began with, so this is not a switch that changes what is running underneath somebody mid-sentence.
+   */
+  async chooseModel(input: {
+    provider: string;
+    id: string;
+  }): Promise<{ ok: boolean; stored: { provider: string; id: string } }> {
+    return this.#call("POST", "/model", input);
+  }
+
+  /**
+   * Forgets a credential this node holds.
+   *
+   * This is what logging out of a provider is: the key is the only thing the node holds for it, so a node that has
+   * forgotten it stops using that provider. The node answers with the names that remain, never a value and never a
+   * length, and says not-found rather than success when there was nothing to forget.
+   */
+  async deleteCredential(name: string): Promise<{ ok: boolean; names: string[] }> {
+    return this.#call("DELETE", `/credentials/${encodeURIComponent(name)}`);
+  }
+
+  /**
+   * What this node offers, and what the agent it drives offers.
+   *
+   * Two lists rather than one, because a reader deciding whether something is possible needs to know which half would
+   * do it: a tool the node holds works here, and one the agent holds works wherever the agent was pointed.
+   */
+  tools(): Promise<{
+    self: { name: string; label: string; description: string }[];
+    agent: { name: string; label: string; description: string }[];
+    agentNote?: string;
+  }> {
+    return this.#call("GET", "/tools");
+  }
+
+  /**
+   * What this node has already been told: whether it can run a model, and which credentials it already holds.
+   *
+   * Names only, never values. The first run reads this to skip questions the machine has already answered, and a client
+   * that asked for a value here would be asking for exactly the thing the asking exists to avoid.
+   */
+  readiness(): Promise<{ model: boolean; credentials: string[] }> {
+    return this.#call("GET", "/readiness");
+  }
+
+  /**
+   * What pi loads on this machine.
+   *
+   * Names and kinds only: an extension can hold a credential, and a surface that reported more would be the place it
+   * leaked from. Read from the node, because which extensions exist belongs to the machine pi runs on.
+   */
+  extensions(): Promise<{ extensions: { name: string; kind: "directory" | "file" }[] }> {
+    return this.#call("GET", "/extensions");
+  }
+
+  /**
+   * pi's own configuration, as far as the node is willing to report it.
+   *
+   * Scalars only, and anything whose name sounds like a secret arrives already redacted: the node is the only thing that
+   * can see the file, so the decision about what may be shown is made there rather than here.
+   */
+  piSettings(): Promise<{ settings: { key: string; value: string }[] }> {
+    return this.#call("GET", "/pi-settings");
+  }
+
+  /**
+   * The providers and models this node can run, and the one it is configured for.
+   *
+   * Read from the node's own catalogue rather than from a list kept here, so upgrading pi on the node makes a new
+   * provider appear in the interface without the interface changing. `current` is reported beside the catalogue rather
+   * than inferred from it, because a node configured for a model its installation no longer offers is a state worth
+   * showing plainly.
+   */
+  model(): Promise<{
+    current: { provider: string; id: string } | null;
+    catalogue: {
+      id: string;
+      models: { provider: string; id: string; contextWindow?: number; current: boolean }[];
+    }[];
+  }> {
+    return this.#call("GET", "/model");
   }
 
   /**
@@ -649,5 +739,75 @@ export class GatewayClient {
     }
     const blob = await response.blob();
     return URL.createObjectURL(blob);
+  }
+
+  /**
+   * Store a secret the person typed.
+   *
+   * The answer is a status, not the value: the node never hands a secret back, so there is nothing here to
+   * cache, redisplay or log. The value travels once, in the request body, and that is the only place it exists
+   * on this side of the wire.
+   */
+  async putCredential(input: { fields: { name: string; value: string }[] }): Promise<{ names: string[] }> {
+    const response = await this.#fetch(`${this.#baseUrl}/credentials`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${this.#token}`, "content-type": "application/json" },
+      body: JSON.stringify({ fields: input.fields }),
+    });
+    if (!response.ok) {
+      throw new GatewayError(response.status, "CREDENTIAL_REFUSED", "that credential was not stored");
+    }
+    const body = (await response.json()) as { names?: unknown };
+    return {
+      names: Array.isArray(body.names) ? body.names.filter((name): name is string => typeof name === "string") : [],
+    };
+  }
+
+  /**
+   * Starts one request in a worker of its own, so it happens while the conversation carries on.
+   *
+   * The node answers 409 when it has no model to run a worker with, and that is a refusal to report rather than an
+   * error to hide: the alternative is a caller showing work that will never happen.
+   */
+  async startBackground(input: { conversationId: string; text: string }): Promise<{ sessionId: string }> {
+    const response = await this.#fetch(`${this.#baseUrl}/background-sessions`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${this.#token}`, "content-type": "application/json" },
+      body: JSON.stringify({ conversationId: input.conversationId, text: input.text }),
+    });
+    if (!response.ok) {
+      const detail = (await response.json().catch(() => ({}))) as { message?: unknown };
+      throw new GatewayError(
+        response.status,
+        "BACKGROUND_REFUSED",
+        typeof detail.message === "string" ? detail.message : "việc nền không bắt đầu được",
+      );
+    }
+    const body = (await response.json()) as { sessionId?: unknown };
+    return { sessionId: typeof body.sessionId === "string" ? body.sessionId : "" };
+  }
+
+  /**
+   * The work running behind the conversation, newest first.
+   *
+   * Polled rather than streamed, which is the honest description of what this is: a count that a person glances at,
+   * not a value anything depends on. A stream for it would be a connection held open to watch a number change.
+   */
+  async backgroundSessions(): Promise<{
+    running: number;
+    sessions: { sessionId: string; title: string; status: string }[];
+  }> {
+    const body = (await this.#call("GET", "/background-sessions")) as {
+      running?: unknown;
+      sessions?: { sessionId?: unknown; title?: unknown; status?: unknown }[];
+    };
+    return {
+      running: typeof body.running === "number" ? body.running : 0,
+      sessions: (Array.isArray(body.sessions) ? body.sessions : []).flatMap((entry) =>
+        typeof entry?.sessionId === "string" && typeof entry.title === "string"
+          ? [{ sessionId: entry.sessionId, title: entry.title, status: typeof entry.status === "string" ? entry.status : "running" }]
+          : [],
+      ),
+    };
   }
 }

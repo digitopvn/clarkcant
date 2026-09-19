@@ -28,6 +28,16 @@ if (NODE_PORT === undefined || NODE_PORT === "") {
 }
 const GATEWAY = `http://127.0.0.1:${NODE_PORT}`;
 
+/**
+ * One transparent pixel, as a PNG.
+ *
+ * Written here rather than copied from another suite, because a picture is not the subject of this test: what
+ * is being checked is that a reference the node minted resolves back to bytes, and one pixel does that.
+ */
+const ONE_PIXEL_PNG =
+  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=";
+
+
 function token(): string {
   const path = join(DATA_DIR, "identity.json");
   let raw: string;
@@ -83,16 +93,13 @@ async function openConversation(page: Page, conversationId: string): Promise<voi
   await expect(page.locator("textarea[aria-label='Nhập tin nhắn']")).toBeVisible();
 }
 
-async function ask(page: Page, text: string): Promise<void> {
-  await page.locator("textarea[aria-label='Nhập tin nhắn']").fill(text);
-  await page.locator("[data-send='true']").click();
-}
-
 test("a scripted table recipe renders a real widget inside the conversation", async ({ page }) => {
   mkdirSync(EVIDENCE, { recursive: true });
   await openApp(page);
 
-  await ask(page, "cho tui xem bảng dữ liệu");
+  // The scripted table is the demo path: a typed message is answered with the node's own data now, so this
+  // journey starts from the chip that says its data is a sample. Chip three is the table request.
+  await page.locator("[data-suggestion]").nth(2).click();
 
   // A surface block that the client could not render falls back to its text alternative, and that
   // fallback is marked. Asserting the table is present *and* the fallback is absent is the
@@ -175,3 +182,62 @@ test("a widget the client cannot render shows its text alternative instead of no
   mkdirSync(EVIDENCE, { recursive: true });
   await page.screenshot({ path: join(EVIDENCE, "widget-02-unknown-renderer-fallback.png"), fullPage: true });
 });
+
+test("a gallery widget draws pictures the node actually holds", async ({ page }) => {
+  // The pictures come from the node's own storage rather than from the fixture carrying its own, because a
+  // fixture with its own image data would prove that a renderer ran and nothing about whether the host can
+  // resolve a reference it minted. The upload goes through the production route with the node's own token, so
+  // this is the path a person's imported picture takes.
+  const uploaded = await fetch(`${GATEWAY}/images`, {
+    method: "POST",
+    headers: { authorization: `Bearer ${token()}`, "content-type": "application/json" },
+    body: JSON.stringify({
+      dataBase64: ONE_PIXEL_PNG,
+      mimeType: "image/png",
+      altText: "Một điểm ảnh, do bài kiểm thử này tải lên",
+    }),
+  });
+  expect(uploaded.ok).toBe(true);
+
+  await openApp(page);
+  await page.locator("[data-composer]").click();
+  await page.keyboard.type("thư viện ảnh");
+  await page.keyboard.press("Enter");
+
+  const frame = page.locator('[data-widget-role="media"]').first();
+  await expect(frame).toBeVisible({ timeout: 20_000 });
+
+  // A drawn picture rather than the text alternative: the alternative is what a client that could not resolve
+  // the reference shows, and that looks like a widget in a screenshot.
+  const image = frame.locator("img[data-image-ref]").first();
+  await expect(image).toBeVisible();
+  const source = await image.getAttribute("src");
+  // A blob URL rather than an address: an `<img>` cannot carry the bearer token, so the bytes are fetched
+  // through the authenticated client and handed to the DOM as a blob. Asserting an http address here would
+  // assert the one thing that must not happen.
+  expect(source ?? "").toMatch(/^blob:/);
+  expect(await frame.locator("[data-widget-fallback='true']").count()).toBe(0);
+
+  await page.screenshot({ path: join(EVIDENCE, "widget-03-gallery.png"), fullPage: true });
+});
+
+test("a youtube widget embeds the video the host named, and nothing else", async ({ page }) => {
+  await openApp(page);
+  await page.locator("[data-composer]").click();
+  await page.keyboard.type("video youtube");
+  await page.keyboard.press("Enter");
+
+  const frame = page.locator('[data-widget-role="media"]').first();
+  await expect(frame).toBeVisible({ timeout: 20_000 });
+
+  const iframe = frame.locator("iframe[data-video-id]");
+  await expect(iframe).toBeVisible();
+  const source = await iframe.getAttribute("src");
+  // The address is the host's, built from the identifier it validated. Asserting both halves is the point:
+  // a client that embedded a `src` the model supplied would satisfy the first and fail the second.
+  expect(source ?? "").toContain("youtube-nocookie.com/embed/");
+  expect(await iframe.getAttribute("data-video-id")).toBe("dQw4w9WgXcQ");
+
+  await page.screenshot({ path: join(EVIDENCE, "widget-04-youtube.png"), fullPage: true });
+});
+

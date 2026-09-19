@@ -12,21 +12,28 @@ import { createServer } from "node:http";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
-import type { MessageBlock } from "@clarkcant/contracts";
+import type { MessageBlock, MessageRecord } from "@clarkcant/contracts";
+import { instantSchema } from "@clarkcant/contracts";
 import { applyEnvFile } from "@clarkcant/pi-adapter";
 
-import { handleRequest, type GatewayResponse } from "./gateway.ts";
+import { handleRequest, decideApprovalForNode, type GatewayResponse } from "./gateway.ts";
 import { machineRoots } from "./fs-search.ts";
-import { resolveProject } from "./project-finder.ts";
+import { resolveProject, refreshProjectIndex } from "./project-finder.ts";
 import { commandDigest } from "./run-command.ts";
-import { listProjects } from "@clarkcant/storage";
-import { requestApproval, setPreference, type CoordinationDeps } from "@clarkcant/core";
-import { attachVoiceGateway } from "./voice-session.ts";
+import { captureSnapshot, createInstance, handleUserMessage, requestApproval, setPreference, type CoordinationDeps } from "@clarkcant/core";
+import { GALLERY, YOUTUBE } from "@clarkcant/data-canvas";
+import { definitionDigest } from "@clarkcant/widget-host";
+import { listLocalImages, messagesSince, readCredential,
+  readPreference,
+} from "@clarkcant/storage";
+import { attachVoiceGateway, VOICE_ANSWER_NOTE, VOICE_CREDENTIAL_NAME } from "./voice-session.ts";
+import { indexMessages, textOfMessage } from "./session-search.ts";
 import { FixtureLiveAdapter } from "./voice-fixture.ts";
 import { SAMPLE_DATASET } from "@clarkcant/data-canvas/sample";
 
 import { createModelTurn, type ViewDescriptor } from "./model-turn.ts";
 import { buildViewCatalog } from "./view-catalog.ts";
+import { registerNodeTools } from "./tool-catalogue.ts";
 import { composeMiniApp } from "./compose-mini-app.ts";
 import { createNodeTools } from "./node-tools.ts";
 import { registerSessionFile, sessionsDirectory } from "./session-store.ts";
@@ -155,6 +162,124 @@ async function main(): Promise<void> {
       };
     }
 
+    /*
+     * The turn that follows an approved command.
+     *
+     * An approval hands the real output back to the agent so it can carry on, and on a fixture node that turn
+     * has to have an answer too: without one the request waits for a model that is not there, and the browser
+     * suite measures a timeout instead of a continuation.
+     */
+    if (/Lệnh đã được duyệt/i.test(input.text)) {
+      const reply = "Fixture: lệnh đã chạy xong, tui đã đọc kết quả và tiếp tục công việc.";
+      return { text: reply, block: { type: "text", format: "plain", content: reply, streaming: false } };
+    }
+
+    /*
+     * A spoken sentence, answered.
+     *
+     * The voice fixture says exactly these words once a second of audio has reached the node, so this is
+     * what makes the whole loop provable in a real browser without a provider account: a sentence spoken
+     * into a microphone becomes a message, the agent answers it, and the session reads the answer back.
+     */
+    if (/audio giả lập|thiết bị micro/i.test(input.text)) {
+      const reply = "Fixture đã nhận câu bạn nói và trả lời qua hội thoại, không phải model thật.";
+      return { text: reply, block: { type: "text", format: "plain", content: reply, streaming: false } };
+    }
+
+    /*
+     * A card asking for a secret.
+     *
+     * The fixture exists for the same reason the approval one does: the browser half of this needs a way to be
+     * reached without a provider account, and a node that never happens to need a key would leave the whole input
+     * path tested by nothing at all. The field is host-owned, so it is drawn by the host and not by a widget.
+     */
+    if (/nhập key thử|nhap key thu/i.test(input.text)) {
+      const reply = "Fixture: node này cần một khoá để thử đường nhập secret (không phải model thật).";
+      return {
+        text: reply,
+        block: {
+          type: "credential-card",
+          owner: "host",
+          requestId: `cred_${input.messageId}`,
+          purpose: "Khoá thử cho fixture, để kiểm tra ô nhập secret.",
+          destination: "vault-node",
+          fields: [{ name: "fixture_key", label: "Khoá thử", masked: true, hostOwned: true }],
+          // A card that never expires would be a card that asks forever, so the fixture's does expire. Built through
+          // the contract's own schema rather than asserted into the branded type, because an assertion here would be
+          // the place a malformed instant got in.
+          expiresAt: instantSchema.parse(new Date(Date.now() + 900_000).toISOString()),
+        },
+      };
+    }
+
+    /*
+     * A video somebody else hosts, named by identifier.
+     *
+     * The embed is the one surface whose content comes from outside the node, which makes it the one worth a
+     * browser assertion: the address is built by the host from an identifier it validated, and a client that
+     * turned an address the model chose into an embed would be a different thing entirely.
+     */
+    if (/video youtube|youtube/i.test(input.text)) {
+      const instance = createInstance(services.conductor, {
+        definition: YOUTUBE,
+        packageDigest: definitionDigest(YOUTUBE),
+        ownerPrincipalId: input.principal.principalId,
+        props: {
+          videoId: "dQw4w9WgXcQ",
+          title: "Video thử (fixture)",
+          description: "Fixture: một video nhúng, không phải model thật.",
+        },
+      });
+      const snapshot = captureSnapshot(services.conductor, {
+        messageId: input.messageId,
+        instance,
+        textAlternative: YOUTUBE.textFallback,
+        presentationRef: `catalog:${YOUTUBE.id}`,
+      });
+      const reply = "Fixture: một video YouTube, để thử đường nhúng (không phải model thật).";
+      return {
+        text: reply,
+        block: { type: "surface", definitionRef: { id: YOUTUBE.id, version: YOUTUBE.version }, snapshot },
+      };
+    }
+
+    /*
+     * Pictures this node holds, as a gallery.
+     *
+     * The picture widgets draw references the host minted, so the only way to reach them without a provider
+     * account is a fixture that reads what this node actually has. The browser suite uploads a real image and
+     * then asks for this, which is the difference between a widget that was drawn and one that was mentioned:
+     * a fixture carrying its own pictures would prove nothing about the resolver behind them.
+     */
+    if (/thư viện ảnh|thu vien anh|gallery/i.test(input.text)) {
+      const images = listLocalImages(services.runtime.db, input.principal.principalId, 12);
+      if (images.length === 0) {
+        const empty = "Fixture: node này chưa có ảnh nào để dựng thư viện.";
+        return { text: empty, block: { type: "text", format: "plain", content: empty, streaming: false } };
+      }
+      const instance = createInstance(services.conductor, {
+        definition: GALLERY,
+        packageDigest: definitionDigest(GALLERY),
+        ownerPrincipalId: input.principal.principalId,
+        props: {
+          imageRefs: images.map((image) => image.imageId),
+          alts: images.map((image) => image.altText),
+          title: "Thư viện ảnh (fixture)",
+        },
+      });
+      const snapshot = captureSnapshot(services.conductor, {
+        messageId: input.messageId,
+        instance,
+        textAlternative: GALLERY.textFallback,
+        presentationRef: `catalog:${GALLERY.id}`,
+      });
+      const reply = "Fixture: thư viện ảnh dựng từ những ảnh node này đang giữ, không phải model thật.";
+      return {
+        text: reply,
+        block: { type: "surface", definitionRef: { id: GALLERY.id, version: GALLERY.version }, snapshot },
+      };
+    }
+
     if (!/tổng quan|tong quan|overview/i.test(input.text)) return undefined;
     const compose = modelWiring.compose;
     if (compose === undefined) return undefined;
@@ -198,9 +323,25 @@ async function main(): Promise<void> {
     };
   };
 
+  /*
+   * The model a person chose, read when a session is created rather than at boot.
+   *
+   * Lazily because `services` - which owns the database and the identity the preference is keyed by - is built below
+   * this line; a value would be the same ordering mistake the typecheck refused twice. By the time anybody sends a
+   * message this node is fully built, so the read happens against a node that exists.
+   */
+  const chosenModel = (): { provider: string; id: string } | undefined => {
+    const stored = readPreference(services.runtime.db, services.runtime.identity.ownerPrincipalId, "model", "node");
+    const [provider, id] = (stored ?? "").split("/");
+    return provider === undefined || provider === "" || id === undefined || id === ""
+      ? undefined
+      : { provider, id };
+  };
+
   const modelTurn = await createModelTurn({
     env: process.env,
     cwd: process.cwd(),
+    model: chosenModel,
     sessionDir: join(options.dataDir, "sessions"),
     onSessionFile: ({ sessionId, sessionFile }) => {
       if (sessionWiring.index === undefined || sessionWiring.principalId === undefined) return;
@@ -214,6 +355,17 @@ async function main(): Promise<void> {
       }
     },
     views: () => viewCatalog,
+    // The conversation so far, for a session that has just been created.
+    //
+    // A session is dropped when a turn fails, because a session that failed a turn is the thing that is broken;
+    // the thread is not, so the next message is answered by an agent that has been told what it is joining
+    // rather than by one that has never heard of it.
+    history: async (conversationId) => {
+      const records = messagesSince(services.runtime.db, conversationId, 0, 40);
+      return records
+        .filter((record): record is MessageRecord & { role: "user" | "assistant" } => record.role === "user" || record.role === "assistant")
+        .map((record) => ({ role: record.role, text: textOfMessage(record) }));
+    },
     // The node registers the sample dataset itself, so this is the complete set it holds rather
     // than a guess. The model is told these names because a view over data that is not there
     // renders as nothing, which reads as a broken widget instead of a missing fact.
@@ -228,17 +380,10 @@ async function main(): Promise<void> {
       const projects = projectWiring.deps;
       const approvals = approvalWiring.deps;
       if (search === undefined || projects === undefined || approvals === undefined) return [];
-      return createNodeTools({
+      const tools = createNodeTools({
         search,
         projects,
         approvals: () => approvals,
-        // A command may run in a folder the user approved, in a project the finder has indexed, or in the
-        // folder those projects live in — which is where a clone lands. Read fresh at each call, because
-        // the index changes while the node runs.
-        placement: () => ({
-          approvedRoots: projects.roots(),
-          knownProjects: listProjects(services.runtime.db, services.runtime.identity.nodeId).map((project) => project.path),
-        }),
         // "Where should this go?" goes through the finder, which is where Jev decides when several folders
         // could be meant. The model is told to look before it proposes, and an ambiguous answer comes back
         // as a question rather than as a guess.
@@ -257,6 +402,10 @@ async function main(): Promise<void> {
           };
         },
       });
+      // Published for the Tools tab, from the same call that hands them to the model: a tab that built its own list
+      // would be a second source of truth for what this node can do, and the first thing to drift from it.
+      registerNodeTools(tools.map((tool) => ({ name: tool.name, label: tool.label, description: tool.description })));
+      return tools;
     },
   });
   process.stderr.write(
@@ -289,6 +438,24 @@ async function main(): Promise<void> {
   sessionWiring.index = services.sessions;
   sessionWiring.principalId = services.runtime.identity.ownerPrincipalId;
   searchWiring.deps = services.search;
+  // The turn control the gateway needs to answer a message that arrives while something is running. Assigned here
+  // rather than passed into bootNodeServices, because the model turn is built above and the services just below it,
+  // and this is the first line where both exist.
+  if (modelTurn !== undefined) {
+    services.turnControl = {
+      running: () => modelTurn.running(),
+      interrupt: (conversationId) => modelTurn.interrupt(conversationId),
+      steer: (conversationId, text) => modelTurn.steer(conversationId, text),
+      runInBackground: (input) => modelTurn.runInBackground(input),
+    };
+    // The catalogue travels the same way and for the same reason: the model turn exists above this line and the
+    // services exist below it, so this is the first place both do. Published as the turn's own function rather than
+    // as a snapshot, so a provider added by upgrading pi is visible without restarting the node.
+    services.modelCatalogue = modelTurn.catalogue;
+    // The same line, for the same reason: the adapter exists above this and the services below it.
+    services.extensions = modelTurn.extensions;
+    services.piSettings = modelTurn.piSettings;
+  }
   projectWiring.deps = services.projects;
   approvalWiring.deps = {
     db: services.runtime.db,
@@ -338,6 +505,34 @@ async function main(): Promise<void> {
   process.stderr.write(
     `filesystem search: read-only over ${machineRoots().join(", ")} — no index is built; matches are sent to the model provider\n`,
   );
+
+  /*
+   * Build the project index, in the background and after the node is listening.
+   *
+   * Nothing at runtime ever refreshed it before this: it was written only when somebody picked a project, so
+   * asking which projects are on this machine answered with the two folders that had already been opened, and an
+   * agent looking for a folder it could see on disk found nothing.
+   *
+   * Bounded in time as well as in entries, because one of this machine's roots is a cloud drive and a scan that
+   * waits for it can run for minutes. An aborted scan is not allowed to prune - the finder checks that itself -
+   * so stopping early leaves the previous index alone rather than emptying it.
+   */
+  const indexScan = new AbortController();
+  const indexBudget = setTimeout(() => indexScan.abort(), 60_000);
+  void refreshProjectIndex(services.projects, { signal: indexScan.signal })
+    .then((outcome) => {
+      clearTimeout(indexBudget);
+      process.stderr.write(
+        `project index: ${outcome.scanned} scanned, ${outcome.kept} kept, ${outcome.removed} removed` +
+          (outcome.truncated || outcome.stoppedEarly ? " — the scan stopped early, so the index is partial\n" : "\n"),
+      );
+    })
+    .catch((cause: unknown) => {
+      clearTimeout(indexBudget);
+      process.stderr.write(
+        `project index: not built — ${cause instanceof Error ? cause.message : String(cause)}\n`,
+      );
+    });
   process.stderr.write(
     viewCatalog.length === 0
       ? "no widget definitions on this node; the model can answer in words only\n"
@@ -484,9 +679,103 @@ async function main(): Promise<void> {
   const voice = attachVoiceGateway({
     server,
     services,
-    credential: () => (voiceFixture ? "fixture-credential" : process.env.GEMINI_API_KEY),
+    credential: () =>
+      voiceFixture
+        ? "fixture-credential"
+        : // The vault first, then the environment. A key typed into the credential card is a key the person
+          // expects to be used, and an environment variable that happens to be absent must not make that
+          // expectation false. Read at open time rather than cached, so the next attempt after typing one finds it.
+          process.env.GEMINI_API_KEY ??
+          readCredential(services.runtime.db, services.runtime.identity.ownerPrincipalId, VOICE_CREDENTIAL_NAME),
     ...(voiceFixture ? { createAdapter: () => new FixtureLiveAdapter() } : {}),
     ...(voiceModel === undefined ? {} : { model: voiceModel }),
+    /**
+     * What a finished sentence does.
+     *
+     * It becomes a message in the conversation and the agent answers it, with whatever tools the
+     * answer needs. The words that come back are what the voice session reads aloud, which is why the
+     * live model is told not to answer anything itself: this is the only answer in the room.
+     */
+    answer: async ({ conversationId, text, at: spokenAt, onText }) => {
+      const outcome = await handleUserMessage(services.conductor, {
+        conversationId: conversationId as never,
+        principal: {
+          principalId: services.runtime.identity.ownerPrincipalId as never,
+          kind: "user",
+          nodeId: services.runtime.identity.nodeId as never,
+        },
+        text,
+        at: spokenAt as never,
+        // Spoken turns are answered briefly: the session has to read the answer out loud.
+        note: VOICE_ANSWER_NOTE,
+        // The voice surface is a caller holding an open stream like any other, so it gets the same
+        // events the typed path gets. Only text is forwarded: the reasoning and tool events belong to
+        // the conversation, which is refreshed when the turn ends.
+        ...(onText === undefined
+          ? {}
+          : {
+              emit: (event: { type: string; text?: string }) => {
+                if (event.type === "text-delta" && typeof event.text === "string") onText(event.text);
+              },
+            }),
+      });
+      // Indexed where the messages were just written, for the same reason the typed route does it:
+      // a sentence that was spoken is a message like any other, and search must not disagree with the
+      // conversation about what was said.
+      indexMessages(services.search, { conversationId, messages: outcome.messages, at: spokenAt });
+
+      const reply = outcome.messages
+        .filter((message) => message.role === "assistant")
+        .map((message) => textOfMessage(message))
+        .join("\n\n")
+        .trim();
+      // A turn can end with an operation waiting for a decision. The voice session asks about it out loud, and
+      // needs the digest the card was shown with: it is the same binding the button sends.
+      const proposed = outcome.messages
+        .flatMap((message) => message.blocks)
+        .find((block) => block.type === "approval-card" && block.decision === "pending");
+      // `find` returns the union it searched, so the block is narrowed again here: nothing else may be read
+      // off an approval card.
+      const pending = proposed !== undefined && proposed.type === "approval-card" ? proposed : undefined;
+      return {
+        reply,
+        recordedMessages: outcome.messages.length,
+        ...(pending === undefined
+          ? {}
+          : {
+              pendingApproval: {
+                approvalId: pending.approvalId,
+                digest: pending.operationDigest,
+                description: pending.operationDescription,
+              },
+            }),
+      };
+    },
+    /**
+     * Carry out what the user just said yes or no to.
+     *
+     * The same function the HTTP route calls, so a decision made by voice and a decision made by pressing the
+     * card mean exactly the same thing: the same digest check, the same receipt in the same conversation.
+     */
+    decideApproval: async ({ conversationId, approvalId, decision, digest }) => {
+      const result = await decideApprovalForNode(services, {
+        conversationId,
+        approvalId,
+        decision,
+        digest,
+        principal: {
+          principalId: services.runtime.identity.ownerPrincipalId,
+          kind: "user",
+          nodeId: services.runtime.identity.nodeId,
+        },
+        at: new Date().toISOString() as never,
+      });
+      return result.ok
+        ? // The agent's continuation is what the person should hear: the command ran, and this is what the agent
+          // made of it. `message` is spoken by the session.
+          { ok: true, message: result.continuation ?? result.outcome ?? "Đã chạy xong lệnh đó." }
+        : { ok: false, message: result.message };
+    },
   });
   process.stderr.write(
     voiceFixture
@@ -517,7 +806,44 @@ async function main(): Promise<void> {
     process.exit(1);
   });
 
+  /*
+   * A failure nobody caught is written down rather than fatal, and this is the one that was actually killing the node.
+   *
+   * The evidence was narrow: a full browser suite saw the process disappear partway through and every request after it
+   * fail with "connection refused", while a guard on unhandled *rejections* caught nothing at all. No rejection means
+   * an exception - a thrown error on a path nobody wrapped, most likely a child process reporting a failure of its own
+   * - and Node's default for that is also to exit.
+   *
+   * A node that exits takes every connected client with it, which is strictly worse than a line of stderr. The node's
+   * job is to stay up and answer; a bad turn should end that turn, not every conversation at once.
+   */
+  const noteFailure = (what: string, reason: unknown): void => {
+    process.stderr.write(
+      `${what} (the node stays up): ${reason instanceof Error ? reason.message : String(reason)}\n`,
+    );
+  };
+  process.on("unhandledRejection", (reason) => noteFailure("unhandled rejection", reason));
+  process.on("uncaughtException", (error) => noteFailure("uncaught exception", error));
+
   server.listen(options.port, options.host, () => {
+    /*
+     * Publish what this node can do, at boot rather than at the first turn.
+     *
+     * The tools are built on demand for a turn, and that is the right time for a turn. It is the wrong time for the
+     * Tools tab, which asks the question before anything has been sent: publishing only inside the lazy builder meant
+     * the answer was "none" exactly when somebody looked, which is what a probe against a running node showed.
+     *
+     * Built from the same wirings the turn uses, and without the folder-resolution refinement, which changes how
+     * run_command picks a folder rather than whether it exists.
+     */
+    const bootApprovals = approvalWiring.deps;
+    if (bootApprovals !== undefined) {
+      registerNodeTools(
+        createNodeTools({ search: services.search, projects: services.projects, approvals: () => bootApprovals }).map(
+          (tool) => ({ name: tool.name, label: tool.label, description: tool.description }),
+        ),
+      );
+    }
     process.stderr.write(
       `clarkcant node "${services.runtime.identity.label}" listening on http://${options.host}:${options.port}\n`,
     );

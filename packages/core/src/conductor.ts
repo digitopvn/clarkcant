@@ -137,6 +137,13 @@ export interface ModelTurnInput {
    */
   messageId: string;
   /**
+   * Guidance for this turn, appended to the prompt by whoever runs it.
+   *
+   * Carried through rather than interpreted here: the conductor decides what is asked and the runner decides
+   * how the model is addressed, and a mode enum would have to be taught to both.
+   */
+  note?: string;
+  /**
    * Everything the turn does while it runs: text, reasoning, and tool calls.
    *
    * Separate from `ModelTurnReply` rather than a replacement for it. The reply is what the message is
@@ -183,6 +190,32 @@ export interface ModelTurnReply {
   provider: string;
   model: string;
   elapsedMs: number;
+  /** What the provider reported about the turn, when it reported anything. */
+  metrics?: TurnMetrics;
+}
+
+/**
+ * What a turn cost, as far as the provider is willing to say.
+ *
+ * Every field is optional and stays absent when it was not reported. A missing cache hit rate is not zero
+ * percent: it is "the provider said nothing about a cache", and a statusline that prints 0% for it is wrong
+ * with confidence, which is worse than being quiet.
+ */
+export interface TurnMetrics {
+  /** The reasoning effort the turn ran at, when the session has one. */
+  thinkingLevel?: string;
+  inputTokens?: number;
+  outputTokens?: number;
+  cacheReadTokens?: number;
+  cacheWriteTokens?: number;
+  /** What the session has cost so far, in US dollars. */
+  costUsd?: number;
+  contextTokens?: number;
+  contextWindow?: number;
+  /** Output tokens a second, over this turn's own wall clock. */
+  tokensPerSecond?: number;
+  /** The folder the agent worked in. */
+  cwd?: string;
 }
 
 /**
@@ -212,6 +245,23 @@ export interface UserMessageInput {
    * message is still the one appended below, built from the same segments.
    */
   emit?: (event: ConductorEmit) => void;
+  /**
+   * Extra guidance for this turn, appended to the prompt.
+   *
+   * It exists because a turn that will be read aloud has to be shorter than one that will be read, and only
+   * the caller knows which it is. Nothing else about the turn changes - the same model, the same tools, the
+   * same stored message - so this is a sentence of guidance rather than a mode.
+   */
+  note?: string;
+  /**
+   * Whether this message is the onboarding demo asking for a scripted sample.
+   *
+   * The samples are labelled and useful, and they are also fake data. A message in a real conversation that merely
+   * sounded like a request for a chart was answered with a sample chart and no model at all: the person could not
+   * tell it apart from a real answer until they read the small print, and the agent's own follow-up work was
+   * replaced by a fixture. So the demo path has to say that it is the demo path, and nothing else gets samples.
+   */
+  demo?: boolean;
 }
 
 /**
@@ -424,7 +474,9 @@ export async function handleUserMessage(
     const candidates = deps.sampleRecipes.filter(
       (candidate) => !(candidate.catchAll === true && deps.respondWithModel !== undefined),
     );
-    const recipe = candidates.find((candidate) => candidate.matches(input.text));
+    // And no sample runs unless the message came from the demo path: a scripted reply is fake data, and a real
+    // conversation must never be answered with it by accident.
+    const recipe = input.demo === true ? candidates.find((candidate) => candidate.matches(input.text)) : undefined;
     if (recipe) {
       return runSampleRecipe(deps, { ...input, at }, recipe);
     }
@@ -521,6 +573,59 @@ export async function handleUserMessage(
  * The cost is that the client learns about the reply by asking again, which is why the route
  * that starts a turn is described as accepted rather than complete.
  */
+/**
+ * The reported numbers, as fields, in the order a reader asks about them.
+ *
+ * Absent numbers produce no field at all rather than a field saying "không rõ": the card exists to say what
+ * is known, and a row of unknowns would bury what is.
+ */
+function turnMetricFields(metrics: TurnMetrics | undefined): { label: string; value: string }[] {
+  if (metrics === undefined) return [];
+  const fields: { label: string; value: string }[] = [];
+  if (metrics.contextTokens !== undefined && metrics.contextWindow !== undefined && metrics.contextWindow > 0) {
+    const share = Math.round((metrics.contextTokens / metrics.contextWindow) * 100);
+    fields.push({
+      label: "Ngữ cảnh",
+      value: `${formatTokens(metrics.contextTokens)} / ${formatTokens(metrics.contextWindow)} (${share}%)`,
+    });
+  }
+  if (metrics.inputTokens !== undefined || metrics.outputTokens !== undefined) {
+    fields.push({
+      label: "Token",
+      value: `${formatTokens(metrics.inputTokens ?? 0)} vào · ${formatTokens(metrics.outputTokens ?? 0)} ra`,
+    });
+  }
+  const cacheRead = metrics.cacheReadTokens;
+  const cacheWrite = metrics.cacheWriteTokens;
+  if (cacheRead !== undefined || cacheWrite !== undefined) {
+    const reusable = (cacheRead ?? 0) + (metrics.inputTokens ?? 0);
+    const rate = reusable === 0 ? undefined : Math.round(((cacheRead ?? 0) / reusable) * 100);
+    fields.push({
+      label: "Cache",
+      value:
+        `${rate === undefined ? "chưa đo được" : `${rate}% đọc lại`}` +
+        ` · ${formatTokens(cacheRead ?? 0)} đọc · ${formatTokens(cacheWrite ?? 0)} ghi`,
+    });
+  }
+  if (metrics.tokensPerSecond !== undefined) {
+    fields.push({ label: "Tốc độ", value: `${metrics.tokensPerSecond.toFixed(1)} tok/s` });
+  }
+  if (metrics.costUsd !== undefined) {
+    fields.push({ label: "Chi phí", value: `$${metrics.costUsd.toFixed(4)}` });
+  }
+  if (metrics.cwd !== undefined) {
+    fields.push({ label: "Thư mục làm việc", value: metrics.cwd });
+  }
+  return fields;
+}
+
+/** Tokens at a glance: nobody reads five digits when three will do. */
+function formatTokens(count: number): string {
+  if (count < 1000) return String(count);
+  if (count < 1_000_000) return `${(count / 1000).toFixed(count < 10_000 ? 1 : 0)}k`;
+  return `${(count / 1_000_000).toFixed(2)}M`;
+}
+
 async function runModelTurn(
   deps: ConductorDeps,
   input: UserMessageInput & { at: Instant },
@@ -535,6 +640,7 @@ async function runModelTurn(
       principal: input.principal,
       text: input.text,
       messageId,
+      ...(input.note === undefined ? {} : { note: input.note }),
       // Always supplied, and a no-op when nobody is streaming. A conditional spread here would have
       // to exist only to keep the optional field absent, which is a distinction nothing reads.
       onEvent: (event: ModelTurnEvent) => input.emit?.(event),
@@ -586,9 +692,17 @@ async function runModelTurn(
           "Câu trả lời này do model sinh ra. Không capability nào trên máy này được dùng, và không dữ liệu thật nào của bạn được đọc.",
         fields: [
           { label: "Provider", value: reply.provider },
-          { label: "Model", value: reply.model },
+          {
+            label: "Model",
+            // The effort belongs with the model, because it is part of which model answered: the same model
+            // at a different effort is a different answer to the same question.
+            value: reply.metrics?.thinkingLevel === undefined ? reply.model : `${reply.model} · ${reply.metrics.thinkingLevel}`,
+          },
           { label: "Thời gian", value: `${reply.elapsedMs} ms` },
+          ...turnMetricFields(reply.metrics),
         ],
+        // The typed copy, for the statusline: the rows above are written to be read, these to be drawn.
+        ...(reply.metrics === undefined ? {} : { metrics: reply.metrics }),
         cancellable: false,
         updatedAt: input.at,
       },

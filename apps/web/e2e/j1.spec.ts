@@ -67,7 +67,7 @@ test.beforeAll(() => {
 test("the client loads, reports a real connection, and asks what to do", async ({ page }) => {
   await openApp(page);
 
-  await expect(page.locator(".cc-brand")).toContainText("Agent");
+  await expect(page.locator(".cc-brand")).toContainText("ClarkCant");
   // "Ready" must mean the node answered, not that the client rendered.
   await expect(page.locator(".cc-status")).toHaveAttribute("data-connection", "ready");
   // The structure rather than the exact words. Copy is a design decision that keeps changing, and a
@@ -104,13 +104,15 @@ test("typing a message works, and the answer comes back from the node", async ({
 
   const composer = page.locator("[data-composer]");
   await composer.click();
-  await composer.fill("cho tui xem bảng dữ liệu");
+  // A typed message is answered by the model, and on this node that is a fixture which composes an overview out
+  // of the node's own records. It used to be answered by a scripted sample recipe, which is precisely what a real
+  // message must never get again: a widget shows real data or it does not exist.
+  await composer.fill("cho tui xem tổng quan");
   await page.locator("[data-send]").click();
 
-  await expect(page.locator(".cc-table").first()).toBeVisible();
-  await expect(page.locator('[data-role="user"]')).toContainText("bảng dữ liệu");
-  await expect(page.locator('[data-widget-role="table"]').first()).toBeVisible();
-  await page.screenshot({ path: join(EVIDENCE, "j1-03-table.png") });
+  await expect(page.locator("[data-slot='metrics']")).toBeVisible({ timeout: 20_000 });
+  await expect(page.locator('[data-role="user"]')).toContainText("tổng quan");
+  await page.screenshot({ path: join(EVIDENCE, "j1-03-overview.png") });
 });
 
 test("pinning and unpinning keeps the widget data", async ({ page }) => {
@@ -139,18 +141,23 @@ test("reopening the app resumes the same conversation", async ({ page }) => {
 
   await page.reload();
   await expect(page.locator('[data-widget-role="chart"]').first()).toBeVisible();
-  await expect(page.locator(".cc-brand")).toContainText("Agent");
+  await expect(page.locator(".cc-brand")).toContainText("ClarkCant");
   await page.screenshot({ path: join(EVIDENCE, "j1-05-after-reload.png") });
 });
 
 test("the composer is keyboard operable end to end", async ({ page }) => {
   await openApp(page);
 
-  await page.locator("[data-composer]").click();
-  await page.keyboard.type("tạo note nhanh cho tui");
-  await page.keyboard.press("Enter");
+  // The note surface first, from the demo chip: the chips live on the start screen and it is the only path that
+  // runs a scripted sample now that a typed message is answered with the node's own data.
+  await page.locator("[data-suggestion]").nth(1).click();
+  await expect(page.locator('[data-widget-role="note"]').first()).toBeVisible({ timeout: 20_000 });
 
-  await expect(page.locator('[data-widget-role="note"]').first()).toBeVisible();
+  // And the composer, typed into and sent with the keyboard alone.
+  await page.locator("[data-composer]").click();
+  await page.keyboard.type("cho tui xem tổng quan");
+  await page.keyboard.press("Enter");
+  await expect(page.locator("[data-slot='metrics']")).toBeVisible({ timeout: 20_000 });
   const area = page.locator(".cc-note-area").first();
   await area.click();
   await page.keyboard.type("ghi chú thử");
@@ -173,3 +180,55 @@ test("an unauthenticated client is told what it needs instead of failing silentl
   await expect(page.locator("[data-needs-token='true']")).toBeVisible();
   await expect(page.locator(".cc-status")).toContainText("Chưa có token");
 });
+
+test("a highlighted passage can be attached to the next prompt", async ({ page }) => {
+  // The menu is placed from the selection's own rectangle, so this asserts the whole path: a text selection inside
+  // the transcript, the menu appearing over it, and the passage arriving in the composer quoted rather than bare.
+  await openApp(page);
+  await page.locator("[data-composer]").click();
+  await page.keyboard.type("tổng quan");
+  await page.keyboard.press("Enter");
+
+  const reply = page.locator('[data-role="assistant"]').last();
+  await expect(reply).toBeVisible({ timeout: 20_000 });
+  await reply.locator("p").first().selectText();
+
+  const attach = page.locator("[data-selection-action='attach']");
+  await expect(attach).toBeVisible();
+  await attach.click();
+
+  await expect(page.locator("[data-composer]")).toHaveValue(/>\s/);
+  await expect(page.locator("[data-selection-menu='true']")).toHaveCount(0);
+});
+
+test("a selected passage can be sent to a background session", async ({ page }) => {
+  await openApp(page);
+  await page.locator("[data-composer]").click();
+  await page.keyboard.type("tổng quan");
+  await page.keyboard.press("Enter");
+
+  const reply = page.locator('[data-role="assistant"]').last();
+  await expect(reply).toBeVisible({ timeout: 20_000 });
+  await reply.locator("p").first().selectText();
+
+  const button = page.locator("[data-selection-action='background']");
+  await expect(button).toBeVisible();
+  await button.click();
+
+  // A fixture node does have a model turn, so this is the accepted path rather than a refusal, and the status is what
+  // says so. It outlives the menu it was clicked in: the menu goes away with the selection, and an answer that vanished
+  // with it would be an answer nobody could read.
+  await expect(page.locator("[data-selection-status='true']")).toContainText(/phiên nền/i);
+
+  // And the header now reports the work it started: this is the count the mark exists for, and it is the only way the
+  // number is verifiable in a browser - the registry fills when something asks for background work, not on its own.
+  await expect(page.locator("[data-background-count='true']")).toBeVisible({ timeout: 20_000 });
+});
+
+test("the header says nothing about background work when there is none", async ({ page }) => {
+  // The empty case, asserted rather than assumed: a mark that showed "0" would be a permanent line of noise, and the
+  // count only matters when it is not zero.
+  await openApp(page);
+  await expect(page.locator("[data-background-sessions]")).toHaveCount(0);
+});
+

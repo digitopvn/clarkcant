@@ -1,7 +1,12 @@
+import { readFile, readdir } from "node:fs/promises";
+import { join } from "node:path";
+
 import type { Instant } from "@clarkcant/contracts";
 import { nowInstant } from "@clarkcant/contracts";
 
-import { NotImplementedError, type PiAdapter, type ResourceRefreshRequest, type ToolDefinition, type WorkerBrief, type WorkerEvent, type WorkerSessionHandle } from "./types.ts";
+import { NotImplementedError, type ModelCatalogue,
+  type PiExtension,
+  type PiSetting, type PiAdapter, type ResourceRefreshRequest, type ToolDefinition, type WorkerBrief, type WorkerEvent, type WorkerSessionHandle, type WorkerUsage } from "./types.ts";
 
 /**
  * Real Pi SDK adapter.
@@ -134,6 +139,23 @@ export interface CompatibilityLock {
   blockedLifecycle: { step: string; reason: string }[];
 }
 
+/**
+ * Whether a setting's name suggests it holds a secret.
+ *
+ * Deliberately broad and deliberately only about the name: the alternative is inspecting values, and a listing that
+ * guessed at a value's shape would eventually get it wrong in the one direction that matters.
+ */
+function looksSecret(key: string): boolean {
+  return /key|token|secret|password|credential/i.test(key);
+}
+
+/** A value as a line of text, bounded so one long list cannot fill a panel. */
+function describeSetting(value: unknown): string {
+  if (value === null || value === undefined) return String(value);
+  if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") return String(value);
+  return JSON.stringify(value).slice(0, 200);
+}
+
 export class RealPiAdapter implements PiAdapter {
   readonly #sessions = new Map<
     string,
@@ -170,8 +192,10 @@ export class RealPiAdapter implements PiAdapter {
    * through would defer the failure to the model runtime, whose complaint names neither the
    * provider nor what it does have, and that is the error an operator would have to debug.
    */
-  async #resolveModel(sdk: SdkModule): Promise<{ runtime?: SdkModelRuntime; model?: SdkModel }> {
-    const wanted = this.#options.model;
+  async #resolveModel(
+    sdk: SdkModule,
+    wanted: RealPiAdapterOptions["model"] = this.#options.model,
+  ): Promise<{ runtime?: SdkModelRuntime; model?: SdkModel }> {
     if (wanted === undefined) return {};
 
     // No options: the credentials this resolves against are the process environment's, which is
@@ -225,6 +249,76 @@ export class RealPiAdapter implements PiAdapter {
     }
     return { available: true, sdkVersion: await sdkVersion() };  }
 
+  /**
+   * The providers and models this installation offers, read from the SDK's catalogue.
+   *
+   * Deliberately not filtered by whether a credential is configured: a person who cannot see the provider cannot
+   * choose it, and cannot learn what to log into. Which of them are ready is a separate question, answered where the
+   * choice is offered rather than by removing the choice.
+   */
+  async catalogue(): Promise<ModelCatalogue> {
+    const sdk = await this.#load();
+    this.#modelRuntime ??= await sdk.ModelRuntime.create({});
+    const runtime = this.#modelRuntime;
+    const current = this.#options.model;
+
+    return runtime.getProviders().map((provider) => ({
+      id: provider.id,
+      models: runtime.getModels(provider.id).map((model) => ({
+        provider: provider.id,
+        id: model.id,
+        current: current?.provider === provider.id && current.id === model.id,
+        ...(model.contextWindow === undefined ? {} : { contextWindow: model.contextWindow }),
+      })),
+    }));
+  }
+
+  /**
+   * What pi loads from its own agent directory.
+   *
+   * The directory is the same one the loader resolves, so this reports the extensions this node actually runs with
+   * rather than the ones in some default place. A directory that is not there is an empty list instead of an error: a
+   * machine where nobody has configured pi has no extensions, which is a fact rather than a failure.
+   */
+  async extensions(): Promise<readonly PiExtension[]> {
+    const sdk = await this.#load();
+    try {
+      const entries = await readdir(join(this.#options.agentDir ?? sdk.getAgentDir(), "extensions"), {
+        withFileTypes: true,
+      });
+      return entries
+        .map((entry) => ({
+          name: entry.name,
+          kind: entry.isDirectory() ? ("directory" as const) : ("file" as const),
+        }))
+        .sort((left, right) => left.name.localeCompare(right.name));
+    } catch {
+      return [];
+    }
+  }
+
+  /**
+   * pi's own configuration, as far as it is safe to report it.
+   *
+   * `auth.json` is deliberately never read: it is where credentials live, and a panel that showed configuration has no
+   * business near it. `settings.json` is configuration rather than secrets, but a key can be written into it all the
+   * same, so anything whose name sounds like a secret is reported as redacted.
+   */
+  async piSettings(): Promise<readonly PiSetting[]> {
+    const sdk = await this.#load();
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(await readFile(join(this.#options.agentDir ?? sdk.getAgentDir(), "settings.json"), "utf8"));
+    } catch {
+      // No file, or one that does not parse: either way there is nothing to report, which is a fact and not a failure.
+      return [];
+    }
+    if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) return [];
+    return Object.entries(parsed as Record<string, unknown>)
+      .map(([key, value]) => ({ key, value: looksSecret(key) ? "[redacted]" : describeSetting(value) }))
+      .sort((left, right) => left.key.localeCompare(right.key));
+  }
+
   async createWorkerSession(brief: WorkerBrief): Promise<WorkerSessionHandle> {
     const sdk = await this.#load();
 
@@ -244,7 +338,7 @@ export class RealPiAdapter implements PiAdapter {
     this.#loader = loader;
     await loader.reload();
 
-    const selection = await this.#resolveModel(sdk);
+    const selection = await this.#resolveModel(sdk, brief.model ?? this.#options.model);
 
     const customTools = brief.customTools ?? [];
     const builtinTools = [...(this.#options.builtinTools ?? READ_ONLY_TOOLS)];
@@ -406,8 +500,20 @@ export class RealPiAdapter implements PiAdapter {
     this.#sessions.delete(sessionId);
   }
 
-  usage(sessionId: string): { turns: number; tokens?: number } {
-    return { turns: this.#require(sessionId).turns };
+  usage(sessionId: string): WorkerUsage {
+    const entry = this.#require(sessionId);
+    const stats = entry.session.getSessionStats();
+    const context = stats.contextUsage;
+    return {
+      turns: entry.turns,
+      inputTokens: stats.tokens.input,
+      outputTokens: stats.tokens.output,
+      cacheReadTokens: stats.tokens.cacheRead,
+      cacheWriteTokens: stats.tokens.cacheWrite,
+      costUsd: stats.cost,
+      ...(context === undefined || context.tokens === null ? {} : { contextTokens: context.tokens }),
+      ...(context === undefined ? {} : { contextWindow: context.contextWindow }),
+    };
   }
 
   /**

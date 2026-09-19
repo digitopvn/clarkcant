@@ -278,6 +278,15 @@ export function SystemCardBlock({ block }: { block: Record<string, unknown> }): 
  */
 export interface BlockActions {
   onApprovalDecide?: (input: { approvalId: string; digest: string; decision: "granted" | "denied" }) => void;
+  /**
+   * A secret the person typed, on its way to the node and nowhere else.
+   *
+   * The callback receives the values because that is what it posts; nothing in this interface keeps them, and the
+   * card clears its own inputs as soon as it hands them over, so a value cannot be shown again by accident.
+   */
+  onCredentialSubmit?: (input: { requestId: string; fields: { name: string; value: string }[] }) => void;
+  /** What the node said about the last submission for one request, in words a reader can act on. */
+  credentialStatus?: { requestId: string; message: string };
   /** Which approval is waiting on the node, so its own card says so rather than all of them. */
   decidingApprovalId?: string;
   /**
@@ -412,10 +421,34 @@ export function ConnectionCardBlock({ block }: { block: Record<string, unknown> 
   );
 }
 
-export function CredentialCardBlock({ block }: { block: Record<string, unknown> }): ReactElement | null {
+export function CredentialCardBlock({
+  block,
+  actions,
+}: {
+  block: Record<string, unknown>;
+  actions?: BlockActions;
+}): ReactElement | null {
   if (block.owner !== "host") return null;
   const purpose = typeof block.purpose === "string" ? block.purpose : "";
   const destination = typeof block.destination === "string" ? block.destination : "vault-node";
+  const requestId = typeof block.requestId === "string" ? block.requestId : "";
+  const fields = Array.isArray(block.fields)
+    ? (block.fields as { name?: unknown; label?: unknown; masked?: unknown }[]).flatMap((field) =>
+        typeof field?.name === "string" && field.name !== ""
+          ? [
+              {
+                name: field.name,
+                label: typeof field.label === "string" && field.label !== "" ? field.label : field.name,
+                masked: field.masked !== false,
+              },
+            ]
+          : [],
+      )
+    : [];
+  const [values, setValues] = useState<Record<string, string>>({});
+  const complete = fields.length > 0 && fields.every((field) => (values[field.name] ?? "") !== "");
+  const status = actions?.credentialStatus?.requestId === requestId ? actions.credentialStatus.message : undefined;
+
   return (
     <section className="cc-card" data-host-card="credential" data-owner="host">
       <header className="cc-card-head">
@@ -424,6 +457,52 @@ export function CredentialCardBlock({ block }: { block: Record<string, unknown> 
       </header>
       <div className="cc-card-body">
         <p style={{ margin: 0 }}>{purpose}</p>
+        {fields.length === 0 ? null : (
+          <form
+            className="cc-credential-form"
+            onSubmit={(event) => {
+              event.preventDefault();
+              if (!complete) return;
+              actions?.onCredentialSubmit?.({
+                requestId,
+                fields: fields.map((field) => ({ name: field.name, value: values[field.name] ?? "" })),
+              });
+              // Cleared as soon as it is handed over, so the value cannot be read back off the screen or out of
+              // the component's state by anything that comes later.
+              setValues({});
+            }}
+          >
+            {fields.map((field) => (
+              <label key={field.name} className="cc-credential-field">
+                <span>{field.label}</span>
+                <input
+                  type={field.masked ? "password" : "text"}
+                  name={field.name}
+                  autoComplete="off"
+                  data-credential-field={field.name}
+                  value={values[field.name] ?? ""}
+                  onChange={(event) =>
+                    setValues((current) => ({ ...current, [field.name]: event.target.value }))
+                  }
+                />
+              </label>
+            ))}
+            <button
+              type="submit"
+              className="cc-icon-btn"
+              style={{ width: "auto", padding: "0 var(--cc-space-sm)" }}
+              disabled={!complete}
+              data-credential-submit="true"
+            >
+              Lưu
+            </button>
+          </form>
+        )}
+        {status !== undefined && (
+          <p className="cc-freshness" data-credential-status="true" style={{ margin: 0 }}>
+            {status}
+          </p>
+        )}
         {/* The value is entered in a host-owned field; it never enters the transcript. */}
         <p className="cc-freshness" style={{ margin: 0 }}>
           Giá trị bạn nhập không đi vào hội thoại, không vào model.
@@ -858,7 +937,7 @@ export function renderBlock(
     case "connection-card":
       return <ConnectionCardBlock key={index} block={block} />;
     case "credential-card":
-      return <CredentialCardBlock key={index} block={block} />;
+      return <CredentialCardBlock key={index} block={block} {...(actions === undefined ? {} : { actions })} />;
     case "task-progress-card":
       return <TaskProgressCardBlock key={index} block={block} />;
     case "task-summary-card":

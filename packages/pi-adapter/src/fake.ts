@@ -1,6 +1,9 @@
 import type { Instant } from "@clarkcant/contracts";
 
 import type {
+  ModelCatalogue,
+  PiExtension,
+  PiSetting,
   PiAdapter,
   ResourceRefreshRequest,
   ToolDefinition,
@@ -47,6 +50,45 @@ export class FakePiAdapter implements PiAdapter {
 
   async availability(): Promise<{ available: boolean; reason?: string; sdkVersion?: string }> {
     return { available: true, sdkVersion: "fake-1.0.0" };
+  }
+
+  /**
+   * A scripted catalogue, deliberately wider than one provider with one model.
+   *
+   * The real one is read from the SDK's own list; this exists so the routes and the chooser can be exercised without a
+   * provider account. A chooser that only ever saw a single row would never exercise the grouping, and a catalogue
+   * with only one model could never show the current one being marked among others.
+   */
+  async catalogue(): Promise<ModelCatalogue> {
+    return [
+      {
+        id: "fake",
+        models: [
+          { provider: "fake", id: "fake-model", current: true },
+          { provider: "fake", id: "fake-model-large", contextWindow: 500_000, current: false },
+        ],
+      },
+      {
+        id: "fake-other",
+        models: [{ provider: "fake-other", id: "fake-other-model", current: false }],
+      },
+    ];
+  }
+
+  /** A scripted list, including both kinds, so a section rendering them has both to render. */
+  async extensions(): Promise<readonly PiExtension[]> {
+    return [
+      { name: "fake-extension", kind: "directory" },
+      { name: "fake-hook.ts", kind: "file" },
+    ];
+  }
+
+  /** A scripted configuration, including a redacted entry so a panel rendering one has one to render. */
+  async piSettings(): Promise<readonly PiSetting[]> {
+    return [
+      { key: "defaultModel", value: "fake-model" },
+      { key: "providerApiKey", value: "[redacted]" },
+    ];
   }
 
   async createWorkerSession(brief: WorkerBrief): Promise<WorkerSessionHandle> {

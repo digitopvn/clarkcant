@@ -23,12 +23,15 @@ import {
   modelFromEnv,
   type ModelBudget,
   type ModelSelection,
+  type ModelCatalogue,
+  type PiExtension,
+  type PiSetting,
   type PiAdapter,
   type ToolDefinition,
   type WorkerEvent,
 } from "@clarkcant/pi-adapter";
 
-import type { ModelSegment, ModelTurnEvent, ModelTurnInput, ModelTurnReply } from "@clarkcant/core";
+import type { ModelSegment, ModelTurnEvent, ModelTurnInput, ModelTurnReply, TurnMetrics } from "@clarkcant/core";
 
 /**
  * One view a model may ask for.
@@ -81,6 +84,41 @@ export interface ModelTurn {
   budget: ModelBudget;
   /** Whether a view catalog is available, so the interface can say so rather than guess. */
   viewCatalogSize: () => number;
+  /** The conversations with a turn still running. */
+  running: () => string[];
+  /** Stops the running turn for a conversation, answering whether there was one. */
+  interrupt: (conversationId: string) => boolean;
+  /** Adds a sentence to the running turn, answering whether there was one to add it to. */
+  steer: (conversationId: string, text: string) => Promise<boolean>;
+  /**
+   * Runs one request in a worker of its own, answering with what that worker said.
+   *
+   * The request does not belong to the conversation's session and does not wait for it: this is what lets a person
+   * ask for something else while the assistant is busy, and it is deliberately not part of the turn machinery -
+   * nothing here touches `turns` or the in-flight marker, so a background request cannot make the conversation look
+   * busy or steal the turn that is running.
+   */
+  runInBackground: (input: { conversationId: string; principal: Principal; text: string }) => Promise<string>;
+
+  /**
+   * The providers and models this node can run, read from the SDK's own catalogue.
+   *
+   * Read on demand rather than held as a snapshot, for the same reason the view catalog is: the list belongs to the
+   * SDK and this is only a way to ask it.
+   */
+  catalogue: () => Promise<ModelCatalogue>;
+
+  /**
+   * What pi loads from its own agent directory.
+   *
+   * Here because this is where the adapter lives, not because it is about a turn: the extension list belongs to pi's
+   * installation rather than to any conversation, and the only thing that can reach it without importing the SDK twice
+   * is the adapter this turn holds.
+   */
+  extensions: () => Promise<readonly PiExtension[]>;
+
+  /** pi's own configuration, as far as it is safe to report it. */
+  piSettings: () => Promise<readonly PiSetting[]>;
   answer: (input: ModelTurnInput) => Promise<ModelTurnReply>;
   dispose: () => Promise<void>;
 }
@@ -108,6 +146,21 @@ interface Turn {
   /** Aborted when the turn is stopped, so an in-flight build knows not to commit. */
   abort: AbortController;
   conversationId: string;
+  /**
+   * Whether the session behind this turn was just created, and so knows nothing about the conversation.
+   *
+   * A session is dropped when a turn fails, because a session that failed a turn is the thing that is broken.
+   * The thread is not broken, so a new session has to be told what it is joining.
+   */
+  fresh: boolean;
+  /**
+   * Whether a turn is running for this conversation right now.
+   *
+   * On the turn rather than in a map keyed by conversation, because the lifetime is the turn's own: the session and
+   * this flag are cleared by different paths, and a marker kept somewhere else is a marker that can outlive what it
+   * describes - which is exactly what a first attempt at this did.
+   */
+  inFlight: boolean;
 }
 
 function isTextDelta(event: WorkerEvent): event is WorkerEvent & { type: "text-delta"; delta: string } {
@@ -120,6 +173,61 @@ function isTextDelta(event: WorkerEvent): event is WorkerEvent & { type: "text-d
  * Called before a block is appended, so a block lands where the model actually asked for it
  * rather than below the whole reply.
  */
+/**
+ * The prompt for one turn: what the person said, plus whatever guidance the caller attached.
+ *
+ * The note is marked as an instruction rather than left as plain text, because a model that reads guidance as
+ * part of the message answers a question nobody asked. Today the only caller that sets one is the voice path,
+ * which asks for the short version - the session has to read it aloud.
+ */
+/** Reads the conversation so far, newest last, for briefing a session that has just been created. */
+type HistoryReader = (
+  conversationId: string,
+) => Promise<readonly { role: "user" | "assistant"; text: string }[]>;
+
+/**
+ * The note a turn is prompted with: the brief for a new session first, then whatever this turn was given.
+ *
+ * Both are instructions to the model rather than things the user said, and the brief goes first because it is
+ * the context the rest is read in.
+ */
+function withRecap(recap: string, note: string | undefined): string | undefined {
+  const parts = [recap, note ?? ""]
+    .map((part) => part.trim())
+    .filter((part) => part !== "");
+  return parts.length === 0 ? undefined : parts.join("\n\n");
+}
+
+/**
+ * A brief of the conversation so far, short enough to read and specific enough to continue from.
+ *
+ * The last few messages only: a brief that grows with the conversation stops being a brief, and the point is
+ * to place the model in the thread rather than to reproduce it. Each line is clipped for the same reason.
+ */
+async function recapFor(options: { history?: HistoryReader }, conversationId: string): Promise<string> {
+  if (options.history === undefined) return "";
+  let messages: readonly { role: "user" | "assistant"; text: string }[];
+  try {
+    messages = await options.history(conversationId);
+  } catch {
+    // A brief that cannot be read is not a reason to refuse the turn: the answer is still an answer, only a
+    // less informed one, and failing here would turn a storage hiccup into a conversation that stops.
+    return "";
+  }
+  const recent = messages.slice(-12);
+  if (recent.length === 0) return "";
+  const lines = recent.map(
+    (message) =>
+      `${message.role === "user" ? "Người dùng" : "Trợ lý"}: ${message.text.replace(/\s+/g, " ").trim().slice(0, 400)}`,
+  );
+  return `Mạch hội thoại trước đó, để bạn tiếp tục đúng việc đang làm:\n${lines.join("\n")}`;
+}
+
+function promptForTurn(input: { text: string; note?: string }): string {
+  const note = input.note?.trim() ?? "";
+  return note === "" ? input.text : `${input.text}\n\n[Hướng dẫn cho lượt này: ${note}]`;
+}
+
 function flushText(turn: Turn): void {
   if (turn.pending.length === 0) return;
   const text = turn.pending.join("");
@@ -261,6 +369,39 @@ function showViewParameters(
  * "no model here" is a state the interface can show, and "a model is configured and cannot be
  * reached" is a fault the operator has to see, with the reason.
  */
+/**
+ * What the turn cost, from the adapter's own accounting.
+ *
+ * Read after the run settles, because that is when the provider has reported it. Anything the SDK did not
+ * report is left out rather than defaulted: a cache hit rate of "0%" for a provider that never mentioned a
+ * cache is a number that is wrong on purpose, and this card exists to be trusted.
+ */
+function turnMetrics(input: { adapter: PiAdapter; sessionId: string; elapsedMs: number; model: string }): TurnMetrics {
+  const usage = input.adapter.usage(input.sessionId);
+  const seconds = input.elapsedMs / 1000;
+  const effort = effortFromModel(input.model);
+  return {
+    ...(effort === undefined ? {} : { thinkingLevel: effort }),
+    ...(usage.inputTokens === undefined ? {} : { inputTokens: usage.inputTokens }),
+    ...(usage.outputTokens === undefined ? {} : { outputTokens: usage.outputTokens }),
+    ...(usage.cacheReadTokens === undefined ? {} : { cacheReadTokens: usage.cacheReadTokens }),
+    ...(usage.cacheWriteTokens === undefined ? {} : { cacheWriteTokens: usage.cacheWriteTokens }),
+    ...(usage.costUsd === undefined ? {} : { costUsd: usage.costUsd }),
+    ...(usage.contextTokens === undefined ? {} : { contextTokens: usage.contextTokens }),
+    ...(usage.contextWindow === undefined ? {} : { contextWindow: usage.contextWindow }),
+    ...(usage.outputTokens === undefined || seconds <= 0 ? {} : { tokensPerSecond: usage.outputTokens / seconds }),
+    cwd: process.cwd(),
+  };
+}
+
+/** The reasoning effort a model identifier carries, if it carries one (`model:high`). */
+function effortFromModel(model: string): string | undefined {
+  const separator = model.lastIndexOf(":");
+  if (separator === -1) return undefined;
+  const effort = model.slice(separator + 1);
+  return effort === "" ? undefined : effort;
+}
+
 export async function createModelTurn(options: {
   env: NodeJS.ProcessEnv;
   cwd: string;
@@ -275,6 +416,14 @@ export async function createModelTurn(options: {
    * exist.
    */
   views?: () => readonly ViewDescriptor[];
+  /**
+   * The conversation so far, newest last, for briefing a session that has just been created.
+   *
+   * A session dropped after a failure, or one created for a conversation resumed on a node that has since
+   * restarted, starts empty. Without this the next message meets an agent that has never heard of the thread,
+   * which is what "it forgot we had just done that" looks like from the outside.
+   */
+  history?: HistoryReader;
   /**
    * Dataset references the node actually holds.
    *
@@ -299,6 +448,14 @@ export async function createModelTurn(options: {
    * than the place that decides which capabilities exist.
    */
   extraTools?: () => readonly ToolDefinition[];
+  /**
+   * The model to run for sessions created from now on, when somebody chose one.
+   *
+   * A function rather than a value, and read at session creation rather than here: the composition root builds the
+   * model turn before the services that own the database and the identity the choice is stored against, so a value
+   * would have to exist before the thing it comes from does.
+   */
+  model?: () => ModelTurn["selection"] | undefined;
 }): Promise<ModelTurn | undefined> {
   const selection = modelFromEnv(options.env);
   if (selection === undefined) return undefined;
@@ -412,6 +569,8 @@ export async function createModelTurn(options: {
       unsubscribe: () => {},
       abort: new AbortController(),
       conversationId,
+      fresh: true,
+      inFlight: false,
     };
     // The view tool is only registered when there is a catalog; the extra tools stand on their own
     // and are registered whatever the catalog says.
@@ -420,12 +579,17 @@ export async function createModelTurn(options: {
       ...readExtraTools(),
     ].map((tool) => withActivity(turn, tool));
 
+    const chosen = options.model?.();
+
     const handle = await adapter.createWorkerSession({
       // The brief is per conversation rather than per message, so the model keeps the thread
       // it is already in instead of meeting the user again on every turn.
       goal: "Answer the user in this conversation.",
       projectRoots: [],
       allowedCapabilityRefs: [],
+      // Resolved here rather than when the turn was built: this is the moment a model can actually be chosen for a
+      // session, and it is also the moment `services` exists to say what was chosen.
+      ...(chosen === undefined ? {} : { model: chosen }),
       ...(customTools.length === 0 ? {} : { customTools }),
       // Carried on the brief as well as held here, because the adapter enforces it at the
       // turn boundary and that is where a runaway turn is actually stopped.
@@ -460,6 +624,60 @@ export async function createModelTurn(options: {
     selection,
     budget,
     viewCatalogSize: () => readViews().length,
+    catalogue: (): Promise<ModelCatalogue> => adapter.catalogue(),
+    extensions: (): Promise<readonly PiExtension[]> => adapter.extensions(),
+    piSettings: (): Promise<readonly PiSetting[]> => adapter.piSettings(),
+
+    /** The conversations with a turn still running. */
+    running: (): string[] => [...turns.values()].filter((turn) => turn.inFlight).map((turn) => turn.conversationId),
+
+    /**
+     * Stops the running turn for a conversation, answering whether there was one.
+     *
+     * The turn's own controller rather than a new one, because the point is to stop the work that is happening, and
+     * the paths that watch for cancellation already watch this one.
+     */
+    interrupt: (conversationId: string): boolean => {
+      const turn = turns.get(conversationId);
+      if (turn === undefined || !turn.inFlight) return false;
+      turn.abort.abort();
+      return true;
+    },
+
+    /**
+     * Adds a sentence to the turn that is already running, answering whether there was one to add it to.
+     *
+     * What the adapter does with it is the adapter's business; the answer is what lets a caller decide what to do
+     * when there was nothing to steer.
+     */
+    steer: async (conversationId: string, text: string): Promise<boolean> => {
+      const turn = turns.get(conversationId);
+      if (turn === undefined || !turn.inFlight || turn.sessionId === "") return false;
+      await adapter.steer(turn.sessionId, text);
+      return true;
+    },
+
+    runInBackground: async (input: { conversationId: string; principal: Principal; text: string }): Promise<string> => {
+      const handle = await adapter.createWorkerSession({
+        goal: input.text.slice(0, 2000),
+        // No folders and no capabilities: starting a worker is not a way to acquire either, and the request that
+        // needs them goes through the same approval path as any other.
+        projectRoots: [],
+        allowedCapabilityRefs: [],
+      });
+      let said = "";
+      const unsubscribe = adapter.subscribe(handle.sessionId, (event) => {
+        if (event.type === "text-delta") said += event.delta;
+      });
+      try {
+        await adapter.prompt(handle.sessionId, input.text);
+      } finally {
+        unsubscribe();
+        // Disposed whatever happened: a worker nobody will ask again is a provider connection held open for nothing.
+        void adapter.dispose(handle.sessionId).catch(() => undefined);
+      }
+      return said.trim();
+    },
 
     async answer(input: ModelTurnInput): Promise<ModelTurnReply> {
       if (!availability.available) {
@@ -470,6 +688,17 @@ export async function createModelTurn(options: {
 
       const startedAt = Date.now();
       const turn = await turnFor(input.conversationId, input.principal);
+      // Once, on the first turn this session answers: the second turn already has the first in its context,
+      // and repeating the brief each time would push the conversation out with its own summary.
+      const recap = turn.fresh ? await recapFor(options, input.conversationId) : "";
+      turn.fresh = false;
+      // Built here rather than at the call, because `note` is optional under exactOptionalPropertyTypes: a
+      // present key holding undefined is a different type from an absent key, and only one of them means
+      // "this turn carries no extra instruction".
+      const note = withRecap(recap, input.note);
+      // Set before the prompt rather than after it, so a message arriving while the first tokens are being written
+      // already sees a turn in flight.
+      turn.inFlight = true;
       // Cleared before the prompt rather than after, so a turn that throws still leaves the
       // buffer empty for the next one instead of prepending the previous reply to it.
       turn.pending.length = 0;
@@ -498,7 +727,10 @@ export async function createModelTurn(options: {
       });
 
       try {
-        await Promise.race([adapter.prompt(turn.sessionId, input.text), deadline]);
+        await Promise.race([
+          adapter.prompt(turn.sessionId, promptForTurn(note === undefined ? input : { ...input, note })),
+          deadline,
+        ]);
       } catch (cause) {
         /*
          * A failed turn takes its session with it.
@@ -521,6 +753,9 @@ export async function createModelTurn(options: {
         // Detached before the segments are read, so an event arriving after the race resolved cannot
         // be delivered to a reader that has already been told the answer is complete.
         turn.onEvent = undefined;
+        // Cleared here, in the one path that every outcome goes through: success, failure and cancellation all leave
+        // `answer` through this block, and a stale marker would make the next message think a turn was still running.
+        turn.inFlight = false;
       }
 
       // Trailing prose after the last view, and reasoning that never got closed by a later block.
@@ -542,7 +777,14 @@ export async function createModelTurn(options: {
 
       // A reply that is only a view is a reply. Refusing it would make the one thing this node
       // was just taught to do look like a failure.
-      return { text, segments, provider: selection.provider, model: selection.id, elapsedMs };
+      return {
+        text,
+        segments,
+        provider: selection.provider,
+        model: selection.id,
+        elapsedMs,
+        metrics: turnMetrics({ adapter, sessionId: turn.sessionId, elapsedMs, model: selection.id }),
+      };
     },
 
     async dispose(): Promise<void> {

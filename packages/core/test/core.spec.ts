@@ -843,3 +843,42 @@ describe("choosing between usable capabilities (Phase 9)", () => {
     expect(JSON.stringify(outcome.messages)).toContain(NODE_A);
   });
 });
+
+/**
+ * Guidance attached to one turn.
+ *
+ * It exists because a turn that will be read aloud has to be shorter than one that will be read, and only the
+ * caller knows which it is. The note travels with the message rather than replacing it.
+ */
+describe("what a turn asks the model for", () => {
+  it("carries the caller's note to the model, with the message unchanged", async () => {
+    const seen: Array<{ text: string; note: string | undefined }> = [];
+    const outcome = await handleUserMessage(
+      {
+        ...deps,
+        sampleRecipes: [],
+        respondWithModel: async (input: { text: string; note?: string }) => {
+          seen.push({ text: input.text, note: input.note });
+          return {
+            text: "ok",
+            segments: [{ kind: "text", text: "ok" }],
+            provider: "test",
+            model: "test",
+            elapsedMs: 1,
+          };
+        },
+      } as never,
+      {
+        conversationId: "conv_1" as never,
+        principal: USER,
+        text: "clone giúp tôi",
+        at: AT,
+        note: "trả lời ngắn",
+      },
+    );
+
+    // The note is guidance, not a different question: the words the person said arrive exactly as said.
+    expect(seen).toEqual([{ text: "clone giúp tôi", note: "trả lời ngắn" }]);
+    expect(outcome.resolution).toBe("model");
+  });
+});

@@ -42,6 +42,17 @@ export default defineConfig({
     baseURL: `http://127.0.0.1:${WEB_PORT}`,
     trace: "retain-on-failure",
     screenshot: "only-on-failure",
+    /*
+     * Every test starts as somebody who has already been through the first-run screen.
+     *
+     * That screen has its own test, which clears this state; the rest of the suite is about what the interface does
+     * afterwards, and making each of them walk through it again would be a line of noise in eight spec files instead
+     * of one here.
+     */
+    storageState: {
+      cookies: [],
+      origins: [{ origin: `http://127.0.0.1:${WEB_PORT}`, localStorage: [{ name: "cc_onboarded", value: "1" }] }],
+    },
   },
   projects: [
     {

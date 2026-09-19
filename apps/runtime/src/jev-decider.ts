@@ -328,6 +328,75 @@ export async function decideProject(
   };
 }
 
+/** The three things that can happen to a message that arrives while something is running. */
+export type TurnAction = "steer" | "interrupt" | "background";
+
+/**
+ * What should happen to a message sent while the assistant is still working.
+ *
+ * The three answers are genuinely different and none is a safe default: steering changes work already under way,
+ * interrupting throws it away, and a background worker spends a provider call on something the person may not have
+ * meant as a separate job. That is why this is a decision rather than a rule, and why an undecided answer is reported
+ * as undecided - the caller decides what to do with that, and choosing here on the model's behalf would hide it.
+ *
+ * How long the current work has been running belongs to the question because it changes the cost of the answer: a
+ * turn that started a second ago is cheap to stop, and one that has been going for a minute has something worth
+ * keeping or steering.
+ */
+export async function decideTurnAction(
+  deps: DecideDeps,
+  input: { text: string; runningMs: number },
+): Promise<
+  | { status: "decided"; action: TurnAction; confidence: number | undefined; model: string }
+  | { status: "fallback"; reason: string }
+> {
+  const refused = jevCallRefusal(deps.jev.config);
+  if (refused !== undefined) return { status: "fallback", reason: refused };
+
+  const outcome = await askChoice(deps.jev, {
+    state: {
+      message: redactSecrets(input.text).slice(0, 400),
+      runningForSeconds: String(Math.max(0, Math.round(input.runningMs / 1000))),
+    },
+    instructions:
+      "Trợ lý đang làm dở một việc trong hội thoại này và người dùng vừa gửi thêm một tin. Chọn cách xử lý tin mới.",
+    criteria: {
+      steer: "tin mới bổ sung, chỉnh lại hoặc nói rõ thêm cho việc đang làm",
+      interrupt: "tin mới thay thế việc đang làm; làm tiếp là làm thừa",
+      background: "tin mới là việc khác, có thể làm song song",
+    },
+    questionId: "turn-action",
+    budget: deps.budget(),
+  });
+
+  if (outcome.status !== "answered") {
+    return {
+      status: "fallback",
+      reason: outcome.status === "unavailable" ? outcome.reason : `the selector did not decide: ${outcome.reason}`,
+    };
+  }
+  if (!outcome.value.substantive) return { status: "fallback", reason: "the selector had no preference" };
+
+  const decisive = isDecisive(
+    outcome.value.top,
+    outcome.value.runnerUp,
+    deps.jev.config.confidenceFloor,
+    deps.jev.config.marginFloor,
+  );
+  if (!decisive.decisive) return { status: "fallback", reason: decisive.reason };
+
+  const choice = outcome.value.choice;
+  if (choice !== "steer" && choice !== "interrupt" && choice !== "background") {
+    return { status: "fallback", reason: "the selector chose something that was not an action" };
+  }
+  return {
+    status: "decided",
+    action: choice,
+    confidence: outcome.value.confidence ?? outcome.value.top,
+    model: deps.jev.config.model,
+  };
+}
+
 
 /**
  * Choose which retrieved result the user meant.

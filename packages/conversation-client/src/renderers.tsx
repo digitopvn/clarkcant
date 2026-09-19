@@ -720,6 +720,166 @@ function LocalImage({ props, imageUrl }: RendererProps): ReactElement {
   );
 }
 
+/** The opaque picture references a widget was given, in the order it gave them. */
+function pictureRefs(value: unknown): string[] {
+  return Array.isArray(value) ? value.filter((entry): entry is string => typeof entry === "string" && entry !== "") : [];
+}
+
+/**
+ * The descriptions that belong to those pictures, by position.
+ *
+ * By position because that is what the schema can say, and a picture without a description is a picture some
+ * people cannot use at all. An entry that is missing or not text becomes an empty description rather than a
+ * borrowed one: the wrong description is worse than none.
+ */
+function pictureAlts(value: unknown, count: number): string[] {
+  const given = Array.isArray(value) ? value : [];
+  return Array.from({ length: count }, (_, index) => {
+    const entry = given[index];
+    return typeof entry === "string" ? entry : "";
+  });
+}
+
+/** Several pictures seen one at a time, with the controls a keyboard can reach. */
+function Carousel({ props, imageUrl }: RendererProps): ReactElement {
+  const refs = pictureRefs(props.imageRefs);
+  const alts = pictureAlts(props.alts, refs.length);
+  const [index, setIndex] = useState(0);
+  const current = refs.length === 0 ? 0 : Math.min(index, refs.length - 1);
+  const ref = refs[current];
+  const alt = alts[current] ?? "";
+  const url = ref === undefined ? undefined : imageUrl?.(ref);
+
+  return (
+    <Frame title={String(props.title ?? "Bộ ảnh")} dataset={undefined} role="media">
+      {refs.length === 0 || url === undefined ? (
+        <Unavailable reason={`Chưa tải được hình ảnh. Mô tả: ${alts.filter((entry) => entry !== "").join(" · ")}`} />
+      ) : (
+        <div className="cc-carousel" data-carousel-index={current}>
+          <figure className="cc-image">
+            <img src={url} alt={alt} loading="lazy" decoding="async" data-image-ref={ref} />
+            <figcaption className="cc-freshness">{alt}</figcaption>
+          </figure>
+          <div className="cc-carousel-controls">
+            <button
+              type="button"
+              aria-label="Ảnh trước"
+              onClick={() => setIndex(current <= 0 ? refs.length - 1 : current - 1)}
+            >
+              ‹
+            </button>
+            <span className="cc-freshness">
+              {current + 1}/{refs.length}
+            </span>
+            <button type="button" aria-label="Ảnh sau" onClick={() => setIndex((current + 1) % refs.length)}>
+              ›
+            </button>
+          </div>
+        </div>
+      )}
+    </Frame>
+  );
+}
+
+/** The same pictures as a grid, for when seeing them together is the point. */
+function Gallery({ props, imageUrl }: RendererProps): ReactElement {
+  const refs = pictureRefs(props.imageRefs);
+  const alts = pictureAlts(props.alts, refs.length);
+  const shown = refs.flatMap((ref, index) => {
+    const url = imageUrl?.(ref);
+    return url === undefined ? [] : [{ ref, url, alt: alts[index] ?? "" }];
+  });
+
+  return (
+    <Frame title={String(props.title ?? "Thư viện ảnh")} dataset={undefined} role="media">
+      {shown.length === 0 ? (
+        <Unavailable reason={`Chưa tải được hình ảnh. Mô tả: ${alts.filter((entry) => entry !== "").join(" · ")}`} />
+      ) : (
+        <ul className="cc-gallery" data-gallery-count={shown.length}>
+          {shown.map((picture) => (
+            <li key={picture.ref}>
+              <figure className="cc-image">
+                <img src={picture.url} alt={picture.alt} loading="lazy" decoding="async" data-image-ref={picture.ref} />
+                {picture.alt !== "" && <figcaption className="cc-freshness">{picture.alt}</figcaption>}
+              </figure>
+            </li>
+          ))}
+        </ul>
+      )}
+    </Frame>
+  );
+}
+
+/**
+ * A YouTube video, embedded from YouTube only when the widget asks for it.
+ *
+ * The address is built here from an identifier the host validated, never taken from the widget: an embed is a
+ * request the reader's browser makes to somebody else's server, and where it may point is the host's decision
+ * rather than the model's. The nocookie host is used because a video is not a reason to be followed around the
+ * internet.
+ */
+function YouTubeEmbed({ props }: RendererProps): ReactElement {
+  const videoId = String(props.videoId ?? "");
+  const title = String(props.title ?? "Video YouTube");
+  const description = typeof props.description === "string" ? props.description : "";
+  const usable = /^[A-Za-z0-9_-]{6,20}$/.test(videoId);
+
+  return (
+    <Frame title={title} dataset={undefined} role="media">
+      {!usable ? (
+        <Unavailable reason={`Video: ${title}${description === "" ? "" : ` — ${description}`}`} />
+      ) : (
+        <div className="cc-embed">
+          <iframe
+            src={`https://www.youtube-nocookie.com/embed/${videoId}`}
+            title={title}
+            loading="lazy"
+            allow="accelerometer; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+            allowFullScreen
+            data-video-id={videoId}
+          />
+          {description !== "" && <p className="cc-freshness">{description}</p>}
+        </div>
+      )}
+    </Frame>
+  );
+}
+
+/**
+ * A video the host holds, played from the same opaque reference an imported image uses.
+ *
+ * `imageUrl` is the host's blob resolver rather than a picture-only one: what it resolves is a reference the
+ * host minted, and a video is another thing behind such a reference. A reference the host cannot resolve shows
+ * the description instead of an invented address.
+ */
+function LocalVideo({ props, imageUrl }: RendererProps): ReactElement {
+  const ref = String(props.videoRef ?? "");
+  const alt = String(props.alt ?? "");
+  const posterRef = typeof props.posterRef === "string" ? props.posterRef : "";
+  const url = ref === "" ? undefined : imageUrl?.(ref);
+  const poster = posterRef === "" ? undefined : imageUrl?.(posterRef);
+
+  return (
+    <Frame title={String(props.title ?? "Video")} dataset={undefined} role="media">
+      {url === undefined ? (
+        <Unavailable reason={`Chưa phát được video. Mô tả: ${alt}`} />
+      ) : (
+        <figure className="cc-video">
+          <video
+            controls
+            preload="metadata"
+            src={url}
+            {...(poster === undefined ? {} : { poster })}
+            aria-label={alt}
+            data-video-ref={ref}
+          />
+          <figcaption className="cc-freshness">{alt}</figcaption>
+        </figure>
+      )}
+    </Frame>
+  );
+}
+
 /**
  * The one action in the M1 vocabulary.
  *
@@ -775,6 +935,10 @@ export const CATALOG: Record<string, CatalogRenderer> = {
   "canvas.filter@1": PeriodFilter,
   "canvas.calendar@1": Calendar,
   "canvas.image@1": LocalImage,
+  "canvas.carousel@1": Carousel,
+  "canvas.gallery@1": Gallery,
+  "canvas.youtube@1": YouTubeEmbed,
+  "canvas.video@1": LocalVideo,
   "canvas.cta@1": CallToAction,
 };
 

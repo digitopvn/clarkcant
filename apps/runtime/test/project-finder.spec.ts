@@ -99,6 +99,23 @@ afterEach(() => {
 });
 
 describe("the scan", () => {
+
+  it("keeps looking inside a folder that only holds a docs subfolder", async () => {
+    // Found on a real machine, and it cost a whole tree: `D:\www` holds `docs`, so it was classified as a
+    // documentation project - and because a directory with a marker is recorded and not descended into, every
+    // repository beneath it disappeared from the index, including the one the node itself was running from. A
+    // weak marker is a hint, not a boundary.
+    const root = mkdtempSync(join(tmpdir(), "cc-weak-marker-"));
+    const container = join(root, "container");
+    mkdirSync(join(container, "docs"), { recursive: true });
+    mkdirSync(join(container, "my-project"), { recursive: true });
+    writeFileSync(join(container, "my-project", "package.json"), "{}");
+
+    const outcome = await scanProjects({ roots: [root], ignore: [], maxDepth: 5 });
+
+    expect(outcome.projects.map((project) => project.name)).toContain("my-project");
+    rmSync(root, { recursive: true, force: true });
+  });
   it("indexes marked directories and refuses to descend into one", async () => {
     buildTree();
     const outcome = await refreshProjectIndex(deps, { full: true });

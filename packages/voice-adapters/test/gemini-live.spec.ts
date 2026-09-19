@@ -360,3 +360,66 @@ describe("parsing", () => {
     expect(message.realtimeInput.audio.mimeType).toBe("audio/pcm;rate=16000");
   });
 });
+
+/**
+ * Reading the agent's reply out loud.
+ *
+ * The provider's voice, somebody else's words. These tests exist because the two are easy to
+ * confuse: the call has to carry the text exactly, and it must not turn into a second question for
+ * the model to answer.
+ */
+describe("reading a given text out loud", () => {
+  async function ready(): Promise<{ adapter: GeminiLiveAdapter; socket: FakeSocket }> {
+    const { adapter, socket, connected } = await begin();
+    socket.open();
+    socket.deliver({ setupComplete: {} });
+    await connected;
+    return { adapter, socket };
+  }
+
+  it("sends the words as a turn rather than asking the model anything", async () => {
+    const { adapter, socket } = await ready();
+
+    adapter.speak("Xong rồi: ba tệp đã được chuyển.");
+
+    const turn = socket.sentObjects().find((message) => "clientContent" in message);
+    expect(turn).toEqual({
+      clientContent: {
+        turns: [{ role: "user", parts: [{ text: "Xong rồi: ba tệp đã được chuyển." }] }],
+        turnComplete: true,
+      },
+    });
+    // The reply is text, not a fabricated audio frame: the provider owns the audio.
+    expect(socket.sentObjects().some((message) => "realtimeInput" in message)).toBe(false);
+  });
+
+  it("says nothing when there is nothing to say", async () => {
+    const { adapter, socket } = await ready();
+    const before = socket.sent.length;
+
+    adapter.speak("   ");
+
+    // A silent turn still costs a round trip, and the silence it produces reads as a stall.
+    expect(socket.sent.length).toBe(before);
+  });
+
+  it("is dropped before the session is ready, because setup has to be first on the socket", async () => {
+    const { adapter, socket } = await begin();
+    socket.open();
+    const before = socket.sent.length;
+
+    adapter.speak("quá sớm");
+
+    expect(socket.sent.length).toBe(before);
+  });
+
+  it("does not throw when there is no session at all", () => {
+    // A caller that has lost its session has nothing to recover with, so this must be a no-op
+    // rather than an exception raised at the layer that cannot do anything about it.
+    const adapter = new GeminiLiveAdapter({ createSocket: () => {
+      throw new Error("no socket should ever be created here");
+    } });
+
+    expect(() => adapter.speak("xin chào")).not.toThrow();
+  });
+});

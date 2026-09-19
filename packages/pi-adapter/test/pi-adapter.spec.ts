@@ -1,3 +1,7 @@
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
 import { describe, expect, it } from "vitest";
 
 import {
@@ -183,7 +187,7 @@ function stubSdk(options: { idleDelayMs?: number } = {}) {
     },
     SessionManager: { inMemory: () => ({}), create: () => ({}) },
     createAgentSession: async () => ({ session }),
-    ModelRuntime: { create: async () => ({ getModels: () => [] }) },
+    ModelRuntime: { create: async () => ({ getModels: () => [], getProviders: () => [] }) },
   };
 
   return { module: module_, prompts, aborts: () => aborts };
@@ -243,3 +247,100 @@ describe("the wall-clock budget bounds a run, not a session's age", () => {
     await adapter.dispose(handle.sessionId);
   });
 });
+
+describe("the model catalogue", () => {
+  it("lists every provider with its own models, and marks exactly one as current", async () => {
+    const catalogue = await new FakePiAdapter().catalogue();
+
+    // More than one provider, and more than one model across them: a chooser that only ever saw a single row would
+    // never exercise the grouping, and a catalogue with one model could never show the current one among others.
+    expect(catalogue.length).toBeGreaterThan(1);
+    const models = catalogue.flatMap((provider) => provider.models);
+    expect(models.length).toBeGreaterThan(catalogue.length);
+    expect(models.filter((model) => model.current)).toHaveLength(1);
+
+    // Each model names the provider it came from, so a chooser can group without re-deriving it from the grouping.
+    for (const provider of catalogue) {
+      for (const model of provider.models) expect(model.provider).toBe(provider.id);
+    }
+  });
+});
+
+  it("resolves the model a brief carries, not only the one the adapter was built with", async () => {
+    const sdk = stubSdk();
+    const adapter = adapterWith(sdk);
+
+    // The stub offers no models for any provider, which is what makes this testable without a provider account: the
+    // refusal names the provider that was asked about, so the provider the adapter resolved is visible in the failure.
+    // A brief carrying a model that was then ignored would name the adapter's own provider instead - and that is the
+    // bug this covers, because a choice stored in the interface reaches a session only through this brief.
+    await expect(
+      adapter.createWorkerSession({
+        goal: "answer the user",
+        projectRoots: [],
+        allowedCapabilityRefs: [],
+        maxWallClockMs: 40,
+        model: { provider: "from-the-brief", id: "any-model" },
+      }),
+    ).rejects.toThrow(/from-the-brief/);
+  });
+
+describe("the extension listing", () => {
+  it("reports the names and kinds pi would load from its own agent directory, and nothing else", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "cc-pi-agent-"));
+    mkdirSync(join(dir, "extensions", "my-extension"), { recursive: true });
+    // Written with contents that must not appear in the answer: the listing reports that a file is there, never what is
+    // in it, because an extension on a real machine can hold a credential.
+    writeFileSync(join(dir, "extensions", "notes.ts"), "const token = must-not-be-listed;");
+
+    const adapter = new RealPiAdapter({
+      cwd: process.cwd(),
+      agentDir: dir,
+      sdk: stubSdk().module as unknown as NonNullable<RealPiAdapterOptions["sdk"]>,
+    });
+
+    const listed = await adapter.extensions();
+    expect(listed).toEqual([
+      { name: "my-extension", kind: "directory" },
+      { name: "notes.ts", kind: "file" },
+    ]);
+    expect(JSON.stringify(listed)).not.toContain("must-not-be-listed");
+
+    // A machine where nobody has configured pi is a fact rather than a failure: an empty list, not an error.
+    rmSync(join(dir, "extensions"), { recursive: true, force: true });
+    expect(await adapter.extensions()).toEqual([]);
+    rmSync(dir, { recursive: true, force: true });
+  });
+});
+
+describe("pi's own settings", () => {
+  it("reports scalars and redacts anything whose name suggests a secret, reading no other file", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "cc-pi-settings-"));
+    writeFileSync(
+      join(dir, "settings.json"),
+      JSON.stringify({ defaultModel: "a-model", providerApiKey: "must-not-appear", thinkingBudgets: { low: 1 } }),
+    );
+
+    const adapter = new RealPiAdapter({
+      cwd: process.cwd(),
+      agentDir: dir,
+      sdk: stubSdk().module as unknown as NonNullable<RealPiAdapterOptions["sdk"]>,
+    });
+
+    const settings = await adapter.piSettings();
+    const byKey = new Map(settings.map((entry) => [entry.key, entry.value]));
+    expect(byKey.get("defaultModel")).toBe("a-model");
+    expect(byKey.get("thinkingBudgets")).toBe('{"low":1}');
+
+    // The redaction is by name and is deliberately broad: a settings file on a real machine can carry a provider key,
+    // and a section that echoed it would be the place it leaked from.
+    expect(byKey.get("providerApiKey")).toBe("[redacted]");
+    expect(JSON.stringify(settings)).not.toContain("must-not-appear");
+
+    // No file is a fact rather than a failure: a machine where nobody has configured pi has nothing to report.
+    rmSync(join(dir, "settings.json"));
+    expect(await adapter.piSettings()).toEqual([]);
+    rmSync(dir, { recursive: true, force: true });
+  });
+});
+

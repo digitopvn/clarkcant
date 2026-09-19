@@ -132,8 +132,18 @@ function isPrivateHost(host: string): boolean {
  * independent settings would allow the state "enabled with no key", which can only fail at call
  * time.
  */
-export function jevConfigFromEnv(env: NodeJS.ProcessEnv = process.env): JevConfig {
-  const apiKey = env.TYPESAFE_API_KEY?.trim() || undefined;
+export function jevConfigFromEnv(
+  env: NodeJS.ProcessEnv = process.env,
+  /**
+   * The key a person typed into the interface, when there is one.
+   *
+   * Read through a function rather than handed over as a value, because it is read when the selector is built and the
+   * point of storing one is that it works without restarting the node. The environment wins when both exist: an
+   * operator who set it deliberately should not be overridden by a value typed later into a card.
+   */
+  stored?: () => string | undefined,
+): JevConfig {
+  const apiKey = env.TYPESAFE_API_KEY?.trim() || stored?.()?.trim() || undefined;
   const localOnly = flag(env.CLARKCANT_JEV_LOCAL_ONLY);
   const explicit = env.CLARKCANT_JEV_ENABLED === undefined ? undefined : flag(env.CLARKCANT_JEV_ENABLED);
   const model = env.CLARKCANT_JEV_MODEL?.trim() || JEV_EXACT_MODEL;

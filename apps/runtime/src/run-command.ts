@@ -1,13 +1,10 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { createHash } from "node:crypto";
-import { dirname, resolve } from "node:path";
 
 import type { Instant, MessageBlock } from "@clarkcant/contracts";
 
-import { isWithinRoot } from "./path-roots.ts";
-
 /**
- * Running one command, in a directory the user approved.
+ * Running one command, in the directory it was asked for, once a person has approved it.
  *
  * This is the module the design deliberately did not have: a conversation turn had no way to touch the
  * machine at all, so an agent asked to clone a repository could only explain, accurately, that it had
@@ -37,31 +34,12 @@ export const COMMAND_LIMITS = {
 
 export interface CommandGuardResult {
   ok: boolean;
-  code?: "EMPTY_COMMAND" | "COMMAND_TOO_LONG" | "OUTSIDE_APPROVED_ROOTS" | "NO_PLACE_TO_RUN";
+  code?: "EMPTY_COMMAND" | "COMMAND_TOO_LONG";
   message?: string;
   /** The resolved directory the command would run in. */
   cwd?: string;
   /** Why this directory is allowed, written for the card: the user is approving a place as well as a command. */
   because?: string;
-}
-
-/**
- * Where a command may run.
- *
- * Not an allowlist the operator maintains: the operator's decision was that the agent should be able to
- * work anywhere it can justify, provided it looks for the right place first and the choice is visible
- * before anything runs. So a directory qualifies when it is one the node already recognises as a place
- * work happens — a folder the user approved, a folder the finder indexed as a project, or the folder such
- * a project lives in (which is where a clone lands: beside the other repositories rather than inside one).
- *
- * The approval card still stands in front of the command, and it names the directory, so the person who
- * approves sees where it will run rather than trusting this function.
- */
-export interface CommandPlacement {
-  /** Folders the user approved explicitly. */
-  approvedRoots: readonly string[];
-  /** Folders the finder has indexed as projects on this node. */
-  knownProjects: readonly string[];
 }
 
 /**
@@ -77,12 +55,19 @@ export function commandDigest(command: string, cwd: string): string {
   return `sha256:${createHash("sha256").update(canonical).digest("hex").slice(0, 40)}`;
 }
 
-/** Whether a command may be proposed at all, and where it would run. */
-export function guardCommand(input: {
-  command: unknown;
-  cwd?: unknown;
-  placement: CommandPlacement;
-}): CommandGuardResult {
+/*
+ * The folder restriction is gone.
+ *
+ * A node used to decide where a command was allowed to run: a folder the user approved, a project the
+ * finder had indexed, or the folder those live in. In use that refused the tree this product itself runs
+ * from - the finder's scan stops at a file ceiling, so it had never reached the directory the operator
+ * launched the app in, and every command there came back as somewhere the agent did not know.
+ *
+ * The decision now belongs to whoever is holding the approval card, which is the only control with a
+ * person behind it, and permission management belongs to the host that runs the agent. Pi here is the
+ * runtime that carries the instruction out, not the thing that decides whether it is allowed to.
+ */
+export function guardCommand(input: { command: unknown; cwd?: unknown }): CommandGuardResult {
   const command = typeof input.command === "string" ? input.command.trim() : "";
   if (command === "") {
     return { ok: false, code: "EMPTY_COMMAND", message: "Cần một lệnh để chạy." };
@@ -95,50 +80,11 @@ export function guardCommand(input: {
     };
   }
 
-  const { approvedRoots, knownProjects } = input.placement;
-  // `dirname("")` is `.`, which would make this list look non-empty on a node that knows nothing — the
-  // branch below would never fire and a command would be proposed for `.`. The parent is only considered
-  // when there is a project to take the parent of.
-  const firstProject = knownProjects[0];
-  const candidates = [approvedRoots[0], firstProject, firstProject === undefined ? undefined : dirname(firstProject)].filter(
-    (value): value is string => value !== undefined && value.trim() !== "",
-  );
-  if (candidates.length === 0) {
-    return {
-      ok: false,
-      code: "NO_PLACE_TO_RUN",
-      message:
-        "Node này chưa biết thư mục nào để làm việc. Hãy để tui tìm dự án trước, hoặc nói rõ thư mục cần dùng.",
-    };
-  }
-
-  const requested =
-    typeof input.cwd === "string" && input.cwd.trim() !== "" ? input.cwd.trim() : (candidates[0] ?? "");
-
-  for (const root of approvedRoots) {
-    if (isWithinRoot(root, requested)) {
-      return { ok: true, cwd: requested, because: `nằm trong thư mục bạn đã duyệt (${root})` };
-    }
-  }
-
-  for (const project of knownProjects) {
-    if (isWithinRoot(project, requested)) {
-      return { ok: true, cwd: requested, because: `nằm trong dự án đã biết (${project})` };
-    }
-    // The folder the projects live in: where a clone lands, beside the repositories rather than inside
-    // one of them. This is the case the request was about.
-    const parent = dirname(project);
-    if (parent !== "" && resolve(parent) === resolve(requested)) {
-      return { ok: true, cwd: requested, because: `là thư mục chứa các dự án đã biết (${project})` };
-    }
-  }
-
+  const requested = typeof input.cwd === "string" && input.cwd.trim() !== "" ? input.cwd.trim() : process.cwd();
   return {
-    ok: false,
-    code: "OUTSIDE_APPROVED_ROOTS",
-    message:
-      `Thư mục ${requested} không nằm trong thư mục đã duyệt hay dự án nào tui biết. ` +
-      `Hãy tìm dự án trước (find_project) hoặc chọn một thư mục nằm cạnh các dự án hiện có.`,
+    ok: true,
+    cwd: requested,
+    because: "node không giới hạn thư mục nữa, nên thẻ duyệt này là chỗ bạn quyết định",
   };
 }
 
@@ -264,19 +210,27 @@ export async function runCommand(
 /**
  * What the conversation says about a finished command.
  *
- * Written for a reader who has to decide whether it worked, so the exit code and the truncation are
- * stated before the output rather than after it — a wall of text with the verdict at the bottom is a
- * wall of text.
+ * The verdict only. The output itself belongs in the block's result, which the interface draws as a code
+ * block, and saying it in both places is what made a receipt print its own output twice.
  */
 export function describeCommandOutcome(command: string, outcome: CommandOutcome): string {
   const verdict = outcome.timedOut
     ? `hết thời gian sau ${outcome.durationMs} ms và bị dừng`
     : `thoát với mã ${outcome.exitCode ?? "không rõ"} sau ${outcome.durationMs} ms`;
-  const parts = [`\`${command}\` ${verdict}.`];
+  return `\`${command}\` ${verdict}.`;
+}
+
+/**
+ * What the command printed, as the result a reader can copy.
+ *
+ * Labelled by stream, because which of the two a line came from is often the whole question, and "Không có
+ * output." rather than an empty block, because a command that printed nothing is a fact worth stating.
+ */
+export function commandOutput(outcome: CommandOutcome): string {
+  const parts: string[] = [];
   if (outcome.stdout.trim() !== "") parts.push(`stdout:\n${outcome.stdout.trimEnd()}`);
   if (outcome.stderr.trim() !== "") parts.push(`stderr:\n${outcome.stderr.trimEnd()}`);
-  if (outcome.stdout.trim() === "" && outcome.stderr.trim() === "") parts.push("Không có output.");
-  return parts.join("\n\n");
+  return parts.length === 0 ? "Không có output." : parts.join("\n\n");
 }
 
 /**
@@ -291,10 +245,37 @@ export function describeCommandOutcome(command: string, outcome: CommandOutcome)
  * refused operation returns no block — a message describing something that did not happen is how a
  * transcript starts lying.
  */
+/**
+ * The receipt a model is given after a command it proposed has run.
+ *
+ * Not the searchable text of the message, and that distinction is the bug this exists to fix. The text walk collects a
+ * block's *summary*, and for a tool record the summary is the verdict - so the model was told a command had exited 0
+ * while the output it actually needed sat in a field nothing looked at. It asked for help, was told everything was
+ * fine, and had to ask again, which is exactly what a person watched happen.
+ *
+ * The output is bounded where it is stored rather than here: the record already carries at most twenty thousand
+ * characters, and re-bounding it in two places would be two places to get it wrong.
+ */
+export function receiptForModel(blocks: readonly MessageBlock[]): string {
+  const parts: string[] = [];
+  for (const block of blocks) {
+    if (block.type === "tool-activity") {
+      const command = block.args.command;
+      if (typeof command === "string" && command.trim() !== "") parts.push(`$ ${command.trim()}`);
+      // Optional on the block type, so it is checked rather than assumed; the receipt still carries the command.
+      if (block.result !== undefined && block.result.trim() !== "") parts.push(block.result);
+    } else if (block.type === "evidence") {
+      parts.push(block.summary);
+    } else if (block.type === "text") {
+      parts.push(block.content);
+    }
+  }
+  return parts.join("\n").trim();
+}
+
 export async function runApprovedCommand(input: {
   payload: string;
   expectedDigest: string;
-  placement: CommandPlacement;
   approvalId: string;
   /** Injected so the whole decision path can be tested without spawning anything. */
   run?: (request: { command: string; cwd: string }) => Promise<CommandOutcome>;
@@ -325,9 +306,9 @@ export async function runApprovedCommand(input: {
     };
   }
 
-  const guard = guardCommand({ command, cwd, placement: input.placement });
+  const guard = guardCommand({ command, cwd });
   if (!guard.ok || guard.cwd === undefined) {
-    return { ok: false, code: guard.code ?? "OUTSIDE_APPROVED_ROOTS", message: guard.message ?? "refused" };
+    return { ok: false, code: guard.code ?? "COMMAND_REFUSED", message: guard.message ?? "refused" };
   }
 
   const at = input.now ?? (() => new Date().toISOString() as Instant);
@@ -346,7 +327,7 @@ export async function runApprovedCommand(input: {
       // The approval id travels with the receipt so the interface can mark the card it answered as
       // decided, including after a reload.
       args: { command, cwd: guard.cwd, approvalId: input.approvalId, decision: "granted" },
-      result: description,
+      result: commandOutput(outcome),
       path: guard.cwd,
       startedAt,
       endedAt: at(),
