@@ -10,6 +10,8 @@ Tên “Agent” chỉ là tên làm việc, không khóa thương hiệu/domain
 
 ## Đọc theo thứ tự
 
+Trước khi sửa UI/UX, đọc [DESIGN.md](../DESIGN.md) để giữ đúng định hướng tương tác. Quy trình làm việc cho agent nằm trong [AGENTS.md](../AGENTS.md); bằng chứng và giới hạn triển khai nằm trong [conformance-traceability.md](conformance-traceability.md).
+
 1. [Scope lock](scope-lock.md): mục tiêu, IN/OUT và các quyết định thay v1.
 2. [System architecture](system-architecture.md): stack, process, domain, contracts, security và dữ liệu.
 3. [Distributed runtime](distributed-runtime.md): cài VPS, pairing, remote delegation, disconnect/recovery.
@@ -28,6 +30,8 @@ Các JSON trong [examples](examples/) chỉ minh họa **contract riêng của a
 ## Ưu tiên tài liệu
 
 Yêu cầu người dùng mới nhất → scope-lock → system-architecture → tài liệu chuyên đề → implementation-plan. Bộ v2 **thay thế**, không cộng chồng lên scope v1. Ảnh UI cũ là tham khảo thị giác; không khóa topology, navigation hoặc lời hứa bảo mật.
+
+[DESIGN.md](../DESIGN.md) sở hữu định hướng UI/UX; [system-architecture.png](system-architecture.png) là sơ đồ kiến trúc hiện hành khi khác với phần mô tả. Đây là các nguồn thiết kế, không phải bằng chứng tính năng đã phát hành. Đặc biệt, Autonomous là policy mục tiêu; đường thực thi command hiện tại vẫn dùng approval, xem [model-turn.ts](../apps/runtime/src/model-turn.ts) và [gateway.ts](../apps/runtime/src/gateway.ts).
 
 ## Scope phát hành
 
