@@ -291,6 +291,18 @@ function parseSseFrame(frame: string): SseEvent | undefined {
   return data.length === 0 ? undefined : { event, data: data.join("\n") };
 }
 
+/** What the node reports about an artifact. No path, deliberately: see `artifact()`. */
+export interface ArtifactView {
+  artifactId: string;
+  digest: string;
+  sizeBytes: number;
+  mimeType: string;
+  originNodeId: string;
+  createdAt: string;
+  expiresAt: string | null;
+  expired: boolean;
+}
+
 export class GatewayError extends Error {
   readonly status: number;
   readonly code: string;
@@ -868,6 +880,18 @@ export class GatewayClient {
    */
   cancelTask(taskId: string): Promise<{ taskId: string; state: string; confirmed: boolean }> {
     return this.#call("POST", `/tasks/${encodeURIComponent(taskId)}/cancel`, {});
+  }
+
+  /**
+   * Open an artifact.
+   *
+   * Resolves with facts about it and never with where its bytes live: the node's own data directory is not
+   * something a client needs in order to show a file. `expired` is reported separately from a missing artifact,
+   * because "the node had it and a retention window passed" and "there is no such file" are different answers
+   * to the user.
+   */
+  artifact(artifactId: string): Promise<{ artifact: ArtifactView }> {
+    return this.#call("GET", `/artifacts/${encodeURIComponent(artifactId)}`);
   }
 
   claimLiveOwner(

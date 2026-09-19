@@ -33,6 +33,7 @@ import { GALLERY, YOUTUBE } from "@clarkcant/data-canvas";
 import { definitionDigest } from "@clarkcant/widget-host";
 import { listLocalImages, messagesSince, readCredential,
   readPreference,
+  upsertArtifact,
 } from "@clarkcant/storage";
 import { attachVoiceGateway, VOICE_ANSWER_NOTE, VOICE_CREDENTIAL_NAME } from "./voice-session.ts";
 import { indexMessages, textOfMessage } from "./session-search.ts";
@@ -261,6 +262,39 @@ async function main(): Promise<void> {
           // Required by the schema: a diff says when it was taken, because a change shown without a time reads
           // as the current state of the code rather than as a snapshot of it.
           updatedAt: instantSchema.parse(new Date().toISOString()),
+        },
+      };
+    }
+
+    /*
+     * An artifact, scripted — and written to the artifacts table, so reopening it asks the node about something
+     * that exists rather than about an id invented for the journey.
+     *
+     * This is a fixture rather than a model, and that is a limitation worth naming: nothing in the product
+     * produces an artifact yet, so the reopen path can be exercised end to end but not reached in normal use.
+     */
+    if (/artifact|tệp lớn/i.test(input.text)) {
+      const artifactId = services.conductor.newId("art");
+      const at = instantSchema.parse(new Date().toISOString());
+      const digest = "sha256:3f786850e387550fdab836ed7e6dc881de23001b09c2f0f8b9f2f1e6c0c4a1b7";
+      upsertArtifact(services.runtime.db, {
+        artifactId,
+        digest,
+        sizeBytes: 20480,
+        mimeType: "application/pdf",
+        classification: "internal",
+        originNodeId: services.runtime.identity.nodeId,
+        createdAt: at,
+      });
+      return {
+        text: "Đây là artifact do fixture tạo, không phải model thật.",
+        block: {
+          type: "artifact",
+          artifactId,
+          mimeType: "application/pdf",
+          sizeBytes: 20480,
+          digest,
+          label: "báo cáo quý.pdf",
         },
       };
     }
