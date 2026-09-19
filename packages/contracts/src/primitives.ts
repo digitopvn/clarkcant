@@ -28,6 +28,10 @@ export const principalIdSchema = prefixed("prin");
 export const conversationIdSchema = prefixed("conv");
 export const messageIdSchema = prefixed("msg");
 export const taskIdSchema = prefixed("task");
+/** A suggestion the node offered. Its id is stable while it is offered, so a press can name it back. */
+export const suggestionIdSchema = prefixed("sug");
+/** One thing the node remembers. Stable, because the Memory tab deletes by it. */
+export const memoryIdSchema = prefixed("mem");
 export const runIdSchema = prefixed("run");
 export const commandIdSchema = prefixed("cmd");
 export const eventIdSchema = prefixed("evt");

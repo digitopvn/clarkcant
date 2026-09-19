@@ -34,6 +34,24 @@ const bridge = {
   status() {
     return ipcRenderer.invoke("desktop:getStatus");
   },
+  /**
+   * The node this window belongs to, or a refusal saying why there is none.
+   *
+   * The token comes through here rather than through the window's URL, where it would end up in history and
+   * in the address bar, and rather than through the command line, where it would end up in a process list.
+   */
+  getSession() {
+    return ipcRenderer.invoke("desktop:getSession");
+  },
+  /**
+   * Shrink the window to the voice bar, grow it back, or pin it above other windows.
+   *
+   * Answers with the bounds and the pin state the window actually has afterwards, not with what was asked for,
+   * because the operating system may clamp either one.
+   */
+  setCompactMode(input) {
+    return ipcRenderer.invoke("desktop:setCompactMode", input);
+  },
 };
 
 contextBridge.exposeInMainWorld("clarkcant", bridge);

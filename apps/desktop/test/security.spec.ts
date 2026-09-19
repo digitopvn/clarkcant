@@ -145,13 +145,26 @@ describe("IPC is answered only for the shell document (sender validation)", () =
     expect(reviewIpcCall({}, "desktop:getStatus", SHELL_URL).allowed).toBe(false);
   });
 
+  it("a refused channel is still refused after compact mode exists", () => {
+    // Adding a channel must not widen the sender check by accident: the new one answers the shell document and
+    // nobody else, and a name that is not registered is not a channel.
+    const shellFrame = { senderFrame: { url: SHELL_URL } };
+    expect(reviewIpcCall(shellFrame, "desktop:setCompactMode", SHELL_URL).allowed).toBe(true);
+    expect(
+      reviewIpcCall({ senderFrame: { url: "https://example.com/" } }, "desktop:setCompactMode", SHELL_URL).allowed,
+    ).toBe(false);
+    expect(reviewIpcCall(shellFrame, "desktop:notRegistered", SHELL_URL).allowed).toBe(false);
+  });
+
   it("allowlists exactly the channels the bridge uses", () => {
     expect([...IPC_CHANNELS].sort()).toEqual([
+      "desktop:getSession",
       "desktop:getStatus",
       "desktop:notify",
       "desktop:openExternal",
       "desktop:pickDirectory",
       "desktop:requestCredential",
+      "desktop:setCompactMode",
       "desktop:setKeepRunning",
     ]);
   });

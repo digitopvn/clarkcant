@@ -31,7 +31,8 @@ const ANSWER_AFTER_BYTES = 32_000;
 const OUTPUT_SAMPLE_RATE_HZ = 24000;
 const TONE_DURATION_MS = 400;
 
-const USER_WORDS = "audio giả lập từ thiết bị micro";
+/** What it says when nobody has scripted it. */
+const DEFAULT_USER_WORDS = "audio giả lập từ thiết bị micro";
 const ASSISTANT_WORDS = "node đã nhận được audio và trả lời bằng fixture";
 
 export class FixtureLiveAdapter implements VoiceProviderAdapter {
@@ -46,13 +47,23 @@ export class FixtureLiveAdapter implements VoiceProviderAdapter {
   #sequence = 0;
   readonly #spoken: string[] = [];
   readonly #now: () => Instant;
+  /**
+   * The sentence this session will be understood to have heard, or a function answering with it.
+   *
+   * The node passes a string: the script is for the next session and is consumed when that session opens, because the
+   * value lives on the node and the node outlives a session. The function form is for a test that wants to change the
+   * sentence between utterances, which a browser journey cannot do because it cannot pause the capture stream.
+   */
+  readonly #words: () => string | undefined;
 
   readonly #transcriptListeners = new Set<(fragment: VoiceTranscriptFragment) => void>();
   readonly #stateListeners = new Set<(state: VoiceState) => void>();
   readonly #audioListeners = new Set<(pcm16: Uint8Array) => void>();
 
-  constructor(options: { now?: () => Instant } = {}) {
+  constructor(options: { now?: () => Instant; words?: string | (() => string | undefined) } = {}) {
     this.#now = options.now ?? nowInstant;
+    const source = options.words ?? DEFAULT_USER_WORDS;
+    this.#words = typeof source === "string" ? () => source : source;
   }
 
   /** Bytes of audio this fixture has accepted, so a caller can see whether capture worked. */
@@ -85,7 +96,8 @@ export class FixtureLiveAdapter implements VoiceProviderAdapter {
 
     this.#received = 0;
     this.#turns += 1;
-    this.#emit("user", USER_WORDS);
+    const words = (this.#words() ?? "").trim();
+    this.#emit("user", words === "" ? DEFAULT_USER_WORDS : words);
     this.#emit("assistant", ASSISTANT_WORDS);
     this.#sendTone();
     this.#setState("listening");

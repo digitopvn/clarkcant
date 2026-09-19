@@ -1,7 +1,7 @@
 ---
 phase: 7
 title: "Cửa sổ desktop compact, shell load client và bridge có tên"
-status: pending
+status: done
 priority: P1
 effort: "6h"
 dependencies: []

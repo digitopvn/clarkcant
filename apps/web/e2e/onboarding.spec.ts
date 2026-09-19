@@ -40,6 +40,14 @@ function token(): string {
 }
 
 async function openApp(page: Page): Promise<void> {
+  // The node's own suggestions are pinned to empty, so the four written chips are the ones on screen.
+  //
+  // This suite is about those four chips and what they promise. Once the node can offer suggestions drawn from
+  // what a person was actually doing, which chips appear depends on what happens to be in .data/e2e - so a test
+  // asserting four would be asserting the database. The dynamic list has its own journey.
+  await page.route("**/suggestions", (route) =>
+    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ items: [] }) }),
+  );
   await page.goto(`/?token=${token()}&gateway=${encodeURIComponent(GATEWAY)}`);
   await expect(page.locator("text=Ready")).toBeVisible({ timeout: 15_000 });
 }

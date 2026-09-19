@@ -10,6 +10,7 @@ import { DeveloperSettings } from "./DeveloperSettings.tsx";
 import { DevicesVoiceSettings } from "./DevicesVoiceSettings.tsx";
 import { ExperienceSettings } from "./ExperienceSettings.tsx";
 import { ExtensionsSettings } from "./ExtensionsSettings.tsx";
+import { MemorySettings } from "./MemorySettings.tsx";
 import { usePreferences } from "./controls/use-preferences.ts";
 
 export { SettingsRow, type SettingsRowProps, ToolRow, type ToolRowProps } from "./controls/SettingsRow.tsx";
@@ -49,6 +50,9 @@ const TABS = [
   { id: "control", label: "Control" },
   { id: "extensions", label: "Extensions" },
   { id: "devices", label: "Devices & Voice" },
+  // What the node remembers, and the way to remove it. A report like Developer, and placed next to it for the
+  // same reason: nothing here is a choice the user is making about behaviour.
+  { id: "memory", label: "Memory" },
   // Last, and it is the only one whose contents are a report rather than a choice.
   { id: "developer", label: "Developer" },
 ] as const;
@@ -90,6 +94,13 @@ export interface SettingsPanelProps {
   onThemeChoice: (choice: ThemeChoice) => void;
   /** Called after a write that changes the orb, so the orb on screen follows the control that changed it. */
   onOrbChange?: () => void;
+  /**
+   * The tab to show, when something other than the panel chose one.
+   *
+   * A spoken command names a tab, and the speech path has to land where clicking that tab lands. Without this the
+   * command was understood and then quietly ignored, which reads as the microphone not working.
+   */
+  openAt?: TabId | undefined;
 }
 
 export function SettingsPanel({
@@ -100,13 +111,20 @@ export function SettingsPanel({
   resolvedTheme,
   onThemeChoice,
   onOrbChange,
+  openAt,
 }: SettingsPanelProps): ReactElement | null {
   const [facts, setFacts] = useState<NodeFacts | undefined>(undefined);
   const [tools, setTools] = useState<ToolFacts[] | undefined>(undefined);
   const [problem, setProblem] = useState<string | undefined>(undefined);
   const [effects, setEffects] = useState<readonly RecentEffect[]>([]);
   const [effectsProblem, setEffectsProblem] = useState<string | undefined>(undefined);
-  const [tab, setTab] = useState<TabId>("experience");
+  const [tab, setTab] = useState<TabId>(openAt ?? "experience");
+
+  // Followed while open as well as at first render: a command that names a tab after the panel is already showing
+  // has to move to it, and that is the case a session open across a settings change produces.
+  useEffect(() => {
+    if (open && openAt !== undefined) setTab(openAt);
+  }, [open, openAt]);
   const prefs = usePreferences(client, open);
 
   useEffect(() => {
@@ -269,6 +287,7 @@ export function SettingsPanel({
         )}
         {tab === "extensions" && <ExtensionsSettings client={client} tools={tools} />}
         {tab === "devices" && <DevicesVoiceSettings client={client} prefs={prefs} facts={facts} />}
+        {tab === "memory" && <MemorySettings client={client} />}
         {tab === "developer" && <DeveloperSettings client={client} facts={facts} />}
       </div>
 

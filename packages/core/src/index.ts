@@ -25,3 +25,4 @@ export * from "./consent.ts";
 export * from "./continuation.ts";
 export * from "./routing.ts";
 export * from "./conductor.ts";
+export * from "./app-intents.ts";

@@ -110,6 +110,16 @@ export interface NodeServices {
   /** pi's own configuration, as far as it is safe to report it: scalars, secrets redacted. */
   piSettings?: () => Promise<readonly { readonly key: string; readonly value: string }[]>;
 
+  /**
+   * The words a scripted voice provider will say, when this node is running one.
+   *
+   * Present only on a node started with the voice fixture, and that presence is the gate: the route that sets them
+   * exists exactly when there is a fake to set them on, so a real node has no such endpoint to reach at all. The
+   * fixture is otherwise a fixed sentence, and a browser journey that cannot say a command cannot test the command
+   * path - which is what left phase 5's evidence unwritten.
+   */
+  voiceFixture?: { setWords(words: string): void };
+
   turnControl?: {
     running(): string[];
     interrupt(conversationId: string): boolean;

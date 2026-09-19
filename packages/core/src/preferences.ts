@@ -181,6 +181,24 @@ export function undoPreference(
 }
 
 /**
+ * Delete a preference outright.
+ *
+ * Undo is the wrong tool for a value that exists only to be spent. A confirmation token has one
+ * legitimate use and then has to be gone, and `undoPreference` would helpfully put the value it
+ * replaced back. Returns whether a row was actually removed, because "the token is gone" and "there
+ * was never a token" are different answers and a caller needs to tell them apart.
+ */
+export function deletePreference(
+  deps: PreferenceDeps,
+  input: { principalId: string; key: string; scope: PreferenceScope },
+): boolean {
+  const result = deps.db
+    .prepare("DELETE FROM preferences WHERE principal_id = ? AND key = ? AND scope = ?")
+    .run(input.principalId, input.key, input.scope);
+  return Number(result.changes) > 0;
+}
+
+/**
  * Undo everything a guided setup wrote.
  *
  * Grouped by source rather than by time, so a setup that was re-run does not leave half of its

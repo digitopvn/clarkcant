@@ -18,6 +18,10 @@ import {
 } from "./theme.ts";
 import type { ThemeName } from "@clarkcant/design-tokens";
 import { AgentAvatar } from "./AgentAvatar.tsx";
+import { hasDesktopChrome, requestWindowMode } from "./desktop-compact.ts";
+import { DesktopChrome } from "./desktop-chrome.tsx";
+import { fetchSuggestions } from "./suggestions.ts";
+import type { Suggestion } from "@clarkcant/contracts";
 import { ReasoningBlock, ToolActivityBlock, type BlockActions } from "./blocks.tsx";
 import { composerTextareaHeight } from "./composer-height.ts";
 import {
@@ -29,7 +33,7 @@ import {
   toBase64,
   type AttachmentChip,
 } from "./attachments.ts";
-import { ATTACHMENT_LIMITS } from "@clarkcant/contracts";
+import { ATTACHMENT_LIMITS, type AppIntentDecision, type AppIntentKind, type SettingsTab } from "@clarkcant/contracts";
 import { followsBottom } from "./follow-bottom.ts";
 import { latestTurnMetrics, statuslineParts } from "./statusline.ts";
 import { attachedPrompt, explainPrompt } from "./selection.ts";
@@ -43,6 +47,7 @@ import { Orb } from "./Orb.tsx";
 import { useTypewriterPlaceholder, prefersReducedMotion } from "./typewriter.ts";
 import { VoiceOverlay } from "./VoiceOverlay.tsx";
 import { SettingsPanel } from "./settings/SettingsPanel.tsx";
+import { runAppIntent, type AppIntentHost } from "./app-intents.ts";
 import { resolveRenderer, toRendererDataset } from "./renderers.tsx";
 import { MiniAppSurface, type CompositeSurfaceView } from "./mini-app-surface.tsx";
 import { PinnedLiveSurface } from "./DesktopSurfaces.tsx";
@@ -255,6 +260,28 @@ export function Conversation({
   const composerFrom = useRef<number | undefined>(undefined);
   const [uiCheckOpen, setUiCheckOpen] = useState(false);
   /**
+   * A tab a command named, if one did.
+   *
+   * Held here rather than inside the panel so that a spoken "open the Memory tab" and a click produce the same
+   * panel state: both go through one executor, and the executor sets this the same way either time.
+   */
+  const [settingsTab, setSettingsTab] = useState<SettingsTab | undefined>(undefined);
+  /**
+   * What came of a command that could not be carried out, or was refused.
+   *
+   * Shown rather than swallowed. "Nothing happened" with no reason is the failure this whole design avoids, and a
+   * browser asked to resize a window has to say that it cannot rather than look like it did.
+   */
+  const [intentNotice, setIntentNotice] = useState<string | undefined>(undefined);
+  /**
+   * A decision a typed command produced, waiting to be carried out.
+   *
+   * Held in state and run from an effect rather than run inside the send callback: the send callback is declared
+   * above the executor, so reaching forward from it would read a binding before it exists. This also keeps one place
+   * that runs a decision, whichever route the command arrived by.
+   */
+  const [pendingIntent, setPendingIntent] = useState<AppIntentDecision | undefined>(undefined);
+  /**
    * Whether the voice surface is up.
    *
    * Opened from the composer's microphone button, which used to be disabled with a tooltip: the one
@@ -262,6 +289,39 @@ export function Conversation({
    * session sat in a settings tab. Speaking is a mode of the conversation, so it belongs here.
    */
   const [voiceOpen, setVoiceOpen] = useState(false);
+  /**
+   * Whether this window is showing the compact surface only.
+   *
+   * A test hook, and named as one: `?cc-compact=1` puts a browser into the presentation the desktop window takes
+   * when it shrinks, so the browser suite can prove that surface without pretending to have a shell. Nothing
+   * changes it, because the real path into it is the window resizing rather than anything in the document.
+   */
+  const [compactSurface] = useState(
+    () => new URLSearchParams(window.location.search).get("cc-compact") === "1",
+  );
+
+  /**
+   * What the node suggests, which is nothing until it answers and nothing if it cannot.
+   *
+   * Empty is the ordinary state rather than a failure: the four chips below are the fallback and they are drawn
+   * whenever this is empty, so a node that is slow, old or unreachable costs the person a suggestion list and
+   * never the screen.
+   */
+  const [dynamicSuggestions, setDynamicSuggestions] = useState<Suggestion[]>([]);
+
+  useEffect(() => {
+    if (compactSurface) setVoiceOpen(true);
+  }, [compactSurface]);
+
+  useEffect(() => {
+    let cancelled = false;
+    void fetchSuggestions(client).then((items) => {
+      if (!cancelled) setDynamicSuggestions(items);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [client]);
 
   /**
    * What the agent is doing, as one state rather than several flags a stylesheet would have to combine.
@@ -822,6 +882,11 @@ export function Conversation({
               applyTimeline(result.timeline);
               setPendingUser(undefined);
               setLive([]);
+              // A command is answered by the host and not by a model, so the node sends the decision along with the
+              // record. `none` means the text was not a command at all and the turn above was the real answer.
+              if (result.appIntent !== undefined && result.appIntent.kind !== "none") {
+                setPendingIntent(result.appIntent);
+              }
             },
           },
           { ...options, attachmentIds },
@@ -869,6 +934,105 @@ export function Conversation({
     setHeroPhase("shown");
     onSessionReset?.();
   }, [onSessionReset, rememberComposerTop]);
+
+  /**
+   * Everything an intent can reach.
+   *
+   * The window commands are absent, and that is the honest state of a page: a host omits what it cannot do, and the
+   * executor then answers that the command needs the desktop app rather than appearing to work.
+   */
+  const intentHost = useMemo<AppIntentHost>(() => {
+    /*
+     * The window intents are offered only where there is a window.
+     *
+     * `runAppIntent` refuses a desktop intent when the host has no method for it, so a browser saying "thu nhỏ
+     * cửa sổ" is refused with a reason rather than reported as done. Defining these unconditionally would report
+     * success for a resize that never happened, because the bridge call itself fails quietly.
+     */
+    const desktop = hasDesktopChrome();
+    return {
+      openSettings: (tab?: SettingsTab) => {
+        setSettingsTab(tab);
+        setUiCheckOpen(true);
+      },
+      goHome: restartSession,
+      openFilePicker: () => attachmentInput.current?.click(),
+      endVoice: () => setVoiceOpen(false),
+      ...(desktop
+        ? {
+            expandWindow: () => {
+              void requestWindowMode({ type: "expand" });
+            },
+            minimiseWindow: () => {
+              void requestWindowMode({ type: "enter-compact" });
+            },
+            setMinimal: () => {
+              // This build has one compact size, so "thu nhỏ" and "thu nhỏ tối thiểu" reach the same bar. They
+              // diverge when the shell gains a way to minimise to the taskbar, which is named as a gap.
+              void requestWindowMode({ type: "enter-compact" });
+            },
+            quit: () => {
+              // The shell decides whether closing the window ends the work; the renderer only asks it to close.
+              window.close();
+            },
+          }
+        : {}),
+    };
+  }, [restartSession]);
+
+  /**
+   * Carry out a decision.
+   *
+   * The only place an intent is performed, whichever way it arrived. A second copy of this for voice would be the
+   * beginning of the two paths drifting apart, which is the whole thing this registry exists to prevent.
+   */
+  const runIntent = useCallback(
+    (decision: AppIntentDecision): void => {
+      const run = runAppIntent(decision, intentHost);
+      // Only a failure is announced. A command that worked has already been read back out loud by the voice surface
+      // or is visible as the panel that just opened, and a second sentence saying so would be noise.
+      if (!run.ran) setIntentNotice(run.say);
+    },
+    [intentHost],
+  );
+
+  /**
+   * Ask the node what a click means, then do it.
+   *
+   * A click goes through the node for the same reason a spoken command does: the registry and the audit record live
+   * there, so the event says "click" rather than "voice" and a click cannot do something the node would refuse.
+   */
+  const clickIntent = useCallback(
+    (kind: AppIntentKind): void => {
+      if (client === undefined) return;
+      void client
+        .sendAppIntent({
+          kind,
+          source: "click",
+          ...(conversationId === undefined ? {} : { conversationId }),
+        })
+        .then((decision) => {
+          if (decision.kind !== "none") runIntent(decision);
+        })
+        .catch(() => setIntentNotice("Không hỏi được node về lệnh đó."));
+    },
+    [client, conversationId, runIntent],
+  );
+
+  // A notice is a remark about something that just happened, not a permanent line of text.
+  useEffect(() => {
+    if (intentNotice === undefined) return;
+    const timer = setTimeout(() => setIntentNotice(undefined), 6000);
+    return () => clearTimeout(timer);
+  }, [intentNotice]);
+
+  // A command that was typed and recognised is answered by the host, so the node sends the decision with the timeline
+  // and the page carries it out here - the same executor a spoken command and a click use.
+  useEffect(() => {
+    if (pendingIntent === undefined) return;
+    setPendingIntent(undefined);
+    runIntent(pendingIntent);
+  }, [pendingIntent, runIntent]);
 
   /**
    * Answer an operation the agent asked for.
@@ -1075,6 +1239,14 @@ export function Conversation({
 
   const blocks = timeline?.messages ?? [];
   const pins = timeline?.pins ?? [];
+  /**
+   * The widget the person is looking at: the one pinned open.
+   *
+   * A pin is what "open" means here - the expanded surface is where the live instance is mounted and the thing that
+   * claims ownership of it - so this is the instance a spoken action acts on, rather than a guess from what happens to
+   * be on screen.
+   */
+  const focusedInstanceId = pins.find((pin) => pin.displayMode === "expanded")?.instanceId;
 
   /**
    * A conversation that arrived with messages was never the start screen.
@@ -1101,6 +1273,7 @@ export function Conversation({
       // narrower than the input it sits over - so it is taken out of the way instead, which is also what the
       // mode means: while the microphone is open, the thing you talk to is not the text box.
       data-voice-open={voiceOpen ? "true" : "false"}
+      data-compact={compactSurface ? "true" : "false"}
       // How the user is interacting and what the agent is doing, published once for the whole shell. A
       // component that needs either reads an attribute instead of attaching its own listener and guessing
       // from unrelated DOM state.
@@ -1125,7 +1298,7 @@ export function Conversation({
           type="button"
           className="cc-brand"
           data-home="true"
-          onClick={restartSession}
+          onClick={() => clickIntent("nav.home")}
           title="Bắt đầu lại"
           aria-label="Bắt đầu lại: về màn hình đầu và mở một phiên mới"
         >
@@ -1145,7 +1318,7 @@ export function Conversation({
             menu: a setting that is two clicks deep is a setting nobody checks. It opens a panel
             that reads the live tokens back off the document, so what it shows is what rendered.
           */}
-          <button type="button" className="cc-icon-btn" aria-label="Cài đặt" title="Cài đặt" data-settings="true" onClick={() => setUiCheckOpen(true)}>
+          <button type="button" className="cc-icon-btn" aria-label="Cài đặt" title="Cài đặt" data-settings="true" onClick={() => clickIntent("settings.open")}>
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
               <circle cx="12" cy="12" r="3" />
               <path d="M19.4 15a1.7 1.7 0 0 0 .34 1.87l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.7 1.7 0 0 0-1.87-.34 1.7 1.7 0 0 0-1 1.55V21a2 2 0 1 1-4 0v-.09A1.7 1.7 0 0 0 9 19.4a1.7 1.7 0 0 0-1.87.34l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.7 1.7 0 0 0 4.6 15a1.7 1.7 0 0 0-1.55-1H3a2 2 0 1 1 0-4h.09A1.7 1.7 0 0 0 4.6 9a1.7 1.7 0 0 0-.34-1.87l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.7 1.7 0 0 0 9 4.6a1.7 1.7 0 0 0 1-1.55V3a2 2 0 1 1 4 0v.09a1.7 1.7 0 0 0 1 1.55 1.7 1.7 0 0 0 1.87-.34l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.7 1.7 0 0 0 19.4 9v0a1.7 1.7 0 0 0 1.55 1H21a2 2 0 1 1 0 4h-.09a1.7 1.7 0 0 0-1.51 1z" />
@@ -1173,8 +1346,37 @@ export function Conversation({
               */}
               <div className="cc-hero-orb" ref={heroOrb} aria-hidden="true" />
               <h1>Bạn đang nghĩ gì?</h1>
-              <p>Nói việc bạn muốn làm, hoặc bắt đầu từ một trong bốn gợi ý dưới đây.</p>
-              <div className="cc-chip-row" data-suggestion-count={SUGGESTIONS.length}>
+              <p>Nói việc bạn muốn làm, hoặc bắt đầu từ một gợi ý dưới đây.</p>
+              {/*
+                Two rows, not one row with two shapes in it. What the node offers is what the person was
+                actually doing, and it is only shown when there is some; the four written chips are the floor,
+                and saying so in the markup is what lets a test tell an empty node from a broken one.
+              */}
+              {dynamicSuggestions.length > 0 ? (
+                <div className="cc-chip-row" data-suggestion-count={dynamicSuggestions.length}>
+                  {dynamicSuggestions.map((suggestion, index) => (
+                    <button
+                      key={suggestion.suggestionId}
+                      type="button"
+                      className="cc-chip"
+                      data-suggestion={suggestion.text}
+                      data-suggestion-source={suggestion.source}
+                      data-suggestion-source-label={suggestion.sourceLabel}
+                      style={{ "--cc-chip-index": index } as CSSProperties}
+                      aria-label={`${suggestion.label} — ${suggestion.sourceLabel}`}
+                      onClick={() => void send(suggestion.text)}
+                    >
+                      <span className="cc-chip-label">{suggestion.label}</span>
+                      <span className="cc-chip-detail">{suggestion.sourceLabel}</span>
+                    </button>
+                  ))}
+                </div>
+              ) : (
+                <div
+                  className="cc-chip-row"
+                  data-suggestion-count={SUGGESTIONS.length}
+                  data-suggestion-static="true"
+                >
                 {SUGGESTIONS.map((suggestion, index) => (
                   <button
                     key={suggestion.text}
@@ -1192,7 +1394,8 @@ export function Conversation({
                     <span className="cc-chip-detail">{suggestion.detail}</span>
                   </button>
                 ))}
-              </div>
+                </div>
+              )}
               <p className="cc-freshness">
                 Gợi ý đánh dấu “cần model” sẽ báo lỗi nếu node này chưa cấu hình model.
               </p>
@@ -1481,6 +1684,12 @@ export function Conversation({
       </div>
 
       {/*
+        The window's own chrome, when there is a window to be dragged and resized. It renders nothing in a
+        browser, so this is one line rather than a branch around the whole conversation.
+      */}
+      <DesktopChrome />
+
+      {/*
         The one orb. It is not two elements that swap places with a transition between them: it is a
         single canvas that moves, which is what makes the move look like one, and what keeps the
         shader's own animation continuous across the change of screen.
@@ -1512,8 +1721,19 @@ export function Conversation({
         </div>
       )}
 
+      {/*
+        What a command could not do here, or why it was refused. Rendered beside the panel rather than inside it, so
+        a window command failing in a browser is still visible when no panel is open.
+      */}
+      {intentNotice !== undefined && (
+        <p className="cc-intent-notice" data-intent-notice="true" role="status">
+          {intentNotice}
+        </p>
+      )}
+
       <SettingsPanel
         open={uiCheckOpen}
+        {...(settingsTab === undefined ? {} : { openAt: settingsTab })}
         onClose={() => setUiCheckOpen(false)}
         client={client}
         themeChoice={themeChoice}
@@ -1549,9 +1769,12 @@ export function Conversation({
       {voiceOpen && (
         <VoiceOverlay
           client={client}
+          startCollapsed={compactSurface}
           {...(conversationId === undefined ? {} : { conversationId })}
           onAnswered={refreshTimeline}
           onProgress={scheduleVoiceRefresh}
+          onAppIntent={runIntent}
+          {...(focusedInstanceId === undefined ? {} : { focusedInstanceId })}
           onClose={({ focusComposer }) => {
             setVoiceOpen(false);
             if (focusComposer) composerInput.current?.focus();

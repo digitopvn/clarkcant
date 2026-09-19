@@ -3,6 +3,8 @@ import { join } from "node:path";
 
 import { expect, test, type Page } from "@playwright/test";
 
+import { SETTINGS_TABS } from "@clarkcant/contracts";
+
 /**
  * Appearance and the settings modal.
  *
@@ -75,7 +77,7 @@ test("a theme choice changes the surface, follows the system, and survives a rel
   await page.screenshot({ path: join(EVIDENCE, "theme-03-light-after-reload.png"), fullPage: true });
 });
 
-test("settings is a modal with six distinct tabs, and Escape returns focus to the gear", async ({ page }) => {
+test("settings is a modal whose tabs each show their own content, and Escape returns focus to the gear", async ({ page }) => {
   mkdirSync(EVIDENCE, { recursive: true });
   await openApp(page);
 
@@ -84,15 +86,9 @@ test("settings is a modal with six distinct tabs, and Escape returns focus to th
 
   const dialog = page.locator('[data-modal="true"]');
   await expect(dialog).toBeVisible();
-  /*
-   * Six tabs, and each one names something the user came to do rather than a part of the system:
-   * Experience, AI & Routing, Control, Extensions, Devices & Voice, Developer.
-   *
-   * This used to be four — General, Models, Tools, Devices — which named the architecture. The old shape had no
-   * place at all for execution policy or the orb, and it put the node id and raw pi settings in tabs a normal
-   * user reads.
-   */
-  await expect(page.locator('[role="tab"]')).toHaveCount(6);
+  // The tabs the panel actually has, taken from the contract rather than counted here. This said four and went
+  // stale the moment the Memory tab was added - a count that is written into a test is a count that drifts.
+  await expect(page.locator('[role="tab"]')).toHaveCount(SETTINGS_TABS.length);
 
   // Each tab shows its own content. Asserted by comparing what is rendered rather than by checking
   // that a heading exists, since six labels over one shared panel would pass the weaker check.

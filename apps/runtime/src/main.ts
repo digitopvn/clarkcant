@@ -7,20 +7,28 @@
  * listener and no TLS is the deployment mistake the blueprint names: application
  * authorization is required regardless of how private the network looks.
  */
+import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
 import type { MessageBlock, MessageRecord } from "@clarkcant/contracts";
-import { instantSchema } from "@clarkcant/contracts";
+import { instantSchema, describeAppIntent } from "@clarkcant/contracts";
 import { applyEnvFile } from "@clarkcant/pi-adapter";
 
-import { decideApprovalForNode } from "./gateway.ts";
+import { decideApprovalForNode, invokeWidgetAction, widgetActionTarget } from "./gateway.ts";
+import { NO_FOCUSED_SURFACE_SAY } from "./widget-voice-action.ts";
+import {
+  type AppIntentDeps,
+  consumeConfirmation,
+  decideAppIntent,
+  mintConfirmation,
+} from "./app-intents.ts";
 import { createNodeServer } from "./server.ts";
 import { machineRoots } from "./fs-search.ts";
 import { resolveProject, refreshProjectIndex } from "./project-finder.ts";
 import { commandDigest } from "./run-command.ts";
-import { captureSnapshot, createInstance, handleUserMessage, readExecutionPolicy, readPersonalInstructions, requestApproval, setPreference, type CoordinationDeps } from "@clarkcant/core";
+import { captureSnapshot, createInstance, handleUserMessage, readExecutionPolicy, readPersonalInstructions, recordAppIntentEvent, requestApproval, setPreference, type CoordinationDeps } from "@clarkcant/core";
 import { GALLERY, YOUTUBE } from "@clarkcant/data-canvas";
 import { definitionDigest } from "@clarkcant/widget-host";
 import { listLocalImages, messagesSince, readCredential,
@@ -32,6 +40,7 @@ import { FixtureLiveAdapter } from "./voice-fixture.ts";
 import { SAMPLE_DATASET } from "@clarkcant/data-canvas/sample";
 
 import { createModelTurn, type ViewDescriptor } from "./model-turn.ts";
+import { memoryBrief, rememberMemory } from "./memory.ts";
 import { attachmentRefsForLastUserMessage } from "./attachments.ts";
 import { buildViewCatalog } from "./view-catalog.ts";
 import { registerNodeTools } from "./tool-catalogue.ts";
@@ -60,6 +69,20 @@ function parseArgs(argv: string[]): CliOptions {
     port: Number.parseInt(get("port") ?? "8765", 10),
     label: get("label") ?? "local runtime",
     allowPublicBind: argv.includes("--allow-public-bind"),
+  };
+}
+
+/**
+ * The registry's dependencies.
+ *
+ * A function rather than a constant so the clock is read when a decision is made, not when the node booted.
+ */
+function appIntentDepsFor(services: NodeServices): AppIntentDeps {
+  return {
+    db: services.runtime.db,
+    nodeId: services.runtime.identity.nodeId,
+    now: () => new Date().toISOString() as never,
+    newId: services.conductor.newId,
   };
 }
 
@@ -281,6 +304,32 @@ async function main(): Promise<void> {
       };
     }
 
+    /*
+     * A sentence that asks the node to remember something.
+     *
+     * This calls the same function the `remember` tool calls, so what it proves is the pipeline - redaction, the
+     * write, the brief, and the Memory tab reading it back - and not that a model decided to remember. That
+     * decision needs a real provider and is recorded as a blocked condition rather than implied by this.
+     */
+    const asked = /(?:nhớ rằng|ghi nhớ)\s*[:：]?\s*(.+)/i.exec(input.text);
+    if (asked !== null) {
+      const outcome = rememberMemory(
+        { db: services.runtime.db, now: () => new Date().toISOString(), newId: services.conductor.newId },
+        {
+          principalId: input.principal.principalId,
+          conversationId: input.conversationId,
+          kind: "preference",
+          scope: "node",
+          text: (asked[1] ?? "").trim(),
+        },
+      );
+      const reply =
+        "refused" in outcome
+          ? `Fixture: không ghi nhớ được - ${outcome.refused}`
+          : `Fixture: đã ghi nhớ (${outcome.kind}) ${outcome.text}`;
+      return { text: reply, block: { type: "text", format: "plain", content: reply, streaming: false } };
+    }
+
     if (!/tổng quan|tong quan|overview/i.test(input.text)) return undefined;
     const compose = modelWiring.compose;
     if (compose === undefined) return undefined;
@@ -395,6 +444,17 @@ async function main(): Promise<void> {
     // than a guess. The model is told these names because a view over data that is not there
     // renders as nothing, which reads as a broken widget instead of a missing fact.
     datasetRefs: () => [SAMPLE_DATASET.datasetId],
+    /*
+     * What was remembered, for the turn about to run.
+     *
+     * Read per turn rather than captured once, so a record somebody deletes in the Memory tab stops being
+     * sent on the very next turn. That is what makes that screen's promise true rather than decorative.
+     */
+    memoryBrief: (conversationId) =>
+      memoryBrief(
+        { db: services.runtime.db, now: () => new Date().toISOString(), newId: services.conductor.newId },
+        { principalId: services.runtime.identity.ownerPrincipalId, conversationId },
+      ),
     // The Session Manager's search surface, exposed to the main model as its own tool. Read from a
     // closure so the services it needs, which are assembled below, exist by the time a turn runs.
     // The Session Manager's read-only reports, including the project finder. Built by a function a
@@ -441,6 +501,9 @@ async function main(): Promise<void> {
         // Reading an attached file is scoped to the conversation this turn belongs to, which is the
         // only thing the tool needs to check beyond the principal.
         attachments: { dataDir: options.dataDir, conversationId: turn.conversationId },
+        // Remembering is scoped to the turn's conversation the same way, and the id comes from the node's own
+        // generator: the model supplies what to remember, never who it belongs to.
+        memory: { conversationId: turn.conversationId, newId: services.conductor.newId },
         // "Where should this go?" goes through the finder, which is where Jev decides when several folders
         // could be meant. The model is told to look before it proposes, and an ambiguous answer comes back
         // as a question rather than as a guess.
@@ -626,6 +689,20 @@ async function main(): Promise<void> {
    * a fake that is indistinguishable from the real thing is worse than having no fake at all.
    */
   const voiceFixture = process.env.CC_VOICE_FIXTURE === "1";
+  /**
+   * The words the scripted provider will say, when the fixture is loaded.
+   *
+   * Read when a session opens rather than captured once, so a test can set them and then open one. On a real node this
+   * stays undefined, and the route that would write it is not registered either - which is the gate.
+   */
+  let voiceFixtureWords: string | undefined;
+  if (voiceFixture) {
+    services.voiceFixture = {
+      setWords: (words: string) => {
+        voiceFixtureWords = words;
+      },
+    };
+  }
   const voice = attachVoiceGateway({
     server,
     services,
@@ -637,7 +714,23 @@ async function main(): Promise<void> {
           // expectation false. Read at open time rather than cached, so the next attempt after typing one finds it.
           process.env.GEMINI_API_KEY ??
           readCredential(services.runtime.db, services.runtime.identity.ownerPrincipalId, VOICE_CREDENTIAL_NAME),
-    ...(voiceFixture ? { createAdapter: () => new FixtureLiveAdapter() } : {}),
+    ...(voiceFixture
+      ? {
+          /**
+           * The scripted words apply to **the next session and no further**.
+           *
+           * Consumed here rather than read on every utterance, because the value lives on the node and the node
+           * outlives a session. Reading it live leaked one suite's script into the next: voice.spec.ts, which
+           * scripts nothing and expects the fixture's own sentence, failed after this suite had run - a failure
+           * that only appeared in a whole-suite run, which is exactly why the whole suite is the gate.
+           */
+          createAdapter: () => {
+            const scripted = voiceFixtureWords;
+            voiceFixtureWords = undefined;
+            return new FixtureLiveAdapter({ ...(scripted === undefined ? {} : { words: scripted }) });
+          },
+        }
+      : {}),
     ...(voiceModel === undefined ? {} : { model: voiceModel }),
     /**
      * What a finished sentence does.
@@ -725,6 +818,82 @@ async function main(): Promise<void> {
           // made of it. `message` is spoken by the session.
           { ok: true, message: result.continuation ?? result.outcome ?? "Đã chạy xong lệnh đó." }
         : { ok: false, message: result.message };
+    },
+    /**
+     * What a spoken sentence means to the application.
+     *
+     * The same registry the typed route and a click go through, with source "voice" so the audit answers "was this
+     * clicked or heard". `none` is returned unchanged and the session then treats the sentence as a question for the
+     * agent, which is what keeps ordinary speech out of the app-control path.
+     */
+    resolveAppIntent: ({ text, conversationId }) => {
+      const deps = appIntentDepsFor(services);
+      const principalId = services.runtime.identity.ownerPrincipalId;
+      return decideAppIntent(
+        deps,
+        { principalId, request: { text, source: "voice" }, conversationId },
+        (intent) => mintConfirmation(deps, { principalId, intent, source: "voice" }),
+      );
+    },
+    /**
+     * Turn a spoken confirmation into permission, once.
+     *
+     * A refusal as well as a failure comes back as a non-executable decision, because the page must never be handed
+     * something it would act on when the answer was no or the token was stale.
+     */
+    confirmAppIntent: ({ token, decision }) => {
+      const deps = appIntentDepsFor(services);
+      const outcome = consumeConfirmation(deps, { principalId: services.runtime.identity.ownerPrincipalId, token });
+      if (!outcome.ok) {
+        const say =
+          outcome.code === "CONFIRMATION_EXPIRED"
+            ? "Lời xác nhận đã quá hạn. Bạn nói lại câu lệnh nhé."
+            : "Tôi không còn lời xác nhận nào đang chờ.";
+        return { kind: "refused", say };
+      }
+      if (decision === "denied") return { kind: "refused", say: "Tôi đã bỏ qua câu lệnh đó." };
+      recordAppIntentEvent(deps, { intent: outcome.intent, source: outcome.source, confirmed: true });
+      return {
+        kind: "intent",
+        intent: outcome.intent,
+        requiresConfirmation: false,
+        readBack: describeAppIntent(outcome.intent),
+      };
+    },
+    /**
+     * Run a widget action the person asked for out loud.
+     *
+     * The same function a click goes through, with the difference that a click brings a cursor and a sentence does
+     * not: the revision and the binding digest are read from the node's own state rather than taken from the page. A
+     * sentence is a request to do the thing, not a claim about which revision it was looking at.
+     */
+    widgetAction: async ({ conversationId, action, focused }) => {
+      const instanceId = focused?.instanceId;
+      if (instanceId === undefined) return { ok: false, say: NO_FOCUSED_SURFACE_SAY };
+
+      const target = widgetActionTarget(services, instanceId, action.actionBindingId);
+      if (target === undefined) {
+        // The page's view was older than the instance, or the action is gone. Either way this is a refusal and not a
+        // guess: invoking a binding the instance no longer announces is exactly what the digest check exists for.
+        return { ok: false, say: "Widget đang mở không còn hành động đó nữa. Bạn mở lại rồi thử lại giúp tôi nhé." };
+      }
+
+      const result = invokeWidgetAction(services, {
+        conversationId,
+        principalId: services.runtime.identity.ownerPrincipalId,
+        instanceId,
+        actionBindingId: action.actionBindingId,
+        expectedRevision: target.revision,
+        expectedBindingDigest: target.bindingDigest,
+        // What the words implied. Empty when the person named the action without saying what it should do, and the
+        // widget's own contract then answers that it wanted an argument - which is better than this guessing a period.
+        input: action.args,
+        invocationId: `inv_${randomUUID()}`,
+      });
+
+      if (!result.ok) return { ok: false, say: `Không thực hiện được: ${result.message}` };
+      const landedOn = typeof result.body.revision === "number" ? result.body.revision : target.revision;
+      return { ok: true, instanceId, revision: landedOn, say: `Đã ${action.label}.` };
     },
   });
   process.stderr.write(

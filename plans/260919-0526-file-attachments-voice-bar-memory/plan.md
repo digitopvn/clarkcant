@@ -86,14 +86,14 @@ không phải thứ tự đánh số ban đầu: vòng red-team đã đảo Stag
 | 2 | [Route upload/download, header transport và seam server](./phase-02-uploads-and-blob-store.md) | Done |
 | 3 | [Composer, timeline và nội dung tới agent](./phase-03-composer-timeline-and-agent-content.md) | Done |
 | 4 | [Journey đính kèm và evidence](./phase-04-attachments-journey-and-evidence.md) | Done |
-| 5 | [Registry app-intent dùng chung cho chat, click và voice](./phase-05-shared-app-control-intents.md) | Pending |
-| 6 | [T66 — voice và click chạm cùng một widget action state](./phase-06-voice-widget-action-parity.md) | Pending |
-| 7 | [Cửa sổ desktop compact, shell load client và bridge có tên](./phase-07-desktop-compact-window.md) | Pending |
-| 8 | [Thanh voice tối giản, intent cửa sổ và phiên sống qua hai chiều](./phase-08-minimal-voice-bar.md) | Pending |
-| 9 | [Gợi ý từ việc gần đây](./phase-09-recent-work-suggestions.md) | Pending |
-| 10 | [Memory record bền vững và tool `remember`](./phase-10-durable-memory-records.md) | Pending |
-| 11 | [Tab Memory trong Settings](./phase-11-settings-memory-tab.md) | Pending |
-| 12 | [Docs, traceability, evidence và release validation](./phase-12-docs-traceability-and-release.md) | Pending |
+| 5 | [Registry app-intent dùng chung cho chat, click và voice](./phase-05-shared-app-control-intents.md) | Done |
+| 6 | [T66 — voice và click chạm cùng một widget action state](./phase-06-voice-widget-action-parity.md) | Done — T66 vẫn NOT-IMPLEMENTED (journey browser bị chặn, điều kiện còn thiếu đã ghi trong file) |
+| 7 | [Cửa sổ desktop compact, shell load client và bridge có tên](./phase-07-desktop-compact-window.md) | Done — smoke Electron do người vận hành chạy, CI không có display |
+| 8 | [Thanh voice tối giản, intent cửa sổ và phiên sống qua hai chiều](./phase-08-minimal-voice-bar.md) | Done |
+| 9 | [Gợi ý từ việc gần đây](./phase-09-recent-work-suggestions.md) | Done |
+| 10 | [Memory record bền vững và tool `remember`](./phase-10-durable-memory-records.md) | Done |
+| 11 | [Tab Memory trong Settings](./phase-11-settings-memory-tab.md) | Done |
+| 12 | [Docs, traceability, evidence và release validation](./phase-12-docs-traceability-and-release.md) | Done |
 
 Lịch thi công (stage, effort, phụ thuộc):
 

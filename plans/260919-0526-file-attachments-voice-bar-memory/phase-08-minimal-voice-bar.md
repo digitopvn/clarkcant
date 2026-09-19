@@ -1,7 +1,7 @@
 ---
 phase: 8
 title: "Thanh voice tối giản, intent cửa sổ và phiên sống qua hai chiều"
-status: pending
+status: done
 priority: P1
 effort: "5h"
 dependencies: [5, 7]

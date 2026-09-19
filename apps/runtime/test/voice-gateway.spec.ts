@@ -1,7 +1,7 @@
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 
-import { type Instant, nodeIdSchema, instantSchema, type VoiceState } from "@clarkcant/contracts";
+import { type AppIntentDecision, type Instant, nodeIdSchema, instantSchema, type VoiceState } from "@clarkcant/contracts";
 import { createConversation, migrate, messagesSince, openDatabase } from "@clarkcant/storage";
 import type { VoiceProviderAdapter } from "@clarkcant/voice-adapters";
 import { WebSocket } from "ws";
@@ -899,5 +899,263 @@ describe("reading a spoken decision", () => {
   it("accepts the spellings a transcriber may drop the marks from", () => {
     expect(interpretDecision("dong y")).toBe("granted");
     expect(interpretDecision("tu choi")).toBe("denied");
+  });
+});
+
+/**
+ * A spoken command to the application.
+ *
+ * The property under test is that the voice path is the same path as a click: the node's registry decides, the
+ * decision travels as its own frame, and only the one executable member is acted on. The second property is that
+ * a spoken quit cannot happen on one sentence, because the executable decision only ever comes back after the
+ * node has spent a token.
+ */
+describe("a spoken command to the application", () => {
+  function clientFor(): ReturnType<typeof connect> {
+    return context === undefined ? (undefined as never) : connect(context.url);
+  }
+
+  async function opened(options: Partial<VoiceGatewayOptions>, adapter: FakeAdapter) {
+    context = await startGateway(() => "credential", adapter, options);
+    const client = clientFor();
+    await client.opened;
+    client.auth(TOKEN, CONVERSATION);
+    await client.control("ready");
+    return client;
+  }
+
+  const say = (adapter: FakeAdapter, text: string): void => {
+    adapter.emitTranscript(text, "user", false);
+    adapter.emitTranscript("", "user", true);
+  };
+
+  const OPEN_SETTINGS: AppIntentDecision = {
+    kind: "intent",
+    intent: { kind: "settings.open" },
+    requiresConfirmation: false,
+    readBack: "Tôi mở Settings nhé.",
+  };
+
+  const QUIT_QUESTION: AppIntentDecision = {
+    kind: "needs-confirmation",
+    intent: { kind: "app.quit" },
+    readBack: "Tôi hiểu là bạn muốn thoát ứng dụng. Bạn xác nhận chứ?",
+    confirmationToken: "3f2504e0-4f89-41d3-9a0c-0305e82c3301",
+  };
+
+  /** Frames whose decision a page would act on. Nothing should produce one unless a question was answered. */
+  const executableFrames = (client: ReturnType<typeof connect>): unknown[] =>
+    client.received.filter(
+      (message) =>
+        !message.binary &&
+        message.control["type"] === "app-intent" &&
+        (message.control["decision"] as { kind?: string } | undefined)?.kind === "intent",
+    );
+
+  it("answers with the intent frame and never asks the agent", async () => {
+    const adapter = new FakeAdapter();
+    let asked = 0;
+    const client = await opened(
+      {
+        resolveAppIntent: () => OPEN_SETTINGS,
+        answer: async () => {
+          asked += 1;
+          return { reply: "không nên tới đây", recordedMessages: 0 };
+        },
+      },
+      adapter,
+    );
+
+    say(adapter, "mở settings");
+
+    const frame = await client.waitFor(
+      (message) => !message.binary && message.control["type"] === "app-intent",
+      "the app-intent frame",
+    );
+    expect(frame.binary === false && frame.control["decision"]).toEqual(OPEN_SETTINGS);
+    // A command is not a question: the agent is not asked, and the decision is what gets acted on.
+    expect(asked).toBe(0);
+    expect(adapter.spoken).toEqual([OPEN_SETTINGS.readBack]);
+  });
+
+  it("asks before quitting and sends nothing a page could act on", async () => {
+    const adapter = new FakeAdapter();
+    const confirmed: unknown[] = [];
+    const client = await opened(
+      {
+        resolveAppIntent: () => QUIT_QUESTION,
+        confirmAppIntent: (input) => {
+          confirmed.push(input);
+          return { kind: "refused", say: "không" };
+        },
+      },
+      adapter,
+    );
+
+    say(adapter, "thoát ứng dụng");
+    await client.waitFor(
+      (message) =>
+        !message.binary &&
+        message.control["type"] === "app-intent" &&
+        (message.control["decision"] as { kind?: string }).kind === "needs-confirmation",
+      "the confirmation question",
+    );
+
+    // The token is on the wire, but nothing executable is, and no confirmation has been taken.
+    expect(executableFrames(client)).toHaveLength(0);
+    expect(confirmed).toHaveLength(0);
+  });
+
+  it("turns a spoken yes into the executable decision, and a no into nothing", async () => {
+    const adapter = new FakeAdapter();
+    const client = await opened(
+      {
+        resolveAppIntent: () => QUIT_QUESTION,
+        confirmAppIntent: ({ token, decision }) =>
+          decision === "granted" && token === QUIT_QUESTION.confirmationToken
+            ? {
+                kind: "intent",
+                intent: { kind: "app.quit" },
+                requiresConfirmation: false,
+                readBack: "Tôi thoát ứng dụng nhé.",
+              }
+            : { kind: "refused", say: "Tôi đã bỏ qua câu lệnh đó." },
+      },
+      adapter,
+    );
+
+    say(adapter, "thoát ứng dụng");
+    await client.waitFor(
+      (message) =>
+        !message.binary &&
+        (message.control["decision"] as { kind?: string } | undefined)?.kind === "needs-confirmation",
+      "the confirmation question",
+    );
+
+    say(adapter, "đồng ý");
+    const granted = await client.waitFor(
+      (message) =>
+        !message.binary &&
+        message.control["type"] === "app-intent" &&
+        (message.control["decision"] as { kind?: string }).kind === "intent",
+      "the executable decision",
+    );
+    const decided =
+      granted.binary === false ? (granted.control["decision"] as { intent: { kind: string } }) : undefined;
+    expect(decided?.intent.kind).toBe("app.quit");
+    expect(executableFrames(client)).toHaveLength(1);
+  });
+
+  it("says it does not understand a command it cannot match, and runs nothing", async () => {
+    const adapter = new FakeAdapter();
+    let asked = 0;
+    const refused: AppIntentDecision = { kind: "refused", say: "Tôi chưa hiểu câu lệnh đó." };
+    const client = await opened(
+      {
+        resolveAppIntent: () => refused,
+        answer: async () => {
+          asked += 1;
+          return { reply: "không nên tới đây", recordedMessages: 0 };
+        },
+      },
+      adapter,
+    );
+
+    say(adapter, "mở cửa sổ trời");
+    await client.waitFor(
+      (message) =>
+        !message.binary && message.control["type"] === "transcript" && message.control["text"] === refused.say,
+      "the refusal",
+    );
+
+    // Refused means refused: no action, and the agent does not get to improvise a guess either.
+    expect(asked).toBe(0);
+    expect(executableFrames(client)).toHaveLength(0);
+  });
+
+  it("leaves a question that merely mentions settings to the agent", async () => {
+    const adapter = new FakeAdapter();
+    const asked: string[] = [];
+    const client = await opened(
+      {
+        resolveAppIntent: () => ({ kind: "none" }),
+        answer: async ({ text }) => {
+          asked.push(text);
+          return { reply: "Đây là phần cài đặt của node.", recordedMessages: 2 };
+        },
+      },
+      adapter,
+    );
+
+    say(adapter, "xem cài đặt của máy chủ này giúp tôi");
+    await client.waitFor(
+      (message) =>
+        !message.binary &&
+        message.control["type"] === "transcript" &&
+        message.control["text"] === "Đây là phần cài đặt của node.",
+      "the agent's answer",
+    );
+
+    expect(asked).toEqual(["xem cài đặt của máy chủ này giúp tôi"]);
+    expect(executableFrames(client)).toHaveLength(0);
+  });
+
+  it("reads a spoken command as an unclear answer while an approval is waiting", async () => {
+    const adapter = new FakeAdapter();
+    const resolved: string[] = [];
+    const decisions: string[] = [];
+    let turns = 0;
+    const client = await opened(
+      {
+        resolveAppIntent: ({ text }) => {
+          resolved.push(text);
+          // Only a sentence that really is a command maps to one. The first sentence is a work request, so the
+          // registry passes it on: this test is about the ordering, not about matching.
+          return text.includes("settings") ? OPEN_SETTINGS : { kind: "none" };
+        },
+        answer: async () => {
+          turns += 1;
+          return turns === 1
+            ? {
+                reply: "Tui cần bạn duyệt lệnh này.",
+                recordedMessages: 2,
+                pendingApproval: { approvalId: "appr_1", digest: "digest", description: "chạy lệnh" },
+              }
+            : { reply: "xong", recordedMessages: 1 };
+        },
+        decideApproval: async ({ decision }) => {
+          decisions.push(decision);
+          return { ok: true, message: "Đã duyệt." };
+        },
+      },
+      adapter,
+    );
+
+    say(adapter, "chạy lệnh này giúp tui");
+    await client.waitFor(
+      (message) =>
+        !message.binary &&
+        message.control["type"] === "transcript" &&
+        message.control["text"] === "chạy lệnh. Bạn cho phép chạy hay là không?",
+      "the approval question",
+    );
+
+    // Now a sentence that would otherwise open Settings. It has to be read as an answer to the question that is
+    // already waiting, because an operation about to run on the machine is the more dangerous of the two, and a
+    // sentence must not be able to decide both.
+    say(adapter, "mở settings");
+    await client.waitFor(
+      (message) =>
+        !message.binary &&
+        message.control["type"] === "transcript" &&
+        String(message.control["text"]).includes("Tui chưa rõ ý bạn"),
+      "the ask-again sentence",
+    );
+
+    // The registry saw the first sentence, which was not a command. The second one never reached it: a
+    // sentence said while a question is waiting is an answer to that question and nothing else.
+    expect(resolved).toEqual(["chạy lệnh này giúp tui"]);
+    expect(decisions).toEqual([]);
+    expect(executableFrames(client)).toHaveLength(0);
   });
 });

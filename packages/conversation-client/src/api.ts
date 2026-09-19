@@ -9,6 +9,15 @@
 import { type RegisteredPreference } from "@clarkcant/contracts";
 
 import {
+  type AppIntentDecision,
+  type AppIntentKind,
+  type AppIntentResolution,
+  type ConfirmationDecision,
+  type SettingsTab,
+} from "@clarkcant/contracts";
+import { memoryListSchema, suggestionsResponseSchema, type MemoryRecord, type Suggestion } from "@clarkcant/contracts";
+
+import {
   type StartVoiceSessionOptions,
   type VoiceSession,
   type VoiceSessionEvents,
@@ -213,6 +222,14 @@ export interface SendMessageResult {
   taskId: string | null;
   /** The messages this request wrote, in order. */
   messageIds: string[];
+  /**
+   * A command the node recognised in what was typed.
+   *
+   * Present when the text was an application command rather than a request for the agent. The node answers those
+   * itself and records them, and the page runs the decision - which is what makes typing "mở settings" open the
+   * panel exactly as saying it does.
+   */
+  appIntent?: AppIntentResolution;
   /** Every message in the conversation, so the client never has to guess whether its cursor is valid. */
   timeline: Timeline;
 }
@@ -375,6 +392,49 @@ export class GatewayClient {
     return this.#call("GET", "/conversations");
   }
 
+  /**
+   * What the node suggests doing next.
+   *
+   * The body is parsed rather than trusted: it crosses a socket and a version boundary, and a client that trusted
+   * it would render whatever an older or newer node happened to send. A node that answers with a shape this build
+   * does not know is an error here, which the caller turns into the fallback chips - not a broken first screen.
+   */
+  async suggestions(): Promise<Suggestion[]> {
+    const body = await this.#call<unknown>("GET", "/suggestions");
+    return suggestionsResponseSchema.parse(body).items;
+  }
+
+  /**
+   * What this node remembers, or why it could not be read.
+   *
+   * Failure is an answer rather than a throw, because the Memory tab has a state for it: a screen that cannot
+   * list what is remembered still has to render, with the reason and a way to try again. A thrown error here
+   * would be a blank panel with nothing to act on.
+   */
+  async listMemories(): Promise<
+    | { ok: true; items: MemoryRecord[]; counts: Record<string, number> }
+    | { ok: false; reason: string }
+  > {
+    try {
+      const body = await this.#call<unknown>("GET", "/memory");
+      const parsed = memoryListSchema.safeParse(body);
+      if (!parsed.success) return { ok: false, reason: "the node's answer was not a list of remembered things" };
+      return { ok: true, items: parsed.data.items, counts: parsed.data.counts };
+    } catch (cause) {
+      return { ok: false, reason: cause instanceof Error ? cause.message : "the node did not answer" };
+    }
+  }
+
+  /** Remove one, and say whether it went. */
+  async deleteMemory(memoryId: string): Promise<{ ok: true } | { ok: false; reason: string }> {
+    try {
+      await this.#call<unknown>("DELETE", `/memory/${encodeURIComponent(memoryId)}`);
+      return { ok: true };
+    } catch (cause) {
+      return { ok: false, reason: cause instanceof Error ? cause.message : "the node did not answer" };
+    }
+  }
+
   sendMessage(
     conversationId: string,
     text: string,
@@ -487,6 +547,9 @@ export class GatewayClient {
             messageIds: Array.isArray(payload.messageIds)
               ? payload.messageIds.filter((id): id is string => typeof id === "string")
               : [],
+            ...(payload.appIntent === undefined
+              ? {}
+              : { appIntent: payload.appIntent as AppIntentResolution }),
             // SAFETY: the timeline is the node's own record and this client has no schema for it — the
             // same position every other route here takes, since the channel is authenticated and the
             // node is the authority on its own timeline. Its fields are read defensively at each use.
@@ -879,6 +942,74 @@ export class GatewayClient {
     return {
       names: Array.isArray(body.names) ? body.names.filter((name): name is string => typeof name === "string") : [],
     };
+  }
+
+  /**
+   * Ask the node what a command means.
+   *
+   * A click goes through the node for the same reason a spoken command does: the registry, the audit record and
+   * the matching rules live there, so clicking Settings and saying "open Settings" produce the same event with the
+   * same kind and only the source differing. It also means a click cannot run something the node would refuse.
+   */
+  async sendAppIntent(input: {
+    kind?: AppIntentKind;
+    tab?: SettingsTab;
+    text?: string;
+    source: "chat" | "click" | "voice";
+    conversationId?: string;
+  }): Promise<AppIntentResolution> {
+    const body = {
+      ...(input.kind === undefined ? {} : { kind: input.kind }),
+      ...(input.tab === undefined ? {} : { tab: input.tab }),
+      ...(input.text === undefined ? {} : { text: input.text }),
+      ...(input.conversationId === undefined ? {} : { conversationId: input.conversationId }),
+      source: input.source,
+    };
+    const response = await this.#fetch(`${this.#baseUrl}/app-intents`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${this.#token}`, "content-type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    if (!response.ok) {
+      throw new GatewayError(response.status, "APP_INTENT_REFUSED", "the node refused that command");
+    }
+    const answer = (await response.json()) as { decision?: unknown };
+    // `none` is a real answer - the sentence was not a command - so it is returned rather than treated as a
+    // missing field. A caller that gets it must fall back to the ordinary path.
+    return (answer.decision ?? { kind: "none" }) as AppIntentResolution;
+  }
+
+  /**
+   * Answer a confirmation the node asked for.
+   *
+   * The token travels back to the node, which spends it and decides; this client never assembles an executable
+   * decision of its own. A denial is a complete answer and comes back as a refusal, so the caller has something to
+   * say rather than a silence to explain.
+   */
+  async confirmAppIntent(input: {
+    confirmationToken: string;
+    decision: ConfirmationDecision;
+    conversationId?: string;
+  }): Promise<AppIntentDecision> {
+    const response = await this.#fetch(`${this.#baseUrl}/app-intents/confirm`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${this.#token}`, "content-type": "application/json" },
+      body: JSON.stringify({
+        confirmationToken: input.confirmationToken,
+        decision: input.decision,
+        ...(input.conversationId === undefined ? {} : { conversationId: input.conversationId }),
+      }),
+    });
+    if (!response.ok) {
+      const detail = (await response.json().catch(() => ({}))) as { code?: unknown };
+      throw new GatewayError(
+        response.status,
+        typeof detail.code === "string" ? detail.code : "CONFIRMATION_REFUSED",
+        "that confirmation was not accepted",
+      );
+    }
+    const body = (await response.json()) as { decision?: unknown };
+    return (body.decision ?? { kind: "refused", say: "Không có gì được thực hiện." }) as AppIntentDecision;
   }
 
   /**

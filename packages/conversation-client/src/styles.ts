@@ -1482,4 +1482,27 @@ button:focus-visible, textarea:focus-visible, input:focus-visible, [tabindex]:fo
      frame, but a value recomputed for every frame of the session. */
   .cc-tool-mark[data-status="running"] { animation: none !important; }
 }
+
+  /*
+   * The desktop window's own chrome.
+   *
+   * A frameless window is dragged by its document, so the strip is the drag handle - and the controls opt out
+   * of it, because a button inside a drag region cannot be clicked. In a browser none of this renders at all.
+   */
+  .cc-desktop-chrome { position: fixed; top: 0; left: 0; right: 0; height: 34px; display: flex; align-items: center; gap: 6px; z-index: 30; }
+  .cc-desktop-drag { flex: 1 1 auto; height: 100%; -webkit-app-region: drag; }
+  .cc-desktop-controls { display: flex; align-items: center; gap: 2px; -webkit-app-region: no-drag; }
+  .cc-desktop-button { -webkit-app-region: no-drag; background: transparent; color: inherit; border: 1px solid var(--cc-line, rgba(255, 255, 255, 0.16)); border-radius: 6px; width: 26px; height: 22px; line-height: 1; font-size: 12px; cursor: pointer; }
+  .cc-desktop-button:hover { border-color: var(--cc-accent, #7aa2f7); }
+  .cc-desktop-button[data-pinned="true"] { border-color: var(--cc-accent, #7aa2f7); }
+  .cc-desktop-mode { -webkit-app-region: no-drag; font-size: 11px; opacity: 0.72; padding-right: 6px; }
+  .cc-desktop-problem { -webkit-app-region: no-drag; font-size: 11px; padding-right: 6px; opacity: 0.9; }
+
+  /*
+   * The compact surface: what the window shows when it has shrunk to the voice bar.
+   *
+   * The conversation is not unmounted - the session behind it keeps running, which is the whole point - so this
+   * takes the window and hides what is underneath rather than removing it.
+   */
+  [data-compact="true"] .cc-voice-scrim { position: fixed; inset: 0; border-radius: 0; background: var(--cc-bg, #0d1117); }
 `;
