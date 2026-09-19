@@ -122,3 +122,32 @@ constructor parameter properties; deps exact-pinned; e2e dùng data dir và port
 
 Ghi chú: chúng **không** được sửa hay nới trong goal này. Nếu một phase sau (P3 voice, P7 background
 routing) chạm đúng đường đó thì phải xử lý ở đó, kèm điều kiện thiếu được nêu tên.
+
+## 8. Kế hoạch t2 (InteractionManager) — đang làm
+
+Đã có: `packages/contracts/src/interactions.ts` (PendingInteraction, 4 question kind, `normalizeAnswer`,
+`voicePromptFor`, `answerNote`, `isWaiting`) + `test/interactions.spec.ts`; và block `question-card`
+trong `packages/contracts/src/surfaces.ts` (union + HOST_OWNED_BLOCK_TYPES).
+
+Thiết kế đã chốt, dựa trên đúng mẫu mà approval card đang dùng:
+
+1. **Không thêm bảng mới.** Card là một message block (`question-card`, `status: "waiting"`), và câu trả lời
+   là một message đi sau nó. Message bất biến, nên trạng thái "đã trả lời" được suy ra từ message trả lời —
+   y như `data-approval-decision="answered"` suy ra từ receipt. Đây là điều làm cho "answer đến sau 10 phút"
+   hoạt động mà không cần giữ một Pi call nào mở.
+2. **InteractionManager** trong `apps/runtime/src/interactions.ts`: `create()`, `answer()`, `cancel()`,
+   `expire()`, `pendingForConversation()`, nhận `db`/`conversationId`/`now`/`newId` như các module khác.
+   `answer()` chuẩn hoá qua `normalizeAnswer`, append `answerNote(...)` như một message người dùng thấy.
+3. **Tool `ask_user_question`** (`apps/runtime/src/node-tools.ts`): validate bằng `askUserQuestionSchema`,
+   tạo interaction, trả `hostBlocks: [question-card]` và text "đã hỏi, lượt này kết thúc". **Không** await
+   input trong `execute`.
+4. **Route** `POST /conversations/:id/questions/:questionId/answer` trong `gateway.ts`, mẫu theo route
+   approval hiện có: trả timeline mới, rồi chạy một turn mới với `answerNote` làm nội dung.
+5. **Từ chối hỏi secret, deterministic**: nếu `question` khớp mẫu secret (api key/token/mật khẩu) → trả
+   "This question appears to request a secret. Use request_secret instead." Không cần Jev.
+6. **Project-finder/search clarify** chuyển thành `QuestionInteraction` thay vì text cho model.
+7. **Client**: render `question-card` (4 kind) + `api.answerQuestion()`, sau đó e2e: card hiện, trả lời, turn
+   tiếp theo nhận answer.
+
+Điểm nối P1→P2 cần đổi: `decideGuardrailForCommand` hiện trả `{kind:"refuse", text}` cho `clarify`; P2 nên
+tạo `QuestionInteraction` thật ở đó.

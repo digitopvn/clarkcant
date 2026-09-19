@@ -490,6 +490,49 @@ export const attachmentBlockSchema = z.strictObject({
   attachment: attachmentRefSchema,
 });
 
+/**
+ * A question the host is waiting to have answered.
+ *
+ * A host-owned card for the same reason an approval card is: it is a boundary between the model and the
+ * person, so neither the model nor a pack draws it. What it is *not* is a permission dialog — the agent
+ * asks because the work is under-specified (“which project?”), and a `clarify` from the guardrail arrives
+ * through the same card as a widget action asking which account to use.
+ *
+ * `voicePrompt` is carried on the block rather than generated at render time, because the spoken form has
+ * to match the options that were actually offered: a surface that re-derived it could read out a stale
+ * wording after an option changed.
+ */
+export const questionCardBlockSchema = z.strictObject({
+  type: z.literal("question-card"),
+  owner: z.literal("host"),
+  questionId: z.string().min(1).max(128),
+  /** What is shown on screen, written by the agent and bounded by the tool schema. */
+  prompt: z.string().min(1).max(500),
+  questionType: z.enum(["text", "single-choice", "multi-choice", "confirm"]),
+  options: z
+    .array(
+      z.strictObject({
+        id: z.string().min(1).max(64),
+        label: z.string().min(1).max(200),
+        description: z.string().max(500).optional(),
+      }),
+    )
+    .max(8),
+  /** Whether an answer outside `options` is accepted. Only meaningful for the choice kinds. */
+  allowOther: z.boolean(),
+  /** What the host says out loud, derived from the structure above. */
+  voicePrompt: z.string().min(1).max(500),
+  /**
+   * The state at the moment the card was written.
+   *
+   * Messages are immutable, so this is never edited: a surface shows “answered” from the answer message
+   * that follows, exactly as an approval card reads its decision from the receipt.
+   */
+  status: z.enum(["waiting", "answered", "cancelled", "expired"]),
+  createdAt: instantSchema,
+  expiresAt: instantSchema.optional(),
+});
+
 export const messageBlockSchema = z.discriminatedUnion("type", [
   textBlockSchema,
   attachmentBlockSchema,
@@ -502,6 +545,7 @@ export const messageBlockSchema = z.discriminatedUnion("type", [
   systemCardBlockSchema,
   approvalCardBlockSchema,
   credentialCardBlockSchema,
+  questionCardBlockSchema,
   connectionCardBlockSchema,
   taskProgressCardSchema,
   taskSummaryCardSchema,
@@ -516,6 +560,7 @@ export type MessageBlock = z.infer<typeof messageBlockSchema>;
 export const HOST_OWNED_BLOCK_TYPES = [
   "system-card",
   "approval-card",
+  "question-card",
   "credential-card",
   "connection-card",
   "task-progress-card",
