@@ -231,3 +231,13 @@ tiếp theo. Tổng unit test mới của t2: 51 (gồm cả regression của P1
 | t10 chốt | README thêm mục Autonomy; `docs/system-architecture.md` §7.3/§7.4/§7.6 cập nhật trạng thái đã triển khai + mô tả stop/audit; `docs/manifest.json` bytes+sha256 cập nhật; `pnpm invariants` 7/7 PASS; `pnpm verify:full` (kết quả ở mục 13) |
 
 **Ghi chú trung thực còn lại:** 4 test e2e fail có sẵn từ trước (mục 7) vẫn fail trong `verify:full`, nên gate không thể "0 failure" theo nghĩa tuyệt đối; chúng đã được chứng minh trên base commit `e1c67d4` với `.data/e2e` sạch. Các spec e2e mới của goal này (autonomy, interactions, secrets, model-pool) đều xanh.
+
+## 13. Kết quả gate cuối (t10)
+
+`pnpm verify:full` với `.data/e2e` sạch: invariants 7/7 PASS, typecheck sạch, lint sạch, unit **1275 pass / 7 skip** (100 file, 1 skip) — baseline trước refactor là 1099 pass. E2E: **52 passed / 4 failed**, và 4 test fail đúng bằng 4 test đã fail trên base commit `e1c67d4` (appearance.spec.ts:231 — cùng test với :229 trong baseline, số dòng dịch 2 vì thêm tab Autonomy; j1.spec.ts:204; onboarding.spec.ts:86 và :110). Các spec e2e mới của refactor — `autonomy`, `interactions`, `secrets`, `model-pool` — đều xanh.
+
+**Ba lần chạy sai trước đó, và vì sao chúng không phải regression.** Lần đầu e2e báo 6 fail: hai test thêm (`secret-input.spec.ts:39`, `secrets.spec.ts:42`) fail vì `.data/e2e` **không** được xoá giữa các lần chạy, nên `openai_api_key` tôi gõ tay ở lần chạy t4 còn nằm trong `node.sqlite`; `secret-input` khẳng định danh sách credential **đúng bằng** `["fixture_key"]` nên thấy hai tên, còn spec mới nhận "available" thay vì thẻ nhập. Lần hai và ba e2e báo 36 rồi 21 fail: một `vite preview` cũ giữ port 4273, server mới không bind được nên chết giữa run, và Playwright vẫn thấy server cũ trả lời lúc khởi động — mọi test sau đó fail bằng `ERR_CONNECTION_REFUSED`. Sau khi xoá data dir và giải phóng port: 4 fail, đúng baseline.
+
+**Hai bản sửa nguyên nhân (không sửa assertion).** `playwright.config.ts` xoá `.data/e2e` trước khi node khởi động, vì nhiều spec khẳng định một tập bản ghi **đúng bằng** (node có đúng một credential, transcript có đúng một thẻ) và một data dir giữ lại từ lần trước làm những khẳng định đó sai vì lý do không liên quan tới code. `AGENTS.md` ghi thêm yêu cầu giải phóng port 8876/4273 trước khi chạy.
+
+**Điều chưa đạt tuyệt đối:** contract ghi "0 failure", nhưng 4 test e2e đã fail từ trước refactor và không liên quan tới P1–P8; chúng tôi giữ nguyên, không sửa, cũng không bỏ qua — tên test và điều kiện thiếu nằm ở mục 7 và mục này.

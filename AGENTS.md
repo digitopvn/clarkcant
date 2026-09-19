@@ -29,7 +29,11 @@ node apps/runtime/src/main.ts --data-dir ./.data --label dev   # local node; tok
 ```
 
 Never point e2e at a running dev node: `playwright.config.ts` uses its own data
-dir and ports so it cannot read the wrong identity file.
+dir and ports so it cannot read the wrong identity file. Free ports 8876 and
+4273 before a run: a server left over from an interrupted run answers
+Playwright's startup health check, so the run's own server fails to bind
+(`--strictPort`) and every test after that fails on a refused connection, which
+reads like a regression and is not one.
 
 ## Tests
 
