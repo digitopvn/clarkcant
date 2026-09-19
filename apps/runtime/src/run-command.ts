@@ -3,6 +3,8 @@ import { createHash } from "node:crypto";
 
 import type { Instant, MessageBlock } from "@clarkcant/contracts";
 
+import type { CommandEnvelope } from "./preflight.ts";
+
 /**
  * Running one command, in the directory it was asked for, once a person has approved it.
  *
@@ -231,6 +233,83 @@ export function commandOutput(outcome: CommandOutcome): string {
   if (outcome.stdout.trim() !== "") parts.push(`stdout:\n${outcome.stdout.trimEnd()}`);
   if (outcome.stderr.trim() !== "") parts.push(`stderr:\n${outcome.stderr.trimEnd()}`);
   return parts.length === 0 ? "Không có output." : parts.join("\n\n");
+}
+
+/**
+ * Run an operation the host has already cleared, and report what happened.
+ *
+ * This is the guarded path: no card, no digest, no person in the loop. What replaced the approval is not
+ * nothing — it is the preflight that produced this envelope (ownership, existence, budget, capability)
+ * and the guardrail that may have narrowed it. Both ran before this function was called, which is why it
+ * can be short: by the time a command gets here the only question left is what it printed.
+ *
+ * The blocks are the same shape the approved path records, so a command reads the same in the transcript
+ * whichever policy let it run. The receipt is returned as text as well as a block because the model is
+ * still holding the turn: unlike the approved path there is no second turn to hand the output to.
+ */
+export async function runGuardedCommand(input: {
+  operationId: string;
+  /** The envelope the preflight produced, already narrowed by the guardrail if it asked for that. */
+  envelope: CommandEnvelope;
+  /** Where the folder came from, in the finder's words. Shown to the person. */
+  reason?: string;
+  /** The model's own one-liner for why this is being run. */
+  why?: string;
+  now?: () => Instant;
+  /** Injected so the whole path can be tested without spawning anything. */
+  run?: (request: {
+    command: string;
+    cwd: string;
+    timeoutMs: number;
+    maxOutputBytes: number;
+  }) => Promise<CommandOutcome>;
+}): Promise<{ blocks: MessageBlock[]; outcome: CommandOutcome; description: string; receipt: string }> {
+  const at = input.now ?? (() => new Date().toISOString() as Instant);
+  const startedAt = at();
+  const { command, cwd } = input.envelope;
+
+  const outcome = await (
+    input.run ??
+    ((request) =>
+      runCommand(
+        { command: request.command, cwd: request.cwd },
+        { timeoutMs: request.timeoutMs, maxOutputBytes: request.maxOutputBytes },
+      ))
+  )({ command, cwd, timeoutMs: input.envelope.budget.timeoutMs, maxOutputBytes: input.envelope.budget.maxOutputBytes });
+
+  const description = describeCommandOutcome(command, outcome);
+  const succeeded = outcome.exitCode === 0 && !outcome.timedOut;
+  const because = input.reason ?? "";
+  const why = input.why ?? "";
+
+  const blocks: MessageBlock[] = [
+    {
+      type: "tool-activity",
+      toolCallId: `run-${input.operationId}`,
+      name: "run_command",
+      label: `Chạy lệnh trong ${cwd}` + (because === "" ? "" : ` (${because})`) + (why === "" ? "" : `: ${why}`),
+      status: succeeded ? "done" : "failed",
+      args: { command, cwd, decision: "guarded", effect: input.envelope.classification.commandClass },
+      result: commandOutput(outcome),
+      path: cwd,
+      startedAt,
+      endedAt: at(),
+    },
+    {
+      type: "evidence",
+      kind: "exit-status",
+      summary: outcome.timedOut
+        ? `Lệnh bị dừng sau ${outcome.durationMs} ms vì vượt thời gian cho phép.`
+        : `Lệnh thoát với mã ${outcome.exitCode ?? "không rõ"} sau ${outcome.durationMs} ms.`,
+      // Non-zero is not "unverified": it is a result, and it contradicts success.
+      verdict: succeeded ? "verified" : "contradicted",
+      ref: input.operationId,
+    },
+  ];
+
+  // The model gets the output rather than a promise of it: it is still holding the turn, and a receipt
+  // that only says "it exited 0" is the bug the approved path already had to fix once.
+  return { blocks, outcome, description, receipt: receiptForModel(blocks) };
 }
 
 /**

@@ -36,7 +36,10 @@ import { attachmentRefsForLastUserMessage } from "./attachments.ts";
 import { buildViewCatalog } from "./view-catalog.ts";
 import { registerNodeTools } from "./tool-catalogue.ts";
 import { composeMiniApp } from "./compose-mini-app.ts";
-import { createNodeTools } from "./node-tools.ts";
+import { createNodeTools, type CommandToolDeps } from "./node-tools.ts";
+import { guardOperation } from "./jev-decider.ts";
+import { ownedResources } from "./preflight.ts";
+import { DEFAULT_NARROWING, readAutonomySettings } from "./autonomy-settings.ts";
 import { registerSessionFile, sessionsDirectory } from "./session-store.ts";
 import { bootNodeServices, type NodeServices } from "./services.ts";
 import type { ProjectSessionStarter } from "./project-session.ts";
@@ -104,10 +107,19 @@ async function main(): Promise<void> {
   /**
    * Where an approval request is recorded, filled once the node has booted.
    *
-   * `run_command` is registered only with these: a node that cannot record a decision cannot ask for one,
-   * and a tool that could only refuse is worse than no tool at all.
+   * Only the `confirm` policy needs these. `run_command` no longer depends on them to exist: a node whose
+   * policy is `guarded` runs commands without recording a decision, so tying the tool's existence to the
+   * approval route — as it used to be — would leave the default policy with no executor at all.
    */
   const approvalWiring: { deps?: CoordinationDeps } = {};
+  /**
+   * The command path, filled once the node has booted.
+   *
+   * Lazily for the same reason as everything else here: the folders this node owns, the settings it runs
+   * under and the policy layer it consults all live on `services`, which is built below this line, while
+   * the tool list has to exist before it.
+   */
+  const commandWiring: { deps?: CommandToolDeps } = {};
   /** Filled once the node has booted, so the scripted turn below can compose a real surface. */
   const modelWiring: { compose?: NodeServices["compose"] } = {};
 
@@ -135,6 +147,38 @@ async function main(): Promise<void> {
      * buttons and a receipt — needs a way to be reached without a provider account, and a fixture that
      * cannot produce the card would leave the client wiring tested by nothing at all.
      */
+    /*
+     * A command that runs without a card.
+     *
+     * The fixture for the default policy, and the browser half of the claim this refactor rests on: a command
+     * is proposed, the host preflights it, no policy layer is wired on a fixture node (so the fail-open
+     * setting governs), and it runs — with no approval card anywhere in the conversation. It drives the real
+     * tool rather than a scripted block, because a fixture that drew its own receipt would prove nothing about
+     * the path a real command takes.
+     */
+    if (/chạy lệnh tự động|tự chạy lệnh/i.test(input.text)) {
+      const command = commandWiring.deps;
+      const search = searchWiring.deps;
+      const projects = projectWiring.deps;
+      if (command === undefined || search === undefined || projects === undefined) return undefined;
+      const tool = createNodeTools({ search, projects, command }).find((entry) => entry.name === "run_command");
+      if (tool === undefined) return undefined;
+
+      const answer = await tool.execute({
+        command: `node -e "process.stdout.write('fixture ran')"`,
+        cwd: options.dataDir,
+        why: "fixture: chứng minh lệnh chạy không cần thẻ duyệt",
+      });
+      const first = answer.hostBlocks?.[0];
+      if (first === undefined) {
+        return { text: answer.text, block: { type: "text", format: "plain", content: answer.text, streaming: false } };
+      }
+      // SAFETY: this is the tool-activity block the guarded run built from the message-block union; the
+      // adapter's shape is loose because it must not depend on contracts, and the node validates blocks
+      // before they reach a transcript.
+      return { text: answer.text, block: first as unknown as MessageBlock };
+    }
+
     if (/chạy lệnh thử|thử chạy lệnh/i.test(input.text)) {
       const approvals = approvalWiring.deps;
       if (approvals === undefined) return undefined;
@@ -388,12 +432,12 @@ async function main(): Promise<void> {
     extraTools: (turn) => {
       const search = searchWiring.deps;
       const projects = projectWiring.deps;
-      const approvals = approvalWiring.deps;
-      if (search === undefined || projects === undefined || approvals === undefined) return [];
+      const command = commandWiring.deps;
+      if (search === undefined || projects === undefined || command === undefined) return [];
       const tools = createNodeTools({
         search,
         projects,
-        approvals: () => approvals,
+        command,
         // Reading an attached file is scoped to the conversation this turn belongs to, which is the
         // only thing the tool needs to check beyond the principal.
         attachments: { dataDir: options.dataDir, conversationId: turn.conversationId },
@@ -476,6 +520,29 @@ async function main(): Promise<void> {
     now: () => new Date().toISOString() as never,
     // The conductor's own id generator, so an approval id looks like every other id this node writes.
     newId: services.conductor.newId,
+  };
+  commandWiring.deps = {
+    // Omitted when the node has no approval route at all, so `confirm` refuses honestly instead of
+    // throwing from inside the tool.
+    ...(approvalWiring.deps === undefined ? {} : { approvals: () => approvalWiring.deps as CoordinationDeps }),
+    autonomy: () => readAutonomySettings(services.runtime.db, services.runtime.identity.ownerPrincipalId),
+    // The folders this node owns, which is the whole of the containment check: the workspace roots from
+    // settings, the node's own data directory, and the directory the operator launched it from. The last
+    // one matters because a node started inside a checkout is being pointed at that checkout by a person.
+    resources: () => ownedResources([...services.projects.roots(), services.runtime.dataDir, process.cwd()]),
+    fallbackCwd: () => process.cwd(),
+    // The same decision layer the finder uses: one adapter, one policy, one fallback chain. A node with
+    // no configured selector reports `unavailable`, and the person's fail-open setting decides what that
+    // means — which is not the same thing as a guardrail that said yes.
+    guardrails: (input) => {
+      const decider = services.projects.decider;
+      if (decider === undefined) {
+        return Promise.resolve({ status: "unavailable" as const, reason: "node này chưa nối policy layer nào" });
+      }
+      return guardOperation(decider, input);
+    },
+    narrowing: DEFAULT_NARROWING,
+    newId: () => services.conductor.newId("run"),
   };
 
   // A fixture node arranges its own precondition: the scripted command proposal has to have somewhere to
@@ -742,10 +809,10 @@ async function main(): Promise<void> {
      * Built from the same wirings the turn uses, and without the folder-resolution refinement, which changes how
      * run_command picks a folder rather than whether it exists.
      */
-    const bootApprovals = approvalWiring.deps;
-    if (bootApprovals !== undefined) {
+    const bootCommand = commandWiring.deps;
+    if (bootCommand !== undefined) {
       registerNodeTools(
-        createNodeTools({ search: services.search, projects: services.projects, approvals: () => bootApprovals }).map(
+        createNodeTools({ search: services.search, projects: services.projects, command: bootCommand }).map(
           (tool) => ({ name: tool.name, label: tool.label, description: tool.description }),
         ),
       );

@@ -1,13 +1,15 @@
 import { join } from "node:path";
 
-import { ATTACHMENT_LIMITS, attachmentIdSchema } from "@clarkcant/contracts";
+import { ATTACHMENT_LIMITS, attachmentIdSchema, type AutonomySettings, type ExecutionPolicy, type GuardClass, type GuardrailConstraint, type Instant } from "@clarkcant/contracts";
 import { getAttachment } from "@clarkcant/storage";
 import type { ToolDefinition } from "@clarkcant/pi-adapter";
 import { requestApproval, type CoordinationDeps } from "@clarkcant/core";
 
 import { blobsDir, readBlob } from "./blobs.ts";
 import { describeSearch, machineRoots, searchFileSystem } from "./fs-search.ts";
-import { commandDigest, guardCommand } from "./run-command.ts";
+import { applyGuardrailConstraints, preflightCommand, type CommandEnvelope, type OwnedResources } from "./preflight.ts";
+import type { OperationGuardInput, OperationGuardOutcome } from "./jev-decider.ts";
+import { commandDigest, runGuardedCommand, type CommandOutcome } from "./run-command.ts";
 import type { ProjectFinderDeps } from "./project-finder.ts";
 import { createFindProjectTool } from "./project-finder.ts";
 import { createFindRuntimeTool } from "./runtime-candidates.ts";
@@ -33,12 +35,14 @@ export function createNodeTools(input: {
   /** Where a machine-wide search starts. Defaults to every drive, or the filesystem root. */
   roots?: () => readonly string[];
   /**
-   * Where an approval request is recorded, when this node may run commands at all.
+   * The command path, when this node may run commands at all.
    *
-   * Absent means `run_command` is not registered: a node with no way to record a decision has no way to
-   * ask for one, and a tool that could only refuse is worse than no tool.
+   * Absent means `run_command` is not registered. Note what is *not* required: an approval route. A node
+   * whose policy is `guarded` runs commands without ever recording a decision, so tying this tool's
+   * existence to the approval infrastructure — as it used to be — would leave the default policy with no
+   * executor.
    */
-  approvals?: () => CoordinationDeps;
+  command?: CommandToolDeps;
   /** Resolve a folder from the model's words, through the finder and its decider. */
   resolveFolder?: (intent: string) => Promise<
     | { status: "resolved"; cwd: string; relPath: string }
@@ -57,11 +61,11 @@ export function createNodeTools(input: {
   return [
     createSearchHistoryTool(input.search),
     createSearchFilesTool(roots),
-    ...(input.approvals === undefined
+    ...(input.command === undefined
       ? []
       : [
           createRunCommandTool({
-            approvals: input.approvals,
+            ...input.command,
             ...(input.resolveFolder === undefined ? {} : { resolveFolder: input.resolveFolder }),
           }),
         ]),
@@ -162,39 +166,161 @@ export function createReadAttachmentTool(input: {
 }
 
 /**
+ * Everything the command tool needs, injected.
+ *
+ * Functions rather than values, so a settings change applies to the next command instead of the next
+ * restart, and so this module stays testable without a database, a node or a provider.
+ */
+export interface CommandToolDeps {
+  /**
+   * Where an approval request is recorded. Only `confirm` needs it.
+   *
+   * Optional on purpose: the default policy does not ask anybody, and a tool that refused to exist
+   * without a decision route would make the default unreachable.
+   */
+  approvals?: () => CoordinationDeps;
+  /** The autonomy settings as they are now. */
+  autonomy: () => AutonomySettings;
+  /** The folders this node owns. Every effect has to resolve inside one of them. */
+  resources: () => OwnedResources;
+  /** The node's own working directory, used when the model named no folder and `cwd` was absent. */
+  fallbackCwd: () => string;
+  /** The policy layer. Absent means there is nothing to consult, and the fail-open setting decides. */
+  guardrails?: (input: OperationGuardInput) => Promise<OperationGuardOutcome>;
+  /**
+   * The narrowing options this host is willing to apply, with the constraint each one means.
+   *
+   * The selector picks an id; this table turns it into a constraint. That indirection is the guarantee
+   * that a guardrail cannot widen anything: it can only point at something the host already decided was a
+   * narrowing.
+   */
+  narrowing?: readonly { id: string; description: string; constraint: GuardrailConstraint }[];
+  /** Ids for the receipts this tool writes. */
+  newId: () => string;
+  now?: () => Instant;
+  /** Injected so the whole path can be tested without spawning anything. */
+  run?: (request: {
+    command: string;
+    cwd: string;
+    timeoutMs: number;
+    maxOutputBytes: number;
+  }) => Promise<CommandOutcome>;
+}
+
+/**
+ * Which policy applies to one effect.
+ *
+ * `guarded` is the interesting case: it means "do not ask a person, but do ask the policy layer", and the
+ * policy layer is only asked for the classes the person left switched on. A class that is switched off is
+ * not "denied" — it is simply not judged, and it runs. Reading it as a denial would make turning a class
+ * off in settings stop work, which is the opposite of what the switch says.
+ */
+export function policyForEffect(settings: AutonomySettings, guardClass: GuardClass): ExecutionPolicy {
+  if (settings.executionPolicy === "deny") return "deny";
+  if (settings.executionPolicy === "confirm") return "confirm";
+  if (settings.executionPolicy === "auto") return "auto";
+  if (!settings.jevGuardrails) return "auto";
+  return settings.guardedClasses.includes(guardClass) ? "guarded" : "auto";
+}
+
+export type GuardDecisionForCommand =
+  | { kind: "proceed"; envelope: CommandEnvelope }
+  | { kind: "refuse"; text: string };
+
+/**
+ * Consult the policy layer about one command, and turn its answer into something the turn can act on.
+ *
+ * The four outcomes are handled differently on purpose. `allow` proceeds. `deny` and `clarify` both stop
+ * the command but say different things — a refusal is final, a clarification is a question the model can
+ * carry back and re-propose against. `constrain` is applied through the host's own table and can still be
+ * refused by `applyGuardrailConstraints` if it turns out to widen. `unavailable` is not a refusal: it is
+ * the absence of a judgment, and what it means is the person's `whenJevUnavailable` setting rather than a
+ * guess made here.
+ */
+export async function decideGuardrailForCommand(
+  input: CommandToolDeps,
+  request: { settings: AutonomySettings; envelope: CommandEnvelope; why: string },
+): Promise<GuardDecisionForCommand> {
+  const outcome: OperationGuardOutcome =
+    input.guardrails === undefined
+      ? { status: "unavailable", reason: "node này chưa nối guardrail nào" }
+      : await input.guardrails({
+          intent: request.why === "" ? request.envelope.command : request.why,
+          operation: `Chạy lệnh trong ${request.envelope.cwd}`,
+          state: {
+            effect: request.envelope.effectCategory,
+            commandClass: request.envelope.classification.commandClass,
+            cwdScope: request.envelope.cwd,
+            executable: request.envelope.command.split(/\s+/)[0] ?? "",
+            recursive: String(request.envelope.classification.recursive),
+            destructive: String(request.envelope.classification.destructive),
+            estimatedTargets: String(request.envelope.classification.estimatedTargets),
+          },
+          instructions: request.settings.instructions,
+          ...(input.narrowing === undefined
+            ? {}
+            : { constraints: input.narrowing.map((entry) => ({ id: entry.id, description: entry.description })) }),
+          clarifyQuestion:
+            "Lệnh này có thể nhắm vào nhiều đối tượng đều hợp lệ. Bạn muốn nói tới cái nào?",
+        });
+
+  if (outcome.status === "allow") return { kind: "proceed", envelope: request.envelope };
+  if (outcome.status === "deny") {
+    return { kind: "refuse", text: `Guardrail từ chối lệnh này (${outcome.reason}). Không có gì được chạy.` };
+  }
+  if (outcome.status === "clarify") {
+    return { kind: "refuse", text: `${outcome.question} Hỏi người dùng rồi đề xuất lại.` };
+  }
+  if (outcome.status === "constrain") {
+    const offered = (input.narrowing ?? []).find((entry) => entry.id === outcome.constraintId);
+    if (offered === undefined) {
+      return { kind: "refuse", text: "Guardrail yêu cầu thu hẹp nhưng không nêu cách nào host đã cho phép." };
+    }
+    const narrowed = applyGuardrailConstraints(request.envelope, [offered.constraint]);
+    if (!narrowed.ok) return { kind: "refuse", text: `Guardrail yêu cầu nới phạm vi: ${narrowed.message}` };
+    return { kind: "proceed", envelope: narrowed.envelope };
+  }
+
+  if (request.settings.whenJevUnavailable === "allow") return { kind: "proceed", envelope: request.envelope };
+  return {
+    kind: "refuse",
+    text: `Guardrail không dùng được (${outcome.reason}) và node này đặt là từ chối khi Jev vắng. Không có gì được chạy.`,
+  };
+}
+
+/**
  * Running a command, as the model may ask for it.
  *
- * The tool does not run anything. It records a request and hands back the card that asks the user, and
- * the command runs only when that card is approved — which is why the description says so in the first
- * sentence. A model that believed it had already run something would tell the user it was done.
- *
- * The description also sends it looking for a place first, because the operator's decision was that the
- * agent may work anywhere it can justify: `where` is an intent ("somewhere beside my other projects") and
- * it is resolved by the project finder, which is where Jev decides when several folders could be meant.
- * Naming no place at all is not an option the model has — it either finds one or asks.
+ * The tool used to do nothing but record a request and hand back a card. It now runs the command, and what
+ * makes that acceptable is not the tool: it is `preflightCommand`, which decides ownership, existence and
+ * budget before this code runs, and `decideGuardrailForCommand`, which may narrow or refuse afterwards.
+ * The approval card is still here for `confirm`, whole and unchanged, because a policy mode that cannot be
+ * exercised is a policy mode that has already rotted.
  */
-export function createRunCommandTool(input: {
-  approvals: () => CoordinationDeps;
-  /**
-   * Resolve a folder from the model's words, through the finder and its decider.
-   *
-   * Injected rather than imported so the tool stays independent of the finder's machinery, and so a test
-   * can drive the ambiguous case without a project index.
-   */
-  resolveFolder?: (intent: string) => Promise<
-    | { status: "resolved"; cwd: string; relPath: string }
-    | { status: "ask"; message: string; options: readonly string[] }
-  >;
-}): ToolDefinition {
+export function createRunCommandTool(
+  input: CommandToolDeps & {
+    /**
+     * Resolve a folder from the model's words, through the finder and its decider.
+     *
+     * Injected rather than imported so the tool stays independent of the finder's machinery, and so a test
+     * can drive the ambiguous case without a project index.
+     */
+    resolveFolder?: (intent: string) => Promise<
+      | { status: "resolved"; cwd: string; relPath: string }
+      | { status: "ask"; message: string; options: readonly string[] }
+    >;
+  },
+): ToolDefinition {
   return {
     name: "run_command",
-    label: "Chạy một lệnh, sau khi bạn duyệt",
+    label: "Chạy một lệnh",
     description:
-      "Ask to run one shell command. Nothing runs until the user approves the exact command and folder in " +
-      "the card this creates, so say that you are asking rather than that you did it. Pass `where` with the " +
-      "place you intend in your own words — look for it first with find_project or search_files, because the " +
-      "folder is decided from what you find and the user sees it in the card. Pass `cwd` only when you " +
-      "already know the exact directory. Use it for work that needs a shell: git clone, a build, a test run.",
+      "Run one shell command in a folder this node owns. Unless this node is set to ask first, the command " +
+      "runs straight away and you get its output in this turn — so do not say you are only proposing it. Pass " +
+      "`where` with the place you intend in your own words and look for it first with find_project or " +
+      "search_files, because the folder must resolve inside a folder this node owns; a folder outside them, " +
+      "or one that does not exist, is refused before anything runs. Pass `cwd` only when you already know the " +
+      "exact directory. Use it for work that needs a shell: git clone, a build, a test run.",
     parameters: {
       type: "object",
       additionalProperties: false,
@@ -211,7 +337,9 @@ export function createRunCommandTool(input: {
       },
     },
     promptSnippet: "run_command — propose a shell command; the user must approve it before it runs",
-    execute: async (params: Record<string, unknown>): Promise<{ text: string; hostCard?: Record<string, unknown> }> => {
+    execute: async (
+      params: Record<string, unknown>,
+    ): Promise<{ text: string; hostCard?: Record<string, unknown>; hostBlocks?: Record<string, unknown>[] }> => {
       const command = typeof params.command === "string" ? params.command.trim() : "";
       if (command === "") return { text: "Cần một lệnh để chạy." };
 
@@ -231,44 +359,103 @@ export function createRunCommandTool(input: {
         because = `được tìm thấy từ “${where}” (${found.relPath})`;
       }
 
-      const guard = guardCommand({ command, cwd });
-      if (!guard.ok || guard.cwd === undefined) {
+      const settings = input.autonomy();
+      const preflight = preflightCommand({
+        command,
+        cwd,
+        resources: input.resources(),
+        fallbackCwd: input.fallbackCwd(),
+      });
+      if (!preflight.ok) {
         // Refused here, in the same turn, so the model can correct itself rather than the user finding out
-        // that a command cannot run where it asked.
-        return { text: guard.message ?? "Không xin được quyền chạy lệnh đó." };
+        // that a command cannot run where it asked. This is the host's own gate, not policy: a folder the
+        // node does not own, or one that is not there, is not a question to put to a model.
+        return { text: preflight.message };
+      }
+      if (preflight.envelope.kind !== "command") return { text: "Chỉ chạy được lệnh shell qua công cụ này." };
+
+      const envelope = preflight.envelope;
+      const why = typeof params.why === "string" && params.why.trim() !== "" ? params.why.trim() : "";
+      const reason = because ?? "";
+      const policy = policyForEffect(settings, envelope.guardClass);
+
+      if (policy === "deny") {
+        return {
+          text:
+            `Node này đang tắt lớp “${envelope.guardClass}”, nên lệnh này không chạy. ` +
+            `Người dùng bật lại trong Settings → Autonomy nếu muốn.`,
+        };
       }
 
-      const resolvedCwd = guard.cwd;
-      const why = typeof params.why === "string" && params.why.trim() !== "" ? params.why.trim() : "";
-      const reason = because ?? guard.because ?? "";
-      const digest = commandDigest(command, resolvedCwd);
-      const approval = requestApproval(input.approvals(), {
-        operationDigest: digest,
-        operationDescription:
-          `Chạy một lệnh trong ${resolvedCwd}` + (reason === "" ? "" : ` (${reason})`) + (why === "" ? "" : `: ${why}`),
-        effectCategory: "local-write",
-        // A quarter of an hour: long enough to read the command and decide, short enough that a card left
-        // on screen overnight cannot be approved the next morning for a stale reason.
-        ttlMs: 15 * 60_000,
+      if (policy === "confirm") {
+        if (input.approvals === undefined) {
+          return {
+            text:
+              "Node này đang ở chế độ confirm nhưng không có nơi ghi quyết định, nên lệnh không chạy được. " +
+              "Đổi sang chế độ khác trong Settings → Autonomy.",
+          };
+        }
+        const digest = commandDigest(command, envelope.cwd);
+        const approval = requestApproval(input.approvals(), {
+          operationDigest: digest,
+          operationDescription:
+            `Chạy một lệnh trong ${envelope.cwd}` +
+            (reason === "" ? "" : ` (${reason})`) +
+            (why === "" ? "" : `: ${why}`),
+          effectCategory: envelope.effectCategory,
+          // A quarter of an hour: long enough to read the command and decide, short enough that a card left
+          // on screen overnight cannot be approved the next morning for a stale reason.
+          ttlMs: 15 * 60_000,
+        });
+        return {
+          text:
+            `Đã gửi yêu cầu duyệt để chạy \`${command}\` trong ${envelope.cwd}. Chưa có gì chạy cả — người dùng ` +
+            `phải bấm duyệt, và tui không thể tự duyệt. Đừng nói là đã chạy xong.`,
+          hostCard: {
+            type: "approval-card",
+            owner: "host",
+            approvalId: approval.approvalId,
+            operationDescription: approval.operationDescription,
+            operationDigest: approval.operationDigest,
+            effectCategory: approval.effectCategory,
+            expiresAt: approval.expiresAt,
+            decider: approval.decider,
+            decision: approval.decision,
+            // The payload is what runs on approval, and the digest above is what proves it is unchanged.
+            payload: JSON.stringify({ command, cwd: envelope.cwd }),
+          },
+        };
+      }
+
+      // `guarded` and `auto` differ only in whether the policy layer is consulted. Neither asks a person,
+      // which is the whole point of the default: the control is the host's gate plus a judgment that can
+      // only narrow, not a dialog nobody reads.
+      let guarded = envelope;
+      if (policy === "guarded") {
+        const decision = await decideGuardrailForCommand(input, { settings, envelope, why });
+        if (decision.kind === "refuse") return { text: decision.text };
+        guarded = decision.envelope;
+      }
+
+      const ran = await runGuardedCommand({
+        operationId: input.newId(),
+        envelope: guarded,
+        ...(reason === "" ? {} : { reason }),
+        ...(why === "" ? {} : { why }),
+        ...(input.now === undefined ? {} : { now: input.now }),
+        ...(input.run === undefined ? {} : { run: input.run }),
       });
 
       return {
-        text:
-          `Đã gửi yêu cầu duyệt để chạy \`${command}\` trong ${resolvedCwd}. Chưa có gì chạy cả — người dùng ` +
-          `phải bấm duyệt, và tui không thể tự duyệt. Đừng nói là đã chạy xong.`,
-        hostCard: {
-          type: "approval-card",
-          owner: "host",
-          approvalId: approval.approvalId,
-          operationDescription: approval.operationDescription,
-          operationDigest: approval.operationDigest,
-          effectCategory: approval.effectCategory,
-          expiresAt: approval.expiresAt,
-          decider: approval.decider,
-          decision: approval.decision,
-          // The payload is what runs on approval, and the digest above is what proves it is unchanged.
-          payload: JSON.stringify({ command, cwd: resolvedCwd }),
-        },
+        // The output travels back with the result because the model is still holding this turn: there is no
+        // second turn to hand it to, and a model told only that a command exited 0 would have to ask for the
+        // output it already produced.
+        text: `${ran.description}\n\n${ran.receipt}`,
+        // SAFETY: these are the blocks `runGuardedCommand` built out of the message-block union, and the
+        // adapter's shape is deliberately loose because that package must not depend on contracts. The node
+        // validates every block against the schema before it reaches a transcript, and the seam cannot be
+        // typed more tightly without inverting the dependency.
+        hostBlocks: ran.blocks as unknown as Record<string, unknown>[],
       };
     },
   };

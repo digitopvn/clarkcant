@@ -51,6 +51,7 @@ import {
   putPreference,
 } from "@clarkcant/storage";
 import { credentialNames, putCredential } from "@clarkcant/storage";
+import { DEFAULT_NARROWING, readAutonomySettings, saveAutonomySettings } from "./autonomy-settings.ts";
 
 import { nodeBackgroundSessions } from "./background-sessions.ts";
 import { decideTurnAction, decisionTimeoutMsFromEnv, searchDecisionBudget } from "./jev-decider.ts";
@@ -274,6 +275,36 @@ export async function handleRequest(deps: GatewayDeps, request: GatewayRequest):
       at: nowInstant(),
     });
     return json(200, { ok: true, stored: { provider, id }, applies: "conversations started after this" });
+  }
+
+  /*
+   * The autonomy settings.
+   *
+   * Read whole and written whole, because they are one decision a person makes about this node rather than
+   * a set of independent switches: whether anything is asked, whether a policy layer may intervene, which
+   * classes it covers, and what happens when it cannot be reached. The narrowing table travels with the
+   * read because the panel shows what the guardrail is allowed to ask for — a list the host owns and a
+   * model may only pick from.
+   */
+  if (request.method === "GET" && request.path === "/autonomy") {
+    return json(200, {
+      settings: readAutonomySettings(services.runtime.db, services.runtime.identity.ownerPrincipalId),
+      narrowing: DEFAULT_NARROWING.map((entry) => ({ id: entry.id, description: entry.description })),
+    });
+  }
+
+  if (request.method === "POST" && request.path === "/autonomy") {
+    const parsed = readJson(request);
+    if (!parsed.ok) return parsed.response;
+    const stored = saveAutonomySettings(
+      services.runtime.db,
+      services.runtime.identity.ownerPrincipalId,
+      parsed.value.settings ?? parsed.value,
+      nowInstant(),
+    );
+    // The scope is stated rather than implied: this node reads the policy per command, so the next command
+    // already runs under it, and a panel that said "restart to apply" would be lying about that.
+    return json(200, { ok: true, settings: stored, applies: "the next command this node runs" });
   }
 
   if (request.method === "GET" && request.path === "/capabilities") {

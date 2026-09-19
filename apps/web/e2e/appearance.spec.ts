@@ -75,7 +75,7 @@ test("a theme choice changes the surface, follows the system, and survives a rel
   await page.screenshot({ path: join(EVIDENCE, "theme-03-light-after-reload.png"), fullPage: true });
 });
 
-test("settings is a modal with three distinct tabs, and Escape returns focus to the gear", async ({ page }) => {
+test("settings is a modal with distinct tabs, and Escape returns focus to the gear", async ({ page }) => {
   mkdirSync(EVIDENCE, { recursive: true });
   await openApp(page);
 
@@ -84,9 +84,11 @@ test("settings is a modal with three distinct tabs, and Escape returns focus to 
 
   const dialog = page.locator('[data-modal="true"]');
   await expect(dialog).toBeVisible();
-  // Three, not four: voice is a mode of the conversation, not a setting, and it left this dialog for the
-  // composer's microphone button.
-  await expect(page.locator('[role="tab"]')).toHaveCount(4);
+  // Five, and each is a place rather than a row. Voice is not one of them, because it is a mode of the
+  // conversation and it left this dialog for the composer's microphone button. Autonomy is, because what this
+  // node does without asking is a decision of its own rather than a row under appearance — and the count is
+  // asserted rather than implied so that a sixth area has to be a deliberate change to this line.
+  await expect(page.locator('[role="tab"]')).toHaveCount(5);
 
   // Each tab shows its own content. Asserted by comparing what is rendered rather than by checking
   // that a heading exists, since three labels over one shared panel would pass the weaker check.

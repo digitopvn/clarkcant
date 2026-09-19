@@ -6,6 +6,8 @@
  * principal, because the gateway derives the caller from the channel rather than the body.
  */
 
+import type { AutonomySettings } from "@clarkcant/contracts";
+
 import {
   type StartVoiceSessionOptions,
   type VoiceSession,
@@ -541,6 +543,20 @@ export class GatewayClient {
     id: string;
   }): Promise<{ ok: boolean; stored: { provider: string; id: string } }> {
     return this.#call("POST", "/model", input);
+  }
+
+  /**
+   * How much this node does on its own, and what may stop it.
+   *
+   * The narrowing list comes back with the settings because the panel shows what the guardrail is allowed to
+   * ask for: a host-owned list a guardrail may pick from, never compose.
+   */
+  async autonomy(): Promise<{ settings: AutonomySettings; narrowing: { id: string; description: string }[] }> {
+    return this.#call("GET", "/autonomy");
+  }
+
+  async putAutonomy(settings: AutonomySettings): Promise<{ ok: boolean; settings: AutonomySettings }> {
+    return this.#call("POST", "/autonomy", { settings });
   }
 
   /**

@@ -75,8 +75,8 @@
     },
     {
       "path": "research-and-decisions.md",
-      "bytes": 15838,
-      "sha256": "e6b071f48a70c2a274345850503627366173efb8c63f724ea9d59ba29cfc9028"
+      "bytes": 18544,
+      "sha256": "bfe74b8707631b575d3194d089e7899f328ea300bc3c241ee73f63623d8c0ec9"
     },
     {
       "path": "scope-lock.md",
@@ -85,8 +85,8 @@
     },
     {
       "path": "system-architecture.md",
-      "bytes": 36410,
-      "sha256": "467c6e642e0495debc7e3bd321ddee253b06b5a8a2ca2df5e52ad60f065b872a"
+      "bytes": 44473,
+      "sha256": "6851ff6a2636b28626fafaba39c1fbb458257a284e7c8aeeb65ff49b78063165"
     },
     {
       "path": "widgets-and-extensions.md",

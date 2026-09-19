@@ -310,6 +310,9 @@ function withActivity(turn: Turn, tool: ToolDefinition): ToolDefinition {
         if (answer.hostCard !== undefined) {
           turn.segments.push({ kind: "host-card", block: answer.hostCard });
         }
+        for (const block of answer.hostBlocks ?? []) {
+          turn.segments.push({ kind: "host-card", block });
+        }
         turn.segments.push({ kind: "block", block: record("done", answer.text) });
         return answer;
       } catch (cause) {

@@ -9,8 +9,10 @@
  * It is a modal rather than a route for the reason the blueprint gives: seeing a setting should
  * never cost the conversation. A full-page settings route would unmount the timeline to change a
  * theme, and the user would lose the thread they were reading to check a checkbox. It is a modal
- * rather than the drawer it used to be because the reference design has four distinct areas and a
- * drawer shows them as one continuous scroll, which reads as a long list rather than four places.
+ * rather than the drawer it used to be because the reference design keeps distinct areas apart, and a
+ * drawer shows them as one continuous scroll, which reads as a long list rather than as separate
+ * places. Autonomy is one of those areas rather than a row inside General: what this node does without
+ * asking is a decision of its own, not an appearance preference.
  *
  * Every tab has content of its own. A tab that exists but is empty teaches the user that the tabs
  * are decoration, and the next time they will not bother opening one.
@@ -23,6 +25,13 @@ import { SearchSelect } from "./search-select.tsx";
 import { ToolLists } from "./tool-lists.tsx";
 
 import { contrastRatio, DARK, LIGHT, type ThemeName } from "@clarkcant/design-tokens";
+import {
+  EXECUTION_POLICIES,
+  GUARD_CLASSES,
+  type AutonomySettings,
+  type ExecutionPolicy,
+  type GuardClass,
+} from "@clarkcant/contracts";
 
 import { DevicePairingPanel } from "./DevicePairingPanel.tsx";
 import { Modal } from "./Modal.tsx";
@@ -54,6 +63,7 @@ const TABS = [
   { id: "general", label: "General" },
   // Provider and model together, because choosing one means choosing the other: the second list belongs to the first.
   { id: "models", label: "Models" },
+  { id: "autonomy", label: "Autonomy" },
   { id: "tools", label: "Tools" },
   { id: "devices", label: "Devices" },
 ] as const;
@@ -172,6 +182,158 @@ export interface SettingsPanelProps {
   /** What is currently shown, which is always `dark` or `light`. */
   resolvedTheme: ThemeName;
   onThemeChoice: (choice: ThemeChoice) => void;
+}
+
+/**
+ * The autonomy settings: what this node does on its own, and what may stop it.
+ *
+ * Read from the node rather than mirrored from a default, because those are two different facts and this
+ * screen exists to show the first one. The wording of each choice is what the node actually does with it —
+ * `guarded` asks nobody and still lets the guardrail refuse, which is not something a person can guess from
+ * the word alone.
+ */
+const POLICY_LABELS: Record<ExecutionPolicy, string> = {
+  auto: "Autonomous — không hỏi, không guardrail",
+  guarded: "Autonomous, có guardrail — không hỏi user",
+  confirm: "Hỏi trước mọi lệnh (như trước đây)",
+  deny: "Không chạy lớp việc này",
+};
+
+const GUARD_CLASS_LABELS: Record<GuardClass, string> = {
+  commands: "Commands",
+  "local-writes": "Local writes",
+  "external-writes": "External writes",
+  communication: "Communication",
+  financial: "Financial",
+  reads: "Reads",
+};
+
+function AutonomyTab({ client }: { client: GatewayClient }): ReactElement {
+  const [settings, setSettings] = useState<AutonomySettings | undefined>(undefined);
+  const [narrowing, setNarrowing] = useState<{ id: string; description: string }[]>([]);
+  const [status, setStatus] = useState("");
+  const [unreadable, setUnreadable] = useState(false);
+
+  useEffect(() => {
+    let live = true;
+    client
+      .autonomy()
+      .then((answer) => {
+        if (!live) return;
+        setSettings(answer.settings);
+        setNarrowing(answer.narrowing);
+      })
+      .catch(() => {
+        if (live) setUnreadable(true);
+      });
+    return () => {
+      live = false;
+    };
+  }, [client]);
+
+  if (unreadable) return <p className="cc-setting-desc">Không đọc được cấu hình autonomy của node này.</p>;
+  if (settings === undefined) return <p className="cc-setting-desc">Đang đọc cấu hình…</p>;
+
+  const update = (patch: Partial<AutonomySettings>): void => setSettings({ ...settings, ...patch });
+  const toggleClass = (guardClass: GuardClass): void =>
+    update({
+      guardedClasses: settings.guardedClasses.includes(guardClass)
+        ? settings.guardedClasses.filter((entry) => entry !== guardClass)
+        : [...settings.guardedClasses, guardClass],
+    });
+  const save = (): void => {
+    client
+      .putAutonomy(settings)
+      .then(() => setStatus("Đã lưu. Áp dụng cho lệnh tiếp theo node chạy."))
+      .catch(() => setStatus("Không lưu được cấu hình."));
+  };
+
+  return (
+    <section className="cc-settings-section" data-autonomy-tab="true">
+      <h3>Execution mode</h3>
+      <SettingsRow
+        label="Cách node quyết định chạy"
+        description="Guarded là mặc định: không hỏi bạn, nhưng guardrail vẫn có thể từ chối hoặc thu hẹp. Confirm giữ nguyên hành vi cũ."
+      >
+        <select
+          value={settings.executionPolicy}
+          data-autonomy-policy="true"
+          onChange={(event) => update({ executionPolicy: event.target.value as ExecutionPolicy })}
+        >
+          {EXECUTION_POLICIES.map((policy) => (
+            <option key={policy} value={policy}>
+              {POLICY_LABELS[policy]}
+            </option>
+          ))}
+        </select>
+      </SettingsRow>
+
+      <SettingsRow
+        label="Jev guardrails"
+        description="Tắt thì guarded chạy như auto. Preflight của host vẫn chạy trong mọi trường hợp."
+      >
+        <input
+          type="checkbox"
+          checked={settings.jevGuardrails}
+          data-autonomy-guardrails="true"
+          onChange={(event) => update({ jevGuardrails: event.target.checked })}
+        />
+      </SettingsRow>
+
+      <SettingsRow label="Instructions" description="Luật của bạn, bằng lời của bạn. Guardrail chỉ có thể thu hẹp thêm, không bao giờ nới.">
+        <textarea
+          value={settings.instructions}
+          rows={4}
+          data-autonomy-instructions="true"
+          placeholder="Ví dụ: Never delete git repositories."
+          onChange={(event) => update({ instructions: event.target.value })}
+        />
+      </SettingsRow>
+
+      <h3>Guard</h3>
+      <SettingsRow label="Lớp việc guardrail được phép phán đoán" description="Lớp không được chọn thì chạy thẳng, không tốn một call nào.">
+        <div className="cc-guard-classes">
+          {GUARD_CLASSES.map((guardClass) => (
+            <label key={guardClass}>
+              <input
+                type="checkbox"
+                checked={settings.guardedClasses.includes(guardClass)}
+                data-autonomy-class={guardClass}
+                onChange={() => toggleClass(guardClass)}
+              />
+              {GUARD_CLASS_LABELS[guardClass]}
+            </label>
+          ))}
+        </div>
+      </SettingsRow>
+
+      <SettingsRow
+        label="Khi Jev không dùng được"
+        description="Fail-open bỏ lớp phán đoán, không bỏ preflight hay containment."
+      >
+        <select
+          value={settings.whenJevUnavailable}
+          data-autonomy-failopen="true"
+          onChange={(event) => update({ whenJevUnavailable: event.target.value === "deny" ? "deny" : "allow" })}
+        >
+          <option value="allow">Allow — chạy tiếp</option>
+          <option value="deny">Deny — không chạy</option>
+        </select>
+      </SettingsRow>
+
+      {narrowing.length > 0 && (
+        <p className="cc-setting-desc">
+          Guardrail chỉ được chọn trong {narrowing.length} cách thu hẹp do host đặt ra:{" "}
+          {narrowing.map((entry) => entry.description).join("; ")}.
+        </p>
+      )}
+
+      <button type="button" className="cc-chip" data-autonomy-save="true" onClick={save}>
+        Lưu autonomy
+      </button>
+      {status !== "" && <p className="cc-setting-desc">{status}</p>}
+    </section>
+  );
 }
 
 export function SettingsPanel({
@@ -728,6 +890,8 @@ export function SettingsPanel({
             </section>
           </section>
         )}
+
+        {tab === "autonomy" && <AutonomyTab client={client} />}
 
         {tab === "devices" && (
           <section className="cc-panel-section">
