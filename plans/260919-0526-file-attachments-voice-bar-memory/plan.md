@@ -152,7 +152,7 @@ Phase 12 là cổng cuối, không sửa giữa các stage ship.
       `FakePiAdapter.promptsFor()`.
 - [x] Ảnh đính kèm render trong timeline **sau reload** (đọc từ history). — `apps/web/e2e/attachments.spec.ts`.
 - [x] Voice chạy được cả nhóm lệnh điều khiển app; lệnh dạng lệnh mà không khớp intent thì nói chưa hiểu và
-      **không hành động**; câu hỏi bình thường vẫn tới agent. — `apps/web/e2e/voice-control.spec.ts` (5 journey)
+      **không hành động**; câu hỏi bình thường vẫn tới agent. — `apps/web/e2e/voice-control.spec.ts` (8 journey: mở Settings, đổi tab được gọi tên, thoát app hỏi trước, lệnh lạ bị từ chối, kết thúc phiên, về home, đính kèm, lệnh cửa sổ bị từ chối trong browser)
       và `packages/core/test/app-intents.spec.ts`.
 - [x] Thoát app chỉ xảy ra sau một lần xác nhận lấy từ route confirm; token dùng lại bị từ chối. —
       `apps/runtime/test/app-intents.spec.ts` ("is not executable until the confirmation route returns it").
