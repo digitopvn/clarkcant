@@ -46,6 +46,22 @@ giản.
 
 ## Cổng hồi quy của stage
 
-`pnpm verify` xanh tại 1198 test; các journey của stage xanh khi chạy riêng (`voice-control.spec.ts` 5,
-`voice-bar.spec.ts` 2). Con số của lần chạy đầy đủ (`pnpm verify` + `pnpm test:e2e`) nằm ở mục release validation
-của phase 12.
+`pnpm verify` xanh tại 1198 test trên cây trước khi merge; các journey của stage xanh khi chạy riêng
+(`voice-control.spec.ts` 5, `voice-bar.spec.ts` 2).
+
+## Release validation (sau khi merge `main`)
+
+`pnpm verify` trên cây đã merge: **1308 passed | 7 skipped (1315)**. Con số cao hơn 1198 vì `main` mang theo test
+của chính nó.
+
+Bộ browser đầy đủ tìm ra **hai lỗi thuộc về stage này**, cả hai cùng một loại — một test viết cứng một con số mà
+tính năng này đã thay đổi có chủ đích:
+
+| Test | Vì sao đỏ | Xử lý |
+| --- | --- | --- |
+| `appearance.spec.ts` "settings is a modal…" | khẳng định panel có bốn tab; tab Memory làm nó thành năm | Sửa ở `1d5251b`: số tab lấy từ `SETTINGS_TABS` thay vì viết trong test, nên lần sau thêm tab sẽ không âm thầm vô hiệu hoá khẳng định |
+| `onboarding.spec.ts` "the empty state offers four chips…" | khẳng định đúng bốn chip; màn hình đầu giờ là gợi ý động của node | Sửa ở `1d5251b`: suite ghim `/suggestions` về rỗng, vì bốn chip viết sẵn mới là thứ nó kiểm |
+
+Sau khi sửa, hai spec đó xanh (`13 passed`), và **bốn** lỗi còn lại của bộ đầy đủ đúng bằng bốn lỗi đã đo được ở
+commit gốc `7f3127f` trong Stage A: `appearance.spec.ts` (journey model đang dùng), `j1.spec.ts` (journey gửi đoạn
+chọn vào background session), và hai journey first-run trong `onboarding.spec.ts`. Không có lỗi nào khác.

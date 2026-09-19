@@ -55,6 +55,18 @@ nhau trong một bức ảnh — và đó đúng là khác biệt giữa một m
 
 ## Cổng hồi quy của stage
 
-`pnpm verify` xanh tại 1198 test. Các journey mới xanh khi chạy riêng: `suggestions.spec.ts` 2,
-`memory.spec.ts` 3. `j1.spec.ts` 10 xanh và 1 đỏ — test đỏ là "a selected passage can be sent to a background
-session", đã đo là đỏ sẵn ở commit gốc `7f3127f` trong Stage A, không phải do stage này.
+`pnpm verify` xanh tại 1198 test trên cây trước khi merge. Các journey mới xanh khi chạy riêng:
+`suggestions.spec.ts` 2, `memory.spec.ts` 3. `j1.spec.ts` 10 xanh và 1 đỏ — test đỏ là "a selected passage can be
+sent to a background session", đã đo là đỏ sẵn ở commit gốc `7f3127f` trong Stage A, không phải do stage này.
+
+## Release validation (sau khi merge `main`)
+
+`pnpm verify` trên cây đã merge: **1308 passed | 7 skipped (1315)**.
+
+Bộ browser đầy đủ tìm ra một lỗi thuộc stage này: `onboarding.spec.ts` khẳng định màn hình đầu có đúng bốn chip,
+trong khi màn hình đầu giờ hiển thị gợi ý động lấy từ việc gần đây và chỉ rơi về bốn chip viết sẵn khi node chưa
+biết gì. Sửa ở `1d5251b`: suite đó ghim `/suggestions` về rỗng, vì bốn chip viết sẵn mới là thứ nó kiểm, còn danh
+sách động đã có journey riêng (`suggestions.spec.ts`).
+
+Sau khi sửa, `13 passed` trên hai spec liên quan, và bốn lỗi còn lại của bộ đầy đủ đúng bằng bốn lỗi đã đo ở commit
+gốc `7f3127f`. Không có lỗi nào khác.
