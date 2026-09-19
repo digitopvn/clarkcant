@@ -22,7 +22,7 @@ import { hasDesktopChrome, requestWindowMode } from "./desktop-compact.ts";
 import { DesktopChrome } from "./desktop-chrome.tsx";
 import { fetchSuggestions } from "./suggestions.ts";
 import type { Suggestion } from "@clarkcant/contracts";
-import { ReasoningBlock, ToolActivityBlock, type BlockActions, type ArtifactOpenState, type BrowserSessionActionState, type TaskStopState } from "./blocks.tsx";
+import { ReasoningBlock, ToolActivityBlock, type BlockActions, type ArtifactOpenState, type ControlSessionActionState, type TaskStopState } from "./blocks.tsx";
 import { composerTextareaHeight } from "./composer-height.ts";
 import {
   attachmentReducer,
@@ -1240,15 +1240,15 @@ export function Conversation({
    * already-planned action is refused for having a stale lease. A boolean here would show that a button worked
    * without showing that the browser changed hands.
    */
-  const [browserSession, setBrowserSession] = useState<Record<string, BrowserSessionActionState>>({});
+  const [controlSession, setControlSession] = useState<Record<string, ControlSessionActionState>>({});
 
   const changeBrowserSession = useCallback(
     (sessionId: string, verb: "takeover" | "stop") => {
-      setBrowserSession((current) => ({ ...current, [sessionId]: { status: "pending" } }));
-      const call = verb === "takeover" ? client.browserTakeover(sessionId) : client.browserStop(sessionId);
+      setControlSession((current) => ({ ...current, [sessionId]: { status: "pending" } }));
+      const call = verb === "takeover" ? client.controlTakeover(sessionId) : client.controlStop(sessionId);
       void call.then(
         (result) =>
-          setBrowserSession((current) => ({
+          setControlSession((current) => ({
             ...current,
             [sessionId]:
               verb === "takeover"
@@ -1258,7 +1258,7 @@ export function Conversation({
         (error: unknown) =>
           // Refused rather than reported as done: a takeover that silently did nothing would leave the user
           // believing they have the wheel while the agent keeps driving.
-          setBrowserSession((current) => ({
+          setControlSession((current) => ({
             ...current,
             [sessionId]: {
               status: "failed",
@@ -1290,11 +1290,11 @@ export function Conversation({
       taskStop,
       onArtifactOpen: ({ artifactId }) => openArtifact(artifactId),
       artifactOpen,
-      onBrowserTakeover: ({ sessionId }) => changeBrowserSession(sessionId, "takeover"),
-      onBrowserStop: ({ sessionId }) => changeBrowserSession(sessionId, "stop"),
-      browserSession,
+      onControlTakeover: ({ sessionId }) => changeBrowserSession(sessionId, "takeover"),
+      onControlStop: ({ sessionId }) => changeBrowserSession(sessionId, "stop"),
+      controlSession,
     }),
-    [artifactOpen, browserSession, changeBrowserSession, credentialStatus, decideApproval, decidedApprovals, decidingApprovalId, openArtifact, openCardIds, send, stopTask, submitCredential, taskStop],
+    [artifactOpen, controlSession, changeBrowserSession, credentialStatus, decideApproval, decidedApprovals, decidingApprovalId, openArtifact, openCardIds, send, stopTask, submitCredential, taskStop],
   );
 
   const renderSurface = useCallback(

@@ -119,6 +119,30 @@ export const browserSessionCardSchema = z.strictObject({
 });
 export type BrowserSessionCard = z.infer<typeof browserSessionCardSchema>;
 
+/**
+ * A desktop session the node is driving.
+ *
+ * The same lease model as a browser session, and the same two verbs, because the question "who may act on this"
+ * does not change with the surface. What differs is observation: on a desktop the operating system owns the
+ * permission to see the screen, so `preview` is a first-class state rather than an error, and a card that showed a
+ * blank or stale view as if it were live would be claiming a view of somebody's screen that nobody has.
+ */
+export const computerSessionCardSchema = z.strictObject({
+  type: z.literal("computer-session-card"),
+  owner: z.literal("host"),
+  cardId: z.string().min(1).max(128),
+  sessionId: z.string().min(1).max(128),
+  label: z.string().min(1).max(300),
+  driver: z.enum(["agent", "user"]),
+  status: z.enum(["running", "stopped"]),
+  leaseEpoch: z.int().nonnegative(),
+  preview: z.enum(["available", "needs-permission", "unavailable"]),
+  /** Why the screen cannot be observed. Shown, because the fix is something the user has to do. */
+  previewReason: z.string().min(1).max(500).optional(),
+  updatedAt: instantSchema,
+});
+export type ComputerSessionCard = z.infer<typeof computerSessionCardSchema>;
+
 export const artifactBlockSchema = z.strictObject({
   type: z.literal("artifact"),
   artifactId: z.string().min(1).max(128),
@@ -593,6 +617,7 @@ export const messageBlockSchema = z.discriminatedUnion("type", [
   widgetRefBlockSchema,
   artifactBlockSchema,
   browserSessionCardSchema,
+  computerSessionCardSchema,
   evidenceBlockSchema,
   systemCardBlockSchema,
   approvalCardBlockSchema,

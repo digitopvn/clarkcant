@@ -666,7 +666,7 @@ export async function handleRequest(deps: GatewayDeps, request: GatewayRequest):
   }
 
   /*
-   * Who is driving a browser session.
+   * Who is driving a controlled surface — a browser session or a desktop session.
    *
    * Takeover hands the wheel to the user by bumping the lease epoch, which invalidates the action the agent had
    * already planned rather than reaching into a process this node does not control. Stop ends the session and
@@ -677,7 +677,7 @@ export async function handleRequest(deps: GatewayDeps, request: GatewayRequest):
    */
   if (
     segments.length === 3 &&
-    segments[0] === "browser-sessions" &&
+    segments[0] === "control-sessions" &&
     (segments[2] === "takeover" || segments[2] === "stop") &&
     request.method === "POST"
   ) {
@@ -685,10 +685,10 @@ export async function handleRequest(deps: GatewayDeps, request: GatewayRequest):
     const at = nowInstant();
     const session =
       segments[2] === "takeover"
-        ? services.browserSessions.takeover(sessionId, at)
-        : services.browserSessions.stop(sessionId, at);
+        ? services.controlSessions.takeover(sessionId, at)
+        : services.controlSessions.stop(sessionId, at);
     if (session === undefined) {
-      return fail(409, "BROWSER_SESSION_UNAVAILABLE", "Không đổi được phiên browser này vì phiên không tồn tại hoặc đã dừng.", {
+      return fail(409, "CONTROL_SESSION_UNAVAILABLE", "Không đổi được phiên này vì phiên không tồn tại hoặc đã dừng.", {
         sessionId,
       });
     }

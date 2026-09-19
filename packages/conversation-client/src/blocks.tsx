@@ -412,10 +412,10 @@ export interface BlockActions {
   onArtifactOpen?: (input: { artifactId: string }) => void;
   artifactOpen?: Readonly<Record<string, ArtifactOpenState>>;
   /** Hand the wheel of a browser session to the user. */
-  onBrowserTakeover?: (input: { sessionId: string }) => void;
+  onControlTakeover?: (input: { sessionId: string }) => void;
   /** End a browser session. */
-  onBrowserStop?: (input: { sessionId: string }) => void;
-  browserSession?: Readonly<Record<string, BrowserSessionActionState>>;
+  onControlStop?: (input: { sessionId: string }) => void;
+  controlSession?: Readonly<Record<string, ControlSessionActionState>>;
 }
 
 /**
@@ -425,7 +425,7 @@ export interface BlockActions {
  * agent planned earlier is still admissible — a card that only said "you have control" would leave a reader unable
  * to tell whether the agent's in-flight action had been refused.
  */
-export type BrowserSessionActionState =
+export type ControlSessionActionState =
   | { status: "pending" }
   | { status: "taken-over"; leaseEpoch: number }
   | { status: "stopped" }
@@ -1261,7 +1261,10 @@ export function renderBlock(
     case "form-card":
       return <FormCardBlock key={index} block={block} {...(actions === undefined ? {} : { actions })} />;
     case "browser-session-card":
-      return <BrowserSessionCardBlock key={index} block={block} {...(actions === undefined ? {} : { actions })} />;
+    case "computer-session-card":
+      // One renderer for both surfaces: the question "who may act on this" does not change with the surface, and
+      // two components would be two places for the answer to drift.
+      return <ControlSessionCardBlock key={index} block={block} {...(actions === undefined ? {} : { actions })} />;
     case "reconnect-card":
       return <ReconnectCardBlock key={index} block={block} />;
     case "surface": {
@@ -1529,7 +1532,7 @@ export function FormCardBlock({
  * The epoch is shown rather than kept internal. It is what decides whether an action the agent planned earlier is
  * still admissible, so a reader who cannot see it cannot tell whether a takeover actually took effect.
  */
-export function BrowserSessionCardBlock({
+export function ControlSessionCardBlock({
   block,
   actions,
 }: {
@@ -1539,11 +1542,15 @@ export function BrowserSessionCardBlock({
   if (block.owner !== "host") return null;
 
   const sessionId = fieldText(block.sessionId);
+  const surface = block.type === "computer-session-card" ? "computer" : "browser";
+  const declaredPreview = fieldText(block.preview, surface === "browser" ? "available" : "needs-permission");
+  const previewReason = typeof block.previewReason === "string" ? block.previewReason : undefined;
+  const observable = declaredPreview === "available";
   const label = fieldText(block.label);
   const declaredDriver = fieldText(block.driver, "agent");
   const declaredStatus = fieldText(block.status, "running");
   const declaredEpoch = typeof block.leaseEpoch === "number" ? block.leaseEpoch : 0;
-  const state = sessionId === "" ? undefined : actions?.browserSession?.[sessionId];
+  const state = sessionId === "" ? undefined : actions?.controlSession?.[sessionId];
 
   // The card's own values are a snapshot; what the node said later wins where the two disagree, because only the
   // node knows who is driving now.
@@ -1556,11 +1563,13 @@ export function BrowserSessionCardBlock({
   return (
     <section
       className="cc-card"
-      data-host-card="browser-session"
+      data-host-card={surface === "computer" ? "computer-session" : "browser-session"}
       data-owner="host"
-      data-browser-session={sessionId}
-      data-browser-driver={driver}
-      data-browser-status={stopped ? "stopped" : "running"}
+      data-control-session={sessionId}
+      data-control-surface={surface}
+      data-control-preview={declaredPreview}
+      data-control-driver={driver}
+      data-control-status={stopped ? "stopped" : "running"}
       aria-label={`Phiên browser: ${label}`}
     >
       <header className="cc-card-head">
@@ -1571,34 +1580,46 @@ export function BrowserSessionCardBlock({
       </header>
       <dl className="cc-fields">
         <dt>Ai đang điều khiển</dt>
-        <dd data-browser-driver-label="true">{driver === "user" ? "bạn" : "agent"}</dd>
+        <dd data-control-driver-label="true">{driver === "user" ? "bạn" : "agent"}</dd>
         <dt>Lease epoch</dt>
         <dd>{leaseEpoch}</dd>
       </dl>
+      {/*
+        Reported before any control, because it decides whether acting is possible at all. A desktop whose screen
+        the operating system has not granted to this node cannot be driven, and the permission is not the node's to
+        assume — so the card says what is missing and who owns it.
+      */}
+      {observable ? null : (
+        <p className="cc-freshness" data-control-preview-notice={declaredPreview}>
+          {declaredPreview === "needs-permission" ? "Chưa được cấp quyền xem màn hình" : "Không xem được màn hình"}
+          {previewReason === undefined ? "" : `: ${previewReason}`}. Quyền này do hệ điều hành cấp, node không tự cấp
+          được, và node sẽ không hành động khi không nhìn thấy gì.
+        </p>
+      )}
       {running ? (
         <div className="cc-chip-row">
           {/*
             Offered only while the agent still has the wheel, and only when something can carry the verb out: a
             takeover control on a session the user already drives would be a control with nothing left to do.
           */}
-          {driver === "agent" && actions?.onBrowserTakeover !== undefined ? (
+          {driver === "agent" && actions?.onControlTakeover !== undefined ? (
             <button
               type="button"
               className="cc-chip"
-              data-browser-takeover={sessionId}
+              data-control-takeover={sessionId}
               disabled={busy}
-              onClick={() => actions.onBrowserTakeover?.({ sessionId })}
+              onClick={() => actions.onControlTakeover?.({ sessionId })}
             >
               {busy ? "Đang chuyển…" : "Tôi tự điều khiển"}
             </button>
           ) : null}
-          {actions?.onBrowserStop !== undefined ? (
+          {actions?.onControlStop !== undefined ? (
             <button
               type="button"
               className="cc-chip"
-              data-browser-stop={sessionId}
+              data-control-stop={sessionId}
               disabled={busy}
-              onClick={() => actions.onBrowserStop?.({ sessionId })}
+              onClick={() => actions.onControlStop?.({ sessionId })}
             >
               Dừng phiên
             </button>
@@ -1611,11 +1632,11 @@ export function BrowserSessionCardBlock({
         thing twice.
       */}
       {state?.status === "failed" ? (
-        <p className="cc-freshness" data-browser-session-error="true">
+        <p className="cc-freshness" data-control-error="true">
           {state.message}
         </p>
       ) : !running ? (
-        <p className="cc-freshness" data-browser-session-notice="stopped">
+        <p className="cc-freshness" data-control-notice="stopped">
           {state?.status === "stopped"
             ? "Phiên đã dừng theo yêu cầu của bạn. Không có hành động nào của agent còn được nhận cho phiên này."
             : "Phiên này đã dừng. Không có hành động nào của agent còn được nhận cho phiên này."}
@@ -1625,7 +1646,7 @@ export function BrowserSessionCardBlock({
          * What takeover actually did. Not "you have control" alone: the user needs to know the agent's already
          * planned action was refused, because that is the part that makes the browser theirs.
          */
-        <p className="cc-freshness" data-browser-session-notice="taken-over">
+        <p className="cc-freshness" data-control-notice="taken-over">
           Bạn đang điều khiển. Hành động agent đã lên kế hoạch từ trước đã bị từ chối vì lease cũ, và agent chỉ
           lấy lại được khi bạn dừng phiên rồi mở phiên mới.
         </p>
