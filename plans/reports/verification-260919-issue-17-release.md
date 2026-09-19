@@ -15,6 +15,11 @@ trên cây đã merge `main`**, không phải số của lần chạy cũ.
 | Smoke desktop | `pnpm --filter @clarkcant/app-desktop run smoke` | **exit 0**, mọi check `true`, `"failed": []` (Electron 44.3.0, Chrome 152) |
 | Đồng bộ với `main` | `git rev-list HEAD..origin/main` | 0 (merge `1368cb5`, sau khi nhận `main`; PR #38 squash thành `9e90535`, PR #44 đưa hai cổng vào CI) |
 
+Nhánh công việc được **merge vào `main` bằng merge commit**, sau khi cây của nó được đưa về đúng cây
+của `main`. Trước đó mọi PR đều được squash, nên nội dung đã ở `main` nhưng **lịch sử của nhánh thì chưa**:
+`git merge-base --is-ancestor <nhánh> main` trả về sai. Merge này làm điều đó thành đúng, và nó không đổi một byte
+nội dung nào ngoài ghi chú này.
+
 ## Hai journey từng bị chặn, và đã sửa tại gốc
 
 Cả hai **đã xanh và nằm trong suite**, mỗi cái có tên test riêng trong ledger. Nguyên nhân của cả hai đều là lỗi mã
