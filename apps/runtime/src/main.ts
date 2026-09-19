@@ -41,6 +41,7 @@ import type { InteractionDeps } from "./interactions.ts";
 import { guardOperation } from "./jev-decider.ts";
 import { ownedResources } from "./preflight.ts";
 import { DEFAULT_NARROWING, readAutonomySettings } from "./autonomy-settings.ts";
+import { createAskUserQuestionTool } from "./ask-user-question.ts";
 import { registerSessionFile, sessionsDirectory } from "./session-store.ts";
 import { bootNodeServices, type NodeServices } from "./services.ts";
 import type { ProjectSessionStarter } from "./project-session.ts";
@@ -155,6 +156,39 @@ async function main(): Promise<void> {
      * buttons and a receipt — needs a way to be reached without a provider account, and a fixture that
      * cannot produce the card would leave the client wiring tested by nothing at all.
      */
+    /*
+     * A question the agent asks, through the real tool.
+     *
+     * Same reason as the command fixtures: the browser half of this feature — a card, a click, and an answer
+     * that comes back as a new turn — cannot be reached without a provider account unless something scripts the
+     * model's half. It calls the tool the model calls, so what the browser proves is the real path.
+     */
+    if (/hỏi tui chọn|thử hỏi tui/i.test(input.text)) {
+      const interactions = interactionWiring.deps?.(input.conversationId);
+      if (interactions === undefined) return undefined;
+      const answer = await createAskUserQuestionTool(interactions).execute({
+        question: "Chọn môi trường triển khai.",
+        kind: "single-choice",
+        options: [
+          { id: "staging", label: "Staging" },
+          { id: "production", label: "Production" },
+        ],
+      });
+      const asked = answer.hostBlocks?.[0];
+      if (asked === undefined) {
+        return { text: answer.text, block: { type: "text", format: "plain", content: answer.text, streaming: false } };
+      }
+      // SAFETY: the block was built by the interaction manager against the message-block union; the adapter's
+      // shape is loose because it must not depend on contracts, and the node validates blocks before storing.
+      return { text: answer.text, block: asked as unknown as MessageBlock };
+    }
+
+    // The turn the answer opens. Without this the request would wait for a model that is not there.
+    if (/Trả lời cho câu hỏi/i.test(input.text)) {
+      const reply = "Fixture: tui đã nhận câu trả lời và tiếp tục công việc.";
+      return { text: reply, block: { type: "text", format: "plain", content: reply, streaming: false } };
+    }
+
     /*
      * A command that runs without a card.
      *

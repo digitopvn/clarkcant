@@ -10,6 +10,7 @@ import { createAskUserQuestionTool } from "./ask-user-question.ts";
 import type { InteractionDeps } from "./interactions.ts";
 import { describeSearch, machineRoots, searchFileSystem } from "./fs-search.ts";
 import { applyGuardrailConstraints, preflightCommand, type CommandEnvelope, type OwnedResources } from "./preflight.ts";
+import { createQuestion } from "./interactions.ts";
 import type { OperationGuardInput, OperationGuardOutcome } from "./jev-decider.ts";
 import { commandDigest, runGuardedCommand, type CommandOutcome } from "./run-command.ts";
 import type { ProjectFinderDeps } from "./project-finder.ts";
@@ -76,6 +77,7 @@ export function createNodeTools(input: {
       : [
           createRunCommandTool({
             ...input.command,
+            ...(input.interactions === undefined ? {} : { interactions: input.interactions }),
             ...(input.resolveFolder === undefined ? {} : { resolveFolder: input.resolveFolder }),
           }),
         ]),
@@ -207,6 +209,13 @@ export interface CommandToolDeps {
   narrowing?: readonly { id: string; description: string; constraint: GuardrailConstraint }[];
   /** Ids for the receipts this tool writes. */
   newId: () => string;
+  /**
+   * The interaction manager, when this node may ask the person something.
+   *
+   * Optional because a node can run commands without being able to ask: in that case a folder the finder cannot
+   * choose between comes back as a question for the model to carry, which is worse but honest.
+   */
+  interactions?: InteractionDeps;
   now?: () => Instant;
   /** Injected so the whole path can be tested without spawning anything. */
   run?: (request: {
@@ -299,6 +308,33 @@ export async function decideGuardrailForCommand(
 }
 
 /**
+ * Turn a finder's indecision into a question card.
+ *
+ * The options are the folders themselves, in the finder's own words, and the answer comes back as the label the
+ * person saw — which is what the next turn needs to re-propose against. Returns nothing when the node cannot ask
+ * or when the manager refuses the question, so the caller keeps its text fallback rather than inventing a card.
+ */
+function askWhichFolder(
+  input: { interactions?: InteractionDeps },
+  found: { message: string; options: readonly string[] },
+): { text: string; hostBlocks: Record<string, unknown>[] } | undefined {
+  if (input.interactions === undefined || found.options.length === 0) return undefined;
+  const created = createQuestion(input.interactions, {
+    question: found.message,
+    kind: "single-choice",
+    options: found.options.slice(0, 8).map((folder, index) => ({ id: `folder-${index + 1}`, label: folder })),
+    allowOther: true,
+  });
+  if (!created.ok) return undefined;
+  return {
+    text: "Đã hỏi người dùng muốn dùng thư mục nào. Lượt này kết thúc ở đây; câu trả lời sẽ tới ở lượt sau.",
+    // SAFETY: built against the message-block union by `createQuestion`; the adapter's shape is loose because it
+    // must not depend on contracts, and the node validates every block before it reaches a transcript.
+    hostBlocks: [created.block as unknown as Record<string, unknown>],
+  };
+}
+
+/**
  * Running a command, as the model may ask for it.
  *
  * The tool used to do nothing but record a request and hand back a card. It now runs the command, and what
@@ -360,8 +396,16 @@ export function createRunCommandTool(
       if (cwd === undefined && where !== "" && input.resolveFolder !== undefined) {
         const found = await input.resolveFolder(where);
         if (found.status === "ask") {
-          // Several folders could be meant, so the question goes back through the model: it is the one
-          // holding the conversation, and the user's answer then names the folder it wanted.
+          /*
+           * The finder found several folders that could be meant, and this is the case the interaction manager
+           * exists for: the question is structural (which of these), not a request for permission, and the person
+           * can answer it by clicking or by saying the folder's name.
+           *
+           * Falling back to text is not a failure: a node with no way to ask leaves the model to carry the
+           * question, which is what this did before there was a card.
+           */
+          const asked = askWhichFolder(input, found);
+          if (asked !== undefined) return asked;
           const options = found.options.length === 0 ? "" : ` Có thể là: ${found.options.join(", ")}.`;
           return { text: `${found.message}${options} Hãy chọn một thư mục rồi đề xuất lại.` };
         }

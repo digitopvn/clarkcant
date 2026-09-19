@@ -303,6 +303,21 @@ export interface BlockActions {
    * here instead of inviting a second press that the node would refuse.
    */
   decidedApprovals?: readonly string[];
+  /**
+   * Post an answer to a question card.
+   *
+   * One callback for all four kinds, because an answer is one shape: a click, a typed sentence and a spoken
+   * utterance all end up here, and the node decides whether the shape fits the question that was asked.
+   */
+  onQuestionAnswer?: (input: { questionId: string; text?: string; optionIds?: string[]; confirmed?: boolean }) => void;
+  /**
+   * Questions this conversation already has an answer recorded for.
+   *
+   * Derived from the transcript, exactly as `decidedApprovals` is: a card keeps saying `waiting` because messages
+   * are never rewritten, and the answer record is what says otherwise. Without it, a reload would offer the
+   * question again — and the node would have to refuse a second answer rather than the card never asking.
+   */
+  answeredQuestions?: readonly string[];
 }
 
 /**
@@ -313,6 +328,147 @@ export interface BlockActions {
  * shown because it is what the decision is bound to: the operation that runs is compared against it, so
  * a plan that changed after display is refused rather than executed.
  */
+/**
+ * The question card.
+ *
+ * A host-owned card, and the same boundary an approval card draws: the model asks, the person answers, and the
+ * model never draws the question. Four kinds because those are the four a voice can answer, and every kind
+ * posts to the same route the voice path uses.
+ *
+ * Not a permission dialog. The agent asks because the work is under-specified — which project, which
+ * environment — so the wording says what is being chosen rather than whether it may proceed.
+ */
+export function QuestionCardBlock({
+  block,
+  actions,
+}: {
+  block: Record<string, unknown>;
+  actions?: BlockActions;
+}): ReactElement | null {
+  if (block.owner !== "host") return null;
+  const questionId = typeof block.questionId === "string" ? block.questionId : "";
+  const prompt = typeof block.prompt === "string" ? block.prompt : "";
+  const kind = typeof block.questionType === "string" ? block.questionType : "text";
+  const offered = (Array.isArray(block.options) ? block.options : []).flatMap((entry) => {
+    const option = entry as { id?: unknown; label?: unknown; description?: unknown };
+    if (typeof option.id !== "string" || typeof option.label !== "string") return [];
+    return [
+      {
+        id: option.id,
+        label: option.label,
+        ...(typeof option.description === "string" ? { description: option.description } : {}),
+      },
+    ];
+  });
+
+  const [chosen, setChosen] = useState<string[]>([]);
+  const [text, setText] = useState("");
+  // Set the moment an answer leaves, so the card does not invite a second press while the node is answering it.
+  const [sent, setSent] = useState(false);
+  const answered = sent || (questionId !== "" && actions?.answeredQuestions?.includes(questionId) === true);
+  const canAnswer = questionId !== "" && actions?.onQuestionAnswer !== undefined && !answered;
+  const submit = (answer: { text?: string; optionIds?: string[]; confirmed?: boolean }): void => {
+    if (!canAnswer) return;
+    setSent(true);
+    actions?.onQuestionAnswer?.({ questionId, ...answer });
+  };
+  const toggle = (id: string): void => {
+    setChosen((current) => (current.includes(id) ? current.filter((entry) => entry !== id) : [...current, id]));
+  };
+
+  return (
+    <section
+      className="cc-card"
+      data-host-card="question"
+      data-owner="host"
+      data-question-id={questionId}
+      data-question-kind={kind}
+      data-answered={answered ? "true" : "false"}
+    >
+      <header className="cc-card-head">
+        <span className="cc-card-title">{answered ? "Câu hỏi đã có câu trả lời" : "Cần bạn chọn"}</span>
+      </header>
+      <div className="cc-card-body">
+        <p style={{ margin: 0 }}>{prompt}</p>
+
+        {!answered && kind === "confirm" && (
+          <div className="cc-card-actions">
+            <button type="button" className="cc-action" data-question-answer="yes" disabled={!canAnswer} onClick={() => submit({ confirmed: true })}>
+              Đồng ý
+            </button>
+            <button type="button" className="cc-action" data-question-answer="no" disabled={!canAnswer} onClick={() => submit({ confirmed: false })}>
+              Không
+            </button>
+          </div>
+        )}
+
+        {!answered && (kind === "single-choice" || kind === "multi-choice") && (
+          <div className="cc-card-actions">
+            {offered.map((option) => (
+              <button
+                key={option.id}
+                type="button"
+                className="cc-action"
+                data-question-option={option.id}
+                data-selected={chosen.includes(option.id)}
+                disabled={!canAnswer}
+                onClick={() => {
+                  if (kind === "single-choice") {
+                    submit({ optionIds: [option.id] });
+                    return;
+                  }
+                  toggle(option.id);
+                }}
+              >
+                {option.label}
+              </button>
+            ))}
+            {kind === "multi-choice" && (
+              <button
+                type="button"
+                className="cc-action"
+                data-question-answer="submit"
+                disabled={!canAnswer || chosen.length === 0}
+                onClick={() => submit({ optionIds: chosen })}
+              >
+                Gửi
+              </button>
+            )}
+          </div>
+        )}
+
+        {!answered && kind === "text" && (
+          <div className="cc-card-actions">
+            <input
+              className="cc-action"
+              data-question-text="true"
+              value={text}
+              placeholder="Trả lời của bạn"
+              disabled={!canAnswer}
+              onChange={(event) => setText(event.target.value)}
+            />
+            <button
+              type="button"
+              className="cc-action"
+              data-question-answer="submit"
+              disabled={!canAnswer || text.trim() === ""}
+              onClick={() => submit({ text })}
+            >
+              Gửi
+            </button>
+          </div>
+        )}
+
+        {answered && (
+          <p className="cc-freshness" style={{ margin: 0 }}>
+            Câu trả lời đã được ghi vào hội thoại này.
+          </p>
+        )}
+      </div>
+    </section>
+  );
+}
+
 export function ApprovalCardBlock({
   block,
   actions,
@@ -886,6 +1042,7 @@ export function ReconnectCardBlock({ block }: { block: Record<string, unknown> }
 export const HOST_OWNED_BLOCK_TYPES = [
   "system-card",
   "approval-card",
+  "question-card",
   "credential-card",
   "connection-card",
   "task-progress-card",
@@ -1031,6 +1188,8 @@ export function renderBlock(
       return <SystemCardBlock key={index} block={block} />;
     case "approval-card":
       return <ApprovalCardBlock key={index} block={block} {...(actions === undefined ? {} : { actions })} />;
+    case "question-card":
+      return <QuestionCardBlock key={index} block={block} {...(actions === undefined ? {} : { actions })} />;
     case "connection-card":
       return <ConnectionCardBlock key={index} block={block} />;
     case "credential-card":

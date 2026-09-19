@@ -4,11 +4,12 @@ import { join } from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { type AutonomySettings, DEFAULT_AUTONOMY_SETTINGS } from "@clarkcant/contracts";
+import { type AutonomySettings, DEFAULT_AUTONOMY_SETTINGS, type Instant, type MessageBlock } from "@clarkcant/contracts";
 import type { CoordinationDeps } from "@clarkcant/core";
 import { migrate, openDatabase, type Database } from "@clarkcant/storage";
 
 import type { CommandOutcome } from "../src/run-command.ts";
+import type { InteractionDeps } from "../src/interactions.ts";
 import type { OperationGuardOutcome } from "../src/jev-decider.ts";
 import { createRunCommandTool, policyForEffect } from "../src/node-tools.ts";
 import { ownedResources } from "../src/preflight.ts";
@@ -42,6 +43,11 @@ function makeTool(options: {
   settings?: Partial<AutonomySettings>;
   guard?: OperationGuardOutcome | ((input: unknown) => Promise<OperationGuardOutcome>);
   approvals?: () => CoordinationDeps;
+  interactions?: InteractionDeps;
+  resolveFolder?: (intent: string) => Promise<
+    | { status: "resolved"; cwd: string; relPath: string }
+    | { status: "ask"; message: string; options: readonly string[] }
+  >;
 } = {}): {
   tool: ReturnType<typeof createRunCommandTool>;
   runs: { command: string; cwd: string; timeoutMs: number; maxOutputBytes: number }[];
@@ -63,6 +69,8 @@ function makeTool(options: {
     },
     narrowing: [{ id: "timeout-30s", description: "chạy tối đa 30 giây", constraint: { kind: "timeout-ms", value: 30_000 } }],
     newId: () => "run_test_1",
+    ...(options.interactions === undefined ? {} : { interactions: options.interactions }),
+    ...(options.resolveFolder === undefined ? {} : { resolveFolder: options.resolveFolder }),
     run: async (request) => {
       runs.push(request);
       return outcome();
@@ -192,6 +200,42 @@ describe("when the policy layer cannot be reached", () => {
     const answer = await tool.execute({ command: "pnpm test" });
     expect(runs).toHaveLength(0);
     expect(answer.text).toContain("từ chối khi Jev vắng");
+  });
+});
+
+describe("a folder the finder cannot choose between", () => {
+  const ambiguous = async (): Promise<{ status: "ask"; message: string; options: readonly string[] }> => ({
+    status: "ask",
+    message: "Bạn muốn dùng thư mục nào?",
+    options: ["agentkit-old", "agentkit-v2"],
+  });
+
+  function interactionsFixture(): InteractionDeps {
+    const blocks: MessageBlock[] = [];
+    return {
+      conversationId: "conv_1",
+      now: () => "2026-09-19T10:00:00.000Z" as Instant,
+      newId: (prefix) => `${prefix}_1`,
+      blocks: () => blocks,
+      append: ({ blocks: appended }) => blocks.push(...appended),
+    };
+  }
+
+  it("becomes a question card rather than a question the model has to carry", async () => {
+    const { tool, runs } = makeTool({ interactions: interactionsFixture(), resolveFolder: ambiguous });
+    const answer = await tool.execute({ command: "pnpm test", where: "dự án agentkit" });
+
+    expect(runs).toHaveLength(0);
+    expect(answer.hostBlocks?.map((block) => block.type)).toEqual(["question-card"]);
+    // The model is told the turn is over, not that it has an answer.
+    expect(answer.text).toContain("Đã hỏi người dùng");
+  });
+
+  it("falls back to a question for the model when the node cannot ask", async () => {
+    const { tool } = makeTool({ resolveFolder: ambiguous });
+    const answer = await tool.execute({ command: "pnpm test", where: "dự án agentkit" });
+    expect(answer.hostBlocks).toBeUndefined();
+    expect(answer.text).toContain("Hãy chọn một thư mục");
   });
 });
 

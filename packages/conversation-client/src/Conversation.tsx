@@ -842,6 +842,24 @@ export function Conversation({
   );
 
   /**
+   * Answer a question the agent asked.
+   *
+   * The node records it and opens a new turn, and the timeline that comes back is the source of truth for what
+   * the card should say next — this handler holds no state of its own beyond clearing the last error.
+   */
+  const answerQuestion = useCallback(
+    (input: { questionId: string; text?: string; optionIds?: string[]; confirmed?: boolean }) => {
+      if (conversationId === undefined) return;
+      setError(undefined);
+      void client
+        .answerQuestion(conversationId, input.questionId, input)
+        .then((result) => applyTimeline(result.timeline))
+        .catch((cause: unknown) => setError(cause instanceof Error ? cause.message : String(cause)));
+    },
+    [applyTimeline, client, conversationId],
+  );
+
+  /**
    * Approvals that already have a receipt in this transcript.
    *
    * The card in storage stays `pending` because messages are never rewritten, so the decision is read
@@ -859,6 +877,25 @@ export function Conversation({
       }
     }
     return [...decided];
+  }, [timeline]);
+
+  /**
+   * Questions this transcript already has an answer for.
+   *
+   * The same derivation as `decidedApprovals`, for the same reason: a card in storage keeps saying `waiting`
+   * because messages are never rewritten, and the record the node wrote when the answer arrived is what says
+   * otherwise. Without it a reload would offer the question again.
+   */
+  const answeredQuestions = useMemo(() => {
+    const answered = new Set<string>();
+    for (const message of timeline?.messages ?? []) {
+      for (const block of message.blocks) {
+        if (block.type !== "tool-activity" || block.name !== "ask_user_question") continue;
+        const args = (block.args ?? {}) as Record<string, unknown>;
+        if (typeof args.questionId === "string") answered.add(args.questionId);
+      }
+    }
+    return [...answered];
   }, [timeline]);
 
   /**
@@ -895,6 +932,8 @@ export function Conversation({
     () => ({
       onApprovalDecide: decideApproval,
       decidedApprovals,
+      onQuestionAnswer: answerQuestion,
+      answeredQuestions,
       ...(decidingApprovalId === undefined ? {} : { decidingApprovalId }),
       onCredentialSubmit: submitCredential,
       ...(credentialStatus === undefined ? {} : { credentialStatus }),

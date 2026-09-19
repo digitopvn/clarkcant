@@ -697,6 +697,29 @@ export class GatewayClient {
     return this.#call("POST", `/conversations/${conversationId}/approvals/${approvalId}/decide`, decision);
   }
 
+  /**
+   * Answer a question the agent asked, or drop it.
+   *
+   * The node records the answer and opens a new turn with it, which is why this route exists separately from the
+   * turn that asked: nothing was waiting on the node for this answer, so nothing needs resuming. A click and a
+   * spoken utterance post to this same route, so the two can never disagree about what an answer means.
+   */
+  answerQuestion(
+    conversationId: string,
+    questionId: string,
+    answer: { text?: string; optionIds?: string[]; confirmed?: boolean; viaVoice?: boolean },
+  ): Promise<{ ok: boolean; note: string; timeline: Timeline }> {
+    return this.#call(
+      "POST",
+      `/conversations/${conversationId}/questions/${encodeURIComponent(questionId)}/answer`,
+      answer,
+    );
+  }
+
+  cancelQuestion(conversationId: string, questionId: string): Promise<{ ok: boolean; timeline: Timeline }> {
+    return this.#call("POST", `/conversations/${conversationId}/questions/${encodeURIComponent(questionId)}/cancel`, {});
+  }
+
   /** Resolve the live surface for an instance: current state, sections and ownership. */
   liveWidget(conversationId: string, instanceId: string): Promise<LiveWidgetResponse> {
     return this.#call("GET", `/conversations/${conversationId}/widgets/${instanceId}/live`);
