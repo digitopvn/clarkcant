@@ -51,33 +51,51 @@ function initMessage(overrides: Record<string, unknown> = {}) {
 }
 
 describe("the widget runtime handshake", () => {
-  it("has no identity to speak with until init arrives", () => {
-    const bus = channel();
-    const runtime = createWidgetRuntime({ endpoint: bus.endpoint });
-
-    expect(runtime.status()).toBe("awaiting-init");
-    // Not queued, not defaulted: calling before init is a programming error, and inventing a nonce is how one
-    // frame comes to speak as another.
-    expect(() => runtime.api()).toThrow(/trước init/);
-    expect(bus.sent).toHaveLength(0);
-  });
-
-  it("answers init with ready carrying the nonce it was issued", () => {
+  it("sends nothing until init arrives, but can be subscribed to before it", () => {
     const bus = channel();
     const runtime = createWidgetRuntime({ endpoint: bus.endpoint });
     let mounted = 0;
-    bus.deliver(initMessage());
+
+    expect(runtime.status()).toBe("awaiting-init");
+    // Nothing has been sent, and nothing can be: inventing a nonce is how one frame comes to speak as another.
+    expect(bus.sent).toHaveLength(0);
+    expect(() => runtime.api().events.emit("too-early", {})).toThrow(/chưa init/);
+    expect(() => runtime.api().host.focus()).toThrow(/chưa init/);
+
+    /*
+     * Reading and subscribing are not sends, and this is the case that has to work: a widget registers `onMount`
+     * before init, because init is what fires it. A runtime that refused the API until init made mount impossible
+     * to observe — which the conformance suite found, and which is why the guard is on sending rather than on the
+     * API as a whole.
+     */
+    expect(runtime.api().props.read()).toEqual({});
     runtime.api().lifecycle.onMount(() => {
       mounted += 1;
     });
+
     bus.deliver(initMessage());
 
     expect(runtime.status()).toBe("ready");
     expect(runtime.instanceId()).toBe("inst_1");
     expect(bus.sent[0]).toEqual({ kind: "ready", nonce: NONCE });
-    // A second init is a second identity, so it is refused rather than accepted.
+    expect(mounted).toBe(1);
+  });
+
+  it("refuses a second init, so a frame cannot be given two identities", () => {
+    const bus = channel();
+    const runtime = createWidgetRuntime({ endpoint: bus.endpoint });
+    let mounted = 0;
+    runtime.api().lifecycle.onMount(() => {
+      mounted += 1;
+    });
+
+    bus.deliver(initMessage());
+    bus.deliver(initMessage());
+
+    expect(runtime.status()).toBe("ready");
+    // One ready, one mount: the duplicate was refused before it could fire anything or hand out a new nonce.
     expect(bus.sent.filter((message) => message.kind === "ready")).toHaveLength(1);
-    expect(mounted).toBe(0);
+    expect(mounted).toBe(1);
   });
 
   it("refuses a host that speaks a different protocol", () => {
