@@ -225,6 +225,46 @@ async function main(): Promise<void> {
       };
     }
 
+    /*
+     * A diff, scripted.
+     *
+     * The keyboard journey needs a diff that is long enough to scroll and present without a pointer, and a card
+     * nothing can produce would leave that journey asserting against a component no user can reach.
+     */
+    if (/xem diff|xem thay đổi|thử diff|show diff/i.test(input.text)) {
+      return {
+        text: "Đây là diff do fixture tạo, không phải model thật.",
+        block: {
+          type: "code-diff-card",
+          owner: "host",
+          cardId: services.conductor.newId("card"),
+          summary: "Đổi cách task được đánh dấu là đã dừng",
+          files: [
+            {
+              path: "packages/core/src/task-service.ts",
+              additions: 2,
+              deletions: 1,
+              hunks: [
+                {
+                  header: "@@ -495,3 +495,4 @@ cancelTask",
+                  lines: [
+                    { kind: "context", text: "const requested = applyTaskEvent(deps, taskId, \"cancel.requested\");" },
+                    { kind: "remove", text: "if (requested.ok) return requested.task;" },
+                    { kind: "add", text: "if (!requested.ok) return requested;" },
+                    { kind: "add", text: "return confirmed(requested.task);" },
+                  ],
+                },
+              ],
+            },
+          ],
+          truncated: false,
+          // Required by the schema: a diff says when it was taken, because a change shown without a time reads
+          // as the current state of the code rather than as a snapshot of it.
+          updatedAt: instantSchema.parse(new Date().toISOString()),
+        },
+      };
+    }
+
     if (/hỏi tôi|thử hỏi|ask me/i.test(input.text)) {
       const questionId = `q_fixture_${fixtureQuestionCounter += 1}`;
       return {
