@@ -22,7 +22,7 @@ import { hasDesktopChrome, requestWindowMode } from "./desktop-compact.ts";
 import { DesktopChrome } from "./desktop-chrome.tsx";
 import { fetchSuggestions } from "./suggestions.ts";
 import type { Suggestion } from "@clarkcant/contracts";
-import { ReasoningBlock, ToolActivityBlock, type BlockActions, type TaskStopState } from "./blocks.tsx";
+import { ReasoningBlock, ToolActivityBlock, type BlockActions, type ArtifactOpenState, type TaskStopState } from "./blocks.tsx";
 import { composerTextareaHeight } from "./composer-height.ts";
 import {
   attachmentReducer,
@@ -1183,6 +1183,48 @@ export function Conversation({
     [client],
   );
 
+  /**
+   * What the node still holds for each artifact somebody reopened.
+   *
+   * `opened` carries facts rather than a status, because the interesting answer is not "it worked" but what the
+   * node has: an artifact can expire between the message that mentioned it and somebody reading it, and the
+   * snapshot in the transcript cannot know that.
+   */
+  const [artifactOpen, setArtifactOpen] = useState<Record<string, ArtifactOpenState>>({});
+
+  const openArtifact = useCallback(
+    (artifactId: string) => {
+      setArtifactOpen((current) => ({ ...current, [artifactId]: { status: "pending" } }));
+      void client.artifact(artifactId).then(
+        (result) => {
+          const { artifact } = result;
+          setArtifactOpen((current) => ({
+            ...current,
+            [artifactId]: {
+              status: "opened",
+              digest: artifact.digest,
+              sizeBytes: artifact.sizeBytes,
+              mimeType: artifact.mimeType,
+              originNodeId: artifact.originNodeId,
+              createdAt: artifact.createdAt,
+              expiresAt: artifact.expiresAt,
+              expired: artifact.expired,
+            },
+          }));
+        },
+        (error: unknown) =>
+          setArtifactOpen((current) => ({
+            ...current,
+            [artifactId]: {
+              status: "failed",
+              message: error instanceof Error ? error.message : "Không mở được artifact này.",
+            },
+          })),
+      );
+    },
+    [client],
+  );
+
   const blockActions: BlockActions = useMemo(
     () => ({
       onApprovalDecide: decideApproval,
@@ -1201,8 +1243,10 @@ export function Conversation({
       openFormIds: openCardIds.forms,
       onTaskStop: ({ taskId }) => stopTask(taskId),
       taskStop,
+      onArtifactOpen: ({ artifactId }) => openArtifact(artifactId),
+      artifactOpen,
     }),
-    [credentialStatus, decideApproval, decidedApprovals, decidingApprovalId, openCardIds, send, stopTask, submitCredential, taskStop],
+    [artifactOpen, credentialStatus, decideApproval, decidedApprovals, decidingApprovalId, openArtifact, openCardIds, send, stopTask, submitCredential, taskStop],
   );
 
   const renderSurface = useCallback(

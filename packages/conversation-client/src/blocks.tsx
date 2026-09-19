@@ -147,19 +147,83 @@ export function EvidenceBlock({ block }: { block: Record<string, unknown> }): Re
   );
 }
 
-export function ArtifactBlock({ block }: { block: Record<string, unknown> }): ReactElement {
+export function ArtifactBlock({
+  block,
+  actions,
+}: {
+  block: Record<string, unknown>;
+  actions?: BlockActions;
+}): ReactElement {
   const labelValue = typeof block.label === "string" ? block.label : "artifact";
   const mimeType = typeof block.mimeType === "string" ? block.mimeType : "application/octet-stream";
   const sizeBytes = typeof block.sizeBytes === "number" ? block.sizeBytes : 0;
   const originNodeId = typeof block.originNodeId === "string" ? block.originNodeId : undefined;
+  const artifactId = typeof block.artifactId === "string" ? block.artifactId : "";
+  const state = artifactId === "" ? undefined : actions?.artifactOpen?.[artifactId];
+
   return (
-    <div className="cc-card" data-artifact="true">
+    <div className="cc-card" data-artifact="true" data-artifact-id={artifactId}>
       <div className="cc-card-head">
         <span className="cc-card-title">{labelValue}</span>
         <span>
           {mimeType} · {sizeBytes} B{originNodeId === undefined ? "" : ` · từ ${originNodeId}`}
         </span>
       </div>
+      {/*
+        The snapshot is what the message recorded. What the node holds now is a separate question, and only the
+        node can answer it — an artifact can expire between the message being written and somebody reading it.
+      */}
+      {artifactId !== "" && actions?.onArtifactOpen !== undefined ? (
+        <div className="cc-chip-row">
+          <button
+            type="button"
+            className="cc-chip"
+            data-artifact-open={artifactId}
+            /*
+             * Disabled only while a request is in flight. Unlike stopping a task, reopening is a question rather
+             * than a state change: the answer can have changed since it was asked — an artifact that had expired
+             * may have been produced again — so asking a second time has to stay possible.
+             */
+            disabled={state?.status === "pending"}
+            onClick={() => actions.onArtifactOpen?.({ artifactId })}
+          >
+            {state?.status === "pending" ? "Đang mở…" : "Mở lại"}
+          </button>
+        </div>
+      ) : null}
+      {state === undefined || state.status === "pending" ? null : state.status === "failed" ? (
+        <p className="cc-freshness" data-artifact-error="true">
+          {state.message}
+        </p>
+      ) : (
+        <dl className="cc-fields" data-artifact-opened="true" data-artifact-expired={String(state.expired)}>
+          {/*
+            An expired artifact is reported as a distinct outcome rather than as a failure: the node had the
+            file and a retention window passed, which calls for asking for it again rather than for looking for
+            a fault.
+          */}
+          {state.expired ? (
+            <p className="cc-freshness" data-artifact-expiry="true">
+              Node đã từng giữ artifact này nhưng đã hết hạn lưu trữ{state.expiresAt === null ? "" : ` từ ${state.expiresAt}`}.
+              Nội dung không còn, nên hãy yêu cầu tạo lại nếu vẫn cần.
+            </p>
+          ) : null}
+          <dt>Kích thước</dt>
+          <dd>{state.sizeBytes} B</dd>
+          <dt>Loại</dt>
+          <dd>{state.mimeType}</dd>
+          <dt>Digest</dt>
+          <dd>
+            <code>{state.digest}</code>
+          </dd>
+          <dt>Tạo lúc</dt>
+          <dd>{state.createdAt}</dd>
+          <dt>Nguồn</dt>
+          <dd>{state.originNodeId}</dd>
+          <dt>Hết hạn</dt>
+          <dd>{state.expiresAt ?? "không"}</dd>
+        </dl>
+      )}
     </div>
   );
 }
@@ -338,7 +402,30 @@ export interface BlockActions {
   onTaskStop?: (input: { taskId: string }) => void;
   /** What the node said about each stop request, keyed by task id. */
   taskStop?: Readonly<Record<string, TaskStopState>>;
+  /**
+   * Open an artifact from the snapshot of it in the transcript.
+   *
+   * The inline block is history and stays read-only; reopening asks the node what it still has, which is the
+   * only place that can answer — an artifact may have expired since the message was written, and a snapshot
+   * cannot know that.
+   */
+  onArtifactOpen?: (input: { artifactId: string }) => void;
+  artifactOpen?: Readonly<Record<string, ArtifactOpenState>>;
 }
+
+export type ArtifactOpenState =
+  | { status: "pending" }
+  | {
+      status: "opened";
+      digest: string;
+      sizeBytes: number;
+      mimeType: string;
+      originNodeId: string;
+      createdAt: string;
+      expiresAt: string | null;
+      expired: boolean;
+    }
+  | { status: "failed"; message: string };
 
 export type TaskStopState =
   | { status: "pending" }
@@ -1126,7 +1213,9 @@ export function renderBlock(
     case "evidence":
       return <EvidenceBlock key={index} block={block} />;
     case "artifact":
-      return <ArtifactBlock key={index} block={block} />;
+      // Forwarded, for the reason the task card's control taught: a component tested by calling it directly
+      // passes whether or not the dispatcher hands it anything.
+      return <ArtifactBlock key={index} block={block} {...(actions === undefined ? {} : { actions })} />;
     case "system-card":
       return <SystemCardBlock key={index} block={block} />;
     case "approval-card":
