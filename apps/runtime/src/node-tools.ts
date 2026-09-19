@@ -1,6 +1,6 @@
 import { join } from "node:path";
 
-import { ATTACHMENT_LIMITS, attachmentIdSchema } from "@clarkcant/contracts";
+import { ATTACHMENT_LIMITS, attachmentIdSchema, memoryKindSchema, memoryScopeSchema } from "@clarkcant/contracts";
 import { getAttachment } from "@clarkcant/storage";
 import type { ToolDefinition } from "@clarkcant/pi-adapter";
 import { requestApproval, type CoordinationDeps } from "@clarkcant/core";
@@ -11,6 +11,7 @@ import { commandDigest, guardCommand } from "./run-command.ts";
 import type { ProjectFinderDeps } from "./project-finder.ts";
 import { createFindProjectTool } from "./project-finder.ts";
 import { createFindRuntimeTool } from "./runtime-candidates.ts";
+import { rememberMemory, type MemoryDeps } from "./memory.ts";
 import type { SessionSearchDeps } from "./session-search.ts";
 import { createSearchHistoryTool } from "./session-search.ts";
 
@@ -52,6 +53,13 @@ export function createNodeTools(input: {
    * *this* principal, and a turn with no conversation has nothing to check against.
    */
   attachments?: { dataDir: string; conversationId: string };
+  /**
+   * Where a remembered thing is written, when this turn may write one.
+   *
+   * Absent means `remember` is not registered. Remembering is always about a conversation and a
+   * principal, so a turn that has neither has nothing to attach a record to.
+   */
+  memory?: { conversationId: string; newId: (prefix: string) => string };
 }): ToolDefinition[] {
   const roots = input.roots ?? machineRoots;
   return [
@@ -79,6 +87,17 @@ export function createNodeTools(input: {
             principalId: input.search.principalId,
             conversationId: input.attachments.conversationId,
             dataDir: input.attachments.dataDir,
+          }),
+        ]),
+    ...(input.memory === undefined
+      ? []
+      : [
+          createRememberTool({
+            db: input.search.db,
+            principalId: input.search.principalId,
+            conversationId: input.memory.conversationId,
+            now: input.search.now,
+            newId: input.memory.newId,
           }),
         ]),
   ];
@@ -316,6 +335,75 @@ export function createSearchFilesTool(roots: () => readonly string[]): ToolDefin
         { roots: roots() },
       );
       return { text: describeSearch(outcome, query) };
+    },
+  };
+}
+
+/**
+ * The tool that writes a memory down.
+ *
+ * The conversation and the principal come from the turn, never from the model's parameters. A model that
+ * could name the conversation it writes into could write into somebody else's, and the whole point of a
+ * memory is that it belongs to the person whose node it is.
+ *
+ * `sourceMessageId` is deliberately not filled: a turn does not reliably know its own message id, and a
+ * pointer that might be wrong is worse than no pointer at all, because it would make the Memory tab's
+ * "where this came from" a claim nobody can check.
+ */
+export function createRememberTool(input: {
+  db: SessionSearchDeps["db"];
+  principalId: string;
+  conversationId: string;
+  now: () => string;
+  newId: (prefix: string) => string;
+}): ToolDefinition {
+  const deps: MemoryDeps = { db: input.db, now: input.now, newId: input.newId };
+  return {
+    name: "remember",
+    label: "Ghi nhớ một điều",
+    description:
+      "Keep one thing for later turns: a preference, a fact about a project, or a decision taken here. " +
+      "Use it when the user asks you to remember something, or when a choice will matter again. Secrets " +
+      "are removed before it is stored. Everything stored is listed in the app's Memory tab, where the " +
+      "user can read it and delete it.",
+    parameters: {
+      type: "object",
+      additionalProperties: false,
+      required: ["kind", "scope", "text"],
+      properties: {
+        kind: {
+          type: "string",
+          enum: ["preference", "project-fact", "decision"],
+          description: "preference about the person, project-fact about a project, or decision taken here.",
+        },
+        scope: {
+          type: "string",
+          enum: ["node", "conversation"],
+          description: "node for something true everywhere, conversation for something settled in this one.",
+        },
+        text: { type: "string", description: "The thing to remember, as one sentence." },
+      },
+    },
+    promptSnippet: "remember — keep one thing for later turns",
+    execute: async (params: Record<string, unknown>): Promise<{ text: string }> => {
+      const kind = memoryKindSchema.safeParse(params.kind);
+      const scope = memoryScopeSchema.safeParse(params.scope);
+      if (!kind.success || !scope.success) {
+        return {
+          text: "kind must be preference, project-fact or decision; scope must be node or conversation.",
+        };
+      }
+      if (typeof params.text !== "string") return { text: "text must be a string." };
+
+      const outcome = rememberMemory(deps, {
+        principalId: input.principalId,
+        conversationId: input.conversationId,
+        kind: kind.data,
+        scope: scope.data,
+        text: params.text,
+      });
+      if ("refused" in outcome) return { text: `Could not remember it: ${outcome.refused}` };
+      return { text: `Remembered (${outcome.kind}): ${outcome.text}` };
     },
   };
 }

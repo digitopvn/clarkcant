@@ -476,6 +476,13 @@ export async function createModelTurn(options: {
    */
   extraTools?: (turn: { conversationId: string }) => readonly ToolDefinition[];
   /**
+   * What was remembered, for the turn about to run.
+   *
+   * A function rather than a string because it must be read per turn: a record somebody deleted has to stop
+   * being sent on the very next turn, and a value captured once would keep sending it until a restart.
+   */
+  memoryBrief?: (conversationId: string) => string;
+  /**
    * The model to run for sessions created from now on, when somebody chose one.
    *
    * A function rather than a value, and read at session creation rather than here: the composition root builds the
@@ -725,13 +732,17 @@ export async function createModelTurn(options: {
       // "this turn carries no extra instruction".
       const note = withRecap(recap, input.note);
       // Read once, before the prompt, from the message the conductor has already stored.
-      const brief =
+      const attachmentPart =
         options.attachments === undefined
           ? ""
           : attachmentBrief({
               refs: options.attachments.refsFor(input.conversationId),
               dataDir: options.attachments.dataDir,
             });
+      // Read fresh every turn, not captured once: a record the person deleted must stop being sent on the next
+      // turn, which is what the Memory tab's promise to let them see the source and delete it has to mean.
+      const memoryPart = options.memoryBrief?.(input.conversationId) ?? "";
+      const brief = [attachmentPart, memoryPart].filter((part) => part !== "").join("\n\n");
       // Set before the prompt rather than after it, so a message arriving while the first tokens are being written
       // already sees a turn in flight.
       turn.inFlight = true;

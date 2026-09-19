@@ -40,6 +40,7 @@ import { FixtureLiveAdapter } from "./voice-fixture.ts";
 import { SAMPLE_DATASET } from "@clarkcant/data-canvas/sample";
 
 import { createModelTurn, type ViewDescriptor } from "./model-turn.ts";
+import { memoryBrief } from "./memory.ts";
 import { attachmentRefsForLastUserMessage } from "./attachments.ts";
 import { buildViewCatalog } from "./view-catalog.ts";
 import { registerNodeTools } from "./tool-catalogue.ts";
@@ -402,6 +403,17 @@ async function main(): Promise<void> {
     // than a guess. The model is told these names because a view over data that is not there
     // renders as nothing, which reads as a broken widget instead of a missing fact.
     datasetRefs: () => [SAMPLE_DATASET.datasetId],
+    /*
+     * What was remembered, for the turn about to run.
+     *
+     * Read per turn rather than captured once, so a record somebody deletes in the Memory tab stops being
+     * sent on the very next turn. That is what makes that screen's promise true rather than decorative.
+     */
+    memoryBrief: (conversationId) =>
+      memoryBrief(
+        { db: services.runtime.db, now: () => new Date().toISOString(), newId: services.conductor.newId },
+        { principalId: services.runtime.identity.ownerPrincipalId, conversationId },
+      ),
     // The Session Manager's search surface, exposed to the main model as its own tool. Read from a
     // closure so the services it needs, which are assembled below, exist by the time a turn runs.
     // The Session Manager's read-only reports, including the project finder. Built by a function a
@@ -419,6 +431,9 @@ async function main(): Promise<void> {
         // Reading an attached file is scoped to the conversation this turn belongs to, which is the
         // only thing the tool needs to check beyond the principal.
         attachments: { dataDir: options.dataDir, conversationId: turn.conversationId },
+        // Remembering is scoped to the turn's conversation the same way, and the id comes from the node's own
+        // generator: the model supplies what to remember, never who it belongs to.
+        memory: { conversationId: turn.conversationId, newId: services.conductor.newId },
         // "Where should this go?" goes through the finder, which is where Jev decides when several folders
         // could be meant. The model is told to look before it proposes, and an ambiguous answer comes back
         // as a question rather than as a guess.
