@@ -44,11 +44,14 @@ nào bị nới để cho qua: mỗi lỗi được đo trước, rồi sửa �
 
 ## CI phủ những gì
 
-`.github/workflows/ci.yml` chạy `pnpm run invariants`, `typecheck`, `lint`, `pnpm run test`, probe Pi SDK và secret
-scan. **Nó không chạy `pnpm test:e2e`**, nên CI xanh không nói gì về browser suite; cổng browser là cổng chạy tại
-máy, và số ở bảng trên là lần chạy tay trên đúng revision đã merge. Trên PR #38: `verify` xanh ở cả node 22.19 và
-node 24, `secret scan` xanh. `GitGuardian` đỏ vì một fixture hình-dạng-khoá nằm trong commit cũ (đã gỡ ở HEAD;
-`no-committed-secrets` của repo vẫn xanh) — nó là check tư vấn, không phải cổng của repo.
+`.github/workflows/ci.yml` chạy `pnpm run invariants`, `typecheck`, `lint`, `pnpm run test`, probe Pi SDK, secret
+scan, **browser suite** (job `e2e`) và **desktop smoke dưới `xvfb`** (job `desktop smoke (xvfb)`). Hai cổng cuối
+trước đây chỉ chạy tay, và PR #44 đã đưa chúng vào CI: cả hai xanh ở cả hai lần chạy (e2e 3m39s và 3m43s,
+desktop smoke 31s và 32s). Lần đầu chúng chạy, chúng đã tìm ra hai lỗi thật và cả hai được sửa ở gốc: Electron
+không khởi động được vì sandbox SUID không cấu hình được trên runner, và một journey bàn phím lấy focus khi panel còn
+đang hiện nên `focus()` bị bỏ. Trên PR #38: `verify` xanh ở cả node 22.19 và node 24, `secret scan` xanh.
+`GitGuardian` đỏ vì một fixture hình-dạng-khoá nằm trong commit cũ (đã gỡ ở HEAD; `no-committed-secrets` của
+repo vẫn xanh) — nó là check tư vấn, không phải cổng của repo.
 
 ## Cổng còn mở
 

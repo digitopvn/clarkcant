@@ -87,7 +87,7 @@ không phải thứ tự đánh số ban đầu: vòng red-team đã đảo Stag
 | 3 | [Composer, timeline và nội dung tới agent](./phase-03-composer-timeline-and-agent-content.md) | Done |
 | 4 | [Journey đính kèm và evidence](./phase-04-attachments-journey-and-evidence.md) | Done |
 | 5 | [Registry app-intent dùng chung cho chat, click và voice](./phase-05-shared-app-control-intents.md) | Done |
-| 7 | [Cửa sổ desktop compact, shell load client và bridge có tên](./phase-07-desktop-compact-window.md) | Done — smoke Electron **đã chạy xanh trên máy này** (exit 0, `"failed": []`, mọi check `true`); CI không có display nên không chạy nó, và đó là khoảng trống coverage có tên |
+| 7 | [Cửa sổ desktop compact, shell load client và bridge có tên](./phase-07-desktop-compact-window.md) | Done — smoke Electron **đã chạy xanh** (exit 0, `"failed": []`, mọi check `true`), và CI chạy nó mỗi lần push trong job `desktop smoke (xvfb)` |
 | 8 | [Thanh voice tối giản, intent cửa sổ và phiên sống qua hai chiều](./phase-08-minimal-voice-bar.md) | Done |
 | 9 | [Gợi ý từ việc gần đây](./phase-09-recent-work-suggestions.md) | Done |
 | 10 | [Memory record bền vững và tool `remember`](./phase-10-durable-memory-records.md) | Done |
@@ -135,13 +135,14 @@ Phase 12 là cổng cuối, không sửa giữa các stage ship.
 - [x] `pnpm verify` xanh: invariant + typecheck + lint + unit test. — chạy trên cây hiện tại của `main`:
       **1427 passed, 7 skipped (1434)**, và 7/7 invariant PASS.
 - [x] `pnpm test:e2e` xanh, có journey mới cho từng tính năng trong năm mục của issue. — **83 passed, 0 failed**
-      (chromium, chạy trên cây hiện tại `c4e7576`). `.github/workflows/ci.yml` **không** chạy `test:e2e`, nên CI xanh
-      không nói gì về cổng này; số này là lần chạy tay trên đúng revision.
-- [x] `pnpm --filter @clarkcant/app-desktop run smoke` xanh, thân trên máy có display, output JSON lưu lại. — Đã
+      (chromium, chạy trên cây hiện tại `c4e7576`). CI cũng chạy nó trong job `e2e` (PR #44 đã merge, xanh ở
+      cả hai lần chạy: 3m39s và 3m43s), nên cổng này không còn phụ thuộc vào một lần chạy tay.
+- [x] `pnpm --filter @clarkcant/app-desktop run smoke` xanh, chạy trên máy có display, output JSON lưu lại. — Đã
       chạy trên máy này: exit 0, `"failed": []`, mọi check `true`, gồm "compact mode reads back the bounds
       Electron actually has", "the minimum size Electron reports is the twenty by fifty floor", "expanding restores the
       bounds Electron had before compact", "always on top is reported by the window, not by the model" và "a window
-      mode this build does not know is refused" (Electron 44.3.0, Chrome 152, Node 24.20.0).
+      mode this build does not know is refused" (Electron 44.3.0, Chrome 152, Node 24.20.0). CI chạy nó trong job
+      `desktop smoke (xvfb)` (PR #44 đã merge, xanh ở cả hai lần chạy), nên cổng này cũng được kiểm mỗi lần push.
 - [x] Nút `+` không còn `disabled`; chuỗi "Chưa hỗ trợ đính kèm" không còn trong mã. —
       `apps/web/e2e/attachments.spec.ts`.
 - [x] Test từ chối: tên file là path tuyệt đối, URL thực thi, mime thực thi, magic bytes lệch khai báo, quá
