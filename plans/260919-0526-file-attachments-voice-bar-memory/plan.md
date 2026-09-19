@@ -226,4 +226,19 @@ Security Adversary) chạy trên ba reviewer độc lập + một checkpoint `ko
   chuyển sang blob store dùng chung, bỏ path khỏi prompt, đưa xác nhận thoát app về node, thêm seam
   `server.ts`, hook `?cc-compact=1`, ngân sách inline theo lượt.
 
+### Ghi nhận khi thi hành (2026-09-19)
+
+- **Deviation (Phase 1):** `attachmentQuotaDecision` **không** được viết. Luật quota, ngưỡng và
+  allowlist đã nằm trong `validateAttachmentCandidate` và đã có test; viết thêm một hàm so sánh thứ
+  hai là cách hai cái trần trở nên khác nhau. Runtime chỉ cấp **đầu vào** cho luật đó
+  (`attachmentUsageForPrincipal`), và route gọi thẳng contract. Không có hành vi nào bị mất.
+- **Deviation (Phase 1):** `sniffImage`/`ALLOWED_IMAGE_TYPES` được giữ ở `mini-app-data.ts` (nó mang
+  thêm ngưỡng byte và chiều pixel của ảnh), nhưng phần đọc magic bytes chuyển sang `blobs.ts` thành
+  `detectImageFormat` để ảnh và attachment dùng **một** implementation. `ALLOWED_IMAGE_TYPES` được
+  import rồi re-export, không định nghĩa lại.
+- **Deviation (Phase 2):** thêm seam `bodyLimitFor` trên `createNodeServer` để trần body test được
+  bằng một con số nhỏ; giá trị deploy (`ATTACHMENT_UPLOAD_BODY_LIMIT`) được assert riêng.
+- **Trạng thái thực thi:** Phase 1 và Phase 2 xong và có commit (`c42db4a`), `pnpm verify` xanh
+  1061 test. Phase 3–12 còn nguyên; xem `stage-a-impl` trong todo của phiên để biết mốc tiếp theo.
+
 <!-- slug: file-attachments-voice-bar-memory -->
