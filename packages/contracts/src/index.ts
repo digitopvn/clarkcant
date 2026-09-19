@@ -24,4 +24,5 @@ export * from "./period.ts";
 export * from "./automation.ts";
 export * from "./nodelink.ts";
 export * from "./voice.ts";
+export * from "./attachments.ts";
 export * from "./surfaces.ts";

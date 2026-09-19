@@ -2244,6 +2244,122 @@ function mapLocalImage(row: Record<string, unknown>): LocalImageRecord {
   };
 }
 
+/* ------------------------------------------------------------------ *
+ * Attachments
+ * ------------------------------------------------------------------ */
+
+/**
+ * A file someone attached to a message.
+ *
+ * `blobPath` is an absolute path on this node. It is stored because the bytes
+ * have to be found again, and it never leaves the node: no route returns it and
+ * no prompt carries it. Readers check it against the blob root before opening
+ * it, because a row edited by hand must not become an arbitrary file read.
+ */
+export interface AttachmentRecord {
+  attachmentId: string;
+  principalId: string;
+  conversationId: string;
+  filename: string;
+  mime: string;
+  kind: string;
+  sizeBytes: number;
+  sha256: string;
+  blobPath: string;
+  createdAt: string;
+}
+
+export function insertAttachment(db: Database, input: AttachmentRecord): void {
+  db.prepare(
+    `INSERT INTO attachments
+       (attachment_id, principal_id, conversation_id, filename, mime, kind, size_bytes, sha256,
+        blob_path, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  ).run(
+    input.attachmentId,
+    input.principalId,
+    input.conversationId,
+    input.filename,
+    input.mime,
+    input.kind,
+    input.sizeBytes,
+    input.sha256,
+    input.blobPath,
+    input.createdAt,
+  );
+}
+
+/** Scoped to the principal, so one person's id is not another person's read. */
+export function getAttachment(
+  db: Database,
+  attachmentId: string,
+  principalId: string,
+): AttachmentRecord | undefined {
+  const row = oneRow<Record<string, unknown>>(
+    db,
+    "SELECT * FROM attachments WHERE attachment_id = ? AND principal_id = ?",
+    attachmentId,
+    principalId,
+  );
+  return row === undefined ? undefined : mapAttachment(row);
+}
+
+export function listAttachmentsForConversation(
+  db: Database,
+  conversationId: string,
+): AttachmentRecord[] {
+  const rows = allRows<Record<string, unknown>>(
+    db,
+    "SELECT * FROM attachments WHERE conversation_id = ? ORDER BY created_at",
+    conversationId,
+  );
+  return rows.map(mapAttachment);
+}
+
+/**
+ * Remove a conversation's attachment rows and report where their bytes were.
+ *
+ * The caller deletes the files, and it does so after this returns: a row that
+ * outlives its bytes is a missing file the UI can explain, while bytes that
+ * outlive their row are garbage nobody can find.
+ */
+export function deleteAttachmentsForConversation(
+  db: Database,
+  conversationId: string,
+): { removed: number; blobPaths: string[] } {
+  return transaction(db, () => {
+    const rows = listAttachmentsForConversation(db, conversationId);
+    if (rows.length === 0) return { removed: 0, blobPaths: [] };
+    const result = db.prepare("DELETE FROM attachments WHERE conversation_id = ?").run(conversationId);
+    return { removed: Number(result.changes), blobPaths: rows.map((row) => row.blobPath) };
+  });
+}
+
+/** Total stored bytes for one principal. The single source the quota is read from. */
+export function attachmentUsageForPrincipal(db: Database, principalId: string): number {
+  const row = oneRow<{ used: number | null }>(
+    db,
+    "SELECT COALESCE(SUM(size_bytes), 0) AS used FROM attachments WHERE principal_id = ?",
+    principalId,
+  );
+  return Number(row?.used ?? 0);
+}
+
+function mapAttachment(row: Record<string, unknown>): AttachmentRecord {
+  return {
+    attachmentId: String(row.attachment_id),
+    principalId: String(row.principal_id),
+    conversationId: String(row.conversation_id),
+    filename: String(row.filename),
+    mime: String(row.mime),
+    kind: String(row.kind),
+    sizeBytes: Number(row.size_bytes),
+    sha256: String(row.sha256),
+    blobPath: String(row.blob_path),
+    createdAt: String(row.created_at),
+  };
+}
+
 /**
  * Secrets a person typed into the host.
  *
