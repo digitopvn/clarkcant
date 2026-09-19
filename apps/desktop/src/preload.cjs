@@ -43,6 +43,15 @@ const bridge = {
   getSession() {
     return ipcRenderer.invoke("desktop:getSession");
   },
+  /**
+   * Shrink the window to the voice bar, grow it back, or pin it above other windows.
+   *
+   * Answers with the bounds and the pin state the window actually has afterwards, not with what was asked for,
+   * because the operating system may clamp either one.
+   */
+  setCompactMode(input) {
+    return ipcRenderer.invoke("desktop:setCompactMode", input);
+  },
 };
 
 contextBridge.exposeInMainWorld("clarkcant", bridge);

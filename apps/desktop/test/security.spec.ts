@@ -153,6 +153,7 @@ describe("IPC is answered only for the shell document (sender validation)", () =
       "desktop:openExternal",
       "desktop:pickDirectory",
       "desktop:requestCredential",
+      "desktop:setCompactMode",
       "desktop:setKeepRunning",
     ]);
   });

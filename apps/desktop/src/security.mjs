@@ -21,6 +21,7 @@ export const IPC_CHANNELS = Object.freeze([
   "desktop:setKeepRunning",
   "desktop:getStatus",
   "desktop:getSession",
+  "desktop:setCompactMode",
 ]);
 
 /**

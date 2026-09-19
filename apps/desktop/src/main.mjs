@@ -16,7 +16,7 @@
  * shape and its refusals from inside the renderer.
  */
 
-import { app, BrowserWindow, dialog, ipcMain, shell, session } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, screen, shell, session } from "electron";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { readFileSync } from "node:fs";
@@ -29,6 +29,7 @@ import {
   reviewCredentialRequest,
   reviewIpcCall,
 } from "./security.mjs";
+import { COMPACT_MIN_SIZE, initialWindowMode, nextWindowMode } from "./window-mode.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 
@@ -43,6 +44,13 @@ const dataDirFlag = argv.indexOf("--data-dir");
 const dataDir = dataDirFlag >= 0 ? argv[dataDirFlag + 1] : undefined;
 const nodeUrlFlag = argv.indexOf("--node-url");
 const nodeUrl = nodeUrlFlag >= 0 ? argv[nodeUrlFlag + 1] : undefined;
+/**
+ * Whether this window is showing the client rather than the bundled posture document.
+ *
+ * It decides the frame: the client draws its own chrome - a drag strip and its own buttons - so an OS frame
+ * on top of it would be a second title bar. The posture document has no chrome of its own and keeps its frame.
+ */
+const loadingClient = rendererUrlFlag >= 0;
 
 /** Closing the window stops the window, not the work. Default is to keep running. */
 let keepRunningOnWindowClose = true;
@@ -54,14 +62,29 @@ let keepRunningOnWindowClose = true;
  * `security.mjs` stays the enforcing copy; this is what the check compares against.
  */
 const EXPECTED_BRIDGE_METHODS = Object.freeze([
+  "getSession",
   "notify",
   "openExternal",
   "pickDirectory",
   "requestCredential",
+  "setCompactMode",
   "setKeepRunningOnWindowClose",
   "status",
-  "getSession",
 ]);
+
+/**
+ * The window's remembered mode, in the process that owns the window.
+ *
+ * Held here rather than in the renderer because a renderer comes and goes: a reload must not move the window
+ * back to its expanded size, and returning from compact has to restore what the person had rather than a
+ * default. `undefined` until the first request, when it is learned from the window itself.
+ */
+let windowMode;
+
+/** The work area of the display the window is on, so a compact window lands somewhere reachable. */
+function workAreaFor(window) {
+  return screen.getDisplayMatching(window.getBounds()).workArea;
+}
 
 /**
  * Answer a channel only after the call has passed review.
@@ -163,6 +186,32 @@ function registerHandlers() {
     return { ok: true, keepRunningOnWindowClose };
   });
 
+  handle("desktop:setCompactMode", async (action) => {
+    const window = BrowserWindow.getAllWindows()[0];
+    if (window === undefined) return { ok: false, refused: "there is no window to resize" };
+    if (!["enter-compact", "expand", "set-always-on-top"].includes(action?.type)) {
+      return { ok: false, refused: "that is not a window mode this build knows" };
+    }
+
+    // Learned from the window the first time rather than assumed, so a window somebody already moved is
+    // remembered where it actually is.
+    if (windowMode === undefined) {
+      windowMode = initialWindowMode({ bounds: window.getBounds(), workArea: workAreaFor(window) });
+    }
+    windowMode = nextWindowMode({ ...windowMode, workArea: workAreaFor(window) }, action);
+    window.setBounds(windowMode.bounds);
+    window.setAlwaysOnTop(windowMode.alwaysOnTop);
+
+    // Read back off the window rather than reporting the request. The OS may clamp a size or a position, and a
+    // shell that echoes what it was asked for cannot tell the difference between that and what happened.
+    return {
+      ok: true,
+      mode: windowMode.mode,
+      bounds: window.getBounds(),
+      alwaysOnTop: window.isAlwaysOnTop(),
+    };
+  });
+
   handle("desktop:getStatus", async () => ({
     ok: true,
     shell: "clarkcant-desktop",
@@ -197,6 +246,10 @@ async function createShellWindow({ show = true } = {}) {
     show,
     title: "clarkcant",
     backgroundColor: "#0d1117",
+    // The floor from the issue. What the window is allowed to become, not what it aims for.
+    minWidth: COMPACT_MIN_SIZE.width,
+    minHeight: COMPACT_MIN_SIZE.height,
+    frame: !loadingClient,
     webPreferences: createWindowOptions(join(here, "preload.cjs")),
   });
 
@@ -248,10 +301,20 @@ async function runSmokeTest() {
       refusedScriptScheme: await call("openExternal", "javascript:alert(1)"),
       refusedVaguePurpose: await call("requestCredential", { requestId: "r1", purpose: "x" }),
       refusedNonBoolean: await call("setKeepRunningOnWindowClose", "yes"),
+      compact: await call("setCompactMode", { type: "enter-compact" }),
+      pinned: await call("setCompactMode", { type: "set-always-on-top", value: true }),
+      expanded: await call("setCompactMode", { type: "expand" }),
+      refusedUnknownMode: await call("setCompactMode", { type: "become-a-toast" }),
     };
   })()`;
 
+  // Read off the real window around the probe, so the compact checks compare Electron's own answers rather
+  // than two copies of the same model agreeing with each other.
+  const boundsBefore = window.getBounds();
   const observed = await window.webContents.executeJavaScript(probe);
+  const boundsAfter = window.getBounds();
+  const minimum = window.getMinimumSize();
+  const pinnedNow = window.isAlwaysOnTop();
   // `close()` is synchronous on BrowserWindow; awaiting it would imply a completion signal that
   // does not exist.
   window.close();
@@ -273,6 +336,26 @@ async function runSmokeTest() {
     ["a scheme that executes script is refused", observed.refusedScriptScheme?.ok === false],
     ["a vague credential purpose is refused", observed.refusedVaguePurpose?.ok === false],
     ["a non-boolean keep flag is refused", observed.refusedNonBoolean?.ok === false],
+    [
+      "compact mode reads back the bounds Electron actually has",
+      observed.compact?.ok === true &&
+        observed.compact.bounds.width < boundsBefore.width &&
+        observed.compact.bounds.width >= COMPACT_MIN_SIZE.width &&
+        observed.compact.mode === "compact",
+    ],
+    [
+      "the minimum size Electron reports is the twenty by fifty floor",
+      minimum.width === COMPACT_MIN_SIZE.width && minimum.height === COMPACT_MIN_SIZE.height,
+    ],
+    [
+      "expanding restores the bounds Electron had before compact",
+      JSON.stringify(boundsAfter) === JSON.stringify(boundsBefore),
+    ],
+    [
+      "always on top is reported by the window, not by the model",
+      observed.pinned?.ok === true && observed.pinned.alwaysOnTop === true && pinnedNow === true,
+    ],
+    ["a window mode this build does not know is refused", observed.refusedUnknownMode?.ok === false],
   ];
 
   const failed = checks.filter(([, passed]) => !passed);
