@@ -634,7 +634,16 @@ export const messageBlockSchema = z.discriminatedUnion("type", [
 ]);
 export type MessageBlock = z.infer<typeof messageBlockSchema>;
 
-/** Blocks whose trust state is owned by the host, never by a pack or a model. */
+/**
+ * Blocks whose trust state is owned by the host, never by a pack or a model.
+ *
+ * The single list. A second copy of it lived in the renderer and had already drifted: it knew about two card types
+ * this one did not, and neither knew about the session cards. Since this list is what refuses a host-owned block
+ * that arrived from somewhere other than the host, a type missing from it is a card a pack or a model could mint.
+ *
+ * Every card whose schema says `owner: z.literal("host")` belongs here, and the test beside it walks the list so a
+ * new one cannot be added in one place and forgotten in the other.
+ */
 export const HOST_OWNED_BLOCK_TYPES = [
   "system-card",
   "approval-card",
@@ -646,6 +655,10 @@ export const HOST_OWNED_BLOCK_TYPES = [
   "code-diff-card",
   "project-picker-card",
   "reconnect-card",
+  "question-card",
+  "form-card",
+  "browser-session-card",
+  "computer-session-card",
 ] as const satisfies readonly MessageBlock["type"][];
 
 export function isHostOwnedBlock(block: MessageBlock): boolean {
