@@ -94,3 +94,31 @@ Quyết định thiết kế đáng nhớ cho các phase sau:
 
 Ràng buộc kỹ thuật phải nhớ: Node chạy `.ts` trực tiếp nên **không** dùng `enum`, `namespace`, hay
 constructor parameter properties; deps exact-pinned; e2e dùng data dir và port riêng của playwright.
+
+## 7. Bằng chứng gate t1 (verify:full) và 4 lỗi e2e có sẵn từ trước
+
+`pnpm verify:full` (task `bd7086c3c`): phase unit xanh toàn bộ; phase e2e 48 passed / 5 failed.
+
+- 1 lỗi là regression của t1: `appearance.spec.ts` assert `[role="tab"]` phải là 4, và tab Autonomy
+  làm nó thành 5. Đã sửa **cả hai phía**: module doc của `SettingsPanel` (bỏ câu "four distinct areas",
+  nêu lý do Autonomy là một khu vực chứ không phải một dòng trong General) và chính test (đổi thành 5,
+  kèm comment giải thích, theo đúng cách comment cũ giải thích vì sao voice không nằm trong dialog).
+  Chạy lại sạch: test đó xanh.
+- 4 lỗi còn lại **có sẵn từ trước, không do P1**: `appearance.spec.ts:229` (tab Models), `j1.spec.ts:204`
+  (background session), `onboarding.spec.ts:86` và `:110` (first run).
+  Chứng minh: `rm -rf .data/e2e`, `git switch --detach e1c67d4`, chạy đúng 3 file spec đó →
+  **23 passed / 4 failed, cùng danh sách, cùng thời lượng timeout**. Trên nhánh này cũng 23/4 với cùng
+  danh sách, nên chúng không phải do thay đổi của t1.
+
+Điều kiện còn thiếu của 4 test đó (theo luật "blocked phải nêu điều kiện, không được skip im lặng"):
+
+- `appearance.spec.ts:229` cần node e2e báo được ít nhất một provider: `playwright.config.ts` chạy node
+  với `CC_MODEL_FIXTURE=1` và **không** có provider key/model nào, nên catalogue rỗng, panel rơi vào nhánh
+  "Node chưa báo provider nào" và `[data-search-input='model']` không hề tồn tại. Lỗi là
+  `element(s) not found`, không phải sai giá trị.
+- `j1.spec.ts:204`, `onboarding.spec.ts:86/110`: cùng trạng thái trên base commit, nằm ngoài mọi đường code
+  mà P1 chạm tới. Chưa xác định được điều kiện thiếu cụ thể; cần một lượt điều tra riêng khi tới phase
+  chạm vào background session hoặc first-run.
+
+Ghi chú: chúng **không** được sửa hay nới trong goal này. Nếu một phase sau (P3 voice, P7 background
+routing) chạm đúng đường đó thì phải xử lý ở đó, kèm điều kiện thiếu được nêu tên.
