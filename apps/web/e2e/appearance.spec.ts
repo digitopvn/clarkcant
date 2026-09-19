@@ -234,3 +234,19 @@ test("the tools tab also says which extensions pi loads on this machine", async 
   });
 });
 
+test("the tools tab also shows pi's own configuration, as lines rather than as a file", async ({ page }) => {
+  await openApp(page);
+  await page.locator("[data-settings='true']").click();
+  await page.getByRole("tab", { name: "Tools" }).click();
+
+  const section = page.locator("[data-pi-settings='true']");
+  await expect(section).toBeVisible();
+
+  // Either the node read a configuration and it is shown as key and value lines, or it read none and says so. What must
+  // never appear is a credential: the node redacts by name before this ever leaves it, and the adapter test covers that
+  // where the file is actually read.
+  await expect(section.locator("[data-pi-setting], [data-pi-settings='none']").first()).toBeVisible({
+    timeout: 20_000,
+  });
+});
+

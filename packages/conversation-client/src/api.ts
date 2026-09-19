@@ -564,6 +564,16 @@ export class GatewayClient {
   }
 
   /**
+   * pi's own configuration, as far as the node is willing to report it.
+   *
+   * Scalars only, and anything whose name sounds like a secret arrives already redacted: the node is the only thing that
+   * can see the file, so the decision about what may be shown is made there rather than here.
+   */
+  piSettings(): Promise<{ settings: { key: string; value: string }[] }> {
+    return this.#call("GET", "/pi-settings");
+  }
+
+  /**
    * The providers and models this node can run, and the one it is configured for.
    *
    * Read from the node's own catalogue rather than from a list kept here, so upgrading pi on the node makes a new

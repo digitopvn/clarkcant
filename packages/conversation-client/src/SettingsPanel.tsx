@@ -200,6 +200,9 @@ export function SettingsPanel({
   /** What pi loads on this machine, or undefined before the node has answered. */
   const [piExtensions, setPiExtensions] = useState<{ name: string; kind: string }[] | undefined>(undefined);
 
+  /** pi's own configuration, read from the same place and shown as lines: a key and a value, never a secret. */
+  const [piSettingLines, setPiSettingLines] = useState<{ key: string; value: string }[] | undefined>(undefined);
+
   useEffect(() => {
     if (!open) return;
     let cancelled = false;
@@ -212,6 +215,16 @@ export function SettingsPanel({
         // An empty list rather than an error: what this section answers is what pi loads, and a node that cannot say
         // still leaves the rest of the tab working.
         if (!cancelled) setPiExtensions([]);
+      });
+    void client
+      .piSettings()
+      .then((answer) => {
+        if (!cancelled) setPiSettingLines(answer.settings);
+      })
+      .catch(() => {
+        // The same reasoning: configuration that cannot be read is reported as none rather than as a failure, because
+        // the person in front of the panel cannot act on a read error either way.
+        if (!cancelled) setPiSettingLines([]);
       });
     return () => {
       cancelled = true;
@@ -585,6 +598,27 @@ export function SettingsPanel({
                   {piExtensions.map((entry) => (
                     <code key={entry.name} data-pi-extension={entry.name} data-kind={entry.kind}>
                       {entry.name}
+                    </code>
+                  ))}
+                </div>
+              )}
+            </section>
+
+            <section className="cc-panel-section" data-pi-settings="true">
+              <h3>Cấu hình pi trên máy này</h3>
+              {piSettingLines === undefined ? (
+                <p className="cc-panel-note">Đang đọc…</p>
+              ) : piSettingLines.length === 0 ? (
+                <p className="cc-panel-note" data-pi-settings="none">
+                  Chưa đọc được cấu hình nào từ pi trên máy này.
+                </p>
+              ) : (
+                // A key and a value per line. Anything whose name sounds like a secret arrives already redacted by the
+                // node, because the node is the only thing that can see the file it came from.
+                <div className="cc-panel-note">
+                  {piSettingLines.map((line) => (
+                    <code key={line.key} data-pi-setting={line.key}>
+                      {line.key}: {line.value}
                     </code>
                   ))}
                 </div>
