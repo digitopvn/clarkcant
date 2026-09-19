@@ -68,8 +68,17 @@ export type VoiceWidgetActionResolution =
   | { ok: true; action: VoiceWidgetAction }
   | { ok: false; say: string };
 
-const NO_ACTION_SAY =
-  "Tôi chưa rõ bạn muốn làm gì với widget đang mở. Bạn nói đúng tên một hành động mà nó đang có giúp tôi nhé.";
+/**
+ * Two different refusals, kept different on purpose. "This widget offers nothing" and "I did not understand
+ * which of the things it offers you meant" are different facts about the world, and answering both with one
+ * sentence made them indistinguishable in a transcript - which is exactly what happened when this was built:
+ * the parity journey failed and the single shared sentence could not say which branch had refused it.
+ */
+const NO_ACTION_SAY = (offered: readonly string[]): string =>
+  `Tôi chưa rõ bạn muốn làm gì với widget đang mở. Nó đang có: ${offered.join(", ")}.`;
+
+/** The widget is open and has nothing to offer, so no sentence could have matched. */
+const NO_OFFERED_ACTION_SAY = "Widget đang mở không có hành động nào để tôi làm.";
 
 export const NO_FOCUSED_SURFACE_SAY =
   "Hiện không có widget nào đang mở, nên tôi chưa có hành động nào để làm.";
@@ -87,10 +96,10 @@ export function resolveVoiceWidgetAction(input: {
 }): VoiceWidgetActionResolution {
   const focused = input.focused;
   if (focused === undefined) return { ok: false, say: NO_FOCUSED_SURFACE_SAY };
-  if (focused.availableActions.length === 0) return { ok: false, say: NO_ACTION_SAY };
+  if (focused.availableActions.length === 0) return { ok: false, say: NO_OFFERED_ACTION_SAY };
 
   const said = normaliseIntentText(input.utterance);
-  if (said === "") return { ok: false, say: NO_ACTION_SAY };
+  if (said === "") return { ok: false, say: offeredSay(focused) };
 
   const offered = [...focused.availableActions].sort((a, b) => b.label.length - a.label.length);
   for (const candidate of offered) {
@@ -108,7 +117,18 @@ export function resolveVoiceWidgetAction(input: {
     }
   }
 
-  return { ok: false, say: NO_ACTION_SAY };
+  return { ok: false, say: offeredSay(focused) };
+}
+
+/**
+ * The refusal that names what the widget does offer, rather than only saying that nothing matched.
+ *
+ * A person who is refused learns what they could have said instead; and a test that fails on this sentence
+ * carries the offered labels in its own output, which is how the labels a view really publishes were read
+ * here rather than assumed from the composition template.
+ */
+function offeredSay(focused: SemanticView): string {
+  return NO_ACTION_SAY(focused.availableActions.map((action) => action.label));
 }
 
 /**

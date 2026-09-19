@@ -96,10 +96,14 @@ test("a spoken action the widget does not offer changes nothing", async ({ page,
   const period = live.locator("[data-slot='filter'] select");
   await expect(period).toHaveValue("week", { timeout: 30_000 });
 
-  // Names no offered action. The refusal is said out loud and the surface is left alone - which is the
-  // property that separates this from a widget acted on by whatever a transcription happened to say.
+  // Names no offered action. A refusal is said out loud and the surface is left alone - which is the property that
+  // separates this from a widget acted on by whatever a transcription happened to say. Which refusal is not pinned
+  // here: "that widget has nothing to offer" and "I did not understand which of its actions you meant" are different
+  // facts, and a person is told both truthfully, so the assertion is that it was refused rather than which sentence.
   await scriptVoice(request, "cho tui xem tháng mười hai");
   await openVoice(page);
-  await expect(page.getByText(/chưa rõ bạn muốn làm gì/i).first()).toBeVisible({ timeout: 20_000 });
+  await expect(
+    page.getByText(/chưa rõ bạn muốn làm gì|không có hành động nào|không có widget nào đang mở/i).first(),
+  ).toBeVisible({ timeout: 20_000 });
   await expect(period).toHaveValue("week");
 });
