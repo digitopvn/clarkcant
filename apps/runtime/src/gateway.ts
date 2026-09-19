@@ -26,6 +26,7 @@ import {
   liveOwnerOf,
   liveStateOf,
   pinInstance,
+  readExecutionPolicy,
   readSnapshotForDisplay,
   releaseLiveOwner,
   sweepExpiredLiveOwners,
@@ -1436,12 +1437,20 @@ async function handleConversationRoutes(
       return fail(400, "INVALID_SCHEMA", "an action invocation needs the expectedRevision the client saw");
     }
 
-    const outcome = invokeMiniAppAction(services.conductor, invocation);
+    const outcome = invokeMiniAppAction(services.conductor, {
+      ...invocation,
+      // Read at the invocation rather than captured, so a mode the user changed applies to the next action
+      // they take instead of the next time the node starts.
+      policy: readExecutionPolicy(
+        { db: runtime.db, now: () => at() as Instant },
+        runtime.identity.ownerPrincipalId,
+      ),
+    });
     if (!outcome.ok) {
       const status =
         outcome.code === "INSTANCE_UNKNOWN" || outcome.code === "ACTION_UNKNOWN"
           ? 404
-          : outcome.code === "NOT_AUTHORIZED"
+          : outcome.code === "NOT_AUTHORIZED" || outcome.code === "POLICY_REFUSED"
             ? 403
             : outcome.code === "REVISION_MISMATCH"
               ? 409

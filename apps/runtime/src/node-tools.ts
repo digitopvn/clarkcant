@@ -1,13 +1,21 @@
 import { join } from "node:path";
 
 import { ATTACHMENT_LIMITS, attachmentIdSchema } from "@clarkcant/contracts";
+import type { EffectCategory, ExecutionMode, ExecutionRule } from "@clarkcant/contracts";
 import { getAttachment } from "@clarkcant/storage";
 import type { ToolDefinition } from "@clarkcant/pi-adapter";
-import { requestApproval, type CoordinationDeps } from "@clarkcant/core";
+import {
+  decideExecution,
+  recordEffectExecution,
+  requestApproval,
+  type CoordinationDeps,
+  type ExecutionAuditDeps,
+  type PolicyDecision,
+} from "@clarkcant/core";
 
 import { blobsDir, readBlob } from "./blobs.ts";
 import { describeSearch, machineRoots, searchFileSystem } from "./fs-search.ts";
-import { commandDigest, guardCommand } from "./run-command.ts";
+import { commandDigest, commandOutput, describeCommandOutcome, guardCommand, runCommand } from "./run-command.ts";
 import type { ProjectFinderDeps } from "./project-finder.ts";
 import { createFindProjectTool } from "./project-finder.ts";
 import { createFindRuntimeTool } from "./runtime-candidates.ts";
@@ -39,6 +47,24 @@ export function createNodeTools(input: {
    * ask for one, and a tool that could only refuse is worse than no tool.
    */
   approvals?: () => CoordinationDeps;
+  /**
+   * The execution policy in force, read at each proposal rather than captured when the node booted.
+   *
+   * Read per call because that is the whole promise of the setting: a mode change has to change what
+   * happens to the next command, and a captured value would make it a restart.
+   *
+   * Absent means this node keeps the behaviour it had before the modes existed — it asks. That is the
+   * honest default for a node that cannot read the mode, because the alternative is a node that stops
+   * asking because a setting it cannot see happens to be missing.
+   */
+  policy?: () => { mode: ExecutionMode; rules: readonly ExecutionRule[] };
+  /**
+   * Where an effect performed without an approval card leaves its record.
+   *
+   * Absent means this node does not perform such an effect at all: it asks instead. An effect nobody
+   * approved and nobody can find afterwards is worse than a question.
+   */
+  audit?: () => { deps: ExecutionAuditDeps; principalId: string; conversationId?: string };
   /** Resolve a folder from the model's words, through the finder and its decider. */
   resolveFolder?: (intent: string) => Promise<
     | { status: "resolved"; cwd: string; relPath: string }
@@ -62,6 +88,8 @@ export function createNodeTools(input: {
       : [
           createRunCommandTool({
             approvals: input.approvals,
+            ...(input.policy === undefined ? {} : { policy: input.policy }),
+            ...(input.audit === undefined ? {} : { audit: input.audit }),
             ...(input.resolveFolder === undefined ? {} : { resolveFolder: input.resolveFolder }),
           }),
         ]),
@@ -175,6 +203,10 @@ export function createReadAttachmentTool(input: {
  */
 export function createRunCommandTool(input: {
   approvals: () => CoordinationDeps;
+  /** The policy in force, read at each proposal. Absent means this node always asks. */
+  policy?: () => { mode: ExecutionMode; rules: readonly ExecutionRule[] };
+  /** Where a command that ran without a card leaves its record. Absent means it always asks. */
+  audit?: () => { deps: ExecutionAuditDeps; principalId: string; conversationId?: string };
   /**
    * Resolve a folder from the model's words, through the finder and its decider.
    *
@@ -188,10 +220,11 @@ export function createRunCommandTool(input: {
 }): ToolDefinition {
   return {
     name: "run_command",
-    label: "Chạy một lệnh, sau khi bạn duyệt",
+    label: "Chạy một lệnh",
     description:
-      "Ask to run one shell command. Nothing runs until the user approves the exact command and folder in " +
-      "the card this creates, so say that you are asking rather than that you did it. Pass `where` with the " +
+      "Run one shell command. Whether it runs immediately or waits for the user to approve the exact " +
+      "command and folder depends on this node's execution policy, and the result of this call says which " +
+      "happened — read it before telling the user anything ran. Pass `where` with the " +
       "place you intend in your own words — look for it first with find_project or search_files, because the " +
       "folder is decided from what you find and the user sees it in the card. Pass `cwd` only when you " +
       "already know the exact directory. Use it for work that needs a shell: git clone, a build, a test run.",
@@ -210,7 +243,8 @@ export function createRunCommandTool(input: {
         why: { type: "string", description: "One sentence for the card: what this is for." },
       },
     },
-    promptSnippet: "run_command — propose a shell command; the user must approve it before it runs",
+    promptSnippet:
+      "run_command — run one shell command, immediately or once the user approves it, according to this node's execution policy",
     execute: async (params: Record<string, unknown>): Promise<{ text: string; hostCard?: Record<string, unknown> }> => {
       const command = typeof params.command === "string" ? params.command.trim() : "";
       if (command === "") return { text: "Cần một lệnh để chạy." };
@@ -242,10 +276,71 @@ export function createRunCommandTool(input: {
       const why = typeof params.why === "string" && params.why.trim() !== "" ? params.why.trim() : "";
       const reason = because ?? guard.because ?? "";
       const digest = commandDigest(command, resolvedCwd);
+      const policy = input.policy?.();
+      const mode: ExecutionMode = policy?.mode ?? "ask";
+      const category: EffectCategory = "local-write";
+      /*
+       * The mode decides whether this becomes a card, runs, or is refused.
+       *
+       * `explicitUserIntent` is false on purpose: the model proposed this command, and the user asked for
+       * an outcome rather than for these bytes. It is what the risk gate reads, and it is why a category
+       * that stays on this machine still runs in Autonomous while a destructive one would be asked about.
+       */
+      const decision: PolicyDecision =
+        policy === undefined
+          ? {
+              kind: "ask",
+              reason: "this node asks before every command",
+              approvalSpec: { effectCategory: category, operationDigest: digest, because: reason },
+            }
+          : decideExecution({
+              mode: policy.mode,
+              rules: policy.rules,
+              action: { kind: "effect", category, operationDigest: digest },
+              explicitUserIntent: false,
+            });
+
+      if (decision.kind === "deny") {
+        // Said in the same turn, so the model tells the user it was refused instead of reporting that it
+        // ran. Retrying would be refused again, which is why it is told not to.
+        return {
+          text:
+            `Không chạy lệnh đó: ${decision.reason}. Hãy nói cho người dùng biết là nó không chạy, và đừng ` +
+            `thử lại trừ khi họ đổi chính sách.`,
+        };
+      }
+
+      if (decision.kind === "execute") {
+        const audit = input.audit?.();
+        if (audit === undefined) {
+          // Autonomy without a record is the one combination this node refuses: an effect nobody approved
+          // and nobody can find afterwards is worse than a question.
+          return { text: "Không chạy được lệnh: node này chưa ghi được dấu vết cho việc chạy tự động." };
+        }
+        // Recorded before the command starts, so a command that hangs or dies still shows that it began.
+        recordEffectExecution(audit.deps, {
+          principalId: audit.principalId,
+          mode,
+          decision,
+          category,
+          operationDigest: digest,
+          ...(audit.conversationId === undefined ? {} : { conversationId: audit.conversationId }),
+          description: `${command} — ${resolvedCwd}`,
+        });
+
+        const outcome = await runCommand({ command, cwd: resolvedCwd });
+        // This text becomes the call's own receipt in the transcript, which is where a reader looks for
+        // what a command printed.
+        return { text: `${describeCommandOutcome(command, outcome)}\n\n${commandOutput(outcome)}` };
+      }
+
       const approval = requestApproval(input.approvals(), {
         operationDigest: digest,
         operationDescription:
-          `Chạy một lệnh trong ${resolvedCwd}` + (reason === "" ? "" : ` (${reason})`) + (why === "" ? "" : `: ${why}`),
+          `Chạy một lệnh trong ${resolvedCwd}` +
+          (reason === "" ? "" : ` (${reason})`) +
+          (why === "" ? "" : `: ${why}`) +
+          ` — ${decision.approvalSpec.because}`,
         effectCategory: "local-write",
         // A quarter of an hour: long enough to read the command and decide, short enough that a card left
         // on screen overnight cannot be approved the next morning for a stale reason.
