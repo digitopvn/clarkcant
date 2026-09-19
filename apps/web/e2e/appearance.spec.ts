@@ -3,6 +3,8 @@ import { join } from "node:path";
 
 import { expect, test, type Page } from "@playwright/test";
 
+import { SETTINGS_TABS } from "@clarkcant/contracts";
+
 /**
  * Appearance and the settings modal.
  *
@@ -75,7 +77,7 @@ test("a theme choice changes the surface, follows the system, and survives a rel
   await page.screenshot({ path: join(EVIDENCE, "theme-03-light-after-reload.png"), fullPage: true });
 });
 
-test("settings is a modal with three distinct tabs, and Escape returns focus to the gear", async ({ page }) => {
+test("settings is a modal whose tabs each show their own content, and Escape returns focus to the gear", async ({ page }) => {
   mkdirSync(EVIDENCE, { recursive: true });
   await openApp(page);
 
@@ -84,9 +86,9 @@ test("settings is a modal with three distinct tabs, and Escape returns focus to 
 
   const dialog = page.locator('[data-modal="true"]');
   await expect(dialog).toBeVisible();
-  // Three, not four: voice is a mode of the conversation, not a setting, and it left this dialog for the
-  // composer's microphone button.
-  await expect(page.locator('[role="tab"]')).toHaveCount(4);
+  // The tabs the panel actually has, taken from the contract rather than counted here. This said four and went
+  // stale the moment the Memory tab was added - a count that is written into a test is a count that drifts.
+  await expect(page.locator('[role="tab"]')).toHaveCount(SETTINGS_TABS.length);
 
   // Each tab shows its own content. Asserted by comparing what is rendered rather than by checking
   // that a heading exists, since three labels over one shared panel would pass the weaker check.
