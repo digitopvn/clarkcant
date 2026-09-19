@@ -261,6 +261,20 @@ export function attachVoiceGateway(options: VoiceGatewayOptions): VoiceGateway {
     let authenticated = false;
     let conversationId: ConversationId | undefined;
     let adapter: VoiceProviderAdapter | undefined;
+
+    /*
+     * Whether the agent has asked for something to be said, and has not finished saying it.
+     *
+     * The voice channel carries exactly what the agent decided to say, and nothing the model volunteers. That rule
+     * exists because of what a person heard: the live model is told to stay quiet while they talk, and a rule that
+     * describes silence rather than the work gets said out loud - the instruction's own words came back through the
+     * speaker over and over.
+     */
+    let awaitingSpeech = false;
+    const say = (text: string): void => {
+      awaitingSpeech = true;
+      adapter?.speak(text);
+    };
     let userText = "";
     /**
      * Closes the sentence when the transcription stops growing.
@@ -365,7 +379,7 @@ export function attachVoiceGateway(options: VoiceGatewayOptions): VoiceGateway {
           // said something reasonable should not have to guess why it was not understood.
           const again = "Tui chưa rõ ý bạn. Bạn nói “đồng ý” hoặc “không” giúp tui nhé.";
           send({ type: "transcript", role: "assistant", text: again, final: true });
-          adapter?.speak(again);
+          say(again);
           return;
         }
 
@@ -383,7 +397,7 @@ export function attachVoiceGateway(options: VoiceGatewayOptions): VoiceGateway {
               : "Đã từ chối. Không có gì được chạy."
             : `Không thực hiện được: ${decided.message}`;
           send({ type: "transcript", role: "assistant", text: said, final: true });
-          adapter?.speak(said);
+          say(said);
         });
         return;
       }
@@ -411,7 +425,7 @@ export function attachVoiceGateway(options: VoiceGatewayOptions): VoiceGateway {
           // heard even if playback never happens. The final text is the stored one, which is the one
           // that counts when a stream stops early.
           send({ type: "transcript", role: "assistant", text: reply, final: true });
-          adapter?.speak(reply);
+          say(reply);
 
           // A proposed command waits for a person. Asked here, in the same turn that produced it, because the
           // card is otherwise a click the voice mode cannot offer.
@@ -420,7 +434,7 @@ export function attachVoiceGateway(options: VoiceGatewayOptions): VoiceGateway {
             waiting = proposed;
             const question = `${proposed.description}. Bạn cho phép chạy hay là không?`;
             send({ type: "transcript", role: "assistant", text: question, final: true });
-            adapter?.speak(question);
+            say(question);
           }
         })
         .catch((cause: unknown) => {
@@ -517,8 +531,14 @@ export function attachVoiceGateway(options: VoiceGatewayOptions): VoiceGateway {
       active = { sessionId, holder };
       adapter = createAdapter();
 
-      adapter.onStateChange((state) => send({ type: "state", state }));
+      adapter.onStateChange((state) => {
+        // The provider says when it stops speaking; until it does, the audio it sends belongs to the reply we asked for.
+        if (state !== "speaking") awaitingSpeech = false;
+        send({ type: "state", state });
+      });
       adapter.onAudio((pcm16) => {
+        // Not ours to play: the agent did not ask for this to be said, so it is not said.
+        if (!awaitingSpeech) return;
         // Audio goes back as a binary frame, not as JSON: base64 inside a control message would
         // inflate every chunk by a third and put a string conversion on the latency path.
         if (ws.readyState === ws.OPEN) ws.send(pcm16, { binary: true });

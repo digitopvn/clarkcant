@@ -327,7 +327,41 @@ describe("a live session", () => {
       text: "hello from the model",
     });
 
-    // And audio comes back as a binary frame rather than as a control message.
+    /*
+     * What used to be asserted here - that this audio reached the socket - is now asserted the other way round, in the
+     * test about what the agent asked to be said. The rule narrowed on purpose: a frame with no request behind it is the
+     * model talking on its own, and that is what a person heard coming out of the speaker.
+     */
+    adapter.sendAudioBack(new Uint8Array([4, 5, 6]));
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  });
+
+  it("does not play audio the agent never asked to be said", async () => {
+    const adapter = new FakeAdapter();
+    // An answer is what gives the session something of its own to read aloud; audio arriving with no such request is
+    // the model talking on its own, which is the thing this refuses.
+    context = await startGateway(() => "credential", adapter, {
+      answer: async () => ({ reply: "troi nang", recordedMessages: 1 }),
+    });
+    const client = connect(context.url);
+    await client.opened;
+    client.auth(TOKEN, CONVERSATION);
+    await client.control("ready");
+
+    // First the volunteered audio, then something the agent actually asked to be said. The order is the evidence: if
+    // the volunteered frame had been played, it would be the first binary frame the socket saw, and the assertion below
+    // would find [9, 9, 9] instead of the reply's own audio.
+    adapter.sendAudioBack(new Uint8Array([9, 9, 9]));
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(adapter.spoken).toEqual([]);
+
+    adapter.emitTranscript("what is the weather", "user", false);
+    adapter.emitTranscript("", "user", true);
+    for (let attempt = 0; attempt < 20 && adapter.spoken.length === 0; attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+    expect(adapter.spoken.length).toBeGreaterThan(0);
+
     adapter.sendAudioBack(new Uint8Array([4, 5, 6]));
     const audio = await client.waitFor((message) => message.binary, "an audio frame");
     expect(audio.binary && [...audio.bytes]).toEqual([4, 5, 6]);
