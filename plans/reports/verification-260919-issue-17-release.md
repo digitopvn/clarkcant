@@ -9,9 +9,9 @@ trên cây đã merge `main`**, không phải số của lần chạy cũ.
 | Cổng | Lệnh | Kết quả |
 | --- | --- | --- |
 | Invariant | `pnpm run invariants` | 7/7 PASS |
-| Typecheck + lint + unit test | `pnpm verify` | **1397 passed, 7 skipped (1404)** |
-| Browser suite | `pnpm test:e2e` | **80 passed, 0 failed** |
-| Đồng bộ với `main` | `git rev-list HEAD..origin/main` | 0 (merge `7d9caea`; PR #38 squash thành `9e90535`) |
+| Typecheck + lint + unit test | `pnpm verify` | **1410 passed, 7 skipped (1417)** |
+| Browser suite | `pnpm test:e2e` | **82 passed, 0 failed** |
+| Đồng bộ với `main` | `git rev-list HEAD..origin/main` | 0 (merge `7d9caea`, PR #38 squash thành `9e90535`; sau đó `main` nhận PR #39 và bản sửa tài liệu này) |
 
 ## Hai journey từng bị chặn, và đã sửa tại gốc
 
