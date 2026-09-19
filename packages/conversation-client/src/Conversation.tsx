@@ -251,6 +251,20 @@ export function Conversation({
    * session sat in a settings tab. Speaking is a mode of the conversation, so it belongs here.
    */
   const [voiceOpen, setVoiceOpen] = useState(false);
+  /**
+   * Whether this window is showing the compact surface only.
+   *
+   * A test hook, and named as one: `?cc-compact=1` puts a browser into the presentation the desktop window takes
+   * when it shrinks, so the browser suite can prove that surface without pretending to have a shell. Nothing
+   * changes it, because the real path into it is the window resizing rather than anything in the document.
+   */
+  const [compactSurface] = useState(
+    () => new URLSearchParams(window.location.search).get("cc-compact") === "1",
+  );
+
+  useEffect(() => {
+    if (compactSurface) setVoiceOpen(true);
+  }, [compactSurface]);
   /** Which approval is in flight, so one card says so rather than every card looking busy. */
   const [decidingApprovalId, setDecidingApprovalId] = useState<string | undefined>(undefined);
   /**
@@ -1187,6 +1201,7 @@ export function Conversation({
       // narrower than the input it sits over - so it is taken out of the way instead, which is also what the
       // mode means: while the microphone is open, the thing you talk to is not the text box.
       data-voice-open={voiceOpen ? "true" : "false"}
+      data-compact={compactSurface ? "true" : "false"}
       ref={shell}
       style={
         {
@@ -1645,6 +1660,7 @@ export function Conversation({
       {voiceOpen && (
         <VoiceOverlay
           client={client}
+          startCollapsed={compactSurface}
           {...(conversationId === undefined ? {} : { conversationId })}
           onAnswered={refreshTimeline}
           onProgress={scheduleVoiceRefresh}

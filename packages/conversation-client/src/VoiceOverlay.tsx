@@ -115,6 +115,13 @@ export interface VoiceOverlayProps {
    * the client here: this overlay owns the microphone, and what is on screen belongs to the surface behind it.
    */
   focusedInstanceId?: string | undefined;
+  /**
+   * Start out of the way, showing only the bar.
+   *
+   * The collapsed presentation is what the desktop window becomes when it shrinks, and this is how a browser can
+   * be put into it too - without pretending to have a shell, and without the test inventing a second bar.
+   */
+  startCollapsed?: boolean | undefined;
   requires?: string;
   unblockedBy?: string;
 }
@@ -127,6 +134,7 @@ export function VoiceOverlay({
   onProgress,
   onAppIntent,
   focusedInstanceId,
+  startCollapsed = false,
   requires = "một phiên Live API đang mở",
   unblockedBy = "đặt GEMINI_API_KEY cho node rồi thử lại",
 }: VoiceOverlayProps): ReactElement {
@@ -137,7 +145,7 @@ export function VoiceOverlay({
    *
    * The session keeps running while it is collapsed: this hides the body, not the microphone.
    */
-  const [collapsed, setCollapsed] = useState(false);
+  const [collapsed, setCollapsed] = useState(startCollapsed);
   const [problem, setProblem] = useState<string | undefined>(undefined);
   /**
    * The credential the node refused the session for, when it refused for one.

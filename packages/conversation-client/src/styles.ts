@@ -1354,4 +1354,12 @@ button:focus-visible, textarea:focus-visible, input:focus-visible, [tabindex]:fo
   .cc-desktop-button[data-pinned="true"] { border-color: var(--cc-accent, #7aa2f7); }
   .cc-desktop-mode { -webkit-app-region: no-drag; font-size: 11px; opacity: 0.72; padding-right: 6px; }
   .cc-desktop-problem { -webkit-app-region: no-drag; font-size: 11px; padding-right: 6px; opacity: 0.9; }
+
+  /*
+   * The compact surface: what the window shows when it has shrunk to the voice bar.
+   *
+   * The conversation is not unmounted - the session behind it keeps running, which is the whole point - so this
+   * takes the window and hides what is underneath rather than removing it.
+   */
+  [data-compact="true"] .cc-voice-scrim { position: fixed; inset: 0; border-radius: 0; background: var(--cc-bg, #0d1117); }
 `;
