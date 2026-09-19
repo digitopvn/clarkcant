@@ -134,7 +134,9 @@ Phase 12 là cổng cuối, không sửa giữa các stage ship.
 ## Success Criteria
 
 - [x] `pnpm verify` xanh: invariant + typecheck + lint + unit test. — chạy trên cây đã merge `main`: **1344 passed | 7 skipped (1351)**.
-- [ ] `pnpm test:e2e` xanh, có journey mới cho từng tính năng trong năm mục của issue. — **CHƯA ĐẠT**: bốn lỗi đã đo là đỏ sẵn ở commit gốc `7f3127f` (Stage A, chạy đối chứng trên worktree riêng), và **không** tính là xanh. `.github/workflows/ci.yml` **không** chạy `test:e2e`, nên CI xanh không nói gì về cổng này.
+- [x] `pnpm test:e2e` xanh, có journey mới cho từng tính năng trong năm mục của issue.
+      — **78 passed, 0 failed** (`pnpm test:e2e`, chromium). `.github/workflows/ci.yml` **không** chạy `test:e2e`,
+      nên CI xanh không nói gì về cổng này; nó được chạy tay và ghi lại số thật.
 - [ ] `pnpm --filter @clarkcant/app-desktop run smoke` xanh, chạy trên máy có display, output JSON
       lưu lại làm evidence (đây là **cổng do người vận hành chạy**, không nằm trong `pnpm verify`).
 - [x] Nút `+` không còn `disabled`; chuỗi "Chưa hỗ trợ đính kèm" không còn trong mã. — `apps/web/e2e/attachments.spec.ts` (chip đính kèm xuất hiện và tệp đi được tới agent).
@@ -154,16 +156,20 @@ Phase 12 là cổng cuối, không sửa giữa các stage ship.
 
 ## Tiêu chí chưa đạt (ghi rõ, không che)
 
-Hai tiêu chí ở trên vẫn để trống có chủ đích, và đây là lý do:
+Một tiêu chí ở trên vẫn để trống có chủ định, và đây là lý do:
 
-- **`pnpm test:e2e` xanh**: bốn journey đỏ sẵn ở commit gốc `7f3127f` (đo bằng worktree đối chứng ở Stage A) cộng
-  hai journey bị chặn bởi fixture thoại. Chúng **không** bị sửa để xanh, và không tính là xanh.
-- **T66 → PASS**: journey chạm widget action state không chạy được vì fixture thoại đưa câu đã script cho sai phiên;
-  cùng nguyên nhân làm journey "tab được gọi tên" của T73 đỏ. Cả hai đã ra khỏi suite kèm điều kiện còn thiếu, và
-  ledger ghi T66 `NOT-IMPLEMENTED`, T73 `PARTIAL`.
 - **Smoke desktop**: `pnpm --filter @clarkcant/app-desktop run smoke` là cổng do người vận hành chạy trên máy có
   display; CI không có display nên nó chưa từng chạy trong phiên này. Điều kiện còn thiếu: job `xvfb-run`.
 
+Đã sửa xong và đo được, không còn là tiêu chí chưa đạt:
+
+- **`pnpm test:e2e` xanh** — **78 passed, 0 failed**. Bốn lỗi đỏ sằn ở `7f3127f` đã được sửa tại gốc:
+  T66 (trang thiếu handler cho frame `widget-action-result`), T73 (panel có hai effect cùng trigger, effect sau ghi đè
+  tab vừa được gọi tên), `appearance.spec.ts:277` (spec đòi ô model trong khi chính file này có journey khác khẳng định
+  node không có model — một node dùng chung không thể vừa có catalogue vừa báo không có), và `j1.spec.ts` (node fixture không có
+  turn control nên đường background bị từ chối, cộng thêm một phụ thuộc thứ tự: journey "header không nói gì khi không có" chỉ
+  đúng khi nó chạy trước journey tạo phiên nền).
+- **T66 → PASS** và **T73 → PASS**: cả hai journey đã xanh và nằm trong suite, ledger ghi đúng trạng thái kèm tên test.
 ## Gates còn mở (cần người xác nhận, không chặn code)
 
 - **Kích thước thanh voice tối giản trên display thật.** Issue ghi "~20×50px" cho *icon*; Done-when

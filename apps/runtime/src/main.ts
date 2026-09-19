@@ -658,6 +658,28 @@ async function main(): Promise<void> {
     process.stderr.write(
       "overview: FIXTURE composer loaded — overview requests are scripted, and no provider is called for them\n",
     );
+    /*
+     * The background path needs a turn control, and the fixture node has none.
+     *
+     * Measured: `services.turnControl` is assigned only when a model turn exists, and `createModelTurn` returns
+     * undefined without a model selection - while the adapter it would otherwise build is the real one, so naming a
+     * provider in the environment would put a real provider call behind every turn. The suite's own journey says a
+     * fixture node has a model turn and asserts the accepted path rather than the refusal, so the control is what is
+     * published here: a scripted background runner and nothing else. No model identity and no catalogue, because the
+     * fixture node deliberately reports that it has no model, and other journeys assert exactly that.
+     */
+    if (services.turnControl === undefined) {
+      services.turnControl = {
+        running: () => [],
+        interrupt: () => true,
+        steer: () => Promise.resolve(false),
+        runInBackground: (input) =>
+          Promise.resolve(`Đã xử lý đoạn này trong một phiên nền (fixture): ${input.text.slice(0, 80)}`),
+      };
+      process.stderr.write(
+        "background: FIXTURE turn control loaded — background work is scripted, and no provider is called\n",
+      );
+    }
   }
 
   // The model may now ask for these views. When there are none the `show_view` tool is not
