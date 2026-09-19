@@ -612,7 +612,32 @@ export function SettingsPanel({
                     {keyStatuses[entry.name]}
                   </p>
                 )}
-              </form>
+                              <button
+                  type="button"
+                  className="cc-chip"
+                  data-settings-key-remove={entry.name}
+                  onClick={() => {
+                    client
+                      .deleteCredential(entry.name)
+                      .then(() => {
+                        setKeyStatuses((current) => ({
+                          ...current,
+                          [entry.name]: "Đã đăng xuất: node không còn giữ khoá này.",
+                        }));
+                      })
+                      .catch(() =>
+                        // A refusal here usually means there was nothing to remove, which is a different answer from a
+                        // failure and is said as one rather than dressed up as an error.
+                        setKeyStatuses((current) => ({
+                          ...current,
+                          [entry.name]: "Không xoá được — có thể node chưa giữ khoá này.",
+                        })),
+                      );
+                  }}
+                >
+                  Đăng xuất
+                </button>
+                </form>
             ))}
           </section>
         )}

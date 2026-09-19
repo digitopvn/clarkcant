@@ -516,6 +516,17 @@ export class GatewayClient {
   }
 
   /**
+   * Forgets a credential this node holds.
+   *
+   * This is what logging out of a provider is: the key is the only thing the node holds for it, so a node that has
+   * forgotten it stops using that provider. The node answers with the names that remain, never a value and never a
+   * length, and says not-found rather than success when there was nothing to forget.
+   */
+  async deleteCredential(name: string): Promise<{ ok: boolean; names: string[] }> {
+    return this.#call("DELETE", `/credentials/${encodeURIComponent(name)}`);
+  }
+
+  /**
    * What this node offers, and what the agent it drives offers.
    *
    * Two lists rather than one, because a reader deciding whether something is possible needs to know which half would

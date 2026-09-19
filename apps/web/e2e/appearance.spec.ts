@@ -194,3 +194,15 @@ test("the settings panel lists what this node can run, or says plainly that it c
   }
 });
 
+test("every key in settings can be taken back again, which is how a provider is logged out of", async ({ page }) => {
+  await openApp(page);
+  await page.locator("[data-settings='true']").click();
+  await page.getByRole("tab", { name: "Devices" }).click();
+
+  // Both keys, because a logout for one and not the other is the kind of half-wired surface that looks finished.
+  for (const name of ["gemini", "typesafe"]) {
+    await expect(page.locator(`[data-settings-key-form='${name}']`)).toBeVisible();
+    await expect(page.locator(`[data-settings-key-remove='${name}']`)).toBeVisible();
+  }
+});
+
