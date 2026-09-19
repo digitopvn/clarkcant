@@ -1,7 +1,8 @@
 # Conformance traceability
 
-Generated view of what is actually verified versus what is not. Every scope item and
-every acceptance test from `docs/implementation-plan.md` appears here exactly once.
+Bảng bằng chứng được duy trì thủ công cho các scope item và acceptance test trong
+[implementation-plan.md](implementation-plan.md). Mỗi trạng thái cần được đọc cùng
+test và giới hạn tương ứng; việc có test không chứng minh lần chạy hiện tại đã đạt.
 
 **Status vocabulary**
 
@@ -94,20 +95,20 @@ A status here is never upgraded without the corresponding test appearing alongsi
 
 | ID | Status | Feature | What is real and what is not |
 |---|---|---|---|
-| V01 | PARTIAL | Conversation client | One timeline, one composer, pins and a shared React surface are implemented and verified in a real browser (8 Playwright tests). Voice and the desktop host are not built. |
+| V01 | PARTIAL | Conversation client | Bằng chứng hội thoại, voice và attachments nằm trong [browser suite](../apps/web/e2e/), gồm [voice](../apps/web/e2e/voice.spec.ts) và [attachments](../apps/web/e2e/attachments.spec.ts). [Electron shell](../apps/desktop/src/main.mjs) đã có mã nguồn; browser suite không chứng minh Electron hay bản phân phối desktop hoàn chỉnh. |
 | V02 | PARTIAL | Portable runtime | `apps/runtime` boots a node with its own identity and database on macOS and Linux, and the gateway refuses an unauthenticated request. The Unix-socket transport and OCI image are not built. |
-| V03 | PARTIAL | Persistent task/session runtime | The full task/run/effect state machine, outbox/inbox durability and success gating are implemented and tested. The conductor and real worker pool are not wired. |
+| V03 | PARTIAL | Persistent task/session runtime | Task/run/effect có bằng chứng trong [core tests](../packages/core/test/); conductor đã nối với runtime qua [services.ts](../apps/runtime/src/services.ts) và có [routing tests](../apps/runtime/test/conductor-routing.spec.ts). Project-work capability vẫn được đăng ký ở trạng thái chưa loaded; đường model/background session không chứng minh worker pool thực thi capability đã hoàn chỉnh. |
 | V04 | PARTIAL | Trusted node linking | Envelope validation, identity checking, invite single-use and revoke are implemented and tested. Pairing between two live hosts is not exercised. |
 | V05 | PARTIAL | Remote collaboration | Delivery semantics, dedup and grant narrowing are implemented and tested. A live two-node delegation is not exercised. |
 | V06 | PARTIAL | Workspace registry | Node-qualified resource references, locality routing and lease serialization are implemented and tested. Explicit file transfer is not built. |
-| V07 | PARTIAL | Capability platform | The registry with independent readiness facets, lazy schema loading and node resolution is implemented and tested. Live MCP transport is not built. |
+| V07 | PARTIAL | Capability platform | Registry và readiness có bằng chứng trong [core tests](../packages/core/test/). MCP stdio có [test với tiến trình server thật](../packages/mcp-adapters/test/stdio.spec.ts); streamable-HTTP vẫn chưa được triển khai. |
 | V08 | PARTIAL | Conversational install | Plan creation, join-or-create, digest-bound consent, generation activation and rollback are implemented and tested. Quarantine download and isolated build are not built. |
 | V09 | PARTIAL | Credential/auth setup | An encrypted vault, redaction, PKCE generation, state comparison, scope verification and endpoint allowlisting are implemented and tested. A live token exchange is not built. |
 | V10 | PARTIAL | Reference integration (Google Calendar) | Scope planning, time normalisation, agenda building, conflict detection, write-outcome classification and freshness labelling are implemented and tested. No live account is connected. |
-| V11 | PARTIAL | Rich built-ins | Line and bar charts, a sortable table and a local note render from descriptors and are verified in a browser. Most of the 18 catalog families are not built. |
-| V12 | PARTIAL | Custom widgets | The bridge codec, nonce validation, sandbox/CSP policy and props validation are implemented and tested. The mini-app runtime is not built. |
+| V11 | PARTIAL | Rich built-ins | Đối chiếu [catalog](../packs/data-canvas/src/index.ts) với [widget tests](../apps/web/e2e/widget.spec.ts) và [composition tests](../apps/web/e2e/mini-app.spec.ts); không suy ra toàn bộ catalog thiết kế đã hoàn thành từ các family có test. |
+| V12 | PARTIAL | Custom widgets | Declarative composition có [browser tests](../apps/web/e2e/mini-app.spec.ts). Không đồng nhất đường này với executable widgets: renderer runtime cho isolated-app/MCP Apps chưa được chứng minh; xem [ranh giới widget](widgets-and-extensions.md). |
 | V13 | PARTIAL | Pins | Pin persistence and single-live-owner enforcement are verified in a browser. Restore-without-autoplay returns the stored position and does not play, verified in core. The pinned media surface itself is a synthetic fixture, not a vendor player. |
-| V14 | PARTIAL | Browser Use | A real Playwright driver runs against a real Chromium: managed profile, origin policy, observation correlation, staleness refusal, local stop, human takeover and secret-entry suspension, 12 integration tests. Takeover preview UI and the injection fixture are not built. |
+| V14 | PARTIAL | Browser Use | Bằng chứng driver Chromium nằm trong [driver.spec.ts](../packs/browser-playwright/test/driver.spec.ts); prompt injection và submit không lặp có [injection.spec.ts](../packs/browser-playwright/test/injection.spec.ts) và [submit-once.spec.ts](../packs/browser-playwright/test/submit-once.spec.ts). Takeover preview UI vẫn chưa được triển khai. |
 | V15 | PARTIAL | Computer Use | Permission gating, containment labelling, target validation and profile validation are implemented and tested. The native bindings need a signed bundle and a container engine. |
 | V16 | PARTIAL | Onboarding/personalisation | Quick play works with no credentials and is labelled as sample in a host-owned card, verified in a browser. Needs-based setup and preference undo are not built. |
 | V17 | PARTIAL | Live voice | Transcript assembly, intent routing, media-focus arbitration and mute/end semantics are implemented and tested. The transport is a node-proxied WebSocket to Gemini Live (`packages/voice-adapters/src/gemini-live.ts`, `apps/runtime/src/voice-session.ts`), not browser-direct WebRTC, and the browser holds no provider credential (`docs/research/adr-001-gemini-live-provider.md`). |
@@ -115,9 +116,7 @@ A status here is never upgraded without the corresponding test appearing alongsi
 
 ## Summary
 
-Acceptance tests: 64 pass, 4 blocked, 4 not implemented (of 72).
-Scope items: 18 partial, 0 not implemented (of 18).
-
-No scope item is claimed as complete. The layers that are implemented are tested; the
-layers that are not are named individually rather than hidden behind a percentage.
-
+Các bảng trên là nơi tra trạng thái từng yêu cầu; không scope item nào được tuyên bố
+hoàn tất. Fixture chứng minh đường nối của ứng dụng, không thay thế kiểm chứng với
+provider thật. Định hướng UX trong [DESIGN.md](../DESIGN.md) không tự nâng trạng thái
+conformance khi chưa có bằng chứng triển khai.

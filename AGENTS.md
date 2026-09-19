@@ -227,7 +227,7 @@ Update DESIGN.md in the same change when intentionally changing a UX invariant.
 ## Commands
 
     pnpm verify
-    pnpm exec vitest run packages/core/test/x.spec.ts
+    pnpm exec vitest run packages/core/test/core.spec.ts
     pnpm test:e2e
     pnpm exec playwright install --with-deps chromium
     pnpm verify:full
@@ -253,7 +253,9 @@ and ports so it cannot read the wrong identity file.
 
 ## Repository invariants
 
-pnpm invariants fails otherwise:
+Chạy `pnpm invariants` để kiểm tra các ràng buộc tự động trong
+`tools/check-invariants.mjs`. Các yêu cầu dưới đây còn bao gồm quy tắc review;
+không coi checker là bằng chứng cho những điều nó không kiểm tra:
 
 - Editing any file listed in docs/manifest.json requires updating that entry's
   bytes and sha256. The check names the stale entry.
