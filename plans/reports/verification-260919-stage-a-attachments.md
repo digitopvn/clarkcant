@@ -85,8 +85,11 @@ chính e2e sinh ra, gitignored, đã mở kiểm: không có token của node tr
 - `pnpm test:e2e`: 10/10 test của `apps/web/e2e/attachments.spec.ts` xanh; toàn suite 47 xanh / **4 đỏ
   có trước**, không thuộc Stage A. Điều kiện còn thiếu của từng test, lấy từ chính thông báo lỗi:
   - `appearance.spec.ts:229` `"the model in use is what the fields show before anybody types"` —
-    `locator('[data-search-input=\'model\']')` **không tìm thấy phần tử**. Cần tab Models có ô tìm model
-    theo catalogue của node, thuộc settings-tabs phần providers.
+    `locator('[data-search-input=\'model\']')` **không tìm thấy phần tử**. Node mà e2e boot không cấu
+    hình model (nó dùng `CC_MODEL_FIXTURE=1`, fixture thay cả lượt model), và tab Models không render ô
+    tìm model trong trạng thái đó. **Không** phải vì thiếu catalogue: `RealPiAdapter.catalogue()` và
+    route model đã có trên `7f3127f`. Điều kiện còn thiếu: hoặc node e2e có một model cấu hình, hoặc
+    tab Models render trường đó cả khi chưa có model.
   - `onboarding.spec.ts:86` `"shows the name, the tagline and one way in, and does not come back"` —
     sau khi bấm `[data-onboarding-start]`, `[data-onboarding='true']` vẫn còn **1** phần tử: màn hình
     onboarding chưa tự đóng. Thuộc onboarding-v2.
