@@ -7,6 +7,7 @@ import {
   type ConversationId,
   type Instant,
   type SemanticView,
+  type VoiceCapabilities,
   nowInstant,
 } from "@clarkcant/contracts";
 import { semanticViewOf } from "@clarkcant/core";
@@ -169,6 +170,15 @@ export interface VoiceGateway {
   activeSessionCount(): number;
   /** The holder of the session, for a caller that needs to report it. */
   activeSessionHolder(): string | undefined;
+  /**
+   * What the configured provider can do, as it reports it.
+   *
+   * Read by the settings surface before it draws a voice control, so a provider that cannot select a voice
+   * shows no selector rather than one that changes nothing. Constructs an adapter to ask it: construction
+   * does not connect, and the alternative is duplicating a provider's capability list somewhere else, which
+   * is the duplication this contract exists to prevent.
+   */
+  capabilities(): VoiceCapabilities;
   close(): Promise<void>;
 }
 
@@ -837,6 +847,7 @@ export function attachVoiceGateway(options: VoiceGatewayOptions): VoiceGateway {
   return {
     activeSessionCount: () => (active === undefined ? 0 : 1),
     activeSessionHolder: () => active?.holder,
+    capabilities: () => createAdapter().capabilities,
     close: async () => {
       active = undefined;
       for (const client of wss.clients) client.close(1001, "the node is shutting down");

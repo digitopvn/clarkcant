@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { instantSchema } from "@clarkcant/contracts";
+import { instantSchema, voiceCapabilitiesSchema } from "@clarkcant/contracts";
 import { decideExecution, recordEffectExecution } from "@clarkcant/core";
 
 import { handleRequest, type GatewayDeps, type GatewayRequest, type GatewayResponse } from "../src/gateway.ts";
@@ -171,6 +171,65 @@ describe("the activity route reports what ran without asking", () => {
 
     const serialised = JSON.stringify(await effects());
     expect(serialised).not.toContain("sk-live-should-not-travel");
+    expect(serialised).not.toContain("apiKey");
+  });
+});
+
+/**
+ * The voice capability route.
+ *
+ * The surface draws its voice control from this, so the wire shape is the contract: a provider that cannot
+ * select a voice must say so here, or the settings tab would offer a picker that changes nothing.
+ *
+ * A node with no voice gateway is a real state — a fixture node, or one whose voice failed to attach — and it
+ * answers with a provider that supports nothing rather than with an error, because there is no control the
+ * person in front of the panel could use either way.
+ */
+describe("the voice capability route", () => {
+  it("is behind the same token as every other route", async () => {
+    expect((await request("GET", "/voice/capabilities", { authed: false })).status).toBe(401);
+  });
+
+  it("reports a provider that supports nothing when this node has no voice gateway", async () => {
+    const response = await request("GET", "/voice/capabilities");
+    expect(response.status).toBe(200);
+    const { capabilities } = response.body as { capabilities: Record<string, unknown> };
+    expect(capabilities).toMatchObject({
+      supportsVoiceSelection: false,
+      supportsPreview: false,
+      voices: [],
+    });
+    // A reason travels with it, so the tab can say why instead of showing an unexplained gap.
+    expect(String(capabilities.note)).not.toBe("");
+  });
+
+  it("reports what the wired provider says, and validates against the contract", async () => {
+    services.voiceCapabilities = () => ({
+      provider: "gemini-live",
+      supportsVoiceSelection: true,
+      voices: [{ id: "Kore", label: "Kore" }],
+      supportsPreview: false,
+      note: "chưa có nghe thử",
+    });
+
+    const response = await request("GET", "/voice/capabilities");
+    const { capabilities } = response.body as { capabilities: unknown };
+    const parsed = voiceCapabilitiesSchema.safeParse(capabilities);
+    expect(parsed.success, parsed.success ? "" : JSON.stringify(parsed.error.issues)).toBe(true);
+    expect(capabilities).toMatchObject({ provider: "gemini-live", supportsVoiceSelection: true });
+  });
+
+  it("never carries a credential, whatever the provider reports", async () => {
+    // The route reports capability, not configuration: no key, no token, no session id.
+    services.voiceCapabilities = () => ({
+      provider: "gemini-live",
+      supportsVoiceSelection: true,
+      voices: [{ id: "Kore", label: "Kore" }],
+      supportsPreview: false,
+    });
+    const serialised = JSON.stringify((await request("GET", "/voice/capabilities")).body);
+    expect(serialised).not.toContain("token");
+    expect(serialised).not.toContain("Bearer");
     expect(serialised).not.toContain("apiKey");
   });
 });

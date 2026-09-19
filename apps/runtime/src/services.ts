@@ -1,6 +1,6 @@
 import { randomBytes } from "node:crypto";
 
-import { type Instant, type WidgetDefinition, nowInstant } from "@clarkcant/contracts";
+import { type Instant, type VoiceCapabilities, type WidgetDefinition, nowInstant } from "@clarkcant/contracts";
 import {
   type ConductorDeps,
   type WidgetDeps,
@@ -103,6 +103,15 @@ export interface NodeServices {
    * rather than as an error - the node is still a node.
    */
   modelCatalogue?: () => Promise<ModelCatalogue>;
+
+  /**
+   * What the configured voice provider can do, as it reports it.
+   *
+   * Assigned after boot for the same reason as the catalogue: the voice gateway is attached to the server that
+   * hosts these routes, so the wiring runs one way. Absent means this node has no voice gateway at all, which the
+   * route reports as a provider that supports nothing rather than as an error.
+   */
+  voiceCapabilities?: () => VoiceCapabilities;
 
   /** What pi loads on this machine. Names and kinds, never contents. */
   extensions?: () => Promise<readonly { readonly name: string; readonly kind: "directory" | "file" }[]>;

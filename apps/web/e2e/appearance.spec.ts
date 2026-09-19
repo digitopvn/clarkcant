@@ -428,3 +428,40 @@ test("personal instructions can be written, survive a reload, and are never sent
     )
     .toBe(true);
 });
+
+test("the voice picker is drawn from what the provider says it can do", async ({ page }) => {
+  /*
+   * The picker is provider-driven, and this asserts the consequence rather than the markup: either the provider
+   * offers voices and a searchable field is there, or it does not and the tab says why in words.
+   *
+   * What must never appear is a picker filled from a list this application wrote down: that would offer one
+   * provider's voices to another, and the failure would arrive as a session that connects and then says nothing.
+   * The e2e node runs the fixture provider, which declares two voices and no preview — so both branches below
+   * are real states this application can be in, not hypotheticals.
+   */
+  await openApp(page);
+  await page.locator("[data-settings='true']").click();
+  await page.getByRole("tab", { name: "Devices & Voice" }).click();
+
+  const section = page.locator("[data-voice-settings='true']");
+  await expect(section).toBeVisible();
+
+  // The provider is named, because a voice only means something relative to who is speaking.
+  const capabilities = page.locator("[data-voice-capabilities]");
+  await expect(capabilities).toBeVisible({ timeout: 20_000 });
+  const provider = await capabilities.getAttribute("data-voice-capabilities");
+  expect(provider).not.toBeNull();
+
+  // Either a searchable voice field, or the reason there is none — never an empty gap.
+  await expect(
+    page.locator("[data-search-input='voice'], [data-tone='warn']").first(),
+  ).toBeVisible({ timeout: 20_000 });
+
+  // The preview control follows the provider's own answer: enabled only if it says it can preview, and
+  // otherwise disabled with the reason beside it rather than hidden or silently inert.
+  const preview = page.locator("[data-voice-preview='true']");
+  await expect(preview).toBeVisible();
+  if (await preview.isDisabled()) {
+    await expect(page.locator("[data-voice-preview-blocked='true']")).toBeVisible();
+  }
+});
