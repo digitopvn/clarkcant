@@ -40,7 +40,7 @@ import { FixtureLiveAdapter } from "./voice-fixture.ts";
 import { SAMPLE_DATASET } from "@clarkcant/data-canvas/sample";
 
 import { createModelTurn, type ViewDescriptor } from "./model-turn.ts";
-import { memoryBrief } from "./memory.ts";
+import { memoryBrief, rememberMemory } from "./memory.ts";
 import { attachmentRefsForLastUserMessage } from "./attachments.ts";
 import { buildViewCatalog } from "./view-catalog.ts";
 import { registerNodeTools } from "./tool-catalogue.ts";
@@ -302,6 +302,32 @@ async function main(): Promise<void> {
         text: reply,
         block: { type: "surface", definitionRef: { id: GALLERY.id, version: GALLERY.version }, snapshot },
       };
+    }
+
+    /*
+     * A sentence that asks the node to remember something.
+     *
+     * This calls the same function the `remember` tool calls, so what it proves is the pipeline - redaction, the
+     * write, the brief, and the Memory tab reading it back - and not that a model decided to remember. That
+     * decision needs a real provider and is recorded as a blocked condition rather than implied by this.
+     */
+    const asked = /(?:nhớ rằng|ghi nhớ)\s*[:：]?\s*(.+)/i.exec(input.text);
+    if (asked !== null) {
+      const outcome = rememberMemory(
+        { db: services.runtime.db, now: () => new Date().toISOString(), newId: services.conductor.newId },
+        {
+          principalId: input.principal.principalId,
+          conversationId: input.conversationId,
+          kind: "preference",
+          scope: "node",
+          text: (asked[1] ?? "").trim(),
+        },
+      );
+      const reply =
+        "refused" in outcome
+          ? `Fixture: không ghi nhớ được - ${outcome.refused}`
+          : `Fixture: đã ghi nhớ (${outcome.kind}) ${outcome.text}`;
+      return { text: reply, block: { type: "text", format: "plain", content: reply, streaming: false } };
     }
 
     if (!/tổng quan|tong quan|overview/i.test(input.text)) return undefined;
