@@ -459,6 +459,21 @@ importers:
         specifier: workspace:*
         version: link:../contracts
 
+  packages/widget-cli:
+    dependencies:
+      '@clarkcant/contracts':
+        specifier: workspace:*
+        version: link:../contracts
+      '@clarkcant/widget-host':
+        specifier: workspace:*
+        version: link:../widget-host
+      '@clarkcant/widget-sdk':
+        specifier: workspace:*
+        version: link:../widget-sdk
+      zod:
+        specifier: 4.6.5
+        version: 4.6.5
+
   packages/widget-host:
     dependencies:
       '@clarkcant/contracts':

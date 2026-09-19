@@ -17,10 +17,15 @@ import {
  *
  * Three decisions shape it.
  *
- * **Nothing is trusted until `init` arrives.** The nonce is issued by the host for this one frame, so
- * the runtime has no identity to speak with until it has been told one. Calling the author API before
- * then throws rather than queueing: a message sent before the handshake would have to carry a nonce the
- * runtime does not have, and inventing one is how a frame comes to act as another.
+ * **Nothing is *sent* until `init` arrives.** The nonce is issued by the host for this one frame, so the
+ * runtime has no identity to speak with until it has been told one, and every send before then throws rather
+ * than queueing: a message sent before the handshake would have to carry a nonce the runtime does not have,
+ * and inventing one is how a frame comes to act as another.
+ *
+ * Reading props and registering lifecycle handlers are not sends, and are allowed immediately. That is not a
+ * convenience: a widget has to be able to register `onMount` *before* init, because init is what fires it — a
+ * runtime that refused the API until init made mount impossible to observe, which is how the conformance suite
+ * found this.
  *
  * **The channel is an interface, not `MessagePort`.** `MessageEndpoint` is the three methods this
  * actually uses, which keeps the runtime free of DOM types and lets the handshake be tested as a
@@ -293,14 +298,7 @@ export function createWidgetRuntime(deps: RuntimeDeps): WidgetRuntime {
   return {
     status: () => status,
     instanceId: () => instanceId,
-    api: () => {
-      if (status === "awaiting-init") {
-        throw new Error(
-          "widget runtime: gọi API trước init là sai thứ tự — chưa có nonce và chưa biết instance nào",
-        );
-      }
-      return api;
-    },
+    api: () => api,
   };
 }
 

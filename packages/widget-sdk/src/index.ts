@@ -201,3 +201,11 @@ export const FORBIDDEN_API_SURFACE = [
  * of something a user can reach.
  */
 export const WIDGET_RUNTIME_STATUS = "runtime-and-host-session-implemented";
+
+/*
+ * The runtime a mini-app imports.
+ *
+ * Re-exported from the package root so an author has one import rather than two: the contract and the thing that
+ * implements it are the same package from the outside.
+ */
+export * from "./runtime.ts";

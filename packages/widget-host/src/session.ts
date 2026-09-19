@@ -98,7 +98,14 @@ export function createFrameSession(input: FrameSessionInput): FrameSession {
   const maxMessages = input.maxMessages ?? 200;
   const transcript: { kind: string; detail: string }[] = [];
   const refusals: FrameRefusal[] = [];
-  const answeredInvocations = new Map<string, FrameActionOutcome>();
+  /**
+   * Invocations seen, whether or not they have answered yet.
+   *
+   * `pending` is the important half: a double click is two messages in quick succession, so keying dedup on the
+   * *answer* let both run — the exact case this exists to prevent. The entry is written when the message is
+   * accepted, not when the action finishes.
+   */
+  const invocations = new Map<string, "pending" | FrameActionOutcome>();
   let state = input.state ?? {};
   let revision = 0;
   let messages = 0;
@@ -152,7 +159,11 @@ export function createFrameSession(input: FrameSessionInput): FrameSession {
         return { ok: true, kind: "event", detail: message.name };
 
       case "action.invoke": {
-        const seen = answeredInvocations.get(message.invocationId);
+        const seen = invocations.get(message.invocationId);
+        if (seen === "pending") {
+          // Already running. Answered once it finishes, and not started again meanwhile.
+          return { ok: true, kind: "action.invoke", detail: "pending" };
+        }
         if (seen !== undefined) {
           /*
            * The same click twice. Returning the first outcome rather than running it again is what makes a double
@@ -171,6 +182,7 @@ export function createFrameSession(input: FrameSessionInput): FrameSession {
           // An id the host never accepted is refused before anything runs: there is no generic invoke to fall into.
           return refuse("ACTION_UNKNOWN", `no accepted binding ${message.actionBindingId} for this instance`);
         }
+        invocations.set(message.invocationId, "pending");
         void input
           .invokeAction({
             actionBindingId: message.actionBindingId,
@@ -179,7 +191,7 @@ export function createFrameSession(input: FrameSessionInput): FrameSession {
             invocationId: message.invocationId,
           })
           .then((outcome) => {
-            answeredInvocations.set(message.invocationId, outcome);
+            invocations.set(message.invocationId, outcome);
             input.post({
               kind: "action-result",
               nonce: input.nonce,
@@ -193,7 +205,7 @@ export function createFrameSession(input: FrameSessionInput): FrameSession {
               status: "failed",
               message: error instanceof Error ? error.message : "the action failed",
             };
-            answeredInvocations.set(message.invocationId, outcome);
+            invocations.set(message.invocationId, outcome);
             input.post({
               kind: "action-result",
               nonce: input.nonce,
