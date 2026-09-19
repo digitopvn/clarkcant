@@ -23,6 +23,7 @@ import {
   modelFromEnv,
   type ModelBudget,
   type ModelSelection,
+  type ModelCatalogue,
   type PiAdapter,
   type ToolDefinition,
   type WorkerEvent,
@@ -96,6 +97,14 @@ export interface ModelTurn {
    * busy or steal the turn that is running.
    */
   runInBackground: (input: { conversationId: string; principal: Principal; text: string }) => Promise<string>;
+
+  /**
+   * The providers and models this node can run, read from the SDK's own catalogue.
+   *
+   * Read on demand rather than held as a snapshot, for the same reason the view catalog is: the list belongs to the
+   * SDK and this is only a way to ask it.
+   */
+  catalogue: () => Promise<ModelCatalogue>;
   answer: (input: ModelTurnInput) => Promise<ModelTurnReply>;
   dispose: () => Promise<void>;
 }
@@ -588,6 +597,7 @@ export async function createModelTurn(options: {
     selection,
     budget,
     viewCatalogSize: () => readViews().length,
+    catalogue: (): Promise<ModelCatalogue> => adapter.catalogue(),
 
     /** The conversations with a turn still running. */
     running: (): string[] => [...turns.values()].filter((turn) => turn.inFlight).map((turn) => turn.conversationId),

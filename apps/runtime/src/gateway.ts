@@ -221,6 +221,14 @@ export async function handleRequest(deps: GatewayDeps, request: GatewayRequest):
     });
   }
 
+  if (request.method === "GET" && request.path === "/model") {
+    // The catalogue comes from the SDK, so a provider added by upgrading pi appears here without this node changing,
+    // and the current selection is reported beside it rather than inferred from it: a node configured for a model its
+    // installation no longer offers is a state worth showing plainly instead of hiding.
+    const catalogue = await (services.modelCatalogue?.() ?? Promise.resolve([]));
+    return json(200, { current: services.model, catalogue });
+  }
+
   if (request.method === "GET" && request.path === "/capabilities") {
     return json(200, {
       // Summaries only: dumping every tool schema into every turn is both expensive and a

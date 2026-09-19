@@ -430,6 +430,10 @@ async function main(): Promise<void> {
       steer: (conversationId, text) => modelTurn.steer(conversationId, text),
       runInBackground: (input) => modelTurn.runInBackground(input),
     };
+    // The catalogue travels the same way and for the same reason: the model turn exists above this line and the
+    // services exist below it, so this is the first place both do. Published as the turn's own function rather than
+    // as a snapshot, so a provider added by upgrading pi is visible without restarting the node.
+    services.modelCatalogue = modelTurn.catalogue;
   }
   projectWiring.deps = services.projects;
   approvalWiring.deps = {

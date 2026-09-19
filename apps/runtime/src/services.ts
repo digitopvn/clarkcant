@@ -20,6 +20,7 @@ import {
   upsertDataset,
 } from "@clarkcant/storage";
 import { readCredential } from "@clarkcant/storage";
+import type { ModelCatalogue } from "@clarkcant/pi-adapter";
 import type { Principal } from "@clarkcant/contracts";
 import { FAMILY_BY_DEFINITION, WIDGETS as CATALOG_WIDGETS } from "@clarkcant/data-canvas";
 import { QUICK_PLAY_RECIPES, SAMPLE_DATASET } from "@clarkcant/data-canvas/sample";
@@ -94,6 +95,15 @@ export interface NodeServices {
    * Optional because a node with no model has no turns to control. Assigned after boot rather than passed in, because
    * the model turn is built before the services are and the wiring runs one way.
    */
+  /**
+   * Every provider and model this node can run, read from the SDK's own catalogue when asked.
+   *
+   * Optional and assigned after boot, like turn control: the model turn is built before the services are, so the
+   * wiring runs one way. Absent on a node whose model turn failed to build, which the route reports as an empty list
+   * rather than as an error - the node is still a node.
+   */
+  modelCatalogue?: () => Promise<ModelCatalogue>;
+
   turnControl?: {
     running(): string[];
     interrupt(conversationId: string): boolean;

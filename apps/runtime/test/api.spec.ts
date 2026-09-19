@@ -775,3 +775,26 @@ describe("a secret a person types", () => {
     expect(JSON.stringify(response.body)).not.toContain("secret-shaped");
   });
 });
+
+describe("the model catalogue route", () => {
+  it("reports what the model turn offers, and an honest empty list on a node with none", async () => {
+    // A node whose model turn failed to build offers nothing, and an empty list is the honest answer - the route is
+    // still a working route. This is also the state the fixture e2e node boots in, so asserting it beats assuming it.
+    const empty = await request("GET", "/model");
+    expect(empty.status).toBe(200);
+    expect(empty.body).toEqual({ current: null, catalogue: [] });
+
+    services.modelCatalogue = async () => [
+      { id: "fake", models: [{ provider: "fake", id: "fake-model", current: true }] },
+    ];
+
+    // Read on demand rather than held as a snapshot: a provider added by upgrading pi is visible without a restart.
+    const listed = await request("GET", "/model");
+    expect(listed.status).toBe(200);
+    expect(listed.body).toEqual({
+      current: null,
+      catalogue: [{ id: "fake", models: [{ provider: "fake", id: "fake-model", current: true }] }],
+    });
+  });
+});
+
