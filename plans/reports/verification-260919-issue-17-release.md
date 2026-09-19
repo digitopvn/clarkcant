@@ -4,14 +4,14 @@ Năm tính năng của issue #17, làm qua ba stage. Stage A (#19), Stage B và 
 phần ghi chú về đúng sự thật, và PR #38 sửa nốt hai claim còn lại cùng cổng browser. Tài liệu này ghi **số thật đo
 trên cây đã merge `main`**, không phải số của lần chạy cũ.
 
-## Số thật, đo trên cây hiện tại (`1368cb5`, sau khi nhận `main`)
+## Số thật, đo trên cây hiện tại của `main` (`0ce8722`)
 
 | Cổng | Lệnh | Kết quả |
 | --- | --- | --- |
 | Invariant | `pnpm run invariants` | 7/7 PASS |
-| Typecheck + lint + unit test | `pnpm verify` | **1474 passed, 7 skipped (1481)** |
+| Typecheck + lint + unit test | `pnpm verify` | **1573 passed, 7 skipped (1580)** |
 | Browser suite | `pnpm test:e2e` | **83 passed, 0 failed** |
-| CI trên `main` | `.github/workflows/ci.yml`, run 35461135410 ở commit `bac2f2e` | **cả năm job xanh**: `verify` (node 22.19 và 24), `secret scan`, `e2e (browser suite)`, `desktop smoke (xvfb)` |
+| CI trên `main` | `.github/workflows/ci.yml`, run 35464062373 ở commit `0ce8722` | **cả năm job xanh**: `verify` (node 22.19 và 24), `secret scan`, `e2e (browser suite)`, `desktop smoke (xvfb)` |
 | Smoke desktop | `pnpm --filter @clarkcant/app-desktop run smoke` | **exit 0**, mọi check `true`, `"failed": []` (Electron 44.3.0, Chrome 152) |
 | Đồng bộ với `main` | `git rev-list HEAD..origin/main` | 0 (merge `1368cb5`, sau khi nhận `main`; PR #38 squash thành `9e90535`, PR #44 đưa hai cổng vào CI) |
 
@@ -42,6 +42,22 @@ nào bị nới để cho qua: mỗi lỗi được đo trước, rồi sửa �
 | `j1.spec.ts` "a selected passage can be sent to a background session" | `services.turnControl` chỉ được gán khi có model turn, và `createModelTurn` trả `undefined` khi không có model được chọn — còn adapter mặc định là `RealPiAdapter`, nên đặt provider trong môi trường sẽ khiến mọi lượt gọi provider thật. | Node fixture công bố một turn control có script (không model, không catalogue, không gọi provider) — đúng thứ journey này nói là fixture node có. |
 | `j1.spec.ts` "the header says nothing about background work when there is none" | Phụ thuộc thứ tự trên node dùng chung: tiền đề "chưa có việc nền nào" chỉ đúng khi nó chạy trước journey tạo phiên nền. | Đưa journey đó lên trước journey tạo phiên, kèm ghi chú vì sao thứ tự là một phần của phép kiểm. |
 | hai journey `onboarding.spec.ts` | Journey first-run, đỏ ở commit gốc. | Xanh trên cây hiện tại ở các lần chạy gần nhất. |
+
+## Hai lỗi nữa, do chính CI tìm ra
+
+Hai cổng mới được đưa vào CI đã tìm ra hai lỗi thật mà máy này không thấy, và cả hai đều được sửa ở gốc:
+
+- **`e2e` bất định trên `appearance.spec.ts:122`** (journey bàn phím của tab Settings). Nguyên nhân:
+  `Modal` gộp phần chuyển focus vào dialog vào **cùng một effect** với listener bàn phím, nên effect chạy lại mỗi khi
+  identity của `onClose` đổi - tức là mỗi lần surface render lại. Mỗi lần chạy lại, nó trả focus về opener rồi
+  chuyển focus vào control đầu tiên của dialog, lấy mất chỗ đang đứng của người dùng bàn phím. Sự cố chỉ hiện
+  khi dữ liệu của panel về đúng lúc, nên nó đỏ trên CI và xanh trên máy này với cùng một cây. Đã tách
+  listener ra effect riêng và để việc chuyển focus chỉ phụ thuộc `open`.
+- **`docs-manifest-integrity` trên `main`**: entry của `docs/widget-development.md` ghi 16284 byte, còn tệp trong git là
+  15655 byte - digest được tính từ một bản Windows có CRLF, nên mọi checkout mới đều trượt invariant. Đã tính lại
+  từ byte được lưu trong git.
+
+Cả hai đều được đo trước khi sửa, và CI của `main` ở `0ce8722` xanh cả năm job.
 
 ## CI phủ những gì
 
