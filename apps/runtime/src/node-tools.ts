@@ -16,6 +16,7 @@ import {
 } from "@clarkcant/core";
 
 import { blobsDir, readBlob } from "./blobs.ts";
+import { extractPdfText } from "./pdf-text.ts";
 import { describeSearch, machineRoots, searchFileSystem } from "./fs-search.ts";
 import { commandDigest, commandOutput, describeCommandOutcome, guardCommand, runCommand } from "./run-command.ts";
 import type { ProjectFinderDeps } from "./project-finder.ts";
@@ -201,11 +202,13 @@ export function createReadAttachmentTool(input: {
         return { text: "Không có tệp đính kèm nào với id đó trong cuộc hội thoại này." };
       }
 
-      if (record.kind !== "text") {
+      // An image is still named rather than read: this node has no reader for one, and a tool that returned nothing
+      // for a picture would read as a file that was empty.
+      if (record.kind === "image") {
         return {
           text:
             `Tệp “${record.filename}” là ${record.mime} (${record.sizeBytes} byte). Node này chưa có bộ trích ` +
-            `nội dung cho ảnh và PDF, nên tui không đọc được nội dung của nó. Đừng đoán nội dung.`,
+            `nội dung cho ảnh, nên tui không đọc được nội dung của nó. Đừng đoán nội dung.`,
         };
       }
 
@@ -214,6 +217,19 @@ export function createReadAttachmentTool(input: {
         blobPath: join(blobsDir(input.dataDir), record.blobPath.split(/[/\\]/).at(-1) ?? ""),
       });
       if (!blob.ok) return { text: `${record.filename}: ${blob.message}` };
+
+      // A PDF is read here rather than named: the issue this tool exists for asks for a file's content, and a PDF's
+      // text can be recovered without a provider. What cannot be read comes back with the reason.
+      if (record.kind === "pdf") {
+        const extracted = extractPdfText(blob.bytes);
+        if (!extracted.ok) return { text: `“${record.filename}”: ${extracted.reason}.` };
+        const allowed = Math.min(extracted.text.length, ATTACHMENT_LIMITS.inlineBudgetBytesPerTurn);
+        const truncated =
+          allowed < extracted.text.length
+            ? `\n[đã lược bớt: tệp dài ${extracted.text.length} ký tự, chỉ đọc ${allowed} ký tự đầu]`
+            : "";
+        return { text: `Nội dung của “${record.filename}”:\n${extracted.text.slice(0, allowed)}${truncated}` };
+      }
 
       // The same ceiling the prompt's attachment section uses, so a file read here cannot be larger than
       // one that would have been inlined there.

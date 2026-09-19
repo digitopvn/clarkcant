@@ -24,14 +24,14 @@ nội dung nào ngoài ghi chú này.
 
 | Mục của issue #17 | Test |
 | --- | --- |
-| 1. Đính kèm tệp | `apps/web/e2e/attachments.spec.ts` — "the agent answers using the content of an attached file" (hai tệp, câu trả lời dùng nội dung tệp văn bản, reload vẫn thấy cả hai), cộng chín journey còn lại của tệp; từ chối path/URL/mime/ngưỡng/quota ở `apps/runtime/test/attachment-routes.spec.ts` |
+| 1. Đính kèm tệp | `apps/web/e2e/attachments.spec.ts` — "the agent answers using the content of an attached file" và "the agent answers using the content of an attached pdf" (hai tệp, câu trả lời dùng nội dung tệp văn bản, reload vẫn thấy cả hai), cộng chín journey còn lại của tệp; từ chối path/URL/mime/ngưỡng/quota ở `apps/runtime/test/attachment-routes.spec.ts` |
 | 2. Cửa sổ desktop tối giản | smoke của `apps/desktop` (bounds, sàn 20×50, always-on-top đọc từ cửa sổ thật; chạy trong CI dưới `xvfb`) và `apps/web/e2e/voice-bar.spec.ts` (phiên sống qua cả hai chiều) |
 | 3. Voice điều khiển app | `apps/web/e2e/voice-control.spec.ts` — 8 journey: mở Settings, đổi tab được gọi tên, thoát app (hỏi trước), lệnh lạ bị từ chối, kết thúc phiên, về home, đính kèm (mở file picker), và lệnh cửa sổ bị từ chối trong browser; cộng `packages/core/test/app-intents.spec.ts` cho từng nhóm lệnh |
 | 4. Gợi ý từ việc gần đây | `apps/web/e2e/suggestions.spec.ts`, `apps/runtime/test/suggestions.spec.ts` |
 | 5. Tab Memory | `apps/web/e2e/memory.spec.ts` (rỗng, có dữ liệu kèm nguồn, xoá), `apps/runtime/test/memory.spec.ts` |
 
-Điều **chưa** đạt trong tiêu chí của issue: nội dung **ảnh/PDF** chưa tới model — chúng được nêu bằng id, và
-`prompt(sessionId, text)` chỉ nhận văn bản. Điều kiện còn thiếu ghi ở `docs/widgets-and-extensions.md` §4.1.
+Điều **chưa** đạt trong tiêu chí của issue: nội dung **ảnh** chưa tới model — ảnh được nêu bằng id, và
+`prompt(sessionId, text)` chỉ nhận văn bản. PDF thì đã đọc được, có journey chứng minh. Điều kiện còn thiếu ghi ở `docs/widgets-and-extensions.md` §4.1.
 
 ## Tiêu chí của chính issue, không chỉ của plan
 

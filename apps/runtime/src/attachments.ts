@@ -14,6 +14,7 @@ import {
 } from "@clarkcant/storage";
 
 import { blobsDir, readBlob, removeBlob } from "./blobs.ts";
+import { extractPdfText } from "./pdf-text.ts";
 
 /**
  * Attachments, as the runtime uses them.
@@ -172,7 +173,9 @@ export function attachmentBrief(input: {
 
   for (const ref of input.refs) {
     const header = `- ${ref.filename} (${ref.mime}, ${ref.sizeBytes} byte) — ${ref.attachmentId}`;
-    if (ref.kind !== "text") {
+    // An image is named rather than read: this node has no reader for one, and inventing detail would be worse than
+    // saying so. A PDF is read, because its text can be recovered without a provider and without a dependency.
+    if (ref.kind === "image") {
       lines.push(
         `${header}: tệp nhị phân. Dùng công cụ read_attachment với id này nếu cần đọc nội dung.`,
       );
@@ -190,12 +193,23 @@ export function attachmentBrief(input: {
       continue;
     }
 
-    const allowed = Math.min(remaining, blob.bytes.byteLength);
-    const truncated = allowed < blob.bytes.byteLength;
+    // A PDF's bytes are a document rather than prose, so its text is recovered before the budget is spent on it.
+    let body = blob.bytes;
+    if (ref.kind === "pdf") {
+      const extracted = extractPdfText(blob.bytes);
+      if (!extracted.ok) {
+        lines.push(`${header}: ${extracted.reason}.`);
+        continue;
+      }
+      body = new TextEncoder().encode(extracted.text);
+    }
+
+    const allowed = Math.min(remaining, body.byteLength);
+    const truncated = allowed < body.byteLength;
     remaining -= allowed;
     // A multi-byte character split by the cut decodes to a replacement character. Stated in the
     // marker rather than hidden: the reader has to know the tail is not the file's own text.
-    const text = new TextDecoder("utf-8", { fatal: false }).decode(blob.bytes.subarray(0, allowed));
+    const text = new TextDecoder("utf-8", { fatal: false }).decode(body.subarray(0, allowed));
     lines.push(`${header}:\n${text}`);
     if (truncated) {
       lines.push(`[đã lược bớt sau ${allowed} byte vì ngân sách văn bản của lượt]`);

@@ -52,6 +52,30 @@ const TEXT = { name: "ghi-chu.md", mimeType: "text/markdown", buffer: Buffer.fro
 const IMAGE = { name: "anh.png", mimeType: "image/png", buffer: Buffer.from(PNG_BASE64, "base64") };
 
 /**
+ * A PDF with one line of text, built here rather than committed as a binary.
+ *
+ * The journey is about the node reading a PDF, and a fixture that can be read at a glance is one that can be corrected
+ * at a glance. The content stream is uncompressed so the text is visible in this file.
+ */
+const PDF = {
+  name: "tai-lieu.pdf",
+  mimeType: "application/pdf",
+  buffer: Buffer.from(
+    [
+      "%PDF-1.4",
+      "4 0 obj << /Length 44 >>",
+      "stream",
+      "BT (Noi dung trong PDF) Tj ET",
+      "endstream",
+      "endobj",
+      "trailer << /Root 1 0 R >>",
+      "%%EOF",
+    ].join("\n"),
+    "latin1",
+  ),
+};
+
+/**
  * A file over the ceiling, built once for the whole file.
  *
  * Allocating and sending 26 MB is the slowest thing here, and two tests need it; making the buffer a shared
@@ -151,6 +175,26 @@ test("the agent answers using the content of an attached file", async ({ page })
   await page.reload();
   await expect(page.locator("[data-composer]")).toBeVisible();
   await expect(page.locator("[data-attachment-block]")).toHaveCount(2, { timeout: 20_000 });
+});
+
+/**
+ * A PDF's content reaching the agent, which is the half of the issue's criterion that was still not met.
+ *
+ * A PDF is the one binary format whose text this node can recover without a provider or a dependency, so "the agent
+ * receives the content" is met for it rather than deferred. The fixture reads it through the same extractor the tool
+ * and the turn's prompt use.
+ */
+test("the agent answers using the content of an attached pdf", async ({ page }) => {
+  await openApp(page);
+  await attach(page, [PDF]);
+  await expect(chips(page)).toHaveCount(1);
+
+  await send(page, "đọc giúp tui tệp pdf này");
+
+  // The words inside the PDF's content stream, which nothing but reading the file could produce.
+  await expect(page.locator('[data-role="assistant"]').last()).toContainText("Noi dung trong PDF", {
+    timeout: 20_000,
+  });
 });
 
 test("the attachments are still in the timeline after a reload", async ({ page }) => {
