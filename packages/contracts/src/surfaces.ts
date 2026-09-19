@@ -248,6 +248,29 @@ export const credentialCardBlockSchema = z.strictObject({
   requestId: z.string().min(1).max(128),
   /** What the credential is for, in plain language. */
   purpose: z.string().min(1).max(1000),
+  /**
+   * The longer explanation, when the purpose line is not enough.
+   *
+   * Shown under the field rather than instead of it: a person deciding whether to paste a key into a form deserves
+   * to know which node will use it and for what, and `purpose` is one line by design.
+   */
+  description: z.string().max(1000).optional(),
+  /**
+   * Who will use it, in the vocabulary the node enforces, e.g. `command:git` or `capability:github`.
+   *
+   * On the card because it is the honest answer to "what will this be used for": the consumer list is what the
+   * secret broker checks before handing a value to anything, so showing it here is showing the actual rule.
+   */
+  consumer: z.string().max(200).optional(),
+  /** Where the secret lives and which account it belongs to, e.g. `node:macbook`. */
+  scope: z.string().max(200).optional(),
+  /**
+   * What kind of secret this is, so the node records what the requester said it was.
+   *
+   * Carried on the card rather than guessed from the name on submit: the requester knows whether this is a token or
+   * a password, and a name is not a reliable way to tell.
+   */
+  secretKind: z.enum(["api-key", "token", "password", "webhook-secret", "other"]).optional(),
   /** Where the input goes. Never the transcript, never the model. */
   destination: z.enum(["vault-node", "system-browser", "provider-page"]),
   fields: z.array(

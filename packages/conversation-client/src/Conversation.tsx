@@ -907,7 +907,10 @@ export function Conversation({
    */
   const [credentialStatus, setCredentialStatus] = useState<{ requestId: string; message: string } | undefined>(undefined);
   const submitCredential = useCallback(
-    (input: { requestId: string; fields: { name: string; value: string }[] }): void => {
+    (input: {
+      requestId: string;
+      fields: { name: string; value: string; description?: string; consumer?: string }[];
+    }): void => {
       client
         .putCredential({ fields: input.fields })
         .then((result) =>

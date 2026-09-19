@@ -848,7 +848,9 @@ export class GatewayClient {
    * cache, redisplay or log. The value travels once, in the request body, and that is the only place it exists
    * on this side of the wire.
    */
-  async putCredential(input: { fields: { name: string; value: string }[] }): Promise<{ names: string[] }> {
+  async putCredential(input: {
+    fields: { name: string; value: string; kind?: string; description?: string; consumer?: string }[];
+  }): Promise<{ names: string[] }> {
     const response = await this.#fetch(`${this.#baseUrl}/credentials`, {
       method: "POST",
       headers: { authorization: `Bearer ${this.#token}`, "content-type": "application/json" },

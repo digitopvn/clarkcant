@@ -17,6 +17,7 @@ import { applyEnvFile } from "@clarkcant/pi-adapter";
 
 import { answerQuestionForNode, decideApprovalForNode, interactionDepsFor } from "./gateway.ts";
 import type { PendingVoiceInteraction } from "./voice-session.ts";
+import type { Instant } from "@clarkcant/contracts";
 import { createNodeServer } from "./server.ts";
 import { machineRoots } from "./fs-search.ts";
 import { resolveProject, refreshProjectIndex } from "./project-finder.ts";
@@ -43,6 +44,8 @@ import { guardOperation } from "./jev-decider.ts";
 import { ownedResources } from "./preflight.ts";
 import { DEFAULT_NARROWING, readAutonomySettings } from "./autonomy-settings.ts";
 import { createAskUserQuestionTool } from "./ask-user-question.ts";
+import { createRequestSecretTool } from "./request-secret.ts";
+import type { RequestSecretDeps } from "./request-secret.ts";
 import { registerSessionFile, sessionsDirectory } from "./session-store.ts";
 import { bootNodeServices, type NodeServices } from "./services.ts";
 import type { ProjectSessionStarter } from "./project-session.ts";
@@ -130,6 +133,8 @@ async function main(): Promise<void> {
    * asked in: two conversations waiting on two different answers must not share one manager.
    */
   const interactionWiring: { deps?: (conversationId: string) => InteractionDeps } = {};
+  /** The secret broker's read side, filled once the node has booted. */
+  const secretWiring: { deps?: RequestSecretDeps } = {};
   /** Filled once the node has booted, so the scripted turn below can compose a real surface. */
   const modelWiring: { compose?: NodeServices["compose"] } = {};
 
@@ -157,6 +162,31 @@ async function main(): Promise<void> {
      * buttons and a receipt — needs a way to be reached without a provider account, and a fixture that
      * cannot produce the card would leave the client wiring tested by nothing at all.
      */
+    /*
+     * A secret the node does not have, asked for through the real tool.
+     *
+     * The browser half of this cannot be reached without a provider account unless something scripts the model's
+     * half, and what it has to prove is negative: the value a person types never appears in the page, the
+     * conversation, or anything the model is handed afterwards.
+     */
+    if (/xin secret thử|thử xin secret/i.test(input.text)) {
+      const secrets = secretWiring.deps;
+      if (secrets === undefined) return undefined;
+      const answer = await createRequestSecretTool(secrets).execute({
+        name: "openai_api_key",
+        label: "OpenAI API key",
+        description: "Dùng để chạy model OpenAI trên node này.",
+        secretKind: "api-key",
+        consumer: "capability:openai",
+      });
+      if (answer.hostCard === undefined) {
+        return { text: answer.text, block: { type: "text", format: "plain", content: answer.text, streaming: false } };
+      }
+      // SAFETY: the card was built against the credential-card schema in contracts; the adapter's shape is loose
+      // because it must not depend on contracts, and the node validates blocks before they reach a transcript.
+      return { text: answer.text, block: answer.hostCard as unknown as MessageBlock };
+    }
+
     /*
      * A question the agent asks, through the real tool.
      *
@@ -487,6 +517,7 @@ async function main(): Promise<void> {
         // And the same conversation is what a question is recorded against, which is why this is built from
         // the turn rather than once for the node.
         ...(interactionWiring.deps === undefined ? {} : { interactions: interactionWiring.deps(turn.conversationId) }),
+        ...(secretWiring.deps === undefined ? {} : { secrets: secretWiring.deps }),
         // "Where should this go?" goes through the finder, which is where Jev decides when several folders
         // could be meant. The model is told to look before it proposes, and an ambiguous answer comes back
         // as a question rather than as a guess.
@@ -591,6 +622,13 @@ async function main(): Promise<void> {
     newId: () => services.conductor.newId("run"),
   };
   interactionWiring.deps = (conversationId) => interactionDepsFor(services, conversationId);
+  secretWiring.deps = {
+    db: services.runtime.db,
+    principalId: services.runtime.identity.ownerPrincipalId,
+    newId: services.conductor.newId,
+    now: () => new Date().toISOString() as Instant,
+    nodeId: services.runtime.identity.nodeId,
+  };
 
   // A fixture node arranges its own precondition: the scripted command proposal has to have somewhere to
   // run, and a browser run must never depend on a developer's real approved folders.

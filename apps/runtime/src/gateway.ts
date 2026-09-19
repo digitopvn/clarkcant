@@ -50,7 +50,7 @@ import {
   deleteCredential,
   putPreference,
 } from "@clarkcant/storage";
-import { credentialNames, putCredential } from "@clarkcant/storage";
+import { credentialNames, putCredential, putSecretMetadata, secretKindOr } from "@clarkcant/storage";
 import { DEFAULT_NARROWING, readAutonomySettings, saveAutonomySettings } from "./autonomy-settings.ts";
 import type { InteractionDeps } from "./interactions.ts";
 import { answerQuestion, cancelQuestion } from "./interactions.ts";
@@ -365,13 +365,36 @@ export async function handleRequest(deps: GatewayDeps, request: GatewayRequest):
     // route is not about a conversation, and a secret is stored against the person who typed it, not against
     // the thread they happened to be in.
     const owner = services.runtime.identity.ownerPrincipalId;
-    for (const field of fields as { name?: unknown; value?: unknown }[]) {
+    for (const field of fields as { name?: unknown; value?: unknown; kind?: unknown; description?: unknown; consumer?: unknown }[]) {
       const name = typeof field.name === "string" ? field.name.trim() : "";
       const value = typeof field.value === "string" ? field.value : "";
       if (name === "" || value === "") {
         return fail(400, "INVALID_SCHEMA", "every credential field needs a name and a value");
       }
       putCredential(services.runtime.db, { principalId: owner, name, value, at });
+      /*
+       * The value goes to the store; what the node remembers about it goes to the metadata row.
+       *
+       * Written together, because the two halves are useless apart: a value nobody can describe is a secret the
+       * agent can never be told about, and a description with no value behind it is a promise this node cannot
+       * keep — which is the state `request_secret` reports as not available rather than as ready.
+       *
+       * The consumer is recorded as the form said it. It is what the broker checks before handing the value to
+       * anything, so it is the honest answer to "what will this be used for" rather than a label.
+       */
+      putSecretMetadata(services.runtime.db, {
+        secretId: services.conductor.newId("secret"),
+        principalId: owner,
+        name,
+        description: typeof field.description === "string" ? field.description.slice(0, 1_000) : "",
+        kind: secretKindOr(field.kind),
+        backend: "node-store",
+        backendRef: name,
+        allowedConsumers: typeof field.consumer === "string" && field.consumer.trim() !== "" ? [field.consumer.trim()] : [],
+        injectionPolicy: "tool-only",
+        nodeId: services.runtime.identity.nodeId,
+        at,
+      });
     }
     return json(201, { ok: true, names: credentialNames(services.runtime.db, owner) });
   }

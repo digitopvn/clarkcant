@@ -7,6 +7,7 @@ import { requestApproval, type CoordinationDeps } from "@clarkcant/core";
 
 import { blobsDir, readBlob } from "./blobs.ts";
 import { createAskUserQuestionTool } from "./ask-user-question.ts";
+import { createRequestSecretTool, type RequestSecretDeps } from "./request-secret.ts";
 import type { InteractionDeps } from "./interactions.ts";
 import { describeSearch, machineRoots, searchFileSystem } from "./fs-search.ts";
 import { applyGuardrailConstraints, preflightCommand, type CommandEnvelope, type OwnedResources } from "./preflight.ts";
@@ -45,6 +46,14 @@ export function createNodeTools(input: {
    */
   interactions?: InteractionDeps;
   /**
+   * The secret broker's read side, when this node may ask for secrets at all.
+   *
+   * Absent means `request_secret` is not registered, and the instruction not to ask for a secret anywhere else is
+   * the only thing left — which is why the refusal inside `ask_user_question` is deterministic rather than
+   * dependent on this tool existing.
+   */
+  secrets?: RequestSecretDeps;
+  /**
    * The command path, when this node may run commands at all.
    *
    * Absent means `run_command` is not registered. Note what is *not* required: an approval route. A node
@@ -72,6 +81,7 @@ export function createNodeTools(input: {
     createSearchHistoryTool(input.search),
     createSearchFilesTool(roots),
     ...(input.interactions === undefined ? [] : [createAskUserQuestionTool(input.interactions)]),
+    ...(input.secrets === undefined ? [] : [createRequestSecretTool(input.secrets)]),
     ...(input.command === undefined
       ? []
       : [

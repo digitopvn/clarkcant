@@ -289,7 +289,10 @@ export interface BlockActions {
    * The callback receives the values because that is what it posts; nothing in this interface keeps them, and the
    * card clears its own inputs as soon as it hands them over, so a value cannot be shown again by accident.
    */
-  onCredentialSubmit?: (input: { requestId: string; fields: { name: string; value: string }[] }) => void;
+  onCredentialSubmit?: (input: {
+    requestId: string;
+    fields: { name: string; value: string; kind?: string; description?: string; consumer?: string }[];
+  }) => void;
   /** What the node said about the last submission for one request, in words a reader can act on. */
   credentialStatus?: { requestId: string; message: string };
   /** Which approval is waiting on the node, so its own card says so rather than all of them. */
@@ -593,6 +596,12 @@ export function CredentialCardBlock({
   const purpose = typeof block.purpose === "string" ? block.purpose : "";
   const destination = typeof block.destination === "string" ? block.destination : "vault-node";
   const requestId = typeof block.requestId === "string" ? block.requestId : "";
+  // The three fields that answer "what is this for, who will use it, on which machine". They travel with the
+  // submission as well as being shown, so the node records the same answer the person was given when they typed.
+  const description = typeof block.description === "string" ? block.description : "";
+  const consumer = typeof block.consumer === "string" ? block.consumer : "";
+  const scope = typeof block.scope === "string" ? block.scope : "";
+  const secretKind = typeof block.secretKind === "string" ? block.secretKind : "";
   const fields = Array.isArray(block.fields)
     ? (block.fields as { name?: unknown; label?: unknown; masked?: unknown }[]).flatMap((field) =>
         typeof field?.name === "string" && field.name !== ""
@@ -618,6 +627,21 @@ export function CredentialCardBlock({
       </header>
       <div className="cc-card-body">
         <p style={{ margin: 0 }}>{purpose}</p>
+        {description !== "" && description !== purpose && (
+          <p className="cc-freshness" style={{ margin: 0 }} data-credential-description="true">
+            {description}
+          </p>
+        )}
+        {consumer !== "" && (
+          <p className="cc-freshness" style={{ margin: 0 }} data-credential-consumer={consumer}>
+            Sẽ được dùng bởi: {consumer}
+          </p>
+        )}
+        {scope !== "" && (
+          <p className="cc-freshness" style={{ margin: 0 }} data-credential-scope={scope}>
+            Lưu trên: {scope}
+          </p>
+        )}
         {fields.length === 0 ? null : (
           <form
             className="cc-credential-form"
@@ -626,7 +650,13 @@ export function CredentialCardBlock({
               if (!complete) return;
               actions?.onCredentialSubmit?.({
                 requestId,
-                fields: fields.map((field) => ({ name: field.name, value: values[field.name] ?? "" })),
+                fields: fields.map((field) => ({
+                  name: field.name,
+                  value: values[field.name] ?? "",
+                  ...(secretKind === "" ? {} : { kind: secretKind }),
+                  ...(description === "" ? {} : { description }),
+                  ...(consumer === "" ? {} : { consumer }),
+                })),
               });
               // Cleared as soon as it is handed over, so the value cannot be read back off the screen or out of
               // the component's state by anything that comes later.

@@ -17,6 +17,20 @@ import type { Database } from "./db.ts";
 
 export type SecretKind = "api-key" | "token" | "password" | "webhook-secret" | "other";
 
+/** The kinds this build understands, in the order a form offers them. */
+export const SECRET_KINDS: readonly SecretKind[] = ["api-key", "token", "password", "webhook-secret", "other"];
+
+/**
+ * A stored kind, or the default.
+ *
+ * Used where the value arrives from outside — a form body, a tool call — because an unrecognised kind must cost the
+ * kind and nothing else: a secret whose kind is wrong is still a secret, and refusing the write would lose the value
+ * a person just typed.
+ */
+export function secretKindOr(value: unknown): SecretKind {
+  return SECRET_KINDS.includes(value as SecretKind) ? (value as SecretKind) : "api-key";
+}
+
 /**
  * How a secret may reach the thing that needs it.
  *
@@ -149,13 +163,11 @@ export function putSecretMetadata(
 }
 
 export function listSecretMetadata(db: Database, principalId: string): SecretMetadata[] {
-  const rows = db
-    .prepare("SELECT * FROM secrets WHERE principal_id = ? ORDER BY name")
-    // SAFETY: the driver types every column as `SQLOutputValue` because SQLite has no static schema. The rows come
-    // from the table this module's own migration created, and every field is read through `toMetadata`, which
-    // narrows each one rather than trusting it.
-    .all(principalId) as unknown as SecretRow[];
-  return rows.map(toMetadata);
+  const rows = db.prepare("SELECT * FROM secrets WHERE principal_id = ? ORDER BY name").all(principalId);
+  // SAFETY: the driver types every column as `SQLOutputValue` because SQLite has no static schema. These rows come
+  // from the table this module's own migration created, and every field is read through `toMetadata`, which narrows
+  // each one rather than trusting it.
+  return (rows as unknown as SecretRow[]).map(toMetadata);
 }
 
 export function getSecretMetadata(db: Database, principalId: string, name: string): SecretMetadata | undefined {
