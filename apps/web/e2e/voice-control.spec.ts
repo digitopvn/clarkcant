@@ -47,6 +47,15 @@ function token(): string {
 }
 
 async function openApp(page: Page): Promise<void> {
+  // Pinned to empty, like the other suites that click a written chip.
+  //
+  // `startConversation` below clicks the first suggestion, and once the node can offer suggestions of its own that
+  // chip is whatever the database happens to hold - so this suite's conversation began with a node suggestion instead
+  // of the scripted one it was written against. That is why the journey below appeared to be about the fixture: the
+  // words were fine, the first screen was not.
+  await page.route("**/suggestions", (route) =>
+    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ items: [] }) }),
+  );
   await page.goto(`/?token=${token()}&gateway=${encodeURIComponent(GATEWAY)}`);
   await expect(page.locator("text=Ready")).toBeVisible({ timeout: 15_000 });
 }
@@ -105,20 +114,21 @@ test("a spoken command and the same click open Settings in the same state", asyn
 });
 
 /*
- * A journey that is NOT here, and why.
+ * A journey that is NOT here, and why - measured, not assumed.
  *
- * "A spoken tab change lands on the tab that was named" was written and does not pass. Clicking the tab works, and
- * the node resolves the sentence correctly: `resolveAppIntent("đổi sang tab công cụ")` returns
- * `{kind: "intent", intent: {kind: "settings.tab", tab: "extensions"}, requiresConfirmation: false}`, and the
- * client's own decision schema accepts that - checked directly, not by reading. What the page shows afterwards is
- * the settings panel on its DEFAULT tab with no intent notice, and that is the signature of a *different* sentence
- * having been heard: `settings.open` with no tab produces exactly that state and reports success, so nothing
- * announces a problem.
+ * "A spoken tab change lands on the tab that was named" does not pass. What is known from diagnostics rather than
+ * from reading: clicking the tab selects it, Escape closes the panel, and after the voice command the panel is open
+ * on its DEFAULT tab with NO `data-intent-notice` and NO user bubble. That combination is what `settings.open` with
+ * no tab produces - the intent succeeds, so nothing announces a problem - which means the sentence the session acted
+ * on was not the sentence this journey scripted.
  *
- * The cause is the voice fixture rather than the feature. Its scripted words are consumed by whichever session next
- * speaks, and a session left open by the journey before this one can take them. That is the same fixture ordering
- * that blocked T66. So the journey is out of the suite and T73 is PARTIAL in `docs/conformance-traceability.md`
- * with this as the missing condition, rather than sitting here failing and calling the browser gate red.
+ * The node is not at fault: `resolveAppIntent("đổi sang tab công cụ")` returns `settings.tab` with
+ * `tab: "extensions"` and `requiresConfirmation: false`, and the client's decision schema accepts that. Both were
+ * checked directly. So the gap is between what the test scripts into the voice fixture and what the session is
+ * handed, and it is a defect in this repository's test harness rather than an external condition.
+ *
+ * It is left out of the suite with this written down, rather than sitting here failing and calling the browser gate
+ * red, and T73 is PARTIAL in `docs/conformance-traceability.md` with this as the missing condition.
  */
 test("a spoken quit asks instead of closing anything", async ({ page, request }) => {
   await openApp(page);
@@ -163,3 +173,5 @@ test("the fixture route is not there unless a scripted provider is loaded", asyn
   expect(refused.status()).toBe(400);
   await expect(page.locator("text=Ready")).toBeVisible();
 });
+
+

@@ -1,7 +1,7 @@
 ---
 title: "Issue #17 — đính kèm file, thanh voice tối giản, voice điều khiển app, gợi ý từ việc gần đây, tab Memory"
 description: "Năm tính năng của issue #17, chia ba chặng ship: đính kèm file; cửa sổ desktop tối giản + voice điều khiển app; gợi ý theo việc gần đây + tab Memory."
-status: pending
+status: in-progress
 priority: P1
 effort: "~52h agent-hours tuần tự; ba PR tuần tự trên cùng một nhánh"
 issue: 17
@@ -137,7 +137,7 @@ Phase 12 là cổng cuối, không sửa giữa các stage ship.
 - [ ] `pnpm test:e2e` xanh, có journey mới cho từng tính năng trong năm mục của issue. — **CHƯA ĐẠT**: bốn lỗi đã đo là đỏ sẵn ở commit gốc `7f3127f` (Stage A, chạy đối chứng trên worktree riêng), và **không** tính là xanh. `.github/workflows/ci.yml` **không** chạy `test:e2e`, nên CI xanh không nói gì về cổng này.
 - [ ] `pnpm --filter @clarkcant/app-desktop run smoke` xanh, chạy trên máy có display, output JSON
       lưu lại làm evidence (đây là **cổng do người vận hành chạy**, không nằm trong `pnpm verify`).
-- [ ] Nút `+` không còn `disabled`; chuỗi "Chưa hỗ trợ đính kèm" không còn trong mã.
+- [x] Nút `+` không còn `disabled`; chuỗi "Chưa hỗ trợ đính kèm" không còn trong mã. — `apps/web/e2e/attachments.spec.ts` (chip đính kèm xuất hiện và tệp đi được tới agent).
 - [ ] Test từ chối: tên file là path tuyệt đối, URL thực thi, mime thực thi, magic bytes lệch khai báo,
       quá ngưỡng, quá quota.
 - [x] Prompt của lượt có attachment **không** chứa path đĩa, chỉ chứa `att_…`. — chứng minh ở ranh giới adapter: `FakePiAdapter.promptsFor()`.
