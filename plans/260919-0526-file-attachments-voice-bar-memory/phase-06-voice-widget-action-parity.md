@@ -1,7 +1,7 @@
 ---
 phase: 6
 title: "T66 — voice và click chạm cùng một widget action state"
-status: pending
+status: done
 priority: P1
 effort: "4h"
 dependencies: [5]

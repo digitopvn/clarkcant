@@ -1,7 +1,7 @@
 ---
 phase: 9
 title: "Gợi ý từ việc gần đây"
-status: pending
+status: done
 priority: P1
 effort: "5h"
 dependencies: []

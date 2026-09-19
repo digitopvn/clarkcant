@@ -1,7 +1,7 @@
 ---
 phase: 5
 title: "Registry app-intent dùng chung cho chat, click và voice"
-status: pending
+status: done
 priority: P1
 effort: "7h"
 dependencies: []
