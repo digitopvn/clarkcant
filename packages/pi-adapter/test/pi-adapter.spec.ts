@@ -243,3 +243,22 @@ describe("the wall-clock budget bounds a run, not a session's age", () => {
     await adapter.dispose(handle.sessionId);
   });
 });
+
+describe("the model catalogue", () => {
+  it("lists every provider with its own models, and marks exactly one as current", async () => {
+    const catalogue = await new FakePiAdapter().catalogue();
+
+    // More than one provider, and more than one model across them: a chooser that only ever saw a single row would
+    // never exercise the grouping, and a catalogue with one model could never show the current one among others.
+    expect(catalogue.length).toBeGreaterThan(1);
+    const models = catalogue.flatMap((provider) => provider.models);
+    expect(models.length).toBeGreaterThan(catalogue.length);
+    expect(models.filter((model) => model.current)).toHaveLength(1);
+
+    // Each model names the provider it came from, so a chooser can group without re-deriving it from the grouping.
+    for (const provider of catalogue) {
+      for (const model of provider.models) expect(model.provider).toBe(provider.id);
+    }
+  });
+});
+

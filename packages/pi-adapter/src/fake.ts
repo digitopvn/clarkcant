@@ -1,6 +1,7 @@
 import type { Instant } from "@clarkcant/contracts";
 
 import type {
+  ModelCatalogue,
   PiAdapter,
   ResourceRefreshRequest,
   ToolDefinition,
@@ -47,6 +48,29 @@ export class FakePiAdapter implements PiAdapter {
 
   async availability(): Promise<{ available: boolean; reason?: string; sdkVersion?: string }> {
     return { available: true, sdkVersion: "fake-1.0.0" };
+  }
+
+  /**
+   * A scripted catalogue, deliberately wider than one provider with one model.
+   *
+   * The real one is read from the SDK's own list; this exists so the routes and the chooser can be exercised without a
+   * provider account. A chooser that only ever saw a single row would never exercise the grouping, and a catalogue
+   * with only one model could never show the current one being marked among others.
+   */
+  async catalogue(): Promise<ModelCatalogue> {
+    return [
+      {
+        id: "fake",
+        models: [
+          { provider: "fake", id: "fake-model", current: true },
+          { provider: "fake", id: "fake-model-large", contextWindow: 500_000, current: false },
+        ],
+      },
+      {
+        id: "fake-other",
+        models: [{ provider: "fake-other", id: "fake-other-model", current: false }],
+      },
+    ];
   }
 
   async createWorkerSession(brief: WorkerBrief): Promise<WorkerSessionHandle> {

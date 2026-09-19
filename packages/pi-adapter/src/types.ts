@@ -85,9 +85,36 @@ export interface ResourceRefreshRequest {
   reason: string;
 }
 
+/** One model an installation can run, and the provider that serves it. */
+export interface CatalogueModel {
+  readonly provider: string;
+  readonly id: string;
+  readonly contextWindow?: number;
+  /** Whether this is the model the adapter is configured with, so a chooser can mark the current one. */
+  readonly current: boolean;
+}
+
+/** What one provider offers. Every provider is listed, including ones with no credential yet. */
+export interface CatalogueProvider {
+  readonly id: string;
+  readonly models: readonly CatalogueModel[];
+}
+
+/**
+ * Everything this installation can run.
+ *
+ * The list is read from the SDK's own catalogue rather than from a table kept here, so a provider added by upgrading
+ * pi appears without this project changing. Hiding unavailable providers would leave a person no way to learn they
+ * exist, so they are listed and it is the chooser's job to say which are ready.
+ */
+export type ModelCatalogue = readonly CatalogueProvider[];
+
 export interface PiAdapter {
   /** Whether the SDK is actually usable in this process. */
   availability(): Promise<{ available: boolean; reason?: string; sdkVersion?: string }>;
+
+  /** The providers this installation offers and the models each one has. */
+  catalogue(): Promise<ModelCatalogue>;
 
   createWorkerSession(brief: WorkerBrief): Promise<WorkerSessionHandle>;
 

@@ -1,7 +1,7 @@
 import type { Instant } from "@clarkcant/contracts";
 import { nowInstant } from "@clarkcant/contracts";
 
-import { NotImplementedError, type PiAdapter, type ResourceRefreshRequest, type ToolDefinition, type WorkerBrief, type WorkerEvent, type WorkerSessionHandle, type WorkerUsage } from "./types.ts";
+import { NotImplementedError, type ModelCatalogue, type PiAdapter, type ResourceRefreshRequest, type ToolDefinition, type WorkerBrief, type WorkerEvent, type WorkerSessionHandle, type WorkerUsage } from "./types.ts";
 
 /**
  * Real Pi SDK adapter.
@@ -224,6 +224,30 @@ export class RealPiAdapter implements PiAdapter {
       };
     }
     return { available: true, sdkVersion: await sdkVersion() };  }
+
+  /**
+   * The providers and models this installation offers, read from the SDK's catalogue.
+   *
+   * Deliberately not filtered by whether a credential is configured: a person who cannot see the provider cannot
+   * choose it, and cannot learn what to log into. Which of them are ready is a separate question, answered where the
+   * choice is offered rather than by removing the choice.
+   */
+  async catalogue(): Promise<ModelCatalogue> {
+    const sdk = await this.#load();
+    this.#modelRuntime ??= await sdk.ModelRuntime.create({});
+    const runtime = this.#modelRuntime;
+    const current = this.#options.model;
+
+    return runtime.getProviders().map((provider) => ({
+      id: provider.id,
+      models: runtime.getModels(provider.id).map((model) => ({
+        provider: provider.id,
+        id: model.id,
+        current: current?.provider === provider.id && current.id === model.id,
+        ...(model.contextWindow === undefined ? {} : { contextWindow: model.contextWindow }),
+      })),
+    }));
+  }
 
   async createWorkerSession(brief: WorkerBrief): Promise<WorkerSessionHandle> {
     const sdk = await this.#load();
