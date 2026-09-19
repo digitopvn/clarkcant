@@ -48,8 +48,9 @@ UI không nói dối ở những chỗ đã ship:
 - Voice preview: adapter trả `supportsPreview: false` kèm lý do, không có nút giả (Phase 6).
 - Phiên desktop: mặc định `needs-permission`, thẻ nói quyền thuộc hệ điều hành và node không tự cấp
   được; không vẽ preview giả (Phase 10).
-- `WIDGET_RUNTIME_STATUS` vẫn là `bridge-codec-implemented-runtime-pending` — tức là nó vẫn nói thật
-  là chưa có runtime (Phase 11 sẽ đổi).
+- `WIDGET_RUNTIME_STATUS` khi đó vẫn là `bridge-codec-implemented-runtime-pending`, tức là nó nói thật là chưa
+  có runtime. Phase 11 đã đổi thành `runtime-and-host-session-implemented` (PR #44), và giá trị mới cũng nói rõ
+  hai điều **chưa** đúng: chưa có mini-app nào ship, và conversation client chưa mount frame nào.
 
 Ba khoảng trống, ghi lại chứ không quảng cáo:
 
@@ -69,4 +70,22 @@ không phải chi tiết bỏ qua. Nếu Phase 11–13 ship runtime mà không c
 
 ## Stage E — Phase 11 (Widget SDK runtime) và Phase 12 (Widget CLI)
 
-*Chưa trả lời — sẽ trả lời trước khi bắt đầu Stage E (câu 9).*
+### Câu 9 — Widget author API có thêm quyền generic chỉ vì dev convenience không?
+
+**Trả lời trước khi bắt đầu (contract h), và đây là điều Phase 11–12 sẽ bị soi lại:**
+
+Không, và có ba chỗ dễ trượt mà tôi cam kết giữ:
+
+1. **Không có `invoke` generic.** Frame chỉ gửi được những message **có tên** trong codec đã có, và mỗi
+   message đi qua một hàm host validate riêng. Một `{type: "invoke", method, args}` sẽ biến bridge
+   thành RPC tới mọi thứ host làm được — đó chính là thứ Phase 12 dễ muốn thêm vì test cho nhanh.
+2. **Quyền nằm trong manifest, không nằm trong lời gọi.** Capability phải khai báo trước và được duyệt
+   như dữ liệu; runtime không cấp thêm quyền vì widget "cần". Capability simulator trong dev host mô
+   phỏng **quyền đã khai báo**, không phải quyền tùy ý.
+3. **Dev host không nới quyền so với production.** Cùng codec, cùng sandbox policy; chỉ khác nguồn
+   bundle và có inspector. Nếu `npm run dev` cho widget làm được điều mà bản pack không làm được thì
+   đó là bug của dev host.
+
+Cách kiểm: test bị từ chối là test ngang hàng với test thành công — forged nonce, sai source window,
+message không có trong codec, capability chưa khai báo, và vượt budget đều phải **fail** có tên. Nếu
+Phase 11–12 chỉ có test happy path thì câu này coi như chưa trả lời.
