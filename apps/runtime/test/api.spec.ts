@@ -798,3 +798,22 @@ describe("the model catalogue route", () => {
   });
 });
 
+describe("taking a credential back", () => {
+  it("removes a name it holds, reports what remains, and 404s a name it never had", async () => {
+    const saved = await request("POST", "/credentials", {
+      body: { fields: [{ name: "probe_key", value: "not-a-real-key" }] },
+    });
+    expect(saved.status).toBe(201);
+
+    const removed = await request("DELETE", "/credentials/probe_key");
+    expect(removed.status).toBe(200);
+    // Names, never values and never lengths: a length is a fact about a secret.
+    expect((removed.body as { names: string[] }).names).not.toContain("probe_key");
+
+    // "I removed it" and "there was nothing to remove" are different answers, and a surface that cannot tell them
+    // apart cannot tell a person why nothing changed.
+    const again = await request("DELETE", "/credentials/probe_key");
+    expect(again.status).toBe(404);
+  });
+});
+

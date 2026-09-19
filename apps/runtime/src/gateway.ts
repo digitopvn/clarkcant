@@ -42,6 +42,7 @@ import {
   listLocalImages,
   nextMessageSequence,
   oneRow,
+  deleteCredential,
 } from "@clarkcant/storage";
 import { credentialNames, putCredential } from "@clarkcant/storage";
 
@@ -305,6 +306,23 @@ export async function handleRequest(deps: GatewayDeps, request: GatewayRequest):
    * The decider is one way a background request happens; a person highlighting a passage and saying "do this
    * elsewhere" is the other, and it must not depend on the decider having an opinion about it.
    */
+  /*
+   * A secret a person takes back.
+   *
+   * This is what logging out of a provider is: the key is the only thing the node holds, so a node that has forgotten
+   * it stops using that provider on the next turn. The answer names what remains, never a value and never a length.
+   */
+  if (segments.length === 2 && segments[0] === "credentials" && request.method === "DELETE") {
+    const name = decodeURIComponent(segments[1] ?? "").trim();
+    if (name === "") return fail(400, "INVALID_SCHEMA", "a credential name is required");
+    const owner = services.runtime.identity.ownerPrincipalId;
+    const removed = deleteCredential(services.runtime.db, owner, name);
+    // 404 rather than a cheerful 200 for a name that was not there: "I removed it" and "there was nothing to remove"
+    // are different answers, and a surface that cannot tell them apart cannot say why nothing changed.
+    if (!removed) return fail(404, "RESOURCE_NOT_FOUND", `no credential named ${name}`);
+    return json(200, { ok: true, names: credentialNames(services.runtime.db, owner) });
+  }
+
   if (segments.length === 1 && segments[0] === "background-sessions" && request.method === "POST") {
     const parsed = readJson(request);
     if (!parsed.ok) return parsed.response;
