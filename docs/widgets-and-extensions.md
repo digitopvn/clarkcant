@@ -151,7 +151,12 @@ Ghi rõ phần nào của §4 đã có trong repo và phần nào còn là thi�
 
 - **Chưa có extractor cho PDF và ảnh**: `read_attachment` chỉ đọc được tệp văn bản và nêu tệp nhị phân bằng id. Điều kiện còn thiếu: một extractor, và một adapter nhận được nội dung ảnh trong prompt — hiện `prompt(sessionId, text)` chỉ nhận văn bản.
 - **Chưa có route xoá conversation**: retention hiện là `releaseConversationAttachments`. Bốn bảng tham chiếu `conversations` mà không có `ON DELETE CASCADE`, và `PRAGMA foreign_keys = ON`, nên xoá một conversation cần một migration xử lý các tham chiếu trước.
-- **Smoke của Electron không chạy trong CI**: Electron cần display và CI không có. Điều kiện còn thiếu: một job `xvfb-run`, hoặc chấp nhận evidence của cửa sổ do người vận hành chạy và ghi rõ như vậy.
+
+Cả hai cổng này chạy trong CI: job `e2e` chạy browser suite, và job `desktop smoke (xvfb)` chạy
+`electron . --smoke-test` dưới `xvfb-run` (thêm ở PR #44). Evidence của cửa sổ vì thế không còn phụ thuộc vào một
+lần người vận hành chạy. Lần chạy đầu của hai job đó tìm ra hai lỗi thật và cả hai đã được sửa ở gốc: Electron
+không khởi động được vì sandbox SUID không cấu hình được trên runner, và một journey bàn phím lấy focus khi
+panel còn đang hiện nên `focus()` bị bỏ.
 
 ## 5. Agent-defined actions
 

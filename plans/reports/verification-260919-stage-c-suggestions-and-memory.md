@@ -1,5 +1,9 @@
 # Báo cáo Stage C — gợi ý từ việc gần đây và Memory
 
+> Ảnh chụp của Stage C tại thời điểm đó. Trạng thái cuối của hai claim journey (T66, T73) nằm ở
+> `plans/reports/verification-260919-issue-17-release.md`: cả hai đã `PASS`, có tên test, và nằm trong suite.
+
+
 Phạm vi: phase 9 → phase 11. Gồm contract gợi ý và bộ sinh ở node, route đọc, client đọc kèm fallback, rồi Memory
 bền vững (bảng, service, tool `remember`, hai route) và tab Memory trong Settings.
 
