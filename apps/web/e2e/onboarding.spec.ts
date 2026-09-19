@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { expect, test, type Page } from "@playwright/test";
@@ -13,6 +13,7 @@ import { expect, test, type Page } from "@playwright/test";
  * composer and stops would look identical in a screenshot.
  */
 
+const EVIDENCE = join(process.cwd(), "plans", "reports", "evidence");
 const DATA_DIR = join(process.cwd(), ".data", "e2e");
 
 const NODE_PORT = process.env.CC_E2E_NODE_PORT;
@@ -134,5 +135,42 @@ test.describe("the first run", () => {
     // And it stays gone: a screen somebody has dismissed is dismissed, not shown again on the next load.
     await page.reload();
     await expect(page.locator("[data-onboarding='true']")).toHaveCount(0);
+  });
+});
+
+test.describe("the first run carries the orb", () => {
+  // The same cleared state the other first-run tests use, for the same reason: without it this test opens the app
+  // and then reports that the first-run screen has no orb, which is true and tells you nothing.
+  test.use({ storageState: { cookies: [], origins: [] } });
+
+  test("the first run carries the same orb, centred on the screen it is drawn over", async ({ page }) => {
+    mkdirSync(EVIDENCE, { recursive: true });
+    await page.goto(`/?token=${token()}&gateway=${encodeURIComponent(GATEWAY)}`);
+
+    const canvas = page.locator("[data-onboarding='true'] canvas").first();
+    await expect(canvas).toBeVisible({ timeout: 20_000 });
+
+    // Measured rather than assumed. The canvas is drawn far larger than the box it sits in - 960 across in a 720px
+    // stage - so being in the markup says nothing about being where somebody can see it, and that gap is exactly what
+    // hid an off-centre orb until it was measured.
+    await page.screenshot({ path: join(EVIDENCE, "first-run.png") });
+
+    await expect
+      .poll(
+        async () =>
+          page.evaluate(() => {
+            const shell = document.querySelector("[data-onboarding='true']") as HTMLElement | null;
+            const drawn = shell?.querySelector("canvas") as HTMLElement | null;
+            if (shell === null || shell === undefined || drawn === null) return 999;
+            const box = shell.getBoundingClientRect();
+            const orb = drawn.getBoundingClientRect();
+            return Math.max(
+              Math.abs(box.left + box.width / 2 - (orb.left + orb.width / 2)),
+              Math.abs(box.top + box.height / 2 - (orb.top + orb.height / 2)),
+            );
+          }),
+        { timeout: 20_000 },
+      )
+      .toBeLessThan(4);
   });
 });

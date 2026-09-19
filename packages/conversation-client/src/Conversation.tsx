@@ -112,12 +112,12 @@ const PLACEHOLDER_PHRASES = [
  * glow that is meant to fade. 960 with a smaller radius keeps the ball exactly the size it was and nearly
  * doubles the room around it.
  */
-const ORB_DRAW_SIZE = 960;
+export const ORB_DRAW_SIZE = 960;
 /** How often the conversation is re-read while a spoken turn runs, at most. */
 const VOICE_REFRESH_INTERVAL_MS = 400;
 
 /** The ball's radius as a fraction of the canvas half-height: 0.54 x 960 is the 518 pixel ball. */
-const ORB_RADIUS = 0.54;
+export const ORB_RADIUS = 0.54;
 
 /**
  * The orb's diameter once it is docked behind the composer.

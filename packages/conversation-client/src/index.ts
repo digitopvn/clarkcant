@@ -78,6 +78,7 @@ export {
   type MenuBarPopoverProps,
 } from "./DesktopSurfaces.tsx";
 export { Orb, type OrbProps } from "./Orb.tsx";
+export { ORB_DRAW_SIZE, ORB_RADIUS } from "./Conversation.tsx";
 export { createOrbRenderer, type OrbOptions, type OrbRenderer } from "./orb.ts";
 export { ORB_PALETTE, ORB_SHAPE, ORB_SHADER_STATUS } from "./orb-shader.ts";
 export {

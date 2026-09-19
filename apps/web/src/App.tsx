@@ -1,6 +1,16 @@
-import { type ReactElement, useEffect, useMemo, useState } from "react";
+import { type ReactElement, useEffect, useMemo, useRef, useState } from "react";
 
-import { Conversation, GatewayClient, installStyles, readStoredTheme, resolveTheme, systemPrefersLight } from "@clarkcant/conversation-client";
+import {
+  Conversation,
+  GatewayClient,
+  ORB_DRAW_SIZE,
+  ORB_RADIUS,
+  Orb,
+  installStyles,
+  readStoredTheme,
+  resolveTheme,
+  systemPrefersLight,
+} from "@clarkcant/conversation-client";
 
 /**
  * Browser client entry.
@@ -62,6 +72,9 @@ export function App(): ReactElement {
    * that provider's models. The provider list is read from the node, so it is pi's own catalogue rather than one
    * written here and a provider added by upgrading pi appears without this file changing.
    */
+  /** The surface the orb reads the pointer against, so its glow reacts here as it does once the app is open. */
+  const shellRef = useRef<HTMLDivElement>(null);
+
   const [onboardStep, setOnboardStep] = useState<"welcome" | "provider" | "model" | "key">("welcome");
   const [pickedProvider, setPickedProvider] = useState<string | undefined>(undefined);
   const [pickedModel, setPickedModel] = useState<string | undefined>(undefined);
@@ -109,7 +122,42 @@ export function App(): ReactElement {
     const pickedModels = catalogue?.find((provider) => provider.id === pickedProvider)?.models ?? [];
 
     return (
-      <div className="cc-shell" data-view="hero" data-onboarding="true" data-onboarding-step={onboardStep}>
+      <div
+        className="cc-shell"
+        data-view="hero"
+        data-onboarding="true"
+        data-onboarding-step={onboardStep}
+        ref={shellRef}
+      >
+        {/*
+          The same orb the app opens with, at the same size, drawn before anything is chosen. The first screen is where
+          somebody decides whether this thing is worth their afternoon, and it was the one place the product's own face
+          was missing.
+        */}
+        <div className="cc-orb-stage">
+          {/*
+            Positioned inline rather than measured: the app has to place the orb against a composer that moves, and this
+            screen has nothing to place it against, so the centre is the whole answer. `.cc-stage-orb` is absolute and
+            240px square, and without a left and top it sits at its static position - which measured 520 pixels away from
+            the centre of the screen, and is what the browser test caught.
+          */}
+          <div
+            className="cc-stage-orb"
+            data-docked="false"
+            style={{ left: "50%", top: "50%", transform: "translate(-50%, -50%)" }}
+          >
+            <Orb
+              size={ORB_DRAW_SIZE}
+              radius={ORB_RADIUS}
+              className="cc-empty-orb"
+              label="ClarkCant"
+              // Drawn at a lower ratio than the small orbs: the canvas is 960 across, and at two device pixels per CSS
+              // pixel that is nearly four million fragments a frame for a soft glow nobody can see the difference in.
+              maxPixelRatio={1.25}
+              pointerTarget={shellRef}
+            />
+          </div>
+        </div>
         <div className="cc-body">
           <div className="cc-scroll">
             <div className="cc-empty">
