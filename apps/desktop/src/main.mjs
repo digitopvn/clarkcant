@@ -17,7 +17,7 @@
  */
 
 import { app, BrowserWindow, dialog, ipcMain, screen, shell, session } from "electron";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { dirname, join } from "node:path";
 import { readFileSync } from "node:fs";
 
@@ -29,7 +29,14 @@ import {
   reviewCredentialRequest,
   reviewIpcCall,
 } from "./security.mjs";
-import { COMPACT_MIN_SIZE, initialWindowMode, nextWindowMode } from "./window-mode.mjs";
+import {
+  COMPACT_MIN_SIZE,
+  WINDOW_MODE_PRESETS,
+  actionForMode,
+  fitIntoWorkArea,
+  initialWindowMode,
+  nextWindowMode,
+} from "./window-mode.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 
@@ -39,7 +46,11 @@ const rendererUrlFlag = argv.indexOf("--renderer-url");
 const rendererUrl =
   rendererUrlFlag >= 0 && argv[rendererUrlFlag + 1] !== undefined
     ? argv[rendererUrlFlag + 1]
-    : `file://${join(here, "shell.html")}`;
+    : // `pathToFileURL` rather than string interpolation: `file://` plus a Windows path gives
+      // `file://D:\...`, which is not the URL the sender frame reports and made every IPC call look
+      // like it came from somewhere else. The review then refused all of them, which is a working
+      // security check fed a wrong expectation.
+      pathToFileURL(join(here, "shell.html")).href;
 const dataDirFlag = argv.indexOf("--data-dir");
 const dataDir = dataDirFlag >= 0 ? argv[dataDirFlag + 1] : undefined;
 const nodeUrlFlag = argv.indexOf("--node-url");
@@ -62,15 +73,19 @@ let keepRunningOnWindowClose = true;
  * `security.mjs` stays the enforcing copy; this is what the check compares against.
  */
 const EXPECTED_BRIDGE_METHODS = Object.freeze([
+  "focusWindow",
   "getSession",
   "notify",
   "openExternal",
   "pickDirectory",
   "requestCredential",
+  "resizeWindowPreset",
+  "restoreWindow",
   "setCompactMode",
   "setKeepRunningOnWindowClose",
+  "setWindowMode",
   "status",
-]);
+].sort());
 
 /**
  * The window's remembered mode, in the process that owns the window.
@@ -84,6 +99,24 @@ let windowMode;
 /** The work area of the display the window is on, so a compact window lands somewhere reachable. */
 function workAreaFor(window) {
   return screen.getDisplayMatching(window.getBounds()).workArea;
+}
+
+/**
+ * What the window actually became, read back off the window.
+ *
+ * Every field here is observed rather than computed from the request. The OS may clamp a size or a position, and
+ * a shell that echoed what it asked for could not tell the difference between that and what happened — which is
+ * the whole reason the smoke test reads `getBounds()` instead of trusting an answer.
+ */
+function describeWindow(window, mode) {
+  return {
+    ok: true,
+    mode: mode?.mode ?? null,
+    bounds: window.getBounds(),
+    minimumSize: window.getMinimumSize(),
+    alwaysOnTop: window.isAlwaysOnTop(),
+    focused: window.isFocused(),
+  };
 }
 
 /**
@@ -213,6 +246,86 @@ function registerHandlers() {
     };
   });
 
+  /*
+   * The window's named modes.
+   *
+   * A mode name from the renderer, and everything else decided here: bounds live in this process, so a
+   * renderer cannot ask for geometry off the edge of the screen or larger than the display. The answer reports
+   * what the window actually has afterwards, read back off the window, because the OS may clamp a size or a
+   * position and a shell that echoed its own request could not tell that difference.
+   */
+  handle("desktop:setWindowMode", async (mode) => {
+    const window = BrowserWindow.getAllWindows()[0];
+    if (window === undefined) return { ok: false, refused: "there is no window to resize" };
+    const action = actionForMode(mode);
+    if (action === undefined) {
+      // Refused rather than coerced into `normal`: silently growing a window somebody asked to shrink is worse
+      // than not moving it.
+      return { ok: false, refused: `"${String(mode)}" is not a window mode this build knows` };
+    }
+    if (windowMode === undefined) {
+      windowMode = initialWindowMode({ bounds: window.getBounds(), workArea: workAreaFor(window) });
+    }
+    windowMode = nextWindowMode({ ...windowMode, workArea: workAreaFor(window) }, action);
+    window.setBounds(windowMode.bounds);
+    return describeWindow(window, windowMode);
+  });
+
+  /*
+   * A named size, with the mode left alone.
+   *
+   * Separate from the mode channels because they answer different questions: a mode is about what the window is
+   * for, and a preset is about how big it is. Folding them together would make resizing the conversation window
+   * change it into the voice bar.
+   */
+  handle("desktop:resizeWindowPreset", async (name) => {
+    const window = BrowserWindow.getAllWindows()[0];
+    if (window === undefined) return { ok: false, refused: "there is no window to resize" };
+    const preset = WINDOW_MODE_PRESETS[String(name)];
+    if (preset === undefined) {
+      return { ok: false, refused: `"${String(name)}" is not a size preset this build knows` };
+    }
+    const current = window.getBounds();
+    window.setBounds(
+      fitIntoWorkArea(
+        { x: current.x, y: current.y, width: preset.width, height: preset.height },
+        workAreaFor(window),
+      ),
+    );
+    return describeWindow(window, windowMode);
+  });
+
+  /*
+   * Back to the size and place the window had before it was collapsed.
+   *
+   * The remembered bounds live in this process, so a reload that loses the renderer's idea of where the window
+   * was does not also lose the window's own position.
+   */
+  handle("desktop:restoreWindow", async () => {
+    const window = BrowserWindow.getAllWindows()[0];
+    if (window === undefined) return { ok: false, refused: "there is no window to restore" };
+    if (windowMode === undefined) {
+      return { ok: false, refused: "this window has not been moved by the shell yet, so there is nothing to restore" };
+    }
+    windowMode = nextWindowMode({ ...windowMode, workArea: workAreaFor(window) }, { type: "expand" });
+    window.setBounds(windowMode.bounds);
+    return describeWindow(window, windowMode);
+  });
+
+  /*
+   * Bring the window forward.
+   *
+   * A request that came from voice or from an app intent has nobody behind it to click the window, so the shell
+   * is what has to make it the one being looked at.
+   */
+  handle("desktop:focusWindow", async () => {
+    const window = BrowserWindow.getAllWindows()[0];
+    if (window === undefined) return { ok: false, refused: "there is no window to focus" };
+    if (window.isMinimized()) window.restore();
+    window.focus();
+    return { ok: true, focused: window.isFocused(), bounds: window.getBounds() };
+  });
+
   handle("desktop:getStatus", async () => ({
     ok: true,
     shell: "clarkcant-desktop",
@@ -333,7 +446,16 @@ async function runSmokeTest() {
   const boundsBefore = window.getBounds();
   const observed = await window.webContents.executeJavaScript(probe);
   const boundsAfter = window.getBounds();
+  /*
+   * `getMinimumSize()` answers an array, not an object.
+   *
+   * The check read `.width` and `.height` off it, which are both `undefined`, so it compared `undefined` to `20`
+   * and failed while the window was reporting exactly the right floor. Read by index, which is the shape
+   * Electron documents.
+   */
   const minimum = window.getMinimumSize();
+  const minimumWidth = Array.isArray(minimum) ? minimum[0] : minimum.width;
+  const minimumHeight = Array.isArray(minimum) ? minimum[1] : minimum.height;
   const pinnedNow = window.isAlwaysOnTop();
   // `close()` is synchronous on BrowserWindow; awaiting it would imply a completion signal that
   // does not exist.
@@ -365,7 +487,7 @@ async function runSmokeTest() {
     ],
     [
       "the minimum size Electron reports is the twenty by fifty floor",
-      minimum.width === COMPACT_MIN_SIZE.width && minimum.height === COMPACT_MIN_SIZE.height,
+      minimumWidth === COMPACT_MIN_SIZE.width && minimumHeight === COMPACT_MIN_SIZE.height,
     ],
     [
       "expanding restores the bounds Electron had before compact",
