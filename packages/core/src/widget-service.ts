@@ -203,7 +203,15 @@ export function bumpRevision(
 
 export interface LiveOwnerClaim {
   instanceId: string;
-  surface: "inline" | "pin";
+  /**
+   * Where this instance is being presented.
+   *
+   * `detached` is a third presentation of the *same* instance, not a new one: a widget moved into its own
+   * window keeps its state, its subscriptions and its single owner, and the point of listing it here is that
+   * the one-owner rule has to hold across surfaces. Without it, detaching would be the way to end up with two
+   * live copies of one widget — the failure the lease exists to prevent.
+   */
+  surface: "inline" | "pin" | "detached";
   ownerToken: string;
   /** How long the claim stays valid without being refreshed. */
   leaseMs?: number;
@@ -312,7 +320,7 @@ export function releaseLiveOwner(deps: WidgetDeps, instanceId: string, ownerToke
 export function liveOwnerOf(
   deps: WidgetDeps,
   instanceId: string,
-): { ownerToken: string; surface: "inline" | "pin"; expiresAt?: string } | undefined {
+): { ownerToken: string; surface: "inline" | "pin" | "detached"; expiresAt?: string } | undefined {
   const row = oneRow<{
     owner_token: string;
     owner_surface: string;
@@ -329,7 +337,7 @@ export function liveOwnerOf(
   }
   return {
     ownerToken: row.owner_token,
-    surface: row.owner_surface as "inline" | "pin",
+    surface: row.owner_surface as "inline" | "pin" | "detached",
     ...(row.lease_expires_at === null ? {} : { expiresAt: row.lease_expires_at }),
   };
 }

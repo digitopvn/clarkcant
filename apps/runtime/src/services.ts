@@ -561,7 +561,7 @@ export interface TimelineInstanceView {
    * The surface only, never the owner token: a token in a payload is a token that ends up in a log,
    * and holding one is what authorizes releasing somebody else's claim.
    */
-  ownerSurface?: "inline" | "pin";
+  ownerSurface?: "inline" | "pin" | "detached";
   /** Set when this instance is a composed surface, so the client can fetch its spec and bundle. */
   compositionId?: string;
 }

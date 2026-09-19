@@ -52,6 +52,28 @@ const bridge = {
   setCompactMode(input) {
     return ipcRenderer.invoke("desktop:setCompactMode", input);
   },
+  /**
+   * The window's named modes: normal, expanded, compact, orb.
+   *
+   * A mode rather than pixel numbers, because bounds live in the main process: a renderer that could ask for
+   * arbitrary geometry could ask for a window off the edge of the screen or larger than the display, and the
+   * work-area arithmetic that prevents that is on the other side of this boundary.
+   */
+  setWindowMode(mode) {
+    return ipcRenderer.invoke("desktop:setWindowMode", mode);
+  },
+  /** Resize to one of the named presets, leaving the mode alone. */
+  resizeWindowPreset(name) {
+    return ipcRenderer.invoke("desktop:resizeWindowPreset", name);
+  },
+  /** Return the window to the size and place it had before it was collapsed. */
+  restoreWindow() {
+    return ipcRenderer.invoke("desktop:restoreWindow");
+  },
+  /** Bring the window forward, for a request that came from voice or from another surface. */
+  focusWindow() {
+    return ipcRenderer.invoke("desktop:focusWindow");
+  },
 };
 
 contextBridge.exposeInMainWorld("clarkcant", bridge);

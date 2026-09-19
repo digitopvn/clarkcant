@@ -27,8 +27,30 @@ export const COMPACT_MIN_SIZE = Object.freeze({ width: 20, height: 50 });
  */
 export const MINIMAL_BAR = Object.freeze({ width: 68, height: 56 });
 
-/** Valid window modes. There is no third one: a window is either showing the conversation or the bar. */
-export const WINDOW_MODES = Object.freeze(["normal", "compact"]);
+/**
+ * Valid window modes.
+ *
+ * Four, matching the design: the conversation at its normal size, the same conversation given more room, the
+ * voice bar, and the orb. `compact` and `orb` are the two collapsed presentations and they are not the same
+ * thing — the bar shows state and controls, the orb shows only the orb — which is why they are separate modes
+ * rather than one mode with a flag.
+ *
+ * A mode this build does not know is refused rather than coerced into `normal`: silently growing a window
+ * somebody asked to shrink is worse than not moving it.
+ */
+export const WINDOW_MODES = Object.freeze(["normal", "expanded", "compact", "orb"]);
+
+/**
+ * The size each mode takes, where a mode has one of its own.
+ *
+ * `expanded` is deliberately absent: it is the work area rather than a number, because "more room" means
+ * whatever the display has, and a fixed 1600×1000 would be larger than some screens and smaller than others.
+ * `normal` is absent too — it restores what the person had.
+ */
+export const WINDOW_MODE_PRESETS = Object.freeze({
+  compact: MINIMAL_BAR,
+  orb: Object.freeze({ width: 148, height: 148 }),
+});
 
 /**
  * The window's remembered state.
@@ -56,16 +78,21 @@ export function initialWindowMode(input) {
 export function nextWindowMode(state, action) {
   switch (action?.type) {
     case "enter-compact":
+      return enterPreset(state, "compact");
+    case "enter-orb":
+      return enterPreset(state, "orb");
+    case "enter-expanded":
       return {
         ...state,
-        mode: "compact",
-        normalBounds: state.bounds,
-        // The bar appears where the window already was when that position still fits, and is pulled back into
-        // the work area when it does not - a bar off the edge of the screen is a window nobody can reach.
-        bounds: fitIntoWorkArea(
-          { x: state.bounds.x, y: state.bounds.y, width: MINIMAL_BAR.width, height: MINIMAL_BAR.height },
-          state.workArea,
-        ),
+        mode: "expanded",
+        // Only a collapse from the conversation remembers where it was: expanding from an already-collapsed
+        // state must not overwrite that with the bar's own bounds.
+        normalBounds: state.mode === "normal" ? state.bounds : state.normalBounds,
+        // The whole work area, which is what "expanded" means and why it has no preset size.
+        bounds:
+          state.workArea === undefined || state.workArea === null
+            ? normalizeBounds(state.bounds)
+            : normalizeBounds(state.workArea),
       };
     case "expand":
       return {
@@ -78,6 +105,48 @@ export function nextWindowMode(state, action) {
       return { ...state, alwaysOnTop: action.value === true };
     default:
       return state;
+  }
+}
+
+/**
+ * Collapse to one of the presets, remembering where the conversation was.
+ *
+ * Shared by the bar and the orb so the two cannot disagree about what "remembered" means: both keep the window
+ * where it was when that position still fits, and both are pulled back into the work area when it does not — a
+ * small window off the edge of the screen is a window nobody can reach.
+ */
+function enterPreset(state, mode) {
+  const preset = WINDOW_MODE_PRESETS[mode];
+  return {
+    ...state,
+    mode,
+    normalBounds: state.mode === "normal" ? state.bounds : state.normalBounds,
+    bounds: fitIntoWorkArea(
+      { x: state.bounds.x, y: state.bounds.y, width: preset.width, height: preset.height },
+      state.workArea,
+    ),
+  };
+}
+
+/**
+ * Apply a named mode, for a caller that has a mode rather than an action.
+ *
+ * The intent registry speaks in modes and the window speaks in actions, so one has to translate. Doing it here
+ * keeps the mapping next to the arithmetic it drives, instead of in a handler where it would be one more thing
+ * to keep in step. An unknown mode returns nothing, and the caller refuses rather than guessing at `normal`.
+ */
+export function actionForMode(mode) {
+  switch (mode) {
+    case "normal":
+      return { type: "expand" };
+    case "expanded":
+      return { type: "enter-expanded" };
+    case "compact":
+      return { type: "enter-compact" };
+    case "orb":
+      return { type: "enter-orb" };
+    default:
+      return undefined;
   }
 }
 
