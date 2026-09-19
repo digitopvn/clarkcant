@@ -696,6 +696,70 @@ async function handleAppIntentRoutes(
   return fail(404, "NOT_FOUND", "no such app-intent route");
 }
 
+/** One widget action invocation, as either a click or a spoken command asks for it. */
+export interface WidgetActionRequest {
+  conversationId: string;
+  principalId: string;
+  instanceId: string;
+  actionBindingId: string;
+  expectedRevision: number;
+  expectedBindingDigest: string;
+  input: Record<string, unknown>;
+  invocationId: string;
+}
+
+export type WidgetActionResult =
+  | { ok: true; status: 200; body: Record<string, unknown> }
+  | { ok: false; status: number; code: string; message: string; currentRevision?: number };
+
+/**
+ * Invoke a widget action.
+ *
+ * The single path a click and a spoken command both take. Everything that decides whether an action may run lives
+ * here - the owner check, the revision the client saw, the binding digest, and one effect per invocation id - so a
+ * second path would not be a second interface to the same gate, it would be a way around one of them.
+ *
+ * Extracted from the route so the voice path has somewhere to call rather than something to copy. The route keeps the
+ * request-shaped validation and this keeps the authorization, which is the split that matters: what the HTTP body
+ * looks like is the transport's business, and whether an action may run is not.
+ */
+export function invokeWidgetAction(services: NodeServices, request: WidgetActionRequest): WidgetActionResult {
+  const outcome = invokeMiniAppAction(services.conductor, request);
+  if (!outcome.ok) {
+    const status =
+      outcome.code === "INSTANCE_UNKNOWN" || outcome.code === "ACTION_UNKNOWN"
+        ? 404
+        : outcome.code === "NOT_AUTHORIZED"
+          ? 403
+          : outcome.code === "REVISION_MISMATCH" || outcome.code === "BINDING_STALE" || outcome.code === "INVOCATION_KEY_REUSED"
+            ? 409
+            : 400;
+    return {
+      ok: false,
+      status,
+      code: outcome.code,
+      message: outcome.message,
+      ...(outcome.currentRevision === undefined ? {} : { currentRevision: outcome.currentRevision }),
+    };
+  }
+
+  return {
+    ok: true,
+    status: 200,
+    body: {
+      duplicate: outcome.duplicate,
+      instanceId: outcome.instanceId,
+      revision: outcome.revision,
+      stateRevision: outcome.stateRevision,
+      state: outcome.state,
+      pinId: outcome.pinId ?? null,
+      // The whole page comes back after a mutation, so the client does not have to guess whether
+      // its cursor is still valid.
+      timeline: buildTimeline(services, { conversationId: request.conversationId, afterSequence: 0 }),
+    },
+  };
+}
+
 /**
  * The voice fixture's script.
  *
@@ -1568,56 +1632,23 @@ async function handleConversationRoutes(
       return fail(400, "INSTANCE_MISMATCH", "the body names a different instance than the path");
     }
 
-    const invocation = {
+    const result = invokeWidgetAction(services, {
       conversationId,
       principalId: runtime.identity.ownerPrincipalId,
       instanceId,
       actionBindingId: typeof parsed.value.actionBindingId === "string" ? parsed.value.actionBindingId : "",
-      expectedRevision:
-        typeof parsed.value.expectedRevision === "number" ? parsed.value.expectedRevision : Number.NaN,
-      expectedBindingDigest:
-        typeof parsed.value.expectedBindingDigest === "string" ? parsed.value.expectedBindingDigest : "",
+      expectedRevision: typeof parsed.value.expectedRevision === "number" ? parsed.value.expectedRevision : Number.NaN,
+      expectedBindingDigest: typeof parsed.value.expectedBindingDigest === "string" ? parsed.value.expectedBindingDigest : "",
       input:
         typeof parsed.value.input === "object" && parsed.value.input !== null && !Array.isArray(parsed.value.input)
           ? (parsed.value.input as Record<string, unknown>)
           : {},
       invocationId: typeof parsed.value.invocationId === "string" ? parsed.value.invocationId : "",
-    };
+    });
 
-    if (invocation.actionBindingId === "" || invocation.invocationId === "") {
-      return fail(400, "INVALID_SCHEMA", "an action invocation needs an actionBindingId and an invocationId");
-    }
-    if (!Number.isFinite(invocation.expectedRevision)) {
-      return fail(400, "INVALID_SCHEMA", "an action invocation needs the expectedRevision the client saw");
-    }
-
-    const outcome = invokeMiniAppAction(services.conductor, invocation);
-    if (!outcome.ok) {
-      const status =
-        outcome.code === "INSTANCE_UNKNOWN" || outcome.code === "ACTION_UNKNOWN"
-          ? 404
-          : outcome.code === "NOT_AUTHORIZED"
-            ? 403
-            : outcome.code === "REVISION_MISMATCH"
-              ? 409
-              : outcome.code === "BINDING_STALE" || outcome.code === "INVOCATION_KEY_REUSED"
-                ? 409
-                : 400;
-      return fail(status, outcome.code, outcome.message, {
-        ...(outcome.currentRevision === undefined ? {} : { currentRevision: outcome.currentRevision }),
-      });
-    }
-
-    return json(200, {
-      duplicate: outcome.duplicate,
-      instanceId: outcome.instanceId,
-      revision: outcome.revision,
-      stateRevision: outcome.stateRevision,
-      state: outcome.state,
-      pinId: outcome.pinId ?? null,
-      // The whole page comes back after a mutation, so the client does not have to guess whether
-      // its cursor is still valid.
-      timeline: buildTimeline(services, { conversationId, afterSequence: 0 }),
+    if (result.ok) return json(result.status, result.body);
+    return fail(result.status, result.code, result.message, {
+      ...(result.currentRevision === undefined ? {} : { currentRevision: result.currentRevision }),
     });
   }
 
