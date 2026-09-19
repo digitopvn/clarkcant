@@ -29,3 +29,5 @@ export * from "./app-intents.ts";
 export * from "./surfaces.ts";
 
 export * from "./suggestions.ts";
+
+export * from "./memory.ts";
