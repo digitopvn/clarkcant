@@ -1,6 +1,11 @@
 import { useEffect, useState, type ReactElement } from "react";
 
+import { attachmentRefSchema, type AttachmentRef } from "@clarkcant/contracts";
+
 import { CodeBlock, Markdown } from "./markdown.tsx";
+import { formatFileSize } from "./attachments.ts";
+import { useAttachmentUrls } from "./use-attachment-urls.ts";
+import type { GatewayClient } from "./api.ts";
 
 /**
  * Block renderers.
@@ -911,17 +916,99 @@ export interface SurfaceBlockRef {
   stale: boolean;
 }
 
+/**
+ * One file a person attached, drawn from the stored message.
+ *
+ * Nothing here keeps state of its own: the block carries the whole reference, so a conversation that is
+ * reloaded draws the same picture it drew when it arrived, with no second lookup that could come back empty
+ * and leave a gap in the timeline.
+ *
+ * A malformed block is dropped rather than drawn, the same way an unknown type is: the ref is re-validated
+ * here because a block read back from storage is not a type, and a renderer that trusted it would be the
+ * place a forged name or a path first reached the DOM.
+ */
+function AttachmentBlock({
+  block,
+  client,
+}: {
+  block: Record<string, unknown>;
+  /** Required but possibly absent: a renderer can be drawn without a node connection, and then it shows the
+   *  file rather than fetching anything. */
+  client: GatewayClient | undefined;
+}): ReactElement | null {
+  const parsed = attachmentRefSchema.safeParse(block.attachment);
+  if (!parsed.success) return null;
+  return <AttachmentCard attachment={parsed.data} client={client} />;
+}
+
+function AttachmentCard({
+  attachment,
+  client,
+}: {
+  attachment: AttachmentRef;
+  client: GatewayClient | undefined;
+}): ReactElement {
+  const resolve = useAttachmentUrls(client, [attachment.attachmentId]);
+  const url = resolve(attachment.attachmentId);
+  const size = formatFileSize(attachment.sizeBytes);
+
+  if (attachment.kind === "image") {
+    return (
+      <figure className="cc-attachment" data-attachment-kind="image" data-attachment-id={attachment.attachmentId}>
+        {url === undefined ? (
+          // A sentence with the file's name, not an empty frame: bytes that cannot be read are a description.
+          <div className="cc-attachment-missing" data-attachment-missing="true">
+            Không hiện được ảnh {attachment.filename}.
+          </div>
+        ) : (
+          <img src={url} alt={attachment.filename} data-attachment-image="true" />
+        )}
+        <figcaption>
+          {attachment.filename} — {size}
+        </figcaption>
+      </figure>
+    );
+  }
+
+  // Text and PDF: a card with a way to open it. A pdf is not rendered in place, because the node serves it as
+  // a download and drawing it inline here would claim a preview this node does not produce.
+  return (
+    <div className="cc-attachment" data-attachment-kind={attachment.kind} data-attachment-id={attachment.attachmentId}>
+      <span className="cc-attachment-name">{attachment.filename}</span>
+      <span className="cc-attachment-size">{size}</span>
+      {url === undefined ? (
+        <span className="cc-attachment-missing" data-attachment-missing="true">
+          Không tải được tệp đính kèm.
+        </span>
+      ) : (
+        <a className="cc-attachment-open" href={url} download={attachment.filename} data-attachment-download="true">
+          Tải về
+        </a>
+      )}
+    </div>
+  );
+}
+
 export function renderBlock(
   block: Record<string, unknown>,
   index: number,
   surface: (props: SurfaceBlockRef) => ReactElement,
   actions?: BlockActions,
+  /**
+   * Written as `| undefined` as well as optional because of `exactOptionalPropertyTypes`: an absent key and a
+   * key holding undefined are different types there, and this one is forwarded as a value.
+   */
+  client?: GatewayClient | undefined,
 ): ReactElement | null {
   const type = typeof block.type === "string" ? block.type : "";
 
   switch (type) {
     case "text":
       return <TextBlock key={index} block={block} />;
+    case "attachment":
+      // The client is what fetches the bytes: an attachment's content route needs the bearer token, so a block
+      // drawn without one still shows the file rather than pretending it is missing.
+      return <AttachmentBlock key={index} block={block} client={client} />;
     case "tool-activity":
       return <ToolActivityBlock key={index} block={block} />;
     case "reasoning":

@@ -577,6 +577,62 @@ button.cc-badge:hover, .cc-badge[role="button"]:hover { color: var(--cc-text); b
 }
 /* The start screen has no bar either: the composer floats under the chips as one composition. */
 .cc-shell[data-view="hero"] .cc-composer-wrap { padding-bottom: var(--cc-space-md); }
+
+/*
+ * The files waiting to be sent.
+ *
+ * Above the pill rather than inside it, because the pill is a fixed stadium whose height is the design's,
+ * and chips that made it grow would move the send button away from where the eye left it. The row is inside
+ * the drop target, though: a file dropped anywhere on the composer - including on a chip - is the same
+ * gesture.
+ */
+.cc-chip-row {
+  display: flex; flex-wrap: wrap; gap: var(--cc-space-xs);
+  list-style: none; margin: 0 auto var(--cc-space-xs); padding: 0;
+  max-width: var(--cc-composer-max-width);
+}
+.cc-chip {
+  display: inline-flex; align-items: center; gap: var(--cc-space-xs);
+  padding: 2px var(--cc-space-xs); border-radius: var(--cc-radius-pill);
+  background: var(--cc-surface-raised); border: 1px solid var(--cc-border);
+  font-size: var(--cc-text-label); color: var(--cc-text);
+  max-width: 100%;
+}
+.cc-chip-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 220px; }
+.cc-chip-size, .cc-chip-reason { color: var(--cc-text-muted); }
+/* A refusal is stated in words next to the file it is about, and in the warning colour rather than red:
+   the file was not sent, which is not the same as the app having failed. */
+.cc-chip[data-attachment-state="failed"] { border-color: var(--cc-warning); }
+.cc-chip[data-attachment-state="failed"] .cc-chip-reason { color: var(--cc-warning); }
+/* Still on its way. The chip is visible and removable the whole time, so an upload that is slow or stuck is
+   never a click that did nothing. */
+.cc-chip[data-attachment-state="checking"] { opacity: 0.7; }
+.cc-chip-remove {
+  background: none; border: none; color: var(--cc-text-muted); cursor: pointer;
+  font: inherit; line-height: 1; padding: 0 2px;
+}
+.cc-chip-remove:hover { color: var(--cc-text); }
+/* The drop target. A dashed outline appears only while a file is over it, so the composer is not permanently
+   claiming a state the person is not in. */
+.cc-composer-wrap[data-composer-drop="true"]::after {
+  content: ""; position: absolute; inset: var(--cc-space-xs) var(--cc-space-md);
+  border: 1px dashed var(--cc-accent); border-radius: var(--cc-radius-pill);
+  pointer-events: none; z-index: 3;
+}
+
+/* An attachment in the timeline: a picture at its own size, or a card that can be opened. */
+.cc-attachment {
+  display: flex; align-items: center; gap: var(--cc-space-sm);
+  margin: var(--cc-space-xs) 0; padding: var(--cc-space-xs) var(--cc-space-sm);
+  border: 1px solid var(--cc-border); border-radius: var(--cc-radius-md);
+  background: var(--cc-surface-raised); max-width: 100%;
+}
+figure.cc-attachment { display: block; }
+.cc-attachment img { display: block; max-width: 100%; max-height: 320px; border-radius: var(--cc-radius-sm); }
+figure.cc-attachment figcaption { margin-top: var(--cc-space-xs); color: var(--cc-text-muted); font-size: var(--cc-text-label); }
+.cc-attachment-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cc-attachment-size, .cc-attachment-missing { color: var(--cc-text-muted); font-size: var(--cc-text-label); }
+.cc-attachment-open { margin-left: auto; color: var(--cc-accent); }
 /*
  * The composer's frame, and the light that travels around it.
  *

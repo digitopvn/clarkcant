@@ -1,4 +1,4 @@
-import { type CSSProperties, type ReactElement, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { type CSSProperties, type ReactElement, useCallback, useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState } from "react";
 
 import type {
   GatewayClient,
@@ -20,6 +20,16 @@ import type { ThemeName } from "@clarkcant/design-tokens";
 import { AgentAvatar } from "./AgentAvatar.tsx";
 import { ReasoningBlock, ToolActivityBlock, type BlockActions } from "./blocks.tsx";
 import { composerTextareaHeight } from "./composer-height.ts";
+import {
+  attachmentReducer,
+  clientAccepts,
+  formatFileSize,
+  nameForPastedFile,
+  readyAttachmentIds,
+  toBase64,
+  type AttachmentChip,
+} from "./attachments.ts";
+import { ATTACHMENT_LIMITS } from "@clarkcant/contracts";
 import { followsBottom } from "./follow-bottom.ts";
 import { latestTurnMetrics, statuslineParts } from "./statusline.ts";
 import { attachedPrompt, explainPrompt } from "./selection.ts";
@@ -167,6 +177,15 @@ export function Conversation({
   const [connection, setConnection] = useState<ConnectionState>("connecting");
   const [draft, setDraft] = useState("");
   const [busy, setBusy] = useState(false);
+  /**
+   * Files on their way to the node, as chips above the input.
+   *
+   * Held here rather than inside the composer form because sending has to read them and clear them, and a
+   * chip that outlives the message it belonged to is a file the person thinks they sent twice.
+   */
+  const [chips, dispatchChips] = useReducer(attachmentReducer, [] as readonly AttachmentChip[]);
+  /** Whether a file is being dragged over the composer, which is what draws the drop target. */
+  const [dragging, setDragging] = useState(false);
   const [error, setError] = useState<string | undefined>(undefined);
   /**
    * Which of the two shapes the interface is in.
@@ -188,6 +207,8 @@ export function Conversation({
   const heroOrb = useRef<HTMLDivElement>(null);
   const composerWrap = useRef<HTMLDivElement>(null);
   const composerInput = useRef<HTMLTextAreaElement>(null);
+  /** The hidden file input the `+` button opens, so the button itself is a real `<button>`. */
+  const attachmentInput = useRef<HTMLInputElement>(null);
   /**
    * The composer's top edge before the hero left.
    *
@@ -626,6 +647,89 @@ export function Conversation({
     return () => node.removeEventListener("scroll", onScroll);
   }, []);
 
+  /**
+   * Take files into the composer, one chip at a time.
+   *
+   * Every route in — the picker, a drop, a paste — comes through here, so the rules are applied once. A file
+   * the client already knows the node will refuse gets a failed chip and no request at all: uploading 30 MB
+   * to be told the ceiling is 25 would spend the person's bandwidth to tell them something known in advance.
+   *
+   * The conversation is created first when there is none. An attachment belongs to a conversation, and one
+   * uploaded into nothing could never be sent.
+   */
+  const addFiles = useCallback(
+    async (files: readonly File[]) => {
+      if (files.length === 0) return;
+      setError(undefined);
+
+      const stamped = Date.now();
+      const additions: AttachmentChip[] = files.map((file, index) => ({
+        id: `chip_${stamped}_${index}`,
+        // A pasted file often arrives with no name at all, and the node refuses an empty one — rightly, since
+        // a nameless attachment is a row nobody can recognise later.
+        filename: file.name === "" ? nameForPastedFile(file.type, new Date(stamped)) : file.name,
+        mime: file.type,
+        sizeBytes: file.size,
+        state: "checking",
+      }));
+      dispatchChips({ type: "add", chips: additions });
+
+      // Where a chip can still become ready. Past this, the message could not carry them anyway.
+      const room = Math.max(0, ATTACHMENT_LIMITS.maxPerMessage - chips.length);
+      for (const [index, chip] of additions.entries()) {
+        if (index >= room) {
+          dispatchChips({
+            type: "failed",
+            id: chip.id,
+            reason: `một tin nhắn chỉ mang được ${ATTACHMENT_LIMITS.maxPerMessage} tệp`,
+          });
+        }
+      }
+      const considered = additions.slice(0, room);
+      if (considered.length === 0) return;
+
+      let target = conversationId;
+      if (target === undefined) {
+        try {
+          target = (await client.createConversation("Conversation")).conversationId;
+          setConversationId(target);
+          onConversationReady?.(target);
+        } catch (cause) {
+          const reason = cause instanceof Error ? cause.message : String(cause);
+          for (const chip of considered) dispatchChips({ type: "failed", id: chip.id, reason });
+          return;
+        }
+      }
+
+      for (const chip of considered) {
+        const refused = clientAccepts({ filename: chip.filename, mime: chip.mime, sizeBytes: chip.sizeBytes });
+        if (!refused.ok) {
+          dispatchChips({ type: "failed", id: chip.id, reason: refused.message });
+          continue;
+        }
+        const file = files[additions.indexOf(chip)];
+        if (file === undefined) continue;
+        try {
+          const bytes = new Uint8Array(await file.arrayBuffer());
+          const stored = await client.uploadAttachment({
+            conversationId: target,
+            filename: chip.filename,
+            mime: chip.mime,
+            contentBase64: toBase64(bytes),
+          });
+          dispatchChips({ type: "stored", id: chip.id, attachmentId: stored.attachmentId });
+        } catch (cause) {
+          dispatchChips({
+            type: "failed",
+            id: chip.id,
+            reason: cause instanceof Error ? cause.message : String(cause),
+          });
+        }
+      }
+    },
+    [chips.length, client, conversationId, onConversationReady],
+  );
+
   const send = useCallback(
     async (text: string, options: { demo?: boolean } = {}) => {
       const trimmed = text.trim();
@@ -643,7 +747,8 @@ export function Conversation({
       beginHeroExit();
       const generation = sessionGeneration.current;
       try {
-        const target = conversationId ?? (await client.createConversation("Conversation")).conversationId;
+        const attachmentIds = readyAttachmentIds(chips);
+      const target = conversationId ?? (await client.createConversation("Conversation")).conversationId;
         // The user may have restarted while the conversation was being created or the model was
         // answering. Everything after this point belongs to the session they left.
         if (sessionGeneration.current !== generation) return;
@@ -668,8 +773,11 @@ export function Conversation({
               setLive([]);
             },
           },
-          options,
+          { ...options, attachmentIds },
         );
+        // Cleared only after the send succeeded: a failed send leaves the chips stored on the node, so the
+        // person can press send again rather than attaching the same file a second time.
+        dispatchChips({ type: "sent" });
       } catch (cause) {
         if (sessionGeneration.current !== generation) return;
         // The draft is restored so a failed send does not lose the user's text.
@@ -681,7 +789,7 @@ export function Conversation({
         setBusy(false);
       }
     },
-    [applyTimeline, beginHeroExit, busy, client, conversationId, onConversationReady],
+    [applyTimeline, beginHeroExit, busy, chips, client, conversationId, onConversationReady],
   );
 
   /**
@@ -1052,13 +1160,13 @@ export function Conversation({
                     <div className="cc-assistant">
                       <AgentAvatar />
                       <div className="cc-assistant-body">
-                        {message.blocks.map((block, blockIndex) => renderBlock(block, blockIndex, renderSurface, blockActions))}
+                        {message.blocks.map((block, blockIndex) => renderBlock(block, blockIndex, renderSurface, blockActions, client))}
                       </div>
                     </div>
                   ) : (
                     // A bubble, because it is the user's own words coming back to them at a glance.
                     <div className="cc-bubble" data-bubble="user">
-                      {message.blocks.map((block, blockIndex) => renderBlock(block, blockIndex, renderSurface, blockActions))}
+                      {message.blocks.map((block, blockIndex) => renderBlock(block, blockIndex, renderSurface, blockActions, client))}
                     </div>
                   )}
                 </article>
@@ -1177,10 +1285,60 @@ export function Conversation({
         </div>
       )}
 
-      <div className="cc-composer-wrap" ref={composerWrap}>
+      <div
+        className="cc-composer-wrap"
+        ref={composerWrap}
+        data-composer-drop={dragging ? "true" : "false"}
+        onDragOver={(event) => {
+          // `preventDefault` is what makes this element a drop target at all: without it the browser opens
+          // the dropped file and the conversation is gone, which reads as the app having crashed.
+          event.preventDefault();
+          setDragging(true);
+        }}
+        onDragLeave={() => setDragging(false)}
+        onDrop={(event) => {
+          event.preventDefault();
+          setDragging(false);
+          void addFiles([...event.dataTransfer.files]);
+        }}
+        onPaste={(event) => {
+          const pasted = [...event.clipboardData.files];
+          // Text paste stays the browser's business; only a file is intercepted.
+          if (pasted.length === 0) return;
+          event.preventDefault();
+          void addFiles(pasted);
+        }}
+      >
         {/* The ring, drawn under the composer so the light travels around its edge rather than across it. */}
         <div className="cc-composer-shell">
           <span className="cc-composer-glow" aria-hidden="true" />
+          {chips.length === 0 ? null : (
+            <ul className="cc-chip-row" data-attachment-chips="true">
+              {chips.map((chip) => (
+                <li
+                  key={chip.id}
+                  className="cc-chip"
+                  data-attachment-chip={chip.filename}
+                  data-attachment-state={chip.state}
+                >
+                  <span className="cc-chip-name">{chip.filename}</span>
+                  <span className="cc-chip-size">{formatFileSize(chip.sizeBytes)}</span>
+                  {/* The node's own sentence, shown where the file is: a refusal the person cannot read is
+                      indistinguishable from a click that did nothing. */}
+                  {chip.state === "failed" ? <span className="cc-chip-reason">{chip.reason}</span> : null}
+                  <button
+                    type="button"
+                    className="cc-chip-remove"
+                    aria-label={`Bỏ ${chip.filename}`}
+                    data-attachment-remove={chip.id}
+                    onClick={() => dispatchChips({ type: "remove", id: chip.id })}
+                  >
+                    ×
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
           <form
             className="cc-composer"
             onSubmit={(event) => {
@@ -1188,7 +1346,28 @@ export function Conversation({
               void send(draft);
             }}
           >
-            <button type="button" className="cc-icon-btn" aria-label="Đính kèm" disabled title="Chưa hỗ trợ đính kèm">
+            <input
+              ref={attachmentInput}
+              type="file"
+              multiple
+              hidden
+              data-attachment-input="true"
+              onChange={(event) => {
+                const chosen = [...(event.target.files ?? [])];
+                // Cleared so choosing the same file twice in a row still fires a change event, which is what
+                // a person does after removing a chip by mistake.
+                event.target.value = "";
+                void addFiles(chosen);
+              }}
+            />
+            <button
+              type="button"
+              className="cc-icon-btn"
+              aria-label="Đính kèm"
+              title="Đính kèm tệp"
+              data-attachment-open="true"
+              onClick={() => attachmentInput.current?.click()}
+            >
               +
             </button>
             <textarea
