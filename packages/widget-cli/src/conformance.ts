@@ -373,6 +373,27 @@ export function runConformance(root: string): ConformanceReport {
     stale.ok ? "a stale write was accepted" : stale.code,
   );
 
+  // An effect cannot be triggered by name alone: an action the host never accepted for this instance is refused
+  // before anything runs. That is the check behind "effect action", and it is the one that matters.
+  const unknownBinding = session.accept({
+    data: {
+      kind: "action.invoke",
+      nonce: "conformance-nonce-000000",
+      actionBindingId: "act_not_accepted",
+      expectedRevision: 1,
+      input: {},
+      invocationId: "inv_unknown",
+    },
+    sourceMatchesExpectedWindow: true,
+  });
+  add(
+    "interaction.effectActionRequiresBinding",
+    "interaction",
+    "an action the host never accepted is refused",
+    !unknownBinding.ok && unknownBinding.code === "ACTION_UNKNOWN" ? "pass" : "fail",
+    unknownBinding.ok ? "an action with an unknown binding was accepted" : unknownBinding.code,
+  );
+
   add(
     "interaction.pin",
     "interaction",
@@ -385,6 +406,16 @@ export function runConformance(root: string): ConformanceReport {
 
   add("interaction.keyboard", "interaction", "keyboard reachability", "requires-dev-host", "needs a rendered frame");
   add("interaction.touchSize", "interaction", "touch target size", "requires-dev-host", "needs a rendered frame");
+  add(
+    "interaction.detach",
+    "interaction",
+    "detach keeps one live owner",
+    "requires-dev-host",
+    // Named precisely: this is not "needs a browser" but "needs a detached host window", and the product does not
+    // have one — phase 7 landed the ownership half only, so there is nothing here to exercise.
+    "a detached host window does not exist yet, so detach cannot be exercised from this command",
+  );
+
   add(
     "interaction.voiceClickParity",
     "interaction",
