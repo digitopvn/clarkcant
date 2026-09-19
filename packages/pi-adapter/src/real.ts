@@ -1,11 +1,12 @@
-import { readdir } from "node:fs/promises";
+import { readFile, readdir } from "node:fs/promises";
 import { join } from "node:path";
 
 import type { Instant } from "@clarkcant/contracts";
 import { nowInstant } from "@clarkcant/contracts";
 
 import { NotImplementedError, type ModelCatalogue,
-  type PiExtension, type PiAdapter, type ResourceRefreshRequest, type ToolDefinition, type WorkerBrief, type WorkerEvent, type WorkerSessionHandle, type WorkerUsage } from "./types.ts";
+  type PiExtension,
+  type PiSetting, type PiAdapter, type ResourceRefreshRequest, type ToolDefinition, type WorkerBrief, type WorkerEvent, type WorkerSessionHandle, type WorkerUsage } from "./types.ts";
 
 /**
  * Real Pi SDK adapter.
@@ -136,6 +137,23 @@ export interface CompatibilityLock {
   exportsMissing: string[];
   verifiedLifecycle: string[];
   blockedLifecycle: { step: string; reason: string }[];
+}
+
+/**
+ * Whether a setting's name suggests it holds a secret.
+ *
+ * Deliberately broad and deliberately only about the name: the alternative is inspecting values, and a listing that
+ * guessed at a value's shape would eventually get it wrong in the one direction that matters.
+ */
+function looksSecret(key: string): boolean {
+  return /key|token|secret|password|credential/i.test(key);
+}
+
+/** A value as a line of text, bounded so one long list cannot fill a panel. */
+function describeSetting(value: unknown): string {
+  if (value === null || value === undefined) return String(value);
+  if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") return String(value);
+  return JSON.stringify(value).slice(0, 200);
 }
 
 export class RealPiAdapter implements PiAdapter {
@@ -277,6 +295,28 @@ export class RealPiAdapter implements PiAdapter {
     } catch {
       return [];
     }
+  }
+
+  /**
+   * pi's own configuration, as far as it is safe to report it.
+   *
+   * `auth.json` is deliberately never read: it is where credentials live, and a panel that showed configuration has no
+   * business near it. `settings.json` is configuration rather than secrets, but a key can be written into it all the
+   * same, so anything whose name sounds like a secret is reported as redacted.
+   */
+  async piSettings(): Promise<readonly PiSetting[]> {
+    const sdk = await this.#load();
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(await readFile(join(this.#options.agentDir ?? sdk.getAgentDir(), "settings.json"), "utf8"));
+    } catch {
+      // No file, or one that does not parse: either way there is nothing to report, which is a fact and not a failure.
+      return [];
+    }
+    if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) return [];
+    return Object.entries(parsed as Record<string, unknown>)
+      .map(([key, value]) => ({ key, value: looksSecret(key) ? "[redacted]" : describeSetting(value) }))
+      .sort((left, right) => left.key.localeCompare(right.key));
   }
 
   async createWorkerSession(brief: WorkerBrief): Promise<WorkerSessionHandle> {

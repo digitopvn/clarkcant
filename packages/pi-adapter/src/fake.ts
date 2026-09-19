@@ -3,6 +3,7 @@ import type { Instant } from "@clarkcant/contracts";
 import type {
   ModelCatalogue,
   PiExtension,
+  PiSetting,
   PiAdapter,
   ResourceRefreshRequest,
   ToolDefinition,
@@ -79,6 +80,14 @@ export class FakePiAdapter implements PiAdapter {
     return [
       { name: "fake-extension", kind: "directory" },
       { name: "fake-hook.ts", kind: "file" },
+    ];
+  }
+
+  /** A scripted configuration, including a redacted entry so a panel rendering one has one to render. */
+  async piSettings(): Promise<readonly PiSetting[]> {
+    return [
+      { key: "defaultModel", value: "fake-model" },
+      { key: "providerApiKey", value: "[redacted]" },
     ];
   }
 

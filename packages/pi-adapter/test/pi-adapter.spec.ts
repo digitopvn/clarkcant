@@ -313,3 +313,34 @@ describe("the extension listing", () => {
   });
 });
 
+describe("pi's own settings", () => {
+  it("reports scalars and redacts anything whose name suggests a secret, reading no other file", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "cc-pi-settings-"));
+    writeFileSync(
+      join(dir, "settings.json"),
+      JSON.stringify({ defaultModel: "a-model", providerApiKey: "must-not-appear", thinkingBudgets: { low: 1 } }),
+    );
+
+    const adapter = new RealPiAdapter({
+      cwd: process.cwd(),
+      agentDir: dir,
+      sdk: stubSdk().module as unknown as NonNullable<RealPiAdapterOptions["sdk"]>,
+    });
+
+    const settings = await adapter.piSettings();
+    const byKey = new Map(settings.map((entry) => [entry.key, entry.value]));
+    expect(byKey.get("defaultModel")).toBe("a-model");
+    expect(byKey.get("thinkingBudgets")).toBe('{"low":1}');
+
+    // The redaction is by name and is deliberately broad: a settings file on a real machine can carry a provider key,
+    // and a section that echoed it would be the place it leaked from.
+    expect(byKey.get("providerApiKey")).toBe("[redacted]");
+    expect(JSON.stringify(settings)).not.toContain("must-not-appear");
+
+    // No file is a fact rather than a failure: a machine where nobody has configured pi has nothing to report.
+    rmSync(join(dir, "settings.json"));
+    expect(await adapter.piSettings()).toEqual([]);
+    rmSync(dir, { recursive: true, force: true });
+  });
+});
+

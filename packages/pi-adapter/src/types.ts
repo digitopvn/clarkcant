@@ -122,6 +122,17 @@ export interface PiExtension {
   readonly kind: "directory" | "file";
 }
 
+/**
+ * One line of pi's own configuration.
+ *
+ * A key and a value as text, because that is what a panel shows. Any key whose name suggests a secret is reported as
+ * redacted rather than as a value: a settings file on a real machine can carry a provider key.
+ */
+export interface PiSetting {
+  readonly key: string;
+  readonly value: string;
+}
+
 export interface PiAdapter {
   /** Whether the SDK is actually usable in this process. */
   availability(): Promise<{ available: boolean; reason?: string; sdkVersion?: string }>;
@@ -136,6 +147,9 @@ export interface PiAdapter {
    * the place it leaked from, so this deliberately reports less than it could.
    */
   extensions(): Promise<readonly PiExtension[]>;
+
+  /** pi's own configuration, as far as it is safe to report it: scalars, with anything secret-sounding redacted. */
+  piSettings(): Promise<readonly PiSetting[]>;
 
   createWorkerSession(brief: WorkerBrief): Promise<WorkerSessionHandle>;
 
