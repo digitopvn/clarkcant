@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, useSyncExternalStore, type ReactElement, type RefObject } from "react";
 
 import { createOrbRenderer, orbPointerFromClient, type OrbOptions, type OrbPointerRect, type OrbPointerSample } from "./orb.ts";
+import { orbFallbackBackground, type ResolvedOrbProfile } from "./orb-profile.ts";
 import { readDocumentTheme, subscribeToDocumentTheme } from "./theme.ts";
 
 /**
@@ -36,6 +37,14 @@ export interface OrbProps extends OrbOptions {
    * placements.
    */
   pointerTarget?: RefObject<HTMLElement | null>;
+  /**
+   * The personalized orb, already resolved and clamped.
+   *
+   * A resolved profile rather than raw preferences, because this component must not read storage: a
+   * renderer that went looking for its own settings would rebuild whenever anything unrelated re-rendered.
+   * Explicit props still win over the profile, so a caller that sizes the hero orb keeps that sizing.
+   */
+  profile?: ResolvedOrbProfile;
 }
 
 /**
@@ -75,7 +84,7 @@ function readCanvasColor(): readonly number[] | undefined {
   return raw === "" ? undefined : parseCssColor(raw);
 }
 
-export function Orb({ size, className, label, pointerTarget, ...options }: OrbProps): ReactElement {
+export function Orb({ size, className, label, pointerTarget, profile, ...options }: OrbProps): ReactElement {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const [failed, setFailed] = useState<string | undefined>(undefined);
   /*
@@ -85,15 +94,36 @@ export function Orb({ size, className, label, pointerTarget, ...options }: OrbPr
    */
   const theme = useSyncExternalStore(subscribeToDocumentTheme, readDocumentTheme, () => "dark" as const);
 
+  /*
+   * The profile's values, under the caller's own props.
+   *
+   * A prop is a decision about this particular orb — the hero is drawn at its own radius — and a profile is
+   * a preference about the orb in general, so the more specific one wins.
+   */
+  const profileOptions: OrbOptions =
+    profile === undefined
+      ? {}
+      : {
+          radius: profile.optical.radius,
+          exposure: profile.optical.exposure,
+          chromatic: profile.optical.chromatic,
+          glow: profile.optical.glow,
+          sheen: profile.optical.sheen,
+          speed: profile.speed,
+          physics: profile.physics,
+          ...(Object.keys(profile.palette).length === 0 ? {} : { palette: profile.palette }),
+        };
+  const effective: OrbOptions = { ...profileOptions, ...options };
+
   useEffect(() => {
     const canvas = canvasRef.current;
     if (canvas === null) return;
 
     const canvasColor = readCanvasColor();
     const created = createOrbRenderer(canvas, {
-      ...options,
+      ...effective,
       // The page background wins over the orb's own default, so the canvas edge is invisible.
-      ...(canvasColor === undefined ? {} : { palette: { ...options.palette, canvas: canvasColor } }),
+      ...(canvasColor === undefined ? {} : { palette: { ...effective.palette, canvas: canvasColor } }),
     });
     if (!created.ok) {
       // Reported rather than swallowed: a caller that wants to know why there is no orb should be
@@ -205,10 +235,27 @@ export function Orb({ size, className, label, pointerTarget, ...options }: OrbPr
       }
       renderer.dispose();
     };
-    // The options are read once, when the renderer is built. Re-creating the context whenever a
-    // new options object identity arrives would drop and rebuild the GPU program on every keystroke
-    // in the composer, which is why the dependency list here is deliberately empty.
-  }, [theme, pointerTarget]);
+    // The options are read once, when the renderer is built: re-creating the context whenever a new options
+    // object identity arrived would drop and rebuild the GPU program on every keystroke in the composer. The
+    // profile key is the one exception, and it is a value rather than an object: it changes exactly when the
+    // resolved profile changes, so a personalized orb rebuilds once per profile change and never per render.
+  }, [theme, pointerTarget, profile?.key]);
+
+  /*
+   * What the machine without WebGL shows.
+   *
+   * The fallback is this element's own background, so a personalized orb has to carry its colours into it:
+   * an orb that reverts to the shipped gradient on a machine without WebGL is a preference that silently
+   * did nothing there. Nothing is set when no palette was chosen, which leaves the stylesheet in charge of
+   * the default look rather than duplicating it here.
+   *
+   * Applied only in the fallback state. A canvas with a working context is transparent so it can composite
+   * over any surface, which means a background painted on the element shows *through* the orb rather than
+   * being covered by it — a band of gradient across the middle of a sphere that already has its own. The
+   * stylesheet scopes its own fallback background the same way, for the same reason.
+   */
+  const fallback =
+    failed === undefined || profile === undefined ? undefined : orbFallbackBackground(profile.palette);
 
   return (
     <canvas
@@ -216,9 +263,24 @@ export function Orb({ size, className, label, pointerTarget, ...options }: OrbPr
       className={className}
       width={size}
       height={size}
-      style={{ width: size, height: size }}
+      style={{
+        width: size,
+        height: size,
+        ...(fallback === undefined ? {} : { background: fallback }),
+      }}
       data-orb={failed === undefined ? "gl" : "fallback"}
       {...(failed === undefined ? {} : { "data-orb-reason": failed })}
+      /*
+       * The resolved profile, published as state rather than kept internal.
+       *
+       * Same reason the shell publishes the agent state: a reader — or a test — should be able to see which orb
+       * is actually drawn without reaching into the renderer. `motion` is separate from the name because they
+       * are separate facts, and the one that matters for accessibility is the resolved one rather than what
+       * the profile asked for.
+       */
+      {...(profile === undefined
+        ? {}
+        : { "data-orb-profile": profile.name, "data-orb-motion": profile.reducedMotion ? "reduced" : "full" })}
       role="img"
       aria-label={label ?? "Orb"}
     />

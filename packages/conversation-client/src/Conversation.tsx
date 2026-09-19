@@ -36,6 +36,8 @@ import { attachedPrompt, explainPrompt } from "./selection.ts";
 import { SelectionToolbar } from "./selection-toolbar.tsx";
 import { BackgroundSessionsMark } from "./background-sessions-mark.tsx";
 import { applyLiveEvent, type LiveSegment } from "./live-reply.ts";
+import { agentStateFrom, attachInputModality, type InputModality } from "./input-modality.ts";
+import type { ResolvedOrbProfile } from "./orb-profile.ts";
 import { Markdown } from "./markdown.tsx";
 import { Orb } from "./Orb.tsx";
 import { useTypewriterPlaceholder, prefersReducedMotion } from "./typewriter.ts";
@@ -79,6 +81,14 @@ export interface ConversationProps {
   onSessionReset?: () => void;
   /** Loads an existing conversation on mount instead of starting empty. */
   initialAfter?: number;
+  /**
+   * The personalized orb, resolved by the host from the stored preferences.
+   *
+   * Passed down rather than read here: the conversation is rendered many times per turn, and a component
+   * that fetched its own preferences would rebuild the orb's GPU program on whatever schedule its own
+   * re-renders happened to follow.
+   */
+  orbProfile?: ResolvedOrbProfile;
 }
 
 type ConnectionState = "connecting" | "ready" | "offline";
@@ -155,6 +165,7 @@ export function Conversation({
   onTimelineChange,
   onConversationReady,
   onSessionReset,
+  orbProfile,
 }: ConversationProps): ReactElement {
   const [conversationId, setConversationId] = useState<string | undefined>(initialConversationId);
   const [timeline, setTimeline] = useState<Timeline | undefined>(undefined);
@@ -203,6 +214,22 @@ export function Conversation({
   const [orbPlacement, setOrbPlacement] = useState<OrbPlacement | undefined>(undefined);
   /** The element the orb answers pointer movement anywhere inside. */
   const shell = useRef<HTMLDivElement>(null);
+  /**
+   * How the user last interacted, as one attribute on the shell.
+   *
+   * Published here rather than detected by each component that cares: a listener per component is a
+   * listener per component to keep in sync, and the stylesheet would have no single place to read. Only
+   * changes are reported, so a pointer crossing the shell is one state write rather than a thousand.
+   */
+  const [modality, setModality] = useState<InputModality>("pointer");
+
+  useEffect(() => {
+    // The window rather than the shell: a pointer that has left the shell is still the last thing the user
+    // did, and a keyboard event inside a focused control has to be seen too.
+    const handle = attachInputModality({ target: window, onChange: setModality });
+    return () => handle.dispose();
+  }, []);
+
   /** The space the hero reserves for the orb, which is where the orb measures itself from. */
   const heroOrb = useRef<HTMLDivElement>(null);
   const composerWrap = useRef<HTMLDivElement>(null);
@@ -226,6 +253,21 @@ export function Conversation({
    * session sat in a settings tab. Speaking is a mode of the conversation, so it belongs here.
    */
   const [voiceOpen, setVoiceOpen] = useState(false);
+
+  /**
+   * What the agent is doing, as one state rather than several flags a stylesheet would have to combine.
+   *
+   * Every input is a state this component already holds. Nothing is promoted to `success`: there is no
+   * real completion signal here yet, and a state published without one is the interface claiming to know
+   * something it does not.
+   */
+  const agentState = agentStateFrom({
+    failed: error !== undefined,
+    listening: voiceOpen,
+    busy,
+    tooling: live.some((segment) => segment.kind === "tool"),
+    responding: live.some((segment) => segment.kind === "text" || segment.kind === "reasoning"),
+  });
   /** Which approval is in flight, so one card says so rather than every card looking busy. */
   const [decidingApprovalId, setDecidingApprovalId] = useState<string | undefined>(undefined);
   /**
@@ -1050,6 +1092,11 @@ export function Conversation({
       // narrower than the input it sits over - so it is taken out of the way instead, which is also what the
       // mode means: while the microphone is open, the thing you talk to is not the text box.
       data-voice-open={voiceOpen ? "true" : "false"}
+      // How the user is interacting and what the agent is doing, published once for the whole shell. A
+      // component that needs either reads an attribute instead of attaching its own listener and guessing
+      // from unrelated DOM state.
+      data-input-modality={modality}
+      data-agent-state={agentState}
       ref={shell}
       style={
         {
@@ -1073,7 +1120,7 @@ export function Conversation({
           title="Bắt đầu lại"
           aria-label="Bắt đầu lại: về màn hình đầu và mở một phiên mới"
         >
-          <Orb size={30} className="cc-orb" label="" pointerTarget={shell} />
+          <Orb size={30} className="cc-orb" label="" pointerTarget={shell} {...(orbProfile === undefined ? {} : { profile: orbProfile })} />
           <span>ClarkCant</span>
         </button>
         <div className="cc-header-end">
@@ -1450,6 +1497,7 @@ export function Conversation({
               // where the difference is actually visible.
               maxPixelRatio={1.25}
               pointerTarget={shell}
+              {...(orbProfile === undefined ? {} : { profile: orbProfile })}
             />
           </div>
         </div>
