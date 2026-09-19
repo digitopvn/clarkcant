@@ -19,6 +19,7 @@
 import { useCallback, useEffect, useState, type ReactElement, type ReactNode } from "react";
 
 import { MicrophoneCheck } from "./microphone-check.tsx";
+import { SearchSelect } from "./search-select.tsx";
 import { ToolLists } from "./tool-lists.tsx";
 
 import { contrastRatio, DARK, LIGHT, type ThemeName } from "@clarkcant/design-tokens";
@@ -546,55 +547,6 @@ export function SettingsPanel({
               <p className="cc-panel-note">{ACCENT_CHOICES[accentIndex]?.note ?? ""}</p>
             </section>
 
-            <section className="cc-panel-section" data-providers="true">
-              <h3>Provider và model có thể chạy</h3>
-              {catalogue === undefined ? (
-                <p className="cc-panel-note">Đang đọc…</p>
-              ) : catalogue.length === 0 ? (
-                <p className="cc-panel-note" data-providers="none">
-                  Node chưa báo provider nào. Danh sách này đọc từ pi trên máy, nên nó rỗng khi pi chưa
-                  thấy provider nào — hoặc khi node không dựng được model turn.
-                </p>
-              ) : (
-                // Grouped by provider with every model spelled out, because choosing means reading the model names, and
-                // the current one is marked here rather than inferred by comparing against the facts above.
-                catalogue.map((provider) => (
-                  <div key={provider.id} data-provider={provider.id}>
-                    <SettingsRow label={provider.id} description={`${provider.models.length} model`}>
-                      <span className="cc-provider-models">
-                        {provider.models.map((model) => (
-                          <button
-                            key={model.id}
-                            type="button"
-                            className="cc-chip"
-                            data-model-id={model.id}
-                            data-current={model.current ? "true" : "false"}
-                            // The model in use is the one already chosen, so offering it as a choice would be a button
-                            // that does nothing and looks like it did something.
-                            disabled={model.current}
-                            onClick={() => {
-                              client
-                                .chooseModel({ provider: provider.id, id: model.id })
-                                .then(() => setModelStatus(`Đã lưu ${provider.id}/${model.id}. Áp dụng cho hội thoại mới.`))
-                                .catch(() => setModelStatus("Không lưu được lựa chọn."));
-                            }}
-                          >
-                            {model.id}
-                            {model.current ? " · đang dùng" : ""}
-                          </button>
-                        ))}
-                      </span>
-                    </SettingsRow>
-                  </div>
-                ))
-              )}
-              {modelStatus === undefined ? null : (
-                <p className="cc-panel-note" data-model-status="true">
-                  {modelStatus}
-                </p>
-              )}
-            </section>
-
           </>
         )}
 
@@ -640,37 +592,42 @@ export function SettingsPanel({
                 <>
                   <label className="cc-credential-field">
                     <span>Provider</span>
-                    <input
-                      list="cc-provider-options"
-                      autoComplete="off"
-                      data-provider-input="true"
+                    <SearchSelect
+                      name="provider"
+                      placeholder="Gõ để tìm provider"
                       value={chosenProvider}
-                      onChange={(event) => {
-                        setProviderDraft(event.target.value);
+                      options={catalogue.map((provider) => ({
+                        value: provider.id,
+                        label: provider.id,
+                        note: `${provider.models.length} model`,
+                      }))}
+                      onChange={(next) => {
+                        setProviderDraft(next);
+                        // A different provider is a different catalogue, so a model chosen for the old one is not a
+                        // choice any more - keeping it would offer a pair this node cannot run.
+                        setModelDraft("");
                       }}
+                      emptyNote="Không có provider nào khớp."
                     />
                   </label>
-                  <datalist id="cc-provider-options">
-                    {catalogue.map((provider) => (
-                      <option key={provider.id} value={provider.id} />
-                    ))}
-                  </datalist>
 
                   <label className="cc-credential-field">
                     <span>Model</span>
-                    <input
-                      list="cc-model-options"
-                      autoComplete="off"
-                      data-model-input="true"
+                    <SearchSelect
+                      name="model"
+                      placeholder="Gõ để tìm model"
                       value={modelDraft ?? facts?.model?.id ?? ""}
-                      onChange={(event) => setModelDraft(event.target.value)}
+                      options={chosenModels.map((model) => ({
+                        value: model.id,
+                        label: model.id,
+                        ...(model.contextWindow === undefined
+                          ? {}
+                          : { note: `${Math.round(model.contextWindow / 1000)}K` }),
+                      }))}
+                      onChange={setModelDraft}
+                      emptyNote="Không có model nào khớp."
                     />
                   </label>
-                  <datalist id="cc-model-options">
-                    {chosenModels.map((model) => (
-                      <option key={model.id} value={model.id} />
-                    ))}
-                  </datalist>
 
                   <div className="cc-chip-row">
                     <button type="button" className="cc-chip" data-model-save="true" onClick={saveModelChoice}>

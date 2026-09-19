@@ -190,14 +190,23 @@ test("the settings panel lists what this node can run, or says plainly that it c
   // Two fields somebody types into rather than hundreds of rows to scroll: this machine's catalogue runs past what any
   // list on a screen could hold, so what is asserted is that a searchable pair is offered, or that the node says plainly
   // that it has none.
-  await expect(section.locator("[data-provider-input], [data-providers='none']").first()).toBeVisible({ timeout: 20_000 });
-  const providerInput = page.locator("[data-provider-input]");
-  if ((await providerInput.count()) > 0) {
-    await expect(page.locator("[data-model-input]")).toBeVisible();
-    // The field is wired to the catalogue rather than to a fixed list, so a provider this node can run is one the
-    // field offers.
-    await expect(providerInput).toHaveAttribute("list", "cc-provider-options");
-    await expect(page.locator("[data-model-input]")).toHaveAttribute("list", "cc-model-options");
+  await expect(section.locator("[data-search-select='provider'], [data-providers='none']").first()).toBeVisible({
+    timeout: 20_000,
+  });
+
+  const provider = page.locator("[data-search-input='provider']");
+  if ((await provider.count()) > 0) {
+    // Clicking opens a list of what this node can run, and typing narrows it. Asserted by behaviour rather than by the
+    // markup, because the point of this field over the one it replaced is what happens when somebody uses it.
+    await provider.click();
+    const options = page.locator("[data-search-option]");
+    await expect(options.first()).toBeVisible({ timeout: 20_000 });
+    const total = await options.count();
+
+    await provider.fill("zzzz-no-such-provider");
+    await expect(page.locator("[data-search-empty='provider']")).toBeVisible();
+    await provider.fill("");
+    await expect(options).toHaveCount(total);
   }
 });
 
@@ -222,14 +231,21 @@ test("the model in use is what the fields show before anybody types", async ({ p
   await page.locator("[data-settings='true']").click();
   await page.getByRole("tab", { name: "Models" }).click();
 
-  const model = page.locator("[data-model-input]");
+  const model = page.locator("[data-search-input='model']");
   await expect(model).toBeVisible({ timeout: 20_000 });
 
-  // Nothing is clicked and nothing is typed: this suite shares one node, so a test that stored a preference would change
-  // what every later spec runs. What is asserted is that the pair the node already runs is the pair on screen.
+  // Nothing is saved: this suite shares one node, so a test that stored a preference would change what every later spec
+  // runs. What is asserted is that the pair the node already runs is the pair on screen, and that choosing replaces it.
   const shown = await model.inputValue();
   const current = await page.locator("[data-model='none']").count();
   expect(current > 0 || shown.length > 0).toBe(true);
+
+  await model.click();
+  const choices = page.locator("[data-search-option]");
+  await expect(choices.first()).toBeVisible({ timeout: 20_000 });
+  const picked = await choices.first().getAttribute("data-search-option");
+  await choices.first().click();
+  expect(await model.inputValue()).toBe(picked);
 });
 
 test("the tools tab also says which extensions pi loads on this machine", async ({ page }) => {

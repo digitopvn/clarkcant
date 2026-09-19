@@ -124,3 +124,10 @@ export function installStyles(theme: "dark" | "light" = "dark"): void {
   document.documentElement.dataset.ccTheme = theme;
 }
 export { firstRunSteps, type FirstRunStep, type NodeReadiness } from "./first-run.ts";
+export {
+  SEARCH_SELECT_MAX_OPTIONS,
+  SearchSelect,
+  matchingOptions,
+  type SearchSelectOption,
+  type SearchSelectProps,
+} from "./search-select.tsx";

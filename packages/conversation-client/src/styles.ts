@@ -62,6 +62,53 @@ body {
 .cc-select:focus-visible { outline: 2px solid var(--cc-focus); outline-offset: 2px; }
 
 /*
+ * A field that opens a list, and the list itself.
+ *
+ * Positioned rather than pushed into the layout, because a panel that grows by several hundred rows every time somebody
+ * clicks a field is a panel that jumps under the pointer.
+ */
+.cc-search-select { position: relative; }
+.cc-search-select input {
+  width: 100%;
+  background: var(--cc-elevated);
+  color: inherit;
+  border: 1px solid var(--cc-border);
+  border-radius: 10px;
+  padding: 10px 12px;
+  font: inherit;
+}
+.cc-search-select input:focus-visible { outline: 2px solid var(--cc-focus); outline-offset: 2px; }
+.cc-search-list {
+  position: absolute;
+  z-index: 5;
+  left: 0;
+  right: 0;
+  top: calc(100% + 4px);
+  max-height: 240px;
+  overflow-y: auto;
+  margin: 0;
+  padding: 4px;
+  list-style: none;
+  background: var(--cc-elevated);
+  border: 1px solid var(--cc-border);
+  border-radius: 10px;
+  box-shadow: var(--cc-shadow-soft, 0 12px 32px rgb(0 0 0 / 35%));
+}
+.cc-search-list li {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 7px 9px;
+  border-radius: 7px;
+  cursor: pointer;
+}
+.cc-search-list li[data-active="true"] { background: var(--cc-card); }
+.cc-search-list li[aria-selected="true"] { color: var(--cc-accent); }
+.cc-search-list li em { opacity: 0.6; font-style: normal; font-size: var(--cc-font-small); }
+.cc-search-empty { cursor: default; opacity: 0.7; }
+
+/*
  * Entrances.
  *
  * One movement, used by everything that arrives: an element comes up a little and settles, with the
