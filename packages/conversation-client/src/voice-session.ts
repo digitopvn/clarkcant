@@ -1,4 +1,4 @@
-import type { VoiceState } from "@clarkcant/contracts";
+import { type AppIntentDecision, type VoiceState, appIntentDecisionSchema } from "@clarkcant/contracts";
 
 /**
  * The browser's half of a live voice session.
@@ -54,6 +54,13 @@ export interface VoiceSessionEvents {
    * already being listened for.
    */
   onAnswerFailed?(input: { code: string; message: string }): void;
+  /**
+   * A decision the node made about a command it was given out loud.
+   *
+   * Passed on rather than acted on here: the session owns the microphone and the node owns what a command means,
+   * and the page has one executor for both a click and a voice. Only `kind: "intent"` may be run.
+   */
+  onAppIntent?(decision: AppIntentDecision): void;
   /**
    * Called once per capture frame handed to the socket.
    *
@@ -259,6 +266,15 @@ export async function startVoiceSession(options: StartVoiceSessionOptions): Prom
             text: typeof control["text"] === "string" ? control["text"] : "",
             final: control["final"] === true,
           });
+          return;
+        }
+        case "app-intent": {
+          const decision = control["decision"];
+          // Validated rather than cast: this arrives from the node over a socket, and a decision that does not parse
+          // is not permission. `runAppIntent` also refuses anything but `kind: "intent"`, so this is the second of
+          // two independent checks that a page cannot act on a question.
+          const parsed = appIntentDecisionSchema.safeParse(decision);
+          if (parsed.success) events.onAppIntent?.(parsed.data);
           return;
         }
         case "ended": {

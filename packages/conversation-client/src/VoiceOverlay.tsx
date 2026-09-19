@@ -1,6 +1,6 @@
 import { type ReactElement, useCallback, useEffect, useRef, useState } from "react";
 
-import type { VoiceState } from "@clarkcant/contracts";
+import type { AppIntentDecision, VoiceState } from "@clarkcant/contracts";
 
 import type { GatewayClient } from "./api.ts";
 import { Orb } from "./Orb.tsx";
@@ -101,6 +101,13 @@ export interface VoiceOverlayProps {
    * and the caller is expected to throttle it, while `onAnswered` fires once and is the end of the turn.
    */
   onProgress?: () => void;
+  /**
+   * A decision the node made about a command spoken during this session.
+   *
+   * Handed to whoever owns the executor rather than acted on here: one function runs an intent whether it came from
+   * a click or a voice, and this overlay is deliberately not that function.
+   */
+  onAppIntent?: (decision: AppIntentDecision) => void;
   requires?: string;
   unblockedBy?: string;
 }
@@ -111,6 +118,7 @@ export function VoiceOverlay({
   onClose,
   onAnswered,
   onProgress,
+  onAppIntent,
   requires = "một phiên Live API đang mở",
   unblockedBy = "đặt GEMINI_API_KEY cho node rồi thử lại",
 }: VoiceOverlayProps): ReactElement {
@@ -212,6 +220,7 @@ export function VoiceOverlay({
           },
           onCaptureFrame: (sent) => setFrames((current) => ({ ...current, captured: sent })),
           onAnswerFailed: (failure) => setAnswerProblem(failure.message),
+          ...(onAppIntent === undefined ? {} : { onAppIntent }),
           onAudioFrame: (received) => setFrames((current) => ({ ...current, heard: received })),
           onError: (message) => {
             setProblem(message);

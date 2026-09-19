@@ -165,6 +165,14 @@ export function ToolRow({ toolRef, summary, usable, blockedReason }: ToolRowProp
 
 export interface SettingsPanelProps {
   open: boolean;
+  /**
+   * A tab a command named, if one did.
+   *
+   * Absent means no request named a tab, and the panel opens on General as it always has. A request that named one
+   * in the same breath is an instruction rather than a memory, so it is honoured - but it is cleared again when the
+   * panel closes, which keeps the reason this panel never remembered a tab in the first place.
+   */
+  openAt?: TabId;
   onClose: () => void;
   client: GatewayClient;
   /** What the user chose, which may be `system`. */
@@ -176,6 +184,7 @@ export interface SettingsPanelProps {
 
 export function SettingsPanel({
   open,
+  openAt,
   onClose,
   client,
   themeChoice,
@@ -403,11 +412,12 @@ export function SettingsPanel({
   }, [open, client]);
 
   // Opened on General each time. Remembering the last tab sounds helpful and is not: someone who
-  // opened Devices once to check a thing would land there every time they wanted the theme.
+  // opened Devices once to check a thing would land there every time they wanted the theme. A command that named a
+  // tab is the one exception, and it is the opposite of remembering: it is being told where to go, now.
   useEffect(() => {
     if (!open) return;
-    setTab("general");
-  }, [open]);
+    setTab(openAt ?? "general");
+  }, [open, openAt]);
 
   const chooseTheme = useCallback(
     (next: ThemeChoice) => {

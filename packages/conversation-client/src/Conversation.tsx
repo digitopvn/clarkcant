@@ -29,7 +29,7 @@ import {
   toBase64,
   type AttachmentChip,
 } from "./attachments.ts";
-import { ATTACHMENT_LIMITS } from "@clarkcant/contracts";
+import { ATTACHMENT_LIMITS, type AppIntentDecision, type AppIntentKind, type SettingsTab } from "@clarkcant/contracts";
 import { followsBottom } from "./follow-bottom.ts";
 import { latestTurnMetrics, statuslineParts } from "./statusline.ts";
 import { attachedPrompt, explainPrompt } from "./selection.ts";
@@ -40,6 +40,7 @@ import { Markdown } from "./markdown.tsx";
 import { Orb } from "./Orb.tsx";
 import { useTypewriterPlaceholder, prefersReducedMotion } from "./typewriter.ts";
 import { VoiceOverlay } from "./VoiceOverlay.tsx";import { SettingsPanel } from "./SettingsPanel.tsx";
+import { runAppIntent, type AppIntentHost } from "./app-intents.ts";
 import { resolveRenderer, toRendererDataset } from "./renderers.tsx";
 import { MiniAppSurface, type CompositeSurfaceView } from "./mini-app-surface.tsx";
 import { PinnedLiveSurface } from "./DesktopSurfaces.tsx";
@@ -218,6 +219,20 @@ export function Conversation({
    */
   const composerFrom = useRef<number | undefined>(undefined);
   const [uiCheckOpen, setUiCheckOpen] = useState(false);
+  /**
+   * A tab a command named, if one did.
+   *
+   * Held here rather than inside the panel so that a spoken "open the Memory tab" and a click produce the same
+   * panel state: both go through one executor, and the executor sets this the same way either time.
+   */
+  const [settingsTab, setSettingsTab] = useState<SettingsTab | undefined>(undefined);
+  /**
+   * What came of a command that could not be carried out, or was refused.
+   *
+   * Shown rather than swallowed. "Nothing happened" with no reason is the failure this whole design avoids, and a
+   * browser asked to resize a window has to say that it cannot rather than look like it did.
+   */
+  const [intentNotice, setIntentNotice] = useState<string | undefined>(undefined);
   /**
    * Whether the voice surface is up.
    *
@@ -820,6 +835,71 @@ export function Conversation({
   }, [onSessionReset, rememberComposerTop]);
 
   /**
+   * Everything an intent can reach.
+   *
+   * The window commands are absent, and that is the honest state of a page: a host omits what it cannot do, and the
+   * executor then answers that the command needs the desktop app rather than appearing to work.
+   */
+  const intentHost = useMemo<AppIntentHost>(
+    () => ({
+      openSettings: (tab?: SettingsTab) => {
+        setSettingsTab(tab);
+        setUiCheckOpen(true);
+      },
+      goHome: restartSession,
+      openFilePicker: () => attachmentInput.current?.click(),
+      endVoice: () => setVoiceOpen(false),
+    }),
+    [restartSession],
+  );
+
+  /**
+   * Carry out a decision.
+   *
+   * The only place an intent is performed, whichever way it arrived. A second copy of this for voice would be the
+   * beginning of the two paths drifting apart, which is the whole thing this registry exists to prevent.
+   */
+  const runIntent = useCallback(
+    (decision: AppIntentDecision): void => {
+      const run = runAppIntent(decision, intentHost);
+      // Only a failure is announced. A command that worked has already been read back out loud by the voice surface
+      // or is visible as the panel that just opened, and a second sentence saying so would be noise.
+      if (!run.ran) setIntentNotice(run.say);
+    },
+    [intentHost],
+  );
+
+  /**
+   * Ask the node what a click means, then do it.
+   *
+   * A click goes through the node for the same reason a spoken command does: the registry and the audit record live
+   * there, so the event says "click" rather than "voice" and a click cannot do something the node would refuse.
+   */
+  const clickIntent = useCallback(
+    (kind: AppIntentKind): void => {
+      if (client === undefined) return;
+      void client
+        .sendAppIntent({
+          kind,
+          source: "click",
+          ...(conversationId === undefined ? {} : { conversationId }),
+        })
+        .then((decision) => {
+          if (decision.kind !== "none") runIntent(decision);
+        })
+        .catch(() => setIntentNotice("Không hỏi được node về lệnh đó."));
+    },
+    [client, conversationId, runIntent],
+  );
+
+  // A notice is a remark about something that just happened, not a permanent line of text.
+  useEffect(() => {
+    if (intentNotice === undefined) return;
+    const timer = setTimeout(() => setIntentNotice(undefined), 6000);
+    return () => clearTimeout(timer);
+  }, [intentNotice]);
+
+  /**
    * Answer an operation the agent asked for.
    *
    * The decision goes to the node, which recomputes the digest of what it is about to run and refuses a
@@ -1069,7 +1149,7 @@ export function Conversation({
           type="button"
           className="cc-brand"
           data-home="true"
-          onClick={restartSession}
+          onClick={() => clickIntent("nav.home")}
           title="Bắt đầu lại"
           aria-label="Bắt đầu lại: về màn hình đầu và mở một phiên mới"
         >
@@ -1089,7 +1169,7 @@ export function Conversation({
             menu: a setting that is two clicks deep is a setting nobody checks. It opens a panel
             that reads the live tokens back off the document, so what it shows is what rendered.
           */}
-          <button type="button" className="cc-icon-btn" aria-label="Cài đặt" title="Cài đặt" data-settings="true" onClick={() => setUiCheckOpen(true)}>
+          <button type="button" className="cc-icon-btn" aria-label="Cài đặt" title="Cài đặt" data-settings="true" onClick={() => clickIntent("settings.open")}>
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
               <circle cx="12" cy="12" r="3" />
               <path d="M19.4 15a1.7 1.7 0 0 0 .34 1.87l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.7 1.7 0 0 0-1.87-.34 1.7 1.7 0 0 0-1 1.55V21a2 2 0 1 1-4 0v-.09A1.7 1.7 0 0 0 9 19.4a1.7 1.7 0 0 0-1.87.34l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.7 1.7 0 0 0 4.6 15a1.7 1.7 0 0 0-1.55-1H3a2 2 0 1 1 0-4h.09A1.7 1.7 0 0 0 4.6 9a1.7 1.7 0 0 0-.34-1.87l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.7 1.7 0 0 0 9 4.6a1.7 1.7 0 0 0 1-1.55V3a2 2 0 1 1 4 0v.09a1.7 1.7 0 0 0 1 1.55 1.7 1.7 0 0 0 1.87-.34l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.7 1.7 0 0 0 19.4 9v0a1.7 1.7 0 0 0 1.55 1H21a2 2 0 1 1 0 4h-.09a1.7 1.7 0 0 0-1.51 1z" />
@@ -1455,8 +1535,19 @@ export function Conversation({
         </div>
       )}
 
+      {/*
+        What a command could not do here, or why it was refused. Rendered beside the panel rather than inside it, so
+        a window command failing in a browser is still visible when no panel is open.
+      */}
+      {intentNotice !== undefined && (
+        <p className="cc-intent-notice" data-intent-notice="true" role="status">
+          {intentNotice}
+        </p>
+      )}
+
       <SettingsPanel
         open={uiCheckOpen}
+        {...(settingsTab === undefined ? {} : { openAt: settingsTab })}
         onClose={() => setUiCheckOpen(false)}
         client={client}
         themeChoice={themeChoice}
@@ -1494,6 +1585,7 @@ export function Conversation({
           {...(conversationId === undefined ? {} : { conversationId })}
           onAnswered={refreshTimeline}
           onProgress={scheduleVoiceRefresh}
+          onAppIntent={runIntent}
           onClose={({ focusComposer }) => {
             setVoiceOpen(false);
             if (focusComposer) composerInput.current?.focus();

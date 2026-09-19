@@ -7,6 +7,14 @@
  */
 
 import {
+  type AppIntentDecision,
+  type AppIntentKind,
+  type AppIntentResolution,
+  type ConfirmationDecision,
+  type SettingsTab,
+} from "@clarkcant/contracts";
+
+import {
   type StartVoiceSessionOptions,
   type VoiceSession,
   type VoiceSessionEvents,
@@ -822,6 +830,74 @@ export class GatewayClient {
     return {
       names: Array.isArray(body.names) ? body.names.filter((name): name is string => typeof name === "string") : [],
     };
+  }
+
+  /**
+   * Ask the node what a command means.
+   *
+   * A click goes through the node for the same reason a spoken command does: the registry, the audit record and
+   * the matching rules live there, so clicking Settings and saying "open Settings" produce the same event with the
+   * same kind and only the source differing. It also means a click cannot run something the node would refuse.
+   */
+  async sendAppIntent(input: {
+    kind?: AppIntentKind;
+    tab?: SettingsTab;
+    text?: string;
+    source: "chat" | "click" | "voice";
+    conversationId?: string;
+  }): Promise<AppIntentResolution> {
+    const body = {
+      ...(input.kind === undefined ? {} : { kind: input.kind }),
+      ...(input.tab === undefined ? {} : { tab: input.tab }),
+      ...(input.text === undefined ? {} : { text: input.text }),
+      ...(input.conversationId === undefined ? {} : { conversationId: input.conversationId }),
+      source: input.source,
+    };
+    const response = await this.#fetch(`${this.#baseUrl}/app-intents`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${this.#token}`, "content-type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    if (!response.ok) {
+      throw new GatewayError(response.status, "APP_INTENT_REFUSED", "the node refused that command");
+    }
+    const answer = (await response.json()) as { decision?: unknown };
+    // `none` is a real answer - the sentence was not a command - so it is returned rather than treated as a
+    // missing field. A caller that gets it must fall back to the ordinary path.
+    return (answer.decision ?? { kind: "none" }) as AppIntentResolution;
+  }
+
+  /**
+   * Answer a confirmation the node asked for.
+   *
+   * The token travels back to the node, which spends it and decides; this client never assembles an executable
+   * decision of its own. A denial is a complete answer and comes back as a refusal, so the caller has something to
+   * say rather than a silence to explain.
+   */
+  async confirmAppIntent(input: {
+    confirmationToken: string;
+    decision: ConfirmationDecision;
+    conversationId?: string;
+  }): Promise<AppIntentDecision> {
+    const response = await this.#fetch(`${this.#baseUrl}/app-intents/confirm`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${this.#token}`, "content-type": "application/json" },
+      body: JSON.stringify({
+        confirmationToken: input.confirmationToken,
+        decision: input.decision,
+        ...(input.conversationId === undefined ? {} : { conversationId: input.conversationId }),
+      }),
+    });
+    if (!response.ok) {
+      const detail = (await response.json().catch(() => ({}))) as { code?: unknown };
+      throw new GatewayError(
+        response.status,
+        typeof detail.code === "string" ? detail.code : "CONFIRMATION_REFUSED",
+        "that confirmation was not accepted",
+      );
+    }
+    const body = (await response.json()) as { decision?: unknown };
+    return (body.decision ?? { kind: "refused", say: "Không có gì được thực hiện." }) as AppIntentDecision;
   }
 
   /**

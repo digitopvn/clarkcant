@@ -28,6 +28,7 @@
 
 import {
   APP_INTENT_NOT_UNDERSTOOD,
+  SETTINGS_TABS,
   type AppIntent,
   type AppIntentDecision,
   type AppIntentEventDocument,
@@ -159,7 +160,6 @@ const TAB_WORDS: readonly { words: readonly string[]; tab: SettingsTab }[] = [
   { words: ["models", "model"], tab: "models" },
   { words: ["tools", "tool", "cong cu"], tab: "tools" },
   { words: ["devices", "device", "thiet bi"], tab: "devices" },
-  { words: ["memory", "ghi nho", "ki uc"], tab: "memory" },
 ];
 
 /** Text that asks to change tabs. Present without a tab name, the request is refused rather than guessed. */
@@ -171,7 +171,9 @@ const TAB_INTENT_MARKERS: readonly string[] = [
   "tab settings",
 ];
 
-const TAB_REFUSAL = `Tôi chưa rõ bạn muốn mở tab nào. Các tab đang có: ${["general", "models", "tools", "devices", "memory"].join(", ")}.`;
+// Derived from the tabs that exist, so a tab added later is named in the refusal without anyone remembering to
+// update a sentence. A refusal that listed a tab which is not there would send the person looking for it.
+const TAB_REFUSAL = `Tôi chưa rõ bạn muốn mở tab nào. Các tab đang có: ${SETTINGS_TABS.join(", ")}.`;
 
 /**
  * Lowercase, strip tone marks, collapse whitespace.

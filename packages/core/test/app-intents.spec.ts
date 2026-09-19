@@ -139,7 +139,9 @@ describe("a command the registry does not know", () => {
     const match = matchAppIntent("đổi sang tab");
     expect(match?.kind).toBe("refused");
     if (match?.kind !== "refused") throw new Error("unreachable");
-    expect(match.say).toContain("memory");
+    expect(match.say).toContain("tools");
+    // And it names only tabs that exist: the Memory tab is not in the list until it is.
+    expect(match.say).not.toContain("memory");
   });
 });
 
@@ -187,10 +189,10 @@ describe("quitting always asks first", () => {
 
   it("carries the tab on a settings intent and nothing extra on the others", () => {
     const resolution = resolveAppIntent({
-      intent: { kind: "settings.tab", tab: "memory" },
+      intent: { kind: "settings.tab", tab: "tools" },
       mintConfirmationToken: mint,
     });
-    expect(resolution.kind === "intent" && resolution.intent).toEqual({ kind: "settings.tab", tab: "memory" });
+    expect(resolution.kind === "intent" && resolution.intent).toEqual({ kind: "settings.tab", tab: "tools" });
   });
 });
 

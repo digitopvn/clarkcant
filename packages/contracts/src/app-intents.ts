@@ -50,10 +50,12 @@ export type AppIntentKind = z.infer<typeof appIntentKindSchema>;
 /**
  * The tabs Settings can be opened at.
  *
- * `memory` is in the list because Stage C adds that tab, and a spoken "mở Memory" that silently
- * opened General would be the kind of small dishonesty that makes people stop trusting voice control.
+ * `memory` is deliberately **not** here yet. The plan's contract listed it in anticipation of the Memory tab, but
+ * listing a tab that does not exist would let "open the Memory tab" be understood, read back and then show nothing
+ * - which is worse than being told the command cannot be done. Stage C adds the tab and this list together, so the
+ * two cannot disagree.
  */
-export const SETTINGS_TABS = ["general", "models", "tools", "devices", "memory"] as const;
+export const SETTINGS_TABS = ["general", "models", "tools", "devices"] as const;
 export const settingsTabSchema = z.enum(SETTINGS_TABS);
 export type SettingsTab = z.infer<typeof settingsTabSchema>;
 
@@ -101,7 +103,6 @@ const TAB_LABELS: Record<SettingsTab, string> = {
   models: "Model",
   tools: "Công cụ",
   devices: "Thiết bị",
-  memory: "Memory",
 };
 
 /**
