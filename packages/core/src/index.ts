@@ -12,6 +12,9 @@
 
 export * from "./task-service.ts";
 export * from "./control-sessions.ts";
+export * from "./package-sources.ts";
+export * from "./install-from-source.ts";
+export * from "./installed-packages.ts";
 export * from "./coordination.ts";
 export * from "./capability-registry.ts";
 export * from "./install-lifecycle.ts";
