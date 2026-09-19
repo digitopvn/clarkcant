@@ -43,6 +43,7 @@ import { SAMPLE_DATASET } from "@clarkcant/data-canvas/sample";
 import { createModelTurn, type ViewDescriptor } from "./model-turn.ts";
 import { memoryBrief, rememberMemory } from "./memory.ts";
 import { attachmentRefsForLastUserMessage } from "./attachments.ts";
+import { blobsDir, readBlob } from "./blobs.ts";
 import { buildViewCatalog } from "./view-catalog.ts";
 import { registerNodeTools } from "./tool-catalogue.ts";
 import { composeMiniApp } from "./compose-mini-app.ts";
@@ -154,6 +155,37 @@ async function main(): Promise<void> {
     text: string;
     messageId: string;
   }): Promise<{ block: MessageBlock; text: string } | undefined> => {
+    /*
+     * The attachment, read back - the acceptance criterion this feature is judged by.
+     *
+     * "Attach two files, send, and the agent answers using the file's content" is what the issue asks the browser
+     * suite to show, and nothing showed it: the prompt carries the refs and the `read_attachment` tool reads text,
+     * but no journey ever watched an answer use a file. On this fixture node there is no model turn, so the fixture
+     * stands in for the agent and reads the bytes through the same helpers the prompt and the tool use. That proves
+     * the pipeline - the file reached the node, the node made its content readable, and the reply carries it. It does
+     * not prove a model would use it, which needs a provider and is recorded as such.
+     */
+    const attached = attachmentRefsForLastUserMessage({
+      db: services.runtime.db,
+      conversationId: input.conversationId,
+    });
+    const readable = attached.filter((ref) => ref.kind === "text");
+    if (readable.length > 0) {
+      const quoted = readable
+        .map((ref) => {
+          const blob = readBlob({
+            dataDir: options.dataDir,
+            blobPath: join(blobsDir(options.dataDir), ref.blobRef),
+          });
+          if (!blob.ok) return `${ref.filename}: ${blob.message}`;
+          return `${ref.filename}:\n${new TextDecoder("utf-8", { fatal: false }).decode(blob.bytes)}`;
+        })
+        .join("\n\n");
+      return {
+        text: "Tui đọc tệp bạn gửi. Nội dung nó nói:",
+        block: { type: "text", format: "markdown", content: quoted, streaming: false },
+      };
+    }
     /*
      * A command proposal, scripted.
      *
