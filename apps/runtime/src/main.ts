@@ -896,6 +896,13 @@ async function main(): Promise<void> {
       return { ok: true, instanceId, revision: landedOn, say: `Đã ${action.label}.` };
     },
   });
+  /*
+   * Published to the settings route, from the same object the voice sessions use.
+   *
+   * A surface that built its own capability list would be a second source of truth for what the provider
+   * supports, and the first thing to drift from it.
+   */
+  services.voiceCapabilities = () => voice.capabilities();
   process.stderr.write(
     voiceFixture
       ? "voice: FIXTURE provider loaded — audio and transcripts on /voice are scripted, not model output\n"

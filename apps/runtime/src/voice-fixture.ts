@@ -1,5 +1,6 @@
 import {
   type Instant,
+  type VoiceCapabilities,
   type VoiceState,
   type VoiceTranscriptFragment,
   nowInstant,
@@ -37,6 +38,23 @@ const ASSISTANT_WORDS = "node đã nhận được audio và trả lời bằng 
 
 export class FixtureLiveAdapter implements VoiceProviderAdapter {
   readonly provider = "fixture-live";
+
+  /**
+   * The fixture's own capability report.
+   *
+   * It mirrors the real adapter's shape rather than claiming more than one: a fixture that reported a preview
+   * it cannot produce would make the browser suite pass against a button that does nothing in production.
+   */
+  readonly capabilities: VoiceCapabilities = {
+    provider: "fixture-live",
+    supportsVoiceSelection: true,
+    voices: [
+      { id: "Fixture", label: "Fixture" },
+      { id: "Second", label: "Second" },
+    ],
+    supportsPreview: false,
+    note: "fixture: danh sách giọng là scripted, không phải provider thật",
+  };
 
   #sessionId = "";
   #state: VoiceState = "idle";

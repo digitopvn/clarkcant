@@ -334,3 +334,49 @@ export const voiceTimingSchema = z.strictObject({
   replyFirstAudioMs: z.number().nonnegative().optional(),
 });
 export type VoiceTiming = z.infer<typeof voiceTimingSchema>;
+
+/**
+ * One voice a provider offers.
+ *
+ * `id` is the provider's own name for it — `Kore`, in Gemini's case — and it is a value this
+ * application passes back rather than interprets. `label` is what a surface shows; keeping them
+ * separate is what lets a provider change its display name without the stored preference moving.
+ */
+export const voiceOptionSchema = z.strictObject({
+  id: z.string().min(1).max(120),
+  label: z.string().min(1).max(120),
+  /** BCP-47 tag, when the provider states one. Absent means the provider did not say. */
+  locale: z.string().min(1).max(35).optional(),
+  /** How the provider describes it, when it describes it at all. Never invented here. */
+  description: z.string().min(1).max(300).optional(),
+});
+export type VoiceOption = z.infer<typeof voiceOptionSchema>;
+
+/**
+ * What a voice provider can actually do.
+ *
+ * The provider owns this, and the surface renders only what it says. That is the whole point of the
+ * contract: a picker hard-coded with one provider's voice names would offer a list to a provider that
+ * has never heard of them, and the failure would arrive as a session that connects and then says
+ * nothing.
+ *
+ * `supportsVoiceSelection: false` is a real answer with a real consequence: the surface shows no
+ * selector, or one that is disabled with the reason, rather than a control that changes nothing.
+ */
+export const voiceCapabilitiesSchema = z.strictObject({
+  /** The provider's own id, so a surface can say which provider is answering. */
+  provider: z.string().min(1).max(120),
+  supportsVoiceSelection: z.boolean(),
+  /** Empty when the provider does not support selection, or when it supports it but offers nothing. */
+  voices: z.array(voiceOptionSchema).max(200),
+  /**
+   * Whether a short spoken sample can be produced before a session is opened.
+   *
+   * Separate from selection because they are separate abilities: a provider may accept a voice name
+   * at connect and still have no way to say one sentence without opening a full session.
+   */
+  supportsPreview: z.boolean(),
+  /** Why a capability is off, when it is. Shown beside the control rather than hidden. */
+  note: z.string().max(300).optional(),
+});
+export type VoiceCapabilities = z.infer<typeof voiceCapabilitiesSchema>;

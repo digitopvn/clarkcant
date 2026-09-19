@@ -46,6 +46,13 @@ function buildDeps() {
 /** A provider that answers on command, so the socket can be tested without a network. */
 class FakeAdapter implements VoiceProviderAdapter {
   readonly provider = "fake-live";
+  /** Declared so the test double matches the interface the real adapters implement. */
+  readonly capabilities = {
+    provider: "fake-live",
+    supportsVoiceSelection: false,
+    voices: [],
+    supportsPreview: false,
+  };
   connected = 0;
   disconnected = 0;
   muted = false;

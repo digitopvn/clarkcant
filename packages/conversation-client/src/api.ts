@@ -6,7 +6,7 @@
  * principal, because the gateway derives the caller from the channel rather than the body.
  */
 
-import { type RegisteredPreference } from "@clarkcant/contracts";
+import { type RegisteredPreference, type VoiceCapabilities } from "@clarkcant/contracts";
 
 import {
   type AppIntentDecision,
@@ -613,6 +613,16 @@ export class GatewayClient {
     }[];
   }> {
     return this.#call("GET", "/activity");
+  }
+
+  /**
+   * What the configured voice provider can do, as it reports it.
+   *
+   * The surface draws its voice control from this rather than from a list of provider names, so a provider
+   * that cannot select a voice shows no selector instead of one that changes nothing.
+   */
+  voiceCapabilities(): Promise<{ capabilities: VoiceCapabilities }> {
+    return this.#call("GET", "/voice/capabilities");
   }
 
   /**

@@ -1,5 +1,7 @@
 import {
   type Instant,
+  type VoiceCapabilities,
+  type VoiceOption,
   type VoiceState,
   type VoiceTranscriptFragment,
   nowInstant,
@@ -64,6 +66,14 @@ export interface GeminiLiveOptions {
   model?: string;
   /** Sent as the session's system instruction. */
   systemInstruction?: string;
+  /**
+   * The voice to speak in, as the provider names it.
+   *
+   * Stored as the provider's own name rather than as an index or an enum here, so the set of voices can
+   * change without a migration: an unknown name is refused by the provider at connect, which is a loud
+   * failure rather than a session that quietly speaks in the wrong voice.
+   */
+  voiceName?: string;
   /** Overridden by tests; the default talks to the real endpoint. */
   endpoint?: string;
   /** Overridden by tests, so the transport can be exercised without a network. */
@@ -75,11 +85,70 @@ export interface GeminiLiveOptions {
 /** A frame larger than this is refused rather than forwarded: a stuck producer is a real failure. */
 const MAX_AUDIO_FRAME_BYTES = 512 * 1024;
 
+/**
+ * The provider's published prebuilt voices.
+ *
+ * Held here rather than in the surface, which is the point of the capability contract: a React component
+ * that knew these names would offer them to a provider that has never heard of them. The list is the
+ * provider's, the labels are the names it publishes, and nothing here describes a voice the provider did
+ * not describe — an invented description would read as fact on a settings screen.
+ *
+ * The provider remains the authority: an unknown name is refused at connect rather than substituted.
+ */
+export const GEMINI_PREBUILT_VOICES: readonly VoiceOption[] = [
+  "Zephyr",
+  "Puck",
+  "Charon",
+  "Kore",
+  "Fenrir",
+  "Leda",
+  "Orus",
+  "Aoede",
+  "Callirrhoe",
+  "Autonoe",
+  "Enceladus",
+  "Iapetus",
+  "Umbriel",
+  "Algieba",
+  "Despina",
+  "Erinome",
+  "Algenib",
+  "Rasalgethi",
+  "Laomedeia",
+  "Achernar",
+  "Alnilam",
+  "Schedar",
+  "Gacrux",
+  "Pulcherrima",
+  "Achird",
+  "Zubenelgenubi",
+  "Vindemiatrix",
+  "Sadachbia",
+  "Sadaltager",
+  "Sulafat",
+].map((id) => ({ id, label: id }));
+
 export class GeminiLiveAdapter implements VoiceProviderAdapter {
   readonly provider = "gemini-live";
 
+  /**
+   * What this provider can do, reported rather than assumed by the surface.
+   *
+   * Preview is off, and the reason is stated rather than left to be discovered: a spoken sample would
+   * open a second live session, and this adapter has no path that produces one sentence without the
+   * full interactive setup. Claiming it would put a button on screen whose action does not exist.
+   */
+  readonly capabilities: VoiceCapabilities = {
+    provider: "gemini-live",
+    supportsVoiceSelection: true,
+    voices: [...GEMINI_PREBUILT_VOICES],
+    supportsPreview: false,
+    note: "Chọn giọng áp dụng cho phiên thoại kế tiếp. Chưa có nghe thử.",
+  };
+
   readonly #model: string;
   readonly #systemInstruction: string | undefined;
+  readonly #voiceName: string | undefined;
   readonly #endpoint: string;
   readonly #createSocket: LiveSocketFactory;
   readonly #now: () => Instant;
@@ -110,6 +179,7 @@ export class GeminiLiveAdapter implements VoiceProviderAdapter {
   constructor(options: GeminiLiveOptions = {}) {
     this.#model = options.model ?? DEFAULT_LIVE_MODEL;
     this.#systemInstruction = options.systemInstruction;
+    this.#voiceName = options.voiceName;
     this.#endpoint = options.endpoint ?? GEMINI_LIVE_ENDPOINT;
     this.#createSocket = options.createSocket ?? globalSocketFactory;
     this.#now = options.now ?? nowInstant;
@@ -249,6 +319,7 @@ export class GeminiLiveAdapter implements VoiceProviderAdapter {
           buildSetupMessage({
             model: this.#model,
             ...(this.#systemInstruction === undefined ? {} : { systemInstruction: this.#systemInstruction }),
+            ...(this.#voiceName === undefined ? {} : { voiceName: this.#voiceName }),
           }),
         ),
       );

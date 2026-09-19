@@ -59,6 +59,15 @@ export interface LiveSetupOptions {
   model?: string;
   /** System instruction, as plain text. */
   systemInstruction?: string;
+  /**
+   * The voice to speak in, as the provider names it.
+   *
+   * A name the provider does not know is not validated here: this module builds the message, and the
+   * provider is the authority on what it accepts. A wrong name fails loudly at connect rather than being
+   * silently replaced by a default, which is the failure mode worth having — a session that speaks in the
+   * wrong voice is harder to notice than one that does not start.
+   */
+  voiceName?: string;
 }
 
 /**
@@ -79,7 +88,21 @@ export interface LiveSetupOptions {
 export function buildSetupMessage(options: LiveSetupOptions = {}): Record<string, unknown> {
   const setup: Record<string, unknown> = {
     model: `models/${options.model ?? DEFAULT_LIVE_MODEL}`,
-    generationConfig: { responseModalities: ["AUDIO"] },
+    generationConfig: {
+      responseModalities: ["AUDIO"],
+      /*
+       * The chosen voice, in the shape the provider documents: a speech config whose prebuilt voice config
+       * names it. Built only when a voice was chosen, so a session with no preference sends exactly the
+       * message it always did rather than one naming a default this application picked.
+       */
+      ...(options.voiceName === undefined || options.voiceName.trim() === ""
+        ? {}
+        : {
+            speechConfig: {
+              voiceConfig: { prebuiltVoiceConfig: { voiceName: options.voiceName } },
+            },
+          }),
+    },
     inputAudioTranscription: {},
     outputAudioTranscription: {},
   };
