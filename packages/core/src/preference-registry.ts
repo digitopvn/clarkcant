@@ -211,3 +211,28 @@ export function undoRegisteredPreference(
   }
   return { ok: true, undone: true, preference };
 }
+
+/**
+ * The user's instructions as prompt text, or nothing.
+ *
+ * `undefined` for every state that means "say nothing": the toggle is off, the text is blank, or the stored
+ * value is not the shape this expects. That is deliberate rather than a refusal — the caller appends this to
+ * a system prompt, and a heading with nothing under it is something the model will try to interpret, while a
+ * malformed preference must not be the reason a turn fails to start.
+ *
+ * Lives here rather than in the composition root so it is testable without a running node: it is the step
+ * between "what the user stored" and "what the model is told", which is exactly where a mistake would be
+ * invisible.
+ */
+export function readPersonalInstructions(
+  deps: PreferenceDeps,
+  principalId: string,
+): string | undefined {
+  const stored = readRegisteredPreference(deps, { principalId, key: "ai.personalInstructions" });
+  const value = stored?.value;
+  if (typeof value !== "object" || value === null) return undefined;
+  const record = value as { enabled?: unknown; text?: unknown };
+  if (record.enabled !== true || typeof record.text !== "string") return undefined;
+  const text = record.text.trim();
+  return text === "" ? undefined : text;
+}

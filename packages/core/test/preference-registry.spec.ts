@@ -7,6 +7,7 @@ import { listPreferences, setPreference } from "../src/preferences.ts";
 import {
   describeValidationIssues,
   listRegisteredPreferences,
+  readPersonalInstructions,
   readRegisteredPreference,
   undoRegisteredPreference,
   writeRegisteredPreference,
@@ -311,5 +312,67 @@ describe("a refusal describes the field, not the value", () => {
     expect(refused.ok).toBe(false);
     if (refused.ok) throw new Error("expected a refusal");
     expect(refused.message).not.toContain("sk-live-do-not-echo");
+  });
+});
+
+describe("the step from a stored preference to what the model is told", () => {
+  /*
+   * This is the seam between "what the user stored" and "what reaches the system prompt", and a mistake
+   * here is invisible from both ends: the settings screen would show the text and the turn would simply not
+   * have it. Every state that means "say nothing" is asserted, because each one is a way the feature could
+   * quietly do nothing.
+   */
+  it("answers nothing when the toggle is off, however much text is stored", () => {
+    writeRegisteredPreference(deps, {
+      principalId: PRINCIPAL,
+      key: "ai.personalInstructions",
+      value: { enabled: false, text: "Prefer concise answers." },
+    });
+    // The text is kept — turning the toggle off must not discard what somebody typed — but it is not sent.
+    expect(readPersonalInstructions(deps, PRINCIPAL)).toBeUndefined();
+  });
+
+  it("answers the trimmed text when it is on", () => {
+    writeRegisteredPreference(deps, {
+      principalId: PRINCIPAL,
+      key: "ai.personalInstructions",
+      value: { enabled: true, text: "  Use TypeScript.  " },
+    });
+    expect(readPersonalInstructions(deps, PRINCIPAL)).toBe("Use TypeScript.");
+  });
+
+  it("answers nothing for text that is only whitespace", () => {
+    // An empty section is a heading the model will try to interpret, which is worse than no section.
+    writeRegisteredPreference(deps, {
+      principalId: PRINCIPAL,
+      key: "ai.personalInstructions",
+      value: { enabled: true, text: "   \n\t " },
+    });
+    expect(readPersonalInstructions(deps, PRINCIPAL)).toBeUndefined();
+  });
+
+  it("answers nothing before anybody has set it", () => {
+    expect(readPersonalInstructions(deps, PRINCIPAL)).toBeUndefined();
+  });
+
+  it("answers nothing for a value of the wrong shape, rather than throwing", () => {
+    // The value arrives from storage, so this is a boundary that parses. A malformed preference must not be
+    // the reason a turn fails to start.
+    for (const value of ["a string", 42, null, [], { enabled: "yes", text: "x" }, { enabled: true }]) {
+      writeRegisteredPreference(deps, {
+        principalId: PRINCIPAL,
+        key: "ai.personalInstructions",
+        value: { enabled: false, text: "" },
+      });
+      // Written through the registry it can only be the right shape, so the malformed case is written directly.
+      setPreference(deps, {
+        principalId: PRINCIPAL,
+        key: "ai.personalInstructions",
+        scope: "global",
+        value,
+        source: "user",
+      });
+      expect(readPersonalInstructions(deps, PRINCIPAL), JSON.stringify(value)).toBeUndefined();
+    }
   });
 });

@@ -2,19 +2,21 @@ import { useEffect, useState, type ReactElement } from "react";
 
 import { SearchSelect } from "../search-select.tsx";
 import type { GatewayClient } from "../api.ts";
-import { InlineStatus, SettingsRow } from "./controls/primitives.tsx";
+import { PERSONAL_INSTRUCTIONS_MAX_CHARS } from "@clarkcant/contracts";
+import { InlineStatus, SettingsRow, ToggleSwitch } from "./controls/primitives.tsx";
 import type { PreferencesHandle } from "./controls/use-preferences.ts";
 
 /**
  * AI & Routing: what answers, and what it costs to run.
  *
  * The model and the Jev key sit together because they answer one question — what this node runs — and the
- * credential is asked for in the tab that explains what it pays for. Routing preferences (`ai.backgroundRouting`,
- * `ai.modelFavorites`) are declared in the registry but deliberately have **no control here yet**: nothing reads
- * them until the shared app-control registry and the background-routing work land, and a control that changes
- * nothing teaches the user that the settings screen is decorative.
+ * credential is asked for in the tab that explains what it pays for. Personal instructions are here because
+ * they are about how the model is briefed, which is the same subject.
  *
- * Personal instructions belong in this tab too, and arrive with the phase that makes them reach the model.
+ * Routing preferences (`ai.backgroundRouting`, `ai.modelFavorites`) are declared in the registry but
+ * deliberately have **no control here yet**: nothing reads them until the shared app-control registry and the
+ * background-routing work land, and a control that changes nothing teaches the user that the settings screen
+ * is decorative.
  */
 
 const KEY_FIELDS = [
@@ -256,6 +258,103 @@ export function AiRoutingSettings({ client, prefs, facts }: AiRoutingSettingsPro
         ))}
         <InlineStatus status={prefs.status} forKey="ai.personalInstructions" />
       </section>
+
+      <PersonalInstructions prefs={prefs} />
     </>
+  );
+}
+
+/**
+ * The user's own instructions, as a section inside the system prompt.
+ *
+ * Three things this control is careful about, and each is a way the feature could mislead:
+ *
+ *   - **It says where the text goes.** "Clark will also receive…" rather than "instructions", because a
+ *     field labelled only that way invites somebody to think it replaces the product's behaviour. The note
+ *     states the precedence: these refine style and defaults, they do not override the rules above them,
+ *     and they cannot grant permission.
+ *   - **It says when it applies.** From the next turn, which is what `applies: "next-turn"` in the registry
+ *     declares, and which is neither "now" nor "after a restart".
+ *   - **It reports the size.** The bound is the whole safety story of a text field that becomes prompt text,
+ *     so the count is shown before somebody reaches it rather than as a refusal afterwards.
+ *
+ * The draft is local and only written on blur, so typing does not put a request on the wire per keystroke.
+ */
+function PersonalInstructions({ prefs }: { prefs: PreferencesHandle }): ReactElement {
+  const stored = prefs.preference("ai.personalInstructions")?.value;
+  const record = typeof stored === "object" && stored !== null ? (stored as Record<string, unknown>) : {};
+  const enabled = record.enabled === true;
+  const text = typeof record.text === "string" ? record.text : "";
+
+  /** Local while typing; committed on blur. A write per keystroke would be a request per keystroke. */
+  const [draft, setDraft] = useState<string | undefined>(undefined);
+  const shown = draft ?? text;
+  const overBound = shown.length > PERSONAL_INSTRUCTIONS_MAX_CHARS;
+
+  const commit = (): void => {
+    if (draft === undefined || draft === text) return;
+    prefs.write("ai.personalInstructions", { enabled, text: draft });
+    setDraft(undefined);
+  };
+
+  return (
+    <section className="cc-panel-section" data-personal-instructions="true">
+      <h3>Chỉ dẫn riêng của bạn</h3>
+      <SettingsRow
+        label="Bật chỉ dẫn riêng"
+        description="Clark sẽ nhận phần này ở lượt kế tiếp, sau các quy tắc của sản phẩm và công cụ."
+      >
+        <ToggleSwitch
+          name="personal-instructions"
+          label="Bật chỉ dẫn riêng"
+          checked={enabled}
+          pending={prefs.pending === "ai.personalInstructions"}
+          onChange={(next) => prefs.write("ai.personalInstructions", { enabled: next, text })}
+        />
+      </SettingsRow>
+
+      <label className="cc-credential-field">
+        <span>Nội dung</span>
+        <textarea
+          className="cc-personal-instructions"
+          data-personal-instructions-input="true"
+          rows={5}
+          spellCheck={false}
+          // Disabled rather than hidden while the toggle is off: the text is kept, and a field that
+          // disappeared would make it look as though turning the toggle off had discarded it.
+          disabled={!enabled}
+          value={shown}
+          placeholder="Ví dụ: trả lời ngắn gọn. Dùng TypeScript cho ví dụ code."
+          onChange={(event) => setDraft(event.target.value)}
+          onBlur={commit}
+        />
+      </label>
+
+      <p className="cc-panel-note" data-personal-instructions-count="true" data-over-bound={overBound}>
+        {shown.length} / {PERSONAL_INSTRUCTIONS_MAX_CHARS} ký tự
+      </p>
+
+      <p className="cc-panel-note">
+        Clark sẽ nhận thêm phần này, không thay thế chỉ dẫn sẵn có. Nó không đổi được quyền hay quy tắc an toàn.
+      </p>
+
+      <div className="cc-panel-row">
+        <button
+          type="button"
+          className="cc-chip"
+          data-personal-instructions-reset="true"
+          onClick={() => {
+            setDraft(undefined);
+            // `reset` rather than `undo`: the label promises the default, and this preference may have been
+            // edited more than once.
+            prefs.reset("ai.personalInstructions");
+          }}
+        >
+          Đặt lại
+        </button>
+      </div>
+
+      <InlineStatus status={prefs.status} forKey="ai.personalInstructions" />
+    </section>
   );
 }

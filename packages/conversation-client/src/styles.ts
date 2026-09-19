@@ -1384,7 +1384,15 @@ button:focus-visible, textarea:focus-visible, input:focus-visible, [tabindex]:fo
 .cc-segmented-wrap > .cc-panel-note { margin: 0; text-align: right; max-width: 34ch; }
 
 .cc-toggle-wrap { display: flex; flex-direction: column; gap: var(--cc-space-xxs); align-items: flex-end; }
-.cc-toggle { display: flex; align-items: center; gap: var(--cc-space-sm); cursor: pointer; }
+/*
+ * Positioned, so the visually-hidden input inside it is placed against this label.
+ *
+ * Without it the absolute input resolves against the nearest positioned ancestor — the modal — and lands
+ * somewhere else on the page entirely. The control still worked with a mouse, which is why this survived a
+ * screenshot: what broke was its position for assistive technology and for anything that had to reach it,
+ * and the first thing to notice was a browser test that refused to click an element outside the viewport.
+ */
+.cc-toggle { position: relative; display: flex; align-items: center; gap: var(--cc-space-sm); cursor: pointer; }
 .cc-toggle input {
   /* The real checkbox stays in the layout for keyboard and screen-reader behaviour, and is hidden visually
      rather than with display:none, which would take it out of the tab order. */
@@ -1441,6 +1449,23 @@ button:focus-visible, textarea:focus-visible, input:focus-visible, [tabindex]:fo
 .cc-effect-list { list-style: none; margin: var(--cc-space-sm) 0 0; padding: 0; display: flex; flex-direction: column; gap: var(--cc-space-xs); }
 .cc-effect-list li { font-size: var(--cc-text-label); color: var(--cc-text-muted); overflow-wrap: anywhere; }
 .cc-effect-list code { color: var(--cc-text); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: var(--cc-text-mono-sm); }
+
+/*
+ * The personal-instructions field.
+ *
+ * A textarea rather than a single-line input, because the text is prose the user is writing about how they
+ * want to be answered. Disabled while the toggle is off but still visible, so turning it off does not look
+ * like it discarded what was typed.
+ */
+.cc-personal-instructions {
+  width: 100%; min-height: 92px; resize: vertical; padding: var(--cc-space-sm);
+  background: var(--cc-card); color: var(--cc-text); border: 1px solid var(--cc-border);
+  border-radius: var(--cc-radius-badge); font: inherit; line-height: var(--cc-leading-body-sm);
+}
+.cc-personal-instructions:focus-visible { outline: 2px solid var(--cc-focus); outline-offset: 1px; }
+.cc-personal-instructions:disabled { opacity: 0.55; cursor: not-allowed; }
+/* Over the bound is a state worth seeing before the node refuses the write, not a silent failure. */
+.cc-panel-note[data-over-bound="true"] { color: var(--cc-danger); }
 
 @media (prefers-reduced-motion: reduce) {
   .cc-scroll { scroll-behavior: auto; }

@@ -490,6 +490,14 @@ export async function createModelTurn(options: {
    * would have to exist before the thing it comes from does.
    */
   model?: () => ModelTurn["selection"] | undefined;
+  /**
+   * The user's own instructions, read fresh on every turn.
+   *
+   * A function for the same reason `model` is, and one more: the promise of the feature is that a
+   * preference written while the app is open reaches the next turn rather than the next session, so the
+   * value has to be read when a turn starts rather than when this module is built.
+   */
+  personalInstructions?: () => string | undefined;
 }): Promise<ModelTurn | undefined> {
   const selection = modelFromEnv(options.env);
   if (selection === undefined) return undefined;
@@ -507,6 +515,9 @@ export async function createModelTurn(options: {
       builtinTools: [],
       ...(options.sessionDir === undefined ? {} : { sessionDir: options.sessionDir }),
       ...(options.onSessionFile === undefined ? {} : { onSessionFile: options.onSessionFile }),
+      ...(options.personalInstructions === undefined
+        ? {}
+        : { personalInstructions: options.personalInstructions }),
     });
   const availability = await adapter.availability();
   const turns = new Map<string, Turn>();

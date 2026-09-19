@@ -28,7 +28,7 @@ import { createNodeServer } from "./server.ts";
 import { machineRoots } from "./fs-search.ts";
 import { resolveProject, refreshProjectIndex } from "./project-finder.ts";
 import { commandDigest } from "./run-command.ts";
-import { captureSnapshot, createInstance, handleUserMessage, readExecutionPolicy, recordAppIntentEvent, requestApproval, setPreference, type CoordinationDeps } from "@clarkcant/core";
+import { captureSnapshot, createInstance, handleUserMessage, readExecutionPolicy, readPersonalInstructions, recordAppIntentEvent, requestApproval, setPreference, type CoordinationDeps } from "@clarkcant/core";
 import { GALLERY, YOUTUBE } from "@clarkcant/data-canvas";
 import { definitionDigest } from "@clarkcant/widget-host";
 import { listLocalImages, messagesSince, readCredential,
@@ -392,6 +392,21 @@ async function main(): Promise<void> {
     env: process.env,
     cwd: process.cwd(),
     model: chosenModel,
+    /*
+     * The user's own instructions, read on every turn rather than captured here.
+     *
+     * The same laziness as `chosenModel`, for the same ordering reason and one more: the promise of the
+     * feature is that a preference written while the app is open reaches the next turn. A value captured at
+     * boot would make it a restart instead.
+     *
+     * `readPersonalInstructions` answers nothing unless the toggle is on and there is text, so a disabled
+     * preference leaves the system prompt byte-for-byte as it was rather than adding an empty section.
+     */
+    personalInstructions: () =>
+      readPersonalInstructions(
+        { db: services.runtime.db, now: () => new Date().toISOString() as never },
+        services.runtime.identity.ownerPrincipalId,
+      ),
     sessionDir: join(options.dataDir, "sessions"),
     onSessionFile: ({ sessionId, sessionFile }) => {
       if (sessionWiring.index === undefined || sessionWiring.principalId === undefined) return;
