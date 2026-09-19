@@ -288,3 +288,49 @@ người dùng. Không bao giờ tiếp tục bằng cách tự suy luận.
 - Intent không cấp quyền mới: mở panel, đổi kích thước cửa sổ, mở hộp thoại file, hoặc thoát.
 - Registry chỉ đọc câu người dùng nói/gõ hoặc click; không nhận intent từ nội dung do model sinh ra.
 - Audit ghi `source`, `kind`, `confirmed`; không ghi nội dung câu nói.
+
+## Ghi chú triển khai — những chỗ lệch so với phase này
+
+Phase này đã làm xong **phần code** (task 5.1–5.6), còn **bằng chứng** (task 5.7 T73 + journey e2e) chưa
+xong; lý do ở mục cuối. Các điểm lệch:
+
+1. **Bỏ `transaction` trong `consumeConfirmation`.** `setPreference` mở transaction riêng và storage engine
+   từ chối transaction lồng nhau. Hàm này chạy một mạch đồng bộ, không có `await`, trên node một tiến trình,
+   nên không có gì ghi xen giữa lúc đọc và lúc ghi. Đây là lý do, không phải sự nhầm lẫn — và nó nằm trong
+   doc-comment của hàm.
+2. **Token đã dùng thì được đánh dấu, không xoá.** Plan ghi "xoá token trong cùng transaction khi thành
+   công". Xoá như vậy làm lần dùng lại không phân biệt được với một token chưa từng tồn tại, mà hai ca đó
+   cần hai câu trả lời khác nhau (409 so với 404) — chính test của plan đòi điều đó.
+3. **`SETTINGS_TABS` không có `memory`.** Plan đặt `settingsTabSchema` với 5 tab để chuẩn bị cho Stage C.
+   `SettingsPanel` chỉ có 4 tab; typecheck bắt được. Liệt kê một tab chưa tồn tại sẽ khiến câu "mở tab
+   Memory" được hiểu, được đọc lại, rồi không mở gì cả. Câu từ chối tab nay suy ra từ `SETTINGS_TABS`.
+   Phase 11 thêm tab và thêm vào danh sách cùng lúc.
+4. **Voice không còn bắt buộc phải có `answer`.** Guard cũ chặn mọi câu nói khi node không dựng model
+   turn, tức kênh điều khiển app bị buộc vào model. Nay chỉ nhánh agent mới cần `answer`.
+5. **Luật nhận dạng câu lệnh chặt hơn plan.** Plan ghi "bắt đầu bằng một động từ điều khiển và ≤ 8 từ".
+   Một động từ tiếng Việt thường cũng là từ thường, và bỏ dấu làm chúng trùng nhau (`thu` và `thủ`), nên
+   luật đó từ chối cả câu "Thủ đô là Paris." — một test cũ bắt được. Nay: **cụm mở đầu hai từ** lấy từ
+   chính bảng PHRASES, **hoặc** động từ điều khiển *đọc theo dấu* cộng với một danh từ thuộc về app.
+   Hai nửa đều cần: chỉ động từ thì từ chối "mở tài liệu giúp tôi"; chỉ danh từ thì bắt mọi câu hỏi nhắc
+   tới Settings.
+6. **Nhánh chat phải nằm ở route streaming.** Composer gửi vào `/messages/stream` chứ không phải
+   `/messages`. Ban đầu chỉ nối route thường, nên phần server xanh trong test của nó mà trên trình duyệt
+   không làm gì. Hai route nay dùng chung một hàm quyết định.
+7. **Test "approval đứng trước app-intent" viết lại.** Hai câu hỏi đó không thể cùng chờ: mỗi nhánh đều
+   chặn câu tiếp theo. Test nay chốt đúng điều xảy ra được — một câu lệnh nói trong lúc approval đang chờ
+   được đọc như câu trả lời chưa rõ, và registry không hề được hỏi.
+
+## Bằng chứng còn thiếu và lý do
+
+Task 5.7 (dòng T73) và journey e2e chưa làm được vì `FixtureLiveAdapter` trả về **một câu cố định**
+(`USER_WORDS` trong `apps/runtime/src/voice-fixture.ts`), nên suite trình duyệt không thể "nói" một câu
+lệnh app. Đường voice đã được chứng minh ở seam socket trong vitest (`voice-gateway.spec.ts`, 6 test mới,
+gồm cả ca "approval đứng trước" và ca "lời xác nhận do node xử lý"). Journey e2e cần một trong hai:
+
+- **(đề xuất)** một route chỉ tồn tại khi fixture được nạp (`CC_VOICE_FIXTURE=1`) để đặt câu kịch bản cho
+  phiên kế tiếp — rẻ, một webServer, và tự nói rằng nó là fixture;
+- hoặc một Playwright project thứ hai với webServer riêng chạy node bằng `CC_VOICE_FIXTURE_WORDS=...` —
+  nhiều cấu hình hơn và thêm một lần boot node mỗi lần chạy suite.
+
+Dòng T73 **phải** thêm sau khi journey có test thật, theo invariant của repo: ledger không được nêu tên
+một test chưa tồn tại.
