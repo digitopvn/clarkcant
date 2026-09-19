@@ -239,6 +239,26 @@ Security Adversary) chạy trên ba reviewer độc lập + một checkpoint `ko
 - **Deviation (Phase 2):** thêm seam `bodyLimitFor` trên `createNodeServer` để trần body test được
   bằng một con số nhỏ; giá trị deploy (`ATTACHMENT_UPLOAD_BODY_LIMIT`) được assert riêng.
 - **Trạng thái thực thi:** Phase 1 và Phase 2 xong và có commit (`c42db4a`), `pnpm verify` xanh
-  1061 test. Phase 3–12 còn nguyên; xem `stage-a-impl` trong todo của phiên để biết mốc tiếp theo.
+  1061 test. Phase 3 xong hai nửa và có commit (`5a003bd` runtime, `e98f8f6` client), `pnpm verify` xanh
+  1099 test. Phase 4 trở đi còn nguyên.
+
+### Ghi nhận khi thi hành Phase 3 (2026-09-19)
+
+- **Deviation (Task 3.3):** `extraTools` đổi từ `() => readonly ToolDefinition[]` thành
+  `(turn: { conversationId: string }) => readonly ToolDefinition[]`. Tool `read_attachment` phải biết
+  conversation của lượt để kiểm quyền, và lấy nó từ chỗ khác sẽ là nguồn sự thật thứ hai về việc lượt
+  nào đang chạy. Chữ ký zero-argument cũ vẫn gán được vào kiểu mới nên không caller nào phải sửa.
+- **Deviation (Task 3.3):** phần đọc refs từ tin nhắn đã lưu được đặt thành
+  `attachmentRefsForLastUserMessage` trong `apps/runtime/src/attachments.ts` thay vì viết inline trong
+  `main.ts`. `main.ts` không export gì và import nó sẽ boot một node, nên logic đó nằm inline thì không
+  test được. Đây cũng là lý do test dùng đúng hàm của node thay vì bản sao.
+- **Deviation (Task 3.4):** `read_attachment` chỉ được đăng ký khi lượt thuộc một conversation; lượt
+  không thuộc conversation nào thì không có gì để kiểm, nên không mở tool đó ra.
+- **Deviation (Task 3.6):** `useImageUrls` được rút về một hook chung `useObjectUrls`, và
+  `useAttachmentUrls` là wrapper thứ hai. Ba luật về blob URL là về blob URL, không phải về ảnh; hai bản
+  sao là hai cơ hội tái hiện lỗi `src` đã bị thu hồi.
+- **Chưa làm, có tên (Refactor của Phase 3):** tách composer thành `composer.tsx`. Điều kiện của plan là
+  `Conversation.tsx` vượt ~1500 dòng; hiện là 1594. Việc tách thuộc về một commit riêng với đúng các
+  `data-*` attribute cũ, sau khi journey Phase 4 đã ghim các attribute đó.
 
 <!-- slug: file-attachments-voice-bar-memory -->
