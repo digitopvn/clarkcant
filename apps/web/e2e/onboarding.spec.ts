@@ -120,7 +120,12 @@ test.describe("the first run", () => {
     await expect(page.locator("[data-onboarding-key='typesafe']")).toBeVisible();
     const secret = "not-a-real-typesafe-key";
     await page.locator("[data-onboarding-key-input='true']").fill(secret);
-    await page.locator("[data-onboarding-key-save='true']").click();
+    await expect(page.locator("[data-onboarding-key-input='true']")).toHaveValue(secret);
+    // Skipped rather than saved, and not because saving is untested: this suite shares one node, so a credential written
+    // here changes what a later spec sees. That is exactly how this test broke secret-input.spec.ts, whose node answered
+    // with one more credential name than it expected. The save path is covered there, through the same client method
+    // and the same route, so the coverage is kept and the side effect is not.
+    await page.locator("[data-onboarding-finish='true']").click();
 
     await expect(page.locator("[data-onboarding='true']")).toHaveCount(0);
     // The value must not appear anywhere on the page: a secret echoed into a surface is a secret in a screenshot.
