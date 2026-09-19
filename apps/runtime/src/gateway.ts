@@ -1,13 +1,18 @@
 import { timingSafeEqual } from "node:crypto";
 
 import {
+  type AppIntent,
+  type AppIntentConfirmationFailure,
   type AttachmentRef,
   type Instant,
   type MessageBlock,
   type MessageRecord,
   type Principal,
   ATTACHMENT_LIMITS,
+  appIntentConfirmRequestSchema,
+  appIntentRequestSchema,
   commandEnvelopeSchema,
+  describeAppIntent,
   nowInstant,
   protocolRangeSchema,
   redactSecrets,
@@ -26,6 +31,7 @@ import {
   liveStateOf,
   pinInstance,
   readSnapshotForDisplay,
+  recordAppIntentEvent,
   releaseLiveOwner,
   sweepExpiredLiveOwners,
   unpinInstance,
@@ -53,6 +59,12 @@ import {
 import { credentialNames, putCredential } from "@clarkcant/storage";
 
 import { nodeBackgroundSessions } from "./background-sessions.ts";
+import {
+  type AppIntentDeps,
+  consumeConfirmation,
+  decideAppIntent,
+  mintConfirmation,
+} from "./app-intents.ts";
 import { decideTurnAction, decisionTimeoutMsFromEnv, searchDecisionBudget } from "./jev-decider.ts";
 import { PI_BUILTIN_TOOLS, nodeToolCatalogue } from "./tool-catalogue.ts";
 
@@ -308,6 +320,10 @@ export async function handleRequest(deps: GatewayDeps, request: GatewayRequest):
     return await handleSearchRoutes(deps, request, segments);
   }
 
+  if (segments[0] === "app-intents") {
+    return await handleAppIntentRoutes(deps, request, segments, at);
+  }
+
   if (segments[0] === "conversations") {
     return await handleConversationRoutes(deps, request, segments, at);
   }
@@ -550,6 +566,102 @@ function appendHostReply(
   appendMessage(services.runtime.db, message, nextMessageSequence(services.runtime.db, input.conversationId));
   indexMessages(services.search, { conversationId: input.conversationId, messages: [message], at: input.at });
   return { messageId: message.messageId };
+}
+
+/**
+ * What each confirmation failure means, in words.
+ *
+ * Spelled out here rather than left to a caller: an expired confirmation and a wrong one lead a person to different
+ * next actions, and a bare code on screen sends them looking for a bug that is not there.
+ */
+const CONFIRMATION_MESSAGES: Record<AppIntentConfirmationFailure, string> = {
+  CONFIRMATION_NOT_FOUND: "Không có lời xác nhận nào đang chờ.",
+  CONFIRMATION_EXPIRED: "Lời xác nhận đã quá hạn. Bạn nói lại câu lệnh nhé.",
+  CONFIRMATION_ALREADY_USED: "Lời xác nhận này đã được dùng rồi.",
+};
+
+/** Said when someone declines. Nothing happened, and the answer says so rather than staying silent. */
+const DECLINED_SAY = "Tôi đã bỏ qua câu lệnh đó.";
+
+/**
+ * Application intents.
+ *
+ * Two routes and one rule: a request comes back as a decision, and only `kind: "intent"` is executable. Quitting
+ * always comes back as `needs-confirmation` carrying a token, so no single request - typed, clicked or spoken - can
+ * end the application on its own. A request that maps to nothing is answered `none`, which means "not my business,
+ * carry on as before" and is deliberately not the same answer as a refusal.
+ */
+async function handleAppIntentRoutes(
+  deps: GatewayDeps,
+  request: GatewayRequest,
+  segments: readonly string[],
+  at: () => string,
+): Promise<GatewayResponse> {
+  const { services } = deps;
+  const { runtime } = services;
+  const principalId = runtime.identity.ownerPrincipalId;
+  const intentDeps: AppIntentDeps = {
+    db: runtime.db,
+    nodeId: runtime.identity.nodeId,
+    now: () => at() as never,
+    newId: services.conductor.newId,
+  };
+
+  if (segments.length === 1 && request.method === "POST") {
+    const parsed = readJson(request);
+    if (!parsed.ok) return parsed.response;
+    const body = appIntentRequestSchema.safeParse(parsed.value);
+    if (!body.success) {
+      return fail(400, "INVALID_SCHEMA", "an app intent request needs text or a kind, and a source");
+    }
+    const asked = body.data;
+    const decision = decideAppIntent(
+      intentDeps,
+      {
+        principalId,
+        request: asked,
+        ...(asked.conversationId === undefined ? {} : { conversationId: asked.conversationId as never }),
+      },
+      (intent: AppIntent) => mintConfirmation(intentDeps, { principalId, intent, source: asked.source }),
+    );
+    return json(200, { decision });
+  }
+
+  if (segments.length === 2 && segments[1] === "confirm" && request.method === "POST") {
+    const parsed = readJson(request);
+    if (!parsed.ok) return parsed.response;
+    const body = appIntentConfirmRequestSchema.safeParse(parsed.value);
+    if (!body.success) {
+      return fail(400, "INVALID_SCHEMA", "a confirmation needs a token and a granted or denied decision");
+    }
+    // Spent before the decision is read, so a denial also burns the token and a second answer cannot reverse it.
+    const outcome = consumeConfirmation(intentDeps, { principalId, token: body.data.confirmationToken });
+    if (!outcome.ok) {
+      const status =
+        outcome.code === "CONFIRMATION_ALREADY_USED" ? 409 : outcome.code === "CONFIRMATION_EXPIRED" ? 410 : 404;
+      return fail(status, outcome.code, CONFIRMATION_MESSAGES[outcome.code]);
+    }
+    if (body.data.decision === "denied") {
+      return json(200, { granted: false, decision: { kind: "refused", say: DECLINED_SAY } });
+    }
+    recordAppIntentEvent(intentDeps, {
+      intent: outcome.intent,
+      source: outcome.source,
+      confirmed: true,
+      ...(body.data.conversationId === undefined ? {} : { conversationId: body.data.conversationId as never }),
+    });
+    return json(200, {
+      granted: true,
+      decision: {
+        kind: "intent",
+        intent: outcome.intent,
+        requiresConfirmation: false,
+        readBack: describeAppIntent(outcome.intent),
+      },
+    });
+  }
+
+  return fail(404, "NOT_FOUND", "no such app-intent route");
 }
 
 /**
@@ -1091,6 +1203,40 @@ async function handleConversationRoutes(
     const text = parsed.value.text;
     if (typeof text !== "string" || text.trim().length === 0) {
       return fail(400, "INVALID_SCHEMA", "a message must carry a non-empty text field");
+    }
+
+    /*
+     * A typed command to the application.
+     *
+     * Checked before the turn machinery, because "mở settings" is not something to steer into a running answer. An
+     * intent is answered by the host and recorded with source "chat"; a command-shaped sentence that maps to nothing
+     * gets an honest "I did not understand" and no model turn at all, which is the issue's rule about not guessing;
+     * anything else falls through untouched and reaches the agent exactly as before.
+     */
+    const chatIntentDeps: AppIntentDeps = {
+      db: runtime.db,
+      nodeId: runtime.identity.nodeId,
+      now: () => at() as never,
+      newId: services.conductor.newId,
+    };
+    const asked = decideAppIntent(
+      chatIntentDeps,
+      {
+        principalId: runtime.identity.ownerPrincipalId,
+        request: { text, source: "chat" },
+        conversationId: conversationId as never,
+      },
+      (intent: AppIntent) =>
+        mintConfirmation(chatIntentDeps, {
+          principalId: runtime.identity.ownerPrincipalId,
+          intent,
+          source: "chat",
+        }),
+    );
+    if (asked.kind !== "none") {
+      const said = asked.kind === "refused" ? asked.say : asked.readBack;
+      const appended = appendHostReply(services, { conversationId, text: said, at: at() as never });
+      return json(200, { accepted: true, messageId: appended.messageId, appIntent: asked });
     }
 
     /*

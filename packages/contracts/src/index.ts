@@ -25,4 +25,5 @@ export * from "./automation.ts";
 export * from "./nodelink.ts";
 export * from "./voice.ts";
 export * from "./attachments.ts";
+export * from "./app-intents.ts";
 export * from "./surfaces.ts";
