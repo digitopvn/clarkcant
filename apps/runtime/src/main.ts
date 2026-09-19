@@ -28,7 +28,7 @@ import { createNodeServer } from "./server.ts";
 import { machineRoots } from "./fs-search.ts";
 import { resolveProject, refreshProjectIndex } from "./project-finder.ts";
 import { commandDigest } from "./run-command.ts";
-import { captureSnapshot, createInstance, createTask, handleUserMessage, readExecutionPolicy, readPersonalInstructions, recordAppIntentEvent, requestApproval, setPreference, type CoordinationDeps } from "@clarkcant/core";
+import { captureSnapshot, createInstance, createTask, handleUserMessage, readExecutionPolicy, readPersonalInstructions, directoryIndexPath, recordAppIntentEvent, requestApproval, setPreference, type CoordinationDeps } from "@clarkcant/core";
 import { GALLERY, YOUTUBE } from "@clarkcant/data-canvas";
 import { definitionDigest } from "@clarkcant/widget-host";
 import { listLocalImages, messagesSince, readCredential,
@@ -370,6 +370,39 @@ async function main(): Promise<void> {
           options: [
             { id: "option-1", label: "Dự án hiện tại", detail: "thư mục này" },
             { id: "option-2", label: "Dự án khác", detail: "tôi sẽ chỉ đường" },
+          ],
+        },
+      };
+    }
+
+    /*
+     * The marketplace-results card, produced without a directory on disk.
+     *
+     * A fixture proves the wiring, not the provider: the search itself is covered by the core tests, and what the
+     * browser has to be shown is that this card renders its source, version, digest and risk lane — and that it
+     * offers no install button of its own.
+     */
+    if (/tìm gói|marketplace|search package/i.test(input.text)) {
+      return {
+        text: "Đây là kết quả do fixture tạo, không phải model thật.",
+        block: {
+          type: "marketplace-results",
+          owner: "host",
+          cardId: "market_fixture_1",
+          query: "dashboard",
+          directory: "/tmp/cc-directory.json",
+          results: [
+            {
+              packageId: "com.acme.dashboard",
+              version: "1.0.0",
+              displayName: "Dashboard",
+              description: "biểu đồ cho dự án",
+              source: { kind: "local", path: "/tmp/dashboard" },
+              digest: "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+              riskTier: "isolated-ui",
+              facets: ["ui"],
+              platforms: ["linux-x64"],
+            },
           ],
         },
       };
@@ -717,6 +750,8 @@ async function main(): Promise<void> {
         }),
         /* The card's id has to outlive the turn, so it comes from the node's own id generator. */
         questions: { newId: services.conductor.newId },
+        // Always passed: an unconfigured directory is something the tool reports, not a reason to hide it.
+        directory: { indexPath: directoryIndexPath(process.env), newId: services.conductor.newId },
         // Reading an attached file is scoped to the conversation this turn belongs to, which is the
         // only thing the tool needs to check beyond the principal.
         attachments: { dataDir: options.dataDir, conversationId: turn.conversationId },

@@ -17,6 +17,7 @@ const ENTRY: DirectoryEntry = {
   version: "1.2.0",
   displayName: "Calendar Plus",
   description: "A compact agenda and week view.",
+  source: { kind: "local", path: "/tmp/pkg" },
   publisher: { id: "example", sourceUrl: "https://github.com/example/calendar-plus", license: "MIT" },
   preview: {},
   facets: ["ui"],

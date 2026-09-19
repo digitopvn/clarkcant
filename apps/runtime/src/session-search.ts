@@ -356,6 +356,17 @@ export function textOfBlock(block: MessageBlock): string {
     case "browser-session-card":
     case "computer-session-card":
       return `${block.label} — ${block.driver === "user" ? "bạn" : "agent"} đang điều khiển`;
+    case "marketplace-results":
+      /*
+       * Names the directory the results came from. A reader who cannot see the card still has to know these are
+       * somebody else's claims about packages, not facts about this machine.
+       */
+      return block.unavailableReason !== undefined
+        ? `Không xem được directory ${block.directory}: ${block.unavailableReason}`
+        : `Tìm “${block.query}” trong ${block.directory}: ` +
+            (block.results.length === 0
+              ? "không có kết quả"
+              : block.results.map((result) => `${result.displayName} ${result.version}`).join(", "));
     default:
       return "";
   }

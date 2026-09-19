@@ -1,7 +1,9 @@
 import { z } from "zod";
 
 import { attachmentRefSchema } from "./attachments.ts";
-import { instantSchema } from "./primitives.ts";
+import { packageSourceSchema, riskLaneSchema } from "./directory.ts";
+import { facetKindSchema } from "./install.ts";
+import { instantSchema, platformSchema } from "./primitives.ts";
 import { widgetSnapshotSchema } from "./widgets.ts";
 
 /**
@@ -142,6 +144,50 @@ export const computerSessionCardSchema = z.strictObject({
   updatedAt: instantSchema,
 });
 export type ComputerSessionCard = z.infer<typeof computerSessionCardSchema>;
+
+/**
+ * One directory listing.
+ *
+ * A search result is a **claim by a directory**, not a fact about the local machine, and it carries exactly the
+ * fields that let a person judge it: where it comes from, which version, the digest the install path will check, and
+ * the risk lane the isolation implies. `digest` is not optional: an artifact nobody can verify is not a result, and
+ * listing one would offer an install that fails later.
+ */
+export const marketplaceResultSchema = z.strictObject({
+  packageId: z.string().min(1).max(200),
+  version: z.string().min(1).max(80),
+  displayName: z.string().min(1).max(200),
+  description: z.string().max(1000),
+  source: packageSourceSchema,
+  digest: z.string().min(1).max(200),
+  riskTier: riskLaneSchema,
+  facets: z.array(facetKindSchema).max(10),
+  platforms: z.array(platformSchema).max(10),
+});
+export type MarketplaceResult = z.infer<typeof marketplaceResultSchema>;
+
+/**
+ * The results of a marketplace search, as the conversation shows them.
+ *
+ * Host-owned, because a result asserts a digest and a risk lane. A pack or a model that could mint this block could
+ * draw a listing that looks verified while pointing at bytes nobody has hashed.
+ *
+ * `directory` is required and named. A listing whose origin is invisible would present what some index says as
+ * something this machine knows, which is the same mistake as showing cached data as live.
+ *
+ * An empty `results` and an `unavailableReason` are different truths — "the directory has nothing" and "the
+ * directory could not be consulted" — so the reason is a separate field rather than an empty list.
+ */
+export const marketplaceResultsBlockSchema = z.strictObject({
+  type: z.literal("marketplace-results"),
+  owner: z.literal("host"),
+  cardId: z.string().min(1).max(128),
+  query: z.string().max(200),
+  directory: z.string().min(1).max(300),
+  results: z.array(marketplaceResultSchema).max(50),
+  unavailableReason: z.string().min(1).max(500).optional(),
+});
+export type MarketplaceResultsBlock = z.infer<typeof marketplaceResultsBlockSchema>;
 
 export const artifactBlockSchema = z.strictObject({
   type: z.literal("artifact"),
@@ -618,6 +664,7 @@ export const messageBlockSchema = z.discriminatedUnion("type", [
   artifactBlockSchema,
   browserSessionCardSchema,
   computerSessionCardSchema,
+  marketplaceResultsBlockSchema,
   evidenceBlockSchema,
   systemCardBlockSchema,
   approvalCardBlockSchema,
@@ -659,6 +706,7 @@ export const HOST_OWNED_BLOCK_TYPES = [
   "form-card",
   "browser-session-card",
   "computer-session-card",
+  "marketplace-results",
 ] as const satisfies readonly MessageBlock["type"][];
 
 export function isHostOwnedBlock(block: MessageBlock): boolean {

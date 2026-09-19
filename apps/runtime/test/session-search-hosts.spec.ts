@@ -178,6 +178,26 @@ const FIXTURES = {
     previewReason: "ứng dụng chưa được cấp quyền ghi màn hình",
     updatedAt: AT,
   },
+  "marketplace-results": {
+    type: "marketplace-results",
+    owner: "host",
+    cardId: "market-1",
+    query: "dashboard",
+    directory: "/tmp/cc-directory.json",
+    results: [
+      {
+        packageId: "com.acme.dashboard",
+        version: "1.0.0",
+        displayName: "Dashboard",
+        description: "biểu đồ",
+        source: { kind: "local", path: "/tmp/dashboard" },
+        digest: "sha256:aaaa",
+        riskTier: "isolated-ui",
+        facets: ["ui"],
+        platforms: ["linux-x64"],
+      },
+    ],
+  },
 };
 
 describe("the text of every host card", () => {

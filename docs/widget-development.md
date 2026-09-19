@@ -625,6 +625,12 @@ Mục này nói rõ phần nào của tài liệu đã có code, để không ai
   hai lần tính cùng một thứ là cách một listing nói tới artifact không ai tạo được). Nó **không** nộp thay
   người dùng: nộp cần account directory, và một lệnh trông như đã nộp rồi là control có action không tồn tại.
   Đường local/git/npm vẫn là first-class nên không cần account để chạy widget của mình.
+- **Directory search** — đã có ở mức đọc một index: `CC_DIRECTORY_INDEX` trỏ tới một file JSON các entry theo
+  §18, và `search_directory` trả về card `marketplace-results` hiển thị **source, version, digest và risk lane**,
+  kèm tên directory mà kết quả đến từ đó. Chưa cấu hình index là một *trạng thái* được nói ra, khác với "không
+  tìm thấy gì". Card **không có nút install**: cài đặt đi qua đúng install path nơi digest được kiểm và consent
+  được ghi; một nút ở đây sẽ là entry point thứ hai để cài, và là chỗ duy nhất một listing có thể biến thành
+  authorization. Không có registry từ xa — search chỉ đọc thứ tồn tại trên máy hoặc ở URL người dùng chỉ định.
 - Script trong trang của dev host: nó thu thập fact và chuyển action, còn mọi quyết định nằm ở hàm đã test —
   nhưng bản thân script cần browser để chạy, và điều đó được nói ra thay vì ngụ ý rằng cả dev host đã được phủ.
 - Detach/attach: chưa có host window tách rời, nên không có gì để chạy. Nửa sở hữu (`detached` trên

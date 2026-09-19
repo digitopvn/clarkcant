@@ -68,6 +68,7 @@ const MATRIX: Record<(typeof HOST_OWNED_BLOCK_TYPES)[number], { applicable: read
   "reconnect-card": { applicable: ["live", "error"], reason: "cached/offline: reconnection is the state being reported" },
   "browser-session-card": { applicable: ["live", "error", "read-only"], reason: "cached/offline: the lease decides what is current, and a cached view would be a view of a session somebody else may be driving" },
   "computer-session-card": { applicable: ["live", "error", "read-only", "unavailable"], reason: "cached/offline: the preview permission is never cached, because a cached yes is a claim nobody granted" },
+  "marketplace-results": { applicable: ["empty", "error", "read-only", "unavailable"], reason: "live/cached: a result is what a directory said when it was asked, and the card names that directory instead of presenting a listing as current" },
 };
 
 describe("the state matrix for host cards", () => {

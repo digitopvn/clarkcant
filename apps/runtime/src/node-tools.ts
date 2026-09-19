@@ -11,6 +11,8 @@ import {
   type CoordinationDeps,
   type ExecutionAuditDeps,
   type PolicyDecision,
+  readDirectoryIndex,
+  searchDirectory,
 } from "@clarkcant/core";
 
 import { blobsDir, readBlob } from "./blobs.ts";
@@ -94,6 +96,14 @@ export function createNodeTools(input: {
    * that could repeat across a restart would make an old card answerable again.
    */
   questions?: { newId: (prefix: string) => string };
+  /**
+   * Where a directory index is, when this node may search one.
+   *
+   * Always present in the runtime, because "no directory configured" is a state the tool reports rather
+   * than a reason not to register it: a user who has not configured one should be told that, not left
+   * wondering why the agent never looks.
+   */
+  directory?: { indexPath: string | undefined; newId: (prefix: string) => string };
 }): ToolDefinition[] {
   const roots = input.roots ?? machineRoots;
   return [
@@ -126,6 +136,7 @@ export function createNodeTools(input: {
           }),
         ]),
     ...(input.questions === undefined ? [] : [createAskUserTool(input.questions.newId)]),
+    ...(input.directory === undefined ? [] : [createSearchDirectoryTool(input.directory)]),
     ...(input.memory === undefined
       ? []
       : [
@@ -512,6 +523,74 @@ export function createRememberTool(input: {
   };
 }
 
+
+/**
+ * Searching the package directory.
+ *
+ * The producer for the marketplace-results card, and the reason that card is host-owned: a result asserts a digest
+ * and a risk lane, and a model that could mint one could draw a listing that looks verified while pointing at bytes
+ * nobody has hashed.
+ *
+ * The tool is a *finder*, never an installer. It hands back sources, and installing one goes through the same
+ * resolver, digest check and generation swap as a path typed by hand. Search is how you find a source, not how you
+ * authorise one.
+ *
+ * "No directory configured" and "nothing matched" are reported as the different things they are.
+ */
+export function createSearchDirectoryTool(input: {
+  indexPath: string | undefined;
+  newId: (prefix: string) => string;
+}): ToolDefinition {
+  return {
+    name: "search_directory",
+    label: "Tìm gói trong directory",
+    description:
+      "Search the configured package directory for a widget or package to install. Each result carries its source, " +
+      "version, digest and risk lane. Installing one still goes through the normal install path. If no directory is " +
+      "configured this says so, which is not the same as finding nothing.",
+    parameters: {
+      type: "object",
+      additionalProperties: false,
+      required: ["query"],
+      properties: {
+        query: { type: "string", description: "What to look for. An empty string browses the directory." },
+      },
+    },
+    promptSnippet: "search_directory — find a package in the directory, then install it by its source",
+    execute: async (params: Record<string, unknown>): Promise<{ text: string; hostCard?: Record<string, unknown> }> => {
+      const query = typeof params.query === "string" ? params.query.trim() : "";
+      const state = readDirectoryIndex(input.indexPath);
+      if (state.kind === "not-configured") return { text: state.reason };
+      if (state.kind === "unreadable") return { text: `Không đọc được directory: ${state.reason}` };
+
+      const results = searchDirectory({ entries: state.entries, query });
+      return {
+        text:
+          results.length === 0
+            ? `Không có gói nào trong ${state.directory} khớp “${query}”.`
+            : `Tìm thấy ${results.length} gói trong ${state.directory}.`,
+        hostCard: {
+          type: "marketplace-results",
+          owner: "host",
+          cardId: input.newId("market"),
+          query,
+          directory: state.directory,
+          results: results.map((entry) => ({
+            packageId: entry.packageId,
+            version: entry.version,
+            displayName: entry.displayName,
+            description: entry.description,
+            source: entry.source,
+            digest: entry.digest,
+            riskTier: entry.riskTier,
+            facets: entry.facets,
+            platforms: entry.platforms,
+          })),
+        },
+      };
+    },
+  };
+}
 
 /**
  * Asking the user a question, with the answers that will be accepted.

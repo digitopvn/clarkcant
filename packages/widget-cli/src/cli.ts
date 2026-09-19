@@ -298,6 +298,9 @@ function publish(root: string): number {
     version: pkg.manifest.version,
     displayName: pkg.manifest.displayName,
     description: pkg.manifest.description,
+    // The package's own directory. A submission would name the published source (a git ref or an npm version);
+    // preparing from a checkout can only honestly say where it is now.
+    source: { kind: "local", path: root },
     publisher: pkg.manifest.publisher,
     // Empty rather than absent: a package without preview media is listed, not hidden.
     preview: {},
