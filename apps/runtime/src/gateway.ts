@@ -67,6 +67,7 @@ import {
   mintConfirmation,
 } from "./app-intents.ts";
 import { buildSuggestions } from "./suggestions.ts";
+import { deleteMemory, listMemories, memoryCounts, type MemoryDeps } from "./memory.ts";
 import { decideTurnAction, decisionTimeoutMsFromEnv, searchDecisionBudget } from "./jev-decider.ts";
 import { PI_BUILTIN_TOOLS, nodeToolCatalogue } from "./tool-catalogue.ts";
 
@@ -322,11 +323,19 @@ export async function handleRequest(deps: GatewayDeps, request: GatewayRequest):
     return await handleSearchRoutes(deps, request, segments);
   }
 
-  if (segments[0] === "app-intents") {
-    if (segments.length === 1 && segments[0] === "suggestions" && request.method === "GET") {
-      return handleSuggestionsRoute(deps);
-    }
+  if (segments[0] === "memory") {
+    const answered = handleMemoryRoutes(deps, request, segments);
+    if (answered !== undefined) return answered;
+  }
 
+  if (segments.length === 1 && segments[0] === "suggestions") {
+    if (request.method !== "GET") {
+      return fail(405, "METHOD_NOT_ALLOWED", "a suggestion list is read, not written");
+    }
+    return handleSuggestionsRoute(deps);
+  }
+
+  if (segments[0] === "app-intents") {
     return await handleAppIntentRoutes(deps, request, segments, at);
   }
 
@@ -631,10 +640,10 @@ const DECLINED_SAY = "Tôi đã bỏ qua câu lệnh đó.";
 /**
  * What to offer next.
  *
- * Read on demand rather than cached, and the response says so: a suggestion list that a proxy or a browser kept
- * would offer somebody the work they just finished. An empty store is an empty list and a 200, not a 404 - there
- * is nothing wrong with having nothing to suggest, and a 404 would make the client treat a normal state as an
- * error it has to recover from.
+ * Read on demand rather than cached, and the transport says so: it owns the cache headers on every response, so
+ * this route does not write one it could not enforce. An empty store is an empty list and a 200, not a 404 -
+ * there is nothing wrong with having nothing to suggest, and a 404 would make the client treat a normal state as
+ * an error it has to recover from.
  */
 function handleSuggestionsRoute(deps: GatewayDeps): GatewayResponse {
   const { runtime } = deps.services;
@@ -643,11 +652,7 @@ function handleSuggestionsRoute(deps: GatewayDeps): GatewayResponse {
     nodeId: runtime.identity.nodeId,
     now: () => new Date().toISOString(),
   });
-  return {
-    status: 200,
-    body: { items },
-    headers: { "cache-control": "no-store" },
-  };
+  return { status: 200, body: { items } };
 }
 
 async function handleAppIntentRoutes(
@@ -2082,4 +2087,46 @@ function handleRawCommand(deps: GatewayDeps, request: GatewayRequest, at: () => 
     receivedAt: at(),
     note: "accepted for durable processing; this is not an outcome",
   });
+}
+
+/**
+ * What this node remembers, and removing one thing from it.
+ *
+ * Reading answers with the records and a count per kind, because a screen that shows a list also wants to say how
+ * much there is. Deleting removes the row for real, and a delete that matched nothing is a 404 rather than a quiet
+ * success: the caller asked to remove something and it is still there, so "it worked" would be a lie the person
+ * cannot see through.
+ *
+ * The principal comes from the token on both paths, which is what makes somebody else's memory unreachable rather
+ * than merely unaddressed.
+ */
+function handleMemoryRoutes(
+  deps: GatewayDeps,
+  request: GatewayRequest,
+  segments: readonly string[],
+): GatewayResponse | undefined {
+  if (segments[0] !== "memory" || segments.length > 2) return undefined;
+  const { services } = deps;
+  const { runtime } = services;
+  const principalId = runtime.identity.ownerPrincipalId;
+  const memoryDeps: MemoryDeps = {
+    db: runtime.db,
+    now: () => new Date().toISOString(),
+    newId: services.conductor.newId,
+  };
+
+  if (segments.length === 1) {
+    if (request.method !== "GET") return fail(405, "METHOD_NOT_ALLOWED", "memory is read here, not written");
+    return {
+      status: 200,
+      body: { items: listMemories(memoryDeps, principalId), counts: memoryCounts(memoryDeps, principalId) },
+    };
+  }
+
+  if (request.method !== "DELETE") return fail(405, "METHOD_NOT_ALLOWED", "a remembered thing is deleted here");
+  const memoryId = segments[1] ?? "";
+  if (!deleteMemory(memoryDeps, principalId, memoryId)) {
+    return fail(404, "NOT_FOUND", "this node has no such remembered thing for this principal");
+  }
+  return { status: 200, body: { removed: true } };
 }
