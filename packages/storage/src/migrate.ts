@@ -927,6 +927,45 @@ export const MIGRATIONS: readonly Migration[] = [
       `);
     },
   },
+  {
+    version: 18,
+    name: "secrets",
+    reversible: true,
+    up: (db) => {
+      db.exec(`
+        -- What a secret is for, who may use it, and where the value actually lives.
+        --
+        -- Metadata only. The value stays in a backend — the node's own store today, a keychain or an external
+        -- vault later — and this table is what lets the agent and the interface talk about a secret without ever
+        -- holding one. That split is the whole point: the model may learn that "github_token" exists, what it is
+        -- for, and which consumers are allowed to use it, and still has no way to read it.
+        --
+        -- backend_ref is opaque to callers: the node-store backend reads it as a credential name, a keychain
+        -- backend would read it as a service path. Keeping it opaque here is what lets the backend change without
+        -- a migration that rewrites rows.
+        --
+        -- allowed_consumers and injection_policy are JSON and text rather than joined tables because they are
+        -- read whole, written whole, and small: a secret's consumer list is not something to query across.
+        CREATE TABLE secrets (
+          secret_id         TEXT PRIMARY KEY,
+          principal_id      TEXT NOT NULL,
+          node_id           TEXT,
+          name              TEXT NOT NULL,
+          description       TEXT NOT NULL DEFAULT '',
+          kind              TEXT NOT NULL DEFAULT 'api-key',
+          backend           TEXT NOT NULL DEFAULT 'node-store',
+          backend_ref       TEXT NOT NULL,
+          allowed_consumers TEXT NOT NULL DEFAULT '[]',
+          injection_policy  TEXT NOT NULL DEFAULT 'tool-only',
+          created_at        TEXT NOT NULL,
+          updated_at        TEXT NOT NULL,
+          last_used_at      TEXT,
+          UNIQUE (principal_id, name)
+        );
+        CREATE INDEX idx_secrets_principal ON secrets(principal_id);
+      `);
+    },
+  },
 ];
 
 export interface MigrationResult {

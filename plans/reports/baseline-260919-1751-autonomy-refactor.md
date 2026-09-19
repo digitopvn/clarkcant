@@ -189,3 +189,31 @@ người dùng thấy do route tạo qua `handleUserMessage` (text = note, note 
 
 Fixture mới ở main.ts: "hỏi tui chọn" (chạy qua đúng `createAskUserQuestionTool`) và nhánh trả lời cho turn
 tiếp theo. Tổng unit test mới của t2: 51 (gồm cả regression của P1).
+
+## 11. t3 — hoàn tất (chờ gate) + thiết kế t4 đã recon
+
+### t3
+
+- `packages/contracts/src/interactions.ts`: `foldWords`, `answerFromUtterance` (confirm → yes/no, single-choice →
+  label dài nhất khớp trước, multi-choice → nhiều label **theo thứ tự đã offer**, text → nguyên văn; trả undefined
+  khi không khớp để hỏi lại thay vì đoán). 7 test mới trong `contracts/test/interactions.spec.ts`.
+- `apps/runtime/src/voice-session.ts`: `PendingVoiceInteraction` (approval | question) thay cho `pendingApproval`
+  cứng; dep `answerQuestion`; nhánh approval giữ `interpretDecision` như cũ; nhánh question dùng
+  `answerFromUtterance` rồi gọi `answerQuestion`.
+- **Một code path cho click và voice:** `answerQuestionForNode(services, input)` export từ `gateway.ts`; route
+  `POST /conversations/:id/questions/:questionId/answer` và voice wiring trong `main.ts` cùng gọi hàm đó.
+- Test: 2 test mới trong `apps/runtime/test/voice-gateway.spec.ts` (đọc câu hỏi bằng voice prompt của host, nói
+  "production" → gửi `optionIds: ["production"]`; nói lạc → hỏi lại, không ghi gì). Cả file 33 test xanh.
+
+### t4 — recon đã xong
+
+- `packages/storage/src/migrate.ts`: `MIGRATIONS` ở dòng 29, version cao nhất là **17**; bảng `credentials` được
+  tạo ở migration **version 16** (dòng ~873–886). Migration mới phải là **version 18** và không được sửa cái cũ.
+- `packages/storage/src/repositories.ts:2371+`: `putCredential` / `hasCredential` / `credentialNames` /
+  `readCredential` — value chỉ ra khỏi DB qua `readCredential`, không có hàm nào liệt kê value.
+- Kế hoạch t4: migration 18 tạo bảng `secrets` (secret_id, principal_id, node_id, name, description, kind,
+  backend, backend_ref, allowed_consumers JSON, injection_policy, created_at, updated_at, last_used_at,
+  UNIQUE(principal_id,name)); interface `SecretBackend` (has/read/write/delete) với backend đầu tiên là
+  `node-store` chạy trên chính bảng `credentials` (backend_ref = tên credential); repository chỉ trả metadata;
+  host tool `request_secret` (có → `available`, chưa có → credential-card); nâng `credential-card` thêm
+  description/consumer/scope. E2E: value không xuất hiện trong DOM và không có trong continuation payload.

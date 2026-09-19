@@ -833,7 +833,6 @@ describe("approving a command by voice", () => {
     sayFor(adapter, "clone giúp tui một repo");
     // The question names the operation and reaches the person as words, not as a card they cannot press.
     await client.waitFor(asked, "the approval question");
-    await client.waitFor(asked, "the approval question");
 
     sayFor(adapter, "đồng ý");
     await client.waitFor(said("Đã duyệt. Tui chạy lệnh đó ngay."), "the decision");
