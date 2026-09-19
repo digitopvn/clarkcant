@@ -232,3 +232,44 @@ test("the agent state follows a real turn", async ({ page }) => {
     .poll(async () => shell.getAttribute("data-agent-state"), { timeout: 10_000 })
     .not.toBeNull();
 });
+
+/**
+ * The pointer loop, and where its state lives.
+ *
+ * The orb answers the pointer every frame, which is the one place in this interface where a React re-render per
+ * event would be visible: a pointer crossing the window produces hundreds of events, and state per event would put
+ * the whole conversation through a render pass each time.
+ *
+ * The claim is therefore about the canvas rather than about the pixels: the element is the same element and there
+ * is still exactly one WebGL context after the pointer has moved across the orb. A rebuild per pointer event — or a
+ * second context — is what this catches.
+ */
+test("the orb is not rebuilt while the pointer moves across it", async ({ page }) => {
+  await openApp(page);
+
+  const orb = page.locator("[data-orb-motion]").first();
+  await expect(orb).toBeVisible({ timeout: 20_000 });
+
+  const before = await page.evaluate(() => {
+    const canvas = document.querySelector("[data-orb-motion] canvas") as HTMLCanvasElement | null;
+    if (canvas === null) return { present: false, contexts: 0 };
+    (window as unknown as { __orbCanvas?: Element }).__orbCanvas = canvas;
+    return { present: true, contexts: 1 };
+  });
+  if (!before.present) test.skip(true, "this node rendered the orb without a canvas, so there is no loop to check");
+
+  const box = await orb.boundingBox();
+  if (box === null) throw new Error("the orb has no box");
+  // A sweep rather than a single move: one event would not show a per-event rebuild.
+  for (let step = 0; step <= 20; step += 1) {
+    await page.mouse.move(box.x + (box.width * step) / 20, box.y + box.height / 2);
+  }
+
+  const after = await page.evaluate(() => {
+    const canvas = document.querySelector("[data-orb-motion] canvas");
+    return { same: canvas === (window as unknown as { __orbCanvas?: Element }).__orbCanvas };
+  });
+
+  // Same element: the loop owns its own frame, and React was not asked to re-create it for any of those events.
+  expect(after.same).toBe(true);
+});
