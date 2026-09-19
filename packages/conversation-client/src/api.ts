@@ -6,7 +6,7 @@
  * principal, because the gateway derives the caller from the channel rather than the body.
  */
 
-import type { AutonomySettings } from "@clarkcant/contracts";
+import type { AutonomySettings, ModelPool } from "@clarkcant/contracts";
 
 import {
   type StartVoiceSessionOptions,
@@ -538,6 +538,41 @@ export class GatewayClient {
    * The node stores the choice and answers with the scope it reaches: a conversation already open keeps the model it
    * began with, so this is not a switch that changes what is running underneath somebody mid-sentence.
    */
+  /**
+   * The pool of models this node keeps, with what the catalogue says about each one.
+   *
+   * `checked` is the node's own answer about whether it can run a profile, not something the client derives: the
+   * catalogue lives on the node, and a client that guessed would disagree with the node at the first upgrade.
+   */
+  async modelPool(): Promise<{
+    pool: ModelPool;
+    currentAlias?: string;
+    checked: { alias: string; ok: boolean; message?: string }[];
+  }> {
+    return this.#call("GET", "/model-pool");
+  }
+
+  async putModelPool(pool: ModelPool): Promise<{ ok: boolean; pool: ModelPool }> {
+    return this.#call("POST", "/model-pool", { pool });
+  }
+
+  /**
+   * Move to the next enabled profile.
+   *
+   * The node answers with the alias it moved to and says what that applies to, because the honest answer is "a new
+   * generation" rather than "now": a running turn keeps the model it started with.
+   */
+  async cycleModel(): Promise<{
+    ok: boolean;
+    previous?: string;
+    alias: string;
+    provider: string;
+    modelId: string;
+    applies: string;
+  }> {
+    return this.#call("POST", "/model-pool/cycle", {});
+  }
+
   async chooseModel(input: {
     provider: string;
     id: string;

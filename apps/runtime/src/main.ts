@@ -43,6 +43,7 @@ import type { InteractionDeps } from "./interactions.ts";
 import { guardOperation } from "./jev-decider.ts";
 import { ownedResources } from "./preflight.ts";
 import { DEFAULT_NARROWING, readAutonomySettings } from "./autonomy-settings.ts";
+import { writeCurrentAlias, writeModelPool } from "./model-registry.ts";
 import { createAskUserQuestionTool } from "./ask-user-question.ts";
 import { createRequestSecretTool } from "./request-secret.ts";
 import type { RequestSecretDeps } from "./request-secret.ts";
@@ -643,6 +644,44 @@ async function main(): Promise<void> {
         source: "user",
       },
     );
+
+    /*
+     * A pool for the hotkey, and a current alias.
+     *
+     * A fixture node arranges its own precondition for the same reason it scripts the composer: the browser half of
+     * the switch — a keypress that changes a label, and a table that shows what it walks — cannot be reached without
+     * profiles to walk. The identifiers are the fake adapter's, and no session is created from them here, because the
+     * fixture answers every turn itself.
+     */
+    const at = new Date().toISOString() as Instant;
+    writeModelPool(
+      services.runtime.db,
+      services.runtime.identity.ownerPrincipalId,
+      {
+        profiles: [
+          {
+            modelProfileId: "profile_fast",
+            alias: "fast",
+            provider: "fake",
+            modelId: "fake-model",
+            enabled: true,
+            roles: ["foreground"],
+            priority: 10,
+          },
+          {
+            modelProfileId: "profile_smart",
+            alias: "smart",
+            provider: "fake-other",
+            modelId: "fake-other-model",
+            enabled: true,
+            roles: ["foreground", "coding"],
+            priority: 20,
+          },
+        ],
+      },
+      at,
+    );
+    writeCurrentAlias(services.runtime.db, services.runtime.identity.ownerPrincipalId, "fast", at);
   }
   modelWiring.compose = services.compose;
 

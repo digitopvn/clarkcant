@@ -906,6 +906,49 @@ export function Conversation({
    * says. This is a fact about now, so it lives with the other facts about now.
    */
   const [credentialStatus, setCredentialStatus] = useState<{ requestId: string; message: string } | undefined>(undefined);
+
+  /**
+   * Which model profile the hotkey is on.
+   *
+   * Held here rather than derived from the settings panel, because the label sits beside the composer and has to be
+   * right without the panel ever having been opened. Undefined means "not read yet", which is different from "no
+   * pool": a node with no pool runs the model it was configured with and shows nothing here.
+   */
+  const [modelAlias, setModelAlias] = useState<string | undefined>(undefined);
+  const [modelNote, setModelNote] = useState<string>("");
+
+  useEffect(() => {
+    client
+      .modelPool()
+      .then((answer) => setModelAlias(answer.currentAlias))
+      .catch(() => undefined);
+  }, [client]);
+
+  /**
+   * One key to change the model, on the window rather than on the composer.
+   *
+   * A model switch is not typing — it has to work while the transcript has focus — and `preventDefault` because
+   * Cmd/Ctrl+] is a browser shortcut in some layouts and a resize gesture in others, neither of which should happen
+   * while somebody is choosing a model. What the press does is write a preference: the answer says it applies to a
+   * new generation, because a running turn keeps the model it started with.
+   */
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent): void => {
+      if (event.key !== "]" || !(event.metaKey || event.ctrlKey)) return;
+      event.preventDefault();
+      void client
+        .cycleModel()
+        .then((answer) => {
+          setModelAlias(answer.alias);
+          setModelNote(`Generation tiếp theo dùng ${answer.alias}.`);
+        })
+        .catch((cause: unknown) =>
+          setModelNote(cause instanceof Error ? cause.message : String(cause)),
+        );
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [client]);
   const submitCredential = useCallback(
     (input: {
       requestId: string;
@@ -1444,6 +1487,21 @@ export function Conversation({
             </button>
           </form>
         </div>
+        {/*
+          The model this conversation will continue on.
+
+          Beside the composer because that is where the question is asked, and showing the alias rather than the
+          provider and model id because that is what the person named it. The note under it is what the last press
+          said — including that it applies to the next generation, which is the part a label alone would hide.
+        */}
+        {modelAlias !== undefined && (
+          <div className="cc-model-switch" data-model-label={modelAlias}>
+            <span className="cc-freshness">model: {modelAlias}</span>
+            <span className="cc-freshness" data-model-note="true">
+              {modelNote === "" ? "⌘] để đổi" : modelNote}
+            </span>
+          </div>
+        )}
         {/*
           A statusline, not a motto.
 

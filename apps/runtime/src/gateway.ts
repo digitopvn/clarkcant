@@ -53,6 +53,7 @@ import {
 import { credentialNames, putCredential, putSecretMetadata, secretKindOr } from "@clarkcant/storage";
 import { DEFAULT_NARROWING, readAutonomySettings, saveAutonomySettings } from "./autonomy-settings.ts";
 import { cycleModelPool, readCurrentAlias, readModelPool, writeModelPool } from "./model-registry.ts";
+import { parseModelPool, validateProfileAgainstCatalogue } from "@clarkcant/contracts";
 import type { InteractionDeps } from "./interactions.ts";
 import { answerQuestion, cancelQuestion } from "./interactions.ts";
 
@@ -311,6 +312,73 @@ export async function handleRequest(deps: GatewayDeps, request: GatewayRequest):
   }
 
   if (request.method === "GET" && request.path === "/capabilities") {
+    return json(200, {
+      // Summaries only: dumping every tool schema into every turn is both expensive and a
+      // prompt-injection surface, so a schema is loaded once a capability is chosen.
+      capabilities: listCapabilitySummaries({ db: runtime.db, nodeId: runtime.identity.nodeId }),
+    });
+  }
+
+  /*
+   * The pool of models a person keeps.
+   *
+   * Read and written whole, like the autonomy settings, and checked against pi's own catalogue on the way in: a
+   * stored profile this installation cannot run would fail every later turn with a message about a provider rather
+   * than about the choice that caused it. The catalogue is not copied into the pool — it is consulted.
+   */
+  if (request.method === "GET" && request.path === "/model-pool") {
+    const catalogue = await (services.modelCatalogue?.() ?? Promise.resolve([]));
+    const owner = services.runtime.identity.ownerPrincipalId;
+    const pool = readModelPool(services.runtime.db, owner);
+    return json(200, {
+      pool,
+      currentAlias: readCurrentAlias(services.runtime.db, owner),
+      // Which profiles this node can actually run, so a panel can say so instead of leaving a row looking usable.
+      checked: pool.profiles.map((profile) => ({
+        alias: profile.alias,
+        ...validateProfileAgainstCatalogue(profile, catalogue),
+      })),
+    });
+  }
+
+  if (request.method === "POST" && request.path === "/model-pool") {
+    const parsed = readJson(request);
+    if (!parsed.ok) return parsed.response;
+    const catalogue = await (services.modelCatalogue?.() ?? Promise.resolve([]));
+    const pool = parseModelPool(parsed.value.pool ?? parsed.value);
+    // Refused before it is stored: a profile this node cannot run is a promise it cannot keep, and the refusal names
+    // which of the two identifiers was wrong.
+    if (catalogue.length > 0) {
+      for (const profile of pool.profiles) {
+        const check = validateProfileAgainstCatalogue(profile, catalogue);
+        if (!check.ok) return fail(400, "INVALID_SCHEMA", check.message);
+      }
+    }
+    const stored = writeModelPool(services.runtime.db, services.runtime.identity.ownerPrincipalId, pool, nowInstant());
+    return json(200, { ok: true, pool: stored });
+  }
+
+  /*
+   * The hotkey: one press moves to the next enabled profile and writes what the next generation will run.
+   *
+   * What it deliberately does not do is touch the session underneath a running turn. Pi resolves a model when a
+   * session is created, so the change is applied as a new generation at the next turn boundary — which is what the
+   * answer says, rather than implying the running turn changed models mid-sentence.
+   */
+  if (request.method === "POST" && request.path === "/model-pool/cycle") {
+    const cycled = cycleModelPool(services.runtime.db, services.runtime.identity.ownerPrincipalId, nowInstant());
+    if (cycled.next === undefined) {
+      return fail(409, "NO_MODEL_PROFILE", "pool này không có profile nào đang bật, nên không có gì để chuyển tới.");
+    }
+    return json(200, {
+      ok: true,
+      ...(cycled.current === undefined ? {} : { previous: cycled.current }),
+      alias: cycled.next.alias,
+      provider: cycled.next.provider,
+      modelId: cycled.next.modelId,
+      applies: "a new generation; the running turn is not touched",
+    });
+  }
 
   // /datasets/:id
   if (segments[0] === "datasets" && segments.length === 2 && request.method === "GET") {
