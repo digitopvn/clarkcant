@@ -19,6 +19,7 @@
 import { app, BrowserWindow, dialog, ipcMain, shell, session } from "electron";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
+import { readFileSync } from "node:fs";
 
 import {
   contentSecurityPolicy,
@@ -38,6 +39,8 @@ const rendererUrl =
   rendererUrlFlag >= 0 && argv[rendererUrlFlag + 1] !== undefined
     ? argv[rendererUrlFlag + 1]
     : `file://${join(here, "shell.html")}`;
+const dataDirFlag = argv.indexOf("--data-dir");
+const dataDir = dataDirFlag >= 0 ? argv[dataDirFlag + 1] : undefined;
 
 /** Closing the window stops the window, not the work. Default is to keep running. */
 let keepRunningOnWindowClose = true;
@@ -55,6 +58,7 @@ const EXPECTED_BRIDGE_METHODS = Object.freeze([
   "requestCredential",
   "setKeepRunningOnWindowClose",
   "status",
+  "getSession",
 ]);
 
 /**
@@ -82,6 +86,31 @@ function registerHandlers() {
     if (!checked.ok) return { ok: false, refused: checked.reason };
     await shell.openExternal(checked.url);
     return { ok: true, opened: checked.url };
+  });
+
+  handle("desktop:getSession", async () => {
+    // The node this window belongs to. The token is read from the node's own identity file rather than passed
+    // on the command line or in the URL, where it would be visible in a process list, in history, and in the
+    // address bar. The base URL is the window's own origin, because the window is served by that node.
+    if (dataDir === undefined) {
+      return { ok: false, refused: "no --data-dir was given, so there is no identity to read" };
+    }
+    let identity;
+    try {
+      identity = JSON.parse(readFileSync(join(dataDir, "identity.json"), "utf8"));
+    } catch (error) {
+      return { ok: false, refused: `the node identity could not be read (${error?.code ?? "unreadable"})` };
+    }
+    const token = typeof identity?.localToken === "string" ? identity.localToken : "";
+    if (token.length === 0) return { ok: false, refused: "the node identity carries no local token" };
+    let origin;
+    try {
+      origin = new URL(rendererUrl).origin;
+    } catch {
+      return { ok: false, refused: "the window's address is not a URL, so there is no node to point at" };
+    }
+    if (origin === "null") return { ok: false, refused: "the window is not loaded from a node" };
+    return { ok: true, session: { baseUrl: origin, token } };
   });
 
   handle("desktop:notify", async (input) => {

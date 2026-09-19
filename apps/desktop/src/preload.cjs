@@ -34,6 +34,15 @@ const bridge = {
   status() {
     return ipcRenderer.invoke("desktop:getStatus");
   },
+  /**
+   * The node this window belongs to, or a refusal saying why there is none.
+   *
+   * The token comes through here rather than through the window's URL, where it would end up in history and
+   * in the address bar, and rather than through the command line, where it would end up in a process list.
+   */
+  getSession() {
+    return ipcRenderer.invoke("desktop:getSession");
+  },
 };
 
 contextBridge.exposeInMainWorld("clarkcant", bridge);

@@ -20,6 +20,7 @@ export const IPC_CHANNELS = Object.freeze([
   "desktop:requestCredential",
   "desktop:setKeepRunning",
   "desktop:getStatus",
+  "desktop:getSession",
 ]);
 
 /**
@@ -63,7 +64,8 @@ export function contentSecurityPolicy() {
     "default-src 'none'",
     "script-src 'self'",
     "style-src 'self'",
-    "img-src 'self' data:",
+    // `blob:` because an attachment preview is an object URL the renderer itself created, not a file it may read.
+    "img-src 'self' data: blob:",
     "font-src 'self'",
     "connect-src 'self'",
     "form-action 'none'",

@@ -147,6 +147,7 @@ describe("IPC is answered only for the shell document (sender validation)", () =
 
   it("allowlists exactly the channels the bridge uses", () => {
     expect([...IPC_CHANNELS].sort()).toEqual([
+      "desktop:getSession",
       "desktop:getStatus",
       "desktop:notify",
       "desktop:openExternal",
