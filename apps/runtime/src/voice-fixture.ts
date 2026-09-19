@@ -43,15 +43,6 @@ export class FixtureLiveAdapter implements VoiceProviderAdapter {
   #muted = false;
   #received = 0;
   #turns = 0;
-  /**
-   * Whether this session has already heard its utterance.
-   *
-   * The fixture answers once per session, not once per 32 KB of audio. It used to answer every time the
-   * threshold was crossed, so a session carried the scripted sentence and then whatever the fallback words
-   * are, and a failed assertion could not say which of them had been judged - which is how a widget-action
-   * journey came to look like a broken resolver for two runs. A session in this product is one exchange.
-   */
-  #answered = false;
   #disconnected = false;
   #sequence = 0;
   readonly #spoken: string[] = [];
@@ -104,8 +95,6 @@ export class FixtureLiveAdapter implements VoiceProviderAdapter {
     if (this.#received < ANSWER_AFTER_BYTES) return;
 
     this.#received = 0;
-    if (this.#answered) return;
-    this.#answered = true;
     this.#turns += 1;
     const words = (this.#words() ?? "").trim();
     this.#emit("user", words === "" ? DEFAULT_USER_WORDS : words);
