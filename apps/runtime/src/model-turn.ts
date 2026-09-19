@@ -24,6 +24,7 @@ import {
   type ModelBudget,
   type ModelSelection,
   type ModelCatalogue,
+  type PiExtension,
   type PiAdapter,
   type ToolDefinition,
   type WorkerEvent,
@@ -105,6 +106,15 @@ export interface ModelTurn {
    * SDK and this is only a way to ask it.
    */
   catalogue: () => Promise<ModelCatalogue>;
+
+  /**
+   * What pi loads from its own agent directory.
+   *
+   * Here because this is where the adapter lives, not because it is about a turn: the extension list belongs to pi's
+   * installation rather than to any conversation, and the only thing that can reach it without importing the SDK twice
+   * is the adapter this turn holds.
+   */
+  extensions: () => Promise<readonly PiExtension[]>;
   answer: (input: ModelTurnInput) => Promise<ModelTurnReply>;
   dispose: () => Promise<void>;
 }
@@ -611,6 +621,7 @@ export async function createModelTurn(options: {
     budget,
     viewCatalogSize: () => readViews().length,
     catalogue: (): Promise<ModelCatalogue> => adapter.catalogue(),
+    extensions: (): Promise<readonly PiExtension[]> => adapter.extensions(),
 
     /** The conversations with a turn still running. */
     running: (): string[] => [...turns.values()].filter((turn) => turn.inFlight).map((turn) => turn.conversationId),

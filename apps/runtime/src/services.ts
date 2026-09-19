@@ -104,6 +104,9 @@ export interface NodeServices {
    */
   modelCatalogue?: () => Promise<ModelCatalogue>;
 
+  /** What pi loads on this machine. Names and kinds, never contents. */
+  extensions?: () => Promise<readonly { readonly name: string; readonly kind: "directory" | "file" }[]>;
+
   turnControl?: {
     running(): string[];
     interrupt(conversationId: string): boolean;

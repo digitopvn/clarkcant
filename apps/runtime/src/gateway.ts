@@ -386,6 +386,17 @@ export async function handleRequest(deps: GatewayDeps, request: GatewayRequest):
    * depend on pi's own configuration, and a list that guessed at them would be wrong in the one direction that
    * matters - claiming a capability this node does not have.
    */
+  /*
+   * What pi loads on this machine.
+   *
+   * Names and kinds, never contents: an extension can hold a credential, and a listing that read files would be the place
+   * it leaked from. Reported apart from this harness's own tools for the same reason the tab reports two lists - a reader
+   * deciding whether something is possible needs to know which half would do it.
+   */
+  if (segments.length === 1 && segments[0] === "extensions" && request.method === "GET") {
+    return json(200, { extensions: await (services.extensions?.() ?? Promise.resolve([])) });
+  }
+
   if (segments.length === 1 && segments[0] === "tools" && request.method === "GET") {
     return json(200, {
       self: nodeToolCatalogue(),

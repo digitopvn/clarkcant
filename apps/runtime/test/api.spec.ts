@@ -845,3 +845,18 @@ describe("choosing a model", () => {
     expect(unknown.status).toBe(400);
   });
 });
+
+describe("the extension listing", () => {
+  it("reports what pi loads, and an empty list on a node that has been told nothing", async () => {
+    const empty = await request("GET", "/extensions");
+    expect(empty.status).toBe(200);
+    expect(empty.body).toEqual({ extensions: [] });
+
+    services.extensions = async () => [{ name: "an-extension", kind: "directory" as const }];
+    const listed = await request("GET", "/extensions");
+    // Two lists, two answers: this one is pi's own and never claims to be this harness's tools.
+    expect(listed.body).toEqual({ extensions: [{ name: "an-extension", kind: "directory" }] });
+    expect(listed.body).not.toHaveProperty("self");
+  });
+});
+

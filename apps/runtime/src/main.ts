@@ -452,6 +452,8 @@ async function main(): Promise<void> {
     // services exist below it, so this is the first place both do. Published as the turn's own function rather than
     // as a snapshot, so a provider added by upgrading pi is visible without restarting the node.
     services.modelCatalogue = modelTurn.catalogue;
+    // The same line, for the same reason: the adapter exists above this and the services below it.
+    services.extensions = modelTurn.extensions;
   }
   projectWiring.deps = services.projects;
   approvalWiring.deps = {
