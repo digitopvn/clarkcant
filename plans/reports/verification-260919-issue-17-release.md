@@ -11,7 +11,7 @@ trên cây đã merge `main`**, không phải số của lần chạy cũ.
 | Invariant | `pnpm run invariants` | 7/7 PASS |
 | Typecheck + lint + unit test | `pnpm verify` | **1573 passed, 7 skipped (1580)** |
 | Browser suite | `pnpm test:e2e` | **83 passed, 0 failed** |
-| CI trên `main` | `.github/workflows/ci.yml`, run 35464062373 ở commit `0ce8722` | **cả năm job xanh**: `verify` (node 22.19 và 24), `secret scan`, `e2e (browser suite)`, `desktop smoke (xvfb)` |
+| CI trên `main` | `.github/workflows/ci.yml`, chạy mỗi lần push | **cả năm job xanh** ở run 35464062373 (`0ce8722`) và 35464369354 (`71d3e05`): `verify` (node 22.19 và 24), `secret scan`, `e2e (browser suite)`, `desktop smoke (xvfb)`. Hai cổng cuối chỉ chạy tay trước PR #44. |
 | Smoke desktop | `pnpm --filter @clarkcant/app-desktop run smoke` | **exit 0**, mọi check `true`, `"failed": []` (Electron 44.3.0, Chrome 152) |
 | Đồng bộ với `main` | `git rev-list HEAD..origin/main` | 0 (merge `1368cb5`, sau khi nhận `main`; PR #38 squash thành `9e90535`, PR #44 đưa hai cổng vào CI) |
 
