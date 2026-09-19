@@ -171,3 +171,21 @@ Còn lại của t2:
 Quyết định đáng nhớ: câu trả lời KHÔNG append một text block thứ hai — chỉ ghi `tool-activity`
 (`name: "ask_user_question"`, `args.questionId`, `decision: answered|cancelled|expired`), còn message
 người dùng thấy do route tạo qua `handleUserMessage` (text = note, note = note + "hãy tiếp tục").
+
+## 10. t2 — hoàn tất (chờ verify cuối)
+
+Đã xong toàn bộ contract của t2:
+
+| Mục contract | Bằng chứng |
+|---|---|
+| create/answer/cancel/expire/pendingForConversation | `apps/runtime/test/interactions.spec.ts` (13 test) |
+| `ask_user_question` kết thúc turn, không await input | `apps/runtime/test/ask-user-question.spec.ts` (3 test) |
+| Answer → Pi turn mới với nội dung answer | route `POST /conversations/:id/questions/:questionId/answer` qua `handleUserMessage`; e2e `apps/web/e2e/interactions.spec.ts` |
+| 4 kind có schema hợp lệ + voice prompt do host sinh | `packages/contracts/test/interactions.spec.ts` (16 test) |
+| Câu hỏi đòi secret bị từ chối deterministic | manager + tool test (`SECRET_REQUEST_MESSAGE`) |
+| project-finder ambiguity → QuestionInteraction | `command-policy.spec.ts`: "becomes a question card rather than a question the model has to carry" + fallback khi node không hỏi được |
+| E2E card render → trả lời → turn sau nhận answer | `apps/web/e2e/interactions.spec.ts` pass (1/1) |
+| Client render + api | `QuestionCardBlock` trong `blocks.tsx` (4 kind), `api.answerQuestion`/`cancelQuestion`, `Conversation.tsx` suy `answeredQuestions` từ transcript |
+
+Fixture mới ở main.ts: "hỏi tui chọn" (chạy qua đúng `createAskUserQuestionTool`) và nhánh trả lời cho turn
+tiếp theo. Tổng unit test mới của t2: 51 (gồm cả regression của P1).
