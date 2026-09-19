@@ -801,7 +801,25 @@ export function CodeDiffCardBlock({ block }: { block: Record<string, unknown> })
   const truncated = block.truncated === true;
 
   return (
-    <section className="cc-card" data-host-card="code-diff" data-owner="host" data-truncated={truncated}>
+    <section
+      className="cc-card"
+      data-host-card="code-diff"
+      data-owner="host"
+      data-truncated={truncated}
+      /*
+       * Reachable without a pointer. A diff is long and read-only, which is exactly the shape that tends to
+       * end up as a div only a mouse can scroll inside: the page scrolls, the diff does not, and a keyboard
+       * user cannot get to the bottom of the change they were asked to review. Focusable and labelled makes
+       * the whole change traversable with the arrow keys.
+       *
+       * No collapse controls are added for this: the card holds no state, so it stays a pure function of its
+       * props and can still be rendered and asserted without a DOM.
+       */
+      tabIndex={0}
+      role="group"
+      aria-label={`Diff: ${summary}`}
+      data-diff-keyboard="true"
+    >
       <header className="cc-card-head">
         <span className="cc-card-title">{summary}</span>
         <span className="cc-badge">{files.length}</span>

@@ -60,6 +60,12 @@ body {
   max-width: 100%;
 }
 .cc-select:focus-visible { outline: 2px solid var(--cc-focus); outline-offset: 2px; }
+/*
+ * A focusable diff needs a ring that survives a long page: the outline has to sit outside the card and stay
+ * visible while the diff is scrolled, and it must not be the accent colour alone.
+ */
+.cc-card[data-diff-keyboard="true"]:focus-visible { outline: 2px solid var(--cc-focus); outline-offset: 2px; }
+.cc-card[data-diff-keyboard="true"] [data-diff-path]:focus-visible { outline: 2px solid var(--cc-focus); outline-offset: 2px; }
 
 /*
  * A field that opens a list, and the list itself.
