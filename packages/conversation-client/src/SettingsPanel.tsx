@@ -194,6 +194,9 @@ export function SettingsPanel({
     | undefined
   >(undefined);
 
+  /** What became of the last model choice: a status, never a value, and never shown as if it applied already. */
+  const [modelStatus, setModelStatus] = useState<string | undefined>(undefined);
+
   useEffect(() => {
     if (!open) return;
     let cancelled = false;
@@ -463,19 +466,35 @@ export function SettingsPanel({
                     <SettingsRow label={provider.id} description={`${provider.models.length} model`}>
                       <span className="cc-provider-models">
                         {provider.models.map((model) => (
-                          <code
+                          <button
                             key={model.id}
+                            type="button"
+                            className="cc-chip"
                             data-model-id={model.id}
                             data-current={model.current ? "true" : "false"}
+                            // The model in use is the one already chosen, so offering it as a choice would be a button
+                            // that does nothing and looks like it did something.
+                            disabled={model.current}
+                            onClick={() => {
+                              client
+                                .chooseModel({ provider: provider.id, id: model.id })
+                                .then(() => setModelStatus(`Đã lưu ${provider.id}/${model.id}. Áp dụng cho hội thoại mới.`))
+                                .catch(() => setModelStatus("Không lưu được lựa chọn."));
+                            }}
                           >
                             {model.id}
                             {model.current ? " · đang dùng" : ""}
-                          </code>
+                          </button>
                         ))}
                       </span>
                     </SettingsRow>
                   </div>
                 ))
+              )}
+              {modelStatus === undefined ? null : (
+                <p className="cc-panel-note" data-model-status="true">
+                  {modelStatus}
+                </p>
               )}
             </section>
 

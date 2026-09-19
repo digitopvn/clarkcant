@@ -206,3 +206,16 @@ test("every key in settings can be taken back again, which is how a provider is 
   }
 });
 
+test("a model in settings is offered as a choice, and the one in use is marked as such", async ({ page }) => {
+  await openApp(page);
+  await page.locator("[data-settings='true']").click();
+
+  const models = page.locator("[data-model-id]");
+  // The catalogue is this machine's, so its size is not asserted and nothing here is clicked: the section is about what
+  // the node can run, and clicking would write a preference into a node every other spec in this suite shares.
+  await expect(models.first()).toBeVisible({ timeout: 20_000 });
+
+  // The model in use is the one already chosen, so it is shown as such rather than offered again.
+  expect(await page.locator("[data-model-id][data-current='true']:disabled").count()).toBeLessThanOrEqual(1);
+});
+

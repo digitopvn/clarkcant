@@ -516,6 +516,19 @@ export class GatewayClient {
   }
 
   /**
+   * Chooses the model to run for sessions created from now on.
+   *
+   * The node stores the choice and answers with the scope it reaches: a conversation already open keeps the model it
+   * began with, so this is not a switch that changes what is running underneath somebody mid-sentence.
+   */
+  async chooseModel(input: {
+    provider: string;
+    id: string;
+  }): Promise<{ ok: boolean; stored: { provider: string; id: string } }> {
+    return this.#call("POST", "/model", input);
+  }
+
+  /**
    * Forgets a credential this node holds.
    *
    * This is what logging out of a provider is: the key is the only thing the node holds for it, so a node that has
