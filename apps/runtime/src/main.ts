@@ -7,6 +7,7 @@
  * listener and no TLS is the deployment mistake the blueprint names: application
  * authorization is required regardless of how private the network looks.
  */
+import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
@@ -15,7 +16,8 @@ import type { MessageBlock, MessageRecord } from "@clarkcant/contracts";
 import { instantSchema, describeAppIntent } from "@clarkcant/contracts";
 import { applyEnvFile } from "@clarkcant/pi-adapter";
 
-import { decideApprovalForNode } from "./gateway.ts";
+import { decideApprovalForNode, invokeWidgetAction, widgetActionTarget } from "./gateway.ts";
+import { NO_FOCUSED_SURFACE_SAY } from "./widget-voice-action.ts";
 import {
   type AppIntentDeps,
   consumeConfirmation,
@@ -772,6 +774,41 @@ async function main(): Promise<void> {
         requiresConfirmation: false,
         readBack: describeAppIntent(outcome.intent),
       };
+    },
+    /**
+     * Run a widget action the person asked for out loud.
+     *
+     * The same function a click goes through, with the difference that a click brings a cursor and a sentence does
+     * not: the revision and the binding digest are read from the node's own state rather than taken from the page. A
+     * sentence is a request to do the thing, not a claim about which revision it was looking at.
+     */
+    widgetAction: async ({ conversationId, action, focused }) => {
+      const instanceId = focused?.instanceId;
+      if (instanceId === undefined) return { ok: false, say: NO_FOCUSED_SURFACE_SAY };
+
+      const target = widgetActionTarget(services, instanceId, action.actionBindingId);
+      if (target === undefined) {
+        // The page's view was older than the instance, or the action is gone. Either way this is a refusal and not a
+        // guess: invoking a binding the instance no longer announces is exactly what the digest check exists for.
+        return { ok: false, say: "Widget đang mở không còn hành động đó nữa. Bạn mở lại rồi thử lại giúp tôi nhé." };
+      }
+
+      const result = invokeWidgetAction(services, {
+        conversationId,
+        principalId: services.runtime.identity.ownerPrincipalId,
+        instanceId,
+        actionBindingId: action.actionBindingId,
+        expectedRevision: target.revision,
+        expectedBindingDigest: target.bindingDigest,
+        // A spoken view operation carries no arguments: the operations a widget publishes for voice are period changes
+        // and refreshes, and a widget needing values is a widget a person fills in with a form.
+        input: {},
+        invocationId: `inv_${randomUUID()}`,
+      });
+
+      if (!result.ok) return { ok: false, say: `Không thực hiện được: ${result.message}` };
+      const landedOn = typeof result.body.revision === "number" ? result.body.revision : target.revision;
+      return { ok: true, instanceId, revision: landedOn, say: `Đã ${action.label}.` };
     },
   });
   process.stderr.write(

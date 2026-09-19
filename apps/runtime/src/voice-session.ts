@@ -6,13 +6,22 @@ import {
   type ConfirmationDecision,
   type ConversationId,
   type Instant,
+  type SemanticView,
   nowInstant,
+  semanticViewSchema,
 } from "@clarkcant/contracts";
 import { recordVoiceTranscript } from "@clarkcant/core";
 import { GeminiLiveAdapter, type VoiceProviderAdapter } from "@clarkcant/voice-adapters";
 import { type RawData, WebSocketServer, type WebSocket } from "ws";
 
 import { tokenMatches } from "./gateway.ts";
+import {
+  NO_FOCUSED_SURFACE_SAY,
+  describeVoiceWidgetAction,
+  resolveVoiceWidgetAction,
+  type VoiceWidgetAction,
+  type VoiceWidgetRun,
+} from "./widget-voice-action.ts";
 import type { NodeServices } from "./services.ts";
 
 /**
@@ -31,6 +40,7 @@ import type { NodeServices } from "./services.ts";
  *
  * Client to node:
  *   `{ type: "auth", token, conversationId? }` — must be the first frame, see below
+ *   `{ type: "focus", view }`                  — the widget the person is looking at, if any
  *   `{ type: "end" }`                          — end the session politely
  *   binary                                     — PCM16, 16 kHz, mono
  *
@@ -40,6 +50,7 @@ import type { NodeServices } from "./services.ts";
  *   `{ type: "state", state }`
  *   `{ type: "transcript", role, text, final }`
  *   `{ type: "app-intent", decision }`          — the application's answer to a command it was given
+ *   `{ type: "widget-action-result", instanceId, revision, ok, say }` — what came of a spoken widget action
  *   `{ type: "error", code, message }`
  *   `{ type: "ended", recordedMessages }`
  *   binary                                     — PCM16, 24 kHz, mono
@@ -123,6 +134,19 @@ export interface VoiceGatewayOptions {
    * complete answer to the question that was asked.
    */
   confirmAppIntent?: (input: { token: string; decision: ConfirmationDecision }) => AppIntentDecision;
+  /**
+   * Run a widget action the person asked for out loud.
+   *
+   * Injected like `decideApproval`, and for the same reason: the node owns whether an action may run - the owner
+   * check, the revision it holds, the binding digest, and one effect per invocation - while this module owns the
+   * conversation that asked. The point of it being one injected function is that a spoken action goes through the
+   * function a click goes through rather than a second copy of those checks.
+   */
+  widgetAction?: (input: {
+    conversationId: ConversationId;
+    action: VoiceWidgetAction;
+    focused: SemanticView | undefined;
+  }) => Promise<VoiceWidgetRun>;
   /** Injected by tests so the transport can be exercised without a provider. */
   createAdapter?: () => VoiceProviderAdapter;
   now?: () => Instant;
@@ -322,6 +346,15 @@ export function attachVoiceGateway(options: VoiceGatewayOptions): VoiceGateway {
      */
     let waitingIntent: string | undefined;
     /**
+     * The widget the person is looking at, as the page last described it.
+     *
+     * Held rather than asked for per sentence, because the page sends it with the utterance and a node that re-asked
+     * would be inventing what the person can see. Only the contracted fields are kept: no user data, no contents.
+     */
+    let focusedView: SemanticView | undefined;
+    /** A widget action that is waiting for a spoken yes, when the widget says it needs one. */
+    let waitingWidget: VoiceWidgetAction | undefined;
+    /**
      * Utterances are answered one at a time, in the order they were said.
      *
      * A second question asked while the first is still being answered would be spoken over it, and the
@@ -390,6 +423,31 @@ export function attachVoiceGateway(options: VoiceGatewayOptions): VoiceGateway {
      * The utterance is taken from the accumulated fragments, because the adapter closes an utterance
      * with an empty final fragment rather than repeating the text in it.
      */
+    /**
+     * Run a widget action and report what came of it.
+     *
+     * One place, shared by the sentence that needs no confirmation and the one that does, so a confirmed action cannot
+     * end up on a different route than an unconfirmed one.
+     */
+    const runWidgetAction = (action: VoiceWidgetAction): void => {
+      const run = options.widgetAction;
+      const runIn = conversationId;
+      if (run === undefined || runIn === undefined) return;
+      answerQueue = answerQueue.then(async () => {
+        const outcome = await run({ conversationId: runIn, action, focused: focusedView });
+        // The page is told what changed rather than that something changed: it updates the same state a click updates,
+        // and it can only do that from the node's own account of the revision it landed on.
+        send({
+          type: "widget-action-result",
+          ok: outcome.ok,
+          say: outcome.say,
+          ...(outcome.ok ? { instanceId: outcome.instanceId, revision: outcome.revision } : {}),
+        });
+        send({ type: "transcript", role: "assistant", text: outcome.say, final: true });
+        say(outcome.say);
+      });
+    };
+
     const ask = (at: Instant): void => {
       const askIn = conversationId;
       const answer = options.answer;
@@ -444,6 +502,32 @@ export function attachVoiceGateway(options: VoiceGatewayOptions): VoiceGateway {
        * Only recognised words decide anything, and the confirmation is sent to the node, which spends the token -
        * so the executable decision comes back from the node rather than being assembled here.
        */
+      /*
+       * A sentence said while a widget action is waiting for a yes.
+       *
+       * The same rule as the other two questions: only recognised words decide anything, and anything else asks again
+       * rather than being taken as agreement.
+       */
+      const pendingWidget = waitingWidget;
+      if (pendingWidget !== undefined) {
+        const decision = interpretDecision(text);
+        if (decision === undefined) {
+          const again = "Tui chưa rõ ý bạn. Bạn nói “đồng ý” hoặc “không” giúp tui nhé.";
+          send({ type: "transcript", role: "assistant", text: again, final: true });
+          say(again);
+          return;
+        }
+        waitingWidget = undefined;
+        if (decision === "denied") {
+          const said = "Đã bỏ qua hành động đó.";
+          send({ type: "transcript", role: "assistant", text: said, final: true });
+          say(said);
+          return;
+        }
+        runWidgetAction(pendingWidget);
+        return;
+      }
+
       const pendingIntent = waitingIntent;
       const confirmIntent = options.confirmAppIntent;
       if (pendingIntent !== undefined && confirmIntent !== undefined) {
@@ -485,6 +569,37 @@ export function attachVoiceGateway(options: VoiceGatewayOptions): VoiceGateway {
           const said = resolved.kind === "refused" ? resolved.say : resolved.readBack;
           send({ type: "transcript", role: "assistant", text: said, final: true });
           say(said);
+          return;
+        }
+      }
+
+      /*
+       * A spoken command about the widget that is open.
+       *
+       * After the questions that may be waiting, because a sentence said while one is waiting is an answer to it. The
+       * action is resolved by the shared resolver: a sentence selects among the actions the focused instance offers,
+       * and the binding id comes from that view rather than from the words. An unmatched sentence is refused when a
+       * widget is open and left to the agent when none is - which is why those two are different sentences rather than
+       * one "I did not understand".
+       */
+      if (options.widgetAction !== undefined) {
+        const resolved = resolveVoiceWidgetAction({ utterance: text, focused: focusedView });
+        if (resolved.ok) {
+          if (resolved.action.requiresApproval) {
+            // Asked before anything runs. A widget says which of its actions need a person, and a spoken sentence is
+            // not a person deciding.
+            waitingWidget = resolved.action;
+            const question = describeVoiceWidgetAction(resolved.action);
+            send({ type: "transcript", role: "assistant", text: question, final: true });
+            say(question);
+            return;
+          }
+          runWidgetAction(resolved.action);
+          return;
+        }
+        if (resolved.say !== NO_FOCUSED_SURFACE_SAY) {
+          send({ type: "transcript", role: "assistant", text: resolved.say, final: true });
+          say(resolved.say);
           return;
         }
       }
@@ -573,6 +688,14 @@ export function attachVoiceGateway(options: VoiceGatewayOptions): VoiceGateway {
         // Mute is applied at the adapter as well as at the client's track. Two layers on purpose:
         // a mute that depends on one is a mute that fails silently when that one is broken.
         adapter?.setMuted(control["muted"] === true);
+        return;
+      }
+      if (control?.["type"] === "focus") {
+        // Validated against the contract rather than trusted: this arrives from a page, and a view that does not parse
+        // is not a description of anything. An unparseable view clears the focus, which makes a spoken action say
+        // "nothing is open" instead of acting on a made-up instance.
+        const parsed = semanticViewSchema.safeParse(control["view"]);
+        focusedView = parsed.success ? parsed.data : undefined;
       }
     });
 

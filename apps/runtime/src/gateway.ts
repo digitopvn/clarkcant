@@ -696,6 +696,27 @@ async function handleAppIntentRoutes(
   return fail(404, "NOT_FOUND", "no such app-intent route");
 }
 
+/**
+ * The revision and binding digest a spoken action is checked against, read from the node's own state.
+ *
+ * A click brings a cursor: the revision it saw, and the digest of the binding it was shown. A spoken sentence brings
+ * nothing at all, so there is nothing to trust and nothing to be stale relative to - the node reads what it holds.
+ * That is also why this refuses an action the instance no longer announces: the sentence was matched against a view
+ * the page sent, and the page's view may be older than the instance.
+ */
+export function widgetActionTarget(
+  services: NodeServices,
+  instanceId: string,
+  actionBindingId: string,
+): { revision: number; bindingDigest: string } | undefined {
+  const instance = getInstance(services.conductor, instanceId);
+  if (instance === undefined) return undefined;
+  if (!instance.actionBindingIds.includes(actionBindingId)) return undefined;
+  const binding = getActionBinding(services.conductor, actionBindingId);
+  if (binding === undefined) return undefined;
+  return { revision: instance.revision, bindingDigest: binding.bindingDigest };
+}
+
 /** One widget action invocation, as either a click or a spoken command asks for it. */
 export interface WidgetActionRequest {
   conversationId: string;
