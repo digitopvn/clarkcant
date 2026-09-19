@@ -1261,6 +1261,8 @@ export function renderBlock(
       // One renderer for both surfaces: the question "who may act on this" does not change with the surface, and
       // two components would be two places for the answer to drift.
       return <ControlSessionCardBlock key={index} block={block} {...(actions === undefined ? {} : { actions })} />;
+    case "marketplace-results":
+      return <MarketplaceResultsBlock key={index} block={block} />;
     case "reconnect-card":
       return <ReconnectCardBlock key={index} block={block} />;
     case "surface": {
@@ -1528,6 +1530,84 @@ export function FormCardBlock({
  * The epoch is shown rather than kept internal. It is what decides whether an action the agent planned earlier is
  * still admissible, so a reader who cannot see it cannot tell whether a takeover actually took effect.
  */
+/** The risk lanes in words, because a lane name is not something a reader should have to learn. */
+const RISK_LANE_LABELS: Record<string, string> = {
+  "isolated-ui": "widget cách ly",
+  service: "service",
+  declarative: "khai báo",
+  "trusted-native": "native tin cậy",
+};
+
+/** Where a result would be fetched from, in one line. */
+function describePackageSource(raw: unknown): string {
+  const source = (raw ?? {}) as Record<string, unknown>;
+  if (source.kind === "local" && typeof source.path === "string") return source.path;
+  if (source.kind === "git" && typeof source.url === "string") return `${source.url}@${String(source.ref ?? "")}`;
+  if (source.kind === "npm" && typeof source.name === "string") return `${source.name}@${String(source.version ?? "")}`;
+  return "không rõ nguồn";
+}
+
+/**
+ * The results of a marketplace search.
+ *
+ * It shows what a listing has to show to be judgeable — where it comes from, which version, the digest the install
+ * path will check, and the lane the isolation implies — and it **has no install button**. That is deliberate: the
+ * card names sources, and installing goes through the install path where the digest is verified and consent is
+ * recorded. A button here would be a second entry point into installing, and the one place where a listing could
+ * become an authorisation.
+ *
+ * The directory is named in the heading. A result whose origin was invisible would present what some index says as
+ * something this machine knows.
+ */
+export function MarketplaceResultsBlock({ block }: { block: Record<string, unknown> }): ReactElement {
+  const directory = typeof block.directory === "string" ? block.directory : "";
+  const query = typeof block.query === "string" ? block.query : "";
+  const reason = typeof block.unavailableReason === "string" ? block.unavailableReason : undefined;
+  const results = Array.isArray(block.results) ? block.results : [];
+
+  return (
+    <div className="cc-card cc-marketplace" role="group" aria-label="Kết quả tìm gói" data-marketplace="true">
+      <div className="cc-card-title">Kết quả trong {directory}</div>
+      {reason !== undefined ? (
+        // A directory that could not be consulted is a different truth from one that had nothing, so it says so.
+        <p className="cc-card-note" data-marketplace-unavailable="true">
+          {reason}
+        </p>
+      ) : results.length === 0 ? (
+        <p className="cc-card-note">Không có gói nào khớp “{query}”.</p>
+      ) : (
+        <ul className="cc-marketplace-list">
+          {results.map((raw, position) => {
+            const result = (raw ?? {}) as Record<string, unknown>;
+            const packageId = typeof result.packageId === "string" ? result.packageId : "";
+            const version = typeof result.version === "string" ? result.version : "";
+            const displayName = typeof result.displayName === "string" ? result.displayName : packageId;
+            const description = typeof result.description === "string" ? result.description : "";
+            const digest = typeof result.digest === "string" ? result.digest : "";
+            const lane = typeof result.riskTier === "string" ? result.riskTier : "";
+            return (
+              <li className="cc-marketplace-item" key={`${packageId}-${version}-${position}`} data-marketplace-package={packageId}>
+                <div className="cc-marketplace-name">
+                  {displayName} <span className="cc-marketplace-version">{version}</span>
+                </div>
+                {description !== "" && <div className="cc-marketplace-desc">{description}</div>}
+                <div className="cc-marketplace-meta">
+                  <span data-marketplace-source="true">{describePackageSource(result.source)}</span>
+                  <span data-marketplace-risk={lane}>{RISK_LANE_LABELS[lane] ?? lane}</span>
+                  {/* Truncated for the line, complete in the title: the digest is checkable, not decorative. */}
+                  <span className="cc-marketplace-digest" title={digest} data-marketplace-digest="true">
+                    {digest.length > 18 ? `${digest.slice(0, 18)}…` : digest}
+                  </span>
+                </div>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+    </div>
+  );
+}
+
 export function ControlSessionCardBlock({
   block,
   actions,

@@ -64,6 +64,12 @@ export const directoryEntrySchema = z.strictObject({
   version: semverSchema,
   displayName: z.string().min(1).max(200),
   description: z.string().min(1).max(600),
+  /**
+   * Where the artifact is fetched from. Required, because a listing that named a package but not a source would
+   * be a result nobody could install — the plan asks the directory to index source references, and this is that
+   * reference. It is still only a pointer: the install path re-resolves it and checks the digest.
+   */
+  source: packageSourceSchema,
   publisher: z.strictObject({
     id: z.string().min(1).max(160),
     sourceUrl: z.string().min(1).max(400),
