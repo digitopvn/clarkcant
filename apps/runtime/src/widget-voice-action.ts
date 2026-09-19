@@ -27,17 +27,14 @@ import { type SemanticView } from "@clarkcant/contracts";
 import { normaliseIntentText } from "@clarkcant/core";
 
 /**
- * How a person might say each label.
+ * How a person might say a label, keyed by the normalised label.
  *
- * Keyed by the normalised label, valued with the other phrasings that mean it. Kept deliberately short: an entry here
- * is a promise that the words really do mean that action, and every entry that is wrong is a wrong thing happening to
- * somebody's calendar.
+ * Grounded in the labels this application actually publishes rather than invented ones: the overview surface offers
+ * `period.change` under the label "Đổi khoảng thời gian", so that is the entry. A phrasing table for labels nothing
+ * offers is worse than no table, because it reads like support for words that would be refused.
  */
 const PHRASINGS: readonly { matches: readonly string[]; label: string }[] = [
-  { matches: ["ky truoc", "lui lai", "thang truoc", "tuan truoc", "previous"], label: "ky truoc" },
-  { matches: ["ky sau", "tiep theo", "thang sau", "tuan sau", "next"], label: "ky sau" },
-  { matches: ["thang nay", "ky nay", "hom nay", "this month"], label: "thang nay" },
-  { matches: ["lam moi", "tai lai", "refresh", "reload"], label: "lam moi" },
+  { matches: ["doi khoang thoi gian", "khoang thoi gian", "change the period", "period"], label: "doi khoang thoi gian" },
 ];
 
 export interface VoiceWidgetAction {
