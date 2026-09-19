@@ -2582,3 +2582,20 @@ export function memoryRecordsForBrief(
   );
   return rows.map(toMemoryRecord);
 }
+
+/**
+ * How many records would go into a brief, counted rather than guessed.
+ *
+ * The brief is capped, and the cap has to say how much was left out. Fetching one row past the cap would let it
+ * say "at least one more", which is weaker than the truth and would drift as memory grows.
+ */
+export function countMemoryRecordsForBrief(db: Database, principalId: string, conversationId: string): number {
+  const row = oneRow<{ total: number }>(
+    db,
+    `SELECT COUNT(*) AS total FROM memory_records
+      WHERE principal_id = ? AND (scope = 'node' OR conversation_id = ?)`,
+    principalId,
+    conversationId,
+  );
+  return Number(row?.total ?? 0);
+}
