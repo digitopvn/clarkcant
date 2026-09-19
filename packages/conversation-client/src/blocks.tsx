@@ -1086,20 +1086,14 @@ export function ReconnectCardBlock({ block }: { block: Record<string, unknown> }
   );
 }
 
-export const HOST_OWNED_BLOCK_TYPES = [
-  "system-card",
-  "approval-card",
-  "credential-card",
-  "connection-card",
-  "task-progress-card",
-  "task-summary-card",
-  "task-overview-card",
-  "code-diff-card",
-  "project-picker-card",
-  "reconnect-card",
-  "question-card",
-  "form-card",
-] as const;
+/*
+ * Re-exported rather than redeclared.
+ *
+ * There were two copies of this list and they had already drifted — this one knew about two card types the
+ * contract's did not, and neither knew about the session cards. The contract's is the one the provenance check
+ * reads, so a type missing there is a host-owned card an untrusted source could mint.
+ */
+export { HOST_OWNED_BLOCK_TYPES } from "@clarkcant/contracts";
 
 /**
  * What a surface block knows about the capture it came from.

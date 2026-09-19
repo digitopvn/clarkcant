@@ -1,4 +1,4 @@
-import { type Instant, type MessageRecord, redactSecrets } from "@clarkcant/contracts";
+import { type Instant, type MessageBlock, type MessageRecord, redactSecrets } from "@clarkcant/contracts";
 import { readTranscriptFrom, type ToolDefinition } from "@clarkcant/pi-adapter";
 import {
   type Database,
@@ -309,14 +309,63 @@ function toHit(hit: HistoryHit): SessionSearchHit {
  * reader who cannot see the block. Indexing raw block JSON instead would make the index a copy of
  * the transport format and would match on field names.
  */
+/**
+ * The sentence a reader would need if they could not see the block.
+ *
+ * One place, so the search index and any text-only view agree about what a block says. A card type missing from
+ * here is invisible to both, which is why the test beside this walks the host-owned list rather than the cases.
+ */
+export function textOfBlock(block: MessageBlock): string {
+  switch (block.type) {
+    case "text":
+      return block.content;
+    case "surface":
+      return block.snapshot.textAlternative;
+    case "evidence":
+      return block.summary;
+    case "artifact":
+      return `${block.label} (${block.mimeType}, ${block.sizeBytes} byte)`;
+    case "widget-ref":
+      return block.textAlternative;
+    case "system-card":
+      return [block.title, block.detail].filter((part) => part !== "").join(" — ");
+    case "approval-card":
+      return block.operationDescription;
+    case "credential-card":
+      return `${block.purpose} (${block.fields.map((field) => field.label).join(", ")})`;
+    case "connection-card":
+      return `${block.provider} — ${block.status}`;
+    case "task-progress-card":
+      return `${block.goal} — ${block.status}`;
+    case "task-summary-card":
+      return `${block.goal} — ${block.outcome}`;
+    case "task-overview-card":
+      return `${String(block.tasks.length)} việc: ${block.tasks.map((task) => `${task.goal} (${task.status})`).join("; ")}`;
+    case "code-diff-card":
+      return `${block.summary} — ${String(block.files.length)} tệp`;
+    case "project-picker-card":
+      return `${block.prompt} — ${block.roots.map((root) => root.label).join(", ")}`;
+    case "reconnect-card":
+      return `${block.nodeLabel} — ${block.status}`;
+    case "question-card":
+      // The answers, not only the question: a reader who cannot press anything still needs to know what was
+      // offered, because the answer is what the conversation turns on.
+      return `${block.question} — ${block.options.map((option) => option.label).join(" / ")}`;
+    case "form-card":
+      return `${block.title} — ${block.fields.map((field) => field.label).join(", ")}`;
+    case "browser-session-card":
+    case "computer-session-card":
+      return `${block.label} — ${block.driver === "user" ? "bạn" : "agent"} đang điều khiển`;
+    default:
+      return "";
+  }
+}
+
 export function textOfMessage(message: Pick<MessageRecord, "blocks">): string {
   const parts: string[] = [];
   for (const block of message.blocks) {
-    if (block.type === "text") parts.push(block.content);
-    else if (block.type === "surface") parts.push(block.snapshot.textAlternative);
-    else if (block.type === "evidence") parts.push(block.summary);
-    else if (block.type === "artifact") parts.push(block.label);
-    else if (block.type === "widget-ref") parts.push(block.textAlternative);
+    const text = textOfBlock(block);
+    if (text !== "") parts.push(text);
   }
   return parts.join("\n").trim();
 }
