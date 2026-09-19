@@ -1125,6 +1125,14 @@ export function Conversation({
 
   const blocks = timeline?.messages ?? [];
   const pins = timeline?.pins ?? [];
+  /**
+   * The widget the person is looking at: the one pinned open.
+   *
+   * A pin is what "open" means here - the expanded surface is where the live instance is mounted and the thing that
+   * claims ownership of it - so this is the instance a spoken action acts on, rather than a guess from what happens to
+   * be on screen.
+   */
+  const focusedInstanceId = pins.find((pin) => pin.displayMode === "expanded")?.instanceId;
 
   /**
    * A conversation that arrived with messages was never the start screen.
@@ -1607,6 +1615,7 @@ export function Conversation({
           onAnswered={refreshTimeline}
           onProgress={scheduleVoiceRefresh}
           onAppIntent={runIntent}
+          {...(focusedInstanceId === undefined ? {} : { focusedInstanceId })}
           onClose={({ focusComposer }) => {
             setVoiceOpen(false);
             if (focusComposer) composerInput.current?.focus();

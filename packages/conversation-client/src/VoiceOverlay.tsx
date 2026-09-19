@@ -108,6 +108,13 @@ export interface VoiceOverlayProps {
    * a click or a voice, and this overlay is deliberately not that function.
    */
   onAppIntent?: (decision: AppIntentDecision) => void;
+  /**
+   * The widget on screen, if any.
+   *
+   * An id, because the node builds the view it decides against from what it holds. Passed down rather than read from
+   * the client here: this overlay owns the microphone, and what is on screen belongs to the surface behind it.
+   */
+  focusedInstanceId?: string | undefined;
   requires?: string;
   unblockedBy?: string;
 }
@@ -119,6 +126,7 @@ export function VoiceOverlay({
   onAnswered,
   onProgress,
   onAppIntent,
+  focusedInstanceId,
   requires = "một phiên Live API đang mở",
   unblockedBy = "đặt GEMINI_API_KEY cho node rồi thử lại",
 }: VoiceOverlayProps): ReactElement {
@@ -161,6 +169,17 @@ export function VoiceOverlay({
   const [frames, setFrames] = useState({ captured: 0, heard: 0 });
 
   const sessionRef = useRef<VoiceSession | undefined>(undefined);
+  /**
+   * Tell the node which widget is on screen.
+   *
+   * Sent when the session appears and whenever the focus changes. The session state is in the dependencies because the
+   * session comes into existence after this component has already rendered: without it, a session opened while a
+   * surface was already up would never say so, and the first spoken action on that widget would be answered with
+   * "nothing is open" - a wrong answer that looks exactly like a working one.
+   */
+  useEffect(() => {
+    sessionRef.current?.focus(focusedInstanceId);
+  }, [focusedInstanceId, state]);
   /** Rolling levels, newest last. A ref because it is read per frame and only summarised into bars. */
   const levels = useRef<number[]>(new Array(WAVEFORM_BARS).fill(0));
 
