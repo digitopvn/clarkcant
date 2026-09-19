@@ -213,9 +213,61 @@ describe("commands that are not implemented", () => {
     expect(await runCli(["nonsense"])).toBe(2);
   });
 
-  it("says publish arrives with the directory, and that a local path needs no account", async () => {
-    // Named rather than stubbed: a command that printed a placeholder would be a control that looks usable before
-    // its action exists.
-    expect(await runCli(["widget", "publish", await tempPackage()])).toBe(2);
+  it("prepares the submission rather than claiming to have submitted it", async () => {
+    /*
+     * The plan scopes this as "may initially prepare directory submission", and the difference matters: the command
+     * writes what a directory would receive and says that sending it needs an account. A command that looked as
+     * though it had already published would be a control whose action does not exist.
+     */
+    const root = await tempPackage();
+    expect(await runCli(["widget", "publish", root])).toBe(0);
+    expect(existsSync(join(root, "dist", "directory-entry.json"))).toBe(true);
+  });
+
+});
+
+describe("clark widget publish", () => {
+  it("prepares a directory entry with the artifact's own digest and the declared risk lane", async () => {
+    const root = await tempPackage("dashboard");
+
+    expect(await runCli(["widget", "publish", root])).toBe(0);
+
+    const entry = JSON.parse(readFileSync(join(root, "dist", "directory-entry.json"), "utf8")) as Record<string, unknown>;
+    const artifact = JSON.parse(readFileSync(join(root, "dist", "artifact.json"), "utf8")) as { digest: string };
+
+    /*
+     * The digest is the artifact's, read from what `pack` produced rather than recomputed. Two computations of the
+     * same thing is how a listing comes to name an artifact nobody can produce.
+     */
+    expect(entry["digest"]).toBe(artifact.digest);
+    const manifest = JSON.parse(readFileSync(join(root, "clarkcant.json"), "utf8")) as { id: string };
+    expect(entry["packageId"]).toBe(manifest.id);
+    expect(entry["riskTier"]).toBe("isolated-ui");
+    expect(entry["facets"]).toEqual(["ui"]);
+    expect(entry["sizeBytes"]).toBeGreaterThan(0);
+    // Every field the standard requires, present — a directory would reject the entry otherwise.
+    for (const field of ["version", "displayName", "description", "publisher", "platforms", "hostApi", "permissionsSummary", "preview"]) {
+      expect(entry[field], field).toBeDefined();
+    }
+  });
+
+  it("refuses to publish a package that fails conformance", async () => {
+    const root = await tempPackage();
+    rmSync(join(root, "fixtures", "error.json"));
+
+    expect(await runCli(["widget", "publish", root])).toBe(1);
+    expect(existsSync(join(root, "dist", "directory-entry.json"))).toBe(false);
+  });
+
+  it("refuses to prepare the same version twice after its bytes changed", async () => {
+    const root = await tempPackage();
+    expect(await runCli(["widget", "publish", root])).toBe(0);
+
+    const entry = join(root, "widgets", "main", "index.html");
+    writeFileSync(entry, readFileSync(entry, "utf8") + "\n<!-- changed -->\n");
+
+    // A version whose bytes changed is a different package wearing the same number, and a directory that received
+    // both would hold two entries nobody can tell apart.
+    expect(await runCli(["widget", "publish", root])).toBe(1);
   });
 });
