@@ -620,8 +620,11 @@ Mục này nói rõ phần nào của tài liệu đã có code, để không ai
 
 **Chưa có:**
 
-- `clark widget publish` — chờ directory ở phase 13; đường local/git/npm đã là first-class nên không cần
-  account để chạy widget của mình.
+- `clark widget publish` — **đã có, ở mức "prepare"**: nó validate, pack, rồi ghi `dist/directory-entry.json`
+  với đủ field mà §18 yêu cầu và digest của artifact đã pack (đọc từ `dist/artifact.json`, không tính lại —
+  hai lần tính cùng một thứ là cách một listing nói tới artifact không ai tạo được). Nó **không** nộp thay
+  người dùng: nộp cần account directory, và một lệnh trông như đã nộp rồi là control có action không tồn tại.
+  Đường local/git/npm vẫn là first-class nên không cần account để chạy widget của mình.
 - Script trong trang của dev host: nó thu thập fact và chuyển action, còn mọi quyết định nằm ở hàm đã test —
   nhưng bản thân script cần browser để chạy, và điều đó được nói ra thay vì ngụ ý rằng cả dev host đã được phủ.
 - Detach/attach: chưa có host window tách rời, nên không có gì để chạy. Nửa sở hữu (`detached` trên

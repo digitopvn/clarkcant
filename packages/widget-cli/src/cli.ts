@@ -4,6 +4,7 @@ import { join, relative } from "node:path";
 import { pathToFileURL } from "node:url";
 
 import { definitionDigest } from "@clarkcant/widget-host";
+import { directoryEntrySchema, riskLaneFor, type DirectoryEntry } from "@clarkcant/contracts";
 
 import { runConformance, type ConformanceReport } from "./conformance.ts";
 import { startDevHost } from "./dev-host.ts";
@@ -98,7 +99,8 @@ function init(root: string, template: Template): void {
     requestedCapabilities: [],
     // Empty by default, so a widget that reaches a network has to say so and the conformance suite can notice.
     permissions: { networkOrigins: [], filesystem: [], microphone: false, camera: false, lifecycleScripts: [] },
-    platforms: ["darwin-arm64", "linux-x64", "win32-x64"],
+    // The contract lists darwin, linux and web; there is no Windows value, so a template cannot claim one.
+    platforms: ["darwin-arm64", "linux-x64", "web"],
     publisher: { id: "example", sourceUrl: "https://github.com/example/my-widget", license: "MIT" },
   };
   const definition = { ...definitionFor(`${id}.main@1`, template), id: `${id}.main@1` };
@@ -228,6 +230,124 @@ function pack(root: string): number {
   return 0;
 }
 
+/* --------------------------------------------------------------- publish */
+
+/** Facet kinds as the directory names them: the manifest says `widget`, the contract says `ui`. */
+const DIRECTORY_FACETS: Record<string, "ui" | "tools" | "skills" | "prompts" | "themes" | "setup" | "driver" | "voice"> = {
+  widget: "ui",
+  composition: "ui",
+  tools: "tools",
+  services: "tools",
+  skills: "skills",
+  recipes: "prompts",
+  themes: "themes",
+};
+
+function requestedSummary(permissions: {
+  networkOrigins: readonly string[];
+  filesystem: readonly string[];
+  microphone: boolean;
+  camera: boolean;
+}): string[] {
+  const out = permissions.networkOrigins.map((origin) => "network: " + origin);
+  for (const path of permissions.filesystem) out.push("filesystem: " + path);
+  if (permissions.microphone) out.push("microphone");
+  if (permissions.camera) out.push("camera");
+  return out;
+}
+
+/**
+ * `clark widget publish` — prepare the directory submission.
+ *
+ * "Prepare" is the whole of it, and the plan says as much ("publish command may initially prepare directory
+ * submission"). It writes the entry a directory would carry — every field the standard requires, plus the digest
+ * of the packed artifact — and stops there. Submitting needs an account, and a command that looked as though it
+ * had already submitted would be a control whose action does not exist.
+ *
+ * It reads `dist/artifact.json` rather than recomputing anything, so the digest in the entry is by construction
+ * the digest of the artifact that was packed. Two computations of the same thing is how a listing comes to name
+ * an artifact nobody can produce.
+ */
+function publish(root: string): number {
+  const result = runConformance(root);
+  if (!result.ok) {
+    process.stderr.write(report(result));
+    process.stderr.write("Refusing to publish a package that fails conformance.");
+    return 1;
+  }
+  if (pack(root) !== 0) return 1;
+
+  const artifactPath = join(root, "dist", "artifact.json");
+  let artifact: { digest?: string; files?: { bytes: number }[] } | undefined;
+  try {
+    artifact = JSON.parse(readFileSync(artifactPath, "utf8")) as { digest?: string; files?: { bytes: number }[] };
+  } catch {
+    process.stderr.write(artifactPath + " is missing or unreadable, so there is nothing to describe.");
+    return 1;
+  }
+  const digest = artifact.digest ?? "";
+  if (digest === "") {
+    // An entry with no digest names bytes nobody can check, and "no digest" must never behave like a match.
+    process.stderr.write("the packed artifact carries no digest, so an entry would name bytes nobody can check.");
+    return 1;
+  }
+
+  const pkg = readPackage(root);
+  const entry: DirectoryEntry = {
+    packageId: pkg.manifest.id,
+    version: pkg.manifest.version,
+    displayName: pkg.manifest.displayName,
+    description: pkg.manifest.description,
+    publisher: pkg.manifest.publisher,
+    // Empty rather than absent: a package without preview media is listed, not hidden.
+    preview: {},
+    facets: [...new Set(pkg.manifest.facets.map((facet) => DIRECTORY_FACETS[facet.kind] ?? "ui"))],
+    platforms: pkg.manifest.platforms as DirectoryEntry["platforms"],
+    hostApi: pkg.manifest.hostApi,
+    permissionsSummary: requestedSummary(pkg.manifest.permissions),
+    // From the isolation the facets declare, never from what the publisher says about their own package.
+    riskTier: riskLaneFor(pkg.manifest.facets.map((facet) => facet.isolation)),
+    sizeBytes: (artifact.files ?? []).reduce((sum, file) => sum + file.bytes, 0),
+    digest,
+  };
+
+  const parsed = directoryEntrySchema.safeParse(entry);
+  if (!parsed.success) {
+    const first = parsed.error.issues[0];
+    process.stderr.write(
+      "the entry this package would produce is not valid: " +
+        (first?.path.join(".") ?? "") +
+        " " +
+        (first?.message ?? "does not match the schema"),
+    );
+    return 1;
+  }
+
+  const entryPath = join(root, "dist", "directory-entry.json");
+  if (existsSync(entryPath)) {
+    let previous: { version?: string; digest?: string } | undefined;
+    try {
+      previous = JSON.parse(readFileSync(entryPath, "utf8")) as { version?: string; digest?: string };
+    } catch {
+      process.stderr.write(entryPath + " exists but is not readable JSON; refusing to overwrite it.");
+      return 1;
+    }
+    // The same rule as packing: a version whose bytes changed is a different package wearing the same number.
+    if (previous.version === entry.version && previous.digest !== digest) {
+      process.stderr.write("version " + entry.version + " was already prepared with a different digest; bump the version.");
+      return 1;
+    }
+  }
+  mkdirSync(join(root, "dist"), { recursive: true });
+  writeFileSync(entryPath, JSON.stringify(parsed.data, null, 2));
+  process.stdout.write("prepared the directory entry for " + entry.packageId + "@" + entry.version);
+  process.stdout.write("  risk lane: " + entry.riskTier);
+  process.stdout.write("  digest: " + digest);
+  process.stdout.write("  " + entryPath);
+  // Named, so the limit is not mistaken for a failure: a local path needs no account, which is why dev and pack do not.
+  process.stdout.write("Submitting needs a directory account; a local path needs none.");
+  return 0;
+}
 /* ------------------------------------------------------------------- run */
 
 export async function runCli(argv: readonly string[]): Promise<number> {
@@ -265,10 +385,7 @@ export async function runCli(argv: readonly string[]): Promise<number> {
     await new Promise(() => {});
     return 0;
   }
-  if (command === "publish") {
-    process.stderr.write("clark widget publish arrives with the directory (phase 13); local paths need no account.\n");
-    return 2;
-  }
+  if (command === "publish") return publish(dir);
   process.stdout.write(`${usage()}\n`);
   return 2;
 }
