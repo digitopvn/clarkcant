@@ -169,6 +169,29 @@ describe("a work request is not an app intent", () => {
     expect(resolveAppIntent({ text: request, mintConfirmationToken: mint }).kind).toBe("none");
   });
 
+  it("does not refuse a short work request that opens with a control verb", () => {
+    // "mở" opens real commands, so the verb alone cannot decide: this sentence starts with it and is a request for
+    // work. What separates the two is that this one is not about the application's own furniture.
+    const request = "mở tài liệu giúp tôi";
+    expect(request.split(" ").length).toBeLessThan(8);
+    expect(isAppCommandShaped(request)).toBe(false);
+    expect(resolveAppIntent({ text: request, mintConfirmationToken: mint }).kind).toBe("none");
+
+    // The same verb about the window is a command, and one the registry does not know, so it is refused rather than
+    // handed on - which is the whole point of recognising the shape at all.
+    expect(matchAppIntent("mở cửa sổ trời")?.kind).toBe("refused");
+  });
+
+  it("does not read an ordinary sentence as a command because of a shared bare spelling", () => {
+    // Found by a regression rather than by reasoning: "thu" (thu nhỏ) and "thủ" (thủ đô) are the same string once the
+    // tone marks are stripped, so a one-word test on the bare form refused this sentence. The shape test reads the
+    // marks; the phrase table still does not, because a transcriber may drop them.
+    const sentence = "Thủ đô là Paris.";
+    expect(normaliseIntentText(sentence)).toBe("thu do la paris.");
+    expect(isAppCommandShaped(sentence)).toBe(false);
+    expect(resolveAppIntent({ text: sentence, mintConfirmationToken: mint }).kind).toBe("none");
+  });
+
   it("is not fooled by a tab name inside a question", () => {
     expect(resolveAppIntent({ text: "model nào đang chạy vậy", mintConfirmationToken: mint }).kind).toBe("none");
   });

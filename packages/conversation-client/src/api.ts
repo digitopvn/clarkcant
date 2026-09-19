@@ -219,6 +219,14 @@ export interface SendMessageResult {
   taskId: string | null;
   /** The messages this request wrote, in order. */
   messageIds: string[];
+  /**
+   * A command the node recognised in what was typed.
+   *
+   * Present when the text was an application command rather than a request for the agent. The node answers those
+   * itself and records them, and the page runs the decision - which is what makes typing "mở settings" open the
+   * panel exactly as saying it does.
+   */
+  appIntent?: AppIntentResolution;
   /** Every message in the conversation, so the client never has to guess whether its cursor is valid. */
   timeline: Timeline;
 }
@@ -493,6 +501,9 @@ export class GatewayClient {
             messageIds: Array.isArray(payload.messageIds)
               ? payload.messageIds.filter((id): id is string => typeof id === "string")
               : [],
+            ...(payload.appIntent === undefined
+              ? {}
+              : { appIntent: payload.appIntent as AppIntentResolution }),
             // SAFETY: the timeline is the node's own record and this client has no schema for it — the
             // same position every other route here takes, since the channel is authenticated and the
             // node is the authority on its own timeline. Its fields are read defensively at each use.

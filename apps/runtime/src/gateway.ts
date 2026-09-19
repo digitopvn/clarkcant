@@ -3,6 +3,7 @@ import { timingSafeEqual } from "node:crypto";
 import {
   type AppIntent,
   type AppIntentConfirmationFailure,
+  type AppIntentResolution,
   type AttachmentRef,
   type Instant,
   type MessageBlock,
@@ -566,6 +567,33 @@ function appendHostReply(
   appendMessage(services.runtime.db, message, nextMessageSequence(services.runtime.db, input.conversationId));
   indexMessages(services.search, { conversationId: input.conversationId, messages: [message], at: input.at });
   return { messageId: message.messageId };
+}
+
+/**
+ * Decide what a typed message means to the application.
+ *
+ * Shared by both message routes. The composer uses the streaming one, and the plain route was wired first - which
+ * meant a typed "mở settings" reached the model instead of the registry until this was found. One function is what
+ * keeps the next route from being the one that forgot to record the audit event.
+ */
+function typedAppIntent(
+  services: NodeServices,
+  conversationId: string,
+  text: string,
+  at: () => string,
+): AppIntentResolution {
+  const intentDeps: AppIntentDeps = {
+    db: services.runtime.db,
+    nodeId: services.runtime.identity.nodeId,
+    now: () => at() as never,
+    newId: services.conductor.newId,
+  };
+  const principalId = services.runtime.identity.ownerPrincipalId;
+  return decideAppIntent(
+    intentDeps,
+    { principalId, request: { text, source: "chat" }, conversationId: conversationId as never },
+    (intent: AppIntent) => mintConfirmation(intentDeps, { principalId, intent, source: "chat" }),
+  );
 }
 
 /**
@@ -1213,26 +1241,7 @@ async function handleConversationRoutes(
      * gets an honest "I did not understand" and no model turn at all, which is the issue's rule about not guessing;
      * anything else falls through untouched and reaches the agent exactly as before.
      */
-    const chatIntentDeps: AppIntentDeps = {
-      db: runtime.db,
-      nodeId: runtime.identity.nodeId,
-      now: () => at() as never,
-      newId: services.conductor.newId,
-    };
-    const asked = decideAppIntent(
-      chatIntentDeps,
-      {
-        principalId: runtime.identity.ownerPrincipalId,
-        request: { text, source: "chat" },
-        conversationId: conversationId as never,
-      },
-      (intent: AppIntent) =>
-        mintConfirmation(chatIntentDeps, {
-          principalId: runtime.identity.ownerPrincipalId,
-          intent,
-          source: "chat",
-        }),
-    );
+    const asked = typedAppIntent(services, conversationId, text, at);
     if (asked.kind !== "none") {
       const said = asked.kind === "refused" ? asked.say : asked.readBack;
       const appended = appendHostReply(services, { conversationId, text: said, at: at() as never });
@@ -1331,6 +1340,40 @@ async function handleConversationRoutes(
     const text = parsed.value.text;
     if (typeof text !== "string" || text.trim().length === 0) {
       return fail(400, "INVALID_SCHEMA", "a message must carry a non-empty text field");
+    }
+
+    /*
+     * A typed command to the application, on the route the composer actually uses.
+     *
+     * The same registry and the same host answer as the non-streaming route; the difference is only where the
+     * decision travels, because this answer is a stream. A command is not a turn, so nothing is sent to the model
+     * and the frame carries the decision the page acts on.
+     */
+    const askedIntent = typedAppIntent(services, conversationId, text, at);
+    if (askedIntent.kind !== "none") {
+      const said = askedIntent.kind === "refused" ? askedIntent.say : askedIntent.readBack;
+      const appended = appendHostReply(services, { conversationId, text: said, at: at() as never });
+      return {
+        status: 200,
+        body: null,
+        stream: {
+          contentType: "text/event-stream",
+          run: async (send) => {
+            // The sentence is a delta so a client that renders replies renders this one too, and the `done` frame
+            // carries the decision plus the timeline the other routes would have returned.
+            send(sse("delta", { text: said }));
+            send(
+              sse("done", {
+                resolution: "app-intent",
+                taskId: null,
+                messageIds: [appended.messageId],
+                timeline: buildTimeline(services, { conversationId, afterSequence: 0 }),
+                appIntent: askedIntent,
+              }),
+            );
+          },
+        },
+      };
     }
 
     const at_ = at() as never;

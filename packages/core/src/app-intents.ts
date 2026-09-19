@@ -44,33 +44,34 @@ import {
 import { type Database, appendEvent } from "@clarkcant/storage";
 
 /**
- * Verbs a command to the application can open with.
+ * Verbs a command to the application can open with, written **with** their tone marks.
  *
- * Only the first word is checked, so "thu nho" is covered by "thu". Kept to verbs that are about the
- * application itself; work verbs like "doc", "xem", "tom tat" or "them" are deliberately absent,
- * which is what keeps "xem cai dat cua may chu nay giup toi" a question - and also "them ghi chu vao
- * tai lieu", which is work somebody wants done rather than a command to the shell. Leaving "them" out
- * costs the phrasing "them tep dinh kem" and is worth it: refusing a real work request is a worse
- * failure than not recognising one way of saying "attach a file".
+ * The tone marks are the point. Matching strips them so a transcriber that drops them still lands, but that same
+ * stripping makes different words identical: "thu" (thu nhỏ, minimise) and "thủ" (thủ đô, capital) are one string
+ * without marks, and a one-word test on the bare form turned "Thủ đô là Paris." into a refused command. So the
+ * shape test reads the marks and the phrase table does not.
+ *
+ * Work verbs - đọc, xem, tóm tắt, thêm - are deliberately absent, and so is "về", which is a preposition as often as
+ * it is a command: a sentence may begin with "Về việc đó thì..." and asking the agent about something must not be
+ * refused. "về nhà" still works, through its own opener.
  */
-const APP_COMMAND_VERBS: readonly string[] = [
-  "mo",
-  "dong",
+const CONTROL_VERBS: readonly string[] = [
+  "mở",
+  "đóng",
   "thu",
-  "phong",
-  "ket",
-  "thoat",
-  "ve",
-  "tat",
-  "doi",
-  "dinh",
-  "chon",
-  "dung",
-  "chuyen",
-  "huy",
-  "khoi",
-  "thuong",
-  "hien",
+  "phóng",
+  "kéo",
+  "kết",
+  "thoát",
+  "tắt",
+  "đổi",
+  "chuyển",
+  "hiện",
+  "khôi",
+  "huỷ",
+  "hủy",
+  "dừng",
+  "đính",
   "open",
   "close",
   "quit",
@@ -85,6 +86,28 @@ const APP_COMMAND_VERBS: readonly string[] = [
   "show",
   "hide",
   "minimal",
+];
+
+/**
+ * The application's own furniture.
+ *
+ * A control verb on its own is not enough to call a sentence a command: "mở tài liệu giúp tôi" opens with mở and is
+ * a work request. Requiring the sentence to be about one of these is what tells "mở cửa sổ trời" - a command the
+ * registry does not know, which must be refused rather than guessed at - from a real request for work.
+ *
+ * "tệp" is deliberately not here: "mở tệp này giúp tôi" is work.
+ */
+const APP_NOUNS: readonly string[] = [
+  "cua so",
+  "settings",
+  "cai dat",
+  "tab",
+  "ung dung",
+  "app",
+  "phien thoai",
+  "thanh voice",
+  "man hinh",
+  "trang chu",
 ];
 
 /** A command is short. A long sentence that opens with a verb is prose, not a command. */
@@ -171,6 +194,29 @@ const TAB_INTENT_MARKERS: readonly string[] = [
   "tab settings",
 ];
 
+/**
+ * The two words a known command opens with, in the bare spelling, plus the ways a tab change can open.
+ *
+ * Derived from the table rather than listed again, so a phrase added below cannot be one the shape test then refuses
+ * to look at. Two words rather than one is what keeps "thủ đô" out while letting "thu nhỏ" in.
+ */
+const COMMAND_OPENERS: readonly string[] = [
+  ...new Set(PHRASES.map((entry) => entry.phrase.split(" ").slice(0, 2).join(" "))),
+  "mo tab",
+  "doi sang",
+  "chuyen sang",
+  "doi tab",
+  "chuyen tab",
+  "switch to",
+  "sang tab",
+];
+
+/** Whether a phrase appears as whole words. "tab" must not be found inside another word. */
+function containsPhrase(words: readonly string[], phrase: string): boolean {
+  const parts = phrase.split(" ");
+  return words.some((_, start) => parts.every((part, offset) => words[start + offset] === part));
+}
+
 // Derived from the tabs that exist, so a tab added later is named in the refusal without anyone remembering to
 // update a sentence. A refusal that listed a tab which is not there would send the person looking for it.
 const TAB_REFUSAL = `Tôi chưa rõ bạn muốn mở tab nào. Các tab đang có: ${SETTINGS_TABS.join(", ")}.`;
@@ -199,12 +245,21 @@ export function normaliseIntentText(text: string): string {
  * the application's settings.
  */
 export function isAppCommandShaped(text: string): boolean {
-  const normalised = normaliseIntentText(text);
-  if (normalised === "") return false;
-  const words = normalised.split(" ");
-  if (words.length > APP_COMMAND_MAX_WORDS) return false;
-  const first = words[0] ?? "";
-  return APP_COMMAND_VERBS.includes(first);
+  const spoken = text.toLowerCase().replace(/\s+/g, " ").trim();
+  if (spoken === "") return false;
+  const spokenWords = spoken.split(" ");
+  if (spokenWords.length > APP_COMMAND_MAX_WORDS) return false;
+
+  const bare = normaliseIntentText(text);
+  // 1. It opens the way a known command opens. Compared without tone marks, so a transcription that dropped them
+  // still lands here, and two words long, so an ordinary word that happens to share a bare spelling does not.
+  if (COMMAND_OPENERS.some((opener) => bare === opener || bare.startsWith(`${opener} `))) return true;
+
+  // 2. It opens with a control verb *and* is about the application's own furniture. Both halves are load-bearing:
+  // the verb alone refuses "mở tài liệu giúp tôi", and the noun alone would catch every question that mentions
+  // Settings. The verb is read with its tone marks because without them it is a different word.
+  const first = spokenWords[0] ?? "";
+  return CONTROL_VERBS.includes(first) && APP_NOUNS.some((noun) => containsPhrase(bare.split(" "), noun));
 }
 
 export type AppIntentMatch =

@@ -234,6 +234,14 @@ export function Conversation({
    */
   const [intentNotice, setIntentNotice] = useState<string | undefined>(undefined);
   /**
+   * A decision a typed command produced, waiting to be carried out.
+   *
+   * Held in state and run from an effect rather than run inside the send callback: the send callback is declared
+   * above the executor, so reaching forward from it would read a binding before it exists. This also keeps one place
+   * that runs a decision, whichever route the command arrived by.
+   */
+  const [pendingIntent, setPendingIntent] = useState<AppIntentDecision | undefined>(undefined);
+  /**
    * Whether the voice surface is up.
    *
    * Opened from the composer's microphone button, which used to be disabled with a tooltip: the one
@@ -786,6 +794,11 @@ export function Conversation({
               applyTimeline(result.timeline);
               setPendingUser(undefined);
               setLive([]);
+              // A command is answered by the host and not by a model, so the node sends the decision along with the
+              // record. `none` means the text was not a command at all and the turn above was the real answer.
+              if (result.appIntent !== undefined && result.appIntent.kind !== "none") {
+                setPendingIntent(result.appIntent);
+              }
             },
           },
           { ...options, attachmentIds },
@@ -898,6 +911,14 @@ export function Conversation({
     const timer = setTimeout(() => setIntentNotice(undefined), 6000);
     return () => clearTimeout(timer);
   }, [intentNotice]);
+
+  // A command that was typed and recognised is answered by the host, so the node sends the decision with the timeline
+  // and the page carries it out here - the same executor a spoken command and a click use.
+  useEffect(() => {
+    if (pendingIntent === undefined) return;
+    setPendingIntent(undefined);
+    runIntent(pendingIntent);
+  }, [pendingIntent, runIntent]);
 
   /**
    * Answer an operation the agent asked for.

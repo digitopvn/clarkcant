@@ -263,3 +263,68 @@ describe("a typed command in the composer", () => {
     expect(rows.some((row) => row.role === "user")).toBe(true);
   });
 });
+
+/**
+ * The streaming route.
+ *
+ * The composer posts here and not to the plain route, so this is the one that decides whether a typed command
+ * reaches the registry at all. Wiring only the plain route first is exactly the mistake these tests exist to catch:
+ * it looked correct in the suite and did nothing in the browser.
+ */
+describe("a typed command on the streaming route", () => {
+  /** The node writes one JSON object per frame on one line, so a frame is two lines and a blank. */
+  function frames(chunks: readonly string[]): { event: string; data: Record<string, unknown> }[] {
+    return chunks.map((chunk) => {
+      const lines = chunk.split("\n");
+      const event = (lines.find((line) => line.startsWith("event: ")) ?? "event: unknown").slice(7).trim();
+      const data = (lines.find((line) => line.startsWith("data: ")) ?? "data: {}").slice(6);
+      return { event, data: JSON.parse(data) as Record<string, unknown> };
+    });
+  }
+
+  async function streamed(text: string): Promise<{ event: string; data: Record<string, unknown> }[]> {
+    const response = await request("POST", `/conversations/${conversationId}/messages/stream`, { text });
+    expect(response.status).toBe(200);
+    const stream = response.stream;
+    expect(stream).toBeDefined();
+    const chunks: string[] = [];
+    await stream?.run((chunk) => chunks.push(chunk));
+    return frames(chunks);
+  }
+
+  it("carries the decision to the page in the done frame and records the audit event", async () => {
+    const events = await streamed("mở settings");
+
+    const done = events.find((event) => event.event === "done");
+    expect(done?.data.resolution).toBe("app-intent");
+    expect(done?.data.appIntent).toMatchObject({ kind: "intent", intent: { kind: "settings.open" } });
+    // The sentence travels as a delta, so the same renderer that draws a reply draws this.
+    expect(events.some((event) => event.event === "delta")).toBe(true);
+    expect(auditRecords()).toEqual([{ kind: "settings.open", source: "chat" }]);
+
+    // One host message and no turn: a command is not a question, so there is no user message to answer.
+    const rows = services.runtime.db
+      .prepare("SELECT role FROM messages WHERE conversation_id = ?")
+      .all(conversationId) as { role: string }[];
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.role).toBe("assistant");
+  });
+
+  it("refuses a command it cannot match, in the frame and in the conversation both", async () => {
+    const events = await streamed("mở cửa sổ trời");
+
+    const done = events.find((event) => event.event === "done");
+    expect(done?.data.appIntent).toMatchObject({ kind: "refused", say: APP_INTENT_NOT_UNDERSTOOD });
+    // Nothing was done, so nothing is audited.
+    expect(auditRecords()).toHaveLength(0);
+  });
+
+  it("carries a quit as a question with a token", async () => {
+    const events = await streamed("thoát ứng dụng");
+
+    const done = events.find((event) => event.event === "done");
+    const decision = done?.data.appIntent as { kind: string; confirmationToken?: string };
+    expect(decision.kind).toBe("needs-confirmation");
+    expect(decision.confirmationToken).toMatch(/^[0-9a-f-]{36}$/);
+  });
+});
