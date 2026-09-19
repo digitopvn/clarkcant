@@ -602,6 +602,20 @@ async function main(): Promise<void> {
    * a fake that is indistinguishable from the real thing is worse than having no fake at all.
    */
   const voiceFixture = process.env.CC_VOICE_FIXTURE === "1";
+  /**
+   * The words the scripted provider will say, when the fixture is loaded.
+   *
+   * Read when a session opens rather than captured once, so a test can set them and then open one. On a real node this
+   * stays undefined, and the route that would write it is not registered either - which is the gate.
+   */
+  let voiceFixtureWords: string | undefined;
+  if (voiceFixture) {
+    services.voiceFixture = {
+      setWords: (words: string) => {
+        voiceFixtureWords = words;
+      },
+    };
+  }
   const voice = attachVoiceGateway({
     server,
     services,
@@ -613,7 +627,23 @@ async function main(): Promise<void> {
           // expectation false. Read at open time rather than cached, so the next attempt after typing one finds it.
           process.env.GEMINI_API_KEY ??
           readCredential(services.runtime.db, services.runtime.identity.ownerPrincipalId, VOICE_CREDENTIAL_NAME),
-    ...(voiceFixture ? { createAdapter: () => new FixtureLiveAdapter() } : {}),
+    ...(voiceFixture
+      ? {
+          /**
+           * The scripted words apply to **the next session and no further**.
+           *
+           * Consumed here rather than read on every utterance, because the value lives on the node and the node
+           * outlives a session. Reading it live leaked one suite's script into the next: voice.spec.ts, which
+           * scripts nothing and expects the fixture's own sentence, failed after this suite had run - a failure
+           * that only appeared in a whole-suite run, which is exactly why the whole suite is the gate.
+           */
+          createAdapter: () => {
+            const scripted = voiceFixtureWords;
+            voiceFixtureWords = undefined;
+            return new FixtureLiveAdapter({ ...(scripted === undefined ? {} : { words: scripted }) });
+          },
+        }
+      : {}),
     ...(voiceModel === undefined ? {} : { model: voiceModel }),
     /**
      * What a finished sentence does.

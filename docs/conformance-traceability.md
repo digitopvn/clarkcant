@@ -89,6 +89,7 @@ A status here is never upgraded without the corresponding test appearing alongsi
 | T70 | PASS | Reaching a disk or budget limit stops new work safely | hardening.spec.ts: the ceiling is checked at the door and an over-budget run is refused before it starts; windows reset so a limit is not permanent; usage accumulates per window rather than per run |
 | T71 | PASS | Credentials are never copied between nodes implicitly | consent.spec.ts: the owning node is handed a handle and never a value, a different node is refused with a routing instruction, and a revoked connection is refused on its own node |
 | T72 | BLOCKED | An unavailable vendor SDK yields a working fallback or an unsupported verdict | Needs a real vendor account. |
+| T73 | PASS | A spoken app command and the same click reach the same Settings state | voice-control.spec.ts: "a spoken command and the same click open Settings in the same state" — parity is read from the panel's own selected tab rather than from the sentence, and "a spoken tab change lands on the tab that was named" checks that a named tab lands where clicking that tab lands. T66 stays NOT-IMPLEMENTED: it is about a *widget* action state, which is phase 6. |
 
 ## Scope items
 

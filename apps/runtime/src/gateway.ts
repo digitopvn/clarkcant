@@ -325,6 +325,10 @@ export async function handleRequest(deps: GatewayDeps, request: GatewayRequest):
     return await handleAppIntentRoutes(deps, request, segments, at);
   }
 
+  if (segments[0] === "voice-fixture") {
+    return handleVoiceFixtureRoute(services, request, segments);
+  }
+
   if (segments[0] === "conversations") {
     return await handleConversationRoutes(deps, request, segments, at);
   }
@@ -690,6 +694,34 @@ async function handleAppIntentRoutes(
   }
 
   return fail(404, "NOT_FOUND", "no such app-intent route");
+}
+
+/**
+ * The voice fixture's script.
+ *
+ * Unreachable on a real node: with no scripted provider loaded there is no seam and this answers 404, so there is no way
+ * to tell a production provider what to say. It exists because the fixture is otherwise one fixed sentence, and a
+ * browser journey that cannot say a command cannot test what the node does with one - which is exactly the evidence
+ * phase 5 was missing.
+ */
+function handleVoiceFixtureRoute(
+  services: NodeServices,
+  request: GatewayRequest,
+  segments: readonly string[],
+): GatewayResponse {
+  const fixture = services.voiceFixture;
+  if (fixture === undefined) return fail(404, "NOT_FOUND", "no voice fixture is loaded on this node");
+  if (segments.length !== 2 || segments[1] !== "words" || request.method !== "POST") {
+    return fail(404, "NOT_FOUND", "no such voice-fixture route");
+  }
+  const parsed = readJson(request);
+  if (!parsed.ok) return parsed.response;
+  const words = parsed.value.words;
+  if (typeof words !== "string" || words.trim() === "") {
+    return fail(400, "INVALID_SCHEMA", "words must be a non-empty string");
+  }
+  fixture.setWords(words.trim());
+  return json(200, { ok: true, words: words.trim() });
 }
 
 /**
