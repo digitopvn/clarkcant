@@ -13,6 +13,7 @@ import {
   type ConfirmationDecision,
   type SettingsTab,
 } from "@clarkcant/contracts";
+import { suggestionsResponseSchema, type Suggestion } from "@clarkcant/contracts";
 
 import {
   type StartVoiceSessionOptions,
@@ -387,6 +388,18 @@ export class GatewayClient {
 
   listConversations(): Promise<{ conversations: { conversationId: string }[] }> {
     return this.#call("GET", "/conversations");
+  }
+
+  /**
+   * What the node suggests doing next.
+   *
+   * The body is parsed rather than trusted: it crosses a socket and a version boundary, and a client that trusted
+   * it would render whatever an older or newer node happened to send. A node that answers with a shape this build
+   * does not know is an error here, which the caller turns into the fallback chips - not a broken first screen.
+   */
+  async suggestions(): Promise<Suggestion[]> {
+    const body = await this.#call<unknown>("GET", "/suggestions");
+    return suggestionsResponseSchema.parse(body).items;
   }
 
   sendMessage(
