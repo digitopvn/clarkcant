@@ -411,7 +411,25 @@ export interface BlockActions {
    */
   onArtifactOpen?: (input: { artifactId: string }) => void;
   artifactOpen?: Readonly<Record<string, ArtifactOpenState>>;
+  /** Hand the wheel of a browser session to the user. */
+  onBrowserTakeover?: (input: { sessionId: string }) => void;
+  /** End a browser session. */
+  onBrowserStop?: (input: { sessionId: string }) => void;
+  browserSession?: Readonly<Record<string, BrowserSessionActionState>>;
 }
+
+/**
+ * What the node said about a browser session after a verb was applied to it.
+ *
+ * `taken-over` carries the epoch rather than a boolean, because the epoch is what decides whether an action the
+ * agent planned earlier is still admissible — a card that only said "you have control" would leave a reader unable
+ * to tell whether the agent's in-flight action had been refused.
+ */
+export type BrowserSessionActionState =
+  | { status: "pending" }
+  | { status: "taken-over"; leaseEpoch: number }
+  | { status: "stopped" }
+  | { status: "failed"; message: string };
 
 export type ArtifactOpenState =
   | { status: "pending" }
@@ -1242,6 +1260,8 @@ export function renderBlock(
       return <QuestionCardBlock key={index} block={block} {...(actions === undefined ? {} : { actions })} />;
     case "form-card":
       return <FormCardBlock key={index} block={block} {...(actions === undefined ? {} : { actions })} />;
+    case "browser-session-card":
+      return <BrowserSessionCardBlock key={index} block={block} {...(actions === undefined ? {} : { actions })} />;
     case "reconnect-card":
       return <ReconnectCardBlock key={index} block={block} />;
     case "surface": {
@@ -1494,6 +1514,122 @@ export function FormCardBlock({
           )}
         </>
       )}
+    </section>
+  );
+}
+
+/**
+ * A browser session the node is driving, and who has the wheel.
+ *
+ * The card exists because the one capability that runs unsupervised is the one where "the agent is still driving"
+ * has to be something the user can change. Two verbs, and the copy distinguishes them, because they do different
+ * things: takeover leaves the session running and its page intact while making the agent's next action invalid,
+ * and stop ends the session.
+ *
+ * The epoch is shown rather than kept internal. It is what decides whether an action the agent planned earlier is
+ * still admissible, so a reader who cannot see it cannot tell whether a takeover actually took effect.
+ */
+export function BrowserSessionCardBlock({
+  block,
+  actions,
+}: {
+  block: Record<string, unknown>;
+  actions?: BlockActions;
+}): ReactElement | null {
+  if (block.owner !== "host") return null;
+
+  const sessionId = fieldText(block.sessionId);
+  const label = fieldText(block.label);
+  const declaredDriver = fieldText(block.driver, "agent");
+  const declaredStatus = fieldText(block.status, "running");
+  const declaredEpoch = typeof block.leaseEpoch === "number" ? block.leaseEpoch : 0;
+  const state = sessionId === "" ? undefined : actions?.browserSession?.[sessionId];
+
+  // The card's own values are a snapshot; what the node said later wins where the two disagree, because only the
+  // node knows who is driving now.
+  const stopped = state?.status === "stopped" || declaredStatus === "stopped";
+  const driver = state?.status === "taken-over" ? "user" : declaredDriver;
+  const leaseEpoch = state?.status === "taken-over" ? state.leaseEpoch : declaredEpoch;
+  const running = !stopped;
+  const busy = state?.status === "pending";
+
+  return (
+    <section
+      className="cc-card"
+      data-host-card="browser-session"
+      data-owner="host"
+      data-browser-session={sessionId}
+      data-browser-driver={driver}
+      data-browser-status={stopped ? "stopped" : "running"}
+      aria-label={`Phiên browser: ${label}`}
+    >
+      <header className="cc-card-head">
+        <span className="cc-card-title">{label}</span>
+        <span className="cc-badge" data-tone={stopped ? "" : "ok"}>
+          {stopped ? "đã dừng" : "đang chạy"}
+        </span>
+      </header>
+      <dl className="cc-fields">
+        <dt>Ai đang điều khiển</dt>
+        <dd data-browser-driver-label="true">{driver === "user" ? "bạn" : "agent"}</dd>
+        <dt>Lease epoch</dt>
+        <dd>{leaseEpoch}</dd>
+      </dl>
+      {running ? (
+        <div className="cc-chip-row">
+          {/*
+            Offered only while the agent still has the wheel, and only when something can carry the verb out: a
+            takeover control on a session the user already drives would be a control with nothing left to do.
+          */}
+          {driver === "agent" && actions?.onBrowserTakeover !== undefined ? (
+            <button
+              type="button"
+              className="cc-chip"
+              data-browser-takeover={sessionId}
+              disabled={busy}
+              onClick={() => actions.onBrowserTakeover?.({ sessionId })}
+            >
+              {busy ? "Đang chuyển…" : "Tôi tự điều khiển"}
+            </button>
+          ) : null}
+          {actions?.onBrowserStop !== undefined ? (
+            <button
+              type="button"
+              className="cc-chip"
+              data-browser-stop={sessionId}
+              disabled={busy}
+              onClick={() => actions.onBrowserStop?.({ sessionId })}
+            >
+              Dừng phiên
+            </button>
+          ) : null}
+        </div>
+      ) : null}
+      {/*
+        Exactly one notice, decided in one place. Two overlapping branches would render two answers to the same
+        question — which is what a duplicate marker caught in the browser, and a reader would have seen the same
+        thing twice.
+      */}
+      {state?.status === "failed" ? (
+        <p className="cc-freshness" data-browser-session-error="true">
+          {state.message}
+        </p>
+      ) : !running ? (
+        <p className="cc-freshness" data-browser-session-notice="stopped">
+          {state?.status === "stopped"
+            ? "Phiên đã dừng theo yêu cầu của bạn. Không có hành động nào của agent còn được nhận cho phiên này."
+            : "Phiên này đã dừng. Không có hành động nào của agent còn được nhận cho phiên này."}
+        </p>
+      ) : state?.status === "taken-over" ? (
+        /*
+         * What takeover actually did. Not "you have control" alone: the user needs to know the agent's already
+         * planned action was refused, because that is the part that makes the browser theirs.
+         */
+        <p className="cc-freshness" data-browser-session-notice="taken-over">
+          Bạn đang điều khiển. Hành động agent đã lên kế hoạch từ trước đã bị từ chối vì lease cũ, và agent chỉ
+          lấy lại được khi bạn dừng phiên rồi mở phiên mới.
+        </p>
+      ) : null}
     </section>
   );
 }

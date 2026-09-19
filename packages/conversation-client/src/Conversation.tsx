@@ -22,7 +22,7 @@ import { hasDesktopChrome, requestWindowMode } from "./desktop-compact.ts";
 import { DesktopChrome } from "./desktop-chrome.tsx";
 import { fetchSuggestions } from "./suggestions.ts";
 import type { Suggestion } from "@clarkcant/contracts";
-import { ReasoningBlock, ToolActivityBlock, type BlockActions, type ArtifactOpenState, type TaskStopState } from "./blocks.tsx";
+import { ReasoningBlock, ToolActivityBlock, type BlockActions, type ArtifactOpenState, type BrowserSessionActionState, type TaskStopState } from "./blocks.tsx";
 import { composerTextareaHeight } from "./composer-height.ts";
 import {
   attachmentReducer,
@@ -1233,6 +1233,43 @@ export function Conversation({
     [client],
   );
 
+  /**
+   * What the node said after a verb was applied to a browser session.
+   *
+   * `taken-over` carries the epoch, because the epoch is the evidence that the takeover took effect: the agent's
+   * already-planned action is refused for having a stale lease. A boolean here would show that a button worked
+   * without showing that the browser changed hands.
+   */
+  const [browserSession, setBrowserSession] = useState<Record<string, BrowserSessionActionState>>({});
+
+  const changeBrowserSession = useCallback(
+    (sessionId: string, verb: "takeover" | "stop") => {
+      setBrowserSession((current) => ({ ...current, [sessionId]: { status: "pending" } }));
+      const call = verb === "takeover" ? client.browserTakeover(sessionId) : client.browserStop(sessionId);
+      void call.then(
+        (result) =>
+          setBrowserSession((current) => ({
+            ...current,
+            [sessionId]:
+              verb === "takeover"
+                ? { status: "taken-over", leaseEpoch: result.session.leaseEpoch }
+                : { status: "stopped" },
+          })),
+        (error: unknown) =>
+          // Refused rather than reported as done: a takeover that silently did nothing would leave the user
+          // believing they have the wheel while the agent keeps driving.
+          setBrowserSession((current) => ({
+            ...current,
+            [sessionId]: {
+              status: "failed",
+              message: error instanceof Error ? error.message : "Không đổi được phiên browser này.",
+            },
+          })),
+      );
+    },
+    [client],
+  );
+
   const blockActions: BlockActions = useMemo(
     () => ({
       onApprovalDecide: decideApproval,
@@ -1253,8 +1290,11 @@ export function Conversation({
       taskStop,
       onArtifactOpen: ({ artifactId }) => openArtifact(artifactId),
       artifactOpen,
+      onBrowserTakeover: ({ sessionId }) => changeBrowserSession(sessionId, "takeover"),
+      onBrowserStop: ({ sessionId }) => changeBrowserSession(sessionId, "stop"),
+      browserSession,
     }),
-    [artifactOpen, credentialStatus, decideApproval, decidedApprovals, decidingApprovalId, openArtifact, openCardIds, send, stopTask, submitCredential, taskStop],
+    [artifactOpen, browserSession, changeBrowserSession, credentialStatus, decideApproval, decidedApprovals, decidingApprovalId, openArtifact, openCardIds, send, stopTask, submitCredential, taskStop],
   );
 
   const renderSurface = useCallback(

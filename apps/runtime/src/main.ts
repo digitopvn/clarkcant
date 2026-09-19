@@ -299,6 +299,31 @@ async function main(): Promise<void> {
       };
     }
 
+    /*
+     * A browser session, scripted — created in the node's own registry, so takeover has something to change hands
+     * over rather than a card carrying an id nothing has heard of.
+     */
+    if (/browser|trình duyệt/i.test(input.text)) {
+      const created = services.browserSessions.create({
+        sessionId: services.conductor.newId("bs"),
+        label: "đang mở form thanh toán",
+      });
+      return {
+        text: "Đây là phiên browser do fixture tạo, không phải model thật.",
+        block: {
+          type: "browser-session-card",
+          owner: "host",
+          cardId: services.conductor.newId("card"),
+          sessionId: created.sessionId,
+          label: created.label,
+          driver: created.owner,
+          status: created.status,
+          leaseEpoch: created.leaseEpoch,
+          updatedAt: instantSchema.parse(new Date().toISOString()),
+        },
+      };
+    }
+
     if (/hỏi tôi|thử hỏi|ask me/i.test(input.text)) {
       const questionId = `q_fixture_${fixtureQuestionCounter += 1}`;
       return {

@@ -292,6 +292,17 @@ function parseSseFrame(frame: string): SseEvent | undefined {
 }
 
 /** What the node reports about an artifact. No path, deliberately: see `artifact()`. */
+/** A browser session as the node holds it. The epoch is the fencing token, so it is on the wire. */
+export interface BrowserSessionView {
+  sessionId: string;
+  label: string;
+  owner: "agent" | "user";
+  status: "running" | "stopped";
+  leaseEpoch: number;
+  takenOverAt?: string;
+  stoppedAt?: string;
+}
+
 export interface ArtifactView {
   artifactId: string;
   digest: string;
@@ -892,6 +903,22 @@ export class GatewayClient {
    */
   artifact(artifactId: string): Promise<{ artifact: ArtifactView }> {
     return this.#call("GET", `/artifacts/${encodeURIComponent(artifactId)}`);
+  }
+
+  /**
+   * Take the wheel of a browser session.
+   *
+   * Resolves with the session as the node now holds it, including the new lease epoch — which is the part that
+   * makes the takeover real: the agent's already-planned action is refused because its lease is stale, not
+   * because something was interrupted.
+   */
+  browserTakeover(sessionId: string): Promise<{ session: BrowserSessionView }> {
+    return this.#call("POST", `/browser-sessions/${encodeURIComponent(sessionId)}/takeover`, {});
+  }
+
+  /** End a browser session. Refused rather than reported as done when there is nothing left to stop. */
+  browserStop(sessionId: string): Promise<{ session: BrowserSessionView }> {
+    return this.#call("POST", `/browser-sessions/${encodeURIComponent(sessionId)}/stop`, {});
   }
 
   claimLiveOwner(

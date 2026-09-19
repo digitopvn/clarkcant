@@ -49,6 +49,7 @@ export {
   ProjectPickerCardBlock,
   QuestionCardBlock,
   FormCardBlock,
+  BrowserSessionCardBlock,
   ReconnectCardBlock,
   SystemCardBlock,
   TaskOverviewCardBlock,

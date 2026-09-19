@@ -665,6 +665,36 @@ export async function handleRequest(deps: GatewayDeps, request: GatewayRequest):
     });
   }
 
+  /*
+   * Who is driving a browser session.
+   *
+   * Takeover hands the wheel to the user by bumping the lease epoch, which invalidates the action the agent had
+   * already planned rather than reaching into a process this node does not control. Stop ends the session and
+   * bumps the epoch for the same reason: an action already in flight must not land on a session that has ended.
+   *
+   * A session that is missing or already stopped is refused rather than quietly reported as done, because a
+   * takeover that silently did nothing leaves the user believing they have the wheel.
+   */
+  if (
+    segments.length === 3 &&
+    segments[0] === "browser-sessions" &&
+    (segments[2] === "takeover" || segments[2] === "stop") &&
+    request.method === "POST"
+  ) {
+    const sessionId = decodeURIComponent(segments[1] ?? "");
+    const at = nowInstant();
+    const session =
+      segments[2] === "takeover"
+        ? services.browserSessions.takeover(sessionId, at)
+        : services.browserSessions.stop(sessionId, at);
+    if (session === undefined) {
+      return fail(409, "BROWSER_SESSION_UNAVAILABLE", "Không đổi được phiên browser này vì phiên không tồn tại hoặc đã dừng.", {
+        sessionId,
+      });
+    }
+    return json(200, { session });
+  }
+
   if (request.method === "POST" && request.path === "/command") {
     return handleRawCommand(deps, request, at);
   }

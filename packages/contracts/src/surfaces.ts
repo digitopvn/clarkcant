@@ -95,6 +95,30 @@ export const widgetRefBlockSchema = z.strictObject({
   textAlternative: z.string().min(1).max(4000),
 });
 
+/**
+ * A browser session the node is driving, and who has the wheel.
+ *
+ * This card exists because the one capability that runs unsupervised is also the one where "the agent is still
+ * driving" has to be something the host can change rather than something the user waits out. The card states who
+ * is driving and offers the two verbs that change it; it never claims a session stopped because a button was
+ * pressed.
+ *
+ * `leaseEpoch` is carried so a card can be reasoned about next to the action it describes: an action planned
+ * under an older epoch than the card shows was planned before the last change of hands.
+ */
+export const browserSessionCardSchema = z.strictObject({
+  type: z.literal("browser-session-card"),
+  owner: z.literal("host"),
+  cardId: z.string().min(1).max(128),
+  sessionId: z.string().min(1).max(128),
+  label: z.string().min(1).max(300),
+  driver: z.enum(["agent", "user"]),
+  status: z.enum(["running", "stopped"]),
+  leaseEpoch: z.int().nonnegative(),
+  updatedAt: instantSchema,
+});
+export type BrowserSessionCard = z.infer<typeof browserSessionCardSchema>;
+
 export const artifactBlockSchema = z.strictObject({
   type: z.literal("artifact"),
   artifactId: z.string().min(1).max(128),
@@ -568,6 +592,7 @@ export const messageBlockSchema = z.discriminatedUnion("type", [
   surfaceBlockSchema,
   widgetRefBlockSchema,
   artifactBlockSchema,
+  browserSessionCardSchema,
   evidenceBlockSchema,
   systemCardBlockSchema,
   approvalCardBlockSchema,
