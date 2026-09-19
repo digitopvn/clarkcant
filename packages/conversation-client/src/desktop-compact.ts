@@ -62,6 +62,16 @@ export function desktopBridge(scope: unknown = globalThis): DesktopBridge | unde
 }
 
 /**
+ * Whether this window is a desktop one, judged by the one capability the chrome needs.
+ *
+ * The chrome also needs `getSession` to be useful, but resizing is what makes it a window's chrome at all, so
+ * this asks for that and nothing else. A browser answers no.
+ */
+export function hasDesktopChrome(scope: unknown = globalThis): boolean {
+  return desktopBridge(scope)?.setCompactMode !== undefined;
+}
+
+/**
  * The session the shell holds for this window, or nothing.
  *
  * Nothing covers every way this can fail - no bridge, a shell that refused because the node's identity file

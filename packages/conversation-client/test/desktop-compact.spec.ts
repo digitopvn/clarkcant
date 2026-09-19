@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { desktopBridge, requestWindowMode, sessionFromBridge } from "../src/desktop-compact.ts";
+import { desktopBridge, hasDesktopChrome, requestWindowMode, sessionFromBridge } from "../src/desktop-compact.ts";
 
 /**
  * The client's half of the desktop shell.
@@ -63,6 +63,18 @@ describe("asking the shell for a window mode", () => {
     const scope = scopeWith({ setCompactMode: async () => ({ ok: true, mode: "sideways" }) });
     const answer = await requestWindowMode({ type: "enter-compact" }, scope);
     expect(answer.ok).toBe(false);
+  });
+});
+
+describe("whether the client should draw window chrome", () => {
+  it("the client renders no desktop chrome when no bridge is present", () => {
+    // The gate the chrome renders behind, asserted without a DOM: the component returns nothing when this is
+    // false, and a plain browser is exactly this case - it must not grow a window strip it cannot honour.
+    expect(hasDesktopChrome({})).toBe(false);
+    expect(hasDesktopChrome({ clarkcant: null })).toBe(false);
+    // A shell old enough to hand over a session but not to resize is not chrome either.
+    expect(hasDesktopChrome(scopeWith({ getSession: async () => ({ ok: true }) }))).toBe(false);
+    expect(hasDesktopChrome(scopeWith({ setCompactMode: async () => ({ ok: true }) }))).toBe(true);
   });
 });
 

@@ -1,6 +1,6 @@
 import { type ReactElement, useCallback, useMemo, useState } from "react";
 
-import { desktopBridge, requestWindowMode, type WindowModeAnswer } from "./desktop-compact.ts";
+import { hasDesktopChrome, requestWindowMode, type WindowModeAnswer } from "./desktop-compact.ts";
 
 /**
  * The window's own chrome, for a window that has none.
@@ -13,14 +13,14 @@ import { desktopBridge, requestWindowMode, type WindowModeAnswer } from "./deskt
  * said it is still expanded is expanded.
  */
 export function DesktopChrome(): ReactElement | null {
-  const bridge = useMemo(() => desktopBridge(), []);
+  const desktop = useMemo(() => hasDesktopChrome(), []);
   const [answer, setAnswer] = useState<WindowModeAnswer | undefined>(undefined);
 
   const ask = useCallback((action: Parameters<typeof requestWindowMode>[0]) => {
     void requestWindowMode(action).then((next) => setAnswer(next));
   }, []);
 
-  if (bridge?.setCompactMode === undefined) return null;
+  if (!desktop) return null;
 
   const mode = answer?.ok === true ? answer.mode : "normal";
   const pinned = answer?.ok === true && answer.alwaysOnTop;

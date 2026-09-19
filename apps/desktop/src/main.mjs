@@ -202,12 +202,13 @@ function registerHandlers() {
     window.setBounds(windowMode.bounds);
     window.setAlwaysOnTop(windowMode.alwaysOnTop);
 
-    // Read back off the window rather than reporting the request. The OS may clamp a size or a position, and a
-    // shell that echoes what it was asked for cannot tell the difference between that and what happened.
+    // Every field read off the window rather than computed by the model. The OS may clamp a size or a position,
+    // and a shell that echoed its own request could not tell the difference between that and what happened.
     return {
       ok: true,
       mode: windowMode.mode,
       bounds: window.getBounds(),
+      minimumSize: window.getMinimumSize(),
       alwaysOnTop: window.isAlwaysOnTop(),
     };
   });
@@ -243,7 +244,9 @@ async function createShellWindow({ show = true } = {}) {
   const window = new BrowserWindow({
     width: 1100,
     height: 760,
-    show,
+    // Always created hidden and shown once it has something to show: a frameless window that appears before its
+    // document has painted is a blank rectangle that reads as a failure.
+    show: false,
     title: "clarkcant",
     backgroundColor: "#0d1117",
     // The floor from the issue. What the window is allowed to become, not what it aims for.
@@ -270,6 +273,23 @@ async function createShellWindow({ show = true } = {}) {
   });
 
   await window.loadURL(rendererUrl);
+
+  window.once("ready-to-show", () => {
+    if (show) window.show();
+  });
+
+  // A window somebody dragged is the window they expect back, so a resize while expanded is remembered as the
+  // size to return to. A resize during compact is the bar being moved, and remembering that as the normal size
+  // would make expanding do nothing at all.
+  window.on("resize", () => {
+    if (windowMode === undefined) {
+      windowMode = initialWindowMode({ bounds: window.getBounds(), workArea: workAreaFor(window) });
+    }
+    if (windowMode.mode === "compact") return;
+    const bounds = window.getBounds();
+    windowMode = { ...windowMode, bounds, normalBounds: bounds };
+  });
+
   return window;
 }
 
