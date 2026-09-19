@@ -45,6 +45,16 @@ export interface PreferencesHandle {
   write: (key: string, value: unknown) => void;
   /** Undo the last write, which is how a control offers "back to what it was". */
   undo: (key: string) => void;
+  /**
+   * Return a preference to its declared default, however many writes it took to get away from it.
+   *
+   * Distinct from `undo`, which steps back exactly one write. A control labelled "reset" means the default,
+   * and a preference somebody edited four times would otherwise need four presses — which is not what the
+   * word promises. Implemented as repeated undo rather than as a second write of the default, because writing
+   * the default would store it as a choice: the surface would then show a value the user picked rather than
+   * the state of having never picked one.
+   */
+  reset: (key: string) => void;
   reload: () => void;
 }
 
@@ -191,6 +201,50 @@ export function usePreferences(client: GatewayClient, open: boolean): Preference
     [client],
   );
 
+  /**
+   * How many undo steps a reset will take before giving up.
+   *
+   * A bound rather than a `while (true)`: each step is a request, and a preference that somehow never reported
+   * itself as default would otherwise be an unbounded loop against the node. Eight is far past any real edit
+   * history for a settings field.
+   */
+  const RESET_MAX_STEPS = 8;
+
+  const reset = useCallback(
+    (key: string): void => {
+      setPending(key);
+      setStatus(undefined);
+      const step = async (remaining: number): Promise<void> => {
+        if (remaining <= 0) {
+          setStatus({ key, tone: "error", message: "Không đưa được về mặc định. Thử lại sau." });
+          return;
+        }
+        const answer = await client.undoPreference(key);
+        setPreferences((current) => {
+          if (current === undefined) return current;
+          return current.map((entry) => (entry.key === key ? answer.preference : entry));
+        });
+        if (answer.preference.isDefault) {
+          setStatus({ key, tone: "ok", message: "Đã trở về mặc định." });
+          return;
+        }
+        await step(remaining - 1);
+      };
+      void step(RESET_MAX_STEPS)
+        .catch((cause: unknown) => {
+          setStatus({
+            key,
+            tone: "error",
+            message: cause instanceof Error ? cause.message : "Không đặt lại được.",
+          });
+        })
+        .finally(() => {
+          setPending((current) => (current === key ? undefined : current));
+        });
+    },
+    [client],
+  );
+
   return {
     preferences,
     problem,
@@ -202,6 +256,7 @@ export function usePreferences(client: GatewayClient, open: boolean): Preference
     record,
     write,
     undo,
+    reset,
     reload: () => setGeneration((current) => current + 1),
   };
 }
