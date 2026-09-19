@@ -1,7 +1,7 @@
 ---
 phase: 6
 title: "T66 — voice và click chạm cùng một widget action state"
-status: done
+status: in-progress
 priority: P1
 effort: "4h"
 dependencies: [5]
@@ -9,14 +9,6 @@ dependencies: [5]
 
 # Phase 6: T66 — voice và click chạm cùng một widget action state
 
-> **Tiêu chí của phase này ĐÃ ĐẠT.** T66 chuyển `NOT-IMPLEMENTED` → `PASS` với tên test
-> `apps/web/e2e/voice-widget-action.spec.ts` — "a spoken action and the same click reach the same state", và journey
-> từ chối đi kèm; cả hai xanh và nằm trong suite.
->
-> Nguyên nhân đã đo được, và ghi chú cũ trong file spec đoán sai: câu nói **có** được resolve và action **có**
-> chạy — node báo `ok`, revision 7 → 8, "Đã Đổi khoảng thời gian" — nhưng trang **không có** handler cho frame
-> `widget-action-result`, nên surface vẫn hiển thị period cũ. Câu nói còn phải mang tham số: action này nhận một
-> period, và một câu chỉ nêu tên action thì không chọn được period nào.
 
 ## Context Links
 

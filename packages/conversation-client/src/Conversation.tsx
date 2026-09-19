@@ -22,7 +22,7 @@ import { hasDesktopChrome, requestWindowMode } from "./desktop-compact.ts";
 import { DesktopChrome } from "./desktop-chrome.tsx";
 import { fetchSuggestions } from "./suggestions.ts";
 import type { Suggestion } from "@clarkcant/contracts";
-import { ReasoningBlock, ToolActivityBlock, type BlockActions } from "./blocks.tsx";
+import { ReasoningBlock, ToolActivityBlock, type BlockActions, type TaskStopState } from "./blocks.tsx";
 import { composerTextareaHeight } from "./composer-height.ts";
 import {
   attachmentReducer,
@@ -1159,6 +1159,38 @@ export function Conversation({
     return { questions, forms };
   }, [timeline]);
 
+  /**
+   * What the node said about each stop request.
+   *
+   * Held here rather than in the card because the card is asserted directly by its own test file and has to stay
+   * a pure function of its props, and because one place should own the call.
+   */
+  const [taskStop, setTaskStop] = useState<Record<string, TaskStopState>>({});
+
+  const stopTask = useCallback(
+    (taskId: string) => {
+      setTaskStop((current) => ({ ...current, [taskId]: { status: "pending" } }));
+      void client.cancelTask(taskId).then(
+        (result) =>
+          setTaskStop((current) => ({
+            ...current,
+            [taskId]: { status: "requested", state: result.state, confirmed: result.confirmed },
+          })),
+        (error: unknown) =>
+          // Reported beside the control that caused it, and the task is left alone: nothing here pretends the
+          // request landed, because a stop that did not reach the node has not stopped anything.
+          setTaskStop((current) => ({
+            ...current,
+            [taskId]: {
+              status: "failed",
+              message: error instanceof Error ? error.message : "Không gửi được yêu cầu dừng task.",
+            },
+          })),
+      );
+    },
+    [client],
+  );
+
   const blockActions: BlockActions = useMemo(
     () => ({
       onApprovalDecide: decideApproval,
@@ -1175,8 +1207,10 @@ export function Conversation({
       /* The same path as a question: the answers become the user's own next message. */
       onFormSubmit: ({ summary }) => void send(summary),
       openFormIds: openCardIds.forms,
+      onTaskStop: ({ taskId }) => stopTask(taskId),
+      taskStop,
     }),
-    [credentialStatus, decideApproval, decidedApprovals, decidingApprovalId, openCardIds, send, submitCredential],
+    [credentialStatus, decideApproval, decidedApprovals, decidingApprovalId, openCardIds, send, stopTask, submitCredential, taskStop],
   );
 
   const renderSurface = useCallback(

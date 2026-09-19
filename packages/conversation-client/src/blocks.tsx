@@ -328,7 +328,22 @@ export interface BlockActions {
   onFormSubmit?: (input: { formId: string; summary: string; values: Record<string, string> }) => void;
   /** Forms that may still be submitted: the same rule as questions, from the same computation. */
   openFormIds?: readonly string[];
+  /**
+   * Ask a running task to stop.
+   *
+   * The node answers with what it actually did rather than with what was asked: cancellation is two steps, so a
+   * task whose executor is still running comes back `cancel_requested` and only a task with nothing in flight is
+   * confirmed on the spot. The outcome is the node's answer, never the press.
+   */
+  onTaskStop?: (input: { taskId: string }) => void;
+  /** What the node said about each stop request, keyed by task id. */
+  taskStop?: Readonly<Record<string, TaskStopState>>;
 }
+
+export type TaskStopState =
+  | { status: "pending" }
+  | { status: "requested"; state: string; confirmed: boolean }
+  | { status: "failed"; message: string };
 
 /**
  * The approval card.
@@ -588,7 +603,13 @@ function listOf(value: unknown): Record<string, unknown>[] {
  * The steps are whatever the host genuinely knows. A card that fills in every step as done to
  * look complete would be inventing progress, which is the same failure as inventing an answer.
  */
-export function TaskProgressCardBlock({ block }: { block: Record<string, unknown> }): ReactElement | null {
+export function TaskProgressCardBlock({
+  block,
+  actions,
+}: {
+  block: Record<string, unknown>;
+  actions?: BlockActions;
+}): ReactElement | null {
   if (block.owner !== "host") return null;
   const goal = fieldText(block.goal);
   const status = fieldText(block.status, "working");
@@ -596,6 +617,8 @@ export function TaskProgressCardBlock({ block }: { block: Record<string, unknown
   const targetNode = (block.targetNode ?? undefined) as Record<string, unknown> | undefined;
   const cancellable = block.cancellable === true;
   const startedAt = fieldText(block.startedAt);
+  const taskId = fieldText(block.taskId);
+  const stopState = taskId === "" ? undefined : actions?.taskStop?.[taskId];
 
   return (
     <section className="cc-card" data-host-card="task-progress" data-owner="host" data-status={status}>
@@ -635,8 +658,40 @@ export function TaskProgressCardBlock({ block }: { block: Record<string, unknown
             </>
           )}
           <dt>Dừng được</dt>
-          <dd>{cancellable ? "có" : "không"}</dd>
+          <dd data-task-cancellable={cancellable ? "true" : "false"}>{cancellable ? "có" : "không"}</dd>
         </dl>
+        {/*
+          The card used to say a task could be stopped and offer nothing that stopped it. The control appears
+          exactly when the block says the task is cancellable, so the claim and the affordance cannot drift.
+        */}
+        {cancellable && taskId !== "" && actions?.onTaskStop !== undefined ? (
+          <div className="cc-chip-row">
+            <button
+              type="button"
+              className="cc-chip"
+              data-task-stop={taskId}
+              disabled={stopState !== undefined && stopState.status !== "failed"}
+              onClick={() => actions.onTaskStop?.({ taskId })}
+            >
+              {stopState?.status === "pending" ? "Đang gửi yêu cầu dừng…" : "Dừng lại"}
+            </button>
+          </div>
+        ) : null}
+        {stopState === undefined || stopState.status === "pending" ? null : stopState.status === "failed" ? (
+          <p className="cc-freshness" data-task-stop-error="true">
+            {stopState.message}
+          </p>
+        ) : (
+          <p
+            className="cc-freshness"
+            data-task-stop-outcome={stopState.state}
+            data-task-stop-confirmed={String(stopState.confirmed)}
+          >
+            {stopState.confirmed
+              ? "Đã dừng. Không có việc nào đang chạy nên không còn gì đang chờ."
+              : "Đã yêu cầu dừng. Nơi đang chạy việc này sẽ xác nhận khi nó thật sự dừng — trong lúc đó task đang dừng dở, chưa phải đã dừng."}
+          </p>
+        )}
       </div>
     </section>
   );
@@ -746,7 +801,25 @@ export function CodeDiffCardBlock({ block }: { block: Record<string, unknown> })
   const truncated = block.truncated === true;
 
   return (
-    <section className="cc-card" data-host-card="code-diff" data-owner="host" data-truncated={truncated}>
+    <section
+      className="cc-card"
+      data-host-card="code-diff"
+      data-owner="host"
+      data-truncated={truncated}
+      /*
+       * Reachable without a pointer. A diff is long and read-only, which is exactly the shape that tends to
+       * end up as a div only a mouse can scroll inside: the page scrolls, the diff does not, and a keyboard
+       * user cannot get to the bottom of the change they were asked to review. Focusable and labelled makes
+       * the whole change traversable with the arrow keys.
+       *
+       * No collapse controls are added for this: the card holds no state, so it stays a pure function of its
+       * props and can still be rendered and asserted without a DOM.
+       */
+      tabIndex={0}
+      role="group"
+      aria-label={`Diff: ${summary}`}
+      data-diff-keyboard="true"
+    >
       <header className="cc-card-head">
         <span className="cc-card-title">{summary}</span>
         <span className="cc-badge">{files.length}</span>
@@ -1063,7 +1136,11 @@ export function renderBlock(
     case "credential-card":
       return <CredentialCardBlock key={index} block={block} {...(actions === undefined ? {} : { actions })} />;
     case "task-progress-card":
-      return <TaskProgressCardBlock key={index} block={block} />;
+      // `actions` must be forwarded, or the card's Stop control is unreachable in the browser while its
+      // own unit test — which calls the component directly — still passes.
+      return (
+        <TaskProgressCardBlock key={index} block={block} {...(actions === undefined ? {} : { actions })} />
+      );
     case "task-summary-card":
       return <TaskSummaryCardBlock key={index} block={block} />;
     case "task-overview-card":

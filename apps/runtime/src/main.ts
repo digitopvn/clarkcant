@@ -28,7 +28,7 @@ import { createNodeServer } from "./server.ts";
 import { machineRoots } from "./fs-search.ts";
 import { resolveProject, refreshProjectIndex } from "./project-finder.ts";
 import { commandDigest } from "./run-command.ts";
-import { captureSnapshot, createInstance, handleUserMessage, readExecutionPolicy, readPersonalInstructions, recordAppIntentEvent, requestApproval, setPreference, type CoordinationDeps } from "@clarkcant/core";
+import { captureSnapshot, createInstance, createTask, handleUserMessage, readExecutionPolicy, readPersonalInstructions, recordAppIntentEvent, requestApproval, setPreference, type CoordinationDeps } from "@clarkcant/core";
 import { GALLERY, YOUTUBE } from "@clarkcant/data-canvas";
 import { definitionDigest } from "@clarkcant/widget-host";
 import { listLocalImages, messagesSince, readCredential,
@@ -180,6 +180,87 @@ async function main(): Promise<void> {
             { id: "field-1", label: "Tên dự án", kind: "text", required: true, placeholder: "ví dụ: clarkcant" },
             { id: "field-2", label: "Ghi chú", kind: "textarea" },
           ],
+        },
+      };
+    }
+
+    /*
+     * A task, scripted — but a real row in the database.
+     *
+     * The Stop control's entire claim is that pressing it changes the node's record of the task, so a card
+     * carrying an invented id would prove nothing: the browser journey would be asserting against a task that
+     * does not exist. This makes the row the control actually acts on.
+     */
+    if (/task dài|chạy task|long task/i.test(input.text)) {
+      const taskDeps = {
+        db: services.runtime.db,
+        nodeId: services.runtime.identity.nodeId,
+        now: () => instantSchema.parse(new Date().toISOString()),
+        newId: services.conductor.newId,
+      };
+      const task = createTask(taskDeps, {
+        conversationId: input.conversationId as never,
+        goal: "Task do fixture tạo để thử nút dừng",
+        principal: {
+          principalId: input.principal.principalId as never,
+          kind: "user" as const,
+          nodeId: services.runtime.identity.nodeId as never,
+        },
+      });
+      const at = instantSchema.parse(new Date().toISOString());
+      return {
+        text: "Đây là task do fixture tạo, không phải model thật, và chưa chạy ở đâu cả.",
+        block: {
+          type: "task-progress-card",
+          owner: "host",
+          cardId: services.conductor.newId("card"),
+          taskId: task.taskId,
+          goal: task.goal,
+          status: "queued",
+          steps: [],
+          startedAt: at,
+          updatedAt: at,
+          cancellable: true,
+        },
+      };
+    }
+
+    /*
+     * A diff, scripted.
+     *
+     * The keyboard journey needs a diff that is long enough to scroll and present without a pointer, and a card
+     * nothing can produce would leave that journey asserting against a component no user can reach.
+     */
+    if (/xem diff|xem thay đổi|thử diff|show diff/i.test(input.text)) {
+      return {
+        text: "Đây là diff do fixture tạo, không phải model thật.",
+        block: {
+          type: "code-diff-card",
+          owner: "host",
+          cardId: services.conductor.newId("card"),
+          summary: "Đổi cách task được đánh dấu là đã dừng",
+          files: [
+            {
+              path: "packages/core/src/task-service.ts",
+              additions: 2,
+              deletions: 1,
+              hunks: [
+                {
+                  header: "@@ -495,3 +495,4 @@ cancelTask",
+                  lines: [
+                    { kind: "context", text: "const requested = applyTaskEvent(deps, taskId, \"cancel.requested\");" },
+                    { kind: "remove", text: "if (requested.ok) return requested.task;" },
+                    { kind: "add", text: "if (!requested.ok) return requested;" },
+                    { kind: "add", text: "return confirmed(requested.task);" },
+                  ],
+                },
+              ],
+            },
+          ],
+          truncated: false,
+          // Required by the schema: a diff says when it was taken, because a change shown without a time reads
+          // as the current state of the code rather than as a snapshot of it.
+          updatedAt: instantSchema.parse(new Date().toISOString()),
         },
       };
     }

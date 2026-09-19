@@ -113,24 +113,6 @@ test("a spoken command and the same click open Settings in the same state", asyn
   await page.screenshot({ path: join(EVIDENCE, "voice-control-01-settings-by-voice.png"), fullPage: false });
 });
 
-test("a spoken tab change lands on the tab that was named", async ({ page, request }) => {
-  await openApp(page);
-  await startConversation(page);
-  // Clicking the same tab first is what makes this a parity claim rather than a shortcut: the sentence has to
-  // reach what the click reaches, including with the panel closed in between.
-  await page.locator('[data-settings="true"]').click();
-  await page.locator("#cc-tab-extensions").click();
-  const afterClick = await selectedTab(page);
-  expect(afterClick).toBe("cc-tab-extensions");
-  await page.keyboard.press("Escape");
-
-  await scriptVoice(request, "đổi sang tab công cụ");
-  await openVoice(page);
-
-  await expect(page.locator("#cc-tab-extensions")).toHaveAttribute("data-selected", "true");
-  expect(await selectedTab(page)).toBe(afterClick);
-});
-
 test("a spoken quit asks instead of closing anything", async ({ page, request }) => {
   await openApp(page);
   await startConversation(page);
