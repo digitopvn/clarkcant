@@ -89,3 +89,28 @@ Không, và có ba chỗ dễ trượt mà tôi cam kết giữ:
 Cách kiểm: test bị từ chối là test ngang hàng với test thành công — forged nonce, sai source window,
 message không có trong codec, capability chưa khai báo, và vượt budget đều phải **fail** có tên. Nếu
 Phase 11–12 chỉ có test happy path thì câu này coi như chưa trả lời.
+
+---
+
+## Stage F — Phase 13 (Package Marketplace & directory)
+
+### Câu 8 — Marketplace có đang bypass exact digest/generation/rollback không?
+
+**Trả lời trước khi bắt đầu (contract h), và đây là điều Phase 13 sẽ bị soi lại:**
+
+Không, và có bốn chỗ dễ trượt mà tôi cam kết giữ:
+
+1. **Không installer thứ hai.** Mọi nguồn — local path, git exact ref, npm exact version — đều đi qua
+   `joinOrCreatePlan` → `advanceInstall` → `activateGeneration` như hiện có. Marketplace chỉ là một
+   **nguồn resolve**: nó tạo ra cùng một `InstallPlan`, không tạo ra đường cài riêng.
+2. **Digest không được nới.** Một nguồn chỉ được chấp nhận khi resolve ra đúng digest đã công bố.
+   "Cài từ marketplace" không phải lý do để bỏ qua kiểm tra digest, và một lần cài không có digest
+   phải bị từ chối chứ không phải được mặc định.
+3. **Generation/rollback giữ nguyên.** Cài xong vẫn tạo generation mới và vẫn rollback được khi
+   healthcheck fail. Marketplace không được phép "cài trực tiếp" để tránh bước stage.
+4. **Risk lane được label, không bị trộn.** Isolated UI, tool/service và native Pi extension là ba
+   lane khác nhau; UI phải nói rõ lane nào, vì native extension là code chạy cùng tiến trình còn
+   isolated widget thì không.
+
+Cách kiểm: test cho một nguồn có digest sai phải **fail**, và test rằng rollback đưa về generation
+trước đó. Nếu Phase 13 chỉ có test happy path của install thì câu này coi như chưa trả lời.

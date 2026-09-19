@@ -19,6 +19,7 @@ export * from "./grants.ts";
 export * from "./tasks.ts";
 export * from "./effects.ts";
 export * from "./install.ts";
+export * from "./directory.ts";
 export * from "./widgets.ts";
 export * from "./surface-composition.ts";
 export * from "./period.ts";

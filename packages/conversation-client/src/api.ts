@@ -311,6 +311,19 @@ export interface ControlSessionView {
   stoppedAt?: string;
 }
 
+/** An installed package, as the node reports it. */
+export interface InstalledPackageView {
+  packageId: string;
+  version: string;
+  digest: string;
+  codeGeneration: string;
+  activatedAt: string;
+  source: { sourceTier: string; rationale: string; artifactUrl: string };
+  /** The strongest lane among the package's facets: a package is as trusted as its least isolated part. */
+  lane: "isolated-ui" | "service" | "declarative" | "trusted-native";
+  consentedDigest?: string;
+}
+
 export interface ArtifactView {
   artifactId: string;
   digest: string;
@@ -927,6 +940,16 @@ export class GatewayClient {
   /** End a browser session. Refused rather than reported as done when there is nothing left to stop. */
   controlStop(sessionId: string): Promise<{ session: ControlSessionView }> {
     return this.#call("POST", `/control-sessions/${encodeURIComponent(sessionId)}/stop`, {});
+  }
+
+  /**
+   * What is installed, with where each package came from and the lane it runs in.
+   *
+   * The digest is part of the answer on purpose: it is the only thing tying what is running to what was approved,
+   * and a list that showed a version without one would be inviting trust it has not earned.
+   */
+  packages(): Promise<{ packages: InstalledPackageView[] }> {
+    return this.#call("GET", "/packages");
   }
 
   claimLiveOwner(

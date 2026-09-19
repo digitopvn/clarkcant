@@ -29,6 +29,7 @@ import {
   handleUserMessage,
   invokeMiniAppAction,
   listCapabilitySummaries,
+  listInstalledPackages,
   listRegisteredPreferences,
   liveOwnerOf,
   liveStateOf,
@@ -693,6 +694,23 @@ export async function handleRequest(deps: GatewayDeps, request: GatewayRequest):
       });
     }
     return json(200, { session });
+  }
+
+  /*
+   * What is installed on this node.
+   *
+   * Read from the active generation, so a rollback is reflected here without anything in this route knowing about
+   * it — and a superseded generation is not listed, because a package that was replaced is not present.
+   */
+  if (segments.length === 1 && segments[0] === "packages" && request.method === "GET") {
+    return json(200, {
+      packages: listInstalledPackages({
+        db: runtime.db,
+        nodeId: runtime.identity.nodeId,
+        now: nowInstant,
+        newId: services.conductor.newId,
+      }),
+    });
   }
 
   if (request.method === "POST" && request.path === "/command") {

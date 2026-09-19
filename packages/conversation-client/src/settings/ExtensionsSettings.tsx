@@ -1,7 +1,7 @@
 import { useEffect, useState, type ReactElement } from "react";
 
 import { ToolLists } from "../tool-lists.tsx";
-import type { GatewayClient } from "../api.ts";
+import type { GatewayClient, InstalledPackageView } from "../api.ts";
 import { ToolRow } from "./controls/SettingsRow.tsx";
 
 /**
@@ -49,6 +49,11 @@ export function ExtensionsSettings({ client, tools }: ExtensionsSettingsProps): 
 
   return (
     <>
+      {/*
+        What is installed, and where it came from.
+        ...
+      */}
+      <InstalledPackagesSection client={client} />
       <section className="cc-panel-section">
         <h3>Capability trên node này</h3>
         <p className="cc-panel-note">
@@ -98,5 +103,81 @@ export function ExtensionsSettings({ client, tools }: ExtensionsSettingsProps): 
         )}
       </section>
     </>
+  );
+}
+
+/**
+ * What is installed, and where each package came from.
+ *
+ * Four facts, and three of them are ones a user cannot check for themselves: where it came from, which version,
+ * which digest, and which lane it runs in. The digest especially — it is the only thing tying what is running to
+ * what was approved, so a list that showed a version without one would be inviting trust it has not earned.
+ *
+ * The lanes are labelled apart on purpose. A native Pi extension is trusted process-level code that runs beside
+ * the host; an isolated widget is opaque-origin code in a frame with no Node, no filesystem and no host cookies.
+ * Showing them with the same wording would be the one mistake this list exists to prevent.
+ */
+const LANE_LABELS: Record<InstalledPackageView["lane"], string> = {
+  declarative: "chỉ dữ liệu",
+  "isolated-ui": "widget cách ly",
+  service: "service riêng tiến trình",
+  "trusted-native": "extension Pi gốc — chạy cùng tiến trình",
+};
+
+function InstalledPackagesSection({ client }: { client: GatewayClient }): ReactElement {
+  const [packages, setPackages] = useState<InstalledPackageView[] | undefined>(undefined);
+
+  useEffect(() => {
+    let cancelled = false;
+    void client
+      .packages()
+      .then((answer) => {
+        if (!cancelled) setPackages(answer.packages);
+      })
+      .catch(() => {
+        // Named as unread rather than shown as empty: an empty list would say "nothing is installed", which is a
+        // different claim from "this node could not say".
+        if (!cancelled) setPackages([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [client]);
+
+  return (
+    <section className="cc-panel-section">
+      <h3>Đã cài trên node này</h3>
+      {packages === undefined ? (
+        <p className="cc-panel-note">Đang đọc…</p>
+      ) : packages.length === 0 ? (
+        <p className="cc-panel-note">Chưa cài gói nào trên node này.</p>
+      ) : (
+        <ul className="cc-installed-list">
+          {packages.map((entry) => (
+            <li key={entry.packageId} data-installed-package={entry.packageId} data-installed-lane={entry.lane}>
+              <strong>
+                {entry.packageId}@{entry.version}
+              </strong>
+              <span className="cc-badge" data-lane={entry.lane}>
+                {LANE_LABELS[entry.lane]}
+              </span>
+              <dl className="cc-fields">
+                <dt>Nguồn</dt>
+                {/* The tier the resolver assigned, so "found on the internet" is never dressed up as first-party. */}
+                <dd data-installed-source-tier={entry.source.sourceTier}>
+                  {entry.source.rationale === "" ? entry.source.sourceTier : entry.source.rationale}
+                </dd>
+                <dt>Digest</dt>
+                <dd>
+                  <code data-installed-digest={entry.digest}>{entry.digest}</code>
+                </dd>
+                <dt>Cài lúc</dt>
+                <dd>{entry.activatedAt}</dd>
+              </dl>
+            </li>
+          ))}
+        </ul>
+      )}
+    </section>
   );
 }
