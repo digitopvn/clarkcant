@@ -20,6 +20,28 @@ của `main`. Trước đó mọi PR đều được squash, nên nội dung đ�
 `git merge-base --is-ancestor <nhánh> main` trả về sai. Merge này làm điều đó thành đúng, và nó không đổi một byte
 nội dung nào ngoài ghi chú này.
 
+## Từng mục của issue, và test chứng minh nó
+
+| Mục của issue #17 | Test |
+| --- | --- |
+| 1. Đính kèm tệp | `apps/web/e2e/attachments.spec.ts` — "the agent answers using the content of an attached file" (hai tệp, câu trả lời dùng nội dung tệp văn bản, reload vẫn thấy cả hai), cộng chín journey còn lại của tệp; từ chối path/URL/mime/ngưỡng/quota ở `apps/runtime/test/attachment-routes.spec.ts` |
+| 2. Cửa sổ desktop tối giản | smoke của `apps/desktop` (bounds, sàn 20×50, always-on-top đọc từ cửa sổ thật; chạy trong CI dưới `xvfb`) và `apps/web/e2e/voice-bar.spec.ts` (phiên sống qua cả hai chiều) |
+| 3. Voice điều khiển app | `apps/web/e2e/voice-control.spec.ts` — 8 journey: mở Settings, đổi tab được gọi tên, thoát app (hỏi trước), lệnh lạ bị từ chối, kết thúc phiên, về home, đính kèm (mở file picker), và lệnh cửa sổ bị từ chối trong browser; cộng `packages/core/test/app-intents.spec.ts` cho từng nhóm lệnh |
+| 4. Gợi ý từ việc gần đây | `apps/web/e2e/suggestions.spec.ts`, `apps/runtime/test/suggestions.spec.ts` |
+| 5. Tab Memory | `apps/web/e2e/memory.spec.ts` (rỗng, có dữ liệu kèm nguồn, xoá), `apps/runtime/test/memory.spec.ts` |
+
+Điều **chưa** đạt trong tiêu chí của issue: nội dung **ảnh/PDF** chưa tới model — chúng được nêu bằng id, và
+`prompt(sessionId, text)` chỉ nhận văn bản. Điều kiện còn thiếu ghi ở `docs/widgets-and-extensions.md` §4.1.
+
+## Tiêu chí của chính issue, không chỉ của plan
+
+Issue #17 §1 ghi điều kiện hoàn thành là: đính 2 tệp (1 text, 1 ảnh) → gửi → agent trả lời dùng nội dung tệp → reload vẫn thấy
+attachment. Journey `apps/web/e2e/attachments.spec.ts` — "the agent answers using the content of an attached file" —
+làm đúng chuỗi đó: hai tệp được đính, câu trả lời chứa nội dung của tệp văn bản, và cả hai tệp còn trong timeline sau khi
+reload. Model ở đó là fixture của node, nên điều được chứng minh là đường ống — tệp tới node, node đọc được nội dung,
+câu trả lời mang nó — chứ không phải phán đoán của model. Nội dung ảnh/PDF thì **chưa** tới model: chúng được nêu bằng
+id, và điều kiện còn thiếu ghi ở `docs/widgets-and-extensions.md` §4.1.
+
 ## Hai journey từng bị chặn, và đã sửa tại gốc
 
 Cả hai **đã xanh và nằm trong suite**, mỗi cái có tên test riêng trong ledger. Nguyên nhân của cả hai đều là lỗi mã
