@@ -245,6 +245,34 @@ export function commandOutput(outcome: CommandOutcome): string {
  * refused operation returns no block — a message describing something that did not happen is how a
  * transcript starts lying.
  */
+/**
+ * The receipt a model is given after a command it proposed has run.
+ *
+ * Not the searchable text of the message, and that distinction is the bug this exists to fix. The text walk collects a
+ * block's *summary*, and for a tool record the summary is the verdict - so the model was told a command had exited 0
+ * while the output it actually needed sat in a field nothing looked at. It asked for help, was told everything was
+ * fine, and had to ask again, which is exactly what a person watched happen.
+ *
+ * The output is bounded where it is stored rather than here: the record already carries at most twenty thousand
+ * characters, and re-bounding it in two places would be two places to get it wrong.
+ */
+export function receiptForModel(blocks: readonly MessageBlock[]): string {
+  const parts: string[] = [];
+  for (const block of blocks) {
+    if (block.type === "tool-activity") {
+      const command = block.args.command;
+      if (typeof command === "string" && command.trim() !== "") parts.push(`$ ${command.trim()}`);
+      // Optional on the block type, so it is checked rather than assumed; the receipt still carries the command.
+      if (block.result !== undefined && block.result.trim() !== "") parts.push(block.result);
+    } else if (block.type === "evidence") {
+      parts.push(block.summary);
+    } else if (block.type === "text") {
+      parts.push(block.content);
+    }
+  }
+  return parts.join("\n").trim();
+}
+
 export async function runApprovedCommand(input: {
   payload: string;
   expectedDigest: string;

@@ -63,7 +63,7 @@ import {
   updateLocalEvent,
 } from "./mini-app-data.ts";
 import { markProjectUsed, projectContext, resolveProject } from "./project-finder.ts";
-import { runApprovedCommand } from "./run-command.ts";
+import { receiptForModel, runApprovedCommand } from "./run-command.ts";
 import { initialPrompt } from "./project-session.ts";
 import { indexMessages, ingestSessionEntries, searchSessions, textOfMessage } from "./session-search.ts";
 import { type NodeServices, buildTimeline } from "./services.ts";
@@ -1480,7 +1480,7 @@ export async function decideApprovalForNode(
    * on. It is a new turn in the same conversation, so it costs a model call, and that cost is the difference
    * between an agent that asked for help and one that stops at the asking.
    */
-  const receipt = textOfMessage({ blocks: ran.blocks });
+  const receipt = receiptForModel(ran.blocks);
   const continued = await handleUserMessage(services.conductor, {
     conversationId: input.conversationId as never,
     principal: input.principal as never,

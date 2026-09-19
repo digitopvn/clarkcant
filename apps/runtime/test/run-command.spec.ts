@@ -1,4 +1,8 @@
-import { describe, expect, it } from "vitest";
+import {
+  describe,
+  expect,
+  it,
+} from "vitest";
 
 import {
   COMMAND_LIMITS,
@@ -6,6 +10,7 @@ import {
   guardCommand,
   runApprovedCommand,
   runCommand,
+  receiptForModel,
 } from "../src/run-command.ts";
 
 /**
@@ -180,3 +185,36 @@ describe("running a real command", () => {
     expect(outcome.stdout).toContain("đã cắt bớt");
   });
 });
+
+describe("the receipt a model is given", () => {
+  it("carries the command's output, not only its verdict", () => {
+    // Covered here because the bug was invisible in the transcript: the receipt block showed the output to a reader
+    // while the text the model received held only "the command exited with code 0", so the model asked for help, was
+    // told all was well, and asked again.
+    const receipt = receiptForModel([
+      {
+        type: "tool-activity",
+        toolCallId: "run-x",
+        name: "run_command",
+        label: "Chay lenh trong D:/proj",
+        status: "done",
+        args: { command: "git log -20 --oneline", cwd: "D:/proj", approvalId: "x", decision: "granted" },
+        result: "a1b2c3 lan dau\nd4e5f6 lan sau",
+        startedAt: "2026-09-19T02:00:00.000Z" as never,
+        endedAt: "2026-09-19T02:00:01.000Z" as never,
+      },
+      {
+        type: "evidence",
+        kind: "exit-status",
+        summary: "Lenh thoat voi ma 0 sau 12 ms.",
+        verdict: "verified",
+        ref: "x",
+      },
+    ]);
+
+    expect(receipt).toContain("git log -20 --oneline");
+    expect(receipt).toContain("a1b2c3 lan dau");
+    expect(receipt).toContain("Lenh thoat voi ma 0");
+  });
+});
+
