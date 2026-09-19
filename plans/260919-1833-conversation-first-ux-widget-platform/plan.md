@@ -95,7 +95,7 @@ Biến generic preference store hiện có thành một registry typed duy nhấ
 | `ai.personalInstructions` | global | enabled + bounded text |
 | `voice.provider` | node | provider id |
 | `voice.voiceName` | node | voice id |
-| `voice.wakePhrase` | node | enabled + detector id |
+| `voice.wake` | node | enabled + detector id |
 | `desktop.startMode` | node | normal/expanded/compact/orb |
 | `desktop.rememberBounds` | node | boolean |
 
@@ -104,7 +104,7 @@ Biến generic preference store hiện có thành một registry typed duy nhấ
 - `GET /preferences` → only registered user-facing preferences.
 - `PUT /preferences/:key` → validate schema + allowed scope.
 - `POST /preferences/:key/undo` → existing undo primitive.
-- Include `revision` and `applies` metadata: immediate / next-session / next-voice-session / desktop-restart.
+- Include `revision` and `applies` metadata: immediate / next-turn / next-session / next-voice-session / desktop-restart. `next-turn` is what personal instructions need: the text reaches the model on the next turn, which is neither "now" nor "when the session is recreated".
 - No secret values in preference API.
 
 ### Done

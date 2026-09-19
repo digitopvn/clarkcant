@@ -6,6 +6,8 @@
  * principal, because the gateway derives the caller from the channel rather than the body.
  */
 
+import { type RegisteredPreference } from "@clarkcant/contracts";
+
 import {
   type StartVoiceSessionOptions,
   type VoiceSession,
@@ -528,6 +530,41 @@ export class GatewayClient {
   }
 
   capabilities(): Promise<{ capabilities: { ref: string; summary: string; usable: boolean; blockedReason?: string }[] }> {    return this.#call("GET", "/capabilities");
+  }
+
+  /**
+   * The registered preferences and their current values.
+   *
+   * Every registered key is answered, including the ones nobody has set: those come back with the
+   * default the product would use and `isDefault: true`, so a settings surface renders an actual
+   * current state instead of inventing one — and cannot show a default as a choice the user made.
+   * `applies` says when a change is in effect, so the copy can say "next voice session" rather than
+   * implying that something already speaking changed underneath the reader.
+   */
+  preferences(): Promise<{ preferences: RegisteredPreference[] }> {
+    return this.#call("GET", "/preferences");
+  }
+
+  /**
+   * Writes one registered preference.
+   *
+   * The node validates the value against the key's own schema before storing anything, so a refused
+   * write leaves the previous value exactly where it was, and the error names the field rather than
+   * echoing what was sent.
+   */
+  writePreference(key: string, value: unknown): Promise<{ preference: RegisteredPreference }> {
+    return this.#call("PUT", `/preferences/${encodeURIComponent(key)}`, { value });
+  }
+
+  /**
+   * Undoes the last write to one preference.
+   *
+   * `undone: false` travels as a success, because a key nobody has written has nothing to undo.
+   */
+  undoPreference(
+    key: string,
+  ): Promise<{ undone: boolean; preference: RegisteredPreference; reason?: string }> {
+    return this.#call("POST", `/preferences/${encodeURIComponent(key)}/undo`);
   }
 
   /**
