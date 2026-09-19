@@ -19,6 +19,8 @@ import {
   openDatabase,
   payloadDigest,
   peerCursor,
+  putPreference,
+  readPreference,
   recordInbox,
   revokeGrant,
   unsettledEffects,
@@ -392,3 +394,54 @@ describe("a stored message", () => {
     expect(messagesSince(db, "conv_meta" as never, 7)).toHaveLength(0);
   });
 });
+
+describe("a stored preference", () => {
+  it("keeps what it replaced, counts the change, and scopes one choice away from another", () => {
+    const db = freshDb();
+    const owner = "principal-owner";
+    const at = instantSchema.parse("2026-09-19T02:00:00.000Z");
+
+    // Nobody has chosen yet, which is a different state from having chosen nothing.
+    expect(readPreference(db, owner, "model", "node")).toBeUndefined();
+
+    putPreference(db, {
+      principalId: owner,
+      key: "model",
+      value: "deepseek/deepseek-v4-flash",
+      scope: "node",
+      source: "onboarding",
+      at,
+    });
+    expect(readPreference(db, owner, "model", "node")).toBe("deepseek/deepseek-v4-flash");
+
+    putPreference(db, {
+      principalId: owner,
+      key: "model",
+      value: "google/gemini-3-pro",
+      scope: "node",
+      source: "settings",
+      at,
+    });
+    expect(readPreference(db, owner, "model", "node")).toBe("google/gemini-3-pro");
+
+    // What it replaced is the first question asked when a node starts behaving differently than expected.
+    const row = db
+      .prepare("SELECT revision, previous_value FROM preferences WHERE principal_id = ? AND key = ? AND scope = ?")
+      .get(owner, "model", "node") as { revision: number; previous_value: string | null };
+    expect(row.revision).toBe(2);
+    expect(row.previous_value).toBe("deepseek/deepseek-v4-flash");
+
+    // Scope is part of the key, so a conversation's choice cannot overwrite the node's.
+    putPreference(db, {
+      principalId: owner,
+      key: "model",
+      value: "google/gemini-3-flash",
+      scope: "conversation-1",
+      source: "settings",
+      at,
+    });
+    expect(readPreference(db, owner, "model", "conversation-1")).toBe("google/gemini-3-flash");
+    expect(readPreference(db, owner, "model", "node")).toBe("google/gemini-3-pro");
+  });
+});
+

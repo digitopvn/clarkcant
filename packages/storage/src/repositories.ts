@@ -2289,6 +2289,53 @@ export function readCredential(db: Database, principalId: string, name: string):
   return row?.value;
 }
 
+/*
+ * Preferences: a choice somebody made, written down with what it replaced.
+ *
+ * `previous_value` and `revision` are kept because a stored choice is a decision, and "what was it before" is the first
+ * question asked when a node starts behaving differently than expected. `scope` is part of the key, so the same setting
+ * can differ per conversation without one silently overwriting the other.
+ */
+export function putPreference(
+  db: Database,
+  input: { principalId: string; key: string; value: string; scope: string; source: string; at: Instant },
+): void {
+  const existing = db
+    .prepare("SELECT value, revision FROM preferences WHERE principal_id = ? AND key = ? AND scope = ?")
+    .get(input.principalId, input.key, input.scope) as { value: string; revision: number } | undefined;
+  db.prepare(
+    `INSERT INTO preferences (principal_id, key, value, scope, source, revision, previous_value, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT (principal_id, key, scope) DO UPDATE SET
+       value = excluded.value,
+       source = excluded.source,
+       revision = excluded.revision,
+       previous_value = excluded.previous_value`,
+  ).run(
+    input.principalId,
+    input.key,
+    input.value,
+    input.scope,
+    input.source,
+    (existing?.revision ?? 0) + 1,
+    existing?.value ?? null,
+    input.at,
+  );
+}
+
+/** What a stored preference says, or undefined when nobody has chosen yet. */
+export function readPreference(
+  db: Database,
+  principalId: string,
+  key: string,
+  scope: string,
+): string | undefined {
+  const row = db
+    .prepare("SELECT value FROM preferences WHERE principal_id = ? AND key = ? AND scope = ?")
+    .get(principalId, key, scope) as { value: string } | undefined;
+  return row?.value;
+}
+
 /** Forgets a name. Returns whether there was one to forget. */
 export function deleteCredential(db: Database, principalId: string, name: string): boolean {
   const result = db.prepare("DELETE FROM credentials WHERE principal_id = ? AND name = ?").run(principalId, name);
