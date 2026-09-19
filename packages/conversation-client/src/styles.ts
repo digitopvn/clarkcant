@@ -197,7 +197,7 @@ body {
   min-width: 220px; max-width: 360px; list-style: none;
   background: var(--cc-elevated); border: 1px solid var(--cc-border); border-radius: var(--cc-radius-card);
   box-shadow: 0 8px 24px rgb(0 0 0 / 35%);
-  opacity: 0; visibility: hidden; transition: opacity 120ms ease;
+  opacity: 0; visibility: hidden; transition: opacity var(--cc-motion-micro) ease;
 }
 .cc-bg-mark:hover .cc-bg-list, .cc-bg-mark:focus-within .cc-bg-list { opacity: 1; visibility: visible; }
 .cc-bg-list li { padding: 2px 0; }
@@ -836,6 +836,52 @@ figure.cc-attachment figcaption { margin-top: var(--cc-space-xs); color: var(--c
   transition: opacity var(--cc-motion-orb) var(--cc-motion-easing), filter var(--cc-motion-orb) var(--cc-motion-easing);
 }
 .cc-stage-orb[data-docked="true"] > .cc-empty-orb { opacity: 0.5; filter: blur(1px) brightness(0.85); }
+
+/*
+ * The docked orb reports what the agent is doing.
+ *
+ * One ring, coloured by the single state the shell publishes, rather than each panel growing its own
+ * indicator: the orb is already where the eye goes, and a second spinner somewhere else would be a second
+ * thing to keep in sync. The idle state draws nothing, because a ring that is always there stops meaning anything.
+ */
+.cc-stage-orb::after {
+  content: ""; position: absolute; inset: 12%; border-radius: var(--cc-radius-pill);
+  pointer-events: none; opacity: 0;
+  transition: opacity var(--cc-motion-normal) var(--cc-motion-easing);
+}
+.cc-shell[data-agent-state="thinking"] .cc-stage-orb::after,
+.cc-shell[data-agent-state="tooling"] .cc-stage-orb::after,
+.cc-shell[data-agent-state="listening"] .cc-stage-orb::after,
+.cc-shell[data-agent-state="responding"] .cc-stage-orb::after {
+  opacity: 1;
+  box-shadow: 0 0 26px color-mix(in oklab, var(--cc-accent) 30%, transparent);
+}
+/*
+ * A tool call and a reply are different amounts of activity, so they are different strengths of the same
+ * signal rather than different signals. The listening state is the brightest, because that is where the
+ * user is being recorded and should be able to see it without reading anything.
+ */
+.cc-shell[data-agent-state="listening"] .cc-stage-orb::after {
+  box-shadow: 0 0 34px color-mix(in oklab, var(--cc-success) 46%, transparent);
+}
+.cc-shell[data-agent-state="responding"] .cc-stage-orb::after {
+  box-shadow: 0 0 30px color-mix(in oklab, var(--cc-accent) 40%, transparent);
+}
+.cc-shell[data-agent-state="error"] .cc-stage-orb::after {
+  opacity: 1;
+  box-shadow: 0 0 30px color-mix(in oklab, var(--cc-danger, var(--cc-accent)) 42%, transparent);
+}
+
+/*
+ * Keyboard interaction gets a visible focus ring on the orb's own button.
+ *
+ * The global :focus-visible rule already covers this, so the modality attribute is not what draws the
+ * ring — it only removes the pointer's own affordance, so a mouse hovering the wordmark does not look
+ * like a keyboard focus. That is the honest use of the attribute: it says which input is in play, and the
+ * focus ring stays a function of focus rather than of the last thing that moved.
+ */
+.cc-shell[data-input-modality="keyboard"] .cc-brand:hover { opacity: 1; }
+.cc-shell[data-input-modality="touch"] .cc-brand:hover { opacity: 1; }
 
 /*
  * Tool activity and reasoning.

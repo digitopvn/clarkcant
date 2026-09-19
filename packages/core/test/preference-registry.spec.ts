@@ -256,6 +256,43 @@ describe("undo returns to what was there, or says there was nothing", () => {
     expect(outcome.reason).toContain("never been set");
     expect(outcome.preference.isDefault).toBe(true);
   });
+
+  it("can be undone twice, without writing an undefined value", () => {
+    /*
+     * The second undo is the case that broke. After the first one removed the row, writing the same key again
+     * and undoing it took the restore branch with no previous value, which reached SQLite as an unbound
+     * parameter and came back from the preferences route as a 500.
+     *
+     * This is the shape the e2e suite hits on every test: a preference is set, then reset, then reset again.
+     */
+    writeRegisteredPreference(deps, { principalId: PRINCIPAL, key: "orb.profile", value: "jelly" });
+    const first = undoRegisteredPreference(deps, { principalId: PRINCIPAL, key: "orb.profile" });
+    expect(first.ok).toBe(true);
+
+    // A second undo with nothing written in between is a no-op rather than a crash.
+    const second = undoRegisteredPreference(deps, { principalId: PRINCIPAL, key: "orb.profile" });
+    expect(second.ok).toBe(true);
+    if (!second.ok) throw new Error("expected a report");
+    expect(second.undone).toBe(false);
+    expect(second.preference.isDefault).toBe(true);
+
+    // And the whole cycle works again afterwards, which is what a settings surface does repeatedly.
+    writeRegisteredPreference(deps, { principalId: PRINCIPAL, key: "orb.profile", value: "calm" });
+    const third = undoRegisteredPreference(deps, { principalId: PRINCIPAL, key: "orb.profile" });
+    expect(third.ok).toBe(true);
+    if (!third.ok) throw new Error("expected an undo");
+    expect(third.preference.value).toBe("clark");
+    expect(third.preference.isDefault).toBe(true);
+  });
+
+  it("removes the row rather than restoring undefined when the history is exhausted", () => {
+    // The store's own view of it: an exhausted history is a row that no longer exists, not one holding a
+    // value nobody chose.
+    writeRegisteredPreference(deps, { principalId: PRINCIPAL, key: "experience.theme", value: "dark" });
+    undoRegisteredPreference(deps, { principalId: PRINCIPAL, key: "experience.theme" });
+    expect(storedKeys()).toEqual([]);
+    expect(readRegisteredPreference(deps, { principalId: PRINCIPAL, key: "experience.theme" })?.isDefault).toBe(true);
+  });
 });
 
 describe("a refusal describes the field, not the value", () => {

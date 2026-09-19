@@ -243,6 +243,16 @@ Root conversation surface nên có state machine hiển thị bằng data attrib
     data-window-mode    = normal | expanded | compact | orb
     data-policy-mode    = autonomous | guarded | ask
 
+Trên chính canvas của Orb, hai attribute nữa công bố **profile đã resolve** chứ không phải preference thô:
+
+    data-orb          = gl | fallback
+    data-orb-profile  = clark | calm | jelly | glass | custom
+    data-orb-motion   = full | reduced
+
+`data-orb-motion` là giá trị **sau khi** reduced-motion đã thắng, nên một surface đọc được sự thật đã resolve
+thay vì phải suy lại từ preference và có thể suy sai. Việc resolve (clamp, preset, reduced-motion) nằm ở một
+hàm thuần trong `orb-profile.ts`; renderer chỉ nhận giá trị đã bounded.
+
 ### 4.1 Pointer
 
 - Orb flare theo pointer proximity.
