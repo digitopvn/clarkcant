@@ -127,6 +127,32 @@ test("sending stores one attachment block per file in the timeline", async ({ pa
   await expect(page.locator("[data-attachment-block][data-attachment-kind='image']")).toHaveCount(1);
 });
 
+/**
+ * The issue's acceptance criterion for this feature, in one journey.
+ *
+ * "Attach two files, send, and the agent answers using the file's content" is what the issue asks the browser suite
+ * to show, and the reload is the other half of it. The model here is the node's fixture, so what this proves is the
+ * pipeline rather than a model's judgement: the file reached the node, the node made its content readable, and the
+ * answer carries it. The fixture reads through the same helpers the turn's prompt and the `read_attachment` tool use,
+ * which is what makes this the production wiring with the provider substituted rather than a second path.
+ */
+test("the agent answers using the content of an attached file", async ({ page }) => {
+  await openApp(page);
+  await attach(page, [TEXT, IMAGE]);
+  await expect(chips(page)).toHaveCount(2);
+
+  await send(page, "đọc giúp tui tệp này");
+
+  // The text file's content is "# Ghi chú\nnội dung thử.\n". That marker is the part nothing but the file could
+  // produce, which is what makes this a claim about the content rather than about the reply's shape.
+  await expect(page.locator('[data-role="assistant"]').last()).toContainText("nội dung thử", { timeout: 20_000 });
+
+  // The other half of the criterion: both attachments are still in the timeline after a reload.
+  await page.reload();
+  await expect(page.locator("[data-composer]")).toBeVisible();
+  await expect(page.locator("[data-attachment-block]")).toHaveCount(2, { timeout: 20_000 });
+});
+
 test("the attachments are still in the timeline after a reload", async ({ page }) => {
   await openApp(page);
   await attach(page, [TEXT, IMAGE]);
