@@ -116,12 +116,26 @@ export interface CatalogueProvider {
  */
 export type ModelCatalogue = readonly CatalogueProvider[];
 
+/** One thing pi loads from its own agent directory. Names and kinds only, never a file's contents. */
+export interface PiExtension {
+  readonly name: string;
+  readonly kind: "directory" | "file";
+}
+
 export interface PiAdapter {
   /** Whether the SDK is actually usable in this process. */
   availability(): Promise<{ available: boolean; reason?: string; sdkVersion?: string }>;
 
   /** The providers this installation offers and the models each one has. */
   catalogue(): Promise<ModelCatalogue>;
+
+  /**
+   * What pi loads from its own agent directory.
+   *
+   * Names and kinds only. An extension on a machine can hold a credential, and a listing that read contents would be
+   * the place it leaked from, so this deliberately reports less than it could.
+   */
+  extensions(): Promise<readonly PiExtension[]>;
 
   createWorkerSession(brief: WorkerBrief): Promise<WorkerSessionHandle>;
 

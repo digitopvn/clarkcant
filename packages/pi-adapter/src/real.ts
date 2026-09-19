@@ -1,7 +1,11 @@
+import { readdir } from "node:fs/promises";
+import { join } from "node:path";
+
 import type { Instant } from "@clarkcant/contracts";
 import { nowInstant } from "@clarkcant/contracts";
 
-import { NotImplementedError, type ModelCatalogue, type PiAdapter, type ResourceRefreshRequest, type ToolDefinition, type WorkerBrief, type WorkerEvent, type WorkerSessionHandle, type WorkerUsage } from "./types.ts";
+import { NotImplementedError, type ModelCatalogue,
+  type PiExtension, type PiAdapter, type ResourceRefreshRequest, type ToolDefinition, type WorkerBrief, type WorkerEvent, type WorkerSessionHandle, type WorkerUsage } from "./types.ts";
 
 /**
  * Real Pi SDK adapter.
@@ -249,6 +253,30 @@ export class RealPiAdapter implements PiAdapter {
         ...(model.contextWindow === undefined ? {} : { contextWindow: model.contextWindow }),
       })),
     }));
+  }
+
+  /**
+   * What pi loads from its own agent directory.
+   *
+   * The directory is the same one the loader resolves, so this reports the extensions this node actually runs with
+   * rather than the ones in some default place. A directory that is not there is an empty list instead of an error: a
+   * machine where nobody has configured pi has no extensions, which is a fact rather than a failure.
+   */
+  async extensions(): Promise<readonly PiExtension[]> {
+    const sdk = await this.#load();
+    try {
+      const entries = await readdir(join(this.#options.agentDir ?? sdk.getAgentDir(), "extensions"), {
+        withFileTypes: true,
+      });
+      return entries
+        .map((entry) => ({
+          name: entry.name,
+          kind: entry.isDirectory() ? ("directory" as const) : ("file" as const),
+        }))
+        .sort((left, right) => left.name.localeCompare(right.name));
+    } catch {
+      return [];
+    }
   }
 
   async createWorkerSession(brief: WorkerBrief): Promise<WorkerSessionHandle> {

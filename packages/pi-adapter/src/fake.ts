@@ -2,6 +2,7 @@ import type { Instant } from "@clarkcant/contracts";
 
 import type {
   ModelCatalogue,
+  PiExtension,
   PiAdapter,
   ResourceRefreshRequest,
   ToolDefinition,
@@ -70,6 +71,14 @@ export class FakePiAdapter implements PiAdapter {
         id: "fake-other",
         models: [{ provider: "fake-other", id: "fake-other-model", current: false }],
       },
+    ];
+  }
+
+  /** A scripted list, including both kinds, so a section rendering them has both to render. */
+  async extensions(): Promise<readonly PiExtension[]> {
+    return [
+      { name: "fake-extension", kind: "directory" },
+      { name: "fake-hook.ts", kind: "file" },
     ];
   }
 

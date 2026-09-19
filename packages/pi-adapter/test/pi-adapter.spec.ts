@@ -1,3 +1,7 @@
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
 import { describe, expect, it } from "vitest";
 
 import {
@@ -280,3 +284,32 @@ describe("the model catalogue", () => {
       }),
     ).rejects.toThrow(/from-the-brief/);
   });
+
+describe("the extension listing", () => {
+  it("reports the names and kinds pi would load from its own agent directory, and nothing else", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "cc-pi-agent-"));
+    mkdirSync(join(dir, "extensions", "my-extension"), { recursive: true });
+    // Written with contents that must not appear in the answer: the listing reports that a file is there, never what is
+    // in it, because an extension on a real machine can hold a credential.
+    writeFileSync(join(dir, "extensions", "notes.ts"), "const token = must-not-be-listed;");
+
+    const adapter = new RealPiAdapter({
+      cwd: process.cwd(),
+      agentDir: dir,
+      sdk: stubSdk().module as unknown as NonNullable<RealPiAdapterOptions["sdk"]>,
+    });
+
+    const listed = await adapter.extensions();
+    expect(listed).toEqual([
+      { name: "my-extension", kind: "directory" },
+      { name: "notes.ts", kind: "file" },
+    ]);
+    expect(JSON.stringify(listed)).not.toContain("must-not-be-listed");
+
+    // A machine where nobody has configured pi is a fact rather than a failure: an empty list, not an error.
+    rmSync(join(dir, "extensions"), { recursive: true, force: true });
+    expect(await adapter.extensions()).toEqual([]);
+    rmSync(dir, { recursive: true, force: true });
+  });
+});
+
