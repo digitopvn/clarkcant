@@ -407,7 +407,7 @@ export function voiceSocketUrl(nodeBaseUrl: string): string {
  * The loudness of one frame, from 0 to 1.
  *
  * Root mean square rather than peak: a peak meter jumps to full on a single click, so a table being set
-down reads as loud as speech. Normalised by the sample format's full scale, then scaled up, because the
+ * down reads as loud as speech. Normalised by the sample format's full scale, then scaled up, because the
  * RMS of ordinary speech is around 0.05 — on a bar chart that is indistinguishable from silence, and a
  * waveform nobody can see is worse than no waveform.
  */
