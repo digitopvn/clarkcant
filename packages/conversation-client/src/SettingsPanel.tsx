@@ -21,11 +21,10 @@ import { useCallback, useEffect, useState, type ReactElement, type ReactNode } f
 import { MicrophoneCheck } from "./microphone-check.tsx";
 import { ToolLists } from "./tool-lists.tsx";
 
-import { contrastRatio, AA_NORMAL_TEXT, DARK, LIGHT, type ThemeName } from "@clarkcant/design-tokens";
+import { contrastRatio, DARK, LIGHT, type ThemeName } from "@clarkcant/design-tokens";
 
 import { DevicePairingPanel } from "./DevicePairingPanel.tsx";
 import { Modal } from "./Modal.tsx";
-import { TokenSpecimens, readVar } from "./TokenSpecimens.tsx";
 import type { GatewayClient } from "./api.ts";
 import { THEME_CHOICES, type ThemeChoice } from "./theme.ts";
 
@@ -52,6 +51,8 @@ const THEME_LABELS: Record<ThemeChoice, string> = {
 
 const TABS = [
   { id: "general", label: "General" },
+  // Provider and model together, because choosing one means choosing the other: the second list belongs to the first.
+  { id: "models", label: "Models" },
   { id: "tools", label: "Tools" },
   { id: "devices", label: "Devices" },
 ] as const;
@@ -195,6 +196,122 @@ export function SettingsPanel({
   >(undefined);
 
   /** What became of the last model choice: a status, never a value, and never shown as if it applied already. */
+
+  /** What the two fields hold while somebody types: nothing is stored until it is asked for. */
+  const [providerDraft, setProviderDraft] = useState<string | undefined>(undefined);
+  const [modelDraft, setModelDraft] = useState<string | undefined>(undefined);
+
+  /** The provider whose models the second field offers: what was typed, or what the node is running. */
+  const chosenProvider = providerDraft ?? facts?.model?.provider ?? "";
+  const chosenModels = catalogue?.find((provider) => provider.id === chosenProvider)?.models ?? [];
+
+  /** Store the pair somebody typed, refusing one this node cannot run before it leaves the page. */
+  const saveModelChoice = (): void => {
+    const provider = chosenProvider.trim();
+    const id = (modelDraft ?? facts?.model?.id ?? "").trim();
+    if (provider === "" || id === "") {
+      setModelStatus("Chọn một provider và một model trước đã.");
+      return;
+    }
+    if (catalogue !== undefined && catalogue.length > 0 && !chosenModels.some((model) => model.id === id)) {
+      // Refused in front of the field it was typed into, rather than by the node after a round trip.
+      setModelStatus(`${provider} không có model ${id}.`);
+      return;
+    }
+    client
+      .chooseModel({ provider, id })
+      .then(() => setModelStatus(`Đã lưu ${provider}/${id}. Áp dụng cho hội thoại mới.`))
+      .catch(() => setModelStatus("Không lưu được lựa chọn."));
+  };
+
+  /**
+   * One key's form: entered here, stored by the node, and never shown again.
+   *
+   * A function rather than a copy, because the same field appears in two tabs and a second copy of a credential
+   * form is the one kind of duplication that goes wrong quietly.
+   */
+  const keyForm = (entry: (typeof KEY_FIELDS)[number]) => (
+              <form
+                key={entry.name}
+                className="cc-credential-form"
+                data-settings-key-form={entry.name}
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  const value = (keyDrafts[entry.name] ?? "").trim();
+                  if (value === "") return;
+                  client
+                    .putCredential({ fields: [{ name: entry.name, value }] })
+                    .then((result) => {
+                      // Cleared the moment it is sent, so nothing later can read it off the screen or out of state.
+                      setKeyDrafts((current) => ({ ...current, [entry.name]: "" }));
+                      setKeyStatuses((current) => ({
+                        ...current,
+                        [entry.name]: result.names.includes(entry.name)
+                          ? "Đã lưu khoá."
+                          : "Đã gửi, nhưng node không ghi nhận tên khoá nào.",
+                      }));
+                    })
+                    .catch(() =>
+                      // The message says nothing about what was typed: an error that repeated the value would be the
+                      // leak this field exists to avoid.
+                      setKeyStatuses((current) => ({ ...current, [entry.name]: "Không lưu được khoá. Thử lại." })),
+                    );
+                }}
+              >
+                <label className="cc-credential-field">
+                  <span>{entry.label}</span>
+                  <input
+                    type="password"
+                    name={entry.name}
+                    autoComplete="off"
+                    data-settings-key-field={entry.name}
+                    value={keyDrafts[entry.name] ?? ""}
+                    onChange={(event) => setKeyDrafts((current) => ({ ...current, [entry.name]: event.target.value }))}
+                  />
+                </label>
+                <button
+                  type="submit"
+                  className="cc-icon-btn"
+                  style={{ width: "auto", padding: "0 var(--cc-space-sm)" }}
+                  disabled={(keyDrafts[entry.name] ?? "").trim() === ""}
+                  data-settings-key-submit={entry.name}
+                >
+                  Lưu khoá
+                </button>
+                <p className="cc-freshness">{entry.purpose}</p>
+                {keyStatuses[entry.name] !== undefined && (
+                  <p className="cc-freshness" data-settings-key-status={entry.name}>
+                    {keyStatuses[entry.name]}
+                  </p>
+                )}
+                              <button
+                  type="button"
+                  className="cc-chip"
+                  data-settings-key-remove={entry.name}
+                  onClick={() => {
+                    client
+                      .deleteCredential(entry.name)
+                      .then(() => {
+                        setKeyStatuses((current) => ({
+                          ...current,
+                          [entry.name]: "Đã đăng xuất: node không còn giữ khoá này.",
+                        }));
+                      })
+                      .catch(() =>
+                        // A refusal here usually means there was nothing to remove, which is a different answer from a
+                        // failure and is said as one rather than dressed up as an error.
+                        setKeyStatuses((current) => ({
+                          ...current,
+                          [entry.name]: "Không xoá được — có thể node chưa giữ khoá này.",
+                        })),
+                      );
+                  }}
+                >
+                  Đăng xuất
+                </button>
+                </form>
+  );
+
   const [modelStatus, setModelStatus] = useState<string | undefined>(undefined);
 
   /** What pi loads on this machine, or undefined before the node has answered. */
@@ -260,7 +377,6 @@ export function SettingsPanel({
   const [keyStatuses, setKeyStatuses] = useState<Record<string, string>>({});  const [accentIndex, setAccentIndex] = useState(0);
   const [tab, setTab] = useState<TabId>("general");
   // Bumped after a theme or accent change so the contrast readout re-reads computed values.
-  const [revision, setRevision] = useState(0);
 
   useEffect(() => {
     if (!open) return;
@@ -295,7 +411,6 @@ export function SettingsPanel({
   const chooseTheme = useCallback(
     (next: ThemeChoice) => {
       onThemeChoice(next);
-      setRevision((n) => n + 1);
     },
     [onThemeChoice],
   );
@@ -320,7 +435,6 @@ export function SettingsPanel({
         contrastRatio("#ffffff", value) >= contrastRatio(tokens.canvas, value) ? "#ffffff" : tokens.canvas,
       );
       setAccentIndex(index);
-      setRevision((n) => n + 1);
     },
     [resolvedTheme],
   );
@@ -336,30 +450,6 @@ export function SettingsPanel({
 
   if (!open) return null;
 
-  const contrastReadout = (): { label: string; ratio: number }[] => {
-    void revision;
-    const pairs: { label: string; foreground: string; background: string }[] = [
-      { label: "body text on canvas", foreground: readVar("--cc-text"), background: readVar("--cc-canvas") },
-      { label: "caption text on a card", foreground: readVar("--cc-text-muted"), background: readVar("--cc-card") },
-      {
-        label: "tertiary text on canvas",
-        foreground: readVar("--cc-text-tertiary"),
-        background: readVar("--cc-canvas"),
-      },
-      { label: "label on accent", foreground: readVar("--cc-on-accent"), background: readVar("--cc-accent") },
-    ];
-    const measured: { label: string; ratio: number }[] = [];
-    for (const pair of pairs) {
-      if (pair.foreground === "" || pair.background === "") continue;
-      try {
-        measured.push({ label: pair.label, ratio: contrastRatio(pair.foreground, pair.background) });
-      } catch {
-        // A value the parser does not understand is left out rather than reported as a pass.
-        continue;
-      }
-    }
-    return measured;
-  };
 
   const nodeStatus = (): string => {
     if (problem !== undefined) return "Không đọc được trạng thái node";
@@ -456,33 +546,6 @@ export function SettingsPanel({
               <p className="cc-panel-note">{ACCENT_CHOICES[accentIndex]?.note ?? ""}</p>
             </section>
 
-            <section className="cc-panel-section">
-              <h3>Model</h3>
-              {facts === undefined ? (
-                <p className="cc-panel-note">Đang đọc…</p>
-              ) : facts.model === null ? (
-                // A node with no model is a working node. Saying so is the point.
-                <p className="cc-panel-note" data-model="none">
-                  Node này chưa cấu hình model. Nó trả lời bằng recipe và capability đã cài, và không
-                  gọi provider nào.
-                </p>
-              ) : (
-                <>
-                  <SettingsRow label="Provider" description="Đặt bằng CC_MODEL_PROVIDER.">
-                    <code>{facts.model.provider}</code>
-                  </SettingsRow>
-                  <SettingsRow label="Model" description="Đặt bằng CC_MODEL_ID.">
-                    <code>{facts.model.id}</code>
-                  </SettingsRow>
-                  <SettingsRow label="Trần một lượt" description="Một lượt vượt trần sẽ bị dừng, không chạy tiếp.">
-                    <code>
-                      {facts.model.maxWallClockMs} ms · {facts.model.maxTokens} token
-                    </code>
-                  </SettingsRow>
-                </>
-              )}
-            </section>
-
             <section className="cc-panel-section" data-providers="true">
               <h3>Provider và model có thể chạy</h3>
               {catalogue === undefined ? (
@@ -532,23 +595,105 @@ export function SettingsPanel({
               )}
             </section>
 
+          </>
+        )}
+
+        {tab === "models" && (
+          <>
             <section className="cc-panel-section">
-              <h3>Độ tương phản, đo trực tiếp</h3>
-              <ul className="cc-panel-readout">
-                {contrastReadout().map((row) => (
-                  <li key={row.label} data-pass={row.ratio >= AA_NORMAL_TEXT}>
-                    <span>{row.label}</span>
-                    <span>
-                      {row.ratio.toFixed(2)}:1 {row.ratio >= AA_NORMAL_TEXT ? "✓" : "✗ dưới 4.5"}
-                    </span>
-                  </li>
-                ))}
-              </ul>
+              <h3>Model</h3>
+              {facts === undefined ? (
+                <p className="cc-panel-note">Đang đọc…</p>
+              ) : facts.model === null ? (
+                // A node with no model is a working node. Saying so is the point.
+                <p className="cc-panel-note" data-model="none">
+                  Node này chưa cấu hình model. Nó trả lời bằng recipe và capability đã cài, và không
+                  gọi provider nào.
+                </p>
+              ) : (
+                <>
+                  <SettingsRow label="Provider" description="Đặt bằng CC_MODEL_PROVIDER.">
+                    <code>{facts.model.provider}</code>
+                  </SettingsRow>
+                  <SettingsRow label="Model" description="Đặt bằng CC_MODEL_ID.">
+                    <code>{facts.model.id}</code>
+                  </SettingsRow>
+                  <SettingsRow label="Trần một lượt" description="Một lượt vượt trần sẽ bị dừng, không chạy tiếp.">
+                    <code>
+                      {facts.model.maxWallClockMs} ms · {facts.model.maxTokens} token
+                    </code>
+                  </SettingsRow>
+                </>
+              )}
             </section>
 
-            {/* The same specimens the UI panel shows. A user checking what the interface is built
-                from should not have to open a second tool to find out. */}
-            <TokenSpecimens />
+            <section className="cc-panel-section" data-providers="true">
+              <h3>Chọn provider và model</h3>
+              {catalogue === undefined ? (
+                <p className="cc-panel-note">Đang đọc…</p>
+              ) : catalogue.length === 0 ? (
+                <p className="cc-panel-note" data-providers="none">
+                  Node chưa báo provider nào. Danh sách này đọc từ pi trên máy, nên nó rỗng khi pi chưa
+                  thấy provider nào — hoặc khi node không dựng được model turn.
+                </p>
+              ) : (
+                <>
+                  <label className="cc-credential-field">
+                    <span>Provider</span>
+                    <input
+                      list="cc-provider-options"
+                      autoComplete="off"
+                      data-provider-input="true"
+                      value={chosenProvider}
+                      onChange={(event) => {
+                        setProviderDraft(event.target.value);
+                      }}
+                    />
+                  </label>
+                  <datalist id="cc-provider-options">
+                    {catalogue.map((provider) => (
+                      <option key={provider.id} value={provider.id} />
+                    ))}
+                  </datalist>
+
+                  <label className="cc-credential-field">
+                    <span>Model</span>
+                    <input
+                      list="cc-model-options"
+                      autoComplete="off"
+                      data-model-input="true"
+                      value={modelDraft ?? facts?.model?.id ?? ""}
+                      onChange={(event) => setModelDraft(event.target.value)}
+                    />
+                  </label>
+                  <datalist id="cc-model-options">
+                    {chosenModels.map((model) => (
+                      <option key={model.id} value={model.id} />
+                    ))}
+                  </datalist>
+
+                  <div className="cc-chip-row">
+                    <button type="button" className="cc-chip" data-model-save="true" onClick={saveModelChoice}>
+                      Lưu lựa chọn
+                    </button>
+                  </div>
+                </>
+              )}
+              {modelStatus === undefined ? null : (
+                <p className="cc-panel-note" data-model-status="true">
+                  {modelStatus}
+                </p>
+              )}
+            </section>
+
+            <section className="cc-panel-section" data-models-key="true">
+              <h3>Khoá TypeSafe</h3>
+              <p className="cc-panel-note">
+                Jev dùng TypeSafe khi nó phải quyết định cách xử lý một việc. Ở đây cùng provider và model, vì cả ba
+                đều là chuyện chọn cái gì để chạy.
+              </p>
+              {KEY_FIELDS.filter((entry) => entry.name === "typesafe").map(keyForm)}
+            </section>
           </>
         )}
 
@@ -645,6 +790,7 @@ export function SettingsPanel({
               runtime is not something the browser ships. A name is cheaper to keep in step than a package.
             */}
             <h3>Giọng nói và khoá</h3>
+            {KEY_FIELDS.filter((entry) => entry.name !== "typesafe").map(keyForm)}
             <MicrophoneCheck />
             {/*
               One field per key: entered here, stored by the node, and never shown again.
@@ -653,87 +799,6 @@ export function SettingsPanel({
               third would be too. The names are the node's own - it is the node that reads a value when it needs one -
               and the purpose under each field says what breaks without it.
             */}
-            {KEY_FIELDS.map((entry) => (
-              <form
-                key={entry.name}
-                className="cc-credential-form"
-                data-settings-key-form={entry.name}
-                onSubmit={(event) => {
-                  event.preventDefault();
-                  const value = (keyDrafts[entry.name] ?? "").trim();
-                  if (value === "") return;
-                  client
-                    .putCredential({ fields: [{ name: entry.name, value }] })
-                    .then((result) => {
-                      // Cleared the moment it is sent, so nothing later can read it off the screen or out of state.
-                      setKeyDrafts((current) => ({ ...current, [entry.name]: "" }));
-                      setKeyStatuses((current) => ({
-                        ...current,
-                        [entry.name]: result.names.includes(entry.name)
-                          ? "Đã lưu khoá."
-                          : "Đã gửi, nhưng node không ghi nhận tên khoá nào.",
-                      }));
-                    })
-                    .catch(() =>
-                      // The message says nothing about what was typed: an error that repeated the value would be the
-                      // leak this field exists to avoid.
-                      setKeyStatuses((current) => ({ ...current, [entry.name]: "Không lưu được khoá. Thử lại." })),
-                    );
-                }}
-              >
-                <label className="cc-credential-field">
-                  <span>{entry.label}</span>
-                  <input
-                    type="password"
-                    name={entry.name}
-                    autoComplete="off"
-                    data-settings-key-field={entry.name}
-                    value={keyDrafts[entry.name] ?? ""}
-                    onChange={(event) => setKeyDrafts((current) => ({ ...current, [entry.name]: event.target.value }))}
-                  />
-                </label>
-                <button
-                  type="submit"
-                  className="cc-icon-btn"
-                  style={{ width: "auto", padding: "0 var(--cc-space-sm)" }}
-                  disabled={(keyDrafts[entry.name] ?? "").trim() === ""}
-                  data-settings-key-submit={entry.name}
-                >
-                  Lưu khoá
-                </button>
-                <p className="cc-freshness">{entry.purpose}</p>
-                {keyStatuses[entry.name] !== undefined && (
-                  <p className="cc-freshness" data-settings-key-status={entry.name}>
-                    {keyStatuses[entry.name]}
-                  </p>
-                )}
-                              <button
-                  type="button"
-                  className="cc-chip"
-                  data-settings-key-remove={entry.name}
-                  onClick={() => {
-                    client
-                      .deleteCredential(entry.name)
-                      .then(() => {
-                        setKeyStatuses((current) => ({
-                          ...current,
-                          [entry.name]: "Đã đăng xuất: node không còn giữ khoá này.",
-                        }));
-                      })
-                      .catch(() =>
-                        // A refusal here usually means there was nothing to remove, which is a different answer from a
-                        // failure and is said as one rather than dressed up as an error.
-                        setKeyStatuses((current) => ({
-                          ...current,
-                          [entry.name]: "Không xoá được — có thể node chưa giữ khoá này.",
-                        })),
-                      );
-                  }}
-                >
-                  Đăng xuất
-                </button>
-                </form>
-            ))}
           </section>
         )}
       </div>

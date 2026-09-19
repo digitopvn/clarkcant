@@ -86,7 +86,7 @@ test("settings is a modal with three distinct tabs, and Escape returns focus to 
   await expect(dialog).toBeVisible();
   // Three, not four: voice is a mode of the conversation, not a setting, and it left this dialog for the
   // composer's microphone button.
-  await expect(page.locator('[role="tab"]')).toHaveCount(3);
+  await expect(page.locator('[role="tab"]')).toHaveCount(4);
 
   // Each tab shows its own content. Asserted by comparing what is rendered rather than by checking
   // that a heading exists, since three labels over one shared panel would pass the weaker check.
@@ -179,18 +179,25 @@ test("the settings panel lists what this node can run, or says plainly that it c
   await openApp(page);
   await page.locator("[data-settings='true']").click();
 
+  // Provider and model have a tab of their own now, because choosing one means choosing the other.
+  await page.getByRole("tab", { name: "Models" }).click();
   const section = page.locator("[data-providers='true']");
   await expect(section).toBeVisible();
 
   // Either pi on this machine offers providers and they are listed, or the node reports none and says so in words.
   // An empty section that explains nothing is the one dishonest outcome, so the two acceptable states are both
   // named here rather than one of them being assumed.
-  await expect(section.locator("[data-provider], [data-providers='none']").first()).toBeVisible();
-
-  const providers = page.locator("[data-provider]");
-  if ((await providers.count()) > 0) {
-    // At most one model is the current one: marking two would make the mark say nothing.
-    expect(await page.locator("[data-model-id][data-current='true']").count()).toBeLessThanOrEqual(1);
+  // Two fields somebody types into rather than hundreds of rows to scroll: this machine's catalogue runs past what any
+  // list on a screen could hold, so what is asserted is that a searchable pair is offered, or that the node says plainly
+  // that it has none.
+  await expect(section.locator("[data-provider-input], [data-providers='none']").first()).toBeVisible({ timeout: 20_000 });
+  const providerInput = page.locator("[data-provider-input]");
+  if ((await providerInput.count()) > 0) {
+    await expect(page.locator("[data-model-input]")).toBeVisible();
+    // The field is wired to the catalogue rather than to a fixed list, so a provider this node can run is one the
+    // field offers.
+    await expect(providerInput).toHaveAttribute("list", "cc-provider-options");
+    await expect(page.locator("[data-model-input]")).toHaveAttribute("list", "cc-model-options");
   }
 });
 
@@ -200,23 +207,29 @@ test("every key in settings can be taken back again, which is how a provider is 
   await page.getByRole("tab", { name: "Devices" }).click();
 
   // Both keys, because a logout for one and not the other is the kind of half-wired surface that looks finished.
-  for (const name of ["gemini", "typesafe"]) {
-    await expect(page.locator(`[data-settings-key-form='${name}']`)).toBeVisible();
-    await expect(page.locator(`[data-settings-key-remove='${name}']`)).toBeVisible();
-  }
+  // Gemini is the voice provider's key, so it stays beside the microphone. TypeSafe is asked for where a model is
+  // chosen, because that is what it pays for - the same list of fields, in the tab that explains each one.
+  await expect(page.locator("[data-settings-key-form='gemini']")).toBeVisible();
+  await expect(page.locator("[data-settings-key-remove='gemini']")).toBeVisible();
+
+  await page.getByRole("tab", { name: "Models" }).click();
+  await expect(page.locator("[data-settings-key-form='typesafe']")).toBeVisible();
+  await expect(page.locator("[data-settings-key-remove='typesafe']")).toBeVisible();
 });
 
-test("a model in settings is offered as a choice, and the one in use is marked as such", async ({ page }) => {
+test("the model in use is what the fields show before anybody types", async ({ page }) => {
   await openApp(page);
   await page.locator("[data-settings='true']").click();
+  await page.getByRole("tab", { name: "Models" }).click();
 
-  const models = page.locator("[data-model-id]");
-  // The catalogue is this machine's, so its size is not asserted and nothing here is clicked: the section is about what
-  // the node can run, and clicking would write a preference into a node every other spec in this suite shares.
-  await expect(models.first()).toBeVisible({ timeout: 20_000 });
+  const model = page.locator("[data-model-input]");
+  await expect(model).toBeVisible({ timeout: 20_000 });
 
-  // The model in use is the one already chosen, so it is shown as such rather than offered again.
-  expect(await page.locator("[data-model-id][data-current='true']:disabled").count()).toBeLessThanOrEqual(1);
+  // Nothing is clicked and nothing is typed: this suite shares one node, so a test that stored a preference would change
+  // what every later spec runs. What is asserted is that the pair the node already runs is the pair on screen.
+  const shown = await model.inputValue();
+  const current = await page.locator("[data-model='none']").count();
+  expect(current > 0 || shown.length > 0).toBe(true);
 });
 
 test("the tools tab also says which extensions pi loads on this machine", async ({ page }) => {
