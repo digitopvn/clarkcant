@@ -800,9 +800,9 @@ async function main(): Promise<void> {
         actionBindingId: action.actionBindingId,
         expectedRevision: target.revision,
         expectedBindingDigest: target.bindingDigest,
-        // A spoken view operation carries no arguments: the operations a widget publishes for voice are period changes
-        // and refreshes, and a widget needing values is a widget a person fills in with a form.
-        input: {},
+        // What the words implied. Empty when the person named the action without saying what it should do, and the
+        // widget's own contract then answers that it wanted an argument - which is better than this guessing a period.
+        input: action.args,
         invocationId: `inv_${randomUUID()}`,
       });
 

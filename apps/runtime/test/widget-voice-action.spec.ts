@@ -63,6 +63,23 @@ describe("a spoken action", () => {
     expect(resolved.ok && resolved.action.actionBindingId).toBe("act_sync");
   });
 
+  it("carries the argument the words implied, so the widget's own contract is what validates it", () => {
+    // The label this application actually publishes, and the operation behind it needs period: "week" | "month".
+    const overview = view([{ actionBindingId: "act_period", label: "Đổi khoảng thời gian" }]);
+
+    const byMonth = resolveVoiceWidgetAction({ utterance: "xem theo tháng", focused: overview });
+    expect(byMonth.ok && byMonth.action.actionBindingId).toBe("act_period");
+    expect(byMonth.ok && byMonth.action.args).toEqual({ period: "month" });
+
+    const byWeek = resolveVoiceWidgetAction({ utterance: "xem theo tuần", focused: overview });
+    expect(byWeek.ok && byWeek.action.args).toEqual({ period: "week" });
+
+    // Naming the action without saying what it should do carries no argument. Whether that is an error is the
+    // widget's business, and its refusal names what it wanted - which this file cannot know and must not guess.
+    const bare = resolveVoiceWidgetAction({ utterance: "đổi khoảng thời gian", focused: overview });
+    expect(bare.ok && bare.action.args).toEqual({});
+  });
+
   it("keeps the approval flag the widget sets, so a spoken sentence alone cannot run it", () => {
     const guarded = view([{ actionBindingId: "act_delete", label: "Xoá sự kiện", requiresApproval: true }]);
     const resolved = resolveVoiceWidgetAction({ utterance: "xoá sự kiện", focused: guarded });
@@ -75,9 +92,9 @@ describe("a spoken action", () => {
     expect(said).toContain("xác nhận");
     expect(said.trim().endsWith("?")).toBe(true);
     // The one that needs no approval announces instead, so the two are not the same sentence.
-    expect(describeVoiceWidgetAction({ actionBindingId: "act_next", label: "Kỳ sau", requiresApproval: false })).not.toContain(
-      "xác nhận",
-    );
+    expect(
+      describeVoiceWidgetAction({ actionBindingId: "act_next", label: "Kỳ sau", requiresApproval: false, args: {} }),
+    ).not.toContain("xác nhận");
   });
 });
 

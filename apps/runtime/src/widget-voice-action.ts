@@ -27,14 +27,25 @@ import { type SemanticView } from "@clarkcant/contracts";
 import { normaliseIntentText } from "@clarkcant/core";
 
 /**
- * How a person might say a label, keyed by the normalised label.
+ * How a person might say a label, and what the words mean by it.
  *
  * Grounded in the labels this application actually publishes rather than invented ones: the overview surface offers
- * `period.change` under the label "Đổi khoảng thời gian", so that is the entry. A phrasing table for labels nothing
- * offers is worse than no table, because it reads like support for words that would be refused.
+ * `period.change` under the label "Đổi khoảng thời gian", and that operation requires `period: "week" | "month"`.
+ * So a phrasing carries the argument it implies - saying "xem theo tháng" is a period change *and* which period - while
+ * saying only the label implies none, and the widget's own contract then answers that it needs one. That is the honest
+ * split: this file knows what words mean, and the widget knows what its operations require.
  */
-const PHRASINGS: readonly { matches: readonly string[]; label: string }[] = [
-  { matches: ["doi khoang thoi gian", "khoang thoi gian", "change the period", "period"], label: "doi khoang thoi gian" },
+const PHRASINGS: readonly {
+  label: string;
+  phrases: readonly { matches: readonly string[]; args: Record<string, unknown> }[];
+}[] = [
+  {
+    label: "doi khoang thoi gian",
+    phrases: [
+      { matches: ["tuan nay", "xem theo tuan", "theo tuan", "week"], args: { period: "week" } },
+      { matches: ["thang nay", "xem theo thang", "theo thang", "month"], args: { period: "month" } },
+    ],
+  },
 ];
 
 export interface VoiceWidgetAction {
@@ -44,6 +55,13 @@ export interface VoiceWidgetAction {
   label: string;
   /** Whether the widget says this action needs a person's explicit approval. */
   requiresApproval: boolean;
+  /**
+   * What the words implied, which the widget's own contract then validates.
+   *
+   * Empty when the person named the action without saying what it should do. That is not an error here: whether the
+   * operation needs an argument is the widget's business, and its refusal names what it wanted.
+   */
+  args: Record<string, unknown>;
 }
 
 export type VoiceWidgetActionResolution =
@@ -76,13 +94,15 @@ export function resolveVoiceWidgetAction(input: {
 
   const offered = [...focused.availableActions].sort((a, b) => b.label.length - a.label.length);
   for (const candidate of offered) {
-    if (matchesLabel(said, candidate.label)) {
+    const matched = matchLabel(said, candidate.label);
+    if (matched !== undefined) {
       return {
         ok: true,
         action: {
           actionBindingId: candidate.actionBindingId,
           label: candidate.label,
           requiresApproval: candidate.requiresApproval,
+          args: matched.args,
         },
       };
     }
@@ -91,13 +111,22 @@ export function resolveVoiceWidgetAction(input: {
   return { ok: false, say: NO_ACTION_SAY };
 }
 
-function matchesLabel(said: string, label: string): boolean {
+/**
+ * What the sentence means by one of the labels this instance offers, or nothing.
+ *
+ * A phrasing's arguments come with it: "xem theo tháng" is a period change and says which period, so both travel
+ * together rather than the argument being reconstructed later from the same words.
+ */
+function matchLabel(said: string, label: string): { args: Record<string, unknown> } | undefined {
   const bareLabel = normaliseIntentText(label);
-  if (bareLabel === "") return false;
-  if (said === bareLabel || said.includes(bareLabel)) return true;
-  // The label as offered, and the phrasings that mean it - both compared without tone marks.
+  if (bareLabel === "") return undefined;
+  if (said === bareLabel || said.includes(bareLabel)) return { args: {} };
+
   const entry = PHRASINGS.find((phrasing) => phrasing.label === bareLabel);
-  return entry?.matches.some((phrase) => said === phrase || said.includes(phrase)) ?? false;
+  for (const phrase of entry?.phrases ?? []) {
+    if (phrase.matches.some((match) => said === match || said.includes(match))) return { args: phrase.args };
+  }
+  return undefined;
 }
 
 /** The sentence read back before a spoken widget action runs. */
