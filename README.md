@@ -70,6 +70,26 @@ These are exercised by tests in this repository, not described in prose:
 - **Verifiable backups.** SQLite `VACUUM INTO`, integrity and foreign-key checks, row-count
   comparison, and a refusal to restore a backup taken by a newer schema.
 
+## Autonomy
+
+The default is autonomous: an agent acts on the intent it is given, and what makes that defensible is not a dialog
+but the host. Every effect goes through a deterministic preflight that confines it to the folders this node owns,
+checks that the resource exists, and attaches a deadline and an output ceiling. A policy layer may then deny, narrow
+or ask a clarifying question — and it can only narrow, never widen.
+
+- **Execution policy.** `guarded` is the default: nobody is asked, and the guardrail may still refuse. `confirm`
+  keeps the approval card whole for anyone who wants to be asked; `auto` and `deny` switch the layers off and on.
+- **Questions, not permission dialogs.** `ask_user_question` ends the turn that asked, and the answer arrives as a
+  new turn — which is why a question costs nothing while it waits. Voice and a click post the same answer to the same
+  route.
+- **Secrets as metadata.** The agent learns that `github_token` exists, what it is for and who may use it. The value
+  goes from a backend into one invocation — a tool call, a child process's environment, a request header — and is
+  never returned to a model.
+- **A pool of models.** Several profiles with roles and priorities; `Cmd/Ctrl+]` moves to the next one, and the
+  change becomes a new generation at the next turn boundary, because Pi resolves a model when a session is created.
+- **Stop and audit.** `POST /stop` kills running commands, interrupts turns and stops background workers. Every
+  effect is written to an append-only trail by name and outcome, never by value.
+
 ## What does not work yet
 
 Stated plainly, because a bootstrap that hides this is worse than useless:
