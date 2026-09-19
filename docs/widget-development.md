@@ -595,3 +595,35 @@ Nếu câu 1 cho thấy composition đủ thì ưu tiên composition.
 - Built-in React renderers: packages/conversation-client.
 - Product UX: DESIGN.md.
 - Standard này định nghĩa developer experience/release gate mục tiêu; implementation status phải được ghi trung thực trong code/conformance.
+
+---
+
+## 19. Trạng thái triển khai
+
+Mục này nói rõ phần nào của tài liệu đã có code, để không ai đọc §16–§17 như thể mọi thứ đã chạy.
+
+**Đã có và có test:**
+
+- `clark widget init` — scaffold `blank`, `form`, `dashboard` theo layout ở §3, và package do nó tạo phải
+  qua chính bộ conformance của nó (một template fail lần chạy đầu là template dạy sai).
+- `clark widget test` — bộ conformance ở §17. Các check chạy được bằng Node thì chạy thật: schema, bridge
+  security (nonce giả, sai source window, message không có trong codec), lifecycle, dedup, stale revision,
+  pin, state migration, text fallback, effect action. Các check cần frame đã render (keyboard, touch size,
+  narrow/compact/expanded, reduced motion, voice/click parity) được báo `requires-dev-host` — **không** được
+  báo pass chỉ vì có fixture.
+- `clark widget pack` — validate manifest, tính digest trên danh tính + nội dung, và từ chối pack lại một
+  version đã pack với digest khác (một version đổi byte là một package khác mang cùng số).
+- `clark widget dev` — dev host ở §16: hot reload qua SSE, fixtures, viewport switcher (320px là lựa chọn
+  thật), dark/light/system, reduced motion, offline, read-only, semantic inspector, action log, capability
+  simulator, và accessibility audit. Frame dùng đúng sandbox của host (`allow-scripts`, không
+  `allow-same-origin`), và server từ chối mọi path nằm ngoài package.
+
+**Chưa có:**
+
+- `clark widget publish` — chờ directory ở phase 13; đường local/git/npm đã là first-class nên không cần
+  account để chạy widget của mình.
+- Script trong trang của dev host: nó thu thập fact và chuyển action, còn mọi quyết định nằm ở hàm đã test —
+  nhưng bản thân script cần browser để chạy, và điều đó được nói ra thay vì ngụ ý rằng cả dev host đã được phủ.
+- Detach/attach: chưa có host window tách rời, nên không có gì để chạy. Nửa sở hữu (`detached` trên
+  live-owner claim) đã có.
+- Runtime cho MCP Apps: đường isolated-app đã có; MCP Apps chưa được chứng minh trên cùng đường đó.
