@@ -222,7 +222,17 @@ export function SettingsPanel({
             tabIndex={tab === entry.id ? 0 : -1}
             onClick={() => setTab(entry.id)}
             onKeyDown={(event) => {
-              const index = TABS.findIndex((candidate) => candidate.id === tab);
+              /*
+               * The index comes from the tab this event landed on, not from the selected-tab state.
+               *
+               * Reading the state made the whole strip depend on when React commits: two arrow presses that
+               * arrive inside one commit both read the older index, so the second one moved from the wrong place
+               * and focus went to the tab before the one the keyboard user asked for. It was intermittent, which
+               * is the worst way to find out - the browser suite failed on one CI run and passed on the next for
+               * a tree that was byte-identical to main. The focused tab is what the ARIA pattern moves from, so
+               * it is also the correct source.
+               */
+              const index = TABS.findIndex((candidate) => candidate.id === entry.id);
               const move = (next: number): void => {
                 event.preventDefault();
                 // Wraps, which is what the pattern asks for and what a user expects at the end of a list.
