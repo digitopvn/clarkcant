@@ -180,21 +180,21 @@ Trước đó smoke desktop được ghi là "cần display" và chưa từng ch
   turn control nên đường background bị từ chối, cộng thêm một phụ thuộc thứ tự: journey "header không nói gì khi không có" chỉ
   đúng khi nó chạy trước journey tạo phiên nền).
 - **T66 → PASS** và **T73 → PASS**: cả hai journey đã xanh và nằm trong suite, ledger ghi đúng trạng thái kèm tên test.
-## Gates còn mở (cần người xác nhận, không chặn code)
+## Quyết định đã chốt, và nợ kỹ thuật còn lại
 
-- **Kích thước thanh voice tối giản trên display thật.** Issue ghi "~20×50px" cho *icon*; Done-when
-  ghi "bounds ≈20×50 khi compact". Plan lấy 20×50 làm **sàn** `setMinimumSize` và để thanh có kích
-  thước đủ chứa hai icon (hằng số có tên ở Phase 7). Cần chốt con số cuối trên máy thật; trên Windows
-  còn một sàn tracking size của OS mà chỉ display thật mới đo được.
-- **Loại file và ngưỡng.** Lấy đề xuất của issue: ảnh, PDF, text/markdown, tối đa 25 MB mỗi file.
-- **Lệnh voice nào được thoát app không cần xác nhận.** Lấy đề xuất của issue: luôn hỏi.
-- **Phạm vi gợi ý.** Chốt: node local (khớp với phạm vi voice).
-- **PDF và ảnh tới model.** Adapter chỉ nhận `text`, nên ảnh/PDF tới model dưới dạng **ref opaque**
-  cộng tool `read_attachment` của node; node chưa có bộ trích PDF nên tool trả lời trung thực rằng
-  chưa đọc được nội dung nhị phân. Kiểm chứng "model nhìn thấy ảnh" cần provider thật → ghi BLOCKED.
-- **Xoá conversation.** Retention thật (xoá blob khi conversation bị xoá) cần một đường xoá
-  conversation; repo chưa có, và 4 bảng tham chiếu không cascade. Plan giao
-  `releaseConversationAttachments` (có test) và ghi việc thêm route xoá conversation là gap có tên.
+Bốn câu hỏi mở ở giai đoạn lập kế hoạch đã được chốt trước khi thi công, nên chúng không còn là gate: ba PR ghép
+trên một nhánh; blob giữ theo conversation kèm quota theo principal; voice chỉ điều khiển app của node này; và tab
+Memory là xem–nguồn–rồi–xoá. Loại file và ngưỡng lấy đúng đề xuất của issue (ảnh, PDF, text/markdown, tối đa 25 MB
+mỗi file), và chỉ `app.quit` cần xác nhận. Kích thước thanh tối giản đã được đo trên cửa sổ thật: smoke đọc lại
+`getBounds()` và `getMinimumSize()` từ window và cả hai đều `true`, với 20×50 là sàn.
+
+Còn lại là nợ kỹ thuật có tên, không phải tiêu chí của plan:
+
+- Extractor PDF/ảnh, và một adapter nhận được nội dung ảnh trong prompt — `docs/widgets-and-extensions.md` §4.1.
+- Route xoá conversation; retention hiện là `releaseConversationAttachments`.
+- Nguồn `memory` trong gợi ý: schema có, `buildSuggestions` chưa phát.
+- Scoped session token cho voice.
+- Các check cần provider thật (`[calibration]`, `[jev-live]`): cần `CLARKCANT_JEV_LIVE=1` và một key.
 
 ## Red Team Review
 
