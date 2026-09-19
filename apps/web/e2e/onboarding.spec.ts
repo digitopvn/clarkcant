@@ -143,7 +143,7 @@ test.describe("the first run carries the orb", () => {
   // and then reports that the first-run screen has no orb, which is true and tells you nothing.
   test.use({ storageState: { cookies: [], origins: [] } });
 
-  test("the first run carries the same orb, centred on the screen it is drawn over", async ({ page }) => {
+  test("the first run carries the same orb, drawn into the space it reserves", async ({ page }) => {
     mkdirSync(EVIDENCE, { recursive: true });
     await page.goto(`/?token=${token()}&gateway=${encodeURIComponent(GATEWAY)}`);
 
@@ -159,10 +159,10 @@ test.describe("the first run carries the orb", () => {
       .poll(
         async () =>
           page.evaluate(() => {
-            const shell = document.querySelector("[data-onboarding='true']") as HTMLElement | null;
-            const drawn = shell?.querySelector("canvas") as HTMLElement | null;
-            if (shell === null || shell === undefined || drawn === null) return 999;
-            const box = shell.getBoundingClientRect();
+            const anchor = document.querySelector("[data-onboarding='true'] .cc-hero-orb") as HTMLElement | null;
+            const drawn = document.querySelector("[data-onboarding='true'] canvas") as HTMLElement | null;
+            if (anchor === null || drawn === null) return 999;
+            const box = anchor.getBoundingClientRect();
             const orb = drawn.getBoundingClientRect();
             return Math.max(
               Math.abs(box.left + box.width / 2 - (orb.left + orb.width / 2)),
@@ -174,3 +174,33 @@ test.describe("the first run carries the orb", () => {
       .toBeLessThan(4);
   });
 });
+
+test.describe("the first run is not covered by its own orb", () => {
+  test.use({ storageState: { cookies: [], origins: [] } });
+
+  test("what is on top at the point somebody aims at is the control, not the orb", async ({ page }) => {
+    await page.goto(`/?token=${token()}&gateway=${encodeURIComponent(GATEWAY)}`);
+    await expect(page.locator("[data-onboarding='true'] canvas").first()).toBeVisible({ timeout: 20_000 });
+
+    // Measured at the point a person aims at rather than read off the markup. The orb is positioned and the first-run
+    // content is not, and a positioned box paints above a static one whatever the order in the document - which is how
+    // an orb drawn as a backdrop ended up over the name and the button.
+    const covering = await page.evaluate(() => {
+      const wanted = ["h1", "p", "[data-onboarding-start='true']"];
+      const covered: string[] = [];
+      for (const selector of wanted) {
+        const node = document.querySelector(selector);
+        if (!(node instanceof HTMLElement)) continue;
+        const box = node.getBoundingClientRect();
+        const hit = document.elementFromPoint(box.left + box.width / 2, box.top + box.height / 2);
+        // The canvas is the orb. Anything else being on top would be a different kind of wrong.
+        if (hit === null || hit.tagName.toLowerCase() === "canvas") covered.push(selector);
+      }
+      return covered.join(",");
+    });
+    // The heading and the paragraph matter as much as the button: they were behind the ball, which is what "the orb is
+    // covering the interface" means when nothing is actually unclickable.
+    expect(covering).toBe("");
+  });
+});
+

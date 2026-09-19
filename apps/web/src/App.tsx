@@ -1,4 +1,4 @@
-import { type ReactElement, useEffect, useMemo, useRef, useState } from "react";
+import { type ReactElement, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 
 import {
   Conversation,
@@ -75,6 +75,11 @@ export function App(): ReactElement {
   /** The surface the orb reads the pointer against, so its glow reacts here as it does once the app is open. */
   const shellRef = useRef<HTMLDivElement>(null);
 
+  /** The space the first run reserves for the orb. The orb measures itself from this rather than from the screen. */
+  const heroOrbRef = useRef<HTMLDivElement>(null);
+  /** Where the orb is drawn, once that space has been measured. */
+  const [orbPlacement, setOrbPlacement] = useState<{ x: number; y: number; scale: number } | undefined>(undefined);
+
   const [onboardStep, setOnboardStep] = useState<"welcome" | "provider" | "model" | "key">("welcome");
   const [pickedProvider, setPickedProvider] = useState<string | undefined>(undefined);
   const [pickedModel, setPickedModel] = useState<string | undefined>(undefined);
@@ -87,6 +92,44 @@ export function App(): ReactElement {
   const [keyDraft, setKeyDraft] = useState("");
   const [keyStatus, setKeyStatus] = useState<string | undefined>(undefined);
   const [catalogue, setCatalogue] = useState<{ id: string; models: { id: string }[] }[] | undefined>(undefined);
+
+  /*
+   * The orb is placed against the space reserved for it, not against the screen.
+   *
+   * This is the app's own arrangement, and the difference matters: a canvas is drawn at 960 across and shrinking it
+   * with a transform does not shrink the box it occupies, so the only way to have an orb of a chosen size in a layout
+   * is to reserve that size and scale the drawing into it. Placed at the centre of the screen at full size first, the
+   * ball covered the name and the button - which is what a person means by "the orb is over the interface".
+   *
+   * Measured over a bounded settle window rather than once, because the heading arrives with its webfont and moves
+   * everything below it; a single measurement describes a page that no longer exists.
+   */
+  useLayoutEffect(() => {
+    if (onboarded) return;
+    const measure = (): void => {
+      const shellBox = shellRef.current?.getBoundingClientRect();
+      const anchor = heroOrbRef.current?.getBoundingClientRect();
+      if (shellBox === undefined || anchor === undefined) return;
+      setOrbPlacement({
+        x: anchor.left + anchor.width / 2 - shellBox.left,
+        y: anchor.top + anchor.height / 2 - shellBox.top,
+        scale: anchor.width / ORB_DRAW_SIZE,
+      });
+    };
+    measure();
+    const timers = [0, 50, 150, 400, 900].map((ms) => setTimeout(measure, ms));
+    window.addEventListener("resize", measure);
+    const observer = typeof ResizeObserver === "function" ? new ResizeObserver(() => measure()) : undefined;
+    if (observer !== undefined && heroOrbRef.current?.parentElement != null) {
+      observer.observe(heroOrbRef.current.parentElement);
+    }
+    void document.fonts?.ready.then(() => measure());
+    return () => {
+      for (const timer of timers) clearTimeout(timer);
+      window.removeEventListener("resize", measure);
+      observer?.disconnect();
+    };
+  }, [onboarded, onboardStep]);
 
   useEffect(() => {
     if (onboarded || onboardStep !== "provider" || catalogue !== undefined) return;
@@ -130,37 +173,38 @@ export function App(): ReactElement {
         ref={shellRef}
       >
         {/*
-          The same orb the app opens with, at the same size, drawn before anything is chosen. The first screen is where
-          somebody decides whether this thing is worth their afternoon, and it was the one place the product's own face
-          was missing.
+          The same orb the app opens with, drawn before anything is chosen. The first screen is where somebody decides
+          whether this thing is worth their afternoon, and it was the one place the product's own face was missing.
         */}
-        <div className="cc-orb-stage">
-          {/*
-            Positioned inline rather than measured: the app has to place the orb against a composer that moves, and this
-            screen has nothing to place it against, so the centre is the whole answer. `.cc-stage-orb` is absolute and
-            240px square, and without a left and top it sits at its static position - which measured 520 pixels away from
-            the centre of the screen, and is what the browser test caught.
-          */}
-          <div
-            className="cc-stage-orb"
-            data-docked="false"
-            style={{ left: "50%", top: "50%", transform: "translate(-50%, -50%)" }}
-          >
-            <Orb
-              size={ORB_DRAW_SIZE}
-              radius={ORB_RADIUS}
-              className="cc-empty-orb"
-              label="ClarkCant"
-              // Drawn at a lower ratio than the small orbs: the canvas is 960 across, and at two device pixels per CSS
-              // pixel that is nearly four million fragments a frame for a soft glow nobody can see the difference in.
-              maxPixelRatio={1.25}
-              pointerTarget={shellRef}
-            />
+        {orbPlacement === undefined ? null : (
+          <div className="cc-orb-stage">
+            <div
+              className="cc-stage-orb"
+              data-docked="false"
+              style={{
+                left: `${orbPlacement.x}px`,
+                top: `${orbPlacement.y}px`,
+                transform: `translate(-50%, -50%) scale(${orbPlacement.scale})`,
+              }}
+            >
+              <Orb
+                size={ORB_DRAW_SIZE}
+                radius={ORB_RADIUS}
+                className="cc-empty-orb"
+                label="ClarkCant"
+                // Drawn at a lower ratio than the small orbs: the canvas is 960 across, and at two device pixels per CSS
+                // pixel that is nearly four million fragments a frame for a soft glow nobody can see the difference in.
+                maxPixelRatio={1.25}
+                pointerTarget={shellRef}
+              />
+            </div>
           </div>
-        </div>
+        )}
         <div className="cc-body">
           <div className="cc-scroll">
             <div className="cc-empty">
+              {/* Reserves the space the orb is drawn into, exactly as the app's own hero does. It paints nothing. */}
+              <div className="cc-hero-orb" ref={heroOrbRef} aria-hidden="true" />
               {onboardStep === "welcome" ? (
                 <>
                   <h1>ClarkCant</h1>
