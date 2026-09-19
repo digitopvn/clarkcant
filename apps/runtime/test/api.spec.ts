@@ -6,7 +6,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { nodeIdSchema } from "@clarkcant/contracts";
 import { FakePiAdapter, type WorkerBrief } from "@clarkcant/pi-adapter";
 import { requestApproval, setPreference, type ModelTurnInput } from "@clarkcant/core";
-import { appendMessage, nextMessageSequence, readCredential } from "@clarkcant/storage";
+import { appendMessage, nextMessageSequence, readCredential, readPreference } from "@clarkcant/storage";
 
 import { handleRequest, type GatewayDeps, type GatewayRequest, type GatewayResponse } from "../src/gateway.ts";
 import { commandDigest } from "../src/run-command.ts";
@@ -817,3 +817,31 @@ describe("taking a credential back", () => {
   });
 });
 
+describe("choosing a model", () => {
+  it("stores the choice, claims nothing more, and refuses one this node cannot run", async () => {
+    const response = await request("POST", "/model", { body: { provider: "fake", id: "fake-model" } });
+    expect(response.status).toBe(200);
+    expect(response.body as Record<string, unknown>).toMatchObject({
+      ok: true,
+      stored: { provider: "fake", id: "fake-model" },
+    });
+
+    // Read back through the same layer the node reads at boot: the running session is deliberately not swapped
+    // underneath the person, so this fact is the one that matters.
+    expect(
+      readPreference(services.runtime.db, services.runtime.identity.ownerPrincipalId, "model", "node"),
+    ).toBe("fake/fake-model");
+
+    // A half-made choice is refused rather than stored as something the next boot cannot use.
+    const incomplete = await request("POST", "/model", { body: { provider: "fake" } });
+    expect(incomplete.status).toBe(400);
+
+    // And with a catalogue in hand, a model outside it is refused by name: a stored model this installation cannot run
+    // would fail every later turn with a message about a provider rather than about the choice that caused it.
+    services.modelCatalogue = async () => [
+      { id: "fake", models: [{ provider: "fake", id: "fake-model", current: false }] },
+    ];
+    const unknown = await request("POST", "/model", { body: { provider: "fake", id: "not-offered" } });
+    expect(unknown.status).toBe(400);
+  });
+});

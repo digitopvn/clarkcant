@@ -43,6 +43,7 @@ import {
   nextMessageSequence,
   oneRow,
   deleteCredential,
+  putPreference,
 } from "@clarkcant/storage";
 import { credentialNames, putCredential } from "@clarkcant/storage";
 
@@ -228,6 +229,42 @@ export async function handleRequest(deps: GatewayDeps, request: GatewayRequest):
     // installation no longer offers is a state worth showing plainly instead of hiding.
     const catalogue = await (services.modelCatalogue?.() ?? Promise.resolve([]));
     return json(200, { current: services.model, catalogue });
+  }
+
+  /*
+   * A model a person chose.
+   *
+   * Stored, and the answer says only that. It is deliberately not claimed to apply: the model turn is built before the
+   * services are - a node exists with its model already in hand - and the boot path does not read this preference yet,
+   * so the running node still runs what its own configuration names. The half that is missing is named here rather than
+   * papered over in the answer, because a route that said "applies next start" while nothing read it would be lying at
+   * the one place a person checks afterwards.
+   *
+   * The choice is still checked against the catalogue first: a stored model this installation cannot run would fail
+   * every later turn with a message about a provider rather than about the choice that caused it.
+   */
+  if (segments.length === 1 && segments[0] === "model" && request.method === "POST") {
+    const parsed = readJson(request);
+    if (!parsed.ok) return parsed.response;
+    const provider = typeof parsed.value.provider === "string" ? parsed.value.provider.trim() : "";
+    const id = typeof parsed.value.id === "string" ? parsed.value.id.trim() : "";
+    if (provider === "" || id === "") {
+      return fail(400, "INVALID_SCHEMA", "a model choice needs a provider and a model id");
+    }
+    const catalogue = await (services.modelCatalogue?.() ?? Promise.resolve([]));
+    const offered = catalogue.find((entry) => entry.id === provider);
+    if (catalogue.length > 0 && (offered === undefined || !offered.models.some((model) => model.id === id))) {
+      return fail(400, "INVALID_SCHEMA", `provider "${provider}" does not offer a model "${id}"`);
+    }
+    putPreference(services.runtime.db, {
+      principalId: services.runtime.identity.ownerPrincipalId,
+      key: "model",
+      value: `${provider}/${id}`,
+      scope: "node",
+      source: "settings",
+      at: nowInstant(),
+    });
+    return json(200, { ok: true, stored: { provider, id } });
   }
 
   if (request.method === "GET" && request.path === "/capabilities") {
