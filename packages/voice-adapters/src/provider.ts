@@ -1,4 +1,4 @@
-import type { VoiceState, VoiceTranscriptFragment } from "@clarkcant/contracts";
+import type { VoiceCapabilities, VoiceState, VoiceTranscriptFragment } from "@clarkcant/contracts";
 
 /**
  * The seam every voice provider sits behind.
@@ -14,6 +14,13 @@ import type { VoiceState, VoiceTranscriptFragment } from "@clarkcant/contracts";
  */
 export interface VoiceProviderAdapter {
   readonly provider: string;
+  /**
+   * What this provider can do, as it reports it.
+   *
+   * Read by the surface before it draws a control. A provider that cannot select a voice says so here,
+   * and the surface then shows no selector rather than one that changes nothing.
+   */
+  readonly capabilities: VoiceCapabilities;
   connect(input: { sessionId: string; tokenProvider: () => Promise<string> }): Promise<void>;
   disconnect(): Promise<void>;
   sendAudio(frame: Uint8Array): void;

@@ -145,6 +145,8 @@ async function main(): Promise<void> {
    * coverage check, transactional capture, timeline.
    */
   const modelFixture = process.env.CC_MODEL_FIXTURE === "1";
+  /** Distinguishes two scripted questions, because the card's answerability is keyed by its id. */
+  let fixtureQuestionCounter = 0;
   const fixtureCompose = async (input: {
     conversationId: string;
     principal: { principalId: string };
@@ -158,6 +160,47 @@ async function main(): Promise<void> {
      * buttons and a receipt — needs a way to be reached without a provider account, and a fixture that
      * cannot produce the card would leave the client wiring tested by nothing at all.
      */
+    /*
+     * A question, scripted — the producer for the question card.
+     *
+     * The same reason the approval fixture exists: the browser half of this feature is a card whose answer
+     * becomes the user's next message, and a card nothing can produce would leave that wiring tested by
+     * nothing at all.
+     */
+    if (/biểu mẫu|thử form|fill a form/i.test(input.text)) {
+      const formId = `form_fixture_${fixtureQuestionCounter += 1}`;
+      return {
+        text: "Đây là biểu mẫu do fixture tạo, không phải model thật.",
+        block: {
+          type: "form-card",
+          owner: "host",
+          formId,
+          title: "Cho tôi biết vài thông tin",
+          fields: [
+            { id: "field-1", label: "Tên dự án", kind: "text", required: true, placeholder: "ví dụ: clarkcant" },
+            { id: "field-2", label: "Ghi chú", kind: "textarea" },
+          ],
+        },
+      };
+    }
+
+    if (/hỏi tôi|thử hỏi|ask me/i.test(input.text)) {
+      const questionId = `q_fixture_${fixtureQuestionCounter += 1}`;
+      return {
+        text: "Đây là câu hỏi do fixture tạo, không phải model thật.",
+        block: {
+          type: "question-card",
+          owner: "host",
+          questionId,
+          question: "Bạn muốn tôi mở dự án nào?",
+          options: [
+            { id: "option-1", label: "Dự án hiện tại", detail: "thư mục này" },
+            { id: "option-2", label: "Dự án khác", detail: "tôi sẽ chỉ đường" },
+          ],
+        },
+      };
+    }
+
     if (/chạy lệnh thử|thử chạy lệnh/i.test(input.text)) {
       const approvals = approvalWiring.deps;
       if (approvals === undefined) return undefined;
@@ -498,6 +541,8 @@ async function main(): Promise<void> {
           principalId: search.principalId,
           conversationId: turn.conversationId,
         }),
+        /* The card's id has to outlive the turn, so it comes from the node's own id generator. */
+        questions: { newId: services.conductor.newId },
         // Reading an attached file is scoped to the conversation this turn belongs to, which is the
         // only thing the tool needs to check beyond the principal.
         attachments: { dataDir: options.dataDir, conversationId: turn.conversationId },
@@ -896,6 +941,13 @@ async function main(): Promise<void> {
       return { ok: true, instanceId, revision: landedOn, say: `Đã ${action.label}.` };
     },
   });
+  /*
+   * Published to the settings route, from the same object the voice sessions use.
+   *
+   * A surface that built its own capability list would be a second source of truth for what the provider
+   * supports, and the first thing to drift from it.
+   */
+  services.voiceCapabilities = () => voice.capabilities();
   process.stderr.write(
     voiceFixture
       ? "voice: FIXTURE provider loaded — audio and transcripts on /voice are scripted, not model output\n"

@@ -102,6 +102,16 @@ export interface ConversationProps {
    * reload, and only the host that resolved the profile can re-resolve it.
    */
   onOrbChange?: () => void;
+  /**
+   * Whether this node has no model, so a turn that needs one would fail.
+   *
+   * Passed down rather than discovered here, because the answer comes from the node's own readiness report and
+   * this surface has no business asking a second time. When it is true the empty state says what is missing and
+   * offers the control that fixes it, which is the difference between a setup step and a dead end: the wizard
+   * this replaced asked before anything had been tried, and ended in a screen with no way forward whenever the
+   * machine had no provider to offer.
+   */
+  needsModel?: boolean;
 }
 
 type ConnectionState = "connecting" | "ready" | "offline";
@@ -180,6 +190,7 @@ export function Conversation({
   onSessionReset,
   orbProfile,
   onOrbChange,
+  needsModel,
 }: ConversationProps): ReactElement {
   const [conversationId, setConversationId] = useState<string | undefined>(initialConversationId);
   const [timeline, setTimeline] = useState<Timeline | undefined>(undefined);
@@ -1106,6 +1117,40 @@ export function Conversation({
     [client],
   );
 
+  /**
+   * Questions that may still be answered.
+   *
+   * A question is open exactly while nothing has come after the message that asked it. Derived from the
+   * transcript rather than tracked as state, because the messages are history and are never rewritten: a card
+   * that stayed answerable after a reply would invite a second answer the node would take as a second message.
+   */
+  /**
+   * Cards that may still be answered: a question's or a form's id, while nothing has come after the message
+   * that asked. One computation for both kinds rather than two that could disagree — the rule is about the
+   * conversation, not about which shape the card has.
+   *
+   * Derived from the transcript rather than tracked as state, because the messages are history and are never
+   * rewritten: a card that stayed live would invite a second answer the node would take as a second message.
+   */
+  const openCardIds = useMemo(() => {
+    const messages = timeline?.messages ?? [];
+    let lastUserIndex = -1;
+    messages.forEach((message, index) => {
+      if (message.role === "user") lastUserIndex = index;
+    });
+    const questions: string[] = [];
+    const forms: string[] = [];
+    messages.forEach((message, index) => {
+      if (index <= lastUserIndex) return;
+      for (const block of message.blocks) {
+        const record = block as Record<string, unknown>;
+        if (record.type === "question-card" && typeof record.questionId === "string") questions.push(record.questionId);
+        if (record.type === "form-card" && typeof record.formId === "string") forms.push(record.formId);
+      }
+    });
+    return { questions, forms };
+  }, [timeline]);
+
   const blockActions: BlockActions = useMemo(
     () => ({
       onApprovalDecide: decideApproval,
@@ -1113,8 +1158,17 @@ export function Conversation({
       ...(decidingApprovalId === undefined ? {} : { decidingApprovalId }),
       onCredentialSubmit: submitCredential,
       ...(credentialStatus === undefined ? {} : { credentialStatus }),
+      /*
+       * A chosen answer is sent as the user's own message — the same call the composer makes — so a click and a
+       * typed reply are one act. Nothing here invents a second route into the agent for a click to take.
+       */
+      onQuestionAnswer: ({ answer }) => void send(answer),
+      openQuestionIds: openCardIds.questions,
+      /* The same path as a question: the answers become the user's own next message. */
+      onFormSubmit: ({ summary }) => void send(summary),
+      openFormIds: openCardIds.forms,
     }),
-    [credentialStatus, decideApproval, decidedApprovals, decidingApprovalId, submitCredential],
+    [credentialStatus, decideApproval, decidedApprovals, decidingApprovalId, openCardIds, send, submitCredential],
   );
 
   const renderSurface = useCallback(
@@ -1345,6 +1399,26 @@ export function Conversation({
                 only one of them can be a layout child.
               */}
               <div className="cc-hero-orb" ref={heroOrb} aria-hidden="true" />
+              {needsModel === true ? (
+                <div className="cc-card cc-setup-card" data-needs-model="true" role="status">
+                  <div className="cc-setting-text">
+                    <span className="cc-setting-label">Node này chưa có model</span>
+                    <span className="cc-setting-desc">
+                      Nó vẫn trả lời được bằng recipe và capability đã cài. Muốn hỏi tự do thì cần chọn provider và
+                      model trước — mở Cài đặt, tab AI &amp; Routing.
+                    </span>
+                  </div>
+                  {/* The control that leads there, rather than a sentence that only describes the gap. */}
+                  <button
+                    type="button"
+                    className="cc-chip"
+                    data-open-model-settings="true"
+                    onClick={() => setUiCheckOpen(true)}
+                  >
+                    Mở Cài đặt
+                  </button>
+                </div>
+              ) : null}
               <h1>Bạn đang nghĩ gì?</h1>
               <p>Nói việc bạn muốn làm, hoặc bắt đầu từ một gợi ý dưới đây.</p>
               {/*

@@ -16,6 +16,7 @@ import {
   approveTaskStatesAreConsistent,
   checkSuccessPreconditions,
   claimLiveOwner,
+  liveOwnerOf,
   compileBinding,
   createInstance,
   createTask,
@@ -585,6 +586,29 @@ describe("widget ownership and bindings (T41, T43, T47)", () => {
     expect(
       claimLiveOwner(deps, { instanceId: widget.instanceId, surface: "pin", ownerToken: "token-inline" }).ok,
     ).toBe(true);
+  });
+
+  it("holds the one-owner rule across a detached surface too (V20)", () => {
+    /*
+     * Detaching presents the same instance somewhere else; it does not create a second one. Without this the
+     * lease would be the thing detaching worked around, and a widget moved into its own window could end up with
+     * two live copies — which is the failure the lease exists to prevent, reached by the one route nobody checks.
+     */
+    const widget = instance();
+    expect(
+      claimLiveOwner(deps, { instanceId: widget.instanceId, surface: "detached", ownerToken: "token-detached" }).ok,
+    ).toBe(true);
+
+    // The conversation cannot claim it while the detached window holds it, and the refusal names where it went.
+    const inline = claimLiveOwner(deps, { instanceId: widget.instanceId, surface: "inline", ownerToken: "token-inline" });
+    expect(inline.ok).toBe(false);
+    if (!inline.ok) expect(inline.heldBy.surface).toBe("detached");
+
+    // Moving it back is the same claim with a different surface, not a second owner.
+    expect(
+      claimLiveOwner(deps, { instanceId: widget.instanceId, surface: "inline", ownerToken: "token-detached" }).ok,
+    ).toBe(true);
+    expect(liveOwnerOf(deps, widget.instanceId)?.surface).toBe("inline");
   });
 
   it("refuses to bind an action to a capability the registry does not know (T40)", () => {

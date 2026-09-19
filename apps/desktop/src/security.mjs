@@ -22,6 +22,18 @@ export const IPC_CHANNELS = Object.freeze([
   "desktop:getStatus",
   "desktop:getSession",
   "desktop:setCompactMode",
+  /*
+   * The window's named modes, one channel each rather than one channel taking an operation name.
+   *
+   * A single `desktop:window` channel with a verb argument would put the allowlist's decision inside the
+   * payload, where review cannot see it: the allowlist is a list of what this window may do, and "resize" and
+   * "focus" are different things to permit. The renderer asks for a mode by name, and the main process decides
+   * what that means.
+   */
+  "desktop:setWindowMode",
+  "desktop:resizeWindowPreset",
+  "desktop:restoreWindow",
+  "desktop:focusWindow",
 ]);
 
 /**

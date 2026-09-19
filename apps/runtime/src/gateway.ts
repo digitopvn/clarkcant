@@ -296,11 +296,32 @@ export async function handleRequest(deps: GatewayDeps, request: GatewayRequest):
     return json(200, { ok: true, stored: { provider, id }, applies: "conversations started after this" });
   }
 
-  if (request.method === "GET" && request.path === "/capabilities") {
+  if (segments.length === 1 && segments[0] === "capabilities" && request.method === "GET") {
     return json(200, {
       // Summaries only: dumping every tool schema into every turn is both expensive and a
       // prompt-injection surface, so a schema is loaded once a capability is chosen.
       capabilities: listCapabilitySummaries({ db: runtime.db, nodeId: runtime.identity.nodeId }),
+    });
+  }
+
+  /*
+   * What the configured voice provider can do.
+   *
+   * Reported rather than assumed by the surface: a picker hard-coded with one provider's voice names would
+   * offer them to a provider that has never heard of them, and the failure would arrive as a session that
+   * connects and then says nothing. A node with no voice gateway answers with a provider that supports
+   * nothing, which is a real answer — the tab then shows a reason instead of a control.
+   */
+  if (segments.length === 2 && segments[0] === "voice" && segments[1] === "capabilities" && request.method === "GET") {
+    const capabilities = services.voiceCapabilities?.();
+    return json(200, {
+      capabilities: capabilities ?? {
+        provider: "none",
+        supportsVoiceSelection: false,
+        voices: [],
+        supportsPreview: false,
+        note: "Node này chưa bật voice.",
+      },
     });
   }
 

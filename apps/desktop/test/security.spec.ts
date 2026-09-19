@@ -157,15 +157,28 @@ describe("IPC is answered only for the shell document (sender validation)", () =
   });
 
   it("allowlists exactly the channels the bridge uses", () => {
+    /*
+     * Written out rather than derived from the preload bridge on purpose: the point is that adding a channel
+     * takes two edits, one of which is this list. A test that read the bridge would agree with whatever the
+     * bridge did, including a channel added to the bridge and never reviewed.
+     *
+     * The window channels are separate entries rather than one `desktop:window` taking a verb, because the
+     * allowlist is a list of what this window may do: "resize" and "focus" are different permissions, and hiding
+     * that distinction inside a payload would put the decision where review cannot see it.
+     */
     expect([...IPC_CHANNELS].sort()).toEqual([
+      "desktop:focusWindow",
       "desktop:getSession",
       "desktop:getStatus",
       "desktop:notify",
       "desktop:openExternal",
       "desktop:pickDirectory",
       "desktop:requestCredential",
+      "desktop:resizeWindowPreset",
+      "desktop:restoreWindow",
       "desktop:setCompactMode",
       "desktop:setKeepRunning",
+      "desktop:setWindowMode",
     ]);
   });
 });

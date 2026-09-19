@@ -86,6 +86,14 @@ export function createNodeTools(input: {
    * principal, so a turn that has neither has nothing to attach a record to.
    */
   memory?: { conversationId: string; newId: (prefix: string) => string };
+  /**
+   * Where a question's id comes from.
+   *
+   * Absent means `ask_user` is not registered. A question id has to be unique for as long as the transcript
+   * that carries it, because the answerability rule is "the conversation has not moved past this id" — an id
+   * that could repeat across a restart would make an old card answerable again.
+   */
+  questions?: { newId: (prefix: string) => string };
 }): ToolDefinition[] {
   const roots = input.roots ?? machineRoots;
   return [
@@ -117,6 +125,7 @@ export function createNodeTools(input: {
             dataDir: input.attachments.dataDir,
           }),
         ]),
+    ...(input.questions === undefined ? [] : [createAskUserTool(input.questions.newId)]),
     ...(input.memory === undefined
       ? []
       : [
@@ -499,6 +508,145 @@ export function createRememberTool(input: {
       });
       if ("refused" in outcome) return { text: `Could not remember it: ${outcome.refused}` };
       return { text: `Remembered (${outcome.kind}): ${outcome.text}` };
+    },
+  };
+}
+
+
+/**
+ * Asking the user a question, with the answers that will be accepted.
+ *
+ * The producer for the question card, and the reason that card exists: without it an agent that needs a
+ * decision writes a paragraph and then guesses which sentence answered it. Here it names the answers, so a
+ * click, a keystroke and a spoken reply all produce the same user message.
+ *
+ * The tool does not wait for the answer. The turn ends, the card stays in the transcript, and the answer arrives
+ * as the user's next message — which is the only shape that works for a conversation that outlives this process.
+ */
+export function createAskUserTool(newId: (prefix: string) => string): ToolDefinition {
+  return {
+    name: "ask_user",
+    label: "Hỏi người dùng một câu",
+    description:
+      "Ask the user one question and offer the answers you will accept. Use it when a decision is genuinely " +
+      "needed and you cannot pick sensibly yourself — not for confirmation of something you were already asked " +
+      "to do. The answer comes back as the user's next message, so end your turn after asking and do not answer " +
+      "on their behalf.",
+    parameters: {
+      type: "object",
+      additionalProperties: false,
+      required: ["question"],
+      properties: {
+        question: { type: "string", description: "The question, in the user's own language, as one sentence." },
+        title: { type: "string", description: "For a form: what the form is for, as one sentence." },
+        fields: {
+          type: "array",
+          maxItems: 12,
+          description:
+            "For a form instead of a question: the values you need. Each needs a label; `kind` is text, textarea or select, and a select needs `options`.",
+          items: {
+            type: "object",
+            additionalProperties: false,
+            required: ["label"],
+            properties: {
+              label: { type: "string" },
+              kind: { type: "string", enum: ["text", "textarea", "select"] },
+              options: { type: "array", items: { type: "string" } },
+              required: { type: "boolean" },
+              placeholder: { type: "string" },
+            },
+          },
+        },
+        options: {
+          type: "array",
+          minItems: 2,
+          maxItems: 6,
+          description: "The answers the user may choose from. Two to six: fewer is not a choice, more is a list.",
+          items: {
+            type: "object",
+            additionalProperties: false,
+            required: ["label"],
+            properties: {
+              label: { type: "string", description: "What the user sees on the button, and what is sent as their reply." },
+              detail: { type: "string", description: "One line clarifying what this choice means." },
+            },
+          },
+        },
+      },
+    },
+    promptSnippet: "ask_user — ask one question with the answers you will accept, then end your turn",
+    execute: async (params: Record<string, unknown>): Promise<{ text: string; hostCard?: Record<string, unknown> }> => {
+      const question = typeof params.question === "string" ? params.question.trim() : "";
+      const raw = Array.isArray(params.options) ? params.options : [];
+      const options = raw
+        .map((entry, index) => {
+          const record = (entry ?? {}) as Record<string, unknown>;
+          const label = typeof record.label === "string" ? record.label.trim() : "";
+          if (label === "") return undefined;
+          return {
+            id: `option-${index + 1}`,
+            label,
+            ...(typeof record.detail === "string" && record.detail.trim() !== ""
+              ? { detail: record.detail.trim() }
+              : {}),
+          };
+        })
+        .filter((entry): entry is { id: string; label: string; detail?: string } => entry !== undefined);
+
+      /*
+       * Fields make it a form; options make it a question. One tool rather than two, because the agent's
+       * decision is "I need something from the user" and which shape fits is a detail of that.
+       */
+      const rawFields = Array.isArray(params.fields) ? params.fields : [];
+      const fields = rawFields
+        .map((entry, index) => {
+          const record = (entry ?? {}) as Record<string, unknown>;
+          const label = typeof record.label === "string" ? record.label.trim() : "";
+          if (label === "") return undefined;
+          const kind = record.kind === "textarea" || record.kind === "select" ? record.kind : ("text" as const);
+          const choices = Array.isArray(record.options)
+            ? record.options.filter((option): option is string => typeof option === "string" && option.trim() !== "")
+            : [];
+          // A select with nothing to choose from is a control the user cannot use, so it becomes text.
+          const usable = kind === "select" && choices.length === 0 ? ("text" as const) : kind;
+          return {
+            id: `field-${index + 1}`,
+            label,
+            kind: usable,
+            ...(usable === "select" ? { options: choices } : {}),
+            ...(record.required === true ? { required: true } : {}),
+            ...(typeof record.placeholder === "string" && record.placeholder.trim() !== ""
+              ? { placeholder: record.placeholder.trim() }
+              : {}),
+          };
+        })
+        .filter((entry): entry is NonNullable<typeof entry> => entry !== undefined);
+
+      if (fields.length > 0) {
+        const title = typeof params.title === "string" && params.title.trim() !== "" ? params.title.trim() : question;
+        return {
+          text: `Đã gửi một biểu mẫu để hỏi người dùng: “${title}”. Câu trả lời sẽ đến ở lượt kế tiếp — kết thúc lượt này.`,
+          hostCard: { type: "form-card", owner: "host", formId: newId("form"), title, fields },
+        };
+      }
+
+      if (question === "" || options.length < 2) {
+        // Refused in the same turn, so the model corrects itself rather than the user seeing an empty card.
+        return { text: "Cần một câu hỏi kèm ít nhất hai lựa chọn, hoặc một biểu mẫu có ít nhất một trường." };
+      }
+
+      return {
+        text:
+          `Đã hỏi người dùng: “${question}”. Câu trả lời sẽ đến ở lượt kế tiếp — kết thúc lượt này và đừng ` +
+          `tự trả lời thay họ.`,
+        hostCard: {
+          type: "question-card",
+          owner: "host",
+          questionId: newId("q"),
+          question,
+          options,
+        },
+      };
     },
   };
 }
