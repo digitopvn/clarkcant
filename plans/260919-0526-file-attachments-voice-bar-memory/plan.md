@@ -133,9 +133,9 @@ Phase 12 là cổng cuối, không sửa giữa các stage ship.
 ## Success Criteria
 
 - [x] `pnpm verify` xanh: invariant + typecheck + lint + unit test. — chạy trên cây hiện tại của `main`:
-      **1410 passed, 7 skipped (1417)**, và 7/7 invariant PASS.
-- [x] `pnpm test:e2e` xanh, có journey mới cho từng tính năng trong năm mục của issue. — **82 passed, 0 failed**
-      (chromium, chạy trên cây hiện tại). `.github/workflows/ci.yml` **không** chạy `test:e2e`, nên CI xanh
+      **1427 passed, 7 skipped (1434)**, và 7/7 invariant PASS.
+- [x] `pnpm test:e2e` xanh, có journey mới cho từng tính năng trong năm mục của issue. — **83 passed, 0 failed**
+      (chromium, chạy trên cây hiện tại `c4e7576`). `.github/workflows/ci.yml` **không** chạy `test:e2e`, nên CI xanh
       không nói gì về cổng này; số này là lần chạy tay trên đúng revision.
 - [x] `pnpm --filter @clarkcant/app-desktop run smoke` xanh, thân trên máy có display, output JSON lưu lại. — Đã
       chạy trên máy này: exit 0, `"failed": []`, mọi check `true`, gồm "compact mode reads back the bounds
