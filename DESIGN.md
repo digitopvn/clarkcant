@@ -184,6 +184,19 @@ Yêu cầu:
 
 ## 3. Motion & micro-interaction system
 
+### Shared motion helpers (đã ship)
+
+Bốn chuyển động của giao diện — `press`, `release`, `panel`, `popover` — nằm trong
+`packages/design-tokens/src/motion.ts` và là **cách duy nhất** để làm chuyển động. Ba quy tắc được mã hoá ở đó
+thay vì giao cho từng component:
+
+- chỉ animate `transform` và `opacity` — hai thuộc tính không buộc browser layout lại; không có `font-size`,
+  `color` hay kích thước nào trong tập, nên helper không thể bị trỏ vào chữ;
+- bounce nhẹ chỉ dùng cho `press`, `release`, `panel`. `popover` không bounce, vì overshoot làm nội dung đáp
+  xuống ở chỗ khác với chỗ nó dừng lại;
+- reduced motion lấy từ bộ token `reduced`, không phải nhân với 0 — nhân với 0 vẫn để lại một transition bắn
+  event, và một animation vô hạn duration 0 là bug chứ không phải bản reduced-motion.
+
 Các token hiện có micro, normal, panel, orb, enter, exit, glow và bounce là nền tảng tốt. Tiếp tục dùng token thay vì hard-code duration.
 
 ### 3.1 Motion grammar
