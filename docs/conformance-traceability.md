@@ -117,6 +117,21 @@ A status here is never upgraded without the corresponding test appearing alongsi
 
 ## Summary
 
+### Khoảng trống đã biết: performance của widget (Phase 14)
+
+Ba mục performance của Phase 14 nằm ở đây thay vì trong bảng, vì chúng **chưa có gì để gắn vào**:
+
+- **pointer Orb loop ngoài React state** — đã có và đã test (`apps/web/e2e/orb.spec.ts`, canvas không bị dựng
+  lại khi pointer quét qua 20 lần).
+- **không duplicate live subscription sau detach** — đã có và đã test từ trước
+  (`core.spec.ts`: "holds the one-owner rule across a detached surface too (V20)"). Detach trình bày cùng một
+  instance ở chỗ khác, không tạo instance thứ hai, và lease từ chối chủ thứ hai kèm tên surface đang giữ.
+- **heavy widget lazy mount** và **offscreen suspend** — **BLOCKED**: conversation client không mount frame
+  isolated nào cả (`mini-app-surface.tsx` vẽ `figure` từ snapshot đã chụp; không có `iframe` và không có
+  `sandbox=` trong client). Điều kiện thiếu được nêu tên: một frame chỉ có thể lazy-mount và suspend khi nó
+  tồn tại, và để nó tồn tại thì node phải phục vụ được entry của một package đã cài — phần đó chưa có. Viết
+  wiring rồi tự test nó trong cùng một change là tự xác nhận, nên hai mục này được báo là thiếu.
+
 Các bảng trên là nơi tra trạng thái từng yêu cầu; không scope item nào được tuyên bố
 hoàn tất. Fixture chứng minh đường nối của ứng dụng, không thay thế kiểm chứng với
 provider thật. Định hướng UX trong [DESIGN.md](../DESIGN.md) không tự nâng trạng thái
