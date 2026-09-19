@@ -4,16 +4,16 @@ Năm tính năng của issue #17, làm qua ba stage. Stage A (#19), Stage B và 
 phần ghi chú về đúng sự thật, và PR #38 sửa nốt hai claim còn lại cùng cổng browser. Tài liệu này ghi **số thật đo
 trên cây đã merge `main`**, không phải số của lần chạy cũ.
 
-## Số thật, đo trên cây hiện tại của `main` (`c4e7576`)
+## Số thật, đo trên cây hiện tại (`1368cb5`, sau khi nhận `main`)
 
 | Cổng | Lệnh | Kết quả |
 | --- | --- | --- |
 | Invariant | `pnpm run invariants` | 7/7 PASS |
-| Typecheck + lint + unit test | `pnpm verify` | **1427 passed, 7 skipped (1434)** |
+| Typecheck + lint + unit test | `pnpm verify` | **1474 passed, 7 skipped (1481)** |
 | Browser suite | `pnpm test:e2e` | **83 passed, 0 failed** |
 | CI trên `main` | `.github/workflows/ci.yml`, run 35461135410 ở commit `bac2f2e` | **cả năm job xanh**: `verify` (node 22.19 và 24), `secret scan`, `e2e (browser suite)`, `desktop smoke (xvfb)` |
 | Smoke desktop | `pnpm --filter @clarkcant/app-desktop run smoke` | **exit 0**, mọi check `true`, `"failed": []` (Electron 44.3.0, Chrome 152) |
-| Đồng bộ với `main` | `git rev-list HEAD..origin/main` | 0 (merge `7d9caea`, PR #38 squash thành `9e90535`; sau đó `main` nhận PR #39 và bản sửa tài liệu này) |
+| Đồng bộ với `main` | `git rev-list HEAD..origin/main` | 0 (merge `1368cb5`, sau khi nhận `main`; PR #38 squash thành `9e90535`, PR #44 đưa hai cổng vào CI) |
 
 ## Hai journey từng bị chặn, và đã sửa tại gốc
 
