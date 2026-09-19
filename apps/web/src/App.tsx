@@ -12,10 +12,7 @@ import {
   systemPrefersLight,
   firstRunSteps,
   type FirstRunStep,
-  prefersReducedMotion,
-  resolveOrbProfile,
-  type RegisteredPreference,
-  type ResolvedOrbProfile,
+  useOrbProfile,
 } from "@clarkcant/conversation-client";
 
 /**
@@ -74,48 +71,12 @@ export function App(): ReactElement {
   /**
    * The personalized orb, resolved from what this node stored.
    *
-   * Resolved once here and passed down rather than read by the orb itself: the conversation re-renders
-   * many times per turn, and a component that fetched its own preferences would rebuild the orb's GPU
-   * program on whatever schedule its own re-renders happened to follow.
-   *
-   * Undefined until the node answers, and it stays undefined on failure. The orb is the product's own face,
-   * so a node that cannot answer for a preference must not be the reason it is missing — the shipped
-   * profile is what draws in that case.
+   * Resolved by the shared hook rather than here, because the settings surface writes the same preferences and
+   * has to be able to re-resolve them: writing a profile changes the orb that is on screen, not the one that
+   * appears after a reload. Undefined until the node answers, and it stays undefined on failure — the orb is the
+   * product's own face, so a node that cannot answer for a preference must not be why it is missing.
    */
-  const [orbProfile, setOrbProfile] = useState<ResolvedOrbProfile | undefined>(undefined);
-
-  useEffect(() => {
-    let cancelled = false;
-    void client
-      .preferences()
-      .then((listed) => {
-        if (cancelled) return;
-        /*
-         * The registered preference itself rather than its value, so nothing here has to name `unknown`.
-         * `resolveOrbProfile` is the boundary that parses what a stored value actually is; this only has to
-         * find the row.
-         */
-        const preference = (key: string): RegisteredPreference | undefined =>
-          listed.preferences.find((candidate) => candidate.key === key);
-        setOrbProfile(
-          resolveOrbProfile({
-            profile: preference("orb.profile")?.value,
-            custom: preference("orb.custom")?.value,
-            // Two ways to ask for stillness, and either one is enough: the platform's own setting, and the
-            // choice this application stores. A preference that could outrank the platform one would make
-            // the accessibility switch a lie.
-            reducedMotion:
-              preference("experience.motion")?.value === "reduced" || prefersReducedMotion(),
-          }),
-        );
-      })
-      .catch(() => {
-        // Left undefined deliberately; see above.
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [client]);
+  const { profile: orbProfile, refresh: refreshOrbProfile } = useOrbProfile(client);
 
   /**
    * What the node says it already has.
@@ -517,6 +478,8 @@ export function App(): ReactElement {
       // start screen would appear and the next reload would pull the old conversation back.
       onSessionReset={() => window.sessionStorage.removeItem("cc_conversation")}
       {...(orbProfile === undefined ? {} : { orbProfile })}
+      // The orb is drawn by this host, so this host is what re-resolves it after a settings write.
+      onOrbChange={refreshOrbProfile}
     />
   );
 }

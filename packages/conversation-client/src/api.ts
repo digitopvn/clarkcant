@@ -533,6 +533,26 @@ export class GatewayClient {
   }
 
   /**
+   * The effects this node performed without an approval card, newest first.
+   *
+   * The record that makes autonomy checkable: an approval card is its own evidence, and an effect that skipped
+   * the card leaves one here instead. Empty is a real answer — nothing has run without asking yet.
+   */
+  activity(): Promise<{
+    effects: {
+      at: string;
+      kind: string;
+      mode: string;
+      category: string;
+      description: string;
+      operationDigest: string;
+      because: string;
+    }[];
+  }> {
+    return this.#call("GET", "/activity");
+  }
+
+  /**
    * The registered preferences and their current values.
    *
    * Every registered key is answered, including the ones nobody has set: those come back with the

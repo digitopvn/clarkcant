@@ -808,7 +808,21 @@ Package không được tự thay global app theme hoặc global shortcuts nếu
 
 Settings vẫn là modal/surface trên conversation. Không biến thành admin console.
 
-Đề xuất 5 nhóm.
+Sáu nhóm, đặt tên theo việc user muốn làm chứ không theo bộ phận của hệ thống:
+
+1. Experience
+2. AI & Routing
+3. Control
+4. Extensions & Widgets
+5. Devices & Voice
+6. Developer / Advanced
+
+Credential **không** có tab riêng: mỗi khoá nằm ở domain giải thích nó (Gemini ở Devices & Voice,
+TypeSafe ở AI & Routing), theo mục 11.6.
+
+Một control chỉ xuất hiện khi behavior đứng sau nó đã tồn tại. Preference đã khai báo trong registry mà
+chưa có ai đọc (density, background routing, voice picker) thì **không** có control, và lý do được nói ở
+chỗ user sẽ tìm — im lặng bỏ qua còn tệ hơn, vì user sẽ tưởng app hỏng.
 
 ### 11.1 Experience
 

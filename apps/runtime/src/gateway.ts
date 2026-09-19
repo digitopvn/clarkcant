@@ -51,6 +51,7 @@ import {
   listLocalImages,
   nextMessageSequence,
   oneRow,
+  recentEvents,
   deleteCredential,
   putPreference,
 } from "@clarkcant/storage";
@@ -307,6 +308,36 @@ export async function handleRequest(deps: GatewayDeps, request: GatewayRequest):
   if (segments.length === 1 && segments[0] === "preferences" && request.method === "GET") {
     return json(200, {
       preferences: listRegisteredPreferences(preferenceDeps, runtime.identity.ownerPrincipalId),
+    });
+  }
+
+  /*
+   * The effects this node performed without an approval card.
+   *
+   * This is what makes autonomy checkable rather than merely trusted: an approval card is its own record, and
+   * an effect that skipped the card would otherwise leave nothing a person could look at. Read from the same
+   * event log the task lifecycle writes to.
+   *
+   * The document is passed through as the writer stored it, and the writer is `recordEffectExecution`, which
+   * puts a description and an operation digest there — never a credential, and never the output of a command.
+   */
+  if (segments.length === 1 && segments[0] === "activity" && request.method === "GET") {
+    const events = recentEvents(runtime.db, { stream: "activity", limit: 20 });
+    return json(200, {
+      effects: events.map((event) => {
+        const document = (typeof event.document === "object" && event.document !== null
+          ? event.document
+          : {}) as Record<string, unknown>;
+        return {
+          at: event.occurredAt,
+          kind: event.kind,
+          mode: typeof document.mode === "string" ? document.mode : "unknown",
+          category: typeof document.category === "string" ? document.category : "unknown",
+          description: typeof document.description === "string" ? document.description : "",
+          operationDigest: typeof document.operationDigest === "string" ? document.operationDigest : "",
+          because: typeof document.because === "string" ? document.because : "",
+        };
+      }),
     });
   }
 
