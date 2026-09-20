@@ -104,7 +104,15 @@ describe("the folders this node owns", () => {
       timeoutMs: COMMAND_LIMITS.timeoutMs,
       maxOutputBytes: COMMAND_LIMITS.maxOutputBytes,
     });
-    expect(result.envelope.guardClass).toBe("commands");
+    /*
+     * A read is governed by the reads row, whatever surface it arrived on.
+     *
+     * This said `commands` — every command did — and that is what made a read-only fetch impossible to run: the
+     * guardrail judged it and refused it, while the default switches already say reads are not guarded. A command that
+     * can change something is still governed by `commands`, which is the row a person looks for after an agent ran
+     * something surprising.
+     */
+    expect(result.envelope.guardClass).toBe("reads");
   });
 
   it("uses the fallback directory when the caller named none, and still contains it", () => {
@@ -135,6 +143,25 @@ describe("what a command looks like", () => {
     const push = classifyCommand("git push origin main");
     expect(push.effectCategory).toBe("external-write");
     expect(push.commandClass).toBe("network");
+  });
+
+  it("reads the network without calling it a write", () => {
+    /*
+     * A fetch reaches outward and changes nothing out there. Classifying it `external-write` put it among the risky
+     * categories, which is what made an ordinary read impossible to run: measured on this node, the guardrail judged a
+     * weather fetch and refused it, and the person was told the guardrails were too strict with nothing to do about it.
+     */
+    const fetched = classifyCommand("curl -s https://wttr.in/Ho+Chi+Minh+City?format=3");
+    expect(fetched.effectCategory).toBe("read");
+    // The family is still worth knowing: it says what the command reaches, not what it changes.
+    expect(fetched.commandClass).toBe("network");
+
+    expect(classifyCommand("wget -q https://example.com/page").effectCategory).toBe("read");
+
+    // Sending something is still a write, in every spelling a person or a model reaches for.
+    expect(classifyCommand("curl -X POST -d @body.json https://example.com").effectCategory).toBe("external-write");
+    expect(classifyCommand("curl -T backup.tar https://example.com").effectCategory).toBe("external-write");
+    expect(classifyCommand("wget --post-data=x https://example.com").effectCategory).toBe("external-write");
   });
 
   it("does not let a force push hide behind the git family", () => {

@@ -90,13 +90,42 @@ export interface CommandClassification {
   effectCategory: EffectCategory;
 }
 
+/**
+ * The command names in a line: what is actually being run, rather than a word that happens to appear in an argument.
+ *
+ * Matching words anywhere in the line is what made an ordinary fetch impossible to run. Measured on this node:
+ * `curl -s https://wttr.in/Ho+Chi+Minh+City?format=3` was classified `destructive`, because `format` appears in the
+ * URL and `format` is one of the words that means "reformat a disk". A destructive classification is the most severe
+ * there is, so the guardrail refused it — reported as the guardrails being too strict, and there was nothing in the
+ * refusal to act on. A command is what it runs; its arguments are not commands.
+ */
+function commandHeads(text: string): string[] {
+  return text
+    .split(/&&|\|\||;|\|/u)
+    .map((segment) => segment.trim().split(/\s+/u)[0] ?? "")
+    .filter((head) => head !== "");
+}
+
 /** Commands that read and change nothing, so a guardrail call on them would buy nothing. */
-const READ_ONLY = /^\s*(ls|dir|cat|type|head|tail|wc|stat|file|pwd|whoami|node\s+(--version|-v)|pnpm\s+(list|why|outdated)|npm\s+ls|git\s+(status|log|diff|show|branch|remote|describe|rev-parse|ls-files|blame))\b/i;
+const READ_ONLY_HEAD = /^(ls|dir|cat|type|head|tail|wc|stat|file|pwd|whoami)$/i;
+const READ_ONLY_FORM = /^(node\s+(--version|-v)|pnpm\s+(list|why|outdated)|npm\s+ls|git\s+(status|log|diff|show|branch|remote|describe|rev-parse|ls-files|blame))\b/i;
 /** Deleting, overwriting or reformatting: the family a guardrail exists for. */
-const DESTRUCTIVE = /\b(rm|rmdir|del|erase|rd|shred|truncate|format|mkfs|fdisk|shutdown|reboot)\b|\bgit\s+(clean\s+-[a-z]*f|reset\s+--hard|push\s+.*--force)\b|\bdd\b/i;
+const DESTRUCTIVE_HEAD = /^(rm|rmdir|del|erase|rd|shred|truncate|format|mkfs|fdisk|shutdown|reboot|dd)$/i;
+const DESTRUCTIVE_FORM = /\bgit\s+(clean\s+-[a-z]*f|reset\s+--hard|push\s+[^|;&]*--force)\b/i;
 const RECURSIVE = /(^|\s)-[a-z]*r[a-z]*\b|(^|\s)--recursive\b|(^|\s)\/s\b/i;
 /** Effects that leave this machine, or reach another account. */
-const EXTERNAL = /\bgit\s+push\b|\bnpm\s+publish\b|\bpnpm\s+publish\b|\bgh\s+(pr|issue|release|api)\b|\bcurl\b|\bwget\b|\bscp\b|\bssh\b|\brsync\b|\bdocker\s+push\b/i;
+const EXTERNAL_HEAD = /^(curl|wget|scp|ssh|sftp|rsync)$/i;
+const EXTERNAL_FORM = /\b(git\s+push|npm\s+publish|pnpm\s+publish|gh\s+(pr|issue|release|api)|docker\s+push)\b/i;
+/**
+ * The external effects that change something on the other side.
+ *
+ * A fetch and an upload both reach outward, and only one of them changes anything out there. Everything external that
+ * is not a plain fetch is treated as a write, because the conservative direction is the one that keeps working when a
+ * rule is incomplete: an unlisted command that sends, runs or uploads something is not a read.
+ */
+const EXTERNAL_WRITE_HEAD = /^(scp|ssh|sftp|rsync)$/i;
+const EXTERNAL_WRITE_FORM =
+  /\b(git\s+push|npm\s+publish|pnpm\s+publish|gh\s+(pr|issue|release|api)|docker\s+push)\b|\b(curl|wget)\b[^|;&]*(-X\s*(POST|PUT|PATCH|DELETE)|-d\b|--data|--form|-F\b|-T\b|--upload-file|--post-data|--post-file|--method)/i;
 const PACKAGE_MANAGER = /^\s*(pnpm|npm|yarn|pip|pip3|poetry|cargo|go)\b/i;
 const BUILD = /^\s*(pnpm|npm|yarn|make|cmake|cargo|go|tsc|vite|vitest|playwright)\b.*\b(build|test|run|install|ci|lint|typecheck)\b/i;
 
@@ -109,17 +138,27 @@ const BUILD = /^\s*(pnpm|npm|yarn|make|cmake|cargo|go|tsc|vite|vitest|playwright
  */
 export function classifyCommand(command: string): CommandClassification {
   const text = command.trim();
-  const destructive = DESTRUCTIVE.test(text);
-  const external = EXTERNAL.test(text);
-  const readOnly = READ_ONLY.test(text);
+  const heads = commandHeads(text);
+  const destructive = heads.some((head) => DESTRUCTIVE_HEAD.test(head)) || DESTRUCTIVE_FORM.test(text);
+  const external =
+    heads.some((head) => EXTERNAL_HEAD.test(head)) ||
+    EXTERNAL_FORM.test(text) ||
+    heads.some((head) => EXTERNAL_WRITE_HEAD.test(head));
+  const externalWrite =
+    heads.some((head) => EXTERNAL_WRITE_HEAD.test(head)) || EXTERNAL_WRITE_FORM.test(text);
+  const readOnly = heads.some((head) => READ_ONLY_HEAD.test(head)) || READ_ONLY_FORM.test(text);
+  // A fetch reaches outward and changes nothing out there: it is a read that happens to use the network.
+  const networkRead = external && !externalWrite;
 
   const effectCategory: EffectCategory = destructive
     ? "destructive"
-    : external
+    : externalWrite
       ? "external-write"
-      : readOnly
+      : readOnly || networkRead
         ? "read"
-        : "local-write";
+        : external
+          ? "external-write"
+          : "local-write";
 
   const commandClass = destructive
     ? "filesystem.delete"
