@@ -411,6 +411,25 @@ function effortFromModel(model: string): string | undefined {
   return effort === "" ? undefined : effort;
 }
 
+/**
+ * The model catalogue a node must be able to show even while it is running no model.
+ *
+ * This exists because of a deadlock the first version shipped with: the picker is how a node stops having no model,
+ * and its list was published only when a model turn already existed, so every fresh node showed an empty list and no
+ * way to fill it. Reading the catalogue needs no model — it is what pi offers — so this builds an adapter for exactly
+ * that question, naming no model, and returns the same zero-argument function the turn publishes.
+ *
+ * `adapter` is injectable for the same reason it is on the turn: a test asserting what the picker lists should not
+ * need a provider account.
+ */
+export function createModelCatalogue(options: {
+  cwd: string;
+  adapter?: PiAdapter;
+}): () => Promise<ModelCatalogue> {
+  const adapter = options.adapter ?? new RealPiAdapter({ cwd: options.cwd, builtinTools: [] });
+  return () => adapter.catalogue();
+}
+
 export async function createModelTurn(options: {
   env: NodeJS.ProcessEnv;
   cwd: string;
@@ -499,7 +518,15 @@ export async function createModelTurn(options: {
    */
   personalInstructions?: () => string | undefined;
 }): Promise<ModelTurn | undefined> {
-  const selection = modelFromEnv(options.env);
+  /*
+   * What this node runs: the choice somebody made, else what the environment names.
+   *
+   * The choice comes first because it is the more specific statement and the one the UI collects. Without this the
+   * picker was a control that stored a value nothing read unless the environment had already given the node a model —
+   * which is the same as a control that does nothing. `options.model` is still called per session below, so a pick
+   * made while the node is running reaches the next conversation.
+   */
+  const selection = options.model?.() ?? modelFromEnv(options.env);
   if (selection === undefined) return undefined;
 
   const readViews = (): readonly ViewDescriptor[] => options.views?.() ?? [];
