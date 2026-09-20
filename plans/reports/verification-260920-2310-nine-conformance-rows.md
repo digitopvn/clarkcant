@@ -42,9 +42,18 @@ Chỉ V02 lên PASS, và claim của nó không nói về dịch vụ live. Bố
 
 - `pnpm run invariants` → **8/8**.
 - `pnpm verify` → **exit 0**, 2000 passed / 13 skipped.
-- `pnpm test:e2e` → chạy ở lệnh riêng, kết quả ghi ở mục dưới khi xong.
+- `pnpm test:e2e` → **exit 0**, 118 passed / 1 skipped (chạy ở lệnh riêng, sau khi dọn listener cũ).
 - Mỗi PR #114–#123: verify (node 22.19), verify (node 24), secret scan, e2e (browser suite),
   desktop smoke (xvfb) — xanh hết; nhánh đồng bộ với `origin/main` sau mỗi lần merge (behind 0).
+
+## Defect thứ tám, tìm ra ở chính bước gate này
+
+Hai test trong `mini-app.spec.ts` đỏ khi e2e chạy lúc 23:0x Chủ nhật và xanh vào buổi chiều cùng
+ngày. Gốc nằm trong **setup của chính chúng**: chúng tạo event lịch ở `now + 1h`, và sau 23:00 thì
+mốc đó rơi sang ngày — và qua Chủ nhật thì rơi sang **tuần** — kế tiếp, ra ngoài khoảng "tuần này"
+mà composition hỏi node. Region calendar chỉ được vẽ **khi có hàng**, nên nó biến mất và assertion
+không tìm thấy `[data-calendar-month]`. CI xanh vì chạy trước mốc đó. Fix `44aed7b` neo event vào
+hôm nay 09:00 theo timezone của event, giữ nguyên mọi assertion — sửa setup chứ không sửa kỳ vọng.
 
 ## Câu hỏi chưa ngã ngũ
 
