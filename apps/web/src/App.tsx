@@ -2,6 +2,8 @@ import { type ReactElement, useEffect, useLayoutEffect, useMemo, useRef, useStat
 
 import {
   Conversation,
+  DetachedWidgetSurface,
+  type DetachedBridge,
   GatewayClient,
   ORB_DRAW_SIZE,
   ORB_RADIUS,
@@ -52,6 +54,27 @@ function readGateway(): string {
 }
 
 export function App(): ReactElement {
+  /*
+   * The detached widget window.
+   *
+   * It is served from this same app and shows none of it. The window holds no token, so this branch is taken
+   * before anything that would read one - not the bridge, not the URL, not session storage - and what remains is
+   * the widget the host handed over. That ordering is the design rather than a detail: a detached window that read
+   * a token on its way to rendering would be a window that could read the whole conversation.
+   *
+   * The branch is a return rather than a flag threaded through everything below, because there is nothing below
+   * that this window has any use for.
+   */
+  /*
+   * SAFETY: `clarkcantDetached` is injected into the page by the desktop shell's `contextBridge`, so it exists at
+   * runtime and in no type. The assertion is narrow (an optional property, read once) and the value is validated
+   * by use: a bridge without `bootstrap` produces a refusal in the surface rather than a crash here.
+   */
+  const detachedBridge = (window as unknown as { clarkcantDetached?: DetachedBridge }).clarkcantDetached;
+  if (new URLSearchParams(window.location.search).get("detached") === "1" && detachedBridge !== undefined) {
+    return <DetachedWidgetSurface bridge={detachedBridge} />;
+  }
+
   /**
    * The token, from the desktop shell when there is one and from the page otherwise.
    *

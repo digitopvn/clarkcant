@@ -12,7 +12,7 @@
  * window is showing it.
  */
 
-import { createWindowOptions } from "./security.mjs";
+import { DETACHED_WINDOW_CHANNELS, createWindowOptions } from "./security.mjs";
 
 /**
  * The channels a detached window may use.
@@ -24,12 +24,17 @@ import { createWindowOptions } from "./security.mjs";
 export const DETACHED_CHANNELS = Object.freeze([
   "desktop:detachWidget",
   "desktop:attachWidget",
-  "detached:bootstrap",
-  "detached:release",
+  ...DETACHED_WINDOW_CHANNELS,
 ]);
 
-/** The exact fields a detached window may receive. Nothing else, and that is the whole security property. */
-const BOOTSTRAP_FIELDS = Object.freeze(["instanceRef", "title", "widgetKind"]);
+/**
+ * The exact fields a detached window may receive. Nothing else, and that is the whole security property.
+ *
+ * `live` is the widget host bootstrap: the composition the host already fetched for this instance. It is the
+ * instance's own data, and the reason it can travel is that it carries no credential — having it lets the window
+ * *draw* the widget, and drawing is all a window without a token can do.
+ */
+const BOOTSTRAP_FIELDS = Object.freeze(["instanceRef", "title", "widgetKind", "live"]);
 
 /**
  * Fields that would make a detached window privileged if they ever appeared.
@@ -60,6 +65,7 @@ export function detachedBootstrap(input) {
     instanceRef: String(record.instanceRef ?? ""),
     title: String(record.title ?? ""),
     widgetKind: String(record.widgetKind ?? "widget"),
+    live: record.live,
   };
 }
 
@@ -84,12 +90,54 @@ export function reviewDetachedBootstrap(payload) {
   if (unknown.length > 0) {
     return { ok: false, reason: `the bootstrap carries fields a detached window does not receive: ${unknown.join(", ")}` };
   }
+  if (payload.live === undefined || payload.live === null || typeof payload.live !== "object") {
+    // A window with no composition has nothing to draw, and an empty frame reads as a widget that failed to load
+    // rather than as a detach that could not be prepared.
+    return { ok: false, reason: "a detached window needs the widget host bootstrap it is a view of" };
+  }
   if (typeof payload.instanceRef !== "string" || payload.instanceRef === "") {
     // A detached window with no instance reference has nothing to show, and an empty frame would read as a widget
     // that failed to load rather than as a request that made no sense.
     return { ok: false, reason: "a detached window needs the instance reference it is a view of" };
   }
   return { ok: true, bootstrap: payload };
+}
+
+/**
+ * What a detached window may ask the host to do.
+ *
+ * The window holds no token, so it cannot invoke an action itself — and it must not, because the credential that
+ * would let it is the credential that reads the whole conversation. So an intent travels to the host, which
+ * performs it with its own credentials and answers. This is what keeps "receives only the bootstrap" true while
+ * the same owner lease moves to the detached window: the window decides *what*, the host is what *can*.
+ *
+ * The fields are named, so the payload cannot carry an owner token, a conversation id or a gateway URL: those are
+ * the host's, and a relay that accepted them would be a window invoking anything.
+ */
+const INTENT_FIELDS = Object.freeze(["instanceRef", "actionBindingId", "expectedRevision", "input"]);
+
+/** @returns {{ ok: true, intent: object } | { ok: false, reason: string }} */
+export function reviewDetachedIntent(payload) {
+  if (payload === null || typeof payload !== "object" || Array.isArray(payload)) {
+    return { ok: false, reason: "an intent must be an object" };
+  }
+  const keys = Object.keys(payload);
+  const privileged = keys.filter((key) => PRIVILEGED_FIELDS.includes(key));
+  if (privileged.length > 0) {
+    // A relayed intent carrying a credential is an attempt to act as the host, not to ask it.
+    return { ok: false, reason: `an intent may not carry privileged fields: ${privileged.join(", ")}` };
+  }
+  const unknown = keys.filter((key) => !INTENT_FIELDS.includes(key));
+  if (unknown.length > 0) {
+    return { ok: false, reason: `an intent carries fields the host does not accept: ${unknown.join(", ")}` };
+  }
+  if (typeof payload.instanceRef !== "string" || payload.instanceRef === "") {
+    return { ok: false, reason: "an intent has to name the instance it acts on" };
+  }
+  if (typeof payload.actionBindingId !== "string" || payload.actionBindingId === "") {
+    return { ok: false, reason: "an intent has to name the binding it invokes" };
+  }
+  return { ok: true, intent: payload };
 }
 
 /** Where a detached window opens: beside its parent, and inside the work area the parent is already in. */

@@ -7,6 +7,7 @@ import {
   detachedBounds,
   detachedWindowOptions,
   reviewDetachedBootstrap,
+  reviewDetachedIntent,
 } from "../src/detached-window.mjs";
 
 /**
@@ -24,7 +25,7 @@ import {
 const PRELOAD = "/tmp/detached-preload.cjs";
 
 describe("the detached bootstrap", () => {
-  it("carries three fields and cannot be widened by its input", () => {
+  it("carries the widget host bootstrap and cannot be widened by its input", () => {
     /*
      * The security property is construction, not redaction. A caller that passes a token gets a bootstrap without
      * one because the token is not among the three things this reads — so there is no filter to get wrong later.
@@ -33,12 +34,13 @@ describe("the detached bootstrap", () => {
       instanceRef: "widget_1",
       title: "Bảng điều khiển",
       widgetKind: "note",
+      live: { compositionId: "comp_1", sections: [] },
       token: "local-secret",
       gateway: "http://127.0.0.1:4273",
       conversationId: "conv_1",
     });
 
-    expect(Object.keys(bootstrap).sort()).toEqual(["instanceRef", "title", "widgetKind"]);
+    expect(Object.keys(bootstrap).sort()).toEqual(["instanceRef", "live", "title", "widgetKind"]);
     expect(JSON.stringify(bootstrap)).not.toContain("local-secret");
     expect(JSON.stringify(bootstrap)).not.toContain("4273");
     expect(JSON.stringify(bootstrap)).not.toContain("conv_1");
@@ -77,9 +79,19 @@ describe("the detached bootstrap", () => {
   });
 
   it("accepts the bootstrap it builds", () => {
-    const bootstrap = detachedBootstrap({ instanceRef: "widget_1", title: "Bảng điều khiển" });
-    const reviewed = reviewDetachedBootstrap(bootstrap);
-    expect(reviewed.ok).toBe(true);
+    const bootstrap = detachedBootstrap({
+      instanceRef: "widget_1",
+      title: "Bảng điều khiển",
+      live: { compositionId: "comp_1", sections: [] },
+    });
+    expect(reviewDetachedBootstrap(bootstrap).ok).toBe(true);
+  });
+
+  it("refuses a window with no composition to draw", () => {
+    // An empty frame reads as a widget that failed to load rather than as a detach that could not be prepared.
+    const reviewed = reviewDetachedBootstrap({ instanceRef: "widget_1", title: "x" });
+    expect(reviewed.ok).toBe(false);
+    expect(reviewed.ok === false ? reviewed.reason : "").toContain("bootstrap");
   });
 });
 
@@ -113,6 +125,34 @@ describe("the detached window itself", () => {
     expect(bounds.y).toBeLessThanOrEqual(1080 - bounds.height);
     expect(bounds.x).toBeGreaterThanOrEqual(0);
     expect(bounds.y).toBeGreaterThanOrEqual(0);
+  });
+});
+
+describe("the relayed intent", () => {
+  it("accepts the four fields an action needs and nothing else", () => {
+    const reviewed = reviewDetachedIntent({
+      instanceRef: "widget_1",
+      actionBindingId: "bind_1",
+      expectedRevision: 4,
+      input: { text: "xin chào" },
+    });
+    expect(reviewed.ok).toBe(true);
+  });
+
+  it("refuses an intent that tries to act as the host", () => {
+    /*
+     * The window holds no token, so it cannot invoke anything itself. An intent carrying one is an attempt to act
+     * as the host rather than to ask it — which is the distinction the relay exists to preserve.
+     */
+    const reviewed = reviewDetachedIntent({ instanceRef: "w", actionBindingId: "b", token: "local-secret" });
+    expect(reviewed.ok).toBe(false);
+    expect(reviewed.ok === false ? reviewed.reason : "").toContain("token");
+  });
+
+  it("refuses an intent that names no binding or no instance", () => {
+    expect(reviewDetachedIntent({ instanceRef: "w" }).ok).toBe(false);
+    expect(reviewDetachedIntent({ actionBindingId: "b" }).ok).toBe(false);
+    expect(reviewDetachedIntent({ instanceRef: "w", actionBindingId: "b", conversationId: "c" }).ok).toBe(false);
   });
 });
 

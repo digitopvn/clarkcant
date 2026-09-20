@@ -167,6 +167,8 @@ describe("IPC is answered only for the shell document (sender validation)", () =
      * that distinction inside a payload would put the decision where review cannot see it.
      */
     expect([...IPC_CHANNELS].sort()).toEqual([
+      "desktop:attachWidget",
+      "desktop:detachWidget",
       "desktop:focusWindow",
       "desktop:getSession",
       "desktop:getStatus",
@@ -179,6 +181,9 @@ describe("IPC is answered only for the shell document (sender validation)", () =
       "desktop:setCompactMode",
       "desktop:setKeepRunning",
       "desktop:setWindowMode",
+      "detached:bootstrap",
+      "detached:intent",
+      "detached:release",
     ]);
   });
 });

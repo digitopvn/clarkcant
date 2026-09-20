@@ -17,6 +17,7 @@
  */
 
 import { app, BrowserWindow, dialog, ipcMain, screen, shell, session } from "electron";
+import { randomUUID } from "node:crypto";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { dirname, join } from "node:path";
 import { readFileSync } from "node:fs";
@@ -30,6 +31,12 @@ import {
   reviewIpcCall,
 } from "./security.mjs";
 import {
+  detachedBootstrap,
+  detachedWindowOptions,
+  reviewDetachedBootstrap,
+  reviewDetachedIntent,
+} from "./detached-window.mjs";
+import {
   COMPACT_MIN_SIZE,
   WINDOW_MODE_PRESETS,
   actionForMode,
@@ -39,6 +46,17 @@ import {
 } from "./window-mode.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
+
+/**
+ * The detached widget window, if one is open.
+ *
+ * One at a time, because the criterion is that detaching keeps one live owner rather than adding one: a second
+ * detached window would be a second owner, and the shell would have no single window to hand an instance back to.
+ */
+let detached;
+
+/** The window the conversation is in, so a detached view can open beside it and hand the instance back to it. */
+let shellWindow;
 
 const argv = process.argv.slice(2);
 const smokeTest = argv.includes("--smoke-test");
@@ -73,9 +91,12 @@ let keepRunningOnWindowClose = true;
  * `security.mjs` stays the enforcing copy; this is what the check compares against.
  */
 const EXPECTED_BRIDGE_METHODS = Object.freeze([
+  "attachWidget",
+  "detachWidget",
   "focusWindow",
   "getSession",
   "notify",
+  "onWidgetReattached",
   "openExternal",
   "pickDirectory",
   "requestCredential",
@@ -130,12 +151,78 @@ function handle(channel, handler) {
     throw new Error(`refusing to register handler for non-allowlisted channel ${channel}`);
   }
   ipcMain.handle(channel, async (event, ...args) => {
-    const review = reviewIpcCall(event, channel, rendererUrl);
+    // The detached window's own address is passed so the review can tell the two documents apart: the sets of
+    // channels they may use are not interchangeable.
+    const review = reviewIpcCall(event, channel, rendererUrl, detached?.url);
     if (!review.allowed) {
       return { ok: false, refused: review.reason };
     }
     return await handler(...args);
   });
+}
+
+/**
+ * The node this window belongs to, or a refusal saying why there is none.
+ *
+ * The token is read from the node's own identity file rather than passed on the command line or in the URL, where
+ * it would be visible in a process list, in history and in the address bar. The base URL is the window's own
+ * origin, because the window is served by that node.
+ *
+ * A function rather than the body of one handler because the detached window's relay needs the same credential:
+ * two reads of the identity file would be two places for the token's rules to drift.
+ */
+function readNodeSession() {
+  if (dataDir === undefined) {
+    return { ok: false, refused: "no --data-dir was given, so there is no identity to read" };
+  }
+  let identity;
+  try {
+    identity = JSON.parse(readFileSync(join(dataDir, "identity.json"), "utf8"));
+  } catch (error) {
+    return { ok: false, refused: `the node identity could not be read (${error?.code ?? "unreadable"})` };
+  }
+  const token = typeof identity?.localToken === "string" ? identity.localToken : "";
+  if (token.length === 0) return { ok: false, refused: "the node identity carries no local token" };
+  let origin;
+  try {
+    origin = new URL(rendererUrl).origin;
+  } catch {
+    return { ok: false, refused: "the window's address is not a URL, so there is no node to point at" };
+  }
+  if (origin === "null") return { ok: false, refused: "the window is not loaded from a node" };
+  return { ok: true, baseUrl: origin, token };
+}
+
+/**
+ * Call the node with its own token.
+ *
+ * The host holds the credential so the detached renderer never does: the window asks for an action, and this
+ * performs it. That is the whole reason a window with no token can still act — and the reason the token must not
+ * travel with the bootstrap.
+ */
+async function callNode(path, init) {
+  const session = readNodeSession();
+  if (!session.ok) return { ok: false, refused: session.refused };
+  try {
+    const response = await fetch(`${session.baseUrl}${path}`, {
+      method: init?.method ?? "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${session.token}`,
+      },
+      ...(init?.body === undefined ? {} : { body: JSON.stringify(init.body) }),
+    });
+    const body = await response.json().catch(() => undefined);
+    if (!response.ok) {
+      const reason = typeof body?.error?.message === "string" ? body.error.message : `status ${response.status}`;
+      return { ok: false, refused: `the node refused: ${reason}` };
+    }
+    return { ok: true, body };
+  } catch (error) {
+    // Named rather than swallowed: "the node is not answering" and "the node said no" are different, and only
+    // one of them is worth retrying.
+    return { ok: false, refused: `the node could not be reached (${error?.code ?? "unreachable"})` };
+  }
 }
 
 function registerHandlers() {
@@ -146,30 +233,7 @@ function registerHandlers() {
     return { ok: true, opened: checked.url };
   });
 
-  handle("desktop:getSession", async () => {
-    // The node this window belongs to. The token is read from the node's own identity file rather than passed
-    // on the command line or in the URL, where it would be visible in a process list, in history, and in the
-    // address bar. The base URL is the window's own origin, because the window is served by that node.
-    if (dataDir === undefined) {
-      return { ok: false, refused: "no --data-dir was given, so there is no identity to read" };
-    }
-    let identity;
-    try {
-      identity = JSON.parse(readFileSync(join(dataDir, "identity.json"), "utf8"));
-    } catch (error) {
-      return { ok: false, refused: `the node identity could not be read (${error?.code ?? "unreadable"})` };
-    }
-    const token = typeof identity?.localToken === "string" ? identity.localToken : "";
-    if (token.length === 0) return { ok: false, refused: "the node identity carries no local token" };
-    let origin;
-    try {
-      origin = new URL(rendererUrl).origin;
-    } catch {
-      return { ok: false, refused: "the window's address is not a URL, so there is no node to point at" };
-    }
-    if (origin === "null") return { ok: false, refused: "the window is not loaded from a node" };
-    return { ok: true, session: { baseUrl: origin, token } };
-  });
+  handle("desktop:getSession", async () => readNodeSession());
 
   handle("desktop:notify", async (input) => {
     const title = typeof input?.title === "string" ? input.title.slice(0, 120) : "";
@@ -338,6 +402,150 @@ function registerHandlers() {
     keepRunningOnWindowClose,
     channels: [...IPC_CHANNELS],
   }));
+
+  /*
+   * Moving a widget into its own window.
+   *
+   * The shell sends the composition it already has, and the host decides whether it may travel: what the window
+   * receives is that composition and no credential, which is what lets it draw the instance without being able to
+   * read the conversation it came from. The lease is claimed after the window loads and released before the shell
+   * is told to take the instance back, so there is never a moment with two owners.
+   */
+  handle("desktop:detachWidget", async (input) => {
+    if (detached !== undefined) {
+      // A second detached window would be a second owner, which is the thing detaching must not create.
+      return { ok: false, refused: "a widget is already detached" };
+    }
+    if (shellWindow === undefined) {
+      return { ok: false, refused: "there is no conversation window to detach from" };
+    }
+    const conversationId = typeof input?.conversationId === "string" ? input.conversationId : "";
+    const instanceId = typeof input?.instanceId === "string" ? input.instanceId : "";
+    if (conversationId === "" || instanceId === "") {
+      return { ok: false, refused: "detaching needs the conversation and the instance it is showing" };
+    }
+    const reviewed = reviewDetachedBootstrap(
+      detachedBootstrap({
+        instanceRef: instanceId,
+        title: input?.title,
+        widgetKind: input?.widgetKind,
+        live: input?.live,
+      }),
+    );
+    if (!reviewed.ok) return { ok: false, refused: reviewed.reason };
+
+    let address;
+    try {
+      address = new URL(rendererUrl);
+    } catch {
+      // A shell not loaded from a URL has no address to open a child window at, and a refusal says so rather
+      // than throwing inside a handler where nobody would see it.
+      return { ok: false, refused: "the conversation window is not loaded from a URL" };
+    }
+    address.searchParams.set("detached", "1");
+    const url = address.toString();
+    const bounds = shellWindow.getBounds();
+    const window = new BrowserWindow({
+      ...detachedWindowOptions(join(here, "detached-preload.cjs"), bounds, screen.getDisplayMatching(bounds).workArea),
+      backgroundColor: "#0d1117",
+    });
+
+    window.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
+    window.webContents.on("will-navigate", (event, target) => {
+      if (!target.startsWith(rendererUrl)) event.preventDefault();
+    });
+
+    detached = { window, url, bootstrap: reviewed.bootstrap, conversationId, instanceId, ownerToken: randomUUID() };
+
+    /*
+     * Closing the window is a reattach whether or not anybody clicked anything.
+     *
+     * An instance cannot be left ownerless by a window that simply disappeared, so the lease is released here and
+     * the shell is told to take the instance back. The close path and the explicit attach path are the same path.
+     */
+    window.on("closed", () => {
+      const closed = detached;
+      detached = undefined;
+      if (closed !== undefined) {
+        void callNode(`/conversations/${closed.conversationId}/widgets/${closed.instanceId}/live-owner`, {
+          method: "DELETE",
+          body: { ownerToken: closed.ownerToken },
+        });
+      }
+      shellWindow?.webContents.send("desktop:widgetReattached", { instanceRef: closed?.instanceId ?? "" });
+    });
+    window.once("ready-to-show", () => window.show());
+    await window.loadURL(url);
+
+    const claimed = await callNode(`/conversations/${conversationId}/widgets/${instanceId}/live-owner`, {
+      method: "POST",
+      body: { ownerToken: detached.ownerToken, surface: "detached" },
+    });
+    if (!claimed.ok) {
+      window.close();
+      return { ok: false, refused: claimed.refused };
+    }
+    return { ok: true, detached: { instanceRef: instanceId, title: reviewed.bootstrap.title } };
+  });
+
+  /** Handing the instance back. The close handler does the releasing, so this is one line of intent. */
+  handle("desktop:attachWidget", async () => {
+    if (detached === undefined) return { ok: true, attached: false };
+    detached.window.close();
+    return { ok: true, attached: true };
+  });
+
+  handle("detached:bootstrap", async () => {
+    if (detached === undefined) return { ok: false, refused: "this window is not showing a detached instance" };
+    const reviewed = reviewDetachedBootstrap(detached.bootstrap);
+    if (!reviewed.ok) return { ok: false, refused: reviewed.reason };
+    return { ok: true, bootstrap: reviewed.bootstrap };
+  });
+
+  /*
+   * An action the detached window asked for, performed by the host.
+   *
+   * The window holds no token, so this is how it acts at all. Two things are resolved here rather than accepted
+   * from the window: the binding digest comes from the composition the host handed over, so a window cannot supply
+   * a digest the node would accept for a different binding, and the invocation id is fresh per attempt, so a
+   * double press is one effect.
+   */
+  handle("detached:intent", async (raw) => {
+    if (detached === undefined) return { ok: false, refused: "this window is not showing a detached instance" };
+    const reviewed = reviewDetachedIntent(raw);
+    if (!reviewed.ok) return { ok: false, refused: reviewed.reason };
+    const intent = reviewed.intent;
+    if (intent.instanceRef !== detached.instanceId) {
+      // A window that could act on an instance other than the one it shows would have reach beyond its own view.
+      return { ok: false, refused: "this window may only act on the instance it is showing" };
+    }
+    const bindings = detached.bootstrap.live?.bindings;
+    const binding = Array.isArray(bindings)
+      ? bindings.find((entry) => entry?.actionBindingId === intent.actionBindingId)
+      : undefined;
+    if (binding === undefined) return { ok: false, refused: "that action is not bound on this instance" };
+
+    const result = await callNode(`/conversations/${detached.conversationId}/widgets/${detached.instanceId}/actions`, {
+      method: "POST",
+      body: {
+        instanceId: detached.instanceId,
+        actionBindingId: intent.actionBindingId,
+        expectedRevision: intent.expectedRevision,
+        expectedBindingDigest: binding.bindingDigest,
+        input: intent.input ?? {},
+        invocationId: randomUUID(),
+      },
+    });
+    if (!result.ok) return { ok: false, refused: result.refused };
+    return { ok: true, result: result.body };
+  });
+
+  handle("detached:release", async () => {
+    if (detached === undefined) return { ok: false, refused: "this window is not showing a detached instance" };
+    // The host closes the window rather than letting the renderer remove itself from the ownership story.
+    detached.window.close();
+    return { ok: true };
+  });
 }
 
 function applyContentSecurityPolicy() {
@@ -385,6 +593,8 @@ async function createShellWindow({ show = true } = {}) {
     if (!target.startsWith(rendererUrl)) event.preventDefault();
   });
 
+  // The window the conversation is in, remembered so a detached view can open beside it and hand back to it.
+  shellWindow = window;
   await window.loadURL(rendererUrl);
 
   window.once("ready-to-show", () => {
@@ -468,8 +678,14 @@ async function runSmokeTest() {
       JSON.stringify(observed.bridgeMethods) === JSON.stringify([...EXPECTED_BRIDGE_METHODS]),
     ],
     [
-      "there is one bridge method per allowlisted channel",
-      observed.bridgeMethods.length === IPC_CHANNELS.length,
+      /*
+       * The count used to be the check, back when one bridge served one window. There are two now, and their
+       * channel sets are deliberately different - the shell must not be able to ask for a detached bootstrap, and
+       * a detached window must not be able to ask for the local token - so a count would compare two numbers that
+       * are supposed to differ. What matters is that the shell exposes none of the detached window's own verbs.
+       */
+      "the shell bridge cannot reach the detached window's own channels",
+      !observed.bridgeMethods.some((name) => ["bootstrap", "intent", "release"].includes(name)),
     ],
     ["Node is unreachable from the renderer", observed.nodeReachable === false],
     ["the shell reports its own posture", observed.status?.sandboxed === true],

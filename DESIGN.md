@@ -166,6 +166,17 @@ Không cho widget tự gọi generic Electron IPC.
 - Close detached window không xóa widget state.
 - Voice có thể focus widget đang pin/detach bằng semantic ID và label.
 
+**Đã ship (phase 7 + 12).** Cửa sổ detached nhận **chỉ** widget host bootstrap và instance ref — không token,
+không gateway URL, không conversation id — và điều đó được làm đúng bằng cách *dựng* payload chứ không phải lọc bớt:
+`detachedBootstrap` đặt tên từng field nó đọc, nên không có đường nào cho một credential đi kèm. Hệ quả là cửa sổ
+**không tự invoke action được**: intent đi qua host (`detached:intent`), host thực hiện bằng token của chính nó và tự
+resolve binding digest từ composition nó đã đưa — nên cửa sổ không thể đưa một digest mà node sẽ chấp nhận cho binding
+khác.
+
+Lease **chuyển** chứ không nhân bản: shell release trước, host claim surface `detached`, và khi cửa sổ đóng thì host
+release rồi shell claim lại — nên không có thời điểm nào có hai owner. Đóng cửa sổ cũng chính là đường reattach, kể cả
+khi người dùng chỉ bấm nút đóng của hệ điều hành.
+
 ### 2.3 Wake phrase
 
 Target UX: local wake phrase **“Hey Clark”** mở voice mode.
