@@ -4,16 +4,16 @@ Năm tính năng của issue #17, làm qua ba stage. Stage A (#19), Stage B và 
 phần ghi chú về đúng sự thật, và PR #38 sửa nốt hai claim còn lại cùng cổng browser. Tài liệu này ghi **số thật đo
 trên cây đã merge `main`**, không phải số của lần chạy cũ.
 
-## Số thật, đo trên cây hiện tại (`bafd59d` = `main`, cộng PR #72)
+## Số thật, đo trên cây hiện tại (`308792a` = `main`)
 
 | Cổng | Lệnh | Kết quả |
 | --- | --- | --- |
-| Invariant | `pnpm run invariants` | 7/7 PASS |
-| Typecheck + lint + unit test | `pnpm verify` | **1639 passed, 7 skipped (1646)** |
-| Browser suite | `pnpm test:e2e` | **103 passed, 1 skipped, 0 failed** (run 35488474171, job `e2e (browser suite)`) |
-| CI trên nhánh này | `.github/workflows/ci.yml`, chạy mỗi lần push | **cả năm job xanh** ở run 35488474171 và 35488477132 (`c96e519`): `verify` (node 22.19 và 24), `secret scan`, `e2e (browser suite)`, `desktop smoke (xvfb)` |
+| Invariant | `pnpm run invariants` | 7/7 PASS (54 tiêu đề test được ledger trích đã đối chiếu với 157 spec file) |
+| Typecheck + lint + unit test | `pnpm verify` | **1660 passed, 7 skipped (1667)** |
+| Browser suite | `pnpm test:e2e` | **107 passed, 1 skipped, 0 failed** (run 35492374408, job `e2e (browser suite)`) |
+| CI trên `main` | `.github/workflows/ci.yml`, chạy mỗi lần push | **cả năm job xanh** ở run 35492374408 (`308792a`): `verify` (node 22.19 và 24), `secret scan`, `e2e (browser suite)`, `desktop smoke (xvfb`) |
 | Smoke desktop | `pnpm --filter @clarkcant/app-desktop run smoke` | **exit 0**, mọi check `true`, `"failed": []` (Electron 44.3.0, Chrome 152); job `desktop smoke (xvfb)` xanh trên CI |
-| Đồng bộ với `main` | `git rev-list HEAD..origin/main` | 0: nhánh này cắt từ head của `main` (`b6b3883`), và nhánh công việc trước đó đã được merge vào `main` bằng merge commit (`git merge-base --is-ancestor` trả về đúng) |
+| Đồng bộ với `main` | `git rev-list HEAD..origin/main` | 0: nhánh công việc bằng head của `main` (`308792a`), và nó đã được merge vào `main` bằng merge commit (`git merge-base --is-ancestor` trả về đúng) |
 
 Nhánh công việc được **merge vào `main` bằng merge commit**, sau khi cây của nó được đưa về đúng cây
 của `main`. Trước đó mọi PR đều được squash, nên nội dung đã ở `main` nhưng **lịch sử của nhánh thì chưa**:
@@ -26,7 +26,7 @@ nội dung nào ngoài ghi chú này.
 | --- | --- |
 | 1. Đính kèm tệp | `apps/web/e2e/attachments.spec.ts` — "the agent answers using the content of an attached file" và "the agent answers using the content of an attached pdf" (hai tệp, câu trả lời dùng nội dung tệp văn bản, reload vẫn thấy cả hai), cộng chín journey còn lại của tệp; từ chối path/URL/mime/ngưỡng/quota ở `apps/runtime/test/attachment-routes.spec.ts` |
 | 2. Cửa sổ desktop tối giản | smoke của `apps/desktop` (bounds, sàn 20×50, always-on-top đọc từ cửa sổ thật; chạy trong CI dưới `xvfb`) và `apps/web/e2e/voice-bar.spec.ts` (phiên sống qua cả hai chiều) |
-| 3. Voice điều khiển app | `apps/web/e2e/voice-control.spec.ts` — 8 journey: mở Settings, đổi tab được gọi tên, thoát app (hỏi trước), lệnh lạ bị từ chối, kết thúc phiên, về home, đính kèm (mở file picker), và lệnh cửa sổ bị từ chối trong browser; cộng `packages/core/test/app-intents.spec.ts` cho từng nhóm lệnh |
+| 3. Voice điều khiển app | `apps/web/e2e/voice-control.spec.ts` — 9 journey: mở Settings, **đổi tab được gọi tên**, thoát app (hỏi trước), lệnh lạ bị từ chối, kết thúc phiên, về home, đính kèm (mở file picker), và lệnh cửa sổ bị từ chối trong browser; cộng `packages/core/test/app-intents.spec.ts` cho từng nhóm lệnh |
 | 4. Gợi ý từ việc gần đây | `apps/web/e2e/suggestions.spec.ts` — gồm "with two sessions behind it, the offer is the one touched last" (seed **hai** phiên, và gợi ý trỏ đúng phiên được chạm sau cùng) — và `apps/runtime/test/suggestions.spec.ts` |
 | 5. Tab Memory | `apps/web/e2e/memory.spec.ts` (rỗng, có dữ liệu kèm nguồn, xoá), `apps/runtime/test/memory.spec.ts` |
 
