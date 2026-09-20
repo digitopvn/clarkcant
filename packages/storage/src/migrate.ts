@@ -955,6 +955,59 @@ export const MIGRATIONS: readonly Migration[] = [
       `);
     },
   },
+  {
+    version: 19,
+    name: "peers-and-pairing",
+    reversible: true,
+    up: (db) => {
+      db.exec(`
+        -- A single-use introduction between two nodes.
+        --
+        -- The invite is an introduction, not a credential: claiming it establishes only that two
+        -- nodes know each other's identity. Nothing becomes reachable and no grant is created until
+        -- a person confirms the pairing, which is a separate act on each side.
+        --
+        -- A claimed invite is kept rather than deleted, because "this invite was already used" and
+        -- "this invite never existed" are different answers to a replay, and collapsing them would
+        -- hide a stolen invite behind an ordinary 404.
+        CREATE TABLE pair_invites (
+          invite_id       TEXT PRIMARY KEY,
+          issuer_node_id  TEXT NOT NULL,
+          endpoint        TEXT NOT NULL,
+          fingerprint     TEXT NOT NULL,
+          created_at      TEXT NOT NULL,
+          expires_at      TEXT NOT NULL,
+          claimed_at      TEXT,
+          claimed_by      TEXT
+        );
+
+        -- A node this one knows.
+        --
+        -- Recorded when a claim arrives, trusted only after a person confirms it: trusted_at null
+        -- means the pairing is pending, and a pending peer is refused an envelope rather than having
+        -- one queued for later.
+        --
+        -- token_hash is the sha256 of the token the peer presents to this node, so the credential
+        -- itself is never stored and a copy of this database cannot be replayed at the peer.
+        CREATE TABLE peers (
+          peer_node_id    TEXT PRIMARY KEY,
+          endpoint        TEXT NOT NULL,
+          public_key      TEXT NOT NULL,
+          fingerprint     TEXT NOT NULL,
+          token_hash      TEXT NOT NULL,
+          paired_at       TEXT NOT NULL,
+          trusted_at      TEXT,
+          revoked_at      TEXT
+        );
+
+        -- Inbound peer requests are authenticated by looking the presented token's hash up here, so
+        -- the lookup has to be direct. Unique as well: two peers sharing a token would make the hash
+        -- ambiguous about which node a request came from, and that identity is what every envelope is
+        -- validated against.
+        CREATE UNIQUE INDEX idx_peers_token_hash ON peers(token_hash);
+      `);
+    },
+  },
 ];
 
 export interface MigrationResult {

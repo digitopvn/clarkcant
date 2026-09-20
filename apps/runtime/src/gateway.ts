@@ -2,6 +2,21 @@ import { randomUUID, timingSafeEqual } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { join, resolve, sep } from "node:path";
 
+import { type PeerGatewayDeps, receiveEnvelope } from "@clarkcant/node-link";
+
+import {
+  type PairingDeps,
+  type PeerOffer,
+  authenticatePeer,
+  claimInviteFrom,
+  confirmPeer,
+  createInvite,
+  peers as listPeers,
+  recordAcceptedClaim,
+  revokePeer,
+  selfDescription,
+} from "./peers.ts";
+
 import {
   type AppIntent,
   type AppIntentConfirmationFailure,
@@ -81,6 +96,7 @@ import {
   recentEvents,
   deleteCredential,
   putPreference,
+  type JsonValue,
 } from "@clarkcant/storage";
 import { credentialNames, putCredential } from "@clarkcant/storage";
 
@@ -205,6 +221,101 @@ function bearer(headers: GatewayRequest["headers"]): string | undefined {
  * there as a standing permission to install something.
  */
 const INSTALL_APPROVAL_TTL_MS = 10 * 60 * 1000;
+
+/**
+ * Read the identity a peer offers about itself.
+ *
+ * Every field is checked rather than trusted: this arrives from another machine and its values are
+ * written into a peer row, so a claim missing a key, or carrying a token hash that is not a hash,
+ * would otherwise become a peer that can never be authenticated and can never be explained either.
+ */
+function readPeerOffer(fields: Record<string, unknown>): PeerOffer | undefined {
+  const read = (key: string): string => (typeof fields[key] === "string" ? (fields[key] as string) : "");
+  const peer: PeerOffer = {
+    nodeId: read("nodeId"),
+    label: read("label"),
+    endpoint: read("endpoint"),
+    publicKey: read("publicKey"),
+    fingerprint: read("fingerprint"),
+    tokenHash: read("tokenHash"),
+  };
+  if (Object.values(peer).some((value) => value === "")) return undefined;
+  return peer;
+}
+
+/** A claim body: an invitation id plus the identity of the node claiming it. */
+function peerOfferFrom(body: Record<string, unknown>): { inviteId: string; peer: PeerOffer } | undefined {
+  const inviteId = typeof body["inviteId"] === "string" ? body["inviteId"] : "";
+  const node = body["node"];
+  if (inviteId === "" || node === null || typeof node !== "object" || Array.isArray(node)) return undefined;
+  const peer = readPeerOffer(node as Record<string, unknown>);
+  return peer === undefined ? undefined : { inviteId, peer };
+}
+
+/**
+ * The inbound half of the peer gateway.
+ *
+ * `knownDelegationIds` is empty in this build: a delegation is established by a grant, and that path
+ * arrives with the delegation step. Until then a `delegate` envelope is refused with the contract's
+ * own DELEGATION_UNKNOWN rather than accepted and quietly dropped.
+ */
+function peerGateway(pairing: PairingDeps): PeerGatewayDeps {
+  return {
+    db: pairing.db,
+    nodeId: pairing.identity.nodeId,
+    now: () => pairing.now(),
+    newId: pairing.newId,
+    // The window the contract's own negotiation test uses; a peer outside it is refused rather than
+    // silently downgraded (T11).
+    supportedVersions: { min: 1, max: 2 },
+    knownDelegationIds: new Set<string>(),
+    handler: (envelope) => ({ accepted: true, kind: envelope.kind, messageId: envelope.messageId }),
+  };
+}
+
+/**
+ * What a replay is answered with.
+ *
+ * A named shape rather than `unknown`, so the route cannot hand a caller something the contract does
+ * not describe: either the outcome that was recorded, or the fact that the bytes on record are not
+ * something this build can read.
+ */
+type RecordedOutcome =
+  | { status: "recorded"; outcome: JsonValue }
+  | { status: "unreadable"; recorded: string };
+
+/**
+ * Read a recorded outcome back.
+ *
+ * The bytes come out of this node's own inbox, but a row this build cannot read has to surface as an
+ * unreadable record rather than as a thrown request: turning a retry into a 500 would lose the one
+ * thing the inbox exists to preserve, which is what we already answered.
+ */
+function parseRecordedOutcome(responseJson: string): RecordedOutcome {
+  try {
+    return { status: "recorded", outcome: JSON.parse(responseJson) as JsonValue };
+  } catch {
+    return { status: "unreadable", recorded: responseJson };
+  }
+}
+
+/**
+ * The status a refused claim is answered with.
+ *
+ * A table rather than a chain of ternaries, because the codes come from the contract and the mapping
+ * is the sort of thing that should be readable in one glance: an unknown invitation is not found, a
+ * fingerprint that does not name the key offered is a bad request, and a used or expired invitation
+ * is a conflict with the state of the world rather than a mistake in the request.
+ */
+const CLAIM_REFUSAL_STATUS: Record<
+  "INVITE_UNKNOWN" | "INVITE_EXPIRED" | "INVITE_ALREADY_CLAIMED" | "FINGERPRINT_MISMATCH",
+  number
+> = {
+  INVITE_UNKNOWN: 404,
+  FINGERPRINT_MISMATCH: 400,
+  INVITE_EXPIRED: 409,
+  INVITE_ALREADY_CLAIMED: 409,
+};
 
 function json(status: number, body: unknown): GatewayResponse {
   return { status, body };
@@ -336,6 +447,71 @@ export async function handleRequest(deps: GatewayDeps, request: GatewayRequest):
     return fail(403, grant.code, grant.message);
   }
 
+  /*
+   * The two routes another node calls, answered before the local token check.
+   *
+   * A peer does not hold this node's local token and must not: that token authorizes commands on this
+   * machine. What a peer presents is a token derived from its own identity when the pairing was made,
+   * and the peer that token identifies is the only value `authenticatedSenderNodeId` is ever allowed
+   * to be - an envelope that names its own sender is exactly the mistake acceptance test T08 covers.
+   */
+  const pairing: PairingDeps = {
+    db: runtime.db,
+    identity: runtime.identity,
+    now: () => at() as Instant,
+    newId: (prefix) => `${prefix}_${randomUUID().replaceAll("-", "").slice(0, 24)}`,
+  };
+
+  if (request.method === "POST" && request.path === "/peers/claim") {
+    const parsed = readJson(request);
+    if (!parsed.ok) return parsed.response;
+    const offer = peerOfferFrom(parsed.value);
+    if (offer === undefined) {
+      return fail(
+        400,
+        "INVALID_SCHEMA",
+        "a claim must carry the invite id and the claimant's node id, label, endpoint, public key, fingerprint and token hash",
+      );
+    }
+    const outcome = claimInviteFrom(pairing, { inviteId: offer.inviteId, offer: offer.peer });
+    if (!outcome.ok) {
+      // A used invite and an expired one are conflicts; an unknown id is not found. Collapsing them
+      // would hide a stolen invitation behind an ordinary 404.
+      return fail(CLAIM_REFUSAL_STATUS[outcome.code], outcome.code, outcome.message);
+    }
+    return json(200, {
+      // No endpoint here on purpose: the claimant already reached this node, so the address it used
+      // is the one that works. Echoing one would invite a node to dial an address nothing verified.
+      issuer: selfDescription(pairing, ""),
+      // The hash of the token this node will present to the claimant, so nothing replayable crosses
+      // the wire while pairing.
+      tokenHash: outcome.issuerTokenHash,
+    });
+  }
+
+  if (request.method === "POST" && request.path === "/peers/messages") {
+    const peer = authenticatePeer(pairing, bearer(request.headers));
+    if (peer === undefined) {
+      // A pending peer, a revoked peer and a token that was never issued are one answer, so the
+      // outside cannot tell a pairing waiting for a person from a token that never existed.
+      return fail(401, "UNAUTHENTICATED", "a confirmed peer token is required to deliver an envelope");
+    }
+    const parsed = readJson(request);
+    if (!parsed.ok) return parsed.response;
+    const outcome = receiveEnvelope(peerGateway(pairing), parsed.value, {
+      authenticatedSenderNodeId: peer.peerNodeId,
+    });
+    if (outcome.status === "rejected") {
+      return fail(400, outcome.code, outcome.message, { issues: outcome.issues });
+    }
+    return json(200, {
+      status: outcome.status,
+      // The recorded outcome, handed back verbatim on a replay. That is what makes a delegation whose
+      // acknowledgement was lost a retry rather than a second instruction.
+      response: parseRecordedOutcome(outcome.responseJson),
+    });
+  }
+
   if (!grantCovers && !tokenMatches(runtime.identity.localToken, bearer(request.headers))) {
     // Identical for a missing and a wrong token: distinguishing them would tell an
     // attacker which half to work on.
@@ -344,11 +520,89 @@ export async function handleRequest(deps: GatewayDeps, request: GatewayRequest):
 
   const segments = request.path.split("/").filter((segment) => segment.length > 0);
 
+  /*
+   * Pairing, from the side a person drives.
+   *
+   * These need the local token because each one is a decision about this machine: issuing an
+   * introduction, confirming that a peer is the machine whose fingerprint somebody compared, and
+   * revoking one. None of them is reachable by a peer.
+   */
+  if (request.method === "POST" && request.path === "/peers/invites") {
+    const parsed = readJson(request);
+    if (!parsed.ok) return parsed.response;
+    const endpoint = parsed.value["endpoint"];
+    if (typeof endpoint !== "string" || endpoint.trim() === "") {
+      return fail(400, "INVALID_SCHEMA", "an invitation must say which endpoint the peer should reach");
+    }
+    return json(201, { invite: createInvite(pairing, { endpoint: endpoint.trim() }) });
+  }
+
+  if (request.method === "GET" && request.path === "/peers") {
+    return json(200, {
+      peers: listPeers(pairing).map((peer) => ({
+        nodeId: peer.peerNodeId,
+        endpoint: peer.endpoint,
+        // The fingerprint, not the label, is what a person compares.
+        fingerprint: peer.fingerprint,
+        pairedAt: peer.pairedAt,
+        trustedAt: peer.trustedAt,
+        revokedAt: peer.revokedAt,
+      })),
+    });
+  }
+
+  if (request.method === "POST" && request.path === "/peers/record") {
+    // The claimant's half of pairing: a peer accepted our claim and told us who it is. Recorded
+    // locally and still pending, because confirmation is a person's decision on each side and this
+    // call is not that decision.
+    const parsed = readJson(request);
+    if (!parsed.ok) return parsed.response;
+    const node = parsed.value["node"];
+    if (node === null || typeof node !== "object" || Array.isArray(node)) {
+      return fail(400, "INVALID_SCHEMA", "recording a peer needs the identity the peer gave us");
+    }
+    const offer = readPeerOffer(node as Record<string, unknown>);
+    if (offer === undefined) {
+      return fail(400, "INVALID_SCHEMA", "a peer identity needs a node id, label, endpoint, public key, fingerprint and token hash");
+    }
+    const recorded = recordAcceptedClaim(pairing, {
+      offer: {
+        nodeId: offer.nodeId,
+        label: offer.label,
+        endpoint: offer.endpoint,
+        publicKey: offer.publicKey,
+        fingerprint: offer.fingerprint,
+      },
+      tokenHash: offer.tokenHash,
+    });
+    return json(201, { nodeId: recorded.peerNodeId, trustedAt: recorded.trustedAt });
+  }
+
+  if (segments.length === 3 && segments[0] === "peers" && segments[2] === "confirm" && request.method === "POST") {
+    const peerNodeId = segments[1] ?? "";
+    if (!confirmPeer(pairing, peerNodeId)) {
+      return fail(404, "PEER_UNKNOWN", "no live peer with that id was paired by this node");
+    }
+    return json(200, { nodeId: peerNodeId, trusted: true });
+  }
+
+  if (segments.length === 3 && segments[0] === "peers" && segments[2] === "revoke" && request.method === "POST") {
+    const peerNodeId = segments[1] ?? "";
+    if (!revokePeer(pairing, peerNodeId)) {
+      return fail(404, "PEER_UNKNOWN", "no live peer with that id was paired by this node");
+    }
+    return json(200, { nodeId: peerNodeId, revoked: true });
+  }
+
   if (request.method === "GET" && request.path === "/node") {
     return json(200, {
       nodeId: runtime.identity.nodeId,
       label: runtime.identity.label,
       createdAt: runtime.identity.createdAt,
+      // The device key's fingerprint is what a peer compares when pairing, so it is reported here
+      // rather than only inside the pairing flow: a person asked "is this the right machine?" needs
+      // to be able to read it out from the node they are standing at.
+      fingerprint: runtime.identity.fingerprint,
       // Reported here rather than inferred by the client, so the settings surface can say what
       // this node is configured for before it has answered anything. `null` means no model, which
       // is a state worth showing plainly: the node answers from scripts and capabilities only.
