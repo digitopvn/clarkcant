@@ -211,8 +211,8 @@ Còn lại là nợ kỹ thuật có tên, không phải tiêu chí của plan:
 ## Red Team Review
 
 Bốn lăng kính đối nghịch (Assumption Destroyer, Failure Mode Analyst, Scope & Complexity Critic,
-Security Adversary) chạy trên ba reviewer độc lập + một checkpoint `kongming`; 14 phát hiện có
-`file:line`, 12 được chấp nhận và đã sửa vào plan, 2 bị từ chối.
+Security Adversary) chạy trên ba reviewer độc lập + một checkpoint `kongming`; 20 phát hiện có
+`file:line`, 19 được chấp nhận (một trong số đó đổi hướng thay vì sửa thẳng) và 1 bị từ chối kèm lý do.
 
 | # | Phát hiện | Mức | Quyết định | Sửa ở đâu |
 |---|-----------|-----|------------|-----------|
@@ -237,7 +237,7 @@ Security Adversary) chạy trên ba reviewer độc lập + một checkpoint `ko
 | 19 | Brief memory 20 dòng × 2000 ký tự mỗi lượt bất kể liên quan | Advisory | **Accept** | Phase 10: trần 12 dòng và 4000 ký tự tổng, có test |
 | 20 | Reorder: registry + T66 trước phần cửa sổ | Advisory | **Accept** | Thứ tự Stage B nay là 5 → 6 → 7 → 8 |
 
-Đã kiểm lại các phát hiện bằng `grep`/`read` trước khi sửa; cả 12 phát hiện được chấp nhận đều có
+Đã kiểm lại các phát hiện bằng `grep`/`read` trước khi sửa; cả 19 phát hiện được chấp nhận đều có
 `file:line` resolve được trong repo ở commit `7f3127f`.
 
 ## Validation log
