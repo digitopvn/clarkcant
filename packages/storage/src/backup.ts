@@ -127,7 +127,21 @@ export function verifyBackup(destination: string): BackupVerification {
     );
   }
 
-  const db = openDatabase({ path: databasePath });
+  /*
+   * Opened inside a try, because a copy that cannot even be opened as a database is the most important case for
+   * this function to report rather than throw on: the caller is deciding whether to restore from it, and an
+   * exception here aborts that decision instead of telling the operator the backup is unusable. One byte corrupted
+   * in the middle of a page is enough to reach this — which is what a backup truncated by a full disk looks like.
+   */
+  let db: ReturnType<typeof openDatabase>;
+  try {
+    db = openDatabase({ path: databasePath });
+  } catch (cause) {
+    problems.push(
+      `the backup could not be opened as a SQLite database: ${cause instanceof Error ? cause.message : String(cause)}`,
+    );
+    return { ok: false, problems, schemaVersion: 0, tableCounts: {} };
+  }
   try {
     let schemaVersion = 0;
     let counts: Record<string, number> = {};
