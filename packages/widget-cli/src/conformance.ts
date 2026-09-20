@@ -57,7 +57,7 @@ function endpoint() {
   return { port, sent, deliver: (data: unknown) => listener?.({ data }), listening: () => listener !== undefined };
 }
 
-function initFor(pkg: WidgetPackage, props: Record<string, unknown>) {
+function initFor(_pkg: WidgetPackage, props: Record<string, unknown>) {
   return {
     kind: "init",
     protocol: "agent.widgetbridge",

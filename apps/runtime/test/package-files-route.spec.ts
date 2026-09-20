@@ -26,6 +26,7 @@ let indexPath: string;
 let services: NodeServices;
 let deps: GatewayDeps;
 let previousIndex: string | undefined;
+let previousAppOrigin: string | undefined;
 
 function entry(overrides: Record<string, unknown> = {}): Record<string, unknown> {
   return {
@@ -156,5 +157,66 @@ describe("serving a package file", () => {
     const response = await handleRequest(deps, request);
 
     expect(response.status).toBe(401);
+  });
+});
+
+/**
+ * The policy the widget entry is served under.
+ *
+ * The `sandbox` attribute keeps the frame from reaching the host, but the document itself is code the host agreed to
+ * run, and the policy is what keeps that agreement narrow: no network, no forms, no base URL rewriting, and exactly
+ * one inline script — the bootstrap — admitted by a nonce minted for this one response.
+ *
+ * The nonce is the point. A policy that admits `'unsafe-inline'` is a hole; a policy that names a *different* nonce
+ * than the document carries is worse, because it fails silently: the frame loads, the bridge never starts, and the
+ * widget looks like one that has not loaded yet.
+ */
+describe("the policy the widget entry is served under", () => {
+  const APP_ORIGIN = "http://app.example.test";
+
+  beforeEach(() => {
+    previousAppOrigin = process.env["CC_APP_ORIGIN"];
+    process.env["CC_APP_ORIGIN"] = APP_ORIGIN;
+  });
+
+  afterEach(() => {
+    if (previousAppOrigin === undefined) delete process.env["CC_APP_ORIGIN"];
+    else process.env["CC_APP_ORIGIN"] = previousAppOrigin;
+  });
+
+  it("admits the bootstrap by the nonce the document actually carries, and nothing else inline", async () => {
+    const response = await get("/packages/com.example.widget/1.0.0/files/widgets/main/index.html");
+
+    const policy = response.binary?.headers?.["content-security-policy"];
+    expect(policy).toBeDefined();
+
+    const html = Buffer.from(response.binary?.bytes ?? []).toString("utf8");
+    const nonce = /<script type="module" nonce="([^"]+)"/.exec(html)?.[1];
+    expect(nonce).toBeTruthy();
+
+    // The same nonce in the header and in the document, which is the only reason the bridge runs at all.
+    expect(policy).toContain(`script-src 'nonce-${String(nonce)}' 'self'`);
+
+    const scriptSource = /script-src [^;]+/.exec(policy ?? "")?.[0] ?? "";
+    expect(scriptSource).not.toContain("unsafe-inline");
+    expect(scriptSource).not.toContain("unsafe-eval");
+    // No wildcard, and no origin beyond the node that served this document and the app that frames it.
+    expect(scriptSource).not.toContain("*");
+  });
+
+  it("closes what the document does not need, and lets only the app frame it", async () => {
+    const response = await get("/packages/com.example.widget/1.0.0/files/widgets/main/index.html");
+    const policy = response.binary?.headers?.["content-security-policy"] ?? "";
+
+    for (const directive of [
+      "default-src 'none'",
+      "base-uri 'none'",
+      "form-action 'none'",
+      `frame-ancestors ${APP_ORIGIN}`,
+      // The package declared no origins, so none are reachable: a widget's data arrives over the bridge.
+      "connect-src 'none'",
+    ]) {
+      expect(policy).toContain(directive);
+    }
   });
 });
