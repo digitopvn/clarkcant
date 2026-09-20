@@ -590,7 +590,7 @@ async function main(): Promise<void> {
         packageGeneration: `${definition.id}#fixture`,
         // A `view` operation on purpose: it is the one the M1 surface performs, so the round trip is about the
         // frame's plumbing rather than about a policy question that has its own tests.
-        proposal: { kind: "view", operation: "frame-widget.ping", args: {} },
+        proposal: { kind: "view", operation: "view.save", args: {} },
         label: "Gửi ý định",
         inputSchema: {},
         allowedDataRefs: [],

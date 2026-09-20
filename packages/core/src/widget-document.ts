@@ -81,9 +81,9 @@ export function widgetDocumentPolicy(input: { appOrigin: string; nonce: string; 
  * anything saying so.
  */
 export function widgetDocument(input: WidgetDocumentInput): string {
+  const runtimeUrl = input.runtimeUrl ?? "/widget-runtime.js";
   const bootstrap = [
     `<script type="module" nonce="${input.nonce}">`,
-    `import { createWidgetRuntime } from ${JSON.stringify(input.runtimeUrl ?? "/widget-runtime.js")};`,
     /*
      * The endpoint is the widget's own window for listening and its parent for sending, and the split is not a
      * detail: a sandboxed frame has an opaque origin, so `window.parent` is cross-origin and only `postMessage` may be
@@ -95,6 +95,33 @@ export function widgetDocument(input: WidgetDocumentInput): string {
     '  addEventListener: (type, listener) => window.addEventListener(type, listener),',
     '  removeEventListener: (type, listener) => window.removeEventListener(type, listener),',
     "};",
+    /*
+     * The host's `init` is buffered here, synchronously, because of an ordering problem this code created.
+     *
+     * The runtime starts listening when it is created, and it is created inside the dynamic import below — which
+     * resolves after the document's `load`. The host posts `init` on `load`, so the message can arrive before there is
+     * anything to receive it: the frame then waits for a handshake it already missed, shows `loading` forever, and
+     * reports nothing. Registering the listener during module evaluation and replaying what arrived closes that gap.
+     * It is the frame's own glue and not a second protocol, and `init` is idempotent on the runtime side, so a replay
+     * that turns out to be unnecessary does nothing.
+     */
+    "let pendingInit = null;",
+    "const bufferInit = (event) => {",
+    '  if (event.data !== null && typeof event.data === "object" && event.data.kind === "init") pendingInit = event.data;',
+    "};",
+    'window.addEventListener("message", bufferInit);',
+    /*
+     * A **dynamic** import, and that word is the whole fix.
+     *
+     * A static `import` at the top of a module is fetched before any of the module runs, so when that fetch fails —
+     * and from an opaque-origin frame every fetch is cross-origin — the module never executes at all and nothing says
+     * why. The frame sat there with no bridge and no error, which is indistinguishable from a widget that has not
+     * loaded yet. This catches the failure and puts the reason on the page, because "the bridge did not start" is
+     * something the person looking at it can act on and something a test can see.
+     */
+    `void import(${JSON.stringify(runtimeUrl)})`,
+    "  .then(({ createWidgetRuntime }) => {",
+    "    try {",
     "const runtime = createWidgetRuntime({",
     "  endpoint,",
     "  // Surfaced rather than swallowed: a message the codec refused is the difference between a widget that is",
@@ -102,6 +129,15 @@ export function widgetDocument(input: WidgetDocumentInput): string {
     '  onRejected: (rejection) => window.dispatchEvent(new CustomEvent("clarkcant:rejected", { detail: rejection })),',
     "});",
     "window.clarkcantWidget = runtime;",
+    'window.removeEventListener("message", bufferInit);',
+    'if (pendingInit !== null) window.postMessage(pendingInit, "*");',
+    "    } catch (error) {",
+    "      window.__clarkcantBridgeError = String(error && error.message ? error.message : error);",
+    "    }",
+    "  })",
+    "  .catch((error) => {",
+    "    window.__clarkcantBridgeError = String(error && error.message ? error.message : error);",
+    "  });",
     "</script>",
   ].join("\n");
 
