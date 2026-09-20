@@ -40,7 +40,8 @@ import { indexMessages, textOfMessage } from "./session-search.ts";
 import { FixtureLiveAdapter } from "./voice-fixture.ts";
 import { SAMPLE_DATASET } from "@clarkcant/data-canvas/sample";
 
-import { createModelTurn, type ViewDescriptor } from "./model-turn.ts";
+import { createModelCatalogue, createModelTurn, type ViewDescriptor } from "./model-turn.ts";
+import { bootRuntime } from "./node.ts";
 import { memoryBrief } from "./memory.ts";
 import { attachmentRefsForLastUserMessage } from "./attachments.ts";
 import { blobsDir, readBlob } from "./blobs.ts";
@@ -757,8 +758,17 @@ async function main(): Promise<void> {
    * this line; a value would be the same ordering mistake the typecheck refused twice. By the time anybody sends a
    * message this node is fully built, so the read happens against a node that exists.
    */
+  /*
+   * The runtime is opened here, before the model turn is built, so the model somebody chose can be read first.
+   *
+   * It is the same handle the service container would have opened, handed to it below rather than opened twice: one
+   * database file is one connection. Opening it later would mean the turn had already decided this node has no model,
+   * which is exactly how a choice made in Settings came to be stored and never used.
+   */
+  const runtime = bootRuntime({ dataDir: options.dataDir, label: options.label });
+
   const chosenModel = (): { provider: string; id: string } | undefined => {
-    const stored = readPreference(services.runtime.db, services.runtime.identity.ownerPrincipalId, "model", "node");
+    const stored = readPreference(runtime.db, runtime.identity.ownerPrincipalId, "model", "node");
     const [provider, id] = (stored ?? "").split("/");
     return provider === undefined || provider === "" || id === undefined || id === ""
       ? undefined
@@ -781,8 +791,8 @@ async function main(): Promise<void> {
      */
     personalInstructions: () =>
       readPersonalInstructions(
-        { db: services.runtime.db, now: () => new Date().toISOString() as never },
-        services.runtime.identity.ownerPrincipalId,
+        { db: runtime.db, now: () => new Date().toISOString() as never },
+        runtime.identity.ownerPrincipalId,
       ),
     sessionDir: join(options.dataDir, "sessions"),
     onSessionFile: ({ sessionId, sessionFile }) => {
@@ -919,6 +929,8 @@ async function main(): Promise<void> {
   const services: NodeServices = bootNodeServices({
     dataDir: options.dataDir,
     label: options.label,
+    // The handle opened above, so the container does not open a second connection to the same file.
+    runtime,
     ...(modelTurn === undefined ? {} : { respondWithModel: modelTurn.answer }),
     // The fixture is a composer rather than a model: it never displaces the model turn, and the
     // recipes still answer everything it declines.
@@ -949,13 +961,24 @@ async function main(): Promise<void> {
       steer: (conversationId, text) => modelTurn.steer(conversationId, text),
       runInBackground: (input) => modelTurn.runInBackground(input),
     };
-    // The catalogue travels the same way and for the same reason: the model turn exists above this line and the
-    // services exist below it, so this is the first place both do. Published as the turn's own function rather than
-    // as a snapshot, so a provider added by upgrading pi is visible without restarting the node.
-    services.modelCatalogue = modelTurn.catalogue;
     // The same line, for the same reason: the adapter exists above this and the services below it.
     services.extensions = modelTurn.extensions;
     services.piSettings = modelTurn.piSettings;
+  }
+  /*
+   * The catalogue is published whether or not a turn exists, because it is how a node stops having no model: the
+   * picker that fills that gap reads it, and publishing it only alongside a turn is what left every fresh node with an
+   * empty list and no way to choose. Published as a function rather than a snapshot, so a provider added by upgrading
+   * pi is visible without restarting the node.
+   *
+   * Not on a fixture node. That one deliberately reports no model and no catalogue, and other journeys assert exactly
+   * that; reading whatever pi the machine running the suite happens to have would also make the suite depend on the
+   * machine it runs on.
+   */
+  if (modelTurn !== undefined) {
+    services.modelCatalogue = modelTurn.catalogue;
+  } else if (!modelFixture) {
+    services.modelCatalogue = createModelCatalogue({ cwd: process.cwd() });
   }
   projectWiring.deps = services.projects;
   approvalWiring.deps = {

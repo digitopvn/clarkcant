@@ -766,7 +766,19 @@ export async function handleRequest(deps: GatewayDeps, request: GatewayRequest):
       source: "settings",
       at: nowInstant(),
     });
-    return json(200, { ok: true, stored: { provider, id }, applies: "conversations started after this" });
+    /*
+     * When the choice takes effect, told rather than implied.
+     *
+     * A running turn reads the stored choice each time it creates a session, so a pick lands on the next
+     * conversation. A node with no turn has nothing to read it yet: it starts with this model the next time the node
+     * starts, and answering "the next conversation" there would describe a change that is not going to happen. The
+     * client turns either code into the sentence beside the field.
+     */
+    return json(200, {
+      ok: true,
+      stored: { provider, id },
+      applies: services.turnControl === undefined ? "next-start" : "next-session",
+    });
   }
 
   if (segments.length === 1 && segments[0] === "capabilities" && request.method === "GET") {
