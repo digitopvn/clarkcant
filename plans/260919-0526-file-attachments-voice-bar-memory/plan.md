@@ -161,6 +161,10 @@ Phase 12 là cổng cuối, không sửa giữa các stage ship.
       reach the same state"), xanh và nằm trong suite.
 - [x] Gợi ý rỗng thì fallback về chip tĩnh hiện có, và không gọi model để sinh gợi ý. —
       `apps/web/e2e/suggestions.spec.ts`, `apps/runtime/test/suggestions.spec.ts`.
+- [x] Seed **hai** phiên khác nhau thì gợi ý phản ánh phiên **gần nhất** (tiêu chí của chính issue, không chỉ của
+      plan). — `apps/web/e2e/suggestions.spec.ts` — "with two sessions behind it, the offer is the one touched
+      last": hai conversation được seed lệch nhau về thời gian, và `ref` của gợi ý `conversation` bằng id của
+      phiên mới hơn. Một seed đơn không chứng minh được điều này, nên journey cũ chỉ nói được rằng có nguồn.
 - [x] Xoá một memory item thì item đó không còn trong brief của lượt sau (đọc lại từ store). —
       `apps/runtime/test/memory.spec.ts` ("a record that is deleted is gone from the next turn's brief") và
       `apps/web/e2e/memory.spec.ts`.
