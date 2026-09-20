@@ -1166,3 +1166,57 @@ describe("a spoken command to the application", () => {
     expect(executableFrames(client)).toHaveLength(0);
   });
 });
+
+describe("a lease whose peer cannot be reached", () => {
+  it("is released, because one vanished peer would otherwise hold the node's only slot forever", async () => {
+    /*
+     * Measured before this existed: with a proxy frozen in the middle — the peer gone, this side's socket still
+     * open — the next session was refused `VOICE_SESSION_BUSY` naming the gone peer, and only a restart changed
+     * that. The socket is real here and the peer is made unreachable by pausing it, which is what a frozen path
+     * looks like from the node: connected, silent, never closing.
+     */
+    const adapter = new FakeAdapter();
+    context = await startGateway(() => "key", adapter, { heartbeatMs: 40 });
+    const gone = connect(context.url);
+    await gone.opened;
+    gone.auth(TOKEN);
+    await gone.control("ready");
+    expect(context.gateway.activeSessionCount()).toBe(1);
+
+    // No close frame and no FIN: the peer stops reading, so it never answers a ping.
+    gone.ws.pause();
+
+    const released = Date.now() + 3000;
+    while (context.gateway.activeSessionCount() > 0 && Date.now() < released) {
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+
+    // What matters is not the count but the slot: somebody else has to be let in.
+    expect(context.gateway.activeSessionCount()).toBe(0);
+    const next = connect(context.url);
+    await next.opened;
+    next.auth(TOKEN);
+    const ready = await next.control("ready");
+    expect(ready.binary === false && ready.control["type"]).toBe("ready");
+  });
+
+  it("is kept while the peer keeps answering, so a live session is never ended for being quiet", async () => {
+    /*
+     * The other half of the same rule, and the half that would do damage if it were wrong: a heartbeat that ends
+     * live sessions is worse than the leak it fixes. Nothing is sent from the page across these intervals — the
+     * pong is the transport's own, which is also why a browser answers it with its tab in the background.
+     */
+    const adapter = new FakeAdapter();
+    context = await startGateway(() => "key", adapter, { heartbeatMs: 20 });
+    const live = connect(context.url);
+    await live.opened;
+    live.auth(TOKEN);
+    await live.control("ready");
+
+    await new Promise((resolve) => setTimeout(resolve, 150));
+
+    expect(context.gateway.activeSessionCount()).toBe(1);
+    expect(adapter.disconnected).toBe(0);
+    expect(live.ws.readyState).toBe(WebSocket.OPEN);
+  });
+});

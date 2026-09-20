@@ -73,6 +73,27 @@ import type { NodeServices } from "./services.ts";
  * already answers by naming the holder.
  */
 
+/**
+ * How often the node asks a socket to prove it is still reachable.
+ *
+ * The lease is released when a socket closes, and a close frame is not something a peer can be relied on
+ * to send: a frozen path or a machine that loses power leaves the peer gone while the node's socket stays
+ * open. With one live session per node that single dead peer then refuses every session afterwards, and
+ * there is no way out of it short of restarting the node. Measured through a proxy that stops forwarding
+ * without closing either side: the next session was refused `VOICE_SESSION_BUSY` naming the gone peer, and
+ * it stayed held.
+ *
+ * An unanswered ping is the signal, because it is the smallest one that tells "gone" from "quiet": a browser
+ * answers pings in the protocol rather than in page code, so a backgrounded tab answers exactly like a
+ * focused one, and nothing here depends on the page running. A peer that cannot answer cannot be talked to
+ * either, so its session is over even though its socket is not.
+ *
+ * Two intervals is the bound, so a gone peer frees the slot within about half a minute. That is deliberate on
+ * both sides: shorter would start ending live sessions over a network stall that a voice call does not survive
+ * anyway, and longer leaves somebody staring at "end it before starting another" with nothing to end.
+ */
+const DEFAULT_HEARTBEAT_MS = 15_000;
+
 export interface VoiceGatewayOptions {
   server: Server;
   services: NodeServices;
@@ -85,6 +106,13 @@ export interface VoiceGatewayOptions {
   credential: () => string | undefined;
   /** Model id, without the `models/` prefix. */
   model?: string;
+  /**
+   * How often a socket is asked to prove it is reachable.
+   *
+   * Defaults to `DEFAULT_HEARTBEAT_MS`. A test shortens it rather than waiting half a minute for a property
+   * that has nothing to do with the value.
+   */
+  heartbeatMs?: number;
   /**
    * What the person said, sent to the conversation the agent answers in.
    *
@@ -835,7 +863,33 @@ export function attachVoiceGateway(options: VoiceGatewayOptions): VoiceGateway {
       });
     }
 
+    /*
+     * Reachable is not the same as present.
+     *
+     * Without this, a peer that vanished without closing holds the node's only voice slot until somebody
+     * restarts the node — see `DEFAULT_HEARTBEAT_MS` for the measurement, which found the slot released after
+     * about two intervals. Two intervals is the bound: one to
+     * ask, one to notice nobody answered.
+     *
+     * Terminating rather than closing is deliberate. A peer that does not answer a ping is not reading a close
+     * frame either, and `terminate` is what runs the release path below.
+     */
+    let awaitingPong = false;
+    const heartbeat = setInterval(() => {
+      if (awaitingPong) {
+        ws.terminate();
+        return;
+      }
+      awaitingPong = true;
+      ws.ping();
+    }, options.heartbeatMs ?? DEFAULT_HEARTBEAT_MS);
+
+    ws.on("pong", () => {
+      awaitingPong = false;
+    });
+
     ws.on("close", () => {
+      clearInterval(heartbeat);
       void finish();
     });
 
