@@ -1,0 +1,39 @@
+{
+  "schemaVersion": 1,
+  "id": "com.example.frame-widget",
+  "version": "1.0.0",
+  "displayName": "Frame widget",
+  "description": "A widget that runs in its own frame.",
+  "hostApi": {
+    "min": 1,
+    "max": 1
+  },
+  "facets": [
+    {
+      "kind": "widget",
+      "id": "com.example.frame-widget.main@1",
+      "entry": "widgets/main/index.html",
+      "definition": "widgets/main/widget.json",
+      "isolation": "isolated-ui"
+    }
+  ],
+  "requestedCapabilities": [],
+  "permissions": {
+    "networkOrigins": [],
+    "filesystem": [],
+    "microphone": false,
+    "camera": false,
+    "lifecycleScripts": []
+  },
+  "platforms": [
+    "darwin-arm64",
+    "linux-x64",
+    "win32-x64",
+    "web"
+  ],
+  "publisher": {
+    "id": "example",
+    "sourceUrl": "https://example.com",
+    "license": "MIT"
+  }
+}

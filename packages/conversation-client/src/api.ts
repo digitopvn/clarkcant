@@ -986,6 +986,17 @@ export class GatewayClient {
    * The digest is part of the answer on purpose: it is the only thing tying what is running to what was approved,
    * and a list that showed a version without one would be inviting trust it has not earned.
    */
+  /**
+   * A node-relative path as an absolute URL.
+   *
+   * The node hands out paths relative to itself, and the client is not always served by the node — in the browser
+   * suite it is served by a different origin entirely — so a path put straight into a frame's `src` would resolve
+   * against the wrong host. One place does the join, so a caller cannot forget it.
+   */
+  nodeUrl(path: string): string {
+    return `${this.#baseUrl}${path.startsWith("/") ? path : `/${path}`}`;
+  }
+
   packages(): Promise<{ packages: InstalledPackageView[] }> {
     return this.#call("GET", "/packages");
   }

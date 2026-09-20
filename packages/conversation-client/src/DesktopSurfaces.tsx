@@ -505,7 +505,7 @@ export function PinnedLiveSurface({
         {head}
         <WidgetFrame
           instanceId={live.instanceId}
-          url={live.frame.url}
+          url={client.nodeUrl(live.frame.url)}
           title={title ?? instanceId}
           props={live.props}
           brokeredCapabilities={live.frame.requestedCapabilities}

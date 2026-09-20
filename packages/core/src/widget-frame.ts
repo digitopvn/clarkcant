@@ -22,6 +22,13 @@ export type IsolatedFrameLookup =
       widgetId: string;
       /** The URL the frame document is served from, relative to the node that will serve it. */
       url: string;
+      /**
+       * The entry file's path inside the package.
+       *
+       * Separate from `url` because a frame grant replaces the prefix with a path segment that carries it — so
+       * whoever mints the grant needs the path, not the ready-made token-less URL.
+       */
+      entryPath: string;
       isolation: IsolationClass;
       /** What the package asked for. Empty means it asked for nothing, which is the common case. */
       requestedCapabilities: readonly string[];
@@ -88,6 +95,7 @@ export function findIsolatedFrame(input: {
       version: entry.version,
       widgetId: input.widgetId,
       url: `/packages/${entry.packageId}/${entry.version}/files/${facet.entryPath}`,
+      entryPath: facet.entryPath,
       isolation: declaration.isolation,
       requestedCapabilities: pkg.manifest.requestedCapabilities,
       allowedOrigins: pkg.manifest.permissions.networkOrigins,

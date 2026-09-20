@@ -35,6 +35,14 @@ export interface WidgetDocumentInput {
    * the bridge, so reaching the network is a request the package has to make in writing.
    */
   allowedOrigins?: readonly string[];
+  /**
+   * Where the runtime bundle is served from, as an absolute path on the node.
+   *
+   * The node, not the app: a sandboxed frame has an opaque origin, so importing this file from another origin is a
+   * CORS request that an app serving its own assets has no reason to answer. Everything the frame loads comes from one
+   * place, and that place is the node that served the document.
+   */
+  runtimeUrl?: string;
 }
 
 /** The policy for a widget document. Returned rather than written as a header so a test can read it. */
@@ -43,7 +51,11 @@ export function widgetDocumentPolicy(input: { appOrigin: string; nonce: string; 
     "default-src 'none'",
     // The bundle comes from the app; the widget's own module and styles come from the node that is serving this
     // document, which is what `'self'` means here.
-    `script-src 'nonce-${input.nonce}' 'self' ${input.appOrigin}`,
+    /*
+     * `'self'` covers the widget's own module and the runtime bundle, because both are served by the node that served
+     * this document. The app origin is deliberately absent: it frames this document, and framing is not running.
+     */
+    `script-src 'nonce-${input.nonce}' 'self'`,
     // Widgets style themselves, and a stylesheet cannot reach the host. Inline styles stay allowed for the same
     // reason they are allowed in the app: they are how a component expresses its own layout.
     "style-src 'self' 'unsafe-inline'",
@@ -71,10 +83,20 @@ export function widgetDocumentPolicy(input: { appOrigin: string; nonce: string; 
 export function widgetDocument(input: WidgetDocumentInput): string {
   const bootstrap = [
     `<script type="module" nonce="${input.nonce}">`,
-    `import { createWidgetRuntime } from ${JSON.stringify(`${input.appOrigin}/widget-runtime.js`)};`,
-    "// The host is `parent`: this document is always the frame, never the window.",
+    `import { createWidgetRuntime } from ${JSON.stringify(input.runtimeUrl ?? "/widget-runtime.js")};`,
+    /*
+     * The endpoint is the widget's own window for listening and its parent for sending, and the split is not a
+     * detail: a sandboxed frame has an opaque origin, so `window.parent` is cross-origin and only `postMessage` may be
+     * called on it. Passing `window.parent` as the whole endpoint — which this did — throws a SecurityError on
+     * `addEventListener` before the runtime exists, and the frame then sits there looking healthy with no bridge.
+     */
+    "const endpoint = {",
+    '  postMessage: (message) => window.parent.postMessage(message, "*"),',
+    '  addEventListener: (type, listener) => window.addEventListener(type, listener),',
+    '  removeEventListener: (type, listener) => window.removeEventListener(type, listener),',
+    "};",
     "const runtime = createWidgetRuntime({",
-    "  endpoint: window.parent,",
+    "  endpoint,",
     "  // Surfaced rather than swallowed: a message the codec refused is the difference between a widget that is",
     "  // quiet and a widget whose messages are not arriving.",
     '  onRejected: (rejection) => window.dispatchEvent(new CustomEvent("clarkcant:rejected", { detail: rejection })),',

@@ -1,4 +1,6 @@
 import { randomUUID, timingSafeEqual } from "node:crypto";
+import { readFileSync } from "node:fs";
+import { join, resolve, sep } from "node:path";
 
 import {
   type AppIntent,
@@ -27,6 +29,8 @@ import {
   decideExecution,
   directoryIndexPath,
   findIsolatedFrame,
+  mintFrameGrant,
+  verifyFrameGrant,
   installFromEntry,
   readPackageFile,
   widgetDocument,
@@ -258,7 +262,81 @@ export async function handleRequest(deps: GatewayDeps, request: GatewayRequest):
     });
   }
 
-  if (!tokenMatches(runtime.identity.localToken, bearer(request.headers))) {
+  /*
+   * The node's own web build: the widget runtime bundle and the chunks it imports.
+   *
+   * The bundle re-exports from a shared chunk — the app and the runtime use the same SDK — and a frame that could load
+   * one but not the other would fail at the import. Both come from here so the frame's scripts are same-origin.
+   *
+   * Unauthenticated on purpose, and it is the one route where that is honest: this is the app's own build output, the
+   * same public code any browser fetches to load the app, and a sandboxed frame cannot present a token anyway. The path
+   * is resolved and checked to be inside the build, so it is not a way to read anything else.
+   */
+  if (request.method === "GET" && (request.path === "/widget-runtime.js" || request.path.startsWith("/assets/"))) {
+    const dist = process.env["CC_WEB_DIST"];
+    if (dist === undefined || dist === "") {
+      return fail(503, "NO_WEB_BUILD", "this node was not told where its web build is, so it cannot serve a widget runtime");
+    }
+    const relative = request.path === "/widget-runtime.js" ? "widget-runtime.js" : request.path.slice(1);
+    const root = resolve(dist);
+    const candidate = resolve(join(root, relative));
+    if (candidate !== root && !candidate.startsWith(root + sep)) {
+      return fail(403, "FILE_OUTSIDE_PACKAGE", "that path is outside the node's web build");
+    }
+    try {
+      const bytes = readFileSync(candidate);
+      const type = request.path.endsWith(".js")
+        ? "text/javascript; charset=utf-8"
+        : request.path.endsWith(".css")
+          ? "text/css; charset=utf-8"
+          : "application/octet-stream";
+      return { status: 200, body: null, binary: { bytes, contentType: type, headers: { "cache-control": "no-store" } } };
+    } catch {
+      return fail(404, "FILE_NOT_FOUND", "this node's web build has no such file");
+    }
+  }
+
+  /*
+   * One route accepts a scoped grant instead of the bearer token, and it is the only one.
+   *
+   * A widget's document is fetched by the browser as a navigation, and a navigation cannot carry an
+   * `Authorization` header — so without this the frame would be served a 401 and nothing would ever render. The grant
+   * is checked here, before the token, and it has to name the exact package the URL asks for: a grant that read
+   * "some instance" could be replayed against any other package on the node.
+   */
+  /*
+   * The frame grant travels as a **path segment**, not as a cookie and not as a query.
+   *
+   * A cookie is an ambient credential, and this one would have to be `SameSite=None` to be sent from a sandboxed
+   * frame — whose opaque origin makes every request cross-site — which is a worse trade than it looks. A query would
+   * only cover the document itself: a subresource URL is the author's, so `./main.js` arrives with nothing attached
+   * and the widget's own module would be refused.
+   *
+   * A path segment covers both, because relative URLs inherit it: `/frame/<grant>/widgets/main/index.html` asks for
+   * `/frame/<grant>/widgets/main/main.js` next, and the same grant authorizes it for exactly the package it names.
+   */
+  const grantSegment =
+    request.method === "GET" && request.path.startsWith("/frame/") ? request.path.split("/")[2] : undefined;
+  const grant =
+    grantSegment === undefined || grantSegment === ""
+      ? undefined
+      : verifyFrameGrant({
+          grant: grantSegment,
+          secret: runtime.identity.localToken,
+          nowMs: Date.parse(nowInstant()),
+        });
+  const grantCovers = grant?.ok === true;
+  /*
+   * A grant that was presented and did not verify is refused as itself, not as "no token".
+   *
+   * The difference is the whole reason the codes exist: "your grant expired" is something a person can act on, and
+   * "unauthenticated" for a URL the node itself just minted reads like a bug in the node.
+   */
+  if (grantSegment !== undefined && grantSegment !== "" && grant !== undefined && !grant.ok) {
+    return fail(403, grant.code, grant.message);
+  }
+
+  if (!grantCovers && !tokenMatches(runtime.identity.localToken, bearer(request.headers))) {
     // Identical for a missing and a wrong token: distinguishing them would tell an
     // attacker which half to work on.
     return fail(401, "UNAUTHENTICATED", "a valid bearer token is required for every command");
@@ -928,6 +1006,49 @@ export async function handleRequest(deps: GatewayDeps, request: GatewayRequest):
       };
     }
 
+    return { status: 200, body: null, binary: { bytes: file.bytes, contentType: file.contentType } };
+  }
+
+  /*
+   * A package's files, reached through a frame grant.
+   *
+   * The same files as the route below and the same injection, reached by a path that carries the grant: everything the
+   * document then loads inherits it, and the grant names the one package it may read, so this is not a way to browse
+   * what is installed.
+   */
+  if (grantCovers && segments.length >= 3 && segments[0] === "frame" && request.method === "GET") {
+    const index = readDirectoryIndex(directoryIndexPath(process.env));
+    if (index.kind !== "configured") {
+      return fail(409, index.kind === "not-configured" ? "NO_DIRECTORY" : "DIRECTORY_UNREADABLE", index.reason);
+    }
+    const entry = index.entries.find(
+      (candidate) => candidate.packageId === grant.packageId && candidate.version === grant.version,
+    );
+    if (entry === undefined) {
+      return fail(404, "NOT_IN_DIRECTORY", "the package this grant names is no longer in the directory");
+    }
+    const file = readPackageFile({ entry, relativePath: segments.slice(2).join("/") });
+    if (!file.ok) {
+      return fail(
+        file.code === "FILE_NOT_FOUND" ? 404 : file.code === "FILE_OUTSIDE_PACKAGE" ? 403 : 409,
+        file.code,
+        file.message,
+      );
+    }
+    if (file.contentType.startsWith("text/html")) {
+      const nonce = randomUUID().replaceAll("-", "");
+      const appOrigin = process.env["CC_APP_ORIGIN"] ?? `http://${request.headers["host"] ?? "127.0.0.1"}`;
+      const document = widgetDocument({ html: file.bytes.toString("utf8"), appOrigin, nonce });
+      return {
+        status: 200,
+        body: null,
+        binary: {
+          bytes: Buffer.from(document, "utf8"),
+          contentType: file.contentType,
+          headers: { "content-security-policy": widgetDocumentPolicy({ appOrigin, nonce }) },
+        },
+      };
+    }
     return { status: 200, body: null, binary: { bytes: file.bytes, contentType: file.contentType } };
   }
 
@@ -1694,8 +1815,19 @@ function resolveLiveWidget(
       revision: instance.revision,
       readOnly: false,
       frame: {
-        // Relative to this node, and served from the package path so the widget's own relative imports resolve.
-        url: isolated.url,
+        /*
+         * Relative to this node, served from the package path so the widget's own relative imports resolve, and
+         * carrying a grant: the frame is loaded by navigation, which cannot carry a bearer token, so this is what
+         * lets it fetch its own document — and only its own. Five minutes is longer than a frame takes to load and
+         * short enough that a URL somebody copied stops working.
+         */
+        url: `/frame/${mintFrameGrant({
+          instanceId,
+          packageId: isolated.packageId,
+          version: isolated.version,
+          secret: runtime.identity.localToken,
+          expiresAtMs: Date.parse(nowInstant()) + 5 * 60 * 1000,
+        })}/${isolated.entryPath}`,
         isolation: isolated.isolation,
         requestedCapabilities: isolated.requestedCapabilities,
         allowedOrigins: isolated.allowedOrigins,
