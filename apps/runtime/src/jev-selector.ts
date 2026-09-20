@@ -200,6 +200,14 @@ export interface JevTransportResponse {
 export type JevTransport = (request: JevTransportRequest) => Promise<JevTransportResponse>;
 
 /**
+ * Thrown when a URL is refused at the sink.
+ *
+ * A distinct type rather than a message match, so the caller can report the refusal itself instead of the generic
+ * "the call failed" that a network error produces.
+ */
+class EndpointRefusedError extends Error {}
+
+/**
  * The real transport.
  *
  * The error path is where this differs from a naive fetch: a non-JSON error body is returned as
@@ -209,7 +217,17 @@ export type JevTransport = (request: JevTransportRequest) => Promise<JevTranspor
  */
 export function createFetchTransport(): JevTransport {
   return async (request) => {
-    const response = await fetch(request.url, {
+    /*
+     * Validated at the sink as well as where the configuration is read.
+     *
+     * A transport that trusted its caller would keep the whole policy in one place, and anything that built a request
+     * another way - a test, a future caller, a configuration path that skipped the check - would reach the network
+     * unexamined. The refusal is the same one the configuration path gives, so both say the same thing.
+     */
+    const allowed = validateProviderEndpoint(request.url);
+    if (!allowed.ok) throw new EndpointRefusedError(allowed.reason);
+
+    const response = await fetch(allowed.url, {
       method: "POST",
       headers: {
         authorization: `Bearer ${request.apiKey}`,
@@ -525,7 +543,9 @@ async function callProvider(
     const aborted = controller.signal.aborted;
     const reason = aborted
       ? `the selector call exceeded the ${input.budget.timeoutMs ?? deps.config.timeoutMs} ms deadline for this decision`
-      : "the selector call failed before a response arrived";
+      : cause instanceof EndpointRefusedError
+        ? `the selector endpoint was refused before the call: ${cause.message}`
+        : "the selector call failed before a response arrived";
     emit(deps, {
       event: "error",
       requestId,

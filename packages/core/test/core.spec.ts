@@ -390,6 +390,35 @@ describe("capability registry (T29)", () => {
     expect(check.ready === false && check.code).toBe("CAPABILITY_NOT_AUTHENTICATED");
   });
 
+  it("reports a capability whose vendor SDK is unavailable as unsupported, and names the missing prerequisite", () => {
+    /*
+     * A vendor-backed capability with no SDK on this node. The verdict is "unsupported here" with a reason, not a
+     * fixture standing in for the integration: a sample answering as if it were the vendor is the one thing this
+     * criterion exists to prevent.
+     */
+    registerCapability(
+      deps,
+      descriptor({
+        readiness: {
+          installed: false,
+          loaded: false,
+          authenticated: false,
+          authorized: false,
+          healthy: false,
+          blockedReason: "the vendor SDK is not available on this node, so nothing can run this capability",
+        },
+      }),
+    );
+
+    // It is not offered as usable, so nothing can be parked on it as though the integration were there.
+    expect(listCapabilitySummaries(deps, { usableOnly: true })).toHaveLength(0);
+
+    const check = invocationPreflight(deps, "project.file.read@1" as never);
+    expect(check.ready).toBe(false);
+    expect(check.ready === false && check.code).toBe("CAPABILITY_NOT_READY");
+    expect(check.ready === false && check.message).toContain("vendor SDK is not available");
+  });
+
   it("stops reporting a capability as usable once a probe fails", () => {
     registerCapability(deps, descriptor());
     expect(invocationPreflight(deps, "project.file.read@1" as never).ready).toBe(true);
