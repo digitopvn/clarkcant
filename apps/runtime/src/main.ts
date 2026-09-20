@@ -28,7 +28,7 @@ import { createNodeServer } from "./server.ts";
 import { machineRoots } from "./fs-search.ts";
 import { resolveProject, refreshProjectIndex } from "./project-finder.ts";
 import { commandDigest } from "./run-command.ts";
-import { captureSnapshot, createInstance, createTask, handleUserMessage, readExecutionPolicy, readPersonalInstructions, directoryIndexPath, recordAppIntentEvent, requestApproval, setPreference, type CoordinationDeps } from "@clarkcant/core";
+import { captureSnapshot, createInstance, saveActionBinding, createTask, handleUserMessage, readExecutionPolicy, readPersonalInstructions, directoryIndexPath, recordAppIntentEvent, requestApproval, setPreference, type CoordinationDeps } from "@clarkcant/core";
 import { GALLERY, YOUTUBE } from "@clarkcant/data-canvas";
 import { definitionDigest } from "@clarkcant/widget-host";
 import { listLocalImages, messagesSince, readCredential,
@@ -539,6 +539,80 @@ async function main(): Promise<void> {
           // the contract's own schema rather than asserted into the branded type, because an assertion here would be
           // the place a malformed instant got in.
           expiresAt: instantSchema.parse(new Date(Date.now() + 900_000).toISOString()),
+        },
+      };
+    }
+
+    /*
+     * A widget that runs in its own frame.
+     *
+     * The instance is created here and its binding attached here, because a frame can only invoke what the instance
+     * already holds: the session refuses an id it was not told about, and the node refuses one the instance does not
+     * carry. The block is what puts the "mở bản hiện tại" affordance in the transcript — without it the instance
+     * exists and nothing offers to open it.
+     *
+     * The definition is written out rather than imported, because it has to agree with the fixture package on disk:
+     * the node resolves a definition to a package by reading that package's own `widget.json`, so a fixture that
+     * disagreed with the file would describe a widget nothing can serve.
+     */
+    if (/widget cách ly|isolated widget/i.test(input.text)) {
+      const definition = {
+        id: "com.example.frame-widget.main@1",
+        version: "0.1.0",
+        renderer: "isolated-app" as const,
+        propsSchema: {
+          type: "object",
+          properties: { title: { type: "string", maxLength: 200 } },
+          required: ["title"],
+          additionalProperties: false,
+        },
+        eventSchemas: {},
+        stateSchema: { type: "object", properties: {}, additionalProperties: true },
+        stateVersion: 0,
+        semanticDescription: "A widget that runs in its own frame.",
+        requestedCapabilities: [],
+        sizing: { compact: true, expanded: true, minHeight: 160 },
+        textFallback: "Widget trong frame: nội dung chưa xem được ở chế độ chỉ có chữ.",
+        effectCategories: [],
+        datasetRefs: [],
+      };
+      const instance = createInstance(services.conductor, {
+        definition,
+        packageDigest: definitionDigest(definition),
+        ownerPrincipalId: input.principal.principalId,
+        props: { title: "Widget trong frame (fixture)" },
+      });
+      saveActionBinding(services.conductor, {
+        // Fixed, because the fixture package's own code names it: a generated id would be one the widget cannot know.
+        actionBindingId: "binding_frame_widget_fixture",
+        instanceId: instance.instanceId,
+        definitionId: definition.id,
+        packageGeneration: `${definition.id}#fixture`,
+        // A `view` operation on purpose: it is the one the M1 surface performs, so the round trip is about the
+        // frame's plumbing rather than about a policy question that has its own tests.
+        proposal: { kind: "view", operation: "frame-widget.ping", args: {} },
+        label: "Gửi ý định",
+        inputSchema: {},
+        allowedDataRefs: [],
+        fixedConstraints: {},
+        effectCategory: "read",
+        requiresApproval: false,
+        limits: {},
+        bindingDigest: "sha256:frame-widget-binding",
+        createdAt: instantSchema.parse(new Date().toISOString()),
+      });
+      const snapshot = captureSnapshot(services.conductor, {
+        messageId: input.messageId,
+        instance,
+        textAlternative: definition.textFallback,
+        presentationRef: `isolated:${definition.id}`,
+      });
+      return {
+        text: "Fixture: một widget chạy trong frame cách ly (không phải model thật).",
+        block: {
+          type: "surface",
+          definitionRef: { id: definition.id, version: definition.version },
+          snapshot,
         },
       };
     }

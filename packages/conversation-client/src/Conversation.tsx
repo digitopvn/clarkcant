@@ -1405,9 +1405,8 @@ export function Conversation({
       }
 
       const Renderer = resolveRenderer(definitionId);
-      if (Renderer === undefined || instance === undefined) {
-        // An unknown definition is a normal outcome, not a failure: the snapshot's text alternative
-        // is what history keeps.
+      if (instance === undefined) {
+        // Without the instance there is nothing to open, and the snapshot's text alternative is what history keeps.
         return (
           <div className="cc-card cc-freshness" data-widget-fallback="true" style={{ padding: "var(--cc-space-md)" }}>
             {input.textAlternative}
@@ -1420,6 +1419,23 @@ export function Conversation({
 
       return (
         <div data-widget-instance={instance.instanceId} data-widget-definition={definitionId}>
+          {Renderer === undefined ? (
+            /*
+             * No catalog renderer for this definition — which is exactly the case for a widget that runs in its own
+             * frame. The text alternative stands in for the inline view, and the live view is still offered below.
+             *
+             * This used to be an early return, and the difference is the whole control: an instance whose definition
+             * the client cannot draw rendered its fallback and nothing else, so there was no way to open it. A widget
+             * the client has no renderer for is not a widget nobody can look at.
+             */
+            <div
+              className="cc-card cc-freshness"
+              data-widget-fallback="true"
+              style={{ padding: "var(--cc-space-md)" }}
+            >
+              {input.textAlternative}
+            </div>
+          ) : (
           <Renderer
             definitionId={definitionId}
             props={instance.props}
@@ -1435,19 +1451,30 @@ export function Conversation({
               void action;
             }}
           />
+          )}
           {conversationId !== undefined && (
             <button
               className="cc-icon-btn"
               style={{ width: "auto", padding: "0 var(--cc-space-sm)", marginTop: "var(--cc-space-xs)" }}
-              data-pin-instance={instance.instanceId}
+              {...(Renderer === undefined
+                ? { "data-open-live": instance.instanceId }
+                : { "data-pin-instance": instance.instanceId })}
               onClick={() => {
-                void client
-                  .pin(conversationId, instance.instanceId)
+                /*
+                 * A widget the client has no renderer for opens its live view; one it can draw is pinned compact.
+                 * The distinction matters because the live view is the only place such a widget can be seen at all:
+                 * "pin it again" would put it on the shelf with nothing on it.
+                 */
+                const request =
+                  Renderer === undefined
+                    ? client.pin(conversationId, instance.instanceId, "expanded")
+                    : client.pin(conversationId, instance.instanceId);
+                void request
                   .then((result) => applyTimeline(result.timeline))
                   .catch((cause: unknown) => setError(cause instanceof Error ? cause.message : String(cause)));
               }}
             >
-              Ghim lại
+              {Renderer === undefined ? "Mở bản hiện tại" : "Ghim lại"}
             </button>
           )}
         </div>

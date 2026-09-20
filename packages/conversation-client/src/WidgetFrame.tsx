@@ -61,6 +61,16 @@ export function WidgetFrame(input: WidgetFrameProps): ReactElement {
   const element = useRef<HTMLIFrameElement>(null);
   const session = useRef<FrameSession | undefined>(undefined);
   const nonce = useRef<string>(newNonce());
+  /*
+   * The parts that change on every parent render, kept in refs.
+   *
+   * A session is created for one frame identity and lives as long as that frame does. Rebuilding it whenever the
+   * parent re-rendered — which is what depending on `props` or `chrome` did, since both are fresh objects each time —
+   * tore down a session mid-handshake and disposed the one that had already been introduced to the frame. The
+   * identity is the instance and its document; everything else is read from these refs at the moment it is needed.
+   */
+  const latest = useRef(input);
+  latest.current = input;
   const [status, setStatus] = useState<"loading" | "ready" | "refused">("loading");
   const [notice, setNotice] = useState<string | undefined>(undefined);
 
@@ -76,8 +86,14 @@ export function WidgetFrame(input: WidgetFrameProps): ReactElement {
       brokeredCapabilities: input.brokeredCapabilities,
       allowedOrigins: input.allowedOrigins,
       knownActionBindings: input.knownActionBindings,
-      invokeAction: input.invokeAction,
-      chrome: input.chrome,
+      // Read through the ref, so a newer callback is used without rebuilding the session that owns the handshake.
+      invokeAction: (intent) => latest.current.invokeAction(intent),
+      chrome: {
+        focus: () => latest.current.chrome.focus(),
+        resize: (height) => latest.current.chrome.resize(height),
+        requestPin: () => latest.current.chrome.requestPin(),
+        openExternal: (url) => latest.current.chrome.openExternal(url),
+      },
       // The frame is reached only this way: an opaque origin has no address to call, so `postMessage` is the whole
       // transport and `"*"` is correct — the session checks the window the message came from, not the target.
       post: (message) => frame.contentWindow?.postMessage(message, "*"),
@@ -107,16 +123,8 @@ export function WidgetFrame(input: WidgetFrameProps): ReactElement {
       live.dispose();
       session.current = undefined;
     };
-  }, [
-    input.allowedOrigins,
-    input.brokeredCapabilities,
-    input.chrome,
-    input.instanceId,
-    input.invokeAction,
-    input.knownActionBindings,
-    input.props,
-    input.state,
-  ]);
+    // The frame's identity, and nothing that changes per render: see the note on `latest`.
+  }, [input.allowedOrigins, input.brokeredCapabilities, input.instanceId, input.knownActionBindings, input.state, input.url]);
 
   /**
    * The init message, sent when the document has loaded.
