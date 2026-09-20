@@ -142,5 +142,5 @@ test("a host card offers a text alternative to its visual form", async ({ page }
    * what makes the card's text alternative the same thing as its control rather than a separate rendering.
    */
   await expect(card).toHaveAttribute("aria-label", /.+/);
-  await expect(card.locator("[data-question-answer]").first()).toHaveText(/.+/);
+  await expect(card.locator("[data-question-option], [data-question-answer]").first()).toHaveText(/.+/);
 });

@@ -121,13 +121,9 @@ export function verifyBackup(destination: string): BackupVerification {
   }
 
   /*
-   * Hashing and opening both sit inside the report rather than outside it.
-   *
-   * A backup interrupted between the database write and the manifest write leaves a directory with a
-   * manifest and no database; one interrupted during the write leaves a file SQLite refuses to open.
-   * Both are exactly the case this function exists for — the caller is deciding whether to restore
-   * from it — and both used to arrive as a thrown ENOENT or "database disk image is malformed"
-   * instead of as the answer that the backup is unusable.
+   * Hashed inside a try for the same reason the open below is: a backup interrupted between the database write
+   * and the manifest write leaves a manifest pointing at nothing, and the operator deciding whether to restore
+   * needs that answer rather than a thrown ENOENT.
    */
   let actualDigest: string;
   try {
@@ -147,19 +143,20 @@ export function verifyBackup(destination: string): BackupVerification {
     );
   }
 
+  /*
+   * Opened inside a try, because a copy that cannot even be opened as a database is the most important case for
+   * this function to report rather than throw on: the caller is deciding whether to restore from it, and an
+   * exception here aborts that decision instead of telling the operator the backup is unusable. One byte corrupted
+   * in the middle of a page is enough to reach this — which is what a backup truncated by a full disk looks like.
+   */
   let db: ReturnType<typeof openDatabase>;
   try {
     db = openDatabase({ path: databasePath });
   } catch (cause) {
-    const detail = cause instanceof Error ? cause.message : String(cause);
-    return {
-      ok: false,
-      // Kept together with any digest problem already found, so a file that is both short and
-      // unopenable reports both rather than only the last thing that went wrong.
-      problems: [...problems, `the backup could not be opened as a SQLite database: ${detail}`],
-      schemaVersion: 0,
-      tableCounts: {},
-    };
+    problems.push(
+      `the backup could not be opened as a SQLite database: ${cause instanceof Error ? cause.message : String(cause)}`,
+    );
+    return { ok: false, problems, schemaVersion: 0, tableCounts: {} };
   }
   try {
     let schemaVersion = 0;

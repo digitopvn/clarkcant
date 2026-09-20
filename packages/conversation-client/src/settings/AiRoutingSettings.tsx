@@ -2,7 +2,7 @@ import { useEffect, useState, type ReactElement } from "react";
 
 import { SearchSelect } from "../search-select.tsx";
 import type { GatewayClient } from "../api.ts";
-import { PERSONAL_INSTRUCTIONS_MAX_CHARS } from "@clarkcant/contracts";
+import { PERSONAL_INSTRUCTIONS_MAX_CHARS, type ModelPool } from "@clarkcant/contracts";
 import { InlineStatus, SettingsRow, ToggleSwitch } from "./controls/primitives.tsx";
 import type { PreferencesHandle } from "./controls/use-preferences.ts";
 
@@ -65,7 +65,7 @@ export function AiRoutingSettings({ client, prefs, facts }: AiRoutingSettingsPro
     };
   }, [client]);
 
-  const chosenProvider = providerDraft ?? facts?.model?.provider ?? "";
+  const chosenProvider = providerDraft ?? facts?.model?.provider ?? catalogue?.[0]?.id ?? "";
   const chosenModels = catalogue?.find((provider) => provider.id === chosenProvider)?.models ?? [];
 
   const saveModelChoice = (): void => {
@@ -267,7 +267,142 @@ export function AiRoutingSettings({ client, prefs, facts }: AiRoutingSettingsPro
       </section>
 
       <PersonalInstructions prefs={prefs} />
+
+      <ModelPoolSection client={client} />
     </>
+  );
+}
+
+/**
+ * The pool of models, as a table.
+ *
+ * A table rather than a list of cards because the fields are the point: a person comparing profiles compares
+ * priority, roles and whether each one is on. Editing is limited to the two fields that decide what a hotkey does
+ * — enabled and priority — because the identifiers belong to the provider and are checked against the node's
+ * catalogue; a profile added here with a model the node cannot run would be refused by the node anyway, and saying
+ * so afterwards is worse than not offering the field.
+ */
+function ModelPoolSection({ client }: { client: GatewayClient }): ReactElement {
+  const [pool, setPool] = useState<ModelPool | undefined>(undefined);
+  const [checked, setChecked] = useState<{ alias: string; ok: boolean; message?: string }[]>([]);
+  const [current, setCurrent] = useState<string | undefined>(undefined);
+  const [status, setStatus] = useState("");
+
+  useEffect(() => {
+    let live = true;
+    client
+      .modelPool()
+      .then((answer) => {
+        if (!live) return;
+        setPool(answer.pool);
+        setChecked(answer.checked);
+        setCurrent(answer.currentAlias);
+      })
+      .catch(() => {
+        if (live) setStatus("Không đọc được model pool của node này.");
+      });
+    return () => {
+      live = false;
+    };
+  }, [client]);
+
+  if (pool === undefined) {
+    return (
+      <section className="cc-panel-section" data-model-pool="none">
+        <h3>Model pool</h3>
+        <p className="cc-panel-note">{status === "" ? "Đang đọc…" : status}</p>
+      </section>
+    );
+  }
+
+  const edit = (alias: string, patch: { enabled?: boolean; priority?: number }): void => {
+    setPool({
+      profiles: pool.profiles.map((profile) => (profile.alias === alias ? { ...profile, ...patch } : profile)),
+    });
+  };
+
+  return (
+    <section className="cc-panel-section" data-model-pool="true">
+      <h3>Model pool</h3>
+      <p className="cc-panel-note">
+        Hotkey ⌘] (Ctrl+] trên Windows) đi theo thứ tự ưu tiên này và áp dụng từ lượt kế tiếp, không đổi model của
+        lượt đang chạy.
+      </p>
+      {pool.profiles.length === 0 ? (
+        <p className="cc-panel-note" data-model-pool="none">
+          Node này chưa có profile nào, nên hotkey ⌘] không có gì để chuyển. Nó vẫn chạy model đã cấu hình.
+        </p>
+      ) : (
+        <table className="cc-model-pool" data-model-pool-table="true">
+          <thead>
+            <tr>
+              <th>Alias</th>
+              <th>Model</th>
+              <th>Vai trò</th>
+              <th>Ưu tiên</th>
+              <th>Bật</th>
+            </tr>
+          </thead>
+          <tbody>
+            {pool.profiles.map((profile) => {
+              const check = checked.find((entry) => entry.alias === profile.alias);
+              return (
+                <tr key={profile.alias} data-model-profile={profile.alias} data-current={current === profile.alias}>
+                  <td>
+                    {profile.alias}
+                    {current === profile.alias && <span className="cc-badge">đang dùng</span>}
+                  </td>
+                  <td>
+                    {profile.provider}/{profile.modelId}
+                    {check !== undefined && !check.ok && (
+                      <span className="cc-freshness" data-model-unavailable="true">
+                        {check.message}
+                      </span>
+                    )}
+                  </td>
+                  <td>{profile.roles.join(", ")}</td>
+                  <td>
+                    <input
+                      type="number"
+                      min={0}
+                      value={profile.priority}
+                      data-model-priority={profile.alias}
+                      onChange={(event) => edit(profile.alias, { priority: Number(event.target.value) })}
+                    />
+                  </td>
+                  <td>
+                    <input
+                      type="checkbox"
+                      checked={profile.enabled}
+                      data-model-enabled={profile.alias}
+                      onChange={(event) => edit(profile.alias, { enabled: event.target.checked })}
+                    />
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      )}
+
+      <div className="cc-panel-row">
+        <button
+          type="button"
+          className="cc-chip"
+          data-model-pool-save="true"
+          onClick={() => {
+            client
+              .putModelPool(pool)
+              .then((answer) => setPool(answer.pool))
+              .then(() => setStatus("Đã lưu. Hotkey ⌘] đi theo thứ tự ưu tiên này."))
+              .catch((cause: unknown) => setStatus(cause instanceof Error ? cause.message : "Không lưu được."));
+          }}
+        >
+          Lưu model pool
+        </button>
+      </div>
+      {status === "" ? null : <p className="cc-panel-note">{status}</p>}
+    </section>
   );
 }
 

@@ -369,7 +369,10 @@ export interface BlockActions {
    * The callback receives the values because that is what it posts; nothing in this interface keeps them, and the
    * card clears its own inputs as soon as it hands them over, so a value cannot be shown again by accident.
    */
-  onCredentialSubmit?: (input: { requestId: string; fields: { name: string; value: string }[] }) => void;
+  onCredentialSubmit?: (input: {
+    requestId: string;
+    fields: { name: string; value: string; kind?: string; description?: string; consumer?: string }[];
+  }) => void;
   /** What the node said about the last submission for one request, in words a reader can act on. */
   credentialStatus?: { requestId: string; message: string };
   /** Which approval is waiting on the node, so its own card says so rather than all of them. */
@@ -383,6 +386,21 @@ export interface BlockActions {
    * here instead of inviting a second press that the node would refuse.
    */
   decidedApprovals?: readonly string[];
+  /**
+   * Post an answer to a question card.
+   *
+   * One callback for all four kinds, because an answer is one shape: a click, a typed sentence and a spoken
+   * utterance all end up here, and the node decides whether the shape fits the question that was asked.
+   */
+  onQuestionAnswer?: (input: { questionId: string; text?: string; optionIds?: string[]; confirmed?: boolean }) => void;
+  /**
+   * Questions this conversation already has an answer recorded for.
+   *
+   * Derived from the transcript, exactly as `decidedApprovals` is: a card keeps saying `waiting` because messages
+   * are never rewritten, and the answer record is what says otherwise. Without it, a reload would offer the
+   * question again — and the node would have to refuse a second answer rather than the card never asking.
+   */
+  answeredQuestions?: readonly string[];
   /**
    * The answer to a question the agent asked, on its way back as the user's own message.
    *
@@ -400,15 +418,23 @@ export interface BlockActions {
   onInstallPackage?: (input: { packageId: string; version: string }) => void;
   /** The attempt for each package id, so the card shows an outcome instead of a spinner that never ends. */
   packageInstall?: Record<string, PackageInstallState>;
-  onQuestionAnswer?: (input: { questionId: string; answer: string }) => void;
   /**
-   * Questions that may still be answered.
+   * The answer being composed for a question card, owned by the surface that draws it.
    *
-   * Computed from the transcript rather than kept as state: a question is open exactly while the conversation
-   * has not moved past it, and the messages are history that never gets rewritten. Without this a card would
-   * stay answerable forever, inviting a second answer to a question the node already received one for.
+   * The card stays a pure function of what it is given, like the other cards in this file: state kept inside the
+   * card would be a second copy of something the conversation also tracks, and the two would disagree exactly when
+   * it matters — after a reload, or when the same card appears twice in one snapshot.
    */
-  openQuestionIds?: readonly string[];
+  questionDraft?: { questionId: string; chosen: readonly string[]; text: string };
+  /** A change to that draft: the selection for a choice, or the text typed so far. */
+  onQuestionDraft?: (input: { questionId: string; chosen?: readonly string[]; text?: string }) => void;
+  /**
+   * The question whose answer is on its way to the node.
+   *
+   * Sent by the surface that posted the answer, because only it knows a request is in flight. The card reading it
+   * is what stops a second press while the first answer is still travelling.
+   */
+  questionPendingId?: string;
   /**
    * A filled-in form, on its way back as the user's own message.
    *
@@ -484,6 +510,181 @@ export type TaskStopState =
  * shown because it is what the decision is bound to: the operation that runs is compared against it, so
  * a plan that changed after display is refused rather than executed.
  */
+/**
+ * The question card.
+ *
+ * A host-owned card, and the same boundary an approval card draws: the model asks, the person answers, and the
+ * model never draws the question. Four kinds because those are the four a voice can answer, and every kind
+ * posts to the same route the voice path uses.
+ *
+ * Not a permission dialog. The agent asks because the work is under-specified — which project, which
+ * environment — so the wording says what is being chosen rather than whether it may proceed.
+ */
+export function QuestionCardBlock({
+  block,
+  actions,
+}: {
+  block: Record<string, unknown>;
+  actions?: BlockActions;
+}): ReactElement | null {
+  if (block.owner !== "host") return null;
+  const questionId = typeof block.questionId === "string" ? block.questionId : "";
+  const prompt = typeof block.prompt === "string" ? block.prompt : "";
+  const kind = typeof block.questionType === "string" ? block.questionType : "text";
+  const offered = (Array.isArray(block.options) ? block.options : []).flatMap((entry) => {
+    const option = entry as { id?: unknown; label?: unknown; description?: unknown };
+    if (typeof option.id !== "string" || typeof option.label !== "string") return [];
+    return [
+      {
+        id: option.id,
+        label: option.label,
+        ...(typeof option.description === "string" ? { description: option.description } : {}),
+      },
+    ];
+  });
+
+  const draft = actions?.questionDraft?.questionId === questionId ? actions.questionDraft : undefined;
+  const chosen = draft?.chosen ?? [];
+  const text = draft?.text ?? "";
+  /*
+   * The node says which question it is still waiting on, and the answer on its way is one of those. The card
+   * does not track its own press: a press is not an answer until the node records it, and a flag kept here would
+   * be a second copy of a fact the transcript already carries.
+   */
+  const sending = actions?.questionPendingId === questionId;
+  const answered = questionId !== "" && actions?.answeredQuestions?.includes(questionId) === true;
+  const canAnswer = questionId !== "" && actions?.onQuestionAnswer !== undefined && !answered && !sending;
+  const submit = (answer: { text?: string; optionIds?: string[]; confirmed?: boolean }): void => {
+    if (!canAnswer) return;
+    actions?.onQuestionAnswer?.({ questionId, ...answer });
+  };
+  const toggle = (id: string): void => {
+    const next = chosen.includes(id) ? chosen.filter((entry) => entry !== id) : [...chosen, id];
+    actions?.onQuestionDraft?.({ questionId, chosen: next });
+  };
+
+  return (
+    <section
+      className="cc-card"
+      data-host-card="question"
+      data-owner="host"
+      data-question-id={questionId}
+      data-question-kind={kind}
+      data-answered={answered ? "true" : "false"}
+      aria-label={prompt}
+    >
+      <header className="cc-card-head">
+        <span className="cc-card-title">{answered ? "Câu hỏi đã có câu trả lời" : "Cần bạn chọn"}</span>
+      </header>
+      <div className="cc-card-body">
+        <p style={{ margin: 0 }}>{prompt}</p>
+
+        {!answered && canAnswer && kind === "confirm" && (
+          <div className="cc-card-actions">
+            <button type="button" className="cc-action" data-question-answer="yes" disabled={!canAnswer} onClick={() => submit({ confirmed: true })}>
+              Đồng ý
+            </button>
+            <button type="button" className="cc-action" data-question-answer="no" disabled={!canAnswer} onClick={() => submit({ confirmed: false })}>
+              Không
+            </button>
+          </div>
+        )}
+
+        {!answered && canAnswer && (kind === "single-choice" || kind === "multi-choice") && (
+          <div className="cc-card-actions">
+            {offered.map((option) => (
+              <button
+                key={option.id}
+                type="button"
+                className="cc-action"
+                data-question-option={option.id}
+                data-selected={chosen.includes(option.id)}
+                disabled={!canAnswer}
+                onClick={() => {
+                  if (kind === "single-choice") {
+                    submit({ optionIds: [option.id] });
+                    return;
+                  }
+                  toggle(option.id);
+                }}
+              >
+                {option.label}
+                {option.description === undefined ? null : (
+                  <span className="cc-setting-desc"> {option.description}</span>
+                )}
+              </button>
+            ))}
+            {kind === "multi-choice" && (
+              <button
+                type="button"
+                className="cc-action"
+                data-question-answer="submit"
+                disabled={!canAnswer || chosen.length === 0}
+                onClick={() => submit({ optionIds: [...chosen] })}
+              >
+                Gửi
+              </button>
+            )}
+          </div>
+        )}
+
+        {!answered && canAnswer && kind === "text" && (
+          <div className="cc-card-actions">
+            <input
+              className="cc-action"
+              data-question-text="true"
+              value={text}
+              placeholder="Trả lời của bạn"
+              disabled={!canAnswer}
+              onChange={(event) => actions?.onQuestionDraft?.({ questionId, text: event.target.value })}
+            />
+            <button
+              type="button"
+              className="cc-action"
+              data-question-answer="submit"
+              disabled={!canAnswer || text.trim() === ""}
+              onClick={() => submit({ text })}
+            >
+              Gửi
+            </button>
+          </div>
+        )}
+
+        {sending && !answered && (
+          <p className="cc-freshness" style={{ margin: 0 }}>
+            Đang gửi câu trả lời…
+          </p>
+        )}
+
+        {answered && (
+          <p className="cc-freshness" style={{ margin: 0 }}>
+            Câu trả lời đã được ghi vào hội thoại này.
+          </p>
+        )}
+
+        {/*
+         * The options as text whenever they cannot be pressed: once an answer is recorded, and on a surface with no
+         * node behind it. This is what makes the card's text alternative the same thing as its control — a snapshot,
+         * a screen reader and an answered card all read the same list — and it is why the list is not simply hidden
+         * behind the buttons.
+         */}
+        {(answered || !canAnswer) && offered.length > 0 && (
+          <ul className="cc-question-options" data-question-options={offered.length}>
+            {offered.map((option) => (
+              <li key={option.id}>
+                {option.label}
+                {option.description === undefined ? null : (
+                  <span className="cc-setting-desc"> — {option.description}</span>
+                )}
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+    </section>
+  );
+}
+
 export function ApprovalCardBlock({
   block,
   actions,
@@ -608,6 +809,12 @@ export function CredentialCardBlock({
   const purpose = typeof block.purpose === "string" ? block.purpose : "";
   const destination = typeof block.destination === "string" ? block.destination : "vault-node";
   const requestId = typeof block.requestId === "string" ? block.requestId : "";
+  // The three fields that answer "what is this for, who will use it, on which machine". They travel with the
+  // submission as well as being shown, so the node records the same answer the person was given when they typed.
+  const description = typeof block.description === "string" ? block.description : "";
+  const consumer = typeof block.consumer === "string" ? block.consumer : "";
+  const scope = typeof block.scope === "string" ? block.scope : "";
+  const secretKind = typeof block.secretKind === "string" ? block.secretKind : "";
   const fields = Array.isArray(block.fields)
     ? (block.fields as { name?: unknown; label?: unknown; masked?: unknown }[]).flatMap((field) =>
         typeof field?.name === "string" && field.name !== ""
@@ -633,6 +840,21 @@ export function CredentialCardBlock({
       </header>
       <div className="cc-card-body">
         <p style={{ margin: 0 }}>{purpose}</p>
+        {description !== "" && description !== purpose && (
+          <p className="cc-freshness" style={{ margin: 0 }} data-credential-description="true">
+            {description}
+          </p>
+        )}
+        {consumer !== "" && (
+          <p className="cc-freshness" style={{ margin: 0 }} data-credential-consumer={consumer}>
+            Sẽ được dùng bởi: {consumer}
+          </p>
+        )}
+        {scope !== "" && (
+          <p className="cc-freshness" style={{ margin: 0 }} data-credential-scope={scope}>
+            Lưu trên: {scope}
+          </p>
+        )}
         {fields.length === 0 ? null : (
           <form
             className="cc-credential-form"
@@ -641,7 +863,13 @@ export function CredentialCardBlock({
               if (!complete) return;
               actions?.onCredentialSubmit?.({
                 requestId,
-                fields: fields.map((field) => ({ name: field.name, value: values[field.name] ?? "" })),
+                fields: fields.map((field) => ({
+                  name: field.name,
+                  value: values[field.name] ?? "",
+                  ...(secretKind === "" ? {} : { kind: secretKind }),
+                  ...(description === "" ? {} : { description }),
+                  ...(consumer === "" ? {} : { consumer }),
+                })),
               });
               // Cleared as soon as it is handed over, so the value cannot be read back off the screen or out of
               // the component's state by anything that comes later.
@@ -1259,6 +1487,8 @@ export function renderBlock(
       return <SystemCardBlock key={index} block={block} />;
     case "approval-card":
       return <ApprovalCardBlock key={index} block={block} {...(actions === undefined ? {} : { actions })} />;
+    case "question-card":
+      return <QuestionCardBlock key={index} block={block} {...(actions === undefined ? {} : { actions })} />;
     case "connection-card":
       return <ConnectionCardBlock key={index} block={block} />;
     case "credential-card":
@@ -1277,8 +1507,6 @@ export function renderBlock(
       return <CodeDiffCardBlock key={index} block={block} />;
     case "project-picker-card":
       return <ProjectPickerCardBlock key={index} block={block} />;
-    case "question-card":
-      return <QuestionCardBlock key={index} block={block} {...(actions === undefined ? {} : { actions })} />;
     case "form-card":
       return <FormCardBlock key={index} block={block} {...(actions === undefined ? {} : { actions })} />;
     case "browser-session-card":
@@ -1320,88 +1548,6 @@ export function renderBlock(
       // client does not understand must not reach the DOM.
       return null;
   }
-}
-
-/**
- * A question the agent is asking, with the answers it will accept.
- *
- * The primitive the plan singles out, and the reason is structural rather than cosmetic. An agent that needs a
- * decision otherwise writes a paragraph and then guesses which sentence answered it — or asks again. Here the
- * answers are a list the agent itself named, and the chosen one travels back **as the user's own message**: the
- * same `send` the composer calls, so a click, a keystroke and a spoken answer are the same act rather than three
- * implementations to keep in step.
- *
- * Read-only once the conversation has moved past it. The transcript is immutable, so a card that stayed
- * answerable would invite a second answer to a question the node already received one for — and the node would
- * take it as a second message, which is a duplicate the user never intended to send.
- *
- * The options are always rendered as text, which is what makes this card's text alternative the same thing as
- * its control: a snapshot, a screen reader and an answered card all read the same list.
- */
-export function QuestionCardBlock({
-  block,
-  actions,
-}: {
-  block: Record<string, unknown>;
-  actions?: BlockActions;
-}): ReactElement | null {
-  if (block.owner !== "host") return null;
-
-  const questionId = typeof block.questionId === "string" ? block.questionId : "";
-  const question = typeof block.question === "string" ? block.question : "";
-  const raw = Array.isArray(block.options) ? (block.options as Record<string, unknown>[]) : [];
-  const options = raw
-    .filter((entry) => typeof entry.id === "string" && typeof entry.label === "string")
-    .map((entry) => ({
-      id: entry.id as string,
-      label: entry.label as string,
-      ...(typeof entry.detail === "string" ? { detail: entry.detail } : {}),
-    }));
-
-  const answerable =
-    questionId !== "" &&
-    actions?.onQuestionAnswer !== undefined &&
-    actions.openQuestionIds?.includes(questionId) === true;
-
-  return (
-    <section
-      className="cc-card"
-      data-host-card="question"
-      data-owner="host"
-      data-question-id={questionId}
-      data-answerable={answerable ? "true" : "false"}
-      aria-label={question}
-    >
-      <div className="cc-card-title">{question}</div>
-      <ul className="cc-question-options" data-question-options={options.length}>
-        {options.map((option) => (
-          <li key={option.id}>
-            {answerable ? (
-              <button
-                type="button"
-                className="cc-chip"
-                data-question-answer={option.id}
-                onClick={() => actions?.onQuestionAnswer?.({ questionId, answer: option.label })}
-              >
-                {option.label}
-              </button>
-            ) : (
-              <span className="cc-chip" data-question-option={option.id}>
-                {option.label}
-              </span>
-            )}
-            {option.detail === undefined ? null : <span className="cc-freshness"> {option.detail}</span>}
-          </li>
-        ))}
-      </ul>
-      {answerable ? null : (
-        // Says why the buttons are gone rather than leaving a reader to wonder whether the card broke.
-        <p className="cc-freshness" data-question-closed="true">
-          Hội thoại đã đi tiếp, nên câu hỏi này không còn nhận câu trả lời.
-        </p>
-      )}
-    </section>
-  );
 }
 
 /**

@@ -48,6 +48,11 @@ export function openDatabase(options: OpenDatabaseOptions): Database {
   // construction — where Node requires it — and the runtime decides whether anything gets loaded.
   const db = new DatabaseSync(options.path, { allowExtension: true });
 
+  /*
+   * The setup statements run inside a try, because opening a file is not the same as being able to use it: a copy
+   * whose pages are corrupt opens and then fails on its first statement. Without this the handle leaked, and the
+   * caller — `verifyBackup`, deciding whether a backup is restorable — could not clean up after the failure either.
+   */
   try {
     if (options.enableWal !== false && !isMemory) {
       db.exec("PRAGMA journal_mode = WAL");
@@ -56,16 +61,8 @@ export function openDatabase(options: OpenDatabaseOptions): Database {
     db.exec("PRAGMA foreign_keys = ON");
     db.exec(`PRAGMA busy_timeout = ${options.busyTimeoutMs ?? 5000}`);
   } catch (cause) {
-    /*
-     * A database that cannot take its pragmas is not usable — a file truncated mid-write is the
-     * ordinary case, and it is the case the backup verifier exists to report — and the handle has to
-     * be released before the error leaves here. Without this the failed open kept a lock on the file
-     * for the life of the process, which on Windows means the directory holding it cannot even be
-     * removed afterwards.
-     */
     db.close();
-    const detail = cause instanceof Error ? cause.message : String(cause);
-    throw new Error(`the database at ${options.path} could not be opened: ${detail}`, { cause });
+    throw cause;
   }
   return db;
 }

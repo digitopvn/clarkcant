@@ -13,10 +13,16 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 
 import type { MessageBlock, MessageRecord } from "@clarkcant/contracts";
-import { instantSchema, describeAppIntent } from "@clarkcant/contracts";
-import { applyEnvFile } from "@clarkcant/pi-adapter";
+import { instantSchema, describeAppIntent, voicePromptFor, type Instant } from "@clarkcant/contracts";
+import { FakePiAdapter, applyEnvFile } from "@clarkcant/pi-adapter";
 
-import { decideApprovalForNode, invokeWidgetAction, widgetActionTarget } from "./gateway.ts";
+import {
+  answerQuestionForNode,
+  decideApprovalForNode,
+  interactionDepsFor,
+  invokeWidgetAction,
+  widgetActionTarget,
+} from "./gateway.ts";
 import { NO_FOCUSED_SURFACE_SAY } from "./widget-voice-action.ts";
 import {
   type AppIntentDeps,
@@ -24,14 +30,15 @@ import {
   decideAppIntent,
   mintConfirmation,
 } from "./app-intents.ts";
+import type { PendingVoiceInteraction } from "./voice-session.ts";
 import { createNodeServer } from "./server.ts";
 import { machineRoots } from "./fs-search.ts";
 import { resolveProject, refreshProjectIndex } from "./project-finder.ts";
 import { commandDigest } from "./run-command.ts";
-import { captureSnapshot, createInstance, saveActionBinding, createTask, handleUserMessage, readExecutionPolicy, readPersonalInstructions, directoryIndexPath, recordAppIntentEvent, requestApproval, setPreference, type CoordinationDeps } from "@clarkcant/core";
+import { captureSnapshot, createInstance, saveActionBinding, createTask, handleUserMessage, readPersonalInstructions, directoryIndexPath, recordAppIntentEvent, requestApproval, setPreference, type CoordinationDeps } from "@clarkcant/core";
 import { GALLERY, YOUTUBE } from "@clarkcant/data-canvas";
 import { definitionDigest } from "@clarkcant/widget-host";
-import { listLocalImages, messagesSince, credentialNames, readCredential,
+import { listLocalImages, messagesSince, credentialNames, appendAuditEvent, readCredential,
   readPreference,
   upsertArtifact,
 } from "@clarkcant/storage";
@@ -50,7 +57,17 @@ import { extractPdfText } from "./pdf-text.ts";
 import { buildViewCatalog } from "./view-catalog.ts";
 import { registerNodeTools } from "./tool-catalogue.ts";
 import { composeMiniApp } from "./compose-mini-app.ts";
-import { createNodeTools, createRememberTool } from "./node-tools.ts";
+import { createNodeTools, createRememberTool, type CommandToolDeps } from "./node-tools.ts";
+import { pendingForConversation, type InteractionDeps } from "./interactions.ts";
+import { guardOperation, decideModelRoute } from "./jev-decider.ts";
+import { ownedResources } from "./preflight.ts";
+import { DEFAULT_NARROWING, readAutonomySettings } from "./autonomy-settings.ts";
+import { writeCurrentAlias, writeModelPool, readCurrentAlias, readModelPool } from "./model-registry.ts";
+import { filterBackgroundCandidates, routeBackgroundModel } from "./model-router.ts";
+import { createAskUserQuestionTool } from "./ask-user-question.ts";
+import { createRequestSecretTool } from "./request-secret.ts";
+import { createSecretBroker } from "./secret-broker.ts";
+import type { RequestSecretDeps } from "./request-secret.ts";
 import { registerSessionFile, sessionsDirectory } from "./session-store.ts";
 import { bootNodeServices, type NodeServices } from "./services.ts";
 import type { ProjectSessionStarter } from "./project-session.ts";
@@ -132,10 +149,28 @@ async function main(): Promise<void> {
   /**
    * Where an approval request is recorded, filled once the node has booted.
    *
-   * `run_command` is registered only with these: a node that cannot record a decision cannot ask for one,
-   * and a tool that could only refuse is worse than no tool at all.
+   * Only the `confirm` policy needs these. `run_command` no longer depends on them to exist: a node whose
+   * policy is `guarded` runs commands without recording a decision, so tying the tool's existence to the
+   * approval route — as it used to be — would leave the default policy with no executor at all.
    */
   const approvalWiring: { deps?: CoordinationDeps } = {};
+  /**
+   * The command path, filled once the node has booted.
+   *
+   * Lazily for the same reason as everything else here: the folders this node owns, the settings it runs
+   * under and the policy layer it consults all live on `services`, which is built below this line, while
+   * the tool list has to exist before it.
+   */
+  const commandWiring: { deps?: CommandToolDeps } = {};
+  /**
+   * The interaction manager, per conversation, filled once the node has booted.
+   *
+   * A function of the conversation rather than a value, because a question belongs to the transcript it was
+   * asked in: two conversations waiting on two different answers must not share one manager.
+   */
+  const interactionWiring: { deps?: (conversationId: string) => InteractionDeps } = {};
+  /** The secret broker's read side, filled once the node has booted. */
+  const secretWiring: { deps?: RequestSecretDeps } = {};
   /** Filled once the node has booted, so the scripted turn below can compose a real surface. */
   const modelWiring: { compose?: NodeServices["compose"] } = {};
 
@@ -202,6 +237,96 @@ async function main(): Promise<void> {
      * buttons and a receipt — needs a way to be reached without a provider account, and a fixture that
      * cannot produce the card would leave the client wiring tested by nothing at all.
      */
+    /*
+     * A secret the node does not have, asked for through the real tool.
+     *
+     * The browser half of this cannot be reached without a provider account unless something scripts the model's
+     * half, and what it has to prove is negative: the value a person types never appears in the page, the
+     * conversation, or anything the model is handed afterwards.
+     */
+    if (/xin secret thử|thử xin secret/i.test(input.text)) {
+      const secrets = secretWiring.deps;
+      if (secrets === undefined) return undefined;
+      const answer = await createRequestSecretTool(secrets).execute({
+        name: "openai_api_key",
+        label: "OpenAI API key",
+        description: "Dùng để chạy model OpenAI trên node này.",
+        secretKind: "api-key",
+        consumer: "capability:openai",
+      });
+      if (answer.hostCard === undefined) {
+        return { text: answer.text, block: { type: "text", format: "plain", content: answer.text, streaming: false } };
+      }
+      // SAFETY: the card was built against the credential-card schema in contracts; the adapter's shape is loose
+      // because it must not depend on contracts, and the node validates blocks before they reach a transcript.
+      return { text: answer.text, block: answer.hostCard as unknown as MessageBlock };
+    }
+
+    /*
+     * A question the agent asks, through the real tool.
+     *
+     * Same reason as the command fixtures: the browser half of this feature — a card, a click, and an answer
+     * that comes back as a new turn — cannot be reached without a provider account unless something scripts the
+     * model's half. It calls the tool the model calls, so what the browser proves is the real path.
+     */
+    if (/hỏi tui chọn|thử hỏi tui/i.test(input.text)) {
+      const interactions = interactionWiring.deps?.(input.conversationId);
+      if (interactions === undefined) return undefined;
+      const answer = await createAskUserQuestionTool(interactions).execute({
+        question: "Chọn môi trường triển khai.",
+        kind: "single-choice",
+        options: [
+          { id: "staging", label: "Staging" },
+          { id: "production", label: "Production" },
+        ],
+      });
+      const asked = answer.hostBlocks?.[0];
+      if (asked === undefined) {
+        return { text: answer.text, block: { type: "text", format: "plain", content: answer.text, streaming: false } };
+      }
+      // SAFETY: the block was built by the interaction manager against the message-block union; the adapter's
+      // shape is loose because it must not depend on contracts, and the node validates blocks before storing.
+      return { text: answer.text, block: asked as unknown as MessageBlock };
+    }
+
+    // The turn the answer opens. Without this the request would wait for a model that is not there.
+    if (/Trả lời cho câu hỏi/i.test(input.text)) {
+      const reply = "Fixture: tui đã nhận câu trả lời và tiếp tục công việc.";
+      return { text: reply, block: { type: "text", format: "plain", content: reply, streaming: false } };
+    }
+
+    /*
+     * A command that runs without a card.
+     *
+     * The fixture for the default policy, and the browser half of the claim this refactor rests on: a command
+     * is proposed, the host preflights it, no policy layer is wired on a fixture node (so the fail-open
+     * setting governs), and it runs — with no approval card anywhere in the conversation. It drives the real
+     * tool rather than a scripted block, because a fixture that drew its own receipt would prove nothing about
+     * the path a real command takes.
+     */
+    if (/chạy lệnh tự động|tự chạy lệnh/i.test(input.text)) {
+      const command = commandWiring.deps;
+      const search = searchWiring.deps;
+      const projects = projectWiring.deps;
+      if (command === undefined || search === undefined || projects === undefined) return undefined;
+      const tool = createNodeTools({ search, projects, command }).find((entry) => entry.name === "run_command");
+      if (tool === undefined) return undefined;
+
+      const answer = await tool.execute({
+        command: `node -e "process.stdout.write('fixture ran')"`,
+        cwd: options.dataDir,
+        why: "fixture: chứng minh lệnh chạy không cần thẻ duyệt",
+      });
+      const first = answer.hostBlocks?.[0];
+      if (first === undefined) {
+        return { text: answer.text, block: { type: "text", format: "plain", content: answer.text, streaming: false } };
+      }
+      // SAFETY: this is the tool-activity block the guarded run built from the message-block union; the
+      // adapter's shape is loose because it must not depend on contracts, and the node validates blocks
+      // before they reach a transcript.
+      return { text: answer.text, block: first as unknown as MessageBlock };
+    }
+
     /*
      * A question, scripted — the producer for the question card.
      *
@@ -407,11 +532,16 @@ async function main(): Promise<void> {
           type: "question-card",
           owner: "host",
           questionId,
-          question: "Bạn muốn tôi mở dự án nào?",
+          prompt: "Bạn muốn tôi mở dự án nào?",
+          questionType: "single-choice",
           options: [
-            { id: "option-1", label: "Dự án hiện tại", detail: "thư mục này" },
-            { id: "option-2", label: "Dự án khác", detail: "tôi sẽ chỉ đường" },
+            { id: "option-1", label: "Dự án hiện tại", description: "thư mục này" },
+            { id: "option-2", label: "Dự án khác", description: "tôi sẽ chỉ đường" },
           ],
+          allowOther: false,
+          voicePrompt: "Bạn muốn tôi mở dự án nào? Dự án hiện tại, hay một dự án khác?",
+          status: "waiting",
+          createdAt: instantSchema.parse(new Date().toISOString()),
         },
       };
     }
@@ -776,10 +906,59 @@ async function main(): Promise<void> {
       : { provider, id };
   };
 
+  /**
+   * Which model a background worker runs.
+   *
+   * Deterministic filters first — the pool's own settings, the credentials this node has, provider health, context and
+   * tool needs — and only then the policy layer, which may choose among what survived. When nothing is eligible, or
+   * when the policy layer cannot be reached, this returns nothing and the worker runs what the node is configured
+   * with: routing must never be the reason a job does not start.
+   */
+  const routeBackground = async (): Promise<{ provider: string; id: string } | undefined> => {
+    const owner = services.runtime.identity.ownerPrincipalId;
+    const pool = readModelPool(services.runtime.db, owner);
+    if (pool.profiles.length === 0) return undefined;
+    const catalogue = await (services.modelCatalogue?.() ?? Promise.resolve([]));
+    const credentials = credentialNames(services.runtime.db, owner);
+    const currentAlias = readCurrentAlias(services.runtime.db, owner);
+
+    const filtered = filterBackgroundCandidates({
+      pool,
+      // The mapping from a provider to the name its credential is stored under is the adapter's business; until it
+      // exposes one, a provider counts as credentialed when it is the one this node runs, or when a credential is
+      // stored under the provider's own name.
+      hasCredential: (provider) => services.model?.provider === provider || credentials.includes(provider),
+      isHealthy: () => true,
+      contextWindowFor: (provider, modelId) =>
+        catalogue.find((entry) => entry.id === provider)?.models.find((model) => model.id === modelId)?.contextWindow,
+      // Unknown rather than false: this build cannot confirm tool support per model, and filtering on a guess would
+      // empty the pool on any installation whose catalogue is thin.
+      supportsTools: () => undefined,
+      needsTools: true,
+    });
+
+    const decider = services.projects.decider;
+    const routed = await routeBackgroundModel({
+      eligible: filtered.eligible,
+      ...(decider === undefined
+        ? {}
+        : {
+            decide: async (candidates) =>
+              await decideModelRoute(decider, { task: "background worker", role: "background", candidates }),
+          }),
+      ...(currentAlias === undefined ? {} : { foregroundAlias: currentAlias }),
+      // Checked after the decision as well as before it: a pool can change while a selector is thinking.
+      verify: (alias) => pool.profiles.some((profile) => profile.alias === alias && profile.enabled),
+    });
+    return routed === undefined ? undefined : { provider: routed.provider, id: routed.modelId };
+  };
+
   const modelTurn = await createModelTurn({
     env: process.env,
     cwd: process.cwd(),
     model: chosenModel,
+    backgroundModel: routeBackground,
+
     /*
      * The user's own instructions, read on every turn rather than captured here.
      *
@@ -851,37 +1030,35 @@ async function main(): Promise<void> {
     extraTools: (turn) => {
       const search = searchWiring.deps;
       const projects = projectWiring.deps;
-      const approvals = approvalWiring.deps;
-      if (search === undefined || projects === undefined || approvals === undefined) return [];
-      // Built through the contract's own schema rather than asserted into the branded type: an assertion
-      // here would be the place a malformed instant got in.
-      const now = () => instantSchema.parse(new Date().toISOString());
+      const command = commandWiring.deps;
+      if (search === undefined || projects === undefined || command === undefined) return [];
       const tools = createNodeTools({
         search,
         projects,
-        approvals: () => approvals,
+        command,
+        // Reading an attached file is scoped to the conversation this turn belongs to, which is the
+        // only thing the tool needs to check beyond the principal.
+        attachments: { dataDir: options.dataDir, conversationId: turn.conversationId },
+        // And the same conversation is what a question is recorded against, which is why this is built from
+        // the turn rather than once for the node.
+        ...(interactionWiring.deps === undefined ? {} : { interactions: interactionWiring.deps(turn.conversationId) }),
+        ...(secretWiring.deps === undefined ? {} : { secrets: secretWiring.deps }),
         /*
-         * The policy is read when a tool call happens rather than captured when this node booted: the
-         * promise of the setting is that it changes what happens next, and a captured value would make it
-         * a restart instead.
-         */
-        policy: () =>
-          readExecutionPolicy(
-            { db: services.runtime.db, now },
-            services.runtime.identity.ownerPrincipalId,
-          ),
-        /*
-         * Where a command that runs without a card leaves its record.
+         * Where a command that runs without a card leaves its record in the effect ledger.
          *
          * The same event log the task lifecycle writes to, because autonomy is only checkable if the
-         * effects it performed are findable afterwards.
+         * effects it performed are findable afterwards. The trail in audit_log is the other half of that
+         * story: who asked for what, and how it came out.
+         *
+         * The clock is read here rather than captured when the node booted, because the promise of this
+         * setting is that it changes what happens next.
          */
-        audit: () => ({
+        effectAudit: () => ({
           deps: {
             db: services.runtime.db,
             nodeId: services.runtime.identity.nodeId,
             newId: services.conductor.newId,
-            now,
+            now: () => instantSchema.parse(new Date().toISOString()),
           },
           principalId: search.principalId,
           conversationId: turn.conversationId,
@@ -890,9 +1067,6 @@ async function main(): Promise<void> {
         questions: { newId: services.conductor.newId },
         // Always passed: an unconfigured directory is something the tool reports, not a reason to hide it.
         directory: { indexPath: directoryIndexPath(process.env), newId: services.conductor.newId },
-        // Reading an attached file is scoped to the conversation this turn belongs to, which is the
-        // only thing the tool needs to check beyond the principal.
-        attachments: { dataDir: options.dataDir, conversationId: turn.conversationId },
         // Remembering is scoped to the turn's conversation the same way, and the id comes from the node's own
         // generator: the model supplies what to remember, never who it belongs to.
         memory: { conversationId: turn.conversationId, newId: services.conductor.newId },
@@ -967,6 +1141,31 @@ async function main(): Promise<void> {
     services.piSettings = modelTurn.piSettings;
   }
   /*
+   * A turn control for a fixture node.
+   *
+   * Starting a background session is the one path a node cannot answer from a recipe: it goes through the turn control,
+   * which only exists when a model turn does — and a fixture node has none by design, because it answers with scripts
+   * rather than a provider. Without this, the browser half of that path is untestable: the client would report the
+   * node's refusal, which is correct behaviour and not the thing a test of the selection menu should be measuring.
+   *
+   * It is not a model. It says so, waits a moment, and answers with a fixture sentence. The wait is the point: a session
+   * that starts and finishes inside the same millisecond is a session no client can ever draw, and drawing it — the
+   * chip in the header, the reply in the conversation — is exactly what the browser test asserts.
+   */
+  if (services.turnControl === undefined && modelFixture) {
+    services.turnControl = {
+      running: () => [],
+      interrupt: () => false,
+      steer: async () => false,
+      runInBackground: async () => {
+        await new Promise((resolve) => setTimeout(resolve, 1_500));
+        const reply = "Fixture: việc nền đã xong, tui đã đọc kết quả và tiếp tục công việc.";
+        return reply;
+      },
+    };
+  }
+
+  /*
    * The catalogue is published whether or not a turn exists, because it is how a node stops having no model: the
    * picker that fills that gap reads it, and publishing it only alongside a turn is what left every fresh node with an
    * empty list and no way to choose. Published as a function rather than a snapshot, so a provider added by upgrading
@@ -989,6 +1188,73 @@ async function main(): Promise<void> {
     // The conductor's own id generator, so an approval id looks like every other id this node writes.
     newId: services.conductor.newId,
   };
+  commandWiring.deps = {
+    // Omitted when the node has no approval route at all, so `confirm` refuses honestly instead of
+    // throwing from inside the tool.
+    ...(approvalWiring.deps === undefined ? {} : { approvals: () => approvalWiring.deps as CoordinationDeps }),
+    autonomy: () => readAutonomySettings(services.runtime.db, services.runtime.identity.ownerPrincipalId),
+    // The folders this node owns, which is the whole of the containment check: the workspace roots from
+    // settings, the node's own data directory, and the directory the operator launched it from. The last
+    // one matters because a node started inside a checkout is being pointed at that checkout by a person.
+    resources: () => ownedResources([...services.projects.roots(), services.runtime.dataDir, process.cwd()]),
+    fallbackCwd: () => process.cwd(),
+    // The same decision layer the finder uses: one adapter, one policy, one fallback chain. A node with
+    // no configured selector reports `unavailable`, and the person's fail-open setting decides what that
+    // means — which is not the same thing as a guardrail that said yes.
+    guardrails: (input) => {
+      const decider = services.projects.decider;
+      if (decider === undefined) {
+        return Promise.resolve({ status: "unavailable" as const, reason: "node này chưa nối policy layer nào" });
+      }
+      return guardOperation(decider, input);
+    },
+    narrowing: DEFAULT_NARROWING,
+    /**
+     * The secret broker, with the trail attached.
+     *
+     * Wired here rather than inside the tool because the broker is the only thing that reads a value: every use of a
+     * secret passes through `withSecret` or `environmentFor`, so this is the one place an audit entry cannot be
+     * forgotten.
+     */
+    broker: createSecretBroker({
+      db: services.runtime.db,
+      principalId: services.runtime.identity.ownerPrincipalId,
+      now: () => new Date().toISOString() as Instant,
+      audit: (event) =>
+        appendAuditEvent(services.runtime.db, {
+          auditId: services.conductor.newId("audit"),
+          principalId: services.runtime.identity.ownerPrincipalId,
+          nodeId: services.runtime.identity.nodeId,
+          kind: "secret-use",
+          summary: event.summary,
+          outcome: "done",
+          ref: event.ref,
+          at: new Date().toISOString() as Instant,
+        }),
+    }),
+    newId: () => services.conductor.newId("run"),
+    // Where a finished command is written down. The trail is the node's, and the sink is how a tool that does not know
+    // about the database still ends up in it.
+    audit: (event) =>
+      appendAuditEvent(services.runtime.db, {
+        auditId: services.conductor.newId("audit"),
+        principalId: services.runtime.identity.ownerPrincipalId,
+        nodeId: services.runtime.identity.nodeId,
+        kind: "command",
+        summary: event.summary,
+        outcome: event.outcome,
+        ...(event.ref === undefined ? {} : { ref: event.ref }),
+        at: new Date().toISOString() as Instant,
+      }),
+  };
+  interactionWiring.deps = (conversationId) => interactionDepsFor(services, conversationId);
+  secretWiring.deps = {
+    db: services.runtime.db,
+    principalId: services.runtime.identity.ownerPrincipalId,
+    newId: services.conductor.newId,
+    now: () => new Date().toISOString() as Instant,
+    nodeId: services.runtime.identity.nodeId,
+  };
 
   // A fixture node arranges its own precondition: the scripted command proposal has to have somewhere to
   // run, and a browser run must never depend on a developer's real approved folders.
@@ -1003,6 +1269,56 @@ async function main(): Promise<void> {
         source: "user",
       },
     );
+
+    /*
+     * A pool for the hotkey, and a current alias.
+     *
+     * A fixture node arranges its own precondition for the same reason it scripts the composer: the browser half of
+     * the switch — a keypress that changes a label, and a table that shows what it walks — cannot be reached without
+     * profiles to walk. The identifiers are the fake adapter's, and no session is created from them here, because the
+     * fixture answers every turn itself.
+     */
+    const at = new Date().toISOString() as Instant;
+    writeModelPool(
+      services.runtime.db,
+      services.runtime.identity.ownerPrincipalId,
+      {
+        profiles: [
+          {
+            modelProfileId: "profile_fast",
+            alias: "fast",
+            provider: "fake",
+            modelId: "fake-model",
+            enabled: true,
+            roles: ["foreground"],
+            priority: 10,
+          },
+          {
+            modelProfileId: "profile_smart",
+            alias: "smart",
+            provider: "fake-other",
+            modelId: "fake-other-model",
+            enabled: true,
+            roles: ["foreground", "coding"],
+            priority: 20,
+          },
+        ],
+      },
+      at,
+    );
+    writeCurrentAlias(services.runtime.db, services.runtime.identity.ownerPrincipalId, "fast", at);
+
+    /*
+     * And the catalogue those providers are supposed to come from.
+     *
+     * Without it the fixture contradicts itself: the pool above names `fake` and `fake-other`, while the Models tab
+     * reports that this node has no such provider and draws no picker, because the catalogue is read from a model turn
+     * that a fixture node deliberately does not build. The list is the fake adapter's, which exists for exactly this —
+     * being read on a machine with no provider account — so the panel, the pool validation and the chooser all have
+     * something real to be exercised against. Only when nothing else answered, so a fixture node that does build a
+     * model turn keeps its own catalogue.
+     */
+    services.modelCatalogue ??= () => new FakePiAdapter().catalogue();
   }
   modelWiring.compose = services.compose;
 
@@ -1239,26 +1555,39 @@ async function main(): Promise<void> {
         .map((message) => textOfMessage(message))
         .join("\n\n")
         .trim();
-      // A turn can end with an operation waiting for a decision. The voice session asks about it out loud, and
-      // needs the digest the card was shown with: it is the same binding the button sends.
-      const proposed = outcome.messages
-        .flatMap((message) => message.blocks)
-        .find((block) => block.type === "approval-card" && block.decision === "pending");
-      // `find` returns the union it searched, so the block is narrowed again here: nothing else may be read
-      // off an approval card.
-      const pending = proposed !== undefined && proposed.type === "approval-card" ? proposed : undefined;
+      /*
+       * A turn can end with something waiting for an answer: an operation to approve, or a question card. The voice
+       * session asks out loud either way, and needs enough of the card to phrase it — the digest for an approval,
+       * the options for a question — because it sends its answer back through the same function the button does.
+       */
+      let pending: PendingVoiceInteraction | undefined;
+      for (const block of outcome.messages.flatMap((message) => message.blocks)) {
+        if (block.type === "approval-card" && block.decision === "pending") {
+          pending = {
+            kind: "approval",
+            approvalId: block.approvalId,
+            digest: block.operationDigest,
+            description: block.operationDescription,
+          };
+          break;
+        }
+        if (block.type === "question-card" && block.status === "waiting") {
+          pending = {
+            kind: "question",
+            questionId: block.questionId,
+            questionType: block.questionType,
+            prompt: block.prompt,
+            options: block.options.map((option) => ({ id: option.id, label: option.label })),
+            allowOther: block.allowOther,
+            voicePrompt: block.voicePrompt,
+          };
+          break;
+        }
+      }
       return {
         reply,
         recordedMessages: outcome.messages.length,
-        ...(pending === undefined
-          ? {}
-          : {
-              pendingApproval: {
-                approvalId: pending.approvalId,
-                digest: pending.operationDigest,
-                description: pending.operationDescription,
-              },
-            }),
+        ...(pending === undefined ? {} : { pendingInteraction: pending }),
       };
     },
     /**
@@ -1285,6 +1614,52 @@ async function main(): Promise<void> {
           // made of it. `message` is spoken by the session.
           { ok: true, message: result.continuation ?? result.outcome ?? "Đã chạy xong lệnh đó." }
         : { ok: false, message: result.message };
+    },
+    /**
+     * Record what the person just said, through the same function the HTTP route calls.
+     *
+     * That is the whole of "voice and a click mean the same thing": not a second path that is kept in step with the
+     * first, but the same function. By the time this is called the session has already matched the words against
+     * the question's own options, so nothing here has to be lenient about speech.
+     */
+    answerQuestion: async ({ conversationId, questionId, text, optionIds, confirmed }) => {
+      const result = await answerQuestionForNode(services, {
+        conversationId,
+        questionId,
+        principal: {
+          principalId: services.runtime.identity.ownerPrincipalId,
+          kind: "user",
+          nodeId: services.runtime.identity.nodeId,
+        },
+        ...(text === undefined ? {} : { text }),
+        ...(optionIds === undefined ? {} : { optionIds }),
+        ...(confirmed === undefined ? {} : { confirmed }),
+        viaVoice: true,
+        at: new Date().toISOString() as never,
+      });
+      return result.ok ? { ok: true, message: "Đã ghi câu trả lời." } : { ok: false, message: result.message };
+    },
+    /**
+     * What this conversation is still waiting on, in the shape the voice session reads.
+     *
+     * Read from the interaction records rather than from this session's own turn, because the answer belongs to the
+     * conversation: a card a click asked is still answerable by a sentence, and one this session asked is still
+     * answerable by a click. The newest question wins, which is the one a person reading the transcript is looking at.
+     */
+    pendingFor: (voiceConversationId) => {
+      const question = pendingForConversation(interactionDepsFor(services, voiceConversationId)).at(-1);
+      if (question === undefined) return undefined;
+      return {
+        kind: "question",
+        questionId: question.questionId,
+        questionType: question.questionType,
+        prompt: question.prompt,
+        options: question.options.map((option) => ({ id: option.id, label: option.label })),
+        allowOther: question.allowOther,
+        // Derived from the options that are actually offered, the same way the card derives it, so what is heard
+        // cannot drift from what is on screen.
+        voicePrompt: voicePromptFor(question),
+      };
     },
     /**
      * What a spoken sentence means to the application.
@@ -1441,10 +1816,10 @@ async function main(): Promise<void> {
      * Built from the same wirings the turn uses, and without the folder-resolution refinement, which changes how
      * run_command picks a folder rather than whether it exists.
      */
-    const bootApprovals = approvalWiring.deps;
-    if (bootApprovals !== undefined) {
+    const bootCommand = commandWiring.deps;
+    if (bootCommand !== undefined) {
       registerNodeTools(
-        createNodeTools({ search: services.search, projects: services.projects, approvals: () => bootApprovals }).map(
+        createNodeTools({ search: services.search, projects: services.projects, command: bootCommand }).map(
           (tool) => ({ name: tool.name, label: tool.label, description: tool.description }),
         ),
       );

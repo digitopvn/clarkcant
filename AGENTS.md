@@ -250,8 +250,12 @@ Update DESIGN.md in the same change when intentionally changing a UX invariant.
 pnpm verify is the definition of done for non-journey code. Run a focused test
 first. Run pnpm verify:full before reporting a UI/journey change complete.
 
-Never point e2e at a running dev node: playwright.config.ts uses its own data dir
-and ports so it cannot read the wrong identity file.
+Never point e2e at a running dev node: `playwright.config.ts` uses its own data
+dir and ports so it cannot read the wrong identity file. Free ports 8876 and
+4273 before a run: a server left over from an interrupted run answers
+Playwright's startup health check, so the run's own server fails to bind
+(`--strictPort`) and every test after that fails on a refused connection, which
+reads like a regression and is not one.
 
 ## Tests
 

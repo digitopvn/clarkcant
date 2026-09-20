@@ -1,17 +1,18 @@
 import type { IncomingMessage, Server } from "node:http";
 
 import {
+  answerFromUtterance,
   type AppIntentDecision,
   type AppIntentResolution,
   type ConfirmationDecision,
   type ConversationId,
   type Instant,
+  type QuestionKind,
   type SemanticView,
   type VoiceCapabilities,
   nowInstant,
 } from "@clarkcant/contracts";
-import { semanticViewOf } from "@clarkcant/core";
-import { recordVoiceTranscript } from "@clarkcant/core";
+import { recordVoiceTranscript, semanticViewOf } from "@clarkcant/core";
 import { GeminiLiveAdapter, type VoiceProviderAdapter } from "@clarkcant/voice-adapters";
 import { type RawData, WebSocketServer, type WebSocket } from "ws";
 
@@ -148,6 +149,30 @@ export interface VoiceGatewayOptions {
     digest: string;
   }) => Promise<{ ok: boolean; message: string }>;
   /**
+   * Answer a question the agent asked, through the same route a click uses.
+   *
+   * Injected for the same reason `decideApproval` is, and to the same end: voice is a surface, not a second
+   * mechanism. If this grew its own way of recording an answer, the two surfaces would eventually disagree about
+   * what a person chose — and the transcript would be the place that disagreement showed up.
+   */
+  answerQuestion?: (input: {
+    conversationId: ConversationId;
+    questionId: string;
+    text?: string;
+    optionIds?: string[];
+    confirmed?: boolean;
+  }) => Promise<{ ok: boolean; message: string }>;
+  /**
+   * What the conversation is still waiting for, when this session is not the one that asked.
+   *
+   * A card waiting in the conversation is waiting for whoever answers it: a person holding a microphone and looking
+   * at that card expects the label to work, and a session that only remembered its own turn would read their answer
+   * as a new request and leave the card standing. Asking the node is what makes "a click and a sentence are the same
+   * act" true rather than a slogan.
+   */
+  pendingFor?: (conversationId: ConversationId) => PendingVoiceInteraction | undefined;
+
+  /**
    * What a sentence means to the application, as opposed to what it means to the agent.
    *
    * Injected for the same reason `answer` is: the node owns the registry and the matching rules, and this
@@ -210,18 +235,39 @@ export interface VoiceGateway {
   close(): Promise<void>;
 }
 
+/**
+ * What the node is waiting for, as far as a voice session is concerned.
+ *
+ * One union for both shapes, because voice has exactly one job when something is pending: read it out and take
+ * the spoken answer. An approval is a yes-or-no question; a question card is four kinds of question. The session
+ * does not need to know more than how to phrase each one, and it deliberately does not get its own way of
+ * recording either answer.
+ */
+export type PendingVoiceInteraction =
+  | { kind: "approval"; approvalId: string; digest: string; description: string }
+  | {
+      kind: "question";
+      questionId: string;
+      questionType: QuestionKind;
+      prompt: string;
+      options: { id: string; label: string }[];
+      allowOther: boolean;
+      /** Spoken by the host, derived from the options so the words cannot drift from the card. */
+      voicePrompt: string;
+    };
+
 /** What the agent answered, and what its turn added to the conversation. */
 export interface VoiceAnswerResult {
   /** The words to read back. Empty when the agent produced nothing worth saying. */
   reply: string;
   /**
-   * An operation the agent asked for, still waiting on a decision.
+   * What the agent asked for and is waiting on, if the person has not answered yet.
    *
-   * A turn that proposes a command ends with a card nobody has decided. The person holding a microphone is not
-   * going to click it, so the session asks about it out loud and takes the spoken answer as the decision; the
-   * alternative is a card that waits for a press the voice mode never offers.
+   * A turn can end with something nobody has answered: a proposed command, or a question card. The person holding
+   * a microphone is not going to click either, so the session asks out loud and takes the spoken answer — the
+   * alternative is a card waiting for a press that voice mode never offers.
    */
-  pendingApproval?: { approvalId: string; digest: string; description: string };
+  pendingInteraction?: PendingVoiceInteraction;
   /**
    * Messages this turn wrote to the conversation.
    *
@@ -374,8 +420,8 @@ export function attachVoiceGateway(options: VoiceGatewayOptions): VoiceGateway {
     let recorded = false;
     /** Messages the agent's turns wrote, so the closing report counts what actually happened. */
     let answeredMessages = 0;
-    /** An operation the agent asked for and is waiting on, if the person has not answered yet. */
-    let waiting: { approvalId: string; digest: string; description: string } | undefined;
+    /** What the agent asked for and is waiting on, if the person has not answered yet. */
+    let waiting: PendingVoiceInteraction | undefined;
     /**
      * A token for a command that asked a question first.
      *
@@ -512,10 +558,12 @@ export function attachVoiceGateway(options: VoiceGatewayOptions): VoiceGateway {
       // the only copy of something that was said, and the closing report would then have nothing to keep.
       userText = "";
 
-      // A sentence said while an approval is waiting is a decision, not a question for the agent.
-      const pending = waiting;
-      const decide = options.decideApproval;
-      if (pending !== undefined && decide !== undefined) {
+      // A sentence said while something is pending is an answer, not a new request for the agent. The question need
+      // not have been asked here: what is pending belongs to the conversation, so a card a click asked is answerable
+      // by a sentence and a card this session asked is answerable by a click.
+      const pending = waiting ?? options.pendingFor?.(askIn);
+      if (pending !== undefined && pending.kind === "approval" && options.decideApproval !== undefined) {
+        const decide = options.decideApproval;
         const decision = interpretDecision(text);
         if (decision === undefined) {
           // One more try, in the same words. The operation is going to run on the machine, so a sentence that could
@@ -547,6 +595,13 @@ export function attachVoiceGateway(options: VoiceGatewayOptions): VoiceGateway {
       }
 
       /*
+       * A question, read against its own options.
+       *
+       * `answerFromUtterance` can only produce an answer the card offered, which is what lets the same route serve
+       * a click and a sentence without being lenient about either. When the words do not fit, the question is asked
+       * again with its options named: a question asked twice is recoverable, a misheard choice is not.
+       */
+      /*
        * A sentence said while the application is waiting to confirm a command answers that question.
        *
        * This sits after the approval branch on purpose: an operation that is about to run on the machine is the
@@ -554,6 +609,29 @@ export function attachVoiceGateway(options: VoiceGatewayOptions): VoiceGateway {
        * Only recognised words decide anything, and the confirmation is sent to the node, which spends the token -
        * so the executable decision comes back from the node rather than being assembled here.
        */
+      const pendingIntent = waitingIntent;
+      const confirmIntent = options.confirmAppIntent;
+      if (pendingIntent !== undefined && confirmIntent !== undefined) {
+        const decision = interpretDecision(text);
+        if (decision === undefined) {
+          const again = "Tui chưa rõ ý bạn. Bạn nói “đồng ý” hoặc “không” giúp tui nhé.";
+          send({ type: "transcript", role: "assistant", text: again, final: true });
+          say(again);
+          return;
+        }
+
+        waitingIntent = undefined;
+        answerQueue = answerQueue.then(() => {
+          const decided = confirmIntent({ token: pendingIntent, decision });
+          send({ type: "app-intent", decision: decided });
+          const said = decided.kind === "refused" ? decided.say : decided.readBack;
+          send({ type: "transcript", role: "assistant", text: said, final: true });
+          say(said);
+          return Promise.resolve();
+        });
+        return;
+      }
+
       /*
        * A sentence said while a widget action is waiting for a yes.
        *
@@ -580,25 +658,40 @@ export function attachVoiceGateway(options: VoiceGatewayOptions): VoiceGateway {
         return;
       }
 
-      const pendingIntent = waitingIntent;
-      const confirmIntent = options.confirmAppIntent;
-      if (pendingIntent !== undefined && confirmIntent !== undefined) {
-        const decision = interpretDecision(text);
-        if (decision === undefined) {
-          const again = "Tui chưa rõ ý bạn. Bạn nói “đồng ý” hoặc “không” giúp tui nhé.";
+      /*
+       * A question, read against its own options.
+       *
+       * `answerFromUtterance` can only produce an answer the card offered, which is what lets the same route serve
+       * a click and a sentence without being lenient about either. When the words do not fit, the question is asked
+       * again with its options named: a question asked twice is recoverable, a misheard choice is not.
+       */
+      if (pending !== undefined && pending.kind === "question" && options.answerQuestion !== undefined) {
+        const record = options.answerQuestion;
+        const answer = answerFromUtterance(
+          { questionType: pending.questionType, options: pending.options, allowOther: pending.allowOther },
+          text,
+        );
+        if (answer === undefined) {
+          const named =
+            pending.options.length === 0 ? "" : ` Có thể là: ${pending.options.map((option) => option.label).join(", ")}.`;
+          const again = `Tui chưa khớp được câu trả lời với câu hỏi. ${pending.prompt}${named}`;
           send({ type: "transcript", role: "assistant", text: again, final: true });
           say(again);
           return;
         }
 
-        waitingIntent = undefined;
-        answerQueue = answerQueue.then(() => {
-          const decided = confirmIntent({ token: pendingIntent, decision });
-          send({ type: "app-intent", decision: decided });
-          const said = decided.kind === "refused" ? decided.say : decided.readBack;
+        waiting = undefined;
+        answerQueue = answerQueue.then(async () => {
+          const recorded = await record({
+            conversationId: askIn,
+            questionId: pending.questionId,
+            ...(answer.text === undefined ? {} : { text: answer.text }),
+            ...(answer.optionIds === undefined ? {} : { optionIds: answer.optionIds }),
+            ...(answer.confirmed === undefined ? {} : { confirmed: answer.confirmed }),
+          });
+          const said = recorded.ok ? "Đã ghi câu trả lời của bạn." : `Không ghi được câu trả lời: ${recorded.message}`;
           send({ type: "transcript", role: "assistant", text: said, final: true });
           say(said);
-          return Promise.resolve();
         });
         return;
       }
@@ -686,10 +779,15 @@ export function attachVoiceGateway(options: VoiceGatewayOptions): VoiceGateway {
 
           // A proposed command waits for a person. Asked here, in the same turn that produced it, because the
           // card is otherwise a click the voice mode cannot offer.
-          const proposed = result.pendingApproval;
+          const proposed = result.pendingInteraction;
           if (proposed !== undefined) {
             waiting = proposed;
-            const question = `${proposed.description}. Bạn cho phép chạy hay là không?`;
+            // Read from the card's own wording, so what is heard is what is on screen: an approval keeps its
+            // yes-or-no phrasing, and a question is read through the host-generated voice prompt.
+            const question =
+              proposed.kind === "approval"
+                ? `${proposed.description}. Bạn cho phép chạy hay là không?`
+                : proposed.voicePrompt;
             send({ type: "transcript", role: "assistant", text: question, final: true });
             say(question);
           }

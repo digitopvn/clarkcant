@@ -91,6 +91,15 @@ export interface ToolDefinition {
      * the schema before it reaches a transcript.
      */
     hostCard?: Record<string, unknown>;
+    /**
+     * More than one block, when one call has more to record than a single card.
+     *
+     * `run_command` is why this exists: a guarded run records what ran *and* the exit-status evidence
+     * for it, and collapsing those into one block would mean either losing the evidence or inventing a
+     * block type that is both. The node validates each entry before it reaches a transcript, exactly as
+     * it does for `hostCard`.
+     */
+    hostBlocks?: Record<string, unknown>[];
   }>;
 }
 
