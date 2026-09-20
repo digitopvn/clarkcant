@@ -1090,14 +1090,32 @@ export function Conversation({
    * The node records it and opens a new turn, and the timeline that comes back is the source of truth for what
    * the card should say next — this handler holds no state of its own beyond clearing the last error.
    */
+  /**
+   * The answer being composed, and the question whose answer is on its way.
+   *
+   * Both live here rather than in the card because the card is a pure function of what it is given: state inside
+   * it would be a second copy of a fact this conversation already tracks, and the two would disagree after a
+   * reload. The draft is cleared the moment an answer leaves, so a card never re-offers what was just sent.
+   */
+  const [questionDraft, setQuestionDraft] = useState<
+    { questionId: string; chosen: string[]; text: string } | undefined
+  >(undefined);
+  const [questionPendingId, setQuestionPendingId] = useState<string | undefined>(undefined);
+
   const answerQuestion = useCallback(
     (input: { questionId: string; text?: string; optionIds?: string[]; confirmed?: boolean }) => {
       if (conversationId === undefined) return;
       setError(undefined);
+      setQuestionPendingId(input.questionId);
+      setQuestionDraft(undefined);
       void client
         .answerQuestion(conversationId, input.questionId, input)
         .then((result) => applyTimeline(result.timeline))
-        .catch((cause: unknown) => setError(cause instanceof Error ? cause.message : String(cause)));
+        .catch((cause: unknown) => {
+          // The answer never reached the node, so the card may be tried again rather than staying disabled.
+          setQuestionPendingId(undefined);
+          setError(cause instanceof Error ? cause.message : String(cause));
+        });
     },
     [applyTimeline, client, conversationId],
   );
@@ -1140,6 +1158,15 @@ export function Conversation({
     }
     return [...answered];
   }, [timeline]);
+
+  /*
+   * Once the transcript carries the record of the answer, nothing is in flight any more. The card reads that
+   * record rather than a flag of its own, which is what keeps a reload from leaving a card disabled forever.
+   */
+  useEffect(() => {
+    if (questionPendingId === undefined) return;
+    if (answeredQuestions.includes(questionPendingId)) setQuestionPendingId(undefined);
+  }, [answeredQuestions, questionPendingId]);
 
   /**
    * What the node said about the last secret submitted through a card.
@@ -1410,6 +1437,17 @@ export function Conversation({
       decidedApprovals,
       onQuestionAnswer: answerQuestion,
       answeredQuestions,
+      ...(questionDraft === undefined ? {} : { questionDraft }),
+      onQuestionDraft: (input) =>
+        setQuestionDraft((current) => {
+          const sameQuestion = current?.questionId === input.questionId;
+          return {
+            questionId: input.questionId,
+            chosen: input.chosen === undefined ? (sameQuestion ? current.chosen : []) : [...input.chosen],
+            text: input.text === undefined ? (sameQuestion ? current.text : "") : input.text,
+          };
+        }),
+      ...(questionPendingId === undefined ? {} : { questionPendingId }),
       ...(decidingApprovalId === undefined ? {} : { decidingApprovalId }),
       onCredentialSubmit: submitCredential,
       ...(credentialStatus === undefined ? {} : { credentialStatus }),
@@ -1417,8 +1455,6 @@ export function Conversation({
        * A chosen answer is sent as the user's own message — the same call the composer makes — so a click and a
        * typed reply are one act. Nothing here invents a second route into the agent for a click to take.
        */
-      onQuestionAnswer: ({ answer }) => void send(answer),
-      openQuestionIds: openCardIds.questions,
       /* The same path as a question: the answers become the user's own next message. */
       onFormSubmit: ({ summary }) => void send(summary),
       openFormIds: openCardIds.forms,
@@ -1432,7 +1468,7 @@ export function Conversation({
       onControlStop: ({ sessionId }) => changeBrowserSession(sessionId, "stop"),
       controlSession,
     }),
-    [artifactOpen, controlSession, changeBrowserSession, credentialStatus, decideApproval, decidedApprovals, decidingApprovalId, installPackage, openArtifact, openCardIds, packageInstall, send, stopTask, submitCredential, taskStop],
+    [artifactOpen, controlSession, changeBrowserSession, credentialStatus, decideApproval, decidedApprovals, decidingApprovalId, installPackage, openArtifact, openCardIds, packageInstall, questionDraft, questionPendingId, send, stopTask, submitCredential, taskStop],
   );
 
   const renderSurface = useCallback(
