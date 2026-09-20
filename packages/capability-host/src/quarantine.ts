@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { mkdirSync, readdirSync, readFileSync, lstatSync, writeFileSync } from "node:fs";
 import { isAbsolute, join, relative, resolve } from "node:path";
 
 /**
@@ -19,8 +19,11 @@ import { isAbsolute, join, relative, resolve } from "node:path";
  *    and a build that inherited the node's environment would do exactly that.
  *
  * The unpack step is guarded twice: the archive is extracted by `tar`, which refuses absolute paths and
- * `..` on its own, and then every entry is walked and checked against the destination — including symlinks,
- * because a symlink pointing outside the root is how a later write escapes a root that looked contained.
+ * `..` on its own, and then every entry is walked and checked against the destination — and an artifact
+ * carrying a symbolic link is refused outright. Not because every link escapes, but because a build creates
+ * the links it needs and a rule with no exceptions is a rule that cannot be subtly wrong: resolving a link's
+ * target correctly (chains, broken links, a target created later by the build itself) is exactly the kind of
+ * careful reasoning that gets one case right and the next one wrong.
  */
 
 export const QUARANTINE_STATUS = "quarantine-download-unpack-and-isolated-build-implemented";
@@ -216,8 +219,10 @@ export async function unpackQuarantine(input: {
     return { ok: false, code: "ESCAPES_ROOT", message: `the artifact contains an entry outside the quarantine root: ${escaped[0] ?? ""}` };
   }
 
-  // Symlinks are checked separately because the walk above resolves the link's own path, not its target.
-  const links = entries.filter((entry) => statSync(entry, { throwIfNoEntry: false })?.isSymbolicLink() === true);
+  // Any symlink fails the install. `lstat` rather than `stat`, because `stat` follows the link and reports the
+  // target's own type — so a symlink to a directory outside the root came back as a directory and passed,
+  // which is the escape this check exists for and which the Linux runner in CI caught.
+  const links = entries.filter((entry) => lstatSync(entry, { throwIfNoEntry: false })?.isSymbolicLink() === true);
   for (const link of links) {
     return { ok: false, code: "ESCAPES_ROOT", message: `the artifact contains a symbolic link (${link}), which a later write could follow out of the root` };
   }

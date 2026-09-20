@@ -1,6 +1,15 @@
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -172,14 +181,22 @@ describe("unpacking an artifact", () => {
     expect(result.ok ? "" : result.code).toBe("UNPACK_FAILED");
   });
 
-  it.skipIf(!POSIX)("refuses an archive carrying a symbolic link out of the root", async () => {
+  /*
+   * POSIX-only, and the reason is `tar` rather than the test: on Windows it refuses to create a symlink from
+   * an archive at all (`Cannot create symlink ... No such file or directory`, exiting 2), so there is no way
+   * to get the archive into the state this test is about. The Linux runner in CI is where it runs — and it is
+   * where it caught the real defect, since `stat` follows a link and reported the target's type.
+   */
+  it.skipIf(!POSIX)("refuses an archive carrying a symbolic link out of the root (POSIX: tar cannot create one on Windows)", async () => {
     const root = tempDir();
     const source = join(root, "payload");
     mkdirSync(source, { recursive: true });
     writeFileSync(join(source, "package.json"), "{}");
     // A symlink out of the root is how a later write escapes a root that looked contained, so it fails the
     // install even though `tar` extracted it happily.
-    spawnSync("ln", ["-s", "/etc", join(source, "escape")]);
+    // Created with `symlinkSync` rather than by shelling out to `ln`, which does not exist on Windows: the
+    // probe above has already established that this machine can make one.
+    symlinkSync("/etc", join(source, "escape"), "dir");
     const path = join(root, "artifact.tar.gz");
     expect(spawnSync("tar", ["-czf", "artifact.tar.gz", "-C", "payload", "."], { cwd: root }).status).toBe(0);
 
