@@ -360,6 +360,48 @@ describe("approvals", () => {
     expect(again.ok).toBe(false);
     expect(again.ok === false && again.code).toBe("APPROVAL_ALREADY_DECIDED");
   });
+
+  it("refuses to decide an approval for a conversation whose home is another node", () => {
+    /*
+     * The case the requirement names is an executor that needs an approval while the home is out of reach: it must
+     * wait rather than approve its own work. The refusal is the same whether the home is merely elsewhere or actually
+     * unreachable, because this node has no authority over that conversation either way - which is what lets it hold
+     * without a reachability probe this phase does not have.
+     */
+    deps.db
+      .prepare("INSERT INTO conversations (conversation_id, home_node_id, created_at, updated_at) VALUES (?,?,?,?)")
+      .run("conv_elsewhere", NODE_B, AT, AT);
+    deps.db
+      .prepare("INSERT INTO conversation_authority (conversation_id, home_node_id, claimed_at) VALUES (?,?,?)")
+      .run("conv_elsewhere", NODE_B, AT);
+    deps.db
+      .prepare(
+        "INSERT INTO tasks (task_id, conversation_id, home_node_id, state, disposition, revision, goal, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?)",
+      )
+      .run("task_elsewhere", "conv_elsewhere", NODE_B, "parked", "waiting", 1, "gửi email cho đối tác", AT, AT);
+
+    const approval = requestApproval(deps, {
+      taskId: "task_elsewhere",
+      operationDigest: "sha256:elsewhere",
+      operationDescription: "send the email",
+      effectCategory: "communication",
+      ttlMs: 60_000,
+    });
+    const decision = decideApproval(deps, {
+      approvalId: approval.approvalId,
+      decision: "granted",
+      decidingPrincipal: USER,
+      seenOperationDigest: "sha256:elsewhere",
+    });
+
+    expect(decision.ok).toBe(false);
+    expect(decision.ok === false && decision.code).toBe("NOT_HOME_AUTHORITY");
+    // And nothing was decided: the approval is still pending, so the work waits rather than proceeding.
+    const row = deps.db.prepare("SELECT decision FROM approvals WHERE approval_id = ?").get(approval.approvalId) as {
+      decision: string;
+    };
+    expect(row.decision).toBe("pending");
+  });
 });
 
 describe("capability registry (T29)", () => {
