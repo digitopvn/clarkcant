@@ -105,11 +105,11 @@ repo vẫn xanh) — nó là check tư vấn, không phải cổng của repo.
 Không tiêu chí nào còn đỏ. Cả hai cổng từng chỉ chạy tay nay chạy trong CI mỗi lần push (`e2e`, `desktop smoke (xvfb)`), nên
 evidence của cửa sổ không còn phụ thuộc vào một máy cụ thể.
 
-- Các check cần provider thật (`[calibration]`, `[jev-live]`) là **opt-in** và cần `CLARKCANT_JEV_LIVE=1` cùng key.
-  Phần chúng chứng minh là **phán đoán của provider** — ví dụ một model thật tự quyết định gọi `remember`. Đường đi
-  thì đã đo được: fixture đóng vai agent và gọi **đúng tool đó** (`apps/runtime/src/main.ts`), và journey
-  `apps/web/e2e/memory.spec.ts` đọc kết quả từ tab Memory, xoá, rồi mở lại tab để chắc rằng mục đã biến mất chứ không
-  bị ẩn.
+- **Các check cần provider thật đã chạy, không còn BLOCKED.** Với `CLARKCANT_JEV_LIVE=1` và key của provider:
+  `apps/runtime/test/jev-calibration-live.spec.ts` xanh — selector chọn đúng **8/16** lượt routing (50,0%) so với
+  ranking, và phép so trên corpus search cũng xanh; `apps/runtime/test/jev-live.spec.ts` xanh (5 passed, 2 skipped).
+  Lần chạy đầu tiên tìm ra một lỗi thật: một model id bị provider từ chối trả về đúng `unavailable` nhưng lý do chỉ là
+  "HTTP 400" và không nêu model mà node đã pin — nay lý do nêu cả hai (`apps/runtime/src/jev-selector.ts`).
 - ~~Extractor PDF/ảnh~~ — **đã đóng**: PDF được trích văn bản (`apps/runtime/src/pdf-text.ts`, PR #64) và ảnh
   được giao nguyên block ảnh cho SDK (PR #66: `read_attachment` trả chính bức ảnh, `toSdkTool` phát
   `{ type: "image", data, mimeType }`). Nguyên nhân gốc nằm ở adapter, chỗ gộp mọi kết quả tool thành một block

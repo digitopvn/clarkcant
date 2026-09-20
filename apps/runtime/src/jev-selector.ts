@@ -455,7 +455,17 @@ async function callProvider(
     const durationMs = now() - startedAt;
 
     if (response.status !== 200) {
-      const reason = reasonForStatus(response.status);
+      /*
+       * A request the provider refused is named together with the model this node pinned.
+       *
+       * "HTTP 400" on its own leaves an operator guessing whether the key, the body or the pinned id was wrong, and
+       * this node pins a model precisely so that it is never evaluated against a different one. A transient status
+       * keeps its own reason: a rate limit has nothing to do with which model was pinned.
+       */
+      const requestRefused = response.status === 400 || response.status === 404 || response.status === 422;
+      const reason = requestRefused
+        ? `${reasonForStatus(response.status)} but this node pinned ${deps.config.model}`
+        : reasonForStatus(response.status);
       emit(deps, {
         event: "error",
         requestId,
