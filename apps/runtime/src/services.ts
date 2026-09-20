@@ -50,6 +50,7 @@ import { getPreference } from "@clarkcant/core";
 import { type ComposeDeps } from "./compose-mini-app.ts";
 import { type ProjectFinderDeps } from "./project-finder.ts";
 import { type ProjectSessionStarter, createProjectSessionStarter } from "./project-session.ts";
+import { loadProjectWorkPack as loadPack, type PackLoadResult } from "./pack-load.ts";
 import {
   decideRuntimeTarget,
   decisionTimeoutMsFromEnv,
@@ -145,6 +146,14 @@ export interface NodeServices {
     /** Runs one request in a worker of its own, answering with what it said. */
     runInBackground(input: { conversationId: string; principal: Principal; text: string }): Promise<string>;
   };
+  /**
+   * Load the project-work pack by running one worker session, and write what the run demonstrated.
+   *
+   * On the container rather than in the entry point because the container already holds the database
+   * and the identity the readiness is keyed by, and because this is the app's own path — which is
+   * precisely what was missing: the capability was registered, and nothing ever tried to load it.
+   */
+  loadProjectWorkPack: (options?: { timeoutMs?: number }) => Promise<PackLoadResult>;
   /** The model this node is configured for, or null when it has none. */
   model: NodeModelInfo | null;
   /** The selector, its wiring, and the counters a test or the health route can read. */
@@ -544,6 +553,12 @@ export function bootNodeServices(options: RuntimeOptions): NodeServices {
     vectors,
     projects,
     projectSessions,
+    loadProjectWorkPack: (loadOptions) =>
+      loadPack({
+        deps: { db: runtime.db, nodeId },
+        refs: PROJECT_WORK_CAPABILITIES.map((capability) => capability.ref),
+        ...(loadOptions?.timeoutMs === undefined ? {} : { timeoutMs: loadOptions.timeoutMs }),
+      }),
     describe: () => ({ node: process.version, platform: process.platform, arch: process.arch }),
   };
 }
