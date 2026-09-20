@@ -108,6 +108,22 @@ export const widgetRefBlockSchema = z.strictObject({
  * `leaseEpoch` is carried so a card can be reasoned about next to the action it describes: an action planned
  * under an older epoch than the card shows was planned before the last change of hands.
  */
+/**
+ * A preview of the screen a session is driving, as a reference to bytes this node holds.
+ *
+ * A reference and not the bytes, for the reason the driver's own observation comment gives: raw frames never enter
+ * the event log. `capturedAt` travels with it because a preview without the moment it was taken cannot be shown
+ * honestly — a card must be able to say "this is what it looked like then", never "this is what it looks like".
+ * `viewport` is the size it was captured at, so the frame is laid out as it was rather than stretched to fit.
+ */
+export const browserPreviewSchema = z.strictObject({
+  blobRef: z.string().min(1).max(128),
+  digest: z.string().regex(/^sha256:[a-f0-9]{64}$/),
+  viewport: z.strictObject({ width: z.int().positive(), height: z.int().positive() }),
+  capturedAt: instantSchema,
+});
+export type BrowserPreview = z.infer<typeof browserPreviewSchema>;
+
 export const browserSessionCardSchema = z.strictObject({
   type: z.literal("browser-session-card"),
   owner: z.literal("host"),
@@ -118,6 +134,12 @@ export const browserSessionCardSchema = z.strictObject({
   status: z.enum(["running", "stopped"]),
   leaseEpoch: z.int().nonnegative(),
   updatedAt: instantSchema,
+  /*
+   * Optional, and its absence is meaningful: a card with no preview is one where nobody captured the screen, or
+   * where the capture failed. That is a different statement from a card whose preview is stale, and the interface
+   * has to be able to tell them apart rather than showing an empty frame as if it were the screen.
+   */
+  preview: browserPreviewSchema.optional(),
 });
 export type BrowserSessionCard = z.infer<typeof browserSessionCardSchema>;
 
