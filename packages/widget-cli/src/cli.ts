@@ -11,11 +11,12 @@ import { startDevHost } from "./dev-host.ts";
 import { readPackage } from "./manifest.ts";
 
 /**
- * `clark widget …` — the author's three commands.
+ * `clark widget …` — the author's commands, from `docs/widget-development.md` §16.
  *
- * The shape comes from `docs/widget-development.md` §16. `dev` is not implemented here, and that is stated rather
- * than stubbed: the dev host is a browser application (hot reload, a viewport switcher, an accessibility inspector),
- * and a command that printed "coming soon" would be a control that looks usable before its action exists.
+ * This comment used to say `dev` was not implemented, and the help text used to say the same thing while `runCli`
+ * ran it. Both are corrected here, and the shape of the fix is the point: the list below is what the dispatch
+ * accepts *and* what the help prints, so the two cannot disagree. A hand-written help block beside a chain of `if`s
+ * drifts exactly as that shape invites — it already had, twice over, with `publish` missing from the help as well.
  *
  * `pack` is where the interesting decision lives. It refuses to pack a package that fails conformance, and it
  * refuses to overwrite an artifact for a version that was already packed at a different digest — because a version
@@ -26,13 +27,33 @@ import { readPackage } from "./manifest.ts";
 const TEMPLATES = ["blank", "form", "dashboard"] as const;
 type Template = (typeof TEMPLATES)[number];
 
+/**
+ * The commands this CLI accepts, with the line each shows in the help.
+ *
+ * One list, read twice: `runCli` refuses a command that is not here, and `usage()` prints exactly these. That is the
+ * whole design — the previous shape was a chain of `if`s plus a hand-written block of text, and the text had gone
+ * stale in two ways at once (`dev` described as unimplemented while it ran, `publish` never mentioned while it also
+ * ran). A list both sides read has nothing to disagree with.
+ */
+export const WIDGET_COMMANDS = [
+  { name: "init", usage: "clark widget init <dir> [--template blank|form|dashboard]   scaffold a package" },
+  { name: "test", usage: "clark widget test [dir]                                     run the conformance suite" },
+  { name: "pack", usage: "clark widget pack [dir]                                     build the artifact and its digest" },
+  {
+    name: "dev",
+    usage: "clark widget dev [dir] [--port N]                           run the dev host and its browser shell",
+  },
+  { name: "publish", usage: "clark widget publish [dir]                                  prepare the directory submission" },
+] as const;
+
 function usage(): string {
   return [
-    "clark widget init <dir> [--template blank|form|dashboard]",
-    "clark widget test [dir]",
-    "clark widget pack [dir]",
+    "clark widget <command> [dir]",
     "",
-    "clark widget dev is not implemented: the dev host is a browser application and is not part of this CLI yet.",
+    ...WIDGET_COMMANDS.map((entry) => `  ${entry.usage}`),
+    "",
+    // Named because it is the product decision behind the whole surface: a local path needs no account.
+    "A local path needs no account. init, test, pack and dev all work without a directory or a login.",
   ].join("\n");
 }
 
@@ -361,6 +382,16 @@ export async function runCli(argv: readonly string[]): Promise<number> {
     return 2;
   }
   const dir = rest.find((arg) => !arg.startsWith("--")) ?? process.cwd();
+
+  /*
+   * The list is the gate, not just the help text. An unknown command is refused here rather than falling through
+   * the chain of `if`s to the same help output, so "is this a command?" has exactly one answer and adding one means
+   * editing one place.
+   */
+  if (!WIDGET_COMMANDS.some((entry) => entry.name === command)) {
+    process.stdout.write(`${usage()}\n`);
+    return 2;
+  }
 
   if (command === "init") {
     const template = (flag(rest, "--template") ?? "blank") as Template;
