@@ -203,6 +203,9 @@ importers:
 
   apps/runtime:
     dependencies:
+      '@clarkcant/app-worker':
+        specifier: workspace:*
+        version: link:../worker
       '@clarkcant/capability-host':
         specifier: workspace:*
         version: link:../../packages/capability-host
