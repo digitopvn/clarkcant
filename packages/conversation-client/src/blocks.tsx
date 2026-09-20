@@ -386,6 +386,7 @@ export interface BlockActions {
    * question again — and the node would have to refuse a second answer rather than the card never asking.
    */
   answeredQuestions?: readonly string[];
+  /**
    * The answer to a question the agent asked, on its way back as the user's own message.
    *
    * Not a new action route. The answer travels the path a typed reply takes — the same `send` the composer

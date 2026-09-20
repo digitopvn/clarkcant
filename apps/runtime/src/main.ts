@@ -35,7 +35,7 @@ import { createNodeServer } from "./server.ts";
 import { machineRoots } from "./fs-search.ts";
 import { resolveProject, refreshProjectIndex } from "./project-finder.ts";
 import { commandDigest } from "./run-command.ts";
-import { captureSnapshot, createInstance, createTask, handleUserMessage, readExecutionPolicy, readPersonalInstructions, directoryIndexPath, recordAppIntentEvent, requestApproval, setPreference, type CoordinationDeps } from "@clarkcant/core";
+import { captureSnapshot, createInstance, createTask, handleUserMessage, readPersonalInstructions, directoryIndexPath, recordAppIntentEvent, requestApproval, setPreference, type CoordinationDeps } from "@clarkcant/core";
 import { GALLERY, YOUTUBE } from "@clarkcant/data-canvas";
 import { definitionDigest } from "@clarkcant/widget-host";
 import { listLocalImages, messagesSince, credentialNames, appendAuditEvent, readCredential,
@@ -323,6 +323,7 @@ async function main(): Promise<void> {
       // adapter's shape is loose because it must not depend on contracts, and the node validates blocks
       // before they reach a transcript.
       return { text: answer.text, block: first as unknown as MessageBlock };
+    }
 
     /*
      * A question, scripted — the producer for the question card.

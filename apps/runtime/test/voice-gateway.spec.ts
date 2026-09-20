@@ -995,6 +995,10 @@ describe("answering a question by voice", () => {
     // Asked again rather than guessed at, because a misheard choice is not recoverable the way a second question is.
     expect(asked.length).toBe(1);
     expect(calls).toEqual([]);
+  });
+});
+
+/*
  * A spoken command to the application.
  *
  * The property under test is that the voice path is the same path as a click: the node's registry decides, the

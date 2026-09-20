@@ -1,4 +1,6 @@
-import { timingSafeEqual } from "node:crypto";
+import { randomUUID, timingSafeEqual } from "node:crypto";
+import { readFileSync } from "node:fs";
+import { join, resolve, sep } from "node:path";
 
 import {
   type AppIntent,
@@ -15,6 +17,8 @@ import {
   commandEnvelopeSchema,
   describeAppIntent,
   nowInstant,
+  instantSchema,
+  platformForHost,
   protocolRangeSchema,
   redactSecrets,
   surfaceCompositionSpecSchema,
@@ -22,6 +26,19 @@ import {
 } from "@clarkcant/contracts";
 import {
   claimLiveOwner,
+  decideExecution,
+  directoryIndexPath,
+  findIsolatedFrame,
+  mintFrameGrant,
+  verifyFrameGrant,
+  installFromEntry,
+  readPackageFile,
+  widgetDocument,
+  widgetDocumentPolicy,
+  INSTALL_VERIFICATION,
+  readDirectoryIndex,
+  recordEffectExecution,
+  requestApproval,
   cancelTask,
   decideApproval,
   getActionBinding,
@@ -187,6 +204,14 @@ function bearer(headers: GatewayRequest["headers"]): string | undefined {
   return token;
 }
 
+/**
+ * How long a pending install approval stays good for, and how long the plan it produces may live.
+ *
+ * Ten minutes: long enough to read the card and decide, short enough that an approval nobody answered does not sit
+ * there as a standing permission to install something.
+ */
+const INSTALL_APPROVAL_TTL_MS = 10 * 60 * 1000;
+
 function json(status: number, body: unknown): GatewayResponse {
   return { status, body };
 }
@@ -243,7 +268,81 @@ export async function handleRequest(deps: GatewayDeps, request: GatewayRequest):
     });
   }
 
-  if (!tokenMatches(runtime.identity.localToken, bearer(request.headers))) {
+  /*
+   * The node's own web build: the widget runtime bundle and the chunks it imports.
+   *
+   * The bundle re-exports from a shared chunk — the app and the runtime use the same SDK — and a frame that could load
+   * one but not the other would fail at the import. Both come from here so the frame's scripts are same-origin.
+   *
+   * Unauthenticated on purpose, and it is the one route where that is honest: this is the app's own build output, the
+   * same public code any browser fetches to load the app, and a sandboxed frame cannot present a token anyway. The path
+   * is resolved and checked to be inside the build, so it is not a way to read anything else.
+   */
+  if (request.method === "GET" && (request.path === "/widget-runtime.js" || request.path.startsWith("/assets/"))) {
+    const dist = process.env["CC_WEB_DIST"];
+    if (dist === undefined || dist === "") {
+      return fail(503, "NO_WEB_BUILD", "this node was not told where its web build is, so it cannot serve a widget runtime");
+    }
+    const relative = request.path === "/widget-runtime.js" ? "widget-runtime.js" : request.path.slice(1);
+    const root = resolve(dist);
+    const candidate = resolve(join(root, relative));
+    if (candidate !== root && !candidate.startsWith(root + sep)) {
+      return fail(403, "FILE_OUTSIDE_PACKAGE", "that path is outside the node's web build");
+    }
+    try {
+      const bytes = readFileSync(candidate);
+      const type = request.path.endsWith(".js")
+        ? "text/javascript; charset=utf-8"
+        : request.path.endsWith(".css")
+          ? "text/css; charset=utf-8"
+          : "application/octet-stream";
+      return { status: 200, body: null, binary: { bytes, contentType: type, headers: { "cache-control": "no-store" } } };
+    } catch {
+      return fail(404, "FILE_NOT_FOUND", "this node's web build has no such file");
+    }
+  }
+
+  /*
+   * One route accepts a scoped grant instead of the bearer token, and it is the only one.
+   *
+   * A widget's document is fetched by the browser as a navigation, and a navigation cannot carry an
+   * `Authorization` header — so without this the frame would be served a 401 and nothing would ever render. The grant
+   * is checked here, before the token, and it has to name the exact package the URL asks for: a grant that read
+   * "some instance" could be replayed against any other package on the node.
+   */
+  /*
+   * The frame grant travels as a **path segment**, not as a cookie and not as a query.
+   *
+   * A cookie is an ambient credential, and this one would have to be `SameSite=None` to be sent from a sandboxed
+   * frame — whose opaque origin makes every request cross-site — which is a worse trade than it looks. A query would
+   * only cover the document itself: a subresource URL is the author's, so `./main.js` arrives with nothing attached
+   * and the widget's own module would be refused.
+   *
+   * A path segment covers both, because relative URLs inherit it: `/frame/<grant>/widgets/main/index.html` asks for
+   * `/frame/<grant>/widgets/main/main.js` next, and the same grant authorizes it for exactly the package it names.
+   */
+  const grantSegment =
+    request.method === "GET" && request.path.startsWith("/frame/") ? request.path.split("/")[2] : undefined;
+  const grant =
+    grantSegment === undefined || grantSegment === ""
+      ? undefined
+      : verifyFrameGrant({
+          grant: grantSegment,
+          secret: runtime.identity.localToken,
+          nowMs: Date.parse(nowInstant()),
+        });
+  const grantCovers = grant?.ok === true;
+  /*
+   * A grant that was presented and did not verify is refused as itself, not as "no token".
+   *
+   * The difference is the whole reason the codes exist: "your grant expired" is something a person can act on, and
+   * "unauthenticated" for a URL the node itself just minted reads like a bug in the node.
+   */
+  if (grantSegment !== undefined && grantSegment !== "" && grant !== undefined && !grant.ok) {
+    return fail(403, grant.code, grant.message);
+  }
+
+  if (!grantCovers && !tokenMatches(runtime.identity.localToken, bearer(request.headers))) {
     // Identical for a missing and a wrong token: distinguishing them would tell an
     // attacker which half to work on.
     return fail(401, "UNAUTHENTICATED", "a valid bearer token is required for every command");
@@ -440,7 +539,7 @@ export async function handleRequest(deps: GatewayDeps, request: GatewayRequest):
       modelId: cycled.next.modelId,
       applies: "a new generation; the running turn is not touched",
     });
-
+  }
   /*
    * What the configured voice provider can do.
    *
@@ -868,6 +967,246 @@ export async function handleRequest(deps: GatewayDeps, request: GatewayRequest):
         newId: services.conductor.newId,
       }),
     });
+  }
+
+  /*
+   * Installing a package a directory listed.
+   *
+   * The seam between the marketplace and the install path, and the only one: it finds the entry in the configured
+   * index, decides with the execution policy that already governs every other effect, and calls the install
+   * supervisor that already exists. It does not fetch, unpack, verify or activate anything itself, and there is no
+   * second install path behind it.
+   */
+  if (segments.length === 2 && segments[0] === "packages" && segments[1] === "install" && request.method === "POST") {
+    const parsed = readJson(request);
+    if (!parsed.ok) return parsed.response;
+    const packageId = typeof parsed.value.packageId === "string" ? parsed.value.packageId : "";
+    const version = typeof parsed.value.version === "string" ? parsed.value.version : "";
+    if (packageId === "" || version === "") {
+      return fail(400, "INVALID_SCHEMA", "an install request needs the package id and the version it is installing");
+    }
+
+    /*
+     * This host's own platform, from Node's pair. A host the vocabulary cannot name has no answer to "can this
+     * package run here", and guessing `web` would offer a native package to something that cannot run it - so it is
+     * refused by name rather than attempted.
+     */
+    const platform = platformForHost(process.platform, process.arch);
+    if (platform === undefined) {
+      return fail(
+        400,
+        "PLATFORM_UNKNOWN",
+        `${process.platform}-${process.arch} is not a platform this host vocabulary names`,
+      );
+    }
+
+    const index = readDirectoryIndex(directoryIndexPath(process.env));
+    if (index.kind === "not-configured") return fail(409, "NO_DIRECTORY", index.reason);
+    if (index.kind === "unreadable") return fail(409, "DIRECTORY_UNREADABLE", index.reason);
+    const entry = index.entries.find(
+      (candidate) => candidate.packageId === packageId && candidate.version === version,
+    );
+    if (entry === undefined) {
+      return fail(404, "NOT_IN_DIRECTORY", `${packageId}@${version} is not in the directory`);
+    }
+
+    const principalId = runtime.identity.ownerPrincipalId;
+    // Read at the request rather than captured at boot, so a mode the user just changed applies to this install.
+    const policy = readExecutionPolicy({ db: runtime.db, now: () => nowInstant() }, principalId);
+    const decision = decideExecution({
+      mode: policy.mode,
+      rules: policy.rules,
+      action: { kind: "effect", category: "local-write", operationDigest: entry.digest },
+      /*
+       * True, unlike a command the model proposed: installing *this named package* is what the person asked for,
+       * which is exactly the case Autonomous exists to run without a second question. Guarded and Ask still apply,
+       * because the decision is the policy's to make, not this route's.
+       */
+      explicitUserIntent: true,
+    });
+
+    if (decision.kind === "deny") return fail(403, "POLICY_REFUSED", decision.reason);
+
+    const coordination = {
+      db: runtime.db,
+      nodeId: runtime.identity.nodeId,
+      now: () => nowInstant(),
+      newId: services.conductor.newId,
+    };
+
+    if (decision.kind === "ask") {
+      const approval = requestApproval(coordination, {
+        operationDigest: entry.digest,
+        operationDescription: `cài ${entry.displayName} ${entry.version} (${entry.riskTier})`,
+        effectCategory: "local-write",
+        ttlMs: INSTALL_APPROVAL_TTL_MS,
+      });
+      // 202 rather than an error: nothing failed, and the approval is the next step rather than a refusal.
+      return json(202, { code: "APPROVAL_REQUIRED", message: decision.reason, approvalId: approval.approvalId });
+    }
+
+    /*
+     * Autonomy without a record is the one combination this node refuses, the same way `run_command` does: an effect
+     * nobody approved and nobody can find afterwards is worse than a question. Recorded before the install starts,
+     * so one that hangs or dies still shows that it began.
+     */
+    recordEffectExecution(coordination, {
+      principalId,
+      mode: policy.mode,
+      decision,
+      category: "local-write",
+      operationDigest: entry.digest,
+      description: `install ${entry.packageId}@${entry.version}`,
+    });
+
+    const outcome = installFromEntry(coordination, {
+      entry,
+      directory: index.entries,
+      platform,
+      ownerPrincipalId: principalId,
+      codeGeneration: services.conductor.newId("codegen"),
+      expiresAt: instantSchema.parse(new Date(Date.now() + INSTALL_APPROVAL_TTL_MS).toISOString()),
+      ...(typeof parsed.value.localDigest === "string" ? { localDigest: parsed.value.localDigest } : {}),
+      ...(Array.isArray(parsed.value.requestedCapabilityRefs)
+        ? {
+            requestedCapabilityRefs: parsed.value.requestedCapabilityRefs.filter(
+              (reference): reference is string => typeof reference === "string",
+            ),
+          }
+        : {}),
+      ...(Array.isArray(parsed.value.grantedCapabilities)
+        ? {
+            grantedCapabilities: parsed.value.grantedCapabilities.filter(
+              (reference): reference is string => typeof reference === "string",
+            ),
+          }
+        : {}),
+    });
+
+    if (!outcome.ok) return fail(400, outcome.code, outcome.message);
+    return json(200, {
+      installed: { packageId: entry.packageId, version: entry.version },
+      generationId: outcome.generationId,
+      state: outcome.state,
+      /*
+       * What was actually verified, in the response rather than left to be assumed. This node does not fetch or run
+       * the artifact, so "active" here means the plan it activated was bound to a published digest — not that the
+       * package is known to work.
+       */
+      verified: INSTALL_VERIFICATION,
+    });
+  }
+
+  /*
+   * A package's own files, for a widget frame to load.
+   *
+   * The frame is an opaque origin, so everything it runs has to be fetched by URL, and this is the only route that
+   * turns a package's bytes into one. It serves a package the node can read on disk and nothing else: a git or npm
+   * entry names bytes nobody here has, and proxying those would be a different and much larger thing.
+   */
+  if (
+    segments.length >= 5 &&
+    segments[0] === "packages" &&
+    segments[3] === "files" &&
+    request.method === "GET"
+  ) {
+    const packageId = segments[1] ?? "";
+    const version = segments[2] ?? "";
+    const index = readDirectoryIndex(directoryIndexPath(process.env));
+    if (index.kind !== "configured") {
+      return fail(
+        409,
+        index.kind === "not-configured" ? "NO_DIRECTORY" : "DIRECTORY_UNREADABLE",
+        index.reason,
+      );
+    }
+    const entry = index.entries.find(
+      (candidate) => candidate.packageId === packageId && candidate.version === version,
+    );
+    if (entry === undefined) {
+      return fail(404, "NOT_IN_DIRECTORY", `${packageId}@${version} is not in the directory`);
+    }
+
+    const file = readPackageFile({ entry, relativePath: segments.slice(4).join("/") });
+    if (!file.ok) {
+      return fail(
+        file.code === "FILE_NOT_FOUND" ? 404 : file.code === "FILE_OUTSIDE_PACKAGE" ? 403 : 409,
+        file.code,
+        file.message,
+      );
+    }
+    /*
+     * An HTML entry is served as a widget document: the author's markup plus the bootstrap that gives it a bridge,
+     * under a policy that says what it may reach. Everything else is served as it is, because a stylesheet or an image
+     * has no bootstrap to add and no policy of its own.
+     *
+     * The document must be served from this path rather than from a host-owned route, because the widget's own
+     * relative imports (`./main.js`) resolve against the URL it was fetched from. Serving the entry anywhere else
+     * would break every relative reference in it.
+     */
+    if (file.contentType.startsWith("text/html")) {
+      const nonce = randomUUID().replaceAll("-", "");
+      const appOrigin = process.env["CC_APP_ORIGIN"] ?? `http://${request.headers["host"] ?? "127.0.0.1"}`;
+      const document = widgetDocument({
+        html: file.bytes.toString("utf8"),
+        appOrigin,
+        nonce,
+      });
+      return {
+        status: 200,
+        body: null,
+        binary: {
+          bytes: Buffer.from(document, "utf8"),
+          contentType: file.contentType,
+          headers: { "content-security-policy": widgetDocumentPolicy({ appOrigin, nonce }) },
+        },
+      };
+    }
+
+    return { status: 200, body: null, binary: { bytes: file.bytes, contentType: file.contentType } };
+  }
+
+  /*
+   * A package's files, reached through a frame grant.
+   *
+   * The same files as the route below and the same injection, reached by a path that carries the grant: everything the
+   * document then loads inherits it, and the grant names the one package it may read, so this is not a way to browse
+   * what is installed.
+   */
+  if (grantCovers && segments.length >= 3 && segments[0] === "frame" && request.method === "GET") {
+    const index = readDirectoryIndex(directoryIndexPath(process.env));
+    if (index.kind !== "configured") {
+      return fail(409, index.kind === "not-configured" ? "NO_DIRECTORY" : "DIRECTORY_UNREADABLE", index.reason);
+    }
+    const entry = index.entries.find(
+      (candidate) => candidate.packageId === grant.packageId && candidate.version === grant.version,
+    );
+    if (entry === undefined) {
+      return fail(404, "NOT_IN_DIRECTORY", "the package this grant names is no longer in the directory");
+    }
+    const file = readPackageFile({ entry, relativePath: segments.slice(2).join("/") });
+    if (!file.ok) {
+      return fail(
+        file.code === "FILE_NOT_FOUND" ? 404 : file.code === "FILE_OUTSIDE_PACKAGE" ? 403 : 409,
+        file.code,
+        file.message,
+      );
+    }
+    if (file.contentType.startsWith("text/html")) {
+      const nonce = randomUUID().replaceAll("-", "");
+      const appOrigin = process.env["CC_APP_ORIGIN"] ?? `http://${request.headers["host"] ?? "127.0.0.1"}`;
+      const document = widgetDocument({ html: file.bytes.toString("utf8"), appOrigin, nonce });
+      return {
+        status: 200,
+        body: null,
+        binary: {
+          bytes: Buffer.from(document, "utf8"),
+          contentType: file.contentType,
+          headers: { "content-security-policy": widgetDocumentPolicy({ appOrigin, nonce }) },
+        },
+      };
+    }
+    return { status: 200, body: null, binary: { bytes: file.bytes, contentType: file.contentType } };
   }
 
   if (request.method === "POST" && request.path === "/command") {
@@ -1693,6 +2032,69 @@ function resolveLiveWidget(
     return fail(403, "NOT_AUTHORIZED", "that instance belongs to another principal");
   }
 
+  /*
+   * A widget that runs in its own frame has no composition to resolve.
+   *
+   * Its code is the package's, so what a client needs is the URL to mount it from and the bindings it may invoke —
+   * and that is what this returns instead. The check comes first because it is what decides which of the two shapes
+   * this route answers with, and a client that had to guess would be a client that guessed wrong once.
+   */
+  const index = readDirectoryIndex(directoryIndexPath(process.env));
+  const isolated = findIsolatedFrame({
+    directory: index.kind === "configured" ? index.entries : [],
+    widgetId: instance.definitionRef.id,
+  });
+  if (isolated.ok) {
+    return json(200, {
+      kind: "isolated-frame",
+      instanceId,
+      revision: instance.revision,
+      readOnly: false,
+      frame: {
+        /*
+         * Relative to this node, served from the package path so the widget's own relative imports resolve, and
+         * carrying a grant: the frame is loaded by navigation, which cannot carry a bearer token, so this is what
+         * lets it fetch its own document — and only its own. Five minutes is longer than a frame takes to load and
+         * short enough that a URL somebody copied stops working.
+         */
+        url: `/frame/${mintFrameGrant({
+          instanceId,
+          packageId: isolated.packageId,
+          version: isolated.version,
+          secret: runtime.identity.localToken,
+          expiresAtMs: Date.parse(nowInstant()) + 5 * 60 * 1000,
+        })}/${isolated.entryPath}`,
+        isolation: isolated.isolation,
+        requestedCapabilities: isolated.requestedCapabilities,
+        allowedOrigins: isolated.allowedOrigins,
+      },
+      /*
+       * The bindings the instance holds, each with the digest the client must send back.
+       *
+       * The same shape the composition path returns, and for the same reason: an invocation is re-authorized
+       * against the instance, the digest and the revision, so a client that could not send the digest it displayed
+       * could not be authorized at all. A frame names one of these ids and nothing else.
+       */
+      bindings: instance.actionBindingIds.flatMap((bindingId) => {
+        const binding = getActionBinding(services.conductor, bindingId);
+        if (binding === undefined) return [];
+        return [
+          {
+            actionBindingId: binding.actionBindingId,
+            label: binding.label,
+            effectCategory: binding.effectCategory,
+            bindingDigest: binding.bindingDigest,
+          },
+        ];
+      }),
+      /*
+       * The props the widget was created with. The frame cannot read them from anywhere else: it has no session, no
+       * storage and no route of its own, so what it is showing has to arrive with the thing that mounts it.
+       */
+      props: instance.props,
+    });
+  }
+
   const composition = findCompositionByInstance(runtime.db, instanceId, principalId);
   if (composition === undefined) {
     // A bundled composition is a state, not an error: the instance exists and the client falls back
@@ -1734,6 +2136,7 @@ function resolveLiveWidget(
   });
 
   return json(200, {
+    kind: "composition",
     compositionId: composition.compositionId,
     // A live surface never mints its own authority: the bindings below are references, and every
     // invocation is re-authorized against the instance, the digest and the current revision.

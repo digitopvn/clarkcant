@@ -1,18 +1,18 @@
 import type { IncomingMessage, Server } from "node:http";
 
-import { answerFromUtterance, type ConversationId, type Instant, type QuestionKind, nowInstant } from "@clarkcant/contracts";
 import {
+  answerFromUtterance,
   type AppIntentDecision,
   type AppIntentResolution,
   type ConfirmationDecision,
   type ConversationId,
   type Instant,
+  type QuestionKind,
   type SemanticView,
   type VoiceCapabilities,
   nowInstant,
 } from "@clarkcant/contracts";
-import { semanticViewOf } from "@clarkcant/core";
-import { recordVoiceTranscript } from "@clarkcant/core";
+import { recordVoiceTranscript, semanticViewOf } from "@clarkcant/core";
 import { GeminiLiveAdapter, type VoiceProviderAdapter } from "@clarkcant/voice-adapters";
 import { type RawData, WebSocketServer, type WebSocket } from "ws";
 
@@ -562,16 +562,7 @@ export function attachVoiceGateway(options: VoiceGatewayOptions): VoiceGateway {
        * a click and a sentence without being lenient about either. When the words do not fit, the question is asked
        * again with its options named: a question asked twice is recoverable, a misheard choice is not.
        */
-      if (pending !== undefined && pending.kind === "question" && options.answerQuestion !== undefined) {
-        const record = options.answerQuestion;
-        const answer = answerFromUtterance(
-          { questionType: pending.questionType, options: pending.options, allowOther: pending.allowOther },
-          text,
-        );
-        if (answer === undefined) {
-          const named =
-            pending.options.length === 0 ? "" : ` Có thể là: ${pending.options.map((option) => option.label).join(", ")}.`;
-          const again = `Tui chưa khớp được câu trả lời với câu hỏi. ${pending.prompt}${named}`;
+      /*
        * A sentence said while the application is waiting to confirm a command answers that question.
        *
        * This sits after the approval branch on purpose: an operation that is about to run on the machine is the
@@ -579,6 +570,29 @@ export function attachVoiceGateway(options: VoiceGatewayOptions): VoiceGateway {
        * Only recognised words decide anything, and the confirmation is sent to the node, which spends the token -
        * so the executable decision comes back from the node rather than being assembled here.
        */
+      const pendingIntent = waitingIntent;
+      const confirmIntent = options.confirmAppIntent;
+      if (pendingIntent !== undefined && confirmIntent !== undefined) {
+        const decision = interpretDecision(text);
+        if (decision === undefined) {
+          const again = "Tui chưa rõ ý bạn. Bạn nói “đồng ý” hoặc “không” giúp tui nhé.";
+          send({ type: "transcript", role: "assistant", text: again, final: true });
+          say(again);
+          return;
+        }
+
+        waitingIntent = undefined;
+        answerQueue = answerQueue.then(() => {
+          const decided = confirmIntent({ token: pendingIntent, decision });
+          send({ type: "app-intent", decision: decided });
+          const said = decided.kind === "refused" ? decided.say : decided.readBack;
+          send({ type: "transcript", role: "assistant", text: said, final: true });
+          say(said);
+          return Promise.resolve();
+        });
+        return;
+      }
+
       /*
        * A sentence said while a widget action is waiting for a yes.
        *
@@ -605,12 +619,23 @@ export function attachVoiceGateway(options: VoiceGatewayOptions): VoiceGateway {
         return;
       }
 
-      const pendingIntent = waitingIntent;
-      const confirmIntent = options.confirmAppIntent;
-      if (pendingIntent !== undefined && confirmIntent !== undefined) {
-        const decision = interpretDecision(text);
-        if (decision === undefined) {
-          const again = "Tui chưa rõ ý bạn. Bạn nói “đồng ý” hoặc “không” giúp tui nhé.";
+      /*
+       * A question, read against its own options.
+       *
+       * `answerFromUtterance` can only produce an answer the card offered, which is what lets the same route serve
+       * a click and a sentence without being lenient about either. When the words do not fit, the question is asked
+       * again with its options named: a question asked twice is recoverable, a misheard choice is not.
+       */
+      if (pending !== undefined && pending.kind === "question" && options.answerQuestion !== undefined) {
+        const record = options.answerQuestion;
+        const answer = answerFromUtterance(
+          { questionType: pending.questionType, options: pending.options, allowOther: pending.allowOther },
+          text,
+        );
+        if (answer === undefined) {
+          const named =
+            pending.options.length === 0 ? "" : ` Có thể là: ${pending.options.map((option) => option.label).join(", ")}.`;
+          const again = `Tui chưa khớp được câu trả lời với câu hỏi. ${pending.prompt}${named}`;
           send({ type: "transcript", role: "assistant", text: again, final: true });
           say(again);
           return;
@@ -628,14 +653,6 @@ export function attachVoiceGateway(options: VoiceGatewayOptions): VoiceGateway {
           const said = recorded.ok ? "Đã ghi câu trả lời của bạn." : `Không ghi được câu trả lời: ${recorded.message}`;
           send({ type: "transcript", role: "assistant", text: said, final: true });
           say(said);
-        waitingIntent = undefined;
-        answerQueue = answerQueue.then(() => {
-          const decided = confirmIntent({ token: pendingIntent, decision });
-          send({ type: "app-intent", decision: decided });
-          const said = decided.kind === "refused" ? decided.say : decided.readBack;
-          send({ type: "transcript", role: "assistant", text: said, final: true });
-          say(said);
-          return Promise.resolve();
         });
         return;
       }
