@@ -51,6 +51,18 @@ test("a takeover changes who may act, and a stop ends the session", async ({ pag
   await expect(card).toHaveAttribute("data-control-status", "running");
   await expect(card).toContainText("agent");
 
+  /*
+   * The captured frame, as a picture rather than a promise. A card that carried a digest but rendered nothing would
+   * pass every assertion above while showing the person nothing at all — and the caption has to say when it was
+   * taken, because a frame presented as the live screen is the one thing this surface must never do.
+   */
+  const frame = card.locator("[data-control-preview-frame='true']");
+  await expect(frame).toHaveCount(1);
+  const picture = frame.locator("img");
+  await expect(picture).toBeVisible({ timeout: 20_000 });
+  await expect(picture).toHaveAttribute("alt", /Ảnh chụp màn hình phiên/);
+  await expect(frame.locator("figcaption")).toContainText("không phải màn hình trực tiếp");
+
   const takeover = card.locator("[data-control-takeover]");
   await expect(takeover).toHaveCount(1);
   await takeover.click();

@@ -1185,6 +1185,24 @@ export class GatewayClient {
   }
 
   /**
+   * Object URL for the frame a session card was captured at.
+   *
+   * The same shape as an attachment read, and for the same reason: the route re-checks that the frame belongs to
+   * the principal on every read, so this URL is not a capability that outlives the conversation it was issued for.
+   * A card shows what the screen looked like when it was captured, never what it looks like now.
+   */
+  async previewObjectUrl(digest: string): Promise<string> {
+    const response = await this.#fetch(`${this.#baseUrl}/previews/${encodeURIComponent(digest)}`, {
+      headers: { authorization: `Bearer ${this.#token}` },
+    });
+    if (!response.ok) {
+      throw new GatewayError(response.status, "PREVIEW_UNAVAILABLE", "that frame could not be read");
+    }
+    const blob = await response.blob();
+    return URL.createObjectURL(blob);
+  }
+
+  /**
    * Store a secret the person typed.
    *
    * The answer is a status, not the value: the node never hands a secret back, so there is nothing here to
