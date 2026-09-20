@@ -1,5 +1,6 @@
 import { spawn } from "node:child_process";
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
+import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -25,85 +26,58 @@ interface Ran {
 
 /** Run the node to completion with a deadline, so a hang fails rather than stalling the suite. */
 async function runNode(args: string[], deadlineMs = 20_000): Promise<Ran> {
-  return await new Promise<Ran>((resolve) => {
+  return await new Promise<Ran>((resolve, reject) => {
     const child = spawn(process.execPath, ["apps/runtime/src/main.ts", ...args], {
       cwd: ROOT,
       stdio: ["ignore", "pipe", "pipe"],
     });
     let stdout = "";
     let stderr = "";
+    let failure: Error | undefined;
     child.stdout.on("data", (chunk: Buffer) => (stdout += chunk.toString("utf8")));
     child.stderr.on("data", (chunk: Buffer) => (stderr += chunk.toString("utf8")));
 
     const timer = setTimeout(() => {
+      failure = new Error(`The runtime did not exit within ${deadlineMs}ms`);
       child.kill("SIGKILL");
-      resolve({ code: null, stdout, stderr });
     }, deadlineMs);
 
+    child.on("error", (error) => {
+      failure = error;
+      clearTimeout(timer);
+    });
     child.on("close", (code) => {
       clearTimeout(timer);
-      resolve({ code, stdout, stderr });
+      if (failure) reject(failure);
+      else resolve({ code, stdout, stderr });
     });
   });
 }
 
-/**
- * A port no other test is using.
- *
- * Picked from a high range and verified by trying it, because a test that assumes a port is
- * free fails for reasons that have nothing to do with the behaviour under test.
- */
-async function startHolder(): Promise<{ port: number; stop: () => void }> {
-  const dataDir = mkdtempSync(join(tmpdir(), "cc-bind-"));
-  for (let attempt = 0; attempt < 12; attempt += 1) {
-    const port = 19_100 + Math.floor(Math.random() * 800);
-    const holder = spawn(
-      process.execPath,
-      ["apps/runtime/src/main.ts", "--data-dir", dataDir, "--port", String(port), "--label", "holder"],
-      { cwd: ROOT, stdio: ["ignore", "pipe", "pipe"] },
-    );
-
-    const started = await new Promise<boolean>((resolve) => {
-      let out = "";
-      const timer = setTimeout(() => resolve(false), 12_000);
-      holder.stderr.on("data", (chunk: Buffer) => {
-        out += chunk.toString("utf8");
-        if (out.includes("listening on")) {
-          clearTimeout(timer);
-          resolve(true);
-        }
-        if (out.includes("already in use")) {
-          clearTimeout(timer);
-          resolve(false);
-        }
-      });
-      holder.on("close", () => {
-        clearTimeout(timer);
-        resolve(false);
-      });
-    });
-
-    if (started) return { port, stop: () => holder.kill("SIGKILL") };
-    holder.kill("SIGKILL");
-  }
-  throw new Error("could not find a free port for the test");
-}
-
 describe("a node that cannot bind its port", () => {
   it("names the port and says what to do, instead of a stack trace", async () => {
-    const holder = await startHolder();
+    const dataDir = mkdtempSync(join(tmpdir(), "cc-bind2-"));
+    const holder = createServer();
     try {
+      // Keep the OS-assigned port occupied until the actual runtime exits.
+      await new Promise<void>((resolve, reject) => {
+        holder.once("error", reject);
+        holder.listen(0, "127.0.0.1", resolve);
+      });
+      const address = holder.address();
+      if (!address || typeof address === "string") throw new Error("Expected a TCP listener address");
+      const port = address.port;
       const second = await runNode([
         "--data-dir",
-        mkdtempSync(join(tmpdir(), "cc-bind2-")),
+        dataDir,
         "--port",
-        String(holder.port),
+        String(port),
         "--label",
         "second",
       ]);
 
       expect(second.code).toBe(1);
-      expect(second.stderr).toContain(`Port ${holder.port} on 127.0.0.1 is already in use`);
+      expect(second.stderr).toContain(`Port ${port} on 127.0.0.1 is already in use`);
       expect(second.stderr).toContain("Another node is probably running");
       expect(second.stderr).toContain("--port <number>");
 
@@ -112,7 +86,15 @@ describe("a node that cannot bind its port", () => {
       expect(second.stderr).not.toContain("Unhandled 'error' event");
       expect(second.stderr).not.toContain("setupListenHandle");
     } finally {
-      holder.stop();
+      try {
+        if (holder.listening) {
+          await new Promise<void>((resolve, reject) => {
+            holder.close((error) => error ? reject(error) : resolve());
+          });
+        }
+      } finally {
+        rmSync(dataDir, { recursive: true, force: true });
+      }
     }
   }, 60_000);
 });

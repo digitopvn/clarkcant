@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { type Instant, type MessageRecord } from "@clarkcant/contracts";
 import { appendMessage, createConversation } from "@clarkcant/storage";
@@ -21,19 +21,14 @@ import { bootNodeServices, type NodeServices } from "../src/services.ts";
  * the project finder's tie-break back to the plain ranking.
  *
  * Nothing caught it because every other test injects its own fresh budget, so all of them test the
- * decider and none of them test the wiring. These tests boot the node, wait past one deadline, and
+ * decider and none of them test the wiring. These tests boot the node, advance past one deadline, and
  * then ask — which is the only shape that fails when the budget is captured at boot.
  */
 
 const AT = "2026-09-17T05:00:00.000Z" as Instant;
 const CONVERSATION = "conv_budget" as never;
-/** Longer than a human would wait for nothing. */
 const DEADLINE_MS = 250;
 const PAST_THE_DEADLINE_MS = 600;
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
 
 interface Recording {
   transport: JevTransport;
@@ -66,6 +61,7 @@ function recording(): Recording {
 
 let dir: string;
 let services: NodeServices | undefined;
+let now: number;
 const envBefore: Record<string, string | undefined> = {};
 
 function seed(text: string, id: string, at: string): void {
@@ -111,17 +107,20 @@ function boot(jev: Recording): NodeServices {
 }
 
 beforeEach(() => {
+  now = Date.parse(AT);
+  // Control deadline age without replacing the async timers used by selector requests.
+  vi.spyOn(Date, "now").mockImplementation(() => now);
   dir = mkdtempSync(join(tmpdir(), "clarkcant-budget-"));
   for (const key of ["CLARKCANT_JEV_SEARCH_TIMEOUT_MS", "CLARKCANT_SEARCH_DECIDER"]) {
     envBefore[key] = process.env[key];
   }
-  // The decision deadline the wiring is supposed to honour, made short enough that a test can
-  // outlive it without a slow sleep.
+  // The configured decision deadline is shorter than the clock advance after boot.
   process.env.CLARKCANT_JEV_SEARCH_TIMEOUT_MS = String(DEADLINE_MS);
   process.env.CLARKCANT_SEARCH_DECIDER = "jev";
 });
 
 afterEach(() => {
+  vi.restoreAllMocks();
   services?.runtime.close();
   services = undefined;
   for (const [key, value] of Object.entries(envBefore)) {
@@ -139,7 +138,7 @@ describe("the budgets the node wires for its selectors", () => {
     seed("sửa lỗi đăng nhập token hết hạn", "msg_login_a", "2026-09-16T02:00:00.000Z");
     seed("sửa lỗi đăng nhập không vào được", "msg_login_b", "2026-09-15T02:00:00.000Z");
 
-    await sleep(PAST_THE_DEADLINE_MS);
+    now += PAST_THE_DEADLINE_MS;
 
     // Read through the same accessor a search uses, so a budget captured at boot is visible here.
     const decider = node.search.decider;
@@ -156,9 +155,9 @@ describe("the budgets the node wires for its selectors", () => {
     expect(outcome.chosen).toBeDefined();
   });
 
-  it("hands the project finder a budget that is still open long after boot", async () => {
+  it("hands the project finder a budget that is still open long after boot", () => {
     const node = boot(recording());
-    await sleep(PAST_THE_DEADLINE_MS);
+    now += PAST_THE_DEADLINE_MS;
 
     // The finder's candidates depend on a scan, so this asserts the property the scan depends on:
     // the wired budget has time left, so a lookup that needs a decision can still make one.

@@ -43,6 +43,12 @@ Yêu cầu người dùng mới nhất → scope-lock → system-architecture �
 - Browser Use và Computer Use là capability quan trọng, driver đóng gói extension; quyền và vòng đời nằm trong core.
 - Voice dùng chung task/action model; mobile native và marketplace thương mại chưa nằm trong release này.
 
+## Kiểm tra CI theo phạm vi thay đổi
+
+Workflow [CI](../.github/workflows/ci.yml) giữ nguyên hai job verify trên Node 22.19/24 và secret scan. [Bộ phân loại](../tools/ci-test-scope.mjs) chỉ bỏ cài dependency, typecheck, lint, browser setup, test và probe khi toàn bộ diff thuộc whitelist văn xuôi hoặc `docs/manifest.json`. Invariants vẫn kiểm tra hash/bytes tài liệu, traceability và credential; secret scan vẫn chạy. Tệp JSON minh họa, mã trong `examples/`, cấu hình và đường dẫn chưa biết đều chạy đầy đủ. Diff trống, thiếu base, lỗi phân loại hoặc rename từ code sang tài liệu cũng chạy đầy đủ.
+
+Các thay đổi có code vẫn chạy toàn bộ Vitest trên cả hai phiên bản Node; không chọn test theo package vì nhiều ràng buộc an toàn đi xuyên package. CI hiện chưa chạy browser journeys của ứng dụng: thay đổi UI vẫn phải chạy `pnpm verify:full` theo AGENTS.md. Test provider opt-in và probe BLOCKED không phải bằng chứng provider thật đã hoạt động.
+
 ## Bốn câu không được quảng cáo sai
 
 “Cài package xong” không đồng nghĩa “integration dùng được”. “Local-first” không đồng nghĩa “dữ liệu không rời máy”. “Đóng UI” không đồng nghĩa “dừng việc trên VPS”. “Có chữ ký/iframe/container” không đồng nghĩa “an toàn tuyệt đối”.
