@@ -161,8 +161,9 @@ export function createNodeTools(input: {
  * different file. The two checks — the row belongs to this principal, and to this conversation — happen
  * against storage, not against the argument.
  *
- * A binary attachment is answered honestly rather than silently: this node has no extractor for images or
- * PDFs, and a tool that returned nothing for a picture would read as a file that was empty.
+ * A picture is handed over as a picture rather than described: the model gets the image itself, because a
+ * file name answers nothing about what is in it. A PDF is read for its text, and what cannot be read comes
+ * back with the reason instead of with nothing, since an empty answer reads as an empty file.
  */
 export function createReadAttachmentTool(input: {
   db: SessionSearchDeps["db"];
@@ -175,9 +176,10 @@ export function createReadAttachmentTool(input: {
     label: "Đọc một tệp đính kèm",
     description:
       "Read a file the user attached to this conversation, by the attachment id you were given in the " +
-      "prompt. Use it when a text file's content was too long to include, or when you need to re-read it. " +
-      "It only accepts an id from this conversation: it cannot open any other file, and it takes no path. " +
-      "Images and PDFs have no reader on this node yet and say so.",
+      "prompt. Use it when a text file's content was too long to include, when you need to re-read it, or " +
+      "when the user asks about a picture they attached: an image comes back as the image itself, so answer " +
+      "from what you see in it rather than from its file name. It only accepts an id from this conversation: " +
+      "it cannot open any other file, and it takes no path.",
     parameters: {
       type: "object",
       additionalProperties: false,
@@ -187,7 +189,9 @@ export function createReadAttachmentTool(input: {
       },
     },
     promptSnippet: "read_attachment — read the content of a file the user attached to this conversation",
-    execute: async (params: Record<string, unknown>): Promise<{ text: string }> => {
+    execute: async (
+      params: Record<string, unknown>,
+    ): Promise<{ text: string; image?: { mimeType: string; dataBase64: string } }> => {
       const parsed = attachmentIdSchema.safeParse(params.attachmentId);
       if (!parsed.success) {
         // Refused in the same turn so the model can correct itself. Saying what an id looks like is not
@@ -202,13 +206,18 @@ export function createReadAttachmentTool(input: {
         return { text: "Không có tệp đính kèm nào với id đó trong cuộc hội thoại này." };
       }
 
-      // An image is still named rather than read: this node has no reader for one, and a tool that returned nothing
-      // for a picture would read as a file that was empty.
+      // An image is handed over as an image: the model receives the picture itself, so a question about what is
+      // in it is answered from the picture rather than from its file name. The sentence beside it stays, because
+      // a transcript that shows only an image loses which file it came from.
       if (record.kind === "image") {
+        const picture = readBlob({
+          dataDir: input.dataDir,
+          blobPath: join(blobsDir(input.dataDir), record.blobPath.split(/[/\\]/).at(-1) ?? ""),
+        });
+        if (!picture.ok) return { text: `${record.filename}: ${picture.message}` };
         return {
-          text:
-            `Tệp “${record.filename}” là ${record.mime} (${record.sizeBytes} byte). Node này chưa có bộ trích ` +
-            `nội dung cho ảnh, nên tui không đọc được nội dung của nó. Đừng đoán nội dung.`,
+          text: `Ảnh “${record.filename}” (${record.mime}, ${record.sizeBytes} byte) ở dưới.`,
+          image: { mimeType: record.mime, dataBase64: Buffer.from(picture.bytes).toString("base64") },
         };
       }
 

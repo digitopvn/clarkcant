@@ -26,8 +26,9 @@ import { attachmentIdSchema, digestSchema } from "./primitives.ts";
  * How a file is treated once it is stored.
  *
  * `text` is inlined into the turn's prompt, subject to the turn's budget.
- * `image` and `pdf` are binary: the node has no extractor for them yet, so they
- * reach the model as a reference plus the host-mediated `read_attachment` tool.
+ * `pdf` is read for its text and inlined the same way, without a provider.
+ * `image` is named in the prompt and handed over by the host-mediated `read_attachment`
+ * tool, which returns the picture itself rather than a sentence about it.
  */
 export const attachmentKindSchema = z.enum(["image", "pdf", "text"]);
 export type AttachmentKind = z.infer<typeof attachmentKindSchema>;

@@ -11,6 +11,60 @@ import {
   mapPiEvent,
   type RealPiAdapterOptions,
 } from "../src/index.ts";
+import { toSdkTool } from "../src/real.ts";
+
+describe("a tool result that carries an image", () => {
+  type CapturedConfig = {
+    execute?: (id: string, params: Record<string, unknown>) => Promise<{ content: unknown[] }>;
+  };
+
+  /** Run a tool through the SDK conversion and keep the config the SDK would have received. */
+  function capture(tool: Parameters<typeof toSdkTool>[1]): CapturedConfig {
+    const captured: CapturedConfig = {};
+    const sdk = {
+      defineTool: (config: unknown): unknown => {
+        Object.assign(captured, config as CapturedConfig);
+        return config;
+      },
+    };
+    toSdkTool(sdk as never, tool);
+    return captured;
+  }
+
+  it("hands the image to the SDK as an image block, not as a sentence about one", async () => {
+    const captured = capture({
+      name: "read_attachment",
+      label: "Đọc một tệp đính kèm",
+      description: "reads a file the user attached",
+      parameters: { type: "object", additionalProperties: false, properties: {} },
+      execute: async () => ({
+        text: "Ảnh “anh.png” (image/png, 4 byte) ở dưới.",
+        image: { mimeType: "image/png", dataBase64: "AAAA" },
+      }),
+    });
+
+    const result = await captured.execute?.("call-1", {});
+    // The SDK's content union carries an image member, so the picture reaches the model as a picture.
+    // A single text block here is exactly the defect this test exists to catch.
+    expect(result?.content).toEqual([
+      { type: "text", text: "Ảnh “anh.png” (image/png, 4 byte) ở dưới." },
+      { type: "image", data: "AAAA", mimeType: "image/png" },
+    ]);
+  });
+
+  it("leaves a tool that read text as a single text block", async () => {
+    const captured = capture({
+      name: "read_attachment",
+      label: "Đọc một tệp đính kèm",
+      description: "reads a file the user attached",
+      parameters: { type: "object", additionalProperties: false, properties: {} },
+      execute: async () => ({ text: "Nội dung của “ghi-chu.txt”:\nchi la chu" }),
+    });
+
+    const result = await captured.execute?.("call-1", {});
+    expect(result?.content).toEqual([{ type: "text", text: "Nội dung của “ghi-chu.txt”:\nchi la chu" }]);
+  });
+});
 
 describe("fake adapter used by CI and E2E", () => {
   it("runs a scripted turn and emits the same event shapes as the real adapter", async () => {

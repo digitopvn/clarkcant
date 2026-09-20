@@ -4,16 +4,16 @@ Năm tính năng của issue #17, làm qua ba stage. Stage A (#19), Stage B và 
 phần ghi chú về đúng sự thật, và PR #38 sửa nốt hai claim còn lại cùng cổng browser. Tài liệu này ghi **số thật đo
 trên cây đã merge `main`**, không phải số của lần chạy cũ.
 
-## Số thật, đo trên cây hiện tại của `main` (`0ce8722`)
+## Số thật, đo trên cây hiện tại (`b6b3883` = `main`, cộng PR #66)
 
 | Cổng | Lệnh | Kết quả |
 | --- | --- | --- |
 | Invariant | `pnpm run invariants` | 7/7 PASS |
-| Typecheck + lint + unit test | `pnpm verify` | **1573 passed, 7 skipped (1580)** |
-| Browser suite | `pnpm test:e2e` | **83 passed, 0 failed** |
-| CI trên `main` | `.github/workflows/ci.yml`, chạy mỗi lần push | **cả năm job xanh** ở run 35464062373 (`0ce8722`) và 35464369354 (`71d3e05`): `verify` (node 22.19 và 24), `secret scan`, `e2e (browser suite)`, `desktop smoke (xvfb)`. Hai cổng cuối chỉ chạy tay trước PR #44. |
-| Smoke desktop | `pnpm --filter @clarkcant/app-desktop run smoke` | **exit 0**, mọi check `true`, `"failed": []` (Electron 44.3.0, Chrome 152) |
-| Đồng bộ với `main` | `git rev-list HEAD..origin/main` | 0 (merge `1368cb5`, sau khi nhận `main`; PR #38 squash thành `9e90535`, PR #44 đưa hai cổng vào CI) |
+| Typecheck + lint + unit test | `pnpm verify` | **1611 passed, 7 skipped (1618)** |
+| Browser suite | `pnpm test:e2e` | **99 passed, 1 skipped, 0 failed** |
+| CI trên nhánh này | `.github/workflows/ci.yml`, chạy mỗi lần push | **cả năm job xanh** ở run 35487109097 (`5c57f05`) và 35487107360: `verify` (node 22.19 và 24), `secret scan`, `e2e (browser suite)`, `desktop smoke (xvfb)` |
+| Smoke desktop | `pnpm --filter @clarkcant/app-desktop run smoke` | **exit 0**, mọi check `true`, `"failed": []` (Electron 44.3.0, Chrome 152); job `desktop smoke (xvfb)` xanh trên CI |
+| Đồng bộ với `main` | `git rev-list HEAD..origin/main` | 0: nhánh này cắt từ head của `main` (`b6b3883`), và nhánh công việc trước đó đã được merge vào `main` bằng merge commit (`git merge-base --is-ancestor` trả về đúng) |
 
 Nhánh công việc được **merge vào `main` bằng merge commit**, sau khi cây của nó được đưa về đúng cây
 của `main`. Trước đó mọi PR đều được squash, nên nội dung đã ở `main` nhưng **lịch sử của nhánh thì chưa**:
@@ -30,8 +30,10 @@ nội dung nào ngoài ghi chú này.
 | 4. Gợi ý từ việc gần đây | `apps/web/e2e/suggestions.spec.ts`, `apps/runtime/test/suggestions.spec.ts` |
 | 5. Tab Memory | `apps/web/e2e/memory.spec.ts` (rỗng, có dữ liệu kèm nguồn, xoá), `apps/runtime/test/memory.spec.ts` |
 
-Điều **chưa** đạt trong tiêu chí của issue: nội dung **ảnh** chưa tới model — ảnh được nêu bằng id, và
-`prompt(sessionId, text)` chỉ nhận văn bản. PDF thì đã đọc được, có journey chứng minh. Điều kiện còn thiếu ghi ở `docs/widgets-and-extensions.md` §4.1.
+Cả ba loại nội dung của issue nay đều tới được agent. Văn bản và PDF đi vào prompt của lượt; ảnh được
+`read_attachment` giao nguyên block ảnh cho SDK (`toSdkTool` phát `{ type: "image", data, mimeType }`), nên model
+nhận chính bức ảnh. Dòng này từng ghi ảnh "chưa tới model": nguyên nhân là adapter gộp mọi kết quả tool thành
+một block văn bản, và điều đó đã được sửa tại gốc.
 
 ## Tiêu chí của chính issue, không chỉ của plan
 
@@ -39,8 +41,9 @@ Issue #17 §1 ghi điều kiện hoàn thành là: đính 2 tệp (1 text, 1 ả
 attachment. Journey `apps/web/e2e/attachments.spec.ts` — "the agent answers using the content of an attached file" —
 làm đúng chuỗi đó: hai tệp được đính, câu trả lời chứa nội dung của tệp văn bản, và cả hai tệp còn trong timeline sau khi
 reload. Model ở đó là fixture của node, nên điều được chứng minh là đường ống — tệp tới node, node đọc được nội dung,
-câu trả lời mang nó — chứ không phải phán đoán của model. Nội dung ảnh/PDF thì **chưa** tới model: chúng được nêu bằng
-id, và điều kiện còn thiếu ghi ở `docs/widgets-and-extensions.md` §4.1.
+câu trả lời mang nó — chứ không phải phán đoán của model. Nội dung tệp tới agent theo ba đường: văn bản và PDF vào
+prompt của lượt, ảnh qua `read_attachment` dưới dạng block ảnh mà SDK mang nguyên vẹn tới model. Điều còn phụ thuộc
+provider là phán đoán của model trên nội dung đó, và các check cần provider thật vẫn là opt-in.
 
 ## Hai journey từng bị chặn, và đã sửa tại gốc
 
@@ -104,6 +107,10 @@ evidence của cửa sổ không còn phụ thuộc vào một máy cụ thể.
 
 - Các check cần provider thật (`[calibration]`, `[jev-live]`) vẫn BLOCKED nếu thiếu `CLARKCANT_JEV_LIVE=1` và key;
   quyết định "ghi nhớ" của chính model vì thế chưa được chứng minh.
-- Extractor PDF/ảnh, route xoá conversation, nguồn `memory` trong gợi ý, scoped session token: mỗi cái có tên và
-  điều kiện còn thiếu trong `docs/widgets-and-extensions.md` §4.1.
+- ~~Extractor PDF/ảnh~~ — **đã đóng**: PDF được trích văn bản (`apps/runtime/src/pdf-text.ts`, PR #64) và ảnh
+  được giao nguyên block ảnh cho SDK (PR #66: `read_attachment` trả chính bức ảnh, `toSdkTool` phát
+  `{ type: "image", data, mimeType }`). Nguyên nhân gốc nằm ở adapter, chỗ gộp mọi kết quả tool thành một block
+  text.
+- Route xoá conversation, nguồn `memory` trong gợi ý, scoped session token: mỗi cái có tên và điều kiện còn thiếu
+  trong `docs/widgets-and-extensions.md` §4.1.
 - `nodeReachable` là `false` trong smoke: cổng này kiểm tra shell và cửa sổ, không cần node đang chạy.

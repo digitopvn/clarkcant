@@ -50,7 +50,7 @@ type SdkTool = SdkSession["agent"]["state"]["tools"][number];
  * system prompt's "Available tools" list, and a model that cannot see its tools answers with
  * invented tool syntax rather than calling one.
  */
-function toSdkTool(sdk: SdkModule, tool: ToolDefinition): SdkTool {
+export function toSdkTool(sdk: SdkModule, tool: ToolDefinition): SdkTool {
   // SAFETY: the SDK's declaration types `parameters` as a TypeBox schema, which our runtime-validated
   // JSON Schema is not, so the generic cannot be inferred and the structural check fails at compile
   // time while the runtime shape is the documented one. `pi-ai` detects the absent TypeBox marker and
@@ -64,7 +64,18 @@ function toSdkTool(sdk: SdkModule, tool: ToolDefinition): SdkTool {
     ...(tool.promptSnippet === undefined ? {} : { promptSnippet: tool.promptSnippet }),
     execute: async (_toolCallId: string, params: Record<string, unknown>) => {
       const result = await tool.execute(params);
-      return { content: [{ type: "text" as const, text: result.text }], details: {} };
+      // A tool that read a picture returns the picture. The SDK's content union has an image member, and
+      // flattening it to the sentence beside it would tell the model that a picture exists while hiding what
+      // is in it. The sentence stays, so a transcript still says which file the picture came from.
+      return {
+        content: [
+          { type: "text" as const, text: result.text },
+          ...(result.image === undefined
+            ? []
+            : [{ type: "image" as const, data: result.image.dataBase64, mimeType: result.image.mimeType }]),
+        ],
+        details: {},
+      };
     },
   }) as unknown as SdkTool;
 }

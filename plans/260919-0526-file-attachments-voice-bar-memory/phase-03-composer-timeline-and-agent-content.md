@@ -76,7 +76,9 @@ Một nguồn sự thật (tin nhắn đã lưu) nghĩa là timeline sau reload 
    - `"reads a text attachment that belongs to the conversation"`.
    - `"refuses an attachment that belongs to another principal"`.
    - `"refuses an id that is not an attachment id"` — không nhận path, không nhận `../`.
-   - `"answers honestly that a binary attachment has no extractor yet"`.
+   - `"answers honestly that a binary attachment has no extractor yet"` — **đã thay thế**: nay là
+     `"hands a picture over as a picture rather than describing it"` và `"answers a text attachment without
+     an image part"` (ảnh được giao nguyên block ảnh cho SDK — PR #66).
 
 ## Tasks & Steps
 
@@ -138,8 +140,10 @@ Một nguồn sự thật (tin nhắn đã lưu) nghĩa là timeline sau reload 
   2. `read_attachment`: validate `attachmentId` bằng `attachmentIdSchema`; tra `getAttachment`; khớp
      `principal_id` **và** `conversation_id`; sai → trả text nói không có attachment đó (không phân biệt
      "không tồn tại" với "không phải của bạn").
-  3. `kind === "text"` → trả nội dung (giới hạn `inlineBudgetBytesPerTurn`); `kind === "image" | "pdf"`
-     → trả text nói rõ node chưa có bộ trích nội dung nhị phân, kèm tên/mime/size. **Không** trả path.
+  3. `kind === "text"` → trả nội dung (giới hạn `inlineBudgetBytesPerTurn`); `kind === "pdf"` → trích văn
+     bản bằng `pdf-text.ts`; `kind === "image"` → trả **chính bức ảnh** dưới dạng block ảnh, kèm tên/mime/size.
+     **Không** trả path. (Ghi chú thực thi: kế hoạch ban đầu định trả text nói "chưa có bộ trích nội dung nhị
+     phân"; điều đó đã đổi tại gốc — PDF ở PR #64, ảnh ở PR #66.)
   4. Thêm dòng vào `apps/runtime/test/node-tools.spec.ts`: danh sách tool có `read_attachment`.
 - **Success criteria**: 4 test của `read-attachment-tool.spec.ts` xanh.
 - **Verify**: `pnpm exec vitest run apps/runtime/test/read-attachment-tool.spec.ts apps/runtime/test/node-tools.spec.ts` exits 0.

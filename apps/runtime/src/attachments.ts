@@ -152,9 +152,11 @@ export function attachmentRefsForLastUserMessage(input: {
  * The attachment section of a turn's prompt.
  *
  * Text is inlined because the adapter takes text and a person attaching a `.md` expects its content
- * to be read. Images and PDFs are named rather than read: this node has no extractor for them, and
- * pretending otherwise would put invented detail in front of the model. Both cases name the
- * attachment by id, so the model has something to act on without being handed a location.
+ * to be read. A PDF's text is inlined too, because it can be recovered without a provider. An image is
+ * named here and handed over by `read_attachment`, which returns the picture itself: inlining bytes as
+ * text would put base64 in front of the model, and naming it without a reader would hide what is in it.
+ * Every case names the attachment by id, so the model has something to act on without being handed a
+ * location.
  *
  * The budget is for the whole turn, not per file. Eight files at a per-file ceiling is a prompt
  * nobody measured, and the ceiling that matters is the one a single turn cannot exceed.
