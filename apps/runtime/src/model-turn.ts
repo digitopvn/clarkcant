@@ -15,7 +15,7 @@
  * approval, evidence and budgets live, and a conversation turn has none of them.
  */
 
-import { type AttachmentRef, type Instant, type MessageBlock, type Principal } from "@clarkcant/contracts";
+import { type AttachmentRef, type Instant, type MessageBlock, type Principal, modelChangeNeedsGeneration } from "@clarkcant/contracts";
 
 import {
   RealPiAdapter,
@@ -28,6 +28,7 @@ import {
   type PiSetting,
   type PiAdapter,
   type ToolDefinition,
+  type WorkerBrief,
   type WorkerEvent,
 } from "@clarkcant/pi-adapter";
 
@@ -101,6 +102,15 @@ export interface ModelTurn {
    * busy or steal the turn that is running.
    */
   runInBackground: (input: { conversationId: string; principal: Principal; text: string }) => Promise<string>;
+
+  /**
+   * Stops every background worker this process started, answering how many there were.
+   *
+   * The other half of the emergency stop. A background request returns as soon as it is accepted, so this is the only
+   * reference to a worker nobody is awaiting — without it a stop would reach the foreground and leave the rest
+   * running, which is the shape of an emergency control that cannot be trusted.
+   */
+  stopBackgroundSessions: () => Promise<number>;
 
   /**
    * The providers and models this node can run, read from the SDK's own catalogue.
@@ -310,6 +320,9 @@ function withActivity(turn: Turn, tool: ToolDefinition): ToolDefinition {
         if (answer.hostCard !== undefined) {
           turn.segments.push({ kind: "host-card", block: answer.hostCard });
         }
+        for (const block of answer.hostBlocks ?? []) {
+          turn.segments.push({ kind: "host-card", block });
+        }
         turn.segments.push({ kind: "block", block: record("done", answer.text) });
         return answer;
       } catch (cause) {
@@ -445,6 +458,14 @@ export async function createModelTurn(options: {
    */
   views?: () => readonly ViewDescriptor[];
   /**
+   * Which model a background worker should run, when the node routes that instead of configuring it.
+   *
+   * A function rather than a value, and asynchronous, because routing consults the pool, the catalogue and possibly
+   * the policy layer — all of which are read at the moment a worker is about to start rather than at boot. Absent
+   * means workers run whatever the node is configured with.
+   */
+  backgroundModel?: () => Promise<{ provider: string; id: string } | undefined>;
+  /**
    * The conversation so far, newest last, for briefing a session that has just been created.
    *
    * A session dropped after a failure, or one created for a conversation resumed on a node that has since
@@ -548,6 +569,21 @@ export async function createModelTurn(options: {
     });
   const availability = await adapter.availability();
   const turns = new Map<string, Turn>();
+  /**
+   * Background workers this process started, by conversation.
+   *
+   * Held so a stop can reach a worker nobody is awaiting: a background request returns as soon as it is accepted, so
+   * the only reference to that session is the one kept here.
+   */
+  const backgroundSessions = new Map<string, string>();
+  /**
+   * Which model each conversation's current generation runs.
+   *
+   * Kept beside the sessions rather than on the turn, because it is the one fact that outlives a session: a model
+   * change creates a successor, and the comparison that decides whether a change is needed is between what the
+   * conversation is running and what the person has asked for.
+   */
+  const generationModels = new Map<string, string>();
 
   const describe = (): string => `${selection.provider}/${selection.id}`;
 
@@ -622,7 +658,21 @@ export async function createModelTurn(options: {
 
   async function turnFor(conversationId: string, principal: Principal): Promise<Turn> {
     const existing = turns.get(conversationId);
-    if (existing !== undefined) return existing;
+    const preferred = options.model?.();
+    const preferredModel = preferred === undefined ? undefined : `${preferred.provider}/${preferred.id}`;
+
+    /*
+     * The fast path, and the only one that may return a session untouched.
+     *
+     * A model change is answered below rather than here, because it needs the brief and the listener that a session
+     * is created with — and those are built after this line so a cached turn costs nothing to reuse.
+     */
+    if (
+      existing !== undefined &&
+      modelChangeNeedsGeneration({ currentModel: generationModels.get(conversationId), preferredModel }) === "none"
+    ) {
+      return existing;
+    }
 
     const views = readViews();
     const viewById = new Map(views.map((entry) => [entry.id, entry]));
@@ -654,7 +704,13 @@ export async function createModelTurn(options: {
 
     const chosen = options.model?.();
 
-    const handle = await adapter.createWorkerSession({
+    /**
+     * The brief this conversation's session is created with — and re-created with after a model change.
+     *
+     * One function rather than two literals, because a successor session created by a handoff with a different
+     * brief would be a generation with different tools, and the model would find out mid-conversation.
+     */
+    const briefFor = (model: { provider: string; id: string } | undefined): WorkerBrief => ({
       // The brief is per conversation rather than per message, so the model keeps the thread
       // it is already in instead of meeting the user again on every turn.
       goal: "Answer the user in this conversation.",
@@ -662,7 +718,7 @@ export async function createModelTurn(options: {
       allowedCapabilityRefs: [],
       // Resolved here rather than when the turn was built: this is the moment a model can actually be chosen for a
       // session, and it is also the moment `services` exists to say what was chosen.
-      ...(chosen === undefined ? {} : { model: chosen }),
+      ...(model === undefined ? {} : { model }),
       ...(customTools.length === 0 ? {} : { customTools }),
       // Carried on the brief as well as held here, because the adapter enforces it at the
       // turn boundary and that is where a runaway turn is actually stopped.
@@ -670,24 +726,53 @@ export async function createModelTurn(options: {
       maxTokens: budget.maxTokens,
     });
 
+    /**
+     * The one listener, so a session created by a handoff is watched exactly like the first one.
+     *
+     * A successor that nothing subscribed to would stream into nowhere: the swap would look successful and the
+     * conversation would go quiet, which is the failure this function exists to make impossible.
+     */
+    const listen = (target: Turn, sessionId: string): (() => void) =>
+      adapter.subscribe(sessionId, (event) => {
+        if (isTextDelta(event)) {
+          // Both, and in this order: the buffer is what the stored message is built from, and the
+          // callback is what the reader sees now. Dropping the buffer to stream would lose the text a
+          // caller that is not watching never receives.
+          // Reasoning already in hand is closed first, so the two never interleave inside one block.
+          flushReasoning(target);
+          target.pending.push(event.delta);
+          target.onEvent?.({ type: "text-delta", text: event.delta });
+          return;
+        }
+        if (event.type === "thinking-delta") {
+          flushText(target);
+          target.reasoning.push(event.delta);
+          target.onEvent?.({ type: "reasoning-delta", text: event.delta });
+        }
+      });
+
+    /*
+     * A model change becomes a new generation, at the turn boundary.
+     *
+     * Pi resolves the model when a session is created, so it cannot be applied to the session underneath a running
+     * turn — and this function is only reached when a turn is starting, which is the boundary the design names.
+     * Nothing is mutated in place: the adapter creates a successor and keeps the previous session subscribed until
+     * the swap is finished, which is what makes a change mid-conversation safe to observe.
+     */
+    if (existing !== undefined) {
+      const successor = await adapter.handoff(existing.sessionId, briefFor(preferred));
+      existing.unsubscribe();
+      existing.sessionId = successor.successor.sessionId;
+      existing.unsubscribe = listen(existing, existing.sessionId);
+      generationModels.set(conversationId, preferredModel ?? "");
+      return existing;
+    }
+
+    const handle = await adapter.createWorkerSession(briefFor(chosen));
+
     turn.sessionId = handle.sessionId;
-    turn.unsubscribe = adapter.subscribe(handle.sessionId, (event) => {
-      if (isTextDelta(event)) {
-        // Both, and in this order: the buffer is what the stored message is built from, and the
-        // callback is what the reader sees now. Dropping the buffer to stream would lose the text a
-        // caller that is not watching never receives.
-        // Reasoning already in hand is closed first, so the two never interleave inside one block.
-        flushReasoning(turn);
-        turn.pending.push(event.delta);
-        turn.onEvent?.({ type: "text-delta", text: event.delta });
-        return;
-      }
-      if (event.type === "thinking-delta") {
-        flushText(turn);
-        turn.reasoning.push(event.delta);
-        turn.onEvent?.({ type: "reasoning-delta", text: event.delta });
-      }
-    });
+    turn.unsubscribe = listen(turn, handle.sessionId);
+    generationModels.set(conversationId, preferredModel ?? "");
 
     turns.set(conversationId, turn);
     return turn;
@@ -731,13 +816,18 @@ export async function createModelTurn(options: {
     },
 
     runInBackground: async (input: { conversationId: string; principal: Principal; text: string }): Promise<string> => {
+      const routed = options.backgroundModel === undefined ? undefined : await options.backgroundModel();
       const handle = await adapter.createWorkerSession({
         goal: input.text.slice(0, 2000),
         // No folders and no capabilities: starting a worker is not a way to acquire either, and the request that
         // needs them goes through the same approval path as any other.
         projectRoots: [],
         allowedCapabilityRefs: [],
+        // Routed only for background work. Foreground honours the person's choice, and nobody is watching this run —
+        // which is exactly why the model for it is a decision rather than a setting.
+        ...(routed === undefined ? {} : { model: routed }),
       });
+      backgroundSessions.set(input.conversationId, handle.sessionId);
       let said = "";
       const unsubscribe = adapter.subscribe(handle.sessionId, (event) => {
         if (event.type === "text-delta") said += event.delta;
@@ -746,10 +836,27 @@ export async function createModelTurn(options: {
         await adapter.prompt(handle.sessionId, input.text);
       } finally {
         unsubscribe();
+        backgroundSessions.delete(input.conversationId);
         // Disposed whatever happened: a worker nobody will ask again is a provider connection held open for nothing.
         void adapter.dispose(handle.sessionId).catch(() => undefined);
       }
       return said.trim();
+    },
+
+    /**
+     * Stop every background worker this process started.
+     *
+     * The other half of the emergency stop. Aborted *and* disposed, in that order, because an abort that leaves the
+     * session registered would let a later turn reach a worker the person has already stopped.
+     */
+    stopBackgroundSessions: async (): Promise<number> => {
+      const started = [...backgroundSessions.entries()];
+      for (const [conversationId, sessionId] of started) {
+        backgroundSessions.delete(conversationId);
+        await adapter.abort(sessionId, "người dùng đã dừng công việc đang chạy").catch(() => undefined);
+        void adapter.dispose(sessionId).catch(() => undefined);
+      }
+      return started.length;
     },
 
     async answer(input: ModelTurnInput): Promise<ModelTurnReply> {

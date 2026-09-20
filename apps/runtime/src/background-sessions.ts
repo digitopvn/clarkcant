@@ -26,9 +26,10 @@ export interface BackgroundSessions {
   /**
    * Records how one ended.
    *
-   * The entry is kept rather than removed: a count that drops to zero the moment work finishes tells a person
-   * nothing about whether it succeeded, and the failure of a background request is exactly the thing they need to
-   * see without asking.
+   * The entry is kept for a while rather than removed: a count that drops to zero the moment work finishes tells a
+   * person nothing about whether it succeeded, and the failure of a background request is exactly the thing they need
+   * to see without asking. How long is the retention below, and past it the entry goes — the outcome itself is a
+   * message in the conversation, which outlives this list.
    */
   finish(input: { sessionId: string; status: "done" | "failed"; at: Instant }): BackgroundSession | undefined;
   /** Newest first, because the one just started is the one being waited for. */
@@ -37,11 +38,44 @@ export interface BackgroundSessions {
   running(): number;
 }
 
-export function createBackgroundSessions(): BackgroundSessions {
+/**
+ * How long a finished entry is kept, and how many of them.
+ *
+ * The outcome of the work is a message in the conversation, which outlives this process; the list is here so a glance
+ * at the header right after something ends can still say what happened. Keeping every finished entry forever would be
+ * an unbounded list answering a question the conversation already answers, so the tail is bounded at both ends.
+ */
+export const FINISHED_RETENTION_MS = 10 * 60_000;
+export const MAX_FINISHED_ENTRIES = 20;
+
+export function createBackgroundSessions(options: { now?: () => Instant } = {}): BackgroundSessions {
   const sessions = new Map<string, BackgroundSession>();
+  const now = options.now ?? ((): Instant => new Date().toISOString() as Instant);
+
+  /*
+   * Drop what nothing can be waiting for any more.
+   *
+   * Two bounds, and they are different kinds of bound. Age drops a finished entry nobody is looking at any more. The
+   * count caps the list when work finishes faster than it ages out. A *running* entry is never dropped by either: it
+   * is the one thing this list exists to report, and a count that quietly forgot a worker would be worse than a list
+   * that is long.
+   */
+  const prune = (): void => {
+    const cutoff = new Date(Date.parse(now()) - FINISHED_RETENTION_MS).toISOString();
+    for (const [sessionId, entry] of sessions) {
+      if (entry.status !== "running" && entry.endedAt !== undefined && entry.endedAt < cutoff) {
+        sessions.delete(sessionId);
+      }
+    }
+    const finished = [...sessions.values()]
+      .filter((entry) => entry.status !== "running")
+      .sort((left, right) => (left.startedAt < right.startedAt ? 1 : -1));
+    for (const entry of finished.slice(MAX_FINISHED_ENTRIES)) sessions.delete(entry.sessionId);
+  };
 
   return {
     start(input) {
+      prune();
       const entry: BackgroundSession = {
         sessionId: input.sessionId,
         title: input.title.trim() === "" ? "Việc nền" : input.title.trim().slice(0, 200),
@@ -52,6 +86,7 @@ export function createBackgroundSessions(): BackgroundSessions {
       return entry;
     },
     finish(input) {
+      prune();
       const existing = sessions.get(input.sessionId);
       if (existing === undefined) return undefined;
       const updated: BackgroundSession = { ...existing, status: input.status, endedAt: input.at };
@@ -59,9 +94,11 @@ export function createBackgroundSessions(): BackgroundSessions {
       return updated;
     },
     list() {
+      prune();
       return [...sessions.values()].sort((left, right) => (left.startedAt < right.startedAt ? 1 : -1));
     },
     running() {
+      prune();
       return [...sessions.values()].filter((entry) => entry.status === "running").length;
     },
   };

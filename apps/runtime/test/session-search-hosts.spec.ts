@@ -141,11 +141,16 @@ const FIXTURES = {
     type: "question-card",
     owner: "host",
     questionId: "q_1",
-    question: "Bạn muốn tôi mở dự án nào?",
+    prompt: "Bạn muốn tôi mở dự án nào?",
+    questionType: "single-choice",
     options: [
       { id: "option-1", label: "Dự án hiện tại" },
       { id: "option-2", label: "Dự án khác" },
     ],
+    allowOther: false,
+    voicePrompt: "Bạn muốn tôi mở dự án nào? Dự án hiện tại, hay dự án khác?",
+    status: "waiting",
+    createdAt: AT,
   },
   "form-card": {
     type: "form-card",

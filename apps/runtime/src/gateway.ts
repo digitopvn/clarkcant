@@ -107,7 +107,13 @@ import {
   upsertGrant,
   type JsonValue,
 } from "@clarkcant/storage";
-import { credentialNames, putCredential } from "@clarkcant/storage";
+import { credentialNames, putCredential, putSecretMetadata, secretKindOr, appendAuditEvent } from "@clarkcant/storage";
+import { DEFAULT_NARROWING, readAutonomySettings, saveAutonomySettings } from "./autonomy-settings.ts";
+import { type OwnedResources, ownedResources } from "./preflight.ts";
+import { cycleModelPool, readCurrentAlias, readModelPool, writeModelPool } from "./model-registry.ts";
+import { parseModelPool, validateProfileAgainstCatalogue } from "@clarkcant/contracts";
+import type { InteractionDeps } from "./interactions.ts";
+import { answerQuestion, cancelQuestion } from "./interactions.ts";
 
 import { nodeBackgroundSessions } from "./background-sessions.ts";
 import {
@@ -134,7 +140,7 @@ import {
 import { readBlob, sniffContentType, writeBlob } from "./blobs.ts";
 import { attachmentRefFromRecord, resolveAttachmentRefs } from "./attachments.ts";
 import { markProjectUsed, projectContext, resolveProject } from "./project-finder.ts";
-import { receiptForModel, runApprovedCommand } from "./run-command.ts";
+import { receiptForModel, runApprovedCommand, stopRunningCommands } from "./run-command.ts";
 import { initialPrompt } from "./project-session.ts";
 import { indexMessages, ingestSessionEntries, searchSessions, textOfMessage } from "./session-search.ts";
 import { type NodeServices, buildTimeline } from "./services.ts";
@@ -781,6 +787,74 @@ export async function handleRequest(deps: GatewayDeps, request: GatewayRequest):
     });
   }
 
+  /*
+   * The autonomy settings.
+   *
+   * Read whole and written whole, because they are one decision a person makes about this node rather than
+   * a set of independent switches: whether anything is asked, whether a policy layer may intervene, which
+   * classes it covers, and what happens when it cannot be reached. The narrowing table travels with the
+   * read because the panel shows what the guardrail is allowed to ask for — a list the host owns and a
+   * model may only pick from.
+   */
+  if (request.method === "GET" && request.path === "/autonomy") {
+    return json(200, {
+      settings: readAutonomySettings(services.runtime.db, services.runtime.identity.ownerPrincipalId),
+      narrowing: DEFAULT_NARROWING.map((entry) => ({ id: entry.id, description: entry.description })),
+    });
+  }
+
+  if (request.method === "POST" && request.path === "/autonomy") {
+    const parsed = readJson(request);
+    if (!parsed.ok) return parsed.response;
+    const stored = saveAutonomySettings(
+      services.runtime.db,
+      services.runtime.identity.ownerPrincipalId,
+      parsed.value.settings ?? parsed.value,
+      nowInstant(),
+    );
+    // The scope is stated rather than implied: this node reads the policy per command, so the next command
+    // already runs under it, and a panel that said "restart to apply" would be lying about that.
+    return json(200, { ok: true, settings: stored, applies: "the next command this node runs" });
+  }
+
+  /*
+   * The emergency stop.
+   *
+   * It kills rather than asks, because the point of a stop is that it works on something that is not listening. The
+   * order is the order of reach: a child process is the one thing that outlives this node's turn, then the turns
+   * themselves, then the background workers nobody is awaiting.
+   */
+  if (request.method === "POST" && request.path === "/stop") {
+    const commands = stopRunningCommands();
+    const control = services.turnControl;
+    let turns = 0;
+    let background = 0;
+    if (control !== undefined) {
+      for (const runningIn of control.running()) {
+        if (control.interrupt(runningIn)) turns += 1;
+      }
+      // SAFETY: the stop is optional on the control object because a node can be built without background workers at
+      // all; reading it through a narrow shape keeps every other caller of `control` typed as it was.
+      const stopBackground = (control as { stopBackgroundSessions?: () => Promise<number> }).stopBackgroundSessions;
+      background = stopBackground === undefined ? 0 : await stopBackground.call(control);
+    }
+
+    const stopped = commands + turns + background;
+    if (stopped > 0) {
+      // Written down whether or not anybody was watching: a stop is the event most likely to need explaining later.
+      appendAuditEvent(services.runtime.db, {
+        auditId: services.conductor.newId("audit"),
+        principalId: services.runtime.identity.ownerPrincipalId,
+        nodeId: services.runtime.identity.nodeId,
+        kind: "stop",
+        summary: `dừng khẩn cấp: ${commands} lệnh, ${turns} lượt, ${background} việc nền`,
+        outcome: "stopped",
+        at: nowInstant(),
+      });
+    }
+    return json(200, { ok: true, stopped: { commands, turns, background } });
+  }
+
   if (segments.length === 1 && segments[0] === "capabilities" && request.method === "GET") {
     return json(200, {
       // Summaries only: dumping every tool schema into every turn is both expensive and a
@@ -789,6 +863,66 @@ export async function handleRequest(deps: GatewayDeps, request: GatewayRequest):
     });
   }
 
+  /*
+   * The pool of models a person keeps.
+   *
+   * Read and written whole, like the autonomy settings, and checked against pi's own catalogue on the way in: a
+   * stored profile this installation cannot run would fail every later turn with a message about a provider rather
+   * than about the choice that caused it. The catalogue is not copied into the pool — it is consulted.
+   */
+  if (request.method === "GET" && request.path === "/model-pool") {
+    const catalogue = await (services.modelCatalogue?.() ?? Promise.resolve([]));
+    const owner = services.runtime.identity.ownerPrincipalId;
+    const pool = readModelPool(services.runtime.db, owner);
+    return json(200, {
+      pool,
+      currentAlias: readCurrentAlias(services.runtime.db, owner),
+      // Which profiles this node can actually run, so a panel can say so instead of leaving a row looking usable.
+      checked: pool.profiles.map((profile) => ({
+        alias: profile.alias,
+        ...validateProfileAgainstCatalogue(profile, catalogue),
+      })),
+    });
+  }
+
+  if (request.method === "POST" && request.path === "/model-pool") {
+    const parsed = readJson(request);
+    if (!parsed.ok) return parsed.response;
+    const catalogue = await (services.modelCatalogue?.() ?? Promise.resolve([]));
+    const pool = parseModelPool(parsed.value.pool ?? parsed.value);
+    // Refused before it is stored: a profile this node cannot run is a promise it cannot keep, and the refusal names
+    // which of the two identifiers was wrong.
+    if (catalogue.length > 0) {
+      for (const profile of pool.profiles) {
+        const check = validateProfileAgainstCatalogue(profile, catalogue);
+        if (!check.ok) return fail(400, "INVALID_SCHEMA", check.message);
+      }
+    }
+    const stored = writeModelPool(services.runtime.db, services.runtime.identity.ownerPrincipalId, pool, nowInstant());
+    return json(200, { ok: true, pool: stored });
+  }
+
+  /*
+   * The hotkey: one press moves to the next enabled profile and writes what the next generation will run.
+   *
+   * What it deliberately does not do is touch the session underneath a running turn. Pi resolves a model when a
+   * session is created, so the change is applied as a new generation at the next turn boundary — which is what the
+   * answer says, rather than implying the running turn changed models mid-sentence.
+   */
+  if (request.method === "POST" && request.path === "/model-pool/cycle") {
+    const cycled = cycleModelPool(services.runtime.db, services.runtime.identity.ownerPrincipalId, nowInstant());
+    if (cycled.next === undefined) {
+      return fail(409, "NO_MODEL_PROFILE", "pool này không có profile nào đang bật, nên không có gì để chuyển tới.");
+    }
+    return json(200, {
+      ok: true,
+      ...(cycled.current === undefined ? {} : { previous: cycled.current }),
+      alias: cycled.next.alias,
+      provider: cycled.next.provider,
+      modelId: cycled.next.modelId,
+      applies: "a new generation; the running turn is not touched",
+    });
+  }
   /*
    * What the configured voice provider can do.
    *
@@ -971,13 +1105,36 @@ export async function handleRequest(deps: GatewayDeps, request: GatewayRequest):
     // route is not about a conversation, and a secret is stored against the person who typed it, not against
     // the thread they happened to be in.
     const owner = services.runtime.identity.ownerPrincipalId;
-    for (const field of fields as { name?: unknown; value?: unknown }[]) {
+    for (const field of fields as { name?: unknown; value?: unknown; kind?: unknown; description?: unknown; consumer?: unknown }[]) {
       const name = typeof field.name === "string" ? field.name.trim() : "";
       const value = typeof field.value === "string" ? field.value : "";
       if (name === "" || value === "") {
         return fail(400, "INVALID_SCHEMA", "every credential field needs a name and a value");
       }
       putCredential(services.runtime.db, { principalId: owner, name, value, at });
+      /*
+       * The value goes to the store; what the node remembers about it goes to the metadata row.
+       *
+       * Written together, because the two halves are useless apart: a value nobody can describe is a secret the
+       * agent can never be told about, and a description with no value behind it is a promise this node cannot
+       * keep — which is the state `request_secret` reports as not available rather than as ready.
+       *
+       * The consumer is recorded as the form said it. It is what the broker checks before handing the value to
+       * anything, so it is the honest answer to "what will this be used for" rather than a label.
+       */
+      putSecretMetadata(services.runtime.db, {
+        secretId: services.conductor.newId("secret"),
+        principalId: owner,
+        name,
+        description: typeof field.description === "string" ? field.description.slice(0, 1_000) : "",
+        kind: secretKindOr(field.kind),
+        backend: "node-store",
+        backendRef: name,
+        allowedConsumers: typeof field.consumer === "string" && field.consumer.trim() !== "" ? [field.consumer.trim()] : [],
+        injectionPolicy: "tool-only",
+        nodeId: services.runtime.identity.nodeId,
+        at,
+      });
     }
     return json(201, { ok: true, names: credentialNames(services.runtime.db, owner) });
   }
@@ -1466,8 +1623,87 @@ function blocksOfConversation(services: NodeServices, conversationId: string): R
 }
 
 /**
- * Append a message the host wrote — a question, a notice, or the receipt of an operation.
+ * The interaction manager for one conversation.
  *
+ * Built per conversation rather than once per node, because every question belongs to a conversation: the
+ * durable state is that conversation's transcript, and an answer only means something against the card that
+ * asked. The two halves are the ones the approval route already uses — read the blocks, append a message — so
+ * a question and an approval cannot end up disagreeing about what the timeline is.
+ */
+export function interactionDepsFor(services: NodeServices, conversationId: string): InteractionDeps {
+  return {
+    conversationId,
+    now: () => nowInstant(),
+    newId: services.conductor.newId,
+    // SAFETY: the timeline hands back a message's blocks as unparsed JSON, exactly as it does for the approval
+    // route above. The node wrote these rows, and the manager reads only `question-card` and `tool-activity`
+    // fields after checking `type`, so a block of any other shape is skipped rather than trusted.
+    blocks: () => blocksOfConversation(services, conversationId) as unknown as MessageBlock[],
+    append: ({ at, blocks }) => {
+      appendHostReply(services, { conversationId, blocks, at });
+    },
+  };
+}
+
+/**
+ * Record an answer and open the turn it starts.
+ *
+ * One function, called by the HTTP route and by the voice session, because "voice and a click mean the same thing"
+ * has to be structurally true rather than a claim two code paths keep in step. What a caller can differ on is the
+ * answer's shape: an utterance has already been matched against the question's own options before it arrives here.
+ */
+export async function answerQuestionForNode(
+  services: NodeServices,
+  input: {
+    conversationId: string;
+    principal: { principalId: string; kind: "user"; nodeId: string };
+    questionId: string;
+    text?: unknown;
+    optionIds?: unknown;
+    confirmed?: unknown;
+    viaVoice?: boolean;
+    at: Instant;
+  },
+): Promise<{ ok: true; note: string } | { ok: false; code: string; message: string }> {
+  const answered = answerQuestion(interactionDepsFor(services, input.conversationId), input.questionId, {
+    text: input.text,
+    optionIds: input.optionIds,
+    confirmed: input.confirmed,
+    ...(input.viaVoice === true ? { viaVoice: true } : {}),
+  });
+  if (!answered.ok) return { ok: false, code: answered.code, message: answered.message };
+
+  /*
+   * What the person sees, and what the model gets.
+   *
+   * The visible message states the answer; the note carries the same sentence plus the instruction to carry on.
+   * The note travels to the model rather than into the transcript, for the same reason the command receipt does:
+   * the transcript already says what happened, and saying it twice is what made a reader complain about a receipt
+   * printed twice.
+   */
+  await handleUserMessage(services.conductor, {
+    conversationId: input.conversationId as never,
+    principal: input.principal as never,
+    text: answered.note,
+    note: `${answered.note}\n\nĐây là câu trả lời của người dùng cho câu hỏi bạn đã hỏi. Hãy tiếp tục công việc đang làm dở.`,
+    at: input.at,
+  });
+  return { ok: true, note: answered.note };
+}
+
+/**
+ * The folders this node owns, for the path that runs an approved command.
+ *
+ * The same set the guarded path uses — configured workspace roots, the node's own data directory, and the directory
+ * the operator launched it from — because asking a person is not a reason to widen what this node may touch.
+ */
+export function ownedResourcesFor(services: NodeServices): OwnedResources {
+  return ownedResources([...services.projects.roots(), services.runtime.dataDir, process.cwd()]);
+}
+
+/**
+ * Append a message the host wrote — a question, a notice, or the receipt of an operation.
+ * * *
  * `blocks` is what a receipt needs: a command's outcome is a tool record and an evidence line, not a
  * paragraph. `text` stays because most host replies are one sentence, and a caller that has to build a
  * text block by hand is a caller that will eventually build it wrong.
@@ -2617,6 +2853,54 @@ async function handleConversationRoutes(
     });
   }
 
+  /*
+   * /conversations/:id/questions/:questionId/answer
+   *
+   * The other half of `ask_user_question`, and the reason that tool can return immediately: the answer is its
+   * own request, arriving whenever the person gets to it. Nothing was waiting on the node for it — the turn
+   * that asked ended — so this route starts a new turn rather than resuming anything.
+   *
+   * Text and voice both land here. The client posts a click and the voice session posts an utterance it has
+   * already matched against the question's own options; there is no second path that could disagree about what
+   * an answer means.
+   */
+  if (segments.length === 5 && segments[2] === "questions" && segments[4] === "answer" && request.method === "POST") {
+    const questionId = segments[3];
+    if (questionId === undefined) return fail(400, "INVALID_SCHEMA", "an answer needs the question it answers");
+    const parsed = readJson(request);
+    if (!parsed.ok) return parsed.response;
+
+    const answered = await answerQuestionForNode(services, {
+      conversationId,
+      principal,
+      questionId,
+      text: parsed.value.text,
+      optionIds: parsed.value.optionIds,
+      confirmed: parsed.value.confirmed,
+      viaVoice: parsed.value.viaVoice === true,
+      at: at() as never,
+    });
+    if (!answered.ok) {
+      const status = answered.code === "QUESTION_NOT_FOUND" ? 404 : 409;
+      return fail(status, answered.code, answered.message);
+    }
+
+    return json(200, {
+      ok: true,
+      note: answered.note,
+      timeline: buildTimeline(services, { conversationId, afterSequence: 0 }),
+    });
+  }
+
+  // /conversations/:id/questions/:questionId/cancel
+  if (segments.length === 5 && segments[2] === "questions" && segments[4] === "cancel" && request.method === "POST") {
+    const questionId = segments[3];
+    if (questionId === undefined) return fail(400, "INVALID_SCHEMA", "a cancellation needs the question it drops");
+    const cancelled = cancelQuestion(interactionDepsFor(services, conversationId), questionId);
+    if (!cancelled) return fail(404, "RESOURCE_NOT_FOUND", "that question is not waiting in this conversation");
+    return json(200, { ok: true, timeline: buildTimeline(services, { conversationId, afterSequence: 0 }) });
+  }
+
 
   // /conversations/:id/start-session
   if (segments.length === 3 && segments[2] === "start-session" && request.method === "POST") {
@@ -2957,10 +3241,26 @@ export async function decideApprovalForNode(
     payload,
     expectedDigest: decided.approval.operationDigest,
     approvalId: input.approvalId,
+    // Re-checked here rather than trusted from the card: the folders this node owns can change between the card being
+    // drawn and the decision being made, and this is the moment it matters.
+    resources: ownedResourcesFor(services),
   });
   if (!ran.ok) return { ok: false, code: ran.code, message: ran.message };
 
   appendHostReply(services, { conversationId: input.conversationId, blocks: ran.blocks, at: input.at });
+
+  // The approved path is audited here rather than in the runner, because this is where the decision and the outcome
+  // are both known: what a person approved, and what came of running it.
+  appendAuditEvent(services.runtime.db, {
+    auditId: services.conductor.newId("audit"),
+    principalId: services.runtime.identity.ownerPrincipalId,
+    nodeId: services.runtime.identity.nodeId,
+    kind: "command",
+    summary: ran.description,
+    outcome: ran.outcome.exitCode === 0 && !ran.outcome.timedOut ? "done" : "failed",
+    ref: input.approvalId,
+    at: input.at,
+  });
 
   /*
    * Hand the outcome back to the agent.

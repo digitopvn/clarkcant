@@ -342,6 +342,29 @@ export const credentialCardBlockSchema = z.strictObject({
   requestId: z.string().min(1).max(128),
   /** What the credential is for, in plain language. */
   purpose: z.string().min(1).max(1000),
+  /**
+   * The longer explanation, when the purpose line is not enough.
+   *
+   * Shown under the field rather than instead of it: a person deciding whether to paste a key into a form deserves
+   * to know which node will use it and for what, and `purpose` is one line by design.
+   */
+  description: z.string().max(1000).optional(),
+  /**
+   * Who will use it, in the vocabulary the node enforces, e.g. `command:git` or `capability:github`.
+   *
+   * On the card because it is the honest answer to "what will this be used for": the consumer list is what the
+   * secret broker checks before handing a value to anything, so showing it here is showing the actual rule.
+   */
+  consumer: z.string().max(200).optional(),
+  /** Where the secret lives and which account it belongs to, e.g. `node:macbook`. */
+  scope: z.string().max(200).optional(),
+  /**
+   * What kind of secret this is, so the node records what the requester said it was.
+   *
+   * Carried on the card rather than guessed from the name on submit: the requester knows whether this is a token or
+   * a password, and a name is not a reliable way to tell.
+   */
+  secretKind: z.enum(["api-key", "token", "password", "webhook-secret", "other"]).optional(),
   /** Where the input goes. Never the transcript, never the model. */
   destination: z.enum(["vault-node", "system-browser", "provider-page"]),
   fields: z.array(
@@ -606,39 +629,6 @@ export const formCardSchema = z.strictObject({
 export type FormCard = z.infer<typeof formCardSchema>;
 
 /**
- * A question the agent is asking, with the answers it will accept.
- *
- * Host-owned, like the other cards a model may propose but not mint for itself: the block is the host's record
- * of what was asked, and a widget cannot produce one to put words in the agent's mouth.
- *
- * The chosen answer does not travel through this block. It becomes the user's own next message — the same thing
- * a typed reply is — which is why the block carries no answer field: the transcript is history, and an answer
- * written back into it would be the host editing what the user said.
- *
- * Bounded to six options because a list is not a question: past that the agent should be asking something
- * narrower, and a wall of buttons is a form.
- */
-export const questionCardSchema = z.strictObject({
-  type: z.literal("question-card"),
-  owner: z.literal("host"),
-  /** Unique for as long as the transcript that carries it, which is what the answerability rule keys on. */
-  questionId: z.string().min(1).max(128),
-  question: z.string().min(1).max(500),
-  options: z
-    .array(
-      z.strictObject({
-        id: z.string().min(1).max(64),
-        /** What the user sees, and what is sent as their reply. */
-        label: z.string().min(1).max(200),
-        detail: z.string().min(1).max(300).optional(),
-      }),
-    )
-    .min(2)
-    .max(6),
-});
-export type QuestionCard = z.infer<typeof questionCardSchema>;
-
-/**
  * A file a person attached, as it appears in the timeline.
  *
  * The block carries the whole ref rather than an id, so a reloaded conversation draws the attachment
@@ -652,6 +642,49 @@ export type QuestionCard = z.infer<typeof questionCardSchema>;
 export const attachmentBlockSchema = z.strictObject({
   type: z.literal("attachment"),
   attachment: attachmentRefSchema,
+});
+
+/**
+ * A question the host is waiting to have answered.
+ *
+ * A host-owned card for the same reason an approval card is: it is a boundary between the model and the
+ * person, so neither the model nor a pack draws it. What it is *not* is a permission dialog — the agent
+ * asks because the work is under-specified (“which project?”), and a `clarify` from the guardrail arrives
+ * through the same card as a widget action asking which account to use.
+ *
+ * `voicePrompt` is carried on the block rather than generated at render time, because the spoken form has
+ * to match the options that were actually offered: a surface that re-derived it could read out a stale
+ * wording after an option changed.
+ */
+export const questionCardBlockSchema = z.strictObject({
+  type: z.literal("question-card"),
+  owner: z.literal("host"),
+  questionId: z.string().min(1).max(128),
+  /** What is shown on screen, written by the agent and bounded by the tool schema. */
+  prompt: z.string().min(1).max(500),
+  questionType: z.enum(["text", "single-choice", "multi-choice", "confirm"]),
+  options: z
+    .array(
+      z.strictObject({
+        id: z.string().min(1).max(64),
+        label: z.string().min(1).max(200),
+        description: z.string().max(500).optional(),
+      }),
+    )
+    .max(8),
+  /** Whether an answer outside `options` is accepted. Only meaningful for the choice kinds. */
+  allowOther: z.boolean(),
+  /** What the host says out loud, derived from the structure above. */
+  voicePrompt: z.string().min(1).max(500),
+  /**
+   * The state at the moment the card was written.
+   *
+   * Messages are immutable, so this is never edited: a surface shows “answered” from the answer message
+   * that follows, exactly as an approval card reads its decision from the receipt.
+   */
+  status: z.enum(["waiting", "answered", "cancelled", "expired"]),
+  createdAt: instantSchema,
+  expiresAt: instantSchema.optional(),
 });
 
 export const messageBlockSchema = z.discriminatedUnion("type", [
@@ -669,6 +702,7 @@ export const messageBlockSchema = z.discriminatedUnion("type", [
   systemCardBlockSchema,
   approvalCardBlockSchema,
   credentialCardBlockSchema,
+  questionCardBlockSchema,
   connectionCardBlockSchema,
   taskProgressCardSchema,
   taskSummaryCardSchema,
@@ -676,7 +710,6 @@ export const messageBlockSchema = z.discriminatedUnion("type", [
   codeDiffCardSchema,
   projectPickerCardSchema,
   reconnectCardSchema,
-  questionCardSchema,
   formCardSchema,
 ]);
 export type MessageBlock = z.infer<typeof messageBlockSchema>;
@@ -694,6 +727,7 @@ export type MessageBlock = z.infer<typeof messageBlockSchema>;
 export const HOST_OWNED_BLOCK_TYPES = [
   "system-card",
   "approval-card",
+  "question-card",
   "credential-card",
   "connection-card",
   "task-progress-card",
@@ -702,7 +736,6 @@ export const HOST_OWNED_BLOCK_TYPES = [
   "code-diff-card",
   "project-picker-card",
   "reconnect-card",
-  "question-card",
   "form-card",
   "browser-session-card",
   "computer-session-card",

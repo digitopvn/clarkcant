@@ -328,6 +328,238 @@ export async function decideProject(
   };
 }
 
+/**
+ * What a guardrail says about an operation the host has already decided is possible.
+ *
+ * Note what is missing: a constraint. The guardrail picks an id from the narrowing options the host
+ * offered, and the host turns that id into a real constraint. A model that could author its own
+ * constraint could author a wider one, so it never gets to.
+ */
+export type OperationGuardOutcome =
+  | { status: "allow"; reason?: string; model?: string }
+  | { status: "deny"; reason: string; model?: string }
+  | { status: "constrain"; constraintId: string; reason: string; model?: string }
+  /** Not permission: the operation is under-specified and several readings are equally valid. */
+  | { status: "clarify"; question: string; model?: string }
+  /** The policy layer could not be reached or would not decide; the caller's fail-open setting governs. */
+  | { status: "unavailable"; reason: string };
+
+export interface OperationGuardInput {
+  /** What the person asked for, in their own words. Redacted before it leaves the node. */
+  intent: string;
+  /** What is about to happen, in the host's words. Short, and written by the caller rather than the model. */
+  operation: string;
+  /**
+   * Sanitized facts: `effect`, `commandClass`, `cwdScope`, `executable`, `recursive`, `estimatedTargets`.
+   *
+   * Named fields rather than a command line, because the guardrail is being asked whether an operation
+   * is appropriate, and the raw text of a command is both a prompt-injection surface and a place where a
+   * secret can hide.
+   */
+  state: Readonly<Record<string, string>>;
+  /** The person's own rules from settings. Policy, not authority: it can only ask for less. */
+  instructions: string;
+  /** The narrowing options the host is willing to apply. Empty means this operation cannot be narrowed. */
+  constraints?: readonly { id: string; description: string }[];
+  /** The question asked when the answer is `clarify`; host-written, since the selector returns no prose. */
+  clarifyQuestion?: string;
+}
+
+/**
+ * Ask the policy layer about one operation.
+ *
+ * This is the sixth decision, and the first one whose subject is an *effect* rather than a choice among
+ * things that already exist. Two refusals keep it honest:
+ *
+ *   - It is not consulted for a class the person switched off, and not at all under `auto`: those
+ *     decisions are made by the caller, not by a model pretending to have made them.
+ *   - An answer that is not decisive is reported as `unavailable` rather than rounded into `allow`.
+ *     What happens next is the caller's fail-open setting, which is a decision a person made once,
+ *     instead of a coin the selector flips per command.
+ */
+export async function guardOperation(deps: DecideDeps, input: OperationGuardInput): Promise<OperationGuardOutcome> {
+  const refused = jevCallRefusal(deps.jev.config);
+  if (refused !== undefined) return { status: "unavailable", reason: refused };
+
+  const offered = input.constraints ?? [];
+  const criteria: Record<string, string | null> = {
+    allow: "việc này nên chạy như đang đề nghị",
+    deny: "việc này không nên chạy",
+  };
+  if (offered.length > 0) {
+    criteria.constrain = `chỉ nên chạy trong phạm vi hẹp hơn: ${offered.map((entry) => entry.id).join(", ")}`;
+  }
+  criteria.clarify = "chưa rõ việc này nhắm vào đâu; phải hỏi lại người dùng trước khi làm";
+
+  // One budget for the whole decision, so a follow-up question about which constraint to apply cannot
+  // spend a second deadline and turn a two-second decision into four.
+  const budget = deps.budget();
+
+  const outcome = await askChoice(deps.jev, {
+    state: {
+      intent: sanitizeIntent(input.intent, 400),
+      operation: sanitizeIntent(input.operation, 300),
+      ...sanitizeState(input.state),
+    },
+    instructions: [
+      "Quyết định xem operation này có nên chạy trên máy của người dùng hay không.",
+      "Chỉ được chọn thu hẹp hoặc từ chối; không có lựa chọn nào mở rộng phạm vi.",
+      "`clarify` chỉ dùng khi bản thân việc này mơ hồ (nhiều đối tượng đều hợp lệ), không dùng để xin phép.",
+      redactSecrets(input.instructions.trim()).slice(0, 1_500),
+    ]
+      .filter((line) => line !== "")
+      .join("\n"),
+    criteria,
+    questionId: "guard-operation",
+    budget,
+  });
+
+  if (outcome.status !== "answered") {
+    return {
+      status: "unavailable",
+      reason: outcome.status === "unavailable" ? outcome.reason : `the guardrail did not decide: ${outcome.reason}`,
+    };
+  }
+  if (!outcome.value.substantive) return { status: "unavailable", reason: "the guardrail had no preference" };
+
+  const decisive = isDecisive(
+    outcome.value.top,
+    outcome.value.runnerUp,
+    deps.jev.config.confidenceFloor,
+    deps.jev.config.marginFloor,
+  );
+  if (!decisive.decisive) return { status: "unavailable", reason: decisive.reason };
+
+  const model = deps.jev.config.model;
+  const choice = outcome.value.choice;
+
+  if (choice === "allow") return { status: "allow", model };
+  if (choice === "clarify") {
+    return {
+      status: "clarify",
+      question:
+        input.clarifyQuestion ?? "Việc này có thể nhắm vào nhiều đối tượng đều hợp lệ. Bạn muốn nói tới cái nào?",
+      model,
+    };
+  }
+  if (choice === "deny") {
+    return { status: "deny", reason: "guardrail từ chối việc này", model };
+  }
+  if (choice !== "constrain") {
+    return { status: "unavailable", reason: `the guardrail chose something that was not an option: ${choice}` };
+  }
+
+  // `constrain` needs a second, narrower question, because the first answer can only name the decision.
+  // An unresolvable constraint is not treated as `allow`: that would let a refusal to narrow become a
+  // widening. It is reported as unavailable, and the caller's fail-open setting governs what that means.
+  const narrowing = await askChoice(deps.jev, {
+    state: {
+      operation: sanitizeIntent(input.operation, 300),
+      ...sanitizeState(input.state),
+    },
+    instructions: "Chọn cách thu hẹp operation này. Chọn none nếu không cách nào trong đây phù hợp.",
+    criteria: Object.fromEntries(offered.map((entry) => [entry.id, entry.description])),
+    questionId: "guard-constraint",
+    budget,
+  });
+
+  if (narrowing.status !== "answered" || !narrowing.value.substantive) {
+    return {
+      status: "unavailable",
+      reason:
+        narrowing.status === "answered"
+          ? "the guardrail asked to narrow but named no way to do it"
+          : `the guardrail asked to narrow and then was unreachable: ${narrowing.reason}`,
+    };
+  }
+  const decided = isDecisive(
+    narrowing.value.top,
+    narrowing.value.runnerUp,
+    deps.jev.config.confidenceFloor,
+    deps.jev.config.marginFloor,
+  );
+  if (!decided.decisive) {
+    return { status: "unavailable", reason: `the guardrail asked to narrow without choosing how: ${decided.reason}` };
+  }
+  const constraintId = narrowing.value.choice;
+  if (!offered.some((entry) => entry.id === constraintId)) {
+    return { status: "unavailable", reason: "the guardrail chose a narrowing the host never offered" };
+  }
+  return { status: "constrain", constraintId, reason: "guardrail yêu cầu thu hẹp phạm vi", model };
+}
+
+/**
+ * The state handed to the guardrail: short strings, redacted, bounded.
+ *
+ * Every value goes through the same treatment as the intent, because a command's own arguments end up
+ * in `executable` or `cwdScope` and would otherwise travel unredacted beside a field that is not.
+ */
+function sanitizeState(state: Readonly<Record<string, string>>): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const [key, value] of Object.entries(state).slice(0, 12)) {
+    out[key] = sanitizeIntent(String(value), 120);
+  }
+  return out;
+}
+
+/**
+ * Which model a background worker should run.
+ *
+ * The seventh decision, and the only one whose subject is a preference rather than a fact: nothing about a provider's
+ * catalogue says which of two eligible models suits this job. What the caller guarantees is the important half — the
+ * candidates have already been filtered to models that can run — so this may only choose among them, and anything
+ * else it returns is refused rather than accepted.
+ */
+export async function decideModelRoute(
+  deps: DecideDeps,
+  input: {
+    /** What the work is, in the host's words. Short, and redacted before it leaves the node. */
+    task: string;
+    role: string;
+    candidates: readonly { alias: string; description: string }[];
+  },
+): Promise<{ status: "chosen"; alias: string; model: string } | { status: "unavailable"; reason: string }> {
+  if (input.candidates.length < 2) {
+    return { status: "unavailable", reason: "một candidate thì không phải một quyết định" };
+  }
+  const refused = jevCallRefusal(deps.jev.config);
+  if (refused !== undefined) return { status: "unavailable", reason: refused };
+
+  const criteria: Record<string, string | null> = {};
+  for (const candidate of input.candidates.slice(0, 12)) criteria[candidate.alias] = candidate.description;
+
+  const outcome = await askChoice(deps.jev, {
+    state: { task: sanitizeIntent(input.task, 400), role: input.role },
+    instructions:
+      "Chọn model phù hợp nhất cho công việc chạy nền này. Chỉ được chọn trong danh sách; chọn none nếu không có cái nào phù hợp.",
+    criteria,
+    questionId: "model-route",
+    budget: deps.budget(),
+  });
+
+  if (outcome.status !== "answered") {
+    return {
+      status: "unavailable",
+      reason: outcome.status === "unavailable" ? outcome.reason : `bộ chọn không quyết định: ${outcome.reason}`,
+    };
+  }
+  if (!outcome.value.substantive) return { status: "unavailable", reason: "bộ chọn không có ý kiến" };
+
+  const decisive = isDecisive(
+    outcome.value.top,
+    outcome.value.runnerUp,
+    deps.jev.config.confidenceFloor,
+    deps.jev.config.marginFloor,
+  );
+  if (!decisive.decisive) return { status: "unavailable", reason: decisive.reason };
+
+  const chosen = input.candidates.find((candidate) => candidate.alias === outcome.value.choice);
+  if (chosen === undefined) {
+    return { status: "unavailable", reason: `bộ chọn trả về ${outcome.value.choice}, không nằm trong danh sách được đưa` };
+  }
+  return { status: "chosen", alias: chosen.alias, model: deps.jev.config.model };
+}
+
 /** The three things that can happen to a message that arrives while something is running. */
 export type TurnAction = "steer" | "interrupt" | "background";
 

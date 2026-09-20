@@ -6,6 +6,8 @@
  * principal, because the gateway derives the caller from the channel rather than the body.
  */
 
+import type { AutonomySettings, ModelPool } from "@clarkcant/contracts";
+
 import {
   memoryListSchema,
   suggestionsResponseSchema,
@@ -748,6 +750,41 @@ export class GatewayClient {
    * The node stores the choice and answers with the scope it reaches: a conversation already open keeps the model it
    * began with, so this is not a switch that changes what is running underneath somebody mid-sentence.
    */
+  /**
+   * The pool of models this node keeps, with what the catalogue says about each one.
+   *
+   * `checked` is the node's own answer about whether it can run a profile, not something the client derives: the
+   * catalogue lives on the node, and a client that guessed would disagree with the node at the first upgrade.
+   */
+  async modelPool(): Promise<{
+    pool: ModelPool;
+    currentAlias?: string;
+    checked: { alias: string; ok: boolean; message?: string }[];
+  }> {
+    return this.#call("GET", "/model-pool");
+  }
+
+  async putModelPool(pool: ModelPool): Promise<{ ok: boolean; pool: ModelPool }> {
+    return this.#call("POST", "/model-pool", { pool });
+  }
+
+  /**
+   * Move to the next enabled profile.
+   *
+   * The node answers with the alias it moved to and says what that applies to, because the honest answer is "a new
+   * generation" rather than "now": a running turn keeps the model it started with.
+   */
+  async cycleModel(): Promise<{
+    ok: boolean;
+    previous?: string;
+    alias: string;
+    provider: string;
+    modelId: string;
+    applies: string;
+  }> {
+    return this.#call("POST", "/model-pool/cycle", {});
+  }
+
   async chooseModel(input: {
     provider: string;
     id: string;
@@ -764,6 +801,20 @@ export class GatewayClient {
     applies: "next-session" | "next-start";
   }> {
     return this.#call("POST", "/model", input);
+  }
+
+  /**
+   * How much this node does on its own, and what may stop it.
+   *
+   * The narrowing list comes back with the settings because the panel shows what the guardrail is allowed to
+   * ask for: a host-owned list a guardrail may pick from, never compose.
+   */
+  async autonomy(): Promise<{ settings: AutonomySettings; narrowing: { id: string; description: string }[] }> {
+    return this.#call("GET", "/autonomy");
+  }
+
+  async putAutonomy(settings: AutonomySettings): Promise<{ ok: boolean; settings: AutonomySettings }> {
+    return this.#call("POST", "/autonomy", { settings });
   }
 
   /**
@@ -902,6 +953,29 @@ export class GatewayClient {
     decision: { decision: "granted" | "denied"; digest: string },
   ): Promise<{ decision: string; timeline: Timeline; outcome?: string }> {
     return this.#call("POST", `/conversations/${conversationId}/approvals/${approvalId}/decide`, decision);
+  }
+
+  /**
+   * Answer a question the agent asked, or drop it.
+   *
+   * The node records the answer and opens a new turn with it, which is why this route exists separately from the
+   * turn that asked: nothing was waiting on the node for this answer, so nothing needs resuming. A click and a
+   * spoken utterance post to this same route, so the two can never disagree about what an answer means.
+   */
+  answerQuestion(
+    conversationId: string,
+    questionId: string,
+    answer: { text?: string; optionIds?: string[]; confirmed?: boolean; viaVoice?: boolean },
+  ): Promise<{ ok: boolean; note: string; timeline: Timeline }> {
+    return this.#call(
+      "POST",
+      `/conversations/${conversationId}/questions/${encodeURIComponent(questionId)}/answer`,
+      answer,
+    );
+  }
+
+  cancelQuestion(conversationId: string, questionId: string): Promise<{ ok: boolean; timeline: Timeline }> {
+    return this.#call("POST", `/conversations/${conversationId}/questions/${encodeURIComponent(questionId)}/cancel`, {});
   }
 
   /** Resolve the live surface for an instance: current state, sections and ownership. */
@@ -1117,7 +1191,9 @@ export class GatewayClient {
    * cache, redisplay or log. The value travels once, in the request body, and that is the only place it exists
    * on this side of the wire.
    */
-  async putCredential(input: { fields: { name: string; value: string }[] }): Promise<{ names: string[] }> {
+  async putCredential(input: {
+    fields: { name: string; value: string; kind?: string; description?: string; consumer?: string }[];
+  }): Promise<{ names: string[] }> {
     const response = await this.#fetch(`${this.#baseUrl}/credentials`, {
       method: "POST",
       headers: { authorization: `Bearer ${this.#token}`, "content-type": "application/json" },

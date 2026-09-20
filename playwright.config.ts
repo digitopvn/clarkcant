@@ -89,7 +89,12 @@ export default defineConfig({
       // that is cmd.exe, which reads `CC_VOICE_FIXTURE=1` as a program name and refuses to start the
       // server at all. The suite was unrunnable there, which is a worse failure than a failing test —
       // it looks like an infrastructure problem and so nobody reads it as a missing verification.
-      command: `node apps/runtime/src/main.ts --data-dir ${DATA_DIR} --port ${NODE_PORT} --label e2e-node`,
+      // The data directory is wiped before the node starts, so the suite means the same thing on every run.
+      // It is not housekeeping: several specs assert an exact set of records (a node that has exactly one credential,
+      // a transcript with exactly one card), and a data directory kept from a previous run makes those assertions false
+      // for a reason that has nothing to do with the code — a failure that reads like a regression and is not one.
+      // A fresh directory is also what a first run looks like, which is the state these specs are written about.
+      command: `node -e "require('node:fs').rmSync('${DATA_DIR}',{recursive:true,force:true})" && node apps/runtime/src/main.ts --data-dir ${DATA_DIR} --port ${NODE_PORT} --label e2e-node`,
       env: {
         CC_VOICE_FIXTURE: "1",
         CC_MODEL_FIXTURE: "1",

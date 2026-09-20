@@ -1,11 +1,10 @@
 import { join } from "node:path";
 
-import { ATTACHMENT_LIMITS, attachmentIdSchema, memoryKindSchema, memoryScopeSchema } from "@clarkcant/contracts";
+import { ATTACHMENT_LIMITS, attachmentIdSchema, memoryKindSchema, memoryScopeSchema, type AutonomySettings, type ExecutionPolicy, type GuardClass, type GuardrailConstraint, type Instant } from "@clarkcant/contracts";
 import type { EffectCategory, ExecutionMode, ExecutionRule } from "@clarkcant/contracts";
 import { getAttachment } from "@clarkcant/storage";
 import type { ToolDefinition } from "@clarkcant/pi-adapter";
 import {
-  decideExecution,
   recordEffectExecution,
   requestApproval,
   type CoordinationDeps,
@@ -16,9 +15,16 @@ import {
 } from "@clarkcant/core";
 
 import { blobsDir, readBlob } from "./blobs.ts";
-import { extractPdfText } from "./pdf-text.ts";
+import { createAskUserQuestionTool } from "./ask-user-question.ts";
+import { createRequestSecretTool, type RequestSecretDeps } from "./request-secret.ts";
+import type { InteractionDeps } from "./interactions.ts";
 import { describeSearch, machineRoots, searchFileSystem } from "./fs-search.ts";
-import { commandDigest, commandOutput, describeCommandOutcome, guardCommand, runCommand } from "./run-command.ts";
+import { applyGuardrailConstraints, preflightCommand, type CommandEnvelope, type OwnedResources } from "./preflight.ts";
+import { createQuestion } from "./interactions.ts";
+import type { SecretBroker } from "./secret-broker.ts";
+import type { OperationGuardInput, OperationGuardOutcome } from "./jev-decider.ts";
+import { extractPdfText } from "./pdf-text.ts";
+import { commandDigest, runGuardedCommand, type CommandOutcome } from "./run-command.ts";
 import type { ProjectFinderDeps } from "./project-finder.ts";
 import { createFindProjectTool } from "./project-finder.ts";
 import { createFindRuntimeTool } from "./runtime-candidates.ts";
@@ -45,11 +51,30 @@ export function createNodeTools(input: {
   /** Where a machine-wide search starts. Defaults to every drive, or the filesystem root. */
   roots?: () => readonly string[];
   /**
-   * Where an approval request is recorded, when this node may run commands at all.
+   * The interaction manager for the conversation this turn belongs to.
    *
-   * Absent means `run_command` is not registered: a node with no way to record a decision has no way to
-   * ask for one, and a tool that could only refuse is worse than no tool.
+   * Absent means `ask_user_question` is not registered: a turn with no conversation has no transcript to
+   * record a question in, and a card nobody can answer is worse than no tool.
    */
+  interactions?: InteractionDeps;
+  /**
+   * The secret broker's read side, when this node may ask for secrets at all.
+   *
+   * Absent means `request_secret` is not registered, and the instruction not to ask for a secret anywhere else is
+   * the only thing left — which is why the refusal inside `ask_user_question` is deterministic rather than
+   * dependent on this tool existing.
+   */
+  secrets?: RequestSecretDeps;
+  /**
+   * The command path, when this node may run commands at all.
+   *
+   * Absent means `run_command` is not registered. Note what is *not* required: an approval route. A node
+   * whose policy is `guarded` runs commands without ever recording a decision, so tying this tool's
+   * existence to the approval infrastructure — as it used to be — would leave the default policy with no
+   * executor.
+   */
+  command?: CommandToolDeps;
+
   approvals?: () => CoordinationDeps;
   /**
    * The execution policy in force, read at each proposal rather than captured when the node booted.
@@ -68,7 +93,13 @@ export function createNodeTools(input: {
    * Absent means this node does not perform such an effect at all: it asks instead. An effect nobody
    * approved and nobody can find afterwards is worse than a question.
    */
-  audit?: () => { deps: ExecutionAuditDeps; principalId: string; conversationId?: string };
+  /**
+   * Where a command that ran without a card leaves its record in the effect ledger; see `audit` above for the trail.
+   *
+   * Two different records on purpose: this one follows how far an external effect got, which is a question about
+   * recovery, and the trail above answers who asked for what and how it ended.
+   */
+  effectAudit?: () => { deps: ExecutionAuditDeps; principalId: string; conversationId?: string };
   /** Resolve a folder from the model's words, through the finder and its decider. */
   resolveFolder?: (intent: string) => Promise<
     | { status: "resolved"; cwd: string; relPath: string }
@@ -110,13 +141,17 @@ export function createNodeTools(input: {
   return [
     createSearchHistoryTool(input.search),
     createSearchFilesTool(roots),
-    ...(input.approvals === undefined
+    ...(input.interactions === undefined ? [] : [createAskUserQuestionTool(input.interactions)]),
+    ...(input.secrets === undefined ? [] : [createRequestSecretTool(input.secrets)]),
+    ...(input.command === undefined
       ? []
       : [
           createRunCommandTool({
-            approvals: input.approvals,
-            ...(input.policy === undefined ? {} : { policy: input.policy }),
-            ...(input.audit === undefined ? {} : { audit: input.audit }),
+            ...input.command,
+            ...(input.interactions === undefined ? {} : { interactions: input.interactions }),
+            // The effect ledger, kept from main: `audit` above is the trail (who asked for what, and how it ended),
+            // and this is the record of how far an external effect got, which is the question recovery asks.
+            ...(input.effectAudit === undefined ? {} : { effectAudit: input.effectAudit }),
             ...(input.resolveFolder === undefined ? {} : { resolveFolder: input.resolveFolder }),
           }),
         ]),
@@ -254,34 +289,251 @@ export function createReadAttachmentTool(input: {
 }
 
 /**
+ * Everything the command tool needs, injected.
+ *
+ * Functions rather than values, so a settings change applies to the next command instead of the next
+ * restart, and so this module stays testable without a database, a node or a provider.
+ */
+export interface CommandToolDeps {
+  /**
+   * Where an approval request is recorded. Only `confirm` needs it.
+   *
+   * Optional on purpose: the default policy does not ask anybody, and a tool that refused to exist
+   * without a decision route would make the default unreachable.
+   */
+  approvals?: () => CoordinationDeps;
+  /** The autonomy settings as they are now. */
+  autonomy: () => AutonomySettings;
+  /** The folders this node owns. Every effect has to resolve inside one of them. */
+  resources: () => OwnedResources;
+  /** The node's own working directory, used when the model named no folder and `cwd` was absent. */
+  fallbackCwd: () => string;
+  /** The policy layer. Absent means there is nothing to consult, and the fail-open setting decides. */
+  guardrails?: (input: OperationGuardInput) => Promise<OperationGuardOutcome>;
+  /**
+   * The narrowing options this host is willing to apply, with the constraint each one means.
+   *
+   * The selector picks an id; this table turns it into a constraint. That indirection is the guarantee
+   * that a guardrail cannot widen anything: it can only point at something the host already decided was a
+   * narrowing.
+   */
+  narrowing?: readonly { id: string; description: string; constraint: GuardrailConstraint }[];
+  /** Ids for the receipts this tool writes. */
+  newId: () => string;
+  /**
+   * Where a finished command is written down, when this node keeps a trail.
+   *
+   * Optional because the audit trail is a node's decision: a test, or an embedder, may run this tool without one.
+   * What is *not* optional is what it may contain — a summary and an outcome, never the command's output and never a
+   * secret that was injected into it.
+   */
+  audit?: (event: {
+    summary: string;
+    outcome: "done" | "failed" | "stopped" | "refused";
+    ref?: string;
+  }) => void;
+  /**
+   * The effect ledger, kept from main.
+   *
+   * Two records answer two different questions: `audit` says who asked for what and how it ended, and this one says
+   * how far an external effect got — which is what a reader needs after a crash between a command starting and its
+   * result arriving. The dependencies come from the caller because only the node knows its database and its clock.
+   */
+  effectAudit?: () => {
+    deps: Parameters<typeof recordEffectExecution>[0];
+    principalId: string;
+    conversationId?: string;
+  };
+  /**
+   * The interaction manager, when this node may ask the person something.
+   *
+   * Optional because a node can run commands without being able to ask: in that case a folder the finder cannot
+   * choose between comes back as a question for the model to carry, which is worse but honest.
+   */
+  interactions?: InteractionDeps;
+  now?: () => Instant;
+  /** Injected so the whole path can be tested without spawning anything. */
+  run?: (request: {
+    command: string;
+    cwd: string;
+    timeoutMs: number;
+    maxOutputBytes: number;
+    env?: Record<string, string>;
+  }) => Promise<CommandOutcome>;
+  /**
+   * The secret broker, when a command may be given a secret it needs.
+   *
+   * Absent means `secretRef` is refused rather than ignored: a command that ran without the credential it asked
+   * for would fail in a way that looks like the command's fault.
+   */
+  broker?: SecretBroker;
+}
+
+/**
+ * Which policy applies to one effect.
+ *
+ * `guarded` is the interesting case: it means "do not ask a person, but do ask the policy layer", and the
+ * policy layer is only asked for the classes the person left switched on. A class that is switched off is
+ * not "denied" — it is simply not judged, and it runs. Reading it as a denial would make turning a class
+ * off in settings stop work, which is the opposite of what the switch says.
+ */
+export function policyForEffect(settings: AutonomySettings, guardClass: GuardClass): ExecutionPolicy {
+  if (settings.executionPolicy === "deny") return "deny";
+  if (settings.executionPolicy === "confirm") return "confirm";
+  if (settings.executionPolicy === "auto") return "auto";
+  if (!settings.jevGuardrails) return "auto";
+  return settings.guardedClasses.includes(guardClass) ? "guarded" : "auto";
+}
+
+export type GuardDecisionForCommand =
+  | { kind: "proceed"; envelope: CommandEnvelope }
+  | { kind: "refuse"; text: string }
+  /** The policy layer could not tell what the command is aimed at and said so. A question, not a verdict. */
+  | { kind: "ask"; question: string };
+
+/**
+ * Consult the policy layer about one command, and turn its answer into something the turn can act on.
+ *
+ * The four outcomes are handled differently on purpose. `allow` proceeds. `deny` and `clarify` both stop
+ * the command but say different things — a refusal is final, a clarification is a question the model can
+ * carry back and re-propose against. `constrain` is applied through the host's own table and can still be
+ * refused by `applyGuardrailConstraints` if it turns out to widen. `unavailable` is not a refusal: it is
+ * the absence of a judgment, and what it means is the person's `whenJevUnavailable` setting rather than a
+ * guess made here.
+ */
+export async function decideGuardrailForCommand(
+  input: CommandToolDeps,
+  request: { settings: AutonomySettings; envelope: CommandEnvelope; why: string },
+): Promise<GuardDecisionForCommand> {
+  const outcome: OperationGuardOutcome =
+    input.guardrails === undefined
+      ? { status: "unavailable", reason: "node này chưa nối guardrail nào" }
+      : await input.guardrails({
+          intent: request.why === "" ? request.envelope.command : request.why,
+          operation: `Chạy lệnh trong ${request.envelope.cwd}`,
+          state: {
+            effect: request.envelope.effectCategory,
+            commandClass: request.envelope.classification.commandClass,
+            cwdScope: request.envelope.cwd,
+            executable: request.envelope.command.split(/\s+/)[0] ?? "",
+            recursive: String(request.envelope.classification.recursive),
+            destructive: String(request.envelope.classification.destructive),
+            estimatedTargets: String(request.envelope.classification.estimatedTargets),
+          },
+          instructions: request.settings.instructions,
+          ...(input.narrowing === undefined
+            ? {}
+            : { constraints: input.narrowing.map((entry) => ({ id: entry.id, description: entry.description })) }),
+          clarifyQuestion:
+            "Lệnh này có thể nhắm vào nhiều đối tượng đều hợp lệ. Bạn muốn nói tới cái nào?",
+        });
+
+  if (outcome.status === "allow") return { kind: "proceed", envelope: request.envelope };
+  if (outcome.status === "deny") {
+    return { kind: "refuse", text: `Guardrail từ chối lệnh này (${outcome.reason}). Không có gì được chạy.` };
+  }
+  if (outcome.status === "clarify") {
+    /*
+     * A question rather than a refusal.
+     *
+     * This used to be handed to the model as prose — "ask the user and propose again" — which made whether anybody
+     * was actually asked depend on the model remembering to ask. It is the same judgement either way; what changes is
+     * who holds the question. The interaction manager holds it, so the turn ends on it and the answer arrives as its
+     * own turn, which is also what lets a click and a spoken sentence be the same answer.
+     */
+    return { kind: "ask", question: outcome.question };
+  }
+  if (outcome.status === "constrain") {
+    const offered = (input.narrowing ?? []).find((entry) => entry.id === outcome.constraintId);
+    if (offered === undefined) {
+      return { kind: "refuse", text: "Guardrail yêu cầu thu hẹp nhưng không nêu cách nào host đã cho phép." };
+    }
+    const narrowed = applyGuardrailConstraints(request.envelope, [offered.constraint]);
+    if (!narrowed.ok) return { kind: "refuse", text: `Guardrail yêu cầu nới phạm vi: ${narrowed.message}` };
+    return { kind: "proceed", envelope: narrowed.envelope };
+  }
+
+  if (request.settings.whenJevUnavailable === "allow") return { kind: "proceed", envelope: request.envelope };
+  return {
+    kind: "refuse",
+    text: `Guardrail không dùng được (${outcome.reason}) và node này đặt là từ chối khi Jev vắng. Không có gì được chạy.`,
+  };
+}
+
+/**
+ * Turn a finder's indecision into a question card.
+ *
+ * The options are the folders themselves, in the finder's own words, and the answer comes back as the label the
+ * person saw — which is what the next turn needs to re-propose against. Returns nothing when the node cannot ask
+ * or when the manager refuses the question, so the caller keeps its text fallback rather than inventing a card.
+ */
+function askWhichFolder(
+  input: { interactions?: InteractionDeps },
+  found: { message: string; options: readonly string[] },
+): { text: string; hostBlocks: Record<string, unknown>[] } | undefined {
+  if (input.interactions === undefined || found.options.length === 0) return undefined;
+  const created = createQuestion(input.interactions, {
+    question: found.message,
+    kind: "single-choice",
+    options: found.options.slice(0, 8).map((folder, index) => ({ id: `folder-${index + 1}`, label: folder })),
+    allowOther: true,
+  });
+  if (!created.ok) return undefined;
+  return {
+    text: "Đã hỏi người dùng muốn dùng thư mục nào. Lượt này kết thúc ở đây; câu trả lời sẽ tới ở lượt sau.",
+    // SAFETY: built against the message-block union by `createQuestion`; the adapter's shape is loose because it
+    // must not depend on contracts, and the node validates every block before it reaches a transcript.
+    hostBlocks: [created.block as unknown as Record<string, unknown>],
+  };
+}
+
+/**
+ * Turn a guardrail's request to clarify into a question card.
+ *
+ * A `text` question rather than a choice, because what the policy layer could not tell apart is the intent itself —
+ * offering it options would be pretending it had narrowed the possibilities down. Returns nothing when the node cannot
+ * ask, so the caller keeps its text fallback rather than inventing a card nobody can answer.
+ */
+function askClarify(
+  input: { interactions?: InteractionDeps },
+  question: string,
+): { text: string; hostBlocks: Record<string, unknown>[] } | undefined {
+  if (input.interactions === undefined) return undefined;
+  const created = createQuestion(input.interactions, { question, kind: "text", allowOther: true });
+  if (!created.ok) return undefined;
+  return {
+    text:
+      "Đã hỏi người dùng cho rõ trước khi chạy. Lượt này kết thúc ở đây; câu trả lời sẽ tới ở lượt sau, và không có gì " +
+      "chạy trước khi có câu trả lời. Đừng nói là đã chạy.",
+    // SAFETY: built against the message-block union by `createQuestion`; the adapter's shape is loose because it must
+    // not depend on contracts, and the node validates every block before it reaches a transcript.
+    hostBlocks: [created.block as unknown as Record<string, unknown>],
+  };
+}
+
+/**
  * Running a command, as the model may ask for it.
  *
- * The tool does not run anything. It records a request and hands back the card that asks the user, and
- * the command runs only when that card is approved — which is why the description says so in the first
- * sentence. A model that believed it had already run something would tell the user it was done.
- *
- * The description also sends it looking for a place first, because the operator's decision was that the
- * agent may work anywhere it can justify: `where` is an intent ("somewhere beside my other projects") and
- * it is resolved by the project finder, which is where Jev decides when several folders could be meant.
- * Naming no place at all is not an option the model has — it either finds one or asks.
+ * The tool used to do nothing but record a request and hand back a card. It now runs the command, and what
+ * makes that acceptable is not the tool: it is `preflightCommand`, which decides ownership, existence and
+ * budget before this code runs, and `decideGuardrailForCommand`, which may narrow or refuse afterwards.
+ * The approval card is still here for `confirm`, whole and unchanged, because a policy mode that cannot be
+ * exercised is a policy mode that has already rotted.
  */
-export function createRunCommandTool(input: {
-  approvals: () => CoordinationDeps;
-  /** The policy in force, read at each proposal. Absent means this node always asks. */
-  policy?: () => { mode: ExecutionMode; rules: readonly ExecutionRule[] };
-  /** Where a command that ran without a card leaves its record. Absent means it always asks. */
-  audit?: () => { deps: ExecutionAuditDeps; principalId: string; conversationId?: string };
-  /**
-   * Resolve a folder from the model's words, through the finder and its decider.
-   *
-   * Injected rather than imported so the tool stays independent of the finder's machinery, and so a test
-   * can drive the ambiguous case without a project index.
-   */
-  resolveFolder?: (intent: string) => Promise<
-    | { status: "resolved"; cwd: string; relPath: string }
-    | { status: "ask"; message: string; options: readonly string[] }
-  >;
-}): ToolDefinition {
+export function createRunCommandTool(
+  input: CommandToolDeps & {
+    /**
+     * Resolve a folder from the model's words, through the finder and its decider.
+     *
+     * Injected rather than imported so the tool stays independent of the finder's machinery, and so a test
+     * can drive the ambiguous case without a project index.
+     */
+    resolveFolder?: (intent: string) => Promise<
+      | { status: "resolved"; cwd: string; relPath: string }
+      | { status: "ask"; message: string; options: readonly string[] }
+    >;
+  },
+): ToolDefinition {
   return {
     name: "run_command",
     label: "Chạy một lệnh",
@@ -305,11 +557,23 @@ export function createRunCommandTool(input: {
         },
         cwd: { type: "string", description: "An exact directory, when you already know one." },
         why: { type: "string", description: "One sentence for the card: what this is for." },
+        secretRef: {
+          type: "string",
+          description:
+            "Name of a secret this command needs, e.g. github_token. It goes into this one child process's " +
+            "environment and you never see the value. Ask for it with request_secret first if the node may not have it.",
+        },
+        secretEnvVar: {
+          type: "string",
+          description: "The environment variable to put it in. Defaults to the secret's name in upper case.",
+        },
       },
     },
     promptSnippet:
       "run_command — run one shell command, immediately or once the user approves it, according to this node's execution policy",
-    execute: async (params: Record<string, unknown>): Promise<{ text: string; hostCard?: Record<string, unknown> }> => {
+    execute: async (
+      params: Record<string, unknown>,
+    ): Promise<{ text: string; hostCard?: Record<string, unknown>; hostBlocks?: Record<string, unknown>[] }> => {
       const command = typeof params.command === "string" ? params.command.trim() : "";
       if (command === "") return { text: "Cần một lệnh để chạy." };
 
@@ -320,8 +584,16 @@ export function createRunCommandTool(input: {
       if (cwd === undefined && where !== "" && input.resolveFolder !== undefined) {
         const found = await input.resolveFolder(where);
         if (found.status === "ask") {
-          // Several folders could be meant, so the question goes back through the model: it is the one
-          // holding the conversation, and the user's answer then names the folder it wanted.
+          /*
+           * The finder found several folders that could be meant, and this is the case the interaction manager
+           * exists for: the question is structural (which of these), not a request for permission, and the person
+           * can answer it by clicking or by saying the folder's name.
+           *
+           * Falling back to text is not a failure: a node with no way to ask leaves the model to carry the
+           * question, which is what this did before there was a card.
+           */
+          const asked = askWhichFolder(input, found);
+          if (asked !== undefined) return asked;
           const options = found.options.length === 0 ? "" : ` Có thể là: ${found.options.join(", ")}.`;
           return { text: `${found.message}${options} Hãy chọn một thư mục rồi đề xuất lại.` };
         }
@@ -329,105 +601,184 @@ export function createRunCommandTool(input: {
         because = `được tìm thấy từ “${where}” (${found.relPath})`;
       }
 
-      const guard = guardCommand({ command, cwd });
-      if (!guard.ok || guard.cwd === undefined) {
+      const settings = input.autonomy();
+      const preflight = preflightCommand({
+        command,
+        cwd,
+        resources: input.resources(),
+        fallbackCwd: input.fallbackCwd(),
+      });
+      if (!preflight.ok) {
         // Refused here, in the same turn, so the model can correct itself rather than the user finding out
-        // that a command cannot run where it asked.
-        return { text: guard.message ?? "Không xin được quyền chạy lệnh đó." };
+        // that a command cannot run where it asked. This is the host's own gate, not policy: a folder the
+        // node does not own, or one that is not there, is not a question to put to a model.
+        return { text: preflight.message };
       }
+      if (preflight.envelope.kind !== "command") return { text: "Chỉ chạy được lệnh shell qua công cụ này." };
 
-      const resolvedCwd = guard.cwd;
+      const envelope = preflight.envelope;
       const why = typeof params.why === "string" && params.why.trim() !== "" ? params.why.trim() : "";
-      const reason = because ?? guard.because ?? "";
-      const digest = commandDigest(command, resolvedCwd);
-      const policy = input.policy?.();
-      const mode: ExecutionMode = policy?.mode ?? "ask";
-      const category: EffectCategory = "local-write";
-      /*
-       * The mode decides whether this becomes a card, runs, or is refused.
-       *
-       * `explicitUserIntent` is false on purpose: the model proposed this command, and the user asked for
-       * an outcome rather than for these bytes. It is what the risk gate reads, and it is why a category
-       * that stays on this machine still runs in Autonomous while a destructive one would be asked about.
-       */
-      const decision: PolicyDecision =
-        policy === undefined
-          ? {
-              kind: "ask",
-              reason: "this node asks before every command",
-              approvalSpec: { effectCategory: category, operationDigest: digest, because: reason },
-            }
-          : decideExecution({
-              mode: policy.mode,
-              rules: policy.rules,
-              action: { kind: "effect", category, operationDigest: digest },
-              explicitUserIntent: false,
-            });
+      const reason = because ?? "";
+      const policy = policyForEffect(settings, envelope.guardClass);
 
-      if (decision.kind === "deny") {
-        // Said in the same turn, so the model tells the user it was refused instead of reporting that it
-        // ran. Retrying would be refused again, which is why it is told not to.
+      if (policy === "deny") {
         return {
           text:
-            `Không chạy lệnh đó: ${decision.reason}. Hãy nói cho người dùng biết là nó không chạy, và đừng ` +
-            `thử lại trừ khi họ đổi chính sách.`,
+            `Node này đang tắt lớp “${envelope.guardClass}”, nên lệnh này không chạy. ` +
+            `Người dùng bật lại trong Settings → Autonomy nếu muốn.`,
         };
       }
 
-      if (decision.kind === "execute") {
-        const audit = input.audit?.();
-        if (audit === undefined) {
-          // Autonomy without a record is the one combination this node refuses: an effect nobody approved
-          // and nobody can find afterwards is worse than a question.
-          return { text: "Không chạy được lệnh: node này chưa ghi được dấu vết cho việc chạy tự động." };
+      if (policy === "confirm") {
+        if (input.approvals === undefined) {
+          return {
+            text:
+              "Node này đang ở chế độ confirm nhưng không có nơi ghi quyết định, nên lệnh không chạy được. " +
+              "Đổi sang chế độ khác trong Settings → Autonomy.",
+          };
         }
-        // Recorded before the command starts, so a command that hangs or dies still shows that it began.
-        recordEffectExecution(audit.deps, {
-          principalId: audit.principalId,
+        const digest = commandDigest(command, envelope.cwd);
+        const approval = requestApproval(input.approvals(), {
+          operationDigest: digest,
+          operationDescription:
+            `Chạy một lệnh trong ${envelope.cwd}` +
+            (reason === "" ? "" : ` (${reason})`) +
+            (why === "" ? "" : `: ${why}`),
+          effectCategory: envelope.effectCategory,
+          // A quarter of an hour: long enough to read the command and decide, short enough that a card left
+          // on screen overnight cannot be approved the next morning for a stale reason.
+          ttlMs: 15 * 60_000,
+        });
+        return {
+          text:
+            `Đã gửi yêu cầu duyệt để chạy \`${command}\` trong ${envelope.cwd}. Chưa có gì chạy cả — người dùng ` +
+            `phải bấm duyệt, và tui không thể tự duyệt. Đừng nói là đã chạy xong.`,
+          hostCard: {
+            type: "approval-card",
+            owner: "host",
+            approvalId: approval.approvalId,
+            operationDescription: approval.operationDescription,
+            operationDigest: approval.operationDigest,
+            effectCategory: approval.effectCategory,
+            expiresAt: approval.expiresAt,
+            decider: approval.decider,
+            decision: approval.decision,
+            // The payload is what runs on approval, and the digest above is what proves it is unchanged.
+            payload: JSON.stringify({ command, cwd: envelope.cwd }),
+          },
+        };
+      }
+
+      // `guarded` and `auto` differ only in whether the policy layer is consulted. Neither asks a person,
+      // which is the whole point of the default: the control is the host's gate plus a judgment that can
+      // only narrow, not a dialog nobody reads.
+      let guarded = envelope;
+      if (policy === "guarded") {
+        const decision = await decideGuardrailForCommand(input, { settings, envelope, why });
+        if (decision.kind === "refuse") {
+          // A refusal is an effect too: it is the thing a person asks about later, when work they expected did not
+          // happen and nobody can remember why.
+          input.audit?.({ summary: decision.text, outcome: "refused" });
+          return { text: decision.text };
+        }
+        if (decision.kind === "ask") {
+          const asked = askClarify(input, decision.question);
+          // No trail entry: the question and its answer are blocks in the transcript, which is the durable record of
+          // this conversation. An audit kind here would be a second, shallower copy of the same fact.
+          if (asked !== undefined) return asked;
+          // A node that cannot ask leaves the question with the model. Worse, and said so.
+          return { text: `${decision.question} Hỏi người dùng rồi đề xuất lại.` };
+        }
+        guarded = decision.envelope;
+      }
+      const operationId = input.newId();
+
+      /*
+       * A secret this command needs, injected just in time.
+       *
+       * The consumer is derived from the command itself rather than taken from the model, so a secret allowed for
+       * `command:git` cannot be handed to `curl` by asking nicely. The value goes into this one child process's
+       * environment and exists nowhere else — not in the receipt, not in the tool result, not in the turn.
+       */
+      let env: Record<string, string> | undefined;
+      const secretRef = typeof params.secretRef === "string" ? params.secretRef.trim() : "";
+      if (secretRef !== "") {
+        if (input.broker === undefined) {
+          return { text: "Node này chưa nối secret broker, nên không inject được secret cho lệnh này." };
+        }
+        const executable = guarded.command.split(/\s+/)[0] ?? "";
+        const variable =
+          typeof params.secretEnvVar === "string" && params.secretEnvVar.trim() !== ""
+            ? params.secretEnvVar.trim()
+            : secretRef.toUpperCase();
+        const built = input.broker.environmentFor({ name: secretRef, consumer: `command:${executable}` }, variable);
+        if (!built.ok) return { text: `${built.message} Lệnh không chạy.` };
+        env = built.env;
+      }
+
+      /*
+       * The effect ledger, kept from main.
+       *
+       * Two records answer two different questions: the trail says who asked for what and how it ended, and this one
+       * says how far an external effect got — which is what a reader needs after a crash between a command starting
+       * and its result arriving. It is written before the command starts for exactly that reason.
+       */
+      const effectAudit = input.effectAudit?.();
+      if (effectAudit !== undefined) {
+        // Only reached when this node did not ask: the confirm path returned above with a card, so anything that runs
+        // here ran because the policy allowed this class of effect without a person.
+        const mode: ExecutionMode = "autonomous";
+        const decision: Extract<PolicyDecision, { kind: "execute" }> = {
+          kind: "execute",
+          reason: "host policy runs this class of effect without a card",
+          audit: true,
+        };
+        const category: EffectCategory = guarded.effectCategory;
+        recordEffectExecution(effectAudit.deps, {
+          principalId: effectAudit.principalId,
           mode,
           decision,
           category,
-          operationDigest: digest,
-          ...(audit.conversationId === undefined ? {} : { conversationId: audit.conversationId }),
-          description: `${command} — ${resolvedCwd}`,
+          operationDigest: commandDigest(guarded.command, guarded.cwd),
+          ...(effectAudit.conversationId === undefined ? {} : { conversationId: effectAudit.conversationId }),
+          description: `${guarded.command} — ${guarded.cwd}`,
         });
-
-        const outcome = await runCommand({ command, cwd: resolvedCwd });
-        // This text becomes the call's own receipt in the transcript, which is where a reader looks for
-        // what a command printed.
-        return { text: `${describeCommandOutcome(command, outcome)}\n\n${commandOutput(outcome)}` };
       }
 
-      const approval = requestApproval(input.approvals(), {
-        operationDigest: digest,
-        operationDescription:
-          `Chạy một lệnh trong ${resolvedCwd}` +
-          (reason === "" ? "" : ` (${reason})`) +
-          (why === "" ? "" : `: ${why}`) +
-          ` — ${decision.approvalSpec.because}`,
-        effectCategory: "local-write",
-        // A quarter of an hour: long enough to read the command and decide, short enough that a card left
-        // on screen overnight cannot be approved the next morning for a stale reason.
-        ttlMs: 15 * 60_000,
+      const ran = await runGuardedCommand({
+        operationId,
+        envelope: guarded,
+        ...(reason === "" ? {} : { reason }),
+        ...(why === "" ? {} : { why }),
+        ...(env === undefined ? {} : { env }),
+        ...(input.now === undefined ? {} : { now: input.now }),
+        ...(input.run === undefined ? {} : { run: input.run }),
+      });
+
+      /*
+       * Written down, with what it produced.
+       *
+       * The summary is the verdict line rather than the command's output: a trail that held output would be a second
+       * copy of everything the receipt exists to bound, and a stopped command is recorded as stopped rather than as a
+       * failure, because those are the two things a reader needs to tell apart.
+       */
+      input.audit?.({
+        summary: ran.description,
+        outcome:
+          ran.outcome.stopped === true ? "stopped" : ran.outcome.exitCode === 0 && !ran.outcome.timedOut ? "done" : "failed",
+        ref: operationId,
       });
 
       return {
-        text:
-          `Đã gửi yêu cầu duyệt để chạy \`${command}\` trong ${resolvedCwd}. Chưa có gì chạy cả — người dùng ` +
-          `phải bấm duyệt, và tui không thể tự duyệt. Đừng nói là đã chạy xong.`,
-        hostCard: {
-          type: "approval-card",
-          owner: "host",
-          approvalId: approval.approvalId,
-          operationDescription: approval.operationDescription,
-          operationDigest: approval.operationDigest,
-          effectCategory: approval.effectCategory,
-          expiresAt: approval.expiresAt,
-          decider: approval.decider,
-          decision: approval.decision,
-          // The payload is what runs on approval, and the digest above is what proves it is unchanged.
-          payload: JSON.stringify({ command, cwd: resolvedCwd }),
-        },
+        // The output travels back with the result because the model is still holding this turn: there is no
+        // second turn to hand it to, and a model told only that a command exited 0 would have to ask for the
+        // output it already produced.
+        text: `${ran.description}\n\n${ran.receipt}`,
+        // SAFETY: these are the blocks `runGuardedCommand` built out of the message-block union, and the
+        // adapter's shape is deliberately loose because that package must not depend on contracts. The node
+        // validates every block against the schema before it reaches a transcript, and the seam cannot be
+        // typed more tightly without inverting the dependency.
+        hostBlocks: ran.blocks as unknown as Record<string, unknown>[],
       };
     },
   };

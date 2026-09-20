@@ -7,16 +7,21 @@ import { QuestionCardBlock, renderBlock, type BlockActions } from "../src/blocks
 /**
  * The question card.
  *
- * Two claims matter here, and both are about what happens when the user is not looking at a fresh card.
+ * Three claims matter here, and the third is the one this card's shape exists for.
  *
- * The first is that an answer travels the composer's path. The card does not invent a route into the agent; it
- * hands the chosen label to `onQuestionAnswer`, and the conversation sends it as the user's own message. That is
- * what makes a click and a typed reply the same act, and it is why this test asserts the handler receives the
- * label rather than an id.
+ * The first is that an answer travels the composer's path: the card hands the chosen option's id to
+ * `onQuestionAnswer`, and the conversation records it and opens the next turn. The id rather than the label is
+ * deliberate — the label is what the person read and the id is what the host recorded the question in terms of — so
+ * a translated or shortened button still answers the question that was asked, and `answerFromUtterance` maps a
+ * spoken label back to the same id.
  *
- * The second is that the card stops being answerable once the conversation has moved past it. The transcript is
- * immutable, so a card that stayed live would offer a second answer to a question the node already received one
- * for — and the node would take it as a second message nobody meant to send.
+ * The second is that the card stops being answerable once the transcript carries an answer. Messages are never
+ * rewritten, so the record the node wrote when the answer arrived is what says otherwise.
+ *
+ * The third is that the card keeps no state of its own: the selection being composed and the text being typed
+ * travel through `onQuestionDraft`, and the question whose answer is in flight arrives as `questionPendingId`. A
+ * card holding its own copy would disagree with the conversation exactly when it matters — after a reload, or when
+ * the same card appears twice in one snapshot.
  *
  * Called as a plain function and walked, like the other block tests: a `ReactElement` is an ordinary object, and
  * this suite runs in Node with no DOM on purpose.
@@ -50,11 +55,16 @@ const QUESTION = {
   type: "question-card",
   owner: "host",
   questionId: "q_1",
-  question: "Bạn muốn mở dự án nào?",
+  prompt: "Bạn muốn mở dự án nào?",
+  questionType: "single-choice",
   options: [
-    { id: "option-1", label: "clarkcant", detail: "thư mục hiện tại" },
+    { id: "option-1", label: "clarkcant", description: "thư mục hiện tại" },
     { id: "option-2", label: "khác" },
   ],
+  allowOther: false,
+  voicePrompt: "Bạn muốn mở dự án nào? clarkcant, hay khác?",
+  status: "waiting",
+  createdAt: "2026-09-20T00:00:00.000Z",
 };
 
 function open(actions?: BlockActions): ReturnType<typeof QuestionCardBlock> {
@@ -64,59 +74,93 @@ function open(actions?: BlockActions): ReturnType<typeof QuestionCardBlock> {
 }
 
 describe("an open question offers its answers as controls", () => {
-  it("draws one button per option, labelled with what the agent will receive", () => {
-    const tree = open({ onQuestionAnswer: () => {}, openQuestionIds: ["q_1"] });
-    const buttons = findAll(tree, "data-question-answer");
-    expect(buttons.map((button) => button.props["data-question-answer"])).toEqual(["option-1", "option-2"]);
-    // The label is the answer: what is on the button is what the user's message will say.
-    expect(buttons.map((button) => textOf(button.props.children))).toEqual(["clarkcant", "khác"]);
+  it("draws one control per option, labelled with what the person read", () => {
+    const tree = open({ onQuestionAnswer: () => {} });
+    const options = findAll(tree, "data-question-option");
+    expect(options.map((option) => option.props["data-question-option"])).toEqual(["option-1", "option-2"]);
+    // The label first, then the description: what the button says is what the person is choosing between. The
+    // whitespace is normalised because the JSX separator between them is a text node of its own.
+    expect(options.map((option) => textOf(option.props.children).replace(/\s+/g, " ").trim())).toEqual([
+      "clarkcant thư mục hiện tại",
+      "khác",
+    ]);
   });
 
-  it("hands over the label rather than the option id", () => {
-    /*
-     * The id is this card's business; the label is what the user chose and what the agent must read. Sending the
-     * id instead would put "option-2" into the transcript, and the agent would have to be told what that meant.
-     */
-    const answers: { questionId: string; answer: string }[] = [];
-    const tree = open({ onQuestionAnswer: (input) => answers.push(input), openQuestionIds: ["q_1"] });
-    const second = findAll(tree, "data-question-answer")[1];
+  it("hands over the option id, which is what the host recorded the question in terms of", () => {
+    const answers: { questionId: string; optionIds?: string[] }[] = [];
+    const tree = open({ onQuestionAnswer: (input) => answers.push(input) });
+    const second = findAll(tree, "data-question-option")[1];
     (second?.props.onClick as () => void)();
 
-    expect(answers).toEqual([{ questionId: "q_1", answer: "khác" }]);
+    expect(answers).toEqual([{ questionId: "q_1", optionIds: ["option-2"] }]);
   });
 
-  it("shows the question and each option's detail as text", () => {
-    const tree = open({ onQuestionAnswer: () => {}, openQuestionIds: ["q_1"] });
+  it("shows the question and each option's description as text", () => {
+    const tree = open({ onQuestionAnswer: () => {} });
     const text = textOf(tree);
     expect(text).toContain("Bạn muốn mở dự án nào?");
     expect(text).toContain("clarkcant");
-    // The detail is part of the readable text, not a tooltip: a reason that only appears on hover is one most
+    // The description is part of the readable text, not a tooltip: a reason that only appears on hover is one most
     // people never learn about.
     expect(text).toContain("thư mục hiện tại");
+  });
+
+  it("hands a change in the selection to the surface rather than keeping it", () => {
+    // The multi-choice draft is the case a card would otherwise have to remember: the answer is only complete when
+    // the person presses Gửi, so the selection lives above the card and arrives back as `questionDraft`.
+    const multi = { ...QUESTION, questionType: "multi-choice" };
+    const drafts: { questionId: string; chosen?: readonly string[] }[] = [];
+    const tree = QuestionCardBlock({
+      block: multi,
+      actions: { onQuestionAnswer: () => {}, onQuestionDraft: (input) => drafts.push(input) },
+    });
+    const first = findAll(tree, "data-question-option")[0];
+    (first?.props.onClick as () => void)();
+    expect(drafts).toEqual([{ questionId: "q_1", chosen: ["option-1"] }]);
+
+    // And it renders what it is given: the same card with a draft shows that option as chosen.
+    const withDraft = QuestionCardBlock({
+      block: multi,
+      actions: {
+        onQuestionAnswer: () => {},
+        questionDraft: { questionId: "q_1", chosen: ["option-2"], text: "" },
+      },
+    });
+    const options = findAll(withDraft, "data-question-option");
+    expect(options[1]?.props["data-selected"]).toBe(true);
+    expect(options[0]?.props["data-selected"]).toBe(false);
   });
 });
 
 describe("a question the conversation has moved past is read-only", () => {
-  it("offers no controls when the id is not open", () => {
-    const tree = open({ onQuestionAnswer: () => {}, openQuestionIds: [] });
-    expect(findAll(tree, "data-question-answer")).toHaveLength(0);
+  it("offers no controls once the transcript carries an answer", () => {
+    const tree = open({ onQuestionAnswer: () => {}, answeredQuestions: ["q_1"] });
+    expect(findAll(tree, "data-question-option")).toHaveLength(0);
     // The options are still readable, which is what makes this card's text alternative the same thing as its
     // control: a snapshot, a screen reader and an answered card read the same list.
-    expect(findAll(tree, "data-question-option")).toHaveLength(2);
     expect(textOf(tree)).toContain("clarkcant");
   });
 
-  it("says why the controls are gone rather than leaving a reader to wonder", () => {
-    const tree = open({ onQuestionAnswer: () => {}, openQuestionIds: [] });
-    expect(findAll(tree, "data-question-closed")).toHaveLength(1);
-    expect(textOf(tree)).toContain("không còn nhận câu trả lời");
+  it("says the answer was recorded rather than leaving a reader to wonder", () => {
+    const tree = open({ onQuestionAnswer: () => {}, answeredQuestions: ["q_1"] });
+    expect(textOf(tree)).toContain("Câu trả lời đã được ghi");
+  });
+
+  it("stops inviting a second press while the first answer is still travelling", () => {
+    // The question the node is still waiting on is the one with no controls at all, and it is said in words rather
+    // than left to a disabled look.
+    const tree = open({ onQuestionAnswer: () => {}, questionPendingId: "q_1" });
+    expect(findAll(tree, "data-question-option")).toHaveLength(0);
+    expect(textOf(tree)).toContain("Đang gửi câu trả lời");
+    // Still readable, which is the same text alternative an answered card offers.
+    expect(textOf(tree)).toContain("clarkcant");
   });
 
   it("is read-only when there is no handler at all, which is the inline history case", () => {
     // A snapshot in the transcript has no host to talk to, so it renders as the record of what was asked.
     const tree = open(undefined);
-    expect(findAll(tree, "data-question-answer")).toHaveLength(0);
-    expect(findAll(tree, "data-question-option")).toHaveLength(2);
+    expect(findAll(tree, "data-question-option")).toHaveLength(0);
+    expect(textOf(tree)).toContain("clarkcant");
   });
 });
 
@@ -127,30 +171,30 @@ describe("a malformed question degrades rather than throwing", () => {
     expect(QuestionCardBlock({ block: { ...QUESTION, owner: "widget" } })).toBeNull();
   });
 
-  it("drops an option with no usable label instead of drawing an empty button", () => {
+  it("drops an option with no usable label instead of drawing an empty control", () => {
     const tree = QuestionCardBlock({
       block: { ...QUESTION, options: [{ id: "option-1", label: "ok" }, { id: "option-2" }, "nonsense"] },
-      actions: { onQuestionAnswer: () => {}, openQuestionIds: ["q_1"] },
+      actions: { onQuestionAnswer: () => {} },
     });
-    expect(findAll(tree, "data-question-answer")).toHaveLength(1);
+    expect(findAll(tree, "data-question-option")).toHaveLength(1);
   });
 
   it("survives a missing options array", () => {
     const tree = QuestionCardBlock({
-      block: { type: "question-card", owner: "host", questionId: "q", question: "Chọn?" },
-      actions: { onQuestionAnswer: () => {}, openQuestionIds: ["q"] },
+      block: { type: "question-card", owner: "host", questionId: "q", prompt: "Chọn?", questionType: "text" },
+      actions: { onQuestionAnswer: () => {} },
     });
-    expect(findAll(tree, "data-question-answer")).toHaveLength(0);
+    expect(findAll(tree, "data-question-option")).toHaveLength(0);
     expect(textOf(tree)).toContain("Chọn?");
   });
 
   it("is reachable through the block switch, and given the actions", () => {
     /*
      * The switch hands back a React element rather than a rendered tree, so this asserts the dispatch and the
-     * props rather than walking inside: the block type resolves to *this* card, and the handler reaches it. That
-     * the card then draws its buttons is the first describe block's claim, checked by calling it directly.
+     * props rather than walking inside: the block type resolves to *this* card, and the handlers reach it. That
+     * the card then draws its controls is the first describe block's claim, checked by calling it directly.
      */
-    const actions: BlockActions = { onQuestionAnswer: () => {}, openQuestionIds: ["q_1"] };
+    const actions: BlockActions = { onQuestionAnswer: () => {}, onQuestionDraft: () => {} };
     // The surface callback is never reached: this block is a host card, not a composed surface. Cast because
     // this file is `.ts` (no JSX) and the parameter is typed as returning an element.
     const surface = (() => null) as unknown as Parameters<typeof renderBlock>[2];

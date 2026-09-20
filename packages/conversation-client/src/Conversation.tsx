@@ -211,6 +211,15 @@ export function Conversation({
    */
   const liveTrigger = useRef<HTMLElement | null>(null);
   const [connection, setConnection] = useState<ConnectionState>("connecting");
+  /**
+   * A counter that tells the header's background mark to read again now.
+   *
+   * The mark polls, because it is a glance at a number rather than a stream. Polling alone would miss work that is
+   * shorter than the interval — a session can last a second and a half while the poll is every five — so the action
+   * that starts work says so and the mark reads immediately instead of waiting for the next tick. Only the start needs
+   * this; the end is what the poll is for.
+   */
+  const [backgroundTick, setBackgroundTick] = useState(0);
   const [draft, setDraft] = useState("");
   const [busy, setBusy] = useState(false);
   /**
@@ -1076,6 +1085,42 @@ export function Conversation({
   );
 
   /**
+   * Answer a question the agent asked.
+   *
+   * The node records it and opens a new turn, and the timeline that comes back is the source of truth for what
+   * the card should say next — this handler holds no state of its own beyond clearing the last error.
+   */
+  /**
+   * The answer being composed, and the question whose answer is on its way.
+   *
+   * Both live here rather than in the card because the card is a pure function of what it is given: state inside
+   * it would be a second copy of a fact this conversation already tracks, and the two would disagree after a
+   * reload. The draft is cleared the moment an answer leaves, so a card never re-offers what was just sent.
+   */
+  const [questionDraft, setQuestionDraft] = useState<
+    { questionId: string; chosen: string[]; text: string } | undefined
+  >(undefined);
+  const [questionPendingId, setQuestionPendingId] = useState<string | undefined>(undefined);
+
+  const answerQuestion = useCallback(
+    (input: { questionId: string; text?: string; optionIds?: string[]; confirmed?: boolean }) => {
+      if (conversationId === undefined) return;
+      setError(undefined);
+      setQuestionPendingId(input.questionId);
+      setQuestionDraft(undefined);
+      void client
+        .answerQuestion(conversationId, input.questionId, input)
+        .then((result) => applyTimeline(result.timeline))
+        .catch((cause: unknown) => {
+          // The answer never reached the node, so the card may be tried again rather than staying disabled.
+          setQuestionPendingId(undefined);
+          setError(cause instanceof Error ? cause.message : String(cause));
+        });
+    },
+    [applyTimeline, client, conversationId],
+  );
+
+  /**
    * Approvals that already have a receipt in this transcript.
    *
    * The card in storage stays `pending` because messages are never rewritten, so the decision is read
@@ -1096,6 +1141,34 @@ export function Conversation({
   }, [timeline]);
 
   /**
+   * Questions this transcript already has an answer for.
+   *
+   * The same derivation as `decidedApprovals`, for the same reason: a card in storage keeps saying `waiting`
+   * because messages are never rewritten, and the record the node wrote when the answer arrived is what says
+   * otherwise. Without it a reload would offer the question again.
+   */
+  const answeredQuestions = useMemo(() => {
+    const answered = new Set<string>();
+    for (const message of timeline?.messages ?? []) {
+      for (const block of message.blocks) {
+        if (block.type !== "tool-activity" || block.name !== "ask_user_question") continue;
+        const args = (block.args ?? {}) as Record<string, unknown>;
+        if (typeof args.questionId === "string") answered.add(args.questionId);
+      }
+    }
+    return [...answered];
+  }, [timeline]);
+
+  /*
+   * Once the transcript carries the record of the answer, nothing is in flight any more. The card reads that
+   * record rather than a flag of its own, which is what keeps a reload from leaving a card disabled forever.
+   */
+  useEffect(() => {
+    if (questionPendingId === undefined) return;
+    if (answeredQuestions.includes(questionPendingId)) setQuestionPendingId(undefined);
+  }, [answeredQuestions, questionPendingId]);
+
+  /**
    * What the node said about the last secret submitted through a card.
    *
    * Held here rather than in the card because the card is a message in a transcript: it is re-rendered from
@@ -1103,8 +1176,54 @@ export function Conversation({
    * says. This is a fact about now, so it lives with the other facts about now.
    */
   const [credentialStatus, setCredentialStatus] = useState<{ requestId: string; message: string } | undefined>(undefined);
+
+  /**
+   * Which model profile the hotkey is on.
+   *
+   * Held here rather than derived from the settings panel, because the label sits beside the composer and has to be
+   * right without the panel ever having been opened. Undefined means "not read yet", which is different from "no
+   * pool": a node with no pool runs the model it was configured with and shows nothing here.
+   */
+  const [modelAlias, setModelAlias] = useState<string | undefined>(undefined);
+  const [modelNote, setModelNote] = useState<string>("");
+
+  useEffect(() => {
+    client
+      .modelPool()
+      .then((answer) => setModelAlias(answer.currentAlias))
+      .catch(() => undefined);
+  }, [client]);
+
+  /**
+   * One key to change the model, on the window rather than on the composer.
+   *
+   * A model switch is not typing — it has to work while the transcript has focus — and `preventDefault` because
+   * Cmd/Ctrl+] is a browser shortcut in some layouts and a resize gesture in others, neither of which should happen
+   * while somebody is choosing a model. What the press does is write a preference: the answer says it applies to a
+   * new generation, because a running turn keeps the model it started with.
+   */
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent): void => {
+      if (event.key !== "]" || !(event.metaKey || event.ctrlKey)) return;
+      event.preventDefault();
+      void client
+        .cycleModel()
+        .then((answer) => {
+          setModelAlias(answer.alias);
+          setModelNote(`Generation tiếp theo dùng ${answer.alias}.`);
+        })
+        .catch((cause: unknown) =>
+          setModelNote(cause instanceof Error ? cause.message : String(cause)),
+        );
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [client]);
   const submitCredential = useCallback(
-    (input: { requestId: string; fields: { name: string; value: string }[] }): void => {
+    (input: {
+      requestId: string;
+      fields: { name: string; value: string; description?: string; consumer?: string }[];
+    }): void => {
       client
         .putCredential({ fields: input.fields })
         .then((result) =>
@@ -1316,6 +1435,19 @@ export function Conversation({
     () => ({
       onApprovalDecide: decideApproval,
       decidedApprovals,
+      onQuestionAnswer: answerQuestion,
+      answeredQuestions,
+      ...(questionDraft === undefined ? {} : { questionDraft }),
+      onQuestionDraft: (input) =>
+        setQuestionDraft((current) => {
+          const sameQuestion = current?.questionId === input.questionId;
+          return {
+            questionId: input.questionId,
+            chosen: input.chosen === undefined ? (sameQuestion ? current.chosen : []) : [...input.chosen],
+            text: input.text === undefined ? (sameQuestion ? current.text : "") : input.text,
+          };
+        }),
+      ...(questionPendingId === undefined ? {} : { questionPendingId }),
       ...(decidingApprovalId === undefined ? {} : { decidingApprovalId }),
       onCredentialSubmit: submitCredential,
       ...(credentialStatus === undefined ? {} : { credentialStatus }),
@@ -1323,8 +1455,6 @@ export function Conversation({
        * A chosen answer is sent as the user's own message — the same call the composer makes — so a click and a
        * typed reply are one act. Nothing here invents a second route into the agent for a click to take.
        */
-      onQuestionAnswer: ({ answer }) => void send(answer),
-      openQuestionIds: openCardIds.questions,
       /* The same path as a question: the answers become the user's own next message. */
       onFormSubmit: ({ summary }) => void send(summary),
       openFormIds: openCardIds.forms,
@@ -1338,7 +1468,7 @@ export function Conversation({
       onControlStop: ({ sessionId }) => changeBrowserSession(sessionId, "stop"),
       controlSession,
     }),
-    [artifactOpen, controlSession, changeBrowserSession, credentialStatus, decideApproval, decidedApprovals, decidingApprovalId, installPackage, openArtifact, openCardIds, packageInstall, send, stopTask, submitCredential, taskStop],
+    [artifactOpen, controlSession, changeBrowserSession, credentialStatus, decideApproval, decidedApprovals, decidingApprovalId, installPackage, openArtifact, openCardIds, packageInstall, questionDraft, questionPendingId, send, stopTask, submitCredential, taskStop],
   );
 
   const renderSurface = useCallback(
@@ -1562,8 +1692,9 @@ export function Conversation({
             {connection === "ready" ? "Ready" : connection === "connecting" ? "Đang kết nối" : "Mất kết nối"}
           </div>
           {/* The work behind the conversation. Absent while there is none: a header that always said "0" would be a
-              permanent line of noise, and the count only matters when it is not zero. */}
-          <BackgroundSessionsMark client={client} />
+              permanent line of noise, and the count only matters when it is not zero. `backgroundTick` is what makes it
+              appear at once for work that may already be over by the next poll. */}
+          <BackgroundSessionsMark client={client} refreshKey={backgroundTick} />
           {/*
             The gear is the only settings affordance, which is why it is here rather than in a
             menu: a setting that is two clicks deep is a setting nobody checks. It opens a panel
@@ -1942,6 +2073,21 @@ export function Conversation({
           </form>
         </div>
         {/*
+          The model this conversation will continue on.
+
+          Beside the composer because that is where the question is asked, and showing the alias rather than the
+          provider and model id because that is what the person named it. The note under it is what the last press
+          said — including that it applies to the next generation, which is the part a label alone would hide.
+        */}
+        {modelAlias !== undefined && (
+          <div className="cc-model-switch" data-model-label={modelAlias}>
+            <span className="cc-freshness">model: {modelAlias}</span>
+            <span className="cc-freshness" data-model-note="true">
+              {modelNote === "" ? "⌘] để đổi" : modelNote}
+            </span>
+          </div>
+        )}
+        {/*
           A statusline, not a motto.
 
           This line used to hold a slogan and a keyboard hint, in the one place a harness reports itself: what
@@ -2043,6 +2189,9 @@ export function Conversation({
         onBackground={async (text) => {
           if (conversationId === undefined) return;
           await client.startBackground({ conversationId, text });
+          // Read the header's mark again now: the node has recorded the session before it answers, so a read here sees
+          // it running, and waiting for the next poll could be waiting longer than the work lasts.
+          setBackgroundTick((tick) => tick + 1);
         }}
       />
 

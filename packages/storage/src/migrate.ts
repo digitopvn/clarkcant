@@ -957,6 +957,76 @@ export const MIGRATIONS: readonly Migration[] = [
   },
   {
     version: 19,
+    name: "secrets",
+    reversible: true,
+    up: (db) => {
+      db.exec(`
+        -- What a secret is for, who may use it, and where the value actually lives.
+        --
+        -- Metadata only. The value stays in a backend — the node's own store today, a keychain or an external
+        -- vault later — and this table is what lets the agent and the interface talk about a secret without ever
+        -- holding one. That split is the whole point: the model may learn that "github_token" exists, what it is
+        -- for, and which consumers are allowed to use it, and still has no way to read it.
+        --
+        -- backend_ref is opaque to callers: the node-store backend reads it as a credential name, a keychain
+        -- backend would read it as a service path. Keeping it opaque here is what lets the backend change without
+        -- a migration that rewrites rows.
+        --
+        -- allowed_consumers and injection_policy are JSON and text rather than joined tables because they are
+        -- read whole, written whole, and small: a secret's consumer list is not something to query across.
+        CREATE TABLE secrets (
+          secret_id         TEXT PRIMARY KEY,
+          principal_id      TEXT NOT NULL,
+          node_id           TEXT,
+          name              TEXT NOT NULL,
+          description       TEXT NOT NULL DEFAULT '',
+          kind              TEXT NOT NULL DEFAULT 'api-key',
+          backend           TEXT NOT NULL DEFAULT 'node-store',
+          backend_ref       TEXT NOT NULL,
+          allowed_consumers TEXT NOT NULL DEFAULT '[]',
+          injection_policy  TEXT NOT NULL DEFAULT 'tool-only',
+          created_at        TEXT NOT NULL,
+          updated_at        TEXT NOT NULL,
+          last_used_at      TEXT,
+          UNIQUE (principal_id, name)
+        );
+        CREATE INDEX idx_secrets_principal ON secrets(principal_id);
+      `);
+    },
+  },
+  {
+    version: 20,
+    name: "audit_log",
+    reversible: true,
+    up: (db) => {
+      db.exec(`
+        -- What this node did, in order, in words.
+        --
+        -- Append-only by convention rather than by trigger: nothing in the codebase updates or deletes a row here,
+        -- and the reason to keep it is the question asked after something surprising happened. A row says what was
+        -- done and how it ended; it never holds a secret value, an argument dump or a transcript, because an audit
+        -- trail that leaked is worse than the failure it was kept for.
+        --
+        -- Separate from the effect ledger, which tracks how far an external effect got. This is the human-readable
+        -- record of what a person or an agent asked this node to do and what came of it.
+        CREATE TABLE audit_log (
+          audit_id     TEXT PRIMARY KEY,
+          principal_id TEXT NOT NULL,
+          node_id      TEXT,
+          at           TEXT NOT NULL,
+          kind         TEXT NOT NULL,
+          summary      TEXT NOT NULL,
+          outcome      TEXT NOT NULL,
+          ref          TEXT
+        );
+        CREATE INDEX idx_audit_principal_at ON audit_log(principal_id, at);
+      `);
+    },
+  },
+  {
+    // 21, not 19: main added this migration at the version this branch already uses for `secrets`, and the two are
+    // kept — a schema version is the count of migrations, so the next free number is the honest one.
+    version: 21,
     name: "peers-and-pairing",
     reversible: true,
     up: (db) => {
