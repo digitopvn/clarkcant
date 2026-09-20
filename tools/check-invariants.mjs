@@ -260,6 +260,38 @@ function readJson(path) {
       const id = `T${String(i).padStart(2, "0")}`;
       if (!source.includes(id)) c.failures.push(`traceability document omits ${id}`);
     }
+
+    /*
+     * A row that cites a test has to cite one that exists.
+     *
+     * An independent audit found why this belongs here: T73's row and the plan's voice criterion both named a
+     * browser journey that was not in the shipped file, and the browser suite was green precisely because the
+     * journey was absent - a test that does not exist cannot fail. Checking that an id appears is not checking
+     * that its evidence does, so a ledger could cite a test nobody ever wrote and every gate would agree.
+     *
+     * Only sentence-shaped quoted titles are checked, because rows also quote Vietnamese messages and file names,
+     * and those are not claims about a test.
+     */
+    const specFiles = ["packages", "apps", "packs", "examples"].flatMap((group) =>
+      walk(join(repoRoot, group), (f) => f.endsWith(".spec.ts") || f.endsWith(".spec.tsx")),
+    );
+    const specText = specFiles.map((file) => readFileSync(file, "utf8")).join("\n");
+    const citedTitles = new Set();
+    for (const line of source.split("\n")) {
+      if (!/^\| (?:T|V)\d+ \|/.test(line)) continue;
+      for (const match of line.matchAll(/"([a-z][a-z0-9 ,:'’()/.-]{11,})"/g)) citedTitles.add(match[1]);
+    }
+    let missing = 0;
+    for (const title of citedTitles) {
+      if (!specText.includes(title)) {
+        c.failures.push(`traceability cites a test that exists nowhere: "${title}"`);
+        missing += 1;
+      }
+    }
+    c.notes.push(
+      `${citedTitles.size} cited test titles checked against ${specFiles.length} spec files` +
+        (missing === 0 ? "" : `, ${missing} missing`),
+    );
   }
 }
 
