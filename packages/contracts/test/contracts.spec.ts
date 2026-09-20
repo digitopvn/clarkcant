@@ -22,6 +22,8 @@ import {
   requiredRefreshScope,
   retryabilityOf,
   routeVoiceIntent,
+  taskIdSchema,
+  runIdSchema,
   taskStateSchema,
   taskEventSchema,
   validatePeerEnvelope,
@@ -40,18 +42,10 @@ const OWNER = principalIdSchema.parse("prin_owner");
 
 describe("identifier contracts", () => {
   it("rejects a run id used where a task id belongs", () => {
-    const parsed = taskStateSchema.safeParse("queued");
-    expect(parsed.success).toBe(true);
-    // The brands are real: a run id cannot be substituted for a task id at the type
-    // level, and the runtime schema refuses the wrong prefix too.
-    expect(
-      validatePeerEnvelope({}, {
-        authenticatedSenderNodeId: "node_a",
-        supportedVersions: { min: 1, max: 2 },
-        lastSeenSequence: undefined,
-        knownDelegationIds: new Set<string>(),
-      }).valid,
-    ).toBe(false);
+    const taskId = taskIdSchema.parse("task_1");
+    const runId = runIdSchema.parse("run_1");
+    expect(taskIdSchema.safeParse(runId).success).toBe(false);
+    expect(runIdSchema.safeParse(taskId).success).toBe(false);
   });
 });
 
@@ -181,7 +175,7 @@ describe("effect ledger (T05)", () => {
     expect(mayRetrySubmit({ state: "confirmed", externalSupportsDedup: true })).toBe(false);
   });
 
-  it("marks a lost-acknowledgement timeout as unknown rather than failed", () => {
+  it("refuses to retry a submitted effect without acknowledgement", () => {
     expect(base.state).toBe("submitted");
     expect(mayRetrySubmit(base)).toBe(false);
   });

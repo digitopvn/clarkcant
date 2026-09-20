@@ -152,6 +152,13 @@ function stubSdk(options: { idleDelayMs?: number } = {}) {
   const prompts: string[] = [];
   let aborts = 0;
   let release: (() => void) | undefined;
+  let idleTimer: ReturnType<typeof setTimeout> | undefined;
+  const finishIdle = () => {
+    clearTimeout(idleTimer);
+    idleTimer = undefined;
+    release?.();
+    release = undefined;
+  };
 
   const session = {
     sessionId: "pi-session-stub",
@@ -162,9 +169,9 @@ function stubSdk(options: { idleDelayMs?: number } = {}) {
     },
     abort: async () => {
       aborts += 1;
-      release?.();
+      finishIdle();
     },
-    dispose: () => undefined,
+    dispose: finishIdle,
     agent: {
       state: { tools: [] as { name: string }[] },
       waitForIdle: () =>
@@ -173,7 +180,7 @@ function stubSdk(options: { idleDelayMs?: number } = {}) {
           // No configured delay means the run settles at once; a stub that hangs by default would make
           // "the fast case" impossible to write.
           if (options.idleDelayMs === undefined) resolve();
-          else setTimeout(resolve, options.idleDelayMs);
+          else idleTimer = setTimeout(finishIdle, options.idleDelayMs);
         }),
     },
   };
