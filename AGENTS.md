@@ -135,6 +135,11 @@ There are four trust lanes and agents must not blur them:
 Rules:
 
 - One logical widget instance has at most one live effect owner.
+- A detached widget window receives only the widget bootstrap and its instance reference: no
+  token, no gateway URL, no conversation id. It therefore holds no credential, so its actions are
+  **relayed through the host** rather than invoked by the window, and the live-owner lease *moves*
+  with it (the shell releases before the host claims) so there is never a second owner. Closing the
+  window, by any means, releases the lease and hands the instance back.
 - Inline history remains an immutable/read-only snapshot.
 - Pin and detach are presentation changes; they do not create a new session.
 - Local view state such as filter/select/zoom may remain interactive in a

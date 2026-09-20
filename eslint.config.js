@@ -70,6 +70,9 @@ export default tseslint.config(
         __dirname: "readonly",
         setTimeout: "readonly",
         clearTimeout: "readonly",
+        // A Node global since 18, and the only way this process reaches the node it serves: the detached
+        // window's relay calls it with the host's own token.
+        fetch: "readonly",
       },
     },
   },

@@ -14,6 +14,7 @@ import { themeStylesheet } from "@clarkcant/design-tokens";
 import { APP_CSS } from "./styles.ts";
 
 export { APP_CSS } from "./styles.ts";
+export { DetachedWidgetSurface, type DetachedBridge } from "./DetachedWidgetSurface.tsx";
 export {
   MiniAppSurface,
   unavailableSections,
