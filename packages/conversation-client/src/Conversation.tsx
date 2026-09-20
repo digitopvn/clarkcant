@@ -1902,7 +1902,16 @@ export function Conversation({
                             return <ToolActivityBlock key={`live-tool-${String(segment.block.toolCallId ?? index)}`} block={segment.block} />;
                           }
                           if (segment.kind === "reasoning") {
-                            return <ReasoningBlock key={`live-reasoning-${index}`} block={{ type: "reasoning", content: segment.text }} />;
+                            // `last` is the whole signal: the live view is drawn in the order the turn produced it, so
+                            // the most recent segment is the one still arriving. Reasoning stops being that segment the
+                            // moment text or a tool call follows it, which is exactly when reasoning stopped.
+                            return (
+                              <ReasoningBlock
+                                key={`live-reasoning-${index}`}
+                                block={{ type: "reasoning", content: segment.text }}
+                                writing={last}
+                              />
+                            );
                           }
                           return (
                             <div key={`live-text-${index}`} className="cc-text" data-streaming={last ? "true" : undefined}>
