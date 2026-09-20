@@ -74,6 +74,11 @@
       "sha256": "3d1b844e23ed173c48248f4843fb109bb44072d79154a426e7e2297637ae4997"
     },
     {
+      "path": "platform-smoke.md",
+      "bytes": 3641,
+      "sha256": "ab28bd80c30fe9d73430a457d4c7b3b0922dac7c9757891b60f0189b742de379"
+    },
+    {
       "path": "research-and-decisions.md",
       "bytes": 15838,
       "sha256": "e6b071f48a70c2a274345850503627366173efb8c63f724ea9d59ba29cfc9028"
