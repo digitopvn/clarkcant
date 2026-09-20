@@ -1,5 +1,12 @@
 import { suggestionIdSchema, type Suggestion } from "@clarkcant/contracts";
-import { listActiveTasks, listConversations, listPins, listProjects, type Database } from "@clarkcant/storage";
+import {
+  listActiveTasks,
+  listConversations,
+  listMemoryRecords,
+  listPins,
+  listProjects,
+  type Database,
+} from "@clarkcant/storage";
 
 /**
  * What to offer somebody who has just opened the app.
@@ -21,6 +28,13 @@ export interface SuggestionDeps {
   now: () => string;
   /** How many to offer. Four by default: a first screen, not a menu. */
   limit?: number;
+  /**
+   * Whose memories may be offered.
+   *
+   * The Memory tab lists these same records, which is what makes offering one safe: a suggestion may only point at
+   * something the person can also go and read, and delete.
+   */
+  principalId: string;
 }
 
 /** A suggestion's id is derived from what it points at, so the same offer keeps the same name. */
@@ -126,7 +140,21 @@ export function buildSuggestions(deps: SuggestionDeps): Suggestion[] {
     });
   }
 
-  // (d) Directories used recently. `listProjects` is already ordered by last use, and the record carries the name.
+  // (d) Something already written down. Reading the same table the Memory tab reads is the point: an offer that
+  // pointed at something the person could not open would be the hidden memory this feature exists to avoid.
+  const newestMemory = listMemoryRecords(deps.db, { principalId: deps.principalId })[0];
+  if (newestMemory !== undefined) {
+    offer({
+      label: `Nhớ lại: ${newestMemory.text}`,
+      text: `Cho tui xem lại điều đã ghi nhớ: ${newestMemory.text}`,
+      source: "memory",
+      sourceLabel: `bạn đã ghi nhớ, ${recencyLabel(newestMemory.at, now)}`,
+      at: newestMemory.at,
+      ref: newestMemory.memoryId,
+    });
+  }
+
+  // (e) Directories used recently. `listProjects` is already ordered by last use, and the record carries the name.
   for (const project of listProjects(deps.db, deps.nodeId, 5)) {
     offer({
       label: `Mở dự án ${project.name}`,

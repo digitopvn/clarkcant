@@ -875,6 +875,7 @@ function handleSuggestionsRoute(deps: GatewayDeps): GatewayResponse {
     db: runtime.db,
     nodeId: runtime.identity.nodeId,
     now: () => new Date().toISOString(),
+    principalId: runtime.identity.ownerPrincipalId,
   });
   return { status: 200, body: { items } };
 }

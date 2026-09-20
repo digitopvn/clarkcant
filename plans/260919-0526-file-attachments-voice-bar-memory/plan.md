@@ -87,6 +87,7 @@ không phải thứ tự đánh số ban đầu: vòng red-team đã đảo Stag
 | 3 | [Composer, timeline và nội dung tới agent](./phase-03-composer-timeline-and-agent-content.md) | Done |
 | 4 | [Journey đính kèm và evidence](./phase-04-attachments-journey-and-evidence.md) | Done |
 | 5 | [Registry app-intent dùng chung cho chat, click và voice](./phase-05-shared-app-control-intents.md) | Done |
+| 6 | [Voice và click chạm cùng một widget action state (T66)](./phase-06-voice-widget-action-parity.md) | Done — journey `apps/web/e2e/voice-widget-action.spec.ts` ("a spoken action and the same click reach the same state") xanh, và ledger T66 chuyển sang `PASS` kèm tên test đó |
 | 7 | [Cửa sổ desktop compact, shell load client và bridge có tên](./phase-07-desktop-compact-window.md) | Done — smoke Electron **đã chạy xanh** (exit 0, `"failed": []`, mọi check `true`), và CI chạy nó mỗi lần push trong job `desktop smoke (xvfb)` |
 | 8 | [Thanh voice tối giản, intent cửa sổ và phiên sống qua hai chiều](./phase-08-minimal-voice-bar.md) | Done |
 | 9 | [Gợi ý từ việc gần đây](./phase-09-recent-work-suggestions.md) | Done |
@@ -200,15 +201,18 @@ Còn lại là nợ kỹ thuật có tên, không phải tiêu chí của plan:
   adapter, chỗ gộp mọi kết quả tool thành một block text. Phần còn phụ thuộc provider là phán đoán của model
   trên nội dung đó, và các check cần provider thật vẫn là opt-in.
 - Route xoá conversation; retention hiện là `releaseConversationAttachments`.
-- Nguồn `memory` trong gợi ý: schema có, `buildSuggestions` chưa phát.
+- ~~Nguồn `memory` trong gợi ý~~ — **đã đóng**: `buildSuggestions` nay phát nguồn `memory` từ chính bảng mà tab
+  Memory đọc (`listMemoryRecords`), nên contract không còn khai một nguồn không bao giờ xuất hiện. Test:
+  `apps/runtime/test/suggestions.spec.ts` — "offers something it was asked to remember, and says that is where it came
+  from" (chip trỏ đúng `memoryId`, và nói rõ nguồn).
 - Scoped session token cho voice.
 - Các check cần provider thật (`[calibration]`, `[jev-live]`): cần `CLARKCANT_JEV_LIVE=1` và một key.
 
 ## Red Team Review
 
 Bốn lăng kính đối nghịch (Assumption Destroyer, Failure Mode Analyst, Scope & Complexity Critic,
-Security Adversary) chạy trên ba reviewer độc lập + một checkpoint `kongming`; 14 phát hiện có
-`file:line`, 12 được chấp nhận và đã sửa vào plan, 2 bị từ chối.
+Security Adversary) chạy trên ba reviewer độc lập + một checkpoint `kongming`; 20 phát hiện có
+`file:line`, 19 được chấp nhận (một trong số đó đổi hướng thay vì sửa thẳng) và 1 bị từ chối kèm lý do.
 
 | # | Phát hiện | Mức | Quyết định | Sửa ở đâu |
 |---|-----------|-----|------------|-----------|
@@ -233,7 +237,7 @@ Security Adversary) chạy trên ba reviewer độc lập + một checkpoint `ko
 | 19 | Brief memory 20 dòng × 2000 ký tự mỗi lượt bất kể liên quan | Advisory | **Accept** | Phase 10: trần 12 dòng và 4000 ký tự tổng, có test |
 | 20 | Reorder: registry + T66 trước phần cửa sổ | Advisory | **Accept** | Thứ tự Stage B nay là 5 → 6 → 7 → 8 |
 
-Đã kiểm lại các phát hiện bằng `grep`/`read` trước khi sửa; cả 12 phát hiện được chấp nhận đều có
+Đã kiểm lại các phát hiện bằng `grep`/`read` trước khi sửa; cả 19 phát hiện được chấp nhận đều có
 `file:line` resolve được trong repo ở commit `7f3127f`.
 
 ## Validation log

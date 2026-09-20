@@ -4,14 +4,14 @@ Năm tính năng của issue #17, làm qua ba stage. Stage A (#19), Stage B và 
 phần ghi chú về đúng sự thật, và PR #38 sửa nốt hai claim còn lại cùng cổng browser. Tài liệu này ghi **số thật đo
 trên cây đã merge `main`**, không phải số của lần chạy cũ.
 
-## Số thật, đo trên cây hiện tại (`b6b3883` = `main`, cộng PR #66)
+## Số thật, đo trên cây hiện tại (`bafd59d` = `main`, cộng PR #72)
 
 | Cổng | Lệnh | Kết quả |
 | --- | --- | --- |
 | Invariant | `pnpm run invariants` | 7/7 PASS |
-| Typecheck + lint + unit test | `pnpm verify` | **1611 passed, 7 skipped (1618)** |
-| Browser suite | `pnpm test:e2e` | **99 passed, 1 skipped, 0 failed** |
-| CI trên nhánh này | `.github/workflows/ci.yml`, chạy mỗi lần push | **cả năm job xanh** ở run 35487109097 (`5c57f05`) và 35487107360: `verify` (node 22.19 và 24), `secret scan`, `e2e (browser suite)`, `desktop smoke (xvfb)` |
+| Typecheck + lint + unit test | `pnpm verify` | **1639 passed, 7 skipped (1646)** |
+| Browser suite | `pnpm test:e2e` | **103 passed, 1 skipped, 0 failed** (run 35488474171, job `e2e (browser suite)`) |
+| CI trên nhánh này | `.github/workflows/ci.yml`, chạy mỗi lần push | **cả năm job xanh** ở run 35488474171 và 35488477132 (`c96e519`): `verify` (node 22.19 và 24), `secret scan`, `e2e (browser suite)`, `desktop smoke (xvfb)` |
 | Smoke desktop | `pnpm --filter @clarkcant/app-desktop run smoke` | **exit 0**, mọi check `true`, `"failed": []` (Electron 44.3.0, Chrome 152); job `desktop smoke (xvfb)` xanh trên CI |
 | Đồng bộ với `main` | `git rev-list HEAD..origin/main` | 0: nhánh này cắt từ head của `main` (`b6b3883`), và nhánh công việc trước đó đã được merge vào `main` bằng merge commit (`git merge-base --is-ancestor` trả về đúng) |
 
@@ -114,6 +114,7 @@ evidence của cửa sổ không còn phụ thuộc vào một máy cụ thể.
   được giao nguyên block ảnh cho SDK (PR #66: `read_attachment` trả chính bức ảnh, `toSdkTool` phát
   `{ type: "image", data, mimeType }`). Nguyên nhân gốc nằm ở adapter, chỗ gộp mọi kết quả tool thành một block
   text.
-- Route xoá conversation, nguồn `memory` trong gợi ý, scoped session token: mỗi cái có tên và điều kiện còn thiếu
-  trong `docs/widgets-and-extensions.md` §4.1.
+- Route xoá conversation và scoped session token cho voice: mỗi cái có tên và điều kiện còn thiếu trong
+  `docs/widgets-and-extensions.md` §4.1. Nguồn `memory` trong gợi ý thì **đã đóng**: `buildSuggestions` nay phát nó từ
+  chính bảng mà tab Memory đọc (`listMemoryRecords`), nên contract không còn khai một nguồn không bao giờ xuất hiện.
 - `nodeReachable` là `false` trong smoke: cổng này kiểm tra shell và cửa sổ, không cần node đang chạy.
