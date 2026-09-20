@@ -50,7 +50,7 @@ test("the hotkey moves to the next profile and the label follows", async ({ page
 
   // And the pool is a table in settings, so what the key walks is something a person can look at.
   await page.locator('[data-settings="true"]').click();
-  await page.locator("#cc-tab-models").click();
+  await page.locator("#cc-tab-ai").click();
   const table = page.locator("[data-model-pool-table]");
   await expect(table).toBeVisible({ timeout: 15_000 });
   await expect(table).toContainText("fast");

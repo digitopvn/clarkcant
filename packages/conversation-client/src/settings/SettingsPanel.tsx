@@ -296,7 +296,12 @@ export function SettingsPanel({
         )}
         {tab === "ai" && <AiRoutingSettings client={client} prefs={prefs} facts={facts} />}
         {tab === "control" && (
-          <ControlSettings prefs={prefs} recentEffects={effects} recentProblem={effectsProblem} />
+          <ControlSettings
+            prefs={prefs}
+            client={client}
+            recentEffects={effects}
+            recentProblem={effectsProblem}
+          />
         )}
         {tab === "extensions" && <ExtensionsSettings client={client} tools={tools} />}
         {tab === "devices" && <DevicesVoiceSettings client={client} prefs={prefs} facts={facts} />}

@@ -52,27 +52,28 @@ test("a command runs without an approval card under the default policy", async (
   await page.screenshot({ path: join(EVIDENCE, "autonomy-01-guarded-run.png"), fullPage: true });
 });
 
-test("the Autonomy tab shows what this node is set to, and saving reaches the node", async ({ page }) => {
+test("the Autonomy control lives in the Control tab, and saving it reaches the node", async ({ page }) => {
   await openApp(page);
   await page.locator('[data-settings="true"]').click();
-  await page.locator("#cc-tab-autonomy").click();
+  await page.locator("#cc-tab-control").click();
 
-  const panel = page.locator("#cc-tabpanel-autonomy");
+  const panel = page.locator("#cc-tabpanel-control");
   await expect(panel).toBeVisible();
-  const policy = panel.locator('[data-autonomy-policy="true"]');
-  // The default, read from the node rather than assumed by the panel.
-  await expect(policy).toHaveValue("guarded");
-  await expect(panel.locator('[data-autonomy-guardrails="true"]')).toBeChecked();
+  // The default, read from the node rather than assumed by the panel: the segment the stored policy names is the
+  // one that reads as pressed.
+  const policy = panel.locator('[data-segmented="autonomy-policy"]');
+  await expect(policy.locator('[data-segment="guarded"]')).toHaveAttribute("aria-pressed", "true");
+  await expect(panel.locator('[data-toggle="autonomy-guardrails"] input[type="checkbox"]')).toBeChecked();
   // Reads are not guarded by default: a guardrail call on every read spends a provider call to decide nothing.
   await expect(panel.locator('[data-autonomy-class="reads"]')).not.toBeChecked();
   await page.screenshot({ path: join(EVIDENCE, "autonomy-02-settings.png"), fullPage: true });
 
   // Change it and put it back, so the node this suite shares with the other specs ends where it started.
-  await policy.selectOption("confirm");
+  await policy.locator('[data-segment="confirm"]').click();
   await panel.locator("[data-autonomy-save]").click();
   await expect(panel).toContainText("Đã lưu", { timeout: 10_000 });
 
-  await policy.selectOption("guarded");
+  await policy.locator('[data-segment="guarded"]').click();
   await panel.locator("[data-autonomy-save]").click();
   await expect(panel).toContainText("Đã lưu", { timeout: 10_000 });
 });
