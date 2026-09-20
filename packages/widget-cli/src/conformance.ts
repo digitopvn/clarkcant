@@ -6,7 +6,7 @@ import { validateProps } from "@clarkcant/widget-host";
 import { FORBIDDEN_API_SURFACE, acceptBridgeMessage, createWidgetRuntime, type MessageEndpoint } from "@clarkcant/widget-sdk";
 import { createFrameSession } from "@clarkcant/widget-host";
 
-import { REQUIRED_FIXTURES, readPackage, type WidgetPackage } from "./manifest.ts";
+import { REQUIRED_FIXTURES, readPackage, type WidgetPackage } from "@clarkcant/core";
 
 /**
  * The conformance suite a widget has to pass before it is publish-ready.
@@ -57,7 +57,7 @@ function endpoint() {
   return { port, sent, deliver: (data: unknown) => listener?.({ data }), listening: () => listener !== undefined };
 }
 
-function initFor(pkg: WidgetPackage, props: Record<string, unknown>) {
+function initFor(_pkg: WidgetPackage, props: Record<string, unknown>) {
   return {
     kind: "init",
     protocol: "agent.widgetbridge",
@@ -329,6 +329,9 @@ export function runConformance(root: string): ConformanceReport {
     instanceId: "conformance",
     nonce: "conformance-nonce-000000",
     props: defaultProps,
+    // The harness speaks as an instance that has never moved, which is what makes its first action valid rather than
+    // a revision assertion about an instance it does not have.
+    revision: 0,
     brokeredCapabilities: [],
     allowedOrigins: [],
     knownActionBindings: ["act_conformance"],

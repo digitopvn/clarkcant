@@ -107,7 +107,7 @@ Target root manifest:
         "camera": false,
         "lifecycleScripts": []
       },
-      "platforms": ["darwin-arm64", "linux-x64"],
+      "platforms": ["darwin-arm64", "linux-x64", "win32-x64"],
       "publisher": {
         "id": "example",
         "sourceUrl": "https://github.com/example/calendar-plus",
@@ -506,6 +506,12 @@ Directory entry cần:
 - preview image/video;
 - widget/facet types;
 - supported platforms;
+
+Giá trị `platforms` lấy từ **một** vocabulary dùng chung cho cả package lẫn host: `darwin-arm64`, `darwin-x64`,
+`linux-x64`, `linux-arm64`, `win32-x64`, `win32-arm64`, `web`. Tên theo dạng `<node platform>-<arch>`, nên Windows
+là `win32-*` chứ không phải `windows-*`. Host tự khai bằng `platformForHost(process.platform, process.arch)`; host
+nào vocabulary không mô tả được thì hàm trả `undefined`, và lời từ chối nêu tên platform của **cả hai** bên — thay
+vì đoán `web` rồi đưa một package native cho thứ không chạy được.
 - host API compatibility;
 - requested permissions summary;
 - risk tier;

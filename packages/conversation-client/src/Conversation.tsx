@@ -22,7 +22,7 @@ import { hasDesktopChrome, requestWindowMode } from "./desktop-compact.ts";
 import { DesktopChrome } from "./desktop-chrome.tsx";
 import { fetchSuggestions } from "./suggestions.ts";
 import type { Suggestion } from "@clarkcant/contracts";
-import { ReasoningBlock, ToolActivityBlock, type BlockActions, type ArtifactOpenState, type ControlSessionActionState, type TaskStopState } from "./blocks.tsx";
+import { ReasoningBlock, ToolActivityBlock, type BlockActions, type ArtifactOpenState, type ControlSessionActionState, type PackageInstallState, type TaskStopState } from "./blocks.tsx";
 import { composerTextareaHeight } from "./composer-height.ts";
 import {
   attachmentReducer,
@@ -1292,6 +1292,48 @@ export function Conversation({
    */
   const [artifactOpen, setArtifactOpen] = useState<Record<string, ArtifactOpenState>>({});
 
+  /**
+   * What became of each install attempt, keyed by package id.
+   *
+   * Four outcomes rather than a boolean, because they are four different things to tell someone: it is happening, it
+   * happened, a decision is needed before it can happen, or it was refused with a reason. "Not installed" would
+   * collapse the middle two, and one of those is waiting on the reader while the other is not.
+   */
+  const [packageInstall, setPackageInstall] = useState<Record<string, PackageInstallState>>({});
+
+  const installPackage = useCallback(
+    ({ packageId, version }: { packageId: string; version: string }) => {
+      setPackageInstall((current) => ({ ...current, [packageId]: { status: "installing" } }));
+      void client.installPackage(packageId, version).then(
+        (answer) => {
+          setPackageInstall((current) => ({
+            ...current,
+            [packageId]:
+              answer.code === "APPROVAL_REQUIRED"
+                ? { status: "approval-required", message: answer.message ?? "Cần bạn duyệt trước khi cài." }
+                : {
+                    status: "installed",
+                    message: "Đã cài.",
+                    ...(answer.generationId === undefined ? {} : { generationId: answer.generationId }),
+                    ...(answer.verified === undefined ? {} : { verified: answer.verified }),
+                  },
+          }));
+        },
+        (error: unknown) => {
+          // The node's own reason, where it gave one: it is the only thing that can say *why* the install stopped.
+          setPackageInstall((current) => ({
+            ...current,
+            [packageId]: {
+              status: "refused",
+              message: error instanceof Error ? error.message : "Không cài được gói này.",
+            },
+          }));
+        },
+      );
+    },
+    [client],
+  );
+
   const openArtifact = useCallback(
     (artifactId: string) => {
       setArtifactOpen((current) => ({ ...current, [artifactId]: { status: "pending" } }));
@@ -1384,11 +1426,13 @@ export function Conversation({
       taskStop,
       onArtifactOpen: ({ artifactId }) => openArtifact(artifactId),
       artifactOpen,
+      onInstallPackage: installPackage,
+      packageInstall,
       onControlTakeover: ({ sessionId }) => changeBrowserSession(sessionId, "takeover"),
       onControlStop: ({ sessionId }) => changeBrowserSession(sessionId, "stop"),
       controlSession,
     }),
-    [artifactOpen, controlSession, changeBrowserSession, credentialStatus, decideApproval, decidedApprovals, decidingApprovalId, openArtifact, openCardIds, send, stopTask, submitCredential, taskStop],
+    [artifactOpen, controlSession, changeBrowserSession, credentialStatus, decideApproval, decidedApprovals, decidingApprovalId, installPackage, openArtifact, openCardIds, packageInstall, send, stopTask, submitCredential, taskStop],
   );
 
   const renderSurface = useCallback(
@@ -1455,9 +1499,8 @@ export function Conversation({
       }
 
       const Renderer = resolveRenderer(definitionId);
-      if (Renderer === undefined || instance === undefined) {
-        // An unknown definition is a normal outcome, not a failure: the snapshot's text alternative
-        // is what history keeps.
+      if (instance === undefined) {
+        // Without the instance there is nothing to open, and the snapshot's text alternative is what history keeps.
         return (
           <div className="cc-card cc-freshness" data-widget-fallback="true" style={{ padding: "var(--cc-space-md)" }}>
             {input.textAlternative}
@@ -1470,6 +1513,23 @@ export function Conversation({
 
       return (
         <div data-widget-instance={instance.instanceId} data-widget-definition={definitionId}>
+          {Renderer === undefined ? (
+            /*
+             * No catalog renderer for this definition — which is exactly the case for a widget that runs in its own
+             * frame. The text alternative stands in for the inline view, and the live view is still offered below.
+             *
+             * This used to be an early return, and the difference is the whole control: an instance whose definition
+             * the client cannot draw rendered its fallback and nothing else, so there was no way to open it. A widget
+             * the client has no renderer for is not a widget nobody can look at.
+             */
+            <div
+              className="cc-card cc-freshness"
+              data-widget-fallback="true"
+              style={{ padding: "var(--cc-space-md)" }}
+            >
+              {input.textAlternative}
+            </div>
+          ) : (
           <Renderer
             definitionId={definitionId}
             props={instance.props}
@@ -1485,19 +1545,30 @@ export function Conversation({
               void action;
             }}
           />
+          )}
           {conversationId !== undefined && (
             <button
               className="cc-icon-btn"
               style={{ width: "auto", padding: "0 var(--cc-space-sm)", marginTop: "var(--cc-space-xs)" }}
-              data-pin-instance={instance.instanceId}
+              {...(Renderer === undefined
+                ? { "data-open-live": instance.instanceId }
+                : { "data-pin-instance": instance.instanceId })}
               onClick={() => {
-                void client
-                  .pin(conversationId, instance.instanceId)
+                /*
+                 * A widget the client has no renderer for opens its live view; one it can draw is pinned compact.
+                 * The distinction matters because the live view is the only place such a widget can be seen at all:
+                 * "pin it again" would put it on the shelf with nothing on it.
+                 */
+                const request =
+                  Renderer === undefined
+                    ? client.pin(conversationId, instance.instanceId, "expanded")
+                    : client.pin(conversationId, instance.instanceId);
+                void request
                   .then((result) => applyTimeline(result.timeline))
                   .catch((cause: unknown) => setError(cause instanceof Error ? cause.message : String(cause)));
               }}
             >
-              Ghim lại
+              {Renderer === undefined ? "Mở bản hiện tại" : "Ghim lại"}
             </button>
           )}
         </div>
@@ -1785,7 +1856,15 @@ export function Conversation({
       */}
       {conversationId !== undefined &&
         pins
-          .filter((pin) => pin.displayMode === "expanded" && instanceById.get(pin.instanceId)?.definitionId === "canvas.overview@1")
+          /*
+           * Any expanded pin whose instance this node knows, rather than one hardcoded definition.
+           *
+           * The filter used to name `canvas.overview@1`, which made the expanded live view a feature of exactly one
+           * widget: every other definition could be pinned and would then render nothing at all. The condition that
+           * matters is the one below — an expanded pin is a request for a live view — and which shape that view
+           * takes is the node's answer, not the client's guess.
+           */
+          .filter((pin) => pin.displayMode === "expanded" && instanceById.get(pin.instanceId) !== undefined)
           .map((pin) => (
             <div key={`live-${pin.pinId}`} className="cc-pin-expanded" data-pin-live={pin.pinId}>
               <PinnedLiveSurface

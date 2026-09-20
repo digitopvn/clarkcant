@@ -346,6 +346,21 @@ export function SystemCardBlock({ block }: { block: Record<string, unknown> }): 
  * history as well as from live turns and only the conversation knows whether a decision is possible right
  * now. A card with no handler draws the decision buttons disabled instead of pretending.
  */
+/**
+ * What became of an install attempt, as the card shows it.
+ *
+ * Four states because the four are different truths: it is happening, it happened, a person has to decide first, or
+ * it was refused. Collapsing the middle two into "not installed" would hide that one of them is waiting on the
+ * reader and the other is not.
+ */
+export interface PackageInstallState {
+  status: "installing" | "installed" | "approval-required" | "refused";
+  /** The node's own words where it gave them. */
+  message?: string;
+  generationId?: string;
+  verified?: string;
+}
+
 export interface BlockActions {
   onApprovalDecide?: (input: { approvalId: string; digest: string; decision: "granted" | "denied" }) => void;
   /**
@@ -393,6 +408,16 @@ export interface BlockActions {
    * calls — which is what makes a click, a keystroke and a spoken answer the same thing rather than three
    * implementations that have to be kept in step.
    */
+  /**
+   * Install a package a directory listing named.
+   *
+   * Absent where there is nothing to install into: a read-only snapshot, or a build with no node behind it. The
+   * control is not rendered at all in that case rather than rendered and refused, which is the difference between a
+   * disabled button with a reason and a button that looks usable and is not.
+   */
+  onInstallPackage?: (input: { packageId: string; version: string }) => void;
+  /** The attempt for each package id, so the card shows an outcome instead of a spinner that never ends. */
+  packageInstall?: Record<string, PackageInstallState>;
   onQuestionAnswer?: (input: { questionId: string; answer: string }) => void;
   /**
    * Questions that may still be answered.
@@ -1450,7 +1475,9 @@ export function renderBlock(
       // two components would be two places for the answer to drift.
       return <ControlSessionCardBlock key={index} block={block} {...(actions === undefined ? {} : { actions })} />;
     case "marketplace-results":
-      return <MarketplaceResultsBlock key={index} block={block} />;
+      // Forwarded, for the reason the task card's control taught: a component tested by calling it directly passes
+      // whether or not the dispatcher hands it anything, and the install action is exactly what would go missing.
+      return <MarketplaceResultsBlock key={index} block={block} {...(actions === undefined ? {} : { actions })} />;
     case "reconnect-card":
       return <ReconnectCardBlock key={index} block={block} />;
     case "surface": {
@@ -1739,15 +1766,21 @@ function describePackageSource(raw: unknown): string {
  * The results of a marketplace search.
  *
  * It shows what a listing has to show to be judgeable — where it comes from, which version, the digest the install
- * path will check, and the lane the isolation implies — and it **has no install button**. That is deliberate: the
- * card names sources, and installing goes through the install path where the digest is verified and consent is
- * recorded. A button here would be a second entry point into installing, and the one place where a listing could
- * become an authorisation.
+ * path will check, and the lane the isolation implies — and it carries the install control on the row it acts on.
+ * The control reports what the install route answered rather than installing anything itself: the digest is verified,
+ * policy and consent are decided, and the effect is audited, all in one place. A second entry point here would be
+ * the one place where a listing could become an authorisation.
  *
  * The directory is named in the heading. A result whose origin was invisible would present what some index says as
  * something this machine knows.
  */
-export function MarketplaceResultsBlock({ block }: { block: Record<string, unknown> }): ReactElement {
+export function MarketplaceResultsBlock({
+  block,
+  actions,
+}: {
+  block: Record<string, unknown>;
+  actions?: BlockActions | undefined;
+}): ReactElement {
   const directory = typeof block.directory === "string" ? block.directory : "";
   const query = typeof block.query === "string" ? block.query : "";
   const reason = typeof block.unavailableReason === "string" ? block.unavailableReason : undefined;
@@ -1773,6 +1806,7 @@ export function MarketplaceResultsBlock({ block }: { block: Record<string, unkno
             const description = typeof result.description === "string" ? result.description : "";
             const digest = typeof result.digest === "string" ? result.digest : "";
             const lane = typeof result.riskTier === "string" ? result.riskTier : "";
+            const installState = actions?.packageInstall?.[packageId];
             return (
               <li className="cc-marketplace-item" key={`${packageId}-${version}-${position}`} data-marketplace-package={packageId}>
                 <div className="cc-marketplace-name">
@@ -1787,6 +1821,30 @@ export function MarketplaceResultsBlock({ block }: { block: Record<string, unkno
                     {digest.length > 18 ? `${digest.slice(0, 18)}…` : digest}
                   </span>
                 </div>
+                {/*
+                  Installing goes through the single install route, which applies the execution policy and the install
+                  supervisor that already existed. The card was deliberately without this control while that route did
+                  not exist, because a button whose action is missing is worse than no button; it exists now, so the
+                  control does too — and only where a caller supplied the action, which a read-only snapshot does not.
+                */}
+                {actions?.onInstallPackage !== undefined && (
+                  <div className="cc-marketplace-actions">
+                    <button
+                      type="button"
+                      className="cc-chip"
+                      data-install-package={packageId}
+                      disabled={installState?.status === "installing"}
+                      onClick={() => actions.onInstallPackage?.({ packageId, version })}
+                    >
+                      {installState?.status === "installing" ? "Đang cài…" : "Cài"}
+                    </button>
+                    {installState !== undefined && installState.status !== "installing" && (
+                      <span className="cc-marketplace-install-state" data-install-state={installState.status}>
+                        {installState.message ?? ""}
+                      </span>
+                    )}
+                  </div>
+                )}
               </li>
             );
           })}

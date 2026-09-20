@@ -11,6 +11,7 @@ import {
   type Instant,
   type IsolationClass,
   type PackageSource,
+  type Platform,
 } from "@clarkcant/contracts";
 
 import {
@@ -44,7 +45,7 @@ export interface InstallFromSourceInput {
   source: PackageSource;
   directory?: readonly DirectoryEntry[];
   hostApi: number;
-  platform: string;
+  platform: Platform;
   /** Required for a local source: the digest the caller computed from the package directory. */
   localDigest?: string;
   ownerPrincipalId: string;

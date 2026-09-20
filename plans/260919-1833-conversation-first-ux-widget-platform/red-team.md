@@ -171,8 +171,10 @@ UI không nói dối ở những chỗ đã ship:
 - Phiên desktop: mặc định `needs-permission`, thẻ nói quyền thuộc hệ điều hành và node không tự cấp
   được; không vẽ preview giả (Phase 10).
 - `WIDGET_RUNTIME_STATUS` khi đó vẫn là `bridge-codec-implemented-runtime-pending`, tức là nó nói thật là chưa
-  có runtime. Phase 11 đã đổi thành `runtime-and-host-session-implemented` (PR #44), và giá trị mới cũng nói rõ
-  hai điều **chưa** đúng: chưa có mini-app nào ship, và conversation client chưa mount frame nào.
+  có runtime. Phase 11 đã đổi thành `runtime-and-host-session-implemented` (PR #44), và ở thời điểm đó giá trị mới
+  nói rõ hai điều **chưa** đúng: chưa có mini-app nào ship, và conversation client chưa mount frame nào. Điều thứ
+  hai **đã đóng** (PR #91, `apps/web/e2e/widget-frame.spec.ts`); điều thứ nhất vẫn đúng — chưa có mini-app nào
+  ship, lane widget hiện chỉ có một package fixture dùng cho e2e.
 
 Ba khoảng trống, ghi lại chứ không quảng cáo:
 
@@ -251,15 +253,23 @@ ghi lại thay vì quảng cáo.**
 - Ledger chỉ được nâng khi test được nêu tên đã tồn tại (T47 nhận thêm bằng chứng detached-window + smoke).
 - 18 tiêu chí release trong `plan.md` được tick kèm bằng chứng chạy được, không tick suông.
 
-Ba khoảng trống, vẫn ghi lại:
+Ba khoảng trống nêu ở Stage G, và trạng thái hiện tại của từng cái:
 
-1. **`platformSchema` không có giá trị cho Windows** (chỉ darwin/linux/web) trong khi chính app desktop của
-   repo là Electron trên Windows. Một package không khai được platform nó chạy. Đây là finding, không phải thứ
-   được nới ra cho vừa fixture.
-2. **Conversation client vẫn chưa mount frame widget cách ly nào.** Runtime, session và conformance suite là
-   thật và có test, nhưng đường executable widget mới tới được ở mức package, chưa tới được từ hội thoại.
+1. **`platformSchema` không có giá trị cho Windows** — **đã đóng** (PR #76). Vocabulary có `win32-x64` và
+   `win32-arm64`, `operatingSystemSchema` có `windows`, và `platformForHost(platform, arch)` trả `undefined`
+   thay vì đoán `web` khi vocabulary không nói được. Package Windows được chấp nhận trên host Windows và bị từ
+   chối trên Linux, với copy nêu **cả hai** phía (`packages/core/test/package-sources.spec.ts`).
+2. **Conversation client chưa mount frame widget cách ly nào** — **đã đóng** (PR #91). `WidgetFrame.tsx` mount
+   `iframe` với `sandbox="allow-scripts"` và **không** `allow-same-origin`; node phục vụ entry của một package
+   đã cài kèm CSP theo nonce cho từng response; và journey từ hội thoại được phủ bởi
+   `apps/web/e2e/widget-frame.spec.ts` — 3 test, chạy trong suite đầy đủ (test 105–107), gồm
+   "a widget package runs in a sandboxed frame, and its code is the package's" và
+   "an action the widget invokes reaches the host and comes back".
 3. **Detach mới có một instance tại một thời điểm**, và journey của nó chỉ được kiểm e2e sau khi bổ sung
-   `apps/web/e2e/detach.spec.ts`; đường mở cửa sổ thật vẫn cần một lần thử tay trên máy có màn hình.
+   `apps/web/e2e/detach.spec.ts`; đường mở cửa sổ thật **đã được chứng minh trên máy này** (PR #80):
+   `electron . --smoke-test` exit 0 với 6 check detached, gồm lease chuyển sang surface `detached` và đóng cửa
+   sổ thì shell claim lại. Phần **chỉ macOS** vẫn không kiểm được ở đây và được ghi kèm lệnh chính xác trong
+   [`docs/platform-smoke.md`](../../docs/platform-smoke.md).
 
 ---
 

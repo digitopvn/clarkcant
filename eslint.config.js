@@ -88,6 +88,25 @@ export default tseslint.config(
     },
   },
   {
+    /*
+     * A widget's own scripts, which run in a sandboxed frame rather than in Node or in this app.
+     *
+     * They are the one kind of JavaScript in this repository that is neither: it is served to a frame, executed by a
+     * browser, and written against the DOM. Linting it with Node globals reported every `document` and `window`
+     * reference as undefined — which is what a widget is made of.
+     */
+    files: ["**/widgets/**/*.js"],
+    languageOptions: {
+      globals: {
+        document: "readonly",
+        window: "readonly",
+        setTimeout: "readonly",
+        crypto: "readonly",
+        CustomEvent: "readonly",
+      },
+    },
+  },
+  {
     // The pre-paint theme script is served to the browser as-is from `public/`, so it runs with
     // browser globals and is never bundled. Linting it against the Node globals the other `.js`
     // files get would report every DOM reference as undefined.

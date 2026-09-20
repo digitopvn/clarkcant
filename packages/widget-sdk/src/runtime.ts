@@ -93,6 +93,14 @@ export function createWidgetRuntime(deps: RuntimeDeps): WidgetRuntime {
     instanceId = message.instanceId;
     props = message.props;
     state = message.state ?? {};
+    /*
+     * The revision the host initialized this frame at.
+     *
+     * Without it a freshly mounted frame speaks revision 0, and the node refuses its first action as stale — so every
+     * widget's first click would fail on an instance that has moved at all since it was created. The host knows the
+     * revision; this is the frame being told rather than guessing.
+     */
+    if (message.revision !== undefined) revision = message.revision;
     brokered = new Set(message.brokeredCapabilities);
     status = "ready";
     send({ kind: "ready", nonce });

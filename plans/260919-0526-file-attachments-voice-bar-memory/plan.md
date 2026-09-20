@@ -261,7 +261,8 @@ Security Adversary) chạy trên ba reviewer độc lập + một checkpoint `ko
 ### Red-team verification (2026-09-19)
 
 - Reviewers: 2 độc lập (assumption/failure, scope/security) + 1 checkpoint kongming.
-- Phát hiện: 20 | Chấp nhận: 17 | Từ chối kèm lý do: 1 (ghi nhận) | Trùng lặp đã gộp: 2.
+- Phát hiện: 20 | Chấp nhận: 19 (một trong số đó đổi hướng thay vì sửa thẳng) | Từ chối kèm lý do: 1. Con số này
+  đếm từ chính bảng ở §Red Team Review, để hai chỗ trong cùng một tài liệu không nói hai điều khác nhau.
 - Kiểm lại bằng `git status`: reviewer không sửa file nào; mọi phát hiện đến từ đọc source.
 
 - 2026-09-19 (v1): plan khởi tạo; chốt bốn quyết định với user.

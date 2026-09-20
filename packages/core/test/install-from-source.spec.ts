@@ -28,6 +28,7 @@ const ENTRY: DirectoryEntry = {
   publisher: { id: "example", sourceUrl: "https://github.com/example/calendar-plus", license: "MIT" },
   preview: {},
   facets: ["ui"],
+  isolations: [{ facetKind: "ui", isolation: "isolated-ui" }],
   platforms: ["linux-x64"],
   hostApi: { min: 1, max: 2 },
   permissionsSummary: [],

@@ -1,0 +1,35 @@
+{
+  "id": "com.example.frame-widget.main@1",
+  "version": "0.1.0",
+  "renderer": "isolated-app",
+  "propsSchema": {
+    "type": "object",
+    "properties": {
+      "title": {
+        "type": "string",
+        "maxLength": 200
+      }
+    },
+    "required": [
+      "title"
+    ],
+    "additionalProperties": false
+  },
+  "eventSchemas": {},
+  "stateSchema": {
+    "type": "object",
+    "properties": {},
+    "additionalProperties": true
+  },
+  "stateVersion": 0,
+  "semanticDescription": "A widget that runs in its own frame.",
+  "requestedCapabilities": [],
+  "sizing": {
+    "compact": true,
+    "expanded": true,
+    "minHeight": 160
+  },
+  "textFallback": "Widget trong frame: n\u1ed9i dung ch\u01b0a xem \u0111\u01b0\u1ee3c \u1edf ch\u1ebf \u0111\u1ed9 ch\u1ec9 c\u00f3 ch\u1eef.",
+  "effectCategories": [],
+  "datasetRefs": []
+}

@@ -74,9 +74,14 @@
       "sha256": "3d1b844e23ed173c48248f4843fb109bb44072d79154a426e7e2297637ae4997"
     },
     {
+      "path": "platform-smoke.md",
+      "bytes": 3641,
+      "sha256": "ab28bd80c30fe9d73430a457d4c7b3b0922dac7c9757891b60f0189b742de379"
+    },
+    {
       "path": "research-and-decisions.md",
-      "bytes": 18544,
-      "sha256": "bfe74b8707631b575d3194d089e7899f328ea300bc3c241ee73f63623d8c0ec9"
+      "bytes": 15838,
+      "sha256": "e6b071f48a70c2a274345850503627366173efb8c63f724ea9d59ba29cfc9028"
     },
     {
       "path": "scope-lock.md",
@@ -85,18 +90,13 @@
     },
     {
       "path": "system-architecture.md",
-<<<<<<< HEAD
-      "bytes": 46601,
-      "sha256": "d8a8747039bf9f8df9524b3ee5131f58900d8a8fc82e1fd773944bc1a746d0fc"
-=======
       "bytes": 37883,
       "sha256": "6ecda19ab5ac4cbc0e5b6c0bf68a4f834791df1304faf44421f2fc457ca56e51"
     },
     {
       "path": "widget-development.md",
-      "bytes": 16944,
-      "sha256": "5a462b85bf0f602c0e843ea56e076b98de1e072bed4ccb146b39c31a16dc4023"
->>>>>>> origin/main
+      "bytes": 17556,
+      "sha256": "490f43d6779bb4718750956d5ed94cbc2b21c35870edff428e0e0d5600d640c0"
     },
     {
       "path": "widgets-and-extensions.md",

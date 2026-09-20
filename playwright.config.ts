@@ -1,4 +1,5 @@
 import { defineConfig, devices } from "@playwright/test";
+import { join } from "node:path";
 
 /**
  * End-to-end configuration.
@@ -94,7 +95,29 @@ export default defineConfig({
       // for a reason that has nothing to do with the code — a failure that reads like a regression and is not one.
       // A fresh directory is also what a first run looks like, which is the state these specs are written about.
       command: `node -e "require('node:fs').rmSync('${DATA_DIR}',{recursive:true,force:true})" && node apps/runtime/src/main.ts --data-dir ${DATA_DIR} --port ${NODE_PORT} --label e2e-node`,
-      env: { CC_VOICE_FIXTURE: "1", CC_MODEL_FIXTURE: "1", CC_SESSION_FIXTURE: "1" },
+      env: {
+        CC_VOICE_FIXTURE: "1",
+        CC_MODEL_FIXTURE: "1",
+        CC_SESSION_FIXTURE: "1",
+        /*
+         * A directory the install journey can resolve against. Without one the route refuses with NO_DIRECTORY, which
+         * is the honest answer for a node nobody configured — but it would mean the only install journey a browser
+         * could ever walk is the refusal.
+         */
+        CC_DIRECTORY_INDEX: join(process.cwd(), "apps", "web", "e2e", "fixtures", "directory.json"),
+        /*
+         * Where the app — and therefore the widget runtime bundle — is served from. A widget document is served by
+         * the node but its runtime comes from the app, and the two are different origins in this suite. Without
+         * this the injected bootstrap points at the node, where nothing serves that file.
+         */
+        CC_APP_ORIGIN: `http://127.0.0.1:${WEB_PORT}`,
+        /*
+         * Where the node may read the widget runtime bundle from. In production the node is deployed with the app it
+         * serves; here the suite has just built it, and the frame imports that file from the node so the request is
+         * same-origin for an opaque-origin document.
+         */
+        CC_WEB_DIST: join(process.cwd(), "apps", "web", "dist"),
+      },
       url: `http://127.0.0.1:${NODE_PORT}/health`,
       reuseExistingServer: false,
       stdout: "pipe",

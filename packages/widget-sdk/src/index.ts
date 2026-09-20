@@ -26,6 +26,13 @@ export const hostToWidgetSchema = z.discriminatedUnion("kind", [
     nonce: z.string().min(16).max(200),
     props: z.record(z.string(), z.unknown()),
     state: z.record(z.string(), z.unknown()).optional(),
+    /**
+     * The instance revision this frame was initialized at, so its first action is not refused as stale.
+     *
+     * Optional in the schema because a runtime copy older than this field must still handshake; the host always sends
+     * it, and a runtime that receives it speaks the revision it was shown instead of inventing one.
+     */
+    revision: z.number().int().nonnegative().optional(),
     /** Capabilities the host is willing to broker, and no others. */
     brokeredCapabilities: z.array(z.string().min(1).max(160)).max(64),
     /** Origins this frame may reach. Enforced by CSP, declared here for the SDK. */

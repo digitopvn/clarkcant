@@ -9,8 +9,9 @@
 
 import { type ReactElement, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-import type { GatewayClient, LiveWidgetResponse, Timeline } from "./api.ts";
+import type { GatewayClient, IsolatedFrameLiveResponse, LiveWidgetResponse, Timeline } from "./api.ts";
 import { MiniAppSurface, type CompositeSurfaceView } from "./mini-app-surface.tsx";
+import { WidgetFrame } from "./WidgetFrame.tsx";
 import { useImageUrls } from "./use-image-urls.ts";
 
 export interface MenuBarPopoverProps {
@@ -190,7 +191,7 @@ export function PinnedLiveSurface({
 }: PinnedLiveSurfaceProps): ReactElement {
   const panel = useRef<HTMLDivElement>(null);
   const closeButton = useRef<HTMLButtonElement>(null);
-  const [live, setLive] = useState<LiveWidgetResponse | undefined>(undefined);
+  const [live, setLive] = useState<LiveWidgetResponse | IsolatedFrameLiveResponse | undefined>(undefined);
   const [ownership, setOwnership] = useState<"claiming" | "owner" | "elsewhere" | "error">("claiming");
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<string | undefined>(undefined);
@@ -332,7 +333,8 @@ export function PinnedLiveSurface({
   /* Imported images are fetched through the authenticated client, not linked to directly. */
   const imageRefs = useMemo(() => {
     const refs = new Set<string>();
-    for (const section of live?.sections ?? []) {
+    // Only a composition has sections to look through; a frame's pictures are its own document's business.
+    for (const section of live?.kind === "composition" ? live.sections : []) {
       const ref = section.props.imageRef;
       if (typeof ref === "string" && ref !== "") refs.add(ref);
     }
@@ -477,6 +479,77 @@ export function PinnedLiveSurface({
               ? "Đang mở bản hiện tại…"
               : `Chưa hiển thị${title === undefined ? "" : `: ${title}`} — cuộn tới để mở.`)}
         </p>
+      </div>
+    );
+  }
+
+  /*
+   * A widget that runs in its own frame is mounted, not drawn.
+   *
+   * The branch is here rather than in a caller because this component is what owns the surface's lifecycle — the
+   * claim, the lazy mount, the release — and both shapes want exactly that. What differs is only what goes in the
+   * body.
+   */
+  if (live.kind === "isolated-frame") {
+    return (
+      <div
+        ref={panel}
+        className="cc-live-surface"
+        data-live-instance={instanceId}
+        data-ownership={ownership}
+        data-display-mode={displayMode}
+        data-lazy={inView ? "false" : "true"}
+        role={displayMode === "expanded" ? "region" : undefined}
+        aria-label={displayMode === "expanded" ? `Bản hiện tại: ${title ?? instanceId}` : undefined}
+      >
+        {head}
+        <WidgetFrame
+          instanceId={live.instanceId}
+          url={client.nodeUrl(live.frame.url)}
+          title={title ?? instanceId}
+          props={live.props}
+          brokeredCapabilities={live.frame.requestedCapabilities}
+          allowedOrigins={live.frame.allowedOrigins}
+          knownActionBindings={live.bindings.map((entry) => entry.actionBindingId)}
+          revision={live.revision}
+          /*
+           * The frame asks; this authorizes and performs. Every invocation goes through the same route a click in
+           * the conversation takes, against the same instance, digest and revision — so a widget in a frame is not a
+           * second way to reach an effect.
+           */
+          invokeAction={async (intent) => {
+            try {
+              /*
+               * The digest comes from the binding the frame named, not from a composition. A frame has no
+               * composition, and the node re-authorizes against exactly this value — so sending the wrong one is
+               * refused rather than papered over.
+               */
+              const binding = live.bindings.find((entry) => entry.actionBindingId === intent.actionBindingId);
+              if (binding === undefined) {
+                return { status: "refused", message: "Hành động này không còn được gắn với widget." };
+              }
+              await client.invokeAction(conversationId, instanceId, {
+                actionBindingId: intent.actionBindingId,
+                expectedRevision: intent.expectedRevision,
+                expectedBindingDigest: binding.bindingDigest,
+                input: intent.input,
+                invocationId: intent.invocationId,
+              });
+              return { status: "accepted", message: "Đã gửi hành động." };
+            } catch (cause) {
+              return {
+                status: "refused",
+                message: cause instanceof Error ? cause.message : "Máy chủ từ chối hành động này.",
+              };
+            }
+          }}
+          chrome={{
+            focus: () => panel.current?.focus(),
+            resize: () => undefined,
+            requestPin: () => undefined,
+            openExternal: () => undefined,
+          }}
+        />
       </div>
     );
   }

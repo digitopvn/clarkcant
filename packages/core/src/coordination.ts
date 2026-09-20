@@ -322,7 +322,7 @@ export type ApprovalDecision =
   | { ok: true; approval: ApprovalRecord }
   | {
       ok: false;
-      code: "APPROVAL_EXPIRED" | "APPROVAL_FORGED" | "APPROVAL_ALREADY_DECIDED";
+      code: "APPROVAL_EXPIRED" | "APPROVAL_FORGED" | "APPROVAL_ALREADY_DECIDED" | "NOT_HOME_AUTHORITY";
       message: string;
     };
 
@@ -396,6 +396,32 @@ export function decideApproval(
     }
 
     const decidedAt = deps.now();
+
+    /*
+     * Only the conversation's home authority decides.
+     *
+     * The case the requirement names is an executor that needs an approval while the home is out of reach: it must
+     * wait rather than approve its own work. An approval carries the task it belongs to, the task carries its
+     * conversation, and the conversation carries the home node - so the refusal is the same whether the home is
+     * merely elsewhere or actually unreachable, which is what lets it hold without a reachability probe this phase
+     * does not have.
+     */
+    const approvingTask = row.task_id === null || row.task_id === undefined ? undefined : String(row.task_id);
+    if (approvingTask !== undefined) {
+      const authority = oneRow<{ home_node_id: string }>(
+        deps.db,
+        "SELECT authority.home_node_id AS home_node_id FROM tasks JOIN conversation_authority AS authority ON authority.conversation_id = tasks.conversation_id WHERE tasks.task_id = ?",
+        approvingTask,
+      );
+      if (authority !== undefined && authority.home_node_id !== deps.nodeId) {
+        return {
+          ok: false as const,
+          code: "NOT_HOME_AUTHORITY" as const,
+          message: `node ${deps.nodeId} is not the home authority for that conversation (${authority.home_node_id}), so it waits rather than approving`,
+        };
+      }
+    }
+
     deps.db
       .prepare("UPDATE approvals SET decision = ?, decided_at = ? WHERE approval_id = ?")
       .run(input.decision, decidedAt, input.approvalId);

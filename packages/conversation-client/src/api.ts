@@ -36,7 +36,42 @@ export interface GatewayClientOptions {
   fetchImpl?: typeof fetch;
 }
 /** What a live composed surface resolves to right now. */
+/**
+ * A widget that runs in its own frame.
+ *
+ * A different shape rather than more fields on the one below, because the two are not the same thing: a composition
+ * is data the client draws, and this is a URL it mounts plus the bindings that mount may invoke. A single interface
+ * with half its fields empty would make every reader check which half it is holding.
+ */
+export interface IsolatedFrameLiveResponse {
+  kind: "isolated-frame";
+  instanceId: string;
+  revision: number;
+  readOnly: boolean;
+  frame: {
+    /** Relative to the node, and served from the package path so the widget's own imports resolve. */
+    url: string;
+    isolation: string;
+    requestedCapabilities: readonly string[];
+    allowedOrigins: readonly string[];
+  };
+  /**
+   * The bindings the frame may invoke, with the digest to send back.
+   *
+   * A frame names one of these ids and nothing else: the session refuses an unknown id before the node ever sees it.
+   */
+  bindings: {
+    actionBindingId: string;
+    label: string;
+    effectCategory: string;
+    bindingDigest: string;
+  }[];
+  /** What the widget was created with, sent to it in the init message and nowhere else. */
+  props: Record<string, unknown>;
+}
+
 export interface LiveWidgetResponse {
+  kind: "composition";
   compositionId: string;
   readOnly: boolean;
   spec: CompositionResponse["spec"];
@@ -933,7 +968,10 @@ export class GatewayClient {
   }
 
   /** Resolve the live surface for an instance: current state, sections and ownership. */
-  liveWidget(conversationId: string, instanceId: string): Promise<LiveWidgetResponse> {
+  liveWidget(
+    conversationId: string,
+    instanceId: string,
+  ): Promise<LiveWidgetResponse | IsolatedFrameLiveResponse> {
     return this.#call("GET", `/conversations/${conversationId}/widgets/${instanceId}/live`);
   }
 
@@ -1022,8 +1060,41 @@ export class GatewayClient {
    * The digest is part of the answer on purpose: it is the only thing tying what is running to what was approved,
    * and a list that showed a version without one would be inviting trust it has not earned.
    */
+  /**
+   * A node-relative path as an absolute URL.
+   *
+   * The node hands out paths relative to itself, and the client is not always served by the node — in the browser
+   * suite it is served by a different origin entirely — so a path put straight into a frame's `src` would resolve
+   * against the wrong host. One place does the join, so a caller cannot forget it.
+   */
+  nodeUrl(path: string): string {
+    return `${this.#baseUrl}${path.startsWith("/") ? path : `/${path}`}`;
+  }
+
   packages(): Promise<{ packages: InstalledPackageView[] }> {
     return this.#call("GET", "/packages");
+  }
+
+  /**
+   * Install a package a directory listed.
+   *
+   * Refusals are thrown, like every other call here: a caller that has to tell "refused" from "installed" by reading
+   * a field inside a resolved promise is a caller that will one day not. An approval is not a refusal and arrives as
+   * an ordinary answer with `code: "APPROVAL_REQUIRED"`, because nothing failed — the next step is a decision.
+   */
+  installPackage(
+    packageId: string,
+    version: string,
+  ): Promise<{
+    installed?: { packageId: string; version: string };
+    code?: string;
+    message?: string;
+    approvalId?: string;
+    generationId?: string;
+    /** What the node actually checked. `digest-only` means the plan was bound to a published digest. */
+    verified?: string;
+  }> {
+    return this.#call("POST", "/packages/install", { packageId, version });
   }
 
   claimLiveOwner(

@@ -35,7 +35,7 @@ import { createNodeServer } from "./server.ts";
 import { machineRoots } from "./fs-search.ts";
 import { resolveProject, refreshProjectIndex } from "./project-finder.ts";
 import { commandDigest } from "./run-command.ts";
-import { captureSnapshot, createInstance, createTask, handleUserMessage, readPersonalInstructions, directoryIndexPath, recordAppIntentEvent, requestApproval, setPreference, type CoordinationDeps } from "@clarkcant/core";
+import { captureSnapshot, createInstance, saveActionBinding, createTask, handleUserMessage, readPersonalInstructions, directoryIndexPath, recordAppIntentEvent, requestApproval, setPreference, type CoordinationDeps } from "@clarkcant/core";
 import { GALLERY, YOUTUBE } from "@clarkcant/data-canvas";
 import { definitionDigest } from "@clarkcant/widget-host";
 import { listLocalImages, messagesSince, credentialNames, appendAuditEvent, readCredential,
@@ -561,11 +561,29 @@ async function main(): Promise<void> {
               version: "1.0.0",
               displayName: "Dashboard",
               description: "biểu đồ cho dự án",
-              source: { kind: "local", path: "/tmp/dashboard" },
+              // An exact npm version, which is what the directory fixture beside this lists: the install resolves the
+              // entry from the index, so a card whose source disagreed with it would be testing two different things.
+              source: { kind: "npm", name: "com.acme.dashboard", version: "1.0.0" },
               digest: "sha256:1111111111111111111111111111111111111111111111111111111111111111",
               riskTier: "isolated-ui",
               facets: ["ui"],
-              platforms: ["linux-x64"],
+              platforms: ["darwin-arm64", "linux-x64", "win32-x64", "web"],
+            },
+            {
+              /*
+               * A second result the directory does **not** list, so the refusal path is reachable from the interface
+               * rather than only from a test that calls the route. A listing somebody can click and get a named
+               * refusal from is the difference between "we handle that" and "we say we handle that".
+               */
+              packageId: "com.acme.not-listed",
+              version: "2.0.0",
+              displayName: "Not Listed",
+              description: "không có trong directory",
+              source: { kind: "npm", name: "com.acme.not-listed", version: "2.0.0" },
+              digest: "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+              riskTier: "isolated-ui",
+              facets: ["ui"],
+              platforms: ["darwin-arm64", "linux-x64", "win32-x64", "web"],
             },
           ],
         },
@@ -646,6 +664,80 @@ async function main(): Promise<void> {
           // the contract's own schema rather than asserted into the branded type, because an assertion here would be
           // the place a malformed instant got in.
           expiresAt: instantSchema.parse(new Date(Date.now() + 900_000).toISOString()),
+        },
+      };
+    }
+
+    /*
+     * A widget that runs in its own frame.
+     *
+     * The instance is created here and its binding attached here, because a frame can only invoke what the instance
+     * already holds: the session refuses an id it was not told about, and the node refuses one the instance does not
+     * carry. The block is what puts the "mở bản hiện tại" affordance in the transcript — without it the instance
+     * exists and nothing offers to open it.
+     *
+     * The definition is written out rather than imported, because it has to agree with the fixture package on disk:
+     * the node resolves a definition to a package by reading that package's own `widget.json`, so a fixture that
+     * disagreed with the file would describe a widget nothing can serve.
+     */
+    if (/widget cách ly|isolated widget/i.test(input.text)) {
+      const definition = {
+        id: "com.example.frame-widget.main@1",
+        version: "0.1.0",
+        renderer: "isolated-app" as const,
+        propsSchema: {
+          type: "object",
+          properties: { title: { type: "string", maxLength: 200 } },
+          required: ["title"],
+          additionalProperties: false,
+        },
+        eventSchemas: {},
+        stateSchema: { type: "object", properties: {}, additionalProperties: true },
+        stateVersion: 0,
+        semanticDescription: "A widget that runs in its own frame.",
+        requestedCapabilities: [],
+        sizing: { compact: true, expanded: true, minHeight: 160 },
+        textFallback: "Widget trong frame: nội dung chưa xem được ở chế độ chỉ có chữ.",
+        effectCategories: [],
+        datasetRefs: [],
+      };
+      const instance = createInstance(services.conductor, {
+        definition,
+        packageDigest: definitionDigest(definition),
+        ownerPrincipalId: input.principal.principalId,
+        props: { title: "Widget trong frame (fixture)" },
+      });
+      saveActionBinding(services.conductor, {
+        // Fixed, because the fixture package's own code names it: a generated id would be one the widget cannot know.
+        actionBindingId: "binding_frame_widget_fixture",
+        instanceId: instance.instanceId,
+        definitionId: definition.id,
+        packageGeneration: `${definition.id}#fixture`,
+        // A `view` operation on purpose: it is the one the M1 surface performs, so the round trip is about the
+        // frame's plumbing rather than about a policy question that has its own tests.
+        proposal: { kind: "view", operation: "view.save", args: {} },
+        label: "Gửi ý định",
+        inputSchema: {},
+        allowedDataRefs: [],
+        fixedConstraints: {},
+        effectCategory: "read",
+        requiresApproval: false,
+        limits: {},
+        bindingDigest: "sha256:frame-widget-binding",
+        createdAt: instantSchema.parse(new Date().toISOString()),
+      });
+      const snapshot = captureSnapshot(services.conductor, {
+        messageId: input.messageId,
+        instance,
+        textAlternative: definition.textFallback,
+        presentationRef: `isolated:${definition.id}`,
+      });
+      return {
+        text: "Fixture: một widget chạy trong frame cách ly (không phải model thật).",
+        block: {
+          type: "surface",
+          definitionRef: { id: definition.id, version: definition.version },
+          snapshot,
         },
       };
     }

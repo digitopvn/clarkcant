@@ -56,6 +56,14 @@ export interface FrameSessionInput {
   nonce: string;
   props: Record<string, unknown>;
   state?: Record<string, unknown>;
+  /**
+   * The instance revision this frame is being shown.
+   *
+   * Sent in the init message so the widget's first action carries the revision it was actually initialized at. A
+   * frame that was never told one speaks revision 0 and has its first action refused as stale, which is a handshake
+   * that looks fine and a widget that cannot act.
+   */
+  revision: number;
   /** Capabilities the host is willing to broker for this frame, and no others. */
   brokeredCapabilities: readonly string[];
   /** Origins this frame may reach, enforced by CSP and stated here for the init message. */
@@ -125,6 +133,7 @@ export function createFrameSession(input: FrameSessionInput): FrameSession {
       nonce: input.nonce,
       props: input.props,
       state,
+      revision: input.revision,
       brokeredCapabilities: [...input.brokeredCapabilities],
       allowedOrigins: [...input.allowedOrigins],
     };
