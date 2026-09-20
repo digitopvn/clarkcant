@@ -150,11 +150,13 @@ export function verifyTokenAudience(input: {
 }
 
 /**
- * @implementation-status stub
- * TODO(P5): the live MCP transport — stdio and streamable HTTP clients, the tool
- * call loop, and MCP Apps UI resource hosting. Metadata normalization, effect
- * classification, tool-set digesting, auth-capability checks and audience validation
- * are implemented and tested; calling a real server requires one to be reachable.
+ * The live MCP transports.
+ *
+ * Two of them, because a server is reached in two ways: stdio for a process on this machine, and
+ * streamable HTTP for one that is not. Both are exercised against a real server rather than a mock.
+ *
+ * Metadata normalization, effect classification, tool-set digesting, auth-capability checks and
+ * audience validation are implemented and tested. MCP Apps UI resource hosting is not built.
  */
 export interface McpTransport {
   listTools(): Promise<McpToolMetadata[]>;
@@ -162,3 +164,9 @@ export interface McpTransport {
 }
 
 export { StdioMcpTransport, connectStdio, MCP_TRANSPORT_STATUS, type StdioMcpTransportOptions, type ServerHandshake } from "./stdio.ts";
+export {
+  MCP_HTTP_TRANSPORT_STATUS,
+  StreamableHttpMcpTransport,
+  connectStreamableHttp,
+  type StreamableHttpMcpTransportOptions,
+} from "./streamable-http.ts";
