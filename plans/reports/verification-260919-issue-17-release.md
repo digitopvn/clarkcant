@@ -27,7 +27,7 @@ nội dung nào ngoài ghi chú này.
 | 1. Đính kèm tệp | `apps/web/e2e/attachments.spec.ts` — "the agent answers using the content of an attached file" và "the agent answers using the content of an attached pdf" (hai tệp, câu trả lời dùng nội dung tệp văn bản, reload vẫn thấy cả hai), cộng chín journey còn lại của tệp; từ chối path/URL/mime/ngưỡng/quota ở `apps/runtime/test/attachment-routes.spec.ts` |
 | 2. Cửa sổ desktop tối giản | smoke của `apps/desktop` (bounds, sàn 20×50, always-on-top đọc từ cửa sổ thật; chạy trong CI dưới `xvfb`) và `apps/web/e2e/voice-bar.spec.ts` (phiên sống qua cả hai chiều) |
 | 3. Voice điều khiển app | `apps/web/e2e/voice-control.spec.ts` — 8 journey: mở Settings, đổi tab được gọi tên, thoát app (hỏi trước), lệnh lạ bị từ chối, kết thúc phiên, về home, đính kèm (mở file picker), và lệnh cửa sổ bị từ chối trong browser; cộng `packages/core/test/app-intents.spec.ts` cho từng nhóm lệnh |
-| 4. Gợi ý từ việc gần đây | `apps/web/e2e/suggestions.spec.ts`, `apps/runtime/test/suggestions.spec.ts` |
+| 4. Gợi ý từ việc gần đây | `apps/web/e2e/suggestions.spec.ts` — gồm "with two sessions behind it, the offer is the one touched last" (seed **hai** phiên, và gợi ý trỏ đúng phiên được chạm sau cùng) — và `apps/runtime/test/suggestions.spec.ts` |
 | 5. Tab Memory | `apps/web/e2e/memory.spec.ts` (rỗng, có dữ liệu kèm nguồn, xoá), `apps/runtime/test/memory.spec.ts` |
 
 Cả ba loại nội dung của issue nay đều tới được agent. Văn bản và PDF đi vào prompt của lượt; ảnh được
