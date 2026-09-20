@@ -141,16 +141,53 @@ export const resourceRefSchema = z.strictObject({
 });
 export type ResourceRef = z.infer<typeof resourceRefSchema>;
 
+/**
+ * The platforms a package may declare, and the platforms a host may be.
+ *
+ * One vocabulary for both, which is the point: a package says where it runs, a host says where it is, and the two
+ * have to be the same strings or they can never be compared. `win32` is here because this repository's own desktop
+ * app is Electron on Windows — a vocabulary without it cannot describe the host it ships on, and a package for that
+ * host has no way to say so.
+ *
+ * The names are `<node platform>-<arch>`, which is why Windows reads `win32-*` rather than `windows-*`: matching
+ * Node's own spelling keeps the mapping below a lookup rather than a translation table.
+ */
 export const platformSchema = z.enum([
   "darwin-arm64",
   "darwin-x64",
   "linux-x64",
   "linux-arm64",
+  "win32-x64",
+  "win32-arm64",
   "web",
 ]);
 export type Platform = z.infer<typeof platformSchema>;
 
-export const operatingSystemSchema = z.enum(["macos", "linux", "web"]);
+/**
+ * The platform name for a host, from Node's own pair.
+ *
+ * Without this the two vocabularies never actually meet. Node reports `process.platform` as `win32` and
+ * `process.arch` as `x64`, while a package declares `win32-x64`; a caller that passed the raw pair would match
+ * nothing at all, and the failure would look like "no package fits this host" rather than like a missing mapping.
+ * That is how the absent Windows value stayed quiet for so long: nothing compared the two strings.
+ *
+ * `undefined` for a host this vocabulary does not describe, so a caller refuses with a reason instead of guessing
+ * `web` and offering a native package to something that cannot run it.
+ */
+export function platformForHost(platform: string, arch: string): Platform | undefined {
+  const key = `${platform}-${arch}`;
+  const known: Partial<Record<string, Platform>> = {
+    "darwin-arm64": "darwin-arm64",
+    "darwin-x64": "darwin-x64",
+    "linux-x64": "linux-x64",
+    "linux-arm64": "linux-arm64",
+    "win32-x64": "win32-x64",
+    "win32-arm64": "win32-arm64",
+  };
+  return known[key];
+}
+
+export const operatingSystemSchema = z.enum(["macos", "linux", "windows", "web"]);
 export type OperatingSystem = z.infer<typeof operatingSystemSchema>;
 
 /**

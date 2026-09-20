@@ -1,4 +1,4 @@
-import { directoryEntrySchema, riskLaneFor, type DirectoryEntry, type PackageSource, type RiskLane } from "@clarkcant/contracts";
+import { directoryEntrySchema, riskLaneFor, type DirectoryEntry, type PackageSource, type Platform, type RiskLane } from "@clarkcant/contracts";
 
 /**
  * Resolving where a package comes from.
@@ -52,7 +52,7 @@ export interface ResolveInput {
   /** The directory listing, when the source is a registry rather than a path. */
   directory?: readonly DirectoryEntry[];
   hostApi: number;
-  platform: string;
+  platform: Platform;
   /**
    * The digest computed from a local package by the caller.
    *
@@ -154,8 +154,14 @@ function finish(
       message: `needs host API ${String(entry.hostApi.min)}–${String(entry.hostApi.max)}, this host is ${String(input.hostApi)}`,
     };
   }
-  if (!entry.platforms.includes(input.platform as never)) {
-    return { ok: false, code: "PLATFORM_MISMATCH", message: `does not list ${input.platform}` };
+  if (!entry.platforms.includes(input.platform)) {
+    // Names both sides. "Does not list linux-x64" tells a reader what this host is and nothing about what the
+    // package is for, so it reads as a malformed package rather than as one built for another machine.
+    return {
+      ok: false,
+      code: "PLATFORM_MISMATCH",
+      message: `is built for ${entry.platforms.join(", ")}; this host is ${input.platform}`,
+    };
   }
   if (entry.digest.trim() === "") {
     // A directory entry with no digest is refused rather than trusted: there would be nothing to check the artifact

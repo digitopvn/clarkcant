@@ -99,8 +99,9 @@ function init(root: string, template: Template): void {
     requestedCapabilities: [],
     // Empty by default, so a widget that reaches a network has to say so and the conformance suite can notice.
     permissions: { networkOrigins: [], filesystem: [], microphone: false, camera: false, lifecycleScripts: [] },
-    // The contract lists darwin, linux and web; there is no Windows value, so a template cannot claim one.
-    platforms: ["darwin-arm64", "linux-x64", "web"],
+    // Windows is listed because this repository's own desktop app is Electron on Windows: a template that could
+    // not declare it would scaffold a package unable to say where it runs.
+    platforms: ["darwin-arm64", "linux-x64", "win32-x64"],
     publisher: { id: "example", sourceUrl: "https://github.com/example/my-widget", license: "MIT" },
   };
   const definition = { ...definitionFor(`${id}.main@1`, template), id: `${id}.main@1` };
