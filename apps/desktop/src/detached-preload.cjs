@@ -22,6 +22,20 @@ contextBridge.exposeInMainWorld("clarkcantDetached", {
     return ipcRenderer.invoke("detached:bootstrap");
   },
   /**
+   * Asks the host to perform an action on this instance.
+   *
+   * The window holds no token, so it cannot invoke anything itself — and it must not, because the credential that
+   * would let it is the credential that reads the whole conversation. So the intent travels to the host, which
+   * performs it with its own credentials and resolves the binding digest from the composition it handed over.
+   *
+   * This method was missing until the desktop smoke test asked a real detached window what it could reach: the host
+   * implemented the channel and the UI called this function, so the window drew correctly and threw on the first
+   * press. A bridge that is one verb short looks entirely healthy until somebody uses it.
+   */
+  intent(input) {
+    return ipcRenderer.invoke("detached:intent", input);
+  },
+  /**
    * Hands the instance back to the window that owns the conversation.
    *
    * The host performs the ownership handoff in both directions, so closing this window is a request rather than a

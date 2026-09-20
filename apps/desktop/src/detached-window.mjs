@@ -164,7 +164,13 @@ export function detachedBounds(parentBounds, workArea) {
  */
 export function detachedWindowOptions(preloadPath, parentBounds, workArea) {
   return {
-    ...createWindowOptions(preloadPath),
+    /*
+     * `webPreferences` is where Electron reads a preload from, and this was the bug the desktop smoke test was
+     * written to find: the hardened options were spread at the **top level** of the BrowserWindow, so `preload` was
+     * a key Electron ignores and the detached window opened with no bridge at all. The window looked right, answered
+     * nothing, and every check that did not open one passed.
+     */
+    webPreferences: createWindowOptions(preloadPath),
     ...detachedBounds(parentBounds, workArea),
     title: "ClarkCant — widget",
     // The detached window is a view of one instance; the conversation's own menu belongs to the window that owns

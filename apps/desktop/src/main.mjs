@@ -18,6 +18,8 @@
 
 import { app, BrowserWindow, dialog, ipcMain, screen, shell, session } from "electron";
 import { randomUUID } from "node:crypto";
+
+import { startSmokeNode } from "./smoke-node.mjs";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { dirname, join } from "node:path";
 import { readFileSync } from "node:fs";
@@ -80,6 +82,35 @@ const nodeUrl = nodeUrlFlag >= 0 ? argv[nodeUrlFlag + 1] : undefined;
  * on top of it would be a second title bar. The posture document has no chrome of its own and keeps its frame.
  */
 const loadingClient = rendererUrlFlag >= 0;
+
+/**
+ * The document the IPC review compares a call against.
+ *
+ * The shell's own URL in every real run. The smoke test moves it, because its detached-window phase is served by a
+ * stand-in node rather than by the app - and "did this call come from the document we loaded" has to keep meaning
+ * that while the document differs. A review comparing against a fixed constant would refuse every call from that
+ * window, which is the same failure the `file://D:\` bug produced from the other direction.
+ */
+let shellDocumentUrl = rendererUrl;
+
+/**
+ * The origin `readNodeSession` treats as the node.
+ *
+ * In production the window is served by the node it talks to, which is why this starts as the renderer's URL. The
+ * smoke test points it at its stand-in so the handoff is exercised end to end rather than only down its refusal path.
+ */
+let nodeOriginUrl = rendererUrl;
+
+/**
+ * The token the host uses when the smoke test has stood a node in for the real one.
+ *
+ * Every real run reads the local token from the node's own identity file. The smoke run has no node, so it has no
+ * identity file either - and without a token the claim is refused before it is attempted, which is what made the
+ * first version of the detached checks assert nothing but the refusal. Named here rather than committed as a fixture
+ * file, because a tracked file that looks like a credential is a bad thing to have in a repository regardless of
+ * whether it is real.
+ */
+let nodeIdentityOverride;
 
 /** Closing the window stops the window, not the work. Default is to keep running. */
 let keepRunningOnWindowClose = true;
@@ -153,7 +184,7 @@ function handle(channel, handler) {
   ipcMain.handle(channel, async (event, ...args) => {
     // The detached window's own address is passed so the review can tell the two documents apart: the sets of
     // channels they may use are not interchangeable.
-    const review = reviewIpcCall(event, channel, rendererUrl, detached?.url);
+    const review = reviewIpcCall(event, channel, shellDocumentUrl, detached?.url);
     if (!review.allowed) {
       return { ok: false, refused: review.reason };
     }
@@ -172,6 +203,15 @@ function handle(channel, handler) {
  * two reads of the identity file would be two places for the token's rules to drift.
  */
 function readNodeSession() {
+  if (nodeIdentityOverride !== undefined) {
+    let overrideOrigin;
+    try {
+      overrideOrigin = new URL(nodeOriginUrl).origin;
+    } catch {
+      return { ok: false, refused: "the window's address is not a URL, so there is no node to point at" };
+    }
+    return { ok: true, baseUrl: overrideOrigin, token: nodeIdentityOverride };
+  }
   if (dataDir === undefined) {
     return { ok: false, refused: "no --data-dir was given, so there is no identity to read" };
   }
@@ -185,7 +225,7 @@ function readNodeSession() {
   if (token.length === 0) return { ok: false, refused: "the node identity carries no local token" };
   let origin;
   try {
-    origin = new URL(rendererUrl).origin;
+    origin = new URL(nodeOriginUrl).origin;
   } catch {
     return { ok: false, refused: "the window's address is not a URL, so there is no node to point at" };
   }
@@ -454,6 +494,20 @@ function registerHandlers() {
     window.webContents.on("will-navigate", (event, target) => {
       if (!target.startsWith(rendererUrl)) event.preventDefault();
     });
+    /*
+     * The same two listeners the shell window has, and for the same reason: a preload that fails to load is silent
+     * by default, and the symptom is a window that looks fine while answering nothing. That is exactly how the
+     * `file://D:\` bug hid, so the window that receives the narrowest bridge is the last one that should be quiet
+     * about failing to get it.
+     */
+    window.webContents.on("preload-error", (_event, preloadPath, error) => {
+      process.stderr.write(`detached preload failed to load from ${preloadPath}: ${error.stack ?? error}
+`);
+    });
+    window.webContents.on("console-message", (_event, level, message) => {
+      if (level >= 2) process.stderr.write(`detached renderer console: ${message}
+`);
+    });
 
     detached = { window, url, bootstrap: reviewed.bootstrap, conversationId, instanceId, ownerToken: randomUUID() };
 
@@ -561,7 +615,12 @@ function applyContentSecurityPolicy() {
   });
 }
 
-async function createShellWindow({ show = true } = {}) {
+async function createShellWindow({ show = true, url } = {}) {
+  /*
+   * `url` exists for the smoke test, which opens one window against its stand-in node so the detach handoff can be
+   * exercised for real. Every other caller loads the app.
+   */
+  const document = url ?? rendererUrl;
   const window = new BrowserWindow({
     width: 1100,
     height: 760,
@@ -590,12 +649,15 @@ async function createShellWindow({ show = true } = {}) {
 
   window.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
   window.webContents.on("will-navigate", (event, target) => {
-    if (!target.startsWith(rendererUrl)) event.preventDefault();
+    if (!target.startsWith(document)) event.preventDefault();
   });
 
   // The window the conversation is in, remembered so a detached view can open beside it and hand back to it.
   shellWindow = window;
-  await window.loadURL(rendererUrl);
+  // Recorded before the load resolves, so a call arriving with the first paint is reviewed against the document
+  // this window actually loaded rather than against the previous one.
+  shellDocumentUrl = document;
+  await window.loadURL(document);
 
   window.once("ready-to-show", () => {
     if (show) window.show();
@@ -666,7 +728,16 @@ async function runSmokeTest() {
   const minimum = window.getMinimumSize();
   const minimumWidth = Array.isArray(minimum) ? minimum[0] : minimum.width;
   const minimumHeight = Array.isArray(minimum) ? minimum[1] : minimum.height;
-  const pinnedNow = window.isAlwaysOnTop();
+  /*
+   * Read with a bounded retry, because the window manager applies the flag asynchronously: a bare synchronous read
+   * raced it and failed roughly one run in three. A check that fails occasionally is worse than no check, because it
+   * teaches people to re-run instead of to look.
+   */
+  let pinnedNow = window.isAlwaysOnTop();
+  for (let attempt = 0; attempt < 20 && pinnedNow !== true; attempt += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 25));
+    pinnedNow = window.isAlwaysOnTop();
+  }
   // `close()` is synchronous on BrowserWindow; awaiting it would imply a completion signal that
   // does not exist.
   window.close();
@@ -716,9 +787,133 @@ async function runSmokeTest() {
     ["a window mode this build does not know is refused", observed.refusedUnknownMode?.ok === false],
   ];
 
+  /*
+   * The detached window, exercised against a stand-in node.
+   *
+   * Everything here is real except the node: a real BrowserWindow with the real narrow preload, the real IPC
+   * channels, the real claim/release handoff. The node is stood in for because the smoke run has no runtime, and
+   * without one the only reachable outcome would be the refusal - so a smoke test with no stand-in could not check
+   * the thing this criterion is about at all.
+   */
+  const node = await startSmokeNode();
+  const previousDocument = shellDocumentUrl;
+  const previousOrigin = nodeOriginUrl;
+  let detachShell;
+  /*
+   * Which step the phase is on, so a failure names it.
+   *
+   * The first version of this phase let an exception escape, and the smoke test printed "Script failed to execute"
+   * with nothing to say about where — the same shape of unhelpful output this whole smoke test exists to replace.
+   * A step name turns a crash into a check that says what broke.
+   */
+  let step = "start";
+  /** What the detached window could see, so a failure there is diagnosable rather than a bare `false`. */
+  let detachedObserved = {};
+  try {
+    shellDocumentUrl = node.url;
+    nodeOriginUrl = node.url;
+    nodeIdentityOverride = "smoke-token-not-a-credential";
+    step = "open a shell against the stand-in";
+    detachShell = await createShellWindow({ show: false, url: node.url });
+    step = "install the reattach listener";
+    await detachShell.webContents.executeJavaScript(
+      "window.__reattached = []; window.clarkcant.onWidgetReattached((payload) => window.__reattached.push(payload)); true",
+    );
+
+    step = "ask the host to detach";
+    const asked = await detachShell.webContents.executeJavaScript(
+      `window.clarkcant.detachWidget(${JSON.stringify({
+        conversationId: "conv_smoke",
+        instanceId: "widget_smoke",
+        title: "Bang dieu khien",
+        live: {
+          compositionId: "comp_smoke",
+          readOnly: false,
+          revision: 1,
+          period: "week",
+          timezone: "Asia/Saigon",
+          state: {},
+          spec: { instanceId: "widget_smoke", catalogDigest: "sha256:smoke", sections: [], actions: [] },
+          bindings: [],
+          sections: [],
+          availability: {},
+        },
+      })})`,
+    );
+
+    step = "read the claim the node was asked for";
+    const claim = node.calls.find((call) => call.method === "POST");
+    const opened = detached?.window;
+    step = "ask the detached window what it received";
+    const bootstrap =
+      opened === undefined
+        ? undefined
+        : await opened.webContents.executeJavaScript(
+            "(() => { const bridge = window.clarkcantDetached; " +
+              "if (bridge === undefined) return { ok: false, refused: 'the detached window has no bridge' }; " +
+              "return bridge.bootstrap(); })()",
+          );
+    step = "ask the detached window what it can reach";
+    const verbs =
+      opened === undefined
+        ? []
+        : await opened.webContents.executeJavaScript(
+            "(() => { const bridge = window.clarkcantDetached; " +
+              "return bridge === undefined ? [] : Object.keys(bridge).sort(); })()",
+          );
+
+    step = "close the detached window";
+    opened?.close();
+    // The close handler releases the lease and messages the shell; neither is synchronous with `close()`.
+    await new Promise((resolve) => setTimeout(resolve, 400));
+
+    const release = node.calls.find((call) => call.method === "DELETE");
+    const reattached = await detachShell.webContents.executeJavaScript("window.__reattached");
+    const bootstrapKeys =
+      bootstrap?.ok === true ? JSON.stringify(Object.keys(bootstrap.bootstrap).sort()) : "[]";
+
+    detachedObserved = { verbs, bootstrapOk: bootstrap?.ok === true, bootstrapKeys };
+    checks.push(
+      [
+        "the stand-in node was asked to move the lease to the detached surface",
+        claim !== undefined && claim.body["surface"] === "detached",
+      ],
+      ["a real detached window opened, and the host said so", asked?.ok === true && opened !== undefined],
+      [
+        "the bootstrap carries the widget and no credential",
+        bootstrap?.ok === true &&
+          bootstrapKeys === JSON.stringify(["instanceRef", "live", "title", "widgetKind"]) &&
+          !JSON.stringify(bootstrap.bootstrap).includes("localToken"),
+      ],
+      [
+        "the detached window reaches only its own three verbs",
+        JSON.stringify(verbs) === JSON.stringify(["bootstrap", "intent", "release"]),
+      ],
+      ["closing the window gives the lease back", release !== undefined],
+      ["and the shell is told to take the instance back", Array.isArray(reattached) && reattached.length === 1],
+    );
+  } catch (error) {
+    checks.push([
+      `the detached-window phase ran to the end (it threw while trying to ${step}: ${
+        error instanceof Error ? error.message : String(error)
+      })`,
+      false,
+    ]);
+  } finally {
+    detachShell?.close();
+    shellDocumentUrl = previousDocument;
+    nodeOriginUrl = previousOrigin;
+    nodeIdentityOverride = undefined;
+    await node.close();
+  }
+
   const failed = checks.filter(([, passed]) => !passed);
   process.stdout.write(
-    `${JSON.stringify({ mode: "smoke-test", rendererUrl, observed, checks, failed: failed.map(([name]) => name) }, null, 2)}\n`,
+    `${JSON.stringify(
+      { mode: "smoke-test", rendererUrl, observed, detachedObserved, checks, failed: failed.map(([name]) => name) },
+      null,
+      2,
+    )}\n`,
   );
   return failed.length === 0 ? 0 : 1;
 }
