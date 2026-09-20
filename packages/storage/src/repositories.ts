@@ -368,12 +368,18 @@ export function recordInbox(
       input.peerNodeId,
     );
     if (cursor === undefined) {
+      // The first message from a peer establishes the baseline. Without one there is nothing to be
+      // contiguous with, and inventing a zero would make a stream that starts at five look like four
+      // lost messages.
       db.prepare("INSERT INTO peer_cursors (peer_node_id, last_sequence, updated_at) VALUES (?, ?, ?)").run(
         input.peerNodeId,
         input.sourceSequence,
         input.receivedAt,
       );
-    } else if (input.sourceSequence > cursor.last_sequence) {
+    } else if (input.sourceSequence === cursor.last_sequence + 1) {
+      // Contiguous only, which is what the column documents itself as being. Advancing over a gap is
+      // what turns a delayed message into a permanently unprocessable one: the missing sequence
+      // arrives later, reads as a regression, and is refused for good.
       db.prepare("UPDATE peer_cursors SET last_sequence = ?, updated_at = ? WHERE peer_node_id = ?").run(
         input.sourceSequence,
         input.receivedAt,

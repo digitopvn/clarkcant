@@ -3,10 +3,11 @@ import { type AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { type Instant, type PairInvite } from "@clarkcant/contracts";
-import { createPairInvite } from "@clarkcant/storage";
+import { type Instant, type PairInvite, type PeerEnvelope, type Grant } from "@clarkcant/contracts";
+import { createPairInvite, getPeer } from "@clarkcant/storage";
 import { afterEach, describe, expect, it } from "vitest";
 
+import { sendToPeer } from "../src/peer-transport.ts";
 import { outboundPeerToken, peerTokenHash } from "../src/peers.ts";
 import { createNodeServer } from "../src/server.ts";
 import { bootNodeServices, type NodeServices } from "../src/services.ts";
@@ -139,6 +140,182 @@ function envelopeFrom(sender: LiveNode, recipient: LiveNode, sequence = 1) {
     payload: { handshake: { min: 1, max: 2 } },
   };
 }
+
+describe("two live hosts delegate", () => {
+  /** The transport as the runtime wires it: real HTTP to whatever peer the outbox row names. */
+  function transportFor(node: LiveNode) {
+    return {
+      db: node.services.runtime.db,
+      identity: node.services.runtime.identity,
+      now: () => new Date().toISOString() as Instant,
+      peerFor: (peerNodeId: string) => getPeer(node.services.runtime.db, peerNodeId),
+    };
+  }
+
+  function grantFor(sender: LiveNode, receiver: LiveNode, overrides: Partial<Grant> = {}): Grant {
+    return {
+      grantId: "grant_1",
+      ownerPrincipalId: identityOf(sender).ownerPrincipalId,
+      senderNodeId: identityOf(sender).nodeId,
+      receiverNodeId: identityOf(receiver).nodeId,
+      capabilityRefs: [],
+      resources: [],
+      allowedDataClasses: ["public", "internal"],
+      expiresAt: new Date(Date.now() + 3_600_000).toISOString() as Instant,
+      budget: { maxArtifactBytes: 1024 },
+      maxDelegationDepth: 0,
+      ...overrides,
+    };
+  }
+
+  function envelope(sender: LiveNode, recipient: LiveNode, sequence: number): Omit<PeerEnvelope, "kind" | "payload"> {
+    return {
+      protocol: "agent.nodelink",
+      version: 1,
+      messageId: `msg_${String(sequence)}`,
+      correlationId: "corr_1",
+      senderNodeId: identityOf(sender).nodeId,
+      recipientNodeId: identityOf(recipient).nodeId,
+      sourceSequence: sequence,
+      sentAt: new Date().toISOString() as Instant,
+    };
+  }
+
+  it("carries a delegation between two live hosts, and answers a replay with what was recorded", async () => {
+    const a = await startNode("node a");
+    const b = await startNode("node b");
+    await pair(a, b);
+
+    // The grant is written by the owner and travels as an envelope, so the receiver stores it and
+    // from then on a delegate naming it is admissible.
+    const grant = grantFor(a, b);
+    const written = await call(a, "/grants", { body: grant, token: a.token });
+    expect(written.status).toBe(201);
+
+    const grantSent = await sendToPeer(transportFor(a), {
+      ...envelope(a, b, 1),
+      kind: "pair.confirm",
+      payload: { grant, fingerprint: identityOf(a).fingerprint },
+    });
+    expect(grantSent.acknowledged).toBe(1);
+    expect(grantSent.refused).toEqual([]);
+
+    const delegated = await sendToPeer(transportFor(a), {
+      ...envelope(a, b, 2),
+      kind: "delegate",
+      delegationId: grant.grantId,
+      taskId: "task_1",
+      payload: { grant, taskBrief: { what: "run the build" }, dataClass: "internal" },
+    });
+    expect(delegated.acknowledged).toBe(1);
+
+    // B accepted it, and the acceptance is what was recorded rather than a bare acknowledgement.
+    const listed = await call(b, "/peers", { method: "GET", token: b.token });
+    expect(listed.status).toBe(200);
+
+    // Re-sending the same delegation is answered from the inbox, so the sender's outbox can retry
+    // after a lost acknowledgement without the work running twice.
+    const replay = await call(b, "/peers/messages", {
+      body: {
+        ...envelope(a, b, 2),
+        kind: "delegate",
+        delegationId: grant.grantId,
+        taskId: "task_1",
+        payload: { grant, taskBrief: { what: "run the build" }, dataClass: "internal" },
+      },
+      peerToken: tokenFor(a, b),
+    });
+    expect(replay.status).toBe(200);
+    expect(replay.body["status"]).toBe("duplicate");
+    expect(replay.body["response"]).toEqual({
+      status: "recorded",
+      outcome: { accepted: true, acceptedAt: expect.any(String) as unknown, delegationId: grant.grantId },
+    });
+  });
+
+  it("refuses a delegation that names a grant the receiver never accepted", async () => {
+    const a = await startNode("node a");
+    const b = await startNode("node b");
+    await pair(a, b);
+
+    // No pair.confirm, so the grant is not live on B. The delegation is refused by name rather than
+    // accepted and quietly ignored.
+    const grant = grantFor(a, b, { grantId: "grant_never_sent" });
+    const refused = await call(b, "/peers/messages", {
+      body: {
+        ...envelope(a, b, 1),
+        kind: "delegate",
+        delegationId: grant.grantId,
+        taskId: "task_1",
+        payload: { grant, taskBrief: { what: "run the build" }, dataClass: "internal" },
+      },
+      peerToken: tokenFor(a, b),
+    });
+    expect(refused.status).toBe(400);
+    expect(refused.body["code"]).toBe("DELEGATION_UNKNOWN");
+  });
+
+  it("refuses an artifact whose classification the grant does not allow", async () => {
+    const a = await startNode("node a");
+    const b = await startNode("node b");
+    await pair(a, b);
+
+    const grant = grantFor(a, b);
+    await call(a, "/grants", { body: grant, token: a.token });
+    await sendToPeer(transportFor(a), {
+      ...envelope(a, b, 1),
+      kind: "pair.confirm",
+      payload: { grant, fingerprint: identityOf(a).fingerprint },
+    });
+
+    // The grant allows public and internal. A secret artifact is refused by the grant, not by the
+    // transfer, which is what makes the refusal about permission rather than about bytes.
+    const offer = {
+      artifactId: "art_1",
+      digest: "sha256:abc",
+      sizeBytes: 10,
+      mimeType: "text/plain",
+      classification: "secret",
+      originNodeId: identityOf(a).nodeId,
+    };
+    const refused = await call(b, "/peers/messages", {
+      body: {
+        ...envelope(a, b, 2),
+        kind: "artifact.offer",
+        payload: { artifact: offer, digest: offer.digest, sizeBytes: offer.sizeBytes, classification: offer.classification },
+      },
+      peerToken: tokenFor(a, b),
+    });
+    expect(refused.status).toBe(200);
+    expect(refused.body["response"]).toEqual({
+      status: "recorded",
+      outcome: { accepted: false, reason: "grant does not permit data class secret" },
+    });
+  });
+
+  it("reports a sequence gap instead of accepting it, and the delayed message still processes", async () => {
+    const a = await startNode("node a");
+    const b = await startNode("node b");
+    await pair(a, b);
+
+    const handshake = (sequence: number) => ({
+      ...envelope(a, b, sequence),
+      kind: "handshake",
+      payload: { handshake: { min: 1, max: 2 } },
+    });
+
+    expect((await call(b, "/peers/messages", { body: handshake(1), peerToken: tokenFor(a, b) })).status).toBe(200);
+
+    // Sequence 3 arrives with 2 missing. It is refused, so the sender's outbox keeps it pending.
+    const gap = await call(b, "/peers/messages", { body: handshake(3), peerToken: tokenFor(a, b) });
+    expect(gap.status).toBe(409);
+    expect(gap.body["code"]).toBe("SEQUENCE_GAP");
+
+    // The delayed message is still processable, and once it is in, the one that was refused follows.
+    expect((await call(b, "/peers/messages", { body: handshake(2), peerToken: tokenFor(a, b) })).status).toBe(200);
+    expect((await call(b, "/peers/messages", { body: handshake(3), peerToken: tokenFor(a, b) })).status).toBe(200);
+  });
+});
 
 describe("two live hosts pair", () => {
   it("records the peer as pending, and admits nothing until a person confirms it on both sides", async () => {
