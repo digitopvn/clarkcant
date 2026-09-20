@@ -98,13 +98,31 @@ describe("the detached bootstrap", () => {
 describe("the detached window itself", () => {
   it("is as hardened as the window it came from", () => {
     const options = detachedWindowOptions(PRELOAD, { x: 0, y: 0, width: 900, height: 700 });
-    expect(options.preload).toBe(PRELOAD);
-    expect(options.sandbox).toBe(true);
-    expect(options.contextIsolation).toBe(true);
-    expect(options.nodeIntegration).toBe(false);
-    expect(options.webviewTag).toBe(false);
+    expect(options.webPreferences.preload).toBe(PRELOAD);
+    expect(options.webPreferences.sandbox).toBe(true);
+    expect(options.webPreferences.contextIsolation).toBe(true);
+    expect(options.webPreferences.nodeIntegration).toBe(false);
+    expect(options.webPreferences.webviewTag).toBe(false);
     // Detaching is a presentation change, so nothing here widens what renderer code may reach.
-    expect(options.allowRunningInsecureContent).toBe(false);
+    expect(options.webPreferences.allowRunningInsecureContent).toBe(false);
+  });
+
+  it("puts the preload where Electron reads it, not spread across the window options", () => {
+    /*
+     * The regression this test exists for: a top-level `preload` is not an error and not a warning — Electron
+     * simply ignores it, so the window opens with no bridge and looks entirely healthy. Asserting the key is
+     * *absent* at the top level is what makes that visible, because every other assertion here passes either way.
+     */
+    const options = detachedWindowOptions(PRELOAD, { x: 0, y: 0, width: 900, height: 700 });
+    /*
+     * SAFETY: the assertion is that these keys are *absent*, which a typed read cannot express — the type has no
+     * such properties precisely because they must not be there. Reading through a loose view is what makes the
+     * absence testable at all.
+     */
+    const loose = options as unknown as Record<string, unknown>;
+    expect(loose["preload"]).toBeUndefined();
+    expect(loose["sandbox"]).toBeUndefined();
+    expect(options.webPreferences.preload).toBe(PRELOAD);
   });
 
   it("refuses to build without a preload path", () => {
