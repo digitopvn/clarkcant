@@ -29,18 +29,29 @@ import { ownedResources } from "../src/preflight.ts";
 
 describe("an approved command is still checked against what this node owns", () => {
   it("refuses an operation whose folder this node does not own", async () => {
-    // Asking a person is a policy about whether to ask, not a different kind of gate: the same containment the
-    // guarded path runs is run here, at the moment of the decision rather than when the card was drawn.
-    const payload = JSON.stringify({ command: "git status", cwd: "D:/somewhere/else" });
-    const refused = await runApprovedCommand({
-      payload,
-      expectedDigest: commandDigest("git status", "D:/somewhere/else"),
-      approvalId: "appr_1",
-      resources: ownedResources([process.cwd()]),
-    });
+    /*
+     * Asking a person is a policy about whether to ask, not a different kind of gate: the same containment the
+     * guarded path runs is run here, at the moment of the decision rather than when the card was drawn.
+     *
+     * The folder has to **exist** for the refusal to be about ownership: a path that is merely absent is refused as
+     * unknown, which is a different answer and not the one this test is about. A path spelled for one platform is
+     * absent on the other — which is how this passed on a developer's machine and failed on Linux — so it is created.
+     */
+    const outside = mkdtempSync(join(tmpdir(), "clarkcant-outside-"));
+    try {
+      const payload = JSON.stringify({ command: "git status", cwd: outside });
+      const refused = await runApprovedCommand({
+        payload,
+        expectedDigest: commandDigest("git status", outside),
+        approvalId: "appr_1",
+        resources: ownedResources([process.cwd()]),
+      });
 
-    expect(refused.ok).toBe(false);
-    if (!refused.ok) expect(refused.code).toBe("OUTSIDE_OWNED_RESOURCES");
+      expect(refused.ok).toBe(false);
+      if (!refused.ok) expect(refused.code).toBe("OUTSIDE_OWNED_RESOURCES");
+    } finally {
+      rmSync(outside, { recursive: true, force: true });
+    }
   });
 
   it("refuses an empty command and one long enough to be a script", async () => {

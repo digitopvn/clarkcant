@@ -240,7 +240,9 @@ describe("a guardrail may only narrow", () => {
     expect(up.ok).toBe(false);
     if (!up.ok) expect(up.code).toBe("GUARDRAIL_WIDENS");
 
-    const absolute = applyGuardrailConstraints(envelope(), [{ kind: "cwd", value: "C:\\Windows" }]);
+    // A folder that is absolute and outside the envelope's own, spelled the same way on every platform: the Windows
+    // path that used to be here is a relative one on Linux, so the refusal was about something else there.
+    const absolute = applyGuardrailConstraints(envelope(), [{ kind: "cwd", value: join(tmpdir(), "clarkcant-elsewhere") }]);
     expect(absolute.ok).toBe(false);
   });
 
