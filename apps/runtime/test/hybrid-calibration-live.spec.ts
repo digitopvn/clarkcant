@@ -33,7 +33,6 @@ describe.runIf(LIVE)("hybrid retrieval calibration", () => {
   let dir: string;
   let db: Database;
   let vectors: VectorIndexService;
-  let available = false;
   let status = "";
 
   beforeAll(async () => {
@@ -43,8 +42,7 @@ describe.runIf(LIVE)("hybrid retrieval calibration", () => {
 
     const loaded = await loadLocalEmbedder();
     if (loaded.provider === undefined) {
-      status = `BLOCKED: ${loaded.reason}`;
-      return;
+      throw new Error(`BLOCKED: ${loaded.reason}`);
     }
     for (const seed of SEARCH_CALIBRATION_SEEDS) {
       indexHistory(db, {
@@ -62,8 +60,8 @@ describe.runIf(LIVE)("hybrid retrieval calibration", () => {
       () => Promise.resolve(loaded.provider),
     );
     const indexed = await vectors.ensure();
-    available = indexed.enabled;
     status = `indexed ${indexed.embedded}/${indexed.indexSize} with ${indexed.model ?? ""} (${extension.ok ? extension.version : extension.reason})`;
+    if (!indexed.enabled) throw new Error(`BLOCKED: vector indexing unavailable: ${status}`);
   }, 120_000);
 
   afterAll(() => {
@@ -72,12 +70,6 @@ describe.runIf(LIVE)("hybrid retrieval calibration", () => {
   });
 
   it("compares hybrid against BM25 alone on the same corpus", async () => {
-    if (!available) {
-      // Reported, not skipped: the absence of the model is exactly what a reader needs to know.
-      console.warn(status);
-      expect(status).toContain("BLOCKED");
-      return;
-    }
     console.log(status);
 
     const baseDeps = {

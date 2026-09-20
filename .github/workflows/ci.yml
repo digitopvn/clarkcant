@@ -111,16 +111,8 @@ jobs:
           # The token is needed to fetch, not to persist: leaving it in .git/config
           # makes it readable by every later step and by any script they run.
           persist-credentials: false
-      # The same patterns the repository invariant checker enforces locally.
-      - name: Fail on credential-shaped strings
-        run: |
-          set -euo pipefail
-          if git grep -nEI 'gh[pousr]_[A-Za-z0-9]{20,}|sk-[A-Za-z0-9]{20,}|AKIA[0-9A-Z]{16}|-----BEGIN [A-Z ]*PRIVATE KEY-----|npm_[A-Za-z0-9]{30,}' \
-               -- . ':(exclude)docs/**' ':(exclude)pnpm-lock.yaml'; then
-            echo "::error::a credential-shaped string was found in the tracked tree"
-            exit 1
-          fi
-          echo "no credential-shaped strings found"
+      - name: Fail on credentials in current and historical file versions
+        run: node tools/scan-secret-history.mjs
 
   # The browser suite was the only gate that exercises the five features of issue #17 end to end, and until this
   # job existed it was run by hand on whichever machine happened to run it. That is why the release report had to

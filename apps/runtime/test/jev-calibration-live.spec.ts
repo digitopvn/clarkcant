@@ -8,7 +8,7 @@ import type { Instant, MessageRecord } from "@clarkcant/contracts";
 import { appendMessage, migrate, openDatabase, type Database } from "@clarkcant/storage";
 
 import { decideRuntimeTarget, decideSearchResult, searchDeciderFromEnv } from "../src/jev-decider.ts";
-import { createJevBudget, jevConfigFromEnv } from "../src/jev-selector.ts";
+import { createJevBudget, jevConfigFromEnv, type JevTelemetry } from "../src/jev-selector.ts";
 import {
   ROUTING_CALIBRATION,
   ROUTING_CALIBRATION_CANDIDATES,
@@ -26,9 +26,9 @@ import type { RuntimeCandidate } from "../src/runtime-candidates.ts";
  * is the *comparison*: the default in `searchDeciderFromEnv` is set from this number, and a selector
  * that does not beat the ranking should not be on for search.
  *
- * It is opt-in twice over, like the live smoke: `CLARKCANT_JEV_LIVE=1` **and** a real key. Without
- * both it reports BLOCKED and asserts nothing, because a calibration that silently passes without
- * measuring would be worse than no calibration at all.
+ * It is opt-in, like the live smoke: `CLARKCANT_JEV_LIVE=1` enables it. Missing credentials or
+ * unavailable provider responses then fail with BLOCKED, because a calibration that silently
+ * passes without measuring would be worse than no calibration at all.
  *
  * What it may claim: agreement with human labels on these corpora. What it may not: accuracy in
  * general, latency, or cost — the corpora are small and written in this repository.
@@ -36,7 +36,6 @@ import type { RuntimeCandidate } from "../src/runtime-candidates.ts";
 
 const LIVE = process.env.CLARKCANT_JEV_LIVE === "1";
 const config = jevConfigFromEnv(process.env);
-const canRun = LIVE && config.apiKey !== undefined && !config.localOnly;
 
 interface Score {
   correct: number;
@@ -46,6 +45,11 @@ interface Score {
 
 function summarise(correct: number, total: number): Score {
   return { correct, total, rate: total === 0 ? 0 : correct / total };
+}
+
+function assertProviderEvidence(telemetry: JevTelemetry[]): void {
+  const failure = telemetry.find((event) => event.status === "unavailable" || event.event === "model_drift");
+  if (failure !== undefined) throw new Error(`BLOCKED: ${failure.reason ?? failure.event}`);
 }
 
 let dir: string;
@@ -93,8 +97,15 @@ afterAll(() => {
   rmSync(dir, { recursive: true, force: true });
 });
 
-describe.skipIf(!canRun)("live calibration (opt-in)", () => {
+describe.skipIf(!LIVE)("live calibration (opt-in)", () => {
+  beforeAll(() => {
+    if (config.apiKey === undefined) throw new Error("BLOCKED: TYPESAFE_API_KEY is required for live calibration");
+    if (config.localOnly) throw new Error("BLOCKED: live calibration requires a non-local-only configuration");
+    if (!config.enabled) throw new Error("BLOCKED: Jev is disabled");
+    if (config.endpointRefusal !== undefined) throw new Error(`BLOCKED: ${config.endpointRefusal}`);
+  });
   it("compares the selector against the ranking on the search corpus", async () => {
+    const telemetry: JevTelemetry[] = [];
     let rankCorrect = 0;
     let jevCorrect = 0;
 
@@ -106,12 +117,14 @@ describe.skipIf(!canRun)("live calibration (opt-in)", () => {
 
       // The decision is applied to the same ranked list, which is what makes the comparison fair.
       const decision = await decideSearchResult(
-        { jev: { config }, budget: () => createJevBudget(config) },
+        { jev: { config, onTelemetry: (event) => telemetry.push(event) }, budget: () => createJevBudget(config) },
         {
           query: entry.query,
           results: ranked.results.map((hit) => ({ ref: hit.ref, snippet: hit.snippet, score: hit.score, source: hit.source })),
         },
       );
+
+      assertProviderEvidence(telemetry);
 
       // A choice that names the expected ref counts; a clarification counts as correct only when the
       // ranking was wrong too, because asking is better than answering wrongly.
@@ -130,6 +143,7 @@ describe.skipIf(!canRun)("live calibration (opt-in)", () => {
       );
     }
 
+    expect(telemetry.some((event) => event.event === "call"), "BLOCKED: no live search response was measured").toBe(true);
     const rankScore = summarise(rankCorrect, SEARCH_CALIBRATION.length);
     const jevScore = summarise(jevCorrect, SEARCH_CALIBRATION.length);
     process.stderr.write(
@@ -153,12 +167,14 @@ describe.skipIf(!canRun)("live calibration (opt-in)", () => {
       load: 1,
     }));
 
+    const telemetry: JevTelemetry[] = [];
     let correct = 0;
     for (const entry of ROUTING_CALIBRATION) {
       const decision = await decideRuntimeTarget(
-        { jev: { config }, budget: () => createJevBudget(config) },
+        { jev: { config, onTelemetry: (event) => telemetry.push(event) }, budget: () => createJevBudget(config) },
         { intent: entry.intent, candidates },
       );
+      assertProviderEvidence(telemetry);
       // The deterministic order is the comparison, and for routing it is the lease that ranks first.
       const rankGuess = candidates[0]?.id;
       const rankOk = rankGuess === entry.expectedId;
@@ -175,6 +191,7 @@ describe.skipIf(!canRun)("live calibration (opt-in)", () => {
       );
     }
 
+    expect(telemetry.some((event) => event.event === "call"), "BLOCKED: no live routing response was measured").toBe(true);
     const score = summarise(correct, ROUTING_CALIBRATION.length);
     process.stderr.write(
       `[calibration] routing: jev ${score.correct}/${score.total} (${(score.rate * 100).toFixed(1)}%)\n`,
@@ -183,7 +200,7 @@ describe.skipIf(!canRun)("live calibration (opt-in)", () => {
   }, 600_000);
 });
 
-describe.skipIf(canRun)("live calibration (skipped)", () => {
+describe.skipIf(LIVE)("live calibration (skipped)", () => {
   it("names what it is waiting for", () => {
     const missing = [
       LIVE ? undefined : "CLARKCANT_JEV_LIVE=1",
