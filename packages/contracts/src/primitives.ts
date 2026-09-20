@@ -146,11 +146,19 @@ export const platformSchema = z.enum([
   "darwin-x64",
   "linux-x64",
   "linux-arm64",
+  "win32-x64",
+  "win32-arm64",
   "web",
 ]);
 export type Platform = z.infer<typeof platformSchema>;
 
-export const operatingSystemSchema = z.enum(["macos", "linux", "web"]);
+/*
+ * Windows is in both vocabularies because this repository's own desktop app is Electron on Windows. Without it a
+ * package cannot declare the platform it is running on and a node cannot say which system it is, which is a gap in
+ * the contract rather than a missing test. `win32-*` follows Node's `process.platform`, which is what the desktop
+ * app and the runtime both report.
+ */
+export const operatingSystemSchema = z.enum(["macos", "windows", "linux", "web"]);
 export type OperatingSystem = z.infer<typeof operatingSystemSchema>;
 
 /**

@@ -32,11 +32,11 @@ const ENTRY: DirectoryEntry = {
 const HOST = { hostApi: 1, platform: "linux-x64" };
 
 /*
- * `platformSchema` has no Windows value. The fixture above originally said `win32-x64` and every case here failed
- * with "the directory entry does not match the schema" — which is a real gap rather than a typo: this repository's
- * own desktop app is Electron on Windows, so a package cannot currently declare the platform it is running on.
- * Left as a finding rather than widened here, because changing the platform vocabulary is a decision about the
- * marketplace's contract and not something a test fixture should settle.
+ * Windows is in the vocabulary now. This fixture originally said `win32-x64` and every case here failed with "the
+ * directory entry does not match the schema" - a real gap rather than a typo, because this repository's own desktop
+ * app is Electron on Windows, so a package could not declare the platform it was running on. The contract was
+ * widened (`platformSchema`, `operatingSystemSchema`) instead of the fixture being worked around, and the case below
+ * is the one that would have caught it.
  */
 
 describe("what the resolver refuses", () => {
@@ -108,6 +108,29 @@ describe("what the resolver refuses", () => {
     const result = resolvePackageSource({
       source: { kind: "npm", name: "com.example.calendar", version: "1.2.0" },
       directory: [{ ...ENTRY, platforms: ["darwin-arm64"] }],
+      ...HOST,
+    });
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.code).toBe("PLATFORM_MISMATCH");
+  });
+
+  it("resolves a package that lists Windows on a Windows host", () => {
+    const result = resolvePackageSource({
+      source: { kind: "npm", name: "com.example.calendar", version: "1.2.0" },
+      directory: [{ ...ENTRY, platforms: ["win32-x64"] }],
+      hostApi: 1,
+      platform: "win32-x64",
+    });
+
+    // The desktop app this repository ships runs on Windows, so this is the host its own marketplace has to serve.
+    expect(result.ok).toBe(true);
+  });
+
+  it("refuses a Windows-only package on a host that is not Windows", () => {
+    const result = resolvePackageSource({
+      source: { kind: "npm", name: "com.example.calendar", version: "1.2.0" },
+      directory: [{ ...ENTRY, platforms: ["win32-x64"] }],
       ...HOST,
     });
 

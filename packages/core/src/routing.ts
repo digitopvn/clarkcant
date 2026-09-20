@@ -1,4 +1,4 @@
-import type { CapabilityDescriptor } from "@clarkcant/contracts";
+import type { CapabilityDescriptor, OperatingSystem } from "@clarkcant/contracts";
 
 /**
  * Task-to-node routing.
@@ -15,7 +15,7 @@ export interface RoutingCandidate {
   usableCapabilityRefs: readonly string[];
   /** Credential-bound capabilities, which cannot move without a re-auth. */
   connectionBoundCapabilityRefs: readonly string[];
-  operatingSystem: "macos" | "linux" | "web";
+  operatingSystem: OperatingSystem;
   /** Resource kinds present locally, e.g. `workspace`. */
   localResourceKinds: readonly string[];
   /** True when the node is currently reachable. */

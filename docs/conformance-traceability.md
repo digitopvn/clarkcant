@@ -40,7 +40,7 @@ A status here is never upgraded without the corresponding test appearing alongsi
 | T20 | PASS | Two tasks needing one pack join a single install plan | core.spec: "lets two tasks needing the same pack join one plan" |
 | T21 | PASS | A changed source/version/digest invalidates prior consent | core.spec: "invalidates consent when the artifact digest moved"; contracts.spec: "invalidates consent when the target node changes" |
 | T22 | PASS | A malicious lifecycle script does not run in a credential-rich host | seams.spec: "never forwards a credential-bearing environment variable" |
-| T23 | BLOCKED | An invalid OS/arch native extension is blocked, not ready | Needs a real native extension artifact. |
+| T23 | BLOCKED | An invalid OS/arch native extension is blocked, not ready | Needs a real native extension artifact. A manifest that does not list this platform is refused before download (`PLATFORM_MISMATCH`), and the vocabulary now covers the platform this repository's own desktop app runs on (Windows) - a separate contract gap that is fixed, not evidence for this criterion. |
 | T24 | PASS | A UI-only package update does not restart Pi or voice | contracts.spec: refresh scoping suite; capability-host test |
 | T25 | PASS | A repeated reload leaves no stale handler or duplicate listener | pi-adapter.spec: "refuses to subscribe the same listener twice" |
 | T26 | PASS | A failed activation leaves the prior generation serving | core.spec: "keeps the previous generation usable after a failed activation" |
