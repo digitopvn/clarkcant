@@ -208,6 +208,42 @@ export type JevTransport = (request: JevTransportRequest) => Promise<JevTranspor
 class EndpointRefusedError extends Error {}
 
 /**
+ * The one URL this transport will call, or a refusal.
+ *
+ * A function rather than a variable so the refusal cannot be skipped: the value handed to `fetch` is only ever one
+ * that passed the policy, which is an allowlist and not a sanitizer - https only, no credentials in the URL, and no
+ * loopback or private address. The configuration path refuses the same things, and this is the second half of that
+ * check rather than a replacement for it.
+ */
+function allowlistedEndpoint(url: string): string {
+  const allowed = validateProviderEndpoint(url);
+  if (!allowed.ok) throw new EndpointRefusedError(allowed.reason);
+  return allowed.url;
+}
+
+/** The only protocols this transport will call. Written as data so the policy is reviewable, not inferred. */
+const CALLABLE_PROTOCOLS = Object.freeze(["https:"]);
+
+/**
+ * The endpoint as a URL this transport will call, or a refusal.
+ *
+ * A malformed URL is refused rather than thrown at the caller as a parse error: it is the same class of problem as
+ * a wrong scheme, and both mean this node will not open a socket.
+ */
+function callableTarget(url: string): URL {
+  let target: URL;
+  try {
+    target = new URL(allowlistedEndpoint(url));
+  } catch {
+    throw new EndpointRefusedError("the configured endpoint is not a URL this transport can call");
+  }
+  if (!CALLABLE_PROTOCOLS.includes(target.protocol)) {
+    throw new EndpointRefusedError(`scheme ${target.protocol} is not allowed; only ${CALLABLE_PROTOCOLS.join(", ")} is called`);
+  }
+  return target;
+}
+
+/**
  * The real transport.
  *
  * The error path is where this differs from a naive fetch: a non-JSON error body is returned as
@@ -217,17 +253,9 @@ class EndpointRefusedError extends Error {}
  */
 export function createFetchTransport(): JevTransport {
   return async (request) => {
-    /*
-     * Validated at the sink as well as where the configuration is read.
-     *
-     * A transport that trusted its caller would keep the whole policy in one place, and anything that built a request
-     * another way - a test, a future caller, a configuration path that skipped the check - would reach the network
-     * unexamined. The refusal is the same one the configuration path gives, so both say the same thing.
-     */
-    const allowed = validateProviderEndpoint(request.url);
-    if (!allowed.ok) throw new EndpointRefusedError(allowed.reason);
-
-    const response = await fetch(allowed.url, {
+    // A plain local name, assigned only from the allowlist above, so the call below cannot reach anything else.
+    const allowlistedUrl = callableTarget(request.url).href;
+    const response = await fetch(allowlistedUrl, {
       method: "POST",
       headers: {
         authorization: `Bearer ${request.apiKey}`,
