@@ -120,7 +120,23 @@ export function verifyBackup(destination: string): BackupVerification {
     };
   }
 
-  const actualDigest = `sha256:${createHash("sha256").update(readFileSync(databasePath)).digest("hex")}`;
+  /*
+   * Hashed inside a try for the same reason the open below is: a backup interrupted between the database write
+   * and the manifest write leaves a manifest pointing at nothing, and the operator deciding whether to restore
+   * needs that answer rather than a thrown ENOENT.
+   */
+  let actualDigest: string;
+  try {
+    actualDigest = `sha256:${createHash("sha256").update(readFileSync(databasePath)).digest("hex")}`;
+  } catch (cause) {
+    const detail = cause instanceof Error ? cause.message : String(cause);
+    return {
+      ok: false,
+      problems: [`the backup database at ${databasePath} could not be read: ${detail}`],
+      schemaVersion: 0,
+      tableCounts: {},
+    };
+  }
   if (actualDigest !== manifest.digest) {
     problems.push(
       `backup digest mismatch: manifest=${manifest.digest.slice(0, 16)}… actual=${actualDigest.slice(0, 16)}…`,

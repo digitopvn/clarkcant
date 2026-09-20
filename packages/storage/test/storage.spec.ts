@@ -16,6 +16,7 @@ import {
   currentSchemaVersion,
   MIGRATIONS,
   migrate,
+  type Migration,
   openDatabase,
   payloadDigest,
   peerCursor,
@@ -345,6 +346,155 @@ describe("consistent backup and restore (T69)", () => {
       vaultKeyBackedUpSeparately: true as const,
     };
     expect(checkRestoreCompatibility(manifest, 7)).toEqual({ ok: true, action: "migrate-forward" });
+  });
+});
+
+/**
+ * Failure injection around a backup (V18).
+ *
+ * A backup is written by a process that can be killed at any moment, so the interesting question is
+ * not whether `createBackup` works when it finishes — the tests above cover that — but what the node
+ * does with the directory an interruption leaves behind. The manifest is written last, so a kill
+ * between `VACUUM INTO` and the manifest write leaves a database with no manifest, and a kill after
+ * it leaves a manifest whose database was never finished. `verifyBackup` is what an operator consults
+ * before restoring, so it has to answer for both rather than throw at them.
+ */
+describe("failure injection around a backup (V18)", () => {
+  /** One finished backup, so each test can break exactly one thing about it. */
+  function backupIn(): string {
+    const db = openDatabase({ path: join(dir, "live.sqlite") });
+    migrate(db);
+    db.prepare(
+      "INSERT INTO conversations (conversation_id, home_node_id, created_at, updated_at) VALUES (?,?,?,?)",
+    ).run("conv_1", NODE_A, AT, AT);
+    createBackup({ db, destination: join(dir, "snapshot"), now: () => AT });
+    closeDatabase(db);
+    return join(dir, "snapshot");
+  }
+
+  it("reports a backup that was interrupted before its manifest was written", () => {
+    const snapshot = backupIn();
+    rmSync(join(snapshot, "manifest.json"), { force: true });
+
+    const verification = verifyBackup(snapshot);
+    expect(verification.ok).toBe(false);
+    expect(verification.problems.join(" ")).toMatch(/could not be read or parsed/);
+  });
+
+  it("reports a manifest whose database was never finished", () => {
+    // The interruption the manifest-last ordering does not cover on its own: the write of the database
+    // itself was cut short, and what is left is a manifest pointing at nothing.
+    const snapshot = backupIn();
+    rmSync(join(snapshot, "backup.sqlite"), { force: true });
+
+    const verification = verifyBackup(snapshot);
+    expect(verification.ok).toBe(false);
+    expect(verification.problems.join(" ")).toMatch(/backup\.sqlite/);
+  });
+
+  it("reports a manifest that cannot be parsed", () => {
+    const snapshot = backupIn();
+    writeFileSync(join(snapshot, "manifest.json"), "{ this is not json");
+
+    const verification = verifyBackup(snapshot);
+    expect(verification.ok).toBe(false);
+    expect(verification.problems.join(" ")).toMatch(/could not be read or parsed/);
+  });
+
+  it("reports a database truncated mid-write", () => {
+    const snapshot = backupIn();
+    const target = join(snapshot, "backup.sqlite");
+    const bytes = readFileSync(target);
+    writeFileSync(target, bytes.subarray(0, Math.floor(bytes.length / 2)));
+
+    const verification = verifyBackup(snapshot);
+    expect(verification.ok).toBe(false);
+    // A short file changes the digest first; if a truncation ever survived that, the integrity check
+    // is the second line of defence and either answer is a refusal.
+    expect(verification.problems.join(" ")).toMatch(/digest mismatch|integrity_check|could not be opened|could not be read/);
+  });
+
+  it("reports row counts that disagree with the manifest even when the bytes are intact", () => {
+    const snapshot = backupIn();
+    const manifestPath = join(snapshot, "manifest.json");
+    const manifest = JSON.parse(readFileSync(manifestPath, "utf8")) as { tableCounts: Record<string, number> };
+    // The digest still matches the file, so only the counts disagree. A restore that trusted the
+    // manifest over the database would report a row count the database does not have.
+    manifest.tableCounts.conversations = 99;
+    writeFileSync(manifestPath, JSON.stringify(manifest, null, 2));
+
+    const verification = verifyBackup(snapshot);
+    expect(verification.ok).toBe(false);
+    expect(verification.problems.join(" ")).toMatch(/conversations restored 1 rows but the manifest recorded 99/);
+  });
+
+  it("keeps verifying over many rounds, so a leak or a drift fails here rather than later", () => {
+    /*
+     * Bounded on purpose. Twenty-five rounds is enough for a leaked handle to show up — each round
+     * removes and rewrites the backup file, and on Windows removing a file something still holds open
+     * fails — and enough for a count or a digest to drift, while staying short enough to be an
+     * ordinary test rather than a soak run nobody keeps.
+     */
+    const snapshot = join(dir, "snapshot");
+    const db = openDatabase({ path: join(dir, "live.sqlite") });
+    migrate(db);
+    try {
+      for (let round = 0; round < 25; round += 1) {
+        db.prepare(
+          "INSERT INTO conversations (conversation_id, home_node_id, created_at, updated_at) VALUES (?,?,?,?)",
+        ).run(`conv_${String(round)}`, NODE_A, AT, AT);
+
+        const manifest = createBackup({ db, destination: snapshot, now: () => AT });
+        expect(manifest.tableCounts.conversations).toBe(round + 1);
+
+        const verification = verifyBackup(snapshot);
+        // Every round has to stand on its own. A backup that verifies only the first time is not a
+        // backup, it is a coincidence.
+        expect(verification.problems).toEqual([]);
+        expect(verification.tableCounts.conversations).toBe(round + 1);
+      }
+    } finally {
+      closeDatabase(db);
+    }
+  });
+});
+
+/**
+ * Failure injection around a migration (V18).
+ *
+ * The interruption this stands in for is a migration that dies partway: a killed process, a full
+ * disk, or a statement that does not hold on this machine's data. The property that has to survive it
+ * is the one `migrate` documents — the version number never describes a schema that is not there —
+ * because the next boot reasoning from a version it never reached is worse than a stopped upgrade.
+ * The list is injectable, which is what makes this testable at all.
+ */
+describe("failure injection around a migration (V18)", () => {
+  it("leaves the schema at the last fully-applied version when a migration dies partway", () => {
+    const db = openDatabase({ path: ":memory:" });
+    const good: Migration = {
+      version: 1,
+      name: "one-table",
+      reversible: true,
+      up: (target) => target.exec("CREATE TABLE keeps_me (id TEXT PRIMARY KEY)"),
+    };
+    const broken: Migration = {
+      version: 2,
+      name: "half-a-table",
+      reversible: false,
+      up: (target) => {
+        target.exec("CREATE TABLE half (id TEXT PRIMARY KEY)");
+        throw new Error("the disk filled up here");
+      },
+    };
+
+    expect(() => migrate(db, [good, broken])).toThrow(/the disk filled up here/);
+
+    // The migration that finished stands...
+    expect(currentSchemaVersion(db)).toBe(1);
+    expect(db.prepare("SELECT name FROM sqlite_master WHERE name = 'keeps_me'").get()).toBeDefined();
+    // ...and the one that died left nothing behind, not even the table it managed to create first.
+    expect(db.prepare("SELECT name FROM sqlite_master WHERE name = 'half'").get()).toBeUndefined();
+    closeDatabase(db);
   });
 });
 
