@@ -32,6 +32,22 @@ export default defineConfig({
     outDir: "dist",
     emptyOutDir: true,
     sourcemap: true,
+    rollupOptions: {
+      /*
+       * Two entries: the app, and the widget runtime a frame loads.
+       *
+       * The second one carries a fixed file name on purpose. The node injects a script tag pointing at it into the
+       * widget document it serves, and a hashed name would mean the node had to be told what the build produced —
+       * a coupling that breaks the first time somebody rebuilds.
+       */
+      input: {
+        main: `${here}index.html`,
+        widgetRuntime: `${here}src/widget-runtime.ts`,
+      },
+      output: {
+        entryFileNames: (chunk) => (chunk.name === "widgetRuntime" ? "widget-runtime.js" : "assets/[name]-[hash].js"),
+      },
+    },
     /**
      * The capture worklet must be emitted as its own file, never inlined.
      *

@@ -1,4 +1,4 @@
-import { timingSafeEqual } from "node:crypto";
+import { randomUUID, timingSafeEqual } from "node:crypto";
 
 import {
   type AppIntent,
@@ -27,6 +27,9 @@ import {
   decideExecution,
   directoryIndexPath,
   installFromEntry,
+  readPackageFile,
+  widgetDocument,
+  widgetDocumentPolicy,
   INSTALL_VERIFICATION,
   readDirectoryIndex,
   recordEffectExecution,
@@ -856,6 +859,75 @@ export async function handleRequest(deps: GatewayDeps, request: GatewayRequest):
        */
       verified: INSTALL_VERIFICATION,
     });
+  }
+
+  /*
+   * A package's own files, for a widget frame to load.
+   *
+   * The frame is an opaque origin, so everything it runs has to be fetched by URL, and this is the only route that
+   * turns a package's bytes into one. It serves a package the node can read on disk and nothing else: a git or npm
+   * entry names bytes nobody here has, and proxying those would be a different and much larger thing.
+   */
+  if (
+    segments.length >= 5 &&
+    segments[0] === "packages" &&
+    segments[3] === "files" &&
+    request.method === "GET"
+  ) {
+    const packageId = segments[1] ?? "";
+    const version = segments[2] ?? "";
+    const index = readDirectoryIndex(directoryIndexPath(process.env));
+    if (index.kind !== "configured") {
+      return fail(
+        409,
+        index.kind === "not-configured" ? "NO_DIRECTORY" : "DIRECTORY_UNREADABLE",
+        index.reason,
+      );
+    }
+    const entry = index.entries.find(
+      (candidate) => candidate.packageId === packageId && candidate.version === version,
+    );
+    if (entry === undefined) {
+      return fail(404, "NOT_IN_DIRECTORY", `${packageId}@${version} is not in the directory`);
+    }
+
+    const file = readPackageFile({ entry, relativePath: segments.slice(4).join("/") });
+    if (!file.ok) {
+      return fail(
+        file.code === "FILE_NOT_FOUND" ? 404 : file.code === "FILE_OUTSIDE_PACKAGE" ? 403 : 409,
+        file.code,
+        file.message,
+      );
+    }
+    /*
+     * An HTML entry is served as a widget document: the author's markup plus the bootstrap that gives it a bridge,
+     * under a policy that says what it may reach. Everything else is served as it is, because a stylesheet or an image
+     * has no bootstrap to add and no policy of its own.
+     *
+     * The document must be served from this path rather than from a host-owned route, because the widget's own
+     * relative imports (`./main.js`) resolve against the URL it was fetched from. Serving the entry anywhere else
+     * would break every relative reference in it.
+     */
+    if (file.contentType.startsWith("text/html")) {
+      const nonce = randomUUID().replaceAll("-", "");
+      const appOrigin = process.env["CC_APP_ORIGIN"] ?? `http://${request.headers["host"] ?? "127.0.0.1"}`;
+      const document = widgetDocument({
+        html: file.bytes.toString("utf8"),
+        appOrigin,
+        nonce,
+      });
+      return {
+        status: 200,
+        body: null,
+        binary: {
+          bytes: Buffer.from(document, "utf8"),
+          contentType: file.contentType,
+          headers: { "content-security-policy": widgetDocumentPolicy({ appOrigin, nonce }) },
+        },
+      };
+    }
+
+    return { status: 200, body: null, binary: { bytes: file.bytes, contentType: file.contentType } };
   }
 
   if (request.method === "POST" && request.path === "/command") {
