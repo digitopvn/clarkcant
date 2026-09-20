@@ -133,6 +133,17 @@ export interface FrameFacts {
   zeroDurationAnimation: boolean;
   /** The text alternative the definition declares. */
   declaredTextFallback: string;
+  /**
+   * What the frame was rendered with, when the collector knows.
+   *
+   * Optional because a fact nobody collected is not a fact: a check that needs this stays `requires-dev-host`
+   * rather than being answered from an assumption about what the browser was doing.
+   */
+  reducedMotion?: boolean;
+  /** Each declared layout, as it actually rendered at a viewport. */
+  layouts?: readonly { name: "narrow" | "compact" | "expanded"; viewportWidth: number; rendered: boolean; overflows: boolean }[];
+  /** Each declared state the collector asked the frame to show. */
+  states?: readonly { name: "loading" | "readOnly"; rendered: boolean }[];
 }
 
 export interface A11yFinding {
