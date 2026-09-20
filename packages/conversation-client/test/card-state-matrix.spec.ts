@@ -37,11 +37,13 @@ const ACTIONS: BlockActions = {
   onArtifactOpen: () => {},
   onControlTakeover: () => {},
   onControlStop: () => {},
-  openQuestionIds: ["q_1"],
+  // A question is read-only once the transcript carries its answer: the card reads that record rather than the
+  // position of the last message, so a sentence that answered nothing cannot close it.
+  answeredQuestions: ["q_1"],
   openFormIds: ["form_1"],
 };
 
-const QUESTION = { type: "question-card", owner: "host", questionId: "q_1", question: "Mở dự án nào?", options: [{ id: "o1", label: "Dự án hiện tại" }, { id: "o2", label: "Dự án khác" }] };
+const QUESTION = { type: "question-card", owner: "host", questionId: "q_1", prompt: "Mở dự án nào?", questionType: "single-choice", options: [{ id: "o1", label: "Dự án hiện tại" }, { id: "o2", label: "Dự án khác" }], allowOther: false, voicePrompt: "Mở dự án nào? Dự án hiện tại hay Dự án khác?", status: "waiting", createdAt: "2026-09-19T17:00:00.000Z" };
 const TASK = { type: "task-progress-card", owner: "host", cardId: "c1", taskId: "task_1", goal: "sửa lỗi", status: "working", steps: [], startedAt: "2026-09-19T17:00:00.000Z", updatedAt: "2026-09-19T17:00:00.000Z", cancellable: true };
 const SESSION = { type: "browser-session-card", owner: "host", cardId: "c2", sessionId: "cs_1", label: "đang mở form", driver: "agent", status: "running", leaseEpoch: 0, updatedAt: "2026-09-19T17:00:00.000Z" };
 const DIFF = { type: "code-diff-card", owner: "host", cardId: "c3", summary: "Sửa một tệp", files: [], truncated: true, updatedAt: "2026-09-19T17:00:00.000Z" };
@@ -139,8 +141,12 @@ describe("the states that do exist for these cards", () => {
   it("publishes a marker for every action a card offers, so nothing is reachable only by guessing coordinates", () => {
     // The semantic half of the contract: an action a surface offers is named in the DOM, which is what lets a voice
     // or app-control path address it as an action rather than as a place on the screen.
+    //
+    // The question card is asked here with actions that leave it open: `ACTIONS` marks this question answered, which
+    // is the read-only state, and a card in that state deliberately offers no controls at all.
+    const openQuestion: BlockActions = { onQuestionAnswer: () => {} };
     const markers = [
-      findAll(QuestionCardBlock({ block: QUESTION, actions: ACTIONS }), "data-question-answer"),
+      findAll(QuestionCardBlock({ block: QUESTION, actions: openQuestion }), "data-question-option"),
       findAll(TaskProgressCardBlock({ block: TASK, actions: ACTIONS }), "data-task-stop"),
       findAll(ArtifactBlock({ block: ARTIFACT, actions: ACTIONS }), "data-artifact-open"),
       findAll(ControlSessionCardBlock({ block: SESSION, actions: ACTIONS }), "data-control-takeover"),

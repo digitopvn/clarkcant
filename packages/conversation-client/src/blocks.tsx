@@ -620,7 +620,7 @@ export function QuestionCardBlock({
                 className="cc-action"
                 data-question-answer="submit"
                 disabled={!canAnswer || chosen.length === 0}
-                onClick={() => submit({ optionIds: chosen })}
+                onClick={() => submit({ optionIds: [...chosen] })}
               >
                 Gửi
               </button>
