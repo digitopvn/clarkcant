@@ -39,11 +39,19 @@ describe("the execution policy a node runs under", () => {
 });
 
 describe("which switch governs an effect", () => {
-  it("governs every command with the commands switch", () => {
-    // Whatever the command turns out to do, "commands" is the row a person looks for afterwards.
-    expect(guardClassFor({ surface: "command", effectCategory: "read" })).toBe("commands");
+  it("governs a command by what it can change, and leaves a read alone", () => {
+    /*
+     * A command that can change something is governed by `commands`, which is the row a person looks for afterwards.
+     *
+     * A command that only reads is governed by `reads`, because the defaults already say reads are not guarded — "a
+     * guardrail call on every read spends a provider call to decide nothing" — and governing every command by
+     * `commands` defeated that: measured on a node, an ordinary `curl` fetch was judged by the guardrail and refused,
+     * and nothing about it could change anything.
+     */
+    expect(guardClassFor({ surface: "command", effectCategory: "read" })).toBe("reads");
     expect(guardClassFor({ surface: "command", effectCategory: "destructive" })).toBe("commands");
     expect(guardClassFor({ surface: "command", effectCategory: "external-write" })).toBe("commands");
+    expect(guardClassFor({ surface: "command", effectCategory: "local-write" })).toBe("commands");
   });
 
   it("governs a capability by how far its effect reaches", () => {

@@ -430,7 +430,17 @@ export async function decideGuardrailForCommand(
 
   if (outcome.status === "allow") return { kind: "proceed", envelope: request.envelope };
   if (outcome.status === "deny") {
-    return { kind: "refuse", text: `Guardrail từ chối lệnh này (${outcome.reason}). Không có gì được chạy.` };
+    /*
+     * The refusal says what was refused and what can be done about it.
+     *
+     * "Guardrail từ chối lệnh này" alone told nobody whether the effect, the scope or the target was the problem, and
+     * left a person with nothing to do but give up. The guardrail returns a choice and no prose, so the reason is built
+     * from the facts the decision carried rather than invented, and the way out names the surface that owns the switch.
+     */
+    return {
+      kind: "refuse",
+      text: `Guardrail từ chối lệnh này (${outcome.reason}). Không có gì được chạy. Xem Settings → Control nếu bạn muốn những lệnh như vậy chạy.`,
+    };
   }
   if (outcome.status === "clarify") {
     /*

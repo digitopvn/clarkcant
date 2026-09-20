@@ -135,6 +135,40 @@ describe("running a command under the default policy", () => {
     expect(guardCalls()).toBe(0);
     expect(runs).toHaveLength(1);
   });
+
+  it("does not consult it for a read, even one that reaches the network", async () => {
+    /*
+     * What a command does decides which switch governs it. A fetch used to be classified `external-write` — one of the
+     * risky categories — so the guardrail judged an ordinary read and refused it, which is what a person reported as the
+     * guardrails being too strict, with nothing they could do about it. The default switches already say that reads are
+     * not guarded.
+     */
+    const { tool, runs, guardCalls } = makeTool();
+    await tool.execute({ command: "curl -s https://wttr.in/Ho+Chi+Minh+City?format=3" });
+
+    expect(guardCalls()).toBe(0);
+    expect(runs).toHaveLength(1);
+  });
+
+  it("still consults it for a command that changes something out there", async () => {
+    const { tool, runs, guardCalls } = makeTool();
+    await tool.execute({ command: "git push origin main" });
+
+    expect(guardCalls()).toBe(1);
+    expect(runs).toHaveLength(1);
+  });
+
+  it("says what the guardrail refused, and where to change it, rather than only that it refused", async () => {
+    const { tool, runs } = makeTool({
+      guard: { status: "deny", reason: "guardrail từ chối nhóm network, ảnh hưởng external-write", model: "test" },
+    });
+    const answer = await tool.execute({ command: "git push origin main" });
+
+    expect(runs).toHaveLength(0);
+    expect(answer.text).toContain("nhóm network");
+    // The way out, because a refusal a person cannot act on reads as a broken feature.
+    expect(answer.text).toContain("Settings → Control");
+  });
 });
 
 describe("what stops a command", () => {

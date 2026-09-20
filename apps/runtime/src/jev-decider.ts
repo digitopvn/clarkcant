@@ -443,7 +443,17 @@ export async function guardOperation(deps: DecideDeps, input: OperationGuardInpu
     };
   }
   if (choice === "deny") {
-    return { status: "deny", reason: "guardrail từ chối việc này", model };
+    /*
+     * Named by what it is, because a refusal nobody can act on reads as a broken feature.
+     *
+     * The guardrail answers with a choice and no prose, so this is built from the facts the decision was given rather
+     * than invented: the effect it was asked about, and the family the command belonged to. The old reason was the same
+     * sentence for every refusal, so the card could not tell a person whether the effect, the scope or the target was
+     * the problem.
+     */
+    const effect = input.state["effect"] ?? "không rõ";
+    const family = input.state["commandClass"] ?? "không rõ";
+    return { status: "deny", reason: `guardrail từ chối nhóm ${family}, ảnh hưởng ${effect}`, model };
   }
   if (choice !== "constrain") {
     return { status: "unavailable", reason: `the guardrail chose something that was not an option: ${choice}` };
