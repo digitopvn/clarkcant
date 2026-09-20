@@ -922,6 +922,17 @@ figure.cc-attachment figcaption { margin-top: var(--cc-space-xs); color: var(--c
 .cc-tool-body { padding: 0 var(--cc-space-md) var(--cc-space-md); display: flex; flex-direction: column; gap: var(--cc-space-sm); }
 .cc-tool[open] > .cc-tool-body { border-top: 1px solid var(--cc-border); padding-top: var(--cc-space-sm); }
 .cc-reasoning-body { color: var(--cc-text-muted); }
+/*
+ * The reasoning block, while the model is still writing it.
+ *
+ * The words are the whole indicator and they carry no animation of their own: the mark already spins while a
+ * block is running, and that animation is switched off in the reduced-motion block. A second endless animation
+ * making the same statement would be one more thing that has to be remembered there, and one more chance for
+ * the two to disagree about whether the block is finished.
+ */
+.cc-reasoning-writing {
+  flex: none; font-size: var(--cc-text-meta); color: var(--cc-text-muted);
+}
 
 /*
  * Voice mode.

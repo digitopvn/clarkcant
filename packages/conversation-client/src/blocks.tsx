@@ -108,8 +108,21 @@ export function ToolActivityBlock({ block }: { block: Record<string, unknown> })
  * Collapsed by default and in its own widget, because it is not the reply: someone who wants to know how
  * the answer was reached can open it, and someone who does not is never shown text the model did not
  * address to them.
+ *
+ * `writing` is set while this is the most recent thing the turn produced, which is what "still arriving"
+ * means for a segment: it stops being the most recent one when text or a tool call follows, and the turn
+ * ending removes the live view entirely. The mark therefore has to sit in the head — the block is
+ * collapsed, so a marker in the body would be behind a click — and the words carry the state on their own,
+ * because a person who cannot see the spin still has to be able to tell a finished block from a running
+ * one. A stored block never sets it: history is not still being written.
  */
-export function ReasoningBlock({ block }: { block: Record<string, unknown> }): ReactElement {
+export function ReasoningBlock({
+  block,
+  writing = false,
+}: {
+  block: Record<string, unknown>;
+  writing?: boolean;
+}): ReactElement {
   const content = typeof block.content === "string" ? block.content : "";
   const [open, setOpen] = useState(false);
 
@@ -117,14 +130,16 @@ export function ReasoningBlock({ block }: { block: Record<string, unknown> }): R
     <details
       className="cc-tool cc-reasoning"
       data-reasoning="true"
+      data-writing={writing ? "true" : undefined}
       open={open}
       onToggle={(event) => setOpen((event.currentTarget as HTMLDetailsElement).open)}
     >
       <summary className="cc-tool-head">
-        <span className="cc-tool-mark" data-status="done" aria-hidden="true">
+        <span className="cc-tool-mark" data-status={writing ? "running" : "done"} aria-hidden="true">
           ✳
         </span>
         <span className="cc-tool-label">Suy luận của agent</span>
+        {writing && <span className="cc-reasoning-writing">đang viết…</span>}
       </summary>
       <div className="cc-tool-body cc-reasoning-body">
         <Markdown text={content} />
