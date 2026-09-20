@@ -48,6 +48,16 @@ test("the installed list says it is empty rather than showing a placeholder", as
   const rows = section.locator("[data-installed-package]");
   const empty = section.getByText("Chưa cài gói nào trên node này.");
 
+  /*
+   * Wait for the list to settle before deciding which of those two it is.
+   *
+   * The section reads its list asynchronously and shows "Đang đọc…" meanwhile. Counting rows the instant the section
+   * becomes visible reads a node that has packages as a node that has none, and then waits for an empty list that is
+   * never coming. That is exactly how this failed — on the run after the install journey had left a package behind,
+   * which is also why the suite now starts from an emptied data directory.
+   */
+  await expect(section.getByText("Đang đọc…")).toBeHidden({ timeout: 20_000 });
+
   const rowCount = await rows.count();
   if (rowCount === 0) {
     await expect(empty).toBeVisible();
