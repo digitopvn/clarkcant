@@ -1,5 +1,7 @@
 # Audit và tối ưu bộ kiểm thử — 19/09/2026
 
+Đây là trạng thái lịch sử ngày 19/09. Các phát hiện còn lại được xử lý ở [báo cáo tiếp nối ngày 20/09](ship-260920-1037-test-audit-followups.md).
+
 Đã áp dụng tối ưu execution, giữ nguyên assertions hiện có và thêm 18 test cho classifier CI. `pnpm verify` PASS: 1.162 test pass, 7 test opt-in skip, không có failure. Không thay đổi code sản phẩm.
 
 ## Audit: các phát hiện chưa sửa
