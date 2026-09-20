@@ -34,7 +34,42 @@ export interface GatewayClientOptions {
   fetchImpl?: typeof fetch;
 }
 /** What a live composed surface resolves to right now. */
+/**
+ * A widget that runs in its own frame.
+ *
+ * A different shape rather than more fields on the one below, because the two are not the same thing: a composition
+ * is data the client draws, and this is a URL it mounts plus the bindings that mount may invoke. A single interface
+ * with half its fields empty would make every reader check which half it is holding.
+ */
+export interface IsolatedFrameLiveResponse {
+  kind: "isolated-frame";
+  instanceId: string;
+  revision: number;
+  readOnly: boolean;
+  frame: {
+    /** Relative to the node, and served from the package path so the widget's own imports resolve. */
+    url: string;
+    isolation: string;
+    requestedCapabilities: readonly string[];
+    allowedOrigins: readonly string[];
+  };
+  /**
+   * The bindings the frame may invoke, with the digest to send back.
+   *
+   * A frame names one of these ids and nothing else: the session refuses an unknown id before the node ever sees it.
+   */
+  bindings: {
+    actionBindingId: string;
+    label: string;
+    effectCategory: string;
+    bindingDigest: string;
+  }[];
+  /** What the widget was created with, sent to it in the init message and nowhere else. */
+  props: Record<string, unknown>;
+}
+
 export interface LiveWidgetResponse {
+  kind: "composition";
   compositionId: string;
   readOnly: boolean;
   spec: CompositionResponse["spec"];
@@ -859,7 +894,10 @@ export class GatewayClient {
   }
 
   /** Resolve the live surface for an instance: current state, sections and ownership. */
-  liveWidget(conversationId: string, instanceId: string): Promise<LiveWidgetResponse> {
+  liveWidget(
+    conversationId: string,
+    instanceId: string,
+  ): Promise<LiveWidgetResponse | IsolatedFrameLiveResponse> {
     return this.#call("GET", `/conversations/${conversationId}/widgets/${instanceId}/live`);
   }
 

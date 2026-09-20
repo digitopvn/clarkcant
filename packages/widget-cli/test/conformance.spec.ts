@@ -6,7 +6,7 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import { runCli } from "../src/cli.ts";
 import { runConformance } from "../src/conformance.ts";
-import { readPackage } from "../src/manifest.ts";
+import { readPackage } from "@clarkcant/core";
 
 /**
  * The author's three commands, run for real.

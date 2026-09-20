@@ -28,10 +28,17 @@ export interface WidgetDocumentInput {
    * markup contains, which is the thing the sandbox exists to constrain — and no bootstrap at all.
    */
   nonce: string;
+  /**
+   * Origins the package declared it reaches, from its own manifest.
+   *
+   * Empty means `connect-src 'none'`, which is the common case and the honest default: a widget's data arrives over
+   * the bridge, so reaching the network is a request the package has to make in writing.
+   */
+  allowedOrigins?: readonly string[];
 }
 
 /** The policy for a widget document. Returned rather than written as a header so a test can read it. */
-export function widgetDocumentPolicy(input: { appOrigin: string; nonce: string }): string {
+export function widgetDocumentPolicy(input: { appOrigin: string; nonce: string; allowedOrigins?: readonly string[] }): string {
   return [
     "default-src 'none'",
     // The bundle comes from the app; the widget's own module and styles come from the node that is serving this
@@ -43,10 +50,11 @@ export function widgetDocumentPolicy(input: { appOrigin: string; nonce: string }
     "img-src 'self' data:",
     "font-src 'self'",
     /*
-     * Nothing. A widget's data arrives over the bridge, so a widget that reaches the network directly is either
-     * redundant or trying to leave, and both are better refused than allowed and forgotten.
+     * Only what the package declared, and nothing when it declared nothing: a widget's data arrives over the bridge,
+     * so a widget that reaches the network directly is either redundant or trying to leave, and both are better
+     * refused than allowed and forgotten.
      */
-    "connect-src 'none'",
+    `connect-src ${(input.allowedOrigins ?? []).length === 0 ? "'none'" : (input.allowedOrigins ?? []).join(" ")}`,
     `frame-ancestors ${input.appOrigin}`,
     "base-uri 'none'",
     "form-action 'none'",

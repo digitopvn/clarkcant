@@ -26,6 +26,7 @@ import {
   claimLiveOwner,
   decideExecution,
   directoryIndexPath,
+  findIsolatedFrame,
   installFromEntry,
   readPackageFile,
   widgetDocument,
@@ -1674,6 +1675,58 @@ function resolveLiveWidget(
     return fail(403, "NOT_AUTHORIZED", "that instance belongs to another principal");
   }
 
+  /*
+   * A widget that runs in its own frame has no composition to resolve.
+   *
+   * Its code is the package's, so what a client needs is the URL to mount it from and the bindings it may invoke —
+   * and that is what this returns instead. The check comes first because it is what decides which of the two shapes
+   * this route answers with, and a client that had to guess would be a client that guessed wrong once.
+   */
+  const index = readDirectoryIndex(directoryIndexPath(process.env));
+  const isolated = findIsolatedFrame({
+    directory: index.kind === "configured" ? index.entries : [],
+    widgetId: instance.definitionRef.id,
+  });
+  if (isolated.ok) {
+    return json(200, {
+      kind: "isolated-frame",
+      instanceId,
+      revision: instance.revision,
+      readOnly: false,
+      frame: {
+        // Relative to this node, and served from the package path so the widget's own relative imports resolve.
+        url: isolated.url,
+        isolation: isolated.isolation,
+        requestedCapabilities: isolated.requestedCapabilities,
+        allowedOrigins: isolated.allowedOrigins,
+      },
+      /*
+       * The bindings the instance holds, each with the digest the client must send back.
+       *
+       * The same shape the composition path returns, and for the same reason: an invocation is re-authorized
+       * against the instance, the digest and the revision, so a client that could not send the digest it displayed
+       * could not be authorized at all. A frame names one of these ids and nothing else.
+       */
+      bindings: instance.actionBindingIds.flatMap((bindingId) => {
+        const binding = getActionBinding(services.conductor, bindingId);
+        if (binding === undefined) return [];
+        return [
+          {
+            actionBindingId: binding.actionBindingId,
+            label: binding.label,
+            effectCategory: binding.effectCategory,
+            bindingDigest: binding.bindingDigest,
+          },
+        ];
+      }),
+      /*
+       * The props the widget was created with. The frame cannot read them from anywhere else: it has no session, no
+       * storage and no route of its own, so what it is showing has to arrive with the thing that mounts it.
+       */
+      props: instance.props,
+    });
+  }
+
   const composition = findCompositionByInstance(runtime.db, instanceId, principalId);
   if (composition === undefined) {
     // A bundled composition is a state, not an error: the instance exists and the client falls back
@@ -1715,6 +1768,7 @@ function resolveLiveWidget(
   });
 
   return json(200, {
+    kind: "composition",
     compositionId: composition.compositionId,
     // A live surface never mints its own authority: the bindings below are references, and every
     // invocation is re-authorized against the instance, the digest and the current revision.
