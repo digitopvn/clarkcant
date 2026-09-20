@@ -30,7 +30,7 @@ Mỗi dòng nêu **tên test** và **file**, vì một khẳng định không c�
 | Tin nhắn đã lưu mang đúng một block cho mỗi tệp | cùng file — `"a stored user message carries one attachment block per attached file"` |
 | Id không tồn tại / của principal khác / của conversation khác đều bị từ chối, và **không** nói id nào | cùng file — mục `authorising the ids a client sends` |
 | `read_attachment` đọc được tệp text, cắt đúng trần, từ chối path và `..` | `apps/runtime/test/read-attachment-tool.spec.ts` |
-| Tool khai **thật** rằng ảnh/PDF chưa có bộ trích nội dung | cùng file — `"answers honestly that a binary attachment has no extractor yet"` |
+| Tool đọc **nội dung** của ảnh và PDF, không chỉ nêu tên | cùng file — `"hands a picture over as a picture rather than describing it"` (block ảnh cho SDK, PR #66) và `"reads the text out of a pdf rather than naming it"` (PR #64) |
 | Nút `+` bật, có input file, không còn câu "chưa hỗ trợ" | `apps/web/e2e/attachments.spec.ts` — `"the attach button is enabled and offers a file input"` |
 | Hai tệp → hai chip đúng tên và đúng cỡ người đọc | cùng file — `"two attached files show chips with name, size and state"` |
 | Gửi xong, timeline có đúng một block cho mỗi tệp | cùng file — `"sending stores one attachment block per file in the timeline"` |
@@ -48,11 +48,14 @@ chính e2e sinh ra, gitignored, đã mở kiểm: không có token của node tr
 
 ## Điều **chưa** được chứng minh — BLOCKED, kèm điều kiện còn thiếu
 
-1. **Model không nhìn thấy pixel của ảnh/PDF.** Adapter `prompt(sessionId, text)` chỉ nhận text, và node
-   chưa có bộ trích nội dung nhị phân. Điều đã làm: prompt nêu id và nói rõ tool nào đọc được, và tool
-   `read_attachment` trả lời thật rằng chưa có bộ trích. **Điều kiện còn thiếu:** một bộ trích PDF/ảnh
-   (hoặc một lượt model nhận ảnh) cùng một test ở seam adapter. Không được đọc dòng nào ở trên thành
-   "model đã đọc được ảnh".
+1. **ĐÃ ĐÓNG — không còn là gap.** Ban đầu: model không nhìn thấy nội dung của ảnh/PDF, vì
+   `prompt(sessionId, text)` chỉ nhận text và node chưa có bộ trích nội dung nhị phân. Nguyên nhân thật hoá ra
+   nằm ở adapter: union nội dung của tool result **có** member ảnh (`{ type: "image", data, mimeType }`), và
+   `toSdkTool` gộp mọi kết quả thành một block text. Nay PDF được trích văn bản
+   (`apps/runtime/src/pdf-text.ts`, PR #64) và ảnh được giao nguyên block ảnh (PR #66), với test ở cả hai
+   seam: `packages/pi-adapter/test/pi-adapter.spec.ts` — "hands the image to the SDK as an image block, not as
+   a sentence about one" — và `apps/runtime/test/read-attachment-tool.spec.ts` — "hands a picture over as a
+   picture rather than describing it".
 2. **Xoá blob theo conversation chưa chạy được từ UI.** `releaseConversationAttachments` có hàm và có
    test (`apps/runtime/test/attachments.spec.ts`), nhưng node **không có** route xoá conversation: bốn
    bảng tham chiếu `conversations` mà không `ON DELETE CASCADE` và `PRAGMA foreign_keys = ON`, nên xoá

@@ -190,7 +190,11 @@ mỗi file), và chỉ `app.quit` cần xác nhận. Kích thước thanh tối 
 
 Còn lại là nợ kỹ thuật có tên, không phải tiêu chí của plan:
 
-- Extractor PDF/ảnh, và một adapter nhận được nội dung ảnh trong prompt — `docs/widgets-and-extensions.md` §4.1.
+- ~~Extractor PDF/ảnh, và một adapter nhận được nội dung ảnh trong prompt~~ — **đã đóng**: PDF được trích văn
+  bản (`apps/runtime/src/pdf-text.ts`, PR #64) và ảnh được giao nguyên block ảnh cho SDK (PR #66: `toSdkTool`
+  phát `{ type: "image", data, mimeType }`, `read_attachment` trả chính bức ảnh). Nguyên nhân gốc hoá ra nằm ở
+  adapter, chỗ gộp mọi kết quả tool thành một block text. Phần còn phụ thuộc provider là phán đoán của model
+  trên nội dung đó, và các check cần provider thật vẫn là opt-in.
 - Route xoá conversation; retention hiện là `releaseConversationAttachments`.
 - Nguồn `memory` trong gợi ý: schema có, `buildSuggestions` chưa phát.
 - Scoped session token cho voice.

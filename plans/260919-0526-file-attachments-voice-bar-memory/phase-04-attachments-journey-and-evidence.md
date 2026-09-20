@@ -91,9 +91,10 @@ thấy prompt. Bằng chứng đó thuộc `apps/runtime/test/attachment-in-turn
 - **Goal**: report của Stage A nói đúng điều đã và chưa chứng minh được.
 - **Target files and symbols**: `plans/reports/verification-260919-stage-a-attachments.md`.
 - **Steps**:
-  1. Ghi rõ: prompt chứa nội dung text **đã** được chứng minh ở seam adapter (nêu tên test); ảnh/PDF
-     tới model dưới dạng ref opaque + tool `read_attachment`, node chưa có bộ trích PDF → ghi BLOCKED
-     kèm điều kiện còn thiếu.
+  1. Ghi rõ: prompt chứa nội dung text **đã** được chứng minh ở seam adapter (nêu tên test); ảnh/PDF tới
+     model qua ref opaque + tool `read_attachment` → ghi BLOCKED kèm điều kiện còn thiếu. (Ghi chú thực thi:
+     điều kiện đó nay **đã có** — PDF được trích văn bản ở PR #64, ảnh được giao nguyên block ảnh ở PR #66;
+     report Stage A đã được đánh dấu tương ứng.)
   2. Ghi rõ: xoá blob theo conversation có hàm + test, nhưng **chưa** có route xoá conversation nên
      retention chưa chạy được từ UI; đây là gap có tên.
 - **Success criteria**: report tồn tại, không câu nào nói "đã xong" cho phần BLOCKED.
