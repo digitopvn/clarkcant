@@ -48,6 +48,7 @@ import { FixtureLiveAdapter } from "./voice-fixture.ts";
 import { SAMPLE_DATASET } from "@clarkcant/data-canvas/sample";
 
 import { createModelCatalogue, createModelTurn, type ViewDescriptor } from "./model-turn.ts";
+import { accumulateAnswerText } from "./voice-answer.ts";
 import { bootRuntime } from "./node.ts";
 import { availableCredentials } from "./readiness.ts";
 import { memoryBrief } from "./memory.ts";
@@ -1535,15 +1536,10 @@ async function main(): Promise<void> {
         // Spoken turns are answered briefly: the session has to read the answer out loud.
         note: VOICE_ANSWER_NOTE,
         // The voice surface is a caller holding an open stream like any other, so it gets the same
-        // events the typed path gets. Only text is forwarded: the reasoning and tool events belong to
-        // the conversation, which is refreshed when the turn ends.
-        ...(onText === undefined
-          ? {}
-          : {
-              emit: (event: { type: string; text?: string }) => {
-                if (event.type === "text-delta" && typeof event.text === "string") onText(event.text);
-              },
-            }),
+        // events the typed path gets. Only text is forwarded, accumulated: the surface replaces what it shows, so a
+        // frame has to carry the answer so far rather than the fragment that just arrived. `accumulateAnswerText`
+        // holds the measurement that made this a function of its own.
+        ...(onText === undefined ? {} : { emit: accumulateAnswerText(onText) }),
       });
       // Indexed where the messages were just written, for the same reason the typed route does it:
       // a sentence that was spoken is a message like any other, and search must not disagree with the
