@@ -4,16 +4,16 @@ Năm tính năng của issue #17, làm qua ba stage. Stage A (#19), Stage B và 
 phần ghi chú về đúng sự thật, và PR #38 sửa nốt hai claim còn lại cùng cổng browser. Tài liệu này ghi **số thật đo
 trên cây đã merge `main`**, không phải số của lần chạy cũ.
 
-## Số thật, đo trên cây hiện tại của `main` (`0ce8722`)
+## Số thật, đo trên cây hiện tại (`b6b3883` = `main`, cộng PR #66)
 
 | Cổng | Lệnh | Kết quả |
 | --- | --- | --- |
 | Invariant | `pnpm run invariants` | 7/7 PASS |
-| Typecheck + lint + unit test | `pnpm verify` | **1573 passed, 7 skipped (1580)** |
-| Browser suite | `pnpm test:e2e` | **83 passed, 0 failed** |
-| CI trên `main` | `.github/workflows/ci.yml`, chạy mỗi lần push | **cả năm job xanh** ở run 35464062373 (`0ce8722`) và 35464369354 (`71d3e05`): `verify` (node 22.19 và 24), `secret scan`, `e2e (browser suite)`, `desktop smoke (xvfb)`. Hai cổng cuối chỉ chạy tay trước PR #44. |
-| Smoke desktop | `pnpm --filter @clarkcant/app-desktop run smoke` | **exit 0**, mọi check `true`, `"failed": []` (Electron 44.3.0, Chrome 152) |
-| Đồng bộ với `main` | `git rev-list HEAD..origin/main` | 0 (merge `1368cb5`, sau khi nhận `main`; PR #38 squash thành `9e90535`, PR #44 đưa hai cổng vào CI) |
+| Typecheck + lint + unit test | `pnpm verify` | **1611 passed, 7 skipped (1618)** |
+| Browser suite | `pnpm test:e2e` | **99 passed, 1 skipped, 0 failed** |
+| CI trên nhánh này | `.github/workflows/ci.yml`, chạy mỗi lần push | **cả năm job xanh** ở run 35487109097 (`5c57f05`) và 35487107360: `verify` (node 22.19 và 24), `secret scan`, `e2e (browser suite)`, `desktop smoke (xvfb)` |
+| Smoke desktop | `pnpm --filter @clarkcant/app-desktop run smoke` | **exit 0**, mọi check `true`, `"failed": []` (Electron 44.3.0, Chrome 152); job `desktop smoke (xvfb)` xanh trên CI |
+| Đồng bộ với `main` | `git rev-list HEAD..origin/main` | 0: nhánh này cắt từ head của `main` (`b6b3883`), và nhánh công việc trước đó đã được merge vào `main` bằng merge commit (`git merge-base --is-ancestor` trả về đúng) |
 
 Nhánh công việc được **merge vào `main` bằng merge commit**, sau khi cây của nó được đưa về đúng cây
 của `main`. Trước đó mọi PR đều được squash, nên nội dung đã ở `main` nhưng **lịch sử của nhánh thì chưa**:
