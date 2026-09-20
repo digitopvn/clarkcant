@@ -19,8 +19,9 @@ import { bootNodeServices, type NodeServices } from "../src/services.ts";
  * steer the model into reading a different file. These tests are about that boundary — an id from another
  * principal, an id from another conversation, and an id that is really a path.
  *
- * The last case is the honest one. This node has no extractor for images or PDFs, and a tool that
- * answered a picture with silence would read to the model as an empty file, which it would then summarise.
+ * A picture is handed over as a picture and a PDF is read for its text. Answering either with silence
+ * would read to the model as an empty file, which it would then summarise; answering a picture with a
+ * sentence about it would read as a description the model never got to check.
  */
 
 const AT = "2026-09-19T07:00:00.000Z";
@@ -181,23 +182,40 @@ describe("reading an attached file", () => {
 });
 
 describe("a binary attachment", () => {
-  it("answers honestly that a binary attachment has no extractor yet", async () => {
+  it("hands a picture over as a picture rather than describing it", async () => {
+    const bytes = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
     const id = store({
       attachmentId: "att_png",
       filename: "anh.png",
       mime: "image/png",
       kind: "image",
-      bytes: new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+      bytes,
       extension: "png",
     });
 
-    const text = await read(id);
-    expect(text).toContain("anh.png");
-    expect(text).toContain("image/png");
-    // Said in words, so the model does not fill the gap with invented detail.
-    expect(text).toContain("chưa có bộ trích");
-    expect(text).toContain("Đừng đoán nội dung.");
-    expect(text).not.toContain(dir);
+    const result = await tool().execute({ attachmentId: id });
+    // The bytes themselves, so a question about what is in the picture is answered from the picture rather
+    // than from its file name.
+    expect(result.image).toEqual({ mimeType: "image/png", dataBase64: Buffer.from(bytes).toString("base64") });
+    // The sentence beside it names the file, and still says nothing about where the bytes live.
+    expect(result.text).toContain("anh.png");
+    expect(result.text).toContain("image/png");
+    expect(result.text).not.toContain(dir);
+  });
+
+  it("answers a text attachment without an image part", async () => {
+    const id = store({
+      attachmentId: "att_plain",
+      filename: "ghi-chu.txt",
+      mime: "text/plain",
+      kind: "text",
+      bytes: new TextEncoder().encode("chi la chu"),
+      extension: "txt",
+    });
+
+    const result = await tool().execute({ attachmentId: id });
+    // A text file is read as text. An image part here would tell the model it was looking at a picture.
+    expect(result.image).toBeUndefined();
   });
 
   it("reads the text out of a pdf rather than naming it", async () => {

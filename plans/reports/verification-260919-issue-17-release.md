@@ -30,8 +30,10 @@ nội dung nào ngoài ghi chú này.
 | 4. Gợi ý từ việc gần đây | `apps/web/e2e/suggestions.spec.ts`, `apps/runtime/test/suggestions.spec.ts` |
 | 5. Tab Memory | `apps/web/e2e/memory.spec.ts` (rỗng, có dữ liệu kèm nguồn, xoá), `apps/runtime/test/memory.spec.ts` |
 
-Điều **chưa** đạt trong tiêu chí của issue: nội dung **ảnh** chưa tới model — ảnh được nêu bằng id, và
-`prompt(sessionId, text)` chỉ nhận văn bản. PDF thì đã đọc được, có journey chứng minh. Điều kiện còn thiếu ghi ở `docs/widgets-and-extensions.md` §4.1.
+Cả ba loại nội dung của issue nay đều tới được agent. Văn bản và PDF đi vào prompt của lượt; ảnh được
+`read_attachment` giao nguyên block ảnh cho SDK (`toSdkTool` phát `{ type: "image", data, mimeType }`), nên model
+nhận chính bức ảnh. Dòng này từng ghi ảnh "chưa tới model": nguyên nhân là adapter gộp mọi kết quả tool thành
+một block văn bản, và điều đó đã được sửa tại gốc.
 
 ## Tiêu chí của chính issue, không chỉ của plan
 
@@ -39,8 +41,9 @@ Issue #17 §1 ghi điều kiện hoàn thành là: đính 2 tệp (1 text, 1 ả
 attachment. Journey `apps/web/e2e/attachments.spec.ts` — "the agent answers using the content of an attached file" —
 làm đúng chuỗi đó: hai tệp được đính, câu trả lời chứa nội dung của tệp văn bản, và cả hai tệp còn trong timeline sau khi
 reload. Model ở đó là fixture của node, nên điều được chứng minh là đường ống — tệp tới node, node đọc được nội dung,
-câu trả lời mang nó — chứ không phải phán đoán của model. Nội dung ảnh/PDF thì **chưa** tới model: chúng được nêu bằng
-id, và điều kiện còn thiếu ghi ở `docs/widgets-and-extensions.md` §4.1.
+câu trả lời mang nó — chứ không phải phán đoán của model. Nội dung tệp tới agent theo ba đường: văn bản và PDF vào
+prompt của lượt, ảnh qua `read_attachment` dưới dạng block ảnh mà SDK mang nguyên vẹn tới model. Điều còn phụ thuộc
+provider là phán đoán của model trên nội dung đó, và các check cần provider thật vẫn là opt-in.
 
 ## Hai journey từng bị chặn, và đã sửa tại gốc
 

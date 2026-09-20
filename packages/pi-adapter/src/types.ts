@@ -76,11 +76,19 @@ export interface ToolDefinition {
   execute: (params: Record<string, unknown>) => Promise<{
     text: string;
     /**
+     * An image the model should receive as an image rather than as a description of one.
+     *
+     * A tool result is a list of content blocks, and the SDK's union has an image member, so a tool that
+     * read a picture hands the picture over. Without this a picture reaches the model as its file name:
+     * the model is told that a picture exists while what is in it stays hidden.
+     */
+    image?: { mimeType: string; dataBase64: string };
+    /**
      * A block the host builds as a result of the call, recorded in the reply.
      *
      * Typed loosely here rather than against the message-block union, because this package must not take
-     * a dependency on the contracts package: the SDK only ever receives `text`, and the node that wraps
-     * these tools validates the block against the schema before it reaches a transcript.
+     * a dependency on the contracts package: the node that wraps these tools validates the block against
+     * the schema before it reaches a transcript.
      */
     hostCard?: Record<string, unknown>;
   }>;

@@ -232,8 +232,23 @@ export class FakePiAdapter implements PiAdapter {
     return scripted;
   }
 
-  /** Test-only: run a registered tool the way the agent loop would. */
+  /** Test-only: run a registered tool the way the agent loop would, and answer with its text. */
   async callTool(sessionId: string, toolName: string, params: Record<string, unknown>): Promise<string> {
+    return (await this.callToolResult(sessionId, toolName, params)).text;
+  }
+
+  /**
+   * Test-only: the whole result of a tool call.
+   *
+   * `callTool` answers with the text, which is what most tests want. This one exists because a tool that
+   * read a picture also returns the picture, and a test that only ever sees the text cannot tell that apart
+   * from a tool that described the picture instead of handing it over.
+   */
+  async callToolResult(
+    sessionId: string,
+    toolName: string,
+    params: Record<string, unknown>,
+  ): Promise<{ text: string; image?: { mimeType: string; dataBase64: string } }> {
     const session = this.#require(sessionId);
     if (!session.activeTools.includes(toolName)) {
       throw new Error(`tool ${toolName} is not active on ${sessionId}`);
@@ -249,7 +264,7 @@ export class FakePiAdapter implements PiAdapter {
       toolCallId: `call-${toolName}`,
       isError: false,
     });
-    return result.text;
+    return result;
   }
 
   listenerCount(sessionId: string): number {
