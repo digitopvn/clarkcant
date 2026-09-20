@@ -338,10 +338,6 @@ export function Conversation({
   const [dynamicSuggestions, setDynamicSuggestions] = useState<Suggestion[]>([]);
 
   useEffect(() => {
-    if (compactSurface) setVoiceOpen(true);
-  }, [compactSurface]);
-
-  useEffect(() => {
     let cancelled = false;
     void fetchSuggestions(client).then((items) => {
       if (!cancelled) setDynamicSuggestions(items);
@@ -1053,6 +1049,45 @@ export function Conversation({
     const timer = setTimeout(() => setIntentNotice(undefined), 6000);
     return () => clearTimeout(timer);
   }, [intentNotice]);
+
+  /**
+   * Opens the voice surface, with a conversation for it to answer in.
+   *
+   * The node answers a spoken sentence inside the conversation the agent works in, so a session opened before any
+   * conversation exists has nowhere to put what was said: the sentence is transcribed and dropped, and the person
+   * hears nothing at all. Measured on the real path, the same audio with a conversation bound produced the agent's
+   * answer and 468 KB of speech back, and without one it produced neither. So the conversation is made first, which
+   * is also what the first attachment does.
+   */
+  const openVoice = useCallback(async (): Promise<void> => {
+    if (conversationId !== undefined) {
+      setVoiceOpen(true);
+      return;
+    }
+    try {
+      const target = (await client.createConversation("Conversation")).conversationId;
+      setConversationId(target);
+      onConversationReady?.(target);
+      setVoiceOpen(true);
+    } catch (cause) {
+      // Said where the person is looking, and the microphone stays off: a session that cannot answer is worse than an
+      // honest refusal.
+      setIntentNotice(
+        cause instanceof Error ? `Không mở được phiên giọng nói: ${cause.message}` : "Không mở được phiên giọng nói.",
+      );
+    }
+  }, [client, conversationId, onConversationReady]);
+
+  /*
+   * The compact surface opens voice by itself.
+   *
+   * A desktop window shrinking to the voice bar is the same act as pressing the voice button, so it goes through the
+   * same path and gets a conversation to answer in. It used to set the flag directly, which opened a session the node
+   * had nowhere to answer - the same failure a person hits by pressing the button first.
+   */
+  useEffect(() => {
+    if (compactSurface) void openVoice();
+  }, [compactSurface, openVoice]);
 
   // A command that was typed and recognised is answered by the host, so the node sends the decision with the timeline
   // and the page carries it out here - the same executor a spoken command and a click use.
@@ -2063,7 +2098,9 @@ export function Conversation({
               aria-label="Nói bằng giọng nói"
               title="Nói bằng giọng nói"
               data-voice-open="true"
-              onClick={() => setVoiceOpen(true)}
+              onClick={() => {
+                void openVoice();
+              }}
             >
               ◉
             </button>

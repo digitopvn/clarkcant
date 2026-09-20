@@ -1309,3 +1309,47 @@ describe("a lease whose peer cannot be reached", () => {
     expect(live.ws.readyState).toBe(WebSocket.OPEN);
   });
 });
+
+describe("a spoken sentence with nowhere to be answered", () => {
+  it("is answered by saying so, instead of being transcribed and dropped", async () => {
+    /*
+     * The failure this replaces was silent: the words were transcribed, `ask` returned early because the session had
+     * no conversation, and nothing else happened. No reply, no error, and a surface that read "listening" — which is
+     * what a person reports as "voice does not work" while every other layer checks out.
+     *
+     * Measured on the real path: the same audio with a conversation bound produced the agent's answer and 468 KB of
+     * speech back; without one it produced neither.
+     */
+    const adapter = new FakeAdapter();
+    const asked: string[] = [];
+    context = await startGateway(() => "key", adapter, {
+      answer: async ({ text }) => {
+        asked.push(text);
+        return undefined;
+      },
+    });
+
+    const client = connect(context.url);
+    await client.opened;
+    // No conversation id: the session is not bound to one.
+    client.auth(TOKEN);
+    await client.control("ready");
+
+    sayFor(adapter, "xin chào");
+
+    const said = await client.waitFor(
+      (message) =>
+        !message.binary &&
+        message.control["type"] === "transcript" &&
+        message.control["final"] === true &&
+        String(message.control["text"]).includes("chưa gắn với hội thoại"),
+      "the explanation that there is nowhere to answer",
+    );
+
+    // Spoken as well as written: the person is in a voice session and is owed the reason out loud.
+    expect(adapter.spoken.join(" ")).toContain("chưa gắn với hội thoại");
+    expect(said.binary === false && typeof said.control["text"]).toBe("string");
+    // The agent is never asked: there is no conversation for an answer to belong to.
+    expect(asked).toEqual([]);
+  });
+});
