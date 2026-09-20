@@ -1,6 +1,7 @@
 import {
   type PeerEnvelope,
   type VersionHandshake,
+  decideInboxAction,
   dedupKey,
   negotiateVersions,
   peerEnvelopeSchema,
@@ -47,6 +48,7 @@ export interface OutboundPeerDeps {
 export type ReceiveOutcome =
   | { status: "processed"; responseJson: string }
   | { status: "duplicate"; responseJson: string }
+  | { status: "gap"; expected: number; received: number }
   | { status: "rejected"; code: string; message: string; issues: string[] };
 
 export function receiveEnvelope(
@@ -85,6 +87,20 @@ export function receiveEnvelope(
 
   const envelope = validation.envelope;
   const key = dedupKey(envelope);
+
+  // The known-key check above answered the duplicate case, so an empty map here is honest rather
+  // than lazy: what is left to decide is whether this sequence follows the last one we processed.
+  const decision = decideInboxAction(envelope, {
+    keys: new Map(),
+    lastSequence: peerCursor(deps.db, transport.authenticatedSenderNodeId),
+  });
+  if (decision.action === "gap-detected") {
+    // Reported rather than processed, and the cursor stays where it is. The sender's outbox keeps the
+    // message pending because nothing acknowledged it, so the missing sequence arrives on the retry
+    // and both are processed in order. Accepting it here would move the cursor past the hole and make
+    // the delayed message unprocessable for good.
+    return { status: "gap", expected: decision.expected, received: decision.received };
+  }
 
   const responseJson = toJson(deps.handler(envelope));
   const recorded = recordInbox(deps.db, {
