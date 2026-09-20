@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="ClarkCant">
+  <!--
+    A plain mark in the theme's accent, not a second Orb.
+
+    The Orb is the product's signature and it is drawn by the app, where it can animate, respond to policy and honour
+    reduced motion. A tab icon cannot do any of that, so this is deliberately only the accent colour: an icon that
+    tried to be the Orb would promise motion it does not have.
+  -->
+  <defs>
+    <radialGradient id="accent" cx="34%" cy="28%" r="78%">
+      <stop offset="0" stop-color="#B8AEDC" />
+      <stop offset="1" stop-color="#6B5FA8" />
+    </radialGradient>
+  </defs>
+  <circle cx="32" cy="32" r="28" fill="url(#accent)" />
+</svg>
