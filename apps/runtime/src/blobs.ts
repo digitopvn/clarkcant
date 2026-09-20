@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, readdirSync, unlinkSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 
 import { isWithinRoot } from "./path-roots.ts";
@@ -78,6 +78,41 @@ export function readBlob(input: { dataDir: string; blobPath: string }): BlobRead
   } catch {
     return { ok: false, code: "BLOB_MISSING", message: "the stored bytes for that file are no longer on disk" };
   }
+}
+
+/**
+ * The 32 hex characters a blob file is named by, or nothing when the digest is not one we wrote.
+ *
+ * This is also the traversal guard. The digest arrives from a peer — it is what an artifact offer
+ * names — and a caller that could choose the file name could ask for any file on the machine, so the
+ * shape is checked before anything is joined to a directory.
+ */
+export function digestPrefix(digest: string): string | undefined {
+  const hex = digest.startsWith("sha256:") ? digest.slice("sha256:".length) : "";
+  return /^[0-9a-f]{64}$/.test(hex) ? hex.slice(0, 32) : undefined;
+}
+
+/**
+ * Where the bytes for a digest live, if this node holds them.
+ *
+ * The blob directory is content-addressed, but a file name also carries the extension, and an
+ * extension is not recoverable from a digest. So the lookup matches the digest's own prefix rather
+ * than guessing one, which is also what lets two nodes agree about an artifact without agreeing about
+ * what to call it.
+ */
+export function blobPathForDigest(input: { dataDir: string; digest: string }): string | undefined {
+  const prefix = digestPrefix(input.digest);
+  if (prefix === undefined) return undefined;
+  const directory = blobsDir(input.dataDir);
+  let entries: string[];
+  try {
+    entries = readdirSync(directory);
+  } catch {
+    // No blob directory yet is the same answer as no blob: nothing here holds those bytes.
+    return undefined;
+  }
+  const match = entries.find((entry) => entry.startsWith(`${prefix}.`));
+  return match === undefined ? undefined : join(directory, match);
 }
 
 /** Remove bytes this node wrote. A file that is already gone is not an error. */
