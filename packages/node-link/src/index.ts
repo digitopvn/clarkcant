@@ -32,6 +32,18 @@ export interface PeerGatewayDeps {
   handler: (envelope: PeerEnvelope) => unknown;
 }
 
+/**
+ * What outbound bookkeeping needs, and no more.
+ *
+ * The sender has no inbound handler and no version window to offer, so taking the whole gateway deps
+ * would force it to invent both. Every `PeerGatewayDeps` satisfies this, which is why narrowing the
+ * three outbound calls to it changed no caller.
+ */
+export interface OutboundPeerDeps {
+  db: Database;
+  now: () => string;
+}
+
 export type ReceiveOutcome =
   | { status: "processed"; responseJson: string }
   | { status: "duplicate"; responseJson: string }
@@ -108,7 +120,7 @@ function peekInbox(db: Database, key: string): { found: false } | { found: true;
 
 /** Record outbound intent before transmission, so a crash cannot lose the message. */
 export function sendEnvelope(
-  deps: PeerGatewayDeps,
+  deps: OutboundPeerDeps,
   envelope: PeerEnvelope,
 ): { messageId: string } {
   enqueueOutbox(deps.db, {
@@ -121,11 +133,11 @@ export function sendEnvelope(
   return { messageId: envelope.messageId };
 }
 
-export function recordTransmissionAttempt(deps: PeerGatewayDeps, messageId: string): void {
+export function recordTransmissionAttempt(deps: OutboundPeerDeps, messageId: string): void {
   markOutboxAttempt(deps.db, messageId, deps.now() as never);
 }
 
-export function recordAcknowledgement(deps: PeerGatewayDeps, messageId: string): void {
+export function recordAcknowledgement(deps: OutboundPeerDeps, messageId: string): void {
   markOutboxAcknowledged(deps.db, messageId, deps.now() as never);
 }
 

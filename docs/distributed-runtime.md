@@ -68,6 +68,12 @@ Pairing flow:
 
 Invite/QR không phải OAuth access token lâu dài. Replay invite bị reject; key rotation cần authenticated transition; lost device/revoke làm mất quyền từ lần gọi tiếp theo và ngừng nhận delegation mới. Already submitted effects có thể cần reconciliation.
 
+**Trạng thái đã ship (2026-09-20).** Pairing đã chạy thật giữa hai node sống: hai node, hai cổng, hai database, HTTP thật giữa chúng. Device key là Ed25519 sinh tại chỗ, lưu trong `identity.json` với quyền chỉ chủ sở hữu đọc được; fingerprint là sha256 của public key in thành từng nhóm bốn ký tự để một người đọc được thành tiếng. Invite là single-use và hết hạn sau 10 phút; claim ghi peer ở trạng thái **pending**, và pending bị từ chối envelope chứ không được xếp hàng đợi. Chỉ khi một người xác nhận ở **cả hai** phía thì kênh mới mở.
+
+Token mà mỗi node trình cho peer được **suy ra** bằng `HMAC(localToken, peerNodeId)`. Nghĩa là không có credential nào đi qua dây trong lúc pairing (hai bên chỉ trao nhau sha256), và chỉ có sha256 nằm trong database — nên một bản sao database không replay được ở peer. Transport là HTTP tới gateway của chính peer đó (`/peers/messages`), có outbox bền (ghi ý định trước khi gửi) và dedup theo message id ở phía nhận.
+
+**Chưa có.** `NodeLinkTransport` trong `packages/node-link` vẫn là stub cho một transport dạng socket: chưa có TLS/mTLS, chưa có WebSocket, chưa có keepalive hay reconnect cursor. Bước 3 nói TLS/mTLS hoặc signed app handshake để xác minh key — hiện tại việc xác minh key là **so fingerprint**, và kênh là HTTP, nên một node chỉ reachable qua plain HTTP mới pair được hôm nay. Bước 4 (grants ban đầu) và bước 6 (probe, capability negotiation, status card) vẫn thuộc P4; `POST /peers/messages` hiện nhận `handshake` và từ chối `delegate` bằng `DELEGATION_UNKNOWN` vì đường delegation chưa nối.
+
 Nếu cả hai node không reachable, app giải thích cần private-network adapter hoặc một reachable gateway. Chọn Tailscale adapter hoặc TLS endpoint của operator; **không hứa kết nối xuyên mọi firewall khi không có hạ tầng hỗ trợ**. Không build bespoke relay/NAT traversal trong foundation beta. Public client/browser qua Tailscale vẫn cần network access và HTTPS cấu hình phù hợp.
 
 ## 5. Trust và delegation grants
