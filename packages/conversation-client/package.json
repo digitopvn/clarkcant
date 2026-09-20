@@ -28,6 +28,7 @@
     "@clarkcant/widget-host": "workspace:*"
   },
   "devDependencies": {
+    "@clarkcant/data-canvas": "workspace:*",
     "@types/react": "^19.3.0"
   }
 }
