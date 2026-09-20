@@ -788,7 +788,18 @@ export class GatewayClient {
   async chooseModel(input: {
     provider: string;
     id: string;
-  }): Promise<{ ok: boolean; stored: { provider: string; id: string } }> {
+  }): Promise<{
+    ok: boolean;
+    stored: { provider: string; id: string };
+    /**
+     * When the choice takes effect.
+     *
+     * `next-session` when the node already has a model turn to read it — the choice lands on the next conversation.
+     * `next-start` when it has none, which is the node that has never run a model: the choice is stored, and the node
+     * starts with it next time. The copy beside the field says which, rather than promising the sooner of the two.
+     */
+    applies: "next-session" | "next-start";
+  }> {
     return this.#call("POST", "/model", input);
   }
 

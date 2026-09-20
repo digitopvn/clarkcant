@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, generateKeyPairSync, randomUUID } from "node:crypto";
 import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
@@ -36,6 +36,35 @@ export interface NodeIdentity {
   createdAt: Instant;
   /** Bearer token required by the local gateway. Rotated by deleting the identity file. */
   localToken: string;
+  /**
+   * The node's device key, in SPKI PEM.
+   *
+   * Published so that pairing is a comparison of keys rather than of names: a peer shows a person
+   * this fingerprint, and the invite carries it, so a DNS name or a label is never the thing being
+   * trusted. The key is generated locally and never leaves the node in private form — `identity.json`
+   * is the only file that holds it and it is owner-readable only.
+   */
+  publicKey: string;
+  /** sha256 of the public key, grouped so a person can read it aloud. */
+  fingerprint: string;
+}
+
+/**
+ * A fingerprint a person can compare by eye or read out loud.
+ *
+ * The first 128 bits of the digest in groups of four hex digits: long enough that a collision is not
+ * something to plan around, short enough that comparing two of them on a call is realistic.
+ */
+export function fingerprintOf(publicKey: string): string {
+  const digest = createHash("sha256").update(publicKey).digest("hex");
+  return (digest.match(/.{4}/g) ?? []).slice(0, 8).join(":");
+}
+
+/** Generate the device key pair and keep only the public half. */
+function createNodeKey(): { publicKey: string; fingerprint: string } {
+  const { publicKey } = generateKeyPairSync("ed25519");
+  const exported = publicKey.export({ type: "spki", format: "pem" }).toString();
+  return { publicKey: exported, fingerprint: fingerprintOf(exported) };
 }
 
 export interface RuntimeOptions {
@@ -43,6 +72,15 @@ export interface RuntimeOptions {
   dataDir: string;
   /** Human label for this node, shown in pairing and status UI. */
   label: string;
+  /**
+   * The runtime the entry point already opened, when it has one.
+   *
+   * Opened by the entry point rather than here so the stored model choice can be read *before* the model turn is
+   * built: a turn built before that read decides this node has no model, and a choice made in the settings surface
+   * would then be stored and never used. Passed in rather than opened a second time, because one database file is one
+   * connection.
+   */
+  runtime?: Runtime;
   /**
    * Answers a turn with a model, when this node has one.
    *
@@ -112,8 +150,9 @@ function readOrCreateIdentity(dataDir: string, label: string): NodeIdentity {
   const path = join(dataDir, "identity.json");
   if (existsSync(path)) {
     const raw = readFileSync(path, "utf8");
+    let stored: NodeIdentity;
     try {
-      return JSON.parse(raw) as NodeIdentity;
+      stored = JSON.parse(raw) as NodeIdentity;
     } catch (cause) {
       // Overwriting a corrupt identity would silently orphan every grant and pairing
       // recorded against the old node id, so the operator is asked to intervene.
@@ -122,6 +161,15 @@ function readOrCreateIdentity(dataDir: string, label: string): NodeIdentity {
         { cause },
       );
     }
+    // A node that existed before device keys did has an identity without one. The key is added in
+    // place rather than by minting a new identity: the node id and the local token are what every
+    // grant, preference and pairing is recorded against, so replacing them would orphan all of it.
+    if (typeof stored.publicKey !== "string" || typeof stored.fingerprint !== "string") {
+      const identity: NodeIdentity = { ...stored, ...createNodeKey() };
+      writeIdentity(path, identity);
+      return identity;
+    }
+    return stored;
   }
 
   const identity: NodeIdentity = {
@@ -130,13 +178,18 @@ function readOrCreateIdentity(dataDir: string, label: string): NodeIdentity {
     label,
     createdAt: nowInstant(),
     localToken: randomUUID().replaceAll("-", "") + randomUUID().replaceAll("-", ""),
+    ...createNodeKey(),
   };
 
   mkdirSync(dataDir, { recursive: true });
+  writeIdentity(path, identity);
+  return identity;
+}
+
+function writeIdentity(path: string, identity: NodeIdentity): void {
   writeFileSync(path, `${JSON.stringify(identity, null, 2)}\n`);
   // The token in this file authorizes local commands, so it is owner-readable only.
   chmodSync(path, 0o600);
-  return identity;
 }
 
 /** Node version and platform, reported by the health endpoint. */

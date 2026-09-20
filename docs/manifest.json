@@ -30,8 +30,8 @@
     },
     {
       "path": "distributed-runtime.md",
-      "bytes": 12896,
-      "sha256": "1c2da039084f33e22c4952996eb00edc0f3ed2053f38054596d0aafc5442bb0f"
+      "bytes": 15450,
+      "sha256": "606cb70dfd2bac096db923035c7815b7f604d6c8eacfd3540c55c5e03ea8c89c"
     },
     {
       "path": "examples/README.md",

@@ -1,6 +1,15 @@
 import { type ReactElement, useEffect, useRef, useState } from "react";
 
-import { createFrameSession, type FrameActionOutcome, type FrameSession } from "@clarkcant/widget-host";
+/*
+ * The session entry, not the package root.
+ *
+ * The root is a mixed barrel: alongside the frame session it carries the node-side catalog registry, whose digest
+ * helper imports `node:crypto`. A bundled build tree-shakes that away, which is why this only ever failed in dev —
+ * where Vite serves modules one to one and hoists the interop read of `createHash` to the top of the module, so
+ * importing the root threw before anything rendered. The browser lane wants the frame session and nothing else, and
+ * this subpath is that boundary made explicit rather than a bundle happening to remove the rest.
+ */
+import { createFrameSession, type FrameActionOutcome, type FrameSession } from "@clarkcant/widget-host/session";
 
 /**
  * A widget running in its own frame.
