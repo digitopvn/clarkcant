@@ -329,6 +329,9 @@ export function runConformance(root: string): ConformanceReport {
     instanceId: "conformance",
     nonce: "conformance-nonce-000000",
     props: defaultProps,
+    // The harness speaks as an instance that has never moved, which is what makes its first action valid rather than
+    // a revision assertion about an instance it does not have.
+    revision: 0,
     brokeredCapabilities: [],
     allowedOrigins: [],
     knownActionBindings: ["act_conformance"],

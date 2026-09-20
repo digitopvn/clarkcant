@@ -81,11 +81,13 @@ export function WidgetFrame(input: WidgetFrameProps): ReactElement {
     const live = createFrameSession({
       instanceId: input.instanceId,
       nonce: nonce.current,
-      props: input.props,
-      ...(input.state === undefined ? {} : { state: input.state }),
-      brokeredCapabilities: input.brokeredCapabilities,
-      allowedOrigins: input.allowedOrigins,
-      knownActionBindings: input.knownActionBindings,
+      props: latest.current.props,
+      ...(latest.current.state === undefined ? {} : { state: latest.current.state }),
+      brokeredCapabilities: latest.current.brokeredCapabilities,
+      allowedOrigins: latest.current.allowedOrigins,
+      knownActionBindings: latest.current.knownActionBindings,
+      // The revision the surface was last told, so the widget's first action is not refused as stale.
+      revision: latest.current.revision,
       // Read through the ref, so a newer callback is used without rebuilding the session that owns the handshake.
       invokeAction: (intent) => latest.current.invokeAction(intent),
       chrome: {
@@ -123,8 +125,17 @@ export function WidgetFrame(input: WidgetFrameProps): ReactElement {
       live.dispose();
       session.current = undefined;
     };
-    // The frame's identity, and nothing that changes per render: see the note on `latest`.
-  }, [input.allowedOrigins, input.brokeredCapabilities, input.instanceId, input.knownActionBindings, input.state, input.url]);
+    /*
+     * The document's identity, and nothing else.
+     *
+     * Every other value here is a fresh array or object on each parent render, so depending on them rebuilt the
+     * session on a re-render, disposed the one the frame was already speaking to, and left a frame that reported
+     * `ready` and then refused every action with "frame đã dispose" — a session that has been disposed cannot be
+     * revived, because a runtime that has already said `ready` ignores a second `init`. The session belongs to the
+     * document: it is created when the document is, and gone when the document is. The values that merely *feed* it
+     * are read from the ref above at the moment they are needed, so a busy parent can re-render all it likes.
+     */
+  }, [input.instanceId, input.url]);
 
   /**
    * The init message, sent when the document has loaded.
