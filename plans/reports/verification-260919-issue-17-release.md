@@ -107,6 +107,10 @@ evidence của cửa sổ không còn phụ thuộc vào một máy cụ thể.
 
 - Các check cần provider thật (`[calibration]`, `[jev-live]`) vẫn BLOCKED nếu thiếu `CLARKCANT_JEV_LIVE=1` và key;
   quyết định "ghi nhớ" của chính model vì thế chưa được chứng minh.
-- Extractor PDF/ảnh, route xoá conversation, nguồn `memory` trong gợi ý, scoped session token: mỗi cái có tên và
-  điều kiện còn thiếu trong `docs/widgets-and-extensions.md` §4.1.
+- ~~Extractor PDF/ảnh~~ — **đã đóng**: PDF được trích văn bản (`apps/runtime/src/pdf-text.ts`, PR #64) và ảnh
+  được giao nguyên block ảnh cho SDK (PR #66: `read_attachment` trả chính bức ảnh, `toSdkTool` phát
+  `{ type: "image", data, mimeType }`). Nguyên nhân gốc nằm ở adapter, chỗ gộp mọi kết quả tool thành một block
+  text.
+- Route xoá conversation, nguồn `memory` trong gợi ý, scoped session token: mỗi cái có tên và điều kiện còn thiếu
+  trong `docs/widgets-and-extensions.md` §4.1.
 - `nodeReachable` là `false` trong smoke: cổng này kiểm tra shell và cửa sổ, không cần node đang chạy.
