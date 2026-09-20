@@ -57,6 +57,17 @@ function token(): string {
  * resume test performs — so the test was erasing the very state it meant to verify.
  */
 async function openApp(page: Page): Promise<void> {
+  //
+  // The node's own suggestions are pinned to empty for this suite.
+  //
+  // These journeys are about the four written chips and the demo samples they open. Once the node can offer
+  // suggestions drawn from what a person was actually doing, which chips are on screen depends on what happens to
+  // be in .data/e2e - so a test that clicked the first chip would be testing whatever the database happened to
+  // hold. Asking the node for none is how this suite keeps testing the chip it means to test; the dynamic list has
+  // its own journey.
+  await page.route("**/suggestions", (route) =>
+    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ items: [] }) }),
+  );
   await page.goto(`/?token=${token()}&gateway=${encodeURIComponent(GATEWAY)}`);
 }
 
@@ -75,7 +86,12 @@ test("the client loads, reports a real connection, and asks what to do", async (
   // first run shows an invitation with a heading and the four starting chips.
   await expect(page.locator(".cc-empty")).toBeVisible();
   await expect(page.locator(".cc-empty h1")).toBeVisible();
-  await expect(page.locator("[data-suggestion]")).toHaveCount(4);
+  // At least one chip, rather than exactly four. The node offers suggestions drawn from what the person was
+  // actually doing once there is history, and falls back to the four written chips when there is none - so the
+  // count depends on how much happened to be in .data/e2e, which is not what this test is about.
+  const chips = page.locator("[data-suggestion]");
+  await expect(chips.first()).toBeVisible();
+  expect(await chips.count()).toBeGreaterThanOrEqual(1);
   await page.screenshot({ path: join(EVIDENCE, "j1-01-empty.png") });
 });
 
@@ -202,7 +218,10 @@ test("a highlighted passage can be attached to the next prompt", async ({ page }
 });
 
 /*
- * The empty case, before anything has run on this node.
+ * The empty case, ordered before the journey below.
+ *
+ * It reads best before anything has run on this node. The order is not load-bearing any more: the mark is about work in
+ * flight, so a session that has finished does not keep it on screen — which the journey below asserts at its end.
  */
 test("the header says nothing about background work when there is none", async ({ page }) => {
   // The empty case, asserted rather than assumed: a mark that showed "0" would be a permanent line of noise, and the
@@ -239,4 +258,3 @@ test("a selected passage can be sent to a background session", async ({ page }) 
   // about work that is over rather than that it says nothing the instant a worker exits.
   await expect(page.locator("[data-background-sessions]")).toHaveCount(0, { timeout: 20_000 });
 });
-

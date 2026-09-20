@@ -473,3 +473,54 @@ export function approveTaskStatesAreConsistent(): boolean {
   }
   return true;
 }
+
+/**
+ * Ask a task to stop.
+ *
+ * Cancellation is deliberately two steps in the reducer — `cancel.requested` moves a task to
+ * `cancel_requested` so the executor gets to confirm what actually happened — and this function is
+ * where that design meets the two very different situations it covers.
+ *
+ * When a run is in flight, the request is all this may do. The task has a process somewhere whose
+ * effect nobody has observed yet, so confirming on its behalf would be the host asserting an
+ * outcome it cannot see, and a task that says `cancelled` while its effect still lands is worse
+ * than one that says it is still stopping.
+ *
+ * When nothing is running there is no executor and no effect in flight, so confirming is a
+ * statement of fact rather than a guess — and leaving the task in `cancel_requested` would tell the
+ * user something is still going on when nothing is. A parked task has no run id, which is exactly
+ * the task whose card already promised it could be stopped.
+ */
+/**
+ * The result of asking a task to stop.
+ *
+ * A discriminated union rather than an intersection, so a caller that has checked `ok` can read the
+ * task without a cast — and so the failure branch cannot be read as if it carried a state.
+ */
+export type CancelTaskResult =
+  | { ok: true; task: TaskRecord; changed: boolean; confirmed: boolean }
+  | { ok: false; code: "ILLEGAL_TRANSITION"; message: string; confirmed: false };
+
+export function cancelTask(deps: TaskServiceDeps, taskId: string): CancelTaskResult {
+  const requested = applyTaskEvent(deps, taskId, "cancel.requested");
+  if (!requested.ok) return { ok: false, code: requested.code, message: requested.message, confirmed: false };
+  if (!requested.changed) return { ok: true, task: requested.task, changed: false, confirmed: false };
+
+  /*
+   * A run id is what says a process is holding this task. `executionNodeId` alone does not: it only
+   * records where work was sent, and a task that was dispatched and whose run has since ended has a
+   * node and nothing executing on it — waiting for a confirmation that can never come would leave
+   * the user reading "still stopping" about work that already stopped.
+   */
+  const nothingRunning = requested.task.activeRunId === undefined;
+  if (!nothingRunning) {
+    return { ok: true, task: requested.task, changed: true, confirmed: false };
+  }
+
+  const confirmed = applyTaskEvent(deps, taskId, "cancel.confirmed");
+  if (!confirmed.ok) {
+    // The request stands; only the confirmation failed. Reporting the request as un-made would be wrong.
+    return { ok: true, task: requested.task, changed: true, confirmed: false };
+  }
+  return { ok: true, task: confirmed.task, changed: true, confirmed: true };
+}

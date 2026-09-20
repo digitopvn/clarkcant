@@ -1,0 +1,335 @@
+import { useState, type ReactElement } from "react";
+
+import { ORB_MOTION_BOUNDS, ORB_OPTICAL_BOUNDS, ORB_PHYSICS_BOUNDS } from "@clarkcant/contracts";
+
+import { Orb } from "../Orb.tsx";
+import { orbFallbackBackground, resolveOrbProfile } from "../orb-profile.ts";
+import { THEME_CHOICES, type ThemeChoice } from "../theme.ts";
+import type { ThemeName } from "@clarkcant/design-tokens";
+import { InlineStatus, RangeField, SegmentedControl, SettingsRow } from "./controls/primitives.tsx";
+import type { PreferencesHandle } from "./controls/use-preferences.ts";
+
+/**
+ * Experience: how the product looks and moves.
+ *
+ * The first tab, because it is the one whose answer is visible immediately and whose effect is entirely
+ * local — no provider, no key, nothing to configure first.
+ *
+ * Only controls whose behaviour exists are rendered. `experience.density` is declared in the registry for a
+ * later phase and deliberately has no control here: a switch that changes nothing is worse than a switch
+ * that is missing, because the user concludes the app is broken rather than that the feature is not here.
+ */
+
+const THEME_LABELS: Record<ThemeChoice, string> = {
+  dark: "Tối",
+  light: "Sáng",
+  system: "Theo hệ thống",
+};
+
+const MOTION_OPTIONS = [
+  { value: "system", label: "Theo hệ thống", note: "Tôn trọng thiết lập giảm chuyển động của máy." },
+  { value: "full", label: "Đầy đủ", note: "Chuyển động như thiết kế." },
+  {
+    value: "reduced",
+    label: "Giảm",
+    note: "Orb đứng yên và bỏ phản hồi theo con trỏ. Màu sắc vẫn giữ.",
+  },
+] as const;
+
+const ORB_PRESETS = [
+  { value: "clark", label: "Clark", note: "Orb gốc, đúng như bản phát hành." },
+  { value: "calm", label: "Calm", note: "Ít sáng, tắt dần nhanh hơn, phản hồi nhẹ." },
+  { value: "jelly", label: "Jelly", note: "Lò xo mềm, rung rõ hơn nhưng vẫn trong giới hạn." },
+  { value: "glass", label: "Glass", note: "Viền rõ hơn, chuyển động chậm." },
+  { value: "custom", label: "Custom", note: "Chỉnh tay trong khoảng an toàn." },
+] as const;
+
+/** The patch's own shape, read defensively: a stored value may predate this control. */
+function numbers(value: unknown): Record<string, number> {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return {};
+  const out: Record<string, number> = {};
+  for (const [key, entry] of Object.entries(value as Record<string, unknown>)) {
+    if (typeof entry === "number" && Number.isFinite(entry)) out[key] = entry;
+  }
+  return out;
+}
+
+export interface ExperienceSettingsProps {
+  prefs: PreferencesHandle;
+  themeChoice: ThemeChoice;
+  resolvedTheme: ThemeName;
+  onThemeChoice: (choice: ThemeChoice) => void;
+  /** Called after a write that changes the orb, so the orb on screen follows the control that changed it. */
+  onOrbChange: () => void;
+}
+
+export function ExperienceSettings({
+  prefs,
+  themeChoice,
+  resolvedTheme,
+  onThemeChoice,
+  onOrbChange,
+}: ExperienceSettingsProps): ReactElement {
+  const profileName = prefs.text("orb.profile", "clark");
+  const custom = prefs.record("orb.custom") ?? {};
+  const customPhysics = numbers(custom.physics);
+  const customOptical = numbers(custom.optical);
+  const customMotion = numbers(custom.motion);
+  const [draftOpen, setDraftOpen] = useState(false);
+
+  /*
+   * The preview.
+   *
+   * Resolved through the same function the running orb uses, from the values the node just confirmed, so what
+   * is shown is what will be drawn rather than a second implementation of the same idea. Reduced motion is
+   * taken from the stored preference here; the platform's own setting is applied inside the Orb itself.
+   */
+  const preview = resolveOrbProfile({
+    profile: profileName,
+    custom,
+    reducedMotion: prefs.text("experience.motion", "system") === "reduced",
+  });
+
+  /** Write one field of the custom patch, keeping the fields that were not touched. */
+  const patchCustom = (group: "physics" | "optical" | "motion", key: string, value: number): void => {
+    const next = {
+      ...custom,
+      [group]: { ...numbers(custom[group]), [key]: value },
+    };
+    prefs.write("orb.custom", next);
+    onOrbChange();
+  };
+
+  return (
+    <>
+      <section className="cc-panel-section">
+        <h3>Giao diện</h3>
+        <SettingsRow label="Chủ đề" description="Áp dụng ngay, và giữ nguyên sau khi tải lại.">
+          <div className="cc-panel-row">
+            {THEME_CHOICES.map((choice) => (
+              <button
+                key={choice}
+                type="button"
+                className="cc-badge"
+                aria-pressed={themeChoice === choice}
+                data-selected={themeChoice === choice}
+                data-theme-choice={choice}
+                onClick={() => onThemeChoice(choice)}
+              >
+                {THEME_LABELS[choice]}
+              </button>
+            ))}
+          </div>
+        </SettingsRow>
+        <p className="cc-panel-note" data-resolved-theme={resolvedTheme}>
+          Đang hiển thị: {THEME_LABELS[resolvedTheme]}
+          {themeChoice === "system" ? " (theo hệ thống)" : ""}
+        </p>
+        <InlineStatus status={prefs.status} forKey="experience.theme" />
+      </section>
+
+      <section className="cc-panel-section">
+        <h3>Chuyển động</h3>
+        <SettingsRow
+          label="Mức chuyển động"
+          description="Giảm chuyển động luôn thắng thiết lập riêng của Orb."
+        >
+          <SegmentedControl
+            name="motion"
+            label="Mức chuyển động"
+            options={MOTION_OPTIONS}
+            value={prefs.text("experience.motion", "system")}
+            pending={prefs.pending === "experience.motion"}
+            onChange={(value) => {
+              prefs.write("experience.motion", value);
+              onOrbChange();
+            }}
+          />
+        </SettingsRow>
+        <InlineStatus status={prefs.status} forKey="experience.motion" />
+      </section>
+
+      <section className="cc-panel-section" data-orb-settings="true">
+        <h3>Orb</h3>
+        <p className="cc-panel-note">
+          Orb là nhận diện của ClarkCant và luôn hiện diện. Bạn đổi được cách nó thể hiện, trong giới hạn an toàn.
+        </p>
+
+        {/*
+          One live orb, and the preset list beside it as flat swatches.
+
+          A grid of preset previews would mean a WebGL context per preset, which is a GPU program each for a
+          difference the eye reads from the label anyway. The selected preset feeds this one renderer instead.
+        */}
+        <div className="cc-orb-preview" data-orb-preview="true">
+          <div
+            className="cc-orb-preview-stage"
+            style={
+              Object.keys(preview.palette).length === 0
+                ? undefined
+                : { background: orbFallbackBackground(preview.palette) }
+            }
+          >
+            <Orb
+              size={96}
+              className="cc-orb-preview-canvas"
+              label={`Xem trước Orb: ${preview.name}`}
+              profile={preview}
+              // A small preview does not need a retina buffer: the difference is invisible and the fragments
+              // are not free.
+              maxPixelRatio={1.5}
+            />
+          </div>
+          <div className="cc-setting-text">
+            <span className="cc-setting-label" data-orb-preview-name={preview.name}>
+              {ORB_PRESETS.find((preset) => preset.value === preview.name)?.label ?? preview.name}
+            </span>
+            <span className="cc-setting-desc">
+              {preview.reducedMotion ? "Đang giảm chuyển động." : "Đang chuyển động."}
+            </span>
+          </div>
+        </div>
+
+        <SettingsRow label="Kiểu Orb" description="Bốn kiểu có sẵn, hoặc tự chỉnh trong khoảng cho phép.">
+          <div className="cc-panel-row">
+            {ORB_PRESETS.map((preset) => (
+              <button
+                key={preset.value}
+                type="button"
+                className="cc-badge"
+                aria-pressed={profileName === preset.value}
+                data-selected={profileName === preset.value}
+                data-orb-preset={preset.value}
+                onClick={() => {
+                  prefs.write("orb.profile", preset.value);
+                  // Opening the advanced controls on the way in, because choosing "custom" without being
+                  // offered what to customise is a dead end.
+                  if (preset.value === "custom") setDraftOpen(true);
+                  onOrbChange();
+                }}
+              >
+                {preset.label}
+              </button>
+            ))}
+          </div>
+        </SettingsRow>
+        <p className="cc-panel-note" data-orb-preset-note="true">
+          {ORB_PRESETS.find((preset) => preset.value === profileName)?.note ?? ""}
+        </p>
+        <InlineStatus status={prefs.status} forKey="orb.profile" />
+
+        <div className="cc-panel-row">
+          <button
+            type="button"
+            className="cc-chip"
+            aria-expanded={draftOpen}
+            data-orb-advanced="true"
+            onClick={() => setDraftOpen((current) => !current)}
+          >
+            {draftOpen ? "Ẩn chỉnh tay" : "Chỉnh tay"}
+          </button>
+          <button
+            type="button"
+            className="cc-chip"
+            data-orb-reset="true"
+            onClick={() => {
+              prefs.write("orb.profile", "clark");
+              prefs.undo("orb.custom");
+              onOrbChange();
+            }}
+          >
+            Về mặc định
+          </button>
+        </div>
+
+        {!draftOpen ? null : (
+          <div data-orb-advanced-panel="true">
+            <p className="cc-panel-note">
+              Chỉ áp dụng cho kiểu Custom. Mọi giá trị bị kẹp trong khoảng ở đây, và node từ chối giá trị ngoài
+              khoảng trước khi lưu.
+            </p>
+
+            <SettingsRow label="Lò xo" description="Độ cứng và độ tắt dần của vỏ Orb.">
+              <RangeField
+                name="stiffness"
+                label="Độ cứng"
+                value={customPhysics.stiffness ?? ORB_PHYSICS_BOUNDS.stiffness.default}
+                min={ORB_PHYSICS_BOUNDS.stiffness.min}
+                max={ORB_PHYSICS_BOUNDS.stiffness.max}
+                step={1}
+                onChange={(value) => patchCustom("physics", "stiffness", value)}
+              />
+            </SettingsRow>
+            <SettingsRow label="Tắt dần" description="Thấp hơn thì rung lâu hơn.">
+              <RangeField
+                name="damping"
+                label="Tắt dần"
+                value={customPhysics.damping ?? ORB_PHYSICS_BOUNDS.damping.default}
+                min={ORB_PHYSICS_BOUNDS.damping.min}
+                max={ORB_PHYSICS_BOUNDS.damping.max}
+                step={0.5}
+                onChange={(value) => patchCustom("physics", "damping", value)}
+              />
+            </SettingsRow>
+            <SettingsRow label="Độ rung" description="Biên độ biến dạng khi kéo nhanh.">
+              <RangeField
+                name="wobbleGain"
+                label="Độ rung"
+                value={customPhysics.wobbleGain ?? ORB_PHYSICS_BOUNDS.wobbleGain.default}
+                min={ORB_PHYSICS_BOUNDS.wobbleGain.min}
+                max={ORB_PHYSICS_BOUNDS.wobbleGain.max}
+                step={0.05}
+                onChange={(value) => patchCustom("physics", "wobbleGain", value)}
+              />
+            </SettingsRow>
+            <SettingsRow label="Phản hồi con trỏ" description="Mức sáng lên khi con trỏ lại gần.">
+              <RangeField
+                name="pointerResponse"
+                label="Phản hồi con trỏ"
+                value={customPhysics.pointerResponse ?? ORB_PHYSICS_BOUNDS.pointerResponse.default}
+                min={ORB_PHYSICS_BOUNDS.pointerResponse.min}
+                max={ORB_PHYSICS_BOUNDS.pointerResponse.max}
+                step={0.05}
+                onChange={(value) => patchCustom("physics", "pointerResponse", value)}
+              />
+            </SettingsRow>
+            <SettingsRow label="Tốc độ" description="Tốc độ chuyển động của dải sáng bên trong.">
+              <RangeField
+                name="speed"
+                label="Tốc độ"
+                value={customMotion.speed ?? ORB_MOTION_BOUNDS.speed.default}
+                min={ORB_MOTION_BOUNDS.speed.min}
+                max={ORB_MOTION_BOUNDS.speed.max}
+                step={0.05}
+                onChange={(value) => patchCustom("motion", "speed", value)}
+              />
+            </SettingsRow>
+            <SettingsRow label="Độ sáng" description="Độ sáng của dải sáng bên trong vỏ.">
+              <RangeField
+                name="exposure"
+                label="Độ sáng"
+                value={customOptical.exposure ?? ORB_OPTICAL_BOUNDS.exposure.default}
+                min={ORB_OPTICAL_BOUNDS.exposure.min}
+                max={ORB_OPTICAL_BOUNDS.exposure.max}
+                step={0.1}
+                onChange={(value) => patchCustom("optical", "exposure", value)}
+              />
+            </SettingsRow>
+            <SettingsRow label="Quầng sáng" description="Ánh sáng Orb toả ra xung quanh.">
+              <RangeField
+                name="glow"
+                label="Quầng sáng"
+                value={customOptical.glow ?? ORB_OPTICAL_BOUNDS.glow.default}
+                min={ORB_OPTICAL_BOUNDS.glow.min}
+                max={ORB_OPTICAL_BOUNDS.glow.max}
+                step={0.05}
+                onChange={(value) => patchCustom("optical", "glow", value)}
+              />
+            </SettingsRow>
+            <InlineStatus status={prefs.status} forKey="orb.custom" />
+          </div>
+        )}
+      </section>
+    </>
+  );
+}

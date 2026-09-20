@@ -497,6 +497,13 @@ export async function createModelTurn(options: {
    */
   extraTools?: (turn: { conversationId: string }) => readonly ToolDefinition[];
   /**
+   * What was remembered, for the turn about to run.
+   *
+   * A function rather than a string because it must be read per turn: a record somebody deleted has to stop
+   * being sent on the very next turn, and a value captured once would keep sending it until a restart.
+   */
+  memoryBrief?: (conversationId: string) => string;
+  /**
    * The model to run for sessions created from now on, when somebody chose one.
    *
    * A function rather than a value, and read at session creation rather than here: the composition root builds the
@@ -504,6 +511,14 @@ export async function createModelTurn(options: {
    * would have to exist before the thing it comes from does.
    */
   model?: () => ModelTurn["selection"] | undefined;
+  /**
+   * The user's own instructions, read fresh on every turn.
+   *
+   * A function for the same reason `model` is, and one more: the promise of the feature is that a
+   * preference written while the app is open reaches the next turn rather than the next session, so the
+   * value has to be read when a turn starts rather than when this module is built.
+   */
+  personalInstructions?: () => string | undefined;
 }): Promise<ModelTurn | undefined> {
   const selection = modelFromEnv(options.env);
   if (selection === undefined) return undefined;
@@ -521,6 +536,9 @@ export async function createModelTurn(options: {
       builtinTools: [],
       ...(options.sessionDir === undefined ? {} : { sessionDir: options.sessionDir }),
       ...(options.onSessionFile === undefined ? {} : { onSessionFile: options.onSessionFile }),
+      ...(options.personalInstructions === undefined
+        ? {}
+        : { personalInstructions: options.personalInstructions }),
     });
   const availability = await adapter.availability();
   const turns = new Map<string, Turn>();
@@ -832,13 +850,17 @@ export async function createModelTurn(options: {
       // "this turn carries no extra instruction".
       const note = withRecap(recap, input.note);
       // Read once, before the prompt, from the message the conductor has already stored.
-      const brief =
+      const attachmentPart =
         options.attachments === undefined
           ? ""
           : attachmentBrief({
               refs: options.attachments.refsFor(input.conversationId),
               dataDir: options.attachments.dataDir,
             });
+      // Read fresh every turn, not captured once: a record the person deleted must stop being sent on the next
+      // turn, which is what the Memory tab's promise to let them see the source and delete it has to mean.
+      const memoryPart = options.memoryBrief?.(input.conversationId) ?? "";
+      const brief = [attachmentPart, memoryPart].filter((part) => part !== "").join("\n\n");
       // Set before the prompt rather than after it, so a message arriving while the first tokens are being written
       // already sees a turn in flight.
       turn.inFlight = true;

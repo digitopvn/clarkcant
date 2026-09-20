@@ -1,6 +1,6 @@
 import { randomBytes } from "node:crypto";
 
-import { type Instant, type WidgetDefinition, nowInstant } from "@clarkcant/contracts";
+import { type Instant, type VoiceCapabilities, type WidgetDefinition, nowInstant } from "@clarkcant/contracts";
 import {
   type ConductorDeps,
   type WidgetDeps,
@@ -10,6 +10,8 @@ import {
   liveOwnerOf,
   liveStateOf,
   registerCapability,
+  createControlSessionRegistry,
+  type ControlSessionRegistry,
 } from "@clarkcant/core";
 import {
   conversationMetadata,
@@ -88,6 +90,13 @@ import {
 
 export interface NodeServices {
   runtime: Runtime;
+  /**
+   * Who is driving each controlled surface — a browser session or a desktop session.
+   *
+   * On the services rather than in a module-level map, so a node's authority records live and die with the node
+   * and two nodes in one process cannot answer for each other's sessions.
+   */
+  controlSessions: ControlSessionRegistry;
   conductor: ConductorDeps;
   /**
    * Control of the turn that is running for a conversation, when one is.
@@ -104,11 +113,30 @@ export interface NodeServices {
    */
   modelCatalogue?: () => Promise<ModelCatalogue>;
 
+  /**
+   * What the configured voice provider can do, as it reports it.
+   *
+   * Assigned after boot for the same reason as the catalogue: the voice gateway is attached to the server that
+   * hosts these routes, so the wiring runs one way. Absent means this node has no voice gateway at all, which the
+   * route reports as a provider that supports nothing rather than as an error.
+   */
+  voiceCapabilities?: () => VoiceCapabilities;
+
   /** What pi loads on this machine. Names and kinds, never contents. */
   extensions?: () => Promise<readonly { readonly name: string; readonly kind: "directory" | "file" }[]>;
 
   /** pi's own configuration, as far as it is safe to report it: scalars, secrets redacted. */
   piSettings?: () => Promise<readonly { readonly key: string; readonly value: string }[]>;
+
+  /**
+   * The words a scripted voice provider will say, when this node is running one.
+   *
+   * Present only on a node started with the voice fixture, and that presence is the gate: the route that sets them
+   * exists exactly when there is a fake to set them on, so a real node has no such endpoint to reach at all. The
+   * fixture is otherwise a fixed sentence, and a browser journey that cannot say a command cannot test the command
+   * path - which is what left phase 5's evidence unwritten.
+   */
+  voiceFixture?: { setWords(words: string): void };
 
   turnControl?: {
     running(): string[];
@@ -503,6 +531,7 @@ export function bootNodeServices(options: RuntimeOptions): NodeServices {
 
   return {
     runtime,
+    controlSessions: createControlSessionRegistry(),
     conductor,
     model: options.model ?? null,
     jev: jevRuntime,
@@ -542,7 +571,7 @@ export interface TimelineInstanceView {
    * The surface only, never the owner token: a token in a payload is a token that ends up in a log,
    * and holding one is what authorizes releasing somebody else's claim.
    */
-  ownerSurface?: "inline" | "pin";
+  ownerSurface?: "inline" | "pin" | "detached";
   /** Set when this instance is a composed surface, so the client can fetch its spec and bundle. */
   compositionId?: string;
 }

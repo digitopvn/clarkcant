@@ -19,10 +19,9 @@ ledger: every scope item (V01–V18) and every acceptance test (T01–T72) from
 [`docs/implementation-plan.md`](docs/implementation-plan.md) with a status of PASS,
 BLOCKED or NOT-IMPLEMENTED, and the evidence for each. Nothing there is marked complete.
 
-Of the 72 acceptance tests in the blueprint: **64 pass**, 4 are blocked on external
-infrastructure or credentials, and 4 belong to phases this bootstrap did not build. The
-unit and integration tests of individual layers passing is not the same as a journey
-passing; the journeys that do run end to end are the browser suite in `apps/web/e2e`.
+Tra trạng thái và điều kiện còn thiếu tại [bảng conformance](docs/conformance-traceability.md).
+Test từng lớp không thay thế kiểm chứng hành trình; các hành trình trình duyệt nằm
+trong [apps/web/e2e](apps/web/e2e). Fixture không chứng minh provider thật hoạt động.
 
 ## What actually works
 
@@ -180,6 +179,11 @@ type-stripping loader cannot execute.
   `succeeded`; it waits for observation.
 
 ## Documentation
+
+Định hướng UI/UX nằm trong [DESIGN.md](DESIGN.md), quy trình dành cho agent nằm trong
+[AGENTS.md](AGENTS.md). Attachments có bằng chứng tại [browser tests](apps/web/e2e/attachments.spec.ts)
+và [runtime tests](apps/runtime/test/attachment-in-turn.spec.ts); không suy ra các giai đoạn
+voice/action parity hay compact desktop đã hoàn tất từ phần attachments.
 
 Read in this order: [`docs/scope-lock.md`](docs/scope-lock.md),
 [`docs/system-architecture.md`](docs/system-architecture.md),

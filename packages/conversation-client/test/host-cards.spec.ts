@@ -249,3 +249,24 @@ describe("the model answer note", () => {
     expect(textOf(element)).toContain("provider exploded");
   });
 });
+
+/**
+ * The diff card without a pointer.
+ *
+ * The journey proves a keyboard user can reach it; these assertions pin the reason that is possible, so a later
+ * refactor that drops the tab stop fails here with a name for the defect rather than only in the browser.
+ */
+describe("the diff card and the keyboard", () => {
+  it("sits in the tab order, is announced as a group, and carries a name", () => {
+    const card = CodeDiffCardBlock({ block: DIFF });
+    // Stated as a record rather than read off the element, whose props are `unknown` by default — the
+    // alternative is a cast per assertion, which reads as if the shape were already known.
+    const props = (card === null ? {} : (card.props as Record<string, unknown>)) ?? {};
+
+    expect(props.tabIndex).toBe(0);
+    expect(props.role).toBe("group");
+    expect(props["data-diff-keyboard"]).toBe("true");
+    // A focusable region with no accessible name announces only that the cursor moved.
+    expect(String(props["aria-label"])).toContain("Diff:");
+  });
+});

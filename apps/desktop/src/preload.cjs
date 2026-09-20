@@ -34,6 +34,69 @@ const bridge = {
   status() {
     return ipcRenderer.invoke("desktop:getStatus");
   },
+  /**
+   * The node this window belongs to, or a refusal saying why there is none.
+   *
+   * The token comes through here rather than through the window's URL, where it would end up in history and
+   * in the address bar, and rather than through the command line, where it would end up in a process list.
+   */
+  getSession() {
+    return ipcRenderer.invoke("desktop:getSession");
+  },
+  /**
+   * Move a widget instance into its own window.
+   *
+   * The widget's composition travels with the request because the shell already has it, and the host decides
+   * whether it may: the window that opens receives that composition and no credential, so it can draw the
+   * instance without being able to read the conversation it came from.
+   */
+  detachWidget(input) {
+    return ipcRenderer.invoke("desktop:detachWidget", input);
+  },
+  /** Hand the instance back, closing its window. */
+  attachWidget() {
+    return ipcRenderer.invoke("desktop:attachWidget");
+  },
+  /**
+   * Told when a detached window closes, so the shell can take the instance back.
+   *
+   * A named subscription rather than a generic `on(channel)`: a generic listener would hand the renderer every
+   * channel the main process can push, which is the same mistake as a generic `invoke`.
+   */
+  onWidgetReattached(callback) {
+    ipcRenderer.on("desktop:widgetReattached", (_event, payload) => callback(payload));
+  },
+  /**
+   * Shrink the window to the voice bar, grow it back, or pin it above other windows.
+   *
+   * Answers with the bounds and the pin state the window actually has afterwards, not with what was asked for,
+   * because the operating system may clamp either one.
+   */
+  setCompactMode(input) {
+    return ipcRenderer.invoke("desktop:setCompactMode", input);
+  },
+  /**
+   * The window's named modes: normal, expanded, compact, orb.
+   *
+   * A mode rather than pixel numbers, because bounds live in the main process: a renderer that could ask for
+   * arbitrary geometry could ask for a window off the edge of the screen or larger than the display, and the
+   * work-area arithmetic that prevents that is on the other side of this boundary.
+   */
+  setWindowMode(mode) {
+    return ipcRenderer.invoke("desktop:setWindowMode", mode);
+  },
+  /** Resize to one of the named presets, leaving the mode alone. */
+  resizeWindowPreset(name) {
+    return ipcRenderer.invoke("desktop:resizeWindowPreset", name);
+  },
+  /** Return the window to the size and place it had before it was collapsed. */
+  restoreWindow() {
+    return ipcRenderer.invoke("desktop:restoreWindow");
+  },
+  /** Bring the window forward, for a request that came from voice or from another surface. */
+  focusWindow() {
+    return ipcRenderer.invoke("desktop:focusWindow");
+  },
 };
 
 contextBridge.exposeInMainWorld("clarkcant", bridge);

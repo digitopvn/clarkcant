@@ -40,6 +40,14 @@ function token(): string {
 }
 
 async function openApp(page: Page): Promise<void> {
+  // The node's own suggestions are pinned to empty, so the four written chips are the ones on screen.
+  //
+  // This suite is about those four chips and what they promise. Once the node can offer suggestions drawn from
+  // what a person was actually doing, which chips appear depends on what happens to be in .data/e2e - so a test
+  // asserting four would be asserting the database. The dynamic list has its own journey.
+  await page.route("**/suggestions", (route) =>
+    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ items: [] }) }),
+  );
   await page.goto(`/?token=${token()}&gateway=${encodeURIComponent(GATEWAY)}`);
   await expect(page.locator("text=Ready")).toBeVisible({ timeout: 15_000 });
 }
@@ -97,7 +105,13 @@ test.describe("the first run", () => {
 
     await expect(page.locator("[data-onboarding='true']")).toBeVisible({ timeout: 15_000 });
     await expect(page.locator("[data-onboarding='true'] h1")).toHaveText("ClarkCant");
-    await expect(page.locator("[data-onboarding='true'] p")).toContainText("Clark Cant Can");
+    // The sentence says what to do rather than what the product is: the first screen is the one place a person
+    // has nothing to go on, and "Nói điều bạn muốn làm" is the instruction the rest of the interface assumes.
+    await expect(page.locator("[data-onboarding='true'] p")).toContainText("Nói điều bạn muốn làm");
+    // Nothing is asked for before anything has been tried. The wizard this replaced asked for a provider, a model
+    // and a key here, which is where a real key ends up in a screenshot.
+    await expect(page.locator("[data-onboarding-key-input='true']")).toHaveCount(0);
+    await expect(page.locator("[data-onboarding-step='provider']")).toHaveCount(0);
 
     // A node whose environment already answers goes straight in. The provider, the model and the key were configured
     // before the browser opened, and asking again would be asking somebody to retype a key this machine already holds.
@@ -113,50 +127,55 @@ test.describe("the first run", () => {
 test.describe("the first run on a node that has been told nothing", () => {
   test.use({ storageState: { cookies: [], origins: [] } });
 
-  test("walks the steps it still needs, in order, and never echoes the key", async ({ page }) => {
-    // Answered here rather than by starting a second node: what an answer says is the thing under test, not where the
-    // answer came from, and this suite's node has a filled-in environment by design.
+  test("asks for nothing it does not need, and offers setup where the answer is used", async ({ page }) => {
+    /*
+     * The node is told it has no model, which is the state a fresh install is most likely to be in. The old
+     * wizard dead-ended exactly here: it offered a provider step against an empty catalogue and a key form
+     * nobody had a reason to fill in.
+     *
+     * What must happen now: the entry screen still gets out of the way in one press, no credential is asked
+     * for, and the conversation says what is missing with the control that fixes it.
+     */
     await page.route("**/readiness", (route) => route.fulfill({ json: { model: false, credentials: [] } }));
     await page.goto(`/?token=${token()}&gateway=${encodeURIComponent(GATEWAY)}`);
     await expect(page.locator("[data-onboarding='true']")).toBeVisible({ timeout: 20_000 });
 
+    // One press, and no credential was needed to reach the conversation.
     await page.locator("[data-onboarding-start='true']").click();
-    await expect(page.locator("[data-onboarding-step='provider']")).toBeVisible();
-
-    // Wait for the step to settle before branching: the catalogue is read from the node, so a count taken the instant the
-    // step appears sees zero and would take the wrong branch.
-    await page.locator("[data-onboarding-provider], [data-onboarding-none='true']").first().waitFor({ timeout: 20_000 });
-
-    const provider = page.locator("[data-onboarding-provider]").first();
-    if ((await provider.count()) > 0) {
-      await provider.click();
-    } else {
-      await expect(page.locator("[data-onboarding-none='true']")).toBeVisible();
-      await page.locator("[data-onboarding-finish='true']").click();
-    }
-
-    // Both branches land on the model step, and the model step belongs to both: what it records is which model *this
-    // browser* should ask for, which is a choice a node with no provider can still offer - the node's own model comes
-    // from its environment either way. Skipping the provider step is not skipping this one.
-    await expect(page.locator("[data-onboarding-step='model']")).toBeVisible();
-    const modelSelect = page.locator("[data-onboarding-model-select]");
-    // Only when there is something to choose between: an empty list is a legitimate answer here, and selecting an
-    // option that does not exist would fail the test for the node's configuration rather than for the client.
-    if ((await modelSelect.locator("option").count()) > 1) await modelSelect.selectOption({ index: 1 });
-    await page.locator("[data-onboarding-continue='true']").click();
-
-    // The key, which is skippable and never echoed back.
-    await expect(page.locator("[data-onboarding-key='typesafe']")).toBeVisible();
-    const secret = "not-a-real-typesafe-key";
-    await page.locator("[data-onboarding-key-input='true']").fill(secret);
-    await expect(page.locator("[data-onboarding-key-input='true']")).toHaveValue(secret);
-    // Skipped rather than saved: this suite shares one node, so a credential written here changes what a later spec
-    // sees. The save path is covered by secret-input.spec.ts through the same client method and the same route.
-    await page.locator("[data-onboarding-finish='true']").click();
-
     await expect(page.locator("[data-onboarding='true']")).toHaveCount(0);
-    // The value must not appear anywhere on the page: a secret echoed into a surface is a secret in a screenshot.
-    await expect(page.locator(`text=${secret}`)).toHaveCount(0);
+    await expect(page.locator("[data-settings-key-input], [data-onboarding-key-input='true']")).toHaveCount(0);
+
+    // The gap, said where it matters, with a way out of it rather than a notice.
+    const card = page.locator("[data-needs-model='true']");
+    await expect(card).toBeVisible({ timeout: 20_000 });
+    await expect(card).toContainText("chưa có model");
+
+    // And the control leads to the place that fixes it, which is what makes this a setup step rather than a
+    // dead end. The card closes with the panel it opened, because the panel is the fix.
+    await page.locator("[data-open-model-settings='true']").click();
+    await expect(page.locator("#cc-tab-ai")).toBeVisible({ timeout: 20_000 });
+  });
+
+  test("a reload after the first run does not ask again", async ({ page }) => {
+    // Resume after reload: a screen somebody has dismissed stays dismissed, and the answer they gave is not
+    // asked for twice.
+    await page.route("**/readiness", (route) => route.fulfill({ json: { model: false, credentials: [] } }));
+    await page.goto(`/?token=${token()}&gateway=${encodeURIComponent(GATEWAY)}`);
+    await expect(page.locator("[data-onboarding='true']")).toBeVisible({ timeout: 20_000 });
+    await page.locator("[data-onboarding-start='true']").click();
+    await expect(page.locator("[data-onboarding='true']")).toHaveCount(0);
+
+    await page.reload();
+    await expect(page.locator("[data-onboarding='true']")).toHaveCount(0);
+
+    /*
+     * And the conversation is what comes back, not the entry screen. Asserted by the composer rather than by
+     * `data-view="conversation"`: the shell opens on its hero and only reports `conversation` once a message has
+     * been sent, so the start screen of an empty conversation is still `hero` and asserting otherwise would be
+     * asserting something the interface does not promise.
+     */
+    await expect(page.locator("textarea[aria-label='Nhập tin nhắn']")).toBeVisible({ timeout: 20_000 });
+    await expect(page.locator("[data-needs-model='true']")).toBeVisible({ timeout: 20_000 });
   });
 });
 

@@ -147,19 +147,84 @@ export function EvidenceBlock({ block }: { block: Record<string, unknown> }): Re
   );
 }
 
-export function ArtifactBlock({ block }: { block: Record<string, unknown> }): ReactElement {
+export function ArtifactBlock({
+  block,
+  actions,
+}: {
+  block: Record<string, unknown>;
+  actions?: BlockActions;
+}): ReactElement {
   const labelValue = typeof block.label === "string" ? block.label : "artifact";
   const mimeType = typeof block.mimeType === "string" ? block.mimeType : "application/octet-stream";
   const sizeBytes = typeof block.sizeBytes === "number" ? block.sizeBytes : 0;
   const originNodeId = typeof block.originNodeId === "string" ? block.originNodeId : undefined;
+  const artifactId = typeof block.artifactId === "string" ? block.artifactId : "";
+  const state = artifactId === "" ? undefined : actions?.artifactOpen?.[artifactId];
+
   return (
-    <div className="cc-card" data-artifact="true">
+    <div className="cc-card" data-artifact="true" data-artifact-id={artifactId}>
       <div className="cc-card-head">
         <span className="cc-card-title">{labelValue}</span>
         <span>
-          {mimeType} · {sizeBytes} B{originNodeId === undefined ? "" : ` · từ ${originNodeId}`}
+          {/* A node id is an internal name; "a node khác" says the same useful thing without exposing one. */}
+          {mimeType} · {sizeBytes} B{originNodeId === undefined ? "" : " · từ một node khác"}
         </span>
       </div>
+      {/*
+        The snapshot is what the message recorded. What the node holds now is a separate question, and only the
+        node can answer it — an artifact can expire between the message being written and somebody reading it.
+      */}
+      {artifactId !== "" && actions?.onArtifactOpen !== undefined ? (
+        <div className="cc-chip-row">
+          <button
+            type="button"
+            className="cc-chip"
+            data-artifact-open={artifactId}
+            /*
+             * Disabled only while a request is in flight. Unlike stopping a task, reopening is a question rather
+             * than a state change: the answer can have changed since it was asked — an artifact that had expired
+             * may have been produced again — so asking a second time has to stay possible.
+             */
+            disabled={state?.status === "pending"}
+            onClick={() => actions.onArtifactOpen?.({ artifactId })}
+          >
+            {state?.status === "pending" ? "Đang mở…" : "Mở lại"}
+          </button>
+        </div>
+      ) : null}
+      {state === undefined || state.status === "pending" ? null : state.status === "failed" ? (
+        <p className="cc-freshness" data-artifact-error="true">
+          {state.message}
+        </p>
+      ) : (
+        <dl className="cc-fields" data-artifact-opened="true" data-artifact-expired={String(state.expired)}>
+          {/*
+            An expired artifact is reported as a distinct outcome rather than as a failure: the node had the
+            file and a retention window passed, which calls for asking for it again rather than for looking for
+            a fault.
+          */}
+          {state.expired ? (
+            <p className="cc-freshness" data-artifact-expiry="true">
+              Node đã từng giữ artifact này nhưng đã hết hạn lưu trữ{state.expiresAt === null ? "" : ` từ ${state.expiresAt}`}.
+              Nội dung không còn, nên hãy yêu cầu tạo lại nếu vẫn cần.
+            </p>
+          ) : null}
+          <dt>Kích thước</dt>
+          <dd>{state.sizeBytes} B</dd>
+          <dt>Loại</dt>
+          <dd>{state.mimeType}</dd>
+          <dt>Digest</dt>
+          <dd>
+            <code>{state.digest}</code>
+          </dd>
+          <dt>Tạo lúc</dt>
+          <dd>{state.createdAt}</dd>
+          <dt>Nguồn</dt>
+          <dd>{state.originNodeId}</dd>
+          <dt>Hết hạn</dt>
+          <dd>{state.expiresAt ?? "không"}</dd>
+        </dl>
+      )}
     </div>
   );
 }
@@ -321,7 +386,87 @@ export interface BlockActions {
    * question again — and the node would have to refuse a second answer rather than the card never asking.
    */
   answeredQuestions?: readonly string[];
+   * The answer to a question the agent asked, on its way back as the user's own message.
+   *
+   * Not a new action route. The answer travels the path a typed reply takes — the same `send` the composer
+   * calls — which is what makes a click, a keystroke and a spoken answer the same thing rather than three
+   * implementations that have to be kept in step.
+   */
+  onQuestionAnswer?: (input: { questionId: string; answer: string }) => void;
+  /**
+   * Questions that may still be answered.
+   *
+   * Computed from the transcript rather than kept as state: a question is open exactly while the conversation
+   * has not moved past it, and the messages are history that never gets rewritten. Without this a card would
+   * stay answerable forever, inviting a second answer to a question the node already received one for.
+   */
+  openQuestionIds?: readonly string[];
+  /**
+   * A filled-in form, on its way back as the user's own message.
+   *
+   * The summary is the answers as lines of text, which is what a reader would have typed — not a JSON blob, which
+   * would put a machine shape into the transcript and lose the labels that make it readable.
+   */
+  onFormSubmit?: (input: { formId: string; summary: string; values: Record<string, string> }) => void;
+  /** Forms that may still be submitted: the same rule as questions, from the same computation. */
+  openFormIds?: readonly string[];
+  /**
+   * Ask a running task to stop.
+   *
+   * The node answers with what it actually did rather than with what was asked: cancellation is two steps, so a
+   * task whose executor is still running comes back `cancel_requested` and only a task with nothing in flight is
+   * confirmed on the spot. The outcome is the node's answer, never the press.
+   */
+  onTaskStop?: (input: { taskId: string }) => void;
+  /** What the node said about each stop request, keyed by task id. */
+  taskStop?: Readonly<Record<string, TaskStopState>>;
+  /**
+   * Open an artifact from the snapshot of it in the transcript.
+   *
+   * The inline block is history and stays read-only; reopening asks the node what it still has, which is the
+   * only place that can answer — an artifact may have expired since the message was written, and a snapshot
+   * cannot know that.
+   */
+  onArtifactOpen?: (input: { artifactId: string }) => void;
+  artifactOpen?: Readonly<Record<string, ArtifactOpenState>>;
+  /** Hand the wheel of a browser session to the user. */
+  onControlTakeover?: (input: { sessionId: string }) => void;
+  /** End a browser session. */
+  onControlStop?: (input: { sessionId: string }) => void;
+  controlSession?: Readonly<Record<string, ControlSessionActionState>>;
 }
+
+/**
+ * What the node said about a browser session after a verb was applied to it.
+ *
+ * `taken-over` carries the epoch rather than a boolean, because the epoch is what decides whether an action the
+ * agent planned earlier is still admissible — a card that only said "you have control" would leave a reader unable
+ * to tell whether the agent's in-flight action had been refused.
+ */
+export type ControlSessionActionState =
+  | { status: "pending" }
+  | { status: "taken-over"; leaseEpoch: number }
+  | { status: "stopped" }
+  | { status: "failed"; message: string };
+
+export type ArtifactOpenState =
+  | { status: "pending" }
+  | {
+      status: "opened";
+      digest: string;
+      sizeBytes: number;
+      mimeType: string;
+      originNodeId: string;
+      createdAt: string;
+      expiresAt: string | null;
+      expired: boolean;
+    }
+  | { status: "failed"; message: string };
+
+export type TaskStopState =
+  | { status: "pending" }
+  | { status: "requested"; state: string; confirmed: boolean }
+  | { status: "failed"; message: string };
 
 /**
  * The approval card.
@@ -749,7 +894,13 @@ function listOf(value: unknown): Record<string, unknown>[] {
  * The steps are whatever the host genuinely knows. A card that fills in every step as done to
  * look complete would be inventing progress, which is the same failure as inventing an answer.
  */
-export function TaskProgressCardBlock({ block }: { block: Record<string, unknown> }): ReactElement | null {
+export function TaskProgressCardBlock({
+  block,
+  actions,
+}: {
+  block: Record<string, unknown>;
+  actions?: BlockActions;
+}): ReactElement | null {
   if (block.owner !== "host") return null;
   const goal = fieldText(block.goal);
   const status = fieldText(block.status, "working");
@@ -757,6 +908,8 @@ export function TaskProgressCardBlock({ block }: { block: Record<string, unknown
   const targetNode = (block.targetNode ?? undefined) as Record<string, unknown> | undefined;
   const cancellable = block.cancellable === true;
   const startedAt = fieldText(block.startedAt);
+  const taskId = fieldText(block.taskId);
+  const stopState = taskId === "" ? undefined : actions?.taskStop?.[taskId];
 
   return (
     <section className="cc-card" data-host-card="task-progress" data-owner="host" data-status={status}>
@@ -792,12 +945,45 @@ export function TaskProgressCardBlock({ block }: { block: Record<string, unknown
             <>
               {/* Named, because a task running elsewhere must not read as a local one. */}
               <dt>Chạy trên</dt>
-              <dd>{fieldText(targetNode.label, fieldText(targetNode.nodeId))}</dd>
+              {/* Named only if it has a name a person would recognise; otherwise "một node khác", not an id. */}
+              <dd>{fieldText(targetNode.label, "một node khác")}</dd>
             </>
           )}
           <dt>Dừng được</dt>
-          <dd>{cancellable ? "có" : "không"}</dd>
+          <dd data-task-cancellable={cancellable ? "true" : "false"}>{cancellable ? "có" : "không"}</dd>
         </dl>
+        {/*
+          The card used to say a task could be stopped and offer nothing that stopped it. The control appears
+          exactly when the block says the task is cancellable, so the claim and the affordance cannot drift.
+        */}
+        {cancellable && taskId !== "" && actions?.onTaskStop !== undefined ? (
+          <div className="cc-chip-row">
+            <button
+              type="button"
+              className="cc-chip"
+              data-task-stop={taskId}
+              disabled={stopState !== undefined && stopState.status !== "failed"}
+              onClick={() => actions.onTaskStop?.({ taskId })}
+            >
+              {stopState?.status === "pending" ? "Đang gửi yêu cầu dừng…" : "Dừng lại"}
+            </button>
+          </div>
+        ) : null}
+        {stopState === undefined || stopState.status === "pending" ? null : stopState.status === "failed" ? (
+          <p className="cc-freshness" data-task-stop-error="true">
+            {stopState.message}
+          </p>
+        ) : (
+          <p
+            className="cc-freshness"
+            data-task-stop-outcome={stopState.state}
+            data-task-stop-confirmed={String(stopState.confirmed)}
+          >
+            {stopState.confirmed
+              ? "Đã dừng. Không có việc nào đang chạy nên không còn gì đang chờ."
+              : "Đã yêu cầu dừng. Nơi đang chạy việc này sẽ xác nhận khi nó thật sự dừng — trong lúc đó task đang dừng dở, chưa phải đã dừng."}
+          </p>
+        )}
       </div>
     </section>
   );
@@ -907,7 +1093,25 @@ export function CodeDiffCardBlock({ block }: { block: Record<string, unknown> })
   const truncated = block.truncated === true;
 
   return (
-    <section className="cc-card" data-host-card="code-diff" data-owner="host" data-truncated={truncated}>
+    <section
+      className="cc-card"
+      data-host-card="code-diff"
+      data-owner="host"
+      data-truncated={truncated}
+      /*
+       * Reachable without a pointer. A diff is long and read-only, which is exactly the shape that tends to
+       * end up as a div only a mouse can scroll inside: the page scrolls, the diff does not, and a keyboard
+       * user cannot get to the bottom of the change they were asked to review. Focusable and labelled makes
+       * the whole change traversable with the arrow keys.
+       *
+       * No collapse controls are added for this: the card holds no state, so it stays a pure function of its
+       * props and can still be rendered and asserted without a DOM.
+       */
+      tabIndex={0}
+      role="group"
+      aria-label={`Diff: ${summary}`}
+      data-diff-keyboard="true"
+    >
       <header className="cc-card-head">
         <span className="cc-card-title">{summary}</span>
         <span className="cc-badge">{files.length}</span>
@@ -1069,19 +1273,14 @@ export function ReconnectCardBlock({ block }: { block: Record<string, unknown> }
   );
 }
 
-export const HOST_OWNED_BLOCK_TYPES = [
-  "system-card",
-  "approval-card",
-  "question-card",
-  "credential-card",
-  "connection-card",
-  "task-progress-card",
-  "task-summary-card",
-  "task-overview-card",
-  "code-diff-card",
-  "project-picker-card",
-  "reconnect-card",
-] as const;
+/*
+ * Re-exported rather than redeclared.
+ *
+ * There were two copies of this list and they had already drifted — this one knew about two card types the
+ * contract's did not, and neither knew about the session cards. The contract's is the one the provenance check
+ * reads, so a type missing there is a host-owned card an untrusted source could mint.
+ */
+export { HOST_OWNED_BLOCK_TYPES } from "@clarkcant/contracts";
 
 /**
  * What a surface block knows about the capture it came from.
@@ -1213,7 +1412,9 @@ export function renderBlock(
     case "evidence":
       return <EvidenceBlock key={index} block={block} />;
     case "artifact":
-      return <ArtifactBlock key={index} block={block} />;
+      // Forwarded, for the reason the task card's control taught: a component tested by calling it directly
+      // passes whether or not the dispatcher hands it anything.
+      return <ArtifactBlock key={index} block={block} {...(actions === undefined ? {} : { actions })} />;
     case "system-card":
       return <SystemCardBlock key={index} block={block} />;
     case "approval-card":
@@ -1225,7 +1426,11 @@ export function renderBlock(
     case "credential-card":
       return <CredentialCardBlock key={index} block={block} {...(actions === undefined ? {} : { actions })} />;
     case "task-progress-card":
-      return <TaskProgressCardBlock key={index} block={block} />;
+      // `actions` must be forwarded, or the card's Stop control is unreachable in the browser while its
+      // own unit test — which calls the component directly — still passes.
+      return (
+        <TaskProgressCardBlock key={index} block={block} {...(actions === undefined ? {} : { actions })} />
+      );
     case "task-summary-card":
       return <TaskSummaryCardBlock key={index} block={block} />;
     case "task-overview-card":
@@ -1234,6 +1439,17 @@ export function renderBlock(
       return <CodeDiffCardBlock key={index} block={block} />;
     case "project-picker-card":
       return <ProjectPickerCardBlock key={index} block={block} />;
+    case "question-card":
+      return <QuestionCardBlock key={index} block={block} {...(actions === undefined ? {} : { actions })} />;
+    case "form-card":
+      return <FormCardBlock key={index} block={block} {...(actions === undefined ? {} : { actions })} />;
+    case "browser-session-card":
+    case "computer-session-card":
+      // One renderer for both surfaces: the question "who may act on this" does not change with the surface, and
+      // two components would be two places for the answer to drift.
+      return <ControlSessionCardBlock key={index} block={block} {...(actions === undefined ? {} : { actions })} />;
+    case "marketplace-results":
+      return <MarketplaceResultsBlock key={index} block={block} />;
     case "reconnect-card":
       return <ReconnectCardBlock key={index} block={block} />;
     case "surface": {
@@ -1264,4 +1480,441 @@ export function renderBlock(
       // client does not understand must not reach the DOM.
       return null;
   }
+}
+
+/**
+ * A question the agent is asking, with the answers it will accept.
+ *
+ * The primitive the plan singles out, and the reason is structural rather than cosmetic. An agent that needs a
+ * decision otherwise writes a paragraph and then guesses which sentence answered it — or asks again. Here the
+ * answers are a list the agent itself named, and the chosen one travels back **as the user's own message**: the
+ * same `send` the composer calls, so a click, a keystroke and a spoken answer are the same act rather than three
+ * implementations to keep in step.
+ *
+ * Read-only once the conversation has moved past it. The transcript is immutable, so a card that stayed
+ * answerable would invite a second answer to a question the node already received one for — and the node would
+ * take it as a second message, which is a duplicate the user never intended to send.
+ *
+ * The options are always rendered as text, which is what makes this card's text alternative the same thing as
+ * its control: a snapshot, a screen reader and an answered card all read the same list.
+ */
+export function QuestionCardBlock({
+  block,
+  actions,
+}: {
+  block: Record<string, unknown>;
+  actions?: BlockActions;
+}): ReactElement | null {
+  if (block.owner !== "host") return null;
+
+  const questionId = typeof block.questionId === "string" ? block.questionId : "";
+  const question = typeof block.question === "string" ? block.question : "";
+  const raw = Array.isArray(block.options) ? (block.options as Record<string, unknown>[]) : [];
+  const options = raw
+    .filter((entry) => typeof entry.id === "string" && typeof entry.label === "string")
+    .map((entry) => ({
+      id: entry.id as string,
+      label: entry.label as string,
+      ...(typeof entry.detail === "string" ? { detail: entry.detail } : {}),
+    }));
+
+  const answerable =
+    questionId !== "" &&
+    actions?.onQuestionAnswer !== undefined &&
+    actions.openQuestionIds?.includes(questionId) === true;
+
+  return (
+    <section
+      className="cc-card"
+      data-host-card="question"
+      data-owner="host"
+      data-question-id={questionId}
+      data-answerable={answerable ? "true" : "false"}
+      aria-label={question}
+    >
+      <div className="cc-card-title">{question}</div>
+      <ul className="cc-question-options" data-question-options={options.length}>
+        {options.map((option) => (
+          <li key={option.id}>
+            {answerable ? (
+              <button
+                type="button"
+                className="cc-chip"
+                data-question-answer={option.id}
+                onClick={() => actions?.onQuestionAnswer?.({ questionId, answer: option.label })}
+              >
+                {option.label}
+              </button>
+            ) : (
+              <span className="cc-chip" data-question-option={option.id}>
+                {option.label}
+              </span>
+            )}
+            {option.detail === undefined ? null : <span className="cc-freshness"> {option.detail}</span>}
+          </li>
+        ))}
+      </ul>
+      {answerable ? null : (
+        // Says why the buttons are gone rather than leaving a reader to wonder whether the card broke.
+        <p className="cc-freshness" data-question-closed="true">
+          Hội thoại đã đi tiếp, nên câu hỏi này không còn nhận câu trả lời.
+        </p>
+      )}
+    </section>
+  );
+}
+
+/**
+ * A form the agent asked for, filled in by the user.
+ *
+ * The same primitive as the question card, for values the agent cannot enumerate: a question offers named answers,
+ * a form asks for text. Both exist because an agent that needs several facts otherwise writes them as prose, gets
+ * a paragraph back, and has to guess which sentence answered which request.
+ *
+ * The draft is component state and nothing else. That is deliberate: a half-typed form must survive a rerender —
+ * a turn streaming behind it, a widget resolving, the window resizing — and it must **not** survive as a
+ * preference, because a form is a message being composed, not a setting. Submitting sends the answers as the
+ * user's own next message, so the transcript stays a conversation and there is one way into the agent.
+ *
+ * Read-only once the conversation has moved past it, for the reason the question card is: the transcript is
+ * immutable, and a form that stayed open would invite a second submission of answers already sent.
+ */
+export function FormCardBlock({
+  block,
+  actions,
+}: {
+  block: Record<string, unknown>;
+  actions?: BlockActions;
+}): ReactElement | null {
+  if (block.owner !== "host") return null;
+
+  const formId = typeof block.formId === "string" ? block.formId : "";
+  const title = typeof block.title === "string" ? block.title : "";
+  const submitLabel = typeof block.submitLabel === "string" ? block.submitLabel : "Gửi";
+  const raw = Array.isArray(block.fields) ? (block.fields as Record<string, unknown>[]) : [];
+  const fields = raw
+    .filter((entry) => typeof entry.id === "string" && typeof entry.label === "string")
+    .map((entry) => ({
+      id: entry.id as string,
+      label: entry.label as string,
+      kind: entry.kind === "textarea" || entry.kind === "select" ? entry.kind : ("text" as const),
+      options: Array.isArray(entry.options) ? entry.options.filter((o): o is string => typeof o === "string") : [],
+      required: entry.required === true,
+      ...(typeof entry.placeholder === "string" ? { placeholder: entry.placeholder } : {}),
+    }));
+
+  const open =
+    formId !== "" && actions?.onFormSubmit !== undefined && actions.openFormIds?.includes(formId) === true;
+
+  // Keyed by field id, so the draft is exactly the answers and nothing else survives a rerender.
+  const [values, setValues] = useState<Record<string, string>>({});
+  const missing = fields.filter((field) => field.required && (values[field.id] ?? "").trim() === "");
+  const complete = missing.length === 0 && fields.length > 0;
+
+  const summary = (): string => {
+    const lines = fields
+      .map((field) => {
+        const value = (values[field.id] ?? "").trim();
+        return value === "" ? undefined : `${field.label}: ${value}`;
+      })
+      .filter((line): line is string => line !== undefined);
+    return [title, ...lines].join("\n");
+  };
+
+  return (
+    <section
+      className="cc-card"
+      data-host-card="form"
+      data-owner="host"
+      data-form-id={formId}
+      data-form-open={open ? "true" : "false"}
+      aria-label={title}
+    >
+      <div className="cc-card-title">{title}</div>
+      <div className="cc-form-fields" data-form-fields={fields.length}>
+        {fields.map((field) => (
+          <label key={field.id} className="cc-credential-field">
+            <span>
+              {field.label}
+              {field.required ? <span aria-hidden="true"> *</span> : null}
+            </span>
+            {/*
+              Rendered as text once the form is closed. The value the user gave stays readable — it is what the
+              conversation is about — and the control goes, because there is nothing left to submit.
+            */}
+            {!open ? (
+              <span className="cc-chip" data-form-answer={field.id}>
+                {(values[field.id] ?? "").trim() === "" ? "—" : values[field.id]}
+              </span>
+            ) : field.kind === "textarea" ? (
+              <textarea
+                className="cc-personal-instructions"
+                data-form-input={field.id}
+                rows={3}
+                value={values[field.id] ?? ""}
+                placeholder={field.placeholder}
+                onChange={(event) => setValues((current) => ({ ...current, [field.id]: event.target.value }))}
+              />
+            ) : field.kind === "select" ? (
+              <select
+                className="cc-select"
+                data-form-input={field.id}
+                value={values[field.id] ?? ""}
+                onChange={(event) => setValues((current) => ({ ...current, [field.id]: event.target.value }))}
+              >
+                <option value="">—</option>
+                {field.options.map((option) => (
+                  <option key={option} value={option}>
+                    {option}
+                  </option>
+                ))}
+              </select>
+            ) : (
+              <input
+                type="text"
+                data-form-input={field.id}
+                value={values[field.id] ?? ""}
+                placeholder={field.placeholder}
+                onChange={(event) => setValues((current) => ({ ...current, [field.id]: event.target.value }))}
+              />
+            )}
+          </label>
+        ))}
+      </div>
+      {!open ? null : (
+        <>
+          <div className="cc-chip-row">
+            <button
+              type="button"
+              className="cc-chip"
+              data-form-submit="true"
+              // Disabled with the reason shown, rather than submitting a form with holes in it.
+              disabled={!complete}
+              onClick={() => actions?.onFormSubmit?.({ formId, summary: summary(), values })}
+            >
+              {submitLabel}
+            </button>
+          </div>
+          {complete ? null : (
+            <p className="cc-freshness" data-form-incomplete="true">
+              Còn thiếu: {missing.map((field) => field.label).join(", ")}
+            </p>
+          )}
+        </>
+      )}
+    </section>
+  );
+}
+
+/**
+ * A browser session the node is driving, and who has the wheel.
+ *
+ * The card exists because the one capability that runs unsupervised is the one where "the agent is still driving"
+ * has to be something the user can change. Two verbs, and the copy distinguishes them, because they do different
+ * things: takeover leaves the session running and its page intact while making the agent's next action invalid,
+ * and stop ends the session.
+ *
+ * The epoch is shown rather than kept internal. It is what decides whether an action the agent planned earlier is
+ * still admissible, so a reader who cannot see it cannot tell whether a takeover actually took effect.
+ */
+/** The risk lanes in words, because a lane name is not something a reader should have to learn. */
+const RISK_LANE_LABELS: Record<string, string> = {
+  "isolated-ui": "widget cách ly",
+  service: "service",
+  declarative: "khai báo",
+  "trusted-native": "native tin cậy",
+};
+
+/** Where a result would be fetched from, in one line. */
+function describePackageSource(raw: unknown): string {
+  const source = (raw ?? {}) as Record<string, unknown>;
+  if (source.kind === "local" && typeof source.path === "string") return source.path;
+  if (source.kind === "git" && typeof source.url === "string") return `${source.url}@${String(source.ref ?? "")}`;
+  if (source.kind === "npm" && typeof source.name === "string") return `${source.name}@${String(source.version ?? "")}`;
+  return "không rõ nguồn";
+}
+
+/**
+ * The results of a marketplace search.
+ *
+ * It shows what a listing has to show to be judgeable — where it comes from, which version, the digest the install
+ * path will check, and the lane the isolation implies — and it **has no install button**. That is deliberate: the
+ * card names sources, and installing goes through the install path where the digest is verified and consent is
+ * recorded. A button here would be a second entry point into installing, and the one place where a listing could
+ * become an authorisation.
+ *
+ * The directory is named in the heading. A result whose origin was invisible would present what some index says as
+ * something this machine knows.
+ */
+export function MarketplaceResultsBlock({ block }: { block: Record<string, unknown> }): ReactElement {
+  const directory = typeof block.directory === "string" ? block.directory : "";
+  const query = typeof block.query === "string" ? block.query : "";
+  const reason = typeof block.unavailableReason === "string" ? block.unavailableReason : undefined;
+  const results = Array.isArray(block.results) ? block.results : [];
+
+  return (
+    <div className="cc-card cc-marketplace" role="group" aria-label="Kết quả tìm gói" data-marketplace="true">
+      <div className="cc-card-title">Kết quả trong {directory}</div>
+      {reason !== undefined ? (
+        // A directory that could not be consulted is a different truth from one that had nothing, so it says so.
+        <p className="cc-card-note" data-marketplace-unavailable="true">
+          {reason}
+        </p>
+      ) : results.length === 0 ? (
+        <p className="cc-card-note">Không có gói nào khớp “{query}”.</p>
+      ) : (
+        <ul className="cc-marketplace-list">
+          {results.map((raw, position) => {
+            const result = (raw ?? {}) as Record<string, unknown>;
+            const packageId = typeof result.packageId === "string" ? result.packageId : "";
+            const version = typeof result.version === "string" ? result.version : "";
+            const displayName = typeof result.displayName === "string" ? result.displayName : packageId;
+            const description = typeof result.description === "string" ? result.description : "";
+            const digest = typeof result.digest === "string" ? result.digest : "";
+            const lane = typeof result.riskTier === "string" ? result.riskTier : "";
+            return (
+              <li className="cc-marketplace-item" key={`${packageId}-${version}-${position}`} data-marketplace-package={packageId}>
+                <div className="cc-marketplace-name">
+                  {displayName} <span className="cc-marketplace-version">{version}</span>
+                </div>
+                {description !== "" && <div className="cc-marketplace-desc">{description}</div>}
+                <div className="cc-marketplace-meta">
+                  <span data-marketplace-source="true">{describePackageSource(result.source)}</span>
+                  <span data-marketplace-risk={lane}>{RISK_LANE_LABELS[lane] ?? lane}</span>
+                  {/* Truncated for the line, complete in the title: the digest is checkable, not decorative. */}
+                  <span className="cc-marketplace-digest" title={digest} data-marketplace-digest="true">
+                    {digest.length > 18 ? `${digest.slice(0, 18)}…` : digest}
+                  </span>
+                </div>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+    </div>
+  );
+}
+
+export function ControlSessionCardBlock({
+  block,
+  actions,
+}: {
+  block: Record<string, unknown>;
+  actions?: BlockActions;
+}): ReactElement | null {
+  if (block.owner !== "host") return null;
+
+  const sessionId = fieldText(block.sessionId);
+  const surface = block.type === "computer-session-card" ? "computer" : "browser";
+  const declaredPreview = fieldText(block.preview, surface === "browser" ? "available" : "needs-permission");
+  const previewReason = typeof block.previewReason === "string" ? block.previewReason : undefined;
+  const observable = declaredPreview === "available";
+  const label = fieldText(block.label);
+  const declaredDriver = fieldText(block.driver, "agent");
+  const declaredStatus = fieldText(block.status, "running");
+  const declaredEpoch = typeof block.leaseEpoch === "number" ? block.leaseEpoch : 0;
+  const state = sessionId === "" ? undefined : actions?.controlSession?.[sessionId];
+
+  // The card's own values are a snapshot; what the node said later wins where the two disagree, because only the
+  // node knows who is driving now.
+  const stopped = state?.status === "stopped" || declaredStatus === "stopped";
+  const driver = state?.status === "taken-over" ? "user" : declaredDriver;
+  const leaseEpoch = state?.status === "taken-over" ? state.leaseEpoch : declaredEpoch;
+  const running = !stopped;
+  const busy = state?.status === "pending";
+
+  return (
+    <section
+      className="cc-card"
+      data-host-card={surface === "computer" ? "computer-session" : "browser-session"}
+      data-owner="host"
+      data-control-session={sessionId}
+      data-control-surface={surface}
+      data-control-preview={declaredPreview}
+      /* Machine-facing only: an assertion can read the epoch, a reader never sees it. */
+      data-control-epoch={leaseEpoch}
+      data-control-driver={driver}
+      data-control-status={stopped ? "stopped" : "running"}
+      aria-label={`Phiên browser: ${label}`}
+    >
+      <header className="cc-card-head">
+        <span className="cc-card-title">{label}</span>
+        <span className="cc-badge" data-tone={stopped ? "" : "ok"}>
+          {stopped ? "đã dừng" : "đang chạy"}
+        </span>
+      </header>
+      <dl className="cc-fields">
+        <dt>Ai đang điều khiển</dt>
+        <dd data-control-driver-label="true">{driver === "user" ? "bạn" : "agent"}</dd>
+
+      </dl>
+      {/*
+        Reported before any control, because it decides whether acting is possible at all. A desktop whose screen
+        the operating system has not granted to this node cannot be driven, and the permission is not the node's to
+        assume — so the card says what is missing and who owns it.
+      */}
+      {observable ? null : (
+        <p className="cc-freshness" data-control-preview-notice={declaredPreview}>
+          {declaredPreview === "needs-permission" ? "Chưa được cấp quyền xem màn hình" : "Không xem được màn hình"}
+          {previewReason === undefined ? "" : `: ${previewReason}`}. Quyền này do hệ điều hành cấp, node không tự cấp
+          được, và node sẽ không hành động khi không nhìn thấy gì.
+        </p>
+      )}
+      {running ? (
+        <div className="cc-chip-row">
+          {/*
+            Offered only while the agent still has the wheel, and only when something can carry the verb out: a
+            takeover control on a session the user already drives would be a control with nothing left to do.
+          */}
+          {driver === "agent" && actions?.onControlTakeover !== undefined ? (
+            <button
+              type="button"
+              className="cc-chip"
+              data-control-takeover={sessionId}
+              disabled={busy}
+              onClick={() => actions.onControlTakeover?.({ sessionId })}
+            >
+              {busy ? "Đang chuyển…" : "Tôi tự điều khiển"}
+            </button>
+          ) : null}
+          {actions?.onControlStop !== undefined ? (
+            <button
+              type="button"
+              className="cc-chip"
+              data-control-stop={sessionId}
+              disabled={busy}
+              onClick={() => actions.onControlStop?.({ sessionId })}
+            >
+              Dừng phiên
+            </button>
+          ) : null}
+        </div>
+      ) : null}
+      {/*
+        Exactly one notice, decided in one place. Two overlapping branches would render two answers to the same
+        question — which is what a duplicate marker caught in the browser, and a reader would have seen the same
+        thing twice.
+      */}
+      {state?.status === "failed" ? (
+        <p className="cc-freshness" data-control-error="true">
+          {state.message}
+        </p>
+      ) : !running ? (
+        <p className="cc-freshness" data-control-notice="stopped">
+          {state?.status === "stopped"
+            ? "Phiên đã dừng theo yêu cầu của bạn. Không có hành động nào của agent còn được nhận cho phiên này."
+            : "Phiên này đã dừng. Không có hành động nào của agent còn được nhận cho phiên này."}
+        </p>
+      ) : state?.status === "taken-over" ? (
+        /*
+         * What takeover actually did. Not "you have control" alone: the user needs to know the agent's already
+         * planned action was refused, because that is the part that makes the browser theirs.
+         */
+        <p className="cc-freshness" data-control-notice="taken-over">
+          Bạn đang điều khiển. Hành động agent đã lên kế hoạch từ trước đã bị từ chối vì lease cũ, và agent chỉ
+          lấy lại được khi bạn dừng phiên rồi mở phiên mới.
+        </p>
+      ) : null}
+    </section>
+  );
 }

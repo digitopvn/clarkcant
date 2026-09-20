@@ -1,7 +1,7 @@
 ---
 phase: 9
 title: "Gợi ý từ việc gần đây"
-status: pending
+status: done
 priority: P1
 effort: "5h"
 dependencies: []
@@ -125,7 +125,7 @@ nhãn nguồn, bấm là chạy thật; store rỗng thì quay lại đúng bố
   trên một thư mục trắng.
 - **Verify**: `pnpm exec vitest run packages/conversation-client/test/suggestions.spec.ts` exits 0.
 
-### Task 9.5 — Journey seed một phiên
+### Task 9.5 — Journey seed hai phiên (kế hoạch ghi "một phiên"; issue cần hai)
 
 - **Goal**: mở app lần sau thấy gợi ý phản ánh phiên gần nhất.
 - **Target files and symbols**: `apps/web/e2e/suggestions.spec.ts`.
@@ -135,7 +135,11 @@ nhãn nguồn, bấm là chạy thật; store rỗng thì quay lại đúng bố
   2. Reload; assert chip động có `data-suggestion-source="conversation"` và nhãn nguồn nêu mốc thời gian.
   3. Test fallback dùng `page.route` để ép `{ items: [] }` — chạy được ở mọi thứ tự, không phụ thuộc
      thư mục dữ liệu. Ghi lý do trong comment.
-- **Success criteria**: 3 journey xanh.
+  4. **Ghi chú thực thi**: issue #17 yêu cầu seed **hai** phiên khác nhau và gợi ý phản ánh phiên **gần nhất**,
+     mà một seed đơn không chứng minh được. Journey "with two sessions behind it, the offer is the one touched
+     last" seed hai conversation lệch nhau về thời gian rồi assert `ref` của gợi ý `conversation` bằng id của
+     phiên mới hơn, và cả phiên cũ không phải câu trả lời.
+- **Success criteria**: 4 journey xanh.
 - **Verify**: `pnpm test:e2e -- apps/web/e2e/suggestions.spec.ts` exits 0.
 
 ## Refactor

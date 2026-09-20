@@ -50,7 +50,7 @@ type SdkTool = SdkSession["agent"]["state"]["tools"][number];
  * system prompt's "Available tools" list, and a model that cannot see its tools answers with
  * invented tool syntax rather than calling one.
  */
-function toSdkTool(sdk: SdkModule, tool: ToolDefinition): SdkTool {
+export function toSdkTool(sdk: SdkModule, tool: ToolDefinition): SdkTool {
   // SAFETY: the SDK's declaration types `parameters` as a TypeBox schema, which our runtime-validated
   // JSON Schema is not, so the generic cannot be inferred and the structural check fails at compile
   // time while the runtime shape is the documented one. `pi-ai` detects the absent TypeBox marker and
@@ -64,7 +64,18 @@ function toSdkTool(sdk: SdkModule, tool: ToolDefinition): SdkTool {
     ...(tool.promptSnippet === undefined ? {} : { promptSnippet: tool.promptSnippet }),
     execute: async (_toolCallId: string, params: Record<string, unknown>) => {
       const result = await tool.execute(params);
-      return { content: [{ type: "text" as const, text: result.text }], details: {} };
+      // A tool that read a picture returns the picture. The SDK's content union has an image member, and
+      // flattening it to the sentence beside it would tell the model that a picture exists while hiding what
+      // is in it. The sentence stays, so a transcript still says which file the picture came from.
+      return {
+        content: [
+          { type: "text" as const, text: result.text },
+          ...(result.image === undefined
+            ? []
+            : [{ type: "image" as const, data: result.image.dataBase64, mimeType: result.image.mimeType }]),
+        ],
+        details: {},
+      };
     },
   }) as unknown as SdkTool;
 }
@@ -78,6 +89,8 @@ export const REQUIRED_SDK_EXPORTS = [
   "ModelRuntime",
   "getAgentDir",
 ] as const;
+
+import { composePersonalInstructions } from "./personal-instructions.ts";
 
 export interface RealPiAdapterOptions {
   /** Working directory for the worker; also the loader's discovery root. */
@@ -115,6 +128,17 @@ export interface RealPiAdapterOptions {
    * must be granted that explicitly, not by omission.
    */
   builtinTools?: readonly string[];
+  /**
+   * The user's own instructions, read fresh on every turn.
+   *
+   * A callback rather than a string because that is the whole promise of the feature: a preference
+   * written while the app is open reaches the next turn rather than the next session. Called once per
+   * turn, so it must be cheap and must not throw.
+   *
+   * The text is appended as a section inside the system prompt the SDK composed, never substituted for
+   * it — see `personal-instructions.ts`.
+   */
+  personalInstructions?: () => string | undefined;
   /** Injected so tests can exercise the adapter without loading the real SDK. */
   sdk?: SdkModule;
 }
@@ -334,6 +358,41 @@ export class RealPiAdapter implements PiAdapter {
       new sdk.DefaultResourceLoader({
         cwd: this.#options.cwd,
         agentDir: this.#options.agentDir ?? sdk.getAgentDir(),
+        /*
+         * The personal-instructions section, registered as a trusted inline extension.
+         *
+         * `before_agent_start` is the only seam in this SDK version that can reach the system prompt, and
+         * it exposes the prompt the SDK itself composed. The handler appends one section to it and returns
+         * the result, so the product's invariants and the tool and security instructions are still the
+         * ones pi assembled — this cannot replace them, only follow them.
+         *
+         * The handler reads the callback on every call rather than capturing its value, which is what makes
+         * a preference change take effect on the next turn instead of at the next session.
+         *
+         * `hidden` so the extension is not presented as one of the user's own: it is part of the product,
+         * and a list of "extensions on this machine" that included it would invite somebody to disable the
+         * feature they just configured.
+         */
+        ...(this.#options.personalInstructions === undefined
+          ? {}
+          : {
+              extensionFactories: [
+                {
+                  name: "clark-personal-instructions",
+                  hidden: true,
+                  factory: (api: {
+                    on: (event: string, handler: (event: { systemPrompt: string }) => { systemPrompt: string }) => void;
+                  }) => {
+                    api.on("before_agent_start", (event) => ({
+                      systemPrompt: composePersonalInstructions({
+                        base: event.systemPrompt,
+                        text: this.#options.personalInstructions?.(),
+                      }),
+                    }));
+                  },
+                },
+              ],
+            }),
       } as never);
     this.#loader = loader;
     await loader.reload();

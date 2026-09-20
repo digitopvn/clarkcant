@@ -28,19 +28,36 @@ jobs:
           # The token is needed to fetch, not to persist; leaving it in .git/config
           # makes it readable by every later step and by any script they run.
           persist-credentials: false
+          # Both sides of push/PR diffs must be available. A missing base still runs all checks.
+          fetch-depth: 0
+
+      - name: Classify the changed paths
+        id: scope
+        continue-on-error: true
+        env:
+          CI_DIFF_BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+          CI_DIFF_HEAD: HEAD
+        run: node tools/ci-test-scope.mjs
 
       - name: Enable corepack
+        if: steps.scope.outcome != 'success' || steps.scope.outputs.full != 'false'
         run: corepack enable
 
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        if: steps.scope.outcome != 'success' || steps.scope.outputs.full != 'false'
         with:
           node-version: ${{ matrix.node }}
           cache: pnpm
+
+      # Keep document hashes, traceability and credential checks even on prose-only changes.
+      - name: Repository invariants
+        run: node tools/check-invariants.mjs
 
       # --frozen-lockfile so CI verifies the committed resolution rather than
       # re-resolving it. The supply-chain policy in pnpm-workspace.yaml is applied
       # during the same step.
       - name: Install
+        if: steps.scope.outcome != 'success' || steps.scope.outputs.full != 'false'
         run: pnpm install --frozen-lockfile
 
       # The vector index needs a loadable extension, and whether it loads is a property of the
@@ -48,32 +65,35 @@ jobs:
       # runs on linux x64. Absent is a supported state and exits 0 with a reason; installed but
       # unusable exits 1, which is the failure that would otherwise hide behind a lexical fallback.
       - name: Probe the optional vector extension
+        if: steps.scope.outcome != 'success' || steps.scope.outputs.full != 'false'
         run: node tools/probe-vector-extension.mjs
 
-      - name: Repository invariants
-        run: pnpm run invariants
-
       - name: Typecheck
+        if: steps.scope.outcome != 'success' || steps.scope.outputs.full != 'false'
         run: pnpm run typecheck
 
       - name: Lint
+        if: steps.scope.outcome != 'success' || steps.scope.outputs.full != 'false'
         run: pnpm run lint
 
       # The browser driver tests launch a real Chromium. Without this step they fail with a
       # message telling you to install it — a true and clear failure, but not a test that ran.
       - name: Install the browser the driver tests launch
+        if: steps.scope.outcome != 'success' || steps.scope.outputs.full != 'false'
         run: pnpm exec playwright install --with-deps chromium
 
       - name: Tests
+        if: steps.scope.outcome != 'success' || steps.scope.outputs.full != 'false'
         run: pnpm run test
 
       # A blocked step is an honest outcome and exits zero; only a genuine failure
       # fails this step. See the probe's own comment for the reasoning.
       - name: P0.1 Pi SDK lifecycle probe
+        if: steps.scope.outcome != 'success' || steps.scope.outputs.full != 'false'
         run: node packages/pi-adapter/src/probe-cli.ts --json > probe.json
 
       - name: Upload probe evidence
-        if: always()
+        if: always() && (steps.scope.outcome != 'success' || steps.scope.outputs.full != 'false')
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: pi-sdk-probe-node-${{ matrix.node }}
@@ -91,13 +111,71 @@ jobs:
           # The token is needed to fetch, not to persist: leaving it in .git/config
           # makes it readable by every later step and by any script they run.
           persist-credentials: false
-      # The same patterns the repository invariant checker enforces locally.
-      - name: Fail on credential-shaped strings
+      - name: Fail on credentials in current and historical file versions
+        run: node tools/scan-secret-history.mjs
+
+  # The browser suite was the only gate that exercises the five features of issue #17 end to end, and until this
+  # job existed it was run by hand on whichever machine happened to run it. That is why the release report had to
+  # say CI told nobody anything about it. It boots its own node and web server on fixed ports, so it needs nothing
+  # from this runner beyond the browser it launches.
+  e2e:
+    name: e2e (browser suite)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+
+      - name: Enable corepack
+        run: corepack enable
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "22.19"
+          cache: pnpm
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Install the browser the suite launches
+        run: pnpm exec playwright install --with-deps chromium
+
+      - name: Browser suite
+        run: pnpm test:e2e
+
+  # The desktop shell's own behaviour - the bounds it reports, the floor it enforces, whether it is always on top -
+  # can only be read back from a real window. Electron needs a display and a set of shared libraries a bare runner
+  # does not carry, so the display is virtual and named here rather than left as an operator's manual step.
+  desktop-smoke:
+    name: desktop smoke (xvfb)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+
+      - name: Enable corepack
+        run: corepack enable
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "22.19"
+          cache: pnpm
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      # ubuntu 24.04 renamed the ALSA package, and this runner image has moved between the two, so both names are
+      # tried rather than pinning to whichever one this image happens to carry today.
+      - name: Install a virtual display and the libraries Electron loads
         run: |
-          set -euo pipefail
-          if git grep -nEI 'gh[pousr]_[A-Za-z0-9]{20,}|sk-[A-Za-z0-9]{20,}|AKIA[0-9A-Z]{16}|-----BEGIN [A-Z ]*PRIVATE KEY-----|npm_[A-Za-z0-9]{30,}' \
-               -- . ':(exclude)docs/**' ':(exclude)pnpm-lock.yaml'; then
-            echo "::error::a credential-shaped string was found in the tracked tree"
-            exit 1
-          fi
-          echo "no credential-shaped strings found"
+          sudo apt-get update
+          common="xvfb libgtk-3-0 libnss3 libgbm1"
+          sudo apt-get install -y $common libasound2t64 || sudo apt-get install -y $common libasound2
+
+      # The SUID sandbox helper cannot be configured the way Electron asks for on a GitHub runner, and Electron
+      # aborts rather than run unsandboxed: "The SUID sandbox helper binary was found, but is not configured
+      # correctly". This job opens one window to read its bounds back, so the sandbox is disabled here and the reason
+      # is written down; the alternative is chowning a binary inside node_modules to root, which no test should need.
+      - name: Desktop smoke
+        run: xvfb-run -a env ELECTRON_DISABLE_SANDBOX=1 pnpm --filter @clarkcant/app-desktop run smoke

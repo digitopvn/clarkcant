@@ -16,9 +16,11 @@
  * shape and its refusals from inside the renderer.
  */
 
-import { app, BrowserWindow, dialog, ipcMain, shell, session } from "electron";
-import { fileURLToPath } from "node:url";
+import { app, BrowserWindow, dialog, ipcMain, screen, shell, session } from "electron";
+import { randomUUID } from "node:crypto";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { dirname, join } from "node:path";
+import { readFileSync } from "node:fs";
 
 import {
   contentSecurityPolicy,
@@ -28,8 +30,33 @@ import {
   reviewCredentialRequest,
   reviewIpcCall,
 } from "./security.mjs";
+import {
+  detachedBootstrap,
+  detachedWindowOptions,
+  reviewDetachedBootstrap,
+  reviewDetachedIntent,
+} from "./detached-window.mjs";
+import {
+  COMPACT_MIN_SIZE,
+  WINDOW_MODE_PRESETS,
+  actionForMode,
+  fitIntoWorkArea,
+  initialWindowMode,
+  nextWindowMode,
+} from "./window-mode.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
+
+/**
+ * The detached widget window, if one is open.
+ *
+ * One at a time, because the criterion is that detaching keeps one live owner rather than adding one: a second
+ * detached window would be a second owner, and the shell would have no single window to hand an instance back to.
+ */
+let detached;
+
+/** The window the conversation is in, so a detached view can open beside it and hand the instance back to it. */
+let shellWindow;
 
 const argv = process.argv.slice(2);
 const smokeTest = argv.includes("--smoke-test");
@@ -37,7 +64,22 @@ const rendererUrlFlag = argv.indexOf("--renderer-url");
 const rendererUrl =
   rendererUrlFlag >= 0 && argv[rendererUrlFlag + 1] !== undefined
     ? argv[rendererUrlFlag + 1]
-    : `file://${join(here, "shell.html")}`;
+    : // `pathToFileURL` rather than string interpolation: `file://` plus a Windows path gives
+      // `file://D:\...`, which is not the URL the sender frame reports and made every IPC call look
+      // like it came from somewhere else. The review then refused all of them, which is a working
+      // security check fed a wrong expectation.
+      pathToFileURL(join(here, "shell.html")).href;
+const dataDirFlag = argv.indexOf("--data-dir");
+const dataDir = dataDirFlag >= 0 ? argv[dataDirFlag + 1] : undefined;
+const nodeUrlFlag = argv.indexOf("--node-url");
+const nodeUrl = nodeUrlFlag >= 0 ? argv[nodeUrlFlag + 1] : undefined;
+/**
+ * Whether this window is showing the client rather than the bundled posture document.
+ *
+ * It decides the frame: the client draws its own chrome - a drag strip and its own buttons - so an OS frame
+ * on top of it would be a second title bar. The posture document has no chrome of its own and keeps its frame.
+ */
+const loadingClient = rendererUrlFlag >= 0;
 
 /** Closing the window stops the window, not the work. Default is to keep running. */
 let keepRunningOnWindowClose = true;
@@ -49,13 +91,54 @@ let keepRunningOnWindowClose = true;
  * `security.mjs` stays the enforcing copy; this is what the check compares against.
  */
 const EXPECTED_BRIDGE_METHODS = Object.freeze([
+  "attachWidget",
+  "detachWidget",
+  "focusWindow",
+  "getSession",
   "notify",
+  "onWidgetReattached",
   "openExternal",
   "pickDirectory",
   "requestCredential",
+  "resizeWindowPreset",
+  "restoreWindow",
+  "setCompactMode",
   "setKeepRunningOnWindowClose",
+  "setWindowMode",
   "status",
-]);
+].sort());
+
+/**
+ * The window's remembered mode, in the process that owns the window.
+ *
+ * Held here rather than in the renderer because a renderer comes and goes: a reload must not move the window
+ * back to its expanded size, and returning from compact has to restore what the person had rather than a
+ * default. `undefined` until the first request, when it is learned from the window itself.
+ */
+let windowMode;
+
+/** The work area of the display the window is on, so a compact window lands somewhere reachable. */
+function workAreaFor(window) {
+  return screen.getDisplayMatching(window.getBounds()).workArea;
+}
+
+/**
+ * What the window actually became, read back off the window.
+ *
+ * Every field here is observed rather than computed from the request. The OS may clamp a size or a position, and
+ * a shell that echoed what it asked for could not tell the difference between that and what happened — which is
+ * the whole reason the smoke test reads `getBounds()` instead of trusting an answer.
+ */
+function describeWindow(window, mode) {
+  return {
+    ok: true,
+    mode: mode?.mode ?? null,
+    bounds: window.getBounds(),
+    minimumSize: window.getMinimumSize(),
+    alwaysOnTop: window.isAlwaysOnTop(),
+    focused: window.isFocused(),
+  };
+}
 
 /**
  * Answer a channel only after the call has passed review.
@@ -68,12 +151,78 @@ function handle(channel, handler) {
     throw new Error(`refusing to register handler for non-allowlisted channel ${channel}`);
   }
   ipcMain.handle(channel, async (event, ...args) => {
-    const review = reviewIpcCall(event, channel, rendererUrl);
+    // The detached window's own address is passed so the review can tell the two documents apart: the sets of
+    // channels they may use are not interchangeable.
+    const review = reviewIpcCall(event, channel, rendererUrl, detached?.url);
     if (!review.allowed) {
       return { ok: false, refused: review.reason };
     }
     return await handler(...args);
   });
+}
+
+/**
+ * The node this window belongs to, or a refusal saying why there is none.
+ *
+ * The token is read from the node's own identity file rather than passed on the command line or in the URL, where
+ * it would be visible in a process list, in history and in the address bar. The base URL is the window's own
+ * origin, because the window is served by that node.
+ *
+ * A function rather than the body of one handler because the detached window's relay needs the same credential:
+ * two reads of the identity file would be two places for the token's rules to drift.
+ */
+function readNodeSession() {
+  if (dataDir === undefined) {
+    return { ok: false, refused: "no --data-dir was given, so there is no identity to read" };
+  }
+  let identity;
+  try {
+    identity = JSON.parse(readFileSync(join(dataDir, "identity.json"), "utf8"));
+  } catch (error) {
+    return { ok: false, refused: `the node identity could not be read (${error?.code ?? "unreadable"})` };
+  }
+  const token = typeof identity?.localToken === "string" ? identity.localToken : "";
+  if (token.length === 0) return { ok: false, refused: "the node identity carries no local token" };
+  let origin;
+  try {
+    origin = new URL(rendererUrl).origin;
+  } catch {
+    return { ok: false, refused: "the window's address is not a URL, so there is no node to point at" };
+  }
+  if (origin === "null") return { ok: false, refused: "the window is not loaded from a node" };
+  return { ok: true, baseUrl: origin, token };
+}
+
+/**
+ * Call the node with its own token.
+ *
+ * The host holds the credential so the detached renderer never does: the window asks for an action, and this
+ * performs it. That is the whole reason a window with no token can still act — and the reason the token must not
+ * travel with the bootstrap.
+ */
+async function callNode(path, init) {
+  const session = readNodeSession();
+  if (!session.ok) return { ok: false, refused: session.refused };
+  try {
+    const response = await fetch(`${session.baseUrl}${path}`, {
+      method: init?.method ?? "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${session.token}`,
+      },
+      ...(init?.body === undefined ? {} : { body: JSON.stringify(init.body) }),
+    });
+    const body = await response.json().catch(() => undefined);
+    if (!response.ok) {
+      const reason = typeof body?.error?.message === "string" ? body.error.message : `status ${response.status}`;
+      return { ok: false, refused: `the node refused: ${reason}` };
+    }
+    return { ok: true, body };
+  } catch (error) {
+    // Named rather than swallowed: "the node is not answering" and "the node said no" are different, and only
+    // one of them is worth retrying.
+    return { ok: false, refused: `the node could not be reached (${error?.code ?? "unreachable"})` };
+  }
 }
 
 function registerHandlers() {
@@ -83,6 +232,8 @@ function registerHandlers() {
     await shell.openExternal(checked.url);
     return { ok: true, opened: checked.url };
   });
+
+  handle("desktop:getSession", async () => readNodeSession());
 
   handle("desktop:notify", async (input) => {
     const title = typeof input?.title === "string" ? input.title.slice(0, 120) : "";
@@ -132,6 +283,113 @@ function registerHandlers() {
     return { ok: true, keepRunningOnWindowClose };
   });
 
+  handle("desktop:setCompactMode", async (action) => {
+    const window = BrowserWindow.getAllWindows()[0];
+    if (window === undefined) return { ok: false, refused: "there is no window to resize" };
+    if (!["enter-compact", "expand", "set-always-on-top"].includes(action?.type)) {
+      return { ok: false, refused: "that is not a window mode this build knows" };
+    }
+
+    // Learned from the window the first time rather than assumed, so a window somebody already moved is
+    // remembered where it actually is.
+    if (windowMode === undefined) {
+      windowMode = initialWindowMode({ bounds: window.getBounds(), workArea: workAreaFor(window) });
+    }
+    windowMode = nextWindowMode({ ...windowMode, workArea: workAreaFor(window) }, action);
+    window.setBounds(windowMode.bounds);
+    window.setAlwaysOnTop(windowMode.alwaysOnTop);
+
+    // Every field read off the window rather than computed by the model. The OS may clamp a size or a position,
+    // and a shell that echoed its own request could not tell the difference between that and what happened.
+    return {
+      ok: true,
+      mode: windowMode.mode,
+      bounds: window.getBounds(),
+      minimumSize: window.getMinimumSize(),
+      alwaysOnTop: window.isAlwaysOnTop(),
+    };
+  });
+
+  /*
+   * The window's named modes.
+   *
+   * A mode name from the renderer, and everything else decided here: bounds live in this process, so a
+   * renderer cannot ask for geometry off the edge of the screen or larger than the display. The answer reports
+   * what the window actually has afterwards, read back off the window, because the OS may clamp a size or a
+   * position and a shell that echoed its own request could not tell that difference.
+   */
+  handle("desktop:setWindowMode", async (mode) => {
+    const window = BrowserWindow.getAllWindows()[0];
+    if (window === undefined) return { ok: false, refused: "there is no window to resize" };
+    const action = actionForMode(mode);
+    if (action === undefined) {
+      // Refused rather than coerced into `normal`: silently growing a window somebody asked to shrink is worse
+      // than not moving it.
+      return { ok: false, refused: `"${String(mode)}" is not a window mode this build knows` };
+    }
+    if (windowMode === undefined) {
+      windowMode = initialWindowMode({ bounds: window.getBounds(), workArea: workAreaFor(window) });
+    }
+    windowMode = nextWindowMode({ ...windowMode, workArea: workAreaFor(window) }, action);
+    window.setBounds(windowMode.bounds);
+    return describeWindow(window, windowMode);
+  });
+
+  /*
+   * A named size, with the mode left alone.
+   *
+   * Separate from the mode channels because they answer different questions: a mode is about what the window is
+   * for, and a preset is about how big it is. Folding them together would make resizing the conversation window
+   * change it into the voice bar.
+   */
+  handle("desktop:resizeWindowPreset", async (name) => {
+    const window = BrowserWindow.getAllWindows()[0];
+    if (window === undefined) return { ok: false, refused: "there is no window to resize" };
+    const preset = WINDOW_MODE_PRESETS[String(name)];
+    if (preset === undefined) {
+      return { ok: false, refused: `"${String(name)}" is not a size preset this build knows` };
+    }
+    const current = window.getBounds();
+    window.setBounds(
+      fitIntoWorkArea(
+        { x: current.x, y: current.y, width: preset.width, height: preset.height },
+        workAreaFor(window),
+      ),
+    );
+    return describeWindow(window, windowMode);
+  });
+
+  /*
+   * Back to the size and place the window had before it was collapsed.
+   *
+   * The remembered bounds live in this process, so a reload that loses the renderer's idea of where the window
+   * was does not also lose the window's own position.
+   */
+  handle("desktop:restoreWindow", async () => {
+    const window = BrowserWindow.getAllWindows()[0];
+    if (window === undefined) return { ok: false, refused: "there is no window to restore" };
+    if (windowMode === undefined) {
+      return { ok: false, refused: "this window has not been moved by the shell yet, so there is nothing to restore" };
+    }
+    windowMode = nextWindowMode({ ...windowMode, workArea: workAreaFor(window) }, { type: "expand" });
+    window.setBounds(windowMode.bounds);
+    return describeWindow(window, windowMode);
+  });
+
+  /*
+   * Bring the window forward.
+   *
+   * A request that came from voice or from an app intent has nobody behind it to click the window, so the shell
+   * is what has to make it the one being looked at.
+   */
+  handle("desktop:focusWindow", async () => {
+    const window = BrowserWindow.getAllWindows()[0];
+    if (window === undefined) return { ok: false, refused: "there is no window to focus" };
+    if (window.isMinimized()) window.restore();
+    window.focus();
+    return { ok: true, focused: window.isFocused(), bounds: window.getBounds() };
+  });
+
   handle("desktop:getStatus", async () => ({
     ok: true,
     shell: "clarkcant-desktop",
@@ -144,6 +402,150 @@ function registerHandlers() {
     keepRunningOnWindowClose,
     channels: [...IPC_CHANNELS],
   }));
+
+  /*
+   * Moving a widget into its own window.
+   *
+   * The shell sends the composition it already has, and the host decides whether it may travel: what the window
+   * receives is that composition and no credential, which is what lets it draw the instance without being able to
+   * read the conversation it came from. The lease is claimed after the window loads and released before the shell
+   * is told to take the instance back, so there is never a moment with two owners.
+   */
+  handle("desktop:detachWidget", async (input) => {
+    if (detached !== undefined) {
+      // A second detached window would be a second owner, which is the thing detaching must not create.
+      return { ok: false, refused: "a widget is already detached" };
+    }
+    if (shellWindow === undefined) {
+      return { ok: false, refused: "there is no conversation window to detach from" };
+    }
+    const conversationId = typeof input?.conversationId === "string" ? input.conversationId : "";
+    const instanceId = typeof input?.instanceId === "string" ? input.instanceId : "";
+    if (conversationId === "" || instanceId === "") {
+      return { ok: false, refused: "detaching needs the conversation and the instance it is showing" };
+    }
+    const reviewed = reviewDetachedBootstrap(
+      detachedBootstrap({
+        instanceRef: instanceId,
+        title: input?.title,
+        widgetKind: input?.widgetKind,
+        live: input?.live,
+      }),
+    );
+    if (!reviewed.ok) return { ok: false, refused: reviewed.reason };
+
+    let address;
+    try {
+      address = new URL(rendererUrl);
+    } catch {
+      // A shell not loaded from a URL has no address to open a child window at, and a refusal says so rather
+      // than throwing inside a handler where nobody would see it.
+      return { ok: false, refused: "the conversation window is not loaded from a URL" };
+    }
+    address.searchParams.set("detached", "1");
+    const url = address.toString();
+    const bounds = shellWindow.getBounds();
+    const window = new BrowserWindow({
+      ...detachedWindowOptions(join(here, "detached-preload.cjs"), bounds, screen.getDisplayMatching(bounds).workArea),
+      backgroundColor: "#0d1117",
+    });
+
+    window.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
+    window.webContents.on("will-navigate", (event, target) => {
+      if (!target.startsWith(rendererUrl)) event.preventDefault();
+    });
+
+    detached = { window, url, bootstrap: reviewed.bootstrap, conversationId, instanceId, ownerToken: randomUUID() };
+
+    /*
+     * Closing the window is a reattach whether or not anybody clicked anything.
+     *
+     * An instance cannot be left ownerless by a window that simply disappeared, so the lease is released here and
+     * the shell is told to take the instance back. The close path and the explicit attach path are the same path.
+     */
+    window.on("closed", () => {
+      const closed = detached;
+      detached = undefined;
+      if (closed !== undefined) {
+        void callNode(`/conversations/${closed.conversationId}/widgets/${closed.instanceId}/live-owner`, {
+          method: "DELETE",
+          body: { ownerToken: closed.ownerToken },
+        });
+      }
+      shellWindow?.webContents.send("desktop:widgetReattached", { instanceRef: closed?.instanceId ?? "" });
+    });
+    window.once("ready-to-show", () => window.show());
+    await window.loadURL(url);
+
+    const claimed = await callNode(`/conversations/${conversationId}/widgets/${instanceId}/live-owner`, {
+      method: "POST",
+      body: { ownerToken: detached.ownerToken, surface: "detached" },
+    });
+    if (!claimed.ok) {
+      window.close();
+      return { ok: false, refused: claimed.refused };
+    }
+    return { ok: true, detached: { instanceRef: instanceId, title: reviewed.bootstrap.title } };
+  });
+
+  /** Handing the instance back. The close handler does the releasing, so this is one line of intent. */
+  handle("desktop:attachWidget", async () => {
+    if (detached === undefined) return { ok: true, attached: false };
+    detached.window.close();
+    return { ok: true, attached: true };
+  });
+
+  handle("detached:bootstrap", async () => {
+    if (detached === undefined) return { ok: false, refused: "this window is not showing a detached instance" };
+    const reviewed = reviewDetachedBootstrap(detached.bootstrap);
+    if (!reviewed.ok) return { ok: false, refused: reviewed.reason };
+    return { ok: true, bootstrap: reviewed.bootstrap };
+  });
+
+  /*
+   * An action the detached window asked for, performed by the host.
+   *
+   * The window holds no token, so this is how it acts at all. Two things are resolved here rather than accepted
+   * from the window: the binding digest comes from the composition the host handed over, so a window cannot supply
+   * a digest the node would accept for a different binding, and the invocation id is fresh per attempt, so a
+   * double press is one effect.
+   */
+  handle("detached:intent", async (raw) => {
+    if (detached === undefined) return { ok: false, refused: "this window is not showing a detached instance" };
+    const reviewed = reviewDetachedIntent(raw);
+    if (!reviewed.ok) return { ok: false, refused: reviewed.reason };
+    const intent = reviewed.intent;
+    if (intent.instanceRef !== detached.instanceId) {
+      // A window that could act on an instance other than the one it shows would have reach beyond its own view.
+      return { ok: false, refused: "this window may only act on the instance it is showing" };
+    }
+    const bindings = detached.bootstrap.live?.bindings;
+    const binding = Array.isArray(bindings)
+      ? bindings.find((entry) => entry?.actionBindingId === intent.actionBindingId)
+      : undefined;
+    if (binding === undefined) return { ok: false, refused: "that action is not bound on this instance" };
+
+    const result = await callNode(`/conversations/${detached.conversationId}/widgets/${detached.instanceId}/actions`, {
+      method: "POST",
+      body: {
+        instanceId: detached.instanceId,
+        actionBindingId: intent.actionBindingId,
+        expectedRevision: intent.expectedRevision,
+        expectedBindingDigest: binding.bindingDigest,
+        input: intent.input ?? {},
+        invocationId: randomUUID(),
+      },
+    });
+    if (!result.ok) return { ok: false, refused: result.refused };
+    return { ok: true, result: result.body };
+  });
+
+  handle("detached:release", async () => {
+    if (detached === undefined) return { ok: false, refused: "this window is not showing a detached instance" };
+    // The host closes the window rather than letting the renderer remove itself from the ownership story.
+    detached.window.close();
+    return { ok: true };
+  });
 }
 
 function applyContentSecurityPolicy() {
@@ -151,7 +553,9 @@ function applyContentSecurityPolicy() {
     callback({
       responseHeaders: {
         ...details.responseHeaders,
-        "Content-Security-Policy": [contentSecurityPolicy()],
+        "Content-Security-Policy": [
+          contentSecurityPolicy({ appOrigin: rendererUrl, nodeOrigin: nodeUrl }),
+        ],
       },
     });
   });
@@ -161,9 +565,15 @@ async function createShellWindow({ show = true } = {}) {
   const window = new BrowserWindow({
     width: 1100,
     height: 760,
-    show,
+    // Always created hidden and shown once it has something to show: a frameless window that appears before its
+    // document has painted is a blank rectangle that reads as a failure.
+    show: false,
     title: "clarkcant",
     backgroundColor: "#0d1117",
+    // The floor from the issue. What the window is allowed to become, not what it aims for.
+    minWidth: COMPACT_MIN_SIZE.width,
+    minHeight: COMPACT_MIN_SIZE.height,
+    frame: !loadingClient,
     webPreferences: createWindowOptions(join(here, "preload.cjs")),
   });
 
@@ -183,7 +593,26 @@ async function createShellWindow({ show = true } = {}) {
     if (!target.startsWith(rendererUrl)) event.preventDefault();
   });
 
+  // The window the conversation is in, remembered so a detached view can open beside it and hand back to it.
+  shellWindow = window;
   await window.loadURL(rendererUrl);
+
+  window.once("ready-to-show", () => {
+    if (show) window.show();
+  });
+
+  // A window somebody dragged is the window they expect back, so a resize while expanded is remembered as the
+  // size to return to. A resize during compact is the bar being moved, and remembering that as the normal size
+  // would make expanding do nothing at all.
+  window.on("resize", () => {
+    if (windowMode === undefined) {
+      windowMode = initialWindowMode({ bounds: window.getBounds(), workArea: workAreaFor(window) });
+    }
+    if (windowMode.mode === "compact") return;
+    const bounds = window.getBounds();
+    windowMode = { ...windowMode, bounds, normalBounds: bounds };
+  });
+
   return window;
 }
 
@@ -215,10 +644,29 @@ async function runSmokeTest() {
       refusedScriptScheme: await call("openExternal", "javascript:alert(1)"),
       refusedVaguePurpose: await call("requestCredential", { requestId: "r1", purpose: "x" }),
       refusedNonBoolean: await call("setKeepRunningOnWindowClose", "yes"),
+      compact: await call("setCompactMode", { type: "enter-compact" }),
+      pinned: await call("setCompactMode", { type: "set-always-on-top", value: true }),
+      expanded: await call("setCompactMode", { type: "expand" }),
+      refusedUnknownMode: await call("setCompactMode", { type: "become-a-toast" }),
     };
   })()`;
 
+  // Read off the real window around the probe, so the compact checks compare Electron's own answers rather
+  // than two copies of the same model agreeing with each other.
+  const boundsBefore = window.getBounds();
   const observed = await window.webContents.executeJavaScript(probe);
+  const boundsAfter = window.getBounds();
+  /*
+   * `getMinimumSize()` answers an array, not an object.
+   *
+   * The check read `.width` and `.height` off it, which are both `undefined`, so it compared `undefined` to `20`
+   * and failed while the window was reporting exactly the right floor. Read by index, which is the shape
+   * Electron documents.
+   */
+  const minimum = window.getMinimumSize();
+  const minimumWidth = Array.isArray(minimum) ? minimum[0] : minimum.width;
+  const minimumHeight = Array.isArray(minimum) ? minimum[1] : minimum.height;
+  const pinnedNow = window.isAlwaysOnTop();
   // `close()` is synchronous on BrowserWindow; awaiting it would imply a completion signal that
   // does not exist.
   window.close();
@@ -230,8 +678,14 @@ async function runSmokeTest() {
       JSON.stringify(observed.bridgeMethods) === JSON.stringify([...EXPECTED_BRIDGE_METHODS]),
     ],
     [
-      "there is one bridge method per allowlisted channel",
-      observed.bridgeMethods.length === IPC_CHANNELS.length,
+      /*
+       * The count used to be the check, back when one bridge served one window. There are two now, and their
+       * channel sets are deliberately different - the shell must not be able to ask for a detached bootstrap, and
+       * a detached window must not be able to ask for the local token - so a count would compare two numbers that
+       * are supposed to differ. What matters is that the shell exposes none of the detached window's own verbs.
+       */
+      "the shell bridge cannot reach the detached window's own channels",
+      !observed.bridgeMethods.some((name) => ["bootstrap", "intent", "release"].includes(name)),
     ],
     ["Node is unreachable from the renderer", observed.nodeReachable === false],
     ["the shell reports its own posture", observed.status?.sandboxed === true],
@@ -240,6 +694,26 @@ async function runSmokeTest() {
     ["a scheme that executes script is refused", observed.refusedScriptScheme?.ok === false],
     ["a vague credential purpose is refused", observed.refusedVaguePurpose?.ok === false],
     ["a non-boolean keep flag is refused", observed.refusedNonBoolean?.ok === false],
+    [
+      "compact mode reads back the bounds Electron actually has",
+      observed.compact?.ok === true &&
+        observed.compact.bounds.width < boundsBefore.width &&
+        observed.compact.bounds.width >= COMPACT_MIN_SIZE.width &&
+        observed.compact.mode === "compact",
+    ],
+    [
+      "the minimum size Electron reports is the twenty by fifty floor",
+      minimumWidth === COMPACT_MIN_SIZE.width && minimumHeight === COMPACT_MIN_SIZE.height,
+    ],
+    [
+      "expanding restores the bounds Electron had before compact",
+      JSON.stringify(boundsAfter) === JSON.stringify(boundsBefore),
+    ],
+    [
+      "always on top is reported by the window, not by the model",
+      observed.pinned?.ok === true && observed.pinned.alwaysOnTop === true && pinnedNow === true,
+    ],
+    ["a window mode this build does not know is refused", observed.refusedUnknownMode?.ok === false],
   ];
 
   const failed = checks.filter(([, passed]) => !passed);

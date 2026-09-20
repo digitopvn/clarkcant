@@ -1,13 +1,23 @@
 ---
 phase: 6
 title: "T66 — voice và click chạm cùng một widget action state"
-status: pending
+status: done
 priority: P1
 effort: "4h"
 dependencies: [5]
 ---
 
 # Phase 6: T66 — voice và click chạm cùng một widget action state
+
+> **Tiêu chí của phase này ĐÃ ĐẠT.** T66 chuyển `NOT-IMPLEMENTED` → `PASS` với tên test
+> `apps/web/e2e/voice-widget-action.spec.ts` — "a spoken action and the same click reach the same state", và journey
+> từ chối đi kèm; cả hai xanh và nằm trong suite.
+>
+> Nguyên nhân đã đo được, và ghi chú cũ trong file spec đoán sai: câu nói **có** được resolve và action **có**
+> chạy — node báo `ok`, revision 7 → 8, "Đã Đổi khoảng thời gian" — nhưng trang **không có** handler cho frame
+> `widget-action-result`, nên surface vẫn hiển thị period cũ. Câu nói còn phải mang tham số: action này nhận một
+> period, và một câu chỉ nêu tên action thì không chọn được period nào.
+
 
 ## Context Links
 
@@ -167,3 +177,35 @@ người dùng. Không bao giờ tiếp tục bằng cách tự suy luận.
 - Semantic view chỉ chứa id/nhãn/action khả dụng, không chứa dữ liệu người dùng.
 - Voice dùng đúng authorization của click: binding, revision, owner, lease.
 - Không có action nào mới được sinh từ câu nói; chỉ những action instance đã công bố.
+
+## Ghi chú thực thi (cập nhật sau khi làm)
+
+**T66 đã `PASS`.** Journey `apps/web/e2e/voice-widget-action.spec.ts` — "a spoken action and the same click reach
+the same state" — xanh và nằm trong suite, cùng journey từ chối. Nguyên nhân đo được, không suy đoán: câu nói **có**
+được resolve (`ok: true`, args `{period: "month"}`) và action **có** chạy (`ok: true`, revision 7 → 8, "Đã Đổi
+khoảng thời gian"), nhưng trang **không có** handler cho frame `widget-action-result`, nên surface vẫn hiển thị period
+cũ. Đã thêm handler và cho surface đọc lại đúng như đường click làm sau khi invoke. Câu nói cũng phải mang tham
+số: action này nhận một period, và một câu chỉ nêu tên action thì không chọn được period nào — nên journey nói
+câu có tham số.
+
+Quãng đường tới lúc đó được giữ lại vì nó là bằng chứng của việc thu hẹp, không phải của một phỏng đoán: instance đang
+focus có thật trong `.data/e2e/node.sqlite` với ba binding id; nhãn binding bộ lọc là `Đổi khoảng thời gian` và
+`normaliseIntentText` biến nó thành `doi khoang thoi gian`, đúng khoá trong bảng phrasing; `xem theo tháng` chuẩn
+hoá thành `xem theo thang`, đúng cặp mà test đơn vị của resolver giải được. Ghi chú cũ trong file spec — "the spoken
+sentence resolves to nothing" — là **sai**, và đã được sửa cùng lúc với bản sửa.
+
+Một thay đổi đã thử và **hoàn nguyên**: cho fixture chỉ trả lời một lần mỗi phiên (`e350a69`). Nó không làm
+journey parity xanh, và nó làm journey từ chối đỏ, nên việc fixture trả lời lặp lại là có vai trò thật trong
+luồng transcript.
+
+Bốn sai lệch so với kế hoạch cần ghi nhận:
+
+1. Hành động nói dùng revision và binding digest của chính node, không nhận con trỏ từ trang: một câu nói không
+   mang theo cursor, còn một cú click thì có.
+2. Resolver so khớp theo **nhãn** mà instance đang mời, không theo `actionId`, vì `actionProposal` không có trường
+   đó.
+3. Khung `focus` chỉ mang instance id; node tự dựng view bằng `semanticViewOf`, nên trang không thể mô tả một
+   instance không tồn tại.
+4. Không có route nào đọc bảng `action_invocations`, nên yêu cầu "mỗi đường đúng một lần gọi" không thể đếm được
+   từ một lần chạy trình duyệt. Hành trình tương lai chỉ khẳng định được trạng thái cuối, và phần đếm được ghi rõ
+   là thiếu.

@@ -60,6 +60,12 @@ body {
   max-width: 100%;
 }
 .cc-select:focus-visible { outline: 2px solid var(--cc-focus); outline-offset: 2px; }
+/*
+ * A focusable diff needs a ring that survives a long page: the outline has to sit outside the card and stay
+ * visible while the diff is scrolled, and it must not be the accent colour alone.
+ */
+.cc-card[data-diff-keyboard="true"]:focus-visible { outline: 2px solid var(--cc-focus); outline-offset: 2px; }
+.cc-card[data-diff-keyboard="true"] [data-diff-path]:focus-visible { outline: 2px solid var(--cc-focus); outline-offset: 2px; }
 
 /*
  * A field that opens a list, and the list itself.
@@ -197,7 +203,7 @@ body {
   min-width: 220px; max-width: 360px; list-style: none;
   background: var(--cc-elevated); border: 1px solid var(--cc-border); border-radius: var(--cc-radius-card);
   box-shadow: 0 8px 24px rgb(0 0 0 / 35%);
-  opacity: 0; visibility: hidden; transition: opacity 120ms ease;
+  opacity: 0; visibility: hidden; transition: opacity var(--cc-motion-micro) ease;
 }
 .cc-bg-mark:hover .cc-bg-list, .cc-bg-mark:focus-within .cc-bg-list { opacity: 1; visibility: visible; }
 .cc-bg-list li { padding: 2px 0; }
@@ -838,6 +844,52 @@ figure.cc-attachment figcaption { margin-top: var(--cc-space-xs); color: var(--c
 .cc-stage-orb[data-docked="true"] > .cc-empty-orb { opacity: 0.5; filter: blur(1px) brightness(0.85); }
 
 /*
+ * The docked orb reports what the agent is doing.
+ *
+ * One ring, coloured by the single state the shell publishes, rather than each panel growing its own
+ * indicator: the orb is already where the eye goes, and a second spinner somewhere else would be a second
+ * thing to keep in sync. The idle state draws nothing, because a ring that is always there stops meaning anything.
+ */
+.cc-stage-orb::after {
+  content: ""; position: absolute; inset: 12%; border-radius: var(--cc-radius-pill);
+  pointer-events: none; opacity: 0;
+  transition: opacity var(--cc-motion-normal) var(--cc-motion-easing);
+}
+.cc-shell[data-agent-state="thinking"] .cc-stage-orb::after,
+.cc-shell[data-agent-state="tooling"] .cc-stage-orb::after,
+.cc-shell[data-agent-state="listening"] .cc-stage-orb::after,
+.cc-shell[data-agent-state="responding"] .cc-stage-orb::after {
+  opacity: 1;
+  box-shadow: 0 0 26px color-mix(in oklab, var(--cc-accent) 30%, transparent);
+}
+/*
+ * A tool call and a reply are different amounts of activity, so they are different strengths of the same
+ * signal rather than different signals. The listening state is the brightest, because that is where the
+ * user is being recorded and should be able to see it without reading anything.
+ */
+.cc-shell[data-agent-state="listening"] .cc-stage-orb::after {
+  box-shadow: 0 0 34px color-mix(in oklab, var(--cc-success) 46%, transparent);
+}
+.cc-shell[data-agent-state="responding"] .cc-stage-orb::after {
+  box-shadow: 0 0 30px color-mix(in oklab, var(--cc-accent) 40%, transparent);
+}
+.cc-shell[data-agent-state="error"] .cc-stage-orb::after {
+  opacity: 1;
+  box-shadow: 0 0 30px color-mix(in oklab, var(--cc-danger, var(--cc-accent)) 42%, transparent);
+}
+
+/*
+ * Keyboard interaction gets a visible focus ring on the orb's own button.
+ *
+ * The global :focus-visible rule already covers this, so the modality attribute is not what draws the
+ * ring — it only removes the pointer's own affordance, so a mouse hovering the wordmark does not look
+ * like a keyboard focus. That is the honest use of the attribute: it says which input is in play, and the
+ * focus ring stays a function of focus rather than of the last thing that moved.
+ */
+.cc-shell[data-input-modality="keyboard"] .cc-brand:hover { opacity: 1; }
+.cc-shell[data-input-modality="touch"] .cc-brand:hover { opacity: 1; }
+
+/*
  * Tool activity and reasoning.
  *
  * The same disclosure frame for both, because they are the same kind of thing to a reader: work the
@@ -1324,6 +1376,103 @@ button:focus-visible, textarea:focus-visible, input:focus-visible, [tabindex]:fo
 .cc-live-surface[data-ownership="elsewhere"] { opacity: 0.9; }
 .cc-live-surface[data-ownership="owner"] .cc-surface-region { border-left: 2px solid transparent; }
 
+/*
+ * The settings controls, one shape per kind of decision.
+ *
+ * Each wraps its own note rather than putting it in a tooltip: a control whose meaning is only visible on
+ * hover is a control most people never understand. The pending state is a dimming rather than a spinner,
+ * because the write is fast and a spinner appearing for a keystroke is noise.
+ */
+.cc-segmented-wrap { display: flex; flex-direction: column; gap: var(--cc-space-xxs); align-items: flex-end; }
+.cc-segmented { display: flex; flex-wrap: wrap; gap: var(--cc-space-xs); justify-content: flex-end; }
+.cc-segmented[data-pending="true"] { opacity: 0.6; }
+/* The note belongs to the whole group, so it is aligned with the controls rather than with the label. */
+.cc-segmented-wrap > .cc-panel-note { margin: 0; text-align: right; max-width: 34ch; }
+
+.cc-toggle-wrap { display: flex; flex-direction: column; gap: var(--cc-space-xxs); align-items: flex-end; }
+/*
+ * Positioned, so the visually-hidden input inside it is placed against this label.
+ *
+ * Without it the absolute input resolves against the nearest positioned ancestor — the modal — and lands
+ * somewhere else on the page entirely. The control still worked with a mouse, which is why this survived a
+ * screenshot: what broke was its position for assistive technology and for anything that had to reach it,
+ * and the first thing to notice was a browser test that refused to click an element outside the viewport.
+ */
+.cc-toggle { position: relative; display: flex; align-items: center; gap: var(--cc-space-sm); cursor: pointer; }
+.cc-toggle input {
+  /* The real checkbox stays in the layout for keyboard and screen-reader behaviour, and is hidden visually
+     rather than with display:none, which would take it out of the tab order. */
+  position: absolute; width: 1px; height: 1px; opacity: 0; margin: 0;
+}
+.cc-toggle-track {
+  width: 38px; height: 22px; border-radius: var(--cc-radius-pill);
+  background: var(--cc-card); border: 1px solid var(--cc-border); position: relative;
+  transition: background var(--cc-motion-micro) var(--cc-motion-easing), border-color var(--cc-motion-micro) var(--cc-motion-easing);
+}
+.cc-toggle-track::after {
+  content: ""; position: absolute; top: 2px; left: 2px; width: 16px; height: 16px;
+  border-radius: var(--cc-radius-pill); background: var(--cc-text-muted);
+  transition: transform var(--cc-motion-micro) var(--cc-motion-bounce), background var(--cc-motion-micro) var(--cc-motion-easing);
+}
+.cc-toggle input:checked + .cc-toggle-track { background: color-mix(in oklab, var(--cc-accent) 30%, transparent); border-color: var(--cc-accent); }
+.cc-toggle input:checked + .cc-toggle-track::after { transform: translateX(16px); background: var(--cc-accent); }
+.cc-toggle input:disabled + .cc-toggle-track { opacity: 0.45; }
+.cc-toggle input:focus-visible + .cc-toggle-track { outline: 2px solid var(--cc-focus); outline-offset: 2px; }
+/* A word beside the switch, so the state does not depend on the knob's position or on a colour. */
+.cc-toggle-state { font-size: var(--cc-text-label); color: var(--cc-text-muted); min-width: 2.4ch; }
+.cc-toggle-wrap > .cc-panel-note { margin: 0; text-align: right; max-width: 34ch; }
+
+.cc-inline-status[data-tone="error"] { color: var(--cc-danger); }
+.cc-inline-status[data-tone="ok"] { color: var(--cc-success); }
+
+.cc-range { display: flex; flex-direction: column; gap: var(--cc-space-xxs); align-items: flex-end; min-width: 200px; }
+.cc-range-row { display: flex; align-items: center; gap: var(--cc-space-sm); width: 100%; }
+.cc-range input[type="range"] { flex: 1; accent-color: var(--cc-accent); min-width: 110px; }
+/* Narrow, because the number is a value to confirm rather than a field to type a sentence into. */
+.cc-range input[type="number"] {
+  width: 72px; padding: var(--cc-space-xxs) var(--cc-space-xs);
+  background: var(--cc-card); color: var(--cc-text); border: 1px solid var(--cc-border);
+  border-radius: var(--cc-radius-badge); font: inherit; font-variant-numeric: tabular-nums;
+}
+.cc-range input[type="number"]:focus-visible { outline: 2px solid var(--cc-focus); outline-offset: 1px; }
+.cc-range > .cc-setting-desc { align-self: flex-end; }
+
+/*
+ * The orb preview: one live renderer, not a grid of them.
+ *
+ * A WebGL context per preset would be a GPU program each for a difference the label already states. The
+ * selected preset feeds this one canvas, and the stage behind it carries the palette so a machine without
+ * WebGL still shows the colours that were chosen.
+ */
+.cc-orb-preview { display: flex; align-items: center; gap: var(--cc-space-md); padding: var(--cc-space-sm) 0; }
+.cc-orb-preview-stage {
+  width: 96px; height: 96px; flex: none; border-radius: var(--cc-radius-pill);
+  display: flex; align-items: center; justify-content: center;
+  background: var(--cc-card); border: 1px solid var(--cc-border);
+}
+.cc-orb-preview-canvas { display: block; }
+
+.cc-effect-list { list-style: none; margin: var(--cc-space-sm) 0 0; padding: 0; display: flex; flex-direction: column; gap: var(--cc-space-xs); }
+.cc-effect-list li { font-size: var(--cc-text-label); color: var(--cc-text-muted); overflow-wrap: anywhere; }
+.cc-effect-list code { color: var(--cc-text); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: var(--cc-text-mono-sm); }
+
+/*
+ * The personal-instructions field.
+ *
+ * A textarea rather than a single-line input, because the text is prose the user is writing about how they
+ * want to be answered. Disabled while the toggle is off but still visible, so turning it off does not look
+ * like it discarded what was typed.
+ */
+.cc-personal-instructions {
+  width: 100%; min-height: 92px; resize: vertical; padding: var(--cc-space-sm);
+  background: var(--cc-card); color: var(--cc-text); border: 1px solid var(--cc-border);
+  border-radius: var(--cc-radius-badge); font: inherit; line-height: var(--cc-leading-body-sm);
+}
+.cc-personal-instructions:focus-visible { outline: 2px solid var(--cc-focus); outline-offset: 1px; }
+.cc-personal-instructions:disabled { opacity: 0.55; cursor: not-allowed; }
+/* Over the bound is a state worth seeing before the node refuses the write, not a silent failure. */
+.cc-panel-note[data-over-bound="true"] { color: var(--cc-danger); }
+
 @media (prefers-reduced-motion: reduce) {
   .cc-scroll { scroll-behavior: auto; }
   * { transition-duration: var(--cc-motion-micro) !important; animation-duration: var(--cc-motion-micro) !important; }
@@ -1339,4 +1488,27 @@ button:focus-visible, textarea:focus-visible, input:focus-visible, [tabindex]:fo
      frame, but a value recomputed for every frame of the session. */
   .cc-tool-mark[data-status="running"] { animation: none !important; }
 }
+
+  /*
+   * The desktop window's own chrome.
+   *
+   * A frameless window is dragged by its document, so the strip is the drag handle - and the controls opt out
+   * of it, because a button inside a drag region cannot be clicked. In a browser none of this renders at all.
+   */
+  .cc-desktop-chrome { position: fixed; top: 0; left: 0; right: 0; height: 34px; display: flex; align-items: center; gap: 6px; z-index: 30; }
+  .cc-desktop-drag { flex: 1 1 auto; height: 100%; -webkit-app-region: drag; }
+  .cc-desktop-controls { display: flex; align-items: center; gap: 2px; -webkit-app-region: no-drag; }
+  .cc-desktop-button { -webkit-app-region: no-drag; background: transparent; color: inherit; border: 1px solid var(--cc-line, rgba(255, 255, 255, 0.16)); border-radius: 6px; width: 26px; height: 22px; line-height: 1; font-size: 12px; cursor: pointer; }
+  .cc-desktop-button:hover { border-color: var(--cc-accent, #7aa2f7); }
+  .cc-desktop-button[data-pinned="true"] { border-color: var(--cc-accent, #7aa2f7); }
+  .cc-desktop-mode { -webkit-app-region: no-drag; font-size: 11px; opacity: 0.72; padding-right: 6px; }
+  .cc-desktop-problem { -webkit-app-region: no-drag; font-size: 11px; padding-right: 6px; opacity: 0.9; }
+
+  /*
+   * The compact surface: what the window shows when it has shrunk to the voice bar.
+   *
+   * The conversation is not unmounted - the session behind it keeps running, which is the whole point - so this
+   * takes the window and hides what is underneath rather than removing it.
+   */
+  [data-compact="true"] .cc-voice-scrim { position: fixed; inset: 0; border-radius: 0; background: var(--cc-bg, #0d1117); }
 `;

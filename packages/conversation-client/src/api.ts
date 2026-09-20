@@ -9,6 +9,20 @@
 import type { AutonomySettings, ModelPool } from "@clarkcant/contracts";
 
 import {
+  memoryListSchema,
+  suggestionsResponseSchema,
+  type AppIntentDecision,
+  type AppIntentKind,
+  type AppIntentResolution,
+  type ConfirmationDecision,
+  type MemoryRecord,
+  type RegisteredPreference,
+  type SettingsTab,
+  type Suggestion,
+  type VoiceCapabilities,
+} from "@clarkcant/contracts";
+
+import {
   type StartVoiceSessionOptions,
   type VoiceSession,
   type VoiceSessionEvents,
@@ -213,6 +227,14 @@ export interface SendMessageResult {
   taskId: string | null;
   /** The messages this request wrote, in order. */
   messageIds: string[];
+  /**
+   * A command the node recognised in what was typed.
+   *
+   * Present when the text was an application command rather than a request for the agent. The node answers those
+   * itself and records them, and the page runs the decision - which is what makes typing "mở settings" open the
+   * panel exactly as saying it does.
+   */
+  appIntent?: AppIntentResolution;
   /** Every message in the conversation, so the client never has to guess whether its cursor is valid. */
   timeline: Timeline;
 }
@@ -269,6 +291,50 @@ function parseSseFrame(frame: string): SseEvent | undefined {
     else if (field === "data") data.push(value);
   }
   return data.length === 0 ? undefined : { event, data: data.join("\n") };
+}
+
+/** What the node reports about an artifact. No path, deliberately: see `artifact()`. */
+/**
+ * A controlled surface as the node holds it.
+ *
+ * The epoch is the fencing token and `preview` is whether the surface can currently be observed, so both are on
+ * the wire: a client that cannot see them cannot say whether the agent may still act.
+ */
+export interface ControlSessionView {
+  sessionId: string;
+  surface: "browser" | "computer";
+  label: string;
+  owner: "agent" | "user";
+  status: "running" | "stopped";
+  leaseEpoch: number;
+  preview: "available" | "needs-permission" | "unavailable";
+  previewReason?: string;
+  takenOverAt?: string;
+  stoppedAt?: string;
+}
+
+/** An installed package, as the node reports it. */
+export interface InstalledPackageView {
+  packageId: string;
+  version: string;
+  digest: string;
+  codeGeneration: string;
+  activatedAt: string;
+  source: { sourceTier: string; rationale: string; artifactUrl: string };
+  /** The strongest lane among the package's facets: a package is as trusted as its least isolated part. */
+  lane: "isolated-ui" | "service" | "declarative" | "trusted-native";
+  consentedDigest?: string;
+}
+
+export interface ArtifactView {
+  artifactId: string;
+  digest: string;
+  sizeBytes: number;
+  mimeType: string;
+  originNodeId: string;
+  createdAt: string;
+  expiresAt: string | null;
+  expired: boolean;
 }
 
 export class GatewayError extends Error {
@@ -373,6 +439,49 @@ export class GatewayClient {
 
   listConversations(): Promise<{ conversations: { conversationId: string }[] }> {
     return this.#call("GET", "/conversations");
+  }
+
+  /**
+   * What the node suggests doing next.
+   *
+   * The body is parsed rather than trusted: it crosses a socket and a version boundary, and a client that trusted
+   * it would render whatever an older or newer node happened to send. A node that answers with a shape this build
+   * does not know is an error here, which the caller turns into the fallback chips - not a broken first screen.
+   */
+  async suggestions(): Promise<Suggestion[]> {
+    const body = await this.#call<unknown>("GET", "/suggestions");
+    return suggestionsResponseSchema.parse(body).items;
+  }
+
+  /**
+   * What this node remembers, or why it could not be read.
+   *
+   * Failure is an answer rather than a throw, because the Memory tab has a state for it: a screen that cannot
+   * list what is remembered still has to render, with the reason and a way to try again. A thrown error here
+   * would be a blank panel with nothing to act on.
+   */
+  async listMemories(): Promise<
+    | { ok: true; items: MemoryRecord[]; counts: Record<string, number> }
+    | { ok: false; reason: string }
+  > {
+    try {
+      const body = await this.#call<unknown>("GET", "/memory");
+      const parsed = memoryListSchema.safeParse(body);
+      if (!parsed.success) return { ok: false, reason: "the node's answer was not a list of remembered things" };
+      return { ok: true, items: parsed.data.items, counts: parsed.data.counts };
+    } catch (cause) {
+      return { ok: false, reason: cause instanceof Error ? cause.message : "the node did not answer" };
+    }
+  }
+
+  /** Remove one, and say whether it went. */
+  async deleteMemory(memoryId: string): Promise<{ ok: true } | { ok: false; reason: string }> {
+    try {
+      await this.#call<unknown>("DELETE", `/memory/${encodeURIComponent(memoryId)}`);
+      return { ok: true };
+    } catch (cause) {
+      return { ok: false, reason: cause instanceof Error ? cause.message : "the node did not answer" };
+    }
   }
 
   sendMessage(
@@ -487,6 +596,9 @@ export class GatewayClient {
             messageIds: Array.isArray(payload.messageIds)
               ? payload.messageIds.filter((id): id is string => typeof id === "string")
               : [],
+            ...(payload.appIntent === undefined
+              ? {}
+              : { appIntent: payload.appIntent as AppIntentResolution }),
             // SAFETY: the timeline is the node's own record and this client has no schema for it — the
             // same position every other route here takes, since the channel is authenticated and the
             // node is the authority on its own timeline. Its fields are read defensively at each use.
@@ -530,6 +642,71 @@ export class GatewayClient {
   }
 
   capabilities(): Promise<{ capabilities: { ref: string; summary: string; usable: boolean; blockedReason?: string }[] }> {    return this.#call("GET", "/capabilities");
+  }
+
+  /**
+   * The effects this node performed without an approval card, newest first.
+   *
+   * The record that makes autonomy checkable: an approval card is its own evidence, and an effect that skipped
+   * the card leaves one here instead. Empty is a real answer — nothing has run without asking yet.
+   */
+  activity(): Promise<{
+    effects: {
+      at: string;
+      kind: string;
+      mode: string;
+      category: string;
+      description: string;
+      operationDigest: string;
+      because: string;
+    }[];
+  }> {
+    return this.#call("GET", "/activity");
+  }
+
+  /**
+   * What the configured voice provider can do, as it reports it.
+   *
+   * The surface draws its voice control from this rather than from a list of provider names, so a provider
+   * that cannot select a voice shows no selector instead of one that changes nothing.
+   */
+  voiceCapabilities(): Promise<{ capabilities: VoiceCapabilities }> {
+    return this.#call("GET", "/voice/capabilities");
+  }
+
+  /**
+   * The registered preferences and their current values.
+   *
+   * Every registered key is answered, including the ones nobody has set: those come back with the
+   * default the product would use and `isDefault: true`, so a settings surface renders an actual
+   * current state instead of inventing one — and cannot show a default as a choice the user made.
+   * `applies` says when a change is in effect, so the copy can say "next voice session" rather than
+   * implying that something already speaking changed underneath the reader.
+   */
+  preferences(): Promise<{ preferences: RegisteredPreference[] }> {
+    return this.#call("GET", "/preferences");
+  }
+
+  /**
+   * Writes one registered preference.
+   *
+   * The node validates the value against the key's own schema before storing anything, so a refused
+   * write leaves the previous value exactly where it was, and the error names the field rather than
+   * echoing what was sent.
+   */
+  writePreference(key: string, value: unknown): Promise<{ preference: RegisteredPreference }> {
+    return this.#call("PUT", `/preferences/${encodeURIComponent(key)}`, { value });
+  }
+
+  /**
+   * Undoes the last write to one preference.
+   *
+   * `undone: false` travels as a success, because a key nobody has written has nothing to undo.
+   */
+  undoPreference(
+    key: string,
+  ): Promise<{ undone: boolean; preference: RegisteredPreference; reason?: string }> {
+    return this.#call("POST", `/preferences/${encodeURIComponent(key)}/undo`);
   }
 
   /**
@@ -800,6 +977,55 @@ export class GatewayClient {
     });
   }
 
+  /**
+   * Ask a task to stop.
+   *
+   * Resolves with what the node actually did, not with what was asked for. Cancellation is two steps so the
+   * executor can confirm what happened, so `state: "cancel_requested"` with `confirmed: false` means the request
+   * is recorded and the work may still be finishing — it does not mean the task stopped.
+   */
+  cancelTask(taskId: string): Promise<{ taskId: string; state: string; confirmed: boolean }> {
+    return this.#call("POST", `/tasks/${encodeURIComponent(taskId)}/cancel`, {});
+  }
+
+  /**
+   * Open an artifact.
+   *
+   * Resolves with facts about it and never with where its bytes live: the node's own data directory is not
+   * something a client needs in order to show a file. `expired` is reported separately from a missing artifact,
+   * because "the node had it and a retention window passed" and "there is no such file" are different answers
+   * to the user.
+   */
+  artifact(artifactId: string): Promise<{ artifact: ArtifactView }> {
+    return this.#call("GET", `/artifacts/${encodeURIComponent(artifactId)}`);
+  }
+
+  /**
+   * Take the wheel of a controlled surface.
+   *
+   * Resolves with the session as the node now holds it, including the new lease epoch — which is the part that
+   * makes the takeover real: the agent's already-planned action is refused because its lease is stale, not
+   * because something was interrupted.
+   */
+  controlTakeover(sessionId: string): Promise<{ session: ControlSessionView }> {
+    return this.#call("POST", `/control-sessions/${encodeURIComponent(sessionId)}/takeover`, {});
+  }
+
+  /** End a browser session. Refused rather than reported as done when there is nothing left to stop. */
+  controlStop(sessionId: string): Promise<{ session: ControlSessionView }> {
+    return this.#call("POST", `/control-sessions/${encodeURIComponent(sessionId)}/stop`, {});
+  }
+
+  /**
+   * What is installed, with where each package came from and the lane it runs in.
+   *
+   * The digest is part of the answer on purpose: it is the only thing tying what is running to what was approved,
+   * and a list that showed a version without one would be inviting trust it has not earned.
+   */
+  packages(): Promise<{ packages: InstalledPackageView[] }> {
+    return this.#call("GET", "/packages");
+  }
+
   claimLiveOwner(
     conversationId: string,
     instanceId: string,
@@ -898,6 +1124,74 @@ export class GatewayClient {
     return {
       names: Array.isArray(body.names) ? body.names.filter((name): name is string => typeof name === "string") : [],
     };
+  }
+
+  /**
+   * Ask the node what a command means.
+   *
+   * A click goes through the node for the same reason a spoken command does: the registry, the audit record and
+   * the matching rules live there, so clicking Settings and saying "open Settings" produce the same event with the
+   * same kind and only the source differing. It also means a click cannot run something the node would refuse.
+   */
+  async sendAppIntent(input: {
+    kind?: AppIntentKind;
+    tab?: SettingsTab;
+    text?: string;
+    source: "chat" | "click" | "voice";
+    conversationId?: string;
+  }): Promise<AppIntentResolution> {
+    const body = {
+      ...(input.kind === undefined ? {} : { kind: input.kind }),
+      ...(input.tab === undefined ? {} : { tab: input.tab }),
+      ...(input.text === undefined ? {} : { text: input.text }),
+      ...(input.conversationId === undefined ? {} : { conversationId: input.conversationId }),
+      source: input.source,
+    };
+    const response = await this.#fetch(`${this.#baseUrl}/app-intents`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${this.#token}`, "content-type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    if (!response.ok) {
+      throw new GatewayError(response.status, "APP_INTENT_REFUSED", "the node refused that command");
+    }
+    const answer = (await response.json()) as { decision?: unknown };
+    // `none` is a real answer - the sentence was not a command - so it is returned rather than treated as a
+    // missing field. A caller that gets it must fall back to the ordinary path.
+    return (answer.decision ?? { kind: "none" }) as AppIntentResolution;
+  }
+
+  /**
+   * Answer a confirmation the node asked for.
+   *
+   * The token travels back to the node, which spends it and decides; this client never assembles an executable
+   * decision of its own. A denial is a complete answer and comes back as a refusal, so the caller has something to
+   * say rather than a silence to explain.
+   */
+  async confirmAppIntent(input: {
+    confirmationToken: string;
+    decision: ConfirmationDecision;
+    conversationId?: string;
+  }): Promise<AppIntentDecision> {
+    const response = await this.#fetch(`${this.#baseUrl}/app-intents/confirm`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${this.#token}`, "content-type": "application/json" },
+      body: JSON.stringify({
+        confirmationToken: input.confirmationToken,
+        decision: input.decision,
+        ...(input.conversationId === undefined ? {} : { conversationId: input.conversationId }),
+      }),
+    });
+    if (!response.ok) {
+      const detail = (await response.json().catch(() => ({}))) as { code?: unknown };
+      throw new GatewayError(
+        response.status,
+        typeof detail.code === "string" ? detail.code : "CONFIRMATION_REFUSED",
+        "that confirmation was not accepted",
+      );
+    }
+    const body = (await response.json()) as { decision?: unknown };
+    return (body.decision ?? { kind: "refused", say: "Không có gì được thực hiện." }) as AppIntentDecision;
   }
 
   /**

@@ -5,6 +5,10 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { DEFAULT_AUTONOMY_SETTINGS } from "@clarkcant/contracts";
+import { instantSchema } from "@clarkcant/contracts";
+import type { ExecutionMode, ExecutionRule } from "@clarkcant/contracts";
+import type { ToolDefinition } from "@clarkcant/pi-adapter";
+import { allRows } from "@clarkcant/storage";
 
 import { createNodeTools } from "../src/node-tools.ts";
 import { ownedResources } from "../src/preflight.ts";
@@ -93,5 +97,103 @@ describe("the node's tools", () => {
     // A report, not a side effect: no session is started and no directory is opened.
     expect(typeof result?.text).toBe("string");
     expect(result?.text).not.toContain("/Users/");
+  });
+});
+
+/**
+ * The command tool, under each execution policy.
+ *
+ * This is where the three modes stop being a setting: the same proposal produces a card, a real run, or
+ * a refusal, and the audit trail says which. The command is a real one — a node that "ran" something it
+ * did not run would pass a test that only checked the text.
+ */
+describe("the command tool obeys the execution policy", () => {
+  const RAN = "policy-ran";
+  const command = `node -e "process.stdout.write('${RAN}')"`;
+
+  function now() {
+    return instantSchema.parse(new Date().toISOString());
+  }
+
+  function commandTool(options: {
+    mode?: ExecutionMode;
+    rules?: readonly ExecutionRule[];
+    audit?: boolean;
+  } = {}): ToolDefinition {
+    const deps = {
+      db: services.runtime.db,
+      nodeId: services.runtime.identity.nodeId,
+      now,
+      newId: services.conductor.newId,
+    };
+    const tools = createNodeTools({
+      search: services.search,
+      projects: services.projects,
+      approvals: () => deps,
+      ...(options.mode === undefined
+        ? {}
+        : { policy: () => ({ mode: options.mode as ExecutionMode, rules: options.rules ?? [] }) }),
+      ...(options.audit === true
+        ? {
+            audit: () => ({
+              deps,
+              principalId: services.search.principalId,
+              conversationId: "conv_policy",
+            }),
+          }
+        : {}),
+    });
+    const tool = tools.find((candidate) => candidate.name === "run_command");
+    // Thrown rather than defaulted: a test that silently exercised no tool at all would pass while the
+    // behaviour it claims to check was never reached.
+    if (tool === undefined) throw new Error("run_command is not registered");
+    return tool;
+  }
+
+  function executedEffects(): string[] {
+    return allRows<{ kind: string }>(services.runtime.db, "SELECT kind FROM events").map((row) => row.kind);
+  }
+
+  it("asks when the node cannot read a policy, which is what it did before the modes existed", async () => {
+    const result = await commandTool().execute({ command, cwd: dir });
+    expect(result.hostCard).toBeDefined();
+    expect((result.hostCard as { type: string }).type).toBe("approval-card");
+    expect(result.text).toContain("Chưa có gì chạy cả");
+    expect(executedEffects()).toEqual([]);
+  });
+
+  it("runs the command in autonomous mode, with no card and a record of it", async () => {
+    const result = await commandTool({ mode: "autonomous", audit: true }).execute({ command, cwd: dir });
+    expect(result.hostCard).toBeUndefined();
+    // The output, not a claim about the output: the shell actually ran.
+    expect(result.text).toContain(RAN);
+    expect(executedEffects()).toEqual(["effect.executed"]);
+  });
+
+  it("asks in ask mode even though the mode could run it", async () => {
+    const result = await commandTool({ mode: "ask", audit: true }).execute({ command, cwd: dir });
+    expect(result.hostCard).toBeDefined();
+    expect(result.text).toContain("Chưa có gì chạy cả");
+    expect(executedEffects()).toEqual([]);
+  });
+
+  it("refuses what a rule refuses, and does not run it", async () => {
+    const result = await commandTool({
+      mode: "autonomous",
+      rules: [{ effectCategory: "local-write", decision: "deny" }],
+      audit: true,
+    }).execute({ command, cwd: dir });
+    expect(result.hostCard).toBeUndefined();
+    expect(result.text).toContain("Không chạy lệnh đó");
+    expect(result.text).not.toContain(RAN);
+    expect(executedEffects()).toEqual([]);
+  });
+
+  it("does not run autonomously when the node cannot record it", async () => {
+    // The one combination refused: an effect nobody approved and nobody can find afterwards.
+    const result = await commandTool({ mode: "autonomous" }).execute({ command, cwd: dir });
+    expect(result.hostCard).toBeUndefined();
+    expect(result.text).toContain("dấu vết");
+    expect(executedEffects()).toEqual([]);
   });
 });

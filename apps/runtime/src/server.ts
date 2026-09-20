@@ -234,6 +234,18 @@ function baseHeaders(): Record<string, string> {
     // a caller does not already need the token for.
     "access-control-allow-origin": "*",
     "access-control-allow-headers": "authorization, content-type",
-    "access-control-allow-methods": "GET, POST, PATCH, DELETE, OPTIONS",
+    /*
+     * Every method the gateway routes.
+     *
+     * `PUT` was missing, and that made the whole preferences surface unusable from a browser: a PUT with a
+     * JSON body is not a simple request, so the preflight asked whether PUT was allowed, was told it was
+     * not, and the write never happened. Every settings control — theme's siblings, execution policy, the
+     * orb profile, personal instructions — returned "Failed to fetch" while the node-side tests passed,
+     * because those call the handler directly and never cross an origin.
+     *
+     * Kept as one list in one place: a route added without its method being allowed here fails only in a
+     * browser, which is the hardest place to notice it.
+     */
+    "access-control-allow-methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
   };
 }

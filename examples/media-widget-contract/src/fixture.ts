@@ -30,12 +30,12 @@ export interface MediaFixtureState {
 }
 
 export type MountOutcome =
-  | { mounted: true; surface: "inline" | "pin"; playing: false }
+  | { mounted: true; surface: "inline" | "pin" | "detached"; playing: false }
   | {
       mounted: false;
       reason: "ALREADY_OWNED";
       /** The surface that holds playback, so the UI can move to it instead of duplicating it. */
-      heldBy: "inline" | "pin";
+      heldBy: "inline" | "pin" | "detached";
       message: string;
     };
 
@@ -48,7 +48,7 @@ export type MountOutcome =
  */
 export function mount(
   deps: WidgetDeps,
-  input: { instanceId: string; surface: "inline" | "pin"; ownerToken: string },
+  input: { instanceId: string; surface: "inline" | "pin" | "detached"; ownerToken: string },
 ): MountOutcome {
   const claim = claimLiveOwner(deps, {
     instanceId: input.instanceId,

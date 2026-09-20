@@ -6,6 +6,8 @@ import {
   type CompositionActionRef,
   type CompositionInitialState,
   type CompositionProvenance,
+  type ExecutionMode,
+  type ExecutionRule,
   type Instant,
   type PresentationBundle,
   type Principal,
@@ -36,6 +38,8 @@ import {
   toJson,
   transaction,
 } from "@clarkcant/storage";
+
+import { decideExecution } from "./execution-policy.ts";
 
 /**
  * Widget and action service.
@@ -199,7 +203,15 @@ export function bumpRevision(
 
 export interface LiveOwnerClaim {
   instanceId: string;
-  surface: "inline" | "pin";
+  /**
+   * Where this instance is being presented.
+   *
+   * `detached` is a third presentation of the *same* instance, not a new one: a widget moved into its own
+   * window keeps its state, its subscriptions and its single owner, and the point of listing it here is that
+   * the one-owner rule has to hold across surfaces. Without it, detaching would be the way to end up with two
+   * live copies of one widget — the failure the lease exists to prevent.
+   */
+  surface: "inline" | "pin" | "detached";
   ownerToken: string;
   /** How long the claim stays valid without being refreshed. */
   leaseMs?: number;
@@ -308,7 +320,7 @@ export function releaseLiveOwner(deps: WidgetDeps, instanceId: string, ownerToke
 export function liveOwnerOf(
   deps: WidgetDeps,
   instanceId: string,
-): { ownerToken: string; surface: "inline" | "pin"; expiresAt?: string } | undefined {
+): { ownerToken: string; surface: "inline" | "pin" | "detached"; expiresAt?: string } | undefined {
   const row = oneRow<{
     owner_token: string;
     owner_surface: string;
@@ -325,7 +337,7 @@ export function liveOwnerOf(
   }
   return {
     ownerToken: row.owner_token,
-    surface: row.owner_surface as "inline" | "pin",
+    surface: row.owner_surface as "inline" | "pin" | "detached",
     ...(row.lease_expires_at === null ? {} : { expiresAt: row.lease_expires_at }),
   };
 }
@@ -1070,6 +1082,14 @@ const OPERATION_BUMP: Record<string, "presentation" | "data"> = {
 export interface MiniAppActionRequest extends ActionInvocation {
   conversationId: string;
   principalId: Principal["principalId"];
+  /**
+   * The execution policy in force, when the caller can read it.
+   *
+   * Supplied by the transport rather than read here, because this package takes no dependency on the
+   * preference store. Absent keeps the behaviour that existed before the modes did: an effect action is
+   * refused as needing the approval path.
+   */
+  policy?: { mode: ExecutionMode; rules: readonly ExecutionRule[] };
 }
 
 export type MiniAppActionCode =
@@ -1081,7 +1101,9 @@ export type MiniAppActionCode =
   | "REVISION_MISMATCH"
   | "BINDING_STALE"
   | "INVOCATION_KEY_REUSED"
-  | "STATE_CONFLICT";
+  | "STATE_CONFLICT"
+  /** Refused by the user's own execution policy, which no mode and no rule may override. */
+  | "POLICY_REFUSED";
 
 export type MiniAppActionOutcome =
   | {
@@ -1157,10 +1179,39 @@ export function invokeMiniAppAction(deps: WidgetDeps, request: MiniAppActionRequ
     };
   }
   if (binding.proposal.kind !== "view") {
+    /*
+     * Whether this needs an approval is the policy's decision, not a flag frozen when the binding was
+     * registered. An action invoked from a surface is the user acting — the click or the spoken request is
+     * the instruction — which is what the risk gate reads.
+     */
+    const decision =
+      request.policy === undefined
+        ? undefined
+        : decideExecution({
+            mode: request.policy.mode,
+            rules: request.policy.rules,
+            explicitUserIntent: true,
+            action: {
+              kind: "effect",
+              category: binding.effectCategory,
+              // Bound to the binding digest the caller was shown, so a card could not cover a different one.
+              operationDigest: request.expectedBindingDigest,
+            },
+          });
+
+    if (decision?.kind === "deny") {
+      return { ok: false, code: "POLICY_REFUSED", message: decision.reason };
+    }
+
     return {
       ok: false,
       code: "UNSUPPORTED_ACTION",
-      message: `a ${binding.proposal.kind} action needs the approval path; the M1 surface only performs view operations`,
+      // Which of the two refusals this is, said plainly: a policy that allows an action this node cannot
+      // perform yet is a missing executor, not a permission problem, and the two need different fixes.
+      message:
+        decision?.kind === "execute"
+          ? `the execution policy allows this ${binding.proposal.kind} action, but this node has no executor for it yet`
+          : `a ${binding.proposal.kind} action needs the approval path; the M1 surface only performs view operations`,
     };
   }
   const operation = binding.proposal.operation;
