@@ -1,7 +1,7 @@
 import { z } from "zod";
 
 import { facetKindSchema, type isolationClassSchema } from "./install.ts";
-import { platformSchema, semverSchema } from "./primitives.ts";
+import { platformSchema, semverSchema, type Platform } from "./primitives.ts";
 
 /**
  * Where a package comes from, and what a directory entry may say about it.
@@ -115,7 +115,12 @@ export function riskLaneFor(isolations: readonly z.infer<typeof isolationClassSc
 export function entryFitsHost(input: {
   entry: Pick<DirectoryEntry, "hostApi" | "platforms">;
   hostApi: number;
-  platform: string;
+  /**
+   * Typed as the vocabulary rather than `string`. It was a string with an `as never` at the comparison, which meant
+   * the one check standing between a package and the wrong host was the one place the compiler was told to look
+   * away — and a raw `win32` from Node sailed through it.
+   */
+  platform: Platform;
 }): { ok: true } | { ok: false; reason: string } {
   if (input.hostApi < input.entry.hostApi.min || input.hostApi > input.entry.hostApi.max) {
     return {
@@ -123,8 +128,12 @@ export function entryFitsHost(input: {
       reason: `package needs host API ${String(input.entry.hostApi.min)}–${String(input.entry.hostApi.max)}, this host is ${String(input.hostApi)}`,
     };
   }
-  if (!input.entry.platforms.includes(input.platform as never)) {
-    return { ok: false, reason: `package does not list ${input.platform}` };
+  if (!input.entry.platforms.includes(input.platform)) {
+    // The same reason as the resolver's: naming only the host describes the reader's machine, not the package.
+    return {
+      ok: false,
+      reason: `package is built for ${input.entry.platforms.join(", ")}; this host is ${input.platform}`,
+    };
   }
   return { ok: true };
 }
