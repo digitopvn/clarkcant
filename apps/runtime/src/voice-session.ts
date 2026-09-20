@@ -553,7 +553,24 @@ export function attachVoiceGateway(options: VoiceGatewayOptions): VoiceGateway {
       // Only a sentence and a conversation are required to get this far. Whether an agent is wired is checked
       // further down, at the point that needs one: the command channel has nothing to do with the model, and a
       // node with no agent can still open Settings or resize its own window when asked out loud.
-      if (text === "" || askIn === undefined) return;
+      if (text === "") return;
+      if (askIn === undefined) {
+        /*
+         * Said, not swallowed.
+         *
+         * A session with no conversation has nowhere to put a sentence: the agent answers inside a conversation, and
+         * without one the words were transcribed and then dropped. The person heard nothing at all - no reply, no
+         * error, and a surface that read "listening" - which is what gets reported as "voice does not work".
+         * Measured on this path: the same audio with a conversation bound produced the agent's answer and 468 KB of
+         * speech back; without one it produced neither.
+         */
+        userText = "";
+        const unbound =
+          "Phiên thoại này chưa gắn với hội thoại nào, nên tui không có chỗ để trả lời. Bạn mở lại voice khi đang ở trong hội thoại giúp tui nhé.";
+        send({ type: "transcript", role: "assistant", text: unbound, final: true });
+        say(unbound);
+        return;
+      }
       // Cleared only when this sentence really is being answered. Clearing it earlier would throw away
       // the only copy of something that was said, and the closing report would then have nothing to keep.
       userText = "";
