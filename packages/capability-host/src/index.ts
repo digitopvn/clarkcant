@@ -181,12 +181,18 @@ export function decideRequirementAction(input: {
 }
 
 /**
- * @implementation-status stub
- * TODO(P5): the staged install pipeline — quarantine download, dependency locking,
- * checksum verification and isolated build. Manifest validation, candidate ranking,
- * plan creation and generation activation are implemented and tested; the download
- * and sandboxed build steps need a real artifact source and an isolation backend.
+ * Manifest validation, candidate ranking, plan creation and generation activation are implemented and tested.
+ *
+ * The staged install pipeline now has the two steps that touch code from somewhere else, in `quarantine.ts`:
+ * the artifact is downloaded into a directory of its own and hashed before anything may look at it, and the
+ * build runs in a process of its own with a working directory inside quarantine and an environment stripped
+ * of the node's credentials. The unpack step is guarded against an entry — a symlink included — that resolves
+ * outside the root.
+ *
+ * Not built: dependency locking. A package's own dependency tree is not resolved and pinned, so a build still
+ * sees whatever the package manager resolves for it at build time.
  */
 export const INSTALL_PIPELINE_STATE: InstallState = "proposed";
 
 export * from "./secrets.ts";
+export * from "./quarantine.ts";
