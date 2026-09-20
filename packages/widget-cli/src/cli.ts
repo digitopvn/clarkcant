@@ -7,6 +7,7 @@ import { definitionDigest } from "@clarkcant/widget-host";
 import { directoryEntrySchema, riskLaneFor, type DirectoryEntry } from "@clarkcant/contracts";
 
 import { runConformance, type ConformanceReport } from "./conformance.ts";
+import type { FrameFacts } from "./dev-shell.ts";
 import { startDevHost } from "./dev-host.ts";
 import { readPackage } from "@clarkcant/core";
 
@@ -178,6 +179,22 @@ function walk(root: string, dir = root): string[] {
     else files.push(relative(root, path).replaceAll("\\", "/"));
   }
   return files.sort();
+}
+
+/**
+ * Frame facts a browser collected, read from a file.
+ *
+ * This is how the checks that need a rendered frame are answered: the dev host collects the facts in the page and
+ * posts them, and the suite reads them here. Without a file they stay `requires-dev-host`, which is the honest
+ * answer — the check has not been performed — rather than a guess about what the browser would have shown.
+ */
+function readFrames(path: string): FrameFacts | undefined {
+  try {
+    const parsed: unknown = JSON.parse(readFileSync(path, "utf8"));
+    return typeof parsed === "object" && parsed !== null ? (parsed as FrameFacts) : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 function pack(root: string): number {
@@ -410,7 +427,15 @@ export async function runCli(argv: readonly string[]): Promise<number> {
     return 0;
   }
   if (command === "test") {
-    const result = runConformance(dir);
+    const framesPath = flag(rest, "--frames");
+    const frames = framesPath === undefined ? undefined : readFrames(framesPath);
+    if (framesPath !== undefined && frames === undefined) {
+      // Reported rather than ignored: a suite that silently fell back would call a package unchecked when somebody
+      // had already checked it, which is the one thing this report exists to distinguish.
+      process.stderr.write(`--frames ${framesPath} could not be read as frame facts\n`);
+      return 2;
+    }
+    const result = runConformance(dir, frames === undefined ? {} : { frames });
     process.stdout.write(`${report(result)}\n`);
     return result.ok ? 0 : 1;
   }
