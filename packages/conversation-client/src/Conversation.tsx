@@ -175,6 +175,15 @@ export function Conversation({
    */
   const liveTrigger = useRef<HTMLElement | null>(null);
   const [connection, setConnection] = useState<ConnectionState>("connecting");
+  /**
+   * A counter that tells the header's background mark to read again now.
+   *
+   * The mark polls, because it is a glance at a number rather than a stream. Polling alone would miss work that is
+   * shorter than the interval — a session can last a second and a half while the poll is every five — so the action
+   * that starts work says so and the mark reads immediately instead of waiting for the next tick. Only the start needs
+   * this; the end is what the poll is for.
+   */
+  const [backgroundTick, setBackgroundTick] = useState(0);
   const [draft, setDraft] = useState("");
   const [busy, setBusy] = useState(false);
   /**
@@ -1167,8 +1176,9 @@ export function Conversation({
             {connection === "ready" ? "Ready" : connection === "connecting" ? "Đang kết nối" : "Mất kết nối"}
           </div>
           {/* The work behind the conversation. Absent while there is none: a header that always said "0" would be a
-              permanent line of noise, and the count only matters when it is not zero. */}
-          <BackgroundSessionsMark client={client} />
+              permanent line of noise, and the count only matters when it is not zero. `backgroundTick` is what makes it
+              appear at once for work that may already be over by the next poll. */}
+          <BackgroundSessionsMark client={client} refreshKey={backgroundTick} />
           {/*
             The gear is the only settings affordance, which is why it is here rather than in a
             menu: a setting that is two clicks deep is a setting nobody checks. It opens a panel
@@ -1585,6 +1595,9 @@ export function Conversation({
         onBackground={async (text) => {
           if (conversationId === undefined) return;
           await client.startBackground({ conversationId, text });
+          // Read the header's mark again now: the node has recorded the session before it answers, so a read here sees
+          // it running, and waiting for the next poll could be waiting longer than the work lasts.
+          setBackgroundTick((tick) => tick + 1);
         }}
       />
 

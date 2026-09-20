@@ -202,13 +202,7 @@ test("a highlighted passage can be attached to the next prompt", async ({ page }
 });
 
 /*
- * The empty case comes first, and the order is the assertion's precondition.
- *
- * This suite shares one node, and that node keeps a finished background session in its list — deliberately, because the
- * useful question is not only "is something running" but "did the last one finish". So once any background work has
- * happened on this node the header has something to say about it, for the rest of the run, and the claim below (the
- * header says nothing when there is none) can only be observed before the first session exists. Read after the test
- * that starts one, it fails for a reason that has nothing to do with what it asserts.
+ * The empty case, before anything has run on this node.
  */
 test("the header says nothing about background work when there is none", async ({ page }) => {
   // The empty case, asserted rather than assumed: a mark that showed "0" would be a permanent line of noise, and the
@@ -239,5 +233,10 @@ test("a selected passage can be sent to a background session", async ({ page }) 
   // And the header now reports the work it started: this is the count the mark exists for, and it is the only way the
   // number is verifiable in a browser - the registry fills when something asks for background work, not on its own.
   await expect(page.locator("[data-background-count='true']")).toBeVisible({ timeout: 20_000 });
+
+  // And it goes away when the work does. The mark is about work in flight: the fixture session finishes in about a
+  // second and a half, and the client polls every five, so this is asserting that the header stops saying something
+  // about work that is over rather than that it says nothing the instant a worker exits.
+  await expect(page.locator("[data-background-sessions]")).toHaveCount(0, { timeout: 20_000 });
 });
 

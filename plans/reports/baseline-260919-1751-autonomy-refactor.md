@@ -259,3 +259,15 @@ Bốn test e2e từng được ghi là "có sẵn từ trước, không liên qu
 **j1.spec.ts:228 (phát sinh khi việc nền chạy được).** Node cố ý giữ cả phiên nền đã xong ("did the last one finish"), nên sau test tạo phiên thì header còn mark suốt run. Test "không có việc nền" khẳng định đúng trạng thái đó nhưng phải được quan sát trước khi node có lịch sử; nó được chuyển lên trước test tạo phiên, kèm lý do.
 
 **Câu hỏi mở.** Node giữ phiên nền đã xong vô thời hạn, nên trên một node thật, header sẽ luôn có mark sau lần đầu ai đó chạy việc nền — ngược với ý "mark chỉ hiện khi có việc". Có nên prune theo tuổi hoặc theo số lượng (ví dụ chỉ giữ phiên đang chạy và phiên vừa xong) không? Chưa đổi vì đó là quyết định sản phẩm.
+
+## 15. Mark việc nền: chỉ nói về việc đang chạy
+
+Theo đề xuất đã chốt. Trước đây registry giữ mọi phiên vĩnh viễn và client vẽ mark khi danh sách còn phần tử, nên sau lần đầu có việc nền thì header có mark mãi — đúng cái mà comment của chính mark nói là không nên — và danh sách trong bộ nhớ tăng không giới hạn.
+
+**Đã làm.** `background-sessions.ts` chặn danh sách hai đầu: mục đã xong quá 10 phút thì bỏ, giữ tối đa 20 mục đã xong; **mục đang chạy không bao giờ bị bỏ** vì đó là thứ duy nhất danh sách này tồn tại để báo, và một con số quên mất worker còn tệ hơn một danh sách dài. Thêm `now()` injectable để test không phụ thuộc đồng hồ thật (test cũ phải inject clock, nếu không mục của nó đã bị prune vì cũ một ngày). Client (`background-sessions-mark.tsx`) chỉ vẽ khi `running > 0` và chỉ liệt kê phiên đang chạy; kết cục của việc nền vẫn nằm ở hội thoại như trước, đó là chỗ bền và có kết quả.
+
+**Một lỗi lộ ra khi bỏ phần "việc đã xong" khỏi mark.** E2E fail ở assertion mark hiện ra: mark đọc trạng thái theo poll 5 giây, còn phiên của fixture chỉ sống 1,5 giây — nên có lúc client không bao giờ thấy nó đang chạy. Trước đây không lộ vì mark còn vẽ cả phiên đã xong nên vẫn hiện. Sửa: `Conversation` giữ một counter `backgroundTick`, tăng ngay sau khi `startBackground` trả về, và mark nhận `refreshKey` để đọc lại ngay thay vì chờ nhịp poll. Chỉ lúc *bắt đầu* cần thế; lúc kết thúc thì poll là đúng dạng, vì không ai đang chờ nó.
+
+**Kiểm chứng.** `background-sessions.spec.ts` 7 test (thêm 3: prune theo tuổi, mục đang chạy không bị prune dù 8 tiếng, cap chỉ áp cho mục đã xong). `pnpm verify` 1281 pass / 7 skip. `pnpm test:e2e` 56 passed / 0 failed, exit=0 — trong đó test việc nền nay khẳng định thêm rằng mark **biến mất** khi việc xong. `docs/system-architecture.md` §368 ghi luật chặn hai đầu; manifest cập nhật; invariants 7/7.
+
+**Câu hỏi mở còn lại.** Không còn từ mục 14. Việc nền ngắn hơn nhịp poll vẫn chỉ hiện được mark nếu nó bắt đầu từ một hành động trong giao diện (đường có `refreshKey`); việc nền do thứ khác khởi động thì vẫn phụ thuộc poll 5 giây. Hiện chưa có đường nào như vậy.
