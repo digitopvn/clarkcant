@@ -436,11 +436,29 @@ async function main(): Promise<void> {
               version: "1.0.0",
               displayName: "Dashboard",
               description: "biểu đồ cho dự án",
-              source: { kind: "local", path: "/tmp/dashboard" },
+              // An exact npm version, which is what the directory fixture beside this lists: the install resolves the
+              // entry from the index, so a card whose source disagreed with it would be testing two different things.
+              source: { kind: "npm", name: "com.acme.dashboard", version: "1.0.0" },
               digest: "sha256:1111111111111111111111111111111111111111111111111111111111111111",
               riskTier: "isolated-ui",
               facets: ["ui"],
-              platforms: ["linux-x64"],
+              platforms: ["darwin-arm64", "linux-x64", "win32-x64", "web"],
+            },
+            {
+              /*
+               * A second result the directory does **not** list, so the refusal path is reachable from the interface
+               * rather than only from a test that calls the route. A listing somebody can click and get a named
+               * refusal from is the difference between "we handle that" and "we say we handle that".
+               */
+              packageId: "com.acme.not-listed",
+              version: "2.0.0",
+              displayName: "Not Listed",
+              description: "không có trong directory",
+              source: { kind: "npm", name: "com.acme.not-listed", version: "2.0.0" },
+              digest: "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+              riskTier: "isolated-ui",
+              facets: ["ui"],
+              platforms: ["darwin-arm64", "linux-x64", "win32-x64", "web"],
             },
           ],
         },

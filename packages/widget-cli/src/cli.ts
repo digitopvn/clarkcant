@@ -327,6 +327,12 @@ function publish(root: string): number {
     // Empty rather than absent: a package without preview media is listed, not hidden.
     preview: {},
     facets: [...new Set(pkg.manifest.facets.map((facet) => DIRECTORY_FACETS[facet.kind] ?? "ui"))],
+    // From the manifest, one entry per facet: the install supervisor plans isolation per facet, and this is the
+    // only place that knows the answer without guessing it back out of the strongest lane.
+    isolations: pkg.manifest.facets.map((facet) => ({
+      facetKind: DIRECTORY_FACETS[facet.kind] ?? "ui",
+      isolation: facet.isolation,
+    })),
     platforms: pkg.manifest.platforms as DirectoryEntry["platforms"],
     hostApi: pkg.manifest.hostApi,
     permissionsSummary: requestedSummary(pkg.manifest.permissions),

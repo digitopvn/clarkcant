@@ -48,21 +48,31 @@ test("a search result names its directory, its source and its risk lane", async 
   // The origin is visible, not implied: a result without it would look like something this machine knows.
   await expect(card).toContainText("/tmp/cc-directory.json");
   await expect(card.locator("[data-marketplace-package='com.acme.dashboard']")).toBeVisible();
-  await expect(card.locator("[data-marketplace-source='true']")).toHaveText("/tmp/dashboard");
-  await expect(card.locator("[data-marketplace-risk='isolated-ui']")).toContainText("cách ly");
+  // Scoped to the package under test: the card lists more than one now, so an unscoped locator would be asserting
+  // against whichever row came first. The source is the exact npm version the directory resolves.
+  const dashboard = card.locator("[data-marketplace-package='com.acme.dashboard']");
+  await expect(dashboard.locator("[data-marketplace-source='true']")).toHaveText("com.acme.dashboard@1.0.0");
+  await expect(dashboard.locator("[data-marketplace-risk='isolated-ui']")).toContainText("cách ly");
   // The digest is shown, and the whole value is available rather than only the truncated line.
-  await expect(card.locator("[data-marketplace-digest='true']")).toHaveAttribute("title", /^sha256:1{8}/);
+  await expect(dashboard.locator("[data-marketplace-digest='true']")).toHaveAttribute("title", /^sha256:1{8}/);
   await expect(card).toContainText("1.0.0");
 });
 
-test("a search result offers no install button of its own", async ({ page }) => {
+test("every install control belongs to the row it acts on", async ({ page }) => {
   await search(page);
 
   const card = page.locator("[data-marketplace='true']").first();
   await expect(card).toBeVisible();
   /*
-   * Installing goes through the install path, where the digest is verified and consent is recorded. A button here
-   * would be a second entry point into installing — and the one place a listing could become an authorisation.
+   * This test used to assert the card had **no** install control, which was right while the install route did not
+   * exist: a button whose action is missing is worse than no button. The route exists now, so each row carries its
+   * own control, and what is worth asserting is that it is *per row* — a single card-wide control would be worse
+   * than either, because it would have to guess which package was meant.
    */
-  await expect(card.locator("button")).toHaveCount(0);
+  const rows = card.locator("[data-marketplace-package]");
+  await expect(rows.locator("[data-install-package]")).toHaveCount(await rows.count());
+  for (const id of ["com.acme.dashboard", "com.acme.not-listed"]) {
+    // Each control names the package it installs, rather than relying on where it happens to sit.
+    await expect(card.locator(`[data-marketplace-package='${id}'] [data-install-package='${id}']`)).toHaveCount(1);
+  }
 });
