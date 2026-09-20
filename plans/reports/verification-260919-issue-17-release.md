@@ -105,8 +105,11 @@ repo vẫn xanh) — nó là check tư vấn, không phải cổng của repo.
 Không tiêu chí nào còn đỏ. Cả hai cổng từng chỉ chạy tay nay chạy trong CI mỗi lần push (`e2e`, `desktop smoke (xvfb)`), nên
 evidence của cửa sổ không còn phụ thuộc vào một máy cụ thể.
 
-- Các check cần provider thật (`[calibration]`, `[jev-live]`) vẫn BLOCKED nếu thiếu `CLARKCANT_JEV_LIVE=1` và key;
-  quyết định "ghi nhớ" của chính model vì thế chưa được chứng minh.
+- Các check cần provider thật (`[calibration]`, `[jev-live]`) là **opt-in** và cần `CLARKCANT_JEV_LIVE=1` cùng key.
+  Phần chúng chứng minh là **phán đoán của provider** — ví dụ một model thật tự quyết định gọi `remember`. Đường đi
+  thì đã đo được: fixture đóng vai agent và gọi **đúng tool đó** (`apps/runtime/src/main.ts`), và journey
+  `apps/web/e2e/memory.spec.ts` đọc kết quả từ tab Memory, xoá, rồi mở lại tab để chắc rằng mục đã biến mất chứ không
+  bị ẩn.
 - ~~Extractor PDF/ảnh~~ — **đã đóng**: PDF được trích văn bản (`apps/runtime/src/pdf-text.ts`, PR #64) và ảnh
   được giao nguyên block ảnh cho SDK (PR #66: `read_attachment` trả chính bức ảnh, `toSdkTool` phát
   `{ type: "image", data, mimeType }`). Nguyên nhân gốc nằm ở adapter, chỗ gộp mọi kết quả tool thành một block

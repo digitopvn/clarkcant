@@ -41,14 +41,14 @@ import { FixtureLiveAdapter } from "./voice-fixture.ts";
 import { SAMPLE_DATASET } from "@clarkcant/data-canvas/sample";
 
 import { createModelTurn, type ViewDescriptor } from "./model-turn.ts";
-import { memoryBrief, rememberMemory } from "./memory.ts";
+import { memoryBrief } from "./memory.ts";
 import { attachmentRefsForLastUserMessage } from "./attachments.ts";
 import { blobsDir, readBlob } from "./blobs.ts";
 import { extractPdfText } from "./pdf-text.ts";
 import { buildViewCatalog } from "./view-catalog.ts";
 import { registerNodeTools } from "./tool-catalogue.ts";
 import { composeMiniApp } from "./compose-mini-app.ts";
-import { createNodeTools } from "./node-tools.ts";
+import { createNodeTools, createRememberTool } from "./node-tools.ts";
 import { registerSessionFile, sessionsDirectory } from "./session-store.ts";
 import { bootNodeServices, type NodeServices } from "./services.ts";
 import type { ProjectSessionStarter } from "./project-session.ts";
@@ -596,26 +596,22 @@ async function main(): Promise<void> {
     /*
      * A sentence that asks the node to remember something.
      *
-     * This calls the same function the `remember` tool calls, so what it proves is the pipeline - redaction, the
-     * write, the brief, and the Memory tab reading it back - and not that a model decided to remember. That
-     * decision needs a real provider and is recorded as a blocked condition rather than implied by this.
+     * The fixture stands in for the agent and calls the same `remember` tool a model calls, with the arguments a
+     * model would pass, so the path exercised here is the tool's own: its validation, its redaction, the write, the
+     * brief the next turn reads, and the Memory tab reading it back. What a fixture cannot prove is the provider's
+     * judgement - that a model would decide to call it - and that stays an opt-in check behind a provider key.
      */
     const asked = /(?:nhớ rằng|ghi nhớ)\s*[:：]?\s*(.+)/i.exec(input.text);
     if (asked !== null) {
-      const outcome = rememberMemory(
-        { db: services.runtime.db, now: () => new Date().toISOString(), newId: services.conductor.newId },
-        {
-          principalId: input.principal.principalId,
-          conversationId: input.conversationId,
-          kind: "preference",
-          scope: "node",
-          text: (asked[1] ?? "").trim(),
-        },
-      );
-      const reply =
-        "refused" in outcome
-          ? `Fixture: không ghi nhớ được - ${outcome.refused}`
-          : `Fixture: đã ghi nhớ (${outcome.kind}) ${outcome.text}`;
+      const tool = createRememberTool({
+        db: services.runtime.db,
+        principalId: input.principal.principalId,
+        conversationId: input.conversationId,
+        now: () => new Date().toISOString(),
+        newId: services.conductor.newId,
+      });
+      const remembered = await tool.execute({ kind: "preference", scope: "node", text: (asked[1] ?? "").trim() });
+      const reply = `Fixture: ${remembered.text}`;
       return { text: reply, block: { type: "text", format: "plain", content: reply, streaming: false } };
     }
 
