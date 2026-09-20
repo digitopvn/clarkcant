@@ -6,9 +6,10 @@ import { expect, test, type Page } from "@playwright/test";
 /**
  * The Memory tab: what was remembered, where it came from, and removing it.
  *
- * The write goes through the fixture, which calls the same function the `remember` tool calls, so this journey
- * proves the pipeline rather than the model's decision to keep something - that needs a real provider and is
- * recorded as a blocked condition.
+ * The write goes through a turn: the fixture stands in for the agent and calls the same `remember` tool a model
+ * calls, so this journey exercises the tool's own validation and redaction, the write, and the Memory tab reading it
+ * back. What a fixture cannot prove is the provider's judgement - that a model would decide to call it - and that
+ * stays an opt-in check behind a provider key.
  *
  * The deletion journey re-opens the tab afterwards on purpose. A row that vanished from the screen and came back on
  * the next read would look identical in a screenshot, and it is exactly the difference between a memory somebody
