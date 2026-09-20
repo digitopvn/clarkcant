@@ -28,19 +28,36 @@ jobs:
           # The token is needed to fetch, not to persist; leaving it in .git/config
           # makes it readable by every later step and by any script they run.
           persist-credentials: false
+          # Both sides of push/PR diffs must be available. A missing base still runs all checks.
+          fetch-depth: 0
+
+      - name: Classify the changed paths
+        id: scope
+        continue-on-error: true
+        env:
+          CI_DIFF_BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+          CI_DIFF_HEAD: HEAD
+        run: node tools/ci-test-scope.mjs
 
       - name: Enable corepack
+        if: steps.scope.outcome != 'success' || steps.scope.outputs.full != 'false'
         run: corepack enable
 
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        if: steps.scope.outcome != 'success' || steps.scope.outputs.full != 'false'
         with:
           node-version: ${{ matrix.node }}
           cache: pnpm
+
+      # Keep document hashes, traceability and credential checks even on prose-only changes.
+      - name: Repository invariants
+        run: node tools/check-invariants.mjs
 
       # --frozen-lockfile so CI verifies the committed resolution rather than
       # re-resolving it. The supply-chain policy in pnpm-workspace.yaml is applied
       # during the same step.
       - name: Install
+        if: steps.scope.outcome != 'success' || steps.scope.outputs.full != 'false'
         run: pnpm install --frozen-lockfile
 
       # The vector index needs a loadable extension, and whether it loads is a property of the
@@ -48,32 +65,35 @@ jobs:
       # runs on linux x64. Absent is a supported state and exits 0 with a reason; installed but
       # unusable exits 1, which is the failure that would otherwise hide behind a lexical fallback.
       - name: Probe the optional vector extension
+        if: steps.scope.outcome != 'success' || steps.scope.outputs.full != 'false'
         run: node tools/probe-vector-extension.mjs
 
-      - name: Repository invariants
-        run: pnpm run invariants
-
       - name: Typecheck
+        if: steps.scope.outcome != 'success' || steps.scope.outputs.full != 'false'
         run: pnpm run typecheck
 
       - name: Lint
+        if: steps.scope.outcome != 'success' || steps.scope.outputs.full != 'false'
         run: pnpm run lint
 
       # The browser driver tests launch a real Chromium. Without this step they fail with a
       # message telling you to install it — a true and clear failure, but not a test that ran.
       - name: Install the browser the driver tests launch
+        if: steps.scope.outcome != 'success' || steps.scope.outputs.full != 'false'
         run: pnpm exec playwright install --with-deps chromium
 
       - name: Tests
+        if: steps.scope.outcome != 'success' || steps.scope.outputs.full != 'false'
         run: pnpm run test
 
       # A blocked step is an honest outcome and exits zero; only a genuine failure
       # fails this step. See the probe's own comment for the reasoning.
       - name: P0.1 Pi SDK lifecycle probe
+        if: steps.scope.outcome != 'success' || steps.scope.outputs.full != 'false'
         run: node packages/pi-adapter/src/probe-cli.ts --json > probe.json
 
       - name: Upload probe evidence
-        if: always()
+        if: always() && (steps.scope.outcome != 'success' || steps.scope.outputs.full != 'false')
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: pi-sdk-probe-node-${{ matrix.node }}
@@ -91,16 +111,8 @@ jobs:
           # The token is needed to fetch, not to persist: leaving it in .git/config
           # makes it readable by every later step and by any script they run.
           persist-credentials: false
-      # The same patterns the repository invariant checker enforces locally.
-      - name: Fail on credential-shaped strings
-        run: |
-          set -euo pipefail
-          if git grep -nEI 'gh[pousr]_[A-Za-z0-9]{20,}|sk-[A-Za-z0-9]{20,}|AKIA[0-9A-Z]{16}|-----BEGIN [A-Z ]*PRIVATE KEY-----|npm_[A-Za-z0-9]{30,}' \
-               -- . ':(exclude)docs/**' ':(exclude)pnpm-lock.yaml'; then
-            echo "::error::a credential-shaped string was found in the tracked tree"
-            exit 1
-          fi
-          echo "no credential-shaped strings found"
+      - name: Fail on credentials in current and historical file versions
+        run: node tools/scan-secret-history.mjs
 
   # The browser suite was the only gate that exercises the five features of issue #17 end to end, and until this
   # job existed it was run by hand on whichever machine happened to run it. That is why the release report had to

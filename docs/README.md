@@ -43,6 +43,16 @@ Yêu cầu người dùng mới nhất → scope-lock → system-architecture �
 - Browser Use và Computer Use là capability quan trọng, driver đóng gói extension; quyền và vòng đời nằm trong core.
 - Voice dùng chung task/action model; mobile native và marketplace thương mại chưa nằm trong release này.
 
+## Kiểm tra CI theo phạm vi thay đổi
+
+Workflow [CI](../.github/workflows/ci.yml) giữ các gate verify, secret scan, browser E2E và desktop smoke. [Bộ phân loại](../tools/ci-test-scope.mjs) chỉ rút gọn các bước của job verify khi toàn bộ diff thuộc danh sách văn xuôi được phép hoặc `docs/manifest.json`; invariants vẫn chạy. Những gate còn lại không bị bộ phân loại này bỏ qua. Diff có code, đường dẫn chưa biết, thiếu base hoặc lỗi phân loại vẫn chạy đầy đủ.
+
+Các thay đổi có code vẫn chạy toàn bộ Vitest trên cả hai phiên bản Node; không chọn test theo package vì nhiều ràng buộc an toàn đi xuyên package. Lệnh kiểm tra hành trình và yêu cầu hoàn tất thay đổi UI nằm trong [AGENTS.md](../AGENTS.md); CI đã có browser E2E và desktop smoke, nhưng fixture không chứng minh provider thật hoạt động. Kết quả BLOCKED phải được đọc cùng điều kiện còn thiếu.
+
+Các suite live chỉ chạy khi bật opt-in. Khi đã bật mà thiếu credential/model hoặc không nhận được bằng chứng từ provider, smoke/calibration thất bại với lý do `BLOCKED`, không chuyển sang PASS nhờ fallback. [Live smoke](../apps/runtime/test/jev-live.spec.ts) và [calibration](../apps/runtime/test/jev-calibration-live.spec.ts) sở hữu điều kiện thực thi; một HTTP lỗi chung không chứng minh từ chối đúng model.
+
+Chạy `node tools/scan-secret-history.mjs` để kiểm tra lịch sử Git đã tải đầy đủ; [script quét](../tools/scan-secret-history.mjs) sở hữu các mẫu nhận diện và giới hạn đầu ra. Phạm vi gồm các phiên bản tệp còn truy cập được trong lịch sử, kể cả tài liệu và tệp đã xóa; đây là kiểm tra theo mẫu, không chứng minh mọi loại bí mật đều được phát hiện. Clone nông hoặc kho Git không đọc được làm kiểm tra thất bại. Kết quả chỉ nêu mã đối tượng và loại mẫu, không in giá trị bí mật.
+
 ## Bốn câu không được quảng cáo sai
 
 “Cài package xong” không đồng nghĩa “integration dùng được”. “Local-first” không đồng nghĩa “dữ liệu không rời máy”. “Đóng UI” không đồng nghĩa “dừng việc trên VPS”. “Có chữ ký/iframe/container” không đồng nghĩa “an toàn tuyệt đối”.
