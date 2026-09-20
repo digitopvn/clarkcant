@@ -49,6 +49,7 @@ import { SAMPLE_DATASET } from "@clarkcant/data-canvas/sample";
 
 import { createModelCatalogue, createModelTurn, type ViewDescriptor } from "./model-turn.ts";
 import { bootRuntime } from "./node.ts";
+import { availableCredentials } from "./readiness.ts";
 import { memoryBrief } from "./memory.ts";
 import { attachmentRefsForLastUserMessage } from "./attachments.ts";
 import { blobsDir, readBlob } from "./blobs.ts";
@@ -1704,12 +1705,24 @@ async function main(): Promise<void> {
    * supports, and the first thing to drift from it.
    */
   services.voiceCapabilities = () => voice.capabilities();
+  /*
+   * Whether voice is usable, answered from both places a key can be.
+   *
+   * The environment is where an operator puts one; the vault is where the settings surface writes one, and on a
+   * desktop that is the common case. Reading only the environment printed "no GEMINI_API_KEY, so a voice session will
+   * be refused" on a node whose credential card had just been filled in — a line that was not merely unhelpful but
+   * wrong about what this node would do.
+   */
+  const voiceHasCredential = availableCredentials({
+    env: process.env,
+    vault: credentialNames(services.runtime.db, services.runtime.identity.ownerPrincipalId),
+  }).includes(VOICE_CREDENTIAL_NAME);
   process.stderr.write(
     voiceFixture
       ? "voice: FIXTURE provider loaded — audio and transcripts on /voice are scripted, not model output\n"
-      : process.env.GEMINI_API_KEY === undefined
-        ? "voice: no GEMINI_API_KEY, so a voice session will be refused with the reason rather than failing silently\n"
-        : `voice: live voice sessions available on /voice (model ${voiceModel ?? "the pinned default"})\n`,
+      : voiceHasCredential
+        ? `voice: live voice sessions available on /voice (model ${voiceModel ?? "the pinned default"})\n`
+        : "voice: no credential for the live provider, so a voice session will be refused by name rather than failing silently\n",
   );
 
   /**

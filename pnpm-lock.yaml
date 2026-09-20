@@ -203,6 +203,9 @@ importers:
 
   apps/runtime:
     dependencies:
+      '@clarkcant/app-worker':
+        specifier: workspace:*
+        version: link:../worker
       '@clarkcant/capability-host':
         specifier: workspace:*
         version: link:../../packages/capability-host
@@ -378,6 +381,9 @@ importers:
         specifier: 19.3.0
         version: 19.3.0
     devDependencies:
+      '@clarkcant/data-canvas':
+        specifier: workspace:*
+        version: link:../../packs/data-canvas
       '@types/react':
         specifier: ^19.3.0
         version: 19.3.0
