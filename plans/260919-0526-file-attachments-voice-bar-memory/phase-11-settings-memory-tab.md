@@ -1,7 +1,7 @@
 ---
 phase: 11
 title: "Tab Memory trong Settings"
-status: pending
+status: done
 priority: P1
 effort: "4h"
 dependencies: [10]

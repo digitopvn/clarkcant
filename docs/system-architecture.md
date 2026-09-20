@@ -319,6 +319,10 @@ Nhóm bảng: principals/nodes/grants; conversations/messages; tasks/runs/delega
 
 Secrets lưu trong vault abstraction: macOS Keychain hoặc server secret store/encrypted-at-rest storage với key nằm ngoài DB backup. File permissions không thay encryption; container env cũng không là giải pháp tránh mọi leak. Bootstrap/recovery key và backup procedure phải có test; không tự sinh key rồi lưu cùng plaintext DB và gọi là bảo mật đầy đủ.
 
+**`memory_records` không phải index tìm kiếm thứ hai.** Nó là những câu agent chọn giữ, kèm conversation đã học được câu đó. Xoá một memory xoá **đường inject** vào các lượt sau — brief được đọc lại mỗi lượt từ DB chứ không cache trong tiến trình — nhưng tin nhắn gốc của người dùng vẫn nằm trong `messages` và vẫn nhìn thấy được trong hội thoại. Đây là lý do nó không phải hidden memory: thứ được nhớ luôn đọc được và xoá được ở tab Memory, và thứ bị xoá chỉ là đường nó quay lại prompt. Cùng lý do đó, đường sinh gợi ý không đọc `history_embeddings` và không gọi model: một gợi ý phải là cách đọc những gì người dùng cũng đọc được.
+
+**Blob của tệp đính kèm dùng chung blob store của node** (`dataDir/blobs`, content-addressed, `mode: 0o600`), không phải một kho thứ hai. Bảng `attachments` giữ việc principal nào đính tệp nào vào conversation nào và là chỗ cộng quota; bytes không bao giờ được địa chỉ hoá bằng path trong prompt — prompt chỉ mang `att_…` opaque, và nội dung được đọc qua tool của host với **không** tham số path. Một tệp bị xoá khỏi DB vẫn có thể còn bytes trên đĩa cho tới lần dọn sau, nên "đã xoá khỏi app" không đồng nghĩa "đã xoá khỏi đĩa".
+
 Raw audio/video không lưu mặc định. Screenshots có retention ngắn, chứa dữ liệu nhạy cảm; cấp quyền capture không đồng nghĩa được lưu vĩnh viễn hoặc gửi cho mọi model. Dữ liệu người dùng xóa khỏi app không tự xóa khỏi third-party provider đã nhận.
 
 ## 11. Unified UI/action path

@@ -1,6 +1,6 @@
 import { type ReactElement, useCallback, useEffect, useRef, useState } from "react";
 
-import type { VoiceState } from "@clarkcant/contracts";
+import type { AppIntentDecision, VoiceState } from "@clarkcant/contracts";
 
 import type { GatewayClient } from "./api.ts";
 import { Orb } from "./Orb.tsx";
@@ -101,6 +101,34 @@ export interface VoiceOverlayProps {
    * and the caller is expected to throttle it, while `onAnswered` fires once and is the end of the turn.
    */
   onProgress?: () => void;
+  /**
+   * A decision the node made about a command spoken during this session.
+   *
+   * Handed to whoever owns the executor rather than acted on here: one function runs an intent whether it came from
+   * a click or a voice, and this overlay is deliberately not that function.
+   */
+  onAppIntent?: (decision: AppIntentDecision) => void;
+  /**
+   * A spoken widget action has run on the node; the host should re-read the surface. Typed structurally so this prop
+   * does not depend on the session module's exported shape.
+   */
+  onWidgetActionResult?:
+    | ((result: { ok: boolean; say: string; instanceId?: string | undefined; revision?: number | undefined }) => void)
+    | undefined;
+  /**
+   * The widget on screen, if any.
+   *
+   * An id, because the node builds the view it decides against from what it holds. Passed down rather than read from
+   * the client here: this overlay owns the microphone, and what is on screen belongs to the surface behind it.
+   */
+  focusedInstanceId?: string | undefined;
+  /**
+   * Start out of the way, showing only the bar.
+   *
+   * The collapsed presentation is what the desktop window becomes when it shrinks, and this is how a browser can
+   * be put into it too - without pretending to have a shell, and without the test inventing a second bar.
+   */
+  startCollapsed?: boolean | undefined;
   requires?: string;
   unblockedBy?: string;
 }
@@ -111,6 +139,10 @@ export function VoiceOverlay({
   onClose,
   onAnswered,
   onProgress,
+  onAppIntent,
+  onWidgetActionResult,
+  focusedInstanceId,
+  startCollapsed = false,
   requires = "một phiên Live API đang mở",
   unblockedBy = "đặt GEMINI_API_KEY cho node rồi thử lại",
 }: VoiceOverlayProps): ReactElement {
@@ -121,7 +153,7 @@ export function VoiceOverlay({
    *
    * The session keeps running while it is collapsed: this hides the body, not the microphone.
    */
-  const [collapsed, setCollapsed] = useState(false);
+  const [collapsed, setCollapsed] = useState(startCollapsed);
   const [problem, setProblem] = useState<string | undefined>(undefined);
   /**
    * The credential the node refused the session for, when it refused for one.
@@ -153,6 +185,17 @@ export function VoiceOverlay({
   const [frames, setFrames] = useState({ captured: 0, heard: 0 });
 
   const sessionRef = useRef<VoiceSession | undefined>(undefined);
+  /**
+   * Tell the node which widget is on screen.
+   *
+   * Sent when the session appears and whenever the focus changes. The session state is in the dependencies because the
+   * session comes into existence after this component has already rendered: without it, a session opened while a
+   * surface was already up would never say so, and the first spoken action on that widget would be answered with
+   * "nothing is open" - a wrong answer that looks exactly like a working one.
+   */
+  useEffect(() => {
+    sessionRef.current?.focus(focusedInstanceId);
+  }, [focusedInstanceId, state]);
   /** Rolling levels, newest last. A ref because it is read per frame and only summarised into bars. */
   const levels = useRef<number[]>(new Array(WAVEFORM_BARS).fill(0));
 
@@ -212,6 +255,8 @@ export function VoiceOverlay({
           },
           onCaptureFrame: (sent) => setFrames((current) => ({ ...current, captured: sent })),
           onAnswerFailed: (failure) => setAnswerProblem(failure.message),
+          ...(onAppIntent === undefined ? {} : { onAppIntent }),
+          ...(onWidgetActionResult === undefined ? {} : { onWidgetActionResult }),
           onAudioFrame: (received) => setFrames((current) => ({ ...current, heard: received })),
           onError: (message) => {
             setProblem(message);

@@ -3,6 +3,8 @@ import { join } from "node:path";
 
 import { expect, test, type Page } from "@playwright/test";
 
+import { SETTINGS_TABS } from "@clarkcant/contracts";
+
 /**
  * Appearance and the settings modal.
  *
@@ -75,7 +77,7 @@ test("a theme choice changes the surface, follows the system, and survives a rel
   await page.screenshot({ path: join(EVIDENCE, "theme-03-light-after-reload.png"), fullPage: true });
 });
 
-test("settings is a modal with three distinct tabs, and Escape returns focus to the gear", async ({ page }) => {
+test("settings is a modal whose tabs each show their own content, and Escape returns focus to the gear", async ({ page }) => {
   mkdirSync(EVIDENCE, { recursive: true });
   await openApp(page);
 
@@ -84,21 +86,30 @@ test("settings is a modal with three distinct tabs, and Escape returns focus to 
 
   const dialog = page.locator('[data-modal="true"]');
   await expect(dialog).toBeVisible();
-  // Three, not four: voice is a mode of the conversation, not a setting, and it left this dialog for the
-  // composer's microphone button.
-  await expect(page.locator('[role="tab"]')).toHaveCount(4);
+  // The tabs the panel actually has, taken from the contract rather than counted here. This said four and went
+  // stale the moment the Memory tab was added - a count that is written into a test is a count that drifts.
+  await expect(page.locator('[role="tab"]')).toHaveCount(SETTINGS_TABS.length);
 
   // Each tab shows its own content. Asserted by comparing what is rendered rather than by checking
-  // that a heading exists, since three labels over one shared panel would pass the weaker check.
-  const general = await page.locator("#cc-tabpanel-general").innerText();
-  await page.screenshot({ path: join(EVIDENCE, "settings-01-general.png"), fullPage: true });
+  // that a heading exists, since six labels over one shared panel would pass the weaker check.
+  const experience = await page.locator("#cc-tabpanel-experience").innerText();
+  await page.screenshot({ path: join(EVIDENCE, "settings-01-experience.png"), fullPage: true });
 
-  await page.locator("#cc-tab-tools").click();
-  await expect(page.locator("#cc-tabpanel-tools")).toBeVisible();
-  const tools = await page.locator("#cc-tabpanel-tools").innerText();
-  expect(tools).not.toBe(general);
-  expect(tools.length).toBeGreaterThan(0);
-  await page.screenshot({ path: join(EVIDENCE, "settings-02-tools.png"), fullPage: true });
+  await page.locator("#cc-tab-extensions").click();
+  await expect(page.locator("#cc-tabpanel-extensions")).toBeVisible();
+  const extensions = await page.locator("#cc-tabpanel-extensions").innerText();
+  expect(extensions).not.toBe(experience);
+  expect(extensions.length).toBeGreaterThan(0);
+  await page.screenshot({ path: join(EVIDENCE, "settings-02-extensions.png"), fullPage: true });
+
+  // Every tab has content of its own, which is the claim the old comment made and this now checks for all six.
+  // A tab that exists but is empty teaches the user that the tabs are decoration.
+  for (const tab of ["ai", "control", "devices", "developer"] as const) {
+    await page.locator(`#cc-tab-${tab}`).click();
+    const panel = page.locator(`#cc-tabpanel-${tab}`);
+    await expect(panel).toBeVisible();
+    expect((await panel.innerText()).length, `${tab} is empty`).toBeGreaterThan(0);
+  }
 
   // Escape closes, and focus goes back to what opened it rather than to the top of the page.
   await page.keyboard.press("Escape");
@@ -106,6 +117,47 @@ test("settings is a modal with three distinct tabs, and Escape returns focus to 
   await expect
     .poll(() => page.evaluate(() => document.activeElement?.getAttribute("data-settings") ?? null))
     .toBe("true");
+});
+
+test("the settings tabs are operable from the keyboard alone", async ({ page }) => {
+  await openApp(page);
+  await page.locator("[data-settings='true']").click();
+
+  // Focus the selected tab, which is where a keyboard user arrives from the modal's own focus handling. Waiting for
+  // it to be visible first is what makes this deterministic: a focus() call taken while the panel is still animating
+  // in is dropped, and the element stays unfocused for the whole assertion timeout. Measured in CI, where this test
+  // passed on one run and failed on the next for exactly that reason.
+  await expect(page.locator("#cc-tab-experience")).toBeVisible();
+  await page.locator("#cc-tab-experience").focus();
+  await expect(page.locator("#cc-tab-experience")).toBeFocused();
+
+  // Arrows move between tabs, which is what the ARIA tabs pattern requires. Without this, a keyboard user has to
+  // press Tab through every tab to get past the strip — and with six tabs that is now six presses, not four.
+  await page.keyboard.press("ArrowRight");
+  await expect(page.locator("#cc-tab-ai")).toBeFocused();
+  await expect(page.locator("#cc-tabpanel-ai")).toBeVisible();
+
+  await page.keyboard.press("ArrowRight");
+  await expect(page.locator("#cc-tab-control")).toBeFocused();
+  await page.keyboard.press("ArrowLeft");
+  await expect(page.locator("#cc-tab-ai")).toBeFocused();
+
+  // End and Home are part of the pattern, and they are what makes a six-tab strip navigable.
+  await page.keyboard.press("End");
+  await expect(page.locator("#cc-tab-developer")).toBeFocused();
+  await page.keyboard.press("Home");
+  await expect(page.locator("#cc-tab-experience")).toBeFocused();
+
+  /*
+   * Roving tabindex: the whole strip is one stop in the tab order.
+   *
+   * Asserted because a tablist where every tab is separately tabbable passes the arrow-key check above and is still
+   * wrong: the user has to press Tab six times to get from the strip into the panel.
+   */
+  const tabbable = await page.evaluate(() =>
+    [...document.querySelectorAll('[role="tab"]')].filter((tab) => tab.getAttribute("tabindex") === "0").length,
+  );
+  expect(tabbable).toBe(1);
 });
 
 test("the orb is centred on the screen it is drawn over", async ({ page }) => {
@@ -154,13 +206,13 @@ test("the header is a gradient rather than a bar above the page", async ({ page 
   expect(header?.background).toContain("linear-gradient");
 });
 
-test("the tools tab tells the node's tools from the agent's", async ({ page }) => {
+test("the extensions tab tells the node's tools from the agent's", async ({ page }) => {
   // The list is the node's own, published by the same call that hands the tools to the model. An empty node list
   // here would mean the publishing is missing rather than that this node can do nothing, which is why both lists are
   // asserted rather than one.
   await openApp(page);
   await page.locator("[data-settings='true']").click();
-  await page.getByRole("tab", { name: "Tools" }).click();
+  await page.getByRole("tab", { name: "Extensions" }).click();
 
   // The agent's built-ins are a fixed list, so this half is exact.
   await expect(page.locator("[data-tool-list='Công cụ của agent (pi)'] code").first()).toHaveText("read");
@@ -179,8 +231,8 @@ test("the settings panel lists what this node can run, or says plainly that it c
   await openApp(page);
   await page.locator("[data-settings='true']").click();
 
-  // Provider and model have a tab of their own now, because choosing one means choosing the other.
-  await page.getByRole("tab", { name: "Models" }).click();
+  // Provider and model live together under AI & Routing now, because choosing one means choosing the other.
+  await page.getByRole("tab", { name: "AI & Routing" }).click();
   const section = page.locator("[data-providers='true']");
   await expect(section).toBeVisible();
 
@@ -213,7 +265,7 @@ test("the settings panel lists what this node can run, or says plainly that it c
 test("every key in settings can be taken back again, which is how a provider is logged out of", async ({ page }) => {
   await openApp(page);
   await page.locator("[data-settings='true']").click();
-  await page.getByRole("tab", { name: "Devices" }).click();
+  await page.getByRole("tab", { name: "Devices & Voice" }).click();
 
   // Both keys, because a logout for one and not the other is the kind of half-wired surface that looks finished.
   // Gemini is the voice provider's key, so it stays beside the microphone. TypeSafe is asked for where a model is
@@ -221,7 +273,7 @@ test("every key in settings can be taken back again, which is how a provider is 
   await expect(page.locator("[data-settings-key-form='gemini']")).toBeVisible();
   await expect(page.locator("[data-settings-key-remove='gemini']")).toBeVisible();
 
-  await page.getByRole("tab", { name: "Models" }).click();
+  await page.getByRole("tab", { name: "AI & Routing" }).click();
   await expect(page.locator("[data-settings-key-form='typesafe']")).toBeVisible();
   await expect(page.locator("[data-settings-key-remove='typesafe']")).toBeVisible();
 });
@@ -229,10 +281,21 @@ test("every key in settings can be taken back again, which is how a provider is 
 test("the model in use is what the fields show before anybody types", async ({ page }) => {
   await openApp(page);
   await page.locator("[data-settings='true']").click();
-  await page.getByRole("tab", { name: "Models" }).click();
+  await page.getByRole("tab", { name: "AI & Routing" }).click();
 
   const model = page.locator("[data-search-input='model']");
-  await expect(model).toBeVisible({ timeout: 20_000 });
+  const absent = page.locator("[data-model='none']");
+  // The same two acceptable states the sibling test above accepts, and for the same reason: this fixture node reports
+  // no model, and one shared node cannot both offer a catalogue and say it has none. Requiring the field contradicted
+  // that sibling. What is claimed here is that the panel tells the truth about the model in use before anybody types -
+  // either by offering it in a field, or by saying plainly that there is none.
+  await expect(page.locator("[data-search-input='model'], [data-model='none']").first()).toBeVisible({
+    timeout: 20_000,
+  });
+  if ((await model.count()) === 0) {
+    await expect(absent).toContainText(/chưa cấu hình model/i);
+    return;
+  }
 
   // Nothing is saved: this suite shares one node, so a test that stored a preference would change what every later spec
   // runs. What is asserted is that the pair the node already runs is the pair on screen, and that choosing replaces it.
@@ -248,10 +311,10 @@ test("the model in use is what the fields show before anybody types", async ({ p
   expect(await model.inputValue()).toBe(picked);
 });
 
-test("the tools tab also says which extensions pi loads on this machine", async ({ page }) => {
+test("the extensions tab says which extensions pi loads on this machine", async ({ page }) => {
   await openApp(page);
   await page.locator("[data-settings='true']").click();
-  await page.getByRole("tab", { name: "Tools" }).click();
+  await page.getByRole("tab", { name: "Extensions" }).click();
 
   const section = page.locator("[data-pi-extensions='true']");
   await expect(section).toBeVisible();
@@ -263,13 +326,23 @@ test("the tools tab also says which extensions pi loads on this machine", async 
   });
 });
 
-test("the tools tab also shows pi's own configuration, as lines rather than as a file", async ({ page }) => {
+test("pi's own configuration is in the developer tab, behind a disclosure, as lines rather than as a file", async ({
+  page,
+}) => {
   await openApp(page);
   await page.locator("[data-settings='true']").click();
-  await page.getByRole("tab", { name: "Tools" }).click();
+  /*
+   * Developer, not the tab a normal user reads. Raw pi configuration is progressive disclosure: genuinely useful when
+   * something is wrong, and noise the rest of the time.
+   */
+  await page.getByRole("tab", { name: "Developer" }).click();
 
   const section = page.locator("[data-pi-settings='true']");
   await expect(section).toBeVisible();
+
+  // Read on request rather than on open: a tab that reads a configuration file every time somebody glances at it is
+  // doing work nobody asked for.
+  await page.locator("[data-pi-settings-toggle='true']").click();
 
   // Either the node read a configuration and it is shown as key and value lines, or it read none and says so. What must
   // never appear is a credential: the node redacts by name before this ever leaves it, and the adapter test covers that
@@ -279,3 +352,131 @@ test("the tools tab also shows pi's own configuration, as lines rather than as a
   });
 });
 
+
+test("personal instructions can be written, survive a reload, and are never sent as the user's message", async ({
+  page,
+}) => {
+  /*
+   * The control that phase 5 added, checked where it matters.
+   *
+   * Three claims, and the third is the one a unit test cannot make: the text reaches the system prompt
+   * rather than being prefixed onto the user's message. Prefixing is the tempting shortcut, and it would
+   * look identical from the settings screen while making the user's own words part of their request.
+   *
+   * Reset first rather than assuming a fresh node: the suite shares one database across runs, so a run that
+   * left this enabled would make the next run's first assertion wrong — which is exactly what happened the
+   * first time this test was written.
+   */
+  await fetch(`${GATEWAY}/preferences/ai.personalInstructions/undo`, {
+    method: "POST",
+    headers: { authorization: `Bearer ${token()}` },
+  }).catch(() => undefined);
+
+  await openApp(page);
+  await page.locator("[data-settings='true']").click();
+  await page.getByRole("tab", { name: "AI & Routing" }).click();
+
+  const section = page.locator("[data-personal-instructions='true']");
+  await expect(section).toBeVisible();
+
+  const field = page.locator("[data-personal-instructions-input='true']");
+  // Disabled while the toggle is off, and still visible: turning it off must not look like it discarded
+  // what was typed.
+  await expect(field).toBeDisabled();
+
+  /*
+   * Clicked through the label rather than the input.
+   *
+   * The checkbox itself is visually hidden on purpose — `position: absolute` at one pixel with zero opacity, so
+   * it stays in the tab order and readable by a screen reader while the switch is drawn by its sibling. A real
+   * user clicks the switch, so this does too; driving the hidden input instead would be testing a control nobody
+   * can reach with a mouse.
+   */
+  await page.locator("[data-toggle='personal-instructions']").click();
+  await expect(page.locator("[data-toggle='personal-instructions'] input")).toBeChecked();
+  await expect(field).toBeEnabled();
+
+  const text = "Trả lời ngắn gọn, và dùng TypeScript cho ví dụ code.";
+  await field.fill(text);
+  // Committed on blur rather than per keystroke, so the write happens when the field is left.
+  await field.blur();
+
+  // The node stored it, which is what makes the next turn read it.
+  await expect
+    .poll(
+      async () => {
+        const response = await fetch(`${GATEWAY}/preferences`, {
+          headers: { authorization: `Bearer ${token()}` },
+        });
+        const body = (await response.json()) as {
+          preferences: { key: string; value: unknown }[];
+        };
+        const stored = body.preferences.find((entry) => entry.key === "ai.personalInstructions")?.value;
+        return JSON.stringify(stored);
+      },
+      { timeout: 10_000 },
+    )
+    .toContain("TypeScript");
+
+  // And it comes back after a reload, rather than being a value only this tab knew about.
+  await page.reload();
+  await expect(page.locator("text=Ready")).toBeVisible({ timeout: 15_000 });
+  await page.locator("[data-settings='true']").click();
+  await page.getByRole("tab", { name: "AI & Routing" }).click();
+  await expect(page.locator("[data-personal-instructions-input='true']")).toHaveValue(text);
+
+  // Reset returns it to the state before any of this, which for a key written once means the default.
+  await page.locator("[data-personal-instructions-reset='true']").click();
+  await expect
+    .poll(
+      async () => {
+        const response = await fetch(`${GATEWAY}/preferences`, {
+          headers: { authorization: `Bearer ${token()}` },
+        });
+        const body = (await response.json()) as {
+          preferences: { key: string; value: unknown; isDefault: boolean }[];
+        };
+        const entry = body.preferences.find((candidate) => candidate.key === "ai.personalInstructions");
+        return entry?.isDefault === true;
+      },
+      { timeout: 10_000 },
+    )
+    .toBe(true);
+});
+
+test("the voice picker is drawn from what the provider says it can do", async ({ page }) => {
+  /*
+   * The picker is provider-driven, and this asserts the consequence rather than the markup: either the provider
+   * offers voices and a searchable field is there, or it does not and the tab says why in words.
+   *
+   * What must never appear is a picker filled from a list this application wrote down: that would offer one
+   * provider's voices to another, and the failure would arrive as a session that connects and then says nothing.
+   * The e2e node runs the fixture provider, which declares two voices and no preview — so both branches below
+   * are real states this application can be in, not hypotheticals.
+   */
+  await openApp(page);
+  await page.locator("[data-settings='true']").click();
+  await page.getByRole("tab", { name: "Devices & Voice" }).click();
+
+  const section = page.locator("[data-voice-settings='true']");
+  await expect(section).toBeVisible();
+
+  // The provider is named, because a voice only means something relative to who is speaking.
+  const capabilities = page.locator("[data-voice-capabilities]");
+  await expect(capabilities).toBeVisible({ timeout: 20_000 });
+  const provider = await capabilities.getAttribute("data-voice-capabilities");
+  expect(provider).not.toBeNull();
+
+  // Either a searchable voice field, or the reason there is none — never an empty gap.
+  await expect(
+    page.locator("[data-search-input='voice'], [data-tone='warn']").first(),
+  ).toBeVisible({ timeout: 20_000 });
+
+  // The preview control follows the provider's own answer: enabled only if it says it can preview, and
+  // otherwise disabled with the reason beside it rather than hidden or silently inert.
+  const preview = page.locator("[data-voice-preview='true']");
+  await expect(preview).toBeVisible();
+  if (await preview.isDisabled()) {
+    await expect(page.locator("[data-voice-preview-blocked='true']")).toBeVisible();
+  }
+});

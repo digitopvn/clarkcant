@@ -7,24 +7,33 @@
  * listener and no TLS is the deployment mistake the blueprint names: application
  * authorization is required regardless of how private the network looks.
  */
+import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
 import type { MessageBlock, MessageRecord } from "@clarkcant/contracts";
-import { instantSchema } from "@clarkcant/contracts";
+import { instantSchema, describeAppIntent } from "@clarkcant/contracts";
 import { applyEnvFile } from "@clarkcant/pi-adapter";
 
-import { decideApprovalForNode } from "./gateway.ts";
+import { decideApprovalForNode, invokeWidgetAction, widgetActionTarget } from "./gateway.ts";
+import { NO_FOCUSED_SURFACE_SAY } from "./widget-voice-action.ts";
+import {
+  type AppIntentDeps,
+  consumeConfirmation,
+  decideAppIntent,
+  mintConfirmation,
+} from "./app-intents.ts";
 import { createNodeServer } from "./server.ts";
 import { machineRoots } from "./fs-search.ts";
 import { resolveProject, refreshProjectIndex } from "./project-finder.ts";
 import { commandDigest } from "./run-command.ts";
-import { captureSnapshot, createInstance, handleUserMessage, requestApproval, setPreference, type CoordinationDeps } from "@clarkcant/core";
+import { captureSnapshot, createInstance, createTask, handleUserMessage, readExecutionPolicy, readPersonalInstructions, directoryIndexPath, recordAppIntentEvent, requestApproval, setPreference, type CoordinationDeps } from "@clarkcant/core";
 import { GALLERY, YOUTUBE } from "@clarkcant/data-canvas";
 import { definitionDigest } from "@clarkcant/widget-host";
 import { listLocalImages, messagesSince, readCredential,
   readPreference,
+  upsertArtifact,
 } from "@clarkcant/storage";
 import { attachVoiceGateway, VOICE_ANSWER_NOTE, VOICE_CREDENTIAL_NAME } from "./voice-session.ts";
 import { indexMessages, textOfMessage } from "./session-search.ts";
@@ -32,7 +41,10 @@ import { FixtureLiveAdapter } from "./voice-fixture.ts";
 import { SAMPLE_DATASET } from "@clarkcant/data-canvas/sample";
 
 import { createModelTurn, type ViewDescriptor } from "./model-turn.ts";
+import { memoryBrief, rememberMemory } from "./memory.ts";
 import { attachmentRefsForLastUserMessage } from "./attachments.ts";
+import { blobsDir, readBlob } from "./blobs.ts";
+import { extractPdfText } from "./pdf-text.ts";
 import { buildViewCatalog } from "./view-catalog.ts";
 import { registerNodeTools } from "./tool-catalogue.ts";
 import { composeMiniApp } from "./compose-mini-app.ts";
@@ -60,6 +72,20 @@ function parseArgs(argv: string[]): CliOptions {
     port: Number.parseInt(get("port") ?? "8765", 10),
     label: get("label") ?? "local runtime",
     allowPublicBind: argv.includes("--allow-public-bind"),
+  };
+}
+
+/**
+ * The registry's dependencies.
+ *
+ * A function rather than a constant so the clock is read when a decision is made, not when the node booted.
+ */
+function appIntentDepsFor(services: NodeServices): AppIntentDeps {
+  return {
+    db: services.runtime.db,
+    nodeId: services.runtime.identity.nodeId,
+    now: () => new Date().toISOString() as never,
+    newId: services.conductor.newId,
   };
 }
 
@@ -122,6 +148,8 @@ async function main(): Promise<void> {
    * coverage check, transactional capture, timeline.
    */
   const modelFixture = process.env.CC_MODEL_FIXTURE === "1";
+  /** Distinguishes two scripted questions, because the card's answerability is keyed by its id. */
+  let fixtureQuestionCounter = 0;
   const fixtureCompose = async (input: {
     conversationId: string;
     principal: { principalId: string };
@@ -129,12 +157,296 @@ async function main(): Promise<void> {
     messageId: string;
   }): Promise<{ block: MessageBlock; text: string } | undefined> => {
     /*
+     * The attachment, read back - the acceptance criterion this feature is judged by.
+     *
+     * "Attach two files, send, and the agent answers using the file's content" is what the issue asks the browser
+     * suite to show, and nothing showed it: the prompt carries the refs and the `read_attachment` tool reads text,
+     * but no journey ever watched an answer use a file. On this fixture node there is no model turn, so the fixture
+     * stands in for the agent and reads the bytes through the same helpers the prompt and the tool use. That proves
+     * the pipeline - the file reached the node, the node made its content readable, and the reply carries it. It does
+     * not prove a model would use it, which needs a provider and is recorded as such.
+     */
+    const attached = attachmentRefsForLastUserMessage({
+      db: services.runtime.db,
+      conversationId: input.conversationId,
+    });
+    const readable = attached.filter((ref) => ref.kind === "text" || ref.kind === "pdf");
+    if (readable.length > 0) {
+      const quoted = readable
+        .map((ref) => {
+          const blob = readBlob({
+            dataDir: options.dataDir,
+            blobPath: join(blobsDir(options.dataDir), ref.blobRef),
+          });
+          if (!blob.ok) return `${ref.filename}: ${blob.message}`;
+          // A PDF is read through the same extractor the tool and the prompt use, so this journey exercises the
+          // production path rather than a shortcut written for the fixture.
+          if (ref.kind === "pdf") {
+            const extracted = extractPdfText(blob.bytes);
+            return extracted.ok ? `${ref.filename}:\n${extracted.text}` : `${ref.filename}: ${extracted.reason}`;
+          }
+          return `${ref.filename}:\n${new TextDecoder("utf-8", { fatal: false }).decode(blob.bytes)}`;
+        })
+        .join("\n\n");
+      return {
+        text: "Tui đọc tệp bạn gửi. Nội dung nó nói:",
+        block: { type: "text", format: "markdown", content: quoted, streaming: false },
+      };
+    }
+    /*
      * A command proposal, scripted.
      *
      * The same reason the other fixtures exist: the browser half of this feature — a card with two
      * buttons and a receipt — needs a way to be reached without a provider account, and a fixture that
      * cannot produce the card would leave the client wiring tested by nothing at all.
      */
+    /*
+     * A question, scripted — the producer for the question card.
+     *
+     * The same reason the approval fixture exists: the browser half of this feature is a card whose answer
+     * becomes the user's next message, and a card nothing can produce would leave that wiring tested by
+     * nothing at all.
+     */
+    if (/biểu mẫu|thử form|fill a form/i.test(input.text)) {
+      const formId = `form_fixture_${fixtureQuestionCounter += 1}`;
+      return {
+        text: "Đây là biểu mẫu do fixture tạo, không phải model thật.",
+        block: {
+          type: "form-card",
+          owner: "host",
+          formId,
+          title: "Cho tôi biết vài thông tin",
+          fields: [
+            { id: "field-1", label: "Tên dự án", kind: "text", required: true, placeholder: "ví dụ: clarkcant" },
+            { id: "field-2", label: "Ghi chú", kind: "textarea" },
+          ],
+        },
+      };
+    }
+
+    /*
+     * A task, scripted — but a real row in the database.
+     *
+     * The Stop control's entire claim is that pressing it changes the node's record of the task, so a card
+     * carrying an invented id would prove nothing: the browser journey would be asserting against a task that
+     * does not exist. This makes the row the control actually acts on.
+     */
+    if (/task dài|chạy task|long task/i.test(input.text)) {
+      const taskDeps = {
+        db: services.runtime.db,
+        nodeId: services.runtime.identity.nodeId,
+        now: () => instantSchema.parse(new Date().toISOString()),
+        newId: services.conductor.newId,
+      };
+      const task = createTask(taskDeps, {
+        conversationId: input.conversationId as never,
+        goal: "Task do fixture tạo để thử nút dừng",
+        principal: {
+          principalId: input.principal.principalId as never,
+          kind: "user" as const,
+          nodeId: services.runtime.identity.nodeId as never,
+        },
+      });
+      const at = instantSchema.parse(new Date().toISOString());
+      return {
+        text: "Đây là task do fixture tạo, không phải model thật, và chưa chạy ở đâu cả.",
+        block: {
+          type: "task-progress-card",
+          owner: "host",
+          cardId: services.conductor.newId("card"),
+          taskId: task.taskId,
+          goal: task.goal,
+          status: "queued",
+          steps: [],
+          startedAt: at,
+          updatedAt: at,
+          cancellable: true,
+        },
+      };
+    }
+
+    /*
+     * A diff, scripted.
+     *
+     * The keyboard journey needs a diff that is long enough to scroll and present without a pointer, and a card
+     * nothing can produce would leave that journey asserting against a component no user can reach.
+     */
+    if (/xem diff|xem thay đổi|thử diff|show diff/i.test(input.text)) {
+      return {
+        text: "Đây là diff do fixture tạo, không phải model thật.",
+        block: {
+          type: "code-diff-card",
+          owner: "host",
+          cardId: services.conductor.newId("card"),
+          summary: "Đổi cách task được đánh dấu là đã dừng",
+          files: [
+            {
+              path: "packages/core/src/task-service.ts",
+              additions: 2,
+              deletions: 1,
+              hunks: [
+                {
+                  header: "@@ -495,3 +495,4 @@ cancelTask",
+                  lines: [
+                    { kind: "context", text: "const requested = applyTaskEvent(deps, taskId, \"cancel.requested\");" },
+                    { kind: "remove", text: "if (requested.ok) return requested.task;" },
+                    { kind: "add", text: "if (!requested.ok) return requested;" },
+                    { kind: "add", text: "return confirmed(requested.task);" },
+                  ],
+                },
+              ],
+            },
+          ],
+          truncated: false,
+          // Required by the schema: a diff says when it was taken, because a change shown without a time reads
+          // as the current state of the code rather than as a snapshot of it.
+          updatedAt: instantSchema.parse(new Date().toISOString()),
+        },
+      };
+    }
+
+    /*
+     * An artifact, scripted — and written to the artifacts table, so reopening it asks the node about something
+     * that exists rather than about an id invented for the journey.
+     *
+     * This is a fixture rather than a model, and that is a limitation worth naming: nothing in the product
+     * produces an artifact yet, so the reopen path can be exercised end to end but not reached in normal use.
+     */
+    if (/artifact|tệp lớn/i.test(input.text)) {
+      const artifactId = services.conductor.newId("art");
+      const at = instantSchema.parse(new Date().toISOString());
+      const digest = "sha256:3f786850e387550fdab836ed7e6dc881de23001b09c2f0f8b9f2f1e6c0c4a1b7";
+      upsertArtifact(services.runtime.db, {
+        artifactId,
+        digest,
+        sizeBytes: 20480,
+        mimeType: "application/pdf",
+        classification: "internal",
+        originNodeId: services.runtime.identity.nodeId,
+        createdAt: at,
+      });
+      return {
+        text: "Đây là artifact do fixture tạo, không phải model thật.",
+        block: {
+          type: "artifact",
+          artifactId,
+          mimeType: "application/pdf",
+          sizeBytes: 20480,
+          digest,
+          label: "báo cáo quý.pdf",
+        },
+      };
+    }
+
+    /*
+     * A browser session, scripted — created in the node's own registry, so takeover has something to change hands
+     * over rather than a card carrying an id nothing has heard of.
+     */
+    if (/browser|trình duyệt/i.test(input.text)) {
+      const created = services.controlSessions.create({
+        sessionId: services.conductor.newId("bs"),
+        surface: "browser",
+        label: "đang mở form thanh toán",
+      });
+      return {
+        text: "Đây là phiên browser do fixture tạo, không phải model thật.",
+        block: {
+          type: "browser-session-card",
+          owner: "host",
+          cardId: services.conductor.newId("card"),
+          sessionId: created.sessionId,
+          label: created.label,
+          driver: created.owner,
+          status: created.status,
+          leaseEpoch: created.leaseEpoch,
+          updatedAt: instantSchema.parse(new Date().toISOString()),
+        },
+      };
+    }
+
+    /*
+     * A desktop session, scripted — created in the node's registry, and left in the state a real one starts in.
+     *
+     * The screen permission belongs to the operating system, so the honest default is "not granted yet" and the
+     * card has to say so. A fixture that pretended the preview was available would let the journey pass while the
+     * one thing that matters about this surface went unasserted.
+     */
+    if (/màn hình|desktop|điều khiển máy/i.test(input.text)) {
+      const created = services.controlSessions.create({
+        sessionId: services.conductor.newId("cs"),
+        surface: "computer",
+        label: "đang sửa bảng tính",
+        preview: "needs-permission",
+        previewReason: "ứng dụng chưa được cấp quyền ghi màn hình",
+      });
+      return {
+        text: "Đây là phiên điều khiển màn hình do fixture tạo, không phải model thật.",
+        block: {
+          type: "computer-session-card",
+          owner: "host",
+          cardId: services.conductor.newId("card"),
+          sessionId: created.sessionId,
+          label: created.label,
+          driver: created.owner,
+          status: created.status,
+          leaseEpoch: created.leaseEpoch,
+          preview: created.preview,
+          ...(created.previewReason === undefined ? {} : { previewReason: created.previewReason }),
+          updatedAt: instantSchema.parse(new Date().toISOString()),
+        },
+      };
+    }
+
+    if (/hỏi tôi|thử hỏi|ask me/i.test(input.text)) {
+      const questionId = `q_fixture_${fixtureQuestionCounter += 1}`;
+      return {
+        text: "Đây là câu hỏi do fixture tạo, không phải model thật.",
+        block: {
+          type: "question-card",
+          owner: "host",
+          questionId,
+          question: "Bạn muốn tôi mở dự án nào?",
+          options: [
+            { id: "option-1", label: "Dự án hiện tại", detail: "thư mục này" },
+            { id: "option-2", label: "Dự án khác", detail: "tôi sẽ chỉ đường" },
+          ],
+        },
+      };
+    }
+
+    /*
+     * The marketplace-results card, produced without a directory on disk.
+     *
+     * A fixture proves the wiring, not the provider: the search itself is covered by the core tests, and what the
+     * browser has to be shown is that this card renders its source, version, digest and risk lane — and that it
+     * offers no install button of its own.
+     */
+    if (/tìm gói|marketplace|search package/i.test(input.text)) {
+      return {
+        text: "Đây là kết quả do fixture tạo, không phải model thật.",
+        block: {
+          type: "marketplace-results",
+          owner: "host",
+          cardId: "market_fixture_1",
+          query: "dashboard",
+          directory: "/tmp/cc-directory.json",
+          results: [
+            {
+              packageId: "com.acme.dashboard",
+              version: "1.0.0",
+              displayName: "Dashboard",
+              description: "biểu đồ cho dự án",
+              source: { kind: "local", path: "/tmp/dashboard" },
+              digest: "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+              riskTier: "isolated-ui",
+              facets: ["ui"],
+              platforms: ["linux-x64"],
+            },
+          ],
+        },
+      };
+    }
+
     if (/chạy lệnh thử|thử chạy lệnh/i.test(input.text)) {
       const approvals = approvalWiring.deps;
       if (approvals === undefined) return undefined;
@@ -281,6 +593,32 @@ async function main(): Promise<void> {
       };
     }
 
+    /*
+     * A sentence that asks the node to remember something.
+     *
+     * This calls the same function the `remember` tool calls, so what it proves is the pipeline - redaction, the
+     * write, the brief, and the Memory tab reading it back - and not that a model decided to remember. That
+     * decision needs a real provider and is recorded as a blocked condition rather than implied by this.
+     */
+    const asked = /(?:nhớ rằng|ghi nhớ)\s*[:：]?\s*(.+)/i.exec(input.text);
+    if (asked !== null) {
+      const outcome = rememberMemory(
+        { db: services.runtime.db, now: () => new Date().toISOString(), newId: services.conductor.newId },
+        {
+          principalId: input.principal.principalId,
+          conversationId: input.conversationId,
+          kind: "preference",
+          scope: "node",
+          text: (asked[1] ?? "").trim(),
+        },
+      );
+      const reply =
+        "refused" in outcome
+          ? `Fixture: không ghi nhớ được - ${outcome.refused}`
+          : `Fixture: đã ghi nhớ (${outcome.kind}) ${outcome.text}`;
+      return { text: reply, block: { type: "text", format: "plain", content: reply, streaming: false } };
+    }
+
     if (!/tổng quan|tong quan|overview/i.test(input.text)) return undefined;
     const compose = modelWiring.compose;
     if (compose === undefined) return undefined;
@@ -343,6 +681,21 @@ async function main(): Promise<void> {
     env: process.env,
     cwd: process.cwd(),
     model: chosenModel,
+    /*
+     * The user's own instructions, read on every turn rather than captured here.
+     *
+     * The same laziness as `chosenModel`, for the same ordering reason and one more: the promise of the
+     * feature is that a preference written while the app is open reaches the next turn. A value captured at
+     * boot would make it a restart instead.
+     *
+     * `readPersonalInstructions` answers nothing unless the toggle is on and there is text, so a disabled
+     * preference leaves the system prompt byte-for-byte as it was rather than adding an empty section.
+     */
+    personalInstructions: () =>
+      readPersonalInstructions(
+        { db: services.runtime.db, now: () => new Date().toISOString() as never },
+        services.runtime.identity.ownerPrincipalId,
+      ),
     sessionDir: join(options.dataDir, "sessions"),
     onSessionFile: ({ sessionId, sessionFile }) => {
       if (sessionWiring.index === undefined || sessionWiring.principalId === undefined) return;
@@ -380,6 +733,17 @@ async function main(): Promise<void> {
     // than a guess. The model is told these names because a view over data that is not there
     // renders as nothing, which reads as a broken widget instead of a missing fact.
     datasetRefs: () => [SAMPLE_DATASET.datasetId],
+    /*
+     * What was remembered, for the turn about to run.
+     *
+     * Read per turn rather than captured once, so a record somebody deletes in the Memory tab stops being
+     * sent on the very next turn. That is what makes that screen's promise true rather than decorative.
+     */
+    memoryBrief: (conversationId) =>
+      memoryBrief(
+        { db: services.runtime.db, now: () => new Date().toISOString(), newId: services.conductor.newId },
+        { principalId: services.runtime.identity.ownerPrincipalId, conversationId },
+      ),
     // The Session Manager's search surface, exposed to the main model as its own tool. Read from a
     // closure so the services it needs, which are assembled below, exist by the time a turn runs.
     // The Session Manager's read-only reports, including the project finder. Built by a function a
@@ -390,13 +754,49 @@ async function main(): Promise<void> {
       const projects = projectWiring.deps;
       const approvals = approvalWiring.deps;
       if (search === undefined || projects === undefined || approvals === undefined) return [];
+      // Built through the contract's own schema rather than asserted into the branded type: an assertion
+      // here would be the place a malformed instant got in.
+      const now = () => instantSchema.parse(new Date().toISOString());
       const tools = createNodeTools({
         search,
         projects,
         approvals: () => approvals,
+        /*
+         * The policy is read when a tool call happens rather than captured when this node booted: the
+         * promise of the setting is that it changes what happens next, and a captured value would make it
+         * a restart instead.
+         */
+        policy: () =>
+          readExecutionPolicy(
+            { db: services.runtime.db, now },
+            services.runtime.identity.ownerPrincipalId,
+          ),
+        /*
+         * Where a command that runs without a card leaves its record.
+         *
+         * The same event log the task lifecycle writes to, because autonomy is only checkable if the
+         * effects it performed are findable afterwards.
+         */
+        audit: () => ({
+          deps: {
+            db: services.runtime.db,
+            nodeId: services.runtime.identity.nodeId,
+            newId: services.conductor.newId,
+            now,
+          },
+          principalId: search.principalId,
+          conversationId: turn.conversationId,
+        }),
+        /* The card's id has to outlive the turn, so it comes from the node's own id generator. */
+        questions: { newId: services.conductor.newId },
+        // Always passed: an unconfigured directory is something the tool reports, not a reason to hide it.
+        directory: { indexPath: directoryIndexPath(process.env), newId: services.conductor.newId },
         // Reading an attached file is scoped to the conversation this turn belongs to, which is the
         // only thing the tool needs to check beyond the principal.
         attachments: { dataDir: options.dataDir, conversationId: turn.conversationId },
+        // Remembering is scoped to the turn's conversation the same way, and the id comes from the node's own
+        // generator: the model supplies what to remember, never who it belongs to.
+        memory: { conversationId: turn.conversationId, newId: services.conductor.newId },
         // "Where should this go?" goes through the finder, which is where Jev decides when several folders
         // could be meant. The model is told to look before it proposes, and an ambiguous answer comes back
         // as a question rather than as a guess.
@@ -506,6 +906,28 @@ async function main(): Promise<void> {
     process.stderr.write(
       "overview: FIXTURE composer loaded — overview requests are scripted, and no provider is called for them\n",
     );
+    /*
+     * The background path needs a turn control, and the fixture node has none.
+     *
+     * Measured: `services.turnControl` is assigned only when a model turn exists, and `createModelTurn` returns
+     * undefined without a model selection - while the adapter it would otherwise build is the real one, so naming a
+     * provider in the environment would put a real provider call behind every turn. The suite's own journey says a
+     * fixture node has a model turn and asserts the accepted path rather than the refusal, so the control is what is
+     * published here: a scripted background runner and nothing else. No model identity and no catalogue, because the
+     * fixture node deliberately reports that it has no model, and other journeys assert exactly that.
+     */
+    if (services.turnControl === undefined) {
+      services.turnControl = {
+        running: () => [],
+        interrupt: () => true,
+        steer: () => Promise.resolve(false),
+        runInBackground: (input) =>
+          Promise.resolve(`Đã xử lý đoạn này trong một phiên nền (fixture): ${input.text.slice(0, 80)}`),
+      };
+      process.stderr.write(
+        "background: FIXTURE turn control loaded — background work is scripted, and no provider is called\n",
+      );
+    }
   }
 
   // The model may now ask for these views. When there are none the `show_view` tool is not
@@ -582,6 +1004,20 @@ async function main(): Promise<void> {
    * a fake that is indistinguishable from the real thing is worse than having no fake at all.
    */
   const voiceFixture = process.env.CC_VOICE_FIXTURE === "1";
+  /**
+   * The words the scripted provider will say, when the fixture is loaded.
+   *
+   * Read when a session opens rather than captured once, so a test can set them and then open one. On a real node this
+   * stays undefined, and the route that would write it is not registered either - which is the gate.
+   */
+  let voiceFixtureWords: string | undefined;
+  if (voiceFixture) {
+    services.voiceFixture = {
+      setWords: (words: string) => {
+        voiceFixtureWords = words;
+      },
+    };
+  }
   const voice = attachVoiceGateway({
     server,
     services,
@@ -593,7 +1029,23 @@ async function main(): Promise<void> {
           // expectation false. Read at open time rather than cached, so the next attempt after typing one finds it.
           process.env.GEMINI_API_KEY ??
           readCredential(services.runtime.db, services.runtime.identity.ownerPrincipalId, VOICE_CREDENTIAL_NAME),
-    ...(voiceFixture ? { createAdapter: () => new FixtureLiveAdapter() } : {}),
+    ...(voiceFixture
+      ? {
+          /**
+           * The scripted words apply to **the next session and no further**.
+           *
+           * Consumed here rather than read on every utterance, because the value lives on the node and the node
+           * outlives a session. Reading it live leaked one suite's script into the next: voice.spec.ts, which
+           * scripts nothing and expects the fixture's own sentence, failed after this suite had run - a failure
+           * that only appeared in a whole-suite run, which is exactly why the whole suite is the gate.
+           */
+          createAdapter: () => {
+            const scripted = voiceFixtureWords;
+            voiceFixtureWords = undefined;
+            return new FixtureLiveAdapter({ ...(scripted === undefined ? {} : { words: scripted }) });
+          },
+        }
+      : {}),
     ...(voiceModel === undefined ? {} : { model: voiceModel }),
     /**
      * What a finished sentence does.
@@ -682,7 +1134,90 @@ async function main(): Promise<void> {
           { ok: true, message: result.continuation ?? result.outcome ?? "Đã chạy xong lệnh đó." }
         : { ok: false, message: result.message };
     },
+    /**
+     * What a spoken sentence means to the application.
+     *
+     * The same registry the typed route and a click go through, with source "voice" so the audit answers "was this
+     * clicked or heard". `none` is returned unchanged and the session then treats the sentence as a question for the
+     * agent, which is what keeps ordinary speech out of the app-control path.
+     */
+    resolveAppIntent: ({ text, conversationId }) => {
+      const deps = appIntentDepsFor(services);
+      const principalId = services.runtime.identity.ownerPrincipalId;
+      return decideAppIntent(
+        deps,
+        { principalId, request: { text, source: "voice" }, conversationId },
+        (intent) => mintConfirmation(deps, { principalId, intent, source: "voice" }),
+      );
+    },
+    /**
+     * Turn a spoken confirmation into permission, once.
+     *
+     * A refusal as well as a failure comes back as a non-executable decision, because the page must never be handed
+     * something it would act on when the answer was no or the token was stale.
+     */
+    confirmAppIntent: ({ token, decision }) => {
+      const deps = appIntentDepsFor(services);
+      const outcome = consumeConfirmation(deps, { principalId: services.runtime.identity.ownerPrincipalId, token });
+      if (!outcome.ok) {
+        const say =
+          outcome.code === "CONFIRMATION_EXPIRED"
+            ? "Lời xác nhận đã quá hạn. Bạn nói lại câu lệnh nhé."
+            : "Tôi không còn lời xác nhận nào đang chờ.";
+        return { kind: "refused", say };
+      }
+      if (decision === "denied") return { kind: "refused", say: "Tôi đã bỏ qua câu lệnh đó." };
+      recordAppIntentEvent(deps, { intent: outcome.intent, source: outcome.source, confirmed: true });
+      return {
+        kind: "intent",
+        intent: outcome.intent,
+        requiresConfirmation: false,
+        readBack: describeAppIntent(outcome.intent),
+      };
+    },
+    /**
+     * Run a widget action the person asked for out loud.
+     *
+     * The same function a click goes through, with the difference that a click brings a cursor and a sentence does
+     * not: the revision and the binding digest are read from the node's own state rather than taken from the page. A
+     * sentence is a request to do the thing, not a claim about which revision it was looking at.
+     */
+    widgetAction: async ({ conversationId, action, focused }) => {
+      const instanceId = focused?.instanceId;
+      if (instanceId === undefined) return { ok: false, say: NO_FOCUSED_SURFACE_SAY };
+
+      const target = widgetActionTarget(services, instanceId, action.actionBindingId);
+      if (target === undefined) {
+        // The page's view was older than the instance, or the action is gone. Either way this is a refusal and not a
+        // guess: invoking a binding the instance no longer announces is exactly what the digest check exists for.
+        return { ok: false, say: "Widget đang mở không còn hành động đó nữa. Bạn mở lại rồi thử lại giúp tôi nhé." };
+      }
+
+      const result = invokeWidgetAction(services, {
+        conversationId,
+        principalId: services.runtime.identity.ownerPrincipalId,
+        instanceId,
+        actionBindingId: action.actionBindingId,
+        expectedRevision: target.revision,
+        expectedBindingDigest: target.bindingDigest,
+        // What the words implied. Empty when the person named the action without saying what it should do, and the
+        // widget's own contract then answers that it wanted an argument - which is better than this guessing a period.
+        input: action.args,
+        invocationId: `inv_${randomUUID()}`,
+      });
+
+      if (!result.ok) return { ok: false, say: `Không thực hiện được: ${result.message}` };
+      const landedOn = typeof result.body.revision === "number" ? result.body.revision : target.revision;
+      return { ok: true, instanceId, revision: landedOn, say: `Đã ${action.label}.` };
+    },
   });
+  /*
+   * Published to the settings route, from the same object the voice sessions use.
+   *
+   * A surface that built its own capability list would be a second source of truth for what the provider
+   * supports, and the first thing to drift from it.
+   */
+  services.voiceCapabilities = () => voice.capabilities();
   process.stderr.write(
     voiceFixture
       ? "voice: FIXTURE provider loaded — audio and transcripts on /voice are scripted, not model output\n"

@@ -1,7 +1,7 @@
 ---
 phase: 10
 title: "Memory record bền vững và tool remember"
-status: pending
+status: done
 priority: P1
 effort: "6h"
 dependencies: []

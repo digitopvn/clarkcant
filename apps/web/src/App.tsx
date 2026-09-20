@@ -2,6 +2,8 @@ import { type ReactElement, useEffect, useLayoutEffect, useMemo, useRef, useStat
 
 import {
   Conversation,
+  DetachedWidgetSurface,
+  type DetachedBridge,
   GatewayClient,
   ORB_DRAW_SIZE,
   ORB_RADIUS,
@@ -9,9 +11,9 @@ import {
   installStyles,
   readStoredTheme,
   resolveTheme,
+  sessionFromBridge,
   systemPrefersLight,
-  firstRunSteps,
-  type FirstRunStep,
+  useOrbProfile,
 } from "@clarkcant/conversation-client";
 
 /**
@@ -52,8 +54,49 @@ function readGateway(): string {
 }
 
 export function App(): ReactElement {
-  const token = readToken();
+  /*
+   * The detached widget window.
+   *
+   * It is served from this same app and shows none of it. The window holds no token, so this branch is taken
+   * before anything that would read one - not the bridge, not the URL, not session storage - and what remains is
+   * the widget the host handed over. That ordering is the design rather than a detail: a detached window that read
+   * a token on its way to rendering would be a window that could read the whole conversation.
+   *
+   * The branch is a return rather than a flag threaded through everything below, because there is nothing below
+   * that this window has any use for.
+   */
+  /*
+   * SAFETY: `clarkcantDetached` is injected into the page by the desktop shell's `contextBridge`, so it exists at
+   * runtime and in no type. The assertion is narrow (an optional property, read once) and the value is validated
+   * by use: a bridge without `bootstrap` produces a refusal in the surface rather than a crash here.
+   */
+  const detachedBridge = (window as unknown as { clarkcantDetached?: DetachedBridge }).clarkcantDetached;
+  if (new URLSearchParams(window.location.search).get("detached") === "1" && detachedBridge !== undefined) {
+    return <DetachedWidgetSurface bridge={detachedBridge} />;
+  }
+
+  /**
+   * The token, from the desktop shell when there is one and from the page otherwise.
+   *
+   * The shell hands it over through a named bridge rather than through the URL, where it would be visible in
+   * history and in the address bar. That answer arrives over IPC, so the client exists unauthenticated for the
+   * moment it takes and is rebuilt when the token arrives; a browser has no bridge and answers nothing, which
+   * leaves the URL and session storage exactly as they were.
+   */
+  const [token, setToken] = useState(readToken);
   const baseUrl = readGateway();
+
+  useEffect(() => {
+    let cancelled = false;
+    void sessionFromBridge().then((session) => {
+      if (cancelled || session === undefined) return;
+      window.sessionStorage.setItem("cc_token", session.token);
+      setToken(session.token);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   // Memoised: passing a fresh client into the conversation on every render would make its
   // load effect depend on a new object each time and re-run without end.
@@ -68,6 +111,16 @@ export function App(): ReactElement {
   const [onboarded, setOnboarded] = useState(() => window.localStorage.getItem("cc_onboarded") === "1");
 
   /**
+   * The personalized orb, resolved from what this node stored.
+   *
+   * Resolved by the shared hook rather than here, because the settings surface writes the same preferences and
+   * has to be able to re-resolve them: writing a profile changes the orb that is on screen, not the one that
+   * appears after a reload. Undefined until the node answers, and it stays undefined on failure — the orb is the
+   * product's own face, so a node that cannot answer for a preference must not be why it is missing.
+   */
+  const { profile: orbProfile, refresh: refreshOrbProfile } = useOrbProfile(client);
+
+  /**
    * What the node says it already has.
    *
    * Undefined until it answers, and the full walk is the fallback: asking is the recoverable failure, because a question
@@ -75,13 +128,6 @@ export function App(): ReactElement {
    */
   const [readiness, setReadiness] = useState<{ model: boolean; credentials: string[] } | undefined>(undefined);
 
-  /**
-   * Which of the first-run steps is showing, and the choices made so far.
-   *
-   * A step machine rather than one screen, because these are genuinely two questions: which provider, and which of
-   * that provider's models. The provider list is read from the node, so it is pi's own catalogue rather than one
-   * written here and a provider added by upgrading pi appears without this file changing.
-   */
   /** The surface the orb reads the pointer against, so its glow reacts here as it does once the app is open. */
   const shellRef = useRef<HTMLDivElement>(null);
 
@@ -90,18 +136,6 @@ export function App(): ReactElement {
   /** Where the orb is drawn, once that space has been measured. */
   const [orbPlacement, setOrbPlacement] = useState<{ x: number; y: number; scale: number } | undefined>(undefined);
 
-  const [onboardStep, setOnboardStep] = useState<"welcome" | "provider" | "model" | "key">("welcome");
-  const [pickedProvider, setPickedProvider] = useState<string | undefined>(undefined);
-  const [pickedModel, setPickedModel] = useState<string | undefined>(undefined);
-  /**
-   * The key being typed, and what became of the last attempt.
-   *
-   * Held in state only long enough to send it, and cleared once the node has it: a secret that stays in the page is a
-   * secret in a screenshot, a devtools panel and whatever else reads the DOM.
-   */
-  const [keyDraft, setKeyDraft] = useState("");
-  const [keyStatus, setKeyStatus] = useState<string | undefined>(undefined);
-  const [catalogue, setCatalogue] = useState<{ id: string; models: { id: string }[] }[] | undefined>(undefined);
 
   /*
    * The orb is placed against the space reserved for it, not against the screen.
@@ -139,10 +173,17 @@ export function App(): ReactElement {
       window.removeEventListener("resize", measure);
       observer?.disconnect();
     };
-  }, [onboarded, onboardStep]);
+  }, [onboarded]);
 
+  /*
+   * Read regardless of whether the first run is over.
+   *
+   * It used to be fetched only while onboarding, which was right when its only reader was the wizard. The
+   * conversation now asks whether this node has a model, and a fact about the node does not stop being true
+   * once somebody has pressed Get Started — so guarding this on `onboarded` meant the setup card appeared
+   * during the first run and never again.
+   */
   useEffect(() => {
-    if (onboarded) return;
     let cancelled = false;
     void client
       .readiness()
@@ -159,59 +200,27 @@ export function App(): ReactElement {
     };
   }, [onboarded, client]);
 
-  useEffect(() => {
-    if (onboarded || onboardStep !== "provider" || catalogue !== undefined) return;
-    let cancelled = false;
-    void client
-      .model()
-      .then((answer) => {
-        if (!cancelled) setCatalogue(answer.catalogue);
-      })
-      .catch(() => {
-        // An empty list rather than an error. What this step needs is a choice, and a node that cannot answer the
-        // question still leaves the person able to carry on instead of staring at a failure they cannot act on.
-        if (!cancelled) setCatalogue([]);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [onboarded, onboardStep, catalogue, client]);
-
   /*
    * What somebody sees the first time.
    *
-   * The product's name, one sentence about what it is, and one button. Everything else this interface needs - a
-   * provider, a model, a key - is asked for when it is needed and with the reason in front of the person, rather than
-   * as a form in front of a thing they have not used yet.
+   * The product's name, one sentence about what it is, and one button. Everything else this interface needs — a
+   * provider, a model, a key — is asked for when it is needed and with the reason in front of the person, rather
+   * than as a form in front of a thing they have not used yet.
+   *
+   * This was a four-step wizard: welcome, then provider, then model, then key. It asked before anything had been
+   * tried — which is how a real key ends up in a screenshot — and it dead-ended whenever the machine had no
+   * provider to offer, which is the state a fresh install is most likely to be in. The steps are gone. What a
+   * node still needs is asked for by the conversation, when a turn actually needs it.
    */
   if (!onboarded) {
-    const finish = (): void => {
+    const start = (): void => {
       // Written before the state flips, so a reload during the transition does not show this screen again.
       window.localStorage.setItem("cc_onboarded", "1");
       setOnboarded(true);
     };
-    const pickedModels = catalogue?.find((provider) => provider.id === pickedProvider)?.models ?? [];
-    /*
-     * The steps worth showing, decided once from what the node reported. A node started from a filled-in environment
-     * needs nothing, so Get Started goes straight into the app rather than asking for a provider, a model and a key it
-     * already has - and asking anyway asks somebody to retype a key, which is how a real key ends up in a screenshot.
-     */
-    const steps = firstRunSteps(readiness ?? { model: false, credentials: [] });
-    /** Moves to whatever comes next in that list, or opens the app when nothing does. */
-    const advanceFrom = (current: FirstRunStep): void => {
-      const next = steps[steps.indexOf(current) + 1];
-      if (next === undefined) finish();
-      else setOnboardStep(next);
-    };
 
     return (
-      <div
-        className="cc-shell"
-        data-view="hero"
-        data-onboarding="true"
-        data-onboarding-step={onboardStep}
-        ref={shellRef}
-      >
+      <div className="cc-shell" data-view="hero" data-onboarding="true" ref={shellRef}>
         {/*
           The same orb the app opens with, drawn before anything is chosen. The first screen is where somebody decides
           whether this thing is worth their afternoon, and it was the one place the product's own face was missing.
@@ -236,6 +245,7 @@ export function App(): ReactElement {
                 // pixel that is nearly four million fragments a frame for a soft glow nobody can see the difference in.
                 maxPixelRatio={1.25}
                 pointerTarget={shellRef}
+                {...(orbProfile === undefined ? {} : { profile: orbProfile })}
               />
             </div>
           </div>
@@ -245,174 +255,13 @@ export function App(): ReactElement {
             <div className="cc-empty">
               {/* Reserves the space the orb is drawn into, exactly as the app's own hero does. It paints nothing. */}
               <div className="cc-hero-orb" ref={heroOrbRef} aria-hidden="true" />
-              {onboardStep === "welcome" ? (
-                <>
-                  <h1>ClarkCant</h1>
-                  <p>Clark Cant Can. The Most Minimal Yet Powerful Harness You&apos;ve Ever Need.</p>
-                  <div className="cc-chip-row">
-                    <button
-                      type="button"
-                      className="cc-chip"
-                      data-onboarding-start="true"
-                      onClick={() => advanceFrom("welcome")}
-                    >
-                      Get Started
-                    </button>
-                  </div>
-                </>
-              ) : onboardStep === "provider" ? (
-                <>
-                  <h1>Provider</h1>
-                  <p>Chọn provider để chạy phiên chính. Danh sách này đọc từ pi trên máy.</p>
-                  {catalogue === undefined ? (
-                    <p className="cc-panel-note">Đang đọc…</p>
-                  ) : catalogue.length === 0 ? (
-                    <>
-                      {/*
-                       * A node that reports no provider is still a working node: it answers from recipes and installed
-                       * capabilities. Saying that, and letting the person carry on, beats a step that cannot be
-                       * completed - which is what an onboarding that dead-ends amounts to.
-                       */}
-                      <p className="cc-panel-note" data-onboarding-none="true">
-                        Node chưa thấy provider nào. Harness vẫn dùng được: nó trả lời bằng recipe và capability đã cài.
-                        Cấu hình provider cho pi rồi mở lại, hoặc đi tiếp.
-                      </p>
-                      <div className="cc-chip-row">
-                        <button
-                          type="button"
-                          className="cc-chip"
-                          data-onboarding-finish="true"
-                          onClick={() => advanceFrom("provider")}
-                        >
-                          Tiếp tục
-                        </button>
-                      </div>
-                    </>
-                  ) : (
-                    <div className="cc-chip-row">
-                      {catalogue.map((provider) => (
-                        <button
-                          key={provider.id}
-                          type="button"
-                          className="cc-chip"
-                          data-onboarding-provider={provider.id}
-                          onClick={() => {
-                            setPickedProvider(provider.id);
-                            setOnboardStep("model");
-                          }}
-                        >
-                          {provider.id}
-                        </button>
-                      ))}
-                    </div>
-                  )}
-                </>
-              ) : onboardStep === "model" ? (
-                <>
-                  <h1>Model</h1>
-                  <p>Chọn model cho phiên chính.</p>
-                  {/*
-                   * A select rather than a row of chips. A provider can offer dozens of models - the first provider in
-                   * this machine's catalogue alone offers more than the screen is tall - and a wall of buttons that has
-                   * to be scrolled is worse than a control built for choosing from a long list.
-                   */}
-                  <label className="cc-panel-note" htmlFor="cc-onboarding-model">
-                    Model của {pickedProvider}
-                  </label>
-                  <select
-                    id="cc-onboarding-model"
-                    className="cc-select"
-                    data-onboarding-model-select="true"
-                    value={pickedModel ?? pickedModels[0]?.id ?? ""}
-                    onChange={(event) => setPickedModel(event.target.value)}
-                  >
-                    {pickedModels.map((model) => (
-                      <option key={model.id} value={model.id}>
-                        {model.id}
-                      </option>
-                    ))}
-                  </select>
-                  <div className="cc-chip-row">
-                    <button
-                      type="button"
-                      className="cc-chip"
-                      data-onboarding-continue="true"
-                      onClick={() => {
-                        const model = pickedModel ?? pickedModels[0]?.id;
-                        if (pickedProvider !== undefined && model !== undefined) {
-                          window.localStorage.setItem("cc_model", `${pickedProvider}/${model}`);
-                        }
-                        advanceFrom("model");
-                      }}
-                    >
-                      Tiếp tục
-                    </button>
-                  </div>
-                  {/*
-                   * Said here rather than left to be discovered: the node runs the model its own configuration names,
-                   * so this choice is remembered for this browser and is not a remote control for the node. An
-                   * onboarding that implied otherwise would be lying at the first screen a person ever sees.
-                   */}
-                  <p className="cc-panel-note">
-                    Node lấy model từ cấu hình của chính nó (CC_MODEL_PROVIDER / CC_MODEL_ID). Lựa chọn ở đây được ghi
-                    nhớ cho trình duyệt này.
-                  </p>
-                </>
-              ) : (
-                <>
-                  <h1>TypeSafe</h1>
-                  <p>
-                    Jev dùng TypeSafe khi nó phải quyết định cách xử lý một việc. Bỏ qua được: nhập sau trong Cài đặt
-                    cũng không sao.
-                  </p>
-                  <form
-                    className="cc-credential-form"
-                    data-onboarding-key="typesafe"
-                    onSubmit={(event) => {
-                      event.preventDefault();
-                      const value = keyDraft.trim();
-                      if (value === "") return;
-                      void client
-                        .putCredential({ fields: [{ name: "typesafe", value }] })
-                        .then((answer) => {
-                          // Cleared, and the confirmation names the credential rather than repeating what was typed: a
-                          // secret echoed into a status line is a secret written to a screenshot and a log.
-                          setKeyDraft("");
-                          setKeyStatus(`Đã lưu khoá: ${answer.names.join(", ")}`);
-                          finish();
-                        })
-                        .catch((cause: unknown) => {
-                          setKeyStatus(
-                            `Không lưu được: ${cause instanceof Error ? cause.message : String(cause)}`,
-                          );
-                        });
-                    }}
-                  >
-                    <input
-                      type="password"
-                      className="cc-select"
-                      autoComplete="off"
-                      placeholder="TypeSafe API key"
-                      data-onboarding-key-input="true"
-                      value={keyDraft}
-                      onChange={(event) => setKeyDraft(event.target.value)}
-                    />
-                    <div className="cc-chip-row">
-                      <button type="submit" className="cc-chip" data-onboarding-key-save="true">
-                        Lưu
-                      </button>
-                      <button type="button" className="cc-chip" data-onboarding-finish="true" onClick={() => finish()}>
-                        Bỏ qua
-                      </button>
-                    </div>
-                  </form>
-                  {keyStatus === undefined ? null : (
-                    <p className="cc-panel-note" data-onboarding-key-status="true">
-                      {keyStatus}
-                    </p>
-                  )}
-                </>
-              )}
+              <h1>ClarkCant</h1>
+              <p>Nói điều bạn muốn làm.</p>
+              <div className="cc-chip-row">
+                <button type="button" className="cc-chip" data-onboarding-start="true" onClick={start}>
+                  Bắt đầu
+                </button>
+              </div>
             </div>
           </div>
         </div>
@@ -465,6 +314,15 @@ export function App(): ReactElement {
       // Remembering the conversation and forgetting it belong in the same place. Without this the
       // start screen would appear and the next reload would pull the old conversation back.
       onSessionReset={() => window.sessionStorage.removeItem("cc_conversation")}
+      {...(orbProfile === undefined ? {} : { orbProfile })}
+      /*
+       * What the node still needs, so the conversation can offer it where a turn actually needs it. The
+       * wizard used to ask this before anything had been tried; this asks it in the place the answer is
+       * used, and only when the answer is missing.
+       */
+      {...(readiness?.model === false ? { needsModel: true } : {})}
+      // The orb is drawn by this host, so this host is what re-resolves it after a settings write.
+      onOrbChange={refreshOrbProfile}
     />
   );
 }

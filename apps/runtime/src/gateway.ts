@@ -1,13 +1,19 @@
 import { timingSafeEqual } from "node:crypto";
 
 import {
+  type AppIntent,
+  type AppIntentConfirmationFailure,
+  type AppIntentResolution,
   type AttachmentRef,
   type Instant,
   type MessageBlock,
   type MessageRecord,
   type Principal,
   ATTACHMENT_LIMITS,
+  appIntentConfirmRequestSchema,
+  appIntentRequestSchema,
   commandEnvelopeSchema,
+  describeAppIntent,
   nowInstant,
   protocolRangeSchema,
   redactSecrets,
@@ -16,17 +22,21 @@ import {
 } from "@clarkcant/contracts";
 import {
   claimLiveOwner,
+  cancelTask,
   decideApproval,
   getActionBinding,
   getInstance,
   handleUserMessage,
   invokeMiniAppAction,
   listCapabilitySummaries,
+  listInstalledPackages,
   listRegisteredPreferences,
   liveOwnerOf,
   liveStateOf,
   pinInstance,
+  readExecutionPolicy,
   readSnapshotForDisplay,
+  recordAppIntentEvent,
   releaseLiveOwner,
   sweepExpiredLiveOwners,
   undoRegisteredPreference,
@@ -40,6 +50,7 @@ import {
   createConversation,
   findBundleForSnapshot,
   findCompositionByInstance,
+  getArtifact,
   getAttachment,
   getConversation,
   getDatasetForPrincipal,
@@ -50,12 +61,21 @@ import {
   listLocalImages,
   nextMessageSequence,
   oneRow,
+  recentEvents,
   deleteCredential,
   putPreference,
 } from "@clarkcant/storage";
 import { credentialNames, putCredential } from "@clarkcant/storage";
 
 import { nodeBackgroundSessions } from "./background-sessions.ts";
+import {
+  type AppIntentDeps,
+  consumeConfirmation,
+  decideAppIntent,
+  mintConfirmation,
+} from "./app-intents.ts";
+import { buildSuggestions } from "./suggestions.ts";
+import { deleteMemory, listMemories, memoryCounts, type MemoryDeps } from "./memory.ts";
 import { decideTurnAction, decisionTimeoutMsFromEnv, searchDecisionBudget } from "./jev-decider.ts";
 import { PI_BUILTIN_TOOLS, nodeToolCatalogue } from "./tool-catalogue.ts";
 
@@ -279,11 +299,32 @@ export async function handleRequest(deps: GatewayDeps, request: GatewayRequest):
     return json(200, { ok: true, stored: { provider, id }, applies: "conversations started after this" });
   }
 
-  if (request.method === "GET" && request.path === "/capabilities") {
+  if (segments.length === 1 && segments[0] === "capabilities" && request.method === "GET") {
     return json(200, {
       // Summaries only: dumping every tool schema into every turn is both expensive and a
       // prompt-injection surface, so a schema is loaded once a capability is chosen.
       capabilities: listCapabilitySummaries({ db: runtime.db, nodeId: runtime.identity.nodeId }),
+    });
+  }
+
+  /*
+   * What the configured voice provider can do.
+   *
+   * Reported rather than assumed by the surface: a picker hard-coded with one provider's voice names would
+   * offer them to a provider that has never heard of them, and the failure would arrive as a session that
+   * connects and then says nothing. A node with no voice gateway answers with a provider that supports
+   * nothing, which is a real answer — the tab then shows a reason instead of a control.
+   */
+  if (segments.length === 2 && segments[0] === "voice" && segments[1] === "capabilities" && request.method === "GET") {
+    const capabilities = services.voiceCapabilities?.();
+    return json(200, {
+      capabilities: capabilities ?? {
+        provider: "none",
+        supportsVoiceSelection: false,
+        voices: [],
+        supportsPreview: false,
+        note: "Node này chưa bật voice.",
+      },
     });
   }
 
@@ -306,6 +347,36 @@ export async function handleRequest(deps: GatewayDeps, request: GatewayRequest):
   if (segments.length === 1 && segments[0] === "preferences" && request.method === "GET") {
     return json(200, {
       preferences: listRegisteredPreferences(preferenceDeps, runtime.identity.ownerPrincipalId),
+    });
+  }
+
+  /*
+   * The effects this node performed without an approval card.
+   *
+   * This is what makes autonomy checkable rather than merely trusted: an approval card is its own record, and
+   * an effect that skipped the card would otherwise leave nothing a person could look at. Read from the same
+   * event log the task lifecycle writes to.
+   *
+   * The document is passed through as the writer stored it, and the writer is `recordEffectExecution`, which
+   * puts a description and an operation digest there — never a credential, and never the output of a command.
+   */
+  if (segments.length === 1 && segments[0] === "activity" && request.method === "GET") {
+    const events = recentEvents(runtime.db, { stream: "activity", limit: 20 });
+    return json(200, {
+      effects: events.map((event) => {
+        const document = (typeof event.document === "object" && event.document !== null
+          ? event.document
+          : {}) as Record<string, unknown>;
+        return {
+          at: event.occurredAt,
+          kind: event.kind,
+          mode: typeof document.mode === "string" ? document.mode : "unknown",
+          category: typeof document.category === "string" ? document.category : "unknown",
+          description: typeof document.description === "string" ? document.description : "",
+          operationDigest: typeof document.operationDigest === "string" ? document.operationDigest : "",
+          because: typeof document.because === "string" ? document.because : "",
+        };
+      }),
     });
   }
 
@@ -372,6 +443,26 @@ export async function handleRequest(deps: GatewayDeps, request: GatewayRequest):
 
   if (segments[0] === "search") {
     return await handleSearchRoutes(deps, request, segments);
+  }
+
+  if (segments[0] === "memory") {
+    const answered = handleMemoryRoutes(deps, request, segments);
+    if (answered !== undefined) return answered;
+  }
+
+  if (segments.length === 1 && segments[0] === "suggestions") {
+    if (request.method !== "GET") {
+      return fail(405, "METHOD_NOT_ALLOWED", "a suggestion list is read, not written");
+    }
+    return handleSuggestionsRoute(deps);
+  }
+
+  if (segments[0] === "app-intents") {
+    return await handleAppIntentRoutes(deps, request, segments, at);
+  }
+
+  if (segments[0] === "voice-fixture") {
+    return handleVoiceFixtureRoute(services, request, segments);
   }
 
   if (segments[0] === "conversations") {
@@ -520,6 +611,108 @@ export async function handleRequest(deps: GatewayDeps, request: GatewayRequest):
     });
   }
 
+  /*
+   * Ask a task to stop, and record the answer in the conversation.
+   *
+   * A stop that only lived in the response to this call would leave the transcript showing a task still going,
+   * so the node writes what it did. `confirmed` is the part a caller must not round up: with an executor still
+   * running the task holds `cancel_requested` until that executor says what happened.
+   */
+  if (segments.length === 3 && segments[0] === "tasks" && segments[2] === "cancel" && request.method === "POST") {
+    const taskId = decodeURIComponent(segments[1] ?? "");
+    const outcome = cancelTask(
+      { db: runtime.db, nodeId: runtime.identity.nodeId, now: nowInstant, newId: services.conductor.newId },
+      taskId,
+    );
+    if (!outcome.ok) return fail(409, outcome.code, outcome.message, { taskId });
+    appendHostReply(services, {
+      conversationId: outcome.task.conversationId,
+      at: nowInstant(),
+      text: outcome.confirmed
+        ? `Đã dừng task ${taskId}. Không có việc nào đang chạy nên không còn gì đang chờ.`
+        : `Đã ghi nhận yêu cầu dừng task ${taskId}. Việc đang chạy vẫn có thể đang hoàn tất, nên task chưa được coi là đã dừng cho tới khi nơi chạy xác nhận.`,
+    });
+    return json(200, { taskId: outcome.task.taskId, state: outcome.task.state, confirmed: outcome.confirmed });
+  }
+
+  /*
+   * Open an artifact.
+   *
+   * Expiry is reported rather than folded into "not found": an artifact that reads as missing tells the user
+   * their file never existed, when the truth is that the node had it and a retention window passed. That
+   * difference decides whether they ask for it again or go looking for a fault.
+   *
+   * The reply describes the artifact and never says where its bytes live — the node's data directory is not
+   * something a client needs in order to show a file, and handing it over would only describe somebody's disk.
+   */
+  if (segments.length === 2 && segments[0] === "artifacts" && request.method === "GET") {
+    const artifactId = decodeURIComponent(segments[1] ?? "");
+    const artifact = getArtifact(runtime.db, artifactId);
+    if (artifact === undefined) {
+      return fail(404, "ARTIFACT_NOT_FOUND", "Không có artifact nào với id này trên node.", { artifactId });
+    }
+    return json(200, {
+      artifact: {
+        artifactId: artifact.artifactId,
+        digest: artifact.digest,
+        sizeBytes: artifact.sizeBytes,
+        mimeType: artifact.mimeType,
+        originNodeId: artifact.originNodeId,
+        createdAt: artifact.createdAt,
+        expiresAt: artifact.expiresAt ?? null,
+        // ISO instants compare correctly as strings, and both sides are UTC.
+        expired: artifact.expiresAt !== undefined && artifact.expiresAt <= at(),
+      },
+    });
+  }
+
+  /*
+   * Who is driving a controlled surface — a browser session or a desktop session.
+   *
+   * Takeover hands the wheel to the user by bumping the lease epoch, which invalidates the action the agent had
+   * already planned rather than reaching into a process this node does not control. Stop ends the session and
+   * bumps the epoch for the same reason: an action already in flight must not land on a session that has ended.
+   *
+   * A session that is missing or already stopped is refused rather than quietly reported as done, because a
+   * takeover that silently did nothing leaves the user believing they have the wheel.
+   */
+  if (
+    segments.length === 3 &&
+    segments[0] === "control-sessions" &&
+    (segments[2] === "takeover" || segments[2] === "stop") &&
+    request.method === "POST"
+  ) {
+    const sessionId = decodeURIComponent(segments[1] ?? "");
+    const at = nowInstant();
+    const session =
+      segments[2] === "takeover"
+        ? services.controlSessions.takeover(sessionId, at)
+        : services.controlSessions.stop(sessionId, at);
+    if (session === undefined) {
+      return fail(409, "CONTROL_SESSION_UNAVAILABLE", "Không đổi được phiên này vì phiên không tồn tại hoặc đã dừng.", {
+        sessionId,
+      });
+    }
+    return json(200, { session });
+  }
+
+  /*
+   * What is installed on this node.
+   *
+   * Read from the active generation, so a rollback is reflected here without anything in this route knowing about
+   * it — and a superseded generation is not listed, because a package that was replaced is not present.
+   */
+  if (segments.length === 1 && segments[0] === "packages" && request.method === "GET") {
+    return json(200, {
+      packages: listInstalledPackages({
+        db: runtime.db,
+        nodeId: runtime.identity.nodeId,
+        now: nowInstant,
+        newId: services.conductor.newId,
+      }),
+    });
+  }
+
   if (request.method === "POST" && request.path === "/command") {
     return handleRawCommand(deps, request, at);
   }
@@ -616,6 +809,276 @@ function appendHostReply(
   appendMessage(services.runtime.db, message, nextMessageSequence(services.runtime.db, input.conversationId));
   indexMessages(services.search, { conversationId: input.conversationId, messages: [message], at: input.at });
   return { messageId: message.messageId };
+}
+
+/**
+ * Decide what a typed message means to the application.
+ *
+ * Shared by both message routes. The composer uses the streaming one, and the plain route was wired first - which
+ * meant a typed "mở settings" reached the model instead of the registry until this was found. One function is what
+ * keeps the next route from being the one that forgot to record the audit event.
+ */
+function typedAppIntent(
+  services: NodeServices,
+  conversationId: string,
+  text: string,
+  at: () => string,
+): AppIntentResolution {
+  const intentDeps: AppIntentDeps = {
+    db: services.runtime.db,
+    nodeId: services.runtime.identity.nodeId,
+    now: () => at() as never,
+    newId: services.conductor.newId,
+  };
+  const principalId = services.runtime.identity.ownerPrincipalId;
+  return decideAppIntent(
+    intentDeps,
+    { principalId, request: { text, source: "chat" }, conversationId: conversationId as never },
+    (intent: AppIntent) => mintConfirmation(intentDeps, { principalId, intent, source: "chat" }),
+  );
+}
+
+/**
+ * What each confirmation failure means, in words.
+ *
+ * Spelled out here rather than left to a caller: an expired confirmation and a wrong one lead a person to different
+ * next actions, and a bare code on screen sends them looking for a bug that is not there.
+ */
+const CONFIRMATION_MESSAGES: Record<AppIntentConfirmationFailure, string> = {
+  CONFIRMATION_NOT_FOUND: "Không có lời xác nhận nào đang chờ.",
+  CONFIRMATION_EXPIRED: "Lời xác nhận đã quá hạn. Bạn nói lại câu lệnh nhé.",
+  CONFIRMATION_ALREADY_USED: "Lời xác nhận này đã được dùng rồi.",
+};
+
+/** Said when someone declines. Nothing happened, and the answer says so rather than staying silent. */
+const DECLINED_SAY = "Tôi đã bỏ qua câu lệnh đó.";
+
+/**
+ * Application intents.
+ *
+ * Two routes and one rule: a request comes back as a decision, and only `kind: "intent"` is executable. Quitting
+ * always comes back as `needs-confirmation` carrying a token, so no single request - typed, clicked or spoken - can
+ * end the application on its own. A request that maps to nothing is answered `none`, which means "not my business,
+ * carry on as before" and is deliberately not the same answer as a refusal.
+ */
+/**
+ * What to offer next.
+ *
+ * Read on demand rather than cached, and the transport says so: it owns the cache headers on every response, so
+ * this route does not write one it could not enforce. An empty store is an empty list and a 200, not a 404 -
+ * there is nothing wrong with having nothing to suggest, and a 404 would make the client treat a normal state as
+ * an error it has to recover from.
+ */
+function handleSuggestionsRoute(deps: GatewayDeps): GatewayResponse {
+  const { runtime } = deps.services;
+  const items = buildSuggestions({
+    db: runtime.db,
+    nodeId: runtime.identity.nodeId,
+    now: () => new Date().toISOString(),
+  });
+  return { status: 200, body: { items } };
+}
+
+async function handleAppIntentRoutes(
+  deps: GatewayDeps,
+  request: GatewayRequest,
+  segments: readonly string[],
+  at: () => string,
+): Promise<GatewayResponse> {
+  const { services } = deps;
+  const { runtime } = services;
+  const principalId = runtime.identity.ownerPrincipalId;
+  const intentDeps: AppIntentDeps = {
+    db: runtime.db,
+    nodeId: runtime.identity.nodeId,
+    now: () => at() as never,
+    newId: services.conductor.newId,
+  };
+
+  if (segments.length === 1 && request.method === "POST") {
+    const parsed = readJson(request);
+    if (!parsed.ok) return parsed.response;
+    const body = appIntentRequestSchema.safeParse(parsed.value);
+    if (!body.success) {
+      return fail(400, "INVALID_SCHEMA", "an app intent request needs text or a kind, and a source");
+    }
+    const asked = body.data;
+    const decision = decideAppIntent(
+      intentDeps,
+      {
+        principalId,
+        request: asked,
+        ...(asked.conversationId === undefined ? {} : { conversationId: asked.conversationId as never }),
+      },
+      (intent: AppIntent) => mintConfirmation(intentDeps, { principalId, intent, source: asked.source }),
+    );
+    return json(200, { decision });
+  }
+
+  if (segments.length === 2 && segments[1] === "confirm" && request.method === "POST") {
+    const parsed = readJson(request);
+    if (!parsed.ok) return parsed.response;
+    const body = appIntentConfirmRequestSchema.safeParse(parsed.value);
+    if (!body.success) {
+      return fail(400, "INVALID_SCHEMA", "a confirmation needs a token and a granted or denied decision");
+    }
+    // Spent before the decision is read, so a denial also burns the token and a second answer cannot reverse it.
+    const outcome = consumeConfirmation(intentDeps, { principalId, token: body.data.confirmationToken });
+    if (!outcome.ok) {
+      const status =
+        outcome.code === "CONFIRMATION_ALREADY_USED" ? 409 : outcome.code === "CONFIRMATION_EXPIRED" ? 410 : 404;
+      return fail(status, outcome.code, CONFIRMATION_MESSAGES[outcome.code]);
+    }
+    if (body.data.decision === "denied") {
+      return json(200, { granted: false, decision: { kind: "refused", say: DECLINED_SAY } });
+    }
+    recordAppIntentEvent(intentDeps, {
+      intent: outcome.intent,
+      source: outcome.source,
+      confirmed: true,
+      ...(body.data.conversationId === undefined ? {} : { conversationId: body.data.conversationId as never }),
+    });
+    return json(200, {
+      granted: true,
+      decision: {
+        kind: "intent",
+        intent: outcome.intent,
+        requiresConfirmation: false,
+        readBack: describeAppIntent(outcome.intent),
+      },
+    });
+  }
+
+  return fail(404, "NOT_FOUND", "no such app-intent route");
+}
+
+/**
+ * The revision and binding digest a spoken action is checked against, read from the node's own state.
+ *
+ * A click brings a cursor: the revision it saw, and the digest of the binding it was shown. A spoken sentence brings
+ * nothing at all, so there is nothing to trust and nothing to be stale relative to - the node reads what it holds.
+ * That is also why this refuses an action the instance no longer announces: the sentence was matched against a view
+ * the page sent, and the page's view may be older than the instance.
+ */
+export function widgetActionTarget(
+  services: NodeServices,
+  instanceId: string,
+  actionBindingId: string,
+): { revision: number; bindingDigest: string } | undefined {
+  const instance = getInstance(services.conductor, instanceId);
+  if (instance === undefined) return undefined;
+  if (!instance.actionBindingIds.includes(actionBindingId)) return undefined;
+  const binding = getActionBinding(services.conductor, actionBindingId);
+  if (binding === undefined) return undefined;
+  return { revision: instance.revision, bindingDigest: binding.bindingDigest };
+}
+
+/** One widget action invocation, as either a click or a spoken command asks for it. */
+export interface WidgetActionRequest {
+  conversationId: string;
+  principalId: string;
+  instanceId: string;
+  actionBindingId: string;
+  expectedRevision: number;
+  expectedBindingDigest: string;
+  input: Record<string, unknown>;
+  invocationId: string;
+}
+
+export type WidgetActionResult =
+  | { ok: true; status: 200; body: Record<string, unknown> }
+  | { ok: false; status: number; code: string; message: string; currentRevision?: number };
+
+/**
+ * Invoke a widget action.
+ *
+ * The single path a click and a spoken command both take. Everything that decides whether an action may run lives
+ * here - the owner check, the revision the client saw, the binding digest, and one effect per invocation id - so a
+ * second path would not be a second interface to the same gate, it would be a way around one of them.
+ *
+ * Extracted from the route so the voice path has somewhere to call rather than something to copy. The route keeps the
+ * request-shaped validation and this keeps the authorization, which is the split that matters: what the HTTP body
+ * looks like is the transport's business, and whether an action may run is not.
+ */
+export function invokeWidgetAction(services: NodeServices, request: WidgetActionRequest): WidgetActionResult {
+  // The guard main added at the route, kept where the invocation actually happens so both callers get it.
+  if (!Number.isFinite(request.expectedRevision)) {
+    return {
+      ok: false,
+      status: 400,
+      code: "INVALID_SCHEMA",
+      message: "an action invocation needs the expectedRevision the client saw",
+    };
+  }
+
+  // Read at the invocation rather than captured, so a mode the user changed applies to the next action they take
+  // instead of the next time the node starts.
+  const policy = readExecutionPolicy(
+    { db: services.runtime.db, now: () => new Date().toISOString() as Instant },
+    services.runtime.identity.ownerPrincipalId,
+  );
+  const outcome = invokeMiniAppAction(services.conductor, { ...request, policy });
+  if (!outcome.ok) {
+    const status =
+      outcome.code === "INSTANCE_UNKNOWN" || outcome.code === "ACTION_UNKNOWN"
+        ? 404
+        : outcome.code === "NOT_AUTHORIZED"
+          ? 403
+          : outcome.code === "REVISION_MISMATCH" || outcome.code === "BINDING_STALE" || outcome.code === "INVOCATION_KEY_REUSED"
+            ? 409
+            : 400;
+    return {
+      ok: false,
+      status,
+      code: outcome.code,
+      message: outcome.message,
+      ...(outcome.currentRevision === undefined ? {} : { currentRevision: outcome.currentRevision }),
+    };
+  }
+
+  return {
+    ok: true,
+    status: 200,
+    body: {
+      duplicate: outcome.duplicate,
+      instanceId: outcome.instanceId,
+      revision: outcome.revision,
+      stateRevision: outcome.stateRevision,
+      state: outcome.state,
+      pinId: outcome.pinId ?? null,
+      // The whole page comes back after a mutation, so the client does not have to guess whether
+      // its cursor is still valid.
+      timeline: buildTimeline(services, { conversationId: request.conversationId, afterSequence: 0 }),
+    },
+  };
+}
+
+/**
+ * The voice fixture's script.
+ *
+ * Unreachable on a real node: with no scripted provider loaded there is no seam and this answers 404, so there is no way
+ * to tell a production provider what to say. It exists because the fixture is otherwise one fixed sentence, and a
+ * browser journey that cannot say a command cannot test what the node does with one - which is exactly the evidence
+ * phase 5 was missing.
+ */
+function handleVoiceFixtureRoute(
+  services: NodeServices,
+  request: GatewayRequest,
+  segments: readonly string[],
+): GatewayResponse {
+  const fixture = services.voiceFixture;
+  if (fixture === undefined) return fail(404, "NOT_FOUND", "no voice fixture is loaded on this node");
+  if (segments.length !== 2 || segments[1] !== "words" || request.method !== "POST") {
+    return fail(404, "NOT_FOUND", "no such voice-fixture route");
+  }
+  const parsed = readJson(request);
+  if (!parsed.ok) return parsed.response;
+  const words = parsed.value.words;
+  if (typeof words !== "string" || words.trim() === "") {
+    return fail(400, "INVALID_SCHEMA", "words must be a non-empty string");
+  }
+  fixture.setWords(words.trim());
+  return json(200, { ok: true, words: words.trim() });
 }
 
 /**
@@ -1160,6 +1623,21 @@ async function handleConversationRoutes(
     }
 
     /*
+     * A typed command to the application.
+     *
+     * Checked before the turn machinery, because "mở settings" is not something to steer into a running answer. An
+     * intent is answered by the host and recorded with source "chat"; a command-shaped sentence that maps to nothing
+     * gets an honest "I did not understand" and no model turn at all, which is the issue's rule about not guessing;
+     * anything else falls through untouched and reaches the agent exactly as before.
+     */
+    const asked = typedAppIntent(services, conversationId, text, at);
+    if (asked.kind !== "none") {
+      const said = asked.kind === "refused" ? asked.say : asked.readBack;
+      const appended = appendHostReply(services, { conversationId, text: said, at: at() as never });
+      return json(200, { accepted: true, messageId: appended.messageId, appIntent: asked });
+    }
+
+    /*
      * A message sent while the assistant is still working.
      *
      * The three answers are not interchangeable, so the decider chooses rather than a rule. Two of them need nothing
@@ -1251,6 +1729,40 @@ async function handleConversationRoutes(
     const text = parsed.value.text;
     if (typeof text !== "string" || text.trim().length === 0) {
       return fail(400, "INVALID_SCHEMA", "a message must carry a non-empty text field");
+    }
+
+    /*
+     * A typed command to the application, on the route the composer actually uses.
+     *
+     * The same registry and the same host answer as the non-streaming route; the difference is only where the
+     * decision travels, because this answer is a stream. A command is not a turn, so nothing is sent to the model
+     * and the frame carries the decision the page acts on.
+     */
+    const askedIntent = typedAppIntent(services, conversationId, text, at);
+    if (askedIntent.kind !== "none") {
+      const said = askedIntent.kind === "refused" ? askedIntent.say : askedIntent.readBack;
+      const appended = appendHostReply(services, { conversationId, text: said, at: at() as never });
+      return {
+        status: 200,
+        body: null,
+        stream: {
+          contentType: "text/event-stream",
+          run: async (send) => {
+            // The sentence is a delta so a client that renders replies renders this one too, and the `done` frame
+            // carries the decision plus the timeline the other routes would have returned.
+            send(sse("delta", { text: said }));
+            send(
+              sse("done", {
+                resolution: "app-intent",
+                taskId: null,
+                messageIds: [appended.messageId],
+                timeline: buildTimeline(services, { conversationId, afterSequence: 0 }),
+                appIntent: askedIntent,
+              }),
+            );
+          },
+        },
+      };
     }
 
     const at_ = at() as never;
@@ -1413,56 +1925,23 @@ async function handleConversationRoutes(
       return fail(400, "INSTANCE_MISMATCH", "the body names a different instance than the path");
     }
 
-    const invocation = {
+    const result = invokeWidgetAction(services, {
       conversationId,
       principalId: runtime.identity.ownerPrincipalId,
       instanceId,
       actionBindingId: typeof parsed.value.actionBindingId === "string" ? parsed.value.actionBindingId : "",
-      expectedRevision:
-        typeof parsed.value.expectedRevision === "number" ? parsed.value.expectedRevision : Number.NaN,
-      expectedBindingDigest:
-        typeof parsed.value.expectedBindingDigest === "string" ? parsed.value.expectedBindingDigest : "",
+      expectedRevision: typeof parsed.value.expectedRevision === "number" ? parsed.value.expectedRevision : Number.NaN,
+      expectedBindingDigest: typeof parsed.value.expectedBindingDigest === "string" ? parsed.value.expectedBindingDigest : "",
       input:
         typeof parsed.value.input === "object" && parsed.value.input !== null && !Array.isArray(parsed.value.input)
           ? (parsed.value.input as Record<string, unknown>)
           : {},
       invocationId: typeof parsed.value.invocationId === "string" ? parsed.value.invocationId : "",
-    };
+    });
 
-    if (invocation.actionBindingId === "" || invocation.invocationId === "") {
-      return fail(400, "INVALID_SCHEMA", "an action invocation needs an actionBindingId and an invocationId");
-    }
-    if (!Number.isFinite(invocation.expectedRevision)) {
-      return fail(400, "INVALID_SCHEMA", "an action invocation needs the expectedRevision the client saw");
-    }
-
-    const outcome = invokeMiniAppAction(services.conductor, invocation);
-    if (!outcome.ok) {
-      const status =
-        outcome.code === "INSTANCE_UNKNOWN" || outcome.code === "ACTION_UNKNOWN"
-          ? 404
-          : outcome.code === "NOT_AUTHORIZED"
-            ? 403
-            : outcome.code === "REVISION_MISMATCH"
-              ? 409
-              : outcome.code === "BINDING_STALE" || outcome.code === "INVOCATION_KEY_REUSED"
-                ? 409
-                : 400;
-      return fail(status, outcome.code, outcome.message, {
-        ...(outcome.currentRevision === undefined ? {} : { currentRevision: outcome.currentRevision }),
-      });
-    }
-
-    return json(200, {
-      duplicate: outcome.duplicate,
-      instanceId: outcome.instanceId,
-      revision: outcome.revision,
-      stateRevision: outcome.stateRevision,
-      state: outcome.state,
-      pinId: outcome.pinId ?? null,
-      // The whole page comes back after a mutation, so the client does not have to guess whether
-      // its cursor is still valid.
-      timeline: buildTimeline(services, { conversationId, afterSequence: 0 }),
+    if (result.ok) return json(result.status, result.body);
+    return fail(result.status, result.code, result.message, {
+      ...(result.currentRevision === undefined ? {} : { currentRevision: result.currentRevision }),
     });
   }
 
@@ -1848,4 +2327,46 @@ function handleRawCommand(deps: GatewayDeps, request: GatewayRequest, at: () => 
     receivedAt: at(),
     note: "accepted for durable processing; this is not an outcome",
   });
+}
+
+/**
+ * What this node remembers, and removing one thing from it.
+ *
+ * Reading answers with the records and a count per kind, because a screen that shows a list also wants to say how
+ * much there is. Deleting removes the row for real, and a delete that matched nothing is a 404 rather than a quiet
+ * success: the caller asked to remove something and it is still there, so "it worked" would be a lie the person
+ * cannot see through.
+ *
+ * The principal comes from the token on both paths, which is what makes somebody else's memory unreachable rather
+ * than merely unaddressed.
+ */
+function handleMemoryRoutes(
+  deps: GatewayDeps,
+  request: GatewayRequest,
+  segments: readonly string[],
+): GatewayResponse | undefined {
+  if (segments[0] !== "memory" || segments.length > 2) return undefined;
+  const { services } = deps;
+  const { runtime } = services;
+  const principalId = runtime.identity.ownerPrincipalId;
+  const memoryDeps: MemoryDeps = {
+    db: runtime.db,
+    now: () => new Date().toISOString(),
+    newId: services.conductor.newId,
+  };
+
+  if (segments.length === 1) {
+    if (request.method !== "GET") return fail(405, "METHOD_NOT_ALLOWED", "memory is read here, not written");
+    return {
+      status: 200,
+      body: { items: listMemories(memoryDeps, principalId), counts: memoryCounts(memoryDeps, principalId) },
+    };
+  }
+
+  if (request.method !== "DELETE") return fail(405, "METHOD_NOT_ALLOWED", "a remembered thing is deleted here");
+  const memoryId = segments[1] ?? "";
+  if (!deleteMemory(memoryDeps, principalId, memoryId)) {
+    return fail(404, "NOT_FOUND", "this node has no such remembered thing for this principal");
+  }
+  return { status: 200, body: { removed: true } };
 }

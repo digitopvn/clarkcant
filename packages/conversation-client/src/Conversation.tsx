@@ -18,7 +18,11 @@ import {
 } from "./theme.ts";
 import type { ThemeName } from "@clarkcant/design-tokens";
 import { AgentAvatar } from "./AgentAvatar.tsx";
-import { ReasoningBlock, ToolActivityBlock, type BlockActions } from "./blocks.tsx";
+import { hasDesktopChrome, requestWindowMode } from "./desktop-compact.ts";
+import { DesktopChrome } from "./desktop-chrome.tsx";
+import { fetchSuggestions } from "./suggestions.ts";
+import type { Suggestion } from "@clarkcant/contracts";
+import { ReasoningBlock, ToolActivityBlock, type BlockActions, type ArtifactOpenState, type ControlSessionActionState, type TaskStopState } from "./blocks.tsx";
 import { composerTextareaHeight } from "./composer-height.ts";
 import {
   attachmentReducer,
@@ -29,17 +33,21 @@ import {
   toBase64,
   type AttachmentChip,
 } from "./attachments.ts";
-import { ATTACHMENT_LIMITS } from "@clarkcant/contracts";
+import { ATTACHMENT_LIMITS, type AppIntentDecision, type AppIntentKind, type SettingsTab } from "@clarkcant/contracts";
 import { followsBottom } from "./follow-bottom.ts";
 import { latestTurnMetrics, statuslineParts } from "./statusline.ts";
 import { attachedPrompt, explainPrompt } from "./selection.ts";
 import { SelectionToolbar } from "./selection-toolbar.tsx";
 import { BackgroundSessionsMark } from "./background-sessions-mark.tsx";
 import { applyLiveEvent, type LiveSegment } from "./live-reply.ts";
+import { agentStateFrom, attachInputModality, type InputModality } from "./input-modality.ts";
+import type { ResolvedOrbProfile } from "./orb-profile.ts";
 import { Markdown } from "./markdown.tsx";
 import { Orb } from "./Orb.tsx";
 import { useTypewriterPlaceholder, prefersReducedMotion } from "./typewriter.ts";
-import { VoiceOverlay } from "./VoiceOverlay.tsx";import { SettingsPanel } from "./SettingsPanel.tsx";
+import { VoiceOverlay } from "./VoiceOverlay.tsx";
+import { SettingsPanel } from "./settings/SettingsPanel.tsx";
+import { runAppIntent, type AppIntentHost } from "./app-intents.ts";
 import { resolveRenderer, toRendererDataset } from "./renderers.tsx";
 import { MiniAppSurface, type CompositeSurfaceView } from "./mini-app-surface.tsx";
 import { PinnedLiveSurface } from "./DesktopSurfaces.tsx";
@@ -79,6 +87,31 @@ export interface ConversationProps {
   onSessionReset?: () => void;
   /** Loads an existing conversation on mount instead of starting empty. */
   initialAfter?: number;
+  /**
+   * The personalized orb, resolved by the host from the stored preferences.
+   *
+   * Passed down rather than read here: the conversation is rendered many times per turn, and a component
+   * that fetched its own preferences would rebuild the orb's GPU program on whatever schedule its own
+   * re-renders happened to follow.
+   */
+  orbProfile?: ResolvedOrbProfile;
+  /**
+   * Called after a settings write that changes the orb.
+   *
+   * Writing a profile has to change the orb that is on screen rather than the one that appears after a
+   * reload, and only the host that resolved the profile can re-resolve it.
+   */
+  onOrbChange?: () => void;
+  /**
+   * Whether this node has no model, so a turn that needs one would fail.
+   *
+   * Passed down rather than discovered here, because the answer comes from the node's own readiness report and
+   * this surface has no business asking a second time. When it is true the empty state says what is missing and
+   * offers the control that fixes it, which is the difference between a setup step and a dead end: the wizard
+   * this replaced asked before anything had been tried, and ended in a screen with no way forward whenever the
+   * machine had no provider to offer.
+   */
+  needsModel?: boolean;
 }
 
 type ConnectionState = "connecting" | "ready" | "offline";
@@ -155,6 +188,9 @@ export function Conversation({
   onTimelineChange,
   onConversationReady,
   onSessionReset,
+  orbProfile,
+  onOrbChange,
+  needsModel,
 }: ConversationProps): ReactElement {
   const [conversationId, setConversationId] = useState<string | undefined>(initialConversationId);
   const [timeline, setTimeline] = useState<Timeline | undefined>(undefined);
@@ -203,6 +239,22 @@ export function Conversation({
   const [orbPlacement, setOrbPlacement] = useState<OrbPlacement | undefined>(undefined);
   /** The element the orb answers pointer movement anywhere inside. */
   const shell = useRef<HTMLDivElement>(null);
+  /**
+   * How the user last interacted, as one attribute on the shell.
+   *
+   * Published here rather than detected by each component that cares: a listener per component is a
+   * listener per component to keep in sync, and the stylesheet would have no single place to read. Only
+   * changes are reported, so a pointer crossing the shell is one state write rather than a thousand.
+   */
+  const [modality, setModality] = useState<InputModality>("pointer");
+
+  useEffect(() => {
+    // The window rather than the shell: a pointer that has left the shell is still the last thing the user
+    // did, and a keyboard event inside a focused control has to be seen too.
+    const handle = attachInputModality({ target: window, onChange: setModality });
+    return () => handle.dispose();
+  }, []);
+
   /** The space the hero reserves for the orb, which is where the orb measures itself from. */
   const heroOrb = useRef<HTMLDivElement>(null);
   const composerWrap = useRef<HTMLDivElement>(null);
@@ -218,6 +270,36 @@ export function Conversation({
    */
   const composerFrom = useRef<number | undefined>(undefined);
   const [uiCheckOpen, setUiCheckOpen] = useState(false);
+  /*
+   * Bumped when the node reports that a spoken action has run.
+   *
+   * The pinned surface watches it and re-reads itself, which is what the click path does after its own invoke. The
+   * alternative - the voice path writing the surface's state directly - would be a second way to change the same
+   * state, and the two would drift.
+   */
+  const [liveRefresh, setLiveRefresh] = useState(0);
+  /**
+   * A tab a command named, if one did.
+   *
+   * Held here rather than inside the panel so that a spoken "open the Memory tab" and a click produce the same
+   * panel state: both go through one executor, and the executor sets this the same way either time.
+   */
+  const [settingsTab, setSettingsTab] = useState<SettingsTab | undefined>(undefined);
+  /**
+   * What came of a command that could not be carried out, or was refused.
+   *
+   * Shown rather than swallowed. "Nothing happened" with no reason is the failure this whole design avoids, and a
+   * browser asked to resize a window has to say that it cannot rather than look like it did.
+   */
+  const [intentNotice, setIntentNotice] = useState<string | undefined>(undefined);
+  /**
+   * A decision a typed command produced, waiting to be carried out.
+   *
+   * Held in state and run from an effect rather than run inside the send callback: the send callback is declared
+   * above the executor, so reaching forward from it would read a binding before it exists. This also keeps one place
+   * that runs a decision, whichever route the command arrived by.
+   */
+  const [pendingIntent, setPendingIntent] = useState<AppIntentDecision | undefined>(undefined);
   /**
    * Whether the voice surface is up.
    *
@@ -226,6 +308,54 @@ export function Conversation({
    * session sat in a settings tab. Speaking is a mode of the conversation, so it belongs here.
    */
   const [voiceOpen, setVoiceOpen] = useState(false);
+  /**
+   * Whether this window is showing the compact surface only.
+   *
+   * A test hook, and named as one: `?cc-compact=1` puts a browser into the presentation the desktop window takes
+   * when it shrinks, so the browser suite can prove that surface without pretending to have a shell. Nothing
+   * changes it, because the real path into it is the window resizing rather than anything in the document.
+   */
+  const [compactSurface] = useState(
+    () => new URLSearchParams(window.location.search).get("cc-compact") === "1",
+  );
+
+  /**
+   * What the node suggests, which is nothing until it answers and nothing if it cannot.
+   *
+   * Empty is the ordinary state rather than a failure: the four chips below are the fallback and they are drawn
+   * whenever this is empty, so a node that is slow, old or unreachable costs the person a suggestion list and
+   * never the screen.
+   */
+  const [dynamicSuggestions, setDynamicSuggestions] = useState<Suggestion[]>([]);
+
+  useEffect(() => {
+    if (compactSurface) setVoiceOpen(true);
+  }, [compactSurface]);
+
+  useEffect(() => {
+    let cancelled = false;
+    void fetchSuggestions(client).then((items) => {
+      if (!cancelled) setDynamicSuggestions(items);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [client]);
+
+  /**
+   * What the agent is doing, as one state rather than several flags a stylesheet would have to combine.
+   *
+   * Every input is a state this component already holds. Nothing is promoted to `success`: there is no
+   * real completion signal here yet, and a state published without one is the interface claiming to know
+   * something it does not.
+   */
+  const agentState = agentStateFrom({
+    failed: error !== undefined,
+    listening: voiceOpen,
+    busy,
+    tooling: live.some((segment) => segment.kind === "tool"),
+    responding: live.some((segment) => segment.kind === "text" || segment.kind === "reasoning"),
+  });
   /** Which approval is in flight, so one card says so rather than every card looking busy. */
   const [decidingApprovalId, setDecidingApprovalId] = useState<string | undefined>(undefined);
   /**
@@ -771,6 +901,11 @@ export function Conversation({
               applyTimeline(result.timeline);
               setPendingUser(undefined);
               setLive([]);
+              // A command is answered by the host and not by a model, so the node sends the decision along with the
+              // record. `none` means the text was not a command at all and the turn above was the real answer.
+              if (result.appIntent !== undefined && result.appIntent.kind !== "none") {
+                setPendingIntent(result.appIntent);
+              }
             },
           },
           { ...options, attachmentIds },
@@ -818,6 +953,105 @@ export function Conversation({
     setHeroPhase("shown");
     onSessionReset?.();
   }, [onSessionReset, rememberComposerTop]);
+
+  /**
+   * Everything an intent can reach.
+   *
+   * The window commands are absent, and that is the honest state of a page: a host omits what it cannot do, and the
+   * executor then answers that the command needs the desktop app rather than appearing to work.
+   */
+  const intentHost = useMemo<AppIntentHost>(() => {
+    /*
+     * The window intents are offered only where there is a window.
+     *
+     * `runAppIntent` refuses a desktop intent when the host has no method for it, so a browser saying "thu nhỏ
+     * cửa sổ" is refused with a reason rather than reported as done. Defining these unconditionally would report
+     * success for a resize that never happened, because the bridge call itself fails quietly.
+     */
+    const desktop = hasDesktopChrome();
+    return {
+      openSettings: (tab?: SettingsTab) => {
+        setSettingsTab(tab);
+        setUiCheckOpen(true);
+      },
+      goHome: restartSession,
+      openFilePicker: () => attachmentInput.current?.click(),
+      endVoice: () => setVoiceOpen(false),
+      ...(desktop
+        ? {
+            expandWindow: () => {
+              void requestWindowMode({ type: "expand" });
+            },
+            minimiseWindow: () => {
+              void requestWindowMode({ type: "enter-compact" });
+            },
+            setMinimal: () => {
+              // This build has one compact size, so "thu nhỏ" and "thu nhỏ tối thiểu" reach the same bar. They
+              // diverge when the shell gains a way to minimise to the taskbar, which is named as a gap.
+              void requestWindowMode({ type: "enter-compact" });
+            },
+            quit: () => {
+              // The shell decides whether closing the window ends the work; the renderer only asks it to close.
+              window.close();
+            },
+          }
+        : {}),
+    };
+  }, [restartSession]);
+
+  /**
+   * Carry out a decision.
+   *
+   * The only place an intent is performed, whichever way it arrived. A second copy of this for voice would be the
+   * beginning of the two paths drifting apart, which is the whole thing this registry exists to prevent.
+   */
+  const runIntent = useCallback(
+    (decision: AppIntentDecision): void => {
+      const run = runAppIntent(decision, intentHost);
+      // Only a failure is announced. A command that worked has already been read back out loud by the voice surface
+      // or is visible as the panel that just opened, and a second sentence saying so would be noise.
+      if (!run.ran) setIntentNotice(run.say);
+    },
+    [intentHost],
+  );
+
+  /**
+   * Ask the node what a click means, then do it.
+   *
+   * A click goes through the node for the same reason a spoken command does: the registry and the audit record live
+   * there, so the event says "click" rather than "voice" and a click cannot do something the node would refuse.
+   */
+  const clickIntent = useCallback(
+    (kind: AppIntentKind): void => {
+      if (client === undefined) return;
+      void client
+        .sendAppIntent({
+          kind,
+          source: "click",
+          ...(conversationId === undefined ? {} : { conversationId }),
+        })
+        .then((decision) => {
+          if (decision.kind !== "none") runIntent(decision);
+        })
+        .catch(() => setIntentNotice("Không hỏi được node về lệnh đó."));
+    },
+    [client, conversationId, runIntent],
+  );
+
+  // A notice is a remark about something that just happened, not a permanent line of text.
+  useEffect(() => {
+    if (intentNotice === undefined) return;
+    const timer = setTimeout(() => setIntentNotice(undefined), 6000);
+    return () => clearTimeout(timer);
+  }, [intentNotice]);
+
+  // A command that was typed and recognised is answered by the host, so the node sends the decision with the timeline
+  // and the page carries it out here - the same executor a spoken command and a click use.
+  useEffect(() => {
+    if (pendingIntent === undefined) return;
+    setPendingIntent(undefined);
+    runIntent(pendingIntent);
+  }, [pendingIntent, runIntent]);
 
   /**
    * Answer an operation the agent asked for.
@@ -891,6 +1125,151 @@ export function Conversation({
     [client],
   );
 
+  /**
+   * Questions that may still be answered.
+   *
+   * A question is open exactly while nothing has come after the message that asked it. Derived from the
+   * transcript rather than tracked as state, because the messages are history and are never rewritten: a card
+   * that stayed answerable after a reply would invite a second answer the node would take as a second message.
+   */
+  /**
+   * Cards that may still be answered: a question's or a form's id, while nothing has come after the message
+   * that asked. One computation for both kinds rather than two that could disagree — the rule is about the
+   * conversation, not about which shape the card has.
+   *
+   * Derived from the transcript rather than tracked as state, because the messages are history and are never
+   * rewritten: a card that stayed live would invite a second answer the node would take as a second message.
+   */
+  const openCardIds = useMemo(() => {
+    const messages = timeline?.messages ?? [];
+    let lastUserIndex = -1;
+    messages.forEach((message, index) => {
+      if (message.role === "user") lastUserIndex = index;
+    });
+    const questions: string[] = [];
+    const forms: string[] = [];
+    messages.forEach((message, index) => {
+      if (index <= lastUserIndex) return;
+      for (const block of message.blocks) {
+        const record = block as Record<string, unknown>;
+        if (record.type === "question-card" && typeof record.questionId === "string") questions.push(record.questionId);
+        if (record.type === "form-card" && typeof record.formId === "string") forms.push(record.formId);
+      }
+    });
+    return { questions, forms };
+  }, [timeline]);
+
+  /**
+   * What the node said about each stop request.
+   *
+   * Held here rather than in the card because the card is asserted directly by its own test file and has to stay
+   * a pure function of its props, and because one place should own the call.
+   */
+  const [taskStop, setTaskStop] = useState<Record<string, TaskStopState>>({});
+
+  const stopTask = useCallback(
+    (taskId: string) => {
+      setTaskStop((current) => ({ ...current, [taskId]: { status: "pending" } }));
+      void client.cancelTask(taskId).then(
+        (result) =>
+          setTaskStop((current) => ({
+            ...current,
+            [taskId]: { status: "requested", state: result.state, confirmed: result.confirmed },
+          })),
+        (error: unknown) =>
+          // Reported beside the control that caused it, and the task is left alone: nothing here pretends the
+          // request landed, because a stop that did not reach the node has not stopped anything.
+          setTaskStop((current) => ({
+            ...current,
+            [taskId]: {
+              status: "failed",
+              message: error instanceof Error ? error.message : "Không gửi được yêu cầu dừng task.",
+            },
+          })),
+      );
+    },
+    [client],
+  );
+
+  /**
+   * What the node still holds for each artifact somebody reopened.
+   *
+   * `opened` carries facts rather than a status, because the interesting answer is not "it worked" but what the
+   * node has: an artifact can expire between the message that mentioned it and somebody reading it, and the
+   * snapshot in the transcript cannot know that.
+   */
+  const [artifactOpen, setArtifactOpen] = useState<Record<string, ArtifactOpenState>>({});
+
+  const openArtifact = useCallback(
+    (artifactId: string) => {
+      setArtifactOpen((current) => ({ ...current, [artifactId]: { status: "pending" } }));
+      void client.artifact(artifactId).then(
+        (result) => {
+          const { artifact } = result;
+          setArtifactOpen((current) => ({
+            ...current,
+            [artifactId]: {
+              status: "opened",
+              digest: artifact.digest,
+              sizeBytes: artifact.sizeBytes,
+              mimeType: artifact.mimeType,
+              originNodeId: artifact.originNodeId,
+              createdAt: artifact.createdAt,
+              expiresAt: artifact.expiresAt,
+              expired: artifact.expired,
+            },
+          }));
+        },
+        (error: unknown) =>
+          setArtifactOpen((current) => ({
+            ...current,
+            [artifactId]: {
+              status: "failed",
+              message: error instanceof Error ? error.message : "Không mở được artifact này.",
+            },
+          })),
+      );
+    },
+    [client],
+  );
+
+  /**
+   * What the node said after a verb was applied to a browser session.
+   *
+   * `taken-over` carries the epoch, because the epoch is the evidence that the takeover took effect: the agent's
+   * already-planned action is refused for having a stale lease. A boolean here would show that a button worked
+   * without showing that the browser changed hands.
+   */
+  const [controlSession, setControlSession] = useState<Record<string, ControlSessionActionState>>({});
+
+  const changeBrowserSession = useCallback(
+    (sessionId: string, verb: "takeover" | "stop") => {
+      setControlSession((current) => ({ ...current, [sessionId]: { status: "pending" } }));
+      const call = verb === "takeover" ? client.controlTakeover(sessionId) : client.controlStop(sessionId);
+      void call.then(
+        (result) =>
+          setControlSession((current) => ({
+            ...current,
+            [sessionId]:
+              verb === "takeover"
+                ? { status: "taken-over", leaseEpoch: result.session.leaseEpoch }
+                : { status: "stopped" },
+          })),
+        (error: unknown) =>
+          // Refused rather than reported as done: a takeover that silently did nothing would leave the user
+          // believing they have the wheel while the agent keeps driving.
+          setControlSession((current) => ({
+            ...current,
+            [sessionId]: {
+              status: "failed",
+              message: error instanceof Error ? error.message : "Không đổi được phiên browser này.",
+            },
+          })),
+      );
+    },
+    [client],
+  );
+
   const blockActions: BlockActions = useMemo(
     () => ({
       onApprovalDecide: decideApproval,
@@ -898,8 +1277,24 @@ export function Conversation({
       ...(decidingApprovalId === undefined ? {} : { decidingApprovalId }),
       onCredentialSubmit: submitCredential,
       ...(credentialStatus === undefined ? {} : { credentialStatus }),
+      /*
+       * A chosen answer is sent as the user's own message — the same call the composer makes — so a click and a
+       * typed reply are one act. Nothing here invents a second route into the agent for a click to take.
+       */
+      onQuestionAnswer: ({ answer }) => void send(answer),
+      openQuestionIds: openCardIds.questions,
+      /* The same path as a question: the answers become the user's own next message. */
+      onFormSubmit: ({ summary }) => void send(summary),
+      openFormIds: openCardIds.forms,
+      onTaskStop: ({ taskId }) => stopTask(taskId),
+      taskStop,
+      onArtifactOpen: ({ artifactId }) => openArtifact(artifactId),
+      artifactOpen,
+      onControlTakeover: ({ sessionId }) => changeBrowserSession(sessionId, "takeover"),
+      onControlStop: ({ sessionId }) => changeBrowserSession(sessionId, "stop"),
+      controlSession,
     }),
-    [credentialStatus, decideApproval, decidedApprovals, decidingApprovalId, submitCredential],
+    [artifactOpen, controlSession, changeBrowserSession, credentialStatus, decideApproval, decidedApprovals, decidingApprovalId, openArtifact, openCardIds, send, stopTask, submitCredential, taskStop],
   );
 
   const renderSurface = useCallback(
@@ -1024,6 +1419,14 @@ export function Conversation({
 
   const blocks = timeline?.messages ?? [];
   const pins = timeline?.pins ?? [];
+  /**
+   * The widget the person is looking at: the one pinned open.
+   *
+   * A pin is what "open" means here - the expanded surface is where the live instance is mounted and the thing that
+   * claims ownership of it - so this is the instance a spoken action acts on, rather than a guess from what happens to
+   * be on screen.
+   */
+  const focusedInstanceId = pins.find((pin) => pin.displayMode === "expanded")?.instanceId;
 
   /**
    * A conversation that arrived with messages was never the start screen.
@@ -1050,6 +1453,12 @@ export function Conversation({
       // narrower than the input it sits over - so it is taken out of the way instead, which is also what the
       // mode means: while the microphone is open, the thing you talk to is not the text box.
       data-voice-open={voiceOpen ? "true" : "false"}
+      data-compact={compactSurface ? "true" : "false"}
+      // How the user is interacting and what the agent is doing, published once for the whole shell. A
+      // component that needs either reads an attribute instead of attaching its own listener and guessing
+      // from unrelated DOM state.
+      data-input-modality={modality}
+      data-agent-state={agentState}
       ref={shell}
       style={
         {
@@ -1069,11 +1478,11 @@ export function Conversation({
           type="button"
           className="cc-brand"
           data-home="true"
-          onClick={restartSession}
+          onClick={() => clickIntent("nav.home")}
           title="Bắt đầu lại"
           aria-label="Bắt đầu lại: về màn hình đầu và mở một phiên mới"
         >
-          <Orb size={30} className="cc-orb" label="" pointerTarget={shell} />
+          <Orb size={30} className="cc-orb" label="" pointerTarget={shell} {...(orbProfile === undefined ? {} : { profile: orbProfile })} />
           <span>ClarkCant</span>
         </button>
         <div className="cc-header-end">
@@ -1089,7 +1498,7 @@ export function Conversation({
             menu: a setting that is two clicks deep is a setting nobody checks. It opens a panel
             that reads the live tokens back off the document, so what it shows is what rendered.
           */}
-          <button type="button" className="cc-icon-btn" aria-label="Cài đặt" title="Cài đặt" data-settings="true" onClick={() => setUiCheckOpen(true)}>
+          <button type="button" className="cc-icon-btn" aria-label="Cài đặt" title="Cài đặt" data-settings="true" onClick={() => clickIntent("settings.open")}>
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
               <circle cx="12" cy="12" r="3" />
               <path d="M19.4 15a1.7 1.7 0 0 0 .34 1.87l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.7 1.7 0 0 0-1.87-.34 1.7 1.7 0 0 0-1 1.55V21a2 2 0 1 1-4 0v-.09A1.7 1.7 0 0 0 9 19.4a1.7 1.7 0 0 0-1.87.34l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.7 1.7 0 0 0 4.6 15a1.7 1.7 0 0 0-1.55-1H3a2 2 0 1 1 0-4h.09A1.7 1.7 0 0 0 4.6 9a1.7 1.7 0 0 0-.34-1.87l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.7 1.7 0 0 0 9 4.6a1.7 1.7 0 0 0 1-1.55V3a2 2 0 1 1 4 0v.09a1.7 1.7 0 0 0 1 1.55 1.7 1.7 0 0 0 1.87-.34l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.7 1.7 0 0 0 19.4 9v0a1.7 1.7 0 0 0 1.55 1H21a2 2 0 1 1 0 4h-.09a1.7 1.7 0 0 0-1.51 1z" />
@@ -1116,9 +1525,58 @@ export function Conversation({
                 only one of them can be a layout child.
               */}
               <div className="cc-hero-orb" ref={heroOrb} aria-hidden="true" />
+              {needsModel === true ? (
+                <div className="cc-card cc-setup-card" data-needs-model="true" role="status">
+                  <div className="cc-setting-text">
+                    <span className="cc-setting-label">Node này chưa có model</span>
+                    <span className="cc-setting-desc">
+                      Nó vẫn trả lời được bằng recipe và capability đã cài. Muốn hỏi tự do thì cần chọn provider và
+                      model trước — mở Cài đặt, tab AI &amp; Routing.
+                    </span>
+                  </div>
+                  {/* The control that leads there, rather than a sentence that only describes the gap. */}
+                  <button
+                    type="button"
+                    className="cc-chip"
+                    data-open-model-settings="true"
+                    onClick={() => setUiCheckOpen(true)}
+                  >
+                    Mở Cài đặt
+                  </button>
+                </div>
+              ) : null}
               <h1>Bạn đang nghĩ gì?</h1>
-              <p>Nói việc bạn muốn làm, hoặc bắt đầu từ một trong bốn gợi ý dưới đây.</p>
-              <div className="cc-chip-row" data-suggestion-count={SUGGESTIONS.length}>
+              <p>Nói việc bạn muốn làm, hoặc bắt đầu từ một gợi ý dưới đây.</p>
+              {/*
+                Two rows, not one row with two shapes in it. What the node offers is what the person was
+                actually doing, and it is only shown when there is some; the four written chips are the floor,
+                and saying so in the markup is what lets a test tell an empty node from a broken one.
+              */}
+              {dynamicSuggestions.length > 0 ? (
+                <div className="cc-chip-row" data-suggestion-count={dynamicSuggestions.length}>
+                  {dynamicSuggestions.map((suggestion, index) => (
+                    <button
+                      key={suggestion.suggestionId}
+                      type="button"
+                      className="cc-chip"
+                      data-suggestion={suggestion.text}
+                      data-suggestion-source={suggestion.source}
+                      data-suggestion-source-label={suggestion.sourceLabel}
+                      style={{ "--cc-chip-index": index } as CSSProperties}
+                      aria-label={`${suggestion.label} — ${suggestion.sourceLabel}`}
+                      onClick={() => void send(suggestion.text)}
+                    >
+                      <span className="cc-chip-label">{suggestion.label}</span>
+                      <span className="cc-chip-detail">{suggestion.sourceLabel}</span>
+                    </button>
+                  ))}
+                </div>
+              ) : (
+                <div
+                  className="cc-chip-row"
+                  data-suggestion-count={SUGGESTIONS.length}
+                  data-suggestion-static="true"
+                >
                 {SUGGESTIONS.map((suggestion, index) => (
                   <button
                     key={suggestion.text}
@@ -1136,7 +1594,8 @@ export function Conversation({
                     <span className="cc-chip-detail">{suggestion.detail}</span>
                   </button>
                 ))}
-              </div>
+                </div>
+              )}
               <p className="cc-freshness">
                 Gợi ý đánh dấu “cần model” sẽ báo lỗi nếu node này chưa cấu hình model.
               </p>
@@ -1239,6 +1698,7 @@ export function Conversation({
                 conversationId={conversationId}
                 instanceId={pin.instanceId}
                 displayMode="expanded"
+                refreshSignal={liveRefresh}
                 title={typeof instanceById.get(pin.instanceId)?.props.title === "string" ? String(instanceById.get(pin.instanceId)?.props.title) : undefined}
                 onTimeline={applyTimeline}
                 onClose={() => {
@@ -1425,6 +1885,12 @@ export function Conversation({
       </div>
 
       {/*
+        The window's own chrome, when there is a window to be dragged and resized. It renders nothing in a
+        browser, so this is one line rather than a branch around the whole conversation.
+      */}
+      <DesktopChrome />
+
+      {/*
         The one orb. It is not two elements that swap places with a transition between them: it is a
         single canvas that moves, which is what makes the move look like one, and what keeps the
         shader's own animation continuous across the change of screen.
@@ -1450,18 +1916,31 @@ export function Conversation({
               // where the difference is actually visible.
               maxPixelRatio={1.25}
               pointerTarget={shell}
+              {...(orbProfile === undefined ? {} : { profile: orbProfile })}
             />
           </div>
         </div>
       )}
 
+      {/*
+        What a command could not do here, or why it was refused. Rendered beside the panel rather than inside it, so
+        a window command failing in a browser is still visible when no panel is open.
+      */}
+      {intentNotice !== undefined && (
+        <p className="cc-intent-notice" data-intent-notice="true" role="status">
+          {intentNotice}
+        </p>
+      )}
+
       <SettingsPanel
         open={uiCheckOpen}
+        {...(settingsTab === undefined ? {} : { openAt: settingsTab })}
         onClose={() => setUiCheckOpen(false)}
         client={client}
         themeChoice={themeChoice}
         resolvedTheme={resolvedTheme}
         onThemeChoice={applyThemeChoice}
+        {...(onOrbChange === undefined ? {} : { onOrbChange })}
       />
 
       {/*
@@ -1491,9 +1970,15 @@ export function Conversation({
       {voiceOpen && (
         <VoiceOverlay
           client={client}
+          startCollapsed={compactSurface}
           {...(conversationId === undefined ? {} : { conversationId })}
           onAnswered={refreshTimeline}
           onProgress={scheduleVoiceRefresh}
+          onAppIntent={runIntent}
+          onWidgetActionResult={() => {
+            setLiveRefresh((count) => count + 1);
+          }}
+          {...(focusedInstanceId === undefined ? {} : { focusedInstanceId })}
           onClose={({ focusComposer }) => {
             setVoiceOpen(false);
             if (focusComposer) composerInput.current?.focus();

@@ -71,6 +71,10 @@ state change rather than decorate the screen.
 
 - Use design-token motion durations/easings. Do not hard-code a new duration when
   an existing token expresses the interaction.
+- Use the shared motion helpers (`press`/`release`/`panel`/`popover` in
+  `packages/design-tokens/src/motion.ts`) instead of writing a transition by hand. They
+  animate only `transform` and `opacity`, so a hand-written transition is the only way to
+  animate a layout property or put the mild bounce on body text.
 - Use the mild bounce token for press/release, pin/drop and panel settle. Never
   bounce body text or run several competing springs.
 - Do not use CSS transition: all.
@@ -131,6 +135,11 @@ There are four trust lanes and agents must not blur them:
 Rules:
 
 - One logical widget instance has at most one live effect owner.
+- A detached widget window receives only the widget bootstrap and its instance reference: no
+  token, no gateway URL, no conversation id. It therefore holds no credential, so its actions are
+  **relayed through the host** rather than invoked by the window, and the live-owner lease *moves*
+  with it (the shell releases before the host claims) so there is never a second owner. Closing the
+  window, by any means, releases the lease and hands the instance back.
 - Inline history remains an immutable/read-only snapshot.
 - Pin and detach are presentation changes; they do not create a new session.
 - Local view state such as filter/select/zoom may remain interactive in a
@@ -158,6 +167,11 @@ into the widget renderer.
 - UI-only updates must not require restarting Pi.
 - Marketplace UI must show source, version, compatibility and capability/risk
   information without making package metadata the main interaction.
+- Installed packages are listed with their **source, version, digest and risk lane**, and
+  the lanes are labelled apart: a native Pi extension is trusted process-level code that runs
+  beside the host, while an isolated widget is opaque-origin code with no Node, filesystem or
+  host cookies. Showing them with the same wording is the one mistake that list exists to
+  prevent.
 - An explicit “install X” request is already user intent in Autonomous mode; do
   not insert a redundant confirmation unless configured policy or a hard external
   boundary requires it.

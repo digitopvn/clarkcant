@@ -166,6 +166,17 @@ Không cho widget tự gọi generic Electron IPC.
 - Close detached window không xóa widget state.
 - Voice có thể focus widget đang pin/detach bằng semantic ID và label.
 
+**Đã ship (phase 7 + 12).** Cửa sổ detached nhận **chỉ** widget host bootstrap và instance ref — không token,
+không gateway URL, không conversation id — và điều đó được làm đúng bằng cách *dựng* payload chứ không phải lọc bớt:
+`detachedBootstrap` đặt tên từng field nó đọc, nên không có đường nào cho một credential đi kèm. Hệ quả là cửa sổ
+**không tự invoke action được**: intent đi qua host (`detached:intent`), host thực hiện bằng token của chính nó và tự
+resolve binding digest từ composition nó đã đưa — nên cửa sổ không thể đưa một digest mà node sẽ chấp nhận cho binding
+khác.
+
+Lease **chuyển** chứ không nhân bản: shell release trước, host claim surface `detached`, và khi cửa sổ đóng thì host
+release rồi shell claim lại — nên không có thời điểm nào có hai owner. Đóng cửa sổ cũng chính là đường reattach, kể cả
+khi người dùng chỉ bấm nút đóng của hệ điều hành.
+
 ### 2.3 Wake phrase
 
 Target UX: local wake phrase **“Hey Clark”** mở voice mode.
@@ -183,6 +194,19 @@ Yêu cầu:
 ---
 
 ## 3. Motion & micro-interaction system
+
+### Shared motion helpers (đã ship)
+
+Bốn chuyển động của giao diện — `press`, `release`, `panel`, `popover` — nằm trong
+`packages/design-tokens/src/motion.ts` và là **cách duy nhất** để làm chuyển động. Ba quy tắc được mã hoá ở đó
+thay vì giao cho từng component:
+
+- chỉ animate `transform` và `opacity` — hai thuộc tính không buộc browser layout lại; không có `font-size`,
+  `color` hay kích thước nào trong tập, nên helper không thể bị trỏ vào chữ;
+- bounce nhẹ chỉ dùng cho `press`, `release`, `panel`. `popover` không bounce, vì overshoot làm nội dung đáp
+  xuống ở chỗ khác với chỗ nó dừng lại;
+- reduced motion lấy từ bộ token `reduced`, không phải nhân với 0 — nhân với 0 vẫn để lại một transition bắn
+  event, và một animation vô hạn duration 0 là bug chứ không phải bản reduced-motion.
 
 Các token hiện có micro, normal, panel, orb, enter, exit, glow và bounce là nền tảng tốt. Tiếp tục dùng token thay vì hard-code duration.
 
@@ -242,6 +266,16 @@ Root conversation surface nên có state machine hiển thị bằng data attrib
     data-agent-state    = idle | listening | thinking | tooling | responding | success | error
     data-window-mode    = normal | expanded | compact | orb
     data-policy-mode    = autonomous | guarded | ask
+
+Trên chính canvas của Orb, hai attribute nữa công bố **profile đã resolve** chứ không phải preference thô:
+
+    data-orb          = gl | fallback
+    data-orb-profile  = clark | calm | jelly | glass | custom
+    data-orb-motion   = full | reduced
+
+`data-orb-motion` là giá trị **sau khi** reduced-motion đã thắng, nên một surface đọc được sự thật đã resolve
+thay vì phải suy lại từ preference và có thể suy sai. Việc resolve (clamp, preset, reduced-motion) nằm ở một
+hàm thuần trong `orb-profile.ts`; renderer chỉ nhận giá trị đã bounded.
 
 ### 4.1 Pointer
 
@@ -798,7 +832,21 @@ Package không được tự thay global app theme hoặc global shortcuts nếu
 
 Settings vẫn là modal/surface trên conversation. Không biến thành admin console.
 
-Đề xuất 5 nhóm.
+Sáu nhóm, đặt tên theo việc user muốn làm chứ không theo bộ phận của hệ thống:
+
+1. Experience
+2. AI & Routing
+3. Control
+4. Extensions & Widgets
+5. Devices & Voice
+6. Developer / Advanced
+
+Credential **không** có tab riêng: mỗi khoá nằm ở domain giải thích nó (Gemini ở Devices & Voice,
+TypeSafe ở AI & Routing), theo mục 11.6.
+
+Một control chỉ xuất hiện khi behavior đứng sau nó đã tồn tại. Preference đã khai báo trong registry mà
+chưa có ai đọc (density, background routing, voice picker) thì **không** có control, và lý do được nói ở
+chỗ user sẽ tìm — im lặng bỏ qua còn tệ hơn, vì user sẽ tưởng app hỏng.
 
 ### 11.1 Experience
 

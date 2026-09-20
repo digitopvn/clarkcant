@@ -138,11 +138,25 @@ Ghi rõ phần nào của §4 đã có trong repo và phần nào còn là thi�
 - Action M1 chỉ gồm `period.change`, `date.select`, `view.save` (`view` kind). `invoke`/`agent`/`workflow` bị từ chối ở `invokeMiniAppAction` và phải đi đường approval.
 - Composer tất định `CC_MODEL_FIXTURE=1` chỉ tồn tại để browser suite chạy được đường composed-surface mà không gọi provider; node in cảnh báo lúc khởi động và câu trả lời tự nói nó là fixture.
 
+- **Đính kèm tệp đi tới được agent**: composer tải lên, bytes nằm trong blob store dùng chung (`dataDir/blobs`, content-addressed, `mode: 0o600`), quota tính theo principal, và loại tệp do **magic bytes** quyết định chứ không do đuôi tên. Prompt chỉ mang `att_…` opaque và **không bao giờ** có path; agent đọc nội dung qua tool của host `read_attachment(attachmentId)`, tool này không nhận tham số path nên không có đường nào mở tệp khác. Tin nhắn đã lưu là nguồn duy nhất — timeline và prompt là hai cách đọc cùng một dòng (`apps/web/e2e/attachments.spec.ts`; phần prompt được chứng minh ở ranh giới adapter bằng `FakePiAdapter.promptsFor()`).
+- **Memory** (`memory_records`, migration 18) **không** phải một index tìm kiếm thứ hai. Xoá một memory xoá **đường inject** vào lượt sau — brief được đọc lại mỗi lượt chứ không cache trong tiến trình — còn tin nhắn gốc của người dùng vẫn nằm trong lịch sử hội thoại và vẫn nhìn thấy được. Vì vậy đây không phải hidden memory: mọi thứ được nhớ đều đọc được và xoá được ở tab Memory (`apps/web/e2e/memory.spec.ts`).
+- **Cửa sổ desktop** vào tới client thật: `electron . --renderer-url <url> --data-dir <dir>`, CSP suy ra từ origin, và một bridge có tên `getSession()` trả `{ baseUrl, token }` đọc từ `identity.json`. Token **không** đi vào argv hay URL, nơi nó sẽ nằm trong danh sách tiến trình và trong lịch sử trình duyệt.
+- `?cc-compact=1` là **đường test-only** để browser suite chạm được thanh voice tối giản, không phải một tính năng. Đường thật vào trạng thái đó là cửa sổ thu nhỏ.
+
 **Chưa có (deferred, không được claim là đã xong):**
 
 - `isolated-app` và `mcp-app`: sandbox policy/registry có code và test, nhưng **renderer runtime cho app cách ly chưa được chứng minh**. Không có app runtime trong repo.
 - Google Calendar connector, custom iframe mini-app, và CTA dạng “agent làm việc X” đều ngoài M1.
 - Bảng family coverage trong §4 vẫn là đích đến của release gate: repo hiện có test cho các family mà composed surface cần (`metrics`, `filter`, `trend`, `calendar`, `media`, `cta`, `tables`, `layout`), không phải cho toàn bộ danh sách.
+
+- **Nội dung tệp tới agent**: tệp văn bản đi vào prompt của lượt (`attachmentBrief` chèn nội dung, `read_attachment` đọc lại theo id), **PDF được trích văn bản** bằng `apps/runtime/src/pdf-text.ts` (không thêm dependency), và hai journey chứng minh câu trả lời **dùng** nội dung đó — một cho tệp văn bản, một cho PDF ([attachments](../apps/web/e2e/attachments.spec.ts)). **Chưa có reader cho ảnh**: ảnh được nêu bằng id, và `prompt(sessionId, text)` chỉ nhận văn bản, nên nội dung ảnh chưa tới model. Điều kiện còn thiếu: một adapter nhận được nội dung ảnh trong prompt.
+- **Chưa có route xoá conversation**: retention hiện là `releaseConversationAttachments`. Bốn bảng tham chiếu `conversations` mà không có `ON DELETE CASCADE`, và `PRAGMA foreign_keys = ON`, nên xoá một conversation cần một migration xử lý các tham chiếu trước.
+
+Cả hai cổng này chạy trong CI: job `e2e` chạy browser suite, và job `desktop smoke (xvfb)` chạy
+`electron . --smoke-test` dưới `xvfb-run` (thêm ở PR #44). Evidence của cửa sổ vì thế không còn phụ thuộc vào một
+lần người vận hành chạy. Lần chạy đầu của hai job đó tìm ra hai lỗi thật và cả hai đã được sửa ở gốc: Electron
+không khởi động được vì sandbox SUID không cấu hình được trên runner, và một journey bàn phím lấy focus khi
+panel còn đang hiện nên `focus()` bị bỏ.
 
 ## 5. Agent-defined actions
 

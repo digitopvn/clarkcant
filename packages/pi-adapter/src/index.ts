@@ -11,6 +11,13 @@
  */
 
 export * from "./types.ts";
+export {
+  PERSONAL_INSTRUCTIONS_HEADING,
+  PERSONAL_INSTRUCTIONS_MAX_CHARS,
+  composePersonalInstructions,
+  hasPersonalInstructions,
+  type PersonalInstructionsInput,
+} from "./personal-instructions.ts";
 export { FakePiAdapter } from "./fake.ts";
 export {
   RealPiAdapter,

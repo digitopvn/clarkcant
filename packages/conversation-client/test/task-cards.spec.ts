@@ -8,6 +8,7 @@ import {
   TaskSummaryCardBlock,
   renderBlock,
 } from "../src/blocks.tsx";
+import { type BlockActions } from "../src/blocks.tsx";
 import { findAll, nonHost } from "./block-helpers.ts";
 
 /**
@@ -154,5 +155,81 @@ describe("the dispatcher", () => {
 
   it("still drops a block type it does not know", () => {
     expect(renderBlock({ type: "something-new" }, 0, () => null as unknown as ReactElement)).toBeNull();
+  });
+});
+
+/**
+ * Stopping a task.
+ *
+ * The card used to say a task could be stopped and offer nothing that stopped it. These tests are
+ * about the two ways that can go wrong again: a control that appears when the block does not claim
+ * cancellability, and a control whose wording claims an outcome the node has not confirmed.
+ */
+describe("stopping a task", () => {
+  const withStop = { onTaskStop: () => {} } satisfies BlockActions;
+
+  it("offers the control only when the block itself says the task can be stopped", () => {
+    const offered = findAll(
+      TaskProgressCardBlock({ block: { ...PROGRESS, cancellable: true }, actions: withStop }),
+      "data-task-stop",
+    );
+    expect(offered).toHaveLength(1);
+
+    // The claim and the affordance come from the same field, so they cannot drift apart.
+    const withheld = findAll(
+      TaskProgressCardBlock({ block: { ...PROGRESS, cancellable: false }, actions: withStop }),
+      "data-task-stop",
+    );
+    expect(withheld).toHaveLength(0);
+  });
+
+  it("reports that a task can be stopped without pressing anything when no handler is wired", () => {
+    // A control that looks usable before its action exists is worse than no control: the fact is
+    // still reported, and nothing pretend-interactive is drawn.
+    const bare = TaskProgressCardBlock({ block: { ...PROGRESS, cancellable: true } });
+
+    expect(findAll(bare, "data-task-cancellable")).toHaveLength(1);
+    expect(findAll(bare, "data-task-stop")).toHaveLength(0);
+  });
+
+  it("does not claim a task stopped while the executor has not confirmed", () => {
+    const pending = TaskProgressCardBlock({
+      block: { ...PROGRESS, cancellable: true },
+      actions: {
+        ...withStop,
+        taskStop: { task_1: { status: "requested", state: "cancel_requested", confirmed: false } },
+      },
+    });
+    const outcome = findAll(pending, "data-task-stop-outcome")[0];
+
+    expect(outcome?.props["data-task-stop-confirmed"]).toBe("false");
+    // The wording matters as much as the flag: a task whose process is still finishing is "stopping",
+    // and reading "đã dừng" here is how a user comes to believe an effect was prevented.
+    expect(String(outcome?.props.children)).toContain("chưa phải đã dừng");
+  });
+
+  it("says a task has stopped only when the node confirmed it", () => {
+    const done = TaskProgressCardBlock({
+      block: { ...PROGRESS, cancellable: true },
+      actions: {
+        ...withStop,
+        taskStop: { task_1: { status: "requested", state: "cancelled", confirmed: true } },
+      },
+    });
+    const outcome = findAll(done, "data-task-stop-outcome")[0];
+
+    expect(outcome?.props["data-task-stop-confirmed"]).toBe("true");
+    expect(String(outcome?.props.children)).toContain("Đã dừng.");
+  });
+
+  it("shows the failure beside the control instead of leaving the request looking sent", () => {
+    const failed = TaskProgressCardBlock({
+      block: { ...PROGRESS, cancellable: true },
+      actions: { ...withStop, taskStop: { task_1: { status: "failed", message: "Không gửi được yêu cầu dừng task." } } },
+    });
+
+    expect(findAll(failed, "data-task-stop-error")).toHaveLength(1);
+    // No outcome is claimed, because nothing came back to claim it from.
+    expect(findAll(failed, "data-task-stop-outcome")).toHaveLength(0);
   });
 });

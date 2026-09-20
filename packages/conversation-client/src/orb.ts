@@ -45,17 +45,42 @@ export interface OrbOptions {
    */
   maxPixelRatio?: number;
   palette?: Partial<Record<keyof typeof ORB_PALETTE, readonly number[]>>;
+  /**
+   * The shell's spring and its pointer gains.
+   *
+   * Every field is optional and every fallback is the shipped value, so this is a patch over the orb
+   * rather than a description of it. Values are the caller's to bound: the profile resolver clamps them
+   * against the contracts bounds before they arrive here.
+   */
+  physics?: OrbPhysicsOptions;
 }
 
 /**
- * The spring constants of the shell.
+ * The spring of the shell, and how strongly it answers a pointer.
  *
  * Underdamped on purpose: the damping ratio is below one, which is what makes it overshoot and ring
  * rather than approach its rest shape from one side. Stiff enough to answer a flick immediately, soft
  * enough that the ringing is visible as jelly rather than as a glitch.
+ *
+ * These are the shipped values rather than the only ones. A profile may change them within the bounds
+ * the contracts package declares, and a profile that names none of them renders exactly as the orb
+ * always has — which is what makes personalization additive instead of a new default.
  */
-const SPRING_STIFFNESS = 90;
-const SPRING_DAMPING = 7.5;
+export const ORB_PHYSICS_DEFAULTS = {
+  stiffness: 90,
+  damping: 7.5,
+  /** Scales how far a flick deforms the shell. Zero is a shell that never rings. */
+  wobbleGain: 1,
+  /** Scales how strongly the pointer lights the orb. */
+  pointerResponse: 1,
+} as const;
+
+export interface OrbPhysicsOptions {
+  stiffness?: number;
+  damping?: number;
+  wobbleGain?: number;
+  pointerResponse?: number;
+}
 
 export interface OrbPointerSample {
   /** Pointer position in the shader's own space: 1 is half the canvas, y pointing up. */
@@ -219,6 +244,12 @@ export function createOrbRenderer(
     sheen: options.sheen ?? ORB_SHAPE.sheen,
   };
   const speed = options.speed ?? 1.23;
+  const physics = {
+    stiffness: options.physics?.stiffness ?? ORB_PHYSICS_DEFAULTS.stiffness,
+    damping: options.physics?.damping ?? ORB_PHYSICS_DEFAULTS.damping,
+    wobbleGain: options.physics?.wobbleGain ?? ORB_PHYSICS_DEFAULTS.wobbleGain,
+    pointerResponse: options.physics?.pointerResponse ?? ORB_PHYSICS_DEFAULTS.pointerResponse,
+  };
   const palette = { ...ORB_PALETTE, ...(options.palette ?? {}) };
 
   const vertex = compile(gl, gl.VERTEX_SHADER, ORB_VERTEX_SHADER);
@@ -301,7 +332,15 @@ export function createOrbRenderer(
     lastFrameMs = timeMs;
 
     const strengthEase = dt === 0 ? 1 : 1 - Math.exp(-dt / 0.10);
-    pointerStrength += (pointerTargetStrength - pointerStrength) * strengthEase;
+    /*
+     * The pointer gain scales what the pointer asks for, and the result is clamped to 1.
+     *
+     * The gain is allowed above 1 so a profile can make the orb answer eagerly, but the shader's own
+     * `u_pointerStrength` is a 0..1 amount: letting the product exceed it would make the glow clip
+     * rather than grow, which reads as a bug in the shader instead of a setting.
+     */
+    const askedStrength = Math.max(0, Math.min(1, pointerTargetStrength * physics.pointerResponse));
+    pointerStrength += (askedStrength - pointerStrength) * strengthEase;
 
     const travelled = Math.hypot(pointer.x - lastPointerX, pointer.y - lastPointerY);
     lastPointerX = pointer.x;
@@ -324,8 +363,8 @@ export function createOrbRenderer(
      * The target is kept below the clamp on purpose. A spring driven to its limit has nowhere to overshoot
      * to, and the overshoot — the part that goes past the rest shape and comes back — is the jelly.
      */
-    const target = Math.min(0.6, travelSpeed * 0.10) * pointerTargetStrength;
-    wobbleVelocity += ((target - wobble) * SPRING_STIFFNESS - wobbleVelocity * SPRING_DAMPING) * dt;
+    const target = Math.min(0.6, travelSpeed * 0.10) * pointerTargetStrength * physics.wobbleGain;
+    wobbleVelocity += ((target - wobble) * physics.stiffness - wobbleVelocity * physics.damping) * dt;
     wobble += wobbleVelocity * dt;
     // Clamped so a fast flick cannot turn the orb into something unrecognisable, and the velocity is
     // dropped with it so it does not bounce off the limit.

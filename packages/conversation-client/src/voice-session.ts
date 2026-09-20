@@ -1,4 +1,4 @@
-import type { VoiceState } from "@clarkcant/contracts";
+import { type AppIntentDecision, type VoiceState, appIntentDecisionSchema } from "@clarkcant/contracts";
 
 /**
  * The browser's half of a live voice session.
@@ -55,6 +55,23 @@ export interface VoiceSessionEvents {
    */
   onAnswerFailed?(input: { code: string; message: string }): void;
   /**
+   * A decision the node made about a command it was given out loud.
+   *
+   * Passed on rather than acted on here: the session owns the microphone and the node owns what a command means,
+   * and the page has one executor for both a click and a voice. Only `kind: "intent"` may be run.
+   */
+  onAppIntent?(decision: AppIntentDecision): void;
+  /**
+   * The node's account of a spoken widget action, once it has run.
+   *
+   * The node performs the action and reports the revision it landed on; the host re-reads the surface from that.
+   * Without this the action really runs and the screen never shows it, which was measured: the node reported ok,
+   * revision 7 to 8, "Da Doi khoang thoi gian", and the surface kept showing the week.
+   */
+  onWidgetActionResult?(
+    result: { ok: boolean; say: string; instanceId?: string | undefined; revision?: number | undefined },
+  ): void;
+  /**
    * Called once per capture frame handed to the socket.
    *
    * The counterpart of `onAudioFrame`, and needed for the same reason: "the microphone is open"
@@ -103,6 +120,14 @@ export interface VoiceSession {
   /** Whether the transcript of this session will be stored by the node. */
   readonly willRecord: boolean;
   setMuted(muted: boolean): void;
+  /**
+   * Say which widget the person is looking at, or that none is.
+   *
+   * An id and nothing else. The node builds the semantic view from what it holds, so a page cannot describe an
+   * instance it does not own and cannot hand over a description that has gone stale. Sent when the focused surface
+   * changes rather than with every sentence, because the answer only changes when somebody navigates.
+   */
+  focus(instanceId: string | undefined): void;
   end(): Promise<void>;
 }
 
@@ -261,6 +286,29 @@ export async function startVoiceSession(options: StartVoiceSessionOptions): Prom
           });
           return;
         }
+        case "app-intent": {
+          const decision = control["decision"];
+          // Validated rather than cast: this arrives from the node over a socket, and a decision that does not parse
+          // is not permission. `runAppIntent` also refuses anything but `kind: "intent"`, so this is the second of
+          // two independent checks that a page cannot act on a question.
+          const parsed = appIntentDecisionSchema.safeParse(decision);
+          if (parsed.success) events.onAppIntent?.(parsed.data);
+          return;
+        }
+        case "widget-action-result": {
+          // Already run on the node, which is why this reports rather than acts: re-reading the surface is the
+          // host's job, and there is one host.
+          const said = control["say"];
+          const instanceId = control["instanceId"];
+          const revision = control["revision"];
+          events.onWidgetActionResult?.({
+            ok: control["ok"] === true,
+            say: typeof said === "string" ? said : "",
+            ...(typeof instanceId === "string" ? { instanceId } : {}),
+            ...(typeof revision === "number" ? { revision } : {}),
+          });
+          return;
+        }
         case "ended": {
           void finish(typeof control["recordedMessages"] === "number" ? control["recordedMessages"] : 0);
           return;
@@ -354,6 +402,13 @@ export async function startVoiceSession(options: StartVoiceSessionOptions): Prom
       // on one of them is a mute that fails when that one is the broken one.
       for (const track of stream?.getTracks() ?? []) track.enabled = !next;
       if (socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify({ type: "mute", muted: next }));
+    },
+    focus(instanceId: string | undefined): void {
+      if (socket.readyState !== WebSocket.OPEN) return;
+      // Saying "nothing is focused" explicitly is not the same as never saying anything: a person who closes the
+      // surface must stop being able to drive it out loud, and the node cannot tell "closed it" from "has not said
+      // anything yet" unless the frame arrives.
+      socket.send(JSON.stringify(instanceId === undefined ? { type: "focus" } : { type: "focus", instanceId }));
     },
     async end(): Promise<void> {
       if (!closed && socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify({ type: "end" }));

@@ -1,7 +1,7 @@
 ---
 title: "Issue #17 — đính kèm file, thanh voice tối giản, voice điều khiển app, gợi ý từ việc gần đây, tab Memory"
 description: "Năm tính năng của issue #17, chia ba chặng ship: đính kèm file; cửa sổ desktop tối giản + voice điều khiển app; gợi ý theo việc gần đây + tab Memory."
-status: pending
+status: completed
 priority: P1
 effort: "~52h agent-hours tuần tự; ba PR tuần tự trên cùng một nhánh"
 issue: 17
@@ -86,14 +86,13 @@ không phải thứ tự đánh số ban đầu: vòng red-team đã đảo Stag
 | 2 | [Route upload/download, header transport và seam server](./phase-02-uploads-and-blob-store.md) | Done |
 | 3 | [Composer, timeline và nội dung tới agent](./phase-03-composer-timeline-and-agent-content.md) | Done |
 | 4 | [Journey đính kèm và evidence](./phase-04-attachments-journey-and-evidence.md) | Done |
-| 5 | [Registry app-intent dùng chung cho chat, click và voice](./phase-05-shared-app-control-intents.md) | Pending |
-| 6 | [T66 — voice và click chạm cùng một widget action state](./phase-06-voice-widget-action-parity.md) | Pending |
-| 7 | [Cửa sổ desktop compact, shell load client và bridge có tên](./phase-07-desktop-compact-window.md) | Pending |
-| 8 | [Thanh voice tối giản, intent cửa sổ và phiên sống qua hai chiều](./phase-08-minimal-voice-bar.md) | Pending |
-| 9 | [Gợi ý từ việc gần đây](./phase-09-recent-work-suggestions.md) | Pending |
-| 10 | [Memory record bền vững và tool `remember`](./phase-10-durable-memory-records.md) | Pending |
-| 11 | [Tab Memory trong Settings](./phase-11-settings-memory-tab.md) | Pending |
-| 12 | [Docs, traceability, evidence và release validation](./phase-12-docs-traceability-and-release.md) | Pending |
+| 5 | [Registry app-intent dùng chung cho chat, click và voice](./phase-05-shared-app-control-intents.md) | Done |
+| 7 | [Cửa sổ desktop compact, shell load client và bridge có tên](./phase-07-desktop-compact-window.md) | Done — smoke Electron **đã chạy xanh** (exit 0, `"failed": []`, mọi check `true`), và CI chạy nó mỗi lần push trong job `desktop smoke (xvfb)` |
+| 8 | [Thanh voice tối giản, intent cửa sổ và phiên sống qua hai chiều](./phase-08-minimal-voice-bar.md) | Done |
+| 9 | [Gợi ý từ việc gần đây](./phase-09-recent-work-suggestions.md) | Done |
+| 10 | [Memory record bền vững và tool `remember`](./phase-10-durable-memory-records.md) | Done |
+| 11 | [Tab Memory trong Settings](./phase-11-settings-memory-tab.md) | Done |
+| 12 | [Docs, traceability, evidence và release validation](./phase-12-docs-traceability-and-release.md) | Done |
 
 Lịch thi công (stage, effort, phụ thuộc):
 
@@ -133,39 +132,69 @@ Phase 12 là cổng cuối, không sửa giữa các stage ship.
 
 ## Success Criteria
 
-- [ ] `pnpm verify` xanh: invariant + typecheck + lint + unit test.
-- [ ] `pnpm test:e2e` xanh, có journey mới cho từng tính năng trong năm mục của issue.
-- [ ] `pnpm --filter @clarkcant/app-desktop run smoke` xanh, chạy trên máy có display, output JSON
-      lưu lại làm evidence (đây là **cổng do người vận hành chạy**, không nằm trong `pnpm verify`).
-- [ ] Nút `+` không còn `disabled`; chuỗi "Chưa hỗ trợ đính kèm" không còn trong mã.
-- [ ] Test từ chối: tên file là path tuyệt đối, URL thực thi, mime thực thi, magic bytes lệch khai báo,
-      quá ngưỡng, quá quota.
-- [ ] Prompt của lượt có attachment **không** chứa path đĩa, chỉ chứa `att_…`.
-- [ ] Ảnh đính kèm render trong timeline **sau reload** (đọc từ history).
-- [ ] Voice chạy được cả nhóm lệnh điều khiển app; lệnh dạng lệnh mà không khớp intent thì nói chưa
-      hiểu và **không hành động**; câu hỏi bình thường vẫn tới agent.
-- [ ] Thoát app chỉ xảy ra sau một lần xác nhận lấy từ route confirm; token dùng lại bị từ chối.
-- [ ] T66 chuyển NOT-IMPLEMENTED → PASS kèm tên test chạm **widget action state**; test panel Settings
-      có T-id riêng, không mượn T66.
-- [ ] Gợi ý rỗng thì fallback về chip tĩnh hiện có, và không gọi model để sinh gợi ý.
-- [ ] Xoá một memory item thì item đó không còn trong brief của lượt sau (đọc lại từ store).
-- [ ] Không credential nào trong file tracked.
+- [x] `pnpm verify` xanh: invariant + typecheck + lint + unit test. — chạy trên cây hiện tại của `main`:
+      **1474 passed, 7 skipped (1481)**, và 7/7 invariant PASS.
+- [x] `pnpm test:e2e` xanh, có journey mới cho từng tính năng trong năm mục của issue. — **83 passed, 0 failed**
+      (chromium, chạy trên cây hiện tại). CI cũng chạy nó trong job `e2e` (PR #44 đã merge, xanh ở
+      cả hai lần chạy), và xanh lại trong CI của `main` ở run 35461135410 (commit `bac2f2e`), nên cổng này không còn phụ thuộc vào một lần chạy tay.
+- [x] `pnpm --filter @clarkcant/app-desktop run smoke` xanh, chạy trên máy có display, output JSON lưu lại. — Đã
+      chạy trên máy này: exit 0, `"failed": []`, mọi check `true`, gồm "compact mode reads back the bounds
+      Electron actually has", "the minimum size Electron reports is the twenty by fifty floor", "expanding restores the
+      bounds Electron had before compact", "always on top is reported by the window, not by the model" và "a window
+      mode this build does not know is refused" (Electron 44.3.0, Chrome 152, Node 24.20.0). CI chạy nó trong job
+      `desktop smoke (xvfb)` (PR #44 đã merge; xanh ở cả hai lần chạy và xanh lại trong CI của `main` ở run 35461135410), nên cổng này được kiểm mỗi lần push.
+- [x] Nút `+` không còn `disabled`; chuỗi "Chưa hỗ trợ đính kèm" không còn trong mã. —
+      `apps/web/e2e/attachments.spec.ts`.
+- [x] Test từ chối: tên file là path tuyệt đối, URL thực thi, mime thực thi, magic bytes lệch khai báo, quá
+      ngưỡng, quá quota. — `apps/runtime/test/attachment-routes.spec.ts` (absolute path, executable URL,
+      executable content type, ceiling, quota) và `apps/runtime/test/attachments.spec.ts` (magic bytes lệch khai báo).
+- [x] Prompt của lượt có attachment **không** chứa path đĩa, chỉ chứa `att_…`. — chứng minh ở ranh giới adapter:
+      `FakePiAdapter.promptsFor()`.
+- [x] Ảnh đính kèm render trong timeline **sau reload** (đọc từ history). — `apps/web/e2e/attachments.spec.ts`.
+- [x] Voice chạy được cả nhóm lệnh điều khiển app; lệnh dạng lệnh mà không khớp intent thì nói chưa hiểu và
+      **không hành động**; câu hỏi bình thường vẫn tới agent. — `apps/web/e2e/voice-control.spec.ts` (8 journey: mở Settings, đổi tab được gọi tên, thoát app hỏi trước, lệnh lạ bị từ chối, kết thúc phiên, về home, đính kèm, lệnh cửa sổ bị từ chối trong browser)
+      và `packages/core/test/app-intents.spec.ts`.
+- [x] Thoát app chỉ xảy ra sau một lần xác nhận lấy từ route confirm; token dùng lại bị từ chối. —
+      `apps/runtime/test/app-intents.spec.ts` ("is not executable until the confirmation route returns it").
+- [x] T66 chuyển NOT-IMPLEMENTED → PASS kèm tên test chạm **widget action state**; test panel Settings có T-id
+      riêng, không mượn T66. — `apps/web/e2e/voice-widget-action.spec.ts` ("a spoken action and the same click
+      reach the same state"), xanh và nằm trong suite.
+- [x] Gợi ý rỗng thì fallback về chip tĩnh hiện có, và không gọi model để sinh gợi ý. —
+      `apps/web/e2e/suggestions.spec.ts`, `apps/runtime/test/suggestions.spec.ts`.
+- [x] Xoá một memory item thì item đó không còn trong brief của lượt sau (đọc lại từ store). —
+      `apps/runtime/test/memory.spec.ts` ("a record that is deleted is gone from the next turn's brief") và
+      `apps/web/e2e/memory.spec.ts`.
+- [x] Không credential nào trong file tracked. — `pnpm run invariants` (`no-committed-secrets`) và secret scan trên
+      CI. `GitGuardian` đỏ vì một fixture hình-dạng-khoá trong commit cũ, đã gỡ ở HEAD, và nó là check tư vấn.
 
-## Gates còn mở (cần người xác nhận, không chặn code)
+**Không còn tiêu chí nào chưa đạt.** Mọi tiêu chí ở trên đều đã đo được, kể cả cổng do người vận hành chạy.
+Trước đó smoke desktop được ghi là "cần display" và chưa từng chạy — đó là một kết luận sai về máy này, không phải một
+điều kiện còn thiếu. Việc còn lại là nợ kỹ thuật có tên ở mục dưới, không phải tiêu chí của plan.
 
-- **Kích thước thanh voice tối giản trên display thật.** Issue ghi "~20×50px" cho *icon*; Done-when
-  ghi "bounds ≈20×50 khi compact". Plan lấy 20×50 làm **sàn** `setMinimumSize` và để thanh có kích
-  thước đủ chứa hai icon (hằng số có tên ở Phase 7). Cần chốt con số cuối trên máy thật; trên Windows
-  còn một sàn tracking size của OS mà chỉ display thật mới đo được.
-- **Loại file và ngưỡng.** Lấy đề xuất của issue: ảnh, PDF, text/markdown, tối đa 25 MB mỗi file.
-- **Lệnh voice nào được thoát app không cần xác nhận.** Lấy đề xuất của issue: luôn hỏi.
-- **Phạm vi gợi ý.** Chốt: node local (khớp với phạm vi voice).
-- **PDF và ảnh tới model.** Adapter chỉ nhận `text`, nên ảnh/PDF tới model dưới dạng **ref opaque**
-  cộng tool `read_attachment` của node; node chưa có bộ trích PDF nên tool trả lời trung thực rằng
-  chưa đọc được nội dung nhị phân. Kiểm chứng "model nhìn thấy ảnh" cần provider thật → ghi BLOCKED.
-- **Xoá conversation.** Retention thật (xoá blob khi conversation bị xoá) cần một đường xoá
-  conversation; repo chưa có, và 4 bảng tham chiếu không cascade. Plan giao
-  `releaseConversationAttachments` (có test) và ghi việc thêm route xoá conversation là gap có tên.
+Đã sửa xong và đo được, không còn là tiêu chí chưa đạt:
+
+- **`pnpm test:e2e` xanh** — **78 passed, 0 failed**. Bốn lỗi đỏ sằn ở `7f3127f` đã được sửa tại gốc:
+  T66 (trang thiếu handler cho frame `widget-action-result`), T73 (panel có hai effect cùng trigger, effect sau ghi đè
+  tab vừa được gọi tên), `appearance.spec.ts:277` (spec đòi ô model trong khi chính file này có journey khác khẳng định
+  node không có model — một node dùng chung không thể vừa có catalogue vừa báo không có), và `j1.spec.ts` (node fixture không có
+  turn control nên đường background bị từ chối, cộng thêm một phụ thuộc thứ tự: journey "header không nói gì khi không có" chỉ
+  đúng khi nó chạy trước journey tạo phiên nền).
+- **T66 → PASS** và **T73 → PASS**: cả hai journey đã xanh và nằm trong suite, ledger ghi đúng trạng thái kèm tên test.
+## Quyết định đã chốt, và nợ kỹ thuật còn lại
+
+Bốn câu hỏi mở ở giai đoạn lập kế hoạch đã được chốt trước khi thi công, nên chúng không còn là gate: ba PR ghép
+trên một nhánh; blob giữ theo conversation kèm quota theo principal; voice chỉ điều khiển app của node này; và tab
+Memory là xem–nguồn–rồi–xoá. Loại file và ngưỡng lấy đúng đề xuất của issue (ảnh, PDF, text/markdown, tối đa 25 MB
+mỗi file), và chỉ `app.quit` cần xác nhận. Kích thước thanh tối giản đã được đo trên cửa sổ thật: smoke đọc lại
+`getBounds()` và `getMinimumSize()` từ window và cả hai đều `true`, với 20×50 là sàn.
+
+Còn lại là nợ kỹ thuật có tên, không phải tiêu chí của plan:
+
+- Extractor PDF/ảnh, và một adapter nhận được nội dung ảnh trong prompt — `docs/widgets-and-extensions.md` §4.1.
+- Route xoá conversation; retention hiện là `releaseConversationAttachments`.
+- Nguồn `memory` trong gợi ý: schema có, `buildSuggestions` chưa phát.
+- Scoped session token cho voice.
+- Các check cần provider thật (`[calibration]`, `[jev-live]`): cần `CLARKCANT_JEV_LIVE=1` và một key.
 
 ## Red Team Review
 

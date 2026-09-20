@@ -1,7 +1,9 @@
 import { z } from "zod";
 
 import { attachmentRefSchema } from "./attachments.ts";
-import { instantSchema } from "./primitives.ts";
+import { packageSourceSchema, riskLaneSchema } from "./directory.ts";
+import { facetKindSchema } from "./install.ts";
+import { instantSchema, platformSchema } from "./primitives.ts";
 import { widgetSnapshotSchema } from "./widgets.ts";
 
 /**
@@ -94,6 +96,98 @@ export const widgetRefBlockSchema = z.strictObject({
    */
   textAlternative: z.string().min(1).max(4000),
 });
+
+/**
+ * A browser session the node is driving, and who has the wheel.
+ *
+ * This card exists because the one capability that runs unsupervised is also the one where "the agent is still
+ * driving" has to be something the host can change rather than something the user waits out. The card states who
+ * is driving and offers the two verbs that change it; it never claims a session stopped because a button was
+ * pressed.
+ *
+ * `leaseEpoch` is carried so a card can be reasoned about next to the action it describes: an action planned
+ * under an older epoch than the card shows was planned before the last change of hands.
+ */
+export const browserSessionCardSchema = z.strictObject({
+  type: z.literal("browser-session-card"),
+  owner: z.literal("host"),
+  cardId: z.string().min(1).max(128),
+  sessionId: z.string().min(1).max(128),
+  label: z.string().min(1).max(300),
+  driver: z.enum(["agent", "user"]),
+  status: z.enum(["running", "stopped"]),
+  leaseEpoch: z.int().nonnegative(),
+  updatedAt: instantSchema,
+});
+export type BrowserSessionCard = z.infer<typeof browserSessionCardSchema>;
+
+/**
+ * A desktop session the node is driving.
+ *
+ * The same lease model as a browser session, and the same two verbs, because the question "who may act on this"
+ * does not change with the surface. What differs is observation: on a desktop the operating system owns the
+ * permission to see the screen, so `preview` is a first-class state rather than an error, and a card that showed a
+ * blank or stale view as if it were live would be claiming a view of somebody's screen that nobody has.
+ */
+export const computerSessionCardSchema = z.strictObject({
+  type: z.literal("computer-session-card"),
+  owner: z.literal("host"),
+  cardId: z.string().min(1).max(128),
+  sessionId: z.string().min(1).max(128),
+  label: z.string().min(1).max(300),
+  driver: z.enum(["agent", "user"]),
+  status: z.enum(["running", "stopped"]),
+  leaseEpoch: z.int().nonnegative(),
+  preview: z.enum(["available", "needs-permission", "unavailable"]),
+  /** Why the screen cannot be observed. Shown, because the fix is something the user has to do. */
+  previewReason: z.string().min(1).max(500).optional(),
+  updatedAt: instantSchema,
+});
+export type ComputerSessionCard = z.infer<typeof computerSessionCardSchema>;
+
+/**
+ * One directory listing.
+ *
+ * A search result is a **claim by a directory**, not a fact about the local machine, and it carries exactly the
+ * fields that let a person judge it: where it comes from, which version, the digest the install path will check, and
+ * the risk lane the isolation implies. `digest` is not optional: an artifact nobody can verify is not a result, and
+ * listing one would offer an install that fails later.
+ */
+export const marketplaceResultSchema = z.strictObject({
+  packageId: z.string().min(1).max(200),
+  version: z.string().min(1).max(80),
+  displayName: z.string().min(1).max(200),
+  description: z.string().max(1000),
+  source: packageSourceSchema,
+  digest: z.string().min(1).max(200),
+  riskTier: riskLaneSchema,
+  facets: z.array(facetKindSchema).max(10),
+  platforms: z.array(platformSchema).max(10),
+});
+export type MarketplaceResult = z.infer<typeof marketplaceResultSchema>;
+
+/**
+ * The results of a marketplace search, as the conversation shows them.
+ *
+ * Host-owned, because a result asserts a digest and a risk lane. A pack or a model that could mint this block could
+ * draw a listing that looks verified while pointing at bytes nobody has hashed.
+ *
+ * `directory` is required and named. A listing whose origin is invisible would present what some index says as
+ * something this machine knows, which is the same mistake as showing cached data as live.
+ *
+ * An empty `results` and an `unavailableReason` are different truths — "the directory has nothing" and "the
+ * directory could not be consulted" — so the reason is a separate field rather than an empty list.
+ */
+export const marketplaceResultsBlockSchema = z.strictObject({
+  type: z.literal("marketplace-results"),
+  owner: z.literal("host"),
+  cardId: z.string().min(1).max(128),
+  query: z.string().max(200),
+  directory: z.string().min(1).max(300),
+  results: z.array(marketplaceResultSchema).max(50),
+  unavailableReason: z.string().min(1).max(500).optional(),
+});
+export type MarketplaceResultsBlock = z.infer<typeof marketplaceResultsBlockSchema>;
 
 export const artifactBlockSchema = z.strictObject({
   type: z.literal("artifact"),
@@ -474,6 +568,76 @@ export const reconnectCardSchema = z.strictObject({
   reason: z.string().min(1).max(2000).optional(),
 });
 
+
+/**
+ * A form the agent is asking the user to fill in.
+ *
+ * The second half of the same primitive: a question offers named answers, and a form asks for values the agent
+ * cannot enumerate. Both exist for one reason — an agent that needs several facts otherwise writes them as prose,
+ * gets a paragraph back, and has to guess which sentence answered which request.
+ *
+ * Host-owned, and submitted as the user's own next message rather than through a route of its own, for the same
+ * reason the question card is: the transcript stays a conversation, and there is one way into the agent.
+ *
+ * `kind` is a closed set of three rather than free-form field definitions, so the renderer cannot be talked into
+ * drawing a control it does not have a safe implementation for.
+ */
+export const formCardSchema = z.strictObject({
+  type: z.literal("form-card"),
+  owner: z.literal("host"),
+  formId: z.string().min(1).max(128),
+  title: z.string().min(1).max(300),
+  fields: z
+    .array(
+      z.strictObject({
+        id: z.string().min(1).max(64),
+        label: z.string().min(1).max(200),
+        kind: z.enum(["text", "textarea", "select"]),
+        /** Required for `select`; ignored otherwise. */
+        options: z.array(z.string().min(1).max(200)).min(1).max(20).optional(),
+        required: z.boolean().optional(),
+        placeholder: z.string().min(1).max(200).optional(),
+      }),
+    )
+    .min(1)
+    .max(12),
+  submitLabel: z.string().min(1).max(60).optional(),
+});
+export type FormCard = z.infer<typeof formCardSchema>;
+
+/**
+ * A question the agent is asking, with the answers it will accept.
+ *
+ * Host-owned, like the other cards a model may propose but not mint for itself: the block is the host's record
+ * of what was asked, and a widget cannot produce one to put words in the agent's mouth.
+ *
+ * The chosen answer does not travel through this block. It becomes the user's own next message — the same thing
+ * a typed reply is — which is why the block carries no answer field: the transcript is history, and an answer
+ * written back into it would be the host editing what the user said.
+ *
+ * Bounded to six options because a list is not a question: past that the agent should be asking something
+ * narrower, and a wall of buttons is a form.
+ */
+export const questionCardSchema = z.strictObject({
+  type: z.literal("question-card"),
+  owner: z.literal("host"),
+  /** Unique for as long as the transcript that carries it, which is what the answerability rule keys on. */
+  questionId: z.string().min(1).max(128),
+  question: z.string().min(1).max(500),
+  options: z
+    .array(
+      z.strictObject({
+        id: z.string().min(1).max(64),
+        /** What the user sees, and what is sent as their reply. */
+        label: z.string().min(1).max(200),
+        detail: z.string().min(1).max(300).optional(),
+      }),
+    )
+    .min(2)
+    .max(6),
+});
+export type QuestionCard = z.infer<typeof questionCardSchema>;
+
 /**
  * A file a person attached, as it appears in the timeline.
  *
@@ -498,6 +662,9 @@ export const messageBlockSchema = z.discriminatedUnion("type", [
   surfaceBlockSchema,
   widgetRefBlockSchema,
   artifactBlockSchema,
+  browserSessionCardSchema,
+  computerSessionCardSchema,
+  marketplaceResultsBlockSchema,
   evidenceBlockSchema,
   systemCardBlockSchema,
   approvalCardBlockSchema,
@@ -509,10 +676,21 @@ export const messageBlockSchema = z.discriminatedUnion("type", [
   codeDiffCardSchema,
   projectPickerCardSchema,
   reconnectCardSchema,
+  questionCardSchema,
+  formCardSchema,
 ]);
 export type MessageBlock = z.infer<typeof messageBlockSchema>;
 
-/** Blocks whose trust state is owned by the host, never by a pack or a model. */
+/**
+ * Blocks whose trust state is owned by the host, never by a pack or a model.
+ *
+ * The single list. A second copy of it lived in the renderer and had already drifted: it knew about two card types
+ * this one did not, and neither knew about the session cards. Since this list is what refuses a host-owned block
+ * that arrived from somewhere other than the host, a type missing from it is a card a pack or a model could mint.
+ *
+ * Every card whose schema says `owner: z.literal("host")` belongs here, and the test beside it walks the list so a
+ * new one cannot be added in one place and forgotten in the other.
+ */
 export const HOST_OWNED_BLOCK_TYPES = [
   "system-card",
   "approval-card",
@@ -524,6 +702,11 @@ export const HOST_OWNED_BLOCK_TYPES = [
   "code-diff-card",
   "project-picker-card",
   "reconnect-card",
+  "question-card",
+  "form-card",
+  "browser-session-card",
+  "computer-session-card",
+  "marketplace-results",
 ] as const satisfies readonly MessageBlock["type"][];
 
 export function isHostOwnedBlock(block: MessageBlock): boolean {

@@ -122,6 +122,11 @@ export interface PinnedLiveSurfaceProps {
    * inside it — not only while a particular control happens to have focus.
    */
   onClose?: (() => void) | undefined;
+  /**
+   * Changes when a spoken action has run elsewhere and this surface should re-read. A signal rather than a value,
+   * because the surface's truth is the node's answer and nothing the caller could hand it.
+   */
+  refreshSignal?: number | undefined;
 }
 
 /** How long a claim is held before it is refreshed. Shorter than the server's lease on purpose. */
@@ -138,6 +143,41 @@ const CLAIM_REFRESH_MS = 30_000;
  * The claim is refreshed on a timer because a claim with no expiry is an orphan waiting to happen,
  * and released on unmount so the next surface does not have to wait for the lease to lapse.
  */
+/**
+ * What the desktop shell offers for detaching, when this build runs inside one.
+ *
+ * Read from the bridge rather than assumed: a browser has no bridge, and a browser has no second window to detach
+ * into - so the control is absent there rather than present and failing. A control that looks usable before its
+ * action exists is the thing this avoids.
+ */
+interface ShellDetachBridge {
+  detachWidget(input: {
+    conversationId: string;
+    instanceId: string;
+    title?: string;
+    live: unknown;
+  }): Promise<{ ok: boolean; refused?: string }>;
+  onWidgetReattached?(callback: (payload: { instanceRef?: string }) => void): void;
+}
+
+function shellDetachBridge(): ShellDetachBridge | undefined {
+  if (typeof window === "undefined") return undefined;
+  /*
+   * SAFETY: `clarkcant` is injected by the desktop preload through `contextBridge`, so it is a runtime fact with
+   * no declared type. The assertion is narrow, and `detachWidget` is checked for being a function before anything
+   * is called on it — a browser without the bridge returns `undefined` rather than a half-shaped object.
+   */
+  const candidate = (window as unknown as { clarkcant?: Record<string, unknown> }).clarkcant;
+  if (candidate === undefined || typeof candidate["detachWidget"] !== "function") return undefined;
+  /*
+   * SAFETY: the check above is what makes this true — a value without a callable `detachWidget` has already
+   * returned, so what is left is a bridge. `onWidgetReattached` is optional in the interface because a shell
+   * built before this channel existed has no way to push the reattach event, and that is a missing feature
+   * rather than a broken shape.
+   */
+  return candidate as unknown as ShellDetachBridge;
+}
+
 export function PinnedLiveSurface({
   client,
   conversationId,
@@ -146,6 +186,7 @@ export function PinnedLiveSurface({
   title,
   onTimeline,
   onClose,
+  refreshSignal,
 }: PinnedLiveSurfaceProps): ReactElement {
   const panel = useRef<HTMLDivElement>(null);
   const closeButton = useRef<HTMLButtonElement>(null);
@@ -153,7 +194,34 @@ export function PinnedLiveSurface({
   const [ownership, setOwnership] = useState<"claiming" | "owner" | "elsewhere" | "error">("claiming");
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<string | undefined>(undefined);
+  /*
+   * Whether the surface is near the viewport.
+   *
+   * Two things hang off this, and they are the same thing seen twice: a heavy surface is not mounted until it is
+   * close, and an offscreen one does not keep a live subscription. The second is the one that matters — a pinned
+   * surface left open in a tab nobody is looking at would otherwise keep claiming the lease and re-reading the
+   * widget on a timer, which is work nobody asked for and a lease nobody is using.
+   */
+  const [inView, setInView] = useState(false);
   const ownerToken = useRef<string>(newOwnerToken());
+
+  useEffect(() => {
+    const element = panel.current;
+    if (element === null) return;
+    /*
+     * `rootMargin` rather than a bare threshold: mounting exactly at the edge would make the surface appear only
+     * once the user has already scrolled to it, which turns lazy mounting into a visible pop-in. A screen's worth of
+     * margin means it is ready before it is looked at.
+     */
+    const observer = new IntersectionObserver(
+      (entries) => {
+        setInView(entries[0]?.isIntersecting ?? true);
+      },
+      { rootMargin: "400px 0px", threshold: 0 },
+    );
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, []);
 
   const load = useCallback(async (): Promise<void> => {
     try {
@@ -165,7 +233,28 @@ export function PinnedLiveSurface({
     }
   }, [client, conversationId, instanceId]);
 
+  // Skipped on the first render on purpose: the claim effect already reads the surface, and a second read of the
+  // same revision would be noise. Only a change means a spoken action landed.
+  const lastRefresh = useRef(refreshSignal ?? 0);
   useEffect(() => {
+    const signal = refreshSignal ?? 0;
+    if (signal === lastRefresh.current) return;
+    lastRefresh.current = signal;
+    void load();
+  }, [refreshSignal, load]);
+
+  useEffect(() => {
+    /*
+     * Offscreen means no subscription. The cleanup below releases the lease and clears the timer, so leaving the
+     * viewport suspends the surface the same way unmounting it does — and returning re-claims with the *same* owner
+     * token, which is the same owner rather than a second one.
+     */
+    if (!inView) {
+      // The cleanup below released the lease, so the surface must stop saying it holds the live view. Saying
+      // "owner" while holding nothing is the exact claim this component exists to avoid making.
+      setOwnership("claiming");
+      return;
+    }
     let cancelled = false;
     const claim = async (): Promise<void> => {
       try {
@@ -207,7 +296,7 @@ export function PinnedLiveSurface({
       // Best effort: the lease is what makes a failed release recoverable.
       void client.releaseLiveOwner(conversationId, instanceId, ownerToken.current).catch(() => undefined);
     };
-  }, [client, conversationId, instanceId, load]);
+  }, [client, conversationId, instanceId, inView, load]);
 
   /*
    * Escape closes the expanded view, from anywhere inside it.
@@ -254,9 +343,96 @@ export function PinnedLiveSurface({
 
   const readOnly = ownership !== "owner";
 
+  /**
+   * Hand this instance to its own window.
+   *
+   * The lease is released *before* the host claims it, and that order is the whole handoff: the node refuses a
+   * second owner, so a shell that asked for a detached window while still holding the lease would have its own
+   * request refused, and the instance would stay here with a window that never opened. Letting go and handing over
+   * are the same act.
+   *
+   * If the window does not open, the lease is taken back rather than left in nobody's hands.
+   */
+  const detach = useCallback(async (): Promise<void> => {
+    const bridge = shellDetachBridge();
+    if (bridge === undefined || live === undefined) return;
+    try {
+      await client.releaseLiveOwner(conversationId, instanceId, ownerToken.current);
+    } catch (cause) {
+      setNotice(cause instanceof Error ? cause.message : String(cause));
+      return;
+    }
+    const answer = await bridge.detachWidget({
+      conversationId,
+      instanceId,
+      ...(title === undefined ? {} : { title }),
+      live,
+    });
+    if (!answer.ok) {
+      setNotice(answer.refused ?? "Không mở được cửa sổ riêng.");
+      await client
+        .claimLiveOwner(conversationId, instanceId, {
+          ownerToken: ownerToken.current,
+          surface: "pin",
+          leaseMs: CLAIM_REFRESH_MS * 3,
+        })
+        .then(() => setOwnership("owner"))
+        .catch(() => undefined);
+      return;
+    }
+    setOwnership("elsewhere");
+    setNotice("Widget đang mở trong một cửa sổ riêng.");
+  }, [client, conversationId, instanceId, live, title]);
+
+  /*
+   * Taking the instance back when its window closes.
+   *
+   * The claim is re-made rather than assumed: the host released the lease on the way out, so this surface holds
+   * nothing until it asks again - and a surface that said "owner" without asking would be claiming a lease nobody
+   * granted.
+   */
+  useEffect(() => {
+    const bridge = shellDetachBridge();
+    if (bridge?.onWidgetReattached === undefined) return;
+    bridge.onWidgetReattached(() => {
+      void client
+        .claimLiveOwner(conversationId, instanceId, {
+          ownerToken: ownerToken.current,
+          surface: "pin",
+          leaseMs: CLAIM_REFRESH_MS * 3,
+        })
+        .then(() => {
+          setOwnership("owner");
+          setNotice(undefined);
+          return load();
+        })
+        .catch(() => {
+          setOwnership("elsewhere");
+        });
+    });
+  }, [client, conversationId, instanceId, load]);
+
+  const detachAvailable = shellDetachBridge() !== undefined;
+
   const head =
     onClose === undefined ? undefined : (
       <div className="cc-live-head">
+        {/*
+          Offered only to the surface holding the lease, and only where a second window exists to detach into. A
+          button that could not hand the instance over would be a control whose action does not exist.
+        */}
+        {detachAvailable && ownership === "owner" && (
+          <button
+            type="button"
+            className="cc-icon-btn"
+            style={{ width: "auto", padding: "0 var(--cc-space-sm)" }}
+            data-detach-widget="true"
+            aria-label="Mở widget này trong một cửa sổ riêng"
+            onClick={() => void detach()}
+          >
+            Cửa sổ riêng
+          </button>
+        )}
         <button
           ref={closeButton}
           type="button"
@@ -271,21 +447,35 @@ export function PinnedLiveSurface({
       </div>
     );
 
-  if (live === undefined) {
+  /*
+   * Offscreen means unmounted. Not polling while still rendering the surface would leave the heavy part on screen
+   * doing nothing — and the point of both items is that a surface nobody is looking at costs nothing.
+   */
+  if (live === undefined || !inView) {
     return (
       <div
+        ref={panel}
         className="cc-live-surface"
         data-live-instance={instanceId}
         data-ownership={ownership}
         data-display-mode={displayMode}
+        data-lazy={inView ? "false" : "true"}
         role={displayMode === "expanded" ? "region" : undefined}
         aria-label={displayMode === "expanded" ? `Bản hiện tại: ${title ?? instanceId}` : undefined}
       >
         {/* The close control is here in the loading state as well: a surface that is still opening is
             exactly when a keyboard user wants to be able to back out. */}
         {head}
-        <p className="cc-freshness" style={{ margin: 0 }}>
-          {notice ?? "Đang mở bản hiện tại…"}
+        {/*
+          Two different waits, said differently. "Chưa hiển thị" is the lazy state and it names what is missing
+          rather than looking like a failure; a reader who cannot see the surface still gets the title, so the
+          placeholder is a text alternative rather than an empty box.
+        */}
+        <p className="cc-freshness" data-live-waiting={inView ? "opening" : "offscreen"} style={{ margin: 0 }}>
+          {notice ??
+            (inView
+              ? "Đang mở bản hiện tại…"
+              : `Chưa hiển thị${title === undefined ? "" : `: ${title}`} — cuộn tới để mở.`)}
         </p>
       </div>
     );
@@ -300,6 +490,7 @@ export function PinnedLiveSurface({
       data-live-instance={instanceId}
       data-ownership={ownership}
       data-display-mode={displayMode}
+      data-lazy="false"
       role={displayMode === "expanded" ? "region" : undefined}
       aria-label={displayMode === "expanded" ? `Bản hiện tại: ${title ?? instanceId}` : undefined}
     >
@@ -360,7 +551,7 @@ export function PinnedLiveSurface({
  * Kept next to the pin because it is the pin's read path: history uses the bundle, and this uses
  * current records. Both produce the same view shape, so there is one renderer.
  */
-function toSurfaceViewFromLive(live: LiveWidgetResponse, readOnly: boolean): CompositeSurfaceView {
+export function toSurfaceViewFromLive(live: LiveWidgetResponse, readOnly: boolean): CompositeSurfaceView {
   return {
     compositionId: live.compositionId,
     instanceId: live.spec.instanceId,

@@ -145,14 +145,45 @@ describe("IPC is answered only for the shell document (sender validation)", () =
     expect(reviewIpcCall({}, "desktop:getStatus", SHELL_URL).allowed).toBe(false);
   });
 
+  it("a refused channel is still refused after compact mode exists", () => {
+    // Adding a channel must not widen the sender check by accident: the new one answers the shell document and
+    // nobody else, and a name that is not registered is not a channel.
+    const shellFrame = { senderFrame: { url: SHELL_URL } };
+    expect(reviewIpcCall(shellFrame, "desktop:setCompactMode", SHELL_URL).allowed).toBe(true);
+    expect(
+      reviewIpcCall({ senderFrame: { url: "https://example.com/" } }, "desktop:setCompactMode", SHELL_URL).allowed,
+    ).toBe(false);
+    expect(reviewIpcCall(shellFrame, "desktop:notRegistered", SHELL_URL).allowed).toBe(false);
+  });
+
   it("allowlists exactly the channels the bridge uses", () => {
+    /*
+     * Written out rather than derived from the preload bridge on purpose: the point is that adding a channel
+     * takes two edits, one of which is this list. A test that read the bridge would agree with whatever the
+     * bridge did, including a channel added to the bridge and never reviewed.
+     *
+     * The window channels are separate entries rather than one `desktop:window` taking a verb, because the
+     * allowlist is a list of what this window may do: "resize" and "focus" are different permissions, and hiding
+     * that distinction inside a payload would put the decision where review cannot see it.
+     */
     expect([...IPC_CHANNELS].sort()).toEqual([
+      "desktop:attachWidget",
+      "desktop:detachWidget",
+      "desktop:focusWindow",
+      "desktop:getSession",
       "desktop:getStatus",
       "desktop:notify",
       "desktop:openExternal",
       "desktop:pickDirectory",
       "desktop:requestCredential",
+      "desktop:resizeWindowPreset",
+      "desktop:restoreWindow",
+      "desktop:setCompactMode",
       "desktop:setKeepRunning",
+      "desktop:setWindowMode",
+      "detached:bootstrap",
+      "detached:intent",
+      "detached:release",
     ]);
   });
 });

@@ -232,6 +232,37 @@ export function eventsSince(
   return rows.map((row) => parseJson<unknown>(row.document, "events.document"));
 }
 
+export interface RecentEvent {
+  kind: string;
+  occurredAt: string;
+  document: unknown;
+}
+
+/**
+ * The most recent events on one stream, newest first.
+ *
+ * Separate from `eventsSince` rather than a flag on it, because the two questions are opposites: that one
+ * replays a conversation forwards from a cursor, and this one answers "what happened lately" for a surface
+ * that shows the last few things and nothing else. It also carries the kind and the time, which the replay
+ * does not need but a list of effects is meaningless without.
+ */
+export function recentEvents(
+  db: Database,
+  filter: { stream: string; limit?: number },
+): RecentEvent[] {
+  const rows = allRows<{ kind: string; occurred_at: string; document: string }>(
+    db,
+    "SELECT kind, occurred_at, document FROM events WHERE stream = ? ORDER BY source_sequence DESC LIMIT ?",
+    filter.stream,
+    filter.limit ?? 20,
+  );
+  return rows.map((row) => ({
+    kind: row.kind,
+    occurredAt: row.occurred_at,
+    document: parseJson<unknown>(row.document, "events.document"),
+  }));
+}
+
 /* ------------------------------------------------------------------ *
  * Outbox
  * ------------------------------------------------------------------ */
@@ -906,6 +937,100 @@ export interface DatasetView {
  * a large result set never enters the transcript and the client can be told how fresh the
  * data is at the moment it renders it.
  */
+/**
+ * An artifact as the node records it.
+ *
+ * `blobPath` is deliberately absent. It is a path inside the node's own data directory, and a
+ * client has no use for it beyond learning the layout of somebody's disk — so the one place that
+ * reads bytes from it is the node, and everything downstream sees facts about the artifact rather
+ * than where it happens to live.
+ */
+export interface ArtifactRecord {
+  artifactId: string;
+  digest: string;
+  sizeBytes: number;
+  mimeType: string;
+  classification: string;
+  originNodeId: string;
+  createdAt: Instant;
+  /** Absent means it does not expire. */
+  expiresAt: Instant | undefined;
+}
+
+export function upsertArtifact(
+  db: Database,
+  input: {
+    artifactId: string;
+    digest: string;
+    sizeBytes: number;
+    mimeType: string;
+    classification: string;
+    originNodeId: string;
+    blobPath?: string;
+    createdAt: Instant;
+    expiresAt?: Instant;
+  },
+): void {
+  db.prepare(
+    `INSERT INTO artifacts (artifact_id, digest, size_bytes, mime_type, classification, origin_node_id, blob_path, created_at, expires_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT(artifact_id) DO UPDATE SET
+       digest = excluded.digest,
+       size_bytes = excluded.size_bytes,
+       mime_type = excluded.mime_type,
+       classification = excluded.classification,
+       origin_node_id = excluded.origin_node_id,
+       blob_path = excluded.blob_path,
+       expires_at = excluded.expires_at`,
+  ).run(
+    input.artifactId,
+    input.digest,
+    input.sizeBytes,
+    input.mimeType,
+    input.classification,
+    input.originNodeId,
+    input.blobPath ?? null,
+    input.createdAt,
+    input.expiresAt ?? null,
+  );
+}
+
+/**
+ * Read an artifact, expired or not.
+ *
+ * Expiry is reported rather than filtered out on purpose: an expired artifact that reads as `missing` tells
+ * the user their file never existed, when the truth is that the node had it and a retention window passed.
+ * The distinction is the difference between "ask for it again" and "something is wrong".
+ */
+export function getArtifact(db: Database, artifactId: string): ArtifactRecord | undefined {
+  const row = oneRow<{
+    artifact_id: string;
+    digest: string;
+    size_bytes: number;
+    mime_type: string;
+    classification: string;
+    origin_node_id: string;
+    created_at: string;
+    expires_at: string | null;
+  }>(
+    db,
+    `SELECT artifact_id, digest, size_bytes, mime_type, classification, origin_node_id, created_at, expires_at
+       FROM artifacts WHERE artifact_id = ?`,
+    artifactId,
+  );
+  if (row === undefined) return undefined;
+  return {
+    artifactId: row.artifact_id,
+    digest: row.digest,
+    sizeBytes: row.size_bytes,
+    mimeType: row.mime_type,
+    classification: row.classification,
+    originNodeId: row.origin_node_id,
+    createdAt: row.created_at as Instant,
+    expiresAt: (row.expires_at ?? undefined) as Instant | undefined,
+  };
+}
+
 export function upsertDataset(
   db: Database,
   input: {
@@ -2456,4 +2581,146 @@ export function readPreference(
 export function deleteCredential(db: Database, principalId: string, name: string): boolean {
   const result = db.prepare("DELETE FROM credentials WHERE principal_id = ? AND name = ?").run(principalId, name);
   return Number(result.changes) > 0;
+}
+
+/* ------------------------------------------------------------------ *
+ * Memory
+ *
+ * One row is a sentence the agent chose to keep, and the conversation
+ * it was learned in. Deletion is real, because the Memory tab promises
+ * that what somebody removes is gone rather than hidden.
+ * ------------------------------------------------------------------ */
+
+export interface MemoryRecordInput {
+  memoryId: string;
+  principalId: string;
+  conversationId: string;
+  sourceMessageId?: string;
+  kind: string;
+  scope: string;
+  text: string;
+  at: string;
+}
+
+export function insertMemoryRecord(db: Database, record: MemoryRecordInput): void {
+  db.prepare(
+    `INSERT INTO memory_records
+       (memory_id, principal_id, conversation_id, source_message_id, kind, scope, text, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+  ).run(
+    record.memoryId,
+    record.principalId,
+    record.conversationId,
+    record.sourceMessageId ?? null,
+    record.kind,
+    record.scope,
+    record.text,
+    record.at,
+  );
+}
+
+interface MemoryRow extends Record<string, unknown> {
+  memory_id: string;
+  conversation_id: string;
+  source_message_id: string | null;
+  kind: string;
+  scope: string;
+  text: string;
+  created_at: string;
+}
+
+function toMemoryRecord(row: MemoryRow): MemoryRecordInput & { memoryId: string } {
+  return {
+    memoryId: String(row.memory_id),
+    principalId: "",
+    conversationId: String(row.conversation_id),
+    ...(row.source_message_id === null ? {} : { sourceMessageId: String(row.source_message_id) }),
+    kind: String(row.kind),
+    scope: String(row.scope),
+    text: String(row.text),
+    at: String(row.created_at),
+  };
+}
+
+/** Newest first, because the newest thing remembered is the one most likely to be relevant. */
+export function listMemoryRecords(
+  db: Database,
+  query: { principalId: string; kind?: string; scope?: string },
+): MemoryRecordInput[] {
+  const clauses = ["principal_id = ?"];
+  const values: unknown[] = [query.principalId];
+  if (query.kind !== undefined) {
+    clauses.push("kind = ?");
+    values.push(query.kind);
+  }
+  if (query.scope !== undefined) {
+    clauses.push("scope = ?");
+    values.push(query.scope);
+  }
+  const rows = allRows<MemoryRow>(
+    db,
+    `SELECT * FROM memory_records WHERE ${clauses.join(" AND ")} ORDER BY created_at DESC, memory_id DESC`,
+    ...values,
+  );
+  return rows.map(toMemoryRecord);
+}
+
+export function getMemoryRecord(db: Database, memoryId: string): MemoryRecordInput | undefined {
+  const row = oneRow<MemoryRow>(db, "SELECT * FROM memory_records WHERE memory_id = ?", memoryId);
+  return row === undefined ? undefined : toMemoryRecord(row);
+}
+
+/**
+ * Remove one record, and say whether anything was removed.
+ *
+ * The principal is part of the condition rather than checked afterwards: a delete that first reads the row and
+ * then decides cannot be the thing that enforces ownership.
+ */
+export function deleteMemoryRecord(db: Database, principalId: string, memoryId: string): boolean {
+  const result = db
+    .prepare("DELETE FROM memory_records WHERE memory_id = ? AND principal_id = ?")
+    .run(memoryId, principalId);
+  return Number(result.changes) > 0;
+}
+
+/**
+ * What goes into the brief for one turn.
+ *
+ * Node-scoped records and the ones learned in this conversation, never another conversation's: a decision taken
+ * somewhere else is not context for what is being decided here.
+ */
+export function memoryRecordsForBrief(
+  db: Database,
+  principalId: string,
+  conversationId: string,
+  limit: number,
+): MemoryRecordInput[] {
+  const rows = allRows<MemoryRow>(
+    db,
+    `SELECT * FROM memory_records
+      WHERE principal_id = ? AND (scope = 'node' OR conversation_id = ?)
+      ORDER BY created_at DESC, memory_id DESC
+      LIMIT ?`,
+    principalId,
+    conversationId,
+    limit,
+  );
+  return rows.map(toMemoryRecord);
+}
+
+/**
+ * How many records would go into a brief, counted rather than guessed.
+ *
+ * The brief is capped, and the cap has to say how much was left out. Fetching one row past the cap would let it
+ * say "at least one more", which is weaker than the truth and would drift as memory grows.
+ */
+export function countMemoryRecordsForBrief(db: Database, principalId: string, conversationId: string): number {
+  const row = oneRow<{ total: number }>(
+    db,
+    `SELECT COUNT(*) AS total FROM memory_records
+      WHERE principal_id = ? AND (scope = 'node' OR conversation_id = ?)`,
+    principalId,
+    conversationId,
+  );
+  return Number(row?.total ?? 0);
 }

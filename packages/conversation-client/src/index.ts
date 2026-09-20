@@ -14,6 +14,7 @@ import { themeStylesheet } from "@clarkcant/design-tokens";
 import { APP_CSS } from "./styles.ts";
 
 export { APP_CSS } from "./styles.ts";
+export { DetachedWidgetSurface, type DetachedBridge } from "./DetachedWidgetSurface.tsx";
 export {
   MiniAppSurface,
   unavailableSections,
@@ -47,6 +48,9 @@ export {
   EvidenceBlock,
   HOST_OWNED_BLOCK_TYPES,
   ProjectPickerCardBlock,
+  QuestionCardBlock,
+  FormCardBlock,
+  ControlSessionCardBlock,
   ReconnectCardBlock,
   SystemCardBlock,
   TaskOverviewCardBlock,
@@ -56,7 +60,22 @@ export {
   renderBlock,
 } from "./blocks.tsx";
 export { Conversation, type ConversationProps } from "./Conversation.tsx";
-export { SettingsPanel, SettingsRow, ToolRow, type SettingsPanelProps, type SettingsRowProps, type ToolRowProps } from "./SettingsPanel.tsx";
+export { desktopBridge, requestWindowMode, sessionFromBridge } from "./desktop-compact.ts";
+export type {
+  SessionHandover,
+  WindowBounds,
+  WindowMode,
+  WindowModeAction,
+  WindowModeAnswer,
+} from "./desktop-compact.ts";
+export {
+  SettingsPanel,
+  type SettingsPanelProps,
+  SettingsRow,
+  type SettingsRowProps,
+  ToolRow,
+  type ToolRowProps,
+} from "./settings/SettingsPanel.tsx";
 export { TokenSpecimens, readVar } from "./TokenSpecimens.tsx";
 export { Modal, type ModalProps } from "./Modal.tsx";
 export { VoiceUnavailable } from "./voice-unavailable.tsx";
@@ -78,6 +97,55 @@ export {
   type MenuBarPopoverProps,
 } from "./DesktopSurfaces.tsx";
 export { Orb, type OrbProps } from "./Orb.tsx";
+export {
+  DEFAULT_ORB_PROFILE,
+  orbFallbackBackground,
+  resolveOrbProfile,
+  type OrbOptical,
+  type OrbPaletteOverride,
+  type OrbPhysics,
+  type ResolvedOrbProfile,
+} from "./orb-profile.ts";
+export {
+  AGENT_STATES,
+  INPUT_MODALITIES,
+  agentStateAttribute,
+  agentStateFrom,
+  attachInputModality,
+  isAgentState,
+  modalityFor,
+  type AgentState,
+  type InputModality,
+  type InputModalityHandle,
+  type InputSignal,
+} from "./input-modality.ts";
+export { prefersReducedMotion } from "./typewriter.ts";
+export {
+  WAKE_STATUSES,
+  WAKE_UNAVAILABLE_REASON,
+  agentStateForWake,
+  createFixtureWakeDetector,
+  wakeAvailability,
+  type WakeAvailability,
+  type WakeStatus,
+  type WakeWordDetector,
+} from "./wake-word.ts";
+export { useOrbProfile, type OrbProfileHandle } from "./use-orb-profile.ts";
+export { usePreferences, type PreferencesHandle, type PreferenceStatus } from "./settings/controls/use-preferences.ts";
+export {
+  InlineStatus,
+  RangeField,
+  SegmentedControl,
+  ToggleSwitch,
+  type InlineStatusProps,
+  type RangeFieldProps,
+  type SegmentedControlProps,
+  type SegmentedOption,
+  type ToggleSwitchProps,
+} from "./settings/controls/primitives.tsx";
+// Re-exported so a host can type the preference it reads without depending on the contracts package for one
+// shape it only passes through.
+export type { RegisteredPreference } from "@clarkcant/contracts";
 export { ORB_DRAW_SIZE, ORB_RADIUS } from "./Conversation.tsx";
 export { createOrbRenderer, type OrbOptions, type OrbRenderer } from "./orb.ts";
 export { ORB_PALETTE, ORB_SHAPE, ORB_SHADER_STATUS } from "./orb-shader.ts";
