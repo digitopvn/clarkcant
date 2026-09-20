@@ -113,6 +113,31 @@ test("a spoken command and the same click open Settings in the same state", asyn
   await page.screenshot({ path: join(EVIDENCE, "voice-control-01-settings-by-voice.png"), fullPage: false });
 });
 
+/*
+ * The second half of the parity claim, and the one that was missing.
+ *
+ * T73's ledger row and the plan's voice criterion both cited this journey while it was not in the file: a spoken
+ * sentence that names a tab has to land where clicking that tab lands. Clicking first is what makes it a parity
+ * claim rather than a shortcut, and closing the panel in between is what makes it a claim about the tab rather than
+ * about the panel still being open.
+ */
+test("a spoken tab change lands on the tab that was named", async ({ page, request }) => {
+  await openApp(page);
+  await startConversation(page);
+
+  await page.locator('[data-settings="true"]').click();
+  await page.locator("#cc-tab-extensions").click();
+  const afterClick = await selectedTab(page);
+  expect(afterClick).toBe("cc-tab-extensions");
+  await page.keyboard.press("Escape");
+
+  await scriptVoice(request, "đổi sang tab công cụ");
+  await openVoice(page);
+
+  await expect(page.locator("#cc-tab-extensions")).toHaveAttribute("data-selected", "true");
+  expect(await selectedTab(page)).toBe(afterClick);
+});
+
 test("a spoken quit asks instead of closing anything", async ({ page, request }) => {
   await openApp(page);
   await startConversation(page);
