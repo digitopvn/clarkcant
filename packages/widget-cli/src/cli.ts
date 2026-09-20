@@ -8,7 +8,7 @@ import { directoryEntrySchema, riskLaneFor, type DirectoryEntry } from "@clarkca
 
 import { runConformance, type ConformanceReport } from "./conformance.ts";
 import { startDevHost } from "./dev-host.ts";
-import { readPackage } from "./manifest.ts";
+import { readPackage } from "@clarkcant/core";
 
 /**
  * `clark widget …` — the author's commands, from `docs/widget-development.md` §16.
@@ -444,4 +444,4 @@ export { applyShellAction, auditFrame, initialState, renderShell } from "./dev-s
 if (process.argv[1] !== undefined && import.meta.url === pathToFileURL(process.argv[1]).href) {
   process.exitCode = await runCli(process.argv.slice(2));
 }
-export { readPackage, manifestSchema } from "./manifest.ts";
+export { readPackage, manifestSchema } from "@clarkcant/core";

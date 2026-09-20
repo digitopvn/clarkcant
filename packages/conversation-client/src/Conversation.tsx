@@ -1734,7 +1734,15 @@ export function Conversation({
       */}
       {conversationId !== undefined &&
         pins
-          .filter((pin) => pin.displayMode === "expanded" && instanceById.get(pin.instanceId)?.definitionId === "canvas.overview@1")
+          /*
+           * Any expanded pin whose instance this node knows, rather than one hardcoded definition.
+           *
+           * The filter used to name `canvas.overview@1`, which made the expanded live view a feature of exactly one
+           * widget: every other definition could be pinned and would then render nothing at all. The condition that
+           * matters is the one below — an expanded pin is a request for a live view — and which shape that view
+           * takes is the node's answer, not the client's guess.
+           */
+          .filter((pin) => pin.displayMode === "expanded" && instanceById.get(pin.instanceId) !== undefined)
           .map((pin) => (
             <div key={`live-${pin.pinId}`} className="cc-pin-expanded" data-pin-live={pin.pinId}>
               <PinnedLiveSurface

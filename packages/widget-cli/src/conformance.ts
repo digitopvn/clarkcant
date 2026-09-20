@@ -6,7 +6,7 @@ import { validateProps } from "@clarkcant/widget-host";
 import { FORBIDDEN_API_SURFACE, acceptBridgeMessage, createWidgetRuntime, type MessageEndpoint } from "@clarkcant/widget-sdk";
 import { createFrameSession } from "@clarkcant/widget-host";
 
-import { REQUIRED_FIXTURES, readPackage, type WidgetPackage } from "./manifest.ts";
+import { REQUIRED_FIXTURES, readPackage, type WidgetPackage } from "@clarkcant/core";
 
 /**
  * The conformance suite a widget has to pass before it is publish-ready.

@@ -2,7 +2,7 @@ import { createServer, type Server, type ServerResponse } from "node:http";
 import { readFileSync, statSync, watch, type FSWatcher } from "node:fs";
 import { extname, join, normalize, resolve, sep } from "node:path";
 
-import { readPackage } from "./manifest.ts";
+import { readPackage } from "@clarkcant/core";
 import { applyShellAction, initialState, renderShell, type DevShellAction, type DevShellState } from "./dev-shell.ts";
 
 /**

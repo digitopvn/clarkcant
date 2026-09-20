@@ -18,6 +18,8 @@ export * from "./install-from-source.ts";
 export * from "./install-from-entry.ts";
 export * from "./package-files.ts";
 export * from "./widget-document.ts";
+export * from "./widget-package.ts";
+export * from "./widget-frame.ts";
 export * from "./installed-packages.ts";
 export * from "./coordination.ts";
 export * from "./capability-registry.ts";
