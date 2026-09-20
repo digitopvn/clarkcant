@@ -350,7 +350,7 @@ export function textOfBlock(block: MessageBlock): string {
     case "question-card":
       // The answers, not only the question: a reader who cannot press anything still needs to know what was
       // offered, because the answer is what the conversation turns on.
-      return `${block.question} — ${block.options.map((option) => option.label).join(" / ")}`;
+      return `${block.prompt} — ${block.options.map((option) => option.label).join(" / ")}`;
     case "form-card":
       return `${block.title} — ${block.fields.map((field) => field.label).join(", ")}`;
     case "browser-session-card":

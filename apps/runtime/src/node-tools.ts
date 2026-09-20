@@ -333,6 +333,18 @@ export interface CommandToolDeps {
     ref?: string;
   }) => void;
   /**
+   * The effect ledger, kept from main.
+   *
+   * Two records answer two different questions: `audit` says who asked for what and how it ended, and this one says
+   * how far an external effect got — which is what a reader needs after a crash between a command starting and its
+   * result arriving. The dependencies come from the caller because only the node knows its database and its clock.
+   */
+  effectAudit?: () => {
+    deps: Parameters<typeof recordEffectExecution>[0];
+    principalId: string;
+    conversationId?: string;
+  };
+  /**
    * The interaction manager, when this node may ask the person something.
    *
    * Optional because a node can run commands without being able to ask: in that case a folder the finder cannot

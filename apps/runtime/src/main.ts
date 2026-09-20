@@ -530,11 +530,16 @@ async function main(): Promise<void> {
           type: "question-card",
           owner: "host",
           questionId,
-          question: "Bạn muốn tôi mở dự án nào?",
+          prompt: "Bạn muốn tôi mở dự án nào?",
+          questionType: "single-choice",
           options: [
-            { id: "option-1", label: "Dự án hiện tại", detail: "thư mục này" },
-            { id: "option-2", label: "Dự án khác", detail: "tôi sẽ chỉ đường" },
+            { id: "option-1", label: "Dự án hiện tại", description: "thư mục này" },
+            { id: "option-2", label: "Dự án khác", description: "tôi sẽ chỉ đường" },
           ],
+          allowOther: false,
+          voicePrompt: "Bạn muốn tôi mở dự án nào? Dự án hiện tại, hay một dự án khác?",
+          status: "waiting",
+          createdAt: instantSchema.parse(new Date().toISOString()),
         },
       };
     }
