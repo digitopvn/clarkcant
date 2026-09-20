@@ -24,6 +24,7 @@ import {
   widgetActionTarget,
 } from "./gateway.ts";
 import { NO_FOCUSED_SURFACE_SAY } from "./widget-voice-action.ts";
+import { storeSessionPreview } from "./session-preview.ts";
 import {
   type AppIntentDeps,
   consumeConfirmation,
@@ -485,6 +486,27 @@ async function main(): Promise<void> {
         surface: "browser",
         label: "đang mở form thanh toán",
       });
+      /*
+       * The frame is captured, stored and referenced — not described. On a fixture node there is no browser to
+       * photograph, so the capture is a fixed PNG: that proves the wiring (bytes reach the blob store, the card
+       * carries a reference to them) and it does not prove a browser rendered anything. That distinction is the
+       * whole reason the ledger row names which half is real.
+       */
+      const frame = await storeSessionPreview({
+        dataDir: options.dataDir,
+        capture: () =>
+          Promise.resolve({
+            bytes: new Uint8Array([
+              0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, // PNG signature
+              0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44, 0x52, // IHDR length and tag
+              0x00, 0x00, 0x05, 0x00, // width 1280
+              0x00, 0x00, 0x02, 0xd0, // height 720
+              0x08, 0x06, 0x00, 0x00, 0x00,
+            ]),
+            contentType: "image/png",
+            viewport: { width: 1280, height: 720 },
+          }),
+      });
       return {
         text: "Đây là phiên browser do fixture tạo, không phải model thật.",
         block: {
@@ -497,6 +519,22 @@ async function main(): Promise<void> {
           status: created.status,
           leaseEpoch: created.leaseEpoch,
           updatedAt: instantSchema.parse(new Date().toISOString()),
+          // The state the node reports, which is what the client reads as `preview`.
+          preview: created.preview,
+          ...(created.previewReason === undefined ? {} : { previewReason: created.previewReason }),
+          /*
+           * Only when the frame was really stored. A capture that failed leaves the card without one, which the
+           * interface can say out loud — the alternative is a card showing an empty box as if it were a screen.
+           */
+          ...(frame.ok
+            ? {
+                previewFrame: {
+                  digest: frame.digest,
+                  viewport: frame.viewport,
+                  capturedAt: instantSchema.parse(new Date().toISOString()),
+                },
+              }
+            : {}),
         },
       };
     }

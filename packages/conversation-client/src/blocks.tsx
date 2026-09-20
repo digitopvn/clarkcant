@@ -5,6 +5,7 @@ import { attachmentRefSchema, type AttachmentRef } from "@clarkcant/contracts";
 import { CodeBlock, Markdown } from "./markdown.tsx";
 import { formatFileSize } from "./attachments.ts";
 import { useAttachmentUrls } from "./use-attachment-urls.ts";
+import { useObjectUrls } from "./use-object-urls.ts";
 import type { GatewayClient } from "./api.ts";
 
 /**
@@ -1528,7 +1529,14 @@ export function renderBlock(
     case "computer-session-card":
       // One renderer for both surfaces: the question "who may act on this" does not change with the surface, and
       // two components would be two places for the answer to drift.
-      return <ControlSessionCardBlock key={index} block={block} {...(actions === undefined ? {} : { actions })} />;
+      return (
+        <ControlSessionCardBlock
+          key={index}
+          block={block}
+          client={client}
+          {...(actions === undefined ? {} : { actions })}
+        />
+      );
     case "marketplace-results":
       // Forwarded, for the reason the task card's control taught: a component tested by calling it directly passes
       // whether or not the dispatcher hands it anything, and the install action is exactly what would go missing.
@@ -1827,12 +1835,64 @@ export function MarketplaceResultsBlock({
   );
 }
 
+/**
+ * The captured frame of a session, as a picture.
+ *
+ * Its own component so the hook that fetches the bytes runs unconditionally: the card below returns early for a
+ * block that is not host-owned, and a hook placed after that return would be a hook that sometimes does not run.
+ *
+ * A frame is never presented as the live screen. The moment it was taken is part of the picture, and while the
+ * bytes are still being fetched the caption says so rather than showing an empty box that could be mistaken for a
+ * blank screen.
+ */
+function SessionPreviewFrame({
+  client,
+  label,
+  digest,
+  viewport,
+  capturedAt,
+}: {
+  client: GatewayClient | undefined;
+  label: string;
+  digest: string;
+  viewport: { width: number; height: number } | undefined;
+  capturedAt: string | undefined;
+}): ReactElement {
+  const url = useObjectUrls(
+    (wanted) =>
+      client === undefined
+        ? Promise.reject(new Error("this view has no node connection"))
+        : client.previewObjectUrl(wanted),
+    [digest],
+  )(digest);
+
+  const taken = capturedAt === undefined ? "" : ` lúc ${capturedAt}`;
+  return (
+    <figure className="cc-card-preview" data-control-preview-frame="true">
+      {url === undefined ? (
+        <p className="cc-card-preview-pending" role="status">
+          Đang tải ảnh chụp màn hình…
+        </p>
+      ) : (
+        <img
+          src={url}
+          alt={`Ảnh chụp màn hình phiên ${label}${taken}`}
+          {...(viewport === undefined ? {} : { width: viewport.width, height: viewport.height })}
+        />
+      )}
+      <figcaption>Ảnh chụp{taken}, không phải màn hình trực tiếp.</figcaption>
+    </figure>
+  );
+}
+
 export function ControlSessionCardBlock({
   block,
   actions,
+  client,
 }: {
   block: Record<string, unknown>;
   actions?: BlockActions;
+  client?: GatewayClient | undefined;
 }): ReactElement | null {
   if (block.owner !== "host") return null;
 
@@ -1854,6 +1914,22 @@ export function ControlSessionCardBlock({
   const leaseEpoch = state?.status === "taken-over" ? state.leaseEpoch : declaredEpoch;
   const running = !stopped;
   const busy = state?.status === "pending";
+  /*
+   * The captured frame, when there is one. Read defensively because a block is untyped data: a frame that is not
+   * shaped like one leaves the card without a picture rather than rendering something that is not the screen.
+   */
+  const declaredFrame = block.previewFrame;
+  const frame = typeof declaredFrame === "object" && declaredFrame !== null ? (declaredFrame as Record<string, unknown>) : undefined;
+  const frameDigest = typeof frame?.digest === "string" ? frame.digest : undefined;
+  const frameCapturedAt = typeof frame?.capturedAt === "string" ? frame.capturedAt : undefined;
+  const declaredViewport =
+    typeof frame?.viewport === "object" && frame.viewport !== null
+      ? (frame.viewport as Record<string, unknown>)
+      : undefined;
+  const frameViewport =
+    typeof declaredViewport?.width === "number" && typeof declaredViewport.height === "number"
+      ? { width: declaredViewport.width, height: declaredViewport.height }
+      : undefined;
 
   return (
     <section
@@ -1869,6 +1945,15 @@ export function ControlSessionCardBlock({
       data-control-status={stopped ? "stopped" : "running"}
       aria-label={`Phiên browser: ${label}`}
     >
+      {frameDigest === undefined ? null : (
+        <SessionPreviewFrame
+          client={client}
+          label={label}
+          digest={frameDigest}
+          viewport={frameViewport}
+          capturedAt={frameCapturedAt}
+        />
+      )}
       <header className="cc-card-head">
         <span className="cc-card-title">{label}</span>
         <span className="cc-badge" data-tone={stopped ? "" : "ok"}>

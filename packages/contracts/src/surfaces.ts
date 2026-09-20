@@ -108,6 +108,31 @@ export const widgetRefBlockSchema = z.strictObject({
  * `leaseEpoch` is carried so a card can be reasoned about next to the action it describes: an action planned
  * under an older epoch than the card shows was planned before the last change of hands.
  */
+/**
+ * A captured frame of the screen a session is driving, as a reference to bytes this node holds.
+ *
+ * Named `previewFrame` and not `preview` on purpose: `preview` on a session card is already the **state** the node
+ * reports (whether it can observe the surface at all), and the client reads it that way. One field with two
+ * meanings is how a card comes to say "available" while showing nothing, or to look observable while the bytes
+ * underneath it are a stale frame.
+ *
+ * A reference and not the bytes, for the reason the driver's own observation comment gives: raw frames never enter
+ * the event log. `capturedAt` travels with it because a preview without the moment it was taken cannot be shown
+ * honestly — a card must be able to say "this is what it looked like then", never "this is what it looks like".
+ * `viewport` is the size it was captured at, so the frame is laid out as it was rather than stretched to fit.
+ */
+export const browserPreviewFrameSchema = z.strictObject({
+  /*
+   * The digest the node serves the bytes under, and the only reference needed: the blob store is content-addressed,
+   * so the digest already resolves to the file. The route that reads it re-checks that the frame belongs to the
+   * principal on every read, so a reference here is never a capability that outlives the conversation.
+   */
+  digest: z.string().regex(/^sha256:[a-f0-9]{64}$/),
+  viewport: z.strictObject({ width: z.int().positive(), height: z.int().positive() }),
+  capturedAt: instantSchema,
+});
+export type BrowserPreviewFrame = z.infer<typeof browserPreviewFrameSchema>;
+
 export const browserSessionCardSchema = z.strictObject({
   type: z.literal("browser-session-card"),
   owner: z.literal("host"),
@@ -118,6 +143,18 @@ export const browserSessionCardSchema = z.strictObject({
   status: z.enum(["running", "stopped"]),
   leaseEpoch: z.int().nonnegative(),
   updatedAt: instantSchema,
+  /*
+   * Whether the node can observe the surface, and why not when it cannot. Declared here because the client reads
+   * them and a card that omitted them would leave the interface guessing at the one thing it must not guess about.
+   */
+  preview: z.enum(["available", "needs-permission", "unavailable"]).optional(),
+  previewReason: z.string().min(1).max(300).optional(),
+  /*
+   * Optional, and its absence is meaningful: a card with no frame is one where nobody captured the screen, or
+   * where the capture failed. That is a different statement from a card whose frame is stale, and the interface
+   * has to be able to tell them apart rather than showing an empty box as if it were the screen.
+   */
+  previewFrame: browserPreviewFrameSchema.optional(),
 });
 export type BrowserSessionCard = z.infer<typeof browserSessionCardSchema>;
 
