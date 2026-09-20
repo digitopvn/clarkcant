@@ -13,7 +13,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 
 import type { MessageBlock, MessageRecord } from "@clarkcant/contracts";
-import { instantSchema, describeAppIntent, type Instant } from "@clarkcant/contracts";
+import { instantSchema, describeAppIntent, voicePromptFor, type Instant } from "@clarkcant/contracts";
 import { FakePiAdapter, applyEnvFile } from "@clarkcant/pi-adapter";
 
 import {
@@ -56,7 +56,7 @@ import { buildViewCatalog } from "./view-catalog.ts";
 import { registerNodeTools } from "./tool-catalogue.ts";
 import { composeMiniApp } from "./compose-mini-app.ts";
 import { createNodeTools, createRememberTool, type CommandToolDeps } from "./node-tools.ts";
-import type { InteractionDeps } from "./interactions.ts";
+import { pendingForConversation, type InteractionDeps } from "./interactions.ts";
 import { guardOperation, decideModelRoute } from "./jev-decider.ts";
 import { ownedResources } from "./preflight.ts";
 import { DEFAULT_NARROWING, readAutonomySettings } from "./autonomy-settings.ts";
@@ -1574,6 +1574,28 @@ async function main(): Promise<void> {
         at: new Date().toISOString() as never,
       });
       return result.ok ? { ok: true, message: "Đã ghi câu trả lời." } : { ok: false, message: result.message };
+    },
+    /**
+     * What this conversation is still waiting on, in the shape the voice session reads.
+     *
+     * Read from the interaction records rather than from this session's own turn, because the answer belongs to the
+     * conversation: a card a click asked is still answerable by a sentence, and one this session asked is still
+     * answerable by a click. The newest question wins, which is the one a person reading the transcript is looking at.
+     */
+    pendingFor: (voiceConversationId) => {
+      const question = pendingForConversation(interactionDepsFor(services, voiceConversationId)).at(-1);
+      if (question === undefined) return undefined;
+      return {
+        kind: "question",
+        questionId: question.questionId,
+        questionType: question.questionType,
+        prompt: question.prompt,
+        options: question.options.map((option) => ({ id: option.id, label: option.label })),
+        allowOther: question.allowOther,
+        // Derived from the options that are actually offered, the same way the card derives it, so what is heard
+        // cannot drift from what is on screen.
+        voicePrompt: voicePromptFor(question),
+      };
     },
     /**
      * What a spoken sentence means to the application.

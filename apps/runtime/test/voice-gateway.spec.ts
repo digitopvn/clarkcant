@@ -1215,7 +1215,7 @@ describe("a spoken command to the application", () => {
             ? {
                 reply: "Tui cần bạn duyệt lệnh này.",
                 recordedMessages: 2,
-                pendingApproval: { approvalId: "appr_1", digest: "digest", description: "chạy lệnh" },
+                pendingInteraction: { kind: "approval", approvalId: "appr_1", digest: "digest", description: "chạy lệnh" },
               }
             : { reply: "xong", recordedMessages: 1 };
         },

@@ -67,7 +67,7 @@ test("an answer spoken out loud lands in the transcript exactly where a pressed 
 
   const card = page.locator("[data-host-card='question']").last();
   await expect(card).toBeVisible({ timeout: 20_000 });
-  await expect(card).toHaveAttribute("data-answerable", "true");
+  await expect(card).toHaveAttribute("data-answered", "false");
 
   // The exact label the card offers. Saying it is the spoken equivalent of pressing it, which is the whole claim:
   // the label is what a click puts in the transcript.
@@ -84,8 +84,11 @@ test("an answer spoken out loud lands in the transcript exactly where a pressed 
   const spoken = page.locator("[data-role='user']").last();
   await expect(spoken).toContainText("Dự án hiện tại", { timeout: 30_000 });
 
-  // And the card stops asking, for the same reason it does after a click: the conversation has moved past it, so
-  // a second answer cannot be sent to a question that was already answered.
-  await expect(card).toHaveAttribute("data-answerable", "false");
-  await expect(card.locator("[data-question-answer]")).toHaveCount(0);
+  /*
+   * And the card stops asking, because the node recorded the answer — the same receipt a click produces. Note which
+   * surface asked and which answered: the question came from a typed message and the answer from a sentence, which is
+   * the claim. A waiting question belongs to the conversation, not to the surface that raised it.
+   */
+  await expect(card).toHaveAttribute("data-answered", "true");
+  await expect(card.locator("[data-question-option]")).toHaveCount(0);
 });

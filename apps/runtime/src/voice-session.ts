@@ -134,6 +134,15 @@ export interface VoiceGatewayOptions {
     optionIds?: string[];
     confirmed?: boolean;
   }) => Promise<{ ok: boolean; message: string }>;
+  /**
+   * What the conversation is still waiting for, when this session is not the one that asked.
+   *
+   * A card waiting in the conversation is waiting for whoever answers it: a person holding a microphone and looking
+   * at that card expects the label to work, and a session that only remembered its own turn would read their answer
+   * as a new request and leave the card standing. Asking the node is what makes "a click and a sentence are the same
+   * act" true rather than a slogan.
+   */
+  pendingFor?: (conversationId: ConversationId) => PendingVoiceInteraction | undefined;
 
   /**
    * What a sentence means to the application, as opposed to what it means to the agent.
@@ -521,8 +530,10 @@ export function attachVoiceGateway(options: VoiceGatewayOptions): VoiceGateway {
       // the only copy of something that was said, and the closing report would then have nothing to keep.
       userText = "";
 
-      // A sentence said while something is pending is an answer, not a new request for the agent.
-      const pending = waiting;
+      // A sentence said while something is pending is an answer, not a new request for the agent. The question need
+      // not have been asked here: what is pending belongs to the conversation, so a card a click asked is answerable
+      // by a sentence and a card this session asked is answerable by a click.
+      const pending = waiting ?? options.pendingFor?.(askIn);
       if (pending !== undefined && pending.kind === "approval" && options.decideApproval !== undefined) {
         const decide = options.decideApproval;
         const decision = interpretDecision(text);
