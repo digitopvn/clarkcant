@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-import { facetKindSchema, type isolationClassSchema } from "./install.ts";
+import { facetKindSchema, isolationClassSchema } from "./install.ts";
 import { platformSchema, semverSchema, type Platform } from "./primitives.ts";
 
 /**
@@ -78,6 +78,16 @@ export const directoryEntrySchema = z.strictObject({
   /** Preview media, optional: a package without one is listed rather than hidden. */
   preview: z.strictObject({ imageUrl: z.string().min(1).max(1000).optional(), videoUrl: z.string().min(1).max(1000).optional() }),
   facets: z.array(facetKindSchema).min(1).max(64),
+  /**
+   * Each facet with the lane it runs in.
+   *
+   * The entry used to carry facet kinds and one `riskTier`, which is the *strongest* lane among them — and a
+   * strongest lane cannot be turned back into a per-facet answer: applying it to every facet would describe a
+   * declarative theme as trusted native, and deriving it from the facet kind would be guessing what some other
+   * publisher meant. The install supervisor needs the per-facet plan, so the entry carries it. The publisher
+   * already knows it (it is in the manifest), and `riskTier` stays as the summary a listing shows.
+   */
+  isolations: z.array(z.strictObject({ facetKind: facetKindSchema, isolation: isolationClassSchema })).min(1).max(64),
   platforms: z.array(platformSchema).min(1),
   hostApi: z.strictObject({ min: z.int().nonnegative(), max: z.int().nonnegative() }),
   /** Summarised for the listing; the authoritative list is the manifest inside the artifact. */

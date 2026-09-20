@@ -952,6 +952,28 @@ export class GatewayClient {
     return this.#call("GET", "/packages");
   }
 
+  /**
+   * Install a package a directory listed.
+   *
+   * Refusals are thrown, like every other call here: a caller that has to tell "refused" from "installed" by reading
+   * a field inside a resolved promise is a caller that will one day not. An approval is not a refusal and arrives as
+   * an ordinary answer with `code: "APPROVAL_REQUIRED"`, because nothing failed — the next step is a decision.
+   */
+  installPackage(
+    packageId: string,
+    version: string,
+  ): Promise<{
+    installed?: { packageId: string; version: string };
+    code?: string;
+    message?: string;
+    approvalId?: string;
+    generationId?: string;
+    /** What the node actually checked. `digest-only` means the plan was bound to a published digest. */
+    verified?: string;
+  }> {
+    return this.#call("POST", "/packages/install", { packageId, version });
+  }
+
   claimLiveOwner(
     conversationId: string,
     instanceId: string,

@@ -1,4 +1,5 @@
 import { defineConfig, devices } from "@playwright/test";
+import { join } from "node:path";
 
 /**
  * End-to-end configuration.
@@ -89,7 +90,17 @@ export default defineConfig({
       // server at all. The suite was unrunnable there, which is a worse failure than a failing test —
       // it looks like an infrastructure problem and so nobody reads it as a missing verification.
       command: `node apps/runtime/src/main.ts --data-dir ${DATA_DIR} --port ${NODE_PORT} --label e2e-node`,
-      env: { CC_VOICE_FIXTURE: "1", CC_MODEL_FIXTURE: "1", CC_SESSION_FIXTURE: "1" },
+      env: {
+        CC_VOICE_FIXTURE: "1",
+        CC_MODEL_FIXTURE: "1",
+        CC_SESSION_FIXTURE: "1",
+        /*
+         * A directory the install journey can resolve against. Without one the route refuses with NO_DIRECTORY, which
+         * is the honest answer for a node nobody configured — but it would mean the only install journey a browser
+         * could ever walk is the refusal.
+         */
+        CC_DIRECTORY_INDEX: join(process.cwd(), "apps", "web", "e2e", "fixtures", "directory.json"),
+      },
       url: `http://127.0.0.1:${NODE_PORT}/health`,
       reuseExistingServer: false,
       stdout: "pipe",

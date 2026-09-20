@@ -17,6 +17,7 @@ function entry(overrides: Partial<DirectoryEntry> & { packageId: string }): Dire
     publisher: { id: "acme", sourceUrl: "https://example.com/acme", license: "MIT" },
     preview: {},
     facets: ["ui"],
+    isolations: [{ facetKind: "ui", isolation: "isolated-ui" }],
     platforms: ["linux-x64"],
     hostApi: { min: 1, max: 1 },
     permissionsSummary: [],

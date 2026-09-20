@@ -15,6 +15,8 @@ import {
   commandEnvelopeSchema,
   describeAppIntent,
   nowInstant,
+  instantSchema,
+  platformForHost,
   protocolRangeSchema,
   redactSecrets,
   surfaceCompositionSpecSchema,
@@ -22,6 +24,13 @@ import {
 } from "@clarkcant/contracts";
 import {
   claimLiveOwner,
+  decideExecution,
+  directoryIndexPath,
+  installFromEntry,
+  INSTALL_VERIFICATION,
+  readDirectoryIndex,
+  recordEffectExecution,
+  requestApproval,
   cancelTask,
   decideApproval,
   getActionBinding,
@@ -180,6 +189,14 @@ function bearer(headers: GatewayRequest["headers"]): string | undefined {
   if (scheme?.toLowerCase() !== "bearer" || token === undefined) return undefined;
   return token;
 }
+
+/**
+ * How long a pending install approval stays good for, and how long the plan it produces may live.
+ *
+ * Ten minutes: long enough to read the card and decide, short enough that an approval nobody answered does not sit
+ * there as a standing permission to install something.
+ */
+const INSTALL_APPROVAL_TTL_MS = 10 * 60 * 1000;
 
 function json(status: number, body: unknown): GatewayResponse {
   return { status, body };
@@ -710,6 +727,134 @@ export async function handleRequest(deps: GatewayDeps, request: GatewayRequest):
         now: nowInstant,
         newId: services.conductor.newId,
       }),
+    });
+  }
+
+  /*
+   * Installing a package a directory listed.
+   *
+   * The seam between the marketplace and the install path, and the only one: it finds the entry in the configured
+   * index, decides with the execution policy that already governs every other effect, and calls the install
+   * supervisor that already exists. It does not fetch, unpack, verify or activate anything itself, and there is no
+   * second install path behind it.
+   */
+  if (segments.length === 2 && segments[0] === "packages" && segments[1] === "install" && request.method === "POST") {
+    const parsed = readJson(request);
+    if (!parsed.ok) return parsed.response;
+    const packageId = typeof parsed.value.packageId === "string" ? parsed.value.packageId : "";
+    const version = typeof parsed.value.version === "string" ? parsed.value.version : "";
+    if (packageId === "" || version === "") {
+      return fail(400, "INVALID_SCHEMA", "an install request needs the package id and the version it is installing");
+    }
+
+    /*
+     * This host's own platform, from Node's pair. A host the vocabulary cannot name has no answer to "can this
+     * package run here", and guessing `web` would offer a native package to something that cannot run it - so it is
+     * refused by name rather than attempted.
+     */
+    const platform = platformForHost(process.platform, process.arch);
+    if (platform === undefined) {
+      return fail(
+        400,
+        "PLATFORM_UNKNOWN",
+        `${process.platform}-${process.arch} is not a platform this host vocabulary names`,
+      );
+    }
+
+    const index = readDirectoryIndex(directoryIndexPath(process.env));
+    if (index.kind === "not-configured") return fail(409, "NO_DIRECTORY", index.reason);
+    if (index.kind === "unreadable") return fail(409, "DIRECTORY_UNREADABLE", index.reason);
+    const entry = index.entries.find(
+      (candidate) => candidate.packageId === packageId && candidate.version === version,
+    );
+    if (entry === undefined) {
+      return fail(404, "NOT_IN_DIRECTORY", `${packageId}@${version} is not in the directory`);
+    }
+
+    const principalId = runtime.identity.ownerPrincipalId;
+    // Read at the request rather than captured at boot, so a mode the user just changed applies to this install.
+    const policy = readExecutionPolicy({ db: runtime.db, now: () => nowInstant() }, principalId);
+    const decision = decideExecution({
+      mode: policy.mode,
+      rules: policy.rules,
+      action: { kind: "effect", category: "local-write", operationDigest: entry.digest },
+      /*
+       * True, unlike a command the model proposed: installing *this named package* is what the person asked for,
+       * which is exactly the case Autonomous exists to run without a second question. Guarded and Ask still apply,
+       * because the decision is the policy's to make, not this route's.
+       */
+      explicitUserIntent: true,
+    });
+
+    if (decision.kind === "deny") return fail(403, "POLICY_REFUSED", decision.reason);
+
+    const coordination = {
+      db: runtime.db,
+      nodeId: runtime.identity.nodeId,
+      now: () => nowInstant(),
+      newId: services.conductor.newId,
+    };
+
+    if (decision.kind === "ask") {
+      const approval = requestApproval(coordination, {
+        operationDigest: entry.digest,
+        operationDescription: `cài ${entry.displayName} ${entry.version} (${entry.riskTier})`,
+        effectCategory: "local-write",
+        ttlMs: INSTALL_APPROVAL_TTL_MS,
+      });
+      // 202 rather than an error: nothing failed, and the approval is the next step rather than a refusal.
+      return json(202, { code: "APPROVAL_REQUIRED", message: decision.reason, approvalId: approval.approvalId });
+    }
+
+    /*
+     * Autonomy without a record is the one combination this node refuses, the same way `run_command` does: an effect
+     * nobody approved and nobody can find afterwards is worse than a question. Recorded before the install starts,
+     * so one that hangs or dies still shows that it began.
+     */
+    recordEffectExecution(coordination, {
+      principalId,
+      mode: policy.mode,
+      decision,
+      category: "local-write",
+      operationDigest: entry.digest,
+      description: `install ${entry.packageId}@${entry.version}`,
+    });
+
+    const outcome = installFromEntry(coordination, {
+      entry,
+      directory: index.entries,
+      platform,
+      ownerPrincipalId: principalId,
+      codeGeneration: services.conductor.newId("codegen"),
+      expiresAt: instantSchema.parse(new Date(Date.now() + INSTALL_APPROVAL_TTL_MS).toISOString()),
+      ...(typeof parsed.value.localDigest === "string" ? { localDigest: parsed.value.localDigest } : {}),
+      ...(Array.isArray(parsed.value.requestedCapabilityRefs)
+        ? {
+            requestedCapabilityRefs: parsed.value.requestedCapabilityRefs.filter(
+              (reference): reference is string => typeof reference === "string",
+            ),
+          }
+        : {}),
+      ...(Array.isArray(parsed.value.grantedCapabilities)
+        ? {
+            grantedCapabilities: parsed.value.grantedCapabilities.filter(
+              (reference): reference is string => typeof reference === "string",
+            ),
+          }
+        : {}),
+    });
+
+    if (!outcome.ok) return fail(400, outcome.code, outcome.message);
+    return json(200, {
+      installed: { packageId: entry.packageId, version: entry.version },
+      generationId: outcome.generationId,
+      state: outcome.state,
+      /*
+       * What was actually verified, in the response rather than left to be assumed. This node does not fetch or run
+       * the artifact, so "active" here means the plan it activated was bound to a published digest — not that the
+       * package is known to work.
+       */
+      verified: INSTALL_VERIFICATION,
     });
   }
 

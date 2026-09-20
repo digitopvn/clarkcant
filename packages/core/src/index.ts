@@ -15,6 +15,7 @@ export * from "./control-sessions.ts";
 export * from "./package-sources.ts";
 export * from "./directory-index.ts";
 export * from "./install-from-source.ts";
+export * from "./install-from-entry.ts";
 export * from "./installed-packages.ts";
 export * from "./coordination.ts";
 export * from "./capability-registry.ts";

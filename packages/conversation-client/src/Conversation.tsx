@@ -22,7 +22,7 @@ import { hasDesktopChrome, requestWindowMode } from "./desktop-compact.ts";
 import { DesktopChrome } from "./desktop-chrome.tsx";
 import { fetchSuggestions } from "./suggestions.ts";
 import type { Suggestion } from "@clarkcant/contracts";
-import { ReasoningBlock, ToolActivityBlock, type BlockActions, type ArtifactOpenState, type ControlSessionActionState, type TaskStopState } from "./blocks.tsx";
+import { ReasoningBlock, ToolActivityBlock, type BlockActions, type ArtifactOpenState, type ControlSessionActionState, type PackageInstallState, type TaskStopState } from "./blocks.tsx";
 import { composerTextareaHeight } from "./composer-height.ts";
 import {
   attachmentReducer,
@@ -1200,6 +1200,48 @@ export function Conversation({
    */
   const [artifactOpen, setArtifactOpen] = useState<Record<string, ArtifactOpenState>>({});
 
+  /**
+   * What became of each install attempt, keyed by package id.
+   *
+   * Four outcomes rather than a boolean, because they are four different things to tell someone: it is happening, it
+   * happened, a decision is needed before it can happen, or it was refused with a reason. "Not installed" would
+   * collapse the middle two, and one of those is waiting on the reader while the other is not.
+   */
+  const [packageInstall, setPackageInstall] = useState<Record<string, PackageInstallState>>({});
+
+  const installPackage = useCallback(
+    ({ packageId, version }: { packageId: string; version: string }) => {
+      setPackageInstall((current) => ({ ...current, [packageId]: { status: "installing" } }));
+      void client.installPackage(packageId, version).then(
+        (answer) => {
+          setPackageInstall((current) => ({
+            ...current,
+            [packageId]:
+              answer.code === "APPROVAL_REQUIRED"
+                ? { status: "approval-required", message: answer.message ?? "Cần bạn duyệt trước khi cài." }
+                : {
+                    status: "installed",
+                    message: "Đã cài.",
+                    ...(answer.generationId === undefined ? {} : { generationId: answer.generationId }),
+                    ...(answer.verified === undefined ? {} : { verified: answer.verified }),
+                  },
+          }));
+        },
+        (error: unknown) => {
+          // The node's own reason, where it gave one: it is the only thing that can say *why* the install stopped.
+          setPackageInstall((current) => ({
+            ...current,
+            [packageId]: {
+              status: "refused",
+              message: error instanceof Error ? error.message : "Không cài được gói này.",
+            },
+          }));
+        },
+      );
+    },
+    [client],
+  );
+
   const openArtifact = useCallback(
     (artifactId: string) => {
       setArtifactOpen((current) => ({ ...current, [artifactId]: { status: "pending" } }));
@@ -1290,11 +1332,13 @@ export function Conversation({
       taskStop,
       onArtifactOpen: ({ artifactId }) => openArtifact(artifactId),
       artifactOpen,
+      onInstallPackage: installPackage,
+      packageInstall,
       onControlTakeover: ({ sessionId }) => changeBrowserSession(sessionId, "takeover"),
       onControlStop: ({ sessionId }) => changeBrowserSession(sessionId, "stop"),
       controlSession,
     }),
-    [artifactOpen, controlSession, changeBrowserSession, credentialStatus, decideApproval, decidedApprovals, decidingApprovalId, openArtifact, openCardIds, send, stopTask, submitCredential, taskStop],
+    [artifactOpen, controlSession, changeBrowserSession, credentialStatus, decideApproval, decidedApprovals, decidingApprovalId, installPackage, openArtifact, openCardIds, packageInstall, send, stopTask, submitCredential, taskStop],
   );
 
   const renderSurface = useCallback(
