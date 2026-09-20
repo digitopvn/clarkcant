@@ -120,14 +120,47 @@ export function verifyBackup(destination: string): BackupVerification {
     };
   }
 
-  const actualDigest = `sha256:${createHash("sha256").update(readFileSync(databasePath)).digest("hex")}`;
+  /*
+   * Hashing and opening both sit inside the report rather than outside it.
+   *
+   * A backup interrupted between the database write and the manifest write leaves a directory with a
+   * manifest and no database; one interrupted during the write leaves a file SQLite refuses to open.
+   * Both are exactly the case this function exists for — the caller is deciding whether to restore
+   * from it — and both used to arrive as a thrown ENOENT or "database disk image is malformed"
+   * instead of as the answer that the backup is unusable.
+   */
+  let actualDigest: string;
+  try {
+    actualDigest = `sha256:${createHash("sha256").update(readFileSync(databasePath)).digest("hex")}`;
+  } catch (cause) {
+    const detail = cause instanceof Error ? cause.message : String(cause);
+    return {
+      ok: false,
+      problems: [`the backup database at ${databasePath} could not be read: ${detail}`],
+      schemaVersion: 0,
+      tableCounts: {},
+    };
+  }
   if (actualDigest !== manifest.digest) {
     problems.push(
       `backup digest mismatch: manifest=${manifest.digest.slice(0, 16)}… actual=${actualDigest.slice(0, 16)}…`,
     );
   }
 
-  const db = openDatabase({ path: databasePath });
+  let db: ReturnType<typeof openDatabase>;
+  try {
+    db = openDatabase({ path: databasePath });
+  } catch (cause) {
+    const detail = cause instanceof Error ? cause.message : String(cause);
+    return {
+      ok: false,
+      // Kept together with any digest problem already found, so a file that is both short and
+      // unopenable reports both rather than only the last thing that went wrong.
+      problems: [...problems, `the backup could not be opened as a SQLite database: ${detail}`],
+      schemaVersion: 0,
+      tableCounts: {},
+    };
+  }
   try {
     let schemaVersion = 0;
     let counts: Record<string, number> = {};
