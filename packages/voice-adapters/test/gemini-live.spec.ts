@@ -6,6 +6,7 @@ import {
   DEFAULT_LIVE_MODEL,
   buildAudioMessage,
   buildSetupMessage,
+  SILENCE_BEFORE_TURN_END_MS,
   buildTextMessage,
   containsCredential,
   parseServerMessage,
@@ -110,6 +111,25 @@ describe("the setup message", () => {
   it("omits the system instruction entirely when none was given, rather than sending an empty one", () => {
     const message = buildSetupMessage() as { setup: Record<string, unknown> };
     expect("systemInstruction" in message.setup).toBe(false);
+  });
+
+  it("asks the provider to finish a turn on a silence run, without which nothing is ever answered", () => {
+    /*
+     * The field that decides whether a live session answers at all.
+     *
+     * Measured against the real endpoint: with no `realtimeInputConfig`, a session streaming real speech started
+     * activity and then produced two messages and no reply for as long as the audio ran — no input transcription, no
+     * model turn — while looking perfectly live. With `silenceDurationMs` set, the same audio produced 65 messages, a
+     * transcript and a spoken answer. Of the fields `automaticActivityDetection` offers, only this one changed the
+     * outcome, which is why it is the only one sent.
+     */
+    const message = buildSetupMessage() as { setup: Record<string, unknown> };
+
+    expect(message.setup["realtimeInputConfig"]).toEqual({
+      automaticActivityDetection: { silenceDurationMs: SILENCE_BEFORE_TURN_END_MS },
+    });
+    // A zero here would be the same as omitting the field, so the value has to mean something.
+    expect(SILENCE_BEFORE_TURN_END_MS).toBeGreaterThan(0);
   });
 });
 

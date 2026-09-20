@@ -37,6 +37,14 @@ export const LIVE_INPUT_SAMPLE_RATE_HZ = 16000;
  */
 export const LIVE_OUTPUT_SAMPLE_RATE_HZ = 24000;
 
+/**
+ * How long a silence has to run before the provider treats a spoken turn as finished.
+ *
+ * Measured against the real endpoint rather than chosen for taste: without a value here the provider began activity
+ * and never ended it, and the session answered nothing at all. See the note where it is used.
+ */
+export const SILENCE_BEFORE_TURN_END_MS = 400;
+
 export type VoiceRole = "user" | "assistant" | "system";
 
 /**
@@ -105,6 +113,23 @@ export function buildSetupMessage(options: LiveSetupOptions = {}): Record<string
     },
     inputAudioTranscription: {},
     outputAudioTranscription: {},
+    /*
+     * The silence run that ends a turn.
+     *
+     * Without it the provider starts activity and never ends it. On this endpoint, with this model, a session that
+     * streamed real speech answered exactly two messages and then nothing — no input transcription, no reply — for as
+     * long as the audio continued, and it looked live the whole time. Measured against the real endpoint: 2 messages
+     * without this field, 65 with it.
+     *
+     * Of the fields `automaticActivityDetection` offers, only this one changed anything. The start and end sensitivity
+     * hints made no difference on their own, and a setting that does not change behaviour is one nobody can justify
+     * later.
+     */
+    realtimeInputConfig: {
+      automaticActivityDetection: {
+        silenceDurationMs: SILENCE_BEFORE_TURN_END_MS,
+      },
+    },
   };
   if (options.systemInstruction !== undefined) {
     setup["systemInstruction"] = { parts: [{ text: options.systemInstruction }] };
