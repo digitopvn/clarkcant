@@ -82,7 +82,14 @@ export function AiRoutingSettings({ client, prefs, facts }: AiRoutingSettingsPro
     }
     client
       .chooseModel({ provider, id })
-      .then(() => setModelStatus(`Đã lưu ${provider}/${id}. Áp dụng cho hội thoại mới.`))
+      .then((answer) =>
+        setModelStatus(
+          `Đã lưu ${provider}/${id}. ` +
+            (answer.applies === "next-session"
+              ? "Áp dụng cho hội thoại mới."
+              : "Node sẽ dùng model này từ lần khởi động sau."),
+        ),
+      )
       .catch(() => setModelStatus("Không lưu được lựa chọn."));
   };
 
@@ -99,10 +106,10 @@ export function AiRoutingSettings({ client, prefs, facts }: AiRoutingSettingsPro
           </p>
         ) : (
           <>
-            <SettingsRow label="Provider" description="Đặt bằng CC_MODEL_PROVIDER.">
+            <SettingsRow label="Provider" description="Lấy từ lựa chọn đã lưu, mặc định là CC_MODEL_PROVIDER.">
               <code>{facts.model.provider}</code>
             </SettingsRow>
-            <SettingsRow label="Model" description="Đặt bằng CC_MODEL_ID.">
+            <SettingsRow label="Model" description="Lấy từ lựa chọn đã lưu, mặc định là CC_MODEL_ID.">
               <code>{facts.model.id}</code>
             </SettingsRow>
             <SettingsRow label="Trần một lượt" description="Một lượt vượt trần sẽ bị dừng, không chạy tiếp.">
@@ -120,8 +127,8 @@ export function AiRoutingSettings({ client, prefs, facts }: AiRoutingSettingsPro
           <p className="cc-panel-note">Đang đọc…</p>
         ) : catalogue.length === 0 ? (
           <p className="cc-panel-note" data-providers="none">
-            Node chưa báo provider nào. Danh sách này đọc từ pi trên máy, nên nó rỗng khi pi chưa thấy provider nào —
-            hoặc khi node không dựng được model turn.
+            Node chưa báo provider nào. Danh sách này đọc từ pi trên máy, nên nó rỗng khi pi không thấy provider nào —
+            hoặc khi node không đọc được pi.
           </p>
         ) : (
           <>

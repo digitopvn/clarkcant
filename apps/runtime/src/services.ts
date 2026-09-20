@@ -274,7 +274,8 @@ function indexRoots(): string[] {
 }
 
 export function bootNodeServices(options: RuntimeOptions): NodeServices {
-  const runtime = bootRuntime(options);
+  // Opened by the entry point when it needs the choice before this container exists; see `RuntimeOptions.runtime`.
+  const runtime = options.runtime ?? bootRuntime(options);
   const nodeId = runtime.identity.nodeId;
   // The key a person typed into the interface, so the decider uses it without a restart. Read from the vault here
   // rather than passed in as a value, because the point of storing one is that the node is already running.

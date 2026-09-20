@@ -44,6 +44,15 @@ export interface RuntimeOptions {
   /** Human label for this node, shown in pairing and status UI. */
   label: string;
   /**
+   * The runtime the entry point already opened, when it has one.
+   *
+   * Opened by the entry point rather than here so the stored model choice can be read *before* the model turn is
+   * built: a turn built before that read decides this node has no model, and a choice made in the settings surface
+   * would then be stored and never used. Passed in rather than opened a second time, because one database file is one
+   * connection.
+   */
+  runtime?: Runtime;
+  /**
    * Answers a turn with a model, when this node has one.
    *
    * Supplied by the entry point rather than constructed here, because building it is
