@@ -46,13 +46,15 @@ export interface DeliveryOutcome {
 }
 
 /**
- * Where a peer's envelopes are delivered.
+ * A peer's origin, checked.
  *
- * The endpoint is an origin; the path belongs to the protocol. Resolving the path against the origin
+ * The endpoint is an origin; the path belongs to the protocol. Resolving a path against the origin
  * rather than appending to whatever the endpoint happened to end with means a peer that recorded
- * `http://host:1234/` and one that recorded `http://host:1234` reach the same place.
+ * `http://host:1234/` and one that recorded `http://host:1234` reach the same place. The protocol and
+ * credential checks live here so every path this node asks a peer for is subject to them: a second
+ * copy of them is how one of the two ends up missing one.
  */
-export function peerMessagesUrl(endpoint: string): string {
+export function peerOrigin(endpoint: string): URL {
   let base: URL;
   try {
     base = new URL(endpoint);
@@ -65,7 +67,23 @@ export function peerMessagesUrl(endpoint: string): string {
   if (base.username !== "" || base.password !== "") {
     throw new Error("a peer endpoint must not embed credentials in its URL");
   }
-  return new URL("/peers/messages", base).toString();
+  return base;
+}
+
+/** Where a peer's envelopes are delivered. */
+export function peerMessagesUrl(endpoint: string): string {
+  return new URL("/peers/messages", peerOrigin(endpoint)).toString();
+}
+
+/**
+ * Where a peer's stored bytes are fetched from.
+ *
+ * The digest is a path segment, so it is encoded rather than interpolated. Every digest this node
+ * writes is hex, but this value arrives in a peer's offer, and a value from a peer does not get to
+ * shape a URL by itself.
+ */
+export function peerArtifactUrl(endpoint: string, digest: string): string {
+  return new URL(`/peers/artifacts/${encodeURIComponent(digest)}`, peerOrigin(endpoint)).toString();
 }
 
 /** One pass over the outbox: attempt what is pending, record what the peer acknowledged. */

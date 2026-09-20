@@ -5,6 +5,7 @@ import { join, resolve, sep } from "node:path";
 import {
   type PeerEnvelope,
   artifactOfferSchema,
+  peerEnvelopeSchema,
   checkArtifactAcceptance,
   grantSchema,
 } from "@clarkcant/contracts";
@@ -19,6 +20,7 @@ import {
   createInvite,
   peer as findPeer,
   peers as listPeers,
+  outboundPeerToken,
   recordAcceptedClaim,
   revokePeer,
   selfDescription,
@@ -137,7 +139,8 @@ import {
   resolveLiveSections,
   updateLocalEvent,
 } from "./mini-app-data.ts";
-import { readBlob, sniffContentType, writeBlob } from "./blobs.ts";
+import { blobPathForDigest, readBlob, sniffContentType, writeBlob } from "./blobs.ts";
+import { extensionForMimeType, fetchArtifactFromPeer } from "./artifact-transfer.ts";
 import { attachmentRefFromRecord, resolveAttachmentRefs } from "./attachments.ts";
 import { markProjectUsed, projectContext, resolveProject } from "./project-finder.ts";
 import { receiptForModel, runApprovedCommand, stopRunningCommands } from "./run-command.ts";
@@ -351,6 +354,58 @@ function acceptancePolicy(
  * `knownDelegationIds` is read from the live grants from that sender, which is what makes a delegate
  * envelope naming an unknown delegation a refusal rather than a guess.
  */
+/** The artifact an accepted offer named, or nothing when this envelope is not one this node took. */
+function acceptedArtifactOffer(
+  raw: unknown,
+  recorded: unknown,
+): { digest: string; mimeType: string; sizeBytes: number } | undefined {
+  const envelope = peerEnvelopeSchema.safeParse(raw);
+  if (!envelope.success || envelope.data.kind !== "artifact.offer") return undefined;
+  if ((recorded as { accepted?: boolean } | null)?.accepted !== true) return undefined;
+  const offer = artifactOfferSchema.safeParse(envelope.data.payload["artifact"]);
+  return offer.success
+    ? { digest: offer.data.digest, mimeType: offer.data.mimeType, sizeBytes: offer.data.sizeBytes }
+    : undefined;
+}
+
+/**
+ * Fetch the bytes an accepted offer named, without holding the sender's acknowledgement open.
+ *
+ * The ceiling is the size the offer declared, and that is not a shortcut: the acceptance check has
+ * already refused anything above the grant's budget, so the declared size is the number this node
+ * agreed to. A peer that declares one size and sends another is refused by the transfer itself.
+ */
+function scheduleArtifactIntake(input: {
+  runtime: { dataDir: string };
+  pairing: PairingDeps;
+  peerNodeId: string;
+  intake: { digest: string; mimeType: string; sizeBytes: number };
+}): void {
+  const record = findPeer(input.pairing, input.peerNodeId);
+  if (record === undefined || record.trustedAt === null || record.revokedAt !== null) return;
+
+  void fetchArtifactFromPeer({
+    dataDir: input.runtime.dataDir,
+    endpoint: record.endpoint,
+    token: outboundPeerToken(input.pairing.identity.localToken, input.peerNodeId),
+    digest: input.intake.digest,
+    extension: extensionForMimeType(input.intake.mimeType),
+    maxBytes: input.intake.sizeBytes,
+  })
+    .then((result) => {
+      process.stderr.write(
+        result.ok
+          ? `artifact: ${String(result.bytes)} byte(s) received from ${input.peerNodeId} as ${result.blobRef}\n`
+          : `artifact: not received from ${input.peerNodeId} — ${result.message}\n`,
+      );
+    })
+    .catch((cause: unknown) => {
+      process.stderr.write(
+        `artifact: not received from ${input.peerNodeId} — ${cause instanceof Error ? cause.message : String(cause)}\n`,
+      );
+    });
+}
+
 function peerGateway(pairing: PairingDeps, peerNodeId: string): PeerGatewayDeps {
   return {
     db: pairing.db,
@@ -602,12 +657,51 @@ export async function handleRequest(deps: GatewayDeps, request: GatewayRequest):
     if (outcome.status === "rejected") {
       return fail(400, outcome.code, outcome.message, { issues: outcome.issues });
     }
+    const recorded = parseRecordedOutcome(outcome.responseJson);
+
+    /*
+     * An accepted offer is followed by the bytes, and the bytes are fetched in the background.
+     *
+     * Not before the acknowledgement: the sender's outbox is waiting on this response, and making it
+     * wait for a file to cross the network would turn a slow artifact into a lost envelope. Not
+     * silently either — the outcome goes to the node's own log, because an artifact that was accepted
+     * and never arrived is exactly the thing that otherwise looks like it worked.
+     */
+    const intake = acceptedArtifactOffer(parsed.value, recorded);
+    if (intake !== undefined) scheduleArtifactIntake({ runtime, pairing, peerNodeId: peer.peerNodeId, intake });
+
     return json(200, {
       status: outcome.status,
       // The recorded outcome, handed back verbatim on a replay. That is what makes a delegation whose
       // acknowledgement was lost a retry rather than a second instruction.
-      response: parseRecordedOutcome(outcome.responseJson),
+      response: recorded,
     });
+  }
+
+  /*
+   * The bytes an accepted offer named.
+   *
+   * Serving them needs the same confirmed-peer token the envelope channel does. An artifact is the
+   * user's, and a node that could fetch another node's files by knowing a digest would make the
+   * acceptance check a formality rather than a boundary.
+   */
+  if (request.method === "GET" && request.path.startsWith("/peers/artifacts/")) {
+    const peer = authenticatePeer(pairing, bearer(request.headers));
+    if (peer === undefined) {
+      return fail(401, "UNAUTHENTICATED", "a confirmed peer token is required to fetch an artifact");
+    }
+    const digest = decodeURIComponent(request.path.slice("/peers/artifacts/".length));
+    const blobPath = blobPathForDigest({ dataDir: runtime.dataDir, digest });
+    if (blobPath === undefined) {
+      // A digest this node does not hold and one that was never a digest are the same answer: a peer
+      // does not get to learn what this machine has by asking.
+      return fail(404, "ARTIFACT_NOT_FOUND", "this node holds no artifact with that digest");
+    }
+    const blob = readBlob({ dataDir: runtime.dataDir, blobPath });
+    if (!blob.ok) return fail(404, blob.code, blob.message);
+    // Stored bytes are served as themselves, under the type the receiver will check by digest rather
+    // than the one this node was told. The offer's MIME type travelled with the offer.
+    return { status: 200, body: null, binary: { bytes: blob.bytes, contentType: "application/octet-stream" } };
   }
 
   if (!grantCovers && !tokenMatches(runtime.identity.localToken, bearer(request.headers))) {
