@@ -68,7 +68,18 @@ export const GUARD_CLASSES = guardClassSchema.options;
  * capability invocation — is governed by how far its effect reaches.
  */
 export function guardClassFor(input: { surface: "command" | "capability"; effectCategory: EffectCategory }): GuardClass {
-  if (input.surface === "command") return "commands";
+  if (input.surface === "command") {
+    /*
+     * A read is not guarded, whatever surface it arrived on.
+     *
+     * The default switches already say this — "Reads are not guarded: a guardrail call on every read spends a provider
+     * call to decide nothing" — but every command was governed by the `commands` row whatever it turned out to do, so a
+     * read-only command was judged anyway and an ordinary fetch was refused. What the command *does* decides here. The
+     * `commands` row still governs everything that can change something, which is the row a person looks for after an
+     * agent ran something surprising.
+     */
+    return input.effectCategory === "read" ? "reads" : "commands";
+  }
   switch (input.effectCategory) {
     case "read":
       return "reads";

@@ -1296,13 +1296,21 @@ describe("a lease whose peer cannot be reached", () => {
      * pong is the transport's own, which is also why a browser answers it with its tab in the background.
      */
     const adapter = new FakeAdapter();
-    context = await startGateway(() => "key", adapter, { heartbeatMs: 20 });
+    /*
+     * 200 ms, not 20.
+     *
+     * At 20 ms this failed in a full-suite run: a loaded machine cannot schedule a pong inside one 20 ms window, so the
+     * server did exactly what it is supposed to do and ended a peer it could not reach. The property under test is that
+     * a peer which answers keeps its session, and a window no scheduler can meet tests the machine rather than the rule.
+     */
+    context = await startGateway(() => "key", adapter, { heartbeatMs: 200 });
     const live = connect(context.url);
     await live.opened;
     live.auth(TOKEN);
     await live.control("ready");
 
-    await new Promise((resolve) => setTimeout(resolve, 150));
+    // Three intervals, so a missed pong would have to happen three times in a row.
+    await new Promise((resolve) => setTimeout(resolve, 650));
 
     expect(context.gateway.activeSessionCount()).toBe(1);
     expect(adapter.disconnected).toBe(0);
