@@ -1578,10 +1578,10 @@ function describePackageSource(raw: unknown): string {
  * The results of a marketplace search.
  *
  * It shows what a listing has to show to be judgeable — where it comes from, which version, the digest the install
- * path will check, and the lane the isolation implies — and it **has no install button**. That is deliberate: the
- * card names sources, and installing goes through the install path where the digest is verified and consent is
- * recorded. A button here would be a second entry point into installing, and the one place where a listing could
- * become an authorisation.
+ * path will check, and the lane the isolation implies — and it carries the install control on the row it acts on.
+ * The control reports what the install route answered rather than installing anything itself: the digest is verified,
+ * policy and consent are decided, and the effect is audited, all in one place. A second entry point here would be
+ * the one place where a listing could become an authorisation.
  *
  * The directory is named in the heading. A result whose origin was invisible would present what some index says as
  * something this machine knows.
