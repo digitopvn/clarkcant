@@ -51,6 +51,8 @@ import { createModelCatalogue, createModelTurn, type ViewDescriptor } from "./mo
 import { accumulateAnswerText } from "./voice-answer.ts";
 import { bootRuntime } from "./node.ts";
 import { availableCredentials } from "./readiness.ts";
+import { detectContainerEngine } from "./container-engine.ts";
+import { listenOnUnixSocket, prepareSocketPath } from "./unix-socket.ts";
 import { memoryBrief } from "./memory.ts";
 import { attachmentRefsForLastUserMessage } from "./attachments.ts";
 import { blobsDir, readBlob } from "./blobs.ts";
@@ -79,6 +81,8 @@ interface CliOptions {
   port: number;
   label: string;
   allowPublicBind: boolean;
+  /** When set, the node listens on a Unix socket instead of a port. */
+  socket: string | undefined;
 }
 
 function parseArgs(argv: string[]): CliOptions {
@@ -92,6 +96,7 @@ function parseArgs(argv: string[]): CliOptions {
     port: Number.parseInt(get("port") ?? "8765", 10),
     label: get("label") ?? "local runtime",
     allowPublicBind: argv.includes("--allow-public-bind"),
+    socket: get("socket"),
   };
 }
 
@@ -112,8 +117,12 @@ function appIntentDepsFor(services: NodeServices): AppIntentDeps {
 async function main(): Promise<void> {
   const options = parseArgs(process.argv.slice(2));
 
+  /*
+   * A socket path replaces the port, so the public-bind refusal does not apply: there is no port to reach
+   * from the network, and the file's mode is the boundary instead.
+   */
   const isLoopback = ["127.0.0.1", "::1", "localhost"].includes(options.host);
-  if (!isLoopback && !options.allowPublicBind) {
+  if (options.socket === undefined && !isLoopback && !options.allowPublicBind) {
     process.stderr.write(
       `Refusing to bind ${options.host}.\n` +
         "A node reachable from the network needs TLS and an explicit acknowledgement that you have it.\n" +
@@ -1770,6 +1779,14 @@ async function main(): Promise<void> {
    * worth four lines of plain language rather than a stack trace to interpret.
    */
   server.on("error", (cause: NodeJS.ErrnoException) => {
+    if (cause.code === "EADDRINUSE" && options.socket !== undefined) {
+      process.stderr.write(
+        `Another node is already listening on ${options.socket}.\n` +
+          "Two nodes on one socket would be one node answering for the other's identity. Stop it, or start" +
+          " this one on a different path with --socket <path>.\n",
+      );
+      process.exit(1);
+    }
     if (cause.code === "EADDRINUSE") {
       process.stderr.write(
         `Port ${options.port} on ${options.host} is already in use.\n` +
@@ -1778,7 +1795,11 @@ async function main(): Promise<void> {
       );
       process.exit(1);
     }
-    process.stderr.write(`The node could not listen on ${options.host}:${options.port}: ${cause.message}\n`);
+    process.stderr.write(
+      options.socket === undefined
+        ? `The node could not listen on ${options.host}:${options.port}: ${cause.message}\n`
+        : `The node could not listen on ${options.socket}: ${cause.message}\n`,
+    );
     process.exit(1);
   });
 
@@ -1801,7 +1822,7 @@ async function main(): Promise<void> {
   process.on("unhandledRejection", (reason) => noteFailure("unhandled rejection", reason));
   process.on("uncaughtException", (error) => noteFailure("uncaught exception", error));
 
-  server.listen(options.port, options.host, () => {
+  const reportListening = (): void => {
     /*
      * Publish what this node can do, at boot rather than at the first turn.
      *
@@ -1821,12 +1842,55 @@ async function main(): Promise<void> {
       );
     }
     process.stderr.write(
-      `clarkcant node "${services.runtime.identity.label}" listening on http://${options.host}:${options.port}\n`,
+      options.socket === undefined
+        ? `clarkcant node "${services.runtime.identity.label}" listening on http://${options.host}:${options.port}\n`
+        : `clarkcant node "${services.runtime.identity.label}" listening on unix socket ${options.socket} (owner-only)\n`,
     );
     process.stderr.write(`node id: ${services.runtime.identity.nodeId}\n`);
     process.stderr.write(`data dir: ${services.runtime.dataDir}\n`);
+    /*
+     * Whether this machine can build the image, said at boot rather than left to be discovered when
+     * somebody tries. A node that cannot build it is still a node; it just cannot be deployed that way here.
+     */
+    const engine = detectContainerEngine();
+    process.stderr.write(
+      engine.available
+        ? `container engine: ${engine.engine} ${engine.version} — the OCI image can be built on this machine\n`
+        : `container engine: none (${engine.reason}) — the OCI image cannot be built here: ${engine.detail}\n`,
+    );
     process.stderr.write("commands require the bearer token stored in the node's identity.json\n");
-  });
+  };
+
+  /*
+   * A socket path, when one was asked for, and a port otherwise.
+   *
+   * The stale-file handling and the owner-only mode live in `unix-socket.ts`, because both are about the
+   * file rather than the server: `listen` refuses a path left behind by a crash, and a socket created
+   * with a permissive umask is connectable by every process on the host.
+   */
+  if (options.socket !== undefined) {
+    void prepareSocketPath(options.socket).then((prepared) => {
+      if (!prepared.ok) {
+        process.stderr.write(`${prepared.reason}\n`);
+        process.exit(1);
+      }
+      if (prepared.removedStaleFile) {
+        process.stderr.write(
+          `removed the socket file at ${options.socket} left by a node that did not shut down\n`,
+        );
+      }
+      listenOnUnixSocket(server, {
+        path: options.socket as string,
+        onListening: reportListening,
+        onError: (cause) => {
+          process.stderr.write(`The node could not listen on ${options.socket}: ${cause.message}\n`);
+          process.exit(1);
+        },
+      });
+    });
+  } else {
+    server.listen(options.port, options.host, reportListening);
+  }
 
   const shutdown = (signal: string): void => {
     process.stderr.write(`received ${signal}; closing the node\n`);

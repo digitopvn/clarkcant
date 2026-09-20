@@ -1,0 +1,22 @@
+# What the image build does not need.
+#
+# `node_modules` is excluded rather than copied: the build resolves its own from the lockfile, and copying a
+# host's tree would put whatever platform it was installed on into the image.
+#
+# `.env` is excluded for a stronger reason. This repository reads provider keys and a TYPESAFE_API_KEY from
+# the environment, and a checked-out `.env` next to the source would otherwise be baked into a layer — where
+# it is not secret any more, whatever the registry's visibility. A container gets its credentials from the
+# environment at run time, which is the only place they can be revoked.
+
+.git
+.gitignore
+.data
+node_modules
+**/node_modules
+**/dist
+.env
+.env.*
+*.log
+multix-output
+plans/reports/evidence
+.github

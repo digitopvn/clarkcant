@@ -225,4 +225,4 @@ export function bootRuntime(options: RuntimeOptions): Runtime {
  * bearer-token gate are implemented and tested; the socket listener that a desktop
  * helper would attach to is not, and only the loopback HTTP gateway is wired today.
  */
-export const LOCAL_SOCKET_STATUS = "identity-and-http-implemented-socket-pending";
+export const LOCAL_SOCKET_STATUS = "identity-http-and-unix-socket-implemented";
