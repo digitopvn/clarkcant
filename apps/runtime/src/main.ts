@@ -1396,6 +1396,46 @@ async function main(): Promise<void> {
         `project index: not built — ${cause instanceof Error ? cause.message : String(cause)}\n`,
       );
     });
+
+  /*
+   * Load the project-work pack, in the background and after the node is listening.
+   *
+   * The pack's capabilities are registered at boot and used to stay exactly as they were registered:
+   * `loaded: false` for the life of the process, with the reason "the pack is declared but no worker
+   * has loaded it on this node". That sentence was true only because nothing ever tried. This is the
+   * thing that tries — one worker session with the pack's capabilities granted, and then the
+   * readiness written from the record that came back rather than from the intention behind it.
+   *
+   * Not on a fixture node. `CC_SESSION_FIXTURE` exists so that a scripted node never spawns a worker,
+   * and that reason does not stop applying because this spawn happens once at boot instead of per
+   * request. A fixture node keeps reporting the pack as one no worker has loaded, which is the truth
+   * about it.
+   *
+   * Bounded, because a wedged worker must not hold a boot open; and reported rather than thrown,
+   * because a node whose pack cannot be loaded is still a node.
+   */
+  if (process.env.CC_SESSION_FIXTURE !== "1") {
+    void services
+      .loadProjectWorkPack({ timeoutMs: 60_000 })
+      .then((outcome) => {
+        if (!outcome.ran) {
+          process.stderr.write(
+            `project-work pack: not loaded — ${outcome.readiness.blockedReason ?? "no reason given"}\n`,
+          );
+          return;
+        }
+        process.stderr.write(
+          outcome.readiness.healthy
+            ? "project-work pack: loaded; a run demonstrated something\n"
+            : `project-work pack: loaded; ${outcome.readiness.blockedReason ?? "no run demonstrated anything"}\n`,
+        );
+      })
+      .catch((cause: unknown) => {
+        process.stderr.write(
+          `project-work pack: not loaded — ${cause instanceof Error ? cause.message : String(cause)}\n`,
+        );
+      });
+  }
   process.stderr.write(
     viewCatalog.length === 0
       ? "no widget definitions on this node; the model can answer in words only\n"
