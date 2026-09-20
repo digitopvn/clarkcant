@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { createConversation, createPin, migrate, openDatabase, upsertProject, type Database } from "@clarkcant/storage";
 
+import { rememberMemory } from "../src/memory.ts";
 import { buildSuggestions } from "../src/suggestions.ts";
 
 /**
@@ -17,6 +18,7 @@ import { buildSuggestions } from "../src/suggestions.ts";
  */
 
 const NODE = "node_test";
+const PRINCIPAL = "prin_test";
 const NOW = "2026-09-19T12:00:00.000Z";
 
 let db: Database;
@@ -32,7 +34,7 @@ afterEach(() => {
 });
 
 function suggest(): ReturnType<typeof buildSuggestions> {
-  return buildSuggestions({ db, nodeId: NODE, now: () => NOW });
+  return buildSuggestions({ db, nodeId: NODE, now: () => NOW, principalId: PRINCIPAL });
 }
 
 /**
@@ -98,6 +100,29 @@ describe("a node with nothing to remember", () => {
 });
 
 describe("a node with records", () => {
+  it("offers something it was asked to remember, and says that is where it came from", () => {
+    conversation("conv_one");
+    const remembered = rememberMemory(
+      { db, now: () => NOW, newId: (prefix) => `${prefix}_one` },
+      {
+        principalId: PRINCIPAL,
+        conversationId: "conv_one",
+        kind: "preference",
+        scope: "node",
+        text: "người dùng thích câu trả lời ngắn",
+      },
+    );
+    if (!("memoryId" in remembered)) throw new Error(`the write was refused: ${remembered.refused}`);
+
+    const offered = suggest().filter((item) => item.source === "memory");
+    expect(offered).toHaveLength(1);
+    // The chip points at the record the Memory tab lists, so it can be opened there and deleted from there. An
+    // offer nobody could open would be the hidden memory this feature exists to avoid.
+    expect(offered[0]?.ref).toBe(remembered.memoryId);
+    expect(offered[0]?.label).toContain("câu trả lời ngắn");
+    expect(offered[0]?.sourceLabel).toContain("bạn đã ghi nhớ");
+  });
+
   it("offers the latest session, and says that is what it is", () => {
     conversation("conv_one");
 

@@ -111,6 +111,7 @@ evidence của cửa sổ không còn phụ thuộc vào một máy cụ thể.
   được giao nguyên block ảnh cho SDK (PR #66: `read_attachment` trả chính bức ảnh, `toSdkTool` phát
   `{ type: "image", data, mimeType }`). Nguyên nhân gốc nằm ở adapter, chỗ gộp mọi kết quả tool thành một block
   text.
-- Route xoá conversation, nguồn `memory` trong gợi ý, scoped session token: mỗi cái có tên và điều kiện còn thiếu
-  trong `docs/widgets-and-extensions.md` §4.1.
+- Route xoá conversation và scoped session token cho voice: mỗi cái có tên và điều kiện còn thiếu trong
+  `docs/widgets-and-extensions.md` §4.1. Nguồn `memory` trong gợi ý thì **đã đóng**: `buildSuggestions` nay phát nó từ
+  chính bảng mà tab Memory đọc (`listMemoryRecords`), nên contract không còn khai một nguồn không bao giờ xuất hiện.
 - `nodeReachable` là `false` trong smoke: cổng này kiểm tra shell và cửa sổ, không cần node đang chạy.
