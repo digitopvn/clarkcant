@@ -4,13 +4,13 @@ Nhánh này là refactor "autonomous by default" (preflight của host giữ quy
 
 ## Vì sao phải hoà giải
 
-Nhánh sau `main` **151 commit** (base `e1c67d4`, `main` nay là `46f1ecd`). Lần hợp nhất đầu tiên vô tình dựng trên một `main` cũ (`ecf1fba`), nên cây thiếu **20 commit** cuối của main — trong đó có `packages/core/src/frame-grant.ts`, `widget-document.ts`, `widget-frame.ts`, `install-from-entry.ts`, `package-files.ts`, `WidgetFrame.tsx` và các e2e widget-frame. Phát hiện này dẫn tới việc hợp nhất nốt `main` hiện tại; lần thứ hai chỉ xung đột 2 tệp (`docs/manifest.json`, `playwright.config.ts`) cộng một dòng import ở `main.ts`.
+Base là `e1c67d4`; `main` nay là `4a92ec0` (#101–#106). Lần hợp nhất đầu tiên vô tình dựng trên một `main` cũ (`ecf1fba`), nên cây thiếu **20 commit** cuối của main — trong đó có `packages/core/src/frame-grant.ts`, `widget-document.ts`, `widget-frame.ts`, `install-from-entry.ts`, `package-files.ts`, `WidgetFrame.tsx` và các e2e widget-frame. Việc đó dẫn tới năm lần hợp nhất nốt `main`, mỗi lần một commit merge riêng: pairing/delegation (#95–#97), một node được gán model (#99), worker của runtime + voice kết thúc lượt khi im lặng (#101–#103), lease của voice (#105), và việc node nạp project-work pack (#106). Bốn lần sau chỉ xung đột tổng cộng hai tệp (`docs/manifest.json`, `playwright.config.ts`) và hai dòng import ở `main.ts`; phần việc còn lại là hợp nhất nội dung.
 
 ## Nội dung
 
-**Migration.** main lấy `18` cho bảng `memory-records` của nó, nên hai migration của nhánh này được đánh số lại: `secrets` = 19, `audit_log` = 20 (đã kiểm 20 version liền mạch, không trùng). Migration đã áp dụng không bị sửa.
+**Migration.** main lấy `18` cho bảng `memory-records` của nó, nên hai migration của nhánh này được đánh số lại: `secrets` = 19, `audit_log` = 20; migration pairing của main sau đó nhận `21` (đã kiểm dãy 22 version tăng dần, không trùng). Migration đã áp dụng không bị sửa.
 
-**Hai mô hình policy cùng điều khiển hiệu ứng.** main có `ExecutionMode`/`ExecutionRule` + `decideExecution`, nhánh này có `ExecutionPolicy` (`auto|guarded|confirm|deny`) + preflight + guardrail. Quyết định: `ExecutionPolicy` quyết định cho **lệnh**, và mô hình của main **vẫn sống** cho hành động widget và cài đặt (`packages/core/src/widget-service.ts`, hai chỗ trong `gateway.ts`) nên control của nó được giữ lại chứ không xoá. Tab Control vì thế có cả hai, và nói rõ cái nào áp cho việc gì. Hợp nhất hai mô hình thành một là việc tiếp theo, không phải việc của PR này.
+**Hai mô hình policy cùng điều khiển hiệu ứng.** main có `ExecutionMode`/`ExecutionRule` + `decideExecution`, nhánh này có `ExecutionPolicy` (`auto|guarded|confirm|deny`) + preflight + guardrail. Quyết định: `ExecutionPolicy` quyết định cho **lệnh**, và mô hình của main **vẫn sống** cho hành động widget và cài đặt (`packages/core/src/widget-service.ts`, hai chỗ trong `gateway.ts`) nên control của nó được giữ lại chứ không xoá. Tab Control vì thế có cả hai, và nói rõ cái nào áp cho việc gì.
 
 **Thẻ câu hỏi.** Cả hai phía cùng thêm `question-card` với hai hình dạng. Hình dạng của nhánh này thắng (`prompt`, `questionType`, `allowOther`, `voicePrompt`, `status`), vì nó là xương sống của Interaction Manager: một đường trả lời cho click, gõ và nói, và `answerFromUtterance` khớp lời nói với nhãn mà thẻ đã đưa. Call site của main được chuyển theo (`prompt` thay `question`).
 
@@ -24,24 +24,39 @@ Nhánh sau `main` **151 commit** (base `e1c67d4`, `main` nay là `46f1ecd`). L�
 - `verifyBackup` mở bản sao **ngoài** khối `try`, nên một bản sao hỏng ném lỗi ra khỏi đúng hàm tồn tại để báo điều đó.
 - `openDatabase` để rò rỉ handle khi một câu lệnh thiết lập lỗi (khoá tệp trên Windows).
 
-## Kiểm chứng (trên cây merge, sau tất cả thay đổi)
+**Hai test không portable**, sửa ở gốc: hai test từ chối lệnh ghi thư mục theo kiểu Windows (`D:/…`, `C:\Windows`). Trên Linux thư mục đó không tồn tại, nên preflight trả `UNKNOWN_DIRECTORY` thay vì trả lời về quyền sở hữu mà test đang nói tới — suite xanh ở máy người viết và đỏ trên CI. Nay dùng thư mục tạo trong thư mục tạm của hệ thống, tuyệt đối và nằm ngoài root trên mọi nền tảng.
+
+## Viết lại lịch sử nhánh (một lần, có công bố)
+
+GitGuardian báo `1 secret` và chỉ đúng một vấn đề có thật: năm fixture dùng để chứng minh "giá trị này không bao giờ xuất hiện" được viết với hình dạng của token thật (`ghp_live_…`, `ghp_value_…`, `sk-live-…`, `sk-e2e-…`). Bản sửa đổi tên chúng thành `fixture-value-…` nằm ở commit sau, còn GitGuardian quét **lịch sử** của PR, nên các commit sớm vẫn giữ chuỗi cũ. Vì vậy lịch sử nhánh đã được viết lại đúng một lần bằng `git filter-branch --tree-filter` chạy `perl` thay thế trên **mọi tệp được theo dõi**, rồi `git push --force-with-lease`.
+
+Bằng chứng việc viết lại không đổi nội dung:
+- Cây của commit cuối **không đổi**: `f86795ab84556d0e7a359a3f4402d2dd44f35013` trước và sau khi viết lại.
+- `git grep` trên **từng** commit trong nhánh: `0` commit còn bất kỳ chuỗi nào trong năm chuỗi cũ.
+- Chỉ mất **một** commit (chính commit đổi tên, trở thành rỗng) nên 35 thành 34; SHA của mọi commit trong nhánh đã thay đổi, còn `main` thì không bị chạm.
+- Bản cũ vẫn còn nguyên ở nhánh `backup/pr100-history-260920` (`550018c`) để so sánh hoặc khôi phục.
+
+Sau khi viết lại, GitGuardian **vẫn** `failure`, nhưng không còn là một lần quét mới tìm ra bí mật: check-run của nó trên head hiện tại bắt đầu và kết thúc **trong cùng một giây**, không có chú thích (annotation) nào chỉ vào tệp hay dòng, và `rerequest` không được hỗ trợ (HTTP 404). Hai bộ quét độc lập trên toàn bộ commit của PR — quét blob của mọi commit, và quét diff của từng commit kể cả diff của commit merge, theo tám họ mẫu (Google, OpenAI/Anthropic, GitHub, GitLab, Slack, AWS, PEM, JWT) — **không tìm thấy mẫu khoá nào**. Đây là trạng thái sự cố đã ghi ở phía GitGuardian cho kho, nên nó chỉ được gỡ bằng cách dismiss/mark "test fixture" trên dashboard GitGuardian (hoặc bởi một maintainer có quyền ở đó); không có lệnh `gh` nào làm được việc đó.
+
+## Kiểm chứng (trên cây đã hợp nhất, sau tất cả thay đổi)
 
 | Cổng | Kết quả |
 |---|---|
-| `pnpm exec tsc -p tsconfig.json --noEmit` | 0 lỗi |
-| `pnpm run invariants` | 7/7 |
-| `pnpm test` (unit) | 1864 pass / 7 skip (147 tệp) |
+| `pnpm verify` (invariants + typecheck **cả hai** tsconfig + lint + unit) | pass |
+| `pnpm run invariants` | **8/8** |
+| `pnpm test` (unit) | **1915 pass / 7 skip** (155 tệp) |
 | `pnpm test:e2e` (Playwright) | **115 pass / 0 failed** (1 skip) |
+| CI `verify` (Node 22.19 và 24), `e2e`, `desktop smoke`, `secret scan` | pass |
 
-Một lần chạy unit có 1 lỗi ở `packages/pi-adapter/test/sdk-compatibility.spec.ts`; tệp đó xanh khi chạy riêng (6/6) và suite đầy đủ xanh lại ở lần kế tiếp — flake, không phải hồi quy.
+Một lần chạy unit có 1 lỗi ở `packages/pi-adapter/test/sdk-compatibility.spec.ts`; tệp đó xanh khi chạy riêng (6/6) và suite đầy đủ xanh lại ở lần kế tiếp — flake, không phải hồi quy. Một lần chạy e2e dừng ở 41 test rồi exit 1 (listener cũ chưa chết hẳn); lần chạy đầy đủ ngay sau đó xanh **115/115**, và mọi lần chạy đầy đủ khác trong chặng này cũng xanh.
 
 ## Điều đã cân nhắc và khai báo
 
-- **`.github/workflows/ci.yml` không bị sửa** dù lens báo 39 dòng quá 80 ký tự. Bằng chứng: `git diff origin/main HEAD -- .github/workflows/ci.yml` **trống** (tệp y hệt main, đến từ main trong merge nên PR này không thay đổi nó); `pnpm exec eslint .github/workflows/ci.yml` chỉ trả *"File ignored because no matching configuration was supplied"*; repo có **0** tệp cấu hình yamllint/markdownlint; `pnpm verify` không có bước lint YAML. Quy tắc 80 ký tự là mặc định của pi-lens. 39 dòng đó gồm 10 biểu thức `if:` của Actions và 2 lệnh shell, và repo không có bộ parse YAML để chứng minh bản sửa tương đương — nên sửa chúng ở đây là rủi ro cho CI của main mà không có cổng nào yêu cầu. Nếu muốn thoả quy tắc này, nó nên là một `chore(ci)` riêng.
-- **`execution.mode`/`execution.rules`**: control của main được giữ vì đường widget/install vẫn đọc chúng, nhưng với **lệnh** thì `ExecutionPolicy` mới là lớp quyết định. Hai bề mặt policy là một cái nhiều hơn sản phẩm muốn; đã ghi trong mã và ở đây.
-- **Không có commit nào của main bị bỏ**: `git merge-base --is-ancestor origin/main HEAD` đúng, `git log HEAD..origin/main` rỗng, và các tệp frame/widget của main có mặt trong cây.
+- **`.github/workflows/ci.yml` được ngắt dòng trong PR này** (một commit `chore(ci)` riêng), sau khi bị pi-lens báo 39 dòng quá 80 ký tự. Việc ngắt dòng là **toàn bộ** thay đổi: comment được xuống dòng lại, các điều kiện dài và một lệnh shell dài trở thành scalar `>-`, và một comment phiên bản ở cuối dòng được chuyển lên trên action mà nó nói tới. Bằng chứng không đổi giá trị: một bộ chuẩn hoá (nối dòng nối bằng `\`, bỏ comment cả dòng và cuối dòng, gộp scalar `>-` về dòng khoá, chuẩn hoá khoảng trắng) so **119 dòng giá trị** của hai bản và **không tìm thấy dòng nào khác**; sau khi sửa còn **0** dòng quá 80 ký tự. Cách kiểm này không thay thế một YAML parser (repo không cài `yaml`/`js-yaml`), nên nếu cổng phạm vi của CI (`if: steps.scope.outcome != 'success' || steps.scope.outputs.full != 'false'`) đọc ra chuỗi khác thì chính các check của PR này sẽ đỏ trước khi merge — và commit đó thu hồi được bằng một commit.
+- **Hai bề mặt policy là một cái nhiều hơn sản phẩm muốn**: control của main được giữ vì đường widget/install vẫn đọc `execution.mode`/`execution.rules`, nhưng với **lệnh** thì `ExecutionPolicy` mới là lớp quyết định. Đã ghi trong mã và ở đây.
+- **Không có commit nào của main bị bỏ**: `git merge-base --is-ancestor origin/main HEAD` đúng và `git log HEAD..origin/main` rỗng ở thời điểm merge cuối.
 
 ## Câu hỏi chưa giải quyết
 
-- Hợp nhất hai mô hình policy thành một (lệnh + widget + cài đặt) — hiện là hai lớp đọc hai nguồn khác nhau.
-- 39 dòng YAML của `.github/workflows/ci.yml` (xem ở trên): sửa trong PR này hay để một `chore(ci)` riêng kèm YAML linter.
+- **GitGuardian** cần một người có quyền trên dashboard dismiss sự cố (nó trỏ vào lịch sử đã bị viết lại, không còn chuỗi nào trong kho). Nếu repo đặt check này là bắt buộc thì việc merge phải chờ thao tác đó.
+- Hợp nhất hai mô hình policy thành một (lệnh + widget + cài đặt).
