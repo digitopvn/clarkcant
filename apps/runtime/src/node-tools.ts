@@ -1,15 +1,15 @@
 import { join } from "node:path";
 
-import { ATTACHMENT_LIMITS, attachmentIdSchema, memoryKindSchema, memoryScopeSchema, type AutonomySettings, type ExecutionPolicy, type GuardClass, type GuardrailConstraint, type Instant } from "@clarkcant/contracts";
-import type { EffectCategory, ExecutionMode, ExecutionRule } from "@clarkcant/contracts";
+import { ATTACHMENT_LIMITS, attachmentIdSchema, memoryKindSchema, memoryScopeSchema, type ExecutionPolicyConfig, type GuardrailConstraint, type Instant } from "@clarkcant/contracts";
 import { getAttachment } from "@clarkcant/storage";
 import type { ToolDefinition } from "@clarkcant/pi-adapter";
 import {
+  decideExecution,
+  guardrailCovers,
   recordEffectExecution,
   requestApproval,
   type CoordinationDeps,
   type ExecutionAuditDeps,
-  type PolicyDecision,
   readDirectoryIndex,
   searchDirectory,
 } from "@clarkcant/core";
@@ -76,17 +76,6 @@ export function createNodeTools(input: {
   command?: CommandToolDeps;
 
   approvals?: () => CoordinationDeps;
-  /**
-   * The execution policy in force, read at each proposal rather than captured when the node booted.
-   *
-   * Read per call because that is the whole promise of the setting: a mode change has to change what
-   * happens to the next command, and a captured value would make it a restart.
-   *
-   * Absent means this node keeps the behaviour it had before the modes existed — it asks. That is the
-   * honest default for a node that cannot read the mode, because the alternative is a node that stops
-   * asking because a setting it cannot see happens to be missing.
-   */
-  policy?: () => { mode: ExecutionMode; rules: readonly ExecutionRule[] };
   /**
    * Where an effect performed without an approval card leaves its record.
    *
@@ -302,8 +291,8 @@ export interface CommandToolDeps {
    * without a decision route would make the default unreachable.
    */
   approvals?: () => CoordinationDeps;
-  /** The autonomy settings as they are now. */
-  autonomy: () => AutonomySettings;
+  /** The execution policy in force, as it is now. One reader supplies it; this tool never opens a preference. */
+  autonomy: () => ExecutionPolicyConfig;
   /** The folders this node owns. Every effect has to resolve inside one of them. */
   resources: () => OwnedResources;
   /** The node's own working directory, used when the model named no folder and `cwd` was absent. */
@@ -369,22 +358,6 @@ export interface CommandToolDeps {
   broker?: SecretBroker;
 }
 
-/**
- * Which policy applies to one effect.
- *
- * `guarded` is the interesting case: it means "do not ask a person, but do ask the policy layer", and the
- * policy layer is only asked for the classes the person left switched on. A class that is switched off is
- * not "denied" — it is simply not judged, and it runs. Reading it as a denial would make turning a class
- * off in settings stop work, which is the opposite of what the switch says.
- */
-export function policyForEffect(settings: AutonomySettings, guardClass: GuardClass): ExecutionPolicy {
-  if (settings.executionPolicy === "deny") return "deny";
-  if (settings.executionPolicy === "confirm") return "confirm";
-  if (settings.executionPolicy === "auto") return "auto";
-  if (!settings.jevGuardrails) return "auto";
-  return settings.guardedClasses.includes(guardClass) ? "guarded" : "auto";
-}
-
 export type GuardDecisionForCommand =
   | { kind: "proceed"; envelope: CommandEnvelope }
   | { kind: "refuse"; text: string }
@@ -392,7 +365,7 @@ export type GuardDecisionForCommand =
   | { kind: "ask"; question: string };
 
 /**
- * Consult the policy layer about one command, and turn its answer into something the turn can act on.
+ * Consult the judgment layer about one command, and turn its answer into something the turn can act on.
  *
  * The four outcomes are handled differently on purpose. `allow` proceeds. `deny` and `clarify` both stop
  * the command but say different things — a refusal is final, a clarification is a question the model can
@@ -400,10 +373,13 @@ export type GuardDecisionForCommand =
  * refused by `applyGuardrailConstraints` if it turns out to widen. `unavailable` is not a refusal: it is
  * the absence of a judgment, and what it means is the person's `whenJevUnavailable` setting rather than a
  * guess made here.
+ *
+ * Reached only when `guardrailCovers` said the layer is consulted for this effect, which is a different
+ * question from the mode: the mode says who is asked, the switches say who is judged.
  */
 export async function decideGuardrailForCommand(
   input: CommandToolDeps,
-  request: { settings: AutonomySettings; envelope: CommandEnvelope; why: string },
+  request: { policy: ExecutionPolicyConfig; envelope: CommandEnvelope; why: string },
 ): Promise<GuardDecisionForCommand> {
   const outcome: OperationGuardOutcome =
     input.guardrails === undefined
@@ -420,7 +396,7 @@ export async function decideGuardrailForCommand(
             destructive: String(request.envelope.classification.destructive),
             estimatedTargets: String(request.envelope.classification.estimatedTargets),
           },
-          instructions: request.settings.instructions,
+          instructions: request.policy.guardrails.instructions,
           ...(input.narrowing === undefined
             ? {}
             : { constraints: input.narrowing.map((entry) => ({ id: entry.id, description: entry.description })) }),
@@ -463,7 +439,7 @@ export async function decideGuardrailForCommand(
     return { kind: "proceed", envelope: narrowed.envelope };
   }
 
-  if (request.settings.whenJevUnavailable === "allow") return { kind: "proceed", envelope: request.envelope };
+  if (request.policy.guardrails.whenUnavailable === "allow") return { kind: "proceed", envelope: request.envelope };
   return {
     kind: "refuse",
     text: `Guardrail không dùng được (${outcome.reason}) và node này đặt là từ chối khi Jev vắng. Không có gì được chạy.`,
@@ -611,7 +587,7 @@ export function createRunCommandTool(
         because = `được tìm thấy từ “${where}” (${found.relPath})`;
       }
 
-      const settings = input.autonomy();
+      const policy = input.autonomy();
       const preflight = preflightCommand({
         command,
         cwd,
@@ -629,25 +605,50 @@ export function createRunCommandTool(
       const envelope = preflight.envelope;
       const why = typeof params.why === "string" && params.why.trim() !== "" ? params.why.trim() : "";
       const reason = because ?? "";
-      const policy = policyForEffect(settings, envelope.guardClass);
+      const digest = commandDigest(command, envelope.cwd);
 
-      if (policy === "deny") {
+      /*
+       * The command path goes through the canonical resolver, like the widget path and the install route.
+       *
+       * It used to answer this itself, from its own four-value policy plus a list of guarded classes, and the
+       * difference is the declared behaviour change: the legacy `guarded` consulted the judgment layer and
+       * never opened a card, while the canonical `guarded` asks wherever the effect category or a rule
+       * requires it. That is the target recorded in DESIGN.md, not a translation of what was there before,
+       * and it is why this is stated rather than described as equivalent.
+       *
+       * The preflight above is untouched and still first. It is the host's own gate — ownership, existence,
+       * budget — and no policy runs before it, which is what keeps a folder this node does not own out of the
+       * conversation entirely rather than a question to put to a model.
+       */
+      const decision = decideExecution({
+        policy,
+        action: { kind: "effect", category: envelope.effectCategory, operationDigest: digest },
+        /*
+         * True, and worth being exact about why. The model proposes this command inside a turn, and a turn
+         * exists because the user acted — the same reading the widget path takes of a click and the install
+         * route takes of "install this package". It is not a claim that the user named this command, and it
+         * lifts nothing on its own: a node-wide prohibition, a rule the user wrote, and every hard consent
+         * boundary are all read before the intent matters, and the preflight has already run.
+         */
+        explicitUserIntent: true,
+      });
+
+      if (decision.kind === "deny") {
         return {
           text:
-            `Node này đang tắt lớp “${envelope.guardClass}”, nên lệnh này không chạy. ` +
-            `Người dùng bật lại trong Settings → Autonomy nếu muốn.`,
+            `Node này không chạy lệnh này: ${decision.reason}. Không có gì được chạy. ` +
+            `Người dùng đổi lại trong Settings → Control nếu muốn.`,
         };
       }
 
-      if (policy === "confirm") {
+      if (decision.kind === "ask") {
         if (input.approvals === undefined) {
           return {
             text:
-              "Node này đang ở chế độ confirm nhưng không có nơi ghi quyết định, nên lệnh không chạy được. " +
-              "Đổi sang chế độ khác trong Settings → Autonomy.",
+              "Node này cần người dùng duyệt lệnh này nhưng không có nơi ghi quyết định, nên lệnh không chạy được. " +
+              "Đổi mức tự chủ trong Settings → Control.",
           };
         }
-        const digest = commandDigest(command, envelope.cwd);
         const approval = requestApproval(input.approvals(), {
           operationDigest: digest,
           operationDescription:
@@ -679,27 +680,32 @@ export function createRunCommandTool(
         };
       }
 
-      // `guarded` and `auto` differ only in whether the policy layer is consulted. Neither asks a person,
-      // which is the whole point of the default: the control is the host's gate plus a judgment that can
-      // only narrow, not a dialog nobody reads.
+      /*
+       * The judgment layer, on the effects the host allowed and the switches cover.
+       *
+       * Reached only on the `execute` branch: a card is already a stricter gate than a judgment that can only
+       * narrow, so asking a person and a model the same question would produce two answers where one is
+       * enough. The layer may still refuse, ask for a clarification, or apply one of the host's own narrowings,
+       * and a widening is refused rather than clamped.
+       */
       let guarded = envelope;
-      if (policy === "guarded") {
-        const decision = await decideGuardrailForCommand(input, { settings, envelope, why });
-        if (decision.kind === "refuse") {
+      if (guardrailCovers(policy, envelope)) {
+        const judgment = await decideGuardrailForCommand(input, { policy, envelope, why });
+        if (judgment.kind === "refuse") {
           // A refusal is an effect too: it is the thing a person asks about later, when work they expected did not
           // happen and nobody can remember why.
-          input.audit?.({ summary: decision.text, outcome: "refused" });
-          return { text: decision.text };
+          input.audit?.({ summary: judgment.text, outcome: "refused" });
+          return { text: judgment.text };
         }
-        if (decision.kind === "ask") {
-          const asked = askClarify(input, decision.question);
+        if (judgment.kind === "ask") {
+          const asked = askClarify(input, judgment.question);
           // No trail entry: the question and its answer are blocks in the transcript, which is the durable record of
           // this conversation. An audit kind here would be a second, shallower copy of the same fact.
           if (asked !== undefined) return asked;
           // A node that cannot ask leaves the question with the model. Worse, and said so.
-          return { text: `${decision.question} Hỏi người dùng rồi đề xuất lại.` };
+          return { text: `${judgment.question} Hỏi người dùng rồi đề xuất lại.` };
         }
-        guarded = decision.envelope;
+        guarded = judgment.envelope;
       }
       const operationId = input.newId();
 
@@ -735,20 +741,18 @@ export function createRunCommandTool(
        */
       const effectAudit = input.effectAudit?.();
       if (effectAudit !== undefined) {
-        // Only reached when this node did not ask: the confirm path returned above with a card, so anything that runs
-        // here ran because the policy allowed this class of effect without a person.
-        const mode: ExecutionMode = "autonomous";
-        const decision: Extract<PolicyDecision, { kind: "execute" }> = {
-          kind: "execute",
-          reason: "host policy runs this class of effect without a card",
-          audit: true,
-        };
-        const category: EffectCategory = guarded.effectCategory;
+        /*
+         * The decision the resolver actually made, and the mode it made it in.
+         *
+         * Both used to be invented here — a literal `autonomous` and a hand-built execute decision — because the
+         * command path had no resolver to quote. Quoting the real one is the point of the ledger: the record now
+         * says what decided this, and a mode this build does not know cannot be written down as `autonomous`.
+         */
         recordEffectExecution(effectAudit.deps, {
           principalId: effectAudit.principalId,
-          mode,
+          mode: policy.mode,
           decision,
-          category,
+          category: guarded.effectCategory,
           operationDigest: commandDigest(guarded.command, guarded.cwd),
           ...(effectAudit.conversationId === undefined ? {} : { conversationId: effectAudit.conversationId }),
           description: `${guarded.command} — ${guarded.cwd}`,

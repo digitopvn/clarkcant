@@ -1,9 +1,15 @@
 import { beforeEach, describe, expect, it } from "vitest";
 
-import type { EffectCategory, ExecutionMode, ExecutionRule } from "@clarkcant/contracts";
+import {
+  DEFAULT_EXECUTION_POLICY_CONFIG,
+  type EffectCategory,
+  type ExecutionMode,
+  type ExecutionPolicyConfig,
+  type ExecutionRule,
+} from "@clarkcant/contracts";
 import { migrate, openDatabase, allRows } from "@clarkcant/storage";
 
-import { decideExecution, recordEffectExecution } from "../src/execution-policy.ts";
+import { decideExecution, guardrailCovers, recordEffectExecution } from "../src/execution-policy.ts";
 
 /**
  * The execution policy (V18).
@@ -29,14 +35,22 @@ function effect(category: EffectCategory) {
   return { kind: "effect" as const, category, operationDigest: DIGEST };
 }
 
+/** A policy, from the canonical default, with only what the case is about changed. */
+function policy(overrides: Partial<ExecutionPolicyConfig> = {}): ExecutionPolicyConfig {
+  return { ...DEFAULT_EXECUTION_POLICY_CONFIG, ...overrides };
+}
+
 function outcome(
   mode: ExecutionMode,
   category: EffectCategory,
-  options: { explicitUserIntent?: boolean; rules?: readonly ExecutionRule[] } = {},
+  options: { explicitUserIntent?: boolean; rules?: readonly ExecutionRule[]; prohibition?: "none" | "all" } = {},
 ): string {
   return decideExecution({
-    mode,
-    rules: options.rules ?? [],
+    policy: policy({
+      mode,
+      rules: [...(options.rules ?? [])],
+      ...(options.prohibition === undefined ? {} : { prohibition: options.prohibition }),
+    }),
     action: effect(category),
     explicitUserIntent: options.explicitUserIntent ?? false,
   }).kind;
@@ -45,7 +59,7 @@ function outcome(
 describe("a local view action is not an effect", () => {
   it("never asks, in any mode", () => {
     for (const mode of ["autonomous", "guarded", "ask"] as const) {
-      const decision = decideExecution({ mode, rules: [], action: { kind: "view" }, explicitUserIntent: false });
+      const decision = decideExecution({ policy: policy({ mode }), action: { kind: "view" }, explicitUserIntent: false });
       expect(decision.kind, mode).toBe("execute");
       if (decision.kind !== "execute") throw new Error("expected an execution");
       // A filter change is not an effect, so it leaves no audit trail to wade through.
@@ -64,8 +78,7 @@ describe("ask mode asks before every effect", () => {
 
   it("binds the approval to the digest and the category", () => {
     const decision = decideExecution({
-      mode: "ask",
-      rules: [],
+      policy: policy({ mode: "ask" }),
       action: effect("local-write"),
       explicitUserIntent: true,
     });
@@ -112,8 +125,7 @@ describe("autonomous mode executes the user's own instruction", () => {
   it("performs everything that stays on this machine", () => {
     for (const category of ["read", "local-write"] as const) {
       const decision = decideExecution({
-        mode: "autonomous",
-        rules: [],
+        policy: policy({ mode: "autonomous" }),
         action: effect(category),
         explicitUserIntent: false,
       });
@@ -157,8 +169,7 @@ describe("two decisions hold in every mode", () => {
     const rules: ExecutionRule[] = [{ effectCategory: "media-capture", decision: "execute" }];
     for (const mode of ["autonomous", "guarded", "ask"] as const) {
       const decision = decideExecution({
-        mode,
-        rules,
+        policy: policy({ mode, rules }),
         action: effect("media-capture"),
         explicitUserIntent: true,
         hardBoundary: { kind: "os-permission", because: "macOS asks before a microphone is used" },
@@ -171,6 +182,84 @@ describe("two decisions hold in every mode", () => {
   });
 });
 
+describe("a node-wide prohibition is read above everything", () => {
+  it("refuses every category in every mode, asked for or not", () => {
+    for (const mode of ["autonomous", "guarded", "ask"] as const) {
+      for (const category of ALL_CATEGORIES) {
+        expect(outcome(mode, category, { prohibition: "all" }), `${mode}/${category}`).toBe("deny");
+        expect(
+          outcome(mode, category, { prohibition: "all", explicitUserIntent: true }),
+          `${mode}/${category} explicit`,
+        ).toBe("deny");
+      }
+    }
+  });
+
+  it("refuses rather than asking at a hard boundary", () => {
+    // The ordering is the whole point of the field: a consent screen an application can put in front of the user
+    // is not the user taking back a refusal, so the refusal is read first and the effect stays unreachable.
+    for (const mode of ["autonomous", "guarded", "ask"] as const) {
+      const decision = decideExecution({
+        policy: policy({ mode, prohibition: "all" }),
+        action: effect("media-capture"),
+        explicitUserIntent: true,
+        hardBoundary: { kind: "oauth", because: "the account holder has to grant this" },
+      });
+      expect(decision.kind, mode).toBe("deny");
+    }
+  });
+
+  it("is not loosened by a rule that allows the category", () => {
+    const rules: ExecutionRule[] = [{ effectCategory: "financial", decision: "execute" }];
+    expect(outcome("autonomous", "financial", { rules, prohibition: "all" })).toBe("deny");
+  });
+
+  it("refuses a category a later build adds, because it names no categories at all", () => {
+    /*
+     * The reason the field exists instead of seven deny rules. The rule table is keyed by a closed list of effect
+     * categories, so a refusal written as rules is a snapshot of the categories that exist today; this is a shape,
+     * and it refuses one this build has never heard of without knowing its name.
+     */
+    const decision = decideDecisionForUnknownCategory();
+    expect(decision).toBe("deny");
+  });
+});
+
+describe("the judgment layer is a second gate, not a second policy", () => {
+  it("is consulted only where the switches say so", () => {
+    const base = policy();
+    expect(guardrailCovers(base, { surface: "command", effectCategory: "local-write" })).toBe(true);
+    expect(guardrailCovers(base, { surface: "command", effectCategory: "read" })).toBe(false);
+    expect(guardrailCovers(base, { surface: "capability", effectCategory: "financial" })).toBe(true);
+  });
+
+  it("is not consulted at all when it is switched off", () => {
+    const off = policy({ guardrails: { ...DEFAULT_EXECUTION_POLICY_CONFIG.guardrails, enabled: false } });
+    expect(guardrailCovers(off, { surface: "command", effectCategory: "local-write" })).toBe(false);
+  });
+
+  it("is a different question from the mode: Guarded asks a person and still judges what it allows", () => {
+    const guarded = policy({ mode: "guarded" });
+    // `local-write` is allowed without asking in Guarded, and the layer still looks at it.
+    expect(outcome("guarded", "local-write")).toBe("execute");
+    expect(guardrailCovers(guarded, { surface: "command", effectCategory: "local-write" })).toBe(true);
+    // A risky category is not allowed by the policy at all, so the layer is never asked about it: the card is the
+    // stricter gate and one question is enough.
+    expect(outcome("guarded", "external-write")).toBe("ask");
+  });
+});
+
+/** A category no build declares, under a prohibition: refused without ever being named. */
+function decideDecisionForUnknownCategory(): string {
+  return decideExecution({
+    policy: policy({ prohibition: "all" }),
+    // SAFETY: the point of the case is a value outside the closed union, which is what a build that adds a category
+    // and an older resolver look like to each other; the resolver must answer it rather than crash on it.
+    action: { kind: "effect", category: "teleportation" as EffectCategory, operationDigest: DIGEST },
+    explicitUserIntent: true,
+  }).kind;
+}
+
 describe("the audit is the record autonomy would otherwise not leave", () => {
   let db: ReturnType<typeof openDatabase>;
   beforeEach(() => {
@@ -180,8 +269,7 @@ describe("the audit is the record autonomy would otherwise not leave", () => {
 
   it("appends one event naming the mode, the category and the digest", () => {
     const decision = decideExecution({
-      mode: "autonomous",
-      rules: [],
+      policy: policy({ mode: "autonomous" }),
       action: effect("local-write"),
       explicitUserIntent: true,
     });

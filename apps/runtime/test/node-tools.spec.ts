@@ -4,9 +4,8 @@ import { join } from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { DEFAULT_AUTONOMY_SETTINGS } from "@clarkcant/contracts";
-import { instantSchema } from "@clarkcant/contracts";
-import type { ExecutionPolicy } from "@clarkcant/contracts";
+import { DEFAULT_EXECUTION_POLICY_CONFIG, instantSchema } from "@clarkcant/contracts";
+import type { ExecutionPolicyConfig } from "@clarkcant/contracts";
 import type { ToolDefinition } from "@clarkcant/pi-adapter";
 import { allRows } from "@clarkcant/storage";
 
@@ -69,13 +68,13 @@ describe("the node's tools", () => {
 
   it("offers run_command even when this node has no approval route", () => {
     // The change this phase makes: a node that cannot record a decision is not a node that cannot run a command.
-    // Registration follows the command path now, and the approval route is only what the `confirm` policy needs —
+    // Registration follows the command path now, and the approval route is only what an asking mode needs —
     // which is why there is no `approvals` in this call at all.
     const withoutApproval = createNodeTools({
       search: services.search,
       projects: services.projects,
       command: {
-        autonomy: () => DEFAULT_AUTONOMY_SETTINGS,
+        autonomy: () => DEFAULT_EXECUTION_POLICY_CONFIG,
         resources: () => ownedResources([dir]),
         fallbackCwd: () => dir,
         newId: () => "run_1",
@@ -116,7 +115,7 @@ describe("the command tool obeys the execution policy", () => {
   }
 
   function commandTool(options: {
-    policy?: ExecutionPolicy;
+    policy?: Partial<ExecutionPolicyConfig>;
     audit?: boolean;
     ledger?: boolean;
   } = {}): ToolDefinition {
@@ -126,14 +125,19 @@ describe("the command tool obeys the execution policy", () => {
       now,
       newId: services.conductor.newId,
     };
+    const inForce: ExecutionPolicyConfig = {
+      ...DEFAULT_EXECUTION_POLICY_CONFIG,
+      ...options.policy,
+      guardrails: { ...DEFAULT_EXECUTION_POLICY_CONFIG.guardrails, ...options.policy?.guardrails },
+    };
     const tools = createNodeTools({
       search: services.search,
       projects: services.projects,
       command: {
-        // Present, so the confirm path has somewhere to record a decision. The refusal that happens when a
+        // Present, so the ask path has somewhere to record a decision. The refusal that happens when a
         // node has no decision route at all is its own case, covered where the whole deps shape is visible.
         approvals: () => deps,
-        autonomy: () => ({ ...DEFAULT_AUTONOMY_SETTINGS, executionPolicy: options.policy ?? "guarded" }),
+        autonomy: () => inForce,
         resources: () => ownedResources([dir, process.cwd()]),
         fallbackCwd: () => dir,
         newId: () => services.conductor.newId("tool"),
@@ -166,7 +170,7 @@ describe("the command tool obeys the execution policy", () => {
   }
 
   it("runs a command the default policy allows, with no card anywhere", async () => {
-    // The change this refactor exists for: the default is guarded, so a command a person asked for runs, and what
+    // The change this refactor exists for: the default is Autonomous, so a command a person asked for runs, and what
     // the transcript carries is its receipt rather than a question nobody wanted to answer.
     const result = await commandTool({ ledger: true }).execute({ command, cwd: dir });
     expect(result.hostCard).toBeUndefined();
@@ -175,24 +179,27 @@ describe("the command tool obeys the execution policy", () => {
     expect(executedEffects()).toEqual(["effect.executed"]);
   });
 
-  it("asks before every command under confirm, and runs nothing until a person answers", async () => {
-    const result = await commandTool({ policy: "confirm" }).execute({ command, cwd: dir });
+  it("asks before every command under Ask every time, and runs nothing until a person answers", async () => {
+    const result = await commandTool({ policy: { mode: "ask" } }).execute({ command, cwd: dir });
     expect(result.hostCard).toBeDefined();
     expect((result.hostCard as { type: string }).type).toBe("approval-card");
     expect(result.text).toContain("Chưa có gì chạy cả");
     expect(executedEffects()).toEqual([]);
   });
 
-  it("refuses a class the node has turned off, and does not run it", async () => {
-    const result = await commandTool({ policy: "deny" }).execute({ command, cwd: dir });
+  it("refuses every effect on a node that refuses everything, and does not run it", async () => {
+    const result = await commandTool({ policy: { prohibition: "all" } }).execute({ command, cwd: dir });
     expect(result.hostCard).toBeUndefined();
-    expect(result.text).toContain("Node này đang tắt lớp");
+    expect(result.text).toContain("không chạy lệnh này");
     expect(result.text).not.toContain(RAN);
     expect(executedEffects()).toEqual([]);
   });
 
-  it("runs under auto as well, which is the same run with the judgment layer switched off", async () => {
-    const result = await commandTool({ policy: "auto", ledger: true }).execute({ command, cwd: dir });
+  it("runs under Autonomous as well, which is the same run with the judgment layer switched off", async () => {
+    const result = await commandTool({
+      policy: { guardrails: { ...DEFAULT_EXECUTION_POLICY_CONFIG.guardrails, enabled: false } },
+      ledger: true,
+    }).execute({ command, cwd: dir });
     expect(result.hostCard).toBeUndefined();
     expect(result.text).toContain(RAN);
     expect(executedEffects()).toEqual(["effect.executed"]);

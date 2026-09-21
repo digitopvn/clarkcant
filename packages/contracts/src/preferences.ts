@@ -20,6 +20,7 @@
 
 import { z } from "zod";
 
+import { GUARD_CLASSES, guardClassSchema, jevUnavailablePolicySchema } from "./execution.ts";
 import { effectCategorySchema, instantSchema } from "./primitives.ts";
 
 /** Where a preference lives. A key declares one, and a write cannot choose another. */
@@ -186,6 +187,146 @@ export type ExecutionRule = z.infer<typeof executionRuleSchema>;
 
 export const executionRulesPreferenceSchema = z.array(executionRuleSchema).max(24);
 
+/**
+ * The one refusal no category table can express.
+ *
+ * `deny` was one of the four values of the legacy execution policy, and on this node it meant "every
+ * effect category is refused". Written as an enumeration of categories it would have been a snapshot:
+ * the category list is closed at seven values today, so a build that adds an eighth would have no rule
+ * for it and the refusal would fail open exactly where it was meant to hold. `prohibition` is the same
+ * decision with a closed structure — none, or all — so it cannot be outgrown.
+ *
+ * Read above the hard consent boundaries, deliberately: "never" is the user's own decision about their
+ * machine, and a consent screen an application can put in front of them is not the user taking it back.
+ */
+export const executionProhibitionSchema = z.enum(["none", "all"]);
+export type ExecutionProhibition = z.infer<typeof executionProhibitionSchema>;
+
+/**
+ * How the judgment layer is configured. Never what it answered.
+ *
+ * `classes` is the authority for "is the judgment layer consulted for this effect", which is a different
+ * question from `mode`'s "who is asked": a class that is not here runs unjudged, and a class that is here
+ * can still come back `allow`. It is named `classes` rather than `guardedClasses` on purpose — one word
+ * for two questions is how a reader ends up believing the mode called "guarded" is driven by this list.
+ *
+ * `allow`, `deny`, `constrain` and `clarify` are its answers and are nowhere in here: they are decisions
+ * about one operation, and a stored answer would become a permission the next one inherits.
+ */
+export const executionGuardrailsSchema = z.object({
+  enabled: z.boolean(),
+  /** Free text handed to the judgment layer as policy. It can only narrow what the host already allowed. */
+  instructions: z.string().max(4_000),
+  classes: z.array(guardClassSchema).max(16),
+  whenUnavailable: jevUnavailablePolicySchema,
+});
+export type ExecutionGuardrails = z.infer<typeof executionGuardrailsSchema>;
+
+/**
+ * The one execution policy.
+ *
+ * Four axes, and each answers a question the others cannot:
+ *
+ *   - `mode` — who is asked when an effect is allowed to happen at all;
+ *   - `prohibition` — whether any effect happens on this node, above every other rule;
+ *   - `rules` — the user's own per-category decisions;
+ *   - `guardrails` — whether a judgment layer may narrow an effect that the above allowed.
+ *
+ * Held in one document rather than spread over three preferences because the settings surface, the
+ * resolver and the audit trail have to agree on it, and because a policy that is assembled from three
+ * reads is a policy that can be observed half-changed.
+ */
+export const executionPolicyConfigSchema = z.object({
+  mode: executionModeSchema,
+  prohibition: executionProhibitionSchema,
+  rules: executionRulesPreferenceSchema,
+  guardrails: executionGuardrailsSchema,
+});
+export type ExecutionPolicyConfig = z.infer<typeof executionPolicyConfigSchema>;
+
+/**
+ * What a node with nothing stored runs: Autonomous, with the judgment layer on.
+ *
+ * `autonomous` and not `guarded`, because that is the recorded product default (DESIGN.md §1.3, §5.3 and
+ * AGENTS.md): a user's own instruction is enough, and the layer that can narrow it stays switched on.
+ * The legacy constants that say `guarded` describe the legacy vocabulary only and are never consulted
+ * for a node that stored neither family.
+ */
+export const DEFAULT_EXECUTION_POLICY_CONFIG: ExecutionPolicyConfig = {
+  mode: "autonomous",
+  prohibition: "none",
+  rules: [],
+  guardrails: {
+    enabled: true,
+    instructions: "",
+    classes: GUARD_CLASSES.filter((guardClass) => guardClass !== "reads"),
+    whenUnavailable: "allow",
+  },
+};
+
+/** One stored rule, or nothing. The rule list is filtered entry by entry, like the switches were. */
+function parseStoredRules(value: unknown): ExecutionRule[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const parsed = executionRulesPreferenceSchema.safeParse(value);
+  // The common case: a list this node's own writer produced, kept exactly as it is.
+  if (parsed.success) return parsed.data;
+  /*
+   * A list that is wrong somewhere. Dropping the whole list would drop the refusals in it, which is the one
+   * way this function could widen what the user chose; keeping the entries that parse costs only the entry
+   * that did not. First entry per category wins, because that is what the resolver's `find` reads.
+   */
+  const kept: ExecutionRule[] = [];
+  for (const entry of value) {
+    const rule = executionRuleSchema.safeParse(entry);
+    if (!rule.success) continue;
+    if (kept.some((candidate) => candidate.effectCategory === rule.data.effectCategory)) continue;
+    kept.push(rule.data);
+  }
+  return kept;
+}
+
+/**
+ * Read a stored policy, field by field, including the fields inside `guardrails`.
+ *
+ * Field-wise and not all-or-nothing, for the reason the legacy settings parser gives: a document written
+ * before a field existed is the normal case after an upgrade, and refusing the whole document would
+ * silently reset a policy the user chose. The nesting makes this sharper rather than softer — a stored
+ * `instructions` a newer build rejects must cost the instructions and nothing else. A parser that treated
+ * `guardrails` as one leaf would reset the mode along with it, which is a widening produced by a typo.
+ */
+export function parseExecutionPolicyConfig(value: unknown): ExecutionPolicyConfig {
+  const source = typeof value === "object" && value !== null ? (value as Record<string, unknown>) : {};
+  const guardrailSource =
+    typeof source.guardrails === "object" && source.guardrails !== null
+      ? (source.guardrails as Record<string, unknown>)
+      : {};
+  const defaults = DEFAULT_EXECUTION_POLICY_CONFIG;
+
+  const mode = executionModeSchema.safeParse(source.mode);
+  const prohibition = executionProhibitionSchema.safeParse(source.prohibition);
+  const rules = parseStoredRules(source.rules);
+  const enabled = z.boolean().safeParse(guardrailSource.enabled);
+  const unavailable = jevUnavailablePolicySchema.safeParse(guardrailSource.whenUnavailable);
+  const classes = Array.isArray(guardrailSource.classes)
+    ? guardrailSource.classes.filter((entry) => guardClassSchema.safeParse(entry).success)
+    : [...defaults.guardrails.classes];
+
+  return {
+    mode: mode.success ? mode.data : defaults.mode,
+    prohibition: prohibition.success ? prohibition.data : defaults.prohibition,
+    rules: rules ?? [...defaults.rules],
+    guardrails: {
+      enabled: enabled.success ? enabled.data : defaults.guardrails.enabled,
+      instructions:
+        typeof guardrailSource.instructions === "string"
+          ? guardrailSource.instructions.slice(0, 4_000)
+          : defaults.guardrails.instructions,
+      classes: classes as ExecutionPolicyConfig["guardrails"]["classes"],
+      whenUnavailable: unavailable.success ? unavailable.data : defaults.guardrails.whenUnavailable,
+    },
+  };
+}
+
 /** Which model a background turn uses when it is not the one the conversation is on. */
 export const backgroundRoutingSchema = z.enum(["auto", "same", "fast", "cheap", "quality"]);
 export type BackgroundRouting = z.infer<typeof backgroundRoutingSchema>;
@@ -350,6 +491,13 @@ export const PREFERENCE_REGISTRY = {
     applies: "immediate",
     default: [],
     schema: executionRulesPreferenceSchema,
+  },
+  "execution.policy": {
+    key: "execution.policy",
+    scope: "global",
+    applies: "immediate",
+    default: DEFAULT_EXECUTION_POLICY_CONFIG,
+    schema: executionPolicyConfigSchema,
   },
   "ai.modelFavorites": {
     key: "ai.modelFavorites",

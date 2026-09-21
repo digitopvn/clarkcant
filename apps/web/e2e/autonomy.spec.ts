@@ -59,10 +59,13 @@ test("the Autonomy control lives in the Control tab, and saving it reaches the n
 
   const panel = page.locator("#cc-tabpanel-control");
   await expect(panel).toBeVisible();
-  // The default, read from the node rather than assumed by the panel: the segment the stored policy names is the
-  // one that reads as pressed.
+  /*
+   * The default, read from the node rather than assumed by the panel: the segment the stored policy reads as is
+   * the one that is pressed. A node that stored no policy runs Autonomous, and this panel spells Autonomous as
+   * `auto` — so the pressed segment is `auto`, and the assertion says so instead of encoding the legacy default.
+   */
   const policy = panel.locator('[data-segmented="autonomy-policy"]');
-  await expect(policy.locator('[data-segment="guarded"]')).toHaveAttribute("aria-pressed", "true");
+  await expect(policy.locator('[data-segment="auto"]')).toHaveAttribute("aria-pressed", "true");
   await expect(panel.locator('[data-toggle="autonomy-guardrails"] input[type="checkbox"]')).toBeChecked();
   // Reads are not guarded by default: a guardrail call on every read spends a provider call to decide nothing.
   await expect(panel.locator('[data-autonomy-class="reads"]')).not.toBeChecked();
@@ -73,7 +76,9 @@ test("the Autonomy control lives in the Control tab, and saving it reaches the n
   await panel.locator("[data-autonomy-save]").click();
   await expect(panel).toContainText("Đã lưu", { timeout: 10_000 });
 
-  await policy.locator('[data-segment="guarded"]').click();
+  // Back to the segment that means the default it started on, so the next spec in this suite sees one policy and
+  // not a node left asking for every effect.
+  await policy.locator('[data-segment="auto"]').click();
   await panel.locator("[data-autonomy-save]").click();
   await expect(panel).toContainText("Đã lưu", { timeout: 10_000 });
 });
