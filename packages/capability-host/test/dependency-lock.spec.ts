@@ -507,6 +507,37 @@ describe("missing or edited lock material fails closed", () => {
     expect(spawned).toBe(0);
   });
 
+  it("names an artifact that cannot be read as unreadable, not as one that was never written", async () => {
+    const { dir, lock } = storedLock();
+    const { quarantineDir, root } = buildRoot(dir);
+    // A directory under the reference: the name is taken, and what is there is not a lock artifact to read.
+    rmSync(join(dir, lock.lockRef));
+    mkdirSync(join(dir, lock.lockRef));
+
+    const outcome = prepare({ dir, lock });
+    expect(outcome.ok ? "" : outcome.code).toBe("LOCK_UNREADABLE");
+    // "There is nothing here" would send somebody looking for a missing write that did happen.
+    expect(outcome.ok ? "" : outcome.message).not.toContain("no frozen build input");
+
+    let spawned = 0;
+    const built = await isolatedLockedBuild({
+      lockDir: dir,
+      lockRef: lock.lockRef,
+      lockDigest: lock.lockDigest,
+      root,
+      quarantineDir,
+      command: process.execPath,
+      args: ["-e", "process.exit(0)"],
+      spawnImpl: vi.fn(() => {
+        spawned += 1;
+        throw new Error("a build was started on an artifact that could not be read");
+      }) as never,
+    });
+
+    expect(built.ok ? "" : built.code).toBe("LOCK_UNREADABLE");
+    expect(spawned).toBe(0);
+  });
+
   it("stops the build when the contents were edited after they were written", async () => {
     const { dir, lock } = storedLock();
     const { quarantineDir, root } = buildRoot(dir);

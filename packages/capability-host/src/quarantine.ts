@@ -311,6 +311,7 @@ export type LockedBuildResult =
         | "BUILD_FAILED"
         | "TIMED_OUT"
         | "LOCK_MISSING"
+        | "LOCK_UNREADABLE"
         | "LOCK_MUTATED"
         | "LOCK_INCOMPLETE"
         | "LIFECYCLE_SCRIPT_NOT_APPROVED";

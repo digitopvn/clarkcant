@@ -306,36 +306,52 @@ const storedLockSchema = z.strictObject({
   buildInputs: z.strictObject({ platform: z.string().min(1).max(120), nodeAbi: z.string().min(1).max(40) }),
 });
 
-export type LockStoreRefusal = "LOCK_MISSING" | "LOCK_MUTATED";
+export type LockStoreRefusal = "LOCK_MISSING" | "LOCK_UNREADABLE" | "LOCK_MUTATED";
 
 function withinDirectory(dir: string, path: string): boolean {
   const rel = relative(resolve(dir), path);
   return rel !== "" && !rel.startsWith("..") && !isAbsolute(rel);
 }
 
-function readStoredLock(path: string): { ok: true; lock: DependencyLock } | { ok: false; message: string } {
+function readStoredLock(
+  path: string,
+): { ok: true; lock: DependencyLock } | { ok: false; code: LockStoreRefusal; message: string } {
   let raw: string;
   try {
     raw = readFileSync(path, "utf8");
-  } catch {
-    return { ok: false, message: "there is no lock artifact at this reference on this node" };
+  } catch (cause) {
+    /*
+     * Absent and unreadable are different incidents, and the errno is the only thing that tells them apart: a
+     * directory under the reference (EISDIR) or a mode this process cannot read (EACCES) is a lock directory to go
+     * and look at, not a frozen build input that was never written. Either way the build does not start.
+     */
+    const errno =
+      cause instanceof Error && "code" in cause ? String((cause as { code?: unknown }).code ?? "") : "";
+    if (errno === "ENOENT") {
+      return { ok: false, code: "LOCK_MISSING", message: "there is no lock artifact at this reference on this node" };
+    }
+    return {
+      ok: false,
+      code: "LOCK_UNREADABLE",
+      message: `the lock artifact is there but could not be read${errno === "" ? "" : ` (${errno})`}`,
+    };
   }
   let parsed: unknown;
   try {
     parsed = JSON.parse(raw);
   } catch {
-    return { ok: false, message: "the lock artifact is not readable JSON" };
+    return { ok: false, code: "LOCK_MUTATED", message: "the lock artifact is not readable JSON" };
   }
   const lock = storedLockSchema.safeParse(parsed);
   if (!lock.success) {
-    return { ok: false, message: "the lock artifact is not a lock this node wrote" };
+    return { ok: false, code: "LOCK_MUTATED", message: "the lock artifact is not a lock this node wrote" };
   }
   const recorded = lock.data.lockDigest;
   const computed = payloadDigest(lockBody(lock.data));
   if (computed !== recorded) {
     // Checked rather than trusted: the digest is in the file it describes, so it only means something if the
     // contents are re-hashed on the way in.
-    return { ok: false, message: `the lock artifact's contents no longer hash to ${recorded}` };
+    return { ok: false, code: "LOCK_MUTATED", message: `the lock artifact's contents no longer hash to ${recorded}` };
   }
   return { ok: true, lock: lock.data };
 }
@@ -384,9 +400,10 @@ export function writeDependencyLock(input: {
 /**
  * Read the frozen artifact a plan consented to, or fail.
  *
- * Missing and mutated are the same answer — the install does not proceed — but they are named separately, because
- * "this node never wrote it" and "somebody changed it after it was written" are different incidents. Nothing here
- * falls back to resolving the closure again: a fallback would mean the build ran on a closure no consent covered.
+ * Missing, unreadable and mutated are all refusals — the install does not proceed — but they are named separately,
+ * because "this node never wrote it", "it is there and cannot be read" and "somebody changed it after it was
+ * written" are different incidents. Nothing here falls back to resolving the closure again: a fallback would mean
+ * the build ran on a closure no consent covered.
  */
 export function readDependencyLock(input: {
   dir: string;
@@ -403,13 +420,13 @@ export function readDependencyLock(input: {
   }
   const stored = readStoredLock(path);
   if (!stored.ok) {
-    const missing = stored.message.startsWith("there is no lock artifact");
     return {
       ok: false,
-      code: missing ? "LOCK_MISSING" : "LOCK_MUTATED",
-      message: missing
-        ? `no frozen build input at ${input.lockRef}, and a build is not allowed to resolve one itself`
-        : `${input.lockRef}: ${stored.message}`,
+      code: stored.code,
+      message:
+        stored.code === "LOCK_MISSING"
+          ? `no frozen build input at ${input.lockRef}, and a build is not allowed to resolve one itself`
+          : `${input.lockRef}: ${stored.message}`,
     };
   }
   if (stored.lock.lockDigest !== input.lockDigest) {
@@ -589,7 +606,10 @@ export function prepareLockedBuild(input: {
 /**
  * The frozen pins, for a build to read instead of resolving anything itself.
  *
- * Canonical JSON through the same digest helper, so what a build sees is byte-identical for byte-identical input.
+ * Same lock, same string: the keys are written in a fixed order and `dependencies` is already sorted by name, so a
+ * build that compared two runs of the same lock would see identical values. Deliberately not `payloadDigest`: this
+ * is an environment value the child parses back into pins, so hashing it would replace them with a digest the build
+ * cannot read.
  */
 export function frozenBuildEnvironment(lock: DependencyLock): Record<string, string> {
   return {
