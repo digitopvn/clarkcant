@@ -2,14 +2,6 @@ import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { join, resolve, sep } from "node:path";
 
-import {
-  artifactRequest,
-  directoryBackedMetadata,
-  lockBindingForPlan,
-  materializeDependencyLock,
-  resolveDependencyClosure,
-  writeDependencyLock,
-} from "@clarkcant/capability-host";
 
 import { type PairingDeps } from "./peers.ts";
 
@@ -27,27 +19,20 @@ import {
   commandEnvelopeSchema,
   describeAppIntent,
   nowInstant,
-  instantSchema,
-  platformForHost,
   protocolRangeSchema,
   surfaceCompositionSpecSchema,
 } from "@clarkcant/contracts";
 import {
   autonomySettingsFromPolicy,
   claimLiveOwner,
-  decideExecution,
   directoryIndexPath,
   findIsolatedFrame,
   mintFrameGrant,
   verifyFrameGrant,
-  installFromEntry,
   readPackageFile,
   widgetDocument,
   widgetDocumentPolicy,
-  INSTALL_VERIFICATION,
   readDirectoryIndex,
-  recordEffectExecution,
-  requestApproval,
   cancelTask,
   decideApproval,
   getActionBinding,
@@ -55,8 +40,6 @@ import {
   handleUserMessage,
   invokeMiniAppAction,
   listCapabilitySummaries,
-  listInstalledPackages,
-  installedWidgets,
   liveOwnerOf,
   liveStateOf,
   pinInstance,
@@ -131,6 +114,7 @@ import { handleAttachmentRoutes } from "./routes/attachments.ts";
 import { type GatewayRequest, type GatewayResponse, bearer, fail, json, readJson, tokenMatches } from "./routes/http.ts";
 import { handlePreviewRoutes } from "./routes/previews.ts";
 import { handlePreferenceRoutes } from "./routes/preferences.ts";
+import { handlePackageRoutes } from "./routes/packages.ts";
 import { handlePairingRoutes, handlePeerUplinkRoutes } from "./routes/peers.ts";
 
 export type { GatewayRequest, GatewayResponse } from "./routes/http.ts";
@@ -158,14 +142,6 @@ export interface GatewayDeps {
   /** Injected so conversation identifiers are deterministic in tests. */
   newConversationId?: () => string;
 }
-
-/**
- * How long a pending install approval stays good for, and how long the plan it produces may live.
- *
- * Ten minutes: long enough to read the card and decide, short enough that an approval nobody answered does not sit
- * there as a standing permission to install something.
- */
-const INSTALL_APPROVAL_TTL_MS = 10 * 60 * 1000;
 
 /**
  * Handle one request.
@@ -860,351 +836,9 @@ export async function handleRequest(deps: GatewayDeps, request: GatewayRequest):
     return json(200, { session });
   }
 
-  /*
-   * What is installed on this node.
-   *
-   * Read from the active generation, so a rollback is reflected here without anything in this route knowing about
-   * it — and a superseded generation is not listed, because a package that was replaced is not present.
-   */
-  if (segments.length === 1 && segments[0] === "packages" && request.method === "GET") {
-    return json(200, {
-      packages: listInstalledPackages({
-        db: runtime.db,
-        nodeId: runtime.identity.nodeId,
-        now: nowInstant,
-        newId: services.conductor.newId,
-      }),
-    });
-  }
+  const packageResponse = handlePackageRoutes({ services, request, segments });
+  if (packageResponse !== undefined) return packageResponse;
 
-  /*
-   * The widget definitions of the packages installed here.
-   *
-   * The library can only show a widget whose definition it can read, and this node can only read a package whose
-   * bytes it holds. So the answer is per package, and "cannot read this one" is a real answer rather than an
-   * empty list: a git or npm entry names bytes nobody here has, and a package the configured directory does not
-   * list cannot be located at all. "Declares no widgets" and "cannot tell" are different facts, and a response
-   * that merged them would be claiming a package is empty.
-   *
-   * What comes back is data — definitions and fixtures. No package contributes a renderer, so the caller decides
-   * which of these it can actually draw.
-   */
-  if (segments.length === 2 && segments[0] === "packages" && segments[1] === "widgets" && request.method === "GET") {
-    const installed = listInstalledPackages({
-      db: runtime.db,
-      nodeId: runtime.identity.nodeId,
-      now: nowInstant,
-      newId: services.conductor.newId,
-    });
-    const index = readDirectoryIndex(directoryIndexPath(process.env));
-
-    return json(200, {
-      packages: installed.map((entry) => {
-        if (index.kind !== "configured") {
-          return {
-            packageId: entry.packageId,
-            version: entry.version,
-            ok: false,
-            code: "NO_DIRECTORY",
-            message: index.reason,
-          };
-        }
-        /*
-         * A locally installed package records the path as its id and "0.0.0-local" as its version, because the
-         * resolver's answer for a source with no published identity is the path itself. So id-and-version alone
-         * cannot find it again, and without this fallback every package installed from disk would report "not in
-         * the directory" forever. The fallback is narrow on purpose: it only matches a local entry whose path is
-         * exactly the recorded id, so it cannot pick up an unrelated entry.
-         */
-        const listed =
-          index.entries.find(
-            (candidate) => candidate.packageId === entry.packageId && candidate.version === entry.version,
-          ) ??
-          index.entries.find(
-            (candidate) => candidate.source.kind === "local" && candidate.source.path === entry.packageId,
-          );
-        if (listed === undefined) {
-          return {
-            packageId: entry.packageId,
-            version: entry.version,
-            ok: false,
-            code: "NOT_IN_DIRECTORY",
-            message: `${entry.packageId}@${entry.version} is not in the directory, so this node cannot locate its files`,
-          };
-        }
-        /*
-         * The declared identity, not the recorded one. A local install records the path as its id, so reporting that
-         * would put a filesystem path where a package name belongs - and the path is where the bytes are, not what
-         * the package is called. The directory entry is the package's own answer, and it is the name the person saw
-         * when they installed it.
-         */
-        const read = installedWidgets({
-          packageId: listed.packageId,
-          version: listed.version,
-          source: listed.source,
-        });
-        return read.ok
-          ? {
-              packageId: listed.packageId,
-              version: listed.version,
-              ok: true,
-              widgets: read.widgets,
-              problems: read.problems,
-            }
-          : {
-              packageId: listed.packageId,
-              version: listed.version,
-              ok: false,
-              code: read.code,
-              message: read.message,
-            };
-      }),
-    });
-  }
-
-  /*
-   * Installing a package a directory listed.
-   *
-   * The seam between the marketplace and the install path, and the only one: it finds the entry in the configured
-   * index, decides with the execution policy that already governs every other effect, and calls the install
-   * supervisor that already exists. It does not fetch, unpack, verify or activate anything itself, and there is no
-   * second install path behind it.
-   */
-  if (segments.length === 2 && segments[0] === "packages" && segments[1] === "install" && request.method === "POST") {
-    const parsed = readJson(request);
-    if (!parsed.ok) return parsed.response;
-    const packageId = typeof parsed.value.packageId === "string" ? parsed.value.packageId : "";
-    const version = typeof parsed.value.version === "string" ? parsed.value.version : "";
-    if (packageId === "" || version === "") {
-      return fail(400, "INVALID_SCHEMA", "an install request needs the package id and the version it is installing");
-    }
-
-    /*
-     * This host's own platform, from Node's pair. A host the vocabulary cannot name has no answer to "can this
-     * package run here", and guessing `web` would offer a native package to something that cannot run it - so it is
-     * refused by name rather than attempted.
-     */
-    const platform = platformForHost(process.platform, process.arch);
-    if (platform === undefined) {
-      return fail(
-        400,
-        "PLATFORM_UNKNOWN",
-        `${process.platform}-${process.arch} is not a platform this host vocabulary names`,
-      );
-    }
-
-    const index = readDirectoryIndex(directoryIndexPath(process.env));
-    if (index.kind === "not-configured") return fail(409, "NO_DIRECTORY", index.reason);
-    if (index.kind === "unreadable") return fail(409, "DIRECTORY_UNREADABLE", index.reason);
-    const entry = index.entries.find(
-      (candidate) => candidate.packageId === packageId && candidate.version === version,
-    );
-    if (entry === undefined) {
-      return fail(404, "NOT_IN_DIRECTORY", `${packageId}@${version} is not in the directory`);
-    }
-
-    const principalId = runtime.identity.ownerPrincipalId;
-    // Read at the request rather than captured at boot, so a mode the user just changed applies to this install.
-    const policy = readExecutionPolicy({ db: runtime.db, now: () => nowInstant() }, principalId);
-    const decision = decideExecution({
-      policy,
-      action: { kind: "effect", category: "local-write", operationDigest: entry.digest },
-      /*
-       * True, unlike a command the model proposed: installing *this named package* is what the person asked for,
-       * which is exactly the case Autonomous exists to run without a second question. Guarded and Ask still apply,
-       * because the decision is the policy's to make, not this route's.
-       */
-      explicitUserIntent: true,
-    });
-
-    if (decision.kind === "deny") return fail(403, "POLICY_REFUSED", decision.reason);
-
-    const coordination = {
-      db: runtime.db,
-      nodeId: runtime.identity.nodeId,
-      now: () => nowInstant(),
-      newId: services.conductor.newId,
-    };
-
-    if (decision.kind === "ask") {
-      const approval = requestApproval(coordination, {
-        operationDigest: entry.digest,
-        operationDescription: `cài ${entry.displayName} ${entry.version} (${entry.riskTier})`,
-        effectCategory: "local-write",
-        ttlMs: INSTALL_APPROVAL_TTL_MS,
-      });
-      // 202 rather than an error: nothing failed, and the approval is the next step rather than a refusal.
-      return json(202, { code: "APPROVAL_REQUIRED", message: decision.reason, approvalId: approval.approvalId });
-    }
-
-    /*
-     * Autonomy without a record is the one combination this node refuses, the same way `run_command` does: an effect
-     * nobody approved and nobody can find afterwards is worse than a question. Recorded before the install starts,
-     * so one that hangs or dies still shows that it began.
-     */
-    recordEffectExecution(coordination, {
-      principalId,
-      mode: policy.mode,
-      decision,
-      category: "local-write",
-      operationDigest: entry.digest,
-      description: `install ${entry.packageId}@${entry.version}`,
-    });
-
-    /*
-     * Resolve the dependency closure **before** anything is installed.
-     *
-     * This node has not downloaded the artifact, so what it can resolve here is what the directory says this
-     * package is: its exact version, the digest the publisher published, and which kind of source it came from.
-     * The package's own dependency tree is not readable from here, and the lock says so rather than implying it
-     * was pinned (`artifact-only`). A build refuses a lock that does not cover the tree, for exactly that reason.
-     *
-     * A resolution that fails stops the install rather than letting a later step resolve it again: "we could not
-     * say what this would install" is not a state to proceed from.
-     */
-    const metadata = directoryBackedMetadata(index.entries);
-    const resolution =
-      entry.digest.trim() === ""
-        ? undefined
-        : resolveDependencyClosure({ requests: [artifactRequest(entry)], metadata });
-    if (resolution !== undefined && !resolution.ok) return fail(400, "DEPENDENCY_UNRESOLVED", resolution.message);
-
-    /*
-     * An entry that publishes no digest is refused by the installer with its own reason, and there is nothing to
-     * freeze for it: a lock whose integrity is blank would name bytes nobody can check.
-     */
-    const lock = resolution === undefined || !resolution.ok
-      ? undefined
-      : materializeDependencyLock({
-          packageId: entry.packageId,
-          version: entry.version,
-          coverage: "artifact-only",
-          resolved: resolution.resolved,
-          buildInputs: { platform, nodeAbi: process.versions.modules },
-        });
-    if (lock !== undefined) {
-      /*
-       * Kept next to the plans it will be consented with, under a reference that is its own digest, so a later
-       * resolution can never replace the bytes a consented plan names.
-       */
-      const stored = writeDependencyLock({ dir: join(runtime.dataDir, "locks"), lock });
-      if (!stored.ok) return fail(409, stored.code, stored.message);
-    }
-
-    const outcome = installFromEntry(coordination, {
-      entry,
-      directory: index.entries,
-      platform,
-      ownerPrincipalId: principalId,
-      codeGeneration: services.conductor.newId("codegen"),
-      expiresAt: instantSchema.parse(new Date(Date.now() + INSTALL_APPROVAL_TTL_MS).toISOString()),
-      // The frozen closure, bound into the plan and the generation the install activates.
-      ...(lock === undefined ? {} : { dependencyLock: lockBindingForPlan(lock) }),
-      ...(typeof parsed.value.localDigest === "string" ? { localDigest: parsed.value.localDigest } : {}),
-      ...(Array.isArray(parsed.value.requestedCapabilityRefs)
-        ? {
-            requestedCapabilityRefs: parsed.value.requestedCapabilityRefs.filter(
-              (reference): reference is string => typeof reference === "string",
-            ),
-          }
-        : {}),
-      ...(Array.isArray(parsed.value.grantedCapabilities)
-        ? {
-            grantedCapabilities: parsed.value.grantedCapabilities.filter(
-              (reference): reference is string => typeof reference === "string",
-            ),
-          }
-        : {}),
-    });
-
-    if (!outcome.ok) return fail(400, outcome.code, outcome.message);
-    return json(200, {
-      installed: { packageId: entry.packageId, version: entry.version },
-      generationId: outcome.generationId,
-      state: outcome.state,
-      /*
-       * What was actually verified, in the response rather than left to be assumed. This node does not fetch or run
-       * the artifact, so "active" here means the plan it activated was bound to a published digest — not that the
-       * package is known to work.
-       */
-      verified: INSTALL_VERIFICATION,
-      /*
-       * The frozen build input, and what it covers. `artifact-only` is stated rather than left out: this node
-       * pinned the artifact and the build inputs, and the package's own dependency tree is not something it could
-       * read without the bytes. Nothing frozen is reported as absent, which is a different statement again.
-       */
-      ...(lock === undefined ? { lock: null } : { lock: { ref: lock.lockRef, digest: lock.lockDigest, coverage: lock.coverage } }),
-    });
-  }
-
-  /*
-   * A package's own files, for a widget frame to load.
-   *
-   * The frame is an opaque origin, so everything it runs has to be fetched by URL, and this is the only route that
-   * turns a package's bytes into one. It serves a package the node can read on disk and nothing else: a git or npm
-   * entry names bytes nobody here has, and proxying those would be a different and much larger thing.
-   */
-  if (
-    segments.length >= 5 &&
-    segments[0] === "packages" &&
-    segments[3] === "files" &&
-    request.method === "GET"
-  ) {
-    const packageId = segments[1] ?? "";
-    const version = segments[2] ?? "";
-    const index = readDirectoryIndex(directoryIndexPath(process.env));
-    if (index.kind !== "configured") {
-      return fail(
-        409,
-        index.kind === "not-configured" ? "NO_DIRECTORY" : "DIRECTORY_UNREADABLE",
-        index.reason,
-      );
-    }
-    const entry = index.entries.find(
-      (candidate) => candidate.packageId === packageId && candidate.version === version,
-    );
-    if (entry === undefined) {
-      return fail(404, "NOT_IN_DIRECTORY", `${packageId}@${version} is not in the directory`);
-    }
-
-    const file = readPackageFile({ entry, relativePath: segments.slice(4).join("/") });
-    if (!file.ok) {
-      return fail(
-        file.code === "FILE_NOT_FOUND" ? 404 : file.code === "FILE_OUTSIDE_PACKAGE" ? 403 : 409,
-        file.code,
-        file.message,
-      );
-    }
-    /*
-     * An HTML entry is served as a widget document: the author's markup plus the bootstrap that gives it a bridge,
-     * under a policy that says what it may reach. Everything else is served as it is, because a stylesheet or an image
-     * has no bootstrap to add and no policy of its own.
-     *
-     * The document must be served from this path rather than from a host-owned route, because the widget's own
-     * relative imports (`./main.js`) resolve against the URL it was fetched from. Serving the entry anywhere else
-     * would break every relative reference in it.
-     */
-    if (file.contentType.startsWith("text/html")) {
-      const nonce = randomUUID().replaceAll("-", "");
-      const appOrigin = process.env["CC_APP_ORIGIN"] ?? `http://${request.headers["host"] ?? "127.0.0.1"}`;
-      const document = widgetDocument({
-        html: file.bytes.toString("utf8"),
-        appOrigin,
-        nonce,
-      });
-      return {
-        status: 200,
-        body: null,
-        binary: {
-          bytes: Buffer.from(document, "utf8"),
-          contentType: file.contentType,
-          headers: { "content-security-policy": widgetDocumentPolicy({ appOrigin, nonce }) },
-        },
-      };
-    }
-
-    return { status: 200, body: null, binary: { bytes: file.bytes, contentType: file.contentType } };
-  }
 
   /*
    * A package's files, reached through a frame grant.
