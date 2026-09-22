@@ -16,7 +16,15 @@ import type { Instant } from "@clarkcant/contracts";
 export interface WorkerBrief {
   /** Bounded task description. Context is curated, not dumped. */
   goal: string;
-  /** Directories the worker may touch, already policy-approved. */
+  /**
+   * Directories the worker may touch, already policy-approved.
+   *
+   * An enforced boundary rather than a description of intent. A brief that declares
+   * `confineToProjectRoots` runs with the SDK's own file tools left out of its allowlist and only the
+   * scoped `read`/`grep`/`find`/`ls` tools registered, each of which canonicalises the path against these
+   * roots — through `scoped-fs.ts` — before it touches the filesystem. An empty list is the conversation
+   * path, which reads no file of its own.
+   */
   projectRoots: string[];
   /** Capability refs the worker may call. Anything else is not registered. */
   allowedCapabilityRefs: string[];
@@ -30,6 +38,16 @@ export interface WorkerBrief {
    * invents them.
    */
   customTools?: readonly ToolDefinition[];
+  /**
+   * Whether this session may reach the filesystem only through the scoped tools built from `projectRoots`.
+   *
+   * A project worker is a session whose reach is a directory a person chose. The runtime builds the scoped
+   * tools from the approved roots and sets this, and the adapter then leaves the SDK's own
+   * `read`/`grep`/`find`/`ls` out of the allowlist and refuses to register a tool afterwards: the boundary is
+   * enforced where the act happens, not promised in a prompt. A brief that declares it without carrying the
+   * scoped tools is refused by name rather than started with no filesystem tool at all.
+   */
+  confineToProjectRoots?: boolean;
   /** Token budget for the run. */
   maxTokens?: number;
   maxWallClockMs?: number;

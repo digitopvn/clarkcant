@@ -8,8 +8,11 @@ import {
   FakePiAdapter,
   RealPiAdapter,
   READ_ONLY_TOOLS,
+  SCOPED_FS_TOOL_NAMES,
   mapPiEvent,
   type RealPiAdapterOptions,
+  type ToolDefinition,
+  type WorkerBrief,
 } from "../src/index.ts";
 import { toSdkTool } from "../src/real.ts";
 
@@ -204,6 +207,14 @@ describe("SDK event mapping", () => {
  */
 function stubSdk(options: { idleDelayMs?: number } = {}) {
   const prompts: string[] = [];
+  /**
+   * The options each session was created with, which is where the tool allowlist travels.
+   *
+   * Recorded rather than inferred: the one option that decides whether a confined worker has the SDK's
+   * own `read` and `grep` at all is the allowlist the adapter passes here, and a test that assumed it
+   * would be proving the adapter's intentions rather than its behaviour.
+   */
+  const sessions: { tools?: string[]; customTools?: { name: string }[] }[] = [];
   let aborts = 0;
   let release: (() => void) | undefined;
   let idleTimer: ReturnType<typeof setTimeout> | undefined;
@@ -247,11 +258,17 @@ function stubSdk(options: { idleDelayMs?: number } = {}) {
       }
     },
     SessionManager: { inMemory: () => ({}), create: () => ({}) },
-    createAgentSession: async () => ({ session }),
+    // The SDK's `defineTool` is an identity function at runtime, and the stub keeps that: a captured custom
+    // tool is then the object the adapter handed over rather than a stand-in for it.
+    defineTool: (config: unknown) => config,
+    createAgentSession: async (options: { tools?: string[]; customTools?: { name: string }[] }) => {
+      sessions.push(options);
+      return { session };
+    },
     ModelRuntime: { create: async () => ({ getModels: () => [], getProviders: () => [] }) },
   };
 
-  return { module: module_, prompts, aborts: () => aborts };
+  return { module: module_, prompts, aborts: () => aborts, sessions };
 }
 
 function adapterWith(sdk: ReturnType<typeof stubSdk>): RealPiAdapter {
@@ -422,6 +439,73 @@ describe("pi's own settings", () => {
     rmSync(join(dir, "settings.json"));
     expect(await adapter.piSettings()).toEqual([]);
     rmSync(dir, { recursive: true, force: true });
+  });
+});
+
+/**
+ * A worker confined to its approved project roots (Phase 2).
+ *
+ * The spike settled that the SDK's `tools` option is a hard allowlist gating built-in and custom tools
+ * alike. What these tests pin is what this adapter does with that fact: a confined brief runs with the
+ * scoped tools and none of the SDK's own, a brief that claims confinement without carrying them is
+ * refused by name, and no tool can be added to a confined session afterwards — which is the path the
+ * spike named as the one that would quietly undo the boundary.
+ */
+describe("a brief confined to its approved project roots", () => {
+  const scoped = (name: string): ToolDefinition => ({
+    name,
+    label: name,
+    description: `${name} stays inside the approved roots`,
+    promptSnippet: `${name}: inside the approved roots`,
+    parameters: { type: "object", additionalProperties: false, properties: {} },
+    execute: async () => ({ text: "not called in these tests" }),
+  });
+
+  const confinedBrief = (): WorkerBrief => ({
+    goal: "work in the project",
+    projectRoots: ["/tmp/project"],
+    allowedCapabilityRefs: [],
+    confineToProjectRoots: true,
+    customTools: SCOPED_FS_TOOL_NAMES.map(scoped),
+  });
+
+  it("runs with the scoped tools and leaves the SDK's own file tools out of the allowlist", async () => {
+    const sdk = stubSdk();
+    const adapter = adapterWith(sdk);
+
+    await adapter.createWorkerSession(confinedBrief());
+
+    const created = sdk.sessions[0];
+    expect(created?.tools).toEqual([...SCOPED_FS_TOOL_NAMES]);
+    // The adapter's own default is the read-only built-in set, so a built-in being absent here is this
+    // adapter's doing rather than the default's.
+    expect(created?.tools).not.toContain("read");
+    expect(created?.customTools?.map((custom) => custom.name)).toEqual([...SCOPED_FS_TOOL_NAMES]);
+  });
+
+  it("refuses a brief that declares confinement without the scoped tools", async () => {
+    const adapter = adapterWith(stubSdk());
+
+    // Fail closed and say so: a session that is confined with no filesystem tool at all is a
+    // configuration error, not a constraint somebody chose.
+    await expect(
+      adapter.createWorkerSession({
+        goal: "work in the project",
+        projectRoots: ["/tmp/project"],
+        allowedCapabilityRefs: [],
+        confineToProjectRoots: true,
+      }),
+    ).rejects.toThrow(/carries no clarkcant_read/);
+  });
+
+  it("refuses to register another tool on a confined session", async () => {
+    const sdk = stubSdk();
+    const adapter = adapterWith(sdk);
+    const handle = await adapter.createWorkerSession(confinedBrief());
+
+    await expect(adapter.registerTool(handle.sessionId, scoped("something_else"))).rejects.toThrow(
+      /confined to its approved project roots/,
+    );
   });
 });
 

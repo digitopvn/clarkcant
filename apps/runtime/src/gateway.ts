@@ -3160,9 +3160,18 @@ async function handleConversationRoutes(
     }
 
     const context = projectContext(resolution.project);
+    /*
+     * The approved roots for this session, passed whole rather than as their first element.
+     *
+     * `projectRoots` is the boundary the session's file tools are confined to, so the array is the contract:
+     * the starter canonicalises every entry and the tools admit paths under all of them. A resolution carries
+     * exactly one root today — the directory the finder verified, and the only root granted (see
+     * `api.spec.ts`) — and a resolution that carried more would need no change here.
+     */
+    const approvedRoots = [resolution.project.path];
     const session = await services.projectSessions.start({
       goal: initialPrompt(text, resolution.project.name, context),
-      projectRoots: [resolution.project.path],
+      projectRoots: approvedRoots,
     });
     markProjectUsed(services.projects, resolution.project.projectId);
 
