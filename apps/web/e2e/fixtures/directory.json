@@ -77,5 +77,44 @@
     "riskTier": "isolated-ui",
     "sizeBytes": 2048,
     "digest": "sha256:frame-widget-digest"
+  },
+  {
+    "packageId": "com.example.chart-widget",
+    "version": "1.0.0",
+    "displayName": "Chart widget",
+    "description": "A chart a package declares, rendered by the catalog's own renderer.",
+    "source": {
+      "kind": "local",
+      "path": "apps/web/e2e/fixtures/chart-widget"
+    },
+    "publisher": {
+      "id": "example",
+      "sourceUrl": "https://example.com",
+      "license": "MIT"
+    },
+    "preview": {},
+    "facets": [
+      "ui"
+    ],
+    "isolations": [
+      {
+        "facetKind": "ui",
+        "isolation": "isolated-ui"
+      }
+    ],
+    "platforms": [
+      "darwin-arm64",
+      "linux-x64",
+      "win32-x64",
+      "web"
+    ],
+    "hostApi": {
+      "min": 1,
+      "max": 1
+    },
+    "permissionsSummary": [],
+    "riskTier": "isolated-ui",
+    "sizeBytes": 2048,
+    "digest": "sha256:chart-widget-digest"
   }
 ]
