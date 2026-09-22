@@ -22,7 +22,6 @@ import {
   type MessageBlock,
   type MessageRecord,
   type Principal,
-  ATTACHMENT_LIMITS,
   appIntentConfirmRequestSchema,
   appIntentRequestSchema,
   commandEnvelopeSchema,
@@ -31,9 +30,7 @@ import {
   instantSchema,
   platformForHost,
   protocolRangeSchema,
-  redactSecrets,
   surfaceCompositionSpecSchema,
-  validateAttachmentCandidate,
 } from "@clarkcant/contracts";
 import {
   EXECUTION_POLICY_PREFERENCE_KEY,
@@ -79,16 +76,13 @@ import {
 import {
   type CalendarEventRecord,
   appendMessage,
-  attachmentUsageForPrincipal,
   createConversation,
   findBundleForSnapshot,
   findCompositionByInstance,
   getArtifact,
-  getAttachment,
   getConversation,
   getDatasetForPrincipal,
   getLocalImage,
-  insertAttachment,
   listCalendarEvents,
   listConversations,
   listLocalImages,
@@ -135,15 +129,17 @@ import {
   resolveLiveSections,
   updateLocalEvent,
 } from "./mini-app-data.ts";
-import { blobPathForDigest, readBlob, sniffContentType, writeBlob } from "./blobs.ts";
-import { attachmentRefFromRecord, resolveAttachmentRefs } from "./attachments.ts";
+import { readBlob } from "./blobs.ts";
+import { resolveAttachmentRefs } from "./attachments.ts";
 import { markProjectUsed, projectContext, resolveProject } from "./project-finder.ts";
 import { receiptForModel, runApprovedCommand, stopRunningCommands } from "./run-command.ts";
 import { initialPrompt } from "./project-session.ts";
 import { indexMessages, ingestSessionEntries, searchSessions, textOfMessage } from "./session-search.ts";
 import { type NodeServices, buildTimeline } from "./services.ts";
 import { availableCredentials } from "./readiness.ts";
+import { handleAttachmentRoutes } from "./routes/attachments.ts";
 import { type GatewayRequest, type GatewayResponse, bearer, fail, json, readJson, tokenMatches } from "./routes/http.ts";
+import { handlePreviewRoutes } from "./routes/previews.ts";
 import { handlePairingRoutes, handlePeerUplinkRoutes } from "./routes/peers.ts";
 
 export type { GatewayRequest, GatewayResponse } from "./routes/http.ts";
@@ -732,11 +728,11 @@ export async function handleRequest(deps: GatewayDeps, request: GatewayRequest):
   }
 
   if (segments[0] === "attachments") {
-    return handleAttachmentRoutes(deps, request, segments, at);
+    return handleAttachmentRoutes({ services, request, segments, at });
   }
 
   if (segments[0] === "previews") {
-    return handlePreviewRoutes(deps, request, segments);
+    return handlePreviewRoutes({ services, request, segments });
   }
 
   if (segments[0] === "search") {
@@ -1926,180 +1922,6 @@ async function handleSearchRoutes(
  * not exist. Distinguishing the two would turn this route into a way to enumerate another
  * principal's calendar.
  */
-/**
- * Files a person attached, and the bytes they point at.
- *
- * Three properties, each of which a different route would lose:
- *
- * - **The bytes decide the type.** The declared content type is a claim, and `sniffContentType` is
- *   what makes it a fact; a mismatch is refused rather than stored under the type the client asked
- *   for, so nothing here can be served back as something executable.
- * - **A reference is not a location.** The answer carries `attachmentId` and a content-addressed
- *   `blobRef`, never the path on this node. The path stays in the row and is re-checked against the
- *   blob root before anything is opened.
- * - **A name is text a person typed.** It is redacted before it is stored as well as before it is
- *   returned, because that is where a credential turns up.
- */
-/**
- * A captured frame of a session, served to the client that owns it.
- *
- * Content-addressed like an artifact, and reachable by this node's own principal rather than by a peer: a frame is
- * a picture of somebody's screen, so the boundary is who is asking, not which machine. The digest is resolved
- * through the blob store's own guard instead of being joined to a path here — the same rule the artifact route
- * follows, for the same reason — and the type is sniffed from the bytes, so a frame cannot be served under a type it
- * does not have.
- *
- * A digest this node does not hold and a string that was never a digest get the same answer, so the route cannot be
- * used to ask what this machine has.
- */
-function handlePreviewRoutes(deps: GatewayDeps, request: GatewayRequest, segments: string[]): GatewayResponse {
-  if (request.method !== "GET" || segments.length !== 2) {
-    return fail(404, "RESOURCE_NOT_FOUND", "no such route");
-  }
-  const { runtime } = deps.services;
-  const blobPath = blobPathForDigest({ dataDir: runtime.dataDir, digest: decodeURIComponent(segments[1] ?? "") });
-  if (blobPath === undefined) {
-    return fail(404, "PREVIEW_NOT_FOUND", "this node holds no frame with that digest");
-  }
-  const blob = readBlob({ dataDir: runtime.dataDir, blobPath });
-  if (!blob.ok) return fail(404, "PREVIEW_NOT_FOUND", "that frame could not be read");
-  const sniffed = sniffContentType(blob.bytes, "application/octet-stream");
-  return {
-    status: 200,
-    body: null,
-    binary: {
-      bytes: blob.bytes,
-      contentType: sniffed.ok ? sniffed.mime : "application/octet-stream",
-      // A frame is a picture of a screen: never cached, because a cached one is a stale one presented as current.
-      headers: { "cache-control": "no-store" },
-    },
-  };
-}
-
-function handleAttachmentRoutes(
-  deps: GatewayDeps,
-  request: GatewayRequest,
-  segments: string[],
-  at: () => string,
-): GatewayResponse {
-  const { runtime, conductor } = deps.services;
-  const principalId = runtime.identity.ownerPrincipalId;
-
-  if (segments.length === 1 && request.method === "POST") {
-    const parsed = readJson(request);
-    if (!parsed.ok) return parsed.response;
-
-    const conversationId = typeof parsed.value.conversationId === "string" ? parsed.value.conversationId : "";
-    const filename = typeof parsed.value.filename === "string" ? parsed.value.filename : "";
-    const mime = typeof parsed.value.mime === "string" ? parsed.value.mime : "";
-    const contentBase64 = typeof parsed.value.contentBase64 === "string" ? parsed.value.contentBase64 : "";
-    if (conversationId === "" || contentBase64 === "") {
-      return fail(
-        400,
-        "INVALID_SCHEMA",
-        "an upload needs a conversationId, a filename, a content type and contentBase64",
-      );
-    }
-    if (getConversation(runtime.db, conversationId) === undefined) {
-      return fail(404, "RESOURCE_NOT_FOUND", "that conversation is not on this node");
-    }
-
-    // Refused from the encoded length alone when that is already over the ceiling: a 100 MB base64
-    // string should not become a 75 MB buffer just to find out it was too big.
-    if (contentBase64.length > Math.ceil((ATTACHMENT_LIMITS.maxBytes * 4) / 3) + 1024) {
-      return fail(413, "ATTACHMENT_TOO_LARGE", `a file must be at most ${ATTACHMENT_LIMITS.maxBytes} bytes`);
-    }
-
-    const bytes = Buffer.from(contentBase64, "base64");
-    const sniffed = sniffContentType(bytes, mime);
-    if (!sniffed.ok) return fail(415, sniffed.code, sniffed.message);
-
-    const checked = validateAttachmentCandidate({
-      filename,
-      mime: sniffed.mime,
-      sizeBytes: bytes.byteLength,
-      usedBytes: attachmentUsageForPrincipal(runtime.db, principalId),
-    });
-    if (!checked.ok) return fail(attachmentRefusalStatus(checked.code), checked.code, checked.message);
-
-    const written = writeBlob({ dataDir: runtime.dataDir, bytes, extension: sniffed.extension });
-    const record = {
-      attachmentId: conductor.newId("att"),
-      principalId,
-      conversationId,
-      filename: redactSecrets(checked.filename),
-      mime: checked.mime,
-      kind: checked.kind,
-      sizeBytes: bytes.byteLength,
-      sha256: written.digest,
-      blobPath: written.blobPath,
-      createdAt: at(),
-    };
-    insertAttachment(runtime.db, record);
-    return { status: 201, body: { attachmentRef: attachmentRefFromRecord(record) } };
-  }
-
-  const attachmentId = decodeURIComponent(segments[1] ?? "");
-  if (attachmentId === "") {
-    return fail(400, "INVALID_SCHEMA", "an attachment route must name an attachment");
-  }
-
-  if (segments.length === 2 && request.method === "GET") {
-    const record = getAttachment(runtime.db, attachmentId, principalId);
-    // One answer for "no such attachment" and "not yours": distinguishing them would make this route
-    // a way to enumerate another principal's files.
-    if (record === undefined) return fail(404, "RESOURCE_NOT_FOUND", "that attachment is not on this node");
-    return json(200, { attachmentRef: attachmentRefFromRecord(record) });
-  }
-
-  if (segments.length === 3 && segments[2] === "content" && request.method === "GET") {
-    const record = getAttachment(runtime.db, attachmentId, principalId);
-    if (record === undefined) return fail(404, "RESOURCE_NOT_FOUND", "that attachment is not on this node");
-
-    const blob = readBlob({ dataDir: runtime.dataDir, blobPath: record.blobPath });
-    if (!blob.ok) {
-      return fail(blob.code === "BLOB_MISSING" ? 410 : 500, blob.code, blob.message);
-    }
-
-    // Only a picture or text may render in place. A pdf opens as a download, and nothing in the
-    // allowlist can become a document the browser would execute, which is what makes `inline` safe
-    // here rather than merely convenient.
-    const inline = record.kind === "image" || record.mime.startsWith("text/");
-    return {
-      status: 200,
-      body: null,
-      binary: {
-        bytes: blob.bytes,
-        contentType: record.mime,
-        headers: {
-          "x-content-type-options": "nosniff",
-          "content-disposition": `${inline ? "inline" : "attachment"}; filename="${dispositionName(record.filename)}"`,
-        },
-      },
-    };
-  }
-
-  return fail(404, "NOT_FOUND", `no handler for ${request.method} ${request.path}`);
-}
-
-/** Which status a refusal deserves, so the mapping exists once rather than at each branch. */
-function attachmentRefusalStatus(code: string): number {
-  if (code === "ATTACHMENT_NAME_NOT_ALLOWED") return 400;
-  if (code === "ATTACHMENT_TOO_LARGE") return 413;
-  if (code === "ATTACHMENT_QUOTA_EXCEEDED") return 409;
-  return 415;
-}
-
-/**
- * A file name safe to put in a header.
- *
- * Quotes, backslashes and line breaks are removed rather than escaped: a name is untrusted text, and
- * a header that can be broken out of is a response-splitting bug rather than a formatting problem.
- */
-function dispositionName(filename: string): string {
-  return filename.replaceAll(/["\\\r\n]/g, "").slice(0, 120);
-}
-
 function handleMiniAppDataRoutes(
   deps: GatewayDeps,
   request: GatewayRequest,
