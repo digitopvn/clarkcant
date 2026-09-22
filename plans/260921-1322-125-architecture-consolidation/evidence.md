@@ -517,7 +517,7 @@ Phase 1 implementation exists on branch `architecture-consolidation-unify-policy
 
 1. **Two out-of-scope file edits need justification or revert.** `packages/storage/src/audit.ts` (2 lines) and `apps/runtime/src/main.ts` (13 lines) are not in phase-01's file list; `main.ts` is Phase 4's surface. The worker was asked to justify or revert both. Its report was not retrieved before the controller interrupted the run, so this is unresolved.
 2. **`pnpm verify` and `pnpm verify:full` have not been run to completion by the controller.** Run them on the frozen tree before opening a PR.
-3. **AC-6 must be answered explicitly in the PR body:** did the command path (`apps/runtime/src/node-tools.ts`) end up calling `decideExecution`, or does it still use `policyForEffect` + `decideGuardrailForCommand`? Either answer is acceptable, but leaving two authorities unstated is not.
+3. ~~**AC-6 must be answered explicitly in the PR body.**~~ **RESOLVED by controller inspection, 2026-09-21.** The command path does call `decideExecution` (`apps/runtime/src/node-tools.ts`, 2 occurrences), and `policyForEffect` has been removed — the parity spec records that explicitly (`packages/core/test/execution-policy-parity.spec.ts:32`: *"`policyForEffect` is gone from the..."*). `decideGuardrailForCommand` is retained (defined at `:380`, called at `:693`) as the narrowing-only Jev judgment stage, which is the intended shape per AC-4: Jev is a stage inside the canonical policy, not a second authority. The PR body must still state this, but the answer is now known and it is the real unification.
 4. **Task 1.6 (one settings surface)** — confirm whether it was done or skipped; skipping is acceptable per AC-9.
 5. **Confirm the two prohibition tests exist** (prohibition produces neither execute nor ask absent a hard boundary; prohibition stands when a hard boundary is present) and that legacy-deny ledger rows show no execute/ask.
 6. **PR body must state this does not close #93/#2/#3/#4/#5 and contain no `Closes`/`Fixes` keyword for them** (AC-7).
@@ -526,3 +526,28 @@ Phase 1 implementation exists on branch `architecture-consolidation-unify-policy
 ### Why the controller stopped
 
 The controller's session context was exhausted for a six-PR program after Phase 1. Continuing would have produced unreliable, unverified work. Phases 2-6 and program closeout are untouched. The goal is paused; run `/goal-resume` to continue from this handoff.
+
+## Controller verification update — 2026-09-21 (post-commit `68eb4b5`)
+
+### `pnpm verify` — PASSED by the controller
+
+```
+Test Files  167 passed | 1 skipped (168)
+     Tests  2047 passed | 7 skipped (2054)
+  Duration  29.89s
+```
+
+`pnpm typecheck` (inside verify) exit 0; `pnpm invariants` and `pnpm lint` both clean. This is the controller's own run on the frozen tree, not the worker's report.
+
+### Out-of-scope edits — both RESOLVED as justified, not cleanup
+
+1. **`packages/storage/src/audit.ts`** adds `"policy"` to `AuditKind`. Required, and not dead code: the migration writes an audit event with `kind: "policy"` at `packages/core/src/execution-policy-migration.ts:350`. A migration that changes a node's authority silently would be unauditable, so the kind is load-bearing.
+2. **`apps/runtime/src/main.ts`** re-points the command tool's `autonomy` dependency from `readAutonomySettings(...)` to `readExecutionPolicy(...)` and drops the now-unused import. This is the AC-5 wiring site the phase-01 file list omitted: `node-tools` must receive the canonical policy, otherwise the resolver would be canonical while its only command caller still read the legacy row. Read at the proposal rather than at boot, so a mode change applies to the next command.
+
+### Task 1.6 status
+
+Not fully collapsed. `packages/conversation-client/src/settings/ControlSettings.tsx` no longer carries the "Two policies is one more than this product wants" note, and the legacy `execution.mode` / `autonomy-policy` references that remain are the compatibility readers the plan explicitly permits (`plan.md`: legacy keys stay readable so an un-updated client sees a policy rather than a blank panel). Reported as partial, not as done.
+
+### Still open
+
+`pnpm verify:full` (browser e2e) was run by the worker (118 passed, 1 skipped) but has not been reproduced by the controller on this exact commit. CI runs the e2e job on the PR, which will settle it.
