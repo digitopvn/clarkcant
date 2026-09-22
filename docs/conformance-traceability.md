@@ -14,20 +14,25 @@ test và giới hạn tương ứng; việc có test không chứng minh lần c
 This table is checked by `pnpm invariants`, which fails if any identifier is missing.
 A status here is never upgraded without the corresponding test appearing alongside it.
 
-**Trạng thái nay có nguồn máy đọc được.** Trạng thái của từng scope item (`V01`–`V18`) và
-của từng capability claim trong source code nằm trong
+**Trạng thái nay có nguồn máy đọc được.** Trạng thái của từng scope item (`V01`–`V18`) và của từng
+capability claim trong source code nằm trong
 [`packages/contracts/src/implementation-status.ts`](../packages/contracts/src/implementation-status.ts);
-bảng này là bản đọc được của cùng dữ liệu đó. `pnpm invariants` fail khi hai bên lệch nhau,
-khi một entry `implemented` không nêu test có thật — và tên test phải có trong chính file được
-nêu, nên “schema đã tồn tại” không đi qua được — khi entry `partial`/`blocked`/`not-implemented`
-không nêu điều còn thiếu, hoặc khi một dòng `PASS`/`PARTIAL` không chỉ ra được test title hay
-file spec tồn tại. Comment trong source chỉ trỏ về registry bằng `@status-ref <capabilityId>`,
-không tự khẳng định trạng thái.
+các dòng `V` của bảng này là bản đọc được của cùng dữ liệu đó. `pnpm invariants` fail khi hai bên
+lệch nhau, khi một entry `implemented` không nêu test có thật — và tên test phải có trong chính file
+được nêu, nên “schema đã tồn tại” không đi qua được — hoặc khi entry
+`partial`/`blocked`/`not-implemented` không nêu điều còn thiếu. Các dòng `T01`–`T73` **không** có
+entry tương ứng trong registry: chúng vẫn chỉ được kiểm bằng sự có mặt của id và bằng những test
+title được trích trong bảng, nên một title được trích phải tồn tại trong repo — còn một dòng chỉ nêu
+đường dẫn spec thì chưa được đối chiếu với ca test cụ thể nào. Comment trong source chỉ trỏ về
+registry bằng `@status-ref <capabilityId>`, không tự khẳng định trạng thái.
 
-**External gate vẫn mở.** #2 (tài khoản Google Calendar thật), #3 (Computer Use signing),
-#4 (voice provider thật), #5 (NodeLink hai host thật) và #93 (isolated widget trust hardening)
-vẫn mở và vẫn được link; không dòng nào ở đây được nâng trạng thái vì một fixture chạy xanh.
-Registry mang issue number cùng lý do còn thiếu cho từng gate.
+**External gate vẫn mở.** #2 (tài khoản Google Calendar thật), #3 (Computer Use signing), #4 (voice
+provider thật) và #5 (NodeLink hai host thật) vẫn mở và vẫn được link; không dòng nào ở đây được nâng
+trạng thái vì một fixture chạy xanh. Registry mang issue number cùng lý do còn thiếu cho từng gate.
+
+Phần chưa chứng minh được của widget được gọi tên ngay tại gap, không mượn trạng thái của một issue:
+bộ conformance còn để `detach` chưa kiểm vì sản phẩm chưa có cửa sổ host tách rời, và
+`voiceClickParity` vì chưa có phiên voice nào chạy — nên `V12` vẫn là `PARTIAL`.
 
 ## Acceptance tests
 
