@@ -1,14 +1,16 @@
-import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rename, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import {
+  SCOPED_FS_LIMITS,
   SCOPED_FS_TOOL_NAMES,
   canonicalRoots,
   createScopedFsTools,
   resolveInsideRoots,
+  type ApprovedRoot,
   type ToolDefinition,
 } from "../src/index.ts";
 
@@ -68,14 +70,16 @@ afterEach(async () => {
 });
 
 /** The canonical form of the given roots, asserting none of them was refused. */
-async function approved(...paths: string[]): Promise<string[]> {
+async function approved(...paths: string[]): Promise<ApprovedRoot[]> {
   const canonical = await canonicalRoots(paths);
   expect(canonical.refused).toEqual([]);
-  return [...canonical.roots];
+  // The approval record rather than the paths: it carries the identity each root had when it was approved,
+  // which is what every resolution re-checks.
+  return [...canonical.approved];
 }
 
-/** One of the four tools, bound to a canonical root set, by name. */
-function tool(roots: readonly string[], name: string): ToolDefinition {
+/** One of the four tools, bound to an approved root set, by name. */
+function tool(roots: readonly ApprovedRoot[], name: string): ToolDefinition {
   const found = createScopedFsTools({ roots }).find((entry) => entry.name === name);
   if (found === undefined) throw new Error(`${name} is not one of the scoped tools`);
   return found;
@@ -145,13 +149,70 @@ describe("the boundary an approved root describes", () => {
   });
 
   it("refuses an approved root that is no longer the directory that was approved", async () => {
-    const alias = join(base, "alias-to-project-b");
-    await symlink(projectB, alias, "dir");
+    const roots = await approved(projectA);
 
-    const verdict = await resolveInsideRoots([alias], join(projectB, "other.md"));
+    // The name stays where it was and something else now answers to it: a symlink to another directory.
+    await rm(projectA, { recursive: true, force: true });
+    await symlink(projectB, projectA, "dir");
+
+    const verdict = await resolveInsideRoots(roots, join(projectB, "other.md"));
 
     expect(verdict.ok).toBe(false);
     expect(verdict.ok === false && verdict.reason).toMatch(/no longer the directory that was approved/);
+  });
+
+  it("refuses a root that was replaced in place after it was approved", async () => {
+    const roots = await approved(projectA);
+
+    /*
+     * The failure a string comparison cannot see: the directory is moved out of the way and a *different*
+     * directory is created under the same name. `realpath` answers with the same path it did at approval, so
+     * only the inode shows that the directory is not the one that was approved.
+     */
+    await rename(projectA, join(base, "project-a-moved"));
+    await mkdir(projectA, { recursive: true });
+    await writeFile(join(projectA, "planted.txt"), "planted after approval\n", "utf8");
+
+    const verdict = await resolveInsideRoots(roots, join(projectA, "planted.txt"));
+
+    expect(verdict.ok).toBe(false);
+    expect(verdict.ok === false && verdict.reason).toMatch(/different directory than the one that was approved/);
+  });
+
+  it("refuses a path whose component is a symlink with no target", async () => {
+    const roots = await approved(projectA);
+    // A symlink to a path that does not exist: the platform would resolve the rest of the path against the
+    // link's target, so the segments after it cannot be joined to this path and admitted.
+    await symlink(join(projectA, "not-there"), join(projectA, "dangle"), "dir");
+
+    const verdict = await resolveInsideRoots(roots, join(projectA, "dangle", "child.txt"));
+
+    expect(verdict.ok).toBe(false);
+    expect(verdict.ok === false && verdict.reason).toMatch(/symlink whose target does not resolve/);
+  });
+
+  it("admits a file that is not there yet, so a truthful not-found is still possible", async () => {
+    const roots = await approved(projectA);
+
+    const verdict = await resolveInsideRoots(roots, join(projectA, "sub", "not-written.txt"));
+
+    // A component that simply does not exist is not an escape: the path stays inside the root and the tool
+    // reports that there is nothing there, which is a fact about the file rather than about the boundary.
+    expect(verdict.ok).toBe(true);
+    expect(verdict.ok && verdict.path).toBe(join(projectA, "sub", "not-written.txt"));
+  });
+
+  it("keeps a directory whose name begins with two dots", async () => {
+    await mkdir(join(projectA, "..dots"), { recursive: true });
+    await writeFile(join(projectA, "..dots", "inside.txt"), "inside a dots directory\n", "utf8");
+    const roots = await approved(projectA);
+
+    const verdict = await resolveInsideRoots(roots, join(projectA, "..dots", "inside.txt"));
+
+    // `..dots` climbs nowhere. Refusing it would refuse a file that is inside the root, and a boundary that
+    // refuses more than it must is a boundary people route around.
+    expect(verdict.ok).toBe(true);
+    expect(verdict.ok && verdict.path).toBe(join(projectA, "..dots", "inside.txt"));
   });
 
   it("reports a root it cannot use instead of dropping it silently", async () => {
@@ -184,8 +245,8 @@ describe("the boundary an approved root describes", () => {
 });
 
 describe("the scoped tools", () => {
-  it("registers exactly the four filesystem tools the boundary is made of", () => {
-    const tools = createScopedFsTools({ roots: [projectA] });
+  it("registers exactly the four filesystem tools the boundary is made of", async () => {
+    const tools = createScopedFsTools({ roots: await approved(projectA) });
 
     expect(tools.map((entry) => entry.name)).toEqual([...SCOPED_FS_TOOL_NAMES]);
     // A snippet is what puts a tool in the system prompt's tool list; without one the model is told it has
@@ -227,6 +288,58 @@ describe("the scoped tools", () => {
     expect(result.text).toContain("the first 100 are shown");
     expect(result.text.length).toBeLessThan(5_000);
   });
+
+  it("holds a read to the per-tool output bound, not only to the per-file one", async () => {
+    const roots = await approved(projectA);
+    // Comfortably larger than `maxOutputBytes` and smaller than `maxFileBytes`: the file bound alone would
+    // hand the whole of it over as one tool's output.
+    const size = 200_000;
+    await writeFile(join(projectA, "huge.txt"), "y".repeat(size), "utf8");
+    const read = tool(roots, "clarkcant_read");
+
+    const result = await read.execute({ path: join(projectA, "huge.txt") });
+
+    expect(Buffer.byteLength(result.text, "utf8")).toBeLessThanOrEqual(SCOPED_FS_LIMITS.maxOutputBytes);
+    expect(result.text).toContain(String(SCOPED_FS_LIMITS.maxOutputBytes));
+  });
+
+  it("refuses a read of a symlink whose target is not there, rather than following it", async () => {
+    const roots = await approved(projectA);
+    await symlink(join(projectA, "not-there.txt"), join(projectA, "dangling.txt"));
+    const read = tool(roots, "clarkcant_read");
+
+    const result = await read.execute({ path: join(projectA, "dangling.txt") });
+
+    expect(result.text).toMatch(/^refused: /);
+    expect(result.text).toContain("dangling.txt");
+  });
+
+  it("returns no match from a search that has to stop its matching thread", async () => {
+    const roots = await approved(projectA);
+    /*
+     * A catastrophic pattern: `^(a+)+$` against `a`s that end in a `b` backtracks for longer than this test
+     * will live, and a synchronous match would hold the whole event loop rather than one call. The clock the
+     * tool is held to is what has to answer, and the ticker below is what proves the loop stayed free: a
+     * pattern matched in this process would starve it.
+     */
+    await writeFile(join(projectA, "catastrophic.txt"), `${"a".repeat(8_000)}b\n`, "utf8");
+    const grep = tool(roots, "clarkcant_grep");
+    let ticks = 0;
+    const ticker = setInterval(() => {
+      ticks += 1;
+    }, 25);
+
+    const started = Date.now();
+    const result = await grep.execute({ pattern: "^(a+)+$", path: projectA });
+    const elapsed = Date.now() - started;
+    clearInterval(ticker);
+
+    expect(result.text).toMatch(/^refused: /);
+    expect(result.text).toContain("matching budget");
+    // The budget is a wall-clock bound: the call answers shortly after it, rather than never.
+    expect(elapsed).toBeLessThan(SCOPED_FS_LIMITS.maxGrepMatchMs + 5_000);
+    expect(ticks).toBeGreaterThan(2);
+  }, 30_000);
 
   it("labels a search that was cut at the match bound", async () => {
     const roots = await approved(projectA);

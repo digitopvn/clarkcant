@@ -101,7 +101,9 @@ export function createProjectSessionStarter(options: ProjectSessionOptions): Pro
         // What makes it a boundary rather than a note: the adapter runs this session with the SDK's own
         // read/grep/find/ls absent from its allowlist, and these four tools are the whole filesystem surface left.
         confineToProjectRoots: true,
-        customTools: createScopedFsTools({ roots }),
+        // Built from the approval record rather than from the paths, so each tool re-checks the identity the
+        // kernel gave the directory here rather than a name that something else could answer to later.
+        customTools: createScopedFsTools({ roots: approved.approved }),
       };
 
       const handle = await adapter.createWorkerSession(brief);

@@ -1,6 +1,8 @@
-import { open, readdir, readFile, realpath, stat } from "node:fs/promises";
+import { constants } from "node:fs";
+import { lstat, open, readdir, realpath, stat, type FileHandle } from "node:fs/promises";
 import { dirname, isAbsolute, join, parse, relative, sep } from "node:path";
 
+import { startGrepMatcher } from "./grep-matcher.ts";
 import type { ToolDefinition } from "./types.ts";
 
 /**
@@ -10,17 +12,26 @@ import type { ToolDefinition } from "./types.ts";
  * worker may read `/etc/passwd` is not a matter of mode or consent, it is the host's capability
  * boundary. `decideExecution` is deliberately not involved, and this module does not import it.
  *
- * Three properties make the check worth trusting rather than decorative:
+ * Four properties make the check worth trusting rather than decorative:
  *
  * 1. **Both sides are canonical.** A root and a candidate are put through `fs.realpath` before they are
- *    compared, so `..`, a symlink and a bind mount are all resolved by the platform rather than by string
- *    arithmetic. Comparing the strings the user typed would accept `/root/link/../../etc` whenever the
- *    lexical form happened to land inside.
+ *    compared, so `..` and a symlink are resolved by the platform rather than by string arithmetic.
+ *    Comparing the strings the user typed would accept `/root/link/../../etc` whenever the lexical form
+ *    happened to land inside. `realpath` does not detect a bind mount: a mount over the approved path is
+ *    caught below only when a *different* directory is mounted there, not when the approved directory is
+ *    mounted over itself.
  * 2. **The candidate is walked the way the kernel walks it.** Each component is resolved before the next
  *    one is joined, so `..` after a symlink climbs out of the symlink's *target* rather than out of its
  *    name — the case a lexical `path.resolve` gets wrong in the permissive direction.
- * 3. **A root has an identity.** If the approved path no longer canonicalises to itself, something else
- *    now stands in its place, and nothing under it is the directory that was approved.
+ * 3. **A root has an identity.** Approval records the `{ dev, ino }` the kernel gave the directory, and
+ *    every resolution re-compares it. A symlink or a mount standing at the approved path changes what
+ *    `realpath` answers; a rename followed by a directory created at the same name leaves the canonical
+ *    path identical and only the inode different. Both are refused, because nothing under either is the
+ *    directory that was approved.
+ * 4. **The file that is read is the file that was checked.** Containment is decided on a path and the
+ *    kernel opens whatever stands there when the call is made, so every read opens with `O_NOFOLLOW` and
+ *    `fstat`s the descriptor it got: a descriptor that is not the file the path resolved to is refused
+ *    rather than read.
  *
  * The four tools below are ClarkCant's own `read`/`grep`/`find`/`ls`. They exist because the SDK's
  * built-in ones resolve paths themselves: a project worker runs with those left out of its allowlist
@@ -34,9 +45,26 @@ export interface RefusedRoot {
   readonly reason: string;
 }
 
-/** The roots a session may touch, canonicalised, plus the ones that were refused and why. */
+/**
+ * A root as it was approved: the directory, and the identity the kernel gave it at that moment.
+ *
+ * `dev` and `ino` are what `stat` reports for the directory itself rather than for its name, which is what
+ * makes an in-place replacement detectable: `mv root root-away && mkdir root` (or a rename followed by a
+ * recreate) leaves the name where it was while the directory behind it is a different one, and comparing
+ * paths cannot tell the two apart.
+ */
+export interface ApprovedRoot {
+  readonly path: string;
+  readonly dev: number;
+  readonly ino: number;
+}
+
+/** The roots a session may touch, canonicalised and identified, plus the ones refused and why. */
 export interface CanonicalRoots {
+  /** The approved directories, in approval order, canonical. */
   readonly roots: readonly string[];
+  /** The same roots with the identity captured at approval, which every resolution re-checks. */
+  readonly approved: readonly ApprovedRoot[];
   readonly refused: readonly RefusedRoot[];
 }
 
@@ -55,6 +83,14 @@ export const SCOPED_FS_LIMITS = {
   maxFileBytes: 262_144,
   /** Bytes of one tool's output. */
   maxOutputBytes: 65_536,
+  /**
+   * Milliseconds one grep's matching may spend before its thread is terminated.
+   *
+   * A JavaScript regular expression is not a function of its input's length: `^(a+)+$` against a long line of
+   * `a`s backtracks for longer than the process lives, and a synchronous `RegExp.test` cannot be interrupted by
+   * a timer. The match runs in a thread this process can kill, and this is the clock that kills it.
+   */
+  maxGrepMatchMs: 5_000,
   /** Matches one grep returns. */
   maxMatches: 100,
   /** Directory entries one traversal visits. */
@@ -82,7 +118,9 @@ function describeCause(cause: unknown): string {
 function isWithin(root: string, candidate: string): boolean {
   if (root === candidate) return true;
   const rel = relative(root, candidate);
-  return rel !== "" && !rel.startsWith("..") && !isAbsolute(rel);
+  // `..` and the separator after it, not any name that merely begins with two dots: a directory called
+  // `..dots` is inside the root, and a boundary that refuses more than it must gets routed around.
+  return rel !== "" && rel !== ".." && !rel.startsWith(`..${sep}`) && !isAbsolute(rel);
 }
 
 /**
@@ -93,7 +131,7 @@ function isWithin(root: string, candidate: string): boolean {
  * unusable one would refuse every path for a reason nobody could find.
  */
 export async function canonicalRoots(roots: readonly string[]): Promise<CanonicalRoots> {
-  const canonical: string[] = [];
+  const approved: ApprovedRoot[] = [];
   const refused: RefusedRoot[] = [];
 
   for (const root of roots) {
@@ -113,21 +151,30 @@ export async function canonicalRoots(roots: readonly string[]): Promise<Canonica
       refused.push({ root, reason: `it is not a directory (${here})` });
       continue;
     }
+    // The identity is captured here, at the moment of approval, because this is the only moment at which
+    // "the directory that was approved" is still unambiguously the directory at this path.
     // Deduplicated after canonicalisation, so `/root` and `/root/` and a symlink to `/root` are one root.
-    if (!canonical.includes(here)) canonical.push(here);
+    if (!approved.some((entry) => entry.path === here)) {
+      approved.push({ path: here, dev: info.dev, ino: info.ino });
+    }
   }
 
-  return { roots: canonical, refused };
+  return { roots: approved.map((entry) => entry.path), approved, refused };
 }
 
 /**
  * Walk a path the way the platform resolves it, so that containment is checked on the real target.
  *
- * Once a component does not exist, the walk stops resolving and the remaining segments are joined
- * lexically: a path that names a file nobody created yet is still a legal path *inside* the root, and
- * the caller gets a truthful "not found" instead of a containment refusal. A `..` after such a
- * component is refused, because the platform would refuse it too — the missing component has to exist
- * to be climbed out of.
+ * Once a component is genuinely absent, the walk stops resolving and the remaining segments are joined to the
+ * canonical path reached so far: a path that names a file nobody created yet is still a legal path *inside*
+ * the root, and the caller gets a truthful "not found" instead of a containment refusal. A `..` after such a
+ * component is refused, because the platform would refuse it too — the missing component has to exist to be
+ * climbed out of.
+ *
+ * A component `stat` cannot follow is looked at with `lstat` before it is called absent. A symlink whose
+ * target does not exist is not a missing file: the platform would resolve the rest of the path against a
+ * target that is not there, so those segments cannot be joined to this path and admitted as if they were
+ * inside the root. The path is refused instead.
  */
 async function walkPath(base: string, segments: readonly string[]): Promise<InsideRoots> {
   let current = base;
@@ -156,6 +203,13 @@ async function walkPath(base: string, segments: readonly string[]): Promise<Insi
     const candidate = join(current, segment);
     const info = await stat(candidate).catch(() => undefined);
     if (info === undefined) {
+      const link = await lstat(candidate).catch(() => undefined);
+      if (link?.isSymbolicLink() === true) {
+        return {
+          ok: false,
+          reason: `"${candidate}" is a symlink whose target does not resolve, so the rest of this path is not a known path inside an approved root`,
+        };
+      }
       missing = segment;
       current = candidate;
       continue;
@@ -175,13 +229,13 @@ async function walkPath(base: string, segments: readonly string[]): Promise<Insi
 /**
  * Resolve a candidate against the approved roots.
  *
- * `roots` are canonical, as `canonicalRoots` produced them. A relative path is taken against the first
- * approved root and never against the process working directory: a working directory is a convenience
- * the platform hands a process, not a boundary, and a boundary that moved with `process.cwd()` would be
- * no boundary at all.
+ * `roots` are approved, as `canonicalRoots` produced them: canonical paths with the identity each had when it
+ * was approved. A relative path is taken against the first approved root and never against the process
+ * working directory: a working directory is a convenience the platform hands a process, not a boundary, and a
+ * boundary that moved with `process.cwd()` would be no boundary at all.
  */
 export async function resolveInsideRoots(
-  roots: readonly string[],
+  roots: readonly ApprovedRoot[],
   path: string,
 ): Promise<InsideRoots> {
   const first = roots[0];
@@ -195,42 +249,108 @@ export async function resolveInsideRoots(
   /*
    * Root identity, checked for every approved root before anything is admitted.
    *
-   * A root that no longer canonicalises to itself has been replaced — by a symlink, another mount, or
-   * a caller that never canonicalised — so a path under the approved string would be a path in some
-   * other directory. This runs first rather than only when a candidate matches, because the failure it
-   * catches is the root's, not the candidate's.
+   * Two different things can stand in an approved path's place, and only the first is visible as a path: a
+   * symlink or a mount changes what `realpath` answers, while a rename followed by a directory created at the
+   * same name leaves the canonical path identical and only the inode different. Both are refused, because
+   * nothing under either is the directory that was approved. This runs first rather than only when a candidate
+   * matches, because the failure it catches is the root's, not the candidate's.
    */
   for (const root of roots) {
     let now: string;
     try {
-      now = await realpath(root);
+      now = await realpath(root.path);
     } catch (cause) {
       return {
         ok: false,
-        reason: `approved root "${root}" can no longer be resolved: ${describeCause(cause)}`,
+        reason: `approved root "${root.path}" can no longer be resolved: ${describeCause(cause)}`,
       };
     }
-    if (now !== root) {
+    if (now !== root.path) {
       return {
         ok: false,
-        reason: `approved root "${root}" now resolves to "${now}", so it is no longer the directory that was approved`,
+        reason: `approved root "${root.path}" now resolves to "${now}", so it is no longer the directory that was approved`,
+      };
+    }
+    const info = await stat(root.path).catch(() => undefined);
+    if (info === undefined) {
+      return {
+        ok: false,
+        reason: `approved root "${root.path}" is no longer there, so no path under it can be admitted`,
+      };
+    }
+    if (info.dev !== root.dev || info.ino !== root.ino) {
+      return {
+        ok: false,
+        reason: `approved root "${root.path}" is a different directory than the one that was approved (inode ${info.ino}, not ${root.ino}), so no path under it can be admitted`,
       };
     }
   }
 
   const root = isAbsolute(asked) ? parse(asked).root : "";
   const relativeToRoot = root === "" ? asked : asked.slice(root.length);
-  const walked = await walkPath(root === "" ? first : root, relativeToRoot.split(sep));
+  const walked = await walkPath(root === "" ? first.path : root, relativeToRoot.split(sep));
   if (!walked.ok) return walked;
 
-  if (!roots.some((approved) => isWithin(approved, walked.path))) {
+  if (!roots.some((approved) => isWithin(approved.path, walked.path))) {
     return {
       ok: false,
-      reason: `"${walked.path}" is outside every approved root (${roots.join(", ")})`,
+      reason: `"${walked.path}" is outside every approved root (${roots.map((entry) => entry.path).join(", ")})`,
     };
   }
 
   return walked;
+}
+
+/** A file opened after its identity was verified, or why it was not opened. */
+type VerifiedOpen =
+  | { readonly ok: true; readonly handle: FileHandle; readonly size: number }
+  | { readonly ok: false; readonly reason: string };
+
+/**
+ * Open a file for reading, then check that the descriptor holds the file the path resolved to.
+ *
+ * `resolveInsideRoots` decides containment on a path, and the kernel opens whatever stands at that path when
+ * the syscall is made, so a directory an attacker can write to is a window between the two. Two things close
+ * it: `O_NOFOLLOW`, so a symlink planted at the resolved path is refused instead of followed, and an `fstat`
+ * of the descriptor compared with a fresh canonicalisation of the same path, so a file swapped in after the
+ * check is refused rather than read.
+ */
+async function openVerified(input: {
+  roots: readonly ApprovedRoot[];
+  path: string;
+}): Promise<VerifiedOpen> {
+  let handle: FileHandle;
+  try {
+    handle = await open(input.path, constants.O_RDONLY | constants.O_NOFOLLOW);
+  } catch (cause) {
+    const code = (cause as NodeJS.ErrnoException).code;
+    const why =
+      code === "ELOOP"
+        ? "something put a symlink there after the path was checked, and a symlink is not followed"
+        : describeCause(cause);
+    return { ok: false, reason: `"${input.path}" could not be opened for reading: ${why}` };
+  }
+
+  const refuse = async (reason: string): Promise<VerifiedOpen> => {
+    await handle.close().catch(() => undefined);
+    return { ok: false, reason };
+  };
+
+  try {
+    const opened = await handle.stat();
+    if (!opened.isFile()) return await refuse(`"${input.path}" is not a regular file`);
+    const checked = await resolveInsideRoots(input.roots, input.path);
+    if (!checked.ok) return await refuse(`"${input.path}" was refused after it was opened: ${checked.reason}`);
+    const atPath = await stat(checked.path).catch(() => undefined);
+    if (atPath === undefined || atPath.dev !== opened.dev || atPath.ino !== opened.ino) {
+      return await refuse(
+        `"${input.path}" is not the file that was checked: something else stands at that path now`,
+      );
+    }
+    return { ok: true, handle, size: opened.size };
+  } catch (cause) {
+    return await refuse(`"${input.path}" could not be verified after opening: ${describeCause(cause)}`);
+  }
 }
 
 /** A tool result that carries text only, which is what every scoped tool answers with. */
@@ -241,6 +361,24 @@ function text(value: string): { text: string } {
 /** The refusal every tool answers with, so a denial reads as a decision rather than as a crash. */
 function refused(reason: string): { text: string } {
   return text(`refused: ${reason}`);
+}
+
+/** A pattern that could not be compiled, answered the same way wherever it was noticed. */
+function invalidPattern(reason: string): { text: string } {
+  return text(`invalid pattern: ${reason}`);
+}
+
+/**
+ * Cut a body so that the header and the body together stay inside the per-tool output bound.
+ *
+ * The cut is labelled, because a file that looks whole and is not is what the bound exists to prevent.
+ */
+function boundedBody(body: string, header: string): string {
+  const room = SCOPED_FS_LIMITS.maxOutputBytes - Buffer.byteLength(header) - 1;
+  if (Buffer.byteLength(body) <= room) return body;
+  const note = `\n… truncated: the output bound of ${SCOPED_FS_LIMITS.maxOutputBytes} byte was reached`;
+  const kept = Buffer.from(body, "utf8").subarray(0, Math.max(0, room - Buffer.byteLength(note)));
+  return `${kept.toString("utf8")}${note}`;
 }
 
 /** One string parameter, trimmed, with an empty value treated as absent. */
@@ -262,24 +400,19 @@ function boundedNumber(
   return Math.min(Math.floor(value), limit);
 }
 
-/** Read at most `cap` bytes, so a large file cannot be loaded to be trimmed afterwards. */
+/** Read at most `cap` bytes from an open handle, so a large file is never loaded to be trimmed afterwards. */
 async function readBounded(
-  path: string,
+  handle: FileHandle,
   cap: number,
 ): Promise<{ bytes: Uint8Array; bytesRead: number }> {
-  const handle = await open(path, "r");
-  try {
-    const buffer = new Uint8Array(cap);
-    let bytesRead = 0;
-    while (bytesRead < cap) {
-      const { bytesRead: read } = await handle.read(buffer, bytesRead, cap - bytesRead, bytesRead);
-      if (read <= 0) break;
-      bytesRead += read;
-    }
-    return { bytes: buffer.subarray(0, bytesRead), bytesRead };
-  } finally {
-    await handle.close();
+  const buffer = new Uint8Array(cap);
+  let bytesRead = 0;
+  while (bytesRead < cap) {
+    const { bytesRead: read } = await handle.read(buffer, bytesRead, cap - bytesRead, bytesRead);
+    if (read <= 0) break;
+    bytesRead += read;
   }
+  return { bytes: buffer.subarray(0, bytesRead), bytesRead };
 }
 
 /** One candidate a traversal considered: where it is now, and what the caller should call it. */
@@ -304,7 +437,7 @@ interface Traversal {
  * would then be reporting a loop rather than a large tree.
  */
 async function traverse(input: {
-  roots: readonly string[];
+  roots: readonly ApprovedRoot[];
   start: string;
   maxDepth: number;
   maxEntries: number;
@@ -383,7 +516,7 @@ function joinBounded(lines: readonly string[], header: string): string {
 }
 
 /** The read tool: one file, its bytes, bounded and labelled. */
-function readTool(roots: readonly string[]): ToolDefinition {
+function readTool(roots: readonly ApprovedRoot[]): ToolDefinition {
   return {
     name: "clarkcant_read",
     label: "Read a file inside the approved project roots",
@@ -413,20 +546,39 @@ function readTool(roots: readonly string[]): ToolDefinition {
       if (info === undefined) return text(`not found: "${resolved.path}" is not there`);
       if (!info.isFile()) return text(`not a file: "${resolved.path}" is not a regular file`);
 
-      const cap = boundedNumber(params, "maxBytes", SCOPED_FS_LIMITS.maxFileBytes, SCOPED_FS_LIMITS.maxFileBytes);
-      const { bytes, bytesRead } = await readBounded(resolved.path, cap);
-      const body = new TextDecoder().decode(bytes);
-      const header =
-        info.size > bytesRead
-          ? `${resolved.path} (${info.size} byte; the first ${bytesRead} are shown)`
-          : `${resolved.path} (${info.size} byte)`;
-      return text(`${header}\n${body}`);
+      const opened = await openVerified({ roots, path: resolved.path });
+      if (!opened.ok) return refused(opened.reason);
+      try {
+        /*
+         * The output bound is the bound, for this tool as much as for a listing.
+         *
+         * `maxFileBytes` says how much of a file may be read; the answer is a header, a newline and the bytes,
+         * so a read allowed to return `maxFileBytes` would return about four times `maxOutputBytes` of tool text
+         * and spend a turn's context on one call. The smaller of the two bounds decides, and the header already
+         * says which bytes were shown.
+         */
+        const requested = boundedNumber(
+          params,
+          "maxBytes",
+          SCOPED_FS_LIMITS.maxFileBytes,
+          SCOPED_FS_LIMITS.maxFileBytes,
+        );
+        const cap = Math.min(requested, SCOPED_FS_LIMITS.maxOutputBytes);
+        const { bytes, bytesRead } = await readBounded(opened.handle, cap);
+        const header =
+          opened.size > bytesRead
+            ? `${resolved.path} (${opened.size} byte; the first ${bytesRead} are shown)`
+            : `${resolved.path} (${opened.size} byte)`;
+        return text(`${header}\n${boundedBody(new TextDecoder().decode(bytes), header)}`);
+      } finally {
+        await opened.handle.close().catch(() => undefined);
+      }
     },
   };
 }
 
 /** The grep tool: a regular expression over the files under one approved path. */
-function grepTool(roots: readonly string[]): ToolDefinition {
+function grepTool(roots: readonly ApprovedRoot[]): ToolDefinition {
   return {
     name: "clarkcant_grep",
     label: "Search inside the approved project roots",
@@ -449,14 +601,18 @@ function grepTool(roots: readonly string[]): ToolDefinition {
     execute: async (params) => {
       const pattern = textParam(params, "pattern");
       if (pattern === undefined) return refused("no pattern was given");
-      let expression: RegExp;
+      /*
+       * The pattern is checked here as well as in the matching thread, so an invalid one is reported even when
+       * nothing is searched at all, and so the answer does not depend on there being a file to match against.
+       * Compiling is not what can hang; matching is, and that only happens in the thread.
+       */
       try {
-        expression = new RegExp(pattern);
+        new RegExp(pattern);
       } catch (cause) {
-        return text(`invalid pattern: ${describeCause(cause)}`);
+        return invalidPattern(describeCause(cause));
       }
 
-      const asked = textParam(params, "path") ?? roots[0] ?? "";
+      const asked = textParam(params, "path") ?? roots[0]?.path ?? "";
       const resolved = await resolveInsideRoots(roots, asked);
       if (!resolved.ok) return refused(resolved.reason);
       const info = await stat(resolved.path).catch(() => undefined);
@@ -472,32 +628,60 @@ function grepTool(roots: readonly string[]): ToolDefinition {
           : { files: single, truncated: undefined, notes: [] };
 
       const lines: string[] = [];
+      const searchNotes: string[] = [];
       let matched = 0;
       let cutAtMatches = false;
-      for (const file of walked.files) {
-        if (matched >= maxMatches) {
-          cutAtMatches = true;
-          break;
-        }
-        const size = (await stat(file.path).catch(() => undefined))?.size ?? 0;
-        if (size > SCOPED_FS_LIMITS.maxFileBytes) continue;
-        const body = await readFile(file.path, "utf8").catch(() => undefined);
-        if (body === undefined) continue;
-        const fileLines = body.split("\n");
-        for (let index = 0; index < fileLines.length; index += 1) {
-          const line = fileLines[index] ?? "";
-          if (!expression.test(line)) continue;
+      const matcher = startGrepMatcher({ pattern, budgetMs: SCOPED_FS_LIMITS.maxGrepMatchMs });
+      try {
+        for (const file of walked.files) {
           if (matched >= maxMatches) {
             cutAtMatches = true;
             break;
           }
-          matched += 1;
-          lines.push(`${file.label}:${index + 1}: ${line.trim()}`);
+          const opened = await openVerified({ roots, path: file.path });
+          if (!opened.ok) {
+            searchNotes.push(`${file.label}: not searched (${opened.reason})`);
+            continue;
+          }
+          let fileLines: string[];
+          try {
+            if (opened.size > SCOPED_FS_LIMITS.maxFileBytes) {
+              searchNotes.push(
+                `${file.label}: larger than the ${SCOPED_FS_LIMITS.maxFileBytes} byte read bound, so it was not searched`,
+              );
+              continue;
+            }
+            const { bytes } = await readBounded(opened.handle, SCOPED_FS_LIMITS.maxFileBytes);
+            fileLines = new TextDecoder().decode(bytes).split("\n");
+          } finally {
+            await opened.handle.close().catch(() => undefined);
+          }
+
+          const outcome = await matcher.match(fileLines);
+          if (!outcome.ok) {
+            if (outcome.kind === "invalid-pattern") return invalidPattern(outcome.reason);
+            /*
+             * A pattern that outran its budget ends the whole search rather than this file: the matches found so
+             * far are a prefix of an answer nobody can trust, and handing them over would read as a complete one.
+             */
+            return refused(`${outcome.reason} (while matching "${file.label}")`);
+          }
+          for (const index of outcome.matches) {
+            if (matched >= maxMatches) {
+              cutAtMatches = true;
+              break;
+            }
+            matched += 1;
+            lines.push(`${file.label}:${index + 1}: ${(fileLines[index] ?? "").trim()}`);
+          }
         }
+      } finally {
+        await matcher.dispose();
       }
 
       const notes = [
         ...walked.notes,
+        ...searchNotes,
         ...(cutAtMatches ? [`only the first ${maxMatches} matches are shown`] : []),
         ...(walked.truncated === undefined ? [] : [walked.truncated]),
       ];
@@ -512,7 +696,7 @@ function grepTool(roots: readonly string[]): ToolDefinition {
 }
 
 /** The find tool: names under one approved path, matched by a glob or a substring. */
-function findTool(roots: readonly string[]): ToolDefinition {
+function findTool(roots: readonly ApprovedRoot[]): ToolDefinition {
   return {
     name: "clarkcant_find",
     label: "Find files inside the approved project roots",
@@ -531,7 +715,7 @@ function findTool(roots: readonly string[]): ToolDefinition {
       },
     },
     execute: async (params) => {
-      const asked = textParam(params, "path") ?? roots[0] ?? "";
+      const asked = textParam(params, "path") ?? roots[0]?.path ?? "";
       const resolved = await resolveInsideRoots(roots, asked);
       if (!resolved.ok) return refused(resolved.reason);
       const info = await stat(resolved.path).catch(() => undefined);
@@ -578,7 +762,7 @@ function matchesName(name: string, pattern: string | undefined): boolean {
 }
 
 /** The ls tool: one directory, its entries, bounded. */
-function lsTool(roots: readonly string[]): ToolDefinition {
+function lsTool(roots: readonly ApprovedRoot[]): ToolDefinition {
   return {
     name: "clarkcant_ls",
     label: "List a directory inside the approved project roots",
@@ -595,7 +779,7 @@ function lsTool(roots: readonly string[]): ToolDefinition {
       },
     },
     execute: async (params) => {
-      const asked = textParam(params, "path") ?? roots[0] ?? "";
+      const asked = textParam(params, "path") ?? roots[0]?.path ?? "";
       const resolved = await resolveInsideRoots(roots, asked);
       if (!resolved.ok) return refused(resolved.reason);
       const info = await stat(resolved.path).catch(() => undefined);
@@ -637,11 +821,11 @@ function lsTool(roots: readonly string[]): ToolDefinition {
 /**
  * The four tools a confined project worker runs with, bound to one canonical root set.
  *
- * `roots` must be canonical — `canonicalRoots` produced them — because every call re-checks that each
- * root still canonicalises to itself, and an un-canonical root is refused by name rather than quietly
- * accepted.
+ * `roots` are approved — `canonicalRoots` produced them, so each carries the identity the kernel gave the
+ * directory when it was approved — because every call re-checks that identity, and an unapproved root is
+ * refused by name rather than quietly accepted.
  */
-export function createScopedFsTools(input: { roots: readonly string[] }): ToolDefinition[] {
+export function createScopedFsTools(input: { roots: readonly ApprovedRoot[] }): ToolDefinition[] {
   const roots = [...input.roots];
   return [readTool(roots), grepTool(roots), findTool(roots), lsTool(roots)];
 }

@@ -35,6 +35,7 @@ export {
   resolveInsideRoots,
   SCOPED_FS_LIMITS,
   SCOPED_FS_TOOL_NAMES,
+  type ApprovedRoot,
   type CanonicalRoots,
   type InsideRoots,
   type RefusedRoot,
