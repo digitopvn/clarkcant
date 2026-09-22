@@ -280,8 +280,8 @@ function readJson(path) {
 
 /* ------------------------------------------------------------------ *
  * 7. The blueprint names its scope items V01–V18 and acceptance tests
- *    T01–T73. Every one must appear in the traceability document, so a reader
- *    can find out what is real without reading source.
+ *    T01–T73. Every one must have its own row in the traceability document, so
+ *    a reader can find out what is real without reading source.
  * ------------------------------------------------------------------ */
 {
   const c = check("scope-and-acceptance-traceability");
@@ -290,13 +290,22 @@ function readJson(path) {
     c.failures.push("docs/conformance-traceability.md is missing");
   } else {
     const source = readFileSync(tracePath, "utf8");
+    /*
+     * A row marker, not a substring anywhere in the file.
+     *
+     * The previous version asked `source.includes(id)`, and the prose that introduces this table
+     * spells the ranges `V01`–`V18` and `T01`–`T73` out in full - so both ends of each range were
+     * satisfied by that sentence alone, and deleting the `| T73 | …` row left every check green. A
+     * presence check has to be about the row, because the row is what a reader uses.
+     */
+    const rowIds = new Set([...source.matchAll(/^\| (V\d{2}|T\d{2}) \|/gm)].map((match) => match[1]));
     for (let i = 1; i <= 18; i += 1) {
       const id = `V${String(i).padStart(2, "0")}`;
-      if (!source.includes(id)) c.failures.push(`traceability document omits ${id}`);
+      if (!rowIds.has(id)) c.failures.push(`traceability document omits the ${id} row`);
     }
     for (let i = 1; i <= 73; i += 1) {
       const id = `T${String(i).padStart(2, "0")}`;
-      if (!source.includes(id)) c.failures.push(`traceability document omits ${id}`);
+      if (!rowIds.has(id)) c.failures.push(`traceability document omits the ${id} row`);
     }
 
     /*
