@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { instantSchema, voiceCapabilitiesSchema } from "@clarkcant/contracts";
+import { DEFAULT_EXECUTION_POLICY_CONFIG, instantSchema, voiceCapabilitiesSchema } from "@clarkcant/contracts";
 import { decideExecution, recordEffectExecution } from "@clarkcant/core";
 
 import { handleRequest, type GatewayDeps, type GatewayRequest, type GatewayResponse } from "../src/gateway.ts";
@@ -71,8 +71,7 @@ async function effects(): Promise<EffectEntry[]> {
 function record(command: string, category: "local-write" | "external-write" = "local-write"): void {
   const digest = `sha256:${"a".repeat(40)}`;
   const decision = decideExecution({
-    mode: "autonomous",
-    rules: [],
+    policy: DEFAULT_EXECUTION_POLICY_CONFIG,
     action: { kind: "effect", category, operationDigest: digest },
     explicitUserIntent: true,
   });

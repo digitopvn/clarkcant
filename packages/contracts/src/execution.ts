@@ -19,6 +19,11 @@ import type { EffectCategory } from "./primitives.ts";
  *
  * Nothing here decides anything by itself. `guarded` is a default because it is the one that keeps a
  * person out of the loop without giving up the loop.
+ *
+ * **Legacy.** This four-value vocabulary is no longer an authority: `execution.policy` in
+ * `preferences.ts` is the one policy this node runs under, and this schema survives because a stored
+ * document from an older build has to keep parsing. `executionPolicyOr` and `parseAutonomySettings` are
+ * the only readers left, and the only caller that matters is the migration.
  */
 export const executionPolicySchema = z.enum(["auto", "guarded", "confirm", "deny"]);
 export type ExecutionPolicy = z.infer<typeof executionPolicySchema>;
@@ -26,6 +31,14 @@ export type ExecutionPolicy = z.infer<typeof executionPolicySchema>;
 export const EXECUTION_POLICIES = executionPolicySchema.options;
 
 /** The default an unset or unreadable setting gets: ask nobody, judge everything. */
+/**
+ * The default the legacy vocabulary falls back to: ask nobody, judge everything.
+ *
+ * **Legacy.** This is not the product's default execution policy — that is `autonomous`, declared once in
+ * `DEFAULT_EXECUTION_POLICY_CONFIG` and documented in DESIGN.md §1.3 and §5.3. It is the fallback of the
+ * four-value vocabulary this file still parses for a node that stored it, and nothing else reads it: a
+ * node that stored neither legacy family gets the canonical default, never this one.
+ */
 export const DEFAULT_EXECUTION_POLICY: ExecutionPolicy = "guarded";
 
 /**
@@ -101,7 +114,12 @@ export const jevUnavailablePolicySchema = z.enum(["allow", "deny"]);
 export type JevUnavailablePolicy = z.infer<typeof jevUnavailablePolicySchema>;
 
 /**
- * The autonomy settings, as the settings panel writes them.
+ * The autonomy settings as an older build stored them.
+ *
+ * **Legacy storage shape.** It is read exactly once — by the migration that turns it into the canonical
+ * policy — and written by nothing. The settings panel reaches it through a compatibility projection in
+ * `apps/runtime/src/autonomy-settings.ts`, which is the only thing that still turns a canonical policy
+ * into these five fields and back.
  *
  * `instructions` is free text handed to the guardrail as policy, which is the reason it is bounded and
  * the reason it is never treated as authority: a stored instruction can only ask the guardrail to
@@ -119,10 +137,14 @@ export const autonomySettingsSchema = z.object({
 export type AutonomySettings = z.infer<typeof autonomySettingsSchema>;
 
 /**
- * The defaults a fresh node starts with.
+ * The defaults a fresh node starts with, in the legacy vocabulary.
  *
  * Reads are not guarded: a guardrail call on every read spends a provider call to decide nothing, and
  * the search path already taught this codebase that lesson. Everything that can change something is.
+ *
+ * **Legacy**, like the shape around it: this is what `parseAutonomySettings` fills a gap from, so a stored
+ * document from an older build keeps parsing. The policy a node runs under comes from
+ * `DEFAULT_EXECUTION_POLICY_CONFIG`, and `autonomous` is the default there — see the constant above.
  */
 export const DEFAULT_AUTONOMY_SETTINGS: AutonomySettings = {
   executionPolicy: DEFAULT_EXECUTION_POLICY,

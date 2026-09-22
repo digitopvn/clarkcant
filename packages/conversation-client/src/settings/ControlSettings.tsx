@@ -23,7 +23,6 @@ import type { GatewayClient } from "../api.ts";
  * are easy to get wrong: Autonomous is not a promise to do things nobody asked for, and no mode lifts an OS or
  * account permission.
  */
-
 const MODE_OPTIONS = [
   {
     value: "autonomous",
@@ -33,7 +32,7 @@ const MODE_OPTIONS = [
   {
     value: "guarded",
     label: "Có rào",
-    note: "Việc trong máy này chạy ngay. Việc gửi ra ngoài, xoá, chi tiêu hoặc liên lạc thì hỏi.",
+    note: "Việc trong máy này chạy ngay. Việc gửi ra ngoài, xoá, chi tiêu, liên lạc hoặc ghi âm/ghi hình thì hỏi.",
   },
   {
     value: "ask",
@@ -81,19 +80,23 @@ const POLICY_OPTIONS = [
   {
     value: "auto",
     label: "Tự chủ",
-    note: "Không hỏi và không gọi guardrail. Preflight của host và containment vẫn chạy.",
+    note: "Chạy ngay việc bạn yêu cầu, không mở thẻ duyệt. Guardrail, nếu đang bật, vẫn phán đoán trước và có thể từ chối hoặc thu hẹp.",
   },
   {
     value: "guarded",
     label: "Có rào",
-    note: "Mặc định: không hỏi bạn, nhưng guardrail vẫn có thể từ chối hoặc thu hẹp lệnh.",
+    note: "Việc trong máy này chạy ngay. Việc gửi ra ngoài, xoá, chi tiêu, liên lạc hoặc ghi âm/ghi hình thì mở thẻ duyệt trước; guardrail vẫn phán đoán phần còn lại.",
   },
   {
     value: "confirm",
-    label: "Hỏi mỗi lệnh",
-    note: "Như trước đây: mọi lệnh hiện thẻ duyệt trước khi chạy.",
+    label: "Hỏi mỗi lần",
+    note: "Mọi hiệu lực đều mở thẻ duyệt trước khi chạy.",
   },
-  { value: "deny", label: "Không chạy", note: "Lớp lệnh bị tắt hoàn toàn." },
+  {
+    value: "deny",
+    label: "Từ chối tất cả",
+    note: "Node này từ chối mọi hiệu lực, kể cả khi một ứng dụng xin quyền từ hệ điều hành hay từ tài khoản.",
+  },
 ] as const satisfies readonly { value: ExecutionPolicy; label: string; note: string }[];
 
 const FAIL_OPEN_OPTIONS = [
@@ -115,18 +118,19 @@ const GUARD_CLASS_LABELS: Record<GuardClass, string> = {
 };
 
 /**
- * What this node does without asking, for the commands it runs.
+ * The policy, in the five fields this panel has always posted.
  *
- * Read whole from the node and written whole, because these are one decision a person makes about this node
- * rather than a set of independent switches: whether anything is asked, whether the policy layer may
- * intervene, which classes it covers, and what happens when it cannot be reached.
+ * There is one policy now, and this is a compatibility view of it: the node projects the canonical policy into these
+ * five fields and translates them back on save, keeping the per-category rules the shape has no way to name. The
+ * mode options therefore mean what the canonical resolver does, not what the four-value vocabulary used to do —
+ * "Có rào" asks before the effects that reach past this machine, which is a declared change and not a translation,
+ * and "Từ chối tất cả" is the structural refusal that no consent screen can lift.
  *
- * It sits **beside** the autonomy level above rather than replacing it, and the reason is a fact about the
- * merged build: `execution.mode` and `execution.rules` are still read by the paths that decide widget actions
- * and installations, so a screen that dropped those controls would be removing a setting from something that
- * still obeys it. Two policies is one more than this product wants; saying so here is better than a control
- * that lies. The narrowing table travels with the read because the panel shows what the guardrail may ask for
- * — a list the host owns, and a model may only pick from.
+ * It sits beside the level control below for the moment; collapsing the two into one surface is its own change, and
+ * saying so here is better than a screen whose two controls write the same policy without a reader knowing.
+ *
+ * The narrowing table travels with the read because the panel shows what the guardrail may ask for — a list the
+ * host owns, and a model may only pick from.
  */
 function CommandAutonomySettings({ client }: { client: GatewayClient }): ReactElement {
   const [settings, setSettings] = useState<AutonomySettings | undefined>(undefined);
@@ -157,7 +161,7 @@ function CommandAutonomySettings({ client }: { client: GatewayClient }): ReactEl
       <section className="cc-panel-section" data-autonomy-tab="true">
         <h3>Lệnh chạy trên máy này</h3>
         <p className="cc-panel-note" data-autonomy-error="true">
-          Không đọc được cấu hình autonomy của node này.
+          Không đọc được execution policy của node này.
         </p>
       </section>
     );
@@ -197,11 +201,11 @@ function CommandAutonomySettings({ client }: { client: GatewayClient }): ReactEl
 
       <SettingsRow
         label="Cách node quyết định chạy"
-        description="Áp dụng cho lệnh agent đề xuất. Mức tự chủ ở trên vẫn quyết định hành động của widget và cài đặt."
+        description="Áp dụng cho lệnh agent đề xuất, hành động của widget và cài đặt — cùng một policy."
       >
         <SegmentedControl
           name="autonomy-policy"
-          label="Cách node quyết định chạy một lệnh"
+          label="Cách node quyết định chạy một hiệu lực"
           options={POLICY_OPTIONS}
           value={settings.executionPolicy}
           pending={pending}
@@ -211,7 +215,7 @@ function CommandAutonomySettings({ client }: { client: GatewayClient }): ReactEl
 
       <SettingsRow
         label="Jev guardrails"
-        description="Tắt thì guarded chạy như auto. Preflight của host vẫn chạy trong mọi trường hợp."
+        description="Tắt thì không lớp phán đoán nào được gọi; preflight của host và các thẻ duyệt ở trên vẫn chạy."
       >
         <ToggleSwitch
           name="autonomy-guardrails"
@@ -256,7 +260,7 @@ function CommandAutonomySettings({ client }: { client: GatewayClient }): ReactEl
 
       <SettingsRow
         label="Khi Jev không dùng được"
-        description="Fail-open bỏ lớp phán đoán, không bỏ preflight hay containment."
+        description="Fail-open bỏ lớp phán đoán, không bỏ preflight hay các thẻ duyệt."
       >
         <SegmentedControl
           name="autonomy-failopen"
@@ -277,7 +281,7 @@ function CommandAutonomySettings({ client }: { client: GatewayClient }): ReactEl
 
       <div className="cc-panel-row">
         <button type="button" className="cc-chip" data-autonomy-save="true" disabled={pending} onClick={save}>
-          Lưu autonomy
+          Lưu policy
         </button>
       </div>
       {status === "" ? null : <p className="cc-panel-note">{status}</p>}
@@ -315,16 +319,16 @@ export function ControlSettings({ prefs, client, recentEffects, recentProblem }:
   return (
     <>
       {/*
-        First, because it is the control that decides what the default is: under `guarded` the node runs a command
-        a person asked for without a card, and everything below is the fallback for the effects it does not cover.
+        The compatibility view of the one policy, and then the level control the rest of the surfaces read. Both write
+        the same policy; collapsing them into one surface is its own change, tracked separately from this one.
       */}
       <CommandAutonomySettings client={client} />
 
       <section className="cc-panel-section" data-execution-mode="true">
-        <h3>Mức tự chủ cho hiệu ứng khác</h3>
+        <h3>Mức tự chủ</h3>
         <SettingsRow
           label="Khi Clark làm gì đó có hiệu lực"
-          description="Áp dụng ngay cho lệnh, hành động của widget và cài đặt."
+          description="Áp dụng ngay cho lệnh, hành động của widget và cài đặt — cùng một policy với phần trên."
         >
           <SegmentedControl
             name="execution-mode"

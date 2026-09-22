@@ -30,6 +30,7 @@ export * from "./widget-lifecycle.ts";
 export * from "./preferences.ts";
 export * from "./preference-registry.ts";
 export * from "./execution-policy.ts";
+export * from "./execution-policy-migration.ts";
 export * from "./onboarding.ts";
 export * from "./limits.ts";
 export * from "./consent.ts";

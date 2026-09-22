@@ -13,7 +13,7 @@ import type { Database } from "./db.ts";
  * Append-only in practice: nothing in this module updates or deletes a row, and `listAuditEvents` is the only reader.
  */
 
-export type AuditKind = "command" | "secret-use" | "approval" | "stop" | "interaction";
+export type AuditKind = "command" | "secret-use" | "approval" | "stop" | "interaction" | "policy";
 export type AuditOutcome = "done" | "failed" | "refused" | "stopped";
 
 export interface AuditEvent {

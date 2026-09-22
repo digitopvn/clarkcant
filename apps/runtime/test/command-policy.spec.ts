@@ -4,25 +4,36 @@ import { join } from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { type AutonomySettings, DEFAULT_AUTONOMY_SETTINGS, type Instant, type MessageBlock } from "@clarkcant/contracts";
+import {
+  DEFAULT_EXECUTION_POLICY_CONFIG,
+  type ExecutionPolicyConfig,
+  type Instant,
+  type MessageBlock,
+} from "@clarkcant/contracts";
 import type { CoordinationDeps } from "@clarkcant/core";
+import { decideExecution, guardrailCovers } from "@clarkcant/core";
 import { migrate, openDatabase, nodeStoreSecretBackend, putSecretMetadata, type Database } from "@clarkcant/storage";
 
-import type { CommandOutcome } from "../src/run-command.ts";
+import { commandDigest, type CommandOutcome } from "../src/run-command.ts";
 import type { InteractionDeps } from "../src/interactions.ts";
 import type { SecretBroker } from "../src/secret-broker.ts";
 import { createSecretBroker } from "../src/secret-broker.ts";
 import type { OperationGuardOutcome } from "../src/jev-decider.ts";
-import { createRunCommandTool, policyForEffect } from "../src/node-tools.ts";
+import { createRunCommandTool } from "../src/node-tools.ts";
 import { ownedResources } from "../src/preflight.ts";
 
 /**
- * The command path under the autonomy policy.
+ * The command path under the one execution policy.
  *
  * This is the change the whole architecture turns on: a command runs without a person approving it, and
  * what keeps that defensible is visible here rather than asserted in prose. Every refusal below is a case
- * where the host said no — outside the folders it owns, a class switched off, a guardrail that refused,
- * a guardrail that could not be reached on a node configured to fail closed.
+ * where the host said no — outside the folders it owns, a node-wide refusal, a rule the user wrote, a
+ * guardrail that refused, a guardrail that could not be reached on a node configured to fail closed.
+ *
+ * The policy the tool reads is the canonical one, supplied by the node's own reader. The cases that used to
+ * assert the four-value command policy — `auto`, `guarded`, `confirm`, `deny` and the class switches — now
+ * assert the canonical axes that replaced it (mode, prohibition, guardrails), because those are the settings
+ * a person can actually change.
  */
 let dir: string;
 let work: string;
@@ -41,8 +52,12 @@ function outcome(overrides: Partial<CommandOutcome> = {}): CommandOutcome {
   return { exitCode: 0, stdout: "built ok", stderr: "", durationMs: 12, timedOut: false, ...overrides };
 }
 
+function policy(overrides: Partial<ExecutionPolicyConfig> = {}): ExecutionPolicyConfig {
+  return { ...DEFAULT_EXECUTION_POLICY_CONFIG, ...overrides };
+}
+
 function makeTool(options: {
-  settings?: Partial<AutonomySettings>;
+  policy?: Partial<ExecutionPolicyConfig>;
   guard?: OperationGuardOutcome | ((input: unknown) => Promise<OperationGuardOutcome>);
   approvals?: () => CoordinationDeps;
   interactions?: InteractionDeps;
@@ -58,11 +73,15 @@ function makeTool(options: {
 } {
   const runs: { command: string; cwd: string; timeoutMs: number; maxOutputBytes: number; env?: Record<string, string> }[] = [];
   let guardCalls = 0;
-  const settings: AutonomySettings = { ...DEFAULT_AUTONOMY_SETTINGS, ...options.settings };
+  const inForce: ExecutionPolicyConfig = {
+    ...DEFAULT_EXECUTION_POLICY_CONFIG,
+    ...options.policy,
+    guardrails: { ...DEFAULT_EXECUTION_POLICY_CONFIG.guardrails, ...options.policy?.guardrails },
+  };
 
   const tool = createRunCommandTool({
     ...(options.approvals === undefined ? {} : { approvals: options.approvals }),
-    autonomy: () => settings,
+    autonomy: () => inForce,
     resources: () => ownedResources([work]),
     fallbackCwd: () => work,
     guardrails: async (input) => {
@@ -84,19 +103,32 @@ function makeTool(options: {
 }
 
 describe("which policy applies", () => {
-  it("guards by default, and only for the classes a person left switched on", () => {
-    expect(policyForEffect(DEFAULT_AUTONOMY_SETTINGS, "commands")).toBe("guarded");
-    expect(policyForEffect(DEFAULT_AUTONOMY_SETTINGS, "reads")).toBe("auto");
+  it("judges a command that changes something, and never judges a read", () => {
+    // The switch is per guard class, and it is the authority for whether the judgment layer is consulted — a
+    // different question from which mode is in force.
+    expect(guardrailCovers(policy(), { surface: "command", effectCategory: "local-write" })).toBe(true);
+    expect(guardrailCovers(policy(), { surface: "command", effectCategory: "read" })).toBe(false);
   });
 
-  it("lets the four modes through unchanged", () => {
-    for (const policy of ["auto", "guarded", "confirm", "deny"] as const) {
-      expect(policyForEffect({ ...DEFAULT_AUTONOMY_SETTINGS, executionPolicy: policy }, "commands")).toBe(policy);
+  it("treats a node-wide prohibition as a refusal of every category", () => {
+    const denied = policy({ prohibition: "all" });
+    for (const category of ["read", "local-write", "external-write", "financial"] as const) {
+      expect(
+        decideExecution({
+          policy: denied,
+          action: { kind: "effect", category, operationDigest: "sha256:x" },
+          explicitUserIntent: true,
+        }).kind,
+        category,
+      ).toBe("deny");
     }
   });
 
-  it("skips the policy layer when guardrails are switched off", () => {
-    expect(policyForEffect({ ...DEFAULT_AUTONOMY_SETTINGS, jevGuardrails: false }, "commands")).toBe("auto");
+  it("skips the judgment layer when it is switched off, and when the class is not covered", () => {
+    const off = policy({ guardrails: { ...DEFAULT_EXECUTION_POLICY_CONFIG.guardrails, enabled: false } });
+    expect(guardrailCovers(off, { surface: "command", effectCategory: "local-write" })).toBe(false);
+    const otherClasses = policy({ guardrails: { ...DEFAULT_EXECUTION_POLICY_CONFIG.guardrails, classes: ["financial"] } });
+    expect(guardrailCovers(otherClasses, { surface: "command", effectCategory: "local-write" })).toBe(false);
   });
 });
 
@@ -123,14 +155,18 @@ describe("running a command under the default policy", () => {
   });
 
   it("does not consult the policy layer at all under auto", async () => {
-    const { tool, runs, guardCalls } = makeTool({ settings: { executionPolicy: "auto" } });
+    const { tool, runs, guardCalls } = makeTool({
+      policy: { guardrails: { ...DEFAULT_EXECUTION_POLICY_CONFIG.guardrails, enabled: false } },
+    });
     await tool.execute({ command: "pnpm build" });
     expect(guardCalls()).toBe(0);
     expect(runs).toHaveLength(1);
   });
 
   it("does not consult it for a class the person switched off", async () => {
-    const { tool, runs, guardCalls } = makeTool({ settings: { guardedClasses: ["financial"] } });
+    const { tool, runs, guardCalls } = makeTool({
+      policy: { guardrails: { ...DEFAULT_EXECUTION_POLICY_CONFIG.guardrails, classes: ["financial"] } },
+    });
     await tool.execute({ command: "pnpm build" });
     expect(guardCalls()).toBe(0);
     expect(runs).toHaveLength(1);
@@ -189,7 +225,7 @@ describe("what stops a command", () => {
   });
 
   it("refuses a class the node has switched off, and says where to switch it back on", async () => {
-    const { tool, runs, guardCalls } = makeTool({ settings: { executionPolicy: "deny" } });
+    const { tool, runs, guardCalls } = makeTool({ policy: { prohibition: "all" } });
     const answer = await tool.execute({ command: "pnpm build" });
     expect(runs).toHaveLength(0);
     expect(guardCalls()).toBe(0);
@@ -234,7 +270,10 @@ describe("when the policy layer cannot be reached", () => {
   });
 
   it("refuses on a node configured to fail closed", async () => {
-    const { tool, runs } = makeTool({ guard: unavailable, settings: { whenJevUnavailable: "deny" } });
+    const { tool, runs } = makeTool({
+      guard: unavailable,
+      policy: { guardrails: { ...DEFAULT_EXECUTION_POLICY_CONFIG.guardrails, whenUnavailable: "deny" } },
+    });
     const answer = await tool.execute({ command: "pnpm test" });
     expect(runs).toHaveLength(0);
     expect(answer.text).toContain("từ chối khi Jev vắng");
@@ -353,9 +392,78 @@ describe("a secret injected for one command", () => {
   });
 });
 
+/**
+ * An asking mode judges before it asks.
+ *
+ * The judgment layer runs before the card, and this is the case that makes the order matter: `ask` is the most
+ * restrictive mode, so a card alone would let the categories the user wrote instructions about run un-narrowed and
+ * un-refused as soon as somebody approved it. The card is therefore offered only for what the judgment allowed, and
+ * it displays the envelope the command will actually run under.
+ */
+describe("an asking mode consults the judgment layer before it offers the card", () => {
+  function approvalsFixture(): { approvals: () => CoordinationDeps; close: () => void } {
+    const database = openDatabase({ path: join(dir, "node.sqlite") });
+    migrate(database);
+    return {
+      approvals: () => ({
+        db: database,
+        nodeId: "node_local",
+        now: () => "2026-09-19T10:00:00.000Z" as never,
+        newId: (prefix: string) => `${prefix}_test`,
+      }),
+      close: () => database.close(),
+    };
+  }
+
+  it("refuses before offering a card when the guardrail refuses", async () => {
+    const approved = approvalsFixture();
+    try {
+      const { tool, runs } = makeTool({
+        policy: { mode: "ask" },
+        guard: { status: "deny", reason: "guardrail từ chối nhóm destructive" },
+        approvals: approved.approvals,
+      });
+      const answer = await tool.execute({ command: "rm -rf build" });
+
+      expect(runs).toHaveLength(0);
+      // No card: asking a person to approve something the judgment layer already refused is not a question.
+      expect(answer.hostCard).toBeUndefined();
+      expect(answer.hostBlocks).toBeUndefined();
+      expect(answer.text).toContain("Guardrail từ chối");
+      expect(answer.text).toContain("nhóm destructive");
+    } finally {
+      approved.close();
+    }
+  });
+
+  it("cards the narrowed envelope, so the approval is bound to what will run", async () => {
+    const approved = approvalsFixture();
+    try {
+      const { tool, runs } = makeTool({
+        policy: { mode: "ask" },
+        guard: { status: "constrain", constraintId: "timeout-30s", reason: "thu hẹp" },
+        approvals: approved.approvals,
+      });
+      const answer = await tool.execute({ command: "pnpm build" });
+      const card = answer.hostCard as { type?: string; payload?: string; operationDigest?: string } | undefined;
+
+      expect(runs).toHaveLength(0);
+      expect(card?.type).toBe("approval-card");
+      // The narrowing travels with the card rather than being lost between the question and the answer.
+      const payload = JSON.parse(card?.payload ?? "{}") as { command?: string; cwd?: string; timeoutMs?: number };
+      expect(payload.command).toBe("pnpm build");
+      expect(payload.cwd).toBe(work);
+      expect(payload.timeoutMs).toBe(30_000);
+      expect(card?.operationDigest).toBe(commandDigest("pnpm build", work));
+    } finally {
+      approved.close();
+    }
+  });
+});
+
 describe("the confirm policy, kept whole", () => {
   it("refuses honestly when the node has no way to record a decision", async () => {
-    const { tool, runs } = makeTool({ settings: { executionPolicy: "confirm" } });
+    const { tool, runs } = makeTool({ policy: { mode: "ask" } });
     const answer = await tool.execute({ command: "pnpm build" });
     expect(runs).toHaveLength(0);
     expect(answer.text).toContain("không có nơi ghi quyết định");
@@ -372,7 +480,7 @@ describe("the confirm policy, kept whole", () => {
         now: () => "2026-09-19T10:00:00.000Z" as never,
         newId: (prefix: string) => `${prefix}_test`,
       });
-      const { tool, runs } = makeTool({ settings: { executionPolicy: "confirm" }, approvals });
+      const { tool, runs } = makeTool({ policy: { mode: "ask" }, approvals });
       const answer = await tool.execute({ command: "pnpm build" });
 
       expect(runs).toHaveLength(0);

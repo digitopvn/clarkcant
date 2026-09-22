@@ -377,6 +377,18 @@ export function receiptForModel(blocks: readonly MessageBlock[]): string {
   return parts.join("\n").trim();
 }
 
+/**
+ * One budget figure an approved payload asked for, clamped to what this host allows.
+ *
+ * `undefined` — a payload written before the budget travelled with the card — answers with the host's own limit,
+ * and so does anything that is not a positive number. The ceiling is `COMMAND_LIMITS`, because the payload is stored
+ * with the conversation: a guardrail may narrow, and nothing may widen.
+ */
+function narrowedTo(value: unknown, ceiling: number): number {
+  if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) return ceiling;
+  return Math.min(Math.floor(value), ceiling);
+}
+
 export async function runApprovedCommand(input: {
   payload: string;
   expectedDigest: string;
@@ -389,15 +401,20 @@ export async function runApprovedCommand(input: {
    */
   resources: OwnedResources;
   /** Injected so the whole decision path can be tested without spawning anything. */
-  run?: (request: { command: string; cwd: string }) => Promise<CommandOutcome>;
+  run?: (request: {
+    command: string;
+    cwd: string;
+    timeoutMs: number;
+    maxOutputBytes: number;
+  }) => Promise<CommandOutcome>;
   now?: () => Instant;
 }): Promise<
   | { ok: true; blocks: MessageBlock[]; outcome: CommandOutcome; description: string }
   | { ok: false; code: string; message: string }
 > {
-  let parsed: { command?: unknown; cwd?: unknown };
+  let parsed: { command?: unknown; cwd?: unknown; timeoutMs?: unknown; maxOutputBytes?: unknown };
   try {
-    parsed = JSON.parse(input.payload) as { command?: unknown; cwd?: unknown };
+    parsed = JSON.parse(input.payload) as typeof parsed;
   } catch {
     return { ok: false, code: "APPROVAL_PAYLOAD_UNREADABLE", message: "the approved payload is not readable" };
   }
@@ -426,10 +443,24 @@ export async function runApprovedCommand(input: {
     };
   }
   const resolvedCwd = preflight.envelope.cwd;
+  /*
+   * The budget the carded envelope carried, if any, and never more than this node's own limits.
+   *
+   * A guardrail may narrow what an approved command is allowed: a shorter deadline, a smaller output ceiling. The
+   * card travels with the envelope it displayed, so the narrowing arrives here with it instead of being lost
+   * between the question and the answer. It is clamped rather than trusted — the payload is stored with the
+   * conversation, and the host's own limits are the ceiling whatever it says.
+   */
+  const budget = {
+    timeoutMs: narrowedTo(parsed.timeoutMs, COMMAND_LIMITS.timeoutMs),
+    maxOutputBytes: narrowedTo(parsed.maxOutputBytes, COMMAND_LIMITS.maxOutputBytes),
+  };
 
   const at = input.now ?? (() => new Date().toISOString() as Instant);
   const startedAt = at();
-  const outcome = await (input.run ?? ((request) => runCommand(request)))({ command, cwd: resolvedCwd });
+  const outcome = await (
+    input.run ?? ((request) => runCommand({ command: request.command, cwd: request.cwd }, request))
+  )({ command, cwd: resolvedCwd, ...budget });
   const description = describeCommandOutcome(command, outcome);
   const succeeded = outcome.exitCode === 0 && !outcome.timedOut;
 

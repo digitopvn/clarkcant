@@ -38,7 +38,7 @@ import { createNodeServer } from "./server.ts";
 import { machineRoots } from "./fs-search.ts";
 import { resolveProject, refreshProjectIndex } from "./project-finder.ts";
 import { commandDigest } from "./run-command.ts";
-import { captureSnapshot, createInstance, saveActionBinding, createTask, handleUserMessage, readPersonalInstructions, directoryIndexPath, recordAppIntentEvent, requestApproval, setPreference, type CoordinationDeps } from "@clarkcant/core";
+import { captureSnapshot, createInstance, saveActionBinding, createTask, handleUserMessage, readExecutionPolicy, readPersonalInstructions, directoryIndexPath, recordAppIntentEvent, requestApproval, setPreference, type CoordinationDeps } from "@clarkcant/core";
 import { GALLERY, YOUTUBE } from "@clarkcant/data-canvas";
 import { definitionDigest } from "@clarkcant/widget-host";
 import { listLocalImages, messagesSince, credentialNames, appendAuditEvent, readCredential,
@@ -67,7 +67,7 @@ import { createNodeTools, createRememberTool, type CommandToolDeps } from "./nod
 import { pendingForConversation, type InteractionDeps } from "./interactions.ts";
 import { guardOperation, decideModelRoute } from "./jev-decider.ts";
 import { ownedResources } from "./preflight.ts";
-import { DEFAULT_NARROWING, readAutonomySettings } from "./autonomy-settings.ts";
+import { DEFAULT_NARROWING } from "./autonomy-settings.ts";
 import { writeCurrentAlias, writeModelPool, readCurrentAlias, readModelPool } from "./model-registry.ts";
 import { filterBackgroundCandidates, routeBackgroundModel } from "./model-router.ts";
 import { createAskUserQuestionTool } from "./ask-user-question.ts";
@@ -1259,7 +1259,14 @@ async function main(): Promise<void> {
     // Omitted when the node has no approval route at all, so `confirm` refuses honestly instead of
     // throwing from inside the tool.
     ...(approvalWiring.deps === undefined ? {} : { approvals: () => approvalWiring.deps as CoordinationDeps }),
-    autonomy: () => readAutonomySettings(services.runtime.db, services.runtime.identity.ownerPrincipalId),
+    // The one canonical reader, at the proposal rather than at boot: a mode change has to change what happens to
+    // the next command, not the next process. It answers whether or not this node has ever stored a policy — a node
+    // that stored one of the two legacy families gets that family, joined pointwise and stored.
+    autonomy: () =>
+      readExecutionPolicy(
+        { db: services.runtime.db, now: () => new Date().toISOString() as Instant },
+        services.runtime.identity.ownerPrincipalId,
+      ),
     // The folders this node owns, which is the whole of the containment check: the workspace roots from
     // settings, the node's own data directory, and the directory the operator launched it from. The last
     // one matters because a node started inside a checkout is being pointed at that checkout by a person.
