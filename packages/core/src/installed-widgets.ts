@@ -1,4 +1,4 @@
-import type { PackageSource, WidgetDefinition, WidgetFixture } from "@clarkcant/contracts";
+import type { FixtureDataset, PackageSource, WidgetDefinition, WidgetFixture } from "@clarkcant/contracts";
 
 import { readPackage } from "./widget-package.ts";
 
@@ -71,15 +71,28 @@ export function installedWidgets(input: {
       version: input.version,
       facetId: facet.facetId,
       definition: facet.definition,
-      fixtures: fixturesFromProps(pkg.fixtures),
+      fixtures: fixturesFromProps(pkg.fixtures, pkg.datasets),
     })),
     problems: pkg.problems,
   };
 }
 
 /** Sorted by name so two reads of the same package agree on the order. */
-function fixturesFromProps(fixtures: Record<string, Record<string, unknown>>): WidgetFixture[] {
+function fixturesFromProps(
+  fixtures: Record<string, Record<string, unknown>>,
+  datasets: Record<string, FixtureDataset>,
+): WidgetFixture[] {
   return Object.entries(fixtures)
     .sort(([left], [right]) => left.localeCompare(right))
-    .map(([name, props]) => ({ id: name, label: name, props }));
+    .map(([name, props]) => {
+      const dataset = datasets[name];
+      return {
+        id: name,
+        label: name,
+        props,
+        // A fixture whose package shipped no dataset renders from none, which is a fact about the package rather
+        // than something to paper over with empty rows.
+        ...(dataset === undefined ? {} : { dataset }),
+      };
+    });
 }

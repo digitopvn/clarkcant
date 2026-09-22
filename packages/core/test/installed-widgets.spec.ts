@@ -14,7 +14,9 @@ import { installedWidgets } from "../src/installed-widgets.ts";
  * package is empty when it simply has no bytes here.
  */
 
-function writePackage(options: { facets?: number; omitManifest?: boolean; brokenSecondFacet?: boolean } = {}): string {
+function writePackage(
+  options: { facets?: number; omitManifest?: boolean; brokenSecondFacet?: boolean; dataset?: "valid" | "broken" | "none" } = {},
+): string {
   const root = mkdtempSync(join(tmpdir(), "cc-installed-widgets-"));
   mkdirSync(join(root, "widgets", "main"), { recursive: true });
   mkdirSync(join(root, "fixtures"), { recursive: true });
@@ -82,6 +84,21 @@ function writePackage(options: { facets?: number; omitManifest?: boolean; broken
   // Deliberately out of alphabetical order on disk, so the ordering assertion is about the code and not the filesystem.
   writeFileSync(join(root, "fixtures", "empty.json"), JSON.stringify({ title: "" }));
   writeFileSync(join(root, "fixtures", "default.json"), JSON.stringify({ title: "Xin chào" }));
+
+  const dataset = options.dataset ?? "valid";
+  if (dataset !== "none") {
+    writeFileSync(
+      join(root, "fixtures", "default.dataset.json"),
+      dataset === "broken"
+        ? JSON.stringify({ datasetId: "fixture_panel" })
+        : JSON.stringify({
+            datasetId: "fixture_panel",
+            source: "sample",
+            columns: ["week", "runs"],
+            rows: [{ week: "W36", runs: 3 }],
+          }),
+    );
+  }
 
   return root;
 }
@@ -161,6 +178,51 @@ describe("installed package widgets", () => {
     expect(outcome.widgets.map((widget) => widget.facetId)).toEqual(["canvas.note@1"]);
     expect(outcome.problems).toHaveLength(1);
     expect(outcome.problems[0]).toContain("widget-1.json");
+  });
+
+  it("carries the dataset a package shipped beside its fixture", () => {
+    // Props cannot carry a dataset: the renderers read one from the fixture, so a data-backed widget would draw
+    // "no data" forever without this.
+    const outcome = installedWidgets({
+      packageId: "com.example.panel",
+      version: "1.0.0",
+      source: { kind: "local", path: writePackage() },
+    });
+
+    expect(outcome.ok).toBe(true);
+    if (!outcome.ok) return;
+
+    const byId = new Map(outcome.widgets[0]?.fixtures.map((fixture) => [fixture.id, fixture]));
+    expect(byId.get("default")?.dataset?.datasetId).toBe("fixture_panel");
+    expect(byId.get("default")?.dataset?.rows).toEqual([{ week: "W36", runs: 3 }]);
+    // A fixture the package shipped no dataset for renders from none, which is a fact about the package.
+    expect(byId.get("empty")?.dataset).toBeUndefined();
+  });
+
+  it("names a dataset file that does not match the schema instead of attaching it", () => {
+    const outcome = installedWidgets({
+      packageId: "com.example.panel",
+      version: "1.0.0",
+      source: { kind: "local", path: writePackage({ dataset: "broken" }) },
+    });
+
+    expect(outcome.ok).toBe(true);
+    if (!outcome.ok) return;
+    expect(outcome.problems.some((problem) => problem.includes("default.dataset.json"))).toBe(true);
+    expect(outcome.widgets[0]?.fixtures.find((fixture) => fixture.id === "default")?.dataset).toBeUndefined();
+  });
+
+  it("does not turn a dataset file into a fixture nobody declared", () => {
+    // `default.dataset.json` stripped of only `.json` would be a fixture called "default.dataset".
+    const outcome = installedWidgets({
+      packageId: "com.example.panel",
+      version: "1.0.0",
+      source: { kind: "local", path: writePackage() },
+    });
+
+    expect(outcome.ok).toBe(true);
+    if (!outcome.ok) return;
+    expect(outcome.widgets[0]?.fixtures.map((fixture) => fixture.id)).toEqual(["default", "empty"]);
   });
 
   it("returns a definition whose id nobody renders, because whether it can be shown is the caller's gate", () => {
