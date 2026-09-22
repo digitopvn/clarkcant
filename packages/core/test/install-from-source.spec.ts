@@ -277,6 +277,30 @@ describe("what the node reports as installed", () => {
     expect(listInstalledPackages(deps)[0]?.lane).toBe("trusted-native");
   });
 
+  it("reports a local package under the name the directory gives it, not its path", () => {
+    /*
+     * One package used to have two names: the listing called it `com.example.calendar` while the installed row
+     * called it `/tmp/pkg`, and the same person was shown both. This asserts they are one name now, from the row the
+     * library and the marketplace both read.
+     */
+    const installed = installFromSource(
+      deps,
+      input({
+        source: { kind: "local", path: "/tmp/pkg" },
+        localDigest: "sha256:local-bytes",
+        requirementKey: "cap:local",
+      }),
+    );
+    expect(installed.ok).toBe(true);
+
+    const entry = listInstalledPackages(deps)[0];
+    expect(entry?.packageId).toBe("com.example.calendar");
+    expect(entry?.version).toBe("1.2.0");
+    // The digest stays the caller's hash of the bytes on disk rather than the listed one, which describes a
+    // different set of bytes: the row has to tie what is running to what was hashed.
+    expect(entry?.digest).toBe("sha256:local-bytes");
+  });
+
   it("reports nothing when nothing is installed, rather than a placeholder", () => {
     expect(listInstalledPackages(deps)).toEqual([]);
   });
