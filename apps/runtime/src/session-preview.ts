@@ -1,3 +1,5 @@
+import { type Instant, nowInstant } from "@clarkcant/contracts";
+
 import { detectImageFormat, writeBlob } from "./blobs.ts";
 
 /**
@@ -43,6 +45,82 @@ export type SessionPreviewResult =
       viewport: { width: number; height: number };
     }
   | { ok: false; code: "CAPTURE_FAILED" | "TOO_LARGE" | "NOT_AN_IMAGE"; message: string };
+
+/**
+ * A browser, narrowed to the one method this path needs.
+ *
+ * Not the packs' `BrowserDriver`: what this module is about is the bytes, so a driver that can hand it a frame is
+ * all it may require. The pack's driver satisfies this without being named here, and a test can satisfy it with
+ * something that is not a browser at all.
+ */
+export interface SessionPreviewDriver {
+  capturePreview(): Promise<SessionPreviewCapture>;
+}
+
+export interface SessionPreviewCaptureRequest {
+  dataDir: string;
+  driver: SessionPreviewDriver;
+  /** The node's clock, injected so a test can pin the instant instead of reading the wall. */
+  at?: () => Instant;
+  maxBytes?: number;
+}
+
+/**
+ * A frame that was captured, stored and stamped, or the reason it was not.
+ *
+ * `capturedAt` is the moment the frame was taken. It travels with the bytes because a card without it cannot say
+ * what it is showing, and it is deliberately **not** part of the store's own answer: the store does not know when
+ * a driver took the picture, and a store that guessed would let a card claim a moment nobody observed.
+ */
+export type SessionPreviewCaptureOutcome =
+  | {
+      ok: true;
+      digest: string;
+      blobRef: string;
+      bytes: number;
+      contentType: string;
+      viewport: { width: number; height: number };
+      capturedAt: Instant;
+    }
+  | Extract<SessionPreviewResult, { ok: false }>;
+
+/**
+ * Capture the screen through a driver and store it as this node's frame.
+ *
+ * The whole real path in one call, and the stamp is taken **inside** the capture rather than before it: the instant
+ * a card shows has to be the instant the driver was asked, because a caller that stamped its own frame would be
+ * reporting a moment it never observed. Everything after that — the size guard, the sniffed type, the content
+ * address — is `storeSessionPreview`'s, so there is one implementation of what a stored frame is.
+ */
+export async function captureSessionPreview(
+  input: SessionPreviewCaptureRequest,
+): Promise<SessionPreviewCaptureOutcome> {
+  const at = input.at ?? ((): Instant => nowInstant());
+  let capturedAt: Instant | undefined;
+  const stored = await storeSessionPreview({
+    dataDir: input.dataDir,
+    capture: () => {
+      capturedAt = at();
+      return input.driver.capturePreview();
+    },
+    ...(input.maxBytes === undefined ? {} : { maxBytes: input.maxBytes }),
+  });
+  if (!stored.ok) return stored;
+  if (capturedAt === undefined) {
+    // Unreachable by construction — the store only reports success once the capture it was handed has run — and
+    // reported rather than asserted, so a frame can never be handed on with no moment attached to it.
+    return { ok: false, code: "CAPTURE_FAILED", message: "the frame was stored without the moment it was taken" };
+  }
+  return {
+    ok: true,
+    digest: stored.digest,
+    blobRef: stored.blobRef,
+    bytes: stored.bytes,
+    contentType: stored.contentType,
+    viewport: stored.viewport,
+    capturedAt,
+  };
+}
 
 export async function storeSessionPreview(input: SessionPreviewInput): Promise<SessionPreviewResult> {
   let captured: SessionPreviewCapture;

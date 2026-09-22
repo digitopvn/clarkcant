@@ -746,3 +746,26 @@ Also fixed: check 10 now states that evidence is checked for existence, not exec
 ### Direction of change
 
 No T-id or V-id was promoted or demoted: no status cell in the traceability table changed, and all 18 V rows already agreed with the registry. Several `@implementation-status` comments were corrected upward because a named test exists and was run (`runtime.local-transport`, `pack.browser-playwright`, `example.media-widget-contract`'s fixture assertions), and one stale prose claim was corrected (V05 no longer says artifact bytes are not transferred).
+
+## Phase 5 — MERGED
+
+| Item | Value |
+| --- | --- |
+| PR | [#147](https://github.com/digitopvn/clarkcant/pull/147) |
+| Merge commit | 952729a2cd32ac80c0a3530198eec3c5172fa6cf |
+| Reviewed head (deciding review) | 98c7bfe97b223dbb7e352f2b3777164a0c37a6fb |
+| Head merged (bound via --match-head-commit) | cef0bd0cdc79f395522ca1fd7c301e334107ffe1 |
+| CI on the merged head | terminal green |
+| pnpm verify | exit 0 — 186 files passed / 1 skipped, 2288 tests passed / 7 skipped |
+
+### Disclosure: the merged head is one commit past the reviewed head
+
+The deciding review verified items 1, 2, 4 and 5 fixed (recomputing the governed manifest hash itself) and left exactly one doc-scope item: the new clarkcant.status definition did not decide why packs/google-calendar is external-blocked while packages/integration-sdk and packages/widget-cli stay implemented under the same account gate. That item was settled by the controller in a single README paragraph, and the plan and PR body were committed with it. The delta past the reviewed head is prose in README.md plus files under plans/, with no code, test, registry or status-cell change. This is recorded rather than glossed: for every earlier phase the merged head was byte-identical to the reviewed head, and here it is not.
+
+### Review history (three rounds)
+
+Round 1 requested changes with six IMPORTANT findings. Round 2 found that round 1's fixes had themselves introduced a new false statement, plus two more. Round 3 verified the remainder fixed. The pattern is worth recording: on this phase, fixes introduced new defects twice, so each round was re-verified against the tree rather than trusted. Two implementer claims were also left unverified by round 1 and are not restated as established: the "187 route-focused tests" figure and "startup stderr byte-identical".
+
+## Phase 6 — internal real-path proofs
+
+Branch phase-6-real-paths, cut from main at the Phase 5 merge. The contract: a real internal journey proves BrowserDriver.capturePreview() real image bytes reach the runtime blob store, are served from the authenticated /previews/<digest> route, and render as a browser takeover card labelled as a captured-at snapshot — with no fixed PNG as final evidence. External gates #2/#3/#4/#5 stay open and are never satisfied by a fixture.

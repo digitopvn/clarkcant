@@ -48,8 +48,19 @@ export interface GatewayResponse {
    * `headers` are additional headers a route needs and the transport does not own — a disposition for
    * an attachment, `nosniff` for anything served back to a browser. The transport refuses a key it
    * owns, so a route cannot serve bytes under a content type the host never verified.
+   *
+   * `cache` is how a route asks for the one host-owned header it has an opinion about. It is a field
+   * rather than a header because the transport owns `cache-control`, and a route that set it directly
+   * had its value refused and silently replaced — which is how a frame meant never to be cached came
+   * back with a five-minute lifetime.
    */
-  binary?: { bytes: Uint8Array; contentType: string; headers?: Record<string, string> };
+  binary?: {
+    bytes: Uint8Array;
+    contentType: string;
+    /** `private` is the default: these bytes are authorized by a token and a shared cache must not reuse them. */
+    cache?: "private" | "no-store";
+    headers?: Record<string, string>;
+  };
 }
 
 /**

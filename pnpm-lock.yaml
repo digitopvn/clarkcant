@@ -206,6 +206,9 @@ importers:
       '@clarkcant/app-worker':
         specifier: workspace:*
         version: link:../worker
+      '@clarkcant/browser-playwright':
+        specifier: workspace:*
+        version: link:../../packs/browser-playwright
       '@clarkcant/capability-host':
         specifier: workspace:*
         version: link:../../packages/capability-host

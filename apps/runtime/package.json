@@ -20,6 +20,7 @@
   },
   "dependencies": {
     "@clarkcant/app-worker": "workspace:*",
+    "@clarkcant/browser-playwright": "workspace:*",
     "@clarkcant/capability-host": "workspace:*",
     "@clarkcant/contracts": "workspace:*",
     "@clarkcant/core": "workspace:*",

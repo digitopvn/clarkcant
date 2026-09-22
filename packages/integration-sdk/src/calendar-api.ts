@@ -26,6 +26,15 @@ export interface CalendarEvent {
   startsAt: string;
   endsAt: string;
   timezone: string;
+  /**
+   * The instance's own status, as the payload states it.
+   *
+   * `confirmed` when the payload is silent, which is the API's own default for an instance it returned — reading
+   * it rather than assuming it is what lets a caller drop a cancelled occurrence instead of showing it.
+   */
+  status: "confirmed" | "tentative" | "cancelled";
+  /** The version this instance was read at, and empty when the payload named none. */
+  etag: string;
 }
 
 export interface CalendarReadInput {
@@ -144,6 +153,8 @@ function readEvent(record: Record<string, unknown>): CalendarEvent | undefined {
     // The event's own zone, taken from whichever end carries one: a calendar that stored it on the start only is
     // still an event with a zone, and guessing the node's own would move it for anybody travelling.
     timezone: typeof start.timeZone === "string" ? start.timeZone : typeof end.timeZone === "string" ? end.timeZone : "UTC",
+    status: record.status === "tentative" || record.status === "cancelled" ? record.status : "confirmed",
+    etag: typeof record.etag === "string" ? record.etag : "",
   };
 }
 

@@ -212,3 +212,20 @@ export {
   type TokenExchangeResult,
   type TokenGrant,
 } from "./token-exchange.ts";
+
+/**
+ * The reference integration's Calendar client.
+ *
+ * Exported because the pack that owns Google Calendar is where this belongs: the SDK owns the request shape and the
+ * vocabulary for what came back, the pack owns the events, the conflicts and the freshness rule. A pack that
+ * re-implemented the request would be a second client for one API, and the two would drift in exactly the place
+ * where "did that write land?" is decided.
+ */
+export {
+  CALENDAR_API_STATUS,
+  readAgenda,
+  writeEvent,
+  type AgendaRead,
+  type CalendarEvent as CalendarApiEvent,
+  type CalendarWriteOutcome,
+} from "./calendar-api.ts";

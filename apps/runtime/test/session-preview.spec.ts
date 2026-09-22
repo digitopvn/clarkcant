@@ -1,11 +1,13 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import { type Instant } from "@clarkcant/contracts";
 import { afterEach, describe, expect, it } from "vitest";
 
-import { readBlob } from "../src/blobs.ts";
-import { storeSessionPreview } from "../src/session-preview.ts";
+import { blobPathForDigest, readBlob } from "../src/blobs.ts";
+import { captureSessionPreview, storeSessionPreview } from "../src/session-preview.ts";
 
 /**
  * A preview of a session, stored as bytes (V14).
@@ -111,5 +113,66 @@ describe("storing a session preview", () => {
 
     expect(result.ok).toBe(true);
     expect(result.ok ? result.contentType : "").toBe("image/jpeg");
+  });
+});
+
+/**
+ * Capturing through a driver (V14).
+ *
+ * The store above is proven with bytes a test supplies. This is the step the phase exists for: a driver hands over
+ * a frame and what comes back carries the moment it was taken. The browser half is the pack's own suite's — these
+ * use a driver that returns bytes on demand, so what is asserted here is the stamp and the digest rather than
+ * whether Chromium started.
+ */
+describe("capturing a session preview through a driver", () => {
+  const driver = (bytes: Uint8Array) => ({ capturePreview: () => Promise.resolve({ bytes, contentType: "image/png", viewport: { width: 1280, height: 720 } }) });
+
+  it("stamps the frame with the moment the driver was asked, not with a clock read after it", async () => {
+    const clock = { now: "2026-09-22T10:00:00.000Z" as Instant };
+    let askedAt: Instant | undefined;
+    const result = await captureSessionPreview({
+      dataDir: tempDir(),
+      at: () => clock.now,
+      driver: {
+        capturePreview: () => {
+          askedAt = clock.now;
+          // The clock moves on while the driver takes the picture. A stamp read after the capture finished would
+          // report a moment the frame does not show, which is the claim a takeover card must never make.
+          clock.now = "2026-09-22T10:00:07.000Z" as Instant;
+          return Promise.resolve({ bytes: PNG, contentType: "image/png", viewport: { width: 1280, height: 720 } });
+        },
+      },
+    });
+
+    expect(result.ok).toBe(true);
+    expect(askedAt).toBe("2026-09-22T10:00:00.000Z");
+    expect(result.ok ? result.capturedAt : "").toBe("2026-09-22T10:00:00.000Z");
+  });
+
+  it("stores the driver's bytes under their own digest", async () => {
+    const dataDir = tempDir();
+    const result = await captureSessionPreview({ dataDir, driver: driver(PNG) });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    // The digest is the bytes' own, computed here from the same array the driver handed over: a digest that did not
+    // match them would be a reference to something else, which is how a card ends up showing another frame.
+    expect(result.digest).toBe(`sha256:${createHash("sha256").update(PNG).digest("hex")}`);
+    const blobPath = blobPathForDigest({ dataDir, digest: result.digest });
+    expect(blobPath).toBeDefined();
+    const back = readBlob({ dataDir, blobPath: blobPath ?? "" });
+    expect(back.ok && Array.from(back.bytes)).toEqual(Array.from(PNG));
+  });
+
+  it("reports a driver that failed instead of storing a frame", async () => {
+    const dataDir = tempDir();
+    const result = await captureSessionPreview({
+      dataDir,
+      driver: { capturePreview: () => Promise.reject(new Error("the browser is gone")) },
+    });
+
+    expect(result.ok ? "" : result.code).toBe("CAPTURE_FAILED");
+    // And nothing was written: a failed capture must not leave a file the node cannot explain.
+    expect(existsSync(join(dataDir, "blobs"))).toBe(false);
   });
 });

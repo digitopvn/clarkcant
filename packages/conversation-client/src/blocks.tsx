@@ -1868,7 +1868,12 @@ function SessionPreviewFrame({
 
   const taken = capturedAt === undefined ? "" : ` lúc ${capturedAt}`;
   return (
-    <figure className="cc-card-preview" data-control-preview-frame="true">
+    /*
+     * The digest is on the element as well as in the fetch, so an assertion can ask the node for the frame the
+     * card names and check that what comes back hashes to it. Without that the two halves — a card carrying a
+     * reference, and a node holding bytes — could each be right about a different picture.
+     */
+    <figure className="cc-card-preview" data-control-preview-frame="true" data-control-preview-digest={digest}>
       {url === undefined ? (
         <p className="cc-card-preview-pending" role="status">
           Đang tải ảnh chụp màn hình…
