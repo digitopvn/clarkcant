@@ -26,10 +26,3 @@ export const MUST_FAIL = [
   "mint an approval record",
   "reach an origin that is not in the declared allowlist",
 ] as const;
-
-/**
- * @status-ref example.mcp-app-fixture
- * TODO(P6): the fixture UI. It also needs a reference MCP Apps host, which this
- * repository does not yet provide.
- */
-export const MCP_FIXTURE_STATUS = "blocked-on-reference-host";

@@ -9,8 +9,8 @@
  * @status-ref example.note-widget
  *
  * The prop schema and the capability requests are declared below and match
- * `docs/examples/note-pack.json`; `editor.ts` is the draft lifecycle they are used by. The
- * registry entry names what is still missing.
+ * `docs/examples/note-pack.json`; `editor.ts` is the draft lifecycle they are used by, and it carries the
+ * package's one `NOTE_WIDGET_STATUS` label. The registry entry names what is still missing.
  *
  * Two properties the fixture exists to demonstrate:
  *   - it requests only `widget.state.read` and `widget.state.write`, so the sandbox
@@ -47,8 +47,3 @@ export const NOTE_DEFINITION: WidgetDefinition = {
 
 /** Declared permissions: nothing. A note needs no network and no filesystem. */
 export const PERMISSIONS = { networkOrigins: [], microphone: false, camera: false, filesystem: [] } as const;
-
-/**
- * @status-ref example.note-widget
- */
-export const NOTE_WIDGET_STATUS = "manifest-declared-bundle-not-implemented";

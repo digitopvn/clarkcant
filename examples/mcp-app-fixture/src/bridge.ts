@@ -19,6 +19,11 @@ import {
   type WidgetToHostMessage,
 } from "@clarkcant/widget-sdk";
 
+/**
+ * The package's one copy of the label, on the module the registry's evidence tests exercise. "Host"
+ * here is the injected one the tests build from `FixtureHost`; the reference MCP Apps host that does
+ * not exist is named by the registry entry `example.mcp-app-fixture`, not by a second constant.
+ */
 export const MCP_FIXTURE_STATUS = "implemented-against-reference-host";
 
 /** The one capability this fixture is allowed to request. */
