@@ -128,8 +128,137 @@ export const installCandidateSchema = z.strictObject({
   ]),
 });
 
-export const installPlanSchema = z.strictObject({
-  planId: z.string().min(1).max(128),
+/* ------------------------------------------------------------------ *
+ * Frozen build input
+ * ------------------------------------------------------------------ */
+
+/**
+ * Which kind of source a pin came from.
+ *
+ * The three do not resolve the same way and are not interchangeable: an npm version is a registry entry, a git ref
+ * is a commit in somebody else's repository, and a local path is bytes on this machine that no registry ever saw.
+ */
+export const dependencyProvenanceSchema = z.enum(["npm", "git", "local"]);
+export type DependencyProvenance = z.infer<typeof dependencyProvenanceSchema>;
+
+/**
+ * One artifact, pinned to an exact version and an integrity.
+ *
+ * `resolvedFrom` is where the bytes come from, in the vocabulary of the source that resolved them:
+ * `npm:<name>@<version>`, `git:<url>#<ref>`, `local:<path>`. Recorded rather than derived from the version, because
+ * a closure that flattened the three into one version number would make a registry tarball and a checkout on this
+ * machine look like the same claim.
+ */
+export const pinnedArtifactSchema = z.strictObject({
+  name: z.string().min(1).max(160),
+  version: semverSchema,
+  integrity: z.string().min(1).max(120),
+  resolvedFrom: z.string().min(1).max(400),
+});
+export type PinnedArtifact = z.infer<typeof pinnedArtifactSchema>;
+
+/**
+ * How much of the build input a lock covers.
+ *
+ * `artifact-only` exists so that a partial resolution is representable without being mistakable for a frozen tree:
+ * a build has to refuse it rather than read it as "the dependencies are pinned".
+ */
+export const dependencyLockCoverageSchema = z.enum(["artifact-only", "artifact-and-dependencies"]);
+export type DependencyLockCoverage = z.infer<typeof dependencyLockCoverageSchema>;
+
+/**
+ * The frozen build input a plan and its generation carry.
+ *
+ * Bound to consent alongside the plan digest, and separate from it: the plan digest answers "is this the plan that
+ * was approved", this answers "is this the closure that was approved". A build reads the artifact the reference
+ * names and never the package manager's own metadata.
+ */
+export const dependencyLockBindingSchema = z.strictObject({
+  lockRef: z.string().min(1).max(300),
+  lockDigest: z.string().min(1).max(120),
+  coverage: dependencyLockCoverageSchema,
+  dependencies: z.array(pinnedArtifactSchema).max(256),
+});
+export type DependencyLockBinding = z.infer<typeof dependencyLockBindingSchema>;
+
+/**
+ * What moved between two pinned sets, in lines that name the artifact rather than the field.
+ *
+ * "the lock changed" is not actionable; "left-pad resolved to 1.3.0 (sha256:…) but consent covered 1.2.0
+ * (sha256:…)" is, and it is the sentence somebody has to act on when a build refuses to start.
+ */
+export function dependencyDrift(
+  consented: readonly PinnedArtifact[],
+  current: readonly PinnedArtifact[],
+): string[] {
+  const before = new Map(consented.map((pin) => [pin.name, pin]));
+  const after = new Map(current.map((pin) => [pin.name, pin]));
+  const differences: string[] = [];
+  for (const [name, pinned] of before) {
+    const now = after.get(name);
+    if (now === undefined) {
+      differences.push(`dependency "${name}" was pinned at ${pinned.version} and is no longer in the closure`);
+      continue;
+    }
+    if (now.version !== pinned.version || now.integrity !== pinned.integrity) {
+      differences.push(
+        `dependency "${name}" resolved to ${now.version} (${now.integrity}) but consent covered ${pinned.version} (${pinned.integrity})`,
+      );
+      continue;
+    }
+    if (now.resolvedFrom !== pinned.resolvedFrom) {
+      differences.push(`dependency "${name}" now comes from ${now.resolvedFrom}, not ${pinned.resolvedFrom}`);
+    }
+  }
+  for (const [name, pinned] of after) {
+    if (!before.has(name)) {
+      differences.push(`dependency "${name}" resolved to ${pinned.version} and was not in the consented closure`);
+    }
+  }
+  return differences;
+}
+
+/** The plan's dependency rows as pins, so the comparison above is one implementation rather than two. */
+export function pinnedFromPlan(plan: InstallPlan): PinnedArtifact[] {
+  return plan.resolvedDependencies.map((dependency) => ({
+    name: dependency.id,
+    version: dependency.version,
+    integrity: dependency.digest,
+    resolvedFrom: dependency.resolvedFrom,
+  }));
+}
+
+/**
+ * Whether a plan already on this node froze the same build input as the one in front of it.
+ *
+ * Named lines rather than booleans, because the caller has to tell a person which dependency moved. A lock that was
+ * present on one side and absent on the other is a difference too: a plan consented with a frozen closure must not
+ * be joined by a resolution that froze nothing.
+ */
+export function lockDriftBetween(consented: InstallPlan, current: InstallPlan): string[] {
+  const differences: string[] = [];
+  if (consented.lockRef !== current.lockRef) {
+    differences.push(
+      `the frozen build input was ${consented.lockRef ?? "not resolved"} and is now ${current.lockRef ?? "not resolved"}`,
+    );
+  }
+  if (consented.lockCoverage !== current.lockCoverage) {
+    differences.push(
+      `the lock covered ${consented.lockCoverage ?? "nothing"} and now covers ${current.lockCoverage ?? "nothing"}`,
+    );
+  }
+  if (consented.lockDigest !== current.lockDigest && consented.lockRef === current.lockRef) {
+    differences.push(
+      `the lock digest changed from ${consented.lockDigest ?? "none"} to ${current.lockDigest ?? "none"}`,
+    );
+  }
+  differences.push(...dependencyDrift(pinnedFromPlan(consented), pinnedFromPlan(current)));
+  return differences;
+}
+
+export const installPlanSchema = z
+  .strictObject({
+    planId: z.string().min(1).max(128),
   ownerPrincipalId: principalIdSchema,
   /** One plan per (capability, node): two tasks needing the same pack share it. */
   requirementKey: z.string().min(1).max(300),
@@ -141,6 +270,8 @@ export const installPlanSchema = z.strictObject({
         id: z.string().min(1).max(160),
         version: semverSchema,
         digest: z.string().min(1).max(120),
+        /** Where these bytes come from; see `pinnedArtifactSchema` for why the three kinds are kept apart. */
+        resolvedFrom: z.string().min(1).max(400),
       }),
     )
     .max(256),
@@ -168,9 +299,28 @@ export const installPlanSchema = z.strictObject({
   isolationPlan: z.array(
     z.strictObject({ facetKind: facetKindSchema, isolation: isolationClassSchema }),
   ),
+  /**
+   * The frozen build input this plan was consented to, when one was resolved.
+   *
+   * Absent means "no closure was frozen", which is a state a plan may honestly be in and is not the same as an
+   * empty closure: a build refuses a plan without the three fields below rather than resolving one itself.
+   */
+  lockRef: z.string().min(1).max(300).optional(),
+  lockDigest: z.string().min(1).max(120).optional(),
+  lockCoverage: dependencyLockCoverageSchema.optional(),
   createdAt: instantSchema,
   expiresAt: instantSchema,
-});
+})
+  /*
+   * A lock reference without a digest, or a digest without what it covers, describes nothing a build could check.
+   * The three travel together or not at all.
+   */
+  .refine(
+    (plan) =>
+      (plan.lockRef === undefined) === (plan.lockDigest === undefined) &&
+      (plan.lockRef === undefined) === (plan.lockCoverage === undefined),
+    { error: "a plan's lockRef, lockDigest and lockCoverage are present together or absent together" },
+  );
 export type InstallPlan = z.infer<typeof installPlanSchema>;
 
 /**
@@ -183,26 +333,30 @@ export type InstallPlan = z.infer<typeof installPlanSchema>;
 export function consentStillValid(
   consented: InstallPlan,
   current: InstallPlan,
-): { valid: true } | { valid: false; changed: string[] } {
+): { valid: true } | { valid: false; changed: string[]; detail: string[] } {
   const changed: string[] = [];
   if (consented.candidate.artifactUrl !== current.candidate.artifactUrl) changed.push("artifactUrl");
   if (consented.candidate.digest !== current.candidate.digest) changed.push("digest");
   if (consented.candidate.version !== current.candidate.version) changed.push("version");
   if (consented.targetNodeId !== current.targetNodeId) changed.push("targetNodeId");
   if (consented.planDigest !== current.planDigest) changed.push("planDigest");
+  if (consented.lockRef !== current.lockRef) changed.push("lockRef");
+  if (consented.lockDigest !== current.lockDigest) changed.push("lockDigest");
+  if (consented.lockCoverage !== current.lockCoverage) changed.push("lockCoverage");
   if (
     consented.grantedCapabilities.slice().sort().join(",") !==
     current.grantedCapabilities.slice().sort().join(",")
   ) {
     changed.push("grantedCapabilities");
   }
-  const deps = (plan: InstallPlan) =>
-    plan.resolvedDependencies
-      .map((dep) => `${dep.id}@${dep.version}:${dep.digest}`)
-      .sort()
-      .join(",");
-  if (deps(consented) !== deps(current)) changed.push("resolvedDependencies");
-  return changed.length === 0 ? { valid: true } : { valid: false, changed };
+  /*
+   * The dependency lines are computed from the pins rather than from a joined string, so the refusal can name the
+   * dependency that moved. "resolvedDependencies changed" is a field; "left-pad resolved to 1.3.0 but consent
+   * covered 1.2.0" is the sentence somebody can act on.
+   */
+  const lockLines = lockDriftBetween(consented, current);
+  if (lockLines.some((line) => line.startsWith("dependency "))) changed.push("resolvedDependencies");
+  return changed.length === 0 ? { valid: true } : { valid: false, changed, detail: lockLines };
 }
 
 /* ------------------------------------------------------------------ *
@@ -289,6 +443,15 @@ export const packageGenerationSchema = z.strictObject({
    * which is what forces a worker handoff rather than a resource refresh.
    */
   codeGeneration: z.string().min(1).max(200),
+  /**
+   * The frozen build input this generation was activated against.
+   *
+   * Carried on the generation rather than looked up from the plan, because what is running and what was consented to
+   * are two different rows: a superseded plan must not be able to change the answer for a live generation.
+   */
+  lockRef: z.string().min(1).max(300).optional(),
+  lockDigest: z.string().min(1).max(120).optional(),
+  lockCoverage: dependencyLockCoverageSchema.optional(),
   activatedAt: instantSchema,
   /** A generation stays addressable after replacement so rollback is possible. */
   supersededAt: instantSchema.optional(),

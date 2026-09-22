@@ -353,6 +353,12 @@ importers:
       '@clarkcant/core':
         specifier: workspace:*
         version: link:../core
+      '@clarkcant/storage':
+        specifier: workspace:*
+        version: link:../storage
+      zod:
+        specifier: 4.6.5
+        version: 4.6.5
 
   packages/contracts:
     dependencies:
