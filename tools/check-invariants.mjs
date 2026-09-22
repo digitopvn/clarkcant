@@ -280,7 +280,7 @@ function readJson(path) {
 
 /* ------------------------------------------------------------------ *
  * 7. The blueprint names its scope items V01–V18 and acceptance tests
- *    T01–T72. Every one must appear in the traceability document, so a reader
+ *    T01–T73. Every one must appear in the traceability document, so a reader
  *    can find out what is real without reading source.
  * ------------------------------------------------------------------ */
 {
@@ -294,7 +294,7 @@ function readJson(path) {
       const id = `V${String(i).padStart(2, "0")}`;
       if (!source.includes(id)) c.failures.push(`traceability document omits ${id}`);
     }
-    for (let i = 1; i <= 72; i += 1) {
+    for (let i = 1; i <= 73; i += 1) {
       const id = `T${String(i).padStart(2, "0")}`;
       if (!source.includes(id)) c.failures.push(`traceability document omits ${id}`);
     }
@@ -650,15 +650,25 @@ function readJson(path) {
 
     /*
      * The external gates are the point of being honest about blocked work, so they stay named.
-     * Only the four this program must keep open are pinned to an issue number. A gap that waits on
-     * nothing outside this repository is described by the gap itself instead: pinning it to a number
-     * would make this check depend on that issue's state, which is the one thing it cannot read.
+     * Only the four this program must keep open are pinned to an issue number, and any other issue
+     * number is rejected rather than ignored: the header rule that a gap waiting on nothing outside
+     * this repository is described by the gap itself is a rule about the field, not advice for the
+     * reader, and a rejected number is the only way a check can enforce it.
      */
+    const openGates = [2, 3, 4, 5];
     const gateIssues = new Set();
     for (const entry of statusRegistry) {
-      if (typeof entry.externalGate?.issue === "number") gateIssues.add(entry.externalGate.issue);
+      const issue = entry.externalGate?.issue;
+      if (typeof issue !== "number") continue;
+      if (!openGates.includes(issue)) {
+        c.failures.push(
+          `${entry.capabilityId} pins its external gate to #${issue}; #${openGates.join("/#")} are the only gates this program keeps open, and a gap that waits on nothing outside the repository is described by the gap itself`,
+        );
+        continue;
+      }
+      gateIssues.add(issue);
     }
-    for (const issue of [2, 3, 4, 5]) {
+    for (const issue of openGates) {
       if (!gateIssues.has(issue)) {
         c.failures.push(`external gate #${issue} is no longer represented by any registry entry`);
       }
