@@ -11,38 +11,32 @@ import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
-import { instantSchema, type Instant, type MessageRecord } from "@clarkcant/contracts";
+import type { Instant } from "@clarkcant/contracts";
 import { applyEnvFile } from "@clarkcant/pi-adapter";
 
 import { interactionDepsFor } from "./gateway.ts";
 import { createNodeServer } from "./server.ts";
 import { machineRoots } from "./fs-search.ts";
-import { resolveProject, refreshProjectIndex } from "./project-finder.ts";
-import { readExecutionPolicy, readPersonalInstructions, directoryIndexPath, type CoordinationDeps } from "@clarkcant/core";
-import { messagesSince, credentialNames, appendAuditEvent, readPreference } from "@clarkcant/storage";
-import { textOfMessage } from "./session-search.ts";
-import { SAMPLE_DATASET } from "@clarkcant/data-canvas/sample";
-
-import { createModelCatalogue, createModelTurn, type ViewDescriptor } from "./model-turn.ts";
+import { refreshProjectIndex } from "./project-finder.ts";
+import { readExecutionPolicy, type CoordinationDeps } from "@clarkcant/core";
+import { appendAuditEvent } from "@clarkcant/storage";
+import { createModelCatalogue, type ViewDescriptor } from "./model-turn.ts";
 import { fixtureGatesFromEnv, loadFixtureComposition } from "./bootstrap/fixtures.ts";
+import { createNodeModelTurn } from "./bootstrap/model-bootstrap.ts";
 import { attachNodeVoice } from "./bootstrap/voice-bootstrap.ts";
 import { bootRuntime } from "./node.ts";
 import { detectContainerEngine } from "./container-engine.ts";
 import { listenOnUnixSocket, prepareSocketPath } from "./unix-socket.ts";
-import { memoryBrief } from "./memory.ts";
-import { attachmentRefsForLastUserMessage } from "./attachments.ts";
 import { buildViewCatalog } from "./view-catalog.ts";
 import { registerNodeTools } from "./tool-catalogue.ts";
 import { createNodeTools, type CommandToolDeps } from "./node-tools.ts";
 import type { InteractionDeps } from "./interactions.ts";
-import { guardOperation, decideModelRoute } from "./jev-decider.ts";
+import { guardOperation } from "./jev-decider.ts";
 import { ownedResources } from "./preflight.ts";
 import { DEFAULT_NARROWING } from "./autonomy-settings.ts";
-import { readCurrentAlias, readModelPool } from "./model-registry.ts";
-import { filterBackgroundCandidates, routeBackgroundModel } from "./model-router.ts";
 import { createSecretBroker } from "./secret-broker.ts";
 import type { RequestSecretDeps } from "./request-secret.ts";
-import { registerSessionFile, sessionsDirectory } from "./session-store.ts";
+import { sessionsDirectory } from "./session-store.ts";
 import { bootNodeServices, type NodeServices } from "./services.ts";
 
 interface CliOptions {
@@ -202,208 +196,29 @@ async function main(): Promise<void> {
    */
   const runtime = bootRuntime({ dataDir: options.dataDir, label: options.label });
 
-  const chosenModel = (): { provider: string; id: string } | undefined => {
-    const stored = readPreference(runtime.db, runtime.identity.ownerPrincipalId, "model", "node");
-    const [provider, id] = (stored ?? "").split("/");
-    return provider === undefined || provider === "" || id === undefined || id === ""
-      ? undefined
-      : { provider, id };
-  };
-
-  /**
-   * Which model a background worker runs.
+  /*
+   * The model a person chose, the background routing, and the turn itself.
    *
-   * Deterministic filters first — the pool's own settings, the credentials this node has, provider health, context and
-   * tool needs — and only then the policy layer, which may choose among what survived. When nothing is eligible, or
-   * when the policy layer cannot be reached, this returns nothing and the worker runs what the node is configured
-   * with: routing must never be the reason a job does not start.
+   * Built here because whether this node has a model decides how the conductor is assembled below, and because the
+   * node publishes most of what a turn reads only after the services exist: the seams are getters for exactly that
+   * reason, and the model and the instructions are read per turn rather than captured.
    */
-  const routeBackground = async (): Promise<{ provider: string; id: string } | undefined> => {
-    const owner = services.runtime.identity.ownerPrincipalId;
-    const pool = readModelPool(services.runtime.db, owner);
-    if (pool.profiles.length === 0) return undefined;
-    const catalogue = await (services.modelCatalogue?.() ?? Promise.resolve([]));
-    const credentials = credentialNames(services.runtime.db, owner);
-    const currentAlias = readCurrentAlias(services.runtime.db, owner);
-
-    const filtered = filterBackgroundCandidates({
-      pool,
-      // The mapping from a provider to the name its credential is stored under is the adapter's business; until it
-      // exposes one, a provider counts as credentialed when it is the one this node runs, or when a credential is
-      // stored under the provider's own name.
-      hasCredential: (provider) => services.model?.provider === provider || credentials.includes(provider),
-      isHealthy: () => true,
-      contextWindowFor: (provider, modelId) =>
-        catalogue.find((entry) => entry.id === provider)?.models.find((model) => model.id === modelId)?.contextWindow,
-      // Unknown rather than false: this build cannot confirm tool support per model, and filtering on a guess would
-      // empty the pool on any installation whose catalogue is thin.
-      supportsTools: () => undefined,
-      needsTools: true,
-    });
-
-    const decider = services.projects.decider;
-    const routed = await routeBackgroundModel({
-      eligible: filtered.eligible,
-      ...(decider === undefined
-        ? {}
-        : {
-            decide: async (candidates) =>
-              await decideModelRoute(decider, { task: "background worker", role: "background", candidates }),
-          }),
-      ...(currentAlias === undefined ? {} : { foregroundAlias: currentAlias }),
-      // Checked after the decision as well as before it: a pool can change while a selector is thinking.
-      verify: (alias) => pool.profiles.some((profile) => profile.alias === alias && profile.enabled),
-    });
-    return routed === undefined ? undefined : { provider: routed.provider, id: routed.modelId };
-  };
-
-  const modelTurn = await createModelTurn({
+  const modelTurn = await createNodeModelTurn({
     env: process.env,
-    cwd: process.cwd(),
-    model: chosenModel,
-    backgroundModel: routeBackground,
-
-    /*
-     * The user's own instructions, read on every turn rather than captured here.
-     *
-     * The same laziness as `chosenModel`, for the same ordering reason and one more: the promise of the
-     * feature is that a preference written while the app is open reaches the next turn. A value captured at
-     * boot would make it a restart instead.
-     *
-     * `readPersonalInstructions` answers nothing unless the toggle is on and there is text, so a disabled
-     * preference leaves the system prompt byte-for-byte as it was rather than adding an empty section.
-     */
-    personalInstructions: () =>
-      readPersonalInstructions(
-        { db: runtime.db, now: () => new Date().toISOString() as never },
-        runtime.identity.ownerPrincipalId,
-      ),
-    sessionDir: join(options.dataDir, "sessions"),
-    onSessionFile: ({ sessionId, sessionFile }) => {
-      if (sessionWiring.index === undefined || sessionWiring.principalId === undefined) return;
-      const registered = registerSessionFile(sessionWiring.index, {
-        sessionId,
-        principalId: sessionWiring.principalId,
-        path: sessionFile,
-      });
-      if (!registered.ok) {
-        process.stderr.write(`session ${sessionId}: ${registered.message}\n`);
-      }
-    },
-    views: () => viewCatalog,
-    // The conversation so far, for a session that has just been created.
-    //
-    // A session is dropped when a turn fails, because a session that failed a turn is the thing that is broken;
-    // the thread is not, so the next message is answered by an agent that has been told what it is joining
-    // rather than by one that has never heard of it.
-    history: async (conversationId) => {
-      const records = messagesSince(services.runtime.db, conversationId, 0, 40);
-      return records
-        .filter((record): record is MessageRecord & { role: "user" | "assistant" } => record.role === "user" || record.role === "assistant")
-        .map((record) => ({ role: record.role, text: textOfMessage(record) }));
-    },
-    // The files the current message carries, read back from the row that message was stored as. The
-    // timeline and this prompt are then the same reading, so a conversation reopened tomorrow attaches
-    // the same files to the same turn. `attachmentBrief` inlines a text file's content and names anything
-    // binary by id; no path is ever part of it.
-    attachments: {
-      dataDir: options.dataDir,
-      refsFor: (conversationId) =>
-        attachmentRefsForLastUserMessage({ db: services.runtime.db, conversationId }),
-    },
-    // The node registers the sample dataset itself, so this is the complete set it holds rather
-    // than a guess. The model is told these names because a view over data that is not there
-    // renders as nothing, which reads as a broken widget instead of a missing fact.
-    datasetRefs: () => [SAMPLE_DATASET.datasetId],
-    /*
-     * What was remembered, for the turn about to run.
-     *
-     * Read per turn rather than captured once, so a record somebody deletes in the Memory tab stops being
-     * sent on the very next turn. That is what makes that screen's promise true rather than decorative.
-     */
-    memoryBrief: (conversationId) =>
-      memoryBrief(
-        { db: services.runtime.db, now: () => new Date().toISOString(), newId: services.conductor.newId },
-        { principalId: services.runtime.identity.ownerPrincipalId, conversationId },
-      ),
-    // The Session Manager's search surface, exposed to the main model as its own tool. Read from a
-    // closure so the services it needs, which are assembled below, exist by the time a turn runs.
-    // The Session Manager's read-only reports, including the project finder. Built by a function a
-    // test can call: an inline list here is how `find_project` came to exist without ever being
-    // registered, and nothing could see the difference.
-    extraTools: (turn) => {
-      const search = searchWiring.deps;
-      const projects = projectWiring.deps;
-      const command = commandWiring.deps;
-      if (search === undefined || projects === undefined || command === undefined) return [];
-      const tools = createNodeTools({
-        search,
-        projects,
-        command,
-        // Reading an attached file is scoped to the conversation this turn belongs to, which is the
-        // only thing the tool needs to check beyond the principal.
-        attachments: { dataDir: options.dataDir, conversationId: turn.conversationId },
-        // And the same conversation is what a question is recorded against, which is why this is built from
-        // the turn rather than once for the node.
-        ...(interactionWiring.deps === undefined ? {} : { interactions: interactionWiring.deps(turn.conversationId) }),
-        ...(secretWiring.deps === undefined ? {} : { secrets: secretWiring.deps }),
-        /*
-         * Where a command that runs without a card leaves its record in the effect ledger.
-         *
-         * The same event log the task lifecycle writes to, because autonomy is only checkable if the
-         * effects it performed are findable afterwards. The trail in audit_log is the other half of that
-         * story: who asked for what, and how it came out.
-         *
-         * The clock is read here rather than captured when the node booted, because the promise of this
-         * setting is that it changes what happens next.
-         */
-        effectAudit: () => ({
-          deps: {
-            db: services.runtime.db,
-            nodeId: services.runtime.identity.nodeId,
-            newId: services.conductor.newId,
-            now: () => instantSchema.parse(new Date().toISOString()),
-          },
-          principalId: search.principalId,
-          conversationId: turn.conversationId,
-        }),
-        /* The card's id has to outlive the turn, so it comes from the node's own id generator. */
-        questions: { newId: services.conductor.newId },
-        // Always passed: an unconfigured directory is something the tool reports, not a reason to hide it.
-        directory: { indexPath: directoryIndexPath(process.env), newId: services.conductor.newId },
-        // Remembering is scoped to the turn's conversation the same way, and the id comes from the node's own
-        // generator: the model supplies what to remember, never who it belongs to.
-        memory: { conversationId: turn.conversationId, newId: services.conductor.newId },
-        // "Where should this go?" goes through the finder, which is where Jev decides when several folders
-        // could be meant. The model is told to look before it proposes, and an ambiguous answer comes back
-        // as a question rather than as a guess.
-        resolveFolder: async (intent) => {
-          const resolution = await resolveProject(projects, { intent });
-          if (resolution.status === "resolved") {
-            return { status: "resolved", cwd: resolution.project.path, relPath: resolution.relPath };
-          }
-          if (resolution.status === "clarify") {
-            return { status: "ask", message: resolution.question, options: resolution.options };
-          }
-          return {
-            status: "ask",
-            message: resolution.status === "rejected" ? resolution.message : resolution.question,
-            options: [],
-          };
-        },
-      });
-      // Published for the Tools tab, from the same call that hands them to the model: a tab that built its own list
-      // would be a second source of truth for what this node can do, and the first thing to drift from it.
-      registerNodeTools(tools.map((tool) => ({ name: tool.name, label: tool.label, description: tool.description })));
-      return tools;
+    dataDir: options.dataDir,
+    runtime,
+    services: () => services,
+    viewCatalog: () => viewCatalog,
+    wiring: {
+      sessionIndex: () => sessionWiring.index,
+      sessionPrincipalId: () => sessionWiring.principalId,
+      search: () => searchWiring.deps,
+      projects: () => projectWiring.deps,
+      command: () => commandWiring.deps,
+      interactions: (conversationId) => interactionWiring.deps?.(conversationId),
+      secrets: () => secretWiring.deps,
     },
   });
-  process.stderr.write(
-    modelTurn === undefined
-      ? "no model configured; the node will answer with scripts and capabilities only\n"
-      : `model: ${modelTurn.selection.provider}/${modelTurn.selection.id}` +
-          ` (turn limit ${modelTurn.budget.maxWallClockMs} ms, ${modelTurn.budget.maxTokens} tokens)\n`,
-  );
 
   const services: NodeServices = bootNodeServices({
     dataDir: options.dataDir,
