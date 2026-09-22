@@ -244,3 +244,72 @@ describe("the platform vocabulary", () => {
     }
   });
 });
+
+describe("what a local path is called", () => {
+  const LOCAL = { kind: "local" as const, path: "/tmp/pkg" };
+  const DIGEST = "sha256:local-bytes";
+
+  it("takes the name the directory gives it, because a path is not a name", () => {
+    /*
+     * Recording the path as the package id gave one package two names: the listing said `com.example.calendar` and
+     * the installed row said `/tmp/pkg`, and the same person was shown both.
+     */
+    const result = resolvePackageSource({ source: LOCAL, directory: [ENTRY], localDigest: DIGEST, ...HOST });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.resolved.packageId).toBe("com.example.calendar");
+    expect(result.resolved.version).toBe("1.2.0");
+    // The artifact is still the directory on disk, and the digest is still the caller's hash of those bytes: the
+    // published digest describes a different set of bytes, and this is a local install.
+    expect(result.resolved.artifactUrl).toBe("file:/tmp/pkg");
+    expect(result.resolved.digest).toBe(DIGEST);
+  });
+
+  it("keeps the path when the directory does not list it", () => {
+    // Installing an unlisted local path works today, so it has to keep working; there is simply no name to prefer.
+    const result = resolvePackageSource({
+      source: { kind: "local", path: "/tmp/unlisted" },
+      directory: [ENTRY],
+      localDigest: DIGEST,
+      ...HOST,
+    });
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.resolved.packageId).toBe("/tmp/unlisted");
+      expect(result.resolved.version).toBe("0.0.0-local");
+    }
+  });
+
+  it("matches the listing by path rather than taking the first local entry", () => {
+    const other: DirectoryEntry = {
+      ...ENTRY,
+      packageId: "com.example.other",
+      source: { kind: "local", path: "/tmp/other" },
+    };
+
+    const result = resolvePackageSource({
+      source: { kind: "local", path: "/tmp/other" },
+      directory: [ENTRY, other],
+      localDigest: DIGEST,
+      ...HOST,
+    });
+
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.resolved.packageId).toBe("com.example.other");
+  });
+
+  it("does not gate a local package on the host, because it is already on this host", () => {
+    // A listing built for another machine still names the bytes that are on this one, and identity is not permission.
+    const result = resolvePackageSource({
+      source: LOCAL,
+      directory: [{ ...ENTRY, platforms: ["win32-x64" as const] }],
+      localDigest: DIGEST,
+      ...HOST,
+    });
+
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.resolved.packageId).toBe("com.example.calendar");
+  });
+});

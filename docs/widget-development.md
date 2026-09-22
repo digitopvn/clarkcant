@@ -772,6 +772,13 @@ trong DB không mang đường dẫn, và artifact của nguồn git/npm không 
 `NOT_LOCAL`/`NOT_IN_DIRECTORY` và được **nêu tên** trong mục "Gói đã cài: phần chưa xem được" — một danh sách
 ngắn hơn sẽ nói "package này không khai báo widget nào" trong khi sự thật là node không đọc được nó.
 
-Danh tính báo về là danh tính **package khai báo**, lấy từ directory entry, không phải đường dẫn đã cài: một
-lần cài từ đĩa ghi `packageId` là chính đường dẫn đó, mà đường dẫn là nơi byte nằm chứ không phải tên của
-package.
+Danh tính của một package local là **danh tính của directory entry**, không phải đường dẫn. Một lần cài từ đĩa
+từng ghi `packageId` là chính đường dẫn đó, mà đường dẫn là nơi byte nằm chứ không phải tên của package — nên
+cùng một package có hai tên: listing nói `com.example.chart-widget` còn row đã cài nói
+`apps/web/e2e/fixtures/chart-widget`. Nhánh local của `resolvePackageSource` nay lấy tên từ entry khớp **theo
+đường dẫn** trong directory index. Một đường dẫn **không** được liệt kê vẫn cài được như trước và giữ đường dẫn
+làm tên, vì nó không có tên nào tốt hơn. `digest` vẫn là hash của chính byte trên đĩa do caller tính, **không**
+phải digest đã publish: hai thứ đó mô tả hai chuyện khác nhau.
+
+Các row `package_generations` **đã** ghi đường dẫn từ trước vẫn còn trong DB, nên route `/packages/widgets` vẫn
+giữ fallback tìm entry theo `source.path`. Nếu xoá nó, những row cũ đó sẽ báo `NOT_IN_DIRECTORY` vĩnh viễn.

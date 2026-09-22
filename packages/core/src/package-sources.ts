@@ -115,11 +115,25 @@ export function resolvePackageSource(input: ResolveInput): ResolveResult {
       message: "a local package must be hashed before it can be planned, so the plan names the bytes it approved",
     };
   }
+
+  /*
+   * A local path has a name when the directory lists it.
+   *
+   * The path is where the bytes are, not what the package is called, so recording the path as the package id gives
+   * one package two names: the listing says `com.example.chart-widget` while the installed row said
+   * `apps/web/e2e/fixtures/chart-widget`, and both were shown to the same person. The listing is this node's own
+   * record of what that path is, so its name is the better answer. A path the directory does not list keeps the
+   * path: installing an unlisted local path works today, and it has nothing better to be called.
+   *
+   * The digest stays the caller's hash of the local bytes rather than the listed digest. Those two describe
+   * different things - the bytes on disk right now against whatever was published - and this is a local install.
+   */
+  const listed = input.directory?.find((entry) => entry.source.kind === "local" && entry.source.path === source.path);
   return {
     ok: true,
     resolved: {
-      packageId: source.path,
-      version: "0.0.0-local",
+      packageId: listed?.packageId ?? source.path,
+      version: listed?.version ?? "0.0.0-local",
       artifactUrl: `file:${source.path}`,
       digest: input.localDigest,
       rationale: `local path ${source.path}`,
