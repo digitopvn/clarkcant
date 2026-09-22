@@ -25,18 +25,16 @@ export interface MediaFixtureState {
   positionSeconds: number;
 }
 
-/** What the fixture must demonstrate, one assertion per line. */
+/**
+ * What the fixture must demonstrate, one assertion per line.
+ *
+ * These assertions are the fixture's own contract, not a status claim. `fixture.ts` is what implements
+ * them and what labels itself (`MEDIA_FIXTURE_STATUS`), while the registry entry
+ * `example.media-widget-contract` names the part that is still missing - a mountable component.
+ */
 export const CONTRACT_ASSERTIONS = [
   "mounting the same instance inline and pinned yields one live owner, not two",
   "restoring a pinned fixture does not autoplay",
   "unpinning preserves position and does not stop a running background job",
   "a second surface can preview read-only while the first owns playback",
 ] as const;
-
-/**
- * @status-ref example.media-widget-contract
- *
- * The declared assertions are the fixture's own contract, not a status: `fixture.spec.ts`
- * checks the ones the state machine implements.
- */
-export const MEDIA_FIXTURE_STATUS = "assertions-declared-component-not-implemented";
