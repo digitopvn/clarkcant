@@ -350,7 +350,12 @@ function readJson(path) {
     return typeof target === "string" ? join(dir, target) : undefined;
   };
 
-  const entries = ["apps/web/src/main.tsx", "apps/web/src/widget-runtime.ts"];
+  const entries = [
+    "apps/web/src/main.tsx",
+    "apps/web/src/widget-runtime.ts",
+    // The dev host serves this to a frame, so it is a browser graph even though a Node CLI ships it.
+    "packages/widget-cli/src/catalog-runtime.tsx",
+  ];
   const visited = new Set();
   const offenders = [];
   const visit = (file, via) => {
