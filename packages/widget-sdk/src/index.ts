@@ -204,7 +204,7 @@ export const FORBIDDEN_API_SURFACE = [
  *
  * What this package does not claim: no mini-app ships against it, and the frame the conversation
  * client mounts is exercised by `apps/web/e2e/widget-frame.spec.ts` rather than by a shipped
- * package. The `V12` registry entry names the rest of that gap, and #93 owns the trust hardening.
+ * package. The `V12` registry entry names the rest of that gap.
  */
 export const WIDGET_RUNTIME_STATUS = "runtime-and-host-session-implemented";
 

@@ -222,7 +222,9 @@ export function bootRuntime(options: RuntimeOptions): Runtime {
 /**
  * @status-ref runtime.local-transport
  *
- * `unix-socket.ts` is the listener, wired behind `--socket`, and `portable-runtime.spec.ts`
- * exercises it against a real socket. The loopback HTTP gateway is the other half.
+ * `unix-socket.ts` is the listener, and `portable-runtime.spec.ts` drives `listenOnUnixSocket`
+ * against a real socket. `main.ts` starts it when `--socket <path>` is passed; no test drives that
+ * flag, so what is exercised is the listener rather than the command line that selects it. The
+ * loopback HTTP gateway is the other half.
  */
 export const LOCAL_SOCKET_STATUS = "identity-http-and-unix-socket-implemented";
