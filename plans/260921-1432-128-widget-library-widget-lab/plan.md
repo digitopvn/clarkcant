@@ -7,6 +7,8 @@ status: completed
 
 Nguồn: issue [#128](https://github.com/digitopvn/clarkcant/issues/128). Nhánh `feat-ui-add-widget-library-widget-lab-as-a-live`, worktree hiện tại, sạch, `0` commit trên `origin/main` (`e6894c4`), không có plan cũ cho issue này.
 
+Pull request: [#131](https://github.com/digitopvn/clarkcant/pull/131).
+
 ## Kết quả cần đạt
 
 ClarkCant có một **Widget Library** mở được từ Settings, chat và voice, cho người dùng xem đúng những widget mà hội thoại thật sự render được, và một **Widget Lab** cho developer soi definition, props, state, events, actions, semantic, sizing, capabilities, fallback cùng viewport/theme/reduced-motion - tất cả trên **cùng một catalog chuẩn** và **cùng renderer production**, không ảnh hưởng vòng đời hội thoại.
