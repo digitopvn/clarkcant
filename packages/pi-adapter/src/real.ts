@@ -776,9 +776,13 @@ export function mapPiEvent(sessionId: string, raw: SdkEvent): WorkerEvent | unde
  * The app must not imply a missing capability is available because a name for it
  * could be constructed.
  *
- * TODO(P5): the capability a node would refuse here — chat-driven install and lifecycle — has no local
- * implementation yet, so this names the milestone rather than a date. The confinement work that used to
- * carry this file's marker is done: see `scoped-fs.ts` and the note in `prompt` below.
+ * TODO(P5): the capability this refuses — chat-driven install and lifecycle — has no local implementation yet,
+ * and the phase that owns it is P5, "Chat-driven install and lifecycle", in the roadmap phase map
+ * (`docs/implementation-plan.md` §8, and the milestone table above it). That phase map is not this repository's
+ * consolidation plan: the consolidation plan's phase 5 owns the implementation-status registry and has nothing
+ * to do with this throw, so the marker says which map it names rather than leaving "P5" to be read either way.
+ * The confinement work that used to carry this file's marker is done: see `scoped-fs.ts` and the note in
+ * `prompt` below.
  */
 export function unsupportedCapability(ref: string): never {
   throw new NotImplementedError(
