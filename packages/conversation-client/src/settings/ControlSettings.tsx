@@ -15,31 +15,19 @@ import type { GatewayClient } from "../api.ts";
 /**
  * Control: how much this node does on its own.
  *
- * The one tab whose controls are backed by a resolver that was written before it: `decideExecution` reads
- * exactly these two preferences, so what this screen offers is what the runtime enforces. Nothing here is a
- * promise about future behaviour.
+ * One policy surface, and exactly one control that changes the mode. `decideExecution` reads the policy this
+ * surface writes, so what this screen offers is what the runtime enforces; nothing here is a promise about
+ * future behaviour.
  *
  * The mode notes are the policy in the user's words rather than a marketing summary, including the parts that
  * are easy to get wrong: Autonomous is not a promise to do things nobody asked for, and no mode lifts an OS or
  * account permission.
+ *
+ * The legacy `execution.mode` preference is a projection of this policy and is no longer written from here.
+ * It used to have a second segmented control of its own in this tab, and a save on either control could write
+ * over a mode just chosen on the other one within the same open Settings; a mode a person can silently lose is
+ * worse than a control they have to find.
  */
-const MODE_OPTIONS = [
-  {
-    value: "autonomous",
-    label: "Tự chủ",
-    note: "Việc bạn yêu cầu thì chạy ngay, không hỏi lại. Việc vượt ra ngoài máy này mà agent tự nghĩ ra thì vẫn hỏi.",
-  },
-  {
-    value: "guarded",
-    label: "Có rào",
-    note: "Việc trong máy này chạy ngay. Việc gửi ra ngoài, xoá, chi tiêu, liên lạc hoặc ghi âm/ghi hình thì hỏi.",
-  },
-  {
-    value: "ask",
-    label: "Hỏi mỗi lần",
-    note: "Mọi thay đổi đều hiện thẻ duyệt trước khi chạy.",
-  },
-] as const;
 
 /**
  * The categories a rule can be written about, in the taxonomy's own words.
@@ -118,21 +106,22 @@ const GUARD_CLASS_LABELS: Record<GuardClass, string> = {
 };
 
 /**
- * The policy, in the five fields this panel has always posted.
+ * The one policy surface: the mode, the guardrails, and what the host preflight still enforces underneath.
  *
- * There is one policy now, and this is a compatibility view of it: the node projects the canonical policy into these
- * five fields and translates them back on save, keeping the per-category rules the shape has no way to name. The
- * mode options therefore mean what the canonical resolver does, not what the four-value vocabulary used to do —
+ * There is one policy, and this writes it: the node projects the canonical policy into the five fields this shape
+ * has always posted and translates them back on save, keeping the per-category rules the shape has no way to name.
+ * The mode options therefore mean what the canonical resolver does, not what the four-value vocabulary used to do —
  * "Có rào" asks before the effects that reach past this machine, which is a declared change and not a translation,
  * and "Từ chối tất cả" is the structural refusal that no consent screen can lift.
  *
- * It sits beside the level control below for the moment; collapsing the two into one surface is its own change, and
- * saying so here is better than a screen whose two controls write the same policy without a reader knowing.
+ * The mode is changed here and nowhere else. A second control used to write `execution.mode` beside this one, so
+ * saving either could overwrite a choice just made on the other; that preference is now a projection of this
+ * policy, read by clients that still spell it and written by nothing on this screen.
  *
  * The narrowing table travels with the read because the panel shows what the guardrail may ask for — a list the
  * host owns, and a model may only pick from.
  */
-function CommandAutonomySettings({ client }: { client: GatewayClient }): ReactElement {
+function ExecutionPolicySettings({ client }: { client: GatewayClient }): ReactElement {
   const [settings, setSettings] = useState<AutonomySettings | undefined>(undefined);
   const [narrowing, setNarrowing] = useState<{ id: string; description: string }[]>([]);
   const [status, setStatus] = useState("");
@@ -159,7 +148,7 @@ function CommandAutonomySettings({ client }: { client: GatewayClient }): ReactEl
   if (unreadable) {
     return (
       <section className="cc-panel-section" data-autonomy-tab="true">
-        <h3>Lệnh chạy trên máy này</h3>
+        <h3>Mức tự chủ và rào chắn</h3>
         <p className="cc-panel-note" data-autonomy-error="true">
           Không đọc được execution policy của node này.
         </p>
@@ -169,7 +158,7 @@ function CommandAutonomySettings({ client }: { client: GatewayClient }): ReactEl
   if (settings === undefined) {
     return (
       <section className="cc-panel-section" data-autonomy-tab="true">
-        <h3>Lệnh chạy trên máy này</h3>
+        <h3>Mức tự chủ và rào chắn</h3>
         <p className="cc-panel-note">Đang đọc cấu hình…</p>
       </section>
     );
@@ -193,9 +182,9 @@ function CommandAutonomySettings({ client }: { client: GatewayClient }): ReactEl
 
   return (
     <section className="cc-panel-section" data-autonomy-tab="true">
-      <h3>Lệnh chạy trên máy này</h3>
+      <h3>Mức tự chủ và rào chắn</h3>
       <p className="cc-panel-note">
-        Preflight của host luôn chạy trước mọi lệnh: hiệu ứng phải nằm trong thư mục node sở hữu. Phần dưới đây
+        Preflight của host luôn chạy trước mọi hiệu lực: lệnh phải nằm trong thư mục node sở hữu. Phần dưới đây
         nói thêm điều gì xảy ra khi nó đã hợp lệ.
       </p>
 
@@ -212,6 +201,16 @@ function CommandAutonomySettings({ client }: { client: GatewayClient }): ReactEl
           onChange={(value) => update({ executionPolicy: value })}
         />
       </SettingsRow>
+
+      {/*
+        Said plainly rather than left to be discovered. These are not this application's permissions to grant, so no
+        mode and no rule can lift them, and a user who expected otherwise would find out at the worst possible
+        moment.
+      */}
+      <p className="cc-panel-note">
+        Quyền của hệ điều hành, của tài khoản provider, của trình duyệt và của bên thứ ba vẫn luôn được hỏi, ở mọi
+        mức — đó không phải là quyết định của ClarkCant.
+      </p>
 
       <SettingsRow
         label="Jev guardrails"
@@ -319,37 +318,12 @@ export function ControlSettings({ prefs, client, recentEffects, recentProblem }:
   return (
     <>
       {/*
-        The compatibility view of the one policy, and then the level control the rest of the surfaces read. Both write
-        the same policy; collapsing them into one surface is its own change, tracked separately from this one.
+        One policy surface, and one control that changes the mode. A second mode control used to sit below this one,
+        writing the legacy `execution.mode` preference; both reached the same policy, so a save on either could
+        overwrite a mode just chosen on the other. The mode lives here now, and `execution.mode` is a projection of
+        it that nothing on this screen writes.
       */}
-      <CommandAutonomySettings client={client} />
-
-      <section className="cc-panel-section" data-execution-mode="true">
-        <h3>Mức tự chủ</h3>
-        <SettingsRow
-          label="Khi Clark làm gì đó có hiệu lực"
-          description="Áp dụng ngay cho lệnh, hành động của widget và cài đặt — cùng một policy với phần trên."
-        >
-          <SegmentedControl
-            name="execution-mode"
-            label="Mức tự chủ"
-            options={MODE_OPTIONS}
-            value={prefs.text("execution.mode", "autonomous")}
-            pending={prefs.pending === "execution.mode"}
-            onChange={(value) => prefs.write("execution.mode", value)}
-          />
-        </SettingsRow>
-        <InlineStatus status={prefs.status} forKey="execution.mode" />
-        {/*
-          Said plainly rather than left to be discovered. These are not this application's permissions to grant,
-          so no mode and no rule can lift them, and a user who expected otherwise would find out at the worst
-          possible moment.
-        */}
-        <p className="cc-panel-note">
-          Quyền của hệ điều hành, của tài khoản provider, của trình duyệt và của bên thứ ba vẫn luôn được hỏi, ở mọi
-          mức — đó không phải là quyết định của ClarkCant.
-        </p>
-      </section>
+      <ExecutionPolicySettings client={client} />
 
       <section className="cc-panel-section" data-execution-rules="true">
         <h3>Quy tắc theo loại việc</h3>
