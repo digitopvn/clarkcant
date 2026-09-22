@@ -1,6 +1,6 @@
 import type { WidgetDefinition } from "@clarkcant/contracts";
 
-import { TABLE, WIDGETS } from "./index.ts";
+import { NOTE, TABLE, WIDGETS } from "./index.ts";
 import type { SampleRecipe } from "@clarkcant/core";
 
 /**
@@ -31,36 +31,12 @@ export const SAMPLE_DATASET = {
   ],
 } as const;
 
-/** A note widget, declared here so J1 has a local editable surface with no network. */
-export const NOTE_DEFINITION: WidgetDefinition = {
-  id: "canvas.note@1",
-  version: "1.0.0",
-  renderer: "catalog",
-  propsSchema: {
-    type: "object",
-    additionalProperties: false,
-    properties: {
-      title: { type: "string", maxLength: 120 },
-      body: { type: "string", maxLength: 4000 },
-    },
-    required: ["title"],
-  },
-  eventSchemas: {
-    "draft.changed": { type: "object" },
-    "save.requested": { type: "object" },
-  },
-  stateSchema: {
-    type: "object",
-    properties: { body: { type: "string" }, revision: { type: "number" } },
-  },
-  stateVersion: 1,
-  semanticDescription: "A personal note stored locally, with a preserved draft",
-  requestedCapabilities: [],
-  sizing: { compact: true, expanded: true, minHeight: 160 },
-  textFallback: "Personal note. The text is shown as plain text when the editor cannot be mounted.",
-  effectCategories: ["read"],
-  datasetRefs: [],
-};
+/**
+ * The note widget's definition lives in `./index.ts`, outside `WIDGETS`.
+ *
+ * Kept as a local alias so the J1 recipe and the `NOTE_WIDGET` export below do not have to change.
+ */
+const NOTE_DEFINITION: WidgetDefinition = NOTE;
 
 /** View-only actions. They need no capability, which is why J1 works offline. */
 const tableActions = {

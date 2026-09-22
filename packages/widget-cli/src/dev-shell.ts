@@ -12,10 +12,22 @@
  * says "pass".
  */
 
+import {
+  PREVIEW_THEMES,
+  applyPreviewAction,
+  type PreviewState,
+} from "@clarkcant/widget-catalog/preview";
+
 export const DEV_VIEWPORTS = ["narrow-320", "conversation", "compact", "expanded"] as const;
 export type DevViewport = (typeof DEV_VIEWPORTS)[number];
 
-export const DEV_THEMES = ["dark", "light", "system"] as const;
+/**
+ * The theme vocabulary is the shared one, not a second copy.
+ *
+ * The two playgrounds disagreed about nothing here, so keeping a local list was only a way for them to
+ * start disagreeing later.
+ */
+export const DEV_THEMES = PREVIEW_THEMES;
 export type DevTheme = (typeof DEV_THEMES)[number];
 
 /** The widths the standard names, with 320 as the floor rather than an afterthought. */
@@ -62,28 +74,59 @@ export function initialState(input: {
   };
 }
 
+/**
+ * The dev shell's state, seen through the shared preview vocabulary.
+ *
+ * The viewport is a placeholder because the shared state carries one and the three transitions below
+ * do not read it: the dev host keeps its own viewport names and widths on purpose (it previews a
+ * standalone package, including a 1024 px desktop size, where the Lab previews conversation widths),
+ * and that is the one genuine difference the two playgrounds document rather than hide.
+ */
+function basePreview(state: DevShellState): PreviewState {
+  return {
+    fixture: state.fixture,
+    viewport: "conversation",
+    theme: state.theme,
+    reducedMotion: state.reducedMotion,
+  };
+}
+
 export function applyShellAction(
   state: DevShellState,
   action: DevShellAction,
   known: { fixtures: readonly string[]; capabilities: readonly string[] },
 ): DevShellState {
   switch (action.kind) {
-    case "fixture":
-      // An unknown fixture is ignored rather than selected: a shell that showed an empty widget for a typo would
-      // look like the widget's bug.
-      return typeof action.value === "string" && known.fixtures.includes(action.value)
-        ? { ...state, fixture: action.value }
-        : state;
+    case "fixture": {
+      // Delegated so "an unknown fixture is ignored rather than selected" has one implementation. A shell
+      // that showed an empty widget for a typo would look like the widget's bug.
+      const next = applyPreviewAction(
+        basePreview(state),
+        { kind: "fixture", value: String(action.value) },
+        { fixtures: known.fixtures },
+      );
+      return { ...state, fixture: next.fixture };
+    }
+    case "theme": {
+      const next = applyPreviewAction(
+        basePreview(state),
+        { kind: "theme", value: String(action.value) },
+        { fixtures: known.fixtures },
+      );
+      return { ...state, theme: next.theme };
+    }
+    case "reduced-motion": {
+      const next = applyPreviewAction(
+        basePreview(state),
+        { kind: "reduced-motion", value: action.value === true },
+        { fixtures: known.fixtures },
+      );
+      return { ...state, reducedMotion: next.reducedMotion };
+    }
     case "viewport":
       return typeof action.value === "string" && (DEV_VIEWPORTS as readonly string[]).includes(action.value)
         ? { ...state, viewport: action.value as DevViewport }
         : state;
-    case "theme":
-      return typeof action.value === "string" && (DEV_THEMES as readonly string[]).includes(action.value)
-        ? { ...state, theme: action.value as DevTheme }
-        : state;
-    case "reduced-motion":
-      return { ...state, reducedMotion: action.value === true };
     case "offline":
       return { ...state, offline: action.value === true };
     case "read-only":

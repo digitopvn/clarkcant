@@ -41,6 +41,13 @@ export interface AppIntentHost {
   goHome(): void;
   openFilePicker(): void;
   endVoice(): void;
+  /**
+   * Opens the widget library.
+   *
+   * Optional for the same reason the window methods are: a host that cannot show the library should
+   * be refused with a sentence that names the limitation rather than reported as having done it.
+   */
+  openWidgetLibrary?(mode: "browse" | "develop", target?: { definitionId?: string; family?: string }): void;
   expandWindow?(): void;
   minimiseWindow?(): void;
   setMinimal?(compact: boolean): void;
@@ -58,6 +65,16 @@ export interface AppIntentRun {
 export const NOT_DESKTOP_SAY =
   "Lệnh này cần cửa sổ desktop. Trình duyệt không điều khiển được cửa sổ của hệ điều hành.";
 
+/** Said when an intent is understood and this build has no widget library to open. */
+export const NOT_LIBRARY_SAY =
+  "Bản dựng này không mở được thư viện widget, nên tôi chưa làm gì cả.";
+
+function missingCapabilitySay(intent: AppIntent): string {
+  return intent.kind === "widgets.open" || intent.kind === "widgets.show"
+    ? NOT_LIBRARY_SAY
+    : NOT_DESKTOP_SAY;
+}
+
 /** Said when a decision came back that is not executable: a question, or a refusal. */
 function notExecutableSay(decision: AppIntentDecision): string {
   switch (decision.kind) {
@@ -71,14 +88,9 @@ function notExecutableSay(decision: AppIntentDecision): string {
   }
 }
 
-/** Which host method an intent needs, so "can this run here" is one question rather than a switch inside a switch. */
-function needsDesktop(intent: AppIntent): boolean {
-  return (
-    intent.kind === "window.expand" ||
-    intent.kind === "window.minimise" ||
-    intent.kind === "window.minimal" ||
-    intent.kind === "app.quit"
-  );
+/** Exported for the test that proves every kind is answerable here. */
+export function describeMissingCapability(intent: AppIntent): string {
+  return missingCapabilitySay(intent);
 }
 
 export function runAppIntent(decision: AppIntentDecision, host: AppIntentHost): AppIntentRun {
@@ -91,8 +103,8 @@ export function runAppIntent(decision: AppIntentDecision, host: AppIntentHost): 
   const intent = decision.intent;
   const readBack = decision.readBack === "" ? describeAppIntent(intent) : decision.readBack;
 
-  if (needsDesktop(intent) && !hostHasCapability(host, intent)) {
-    return { ran: false, say: NOT_DESKTOP_SAY };
+  if (!hostHasCapability(host, intent)) {
+    return { ran: false, say: missingCapabilitySay(intent) };
   }
 
   switch (intent.kind) {
@@ -123,6 +135,17 @@ export function runAppIntent(decision: AppIntentDecision, host: AppIntentHost): 
     case "app.quit":
       host.quit?.();
       return { ran: true, say: readBack };
+    case "widgets.open":
+      host.openWidgetLibrary?.("browse");
+      return { ran: true, say: readBack };
+    case "widgets.show": {
+      const target = {
+        ...(intent.definitionId === undefined ? {} : { definitionId: intent.definitionId }),
+        ...(intent.family === undefined ? {} : { family: intent.family }),
+      };
+      host.openWidgetLibrary?.("browse", target);
+      return { ran: true, say: readBack };
+    }
     default: {
       // Every kind above returns. This keeps a tenth kind from being silently ignored by the executor.
       const unreachable: never = intent.kind;
@@ -141,6 +164,9 @@ function hostHasCapability(host: AppIntentHost, intent: AppIntent): boolean {
       return host.setMinimal !== undefined;
     case "app.quit":
       return host.quit !== undefined;
+    case "widgets.open":
+    case "widgets.show":
+      return host.openWidgetLibrary !== undefined;
     default:
       return true;
   }

@@ -26,6 +26,9 @@
       "@clarkcant/widget-sdk": [
         "packages/widget-sdk/src/index.ts"
       ],
+      "@clarkcant/widget-catalog": [
+        "packages/widget-catalog/src/index.ts"
+      ],
       "@clarkcant/conversation-client": [
         "packages/conversation-client/src/index.ts"
       ]

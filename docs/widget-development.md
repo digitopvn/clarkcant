@@ -642,3 +642,82 @@ Mục này nói rõ phần nào của tài liệu đã có code, để không ai
 - Detach/attach: chưa có host window tách rời, nên không có gì để chạy. Nửa sở hữu (`detached` trên
   live-owner claim) đã có.
 - Runtime cho MCP Apps: đường isolated-app đã có; MCP Apps chưa được chứng minh trên cùng đường đó.
+
+---
+
+## 23. Widget Library và Widget Lab
+
+Mục này mô tả hai surface đã có code: thư viện để **xem** catalog, và Lab để **phát triển** widget. Cả hai
+dùng chung một surface, khác nhau ở chế độ.
+
+### 23.1 Một catalog chuẩn
+
+`packages/widget-catalog` là lớp discovery duy nhất: `CATALOG_DEFINITIONS` = `WIDGETS` của `packs/data-canvas`
+cộng `NOTE`. Note **không** nằm trong `WIDGETS` vì danh sách đó là từ vựng view mà model được phép gọi
+(`apps/runtime/src/services.ts`), nên thêm vào đó là thay đổi bề mặt model chứ không phải refactor metadata.
+Note được export từ barrel của pack, **không** từ `sample.ts`: `sample.ts` import `@clarkcant/core`, và đi qua
+nó sẽ kéo `packages/storage` (`node:sqlite`, `node:crypto`) vào bundle browser — đúng thứ invariant
+`browser-entries-avoid-node-builtins` bắt được.
+
+Metadata hiển thị (tên, mô tả, family, tag) nằm trong `widget-catalog`, và test khẳng định không entry nào rơi
+về id thô, cũng không entry metadata nào trỏ tới definition không tồn tại.
+
+### 23.2 Hợp đồng fixture
+
+`widgetFixtureSchema` trong `packages/contracts/src/widgets.ts` là hợp đồng dùng chung: `strictObject` với
+`{id, label, props, state?, dataset?, mode?}`. Strict nghĩa là một fixture mang thêm khoá lạ — ví dụ một effect
+binding — sẽ fail thay vì được render như thể vô hại. Đó là cách "fixture là data, không phải code" trở thành
+điều kiểm được.
+
+Hai artifact khác nhau, không phải hai bản sao của một thứ:
+
+- **fixture của catalog** — `WidgetFixture`, có `dataset` và `mode`, do `widget-catalog` cung cấp;
+- **`fixtures/*.json` của một package** — props trần; `readPackage` đọc chúng và `conformance.ts` kiểm bằng
+  props schema của chính widget đó.
+
+### 23.3 Xem trước bằng renderer thật
+
+Preview gọi `resolveRenderer` trong `packages/conversation-client/src/renderers.tsx` — cùng renderer mà hội
+thoại dùng. Không có renderer thứ hai, không ảnh chụp, không mock: một preview bằng ảnh sẽ không nói được gì
+về widget đang chạy. Definition không có renderer thì hiện `data-widget-preview-missing` kèm lý do, chứ không
+im lặng.
+
+Widget media (`canvas.youtube@1`, `video`, `image`, `carousel`, `gallery`) chỉ mount ở detail view; ở lưới
+chúng chỉ có text alternative. Nhờ vậy duyệt catalog không gọi bên thứ ba.
+
+### 23.4 Widget Lab
+
+Lab là **cùng surface** ở `mode="develop"`, mở từ Settings → Developer. Nó thêm:
+
+- props form dựng từ props schema, nên control phản ánh đúng schema chứ không phải danh sách viết tay;
+- inspector 8 panel: props/state/events/semantic/sizing/a11y/definition/raw;
+- fixture, viewport, theme và reduced motion áp trong **phạm vi preview** (`data-cc-theme`,
+  `data-cc-reduced-motion` trên frame), nên xem widget ở dark mode không đổi tuỳ chọn của người dùng;
+- màn hẹp thì pane tiến (preview ↔ inspector) thay vì hai cột.
+
+### 23.5 Hội tụ với dev host
+
+`clark widget dev` và Lab dùng chung **ngữ nghĩa preview**: từ vựng theme (`PREVIEW_THEMES`) và ba luật chuyển
+`fixture`/`theme`/`reduced-motion` (dev shell uỷ quyền cho `applyPreviewAction`). Test
+`packages/widget-cli/test/dev-shell-convergence.spec.ts` so sánh trực tiếp hai cài đặt, nên lệch nhau sẽ fail ở
+đó chứ không phải chờ ai đó mở hai cửa sổ rồi so bằng mắt.
+
+Khác có chủ ý: dev host dùng bộ viewport riêng (tới 1024px) vì nó xem một package độc lập, còn Lab xem ở bề
+rộng hội thoại. `clark widget dev --builtin` **không** được thêm: dev host phục vụ facet entry của package,
+không phải catalog renderer.
+
+### 23.6 Provenance của package đã cài
+
+Thư viện liệt kê package đã cài như **provenance**, trên danh sách riêng, không phải card trong catalog: không
+route nào expose widget definition/fixture/renderer của một package, nên một card cho nó sẽ phải bịa ra đúng
+những field làm card hoạt động. Danh sách hiện `packageId@version`, source tier, digest (rút gọn, bản đầy đủ ở
+`title`) và trust lane; wording của lane nằm một chỗ trong
+`packages/conversation-client/src/package-provenance.ts` để extension Pi gốc và widget cách ly không bao giờ
+đọc giống nhau. Ba trạng thái được tách: đang đọc, không đọc được (có nút thử lại), và chưa cài gì.
+
+### 23.7 Đường vào
+
+Nút trong Settings, câu lệnh gõ và voice đều đi qua **một** app-intent path: `widgets.open` (mở thư viện) và
+`widgets.show` (hiện một widget, có target). Matcher chỉ nhận target khi câu có dạng mệnh lệnh, và một câu nhắc
+widget không resolve được target sẽ mở thư viện thay vì đoán — đây là hành động chỉ xem, không bao giờ đoán
+một effect.

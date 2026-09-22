@@ -370,6 +370,45 @@ export const CTA: WidgetDefinition = {
   datasetRefs: [],
 };
 
+/**
+ * A personal note.
+ *
+ * Exported here, beside the other descriptors, but deliberately **not** in `WIDGETS`: that list is
+ * what the runtime turns into the model's callable view vocabulary, so joining it would change what
+ * the model may ask for rather than only what the library can show. It also must not live in
+ * `sample.ts`, because `sample.ts` imports `@clarkcant/core` and anything that reaches it would drag
+ * a Node-only module graph into the browser bundle.
+ */
+export const NOTE: WidgetDefinition = {
+  id: "canvas.note@1",
+  version: "1.0.0",
+  renderer: "catalog",
+  propsSchema: {
+    type: "object",
+    additionalProperties: false,
+    properties: {
+      title: { type: "string", maxLength: 120 },
+      body: { type: "string", maxLength: 4000 },
+    },
+    required: ["title"],
+  },
+  eventSchemas: {
+    "draft.changed": { type: "object" },
+    "save.requested": { type: "object" },
+  },
+  stateSchema: {
+    type: "object",
+    properties: { body: { type: "string" }, revision: { type: "number" } },
+  },
+  stateVersion: 1,
+  semanticDescription: "A personal note stored locally, with a preserved draft",
+  requestedCapabilities: [],
+  sizing: { compact: true, expanded: true, minHeight: 160 },
+  textFallback: "Personal note. The text is shown as plain text when the editor cannot be mounted.",
+  effectCategories: ["read"],
+  datasetRefs: [],
+};
+
 export const WIDGETS = [
   LINE_CHART,
   BAR_CHART,

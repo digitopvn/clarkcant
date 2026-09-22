@@ -33,7 +33,8 @@
     "@clarkcant/voice-adapters": "workspace:*",
     "@clarkcant/widget-host": "workspace:*",
     "ws": "8.21.3",
-    "zod": "4.6.5"
+    "zod": "4.6.5",
+    "@clarkcant/widget-catalog": "workspace:*"
   },
   "devDependencies": {
     "@types/ws": "8.18.1"

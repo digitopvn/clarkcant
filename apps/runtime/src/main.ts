@@ -31,6 +31,8 @@ import {
   decideAppIntent,
   mintConfirmation,
 } from "./app-intents.ts";
+import { catalogFamilies, libraryEntries } from "@clarkcant/widget-catalog";
+import type { WidgetTarget } from "@clarkcant/core";
 import type { PendingVoiceInteraction } from "./voice-session.ts";
 import { createNodeServer } from "./server.ts";
 import { machineRoots } from "./fs-search.ts";
@@ -112,7 +114,24 @@ function appIntentDepsFor(services: NodeServices): AppIntentDeps {
     nodeId: services.runtime.identity.nodeId,
     now: () => new Date().toISOString() as never,
     newId: services.conductor.newId,
+    widgetTargets: widgetTargetsFromCatalog(),
   };
+}
+
+/**
+ * The widgets a spoken or typed sentence may name, built from the canonical catalogue.
+ *
+ * Display names and aliases become widget phrases; families become family targets. The matcher takes
+ * the longest phrase that matches, so "thư viện ảnh" is not stolen by the shorter "ảnh".
+ */
+function widgetTargetsFromCatalog(): WidgetTarget[] {
+  const targets: WidgetTarget[] = [];
+  for (const entry of libraryEntries()) {
+    targets.push({ phrase: entry.displayName, definitionId: entry.definition.id });
+    for (const alias of entry.aliases) targets.push({ phrase: alias, definitionId: entry.definition.id });
+  }
+  for (const family of catalogFamilies()) targets.push({ phrase: family, family });
+  return targets;
 }
 
 async function main(): Promise<void> {

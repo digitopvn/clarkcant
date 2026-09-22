@@ -2,7 +2,8 @@ import { useEffect, useState, type ReactElement } from "react";
 
 import { ToolLists } from "../tool-lists.tsx";
 import type { GatewayClient, InstalledPackageView } from "../api.ts";
-import { ToolRow } from "./controls/SettingsRow.tsx";
+import { LANE_LABELS } from "../package-provenance.ts";
+import { SettingsRow, ToolRow } from "./controls/SettingsRow.tsx";
 
 /**
  * Extensions & Widgets: what this node can do, and what it has loaded.
@@ -25,9 +26,10 @@ interface ToolFacts {
 export interface ExtensionsSettingsProps {
   client: GatewayClient;
   tools: ToolFacts[] | undefined;
+  onOpenWidgetLibrary?: ((mode: "browse" | "develop") => void) | undefined;
 }
 
-export function ExtensionsSettings({ client, tools }: ExtensionsSettingsProps): ReactElement {
+export function ExtensionsSettings({ client, tools, onOpenWidgetLibrary }: ExtensionsSettingsProps): ReactElement {
   const [extensions, setExtensions] = useState<{ name: string; kind: string }[] | undefined>(undefined);
 
   useEffect(() => {
@@ -54,6 +56,29 @@ export function ExtensionsSettings({ client, tools }: ExtensionsSettingsProps): 
         ...
       */}
       <InstalledPackagesSection client={client} />
+      {/*
+        The library entry point.
+
+        It sits above the installed list because it answers the question a person actually has
+        ("what can Clark draw?") rather than the one the list answers ("what is installed?").
+      */}
+      <section className="cc-panel-section" data-widget-library-entry="true">
+        <h3>Widget Library</h3>
+        <p className="cc-panel-note">Xem những giao diện Clark có thể dùng trong hội thoại.</p>
+        <SettingsRow
+          label="Widget Library"
+          description="Duyệt danh mục widget thật, kèm bản xem trước bằng chính renderer đang chạy trong hội thoại."
+        >
+          <button
+            type="button"
+            className="cc-badge"
+            onClick={() => onOpenWidgetLibrary?.("browse")}
+            data-widget-library-open="browse"
+          >
+            Duyệt
+          </button>
+        </SettingsRow>
+      </section>
       <section className="cc-panel-section">
         <h3>Capability trên node này</h3>
         <p className="cc-panel-note">
@@ -117,13 +142,6 @@ export function ExtensionsSettings({ client, tools }: ExtensionsSettingsProps): 
  * the host; an isolated widget is opaque-origin code in a frame with no Node, no filesystem and no host cookies.
  * Showing them with the same wording would be the one mistake this list exists to prevent.
  */
-const LANE_LABELS: Record<InstalledPackageView["lane"], string> = {
-  declarative: "chỉ dữ liệu",
-  "isolated-ui": "widget cách ly",
-  service: "service riêng tiến trình",
-  "trusted-native": "extension Pi gốc — chạy cùng tiến trình",
-};
-
 function InstalledPackagesSection({ client }: { client: GatewayClient }): ReactElement {
   const [packages, setPackages] = useState<InstalledPackageView[] | undefined>(undefined);
 

@@ -47,6 +47,12 @@ import { Orb } from "./Orb.tsx";
 import { useTypewriterPlaceholder, prefersReducedMotion } from "./typewriter.ts";
 import { VoiceOverlay } from "./VoiceOverlay.tsx";
 import { SettingsPanel } from "./settings/SettingsPanel.tsx";
+import { WidgetLibrarySurface } from "./widget-library/WidgetLibrarySurface.tsx";
+import {
+  CLOSED_LIBRARY,
+  applyLibraryAction,
+  type WidgetLibraryState,
+} from "./widget-library/widget-library-state.ts";
 import { runAppIntent, type AppIntentHost } from "./app-intents.ts";
 import { resolveRenderer, toRendererDataset } from "./renderers.tsx";
 import { MiniAppSurface, type CompositeSurfaceView } from "./mini-app-surface.tsx";
@@ -279,6 +285,16 @@ export function Conversation({
    */
   const composerFrom = useRef<number | undefined>(undefined);
   const [uiCheckOpen, setUiCheckOpen] = useState(false);
+  /**
+   * The Widget Library, as surface state rather than a route.
+   *
+   * It is a sibling of the transcript, so opening it cannot unmount the conversation, its pins, its
+   * live-effect owners or its voice session. Closing it returns the closed state exactly.
+   */
+  const [widgetLibrary, setWidgetLibrary] = useState<WidgetLibraryState>(CLOSED_LIBRARY);
+  const openWidgetLibrary = useCallback((mode: "browse" | "develop"): void => {
+    setWidgetLibrary((current) => applyLibraryAction(current, { kind: "open", mode }));
+  }, []);
   /*
    * Bumped when the node reports that a spoken action has run.
    *
@@ -982,6 +998,13 @@ export function Conversation({
       goHome: restartSession,
       openFilePicker: () => attachmentInput.current?.click(),
       endVoice: () => setVoiceOpen(false),
+      openWidgetLibrary: (mode: "browse" | "develop", target?: { definitionId?: string; family?: string }) => {
+        // The same state machine the Settings buttons drive: a spoken command and a click land on the
+        // same library state, which is the property the app-intent registry exists to buy.
+        setWidgetLibrary((current) =>
+          applyLibraryAction(current, { kind: "open", mode, ...(target === undefined ? {} : { target }) }),
+        );
+      },
       ...(desktop
         ? {
             expandWindow: () => {
@@ -1735,7 +1758,7 @@ export function Conversation({
             menu: a setting that is two clicks deep is a setting nobody checks. It opens a panel
             that reads the live tokens back off the document, so what it shows is what rendered.
           */}
-          <button type="button" className="cc-icon-btn" aria-label="Cài đặt" title="Cài đặt" data-settings="true" onClick={() => clickIntent("settings.open")}>
+          <button type="button" className="cc-icon-btn" aria-label="Cài đặt" title="Cài đặt" data-settings="true" data-widget-library-anchor="true" onClick={() => clickIntent("settings.open")}>
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
               <circle cx="12" cy="12" r="3" />
               <path d="M19.4 15a1.7 1.7 0 0 0 .34 1.87l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.7 1.7 0 0 0-1.87-.34 1.7 1.7 0 0 0-1 1.55V21a2 2 0 1 1-4 0v-.09A1.7 1.7 0 0 0 9 19.4a1.7 1.7 0 0 0-1.87.34l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.7 1.7 0 0 0 4.6 15a1.7 1.7 0 0 0-1.55-1H3a2 2 0 1 1 0-4h.09A1.7 1.7 0 0 0 4.6 9a1.7 1.7 0 0 0-.34-1.87l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.7 1.7 0 0 0 9 4.6a1.7 1.7 0 0 0 1-1.55V3a2 2 0 1 1 4 0v.09a1.7 1.7 0 0 0 1 1.55 1.7 1.7 0 0 0 1.87-.34l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.7 1.7 0 0 0 19.4 9v0a1.7 1.7 0 0 0 1.55 1H21a2 2 0 1 1 0 4h-.09a1.7 1.7 0 0 0-1.51 1z" />
@@ -2212,6 +2235,16 @@ export function Conversation({
         resolvedTheme={resolvedTheme}
         onThemeChoice={applyThemeChoice}
         {...(onOrbChange === undefined ? {} : { onOrbChange })}
+        onOpenWidgetLibrary={openWidgetLibrary}
+      />
+
+      {/*
+        The Widget Library, beside the conversation rather than in place of it.
+      */}
+      <WidgetLibrarySurface
+        state={widgetLibrary}
+        client={client}
+        onAction={(action) => setWidgetLibrary((current) => applyLibraryAction(current, action))}
       />
 
       {/*

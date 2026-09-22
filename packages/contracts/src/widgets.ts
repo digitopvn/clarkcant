@@ -19,6 +19,37 @@ import { capabilityRefSchema } from "./grants.ts";
 export const widgetRendererSchema = z.enum(["catalog", "isolated-app", "mcp-app"]);
 export type WidgetRenderer = z.infer<typeof widgetRendererSchema>;
 
+/**
+ * A dataset a fixture draws from.
+ *
+ * Inline rather than a reference, because a preview surface has no host to resolve an opaque
+ * reference: a fixture that named a reference the library cannot resolve would render the
+ * "unavailable" state and quietly make a conformance claim that is not true.
+ */
+export const fixtureDatasetSchema = z.strictObject({
+  datasetId: z.string().min(1).max(128),
+  source: z.enum(["sample", "cached"]),
+  columns: z.array(z.string().min(1).max(64)).min(1),
+  rows: z.array(z.record(z.string(), z.unknown())),
+});
+export type FixtureDataset = z.infer<typeof fixtureDatasetSchema>;
+
+/**
+ * One deterministic way to show a widget.
+ *
+ * Fixtures are data, never code, and they carry no effect binding that could reach the outside
+ * world: a catalog preview must not be able to trigger a real action by being displayed.
+ */
+export const widgetFixtureSchema = z.strictObject({
+  id: z.string().min(1).max(64),
+  label: z.string().min(1).max(120),
+  props: z.record(z.string(), z.unknown()),
+  state: z.record(z.string(), z.unknown()).optional(),
+  dataset: fixtureDatasetSchema.optional(),
+  mode: z.enum(["interactive", "read-only"]).optional(),
+});
+export type WidgetFixture = z.infer<typeof widgetFixtureSchema>;
+
 export const widgetDefinitionSchema = z.strictObject({
   id: z.string().min(1).max(160),
   version: z.string().min(1).max(80),

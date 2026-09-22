@@ -96,6 +96,12 @@ const CONTROL_VERBS: readonly string[] = [
  * registry does not know, which must be refused rather than guessed at - from a real request for work.
  *
  * "tệp" is deliberately not here: "mở tệp này giúp tôi" is work.
+ *
+ * "widget" is here because the library is the application's own furniture: "hiện widget lịch" and
+ * "show the calendar widget" name something the shell owns, and without this noun neither sentence
+ * could be shaped at all. The cost is that an unknown widget sentence is refused rather than handed
+ * to the agent, which is the same trade the rest of this table already makes: a sentence shaped like
+ * a command to the shell is never guessed at.
  */
 const APP_NOUNS: readonly string[] = [
   "cua so",
@@ -108,6 +114,7 @@ const APP_NOUNS: readonly string[] = [
   "thanh voice",
   "man hinh",
   "trang chu",
+  "widget",
 ];
 
 /** A command is short. A long sentence that opens with a verb is prose, not a command. */
@@ -175,6 +182,17 @@ const PHRASES: readonly { phrase: string; kind: AppIntentKind }[] = [
   { phrase: "quit the app", kind: "app.quit" },
   { phrase: "quit app", kind: "app.quit" },
   { phrase: "exit the app", kind: "app.quit" },
+
+  // The widget library. Opening the catalogue is one request; naming a widget in it is another.
+  //
+  // These phrases shape through the control-verb-plus-noun rule rather than through the opener rule:
+  // see the note on COMMAND_OPENERS. "thư viện widget" is deliberately absent, because without an
+  // opening verb it is not command-shaped and a phrase that can never be reached is a lie in a table.
+  { phrase: "mo thu vien widget", kind: "widgets.open" },
+  { phrase: "widget library", kind: "widgets.open" },
+  { phrase: "widget gallery", kind: "widgets.open" },
+  { phrase: "hien widget", kind: "widgets.show" },
+  { phrase: "show widget", kind: "widgets.show" },
 ];
 
 /** Words that name a Settings tab, longest first so "cong cu" is not read as "cong". */
@@ -204,9 +222,24 @@ const TAB_INTENT_MARKERS: readonly string[] = [
  *
  * Derived from the table rather than listed again, so a phrase added below cannot be one the shape test then refuses
  * to look at. Two words rather than one is what keeps "thủ đô" out while letting "thu nhỏ" in.
+ *
+ * The widget phrases are excluded on purpose, and the reason is a regression this derivation caused once.
+ * A phrase's first two words become an opener that the shape test accepts for *any* sentence starting with
+ * them, so "thu vien widget" contributed the opener "thu vien" and "mo thu vien widget" contributed "mo thu".
+ * After that, "thư viện ảnh" and "mở thư viện ảnh" - requests for work, not commands to the shell - were
+ * command-shaped, matched no phrase, and were refused with "tôi chưa hiểu câu lệnh đó" instead of reaching
+ * the agent. The gallery journey in apps/web/e2e/widget.spec.ts caught it.
+ *
+ * Excluding them costs nothing: the widget sentences are shaped by the control-verb-plus-noun rule, because
+ * "widget" is in APP_NOUNS and "mở"/"hiện"/"show" are in CONTROL_VERBS. Deriving openers only from phrases
+ * whose first two words are genuinely command-like is the property that matters here.
  */
 const COMMAND_OPENERS: readonly string[] = [
-  ...new Set(PHRASES.map((entry) => entry.phrase.split(" ").slice(0, 2).join(" "))),
+  ...new Set(
+    PHRASES.filter((entry) => entry.kind !== "widgets.open" && entry.kind !== "widgets.show").map(
+      (entry) => entry.phrase.split(" ").slice(0, 2).join(" "),
+    ),
+  ),
   "mo tab",
   "doi sang",
   "chuyen sang",
@@ -296,7 +329,34 @@ function looksLikeTabRequest(normalised: string): boolean {
  * `refused` means "this was shaped like a command and I will not guess" and the caller answers
  * without acting and without an agent turn.
  */
-export function matchAppIntent(text: string): AppIntentMatch | undefined {
+/**
+ * A widget a spoken or typed command can name.
+ *
+ * The runtime builds this table from the canonical catalogue and injects it here, rather than
+ * `core` importing the catalogue: `packs/data-canvas/sample.ts` imports `@clarkcant/core`, so the
+ * other direction would be a dependency cycle, and this keeps the matcher free of any knowledge of
+ * which widgets exist while still resolving them deterministically.
+ */
+export interface WidgetTarget {
+  phrase: string;
+  definitionId?: string;
+  family?: string;
+}
+
+function findWidgetTarget(bare: string, targets: readonly WidgetTarget[]): WidgetTarget | undefined {
+  const words = bare.split(" ");
+  // Longest phrase first, so "thư viện ảnh" is not stolen by a shorter "ảnh".
+  const sorted = [...targets].sort((a, b) => b.phrase.length - a.phrase.length);
+  for (const target of sorted) {
+    if (containsPhrase(words, normaliseIntentText(target.phrase))) return target;
+  }
+  return undefined;
+}
+
+export function matchAppIntent(
+  text: string,
+  options?: { widgetTargets?: readonly WidgetTarget[] },
+): AppIntentMatch | undefined {
   if (!isAppCommandShaped(text)) return undefined;
   const normalised = normaliseIntentText(text);
 
@@ -306,6 +366,22 @@ export function matchAppIntent(text: string): AppIntentMatch | undefined {
     const tab = findTab(normalised);
     if (tab === undefined) return { kind: "refused", say: TAB_REFUSAL };
     return { kind: "intent", intent: { kind: "settings.tab", tab } };
+  }
+
+  // A widget sentence is resolved against the catalogue before the phrase table, because which
+  // widget was named is more specific than the fact that the sentence is about widgets at all.
+  if (containsPhrase(normalised.split(" "), "widget")) {
+    const target = findWidgetTarget(normalised, options?.widgetTargets ?? []);
+    if (target !== undefined) {
+      return {
+        kind: "intent",
+        intent: {
+          kind: "widgets.show",
+          ...(target.definitionId === undefined ? {} : { definitionId: target.definitionId }),
+          ...(target.family === undefined ? {} : { family: target.family }),
+        },
+      };
+    }
   }
 
   const matched = [...PHRASES].sort((a, b) => b.phrase.length - a.phrase.length).find((entry) => normalised.includes(entry.phrase));
@@ -338,11 +414,15 @@ export function resolveAppIntent(input: {
   text?: string;
   intent?: AppIntent;
   mintConfirmationToken: () => ConfirmationToken;
+  widgetTargets?: readonly WidgetTarget[];
 }): AppIntentResolution {
   if (input.intent !== undefined) {
     return decisionFor(input.intent, input.mintConfirmationToken);
   }
-  const match = matchAppIntent(input.text ?? "");
+  const match = matchAppIntent(
+    input.text ?? "",
+    input.widgetTargets === undefined ? undefined : { widgetTargets: input.widgetTargets },
+  );
   if (match === undefined) return { kind: "none" };
   if (match.kind === "refused") return { kind: "refused", say: match.say };
   return decisionFor(match.intent, input.mintConfirmationToken);
@@ -374,6 +454,9 @@ export function recordAppIntentEvent(
   const document: AppIntentEventDocument = {
     kind: input.intent.kind,
     ...(input.intent.tab === undefined ? {} : { tab: input.intent.tab }),
+    // Recorded so the audit can answer which widget was shown, not only that the library opened.
+    ...(input.intent.definitionId === undefined ? {} : { definitionId: input.intent.definitionId }),
+    ...(input.intent.family === undefined ? {} : { family: input.intent.family }),
     source: input.source,
     confirmed: input.confirmed,
   };
