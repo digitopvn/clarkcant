@@ -58,9 +58,35 @@ function usage(): string {
   ].join("\n");
 }
 
+/**
+ * Flags that carry a value, so the argument after one belongs to the flag rather than to the command.
+ *
+ * Declared once because two readers have to agree on it: `flag` reads the value that follows a name, and
+ * `positional` has to step over that same value. While only the first of them knew, `clark widget dev --port 4000`
+ * read `4000` as the package directory.
+ */
+const FLAGS_WITH_VALUES: readonly string[] = ["--template", "--frames", "--port", "--builtin"];
+
 function flag(args: readonly string[], name: string): string | undefined {
   const index = args.indexOf(name);
   return index === -1 ? undefined : args[index + 1];
+}
+
+/**
+ * The command's positional argument: the first argument that is neither a flag nor a flag's value.
+ *
+ * `dev --port 4000 .` names `.`, and `dev --port 4000` names nothing at all rather than naming `4000`. What nothing
+ * means is the caller's decision, because it is not the same for every command: `dev` falls back to the working
+ * directory, while a command that needs a directory can refuse instead.
+ */
+export function positional(args: readonly string[]): string | undefined {
+  for (let index = 0; index < args.length; index += 1) {
+    const arg = args[index];
+    if (arg === undefined) continue;
+    if (!arg.startsWith("--")) return arg;
+    if (FLAGS_WITH_VALUES.includes(arg)) index += 1;
+  }
+  return undefined;
 }
 
 /* ------------------------------------------------------------------ init */
@@ -404,7 +430,7 @@ export async function runCli(argv: readonly string[]): Promise<number> {
     process.stdout.write(`${usage()}\n`);
     return 2;
   }
-  const dir = rest.find((arg) => !arg.startsWith("--")) ?? process.cwd();
+  const dir = positional(rest) ?? process.cwd();
 
   /*
    * The list is the gate, not just the help text. An unknown command is refused here rather than falling through

@@ -1,6 +1,10 @@
+import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
 import { describe, expect, it, vi } from "vitest";
 
-import { WIDGET_COMMANDS, runCli } from "../src/cli.ts";
+import { WIDGET_COMMANDS, positional, runCli } from "../src/cli.ts";
 
 /**
  * The help text, checked against the commands the CLI actually accepts.
@@ -67,5 +71,49 @@ describe("the CLI help", () => {
 
     expect(code).toBe(2);
     for (const command of WIDGET_COMMANDS) expect(text).toContain(command.name);
+  });
+});
+
+describe("the argument a command works on", () => {
+  it("reads a flag's value as the flag's, not as the directory", () => {
+    /*
+     * The bug this pins: `dev --port 4000` named `4000`, so the directory handed to `readPackage` was one nobody
+     * had written. Every value-taking flag is here, because the failure was in the reading rather than in `--port`.
+     */
+    expect(positional(["--port", "4000"])).toBeUndefined();
+    expect(positional(["--builtin", "canvas.table@1"])).toBeUndefined();
+    expect(positional(["--template", "form"])).toBeUndefined();
+    expect(positional(["--frames", "/tmp/frames"])).toBeUndefined();
+  });
+
+  it("still reads a directory where a person would put it", () => {
+    expect(positional(["pkg", "--port", "4000"])).toBe("pkg");
+    expect(positional(["--port", "4000", "pkg"])).toBe("pkg");
+    // The value of one flag is not the name of a directory, even when another flag follows it.
+    expect(positional(["--builtin", "canvas.table@1", "--port", "4000"])).toBeUndefined();
+  });
+
+  it("copes with a flag that was given no value", () => {
+    expect(positional(["--port"])).toBeUndefined();
+    expect(positional(["pkg", "--port"])).toBe("pkg");
+  });
+
+  it("scaffolds into the working directory when a flag comes first", async () => {
+    // The end-to-end form of the bug, through the real command rather than through the helper: `init --template
+    // form` used to scaffold into a directory called `form`, nowhere near where the person was standing.
+    const previous = process.cwd();
+    const root = mkdtempSync(join(tmpdir(), "clark-cli-dir-"));
+    try {
+      process.chdir(root);
+      const { code } = await captureUsage(["widget", "init", "--template", "form"]);
+
+      expect(code).toBe(0);
+      expect(existsSync(join(root, "clarkcant.json"))).toBe(true);
+      // Asserted as absent so the old reading cannot come back unnoticed.
+      expect(existsSync(join(root, "form"))).toBe(false);
+    } finally {
+      process.chdir(previous);
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 });
