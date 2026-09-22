@@ -575,3 +575,36 @@ Branch: `phase-2-pi-confinement`, cut from `main` at `89be38d`.
 ### Pre-task 2.0 — spike A3 (in progress)
 
 Question: does the installed Pi SDK honour `builtinTools: []`, i.e. can the raw filesystem built-ins (`read`, `grep`, `find`, `ls`) actually be turned off for a project session? The red-team marked this unverified, and Phase 2's approach and effort estimate both depend on the answer.
+
+### Pre-task 2.0 — spike A3 RESULT (2026-09-22)
+
+**ANSWER: YES.** The installed SDK (0.85.1) honours tool suppression. `tools` is a hard allowlist consulted when the tool *registry* is built, not a prompt hint, so a built-in omitted from it is absent from `session.agent.state.tools`.
+
+**Type evidence** (`packages/pi-adapter/node_modules/@earendil-works/pi-coding-agent/dist/core/sdk.d.ts`): `:43 tools?: string[]` — *"When provided, only the listed tool names are enabled."*; `:33 noTools?: "all" | "builtin"`; `:45 excludeTools?: string[]`; `:47 customTools?: ToolDefinition[]`; `:71` exports `createReadTool`/`createGrepTool`/`createFindTool`/`createLsTool`.
+
+**Implementation mechanism** (`dist/core/sdk.js:139-144`, `:253-267`; `dist/core/agent-session.js:2110`, `:2119-2127`, `:2149-2158`, `:2160-2180`, `:669`): built-ins enter the registry Map first and custom tools `set` over them by name; the allowlist filters both. The SDK's own CLI documents the same contract (`dist/cli/args.js:286-291`, example at `:369` is literally `--tools read,grep,find,ls`).
+
+**Empirical probe** (SDK 0.85.1; scratch script deleted, no repository file touched):
+
+| case | passed to `createAgentSession` | observed `state.tools` |
+| --- | --- | --- |
+| A | `tools: ["read","grep","find","ls"]` | same four |
+| B | `tools: []` | `[]` |
+| C | `tools: ["read"]` | `["read"]` |
+| D | `tools: []` + custom `clarkcant_read` | `[]` — the custom tool is dropped too |
+| E | `tools: ["clarkcant_read"]` + that custom tool | `["clarkcant_read"]` ← **the Phase 2 shape** |
+| F | `tools: ["read"]` + custom tool named `read` | one entry named `read`, the custom one |
+| G | `tools: ["grep"]` + custom `read` | `["grep"]` — custom dropped |
+| H | `noTools: "builtin"` + custom | built-ins gone, 61 ambient extension tools active |
+| I | `excludeTools: ["read","grep","find","ls"]` | `bash`,`edit`,`write` + 61 extension tools |
+
+**Not empirical:** no live model turn was run (no provider credential here). Closed by source, not assumption: `agent-session.js:293-307` passes `state.tools` into the turn context and `setActiveToolsByName` is its only writer. Post-creation mutation was also probed: `setActiveToolsByName`, reassigning `agent.state.tools`, and `await session.reload()` all left case E at `["clarkcant_read"]`.
+
+**Two caveats that must reach the implementer:**
+
+1. The adapter option named `builtinTools` (`real.ts:130`) is not built-in-specific — it maps onto the SDK's `tools` allowlist, which gates extension and custom tools too. Case D is the trap: `builtinTools: []` on its own kills the custom tools as well, and only the concatenation at `real.ts:426` (`[...builtinTools, ...customTools.map((tool) => tool.name)]`) saves them. That line is load-bearing and must not be "simplified" away.
+2. The allowlist is what keeps the SDK's other escape hatches shut: the SDK exports `createReadTool` and friends (`sdk.d.ts:71`), and the adapter's `registerTool` (`real.ts:470-480`) appends to `agent.state.tools` without consulting the allowlist, while `setActiveTools` (`real.ts:464-467`) keeps registered names unconditionally. Those paths must stay off the project-worker route, or confinement is only as good as the call site.
+
+**Shadowing fallback is available but not needed:** a custom tool does shadow a built-in name (case F), but it must also be allowlisted (case G). Phase 2's own tool names are the cleaner route and case E confirms they work.
+
+**Consequence:** the "1.5-2 ngày" estimate holds; phase-02 needs no re-plan.
