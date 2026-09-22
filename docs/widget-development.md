@@ -675,6 +675,15 @@ Hai artifact khác nhau, không phải hai bản sao của một thứ:
 - **`fixtures/*.json` của một package** — props trần; `readPackage` đọc chúng và `conformance.ts` kiểm bằng
   props schema của chính widget đó.
 
+Một fixture của package có thể mang thêm dữ liệu: file `fixtures/<name>.dataset.json` đi kèm
+`fixtures/<name>.json`. Node đọc cặp này thành **một** `WidgetFixture` — props từ file thứ nhất, `dataset` từ
+file thứ hai — và validate dataset bằng đúng `fixtureDatasetSchema` mà catalog dùng. Dataset sai schema thì bị
+nêu tên trong `problems` và **không** được gắn vào fixture, chứ không được render như thể hợp lệ.
+
+Vì sao cần file riêng thay vì nhét dataset vào props: renderer đọc dataset từ **fixture**, không từ props
+(`WidgetPreview.tsx`), nên một widget có dữ liệu sẽ mãi vẽ đường "chưa có dữ liệu" nếu dataset chỉ nằm trong
+props.
+
 ### 23.3 Xem trước bằng renderer thật
 
 Preview gọi `resolveRenderer` trong `packages/conversation-client/src/renderers.tsx` — cùng renderer mà hội
@@ -710,12 +719,11 @@ không phải catalog renderer.
 
 ### 23.6 Provenance của package đã cài
 
-Thư viện liệt kê package đã cài như **provenance**, trên danh sách riêng, không phải card trong catalog: không
-route nào expose widget definition/fixture/renderer của một package, nên một card cho nó sẽ phải bịa ra đúng
-những field làm card hoạt động. Danh sách hiện `packageId@version`, source tier, digest (rút gọn, bản đầy đủ ở
-`title`) và trust lane; wording của lane nằm một chỗ trong
+Thư viện liệt kê package đã cài như **provenance**, trên danh sách riêng: `packageId@version`, source tier,
+digest (rút gọn, bản đầy đủ ở `title`) và trust lane; wording của lane nằm một chỗ trong
 `packages/conversation-client/src/package-provenance.ts` để extension Pi gốc và widget cách ly không bao giờ
-đọc giống nhau. Ba trạng thái được tách: đang đọc, không đọc được (có nút thử lại), và chưa cài gì.
+đọc giống nhau. Ba trạng thái được tách: đang đọc, không đọc được (có nút thử lại), và chưa cài gì. Widget mà
+package khai báo là card thật, ở mục 23.8.
 
 ### 23.7 Đường vào
 
@@ -723,3 +731,29 @@ Nút trong Settings, câu lệnh gõ và voice đều đi qua **một** app-inte
 `widgets.show` (hiện một widget, có target). Matcher chỉ nhận target khi câu có dạng mệnh lệnh, và một câu nhắc
 widget không resolve được target sẽ mở thư viện thay vì đoán — đây là hành động chỉ xem, không bao giờ đoán
 một effect.
+
+### 23.8 Widget do package khai báo
+
+Một package có thể khai báo widget, và widget đó trở thành card thật trong thư viện. Đường đọc:
+
+1. client gọi `GET /packages/widgets` **khi mở** thư viện, không phải khi mount — thư viện không ai mở thì
+   không hỏi node câu nào;
+2. node tìm package trong directory index (`CC_DIRECTORY_INDEX`) rồi đọc định nghĩa từ đĩa
+   (`installedWidgets` trong `packages/core/src/installed-widgets.ts`);
+3. card chỉ được tạo nếu **client** có renderer cho definition id đó (`resolveRenderer`). Cổng nằm ở client vì
+   renderer nằm ở client; một ý kiến thứ hai ở node sẽ lệch khỏi ý kiến này.
+
+**Card id được namespace.** Mọi definition id mà renderer hiện có vẽ được đều đã là entry của catalog, nên một
+package dùng chính definition id làm danh tính card sẽ không bao giờ hiện được: entry của catalog thắng id đó
+mọi lần. Vì vậy card id là `<packageId>/<definitionId>` — một sự thật về nguồn gốc, không phải một cái tên đẹp
+hơn. Việc vẽ vẫn resolve từ `definition.id`, nên vẫn đúng **một** renderer cho mỗi id, và card của catalog cho
+cùng definition vẫn hiện bên cạnh (nhãn `Built-in` so với `Local development package`).
+
+**Giới hạn, và nó được nói ra.** Chỉ package **local** và **có trong directory index** mới đọc được: generation
+trong DB không mang đường dẫn, và artifact của nguồn git/npm không nằm trên máy này. Nguồn khác nhận
+`NOT_LOCAL`/`NOT_IN_DIRECTORY` và được **nêu tên** trong mục "Gói đã cài: phần chưa xem được" — một danh sách
+ngắn hơn sẽ nói "package này không khai báo widget nào" trong khi sự thật là node không đọc được nó.
+
+Danh tính báo về là danh tính **package khai báo**, lấy từ directory entry, không phải đường dẫn đã cài: một
+lần cài từ đĩa ghi `packageId` là chính đường dẫn đó, mà đường dẫn là nơi byte nằm chứ không phải tên của
+package.
