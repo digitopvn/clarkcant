@@ -281,7 +281,10 @@ export async function resolveInsideRoots(
     if (info.dev !== root.dev || info.ino !== root.ino) {
       return {
         ok: false,
-        reason: `approved root "${root.path}" is a different directory than the one that was approved (inode ${info.ino}, not ${root.ino}), so no path under it can be admitted`,
+        // No inode number in the message: the refusal is read by a model, and which directory stands there
+        // is the whole of what it needs to know. The numbers stay in the approval record, where a human
+        // debugging an outage can reach them.
+        reason: `approved root "${root.path}" is a different directory than the one that was approved (its inode changed since approval), so no path under it can be admitted`,
       };
     }
   }
