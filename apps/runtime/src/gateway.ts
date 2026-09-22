@@ -1565,9 +1565,20 @@ export async function handleRequest(deps: GatewayDeps, request: GatewayRequest):
             message: index.reason,
           };
         }
-        const listed = index.entries.find(
-          (candidate) => candidate.packageId === entry.packageId && candidate.version === entry.version,
-        );
+        /*
+         * A locally installed package records the path as its id and "0.0.0-local" as its version, because the
+         * resolver's answer for a source with no published identity is the path itself. So id-and-version alone
+         * cannot find it again, and without this fallback every package installed from disk would report "not in
+         * the directory" forever. The fallback is narrow on purpose: it only matches a local entry whose path is
+         * exactly the recorded id, so it cannot pick up an unrelated entry.
+         */
+        const listed =
+          index.entries.find(
+            (candidate) => candidate.packageId === entry.packageId && candidate.version === entry.version,
+          ) ??
+          index.entries.find(
+            (candidate) => candidate.source.kind === "local" && candidate.source.path === entry.packageId,
+          );
         if (listed === undefined) {
           return {
             packageId: entry.packageId,
@@ -1577,22 +1588,28 @@ export async function handleRequest(deps: GatewayDeps, request: GatewayRequest):
             message: `${entry.packageId}@${entry.version} is not in the directory, so this node cannot locate its files`,
           };
         }
+        /*
+         * The declared identity, not the recorded one. A local install records the path as its id, so reporting that
+         * would put a filesystem path where a package name belongs - and the path is where the bytes are, not what
+         * the package is called. The directory entry is the package's own answer, and it is the name the person saw
+         * when they installed it.
+         */
         const read = installedWidgets({
-          packageId: entry.packageId,
-          version: entry.version,
+          packageId: listed.packageId,
+          version: listed.version,
           source: listed.source,
         });
         return read.ok
           ? {
-              packageId: entry.packageId,
-              version: entry.version,
+              packageId: listed.packageId,
+              version: listed.version,
               ok: true,
               widgets: read.widgets,
               problems: read.problems,
             }
           : {
-              packageId: entry.packageId,
-              version: entry.version,
+              packageId: listed.packageId,
+              version: listed.version,
               ok: false,
               code: read.code,
               message: read.message,

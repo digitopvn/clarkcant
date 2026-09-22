@@ -209,6 +209,27 @@ describe("the installed packages' widget definitions", () => {
     expect(packages[0]?.["code"]).toBe("NO_DIRECTORY");
   });
 
+  it("finds a package installed from disk again, whose recorded id is the path itself", async () => {
+    /*
+     * A local install records the path as its package id and "0.0.0-local" as its version, so a lookup by id and
+     * version alone would report "not in the directory" for every package installed from disk.
+     */
+    services.runtime.db
+      .prepare("UPDATE package_generations SET package_id = ?, version = ? WHERE generation_id = ?")
+      .run(packageRoot, "0.0.0-local", "gen_test_1");
+
+    const response = await get("/packages/widgets");
+    const packages = (response.body as { packages: Record<string, unknown>[] }).packages;
+
+    expect(packages[0]?.["ok"]).toBe(true);
+    // The declared identity, not the path the resolver records for a local source: a path is where the bytes are,
+    // not what the package is called, and reporting it would put a filesystem path where a name belongs.
+    expect(packages[0]?.["packageId"]).toBe(PACKAGE_ID);
+    expect(packages[0]?.["version"]).toBe(VERSION);
+    const widgets = packages[0]?.["widgets"] as Record<string, unknown>[];
+    expect((widgets[0]?.["definition"] as { id: string }).id).toBe("canvas.note@1");
+  });
+
   it("requires the token that every other local decision requires", async () => {
     const response = await get("/packages/widgets", { authed: false });
     expect(response.status).toBe(401);
