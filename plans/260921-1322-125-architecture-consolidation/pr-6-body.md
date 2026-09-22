@@ -48,4 +48,4 @@ The e2e journey was also changed to assert bytes rather than element presence: i
 
 ## Scope guard
 
-This PR **does not** close #125, #2, #3, #4 or #5, and contains no closing keyword for them. The four Phase 3 and three Phase 4 MINORs recorded in the plan's `evidence.md` were deliberately left untouched, because bundling them would violate this program's no-unrelated-cleanup criterion.
+This PR **completes no external gate**. Issues #125, #2, #3, #4 and #5 stay as they were and are not proven by fixture, and this body carries no closing keyword for any of them. The four Phase 3 and three Phase 4 MINORs recorded in the plan's `evidence.md` were deliberately left untouched, because bundling them would violate this program's no-unrelated-cleanup criterion.

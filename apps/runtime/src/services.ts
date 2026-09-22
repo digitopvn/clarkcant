@@ -632,8 +632,8 @@ export interface Timeline {
   activeTaskIds: string[];
 }
 
-/** Widget dependencies for read-only lookups. */
-function readDeps(services: NodeServices): WidgetDeps {
+/** Widget dependencies for read-only lookups. Only the node's own runtime is read, so that is all it asks for. */
+function readDeps(services: Pick<NodeServices, "runtime">): WidgetDeps {
   return {
     db: services.runtime.db,
     nodeId: services.runtime.identity.nodeId,
@@ -648,9 +648,12 @@ function readDeps(services: NodeServices): WidgetDeps {
  * Messages and the instances they reference are returned together. A message rendering a
  * widget whose props are missing would show an empty surface, and fetching the two halves
  * separately would let them disagree while the user is looking at them.
+ *
+ * Narrowed to the node's runtime because that is the whole of what it reads: a caller holding only part of the
+ * services bundle can still build a page.
  */
 export function buildTimeline(
-  services: NodeServices,
+  services: Pick<NodeServices, "runtime">,
   input: { conversationId: string; afterSequence: number; limit?: number },
 ): Timeline {
   const { db } = services.runtime;

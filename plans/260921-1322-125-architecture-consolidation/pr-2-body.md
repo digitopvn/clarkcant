@@ -48,4 +48,4 @@ flowchart TD
 
 ## Scope guard
 
-This PR **does not** close #93, #2, #3, #4 or #5, and contains no closing keyword for them. Those external gates stay open and are not proven by fixture.
+This PR **completes no external gate**. Issues #93, #2, #3, #4 and #5 stay as they were and are not proven by fixture, and this body carries no closing keyword for any of them.

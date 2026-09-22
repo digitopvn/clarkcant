@@ -12,8 +12,9 @@ import { type NodeServices, buildTimeline } from "../services.ts";
  * Widget actions: the cursor a spoken action is checked against, and the invocation itself.
  *
  * Both the conversation route and the voice session call these, so they live here rather than in either
- * caller. `services` is a parameter, not a lookup, and the policy is read at the invocation rather than
- * captured, so a mode the user just changed applies to the next action they take.
+ * caller. `services` is a parameter, not a lookup, narrowed to the fields each function reads, and the policy is
+ * read at the invocation rather than captured, so a mode the user just changed applies to the next action they
+ * take.
  */
 
 /**
@@ -25,7 +26,7 @@ import { type NodeServices, buildTimeline } from "../services.ts";
  * the page sent, and the page's view may be older than the instance.
  */
 export function widgetActionTarget(
-  services: NodeServices,
+  services: Pick<NodeServices, "conductor">,
   instanceId: string,
   actionBindingId: string,
 ): { revision: number; bindingDigest: string } | undefined {
@@ -64,7 +65,10 @@ export type WidgetActionResult =
  * request-shaped validation and this keeps the authorization, which is the split that matters: what the HTTP body
  * looks like is the transport's business, and whether an action may run is not.
  */
-export function invokeWidgetAction(services: NodeServices, request: WidgetActionRequest): WidgetActionResult {
+export function invokeWidgetAction(
+  services: Pick<NodeServices, "runtime" | "conductor">,
+  request: WidgetActionRequest,
+): WidgetActionResult {
   // The guard main added at the route, kept where the invocation actually happens so both callers get it.
   if (!Number.isFinite(request.expectedRevision)) {
     return {

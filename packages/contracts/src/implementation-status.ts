@@ -90,16 +90,15 @@ export const IMPLEMENTATION_STATUS: readonly ImplementationStatusEntry[] = [
   },
   {
     capabilityId: "V02",
-    summary: "Portable runtime: own identity and database, bearer-gated gateway, Unix-socket transport.",
+    summary:
+      "Portable runtime: own identity and database, bearer-gated gateway, Unix-socket transport (the socket half is POSIX-only, and its own suite skips on Windows with the reason named).",
     status: "implemented",
     owningPackage: "@clarkcant/runtime",
     phase: "P1",
     evidenceTests: [
+      { file: `${RUNTIME}/identity.spec.ts`, test: "is created with the node and reported as a fingerprint a person can read aloud" },
+      { file: `${RUNTIME}/api.spec.ts`, test: "rejects every other route without a token" },
       { file: `${RUNTIME}/portable-runtime.spec.ts`, test: "serves a real request and keeps the file owner-only" },
-      {
-        file: `${RUNTIME}/portable-runtime.spec.ts`,
-        test: "refuses a path another node is listening on rather than taking it away",
-      },
     ],
   },
   {
@@ -379,16 +378,23 @@ export const IMPLEMENTATION_STATUS: readonly ImplementationStatusEntry[] = [
   {
     capabilityId: "runtime.local-transport",
     summary: "The node's own transport: loopback HTTP with a bearer gate, and the Unix socket a desktop helper would attach to.",
-    status: "implemented",
+    status: "partial",
     owningPackage: "@clarkcant/runtime",
     phase: "P1",
     evidenceTests: [
-      { file: `${RUNTIME}/portable-runtime.spec.ts`, test: "serves a real request and keeps the file owner-only" },
+      {
+        file: `${RUNTIME}/artifact-transfer.spec.ts`,
+        test: "serves a stored blob to a confirmed peer, and refuses everyone else",
+      },
       {
         file: `${RUNTIME}/portable-runtime.spec.ts`,
         test: "clears the file a node left behind when it did not shut down",
       },
     ],
+    externalGate: {
+      reason:
+        "the Unix-socket half is POSIX-only: Node has no Unix domain sockets on Windows, so its suite is skipped there with the reason named and this capability has no executed evidence for that half on a non-POSIX runner, and no test drives the --socket flag that selects the listener",
+    },
   },
   {
     capabilityId: "app.web.client",

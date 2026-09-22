@@ -816,3 +816,19 @@ The four gates the objective names — **#2, #3, #4 and #5 — remain OPEN**, an
 4. **#137 (packed-worker lane not confined) remains open** and is a real confinement gap in a lane Phase 2 did not cover.
 5. **The `fea0044` commit bundles three changes** because it was pushed before being split and force-pushing is forbidden. Its tree is byte-identical to the intended split.
 6. Unverified claims carried forward and NOT to be restated as established: the "187 route-focused tests" figure and "startup stderr byte-identical" from Phase 4, which the reviewer superseded with its own dispatch probe.
+
+## Audit rework — what the rejection required and what was done
+
+An independent completion audit rejected the closeout. Its objections were concrete, and these are the remedies.
+
+**Corrected count.** The Phase 5 section above reads 16 implemented / 14 partial. After the rework the tree is **15 implemented / 15 partial / 4 blocked**: `runtime.local-transport` moved to `partial` because its Unix-socket half genuinely cannot be exercised off POSIX and no test drives the `--socket` flag.
+
+**Objection: post-merge CI green for every merge commit.** The main-branch runs for `e0871aeb` (#139) and `cef02344` (#149) were `cancelled`, not failed — my own follow-up docs commits to main cancelled them via the workflow concurrency group. They were re-run explicitly so the criterion is met literally rather than explained away.
+
+**Objection: per-phase advisory checkpoints were never taken and never commented.** Only one program-level checkpoint had been taken. A retrospective per-phase advisory assessment was then run against the merged tree, and its block for each phase is posted on that phase's PR and in full on #125; the source text is `advisory-per-phase.md`. It did not affirm the phases: it found that Phase 1's fourth effect surface has no production call site and that a `prohibition: "all"` node cannot be released from any UI, that Phase 3's lock is consumed by no production build, that Phase 5's `node-link` manifest contradicts its own `V04`/`V05` entries, and that Phase 6's capture has a single fixture caller so the production node never takes a frame. Those are recorded rather than fixed here, and they are the honest answer to "did the guard rails protect what they were built to protect".
+
+**Objection: unavailable-advisor condition must be recorded as an external blocker, not skipped silently.** Recorded: the `ask_advisor` consult failed with `400 MissingSessionID` (a harness routing failure, not a review outcome), and the advisory work was then carried out through the `kongming` agent instead. This is the external blocker the objective asks to be recorded rather than silently substituted.
+
+**Objection: the guard that protected the gates was structurally wrong.** `tools/check-invariants.mjs` pinned permitted issue numbers to `[2,3,4,5]`, so #93/#125 could not be represented at all, and no check looked at the checked-in PR bodies. A twelfth invariant, `pr-bodies-close-nothing`, now fails when a closing keyword sits beside an issue reference in any `plans/**/pr-*-body.md`, and it reproduced the audit's finding on all six bodies (six pairs) before they were cleaned. The `[2,3,4,5]` gate rule is untouched.
+
+**Objection: acceptance criteria only partly true.** Two route modules took the whole `NodeServices` bundle and now take only the fields they read, with a negative probe proving the narrowing bites. `implemented` now requires at least one cited test that is not platform-skipped, resolved through the AST rather than pattern-matched, with a counterexample shown failing before the rule landed.

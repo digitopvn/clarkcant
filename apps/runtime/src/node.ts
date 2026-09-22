@@ -225,6 +225,8 @@ export function bootRuntime(options: RuntimeOptions): Runtime {
  * `unix-socket.ts` is the listener, and `portable-runtime.spec.ts` drives `listenOnUnixSocket`
  * against a real socket. `main.ts` starts it when `--socket <path>` is passed; no test drives that
  * flag, so what is exercised is the listener rather than the command line that selects it. The
- * loopback HTTP gateway is the other half.
+ * loopback HTTP gateway is the other half, and it runs on every platform; the socket half is
+ * POSIX-only, because Node has no Unix domain sockets on Windows, so the registry holds this
+ * capability as `partial` and names that as the gap.
  */
-export const LOCAL_SOCKET_STATUS = "identity-http-and-unix-socket-implemented";
+export const LOCAL_SOCKET_STATUS = "identity-http-implemented-unix-socket-posix-only";
