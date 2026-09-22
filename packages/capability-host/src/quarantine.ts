@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 import { mkdirSync, readdirSync, readFileSync, lstatSync, writeFileSync } from "node:fs";
 import { isAbsolute, join, relative, resolve } from "node:path";
 
-import { frozenBuildEnvironment, lifecycleScriptGate, readDependencyLock } from "./dependency-lock.ts";
+import { frozenBuildEnvironment, incompleteCoverageRefusal, lifecycleScriptGate, readDependencyLock } from "./dependency-lock.ts";
 
 /**
  * The staged install pipeline: quarantine, then an isolated build.
@@ -249,6 +249,11 @@ export type IsolatedBuildResult =
  * 2. **The scripts this node approved.** A script the artifact declares and nobody approved is not skipped: the
  *    build does not start. Silently dropping part of a package's build would run a build the consent did not cover,
  *    and the honest answer is to stop and ask rather than to run something else.
+ *
+ * The coverage check is done here and not only in `prepareLockedBuild`, because this function is the one that
+ * spawns: a lock that does not pin the package's dependency tree is refused at the point of execution, so a caller
+ * that reaches this runner without the pipeline in front of it gets the same refusal rather than a build on a tree
+ * nobody pinned.
  */
 export async function isolatedLockedBuild(input: {
   /** The node's lock directory. The reference is resolved inside it and nowhere else. */
@@ -268,6 +273,9 @@ export async function isolatedLockedBuild(input: {
 }): Promise<LockedBuildResult> {
   const stored = readDependencyLock({ dir: input.lockDir, lockRef: input.lockRef, lockDigest: input.lockDigest });
   if (!stored.ok) return { ok: false, code: stored.code, message: stored.message };
+
+  const incomplete = incompleteCoverageRefusal(stored.lock);
+  if (incomplete !== undefined) return { ok: false, code: incomplete.code, message: incomplete.message };
 
   const gate = lifecycleScriptGate({
     declared: stored.lock.lifecycleScripts,
@@ -298,7 +306,14 @@ export type LockedBuildResult =
   | { ok: true; stdout: string }
   | {
       ok: false;
-      code: "REFUSED" | "BUILD_FAILED" | "TIMED_OUT" | "LOCK_MISSING" | "LOCK_MUTATED" | "LIFECYCLE_SCRIPT_NOT_APPROVED";
+      code:
+        | "REFUSED"
+        | "BUILD_FAILED"
+        | "TIMED_OUT"
+        | "LOCK_MISSING"
+        | "LOCK_MUTATED"
+        | "LOCK_INCOMPLETE"
+        | "LIFECYCLE_SCRIPT_NOT_APPROVED";
       message: string;
       stdout?: string;
     };
@@ -310,9 +325,12 @@ export type LockedBuildResult =
  * key added later, a token in a CI variable — reaches a build script; a list of what a build legitimately
  * needs is short and does not grow by accident.
  *
- * `isolatedLockedBuild` above is the entry point the install pipeline uses: it checks the frozen lock and the
- * approved lifecycle scripts first. This function stays as it is — a contained process — so the isolation can be
- * read and tested without the locking rules, and the two compose rather than one absorbing the other.
+ * `isolatedLockedBuild` above is the entry point a build goes through: it reads the frozen lock, refuses one that
+ * does not cover the dependency tree, and checks the approved lifecycle scripts before anything is spawned. This
+ * function deliberately does not repeat any of that: it takes an environment as an argument and has no way to tell
+ * where that environment came from, so refusing "a lock it cannot verify" is not something it can decide. It stays
+ * the lower-level contained-process primitive — read and tested without the locking rules — and a caller that wants
+ * the frozen-input guarantee calls `isolatedLockedBuild`, which is the only path that enforces it.
  */
 export async function isolatedBuild(input: {
   /** The build's working directory. It has to be inside quarantine, or it is not quarantine. */

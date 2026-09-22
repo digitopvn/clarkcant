@@ -442,6 +442,40 @@ describe("drift invalidates the prior consent", () => {
     expect(outcome.ok ? "" : outcome.code).toBe("LOCK_INCOMPLETE");
     expect(outcome.ok ? "" : outcome.message).toContain("artifact-only");
   });
+
+  it("refuses the same artifact-only lock at the runner that spawns, not only in the pipeline in front of it", async () => {
+    const { dir, lock } = storedLock(
+      materializeDependencyLock({
+        ...PACKAGE,
+        coverage: "artifact-only",
+        resolved: resolvedClosure(published(), [ARTIFACT]),
+        buildInputs: BUILD_INPUTS,
+      }),
+    );
+    const { quarantineDir, root } = buildRoot(dir);
+
+    let spawned = 0;
+    const built = await isolatedLockedBuild({
+      lockDir: dir,
+      lockRef: lock.lockRef,
+      lockDigest: lock.lockDigest,
+      root,
+      quarantineDir,
+      command: process.execPath,
+      // The command is the counterexample: reaching the child printed CC_LOCKED_DEPENDENCIES when only the
+      // pipeline refused this lock, so the assertion is that no child is started at all.
+      args: ["-e", "process.stdout.write(process.env.CC_LOCKED_DEPENDENCIES ?? '')"],
+      spawnImpl: vi.fn(() => {
+        spawned += 1;
+        throw new Error("a build was started on a lock that does not cover the dependency tree");
+      }) as never,
+    });
+
+    expect(built.ok ? "" : built.code).toBe("LOCK_INCOMPLETE");
+    expect(built.ok ? "" : built.message).toContain("artifact-only");
+    expect(spawned).toBe(0);
+    expect(existsSync(join(root, ".tmp"))).toBe(false);
+  });
 });
 
 describe("missing or edited lock material fails closed", () => {

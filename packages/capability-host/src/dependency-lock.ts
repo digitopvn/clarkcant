@@ -503,6 +503,24 @@ export type PrepareLockedBuildResult =
     };
 
 /**
+ * Whether a lock can cover the build about to read it.
+ *
+ * One implementation because there are two ways into a build — the `prepareLockedBuild` pipeline and the runner
+ * `isolatedLockedBuild` — and a guarantee enforced on one of them is not a guarantee. A lock that covers the
+ * artifact alone was written where the package's tree could not be read, so building on it would run a build whose
+ * dependencies nobody pinned, which is the state this phase exists to end.
+ */
+export function incompleteCoverageRefusal(
+  lock: DependencyLock,
+): { code: "LOCK_INCOMPLETE"; message: string } | undefined {
+  if (lock.coverage === "artifact-and-dependencies") return undefined;
+  return {
+    code: "LOCK_INCOMPLETE",
+    message: `${lock.lockRef} covers ${lock.coverage}, so it does not pin the dependency tree this build would consume`,
+  };
+}
+
+/**
  * Resolve the closure, then check it against what consent covered — before anything is executed.
  *
  * The order is the point. Metadata is read here, in the parent process, and compared with the consented digest, so
@@ -532,17 +550,8 @@ export function prepareLockedBuild(input: {
   });
   if (!stored.ok) return { ok: false, code: stored.code, message: stored.message };
 
-  if (stored.lock.coverage !== "artifact-and-dependencies") {
-    /*
-     * A lock that covers the artifact alone was written where the package's tree could not be read. Building on it
-     * would mean running a build whose dependencies nobody pinned, which is the state this phase exists to end.
-     */
-    return {
-      ok: false,
-      code: "LOCK_INCOMPLETE",
-      message: `${stored.lock.lockRef} covers ${stored.lock.coverage}, so it does not pin the dependency tree this build would consume`,
-    };
-  }
+  const incomplete = incompleteCoverageRefusal(stored.lock);
+  if (incomplete !== undefined) return { ok: false, code: incomplete.code, message: incomplete.message };
 
   const resolution = resolveDependencyClosure({
     requests: [input.artifact, ...input.declared],
