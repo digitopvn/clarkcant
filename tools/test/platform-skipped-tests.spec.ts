@@ -44,7 +44,7 @@ describe("everything else", () => {
   it.skipIf(!POSIX)("skipped in place", () => {});
 });
 `);
-    expect(platformSkippedTestTitles(source).has("skipped in place")).toBe(true);
+    expect(platformSkippedTestTitles(source).get("skipped in place")).toBe("!POSIX");
   });
 
   it("reports a suite run only on a platform condition", () => {
@@ -53,7 +53,7 @@ describe.runIf(POSIX)("POSIX only", () => {
   it("runs only there", () => {});
 });
 `);
-    expect(platformSkippedTestTitles(source).has("runs only there")).toBe(true);
+    expect(platformSkippedTestTitles(source).get("runs only there")).toBe("POSIX");
   });
 
   it("does not report the tests of an unskipped suite in the same file", () => {
@@ -113,5 +113,110 @@ describe.skipIf(!POSIX)("POSIX only", () => {
     expect(skipped.get("clears the file a node left behind when it did not shut down")).toBe("!POSIX");
     expect(skipped.get("refuses a path another node is listening on rather than taking it away")).toBe("!POSIX");
     expect(skipped.has("names the engine and its version when one answers")).toBe(false);
+  });
+
+  it("throws on an unterminated literal, comment or delimiter rather than reporting that nothing is skipped", () => {
+    expect(() => platformSkippedTestTitles('const note = "unclosed\n')).toThrow(/not parseable as TypeScript/u);
+    expect(() => platformSkippedTestTitles("/* unterminated\nconst x = 1;\n")).toThrow(
+      /not parseable as TypeScript/u,
+    );
+    expect(() => platformSkippedTestTitles("const x = [1, 2;\n")).toThrow(/not parseable as TypeScript/u);
+  });
+
+  it("does not read a skip named in a comment or a string as a skip", () => {
+    const source = spec(`
+// describe.skipIf(!POSIX)("POSIX only", () => {
+const note = 'describe.skipIf(!POSIX)("POSIX only", () => {';
+describe("everything else", () => {
+  it("always runs", () => {});
+});
+`);
+    expect(platformSkippedTestTitles(source).size).toBe(0);
+  });
+
+  it("does not end a skipped region at a delimiter inside a literal, a comment or a pattern", () => {
+    const source = spec(`
+describe.skipIf(!POSIX)("POSIX only", () => {
+  // a comment carrying a ) and a }
+  const pattern = /[){}]/u;
+  it("runs only there", () => {
+    expect(pattern.test(")")).toBe(false);
+    expect(")}").toBe(")}");
+  });
+});
+`);
+    expect(platformSkippedTestTitles(source).has("runs only there")).toBe(true);
+  });
+
+  it("does not end a skipped region at a template substitution, nor read the body as the condition", () => {
+    const source = spec(`
+describe.skipIf(!POSIX)("POSIX only", () => {
+  it("runs only there", () => {
+    const label = \`inner \${ \`deep \${process.platform}\` } tail\`;
+    expect(label).toContain("inner");
+  });
+});
+`);
+    expect(platformSkippedTestTitles(source).get("runs only there")).toBe("!POSIX");
+  });
+
+  it("resolves a platform condition through a chain of names bound in the same file", () => {
+    const source = spec(`
+const IS_WINDOWS = process.platform === "win32";
+const POSIX = !IS_WINDOWS;
+describe.skipIf(!POSIX)("POSIX only", () => {
+  it("runs only there", () => {});
+});
+`);
+    expect(platformSkippedTestTitles(source).get("runs only there")).toBe("!POSIX");
+  });
+
+  it("reports a test nested more than one suite deep under the skip, and not its unskipped siblings", () => {
+    const source = spec(`
+describe("outer", () => {
+  describe.skipIf(!POSIX)("POSIX only", () => {
+    describe("inner", () => {
+      it("runs only there", () => {});
+    });
+  });
+  it("always runs", () => {});
+});
+`);
+    const skipped = platformSkippedTestTitles(source);
+    expect(skipped.has("runs only there")).toBe(true);
+    expect(skipped.has("inner")).toBe(true);
+    expect(skipped.has("outer")).toBe(false);
+    expect(skipped.has("always runs")).toBe(false);
+  });
+
+  it("reports a table-driven declaration under the skip, because a title that never runs is not evidence", () => {
+    const source = spec(`
+describe.skipIf(!POSIX)("POSIX only", () => {
+  it.each([[1], [2]])("case %s", () => {});
+});
+`);
+    expect(platformSkippedTestTitles(source).get("case %s")).toBe("!POSIX");
+  });
+
+  it("reports a title whose every declaration is skipped, and only then", () => {
+    const source = spec(`
+describe.skipIf(!POSIX)("first", () => {
+  it("skipped everywhere", () => {});
+});
+describe.skipIf(!POSIX)("second", () => {
+  it("skipped everywhere", () => {});
+});
+`);
+    expect(platformSkippedTestTitles(source).get("skipped everywhere")).toBe("!POSIX");
+  });
+
+  it("does not report a runtime condition that is not the platform, in either modifier", () => {
+    const source = `import { describe, it } from "vitest";
+const LIVE = process.env.CLARKCANT_JEV_LIVE === "1";
+describe.runIf(LIVE)("live suite", () => {
+  it("calls the provider", () => {});
+});
+`;
+    expect(platformSkippedTestTitles(source).size).toBe(0);
   });
 });
