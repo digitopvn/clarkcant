@@ -39,7 +39,15 @@ export function handlePreviewRoutes(deps: PreviewRouteDeps): GatewayResponse {
   }
   const blob = readBlob({ dataDir: runtime.dataDir, blobPath });
   if (!blob.ok) return fail(404, "PREVIEW_NOT_FOUND", "that frame could not be read");
-  const sniffed = sniffContentType(blob.bytes, "application/octet-stream");
+  /*
+   * The declared type is empty, and that is not a missing argument.
+   *
+   * A digest carries no declaration, so there is nothing to check the bytes against — and passing a placeholder
+   * type made the sniffer compare a real PNG with `application/octet-stream`, fail the match, and serve the node's
+   * own frame as `application/octet-stream`. An empty declaration is the honest one: this route serves what the
+   * bytes are, and the bytes are what decide it.
+   */
+  const sniffed = sniffContentType(blob.bytes, "");
   return {
     status: 200,
     body: null,

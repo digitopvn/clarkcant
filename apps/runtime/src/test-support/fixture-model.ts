@@ -26,7 +26,7 @@ import { extractPdfText } from "../pdf-text.ts";
 import { type ProjectFinderDeps } from "../project-finder.ts";
 import { createRequestSecretTool, type RequestSecretDeps } from "../request-secret.ts";
 import { commandDigest } from "../run-command.ts";
-import { storeSessionPreview } from "../session-preview.ts";
+import { captureBrowserFrame, previewPageUrl } from "./browser-frame.ts";
 import { type NodeServices } from "../services.ts";
 
 /**
@@ -370,26 +370,22 @@ export function createModelComposer(deps: FixtureModelDeps): FixtureCompose {
         label: "đang mở form thanh toán",
       });
       /*
-       * The frame is captured, stored and referenced — not described. On a fixture node there is no browser to
-       * photograph, so the capture is a fixed PNG: that proves the wiring (bytes reach the blob store, the card
-       * carries a reference to them) and it does not prove a browser rendered anything. That distinction is the
-       * whole reason the ledger row names which half is real.
+       * The frame is captured from a real browser, stored and referenced — not described, and not drawn here.
+       *
+       * The scripted part is that this turn opened a page at all; the picture is the pack's driver photographing a
+       * page the node serves, so what the card shows is bytes a browser rendered. Where there is no page to
+       * photograph the frame is absent and the card says so by showing nothing, rather than showing a rectangle
+       * that would be indistinguishable from a screen nobody could see.
        */
-      const frame = await storeSessionPreview({
-        dataDir: deps.dataDir,
-        capture: () =>
-          Promise.resolve({
-            bytes: new Uint8Array([
-              0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, // PNG signature
-              0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44, 0x52, // IHDR length and tag
-              0x00, 0x00, 0x05, 0x00, // width 1280
-              0x00, 0x00, 0x02, 0xd0, // height 720
-              0x08, 0x06, 0x00, 0x00, 0x00,
-            ]),
-            contentType: "image/png",
-            viewport: { width: 1280, height: 720 },
-          }),
-      });
+      const pageUrl = previewPageUrl(process.env);
+      const frame =
+        pageUrl === undefined
+          ? { ok: false as const, code: "CAPTURE_FAILED" as const, message: "this node has no page for a browser session to open" }
+          : await captureBrowserFrame({
+              dataDir: deps.dataDir,
+              nodeId: deps.services().runtime.identity.nodeId,
+              pageUrl,
+            });
       return {
         text: "Đây là phiên browser do fixture tạo, không phải model thật.",
         block: {
@@ -408,13 +404,16 @@ export function createModelComposer(deps: FixtureModelDeps): FixtureCompose {
           /*
            * Only when the frame was really stored. A capture that failed leaves the card without one, which the
            * interface can say out loud — the alternative is a card showing an empty box as if it were a screen.
+           *
+           * The moment comes from the capture and not from here: a card that stamped itself would be reporting an
+           * instant nobody observed, which is the same claim as showing a stale frame as the current screen.
            */
           ...(frame.ok
             ? {
                 previewFrame: {
                   digest: frame.digest,
                   viewport: frame.viewport,
-                  capturedAt: instantSchema.parse(new Date().toISOString()),
+                  capturedAt: frame.capturedAt,
                 },
               }
             : {}),
