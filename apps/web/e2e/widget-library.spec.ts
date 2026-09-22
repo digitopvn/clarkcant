@@ -258,7 +258,56 @@ test("installed packages are reported as provenance, never as catalog cards", as
       (await installed.locator("[data-provenance-state='unread']").count());
     expect(emptyOrUnread).toBe(1);
   } else {
-    // A package that is installed is not a catalog card: no route exposes its widget definitions.
+    // A card is keyed by definition id, so a package id is never a card, however the package was installed.
     await expect(page.locator("[data-widget-card='clark.notes']")).toHaveCount(0);
   }
+});
+
+test("an installed package's widget becomes a card, rendered by the catalog", async ({ page }) => {
+  /*
+   * The whole installed lane, end to end: a package whose bytes are on this machine is installed, its definition is
+   * read from disk, and its widget appears as a card that renders through the catalog's own renderer.
+   *
+   * The package declares `canvas.line@1` on purpose. A renderer owns that id but the catalog lists no entry for it,
+   * so the card can only exist because a package declared it. A package re-declaring a widget the catalog already
+   * lists is reported as a duplicate instead, which is a different claim.
+   */
+  const install = await fetch(`${GATEWAY}/packages/install`, {
+    method: "POST",
+    headers: { authorization: `Bearer ${token()}`, "content-type": "application/json" },
+    body: JSON.stringify({
+      packageId: "com.example.chart-widget",
+      version: "1.0.0",
+      // A local package has no published digest, so the caller hashes it and the digest becomes its identity. The
+      // route requires one, and without it the honest answer is LOCAL_DIGEST_REQUIRED.
+      localDigest: "sha256:chart-widget-digest",
+    }),
+  });
+  expect(install.ok, `install answered ${String(install.status)}: ${await install.text()}`).toBe(true);
+
+  await openLibraryFromExtensions(page);
+
+  /*
+   * The card id is namespaced by the package, because every definition id a renderer can draw is already a catalog
+   * entry: without the namespace this card could not exist, and the catalog's own entry would win the id.
+   */
+  const card = page.locator("[data-widget-card='com.example.chart-widget/canvas.line@1']");
+  await expect(card).toBeVisible({ timeout: 20_000 });
+  // Labelled for what it is rather than mixed in with the built-ins.
+  await expect(card).toContainText("Local development package");
+  // And the catalog's own card for the same definition is still there, rather than being replaced by the package's.
+  await expect(page.locator("[data-widget-card='canvas.line@1']")).toBeVisible();
+
+  await card.click();
+  await expect(page.locator("[data-widget-detail='com.example.chart-widget/canvas.line@1']")).toBeVisible({
+    timeout: 20_000,
+  });
+
+  /*
+   * The renderer has data. This is the assertion the dataset path exists for: without the package's dataset file the
+   * same card would draw the "no data" path, which still looks like a widget in a screenshot.
+   */
+  const preview = page.locator("[data-widget-preview='com.example.chart-widget/canvas.line@1']");
+  await expect(preview).toBeVisible({ timeout: 20_000 });
+  await expect(preview.locator("[data-widget-unavailable='true']")).toHaveCount(0);
 });

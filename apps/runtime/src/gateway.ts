@@ -73,6 +73,7 @@ import {
   invokeMiniAppAction,
   listCapabilitySummaries,
   listInstalledPackages,
+  installedWidgets,
   listRegisteredPreferences,
   liveOwnerOf,
   liveStateOf,
@@ -1528,6 +1529,91 @@ export async function handleRequest(deps: GatewayDeps, request: GatewayRequest):
         nodeId: runtime.identity.nodeId,
         now: nowInstant,
         newId: services.conductor.newId,
+      }),
+    });
+  }
+
+  /*
+   * The widget definitions of the packages installed here.
+   *
+   * The library can only show a widget whose definition it can read, and this node can only read a package whose
+   * bytes it holds. So the answer is per package, and "cannot read this one" is a real answer rather than an
+   * empty list: a git or npm entry names bytes nobody here has, and a package the configured directory does not
+   * list cannot be located at all. "Declares no widgets" and "cannot tell" are different facts, and a response
+   * that merged them would be claiming a package is empty.
+   *
+   * What comes back is data — definitions and fixtures. No package contributes a renderer, so the caller decides
+   * which of these it can actually draw.
+   */
+  if (segments.length === 2 && segments[0] === "packages" && segments[1] === "widgets" && request.method === "GET") {
+    const installed = listInstalledPackages({
+      db: runtime.db,
+      nodeId: runtime.identity.nodeId,
+      now: nowInstant,
+      newId: services.conductor.newId,
+    });
+    const index = readDirectoryIndex(directoryIndexPath(process.env));
+
+    return json(200, {
+      packages: installed.map((entry) => {
+        if (index.kind !== "configured") {
+          return {
+            packageId: entry.packageId,
+            version: entry.version,
+            ok: false,
+            code: "NO_DIRECTORY",
+            message: index.reason,
+          };
+        }
+        /*
+         * A locally installed package records the path as its id and "0.0.0-local" as its version, because the
+         * resolver's answer for a source with no published identity is the path itself. So id-and-version alone
+         * cannot find it again, and without this fallback every package installed from disk would report "not in
+         * the directory" forever. The fallback is narrow on purpose: it only matches a local entry whose path is
+         * exactly the recorded id, so it cannot pick up an unrelated entry.
+         */
+        const listed =
+          index.entries.find(
+            (candidate) => candidate.packageId === entry.packageId && candidate.version === entry.version,
+          ) ??
+          index.entries.find(
+            (candidate) => candidate.source.kind === "local" && candidate.source.path === entry.packageId,
+          );
+        if (listed === undefined) {
+          return {
+            packageId: entry.packageId,
+            version: entry.version,
+            ok: false,
+            code: "NOT_IN_DIRECTORY",
+            message: `${entry.packageId}@${entry.version} is not in the directory, so this node cannot locate its files`,
+          };
+        }
+        /*
+         * The declared identity, not the recorded one. A local install records the path as its id, so reporting that
+         * would put a filesystem path where a package name belongs - and the path is where the bytes are, not what
+         * the package is called. The directory entry is the package's own answer, and it is the name the person saw
+         * when they installed it.
+         */
+        const read = installedWidgets({
+          packageId: listed.packageId,
+          version: listed.version,
+          source: listed.source,
+        });
+        return read.ok
+          ? {
+              packageId: listed.packageId,
+              version: listed.version,
+              ok: true,
+              widgets: read.widgets,
+              problems: read.problems,
+            }
+          : {
+              packageId: listed.packageId,
+              version: listed.version,
+              ok: false,
+              code: read.code,
+              message: read.message,
+            };
       }),
     });
   }

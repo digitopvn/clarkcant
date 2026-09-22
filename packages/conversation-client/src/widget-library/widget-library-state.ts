@@ -41,7 +41,7 @@ export type WidgetLibraryAction =
   | { kind: "close" }
   | { kind: "query"; value: string }
   | { kind: "family"; value: string }
-  | { kind: "select"; definitionId: string }
+  | { kind: "select"; cardId: string }
   | { kind: "back" };
 
 export function applyLibraryAction(
@@ -70,7 +70,7 @@ export function applyLibraryAction(
     case "family":
       return { ...state, family: action.value, selectedId: undefined };
     case "select":
-      return { ...state, selectedId: action.definitionId };
+      return { ...state, selectedId: action.cardId };
     case "back":
       // Back leaves the filter and the query alone: the person is going back one step, not resetting.
       return { ...state, selectedId: undefined };
@@ -99,5 +99,5 @@ export function selectedEntry(
   state: WidgetLibraryState,
 ): WidgetCatalogEntry | undefined {
   if (state.selectedId === undefined) return undefined;
-  return entries.find((entry) => entry.definition.id === state.selectedId);
+  return entries.find((entry) => entry.cardId === state.selectedId);
 }

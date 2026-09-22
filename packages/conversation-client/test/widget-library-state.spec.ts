@@ -62,20 +62,20 @@ describe("widget library state", () => {
 
   it("keeps the query and family when stepping back out of a widget", () => {
     let state = applyLibraryAction(opened(), { kind: "family", value: "media" });
-    state = applyLibraryAction(state, { kind: "select", definitionId: "canvas.gallery@1" });
+    state = applyLibraryAction(state, { kind: "select", cardId: "canvas.gallery@1" });
     const back = applyLibraryAction(state, { kind: "back" });
     expect(back.selectedId).toBeUndefined();
     expect(back.family).toBe("media");
   });
 
   it("drops a stale selection when the filter changes", () => {
-    let state = applyLibraryAction(opened(), { kind: "select", definitionId: "canvas.calendar@1" });
+    let state = applyLibraryAction(opened(), { kind: "select", cardId: "canvas.calendar@1" });
     state = applyLibraryAction(state, { kind: "query", value: "table" });
     expect(state.selectedId).toBeUndefined();
   });
 
   it("resolves a selected entry only while the id still exists", () => {
-    const state = applyLibraryAction(opened(), { kind: "select", definitionId: "canvas.calendar@1" });
+    const state = applyLibraryAction(opened(), { kind: "select", cardId: "canvas.calendar@1" });
     expect(selectedEntry(entries, state)?.definition.id).toBe("canvas.calendar@1");
     expect(selectedEntry([], state)).toBeUndefined();
   });

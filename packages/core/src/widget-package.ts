@@ -1,7 +1,7 @@
 import { readFileSync, readdirSync, existsSync } from "node:fs";
 import { join } from "node:path";
 
-import { widgetDefinitionSchema, type WidgetDefinition } from "@clarkcant/contracts";
+import { fixtureDatasetSchema, widgetDefinitionSchema, type FixtureDataset, type WidgetDefinition } from "@clarkcant/contracts";
 import { z } from "zod";
 
 /**
@@ -67,6 +67,15 @@ export interface WidgetPackage {
   facets: WidgetFacet[];
   /** Fixture name to the props it declares, read from `fixtures/*.json`. */
   fixtures: Record<string, Record<string, unknown>>;
+  /**
+   * Fixture name to the dataset it renders from, read from `fixtures/<name>.dataset.json`.
+   *
+   * A package's fixture file holds raw props, and props cannot carry a dataset: the catalog's renderers read one
+   * from the fixture rather than from the props, so without this a data-backed widget a package declares would
+   * draw "no data" forever. The sibling file keeps "props are props" and gives the dataset its own artifact,
+   * validated by the same schema the catalog's own fixtures use.
+   */
+  datasets: Record<string, FixtureDataset>;
   /** Anything that stopped the package from being read at all. */
   problems: string[];
 }
@@ -86,7 +95,7 @@ export function readPackage(root: string): WidgetPackage {
   const read = readJson(manifestPath);
   if (!read.ok) {
     // Nothing else can be read without a manifest, and guessing at one would validate the wrong package.
-    return { root, manifest: {} as WidgetManifest, facets: [], fixtures: {}, problems: [read.problem] };
+    return { root, manifest: {} as WidgetManifest, facets: [], fixtures: {}, datasets: {}, problems: [read.problem] };
   }
   const parsed = manifestSchema.safeParse(read.value);
   if (!parsed.success) {
@@ -96,6 +105,7 @@ export function readPackage(root: string): WidgetPackage {
       manifest: {} as WidgetManifest,
       facets: [],
       fixtures: {},
+      datasets: {},
       problems: [`${manifestPath}: ${first?.path.join(".") ?? ""} ${first?.message ?? "does not match the manifest schema"}`],
     };
   }
@@ -130,6 +140,7 @@ export function readPackage(root: string): WidgetPackage {
   }
 
   const fixtures: Record<string, Record<string, unknown>> = {};
+  const datasets: Record<string, FixtureDataset> = {};
   const fixturesDir = join(root, "fixtures");
   if (existsSync(fixturesDir)) {
     for (const name of readdirSync(fixturesDir)) {
@@ -139,6 +150,24 @@ export function readPackage(root: string): WidgetPackage {
         problems.push(fixtureRead.problem);
         continue;
       }
+
+      /*
+       * Checked before the props branch, and not only because of the name: `default.dataset.json` would otherwise
+       * be read as a fixture called "default.dataset", which is a fixture nobody declared and nobody can select.
+       */
+      if (name.endsWith(".dataset.json")) {
+        const parsedDataset = fixtureDatasetSchema.safeParse(fixtureRead.value);
+        if (!parsedDataset.success) {
+          const first = parsedDataset.error.issues[0];
+          problems.push(
+            `fixtures/${name}: ${first?.path.join(".") ?? ""} ${first?.message ?? "does not match the dataset schema"}`,
+          );
+          continue;
+        }
+        datasets[name.slice(0, -".dataset.json".length)] = parsedDataset.data;
+        continue;
+      }
+
       const value = fixtureRead.value;
       if (value === null || typeof value !== "object" || Array.isArray(value)) {
         problems.push(`fixtures/${name} must be a JSON object of props`);
@@ -148,7 +177,7 @@ export function readPackage(root: string): WidgetPackage {
     }
   }
 
-  return { root, manifest: parsed.data, facets, fixtures, problems };
+  return { root, manifest: parsed.data, facets, fixtures, datasets, problems };
 }
 
 /** The fixture names the standard requires, because the states they stand for are the ones a widget must survive. */
