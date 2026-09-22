@@ -21,9 +21,14 @@
  * `docs/conformance-traceability.md`. That agreement is checked, so a row cannot be quietly
  * promoted: changing one side alone fails `pnpm invariants`.
  *
- * External gates are named by issue number where one owns them (#2, #3, #4, #5, #93). They stay
- * open: a fixture that passes proves the wiring, never the external account, signature, engine or
- * second host the gate is waiting on.
+ * External gates are named by issue number while the gate is waiting on something outside this
+ * repository: #2 a live Calendar account, #3 Computer Use signing, #4 a live voice provider, #5 a
+ * second NodeLink host. They stay open: a fixture that passes proves the wiring, never the external
+ * account, signature, engine or second host the gate is waiting on.
+ *
+ * A gap that waits on nothing outside the repository is described by the gap itself rather than by an
+ * issue number, so no wording here depends on an issue's state and none of it goes stale when one
+ * closes.
  */
 
 /** What the repository can honestly say about one capability or scope item. */
@@ -262,9 +267,8 @@ export const IMPLEMENTATION_STATUS: readonly ImplementationStatusEntry[] = [
       },
     ],
     externalGate: {
-      issue: 93,
       reason:
-        "isolated widget trust hardening is tracked in #93; the harness also leaves detach unverified because the product ships no detached host window, and voiceClickParity because no voice session runs",
+        "the harness leaves detach unverified because the product ships no detached host window, and voiceClickParity because no voice session runs; these are checks this repository has not built yet, not a gate waiting on an external account",
     },
   },
   {
@@ -366,7 +370,7 @@ export const IMPLEMENTATION_STATUS: readonly ImplementationStatusEntry[] = [
    * ---------------------------------------------------------------- */
   {
     capabilityId: "runtime.local-transport",
-    summary: "The node's own transport: loopback HTTP with a bearer gate, and the Unix socket a desktop helper attaches to.",
+    summary: "The node's own transport: loopback HTTP with a bearer gate, and the Unix socket a desktop helper would attach to.",
     status: "implemented",
     owningPackage: "@clarkcant/runtime",
     phase: "P1",
@@ -566,7 +570,7 @@ export const IMPLEMENTATION_STATUS: readonly ImplementationStatusEntry[] = [
   {
     capabilityId: "example.media-widget-contract",
     summary: "Synthetic media fixture: one live owner per instance, and a restore that does not start playback.",
-    status: "implemented",
+    status: "partial",
     owningPackage: "@clarkcant/media-widget-contract",
     phase: "P6",
     evidenceTests: [
@@ -579,6 +583,10 @@ export const IMPLEMENTATION_STATUS: readonly ImplementationStatusEntry[] = [
         test: "returns the stored position with playback stopped",
       },
     ],
+    externalGate: {
+      reason:
+        "the ownership and restore state machine is implemented and tested, but the package holds no mountable component, so the fixture has never been mounted in a UI",
+    },
   },
   {
     capabilityId: "example.mcp-app-fixture",
