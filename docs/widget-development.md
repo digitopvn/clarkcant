@@ -690,7 +690,9 @@ chúng chỉ có text alternative. Nhờ vậy duyệt catalog không gọi bên
 Lab là **cùng surface** ở `mode="develop"`, mở từ Settings → Developer. Nó thêm:
 
 - props form dựng từ props schema, nên control phản ánh đúng schema chứ không phải danh sách viết tay;
-- inspector 8 panel: props/state/events/semantic/sizing/a11y/definition/raw;
+- inspector 8 panel, đúng theo `inspectorPanels` trong `widget-lab.ts`: props, state, events, actions,
+  semantic, sizing, capabilities, fallback. Tên trong tài liệu là **id** của panel, không phải nhãn hiển thị
+  (`Props`, `State`, …), để người đọc đối chiếu được với code;
 - fixture, viewport, theme và reduced motion áp trong **phạm vi preview** (`data-cc-theme`,
   `data-cc-reduced-motion` trên frame), nên xem widget ở dark mode không đổi tuỳ chọn của người dùng;
 - màn hẹp thì pane tiến (preview ↔ inspector) thay vì hai cột.
