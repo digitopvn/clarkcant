@@ -73,6 +73,7 @@ import {
   invokeMiniAppAction,
   listCapabilitySummaries,
   listInstalledPackages,
+  installedWidgets,
   listRegisteredPreferences,
   liveOwnerOf,
   liveStateOf,
@@ -1528,6 +1529,74 @@ export async function handleRequest(deps: GatewayDeps, request: GatewayRequest):
         nodeId: runtime.identity.nodeId,
         now: nowInstant,
         newId: services.conductor.newId,
+      }),
+    });
+  }
+
+  /*
+   * The widget definitions of the packages installed here.
+   *
+   * The library can only show a widget whose definition it can read, and this node can only read a package whose
+   * bytes it holds. So the answer is per package, and "cannot read this one" is a real answer rather than an
+   * empty list: a git or npm entry names bytes nobody here has, and a package the configured directory does not
+   * list cannot be located at all. "Declares no widgets" and "cannot tell" are different facts, and a response
+   * that merged them would be claiming a package is empty.
+   *
+   * What comes back is data — definitions and fixtures. No package contributes a renderer, so the caller decides
+   * which of these it can actually draw.
+   */
+  if (segments.length === 2 && segments[0] === "packages" && segments[1] === "widgets" && request.method === "GET") {
+    const installed = listInstalledPackages({
+      db: runtime.db,
+      nodeId: runtime.identity.nodeId,
+      now: nowInstant,
+      newId: services.conductor.newId,
+    });
+    const index = readDirectoryIndex(directoryIndexPath(process.env));
+
+    return json(200, {
+      packages: installed.map((entry) => {
+        if (index.kind !== "configured") {
+          return {
+            packageId: entry.packageId,
+            version: entry.version,
+            ok: false,
+            code: "NO_DIRECTORY",
+            message: index.reason,
+          };
+        }
+        const listed = index.entries.find(
+          (candidate) => candidate.packageId === entry.packageId && candidate.version === entry.version,
+        );
+        if (listed === undefined) {
+          return {
+            packageId: entry.packageId,
+            version: entry.version,
+            ok: false,
+            code: "NOT_IN_DIRECTORY",
+            message: `${entry.packageId}@${entry.version} is not in the directory, so this node cannot locate its files`,
+          };
+        }
+        const read = installedWidgets({
+          packageId: entry.packageId,
+          version: entry.version,
+          source: listed.source,
+        });
+        return read.ok
+          ? {
+              packageId: entry.packageId,
+              version: entry.version,
+              ok: true,
+              widgets: read.widgets,
+              problems: read.problems,
+            }
+          : {
+              packageId: entry.packageId,
+              version: entry.version,
+              ok: false,
+              code: read.code,
+              message: read.message,
+            };
       }),
     });
   }

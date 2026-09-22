@@ -22,6 +22,7 @@ export * from "./widget-package.ts";
 export * from "./widget-frame.ts";
 export * from "./frame-grant.ts";
 export * from "./installed-packages.ts";
+export * from "./installed-widgets.ts";
 export * from "./coordination.ts";
 export * from "./capability-registry.ts";
 export * from "./install-lifecycle.ts";

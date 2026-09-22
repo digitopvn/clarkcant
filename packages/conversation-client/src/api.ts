@@ -6,7 +6,7 @@
  * principal, because the gateway derives the caller from the channel rather than the body.
  */
 
-import type { AutonomySettings, ModelPool } from "@clarkcant/contracts";
+import type { AutonomySettings, ModelPool, WidgetDefinition, WidgetFixture } from "@clarkcant/contracts";
 
 import {
   memoryListSchema,
@@ -360,6 +360,38 @@ export interface InstalledPackageView {
   lane: "isolated-ui" | "service" | "declarative" | "trusted-native";
   consentedDigest?: string;
 }
+
+/**
+ * A widget definition an installed package declares, as the node reports it.
+ *
+ * Data only. A package never contributes a renderer, so what arrives is a definition and the fixtures the package
+ * wrote, and whether any of it can be drawn is decided where the renderers are.
+ */
+export interface InstalledWidgetRead {
+  packageId: string;
+  version: string;
+  facetId: string;
+  definition: WidgetDefinition;
+  fixtures: WidgetFixture[];
+}
+
+/**
+ * One installed package's widgets, or the reason this node could not read them.
+ *
+ * The failure arm is not an empty list, because "this package declares no widgets" and "this node cannot read that
+ * package" are different facts: a git or npm entry names bytes nobody here holds, and a package the configured
+ * directory does not list cannot be located at all.
+ */
+export type InstalledPackageRead =
+  | {
+      packageId: string;
+      version: string;
+      ok: true;
+      widgets: InstalledWidgetRead[];
+      /** Facets that did not parse, named rather than silently dropped. */
+      problems: string[];
+    }
+  | { packageId: string; version: string; ok: false; code: string; message: string };
 
 export interface ArtifactView {
   artifactId: string;
@@ -1084,6 +1116,17 @@ export class GatewayClient {
 
   packages(): Promise<{ packages: InstalledPackageView[] }> {
     return this.#call("GET", "/packages");
+  }
+
+  /**
+   * The widget definitions of the packages installed on this node.
+   *
+   * Each package answers for itself: its widgets, or why this node could not read them. A caller that turned the
+   * failure arm into an empty list would be reporting a package as having no widgets when the truth is that nobody
+   * here can tell.
+   */
+  packageWidgets(): Promise<{ packages: InstalledPackageRead[] }> {
+    return this.#call("GET", "/packages/widgets");
   }
 
   /**

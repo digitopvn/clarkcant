@@ -12,7 +12,9 @@ import {
 
 import type { GatewayClient } from "../api.ts";
 import { BUILT_IN_LABEL } from "../package-provenance.ts";
+import { resolveRenderer } from "../renderers.tsx";
 import { InstalledProvenance } from "./InstalledProvenance.tsx";
+import { installedCatalogEntries, type InstalledEntriesRead } from "./installed-entries.ts";
 import { WidgetFixtureControls } from "./WidgetFixtureControls.tsx";
 import { WidgetGallery } from "./WidgetGallery.tsx";
 import { WidgetInspector } from "./WidgetInspector.tsx";
@@ -72,12 +74,53 @@ export function WidgetLibrarySurface({
   const opener = useRef<Element | null>(null);
   const open = state.open;
 
-  const selected = selectedEntry(entries, state);
-  const selectedId = selected?.definition.id;
-
   const [preview, setPreview] = useState<PreviewState>(() => initialPreviewState([]));
   const [propsOverride, setPropsOverride] = useState<Record<string, unknown> | undefined>(undefined);
   const [showInspector, setShowInspector] = useState(false);
+
+  /*
+   * What this node has installed, read when the surface opens rather than when it mounts: a library nobody has
+   * opened should not be asking the node questions, and the answer only matters while the surface is up.
+   */
+  const [installed, setInstalled] = useState<InstalledEntriesRead>({ entries: [], notes: [] });
+
+  useEffect(() => {
+    if (!open || client === undefined) return;
+    let cancelled = false;
+    void client
+      .packageWidgets()
+      .then((answer) => {
+        if (cancelled) return;
+        setInstalled(
+          installedCatalogEntries({
+            packages: answer.packages,
+            known: entries,
+            canRender: (definitionId) => resolveRenderer(definitionId) !== undefined,
+          }),
+        );
+      })
+      .catch(() => {
+        if (cancelled) return;
+        // Named as unread rather than shown as an empty list, which would say "no package declares a widget here".
+        setInstalled({
+          entries: [],
+          notes: [
+            {
+              packageId: "node",
+              message: "Không đọc được widget của các gói đã cài. Danh mục dựng sẵn vẫn dùng được bình thường.",
+            },
+          ],
+        });
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [open, client, entries]);
+
+  // The catalog's own entries come first, so a definition the catalog already provides is the one that shows.
+  const allEntries = [...entries, ...installed.entries];
+  const selected = selectedEntry(allEntries, state);
+  const selectedId = selected?.definition.id;
 
   // A new widget starts from its own first fixture rather than inheriting the previous widget's
   // fixture id, which would silently select nothing.
@@ -121,8 +164,8 @@ export function WidgetLibrarySurface({
 
   if (!open) return null;
 
-  const visible = visibleEntries(entries, state);
-  const facets = familyFacets(entries);
+  const visible = visibleEntries(allEntries, state);
+  const facets = familyFacets(allEntries);
   const fixture = selected === undefined ? undefined : fixtureById(selected, preview.fixture) ?? selected.fixtures[0];
   const effectiveFixture =
     fixture === undefined
@@ -235,6 +278,22 @@ export function WidgetLibrarySurface({
                   onSelect={(definitionId) => onAction({ kind: "select", definitionId })}
                 />
               </section>
+              {/*
+                What could not be shown, and why. A shorter list would say "this package declares no widgets" when
+                the truth is that this node cannot read it, or that nothing here can draw it.
+              */}
+              {installed.notes.length > 0 && (
+                <section className="cc-library-notes" data-widget-installed-notes="true">
+                  <h3>Gói đã cài: phần chưa xem được</h3>
+                  <ul>
+                    {installed.notes.map((note) => (
+                      <li key={`${note.packageId}:${note.message}`} data-widget-installed-note={note.packageId}>
+                        <strong>{note.packageId}</strong>: {note.message}
+                      </li>
+                    ))}
+                  </ul>
+                </section>
+              )}
               {client !== undefined && <InstalledProvenance client={client} />}
             </>
           ) : (
