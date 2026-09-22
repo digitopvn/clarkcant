@@ -675,3 +675,30 @@ Four MINOR findings were left in place and are candidates for Phase 5's evidence
 ## Phase 4 — runtime composition decomposition
 
 Branch: `phase-4-runtime-split`, cut from `main` at `e0871ae`. Behavior-preserving: the review of this phase must not accept any public-behavior change, and the baseline must be captured before each family moves.
+
+## Phase 4 — MERGED
+
+| Item | Value |
+| --- | --- |
+| PR | [#145](https://github.com/digitopvn/clarkcant/pull/145) |
+| Merge commit | b59acd76e880d237410ecf79039c0ce04b596190 |
+| Reviewed head (bound via --match-head-commit) | e6b31944998d9ebe583978d4c37ef7b4e42e6a4c |
+| CI on the reviewed head | terminal green |
+| pnpm verify | exit 0 — 186 files passed / 1 skipped, 2279 tests passed / 7 skipped |
+| pnpm test:e2e | 127 passed / 1 skipped (3.8m) |
+
+Behavior-preserving decomposition: gateway.ts 3825 -> 237 lines, main.ts 1972 -> 367. routes/ (17 modules, explicit dependency interfaces), application/ (5 services), bootstrap/ (4), test-support/ (5, reached only through a dynamic import behind the CC_*_FIXTURE gates).
+
+### Review outcome
+
+No CRITICAL, no IMPORTANT, no actionable findings; A-F all PASS. The reviewer did not accept the behavior-preserving claim on trust: it enumerated all 53 top-level branches of the pre-move gateway.ts, mapped each to exactly one call site, and built a probe calling all 17 route modules across 78 (method, path) pairs, proving every path is claimed by exactly one module and by the correct family. Normalized comment-stripped diffs of every moved body showed zero changed lines beyond the signature. It re-ran the runtime suite itself (68 files / 727 tests, matching the PR body), confirmed no test file changed at all, and confirmed fixture isolation holds with no third instance of the leak the implementer had fixed.
+
+### Carried into Phase 5 (three MINORs, deliberately not folded in after review)
+
+Folding comment-only edits into the branch would have changed the head after review, breaking the merged-head == reviewed-head invariant this program holds for every PR. All three are recorded here instead:
+
+1. apps/runtime/src/test-support/fixture-model.ts:829 — pre-existing dead fixture branch (12 unreachable lines) whose new doc comment claims the opposite, asserting it prints a startup line it can never print. Not a behavior change; the comment is false and should be corrected or the block dropped.
+2. apps/runtime/src/routes/http.ts:36,52 — the moved GatewayResponse lost the rationale comment stating that binary.headers may not carry a key the transport owns. No runtime effect; documentation loss in the file that now owns the contract.
+3. apps/runtime/src/routes/control.ts:24 and conversations.ts:74,84 — two of seventeen route modules take the whole NodeServices bundle instead of narrowing it, so "each takes an explicit dependency interface" is only partly true there. Injected, never looked up, so not the forbidden locator pattern.
+
+Two implementer claims were left unverified by the review and are not to be restated as established: the "187 route-focused tests before and after" figure, and "startup stderr byte-identical". Both are superseded by the reviewer's own dispatch probe.
