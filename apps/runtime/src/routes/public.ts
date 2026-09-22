@@ -82,7 +82,7 @@ export function handlePublicRoutes(deps: PublicRouteDeps): GatewayResponse | und
         : request.path.endsWith(".css")
           ? "text/css; charset=utf-8"
           : "application/octet-stream";
-      return { status: 200, body: null, binary: { bytes, contentType: type, headers: { "cache-control": "no-store" } } };
+      return { status: 200, body: null, binary: { bytes, contentType: type, cache: "no-store" } };
     } catch {
       return fail(404, "FILE_NOT_FOUND", "this node's web build has no such file");
     }

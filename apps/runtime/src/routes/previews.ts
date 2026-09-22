@@ -55,7 +55,7 @@ export function handlePreviewRoutes(deps: PreviewRouteDeps): GatewayResponse {
       bytes: blob.bytes,
       contentType: sniffed.ok ? sniffed.mime : "application/octet-stream",
       // A frame is a picture of a screen: never cached, because a cached one is a stale one presented as current.
-      headers: { "cache-control": "no-store" },
+      cache: "no-store",
     },
   };
 }

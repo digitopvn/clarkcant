@@ -1,6 +1,7 @@
 import { createServer, type Server } from "node:http";
 import { createHash } from "node:crypto";
 import { mkdtempSync, rmSync } from "node:fs";
+import { type AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -9,24 +10,24 @@ import { createDriver, type BrowserDriver } from "@clarkcant/browser-playwright"
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { blobPathForDigest, readBlob } from "../src/blobs.ts";
-import { handleRequest, type GatewayDeps, type GatewayRequest } from "../src/gateway.ts";
+import { createNodeServer } from "../src/server.ts";
 import { captureSessionPreview } from "../src/session-preview.ts";
 import { bootNodeServices, type NodeServices } from "../src/services.ts";
 
 /**
  * The preview path with a browser at the end of it (V14, phase 6).
  *
- * Everything here is real: a Chromium this pack really launches, a page really served over HTTP, the driver's own
- * `capturePreview()`, the node's blob store, and the authenticated route reading the bytes back. The reason it is
- * worth a browser is that the defect this phase closes was invisible without one — the path used to be proven with
- * a hand-written PNG prefix, and a truncated PNG decodes to no picture at all, so a journey could be green while no
- * browser had drawn anything.
+ * Everything here is real: a Chromium the pack really launches, a page really served over HTTP, the driver's own
+ * `capturePreview()`, the node's blob store, and the node's own HTTP server answering the authenticated route. The
+ * reason it is worth a browser is that the defect this phase closes was invisible without one — the path used to be
+ * proven with a hand-written PNG prefix, and a truncated PNG decodes to no picture at all, so a journey could be
+ * green while no browser had drawn anything.
  *
  * Two pages, not one, because that is what makes the digest mean something: if the bytes were a constant, the
  * digest would be a constant, and a card showing "the screen" would be showing the same picture forever.
  *
- * The frame is served by the node's own principal. A frame is a picture of somebody's screen, so the boundary that
- * matters is who is asking, not which machine is.
+ * Requests go to the server rather than to `handleRequest`, because the transport is where a header can be
+ * silently replaced by one it owns — which is what was happening to this route's `no-store`.
  */
 
 const PAGE_ONE = `<!doctype html>
@@ -36,7 +37,7 @@ const PAGE_ONE = `<!doctype html>
 
 const PAGE_TWO = `<!doctype html>
 <html><head><title>Two</title></head><body style="margin:0;background:#f5f0e6">
-  <h1 style="color:#111;font:700 96px system-ui;padding:64px">Phiên browser hai</h2>
+  <h1 style="color:#111;font:700 96px system-ui;padding:64px">Phiên browser hai</h1>
   <button>Hoàn tất</button>
 </body></html>`;
 
@@ -47,7 +48,8 @@ let profiles: string;
 /** The node's data directory, removed when the file is done — not between tests, because the node outlives them. */
 let dataDir: string;
 let services: NodeServices;
-let deps: GatewayDeps;
+let closeServer: () => Promise<void>;
+let base: string;
 
 beforeAll(async () => {
   server = createServer((request, response) => {
@@ -62,10 +64,18 @@ beforeAll(async () => {
   profiles = mkdtempSync(join(tmpdir(), "clarkcant-preview-profiles-"));
   dataDir = mkdtempSync(join(tmpdir(), "clarkcant-preview-node-"));
   services = bootNodeServices({ dataDir, label: "preview test node" });
-  deps = { services, now: () => "2026-09-22T10:00:00.000Z" };
+
+  const node = createNodeServer({ services, origin: "http://127.0.0.1", onWarning: () => undefined });
+  await new Promise<void>((resolve) => node.listen(0, "127.0.0.1", resolve));
+  base = `http://127.0.0.1:${String((node.address() as AddressInfo).port)}`;
+  closeServer = () =>
+    new Promise<void>((resolve) => {
+      node.close(() => resolve());
+    });
 });
 
 afterAll(async () => {
+  await closeServer();
   services.runtime.close();
   await new Promise<void>((resolve) => server.close(() => resolve()));
   rmSync(profiles, { recursive: true, force: true });
@@ -117,15 +127,11 @@ async function captureThroughDriver(driver: BrowserDriver): Promise<{
   return { digest: captured.digest, viewport: captured.viewport, bytes: captured.bytes };
 }
 
-async function request(path: string, options: { authed?: boolean } = {}): Promise<Awaited<ReturnType<typeof handleRequest>>> {
-  const outgoing: GatewayRequest = {
-    method: "GET",
-    path,
-    query: {},
+/** The route as a caller reaches it, over the node's own server. */
+async function requestPreview(digest: string, options: { authed?: boolean } = {}): Promise<Response> {
+  return await fetch(`${base}/previews/${encodeURIComponent(digest)}`, {
     headers: options.authed === false ? {} : { authorization: `Bearer ${services.runtime.identity.localToken}` },
-    body: "",
-  };
-  return await handleRequest(deps, outgoing);
+  });
 }
 
 function sha256(bytes: Uint8Array): string {
@@ -165,14 +171,15 @@ describe("a frame captured from a real browser", () => {
     // The digest is the bytes' own, so a card naming a digest is naming exactly this frame.
     expect(sha256(stored.bytes)).toBe(captured.digest);
 
-    const response = await request(`/previews/${captured.digest}`);
+    const response = await requestPreview(captured.digest);
     expect(response.status).toBe(200);
-    expect(response.binary?.contentType).toBe("image/png");
+    expect(response.headers.get("content-type")).toBe("image/png");
     // A frame is a picture of a screen: a cached one is a stale one presented as current.
-    expect(response.binary?.headers["cache-control"]).toBe("no-store");
+    expect(response.headers.get("cache-control")).toBe("no-store");
     // The route serves the bytes the digest addresses — the same frame the card was told about.
-    expect(sha256(response.binary?.bytes ?? new Uint8Array())).toBe(captured.digest);
-    expect(pngSize(response.binary?.bytes ?? new Uint8Array())).toEqual(captured.viewport);
+    const served = new Uint8Array(await response.arrayBuffer());
+    expect(sha256(served)).toBe(captured.digest);
+    expect(pngSize(served)).toEqual(captured.viewport);
   });
 
   it("changes digest when the page changes, and keeps both frames addressable", async () => {
@@ -183,24 +190,23 @@ describe("a frame captured from a real browser", () => {
     // Both stay served: a preview that replaced the previous frame would make the earlier card show the wrong
     // picture, and a content-addressed store cannot do that.
     for (const captured of [one, two]) {
-      const response = await request(`/previews/${captured.digest}`);
+      const response = await requestPreview(captured.digest);
       expect(response.status).toBe(200);
-      expect(sha256(response.binary?.bytes ?? new Uint8Array())).toBe(captured.digest);
+      expect(sha256(new Uint8Array(await response.arrayBuffer()))).toBe(captured.digest);
     }
   });
 
   it("is not served to a caller without this node's token, and a digest it does not hold is not found", async () => {
     const captured = await withPage("/", async (driver) => captureThroughDriver(driver));
 
-    const unauthenticated = await request(`/previews/${captured.digest}`, { authed: false });
+    const unauthenticated = await requestPreview(captured.digest, { authed: false });
     expect(unauthenticated.status).toBe(401);
-    expect(unauthenticated.binary).toBeUndefined();
 
     // A digest nobody wrote and a string that was never a digest get the same answer, so the route cannot be used
     // to ask what this machine holds.
-    const missing = await request(`/previews/sha256:${"0".repeat(64)}`);
+    const missing = await requestPreview(`sha256:${"0".repeat(64)}`);
     expect(missing.status).toBe(404);
-    const malformed = await request("/previews/not-a-digest");
+    const malformed = await requestPreview("not-a-digest");
     expect(malformed.status).toBe(404);
   });
 });
