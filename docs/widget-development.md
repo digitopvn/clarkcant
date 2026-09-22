@@ -727,6 +727,9 @@ không có bước build nào để quên cũng như không có artifact nào ph
 **ngay lúc khởi động và kèm tên**, chứ không phải trong browser. Frame được sinh theo từng request nên nó mang
 đúng fixture mà shell đang hiện: đổi control fixture là đổi thứ được vẽ, không chỉ đổi thứ shell nói.
 
+Một khác biệt đã biết: chế độ này **không** tự reload khi source đổi. Chế độ package theo dõi thư mục package và
+báo qua `/dev/events`; frame của catalog chưa nối vào cơ chế đó, nên phải **refresh thủ công**.
+
 Vì entry đó là code browser do một CLI Node phát đi, nó nằm trong danh sách entry của invariant
 `browser-entries-avoid-node-builtins` (115 module, 3 entry), và `tsconfig.web.json` phủ
 `packages/widget-cli/src/**/*.tsx`. Dòng config đó là bắt buộc: config Node chỉ include `**/*.ts` và không đặt
