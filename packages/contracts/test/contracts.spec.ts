@@ -18,6 +18,7 @@ import {
   legalEvents,
   mayRetrySubmit,
   negotiateVersions,
+  dependencyDrift,
   planPredatesFrozenBuildInput,
   reduceTask,
   requiredRefreshScope,
@@ -445,6 +446,31 @@ describe("install consent (T21)", () => {
     // "No lock" is a different build input from "a lock that pins this artifact", and it must not read as agreement.
     expect(result.valid).toBe(false);
     expect(result.valid === false && result.changed).toContain("lockRef");
+  });
+
+  it("compares two versions of one name rather than collapsing them into one row", () => {
+    const consented = [
+      { name: "left-pad", version: "1.2.5", integrity: "sha512-leftpad1", resolvedFrom: "npm:left-pad@1.2.5" },
+      { name: "left-pad", version: "1.3.0", integrity: "sha512-leftpad2", resolvedFrom: "npm:left-pad@1.3.0" },
+    ];
+    const current = [
+      { name: "left-pad", version: "1.3.0", integrity: "sha512-leftpad2", resolvedFrom: "npm:left-pad@1.3.0" },
+    ];
+
+    const drift = dependencyDrift(consented, current);
+
+    /*
+     * Keyed by name alone, both sides held one entry and compared 1.3.0 with 1.3.0, reporting nothing while a
+     * version the user consented to had left the closure.
+     */
+    expect(drift).toHaveLength(1);
+    const line = drift[0] ?? "";
+    expect(line).toContain("left-pad");
+    expect(line).toContain("1.2.5");
+    expect(line).toContain("1.3.0");
+    // The other direction is a difference too, and a closure that did not move is still no difference at all.
+    expect(dependencyDrift(current, consented)).toHaveLength(1);
+    expect(dependencyDrift(consented, consented)).toEqual([]);
   });
 
   it("tells apart a plan that predates the frozen build input from one that recorded a closure", () => {

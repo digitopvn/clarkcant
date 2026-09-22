@@ -184,6 +184,10 @@ export type DependencyLockBinding = z.infer<typeof dependencyLockBindingSchema>;
 /**
  * What moved between two pinned sets, in lines that name the artifact rather than the field.
  *
+ * Grouped by name and compared version by version inside the name, because one pin per name is not what the
+ * comparison is about: keyed by name alone, a consent that covered `[left-pad@1.2.5, left-pad@1.3.0]` and a
+ * closure holding only `[left-pad@1.3.0]` collapsed to one entry each and compared equal.
+ *
  * "the lock changed" is not actionable; "left-pad resolved to 1.3.0 (sha256:…) but consent covered 1.2.0
  * (sha256:…)" is, and it is the sentence somebody has to act on when a build refuses to start.
  */
@@ -191,31 +195,68 @@ export function dependencyDrift(
   consented: readonly PinnedArtifact[],
   current: readonly PinnedArtifact[],
 ): string[] {
-  const before = new Map(consented.map((pin) => [pin.name, pin]));
-  const after = new Map(current.map((pin) => [pin.name, pin]));
   const differences: string[] = [];
-  for (const [name, pinned] of before) {
-    const now = after.get(name);
-    if (now === undefined) {
-      differences.push(`dependency "${name}" was pinned at ${pinned.version} and is no longer in the closure`);
+  const names = [...new Set([...consented, ...current].map((pin) => pin.name))].sort();
+
+  for (const name of names) {
+    const before = uniquePins(consented.filter((pin) => pin.name === name));
+    const after = uniquePins(current.filter((pin) => pin.name === name));
+
+    if (before.length === 0) {
+      for (const pin of after) {
+        differences.push(`dependency "${name}" resolved to ${pin.version} and was not in the consented closure`);
+      }
       continue;
     }
-    if (now.version !== pinned.version || now.integrity !== pinned.integrity) {
+    if (after.length === 0) {
+      for (const pin of before) {
+        differences.push(`dependency "${name}" was pinned at ${pin.version} and is no longer in the closure`);
+      }
+      continue;
+    }
+
+    const beforeVersions = [...new Set(before.map((pin) => pin.version))].sort();
+    const afterVersions = [...new Set(after.map((pin) => pin.version))].sort();
+    if (beforeVersions.join(",") !== afterVersions.join(",")) {
       differences.push(
-        `dependency "${name}" resolved to ${now.version} (${now.integrity}) but consent covered ${pinned.version} (${pinned.integrity})`,
+        `dependency "${name}" resolved to ${versionsNamed(after, afterVersions)} but consent covered ${versionsNamed(before, beforeVersions)}`,
       );
-      continue;
     }
-    if (now.resolvedFrom !== pinned.resolvedFrom) {
-      differences.push(`dependency "${name}" now comes from ${now.resolvedFrom}, not ${pinned.resolvedFrom}`);
+
+    for (const pinned of before) {
+      // A version the closure no longer holds is already named by the line above; only one that is still there can
+      // be compared further.
+      const now = after.find((candidate) => candidate.version === pinned.version);
+      if (now === undefined) continue;
+      if (now.integrity !== pinned.integrity) {
+        differences.push(
+          `dependency "${name}" resolved to ${now.version} (${now.integrity}) but consent covered ${pinned.version} (${pinned.integrity})`,
+        );
+        continue;
+      }
+      if (now.resolvedFrom !== pinned.resolvedFrom) {
+        differences.push(`dependency "${name}" now comes from ${now.resolvedFrom}, not ${pinned.resolvedFrom}`);
+      }
     }
   }
-  for (const [name, pinned] of after) {
-    if (!before.has(name)) {
-      differences.push(`dependency "${name}" resolved to ${pinned.version} and was not in the consented closure`);
-    }
-  }
+
   return differences;
+}
+
+/** The distinct pins in one name's rows, so a duplicated row is compared once rather than reported twice. */
+function uniquePins(pins: readonly PinnedArtifact[]): PinnedArtifact[] {
+  const seen = new Map<string, PinnedArtifact>();
+  for (const pin of pins) seen.set(`${pin.version}\u0000${pin.integrity}\u0000${pin.resolvedFrom}`, pin);
+  return [...seen.values()];
+}
+
+/** One version prints with its integrity, because that is what a decision needs; several are listed by version. */
+function versionsNamed(pins: readonly PinnedArtifact[], versions: readonly string[]): string {
+  if (versions.length === 1) {
+    const only = pins.find((pin) => pin.version === versions[0]);
+    if (only !== undefined) return `${only.version} (${only.integrity})`;
+  }
+  return versions.join(", ");
 }
 
 /** The plan's dependency rows as pins, so the comparison above is one implementation rather than two. */
