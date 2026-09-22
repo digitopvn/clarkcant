@@ -240,8 +240,9 @@ Update DESIGN.md in the same change when intentionally changing a UX invariant.
   to make imports work.
 - A new `.tsx` under `packages/*/src` outside `conversation-client` and `apps/web`
   is in neither tsconfig's include: it is typechecked by nothing, and no error
-  says so. Add its path to `tsconfig.web.json`, and keep the decisions in a `.ts`
-  file so the Node config checks the logic.
+  says so at typecheck time. Add its path to `tsconfig.web.json`, and keep the
+  decisions in a `.ts` file so the Node config checks the logic. `pnpm invariants`
+  fails when a `.tsx` is in no typecheck include.
 
 ## Commands
 
