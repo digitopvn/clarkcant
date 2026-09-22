@@ -14,6 +14,7 @@ import { join, relative } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 import { uncoveredFiles } from "./tsconfig-coverage.mjs";
+import { platformSkippedTestTitles } from "./platform-skipped-tests.mjs";
 
 const repoRoot = fileURLToPath(new URL("..", import.meta.url));
 
@@ -517,6 +518,10 @@ function readJson(path) {
  *   - every entry names a workspace package that exists, with that package's declared phase;
  *   - `implemented` names at least one test, and each named test exists in the file it names (the
  *     reason "the schema exists" is not allowed to pass is here: a schema has no title);
+ *   - an `implemented` entry's evidence must also be able to run: a title a platform condition skips
+ *     (`describe.skipIf(!POSIX)`) is not evidence on a runner where that condition does not hold, so
+ *     an entry whose every named test sits under one is rejected rather than reported as green. Two
+ *     entries passed exactly that way before this rule existed, which is why it is here;
  *   - every other status names what is missing, and the four external gates this program must keep
  *     open (#2 Calendar account, #3 Computer Use signing, #4 live voice provider, #5 two-host
  *     NodeLink) stay represented by at least one entry, so a gate cannot quietly stop being a gate;
@@ -538,6 +543,20 @@ function readJson(path) {
   } else if (!Array.isArray(statusRegistry)) {
     c.failures.push(`${REGISTRY_PATH} does not export an IMPLEMENTATION_STATUS array`);
   } else {
+    /*
+     * Which titles in a cited file a platform condition keeps from running, read once per file. The rule below is
+     * about evidence that cannot execute where the check runs, and the POSIX socket suite is the instance of it this
+     * repository actually has: `apps/runtime/test/portable-runtime.spec.ts` skips its socket tests on Windows with
+     * the reason named.
+     */
+    const platformSkippedByFile = new Map();
+    const platformSkippedIn = (file) => {
+      if (!platformSkippedByFile.has(file)) {
+        platformSkippedByFile.set(file, platformSkippedTestTitles(readFileSync(join(repoRoot, file), "utf8")));
+      }
+      return platformSkippedByFile.get(file);
+    };
+
     const packagesByName = new Map();
     for (const group of ["packages", "apps", "packs", "examples"]) {
       const groupDir = join(repoRoot, group);
@@ -599,6 +618,26 @@ function readJson(path) {
           if (item.test === undefined) {
             c.failures.push(`${label} is implemented but its evidence for ${item?.file} is untitled`);
           }
+        }
+        /*
+         * Evidence that exists and never executes is not evidence. A title inside `describe.skipIf(!POSIX)` is named
+         * and present and skipped on every runner where the condition does not hold, so an entry whose whole evidence
+         * set is like that is green with nothing executed. One test that runs where the check runs is enough; an
+         * entry that genuinely cannot be proven off its platform belongs in `partial`, naming that as the gap.
+         */
+        const runnable = evidence.filter(
+          (item) =>
+            typeof item?.file === "string" &&
+            typeof item?.test === "string" &&
+            existsSync(join(repoRoot, item.file)),
+        );
+        if (runnable.length > 0 && runnable.every((item) => platformSkippedIn(item.file).has(item.test))) {
+          const conditions = [...new Set(runnable.map((item) => platformSkippedIn(item.file).get(item.test)))];
+          c.failures.push(
+            `${label} is implemented but every test it names is skipped by a platform condition (${conditions.join("; ")}), ` +
+              "so on a runner where that condition does not hold it has no executed evidence: " +
+              runnable.map((item) => `${item.file} "${item.test}"`).join(", "),
+          );
         }
         if (entry.externalGate !== undefined) {
           c.failures.push(`${label} is implemented and still carries an external gate; one of the two is wrong`);
@@ -693,9 +732,24 @@ function readJson(path) {
     );
     c.notes.push(`${references} @status-ref reference(s) across ${sources.length} source files`);
     c.notes.push(`${documented.size} V row(s) agree with the registry; gates #${[...gateIssues].sort((a, b) => a - b).join("/#")} represented`);
+    const platformSkippedEntries = statusRegistry.filter((entry) =>
+      (entry.evidenceTests ?? []).some(
+        (item) =>
+          typeof item?.file === "string" &&
+          typeof item?.test === "string" &&
+          existsSync(join(repoRoot, item.file)) &&
+          platformSkippedIn(item.file).has(item.test),
+      ),
+    );
+    if (platformSkippedEntries.length > 0) {
+      c.notes.push(
+        `${platformSkippedEntries.map((entry) => entry.capabilityId).join(", ")} cite a test a platform condition skips on some runners, ` +
+          "so their evidence is thinner there than on this one",
+      );
+    }
     c.notes.push(
-      "evidence is checked for existence, not for execution: a named test that a runtime condition skips " +
-        "(the socket suite runs under describe.skipIf(!POSIX)) still counts as evidence",
+      "evidence is checked for existence and for a platform-conditional skip: a runtime condition that is not " +
+        "derived from process.platform or process.arch (an opt-in live provider, for instance) is not this check's subject",
     );
   }
 }
