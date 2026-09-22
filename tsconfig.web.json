@@ -40,8 +40,8 @@
     "packages/conversation-client/src/**/*.tsx",
     "packages/conversation-client/test/**/*.ts",
     "packages/conversation-client/test/**/*.tsx",
-    "apps/web/src/**/*.ts",
-    "apps/web/src/**/*.tsx",
+    "packages/widget-cli/src/**/*.tsx",
+    "apps/web/src/**/*.ts",    "apps/web/src/**/*.tsx",
     "apps/web/vite.config.ts",
     "apps/web/e2e/**/*.ts",
     "playwright.config.ts"

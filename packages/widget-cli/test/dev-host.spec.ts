@@ -4,6 +4,8 @@ import { join } from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
 
+import { catalogEntry } from "@clarkcant/widget-catalog";
+
 import { runCli } from "../src/cli.ts";
 import { startDevHost } from "../src/dev-host.ts";
 import {
@@ -339,5 +341,90 @@ describe("the dev host server", () => {
 
     // Named, so an author who ran it in the wrong directory is told which directory was wrong.
     await expect(startDevHost({ root: empty, port: 0, watchFiles: false })).rejects.toThrow(/no widget facet/);
+  });
+});
+
+describe("the dev host serving a catalog widget", () => {
+  async function started(builtin: string): Promise<{ url: string; stop: () => Promise<void> }> {
+    // No package directory is read, because a catalog widget has none: this is the whole reason the option exists.
+    const host = await startDevHost({ builtin, port: 0, watchFiles: false });
+    return { url: host.url, stop: host.close };
+  }
+
+  it("serves the same shell, naming a catalog widget instead of a package", async () => {
+    const { url, stop } = await started("canvas.line@1");
+    try {
+      const response = await fetch(url);
+      const html = await response.text();
+
+      expect(response.status).toBe(200);
+      expect(html).toContain("canvas.line@1");
+      // The same surface, so the same frame policy: a builtin preview is not given a weaker sandbox.
+      expect(html).toContain('sandbox="allow-scripts"');
+      expect(html).toContain('src="/catalog-runtime.html"');
+    } finally {
+      await stop();
+    }
+  });
+
+  it("offers the entry's own fixtures, so the fixture control is not decorative", async () => {
+    const { url, stop } = await started("canvas.line@1");
+    try {
+      const html = await (await fetch(url)).text();
+      const first = catalogEntry("canvas.line@1")?.fixtures[0]?.id;
+
+      expect(first).toBeDefined();
+      expect(html).toContain(`data-dev-action="fixture" data-dev-value="${String(first)}"`);
+    } finally {
+      await stop();
+    }
+  });
+
+  it("hands the frame the fixture the shell is showing", async () => {
+    const host = await startDevHost({ builtin: "canvas.line@1", port: 0, watchFiles: false });
+    try {
+      const before = await (await fetch(`${host.url}catalog-runtime.html`)).text();
+      const other = catalogEntry("canvas.line@1")?.fixtures[1]?.id;
+      expect(other, "this test needs an entry with more than one fixture").toBeDefined();
+      if (other === undefined) return;
+
+      host.apply({ kind: "fixture", value: other });
+      const after = await (await fetch(`${host.url}catalog-runtime.html`)).text();
+
+      // The page carries the state on screen rather than a default, so changing the control changes what is drawn.
+      expect(before).not.toBe(after);
+      expect(after).toContain(`"fixtureId":"${other}"`);
+    } finally {
+      await host.close();
+    }
+  });
+
+  it("serves the runtime module Vite builds from the workspace source", async () => {
+    const { url, stop } = await started("canvas.note@1");
+    try {
+      // The module the frame loads. Serving it is what makes the preview the production renderer rather than a
+      // second implementation of it, so this is the assertion the option rests on. `Sec-Fetch-Dest` is what a
+      // browser's own module request carries and a bare fetch does not, and Vite answers only the former.
+      const response = await fetch(`${url}src/catalog-runtime.tsx`, { headers: { "sec-fetch-dest": "script" } });
+      const code = await response.text();
+
+      expect(response.status).toBe(200);
+      expect(response.headers.get("content-type")).toContain("javascript");
+      expect(code).toContain("WidgetPreview");
+    } finally {
+      await stop();
+    }
+  });
+
+  it("refuses an id the catalog does not have, by name", async () => {
+    await expect(startDevHost({ builtin: "canvas.nope@1", port: 0, watchFiles: false })).rejects.toThrow(
+      /canvas\.nope@1 is not a definition in the catalog/,
+    );
+  });
+
+  it("refuses to be given both a package and a catalog widget", async () => {
+    await expect(
+      startDevHost({ root: process.cwd(), builtin: "canvas.note@1", port: 0, watchFiles: false }),
+    ).rejects.toThrow(/not both/);
   });
 });

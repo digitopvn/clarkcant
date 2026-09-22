@@ -35,6 +35,11 @@ export {
   type RendererDataset,
   type RendererProps,
 } from "./renderers.tsx";
+export {
+  rendererDataset,
+  WidgetPreview,
+  type WidgetPreviewProps,
+} from "./widget-library/WidgetPreview.tsx";
 export type {
   CalendarEventView,
   CompositionResponse,
