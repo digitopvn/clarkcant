@@ -233,10 +233,15 @@ Update DESIGN.md in the same change when intentionally changing a UX invariant.
   pnpm-workspace.yaml refuses releases younger than 24h and blocks lifecycle
   scripts unless listed in allowBuilds; a fresh package failing to install is
   that policy, not a network error.
-- Node runs .ts directly by stripping types: no enum, namespace, or constructor
-  parameter properties (ESLint and pnpm invariants both fail on them).
+- Node runs .ts directly by stripping types: no enum, namespace (including
+  `declare global`, which is one), or constructor parameter properties (ESLint
+  and pnpm invariants both fail on them).
 - Workspace packages resolve to src/index.ts, never dist/; don't add build steps
   to make imports work.
+- A new `.tsx` under `packages/*/src` outside `conversation-client` and `apps/web`
+  is in neither tsconfig's include: it is typechecked by nothing, and no error
+  says so. Add its path to `tsconfig.web.json`, and keep the decisions in a `.ts`
+  file so the Node config checks the logic.
 
 ## Commands
 
@@ -256,6 +261,10 @@ dir and ports so it cannot read the wrong identity file. Free ports 8876 and
 Playwright's startup health check, so the run's own server fails to bind
 (`--strictPort`) and every test after that fails on a refused connection, which
 reads like a regression and is not one.
+
+A verification result describes the tree it ran on: if files changed while it ran,
+or the branch was rebased after it, re-run it before reporting. Decide whether two
+concurrent changes overlap with `git diff --name-only`, not from memory.
 
 ## Tests
 
@@ -303,6 +312,10 @@ không coi checker là bằng chứng cho những điều nó không kiểm tra:
   and a PR.
 - Plan directories follow plans/{date}-{issue}-{slug}/; run ak plan validate
   plans/<dir> after editing a plan.
+- Never pass markdown, backticks or `$` through a double-quoted shell argument
+  (`gh pr comment --body "..."`): the shell substitutes them, the artifact is
+  wrong and the command still exits 0. Write a body file, pass the file, then read
+  the artifact back.
 
 ## Language
 
