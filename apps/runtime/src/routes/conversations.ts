@@ -61,17 +61,32 @@ import { type GatewayRequest, type GatewayResponse, fail, json, readJson } from 
  * the raw command envelope the durable path sends.
  *
  * The route owns the HTTP: which method and shape is accepted, which status a refusal deserves, and
- * the streaming envelope a turn is reported with. Everything it needs is a parameter. `services` is the
- * bundle the gateway was itself handed — every field of it was injected at composition, so this is not a
- * lookup: a route cannot ask for a service the node was not built with.
+ * the streaming envelope a turn is reported with. Everything it needs is a parameter, and `services` is
+ * narrowed to the fields in `ConversationServices` rather than taken as the whole bundle: those fields were
+ * injected at composition, so this is not a lookup, and a module handed every seam can reach one its
+ * interface never named.
  *
  * The order the routes were dispatched in is unchanged; the gateway calls the two entry points below at
  * the positions the branches used to occupy.
  */
 
+/**
+ * The node services the conversation family reads, named one field at a time.
+ *
+ * The seven are every service these routes touch: the node itself, the conductor that owns widget instances, the
+ * search service a written message is indexed into, the selector wiring that decides what to do with a message that
+ * arrives mid-turn, the two project seams a session start needs, and the turn control a background request runs
+ * through. Nothing else of the bundle is here, so a route cannot start reaching for a service this file never asked
+ * for.
+ */
+export type ConversationServices = Pick<
+  NodeServices,
+  "runtime" | "conductor" | "search" | "jev" | "projects" | "projectSessions" | "turnControl"
+>;
+
 /** What the conversation routes need. */
 export interface ConversationRouteDeps {
-  services: NodeServices;
+  services: ConversationServices;
   request: GatewayRequest;
   segments: string[];
   at: () => string;
@@ -79,9 +94,9 @@ export interface ConversationRouteDeps {
   newConversationId?: () => string;
 }
 
-/** What the durable command envelope needs. */
+/** What the durable command envelope needs: the node's own identity, and nothing else. */
 export interface RawCommandRouteDeps {
-  services: NodeServices;
+  services: Pick<NodeServices, "runtime">;
   request: GatewayRequest;
   at: () => string;
 }
@@ -95,7 +110,7 @@ export interface RawCommandRouteDeps {
  * instead of at the default in the spec.
  */
 function resolveLiveWidget(
-  services: NodeServices,
+  services: Pick<NodeServices, "runtime" | "conductor">,
   conversationId: string,
   instanceId: string,
   principalId: string,
@@ -240,7 +255,10 @@ function resolveLiveWidget(
  * Both halves are read fresh rather than captured when the request was made: an approval can sit for a
  * quarter of an hour, and a project that was indexed then may not be known now.
  */
-function blocksOfConversation(services: NodeServices, conversationId: string): Record<string, unknown>[] {
+function blocksOfConversation(
+  services: Pick<NodeServices, "runtime">,
+  conversationId: string,
+): Record<string, unknown>[] {
   const timeline = buildTimeline(services, { conversationId, afterSequence: 0 });
   const blocks: Record<string, unknown>[] = [];
   // SAFETY: the timeline type describes a message's blocks as unparsed JSON. The node wrote them, and
@@ -258,7 +276,10 @@ function blocksOfConversation(services: NodeServices, conversationId: string): R
  * asked. The two halves are the ones the approval route already uses — read the blocks, append a message — so
  * a question and an approval cannot end up disagreeing about what the timeline is.
  */
-export function interactionDepsFor(services: NodeServices, conversationId: string): InteractionDeps {
+export function interactionDepsFor(
+  services: Pick<NodeServices, "runtime" | "conductor" | "search">,
+  conversationId: string,
+): InteractionDeps {
   return {
     conversationId,
     now: () => nowInstant(),
@@ -281,7 +302,7 @@ export function interactionDepsFor(services: NodeServices, conversationId: strin
  * answer's shape: an utterance has already been matched against the question's own options before it arrives here.
  */
 export async function answerQuestionForNode(
-  services: NodeServices,
+  services: Pick<NodeServices, "runtime" | "conductor" | "search">,
   input: {
     conversationId: string;
     principal: { principalId: string; kind: "user"; nodeId: string };
@@ -325,7 +346,7 @@ export async function answerQuestionForNode(
  * The same set the guarded path uses — configured workspace roots, the node's own data directory, and the directory
  * the operator launched it from — because asking a person is not a reason to widen what this node may touch.
  */
-export function ownedResourcesFor(services: NodeServices): OwnedResources {
+export function ownedResourcesFor(services: Pick<NodeServices, "runtime" | "projects">): OwnedResources {
   return ownedResources([...services.projects.roots(), services.runtime.dataDir, process.cwd()]);
 }
 
@@ -349,7 +370,7 @@ export function ownedResourcesFor(services: NodeServices): OwnedResources {
  * than work that never started.
  */
 export function startBackgroundWork(
-  services: NodeServices,
+  services: Pick<NodeServices, "runtime" | "conductor" | "search" | "turnControl">,
   principal: Principal,
   at: () => Instant,
   conversationId: string,
@@ -378,7 +399,7 @@ export function startBackgroundWork(
 }
 
 export function appendHostReply(
-  services: NodeServices,
+  services: Pick<NodeServices, "runtime" | "conductor" | "search">,
   input: { conversationId: string; text?: string; blocks?: MessageBlock[]; at: Instant },
 ): { messageId: string } {
   const blocks: MessageBlock[] =
@@ -406,7 +427,7 @@ export function appendHostReply(
  * keeps the next route from being the one that forgot to record the audit event.
  */
 function typedAppIntent(
-  services: NodeServices,
+  services: Pick<NodeServices, "runtime" | "conductor">,
   conversationId: string,
   text: string,
   at: () => string,
@@ -1047,7 +1068,7 @@ export async function handleConversationRoutes(deps: ConversationRouteDeps): Pro
  * something that did not happen is how a transcript starts lying.
  */
 export async function decideApprovalForNode(
-  services: NodeServices,
+  services: Pick<NodeServices, "runtime" | "conductor" | "search" | "projects">,
   input: {
     conversationId: string;
     approvalId: string;
@@ -1178,7 +1199,7 @@ function sse(event: string, payload: unknown): string {
  * long since been written.
  */
 async function streamUserMessage(
-  services: NodeServices,
+  services: Pick<NodeServices, "runtime" | "conductor" | "search">,
   input: {
     conversationId: string;
     principal: Principal;

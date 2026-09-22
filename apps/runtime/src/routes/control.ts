@@ -14,14 +14,20 @@ import { type GatewayRequest, type GatewayResponse, fail, json, readJson } from 
  * controlled surface. They are one family because they are the same decision seen from four sides: what is running,
  * and how it ends.
  *
- * `services` is the bundle the gateway was itself handed — every field of it was injected at composition, so this
- * is not a lookup: a route cannot ask for a service the node was not built with.
+ * `services` is narrowed to the fields this family needs rather than taken as the whole bundle the gateway was
+ * itself handed: the node it runs on, the conductor, the controlled surfaces it stops or takes over, the turn
+ * control a background request runs through, and the search service the reply it writes is indexed into. Every
+ * field was injected at composition, so this is not a lookup, and nothing here can reach a seam the interface
+ * does not name.
  *
  * `undefined` means "not one of mine", which is how the dispatch keeps the route order it had when these branches
  * lived in the gateway.
  */
 export interface ControlRouteDeps {
-  services: NodeServices;
+  services: Pick<
+    NodeServices,
+    "runtime" | "conductor" | "controlSessions" | "search" | "turnControl"
+  >;
   request: GatewayRequest;
   segments: string[];
   at: () => string;
