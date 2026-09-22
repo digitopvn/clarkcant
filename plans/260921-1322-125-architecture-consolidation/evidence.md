@@ -769,3 +769,50 @@ Round 1 requested changes with six IMPORTANT findings. Round 2 found that round 
 ## Phase 6 — internal real-path proofs
 
 Branch phase-6-real-paths, cut from main at the Phase 5 merge. The contract: a real internal journey proves BrowserDriver.capturePreview() real image bytes reach the runtime blob store, are served from the authenticated /previews/<digest> route, and render as a browser takeover card labelled as a captured-at snapshot — with no fixed PNG as final evidence. External gates #2/#3/#4/#5 stay open and are never satisfied by a fixture.
+
+## Program closeout
+
+### The six phases, all merged to main
+
+| Phase | PR | Merge commit |
+| --- | --- | --- |
+| 1 canonical execution policy | #130 | `89be38df` |
+| 2 Pi projectRoots confinement | #136 | `026d0612` |
+| 3 deterministic install dependency lock | #139 | `e0871aeb` |
+| 4 runtime decomposition | #145 | `b59acd76` |
+| 5 implementation-status source of truth | #147 | `952729a2` |
+| 6 internal real-path proofs | #149 | `cef02344` |
+
+Each was cut from freshly updated main, each had terminal-green CI on the SHA that was merged (bound with `--match-head-commit`), each received an independent review pass, and each was merged only after its review's Critical and Important findings were resolved. `pnpm verify` on the merged tree (main at `cef0234`) passes, and the Phase 6 gate run was 188 files passed / 1 skipped with 2300 tests passed / 7 skipped, plus 127 Playwright journeys passed / 1 skipped.
+
+### DEFECT: this program's own PR bodies closed #93 and #125 by accident
+
+Every PR body carried a defensive sentence stating that the PR does not close the external gates. That sentence contained the literal substring `close #93` (Phases 1-4) or `close #125` (Phases 5-6), and GitHub's closing-keyword parser matches the keyword next to the reference regardless of the preceding "does not". The result is the opposite of the intent:
+
+- **#93 was closed at 2026-09-22T04:46:20Z** as a side effect of a phase PR merging. #93's subject is "Hardening: close isolated-widget trust-boundary gaps and prove the browser journey", and this program did NOT complete that subject: Phase 5 recorded `V12` as PARTIAL with `detach` and `voiceClickParity` unproven, and Phase 6 did not change that. **#93 should be reopened or re-verified by its owner**, because its COMPLETED state was not earned by this work.
+- **#125 was closed at 2026-09-22T10:26:54Z**, at the Phase 5 merge, roughly an hour BEFORE Phase 6 landed. The tracker therefore said COMPLETED while a phase was still outstanding. Now that Phase 6 is merged the closed state happens to be correct, but it was reached by accident and at the wrong time.
+
+The four gates the objective names — **#2, #3, #4 and #5 — remain OPEN**, and no phase PR body listed them in a matching form, so the one thing the sentence existed to protect was in fact protected. The lesson for future programs is recorded here: a negative statement about a closing keyword still contains the keyword; the safe form is to name the issues without the verb, or to say "no closing keywords".
+
+### Advisory checkpoint receipt — honest count
+
+**One kongming advisory checkpoint was taken, not one per PR.** It was the program-level plan checkpoint, which returned GO with corrections; 11 of its 12 corrections were adopted into Phase 1 (AC-0 through AC-9), and its one recommendation to land Phase 3 before Phase 2 was rejected because the issue's own phase order is authoritative, with the risk handled instead by the Phase 2.0 spike. The closeout contract asked for a kongming receipt on each PR and on the issue; those were NOT taken. Independent `code-reviewer` passes were used per phase instead (Phase 1: 1 CRITICAL + 5 IMPORTANT found; Phase 2: 4 IMPORTANT then 1 more; Phase 3: 3 IMPORTANT; Phase 4: none actionable; Phase 5: three rounds because fixes introduced new defects twice; Phase 6: none actionable). This is recorded as a deviation from the contract rather than presented as compliance.
+
+### Verification of the acceptance criteria against the merged tree
+
+- Policy: one canonical reader (`single-execution-policy-reader` invariant passes), modes exactly autonomous/guarded/ask, legacy preferences joined pointwise, `prohibition: "all"` evaluated above the hard boundary, containment never routed through the policy resolver. Proved by the Phase 1 tests on the merged tree.
+- Pi containment: `scoped-fs.ts` canonicalises roots and paths, refuses symlink/`..`/absolute-outside escapes, and the packed-worker lane gap is filed as #137 rather than claimed closed. Proved by the Phase 2 tests.
+- Install locking: closure frozen before build, bound into plan and generation, drift refused rather than re-resolved, lifecycle scripts ungated. Proved by 22 tests in `dependency-lock.spec.ts` plus the route and install-from-source cases.
+- Runtime decomposition: `gateway.ts` 3825 to 237 lines, `main.ts` 1972 to 367, explicit dependency interfaces, no service locator, fixtures reached only through a dynamic gate. Behavior preservation evidenced by an independent dispatch probe over all 53 pre-move branches.
+- Status source of truth: a 34-entry typed registry, a tenth invariant check demonstrated able to fail, 18 markers reconciled to zero, and corrections including five false detached-window claims.
+- Real-path proofs: the 29-byte fixture PNG is gone, the preview digest is a hash of real captured bytes, and the google-calendar pack now has real connector tests where it previously had none.
+- External gates: #2/#3/#4/#5 open and labelled unproven; no gate satisfied by a fixture.
+
+### Residual risks and unresolved questions
+
+1. **#93 is closed but its subject is not complete** (see the defect above). This is the most important residual risk.
+2. **Seven recorded MINORs remain unfixed by design**: four from Phase 3 (lock comparison breadth, unpruned artifacts, an unparsed plan refine, an unread client field) and three from Phase 4 (a dead fixture branch under a false comment, a lost rationale comment on the response type, two route modules taking the whole services bundle). They were kept out of phase PRs to satisfy the no-unrelated-cleanup criterion, and are candidates for one small follow-up.
+3. **Phase 5's invariant proves existence, not exercise.** A cited test must exist and contain the title; nothing proves it exercises the claim. Evidence can also be a test that is skipped on some platforms.
+4. **#137 (packed-worker lane not confined) remains open** and is a real confinement gap in a lane Phase 2 did not cover.
+5. **The `fea0044` commit bundles three changes** because it was pushed before being split and force-pushing is forbidden. Its tree is byte-identical to the intended split.
+6. Unverified claims carried forward and NOT to be restated as established: the "187 route-focused tests" figure and "startup stderr byte-identical" from Phase 4, which the reviewer superseded with its own dispatch probe.
