@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import {
   capabilityRefSchema,
   lockDriftBetween,
+  planPredatesFrozenBuildInput,
   type CapabilityRef,
   type DependencyLockBinding,
   type DirectoryEntry,
@@ -186,10 +187,20 @@ export function installFromSource(deps: InstallDeps, input: InstallFromSourceInp
     const existing = getPlan(deps, joined.planId);
     const drift = existing === undefined ? [] : lockDriftBetween(existing.plan, plan);
     if (drift.length > 0) {
+      /*
+       * A plan recorded before this node froze a build input has no closure on its side, so the same refusal would
+       * otherwise read as "the lock covered nothing and now covers ..." — as though a closure had moved. Nothing
+       * moved: that plan predates the frozen input, so the comparison has one side missing. The refusal is the same
+       * either way, but the sentence a person reads has to name the cause they can act on, and "review it again" is
+       * not an action for a plan that is already installing (T21).
+       */
+      const legacy = existing !== undefined && planPredatesFrozenBuildInput(existing.plan);
       return {
         ok: false,
         code: "LOCK_DRIFT",
-        message: `a plan for this requirement is already on this node with a different frozen build input: ${drift.join("; ")}; review it again rather than joining it`,
+        message: legacy
+          ? `a plan for this requirement is already on this node (${joined.planId}, state ${joined.state}) and predates the frozen build input: it was recorded before this node froze a dependency closure, so there is no consented lock on that side to compare against — a legacy plan, not drift in a closure that moved. That plan already covers this requirement, so wait for it rather than installing a second time; if it has to be replaced, roll that generation back first and resolve the closure again`
+          : `a plan for this requirement is already on this node with a different frozen build input: ${drift.join("; ")}; review it again rather than joining it`,
       };
     }
     /*

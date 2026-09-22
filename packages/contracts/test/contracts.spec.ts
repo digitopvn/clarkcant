@@ -18,6 +18,7 @@ import {
   legalEvents,
   mayRetrySubmit,
   negotiateVersions,
+  planPredatesFrozenBuildInput,
   reduceTask,
   requiredRefreshScope,
   retryabilityOf,
@@ -444,6 +445,22 @@ describe("install consent (T21)", () => {
     // "No lock" is a different build input from "a lock that pins this artifact", and it must not read as agreement.
     expect(result.valid).toBe(false);
     expect(result.valid === false && result.changed).toContain("lockRef");
+  });
+
+  it("tells apart a plan that predates the frozen build input from one that recorded a closure", () => {
+    const frozen = {
+      ...plan,
+      lockRef: "pkg.artifact-and-dependencies.sha256-aaaa.lock.json",
+      lockDigest: "sha256:lock-one",
+      lockCoverage: "artifact-and-dependencies" as const,
+    };
+
+    /*
+     * The distinction the installing path needs to phrase its refusal: a plan with no reference, digest or coverage
+     * was written before anything was frozen, so it has no closure to have drifted away from.
+     */
+    expect(planPredatesFrozenBuildInput(plan)).toBe(true);
+    expect(planPredatesFrozenBuildInput(frozen)).toBe(false);
   });
 });
 

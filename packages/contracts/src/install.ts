@@ -256,6 +256,19 @@ export function lockDriftBetween(consented: InstallPlan, current: InstallPlan): 
   return differences;
 }
 
+/**
+ * Whether a plan was recorded before this node froze a build input.
+ *
+ * A plan written before that existed carries no reference, no digest and no coverage, because there was nothing to
+ * record. Compared with a plan that does carry one it looks like drift — `lockCoverage` moved from "nothing" to a
+ * coverage — but nothing moved: the comparison has one side missing. The refusal is the same either way, and this
+ * exists so the sentence a person reads can name the real cause instead of sending them to review a closure that
+ * was never recorded.
+ */
+export function planPredatesFrozenBuildInput(plan: InstallPlan): boolean {
+  return plan.lockRef === undefined && plan.lockDigest === undefined && plan.lockCoverage === undefined;
+}
+
 export const installPlanSchema = z
   .strictObject({
     planId: z.string().min(1).max(128),

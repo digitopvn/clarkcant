@@ -352,8 +352,37 @@ describe("the frozen build input the plan carries", () => {
     expect(second.message).toContain("left-pad");
     expect(second.message).toContain("1.2.5");
     expect(second.message).toContain("1.3.0");
+    // And it says which refusal this is: drift in a closure that was recorded, not a plan that predates the lock.
+    expect(second.message).toContain("different frozen build input");
+    expect(second.message).not.toContain("predates the frozen build input");
     // And the plan on the node is still the one that was consented to, not the second resolution.
     expect(listInstalledPackages(deps)).toHaveLength(1);
+  });
+
+  it("names a legacy plan rather than reporting a closure that never moved", () => {
+    /*
+     * What the pre-release installer wrote, and what a node keeps after upgrading: a plan with no reference, no
+     * coverage and no pins, in state `active` because the install it recorded already finished. A repeat install of
+     * the same package@version now resolves a lock and joins that plan.
+     */
+    const legacy = installFromSource(deps, input());
+    expect(legacy.ok).toBe(true);
+    if (!legacy.ok) return;
+
+    const again = installFromSource(deps, input({ dependencyLock: LOCK }));
+
+    expect(again.ok).toBe(false);
+    if (again.ok) return;
+    expect(again.code).toBe("LOCK_DRIFT");
+    // The refusal names the cause: a plan recorded before this node froze a dependency closure, with nothing on its
+    // side to compare against. Nothing here says a lock moved from "nothing" to a coverage.
+    expect(again.message).toContain("predates the frozen build input");
+    expect(again.message).not.toContain("the lock covered nothing");
+    expect(again.message).not.toContain("different frozen build input");
+    // It names which plan, so the sentence is about an install this node can find, and says what to do about it.
+    expect(again.message).toContain(legacy.planId);
+    expect(again.message).toContain("active");
+    expect(again.message).toContain("wait for it");
   });
 
   it("joins again when the closure is the same, so two tasks still share one plan", () => {
