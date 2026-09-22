@@ -9,7 +9,15 @@ import {
 } from "@clarkcant/contracts";
 import { migrate, openDatabase, allRows } from "@clarkcant/storage";
 
-import { decideExecution, guardrailCovers, recordEffectExecution } from "../src/execution-policy.ts";
+import {
+  decideExecution,
+  guardrailCovers,
+  readExecutionPolicy,
+  recordEffectExecution,
+} from "../src/execution-policy.ts";
+import { EXECUTION_POLICY_PREFERENCE_KEY } from "../src/execution-policy-migration.ts";
+import { readRegisteredPreference } from "../src/preference-registry.ts";
+import { setPreference, type PreferenceDeps } from "../src/preferences.ts";
 
 /**
  * The execution policy (V18).
@@ -305,5 +313,93 @@ describe("the audit is the record autonomy would otherwise not leave", () => {
       approvedBy: "policy",
       description: "git status",
     });
+  });
+});
+
+/**
+ * What the reader does with the row it finds.
+ *
+ * The whole point of the canonical row is that it is the user's own decision, so the two ways a read could lose it
+ * are both here: a document with one unreadable leaf (which must cost that leaf and nothing else) and a row whose
+ * JSON cannot be read at all (which must not throw out of a read that happens per command, per widget action and
+ * per install).
+ */
+describe("the canonical row is read field by field", () => {
+  const PRINCIPAL = "prin_reader";
+  const AT = "2026-09-21T12:00:00.000Z" as never;
+  let db: ReturnType<typeof openDatabase>;
+  let deps: PreferenceDeps;
+
+  beforeEach(() => {
+    db = openDatabase({ path: ":memory:" });
+    migrate(db);
+    deps = { db, now: () => AT };
+  });
+
+  function store(value: unknown): void {
+    setPreference(deps, {
+      principalId: PRINCIPAL,
+      key: EXECUTION_POLICY_PREFERENCE_KEY,
+      scope: "global",
+      value,
+      source: "user",
+    });
+  }
+
+  it("keeps the mode and the refusal when the only bad leaf is inside the guardrails", () => {
+    const row = {
+      mode: "ask",
+      prohibition: "all",
+      rules: [],
+      guardrails: {
+        enabled: true,
+        instructions: 12345,
+        classes: ["commands"],
+        whenUnavailable: "deny",
+      },
+    };
+    store(row);
+
+    const policy = readExecutionPolicy(deps, PRINCIPAL);
+
+    // The two axes a bad leaf used to reset, and the widened document that used to be written back.
+    expect(policy.mode).toBe("ask");
+    expect(policy.prohibition).toBe("all");
+    // The bad leaf cost itself: the rest of the guardrails are still the user's.
+    expect(policy.guardrails.instructions).toBe("");
+    expect(policy.guardrails.classes).toEqual(["commands"]);
+    expect(policy.guardrails.whenUnavailable).toBe("deny");
+    // The stored row is left exactly as it was, revision included: no migration wrote over it.
+    expect(readRegisteredPreference(deps, { principalId: PRINCIPAL, key: EXECUTION_POLICY_PREFERENCE_KEY })).toMatchObject({
+      value: row,
+      revision: 1,
+    });
+    expect(allRows(db, "SELECT audit_id FROM audit_log")).toEqual([]);
+  });
+
+  it("answers from the legacy families instead of throwing when the row is not readable at all", () => {
+    // A row written outside the module — a partial write, or a file whose pages were damaged — is a row whose JSON
+    // is not JSON. The reader runs on every effect, so this is a fallback and not an exception.
+    db.prepare(
+      `INSERT INTO preferences (principal_id, key, value, scope, source, revision, previous_value, created_at)
+       VALUES (?, ?, ?, 'global', 'user', 1, NULL, ?)`,
+    ).run(PRINCIPAL, EXECUTION_POLICY_PREFERENCE_KEY, "{not json", AT);
+    setPreference(deps, {
+      principalId: PRINCIPAL,
+      key: "autonomy",
+      scope: "node",
+      value: { executionPolicy: "deny" },
+      source: "user",
+    });
+
+    const policy = readExecutionPolicy(deps, PRINCIPAL);
+
+    // The join of what the node actually stored, not the canonical default — and no exception on the way.
+    expect(policy.prohibition).toBe("all");
+    expect(policy.mode).toBe("guarded");
+    // And the row now parses, so the next read answers from it rather than falling back again.
+    expect(
+      readRegisteredPreference(deps, { principalId: PRINCIPAL, key: EXECUTION_POLICY_PREFERENCE_KEY })?.value,
+    ).toMatchObject({ prohibition: "all" });
   });
 });

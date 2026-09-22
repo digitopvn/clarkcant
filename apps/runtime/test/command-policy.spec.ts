@@ -14,7 +14,7 @@ import type { CoordinationDeps } from "@clarkcant/core";
 import { decideExecution, guardrailCovers } from "@clarkcant/core";
 import { migrate, openDatabase, nodeStoreSecretBackend, putSecretMetadata, type Database } from "@clarkcant/storage";
 
-import type { CommandOutcome } from "../src/run-command.ts";
+import { commandDigest, type CommandOutcome } from "../src/run-command.ts";
 import type { InteractionDeps } from "../src/interactions.ts";
 import type { SecretBroker } from "../src/secret-broker.ts";
 import { createSecretBroker } from "../src/secret-broker.ts";
@@ -388,6 +388,75 @@ describe("a secret injected for one command", () => {
       expect(answer.text).not.toContain(SECRET_VALUE);
     } finally {
       seeded.close();
+    }
+  });
+});
+
+/**
+ * An asking mode judges before it asks.
+ *
+ * The judgment layer runs before the card, and this is the case that makes the order matter: `ask` is the most
+ * restrictive mode, so a card alone would let the categories the user wrote instructions about run un-narrowed and
+ * un-refused as soon as somebody approved it. The card is therefore offered only for what the judgment allowed, and
+ * it displays the envelope the command will actually run under.
+ */
+describe("an asking mode consults the judgment layer before it offers the card", () => {
+  function approvalsFixture(): { approvals: () => CoordinationDeps; close: () => void } {
+    const database = openDatabase({ path: join(dir, "node.sqlite") });
+    migrate(database);
+    return {
+      approvals: () => ({
+        db: database,
+        nodeId: "node_local",
+        now: () => "2026-09-19T10:00:00.000Z" as never,
+        newId: (prefix: string) => `${prefix}_test`,
+      }),
+      close: () => database.close(),
+    };
+  }
+
+  it("refuses before offering a card when the guardrail refuses", async () => {
+    const approved = approvalsFixture();
+    try {
+      const { tool, runs } = makeTool({
+        policy: { mode: "ask" },
+        guard: { status: "deny", reason: "guardrail từ chối nhóm destructive" },
+        approvals: approved.approvals,
+      });
+      const answer = await tool.execute({ command: "rm -rf build" });
+
+      expect(runs).toHaveLength(0);
+      // No card: asking a person to approve something the judgment layer already refused is not a question.
+      expect(answer.hostCard).toBeUndefined();
+      expect(answer.hostBlocks).toBeUndefined();
+      expect(answer.text).toContain("Guardrail từ chối");
+      expect(answer.text).toContain("nhóm destructive");
+    } finally {
+      approved.close();
+    }
+  });
+
+  it("cards the narrowed envelope, so the approval is bound to what will run", async () => {
+    const approved = approvalsFixture();
+    try {
+      const { tool, runs } = makeTool({
+        policy: { mode: "ask" },
+        guard: { status: "constrain", constraintId: "timeout-30s", reason: "thu hẹp" },
+        approvals: approved.approvals,
+      });
+      const answer = await tool.execute({ command: "pnpm build" });
+      const card = answer.hostCard as { type?: string; payload?: string; operationDigest?: string } | undefined;
+
+      expect(runs).toHaveLength(0);
+      expect(card?.type).toBe("approval-card");
+      // The narrowing travels with the card rather than being lost between the question and the answer.
+      const payload = JSON.parse(card?.payload ?? "{}") as { command?: string; cwd?: string; timeoutMs?: number };
+      expect(payload.command).toBe("pnpm build");
+      expect(payload.cwd).toBe(work);
+      expect(payload.timeoutMs).toBe(30_000);
+      expect(card?.operationDigest).toBe(commandDigest("pnpm build", work));
+    } finally {
+      approved.close();
     }
   });
 });

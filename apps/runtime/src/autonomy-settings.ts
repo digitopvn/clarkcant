@@ -4,6 +4,7 @@ import {
   type GuardrailConstraint,
   type RegisteredPreference,
   executionPolicyConfigSchema,
+  executionPolicySchema,
   parseAutonomySettings,
 } from "@clarkcant/contracts";
 import {
@@ -12,9 +13,15 @@ import {
   LEGACY_EXECUTION_RULES_KEY,
   autonomyFamily,
   autonomySettingsFromPolicy,
+  legacyModeFromPolicy,
   readExecutionPolicy,
+  readExecutionPolicyPreference,
+  readRegisteredPreference,
+  undoRegisteredPreference,
   writeRegisteredPreference,
   type PreferenceDeps,
+  type PreferenceRefusalCode,
+  type PreferenceUndoOutcome,
   type PreferenceWriteOutcome,
 } from "@clarkcant/core";
 
@@ -56,37 +63,67 @@ export function readAutonomySettings(deps: PreferenceDeps, principalId: string):
 /**
  * Store what the legacy settings shape describes, keeping everything it cannot describe.
  *
- * `current` is the policy in force, and it is what supplies the rules: the old shape has no field for them,
- * so a write through it must leave them exactly as they are. A refusal the user wrote cannot be deleted by a
- * surface that never knew it was writing about it.
+ * `current` is the policy in force, and it supplies every canonical axis the legacy shape cannot speak: the rules,
+ * and `prohibition`. A refusal the user wrote cannot be deleted by a surface that never knew it was writing about
+ * it — and this shape cannot express one either, except as the whole-policy `deny`, which is why the two are
+ * handled apart: the body is read as a patch over the policy, and a field it does not name is not a field it
+ * clears.
  */
 export function policyFromAutonomySettings(
   current: ExecutionPolicyConfig,
   raw: unknown,
 ): ExecutionPolicyConfig {
   const family = autonomyFamily(parseAutonomySettings(raw));
+  const body = typeof raw === "object" && raw !== null ? (raw as Record<string, unknown>) : {};
+  const named = executionPolicySchema.safeParse(body.executionPolicy);
   return {
-    mode: family.mode,
-    prohibition: family.prohibition ?? "none",
+    // The mode moves only when the body named the legacy policy. `parseAutonomySettings` fills a gap with the
+    // legacy default, so a partial body would otherwise read as "the user chose guarded" and move the mode of a
+    // node nobody asked to change.
+    mode: named.success ? legacyModeFromPolicy(named.data) : current.mode,
+    /*
+     * A refusal can be added through this shape and never lifted by it.
+     *
+     * `deny` is the legacy spelling of "no effects on this node", so a body that names it sets `prohibition: all`.
+     * A body that names anything else does not clear it, because the legacy fields have no way to say "not a
+     * refusal": the four values describe who is asked, and `guarded` in that vocabulary never meant "every effect
+     * is allowed". Reading a silence as consent would lift, by a guardrail edit in the settings panel, a refusal
+     * the user set somewhere else — so lifting one is left to the surface that shows it (Settings → Control has
+     * its own control for it), and the direction this file can move a refusal is the only safe one.
+     */
+    prohibition: named.success && named.data === "deny" ? "all" : current.prohibition,
     rules: [...current.rules],
     guardrails: family.guardrails ?? current.guardrails,
   };
 }
 
-/** Write the policy the legacy settings shape describes. Returns the policy now in force. */
+/** The outcome of a compatibility write: the policy now in force, or why it was refused. */
+export type SaveAutonomySettingsOutcome =
+  | { ok: true; stored: ExecutionPolicyConfig }
+  | { ok: false; code: PreferenceRefusalCode; message: string };
+
+/**
+ * Write the policy the legacy settings shape describes. Returns the policy now in force, or the refusal.
+ *
+ * The write outcome is read rather than assumed. `writeRegisteredPreference` validates before it stores and can
+ * refuse — a body carrying more guard classes than the canonical list holds is the case this exists for — and a
+ * refusal reported as a success would tell the settings panel it had stored a policy the node is not running
+ * under.
+ */
 export function saveAutonomySettings(
   deps: PreferenceDeps,
   principalId: string,
   raw: unknown,
-): ExecutionPolicyConfig {
+): SaveAutonomySettingsOutcome {
   const next = policyFromAutonomySettings(readExecutionPolicy(deps, principalId), raw);
-  writeRegisteredPreference(deps, {
+  const outcome = writeRegisteredPreference(deps, {
     principalId,
     key: EXECUTION_POLICY_PREFERENCE_KEY,
     value: next,
     source: "user",
   });
-  return next;
+  if (!outcome.ok) return { ok: false, code: outcome.code, message: outcome.message };
+  return { ok: true, stored: next };
 }
 
 /**
@@ -140,6 +177,44 @@ export function writePolicyPreference(
     value: next,
     source: "user",
   });
+}
+
+/** Whether a key is one of the two the compatibility surface translates. */
+function isLegacyPolicyKey(key: string): boolean {
+  return key === LEGACY_EXECUTION_MODE_KEY || key === LEGACY_EXECUTION_RULES_KEY;
+}
+
+/**
+ * Undo a write that arrived through one of the two legacy keys.
+ *
+ * A write through `execution.mode` or `execution.rules` is translated into the canonical policy
+ * (`writePolicyPreference`), so undoing one has to reach the same row. It used to undo the legacy row instead,
+ * which nothing writes and nothing reads: the answer was `undone: false` for a value that had never been stored
+ * there, while the policy the write actually changed stayed changed.
+ *
+ * Returns nothing for every other key, so the route keeps one code path: it asks this first and falls through to
+ * the registry. The answer is projected under the key the caller asked about, from the canonical policy read
+ * after the undo — the same one reader every other route uses.
+ */
+export function undoPolicyPreference(
+  deps: PreferenceDeps,
+  input: { principalId: string; key: string },
+): PreferenceUndoOutcome | undefined {
+  if (!isLegacyPolicyKey(input.key)) return undefined;
+  const undone = undoRegisteredPreference(deps, {
+    principalId: input.principalId,
+    key: EXECUTION_POLICY_PREFERENCE_KEY,
+  });
+  if (!undone.ok) return undone;
+  const view = readRegisteredPreference(deps, { principalId: input.principalId, key: input.key });
+  if (view === undefined) return undone;
+  const preference = projectPolicyPreference(
+    readExecutionPolicyPreference(deps, input.principalId),
+    view,
+  );
+  return undone.undone
+    ? { ok: true, undone: true, preference }
+    : { ok: true, undone: false, preference, reason: undone.reason };
 }
 
 /**

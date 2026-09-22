@@ -119,6 +119,60 @@ describe("running an approved operation", () => {
     expect(result.description).not.toContain("Cloning into");
   });
 
+  it("runs the narrowed budget the card carried, and never more than this host allows", async () => {
+    /*
+     * An asking mode consults the judgment layer before it draws a card, and what that layer narrowed — a shorter
+     * deadline, a smaller output ceiling — travels with the card. It has to reach the run as well as the card: a
+     * permission that is narrowed on screen and not at the point of the effect is not a narrowing at all.
+     */
+    const seen: { timeoutMs: number; maxOutputBytes: number }[] = [];
+    const run = async (request: {
+      command: string;
+      cwd: string;
+      timeoutMs: number;
+      maxOutputBytes: number;
+    }) => {
+      seen.push({ timeoutMs: request.timeoutMs, maxOutputBytes: request.maxOutputBytes });
+      return { exitCode: 0, stdout: "", stderr: "", durationMs: 1, timedOut: false };
+    };
+
+    const narrowed = JSON.stringify({
+      command: "git clone repo",
+      cwd: workdir,
+      timeoutMs: 30_000,
+      maxOutputBytes: 2_000,
+    });
+    const ran = await runApprovedCommand({
+      payload: narrowed,
+      expectedDigest: digest,
+      approvalId: "appr_1",
+      resources: owned,
+      run,
+    });
+    expect(ran.ok).toBe(true);
+    expect(seen).toEqual([{ timeoutMs: 30_000, maxOutputBytes: 2_000 }]);
+
+    // A payload is stored with the conversation, so it is clamped rather than trusted: the host's own limits are
+    // the ceiling whatever it asks for.
+    const wider = JSON.stringify({
+      command: "git clone repo",
+      cwd: workdir,
+      timeoutMs: 10 * 60_000,
+      maxOutputBytes: 10_000_000,
+    });
+    await runApprovedCommand({
+      payload: wider,
+      expectedDigest: digest,
+      approvalId: "appr_2",
+      resources: owned,
+      run,
+    });
+    expect(seen[1]).toEqual({
+      timeoutMs: COMMAND_LIMITS.timeoutMs,
+      maxOutputBytes: COMMAND_LIMITS.maxOutputBytes,
+    });
+  });
+
   it("leaves the output out when the command printed nothing", async () => {
     const result = await runApprovedCommand({
       payload,

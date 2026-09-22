@@ -20,7 +20,7 @@ import {
   migrateExecutionPolicy,
   readLegacyPolicy,
 } from "../src/execution-policy-migration.ts";
-import { setPreference, type PreferenceDeps } from "../src/preferences.ts";
+import { setPreference, undoPreference, type PreferenceDeps } from "../src/preferences.ts";
 import { readRegisteredPreference } from "../src/preference-registry.ts";
 
 /**
@@ -315,6 +315,32 @@ describe("the migration is idempotent and auditable", () => {
     expect(rows).toHaveLength(1);
     expect(rows[0]?.kind).toBe("policy");
     expect(rows[0]?.summary).toContain("policy chuẩn");
+  });
+
+  it("audits a second migration after the row was undone, instead of throwing over a taken id", () => {
+    /*
+     * The record's id used to come from the revision the write reported, and a revision is resettable: undoing a
+     * first write deletes the row, so the next read migrated again at revision 1 and derived the same id.
+     * `audit_log.audit_id` is a primary key, so that insert threw — after the policy had been stored, which left the
+     * change the record exists for un-audited and failed the request that triggered it.
+     */
+    storeLegacy(deps, { autonomy: autonomy({ executionPolicy: "deny" }) });
+    expect(migrateExecutionPolicy(deps, { principalId: PRINCIPAL }).written).toBe(true);
+    expect(auditPolicyRows()).toHaveLength(1);
+
+    const undone = undoPreference(deps, {
+      principalId: PRINCIPAL,
+      key: EXECUTION_POLICY_PREFERENCE_KEY,
+      scope: "global",
+    });
+    expect(undone).toMatchObject({ undone: true, removed: true });
+    expect(
+      readRegisteredPreference(deps, { principalId: PRINCIPAL, key: EXECUTION_POLICY_PREFERENCE_KEY })?.isDefault,
+    ).toBe(true);
+
+    // No throw, the join again rather than a default, and a second record of its own.
+    expect(readExecutionPolicy(deps, PRINCIPAL).prohibition).toBe("all");
+    expect(auditPolicyRows()).toHaveLength(2);
   });
 
   it("does not treat a refused write as a success", () => {

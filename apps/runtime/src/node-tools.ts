@@ -641,52 +641,19 @@ export function createRunCommandTool(
         };
       }
 
-      if (decision.kind === "ask") {
-        if (input.approvals === undefined) {
-          return {
-            text:
-              "Node này cần người dùng duyệt lệnh này nhưng không có nơi ghi quyết định, nên lệnh không chạy được. " +
-              "Đổi mức tự chủ trong Settings → Control.",
-          };
-        }
-        const approval = requestApproval(input.approvals(), {
-          operationDigest: digest,
-          operationDescription:
-            `Chạy một lệnh trong ${envelope.cwd}` +
-            (reason === "" ? "" : ` (${reason})`) +
-            (why === "" ? "" : `: ${why}`),
-          effectCategory: envelope.effectCategory,
-          // A quarter of an hour: long enough to read the command and decide, short enough that a card left
-          // on screen overnight cannot be approved the next morning for a stale reason.
-          ttlMs: 15 * 60_000,
-        });
-        return {
-          text:
-            `Đã gửi yêu cầu duyệt để chạy \`${command}\` trong ${envelope.cwd}. Chưa có gì chạy cả — người dùng ` +
-            `phải bấm duyệt, và tui không thể tự duyệt. Đừng nói là đã chạy xong.`,
-          hostCard: {
-            type: "approval-card",
-            owner: "host",
-            approvalId: approval.approvalId,
-            operationDescription: approval.operationDescription,
-            operationDigest: approval.operationDigest,
-            effectCategory: approval.effectCategory,
-            expiresAt: approval.expiresAt,
-            decider: approval.decider,
-            decision: approval.decision,
-            // The payload is what runs on approval, and the digest above is what proves it is unchanged.
-            payload: JSON.stringify({ command, cwd: envelope.cwd }),
-          },
-        };
-      }
-
       /*
-       * The judgment layer, on the effects the host allowed and the switches cover.
+       * The judgment layer, on every effect the host allowed and the switches cover — the ones it will execute and
+       * the ones it will ask a person about.
        *
-       * Reached only on the `execute` branch: a card is already a stricter gate than a judgment that can only
-       * narrow, so asking a person and a model the same question would produce two answers where one is
-       * enough. The layer may still refuse, ask for a clarification, or apply one of the host's own narrowings,
-       * and a widening is refused rather than clamped.
+       * It runs before the card rather than after it, and that order is the point. A card is a stricter gate than a
+       * judgment that can only narrow, but it is not a substitute for one: a guardrail consulted only on the execute
+       * branch meant that in Ask every time — the most restrictive mode — the categories the user wrote instructions
+       * about were the ones that ran un-narrowed and un-refused once somebody approved the card. So a refusal refuses
+       * here, before any card exists, and the envelope the card displays is the same narrowed one the command will run
+       * under if it is approved.
+       *
+       * The layer may refuse, ask for a clarification, or apply one of the host's own narrowings, and a widening is
+       * refused rather than clamped.
        */
       let guarded = envelope;
       if (guardrailCovers(policy, envelope)) {
@@ -707,6 +674,60 @@ export function createRunCommandTool(
         }
         guarded = judgment.envelope;
       }
+
+      if (decision.kind === "ask") {
+        if (input.approvals === undefined) {
+          return {
+            text:
+              "Node này cần người dùng duyệt lệnh này nhưng không có nơi ghi quyết định, nên lệnh không chạy được. " +
+              "Đổi mức tự chủ trong Settings → Control.",
+          };
+        }
+        /*
+         * The digest is taken from the envelope the command will run under, not from the one the preflight produced:
+         * a guardrail may have narrowed the directory, and the approval has to be bound to what actually runs.
+         */
+        const approvedDigest = commandDigest(guarded.command, guarded.cwd);
+        const approval = requestApproval(input.approvals(), {
+          operationDigest: approvedDigest,
+          operationDescription:
+            `Chạy một lệnh trong ${guarded.cwd}` +
+            (reason === "" ? "" : ` (${reason})`) +
+            (why === "" ? "" : `: ${why}`),
+          effectCategory: guarded.effectCategory,
+          // A quarter of an hour: long enough to read the command and decide, short enough that a card left
+          // on screen overnight cannot be approved the next morning for a stale reason.
+          ttlMs: 15 * 60_000,
+        });
+        return {
+          text:
+            `Đã gửi yêu cầu duyệt để chạy \`${guarded.command}\` trong ${guarded.cwd}. Chưa có gì chạy cả — người dùng ` +
+            `phải bấm duyệt, và tui không thể tự duyệt. Đừng nói là đã chạy xong.`,
+          hostCard: {
+            type: "approval-card",
+            owner: "host",
+            approvalId: approval.approvalId,
+            operationDescription: approval.operationDescription,
+            operationDigest: approval.operationDigest,
+            effectCategory: approval.effectCategory,
+            expiresAt: approval.expiresAt,
+            decider: approval.decider,
+            decision: approval.decision,
+            /*
+             * The payload is what runs on approval, and the digest above is what proves it is unchanged. It carries
+             * the narrowed envelope whole — the directory and the budget — because a guardrail's narrowing is policy:
+             * a card that displayed one envelope and ran another would be the same inversion this ordering fixed.
+             */
+            payload: JSON.stringify({
+              command: guarded.command,
+              cwd: guarded.cwd,
+              timeoutMs: guarded.budget.timeoutMs,
+              maxOutputBytes: guarded.budget.maxOutputBytes,
+            }),
+          },
+        };
+      }
+
       const operationId = input.newId();
 
       /*

@@ -27,6 +27,7 @@
 
 import {
   DEFAULT_EXECUTION_POLICY_CONFIG,
+  GUARD_CLASSES,
   type AutonomySettings,
   type EffectCategory,
   type ExecutionGuardrails,
@@ -39,9 +40,9 @@ import {
   parseAutonomySettings,
   parseExecutionPolicyConfig,
 } from "@clarkcant/contracts";
-import { appendAuditEvent } from "@clarkcant/storage";
+import { appendAuditEvent, allRows } from "@clarkcant/storage";
 
-import { getPreference, type PreferenceDeps, type PreferenceSource } from "./preferences.ts";
+import { getPreference, type PreferenceDeps, type PreferenceRecord, type PreferenceSource } from "./preferences.ts";
 import { writeRegisteredPreference, type PreferenceWriteOutcome } from "./preference-registry.ts";
 
 /** The one key a policy lives under from here on. */
@@ -151,7 +152,7 @@ export function legacyPolicyFromPolicy(policy: ExecutionPolicyConfig): Execution
 }
 
 function readAutonomyFamily(deps: PreferenceDeps, principalId: string): LegacyPolicyFamily | undefined {
-  const stored = getPreference(deps, {
+  const stored = readStoredPreference(deps, {
     principalId,
     key: LEGACY_AUTONOMY_PREFERENCE_KEY,
     scope: "node",
@@ -162,9 +163,28 @@ function readAutonomyFamily(deps: PreferenceDeps, principalId: string): LegacyPo
   return autonomyFamily(parseAutonomySettings(stored.value));
 }
 
+/**
+ * One stored preference, or nothing.
+ *
+ * The store reports a row whose JSON is unreadable instead of treating it as absent, which is right for a store.
+ * A migration is not: it runs inside a policy read, which happens per command, per widget action and per install,
+ * and a row this build cannot decode is exactly the case the field-wise parsers below already tolerate. Treating
+ * it as no row at all is the same answer they would give it.
+ */
+function readStoredPreference(
+  deps: PreferenceDeps,
+  input: { principalId: string; key: string; scope: "global" | "node" },
+): PreferenceRecord | undefined {
+  try {
+    return getPreference(deps, input);
+  } catch {
+    return undefined;
+  }
+}
+
 function readExecutionFamily(deps: PreferenceDeps, principalId: string): LegacyPolicyFamily | undefined {
-  const mode = getPreference(deps, { principalId, key: LEGACY_EXECUTION_MODE_KEY, scope: "global" });
-  const rules = getPreference(deps, { principalId, key: LEGACY_EXECUTION_RULES_KEY, scope: "global" });
+  const mode = readStoredPreference(deps, { principalId, key: LEGACY_EXECUTION_MODE_KEY, scope: "global" });
+  const rules = readStoredPreference(deps, { principalId, key: LEGACY_EXECUTION_RULES_KEY, scope: "global" });
   if (mode === undefined && rules === undefined) return undefined;
   return {
     // The registry's own default for a node that stored the rules and never the mode.
@@ -227,10 +247,9 @@ function joinGuardrails(
     // off is the one direction in this join that is not automatically the safer one.
     enabled: declared.every((guardrails) => guardrails.enabled),
     instructions: declared.find((guardrails) => guardrails.instructions !== "")?.instructions ?? "",
-    // The union, in the declared order of the six switches, so the same input always produces the same list.
-    classes: (["commands", "local-writes", "external-writes", "communication", "financial", "reads"] as const).filter(
-      (guardClass) => classes.has(guardClass),
-    ),
+    // The union, in the declared order of the class list, so the same input always produces the same list — and
+    // so a class a later build adds is joined rather than silently dropped from the union.
+    classes: GUARD_CLASSES.filter((guardClass) => classes.has(guardClass)),
     whenUnavailable: declared.some((guardrails) => guardrails.whenUnavailable === "deny") ? "deny" : "allow",
   };
 }
@@ -243,7 +262,16 @@ function joinGuardrails(
  */
 export function joinExecutionPolicies(families: readonly LegacyPolicyFamily[]): ExecutionPolicyConfig {
   if (families.length === 0) {
-    return { ...DEFAULT_EXECUTION_POLICY_CONFIG, rules: [], guardrails: { ...DEFAULT_EXECUTION_POLICY_CONFIG.guardrails } };
+    // Arrays are copied rather than shared: these are the process-wide default's own lists, and a caller that
+    // mutated the policy it was handed would otherwise edit the default for every node in this process.
+    return {
+      ...DEFAULT_EXECUTION_POLICY_CONFIG,
+      rules: [...DEFAULT_EXECUTION_POLICY_CONFIG.rules],
+      guardrails: {
+        ...DEFAULT_EXECUTION_POLICY_CONFIG.guardrails,
+        classes: [...DEFAULT_EXECUTION_POLICY_CONFIG.guardrails.classes],
+      },
+    };
   }
   return {
     mode: families.reduce<ExecutionMode>(
@@ -301,6 +329,53 @@ function samePolicy(left: unknown, right: ExecutionPolicyConfig): boolean {
 }
 
 /**
+ * Write the record of one migration, under an id that cannot collide with an earlier one.
+ *
+ * The id is derived from how many migrations this principal already has, and not from the stored preference's
+ * revision, which is what it used to be. A revision is resettable: `undoPreference` deletes the row when it had
+ * nothing to restore, so the next read migrated again and produced the same `…_r1` id. `audit_log.audit_id` is a
+ * primary key, so that threw `UNIQUE constraint failed` — after the policy had already been stored, which left the
+ * change the record exists for un-audited and failed the request that triggered it. `audit_log` is append-only, so
+ * counting its own rows is stable in a way a preference revision is not.
+ *
+ * A duplicate would still not be allowed to throw. This is called on the read path — per command, per widget action
+ * and per install — and the policy is stored by the time it runs, so turning a collision into an exception would
+ * report a failure for a change that did happen.
+ */
+function recordMigrationAudit(
+  deps: PreferenceDeps,
+  input: { principalId: string; families: number; policy: ExecutionPolicyConfig },
+): void {
+  const prefix = `audit_execution-policy-migration_${input.principalId}_`;
+  const taken = new Set(
+    allRows<{ audit_id: string }>(
+      deps.db,
+      "SELECT audit_id FROM audit_log WHERE principal_id = ?",
+      input.principalId,
+    ).map((row) => row.audit_id),
+  );
+  let ordinal = 1;
+  while (taken.has(`${prefix}${ordinal}`)) ordinal += 1;
+
+  try {
+    appendAuditEvent(deps.db, {
+      auditId: `${prefix}${ordinal}`,
+      principalId: input.principalId,
+      kind: "policy",
+      summary:
+        `hợp nhất ${input.families} họ policy cũ thành policy chuẩn ` +
+        `(mode ${input.policy.mode}, prohibition ${input.policy.prohibition}, ${input.policy.rules.length} rule)`,
+      outcome: "done",
+      at: deps.now(),
+    });
+  } catch (cause) {
+    // Only a duplicate is tolerated, and only because it means the same migration is already recorded. Anything
+    // else is a broken store, which is not something this function may hide.
+    if (!(cause instanceof Error) || !cause.message.includes("UNIQUE constraint failed")) throw cause;
+  }
+}
+
+/**
  * Store the canonical policy for a node that has not got one.
  *
  * Idempotent by comparison rather than by a flag: a second run computes the same join, sees the stored
@@ -319,7 +394,7 @@ export function migrateExecutionPolicy(
   if (execution !== undefined) families.push(execution);
   const policy = joinExecutionPolicies(families);
 
-  const stored = getPreference(deps, {
+  const stored = readStoredPreference(deps, {
     principalId: input.principalId,
     key: EXECUTION_POLICY_PREFERENCE_KEY,
     scope: "global",
@@ -342,18 +417,7 @@ export function migrateExecutionPolicy(
     return { policy, written: false, refusal: outcome.message, hadLegacy: families.length > 0 };
   }
 
-  appendAuditEvent(deps.db, {
-    // From the revision the write reported, so the record and the stored document cannot disagree about which
-    // migration wrote it, and a second run cannot collide with the first.
-    auditId: `audit_execution-policy-migration_${input.principalId}_r${outcome.preference.revision}`,
-    principalId: input.principalId,
-    kind: "policy",
-    summary:
-      `hợp nhất ${families.length} họ policy cũ thành policy chuẩn ` +
-      `(mode ${policy.mode}, prohibition ${policy.prohibition}, ${policy.rules.length} rule)`,
-    outcome: "done",
-    at: deps.now(),
-  });
+  recordMigrationAudit(deps, { principalId: input.principalId, families: families.length, policy });
 
   return { policy, written: true, hadLegacy: families.length > 0 };
 }

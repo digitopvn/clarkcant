@@ -78,6 +78,7 @@ import {
   liveStateOf,
   pinInstance,
   readExecutionPolicy,
+  readExecutionPolicyPreference,
   readRegisteredPreference,
   readSnapshotForDisplay,
   recordAppIntentEvent,
@@ -118,6 +119,7 @@ import {
   projectPolicyPreference,
   readAutonomySettings,
   saveAutonomySettings,
+  undoPolicyPreference,
   writePolicyPreference,
 } from "./autonomy-settings.ts";
 import { type OwnedResources, ownedResources } from "./preflight.ts";
@@ -916,17 +918,23 @@ export async function handleRequest(deps: GatewayDeps, request: GatewayRequest):
   if (request.method === "POST" && request.path === "/autonomy") {
     const parsed = readJson(request);
     if (!parsed.ok) return parsed.response;
-    const stored = saveAutonomySettings(
+    const saved = saveAutonomySettings(
       { db: services.runtime.db, now: () => nowInstant() },
       services.runtime.identity.ownerPrincipalId,
       parsed.value.settings ?? parsed.value,
     );
+    /*
+     * A refused write is answered as a refusal. The panel renders the answer as the state of the node, so
+     * reporting `ok: true` with a policy the registry would not store would describe a change that did not
+     * happen — and the fields it names are the ones the user has to fix.
+     */
+    if (!saved.ok) return fail(400, saved.code, saved.message);
     // The scope is stated rather than implied: this node reads the policy per command, so the next command
     // already runs under it, and a panel that said "restart to apply" would be lying about that.
     return json(200, {
       ok: true,
-      settings: autonomySettingsFromPolicy(stored),
-      policy: stored,
+      settings: autonomySettingsFromPolicy(saved.stored),
+      policy: saved.stored,
       applies: "the next command this node runs",
     });
   }
@@ -1080,14 +1088,21 @@ export async function handleRequest(deps: GatewayDeps, request: GatewayRequest):
      * The two keys a surface may still spell the policy's mode and rules in are answered as views of the one
      * policy, not as their own rows: a value nothing reads is a setting that does nothing, and the whole point
      * of the registry is that a key a surface writes is a key the node obeys.
+     *
+     * The policy comes from `readExecutionPolicyPreference` — the one reader, with the canonical row's own
+     * markers — rather than from a second read of the preference key. A read of the key would answer with the
+     * registry's default whenever no canonical row exists, which on an upgraded node whose legacy `autonomy` is
+     * `deny` reported `execution.mode: "autonomous"` for a node that refuses every effect. Reading it can store
+     * the canonical default the first time (that is the migration), which is exactly what makes what this route
+     * reports the same value the node will obey.
      */
-    const policy = readRegisteredPreference(preferenceDeps, {
-      principalId: runtime.identity.ownerPrincipalId,
-      key: EXECUTION_POLICY_PREFERENCE_KEY,
-    });
+    const policy = readExecutionPolicyPreference(preferenceDeps, runtime.identity.ownerPrincipalId);
     return json(200, {
-      preferences:
-        policy === undefined ? stored : stored.map((preference) => projectPolicyPreference(policy, preference)),
+      preferences: stored.map((preference) =>
+        preference.key === EXECUTION_POLICY_PREFERENCE_KEY
+          ? policy
+          : projectPolicyPreference(policy, preference),
+      ),
     });
   }
 
@@ -1145,15 +1160,14 @@ export async function handleRequest(deps: GatewayDeps, request: GatewayRequest):
       if (!compat.ok) {
         return fail(compat.code === "PREFERENCE_UNKNOWN" ? 404 : 400, compat.code, compat.message);
       }
-      const policy = readRegisteredPreference(preferenceDeps, {
-        principalId: runtime.identity.ownerPrincipalId,
-        key: EXECUTION_POLICY_PREFERENCE_KEY,
-      });
+      // The answer is the policy in force, projected under the key that was written — through the one reader, so
+      // the value a surface is shown is the value the node will obey.
+      const policy = readExecutionPolicyPreference(preferenceDeps, runtime.identity.ownerPrincipalId);
       const view = readRegisteredPreference(preferenceDeps, {
         principalId: runtime.identity.ownerPrincipalId,
         key: requested,
       });
-      if (policy !== undefined && view !== undefined) {
+      if (view !== undefined) {
         return json(200, { preference: projectPolicyPreference(policy, view) });
       }
     }
@@ -1180,10 +1194,19 @@ export async function handleRequest(deps: GatewayDeps, request: GatewayRequest):
     segments[2] === "undo" &&
     request.method === "POST"
   ) {
-    const outcome = undoRegisteredPreference(preferenceDeps, {
-      principalId: runtime.identity.ownerPrincipalId,
-      key: segments[1] ?? "",
-    });
+    /*
+     * The legacy policy keys first, for the same reason the write path asks first: a write through `execution.mode`
+     * or `execution.rules` landed in the canonical policy, so undoing one has to reach the row it changed.
+     */
+    const outcome =
+      undoPolicyPreference(preferenceDeps, {
+        principalId: runtime.identity.ownerPrincipalId,
+        key: segments[1] ?? "",
+      }) ??
+      undoRegisteredPreference(preferenceDeps, {
+        principalId: runtime.identity.ownerPrincipalId,
+        key: segments[1] ?? "",
+      });
     if (!outcome.ok) return fail(404, outcome.code, outcome.message);
     // `undone: false` travels as a success, because a key nobody has written has nothing to undo:
     // reporting a change that did not happen would be worse than reporting that there was none.

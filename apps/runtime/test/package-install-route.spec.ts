@@ -3,8 +3,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { platformForHost } from "@clarkcant/contracts";
-import { setPreference } from "@clarkcant/core";
+import { platformForHost, DEFAULT_EXECUTION_POLICY_CONFIG } from "@clarkcant/contracts";
+import { EXECUTION_POLICY_PREFERENCE_KEY, writeRegisteredPreference } from "@clarkcant/core";
 
 import { handleRequest, type GatewayDeps, type GatewayRequest, type GatewayResponse } from "../src/gateway.ts";
 import { bootNodeServices, type NodeServices } from "../src/services.ts";
@@ -131,16 +131,17 @@ describe("installing from the directory", () => {
 
   it("asks first when the policy says to, and installs nothing", async () => {
     writeIndex([entry()]);
-    setPreference(
+    // The canonical policy, written where the node reads it: this route asks the policy, not a row beside it.
+    const written = writeRegisteredPreference(
       { db: services.runtime.db, now: () => AT as never },
       {
         principalId: services.runtime.identity.ownerPrincipalId,
-        key: "execution.mode",
-        scope: "global",
-        value: "ask",
+        key: EXECUTION_POLICY_PREFERENCE_KEY,
+        value: { ...DEFAULT_EXECUTION_POLICY_CONFIG, mode: "ask" },
         source: "user",
       },
     );
+    if (!written.ok) throw new Error(written.message);
 
     const response = await install({ packageId: "com.example.calendar", version: "1.2.0" });
 
@@ -151,6 +152,27 @@ describe("installing from the directory", () => {
     expect(typeof body["approvalId"]).toBe("string");
     // Nothing was installed, and nothing claims it was.
     expect(JSON.stringify(body)).not.toContain("generationId");
+  });
+
+  it("refuses on a node that refuses every effect, and installs nothing", async () => {
+    writeIndex([entry()]);
+    // The third mode the install seam has to agree with the command and widget seams about.
+    const written = writeRegisteredPreference(
+      { db: services.runtime.db, now: () => AT as never },
+      {
+        principalId: services.runtime.identity.ownerPrincipalId,
+        key: EXECUTION_POLICY_PREFERENCE_KEY,
+        value: { ...DEFAULT_EXECUTION_POLICY_CONFIG, prohibition: "all" },
+        source: "user",
+      },
+    );
+    if (!written.ok) throw new Error(written.message);
+
+    const response = await install({ packageId: "com.example.calendar", version: "1.2.0" });
+
+    expect(response.status).toBe(403);
+    expect((response.body as Record<string, unknown>)["code"]).toBe("POLICY_REFUSED");
+    expect(JSON.stringify(response.body)).not.toContain("generationId");
   });
 });
 

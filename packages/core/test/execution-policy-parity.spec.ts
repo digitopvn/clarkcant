@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
 
 import {
   DEFAULT_EXECUTION_POLICY_CONFIG,
@@ -8,7 +8,11 @@ import {
   type ExecutionPolicy,
   type ExecutionPolicyConfig,
   type ExecutionRule,
+  type Instant,
+  type WidgetDefinition,
+  compileActionBinding,
 } from "@clarkcant/contracts";
+import { migrate, openDatabase, type Database } from "@clarkcant/storage";
 
 import { decideExecution, guardrailCovers } from "../src/execution-policy.ts";
 import {
@@ -17,6 +21,12 @@ import {
   legacyPolicyFromPolicy,
   type LegacyPolicyFamily,
 } from "../src/execution-policy-migration.ts";
+import {
+  createInstance,
+  invokeMiniAppAction,
+  saveActionBinding,
+  type WidgetDeps,
+} from "../src/widget-service.ts";
 
 /**
  * Parity across the surfaces, and — the half that actually catches a regression — parity between what this
@@ -151,32 +161,177 @@ const LEGACY_CONFIGS: readonly {
   },
 ];
 
-describe("one policy, four surfaces", () => {
-  it("answers one thing for one question, whichever seam asks it", () => {
+describe("one policy, whichever seam asks it", () => {
+  /*
+   * The seams live in different packages: a command goes through `run_command` in `apps/runtime/src/node-tools.ts`,
+   * an install through the route in `apps/runtime/src/gateway.ts`, and both are driven under all three modes by
+   * `apps/runtime/test/node-tools.spec.ts`, `command-policy.spec.ts` and `package-install-route.spec.ts`. The one
+   * seam this package owns is the widget action, and it is driven here through its real entry point rather than
+   * through the decision it calls: a table that calls `decideExecution` four times with the same arguments and a
+   * different label in a string measures nothing about a seam.
+   */
+  const ACTION_WIDGET: WidgetDefinition = {
+    id: "canvas.probe@1",
+    version: "1.0.0",
+    renderer: "catalog",
+    propsSchema: { type: "object", additionalProperties: true },
+    eventSchemas: {},
+    stateSchema: { type: "object" },
+    stateVersion: 1,
+    semanticDescription: "A widget whose bound action is not a view operation",
+    requestedCapabilities: [],
+    sizing: { compact: true, expanded: true },
+    textFallback: "A probe widget.",
+    effectCategories: ["local-write"],
+    datasetRefs: [],
+  };
+
+  let db: Database;
+  let deps: WidgetDeps;
+  let instanceId: string;
+  let bindingId: string;
+  let bindingDigest: string;
+
+  beforeEach(() => {
+    db = openDatabase({ path: ":memory:" });
+    migrate(db);
+    let counter = 0;
+    deps = {
+      db,
+      nodeId: "node_local",
+      now: () => "2026-09-21T12:00:00.000Z" as Instant,
+      newId: (prefix) => `${prefix}_${(counter += 1)}`,
+    };
+    const instance = createInstance(deps, {
+      definition: ACTION_WIDGET,
+      packageDigest: "sha256:probe",
+      ownerPrincipalId: "prin_owner" as never,
+      props: {},
+    });
+    const compiled = compileActionBinding({
+      bindingId: "act_probe",
+      instance: {
+        instanceId: instance.instanceId,
+        ownerNodeId: deps.nodeId,
+        definitionRef: { id: ACTION_WIDGET.id, version: ACTION_WIDGET.version, packageDigest: "sha256:probe" },
+        actionBindingRevision: instance.actionBindingRevision,
+      },
+      packageGeneration: "sha256:probe",
+      label: "do something",
+      // Not a view operation, so the seam has to ask the policy whether the effect may happen at all.
+      proposal: { kind: "agent", intent: "do something", contextRefs: [] },
+      inputSchema: { type: "object" },
+      allowedDataRefs: [],
+      fixedConstraints: {},
+      effectCategory: "local-write",
+      requiresApproval: true,
+      limits: {},
+      bindingDigest: "sha256:probe-action",
+      at: deps.now(),
+      knownCapabilities: new Set<string>(),
+    });
+    if (!compiled.ok) throw new Error(`fixture binding did not compile: ${compiled.message}`);
+    saveActionBinding(deps, compiled.binding);
+    instanceId = instance.instanceId;
+    bindingId = compiled.binding.actionBindingId;
+    bindingDigest = compiled.binding.bindingDigest;
+  });
+
+  function invoke(inForce: ExecutionPolicyConfig) {
+    return invokeMiniAppAction(deps, {
+      conversationId: "conv_parity",
+      principalId: "prin_owner" as never,
+      instanceId,
+      actionBindingId: bindingId,
+      expectedRevision: 1,
+      expectedBindingDigest: bindingDigest,
+      input: {},
+      invocationId: "inv_parity",
+      policy: inForce,
+    });
+  }
+
+  it("refuses through the widget seam exactly what the policy refuses", () => {
+    const decision = decideExecution({
+      policy: policy({ prohibition: "all" }),
+      action: { kind: "effect", category: "local-write", operationDigest: bindingDigest },
+      explicitUserIntent: true,
+    });
+    if (decision.kind !== "deny") throw new Error("expected the prohibition to refuse");
+
+    const outcome = invoke(policy({ prohibition: "all" }));
+
+    expect(outcome.ok).toBe(false);
+    if (outcome.ok) throw new Error("expected a refusal");
+    expect(outcome.code).toBe("POLICY_REFUSED");
+    // The seam reports the policy's own reason rather than a second vocabulary for it.
+    expect(outcome.message).toBe(decision.reason);
+  });
+
+  it("tells a policy that asks apart from one that allows, because the two need different fixes", () => {
+    for (const mode of ["ask", "autonomous"] as const) {
+      const inForce = policy({ mode });
+      const decision = decideExecution({
+        policy: inForce,
+        action: { kind: "effect", category: "local-write", operationDigest: bindingDigest },
+        explicitUserIntent: true,
+      });
+
+      const outcome = invoke(inForce);
+      expect(outcome.ok, mode).toBe(false);
+      if (outcome.ok) throw new Error("expected a refusal");
+      // An action this node has no executor for is not a permission problem, and a policy that asks is not a
+      // policy that allowed: the seam says which of the two it is.
+      expect(outcome.code, mode).toBe("UNSUPPORTED_ACTION");
+      if (decision.kind === "ask") expect(outcome.message, mode).toContain("approval path");
+      else expect(outcome.message, mode).toContain("no executor");
+    }
+  });
+
+  it("answers one thing for one policy whatever a seam is free to vary", () => {
     /*
-     * The four seams supply their own guard class and their own reading of intent, and neither is an input to the
-     * decision: the guard class decides whether the judgment layer looks, and `mode` decides who is asked. So the
-     * assertion is that one (mode, category, intent, boundary) produces one kind on all four — the shape that makes
-     * "a command and a widget action with the same reach behave the same" a fact rather than a hope.
+     * What the cross-surface claim rests on, stated as the property that makes it true: the only inputs to the
+     * decision are the policy and the question, and the fields a seam supplies — the digest an approval is bound to,
+     * the sentence a card carries, whether it read a click or a proposal — are not among them. The question has no
+     * `surface` field at all, which is the structural half of the same fact.
+     *
+     * The seams themselves are driven through their own entry points: the widget action just below, and the command
+     * and install seams in `apps/runtime/test/node-tools.spec.ts`, `command-policy.spec.ts` and
+     * `package-install-route.spec.ts`.
      */
-    let cases = 0;
+    const seams = [
+      { seam: "command", operationDigest: "sha256:command" },
+      { seam: "install", operationDigest: "sha256:install" },
+      { seam: "widget-action", operationDigest: "sha256:binding" },
+    ] as const;
+
     for (const mode of MODES) {
       for (const category of CATEGORIES) {
         for (const explicitUserIntent of [true, false]) {
           for (const hardBoundary of [true, false]) {
-            const kinds = SURFACES.map((surface) => {
-              cases += 1;
-              return `${surface}=${decisionKind(policy({ mode }), category, { explicitUserIntent, hardBoundary })}`;
-            });
+            const kinds = seams.map(({ seam, operationDigest }) =>
+              decideExecution({
+                policy: policy({ mode }),
+                action: { kind: "effect", category, operationDigest },
+                explicitUserIntent,
+                ...(hardBoundary
+                  ? {
+                      hardBoundary: {
+                        kind: "os-permission" as const,
+                        because: `${seam} was handed to the operating system`,
+                      },
+                    }
+                  : {}),
+              }).kind,
+            );
             expect(
-              new Set(kinds.map((entry) => entry.split("=")[1])).size,
-              `${mode}/${category}/intent=${explicitUserIntent}/boundary=${hardBoundary}: ${kinds.join(", ")}`,
+              new Set(kinds).size,
+              `${mode}/${category}/intent=${explicitUserIntent}/boundary=${hardBoundary}`,
             ).toBe(1);
           }
         }
       }
     }
-    console.info(`cross-surface tuples evaluated: ${cases}`);
   });
 
   it("keeps the judgment layer's gate on the guard class, never on the outcome", () => {
