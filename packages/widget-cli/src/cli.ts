@@ -42,7 +42,7 @@ export const WIDGET_COMMANDS = [
   { name: "pack", usage: "clark widget pack [dir]                                     build the artifact and its digest" },
   {
     name: "dev",
-    usage: "clark widget dev [dir] [--port N]                           run the dev host and its browser shell",
+    usage: "clark widget dev [dir] [--port N] [--builtin <id>]          run the dev host and its browser shell",
   },
   { name: "publish", usage: "clark widget publish [dir]                                  prepare the directory submission" },
 ] as const;
@@ -442,9 +442,13 @@ export async function runCli(argv: readonly string[]): Promise<number> {
   if (command === "pack") return pack(dir);
   if (command === "dev") {
     const requested = Number(flag(rest, "--port") ?? "0");
-    const host = await startDevHost({ root: dir, port: Number.isInteger(requested) ? requested : 0 });
+    const builtin = flag(rest, "--builtin");
+    const host = await startDevHost({
+      ...(builtin === undefined ? { root: dir } : { builtin }),
+      port: Number.isInteger(requested) ? requested : 0,
+    });
     process.stdout.write(`dev host: ${host.url}
-  package: ${dir}
+  ${builtin === undefined ? `package: ${dir}` : `catalog widget: ${builtin}`}
   ctrl-c để dừng
 `);
     // Stay alive until ctrl-c: the listening server keeps the event loop busy, which is the whole of "running".

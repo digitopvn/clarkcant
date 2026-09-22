@@ -1,8 +1,14 @@
 import { createServer, type Server, type ServerResponse } from "node:http";
 import { readFileSync, statSync, watch, type FSWatcher } from "node:fs";
 import { extname, join, normalize, resolve, sep } from "node:path";
+import { fileURLToPath } from "node:url";
+
+import react from "@vitejs/plugin-react";
+import { createServer as createViteServer, type ViteDevServer } from "vite";
 
 import { readPackage } from "@clarkcant/core";
+import { catalogEntry } from "@clarkcant/widget-catalog";
+import { catalogFrameHtml, catalogTarget } from "./catalog-target.ts";
 import { applyShellAction, initialState, renderShell, type DevShellAction, type DevShellState } from "./dev-shell.ts";
 
 /**
@@ -24,7 +30,15 @@ import { applyShellAction, initialState, renderShell, type DevShellAction, type 
  */
 
 export interface DevHostOptions {
-  root: string;
+  /** The package directory to develop. Absent when `builtin` names a catalog definition instead. */
+  root?: string;
+  /**
+   * A catalog definition id to develop in place of a package on disk.
+   *
+   * The frame is the same sandboxed frame, and the renderer is the same production renderer, so what an author sees
+   * here is what the conversation would draw. Only where the definition and the frame's module come from differs.
+   */
+  builtin?: string;
   /** 0 asks the operating system for a free port, which is what a test wants. */
   port?: number;
   watchFiles?: boolean;
@@ -166,16 +180,94 @@ window.addEventListener("message", (event) => {
 });
 `;
 
-export async function startDevHost(options: DevHostOptions): Promise<DevHost> {
-  const root = resolve(options.root);
+/** Where a shell's facts come from, once the choice between a package and the catalog has been made. */
+interface ShellSource {
+  /** The directory whose files may be served, or `undefined` for a catalog widget, which has no package. */
+  root: string | undefined;
+  packageId: string;
+  definitionId: string;
+  fixtures: readonly string[];
+  requestedCapabilities: readonly string[];
+  entryUrl: string;
+  definition: { textFallback: string; semanticDescription: string };
+}
+
+/** The widget-cli package directory, which is Vite's root when the frame is a catalog widget. */
+const CLI_ROOT = fileURLToPath(new URL("..", import.meta.url));
+
+function packageSource(requested: string): ShellSource {
+  const root = resolve(requested);
   const pkg = readPackage(root);
   const facet = pkg.facets[0];
   if (facet === undefined) {
     throw new Error(`no widget facet is declared in ${root}, so there is nothing to develop`);
   }
+  return {
+    root,
+    packageId: pkg.manifest.id,
+    definitionId: facet.facetId,
+    fixtures: Object.keys(pkg.fixtures),
+    requestedCapabilities: facet.definition.requestedCapabilities,
+    entryUrl: `/${facet.entryPath}`,
+    definition: {
+      textFallback: facet.definition.textFallback,
+      semanticDescription: facet.definition.semanticDescription,
+    },
+  };
+}
 
-  const fixtures = Object.keys(pkg.fixtures);
-  const capabilities = facet.definition.requestedCapabilities;
+function catalogSource(definitionId: string): ShellSource {
+  // Resolved through the catalog rather than trusted, so an id the catalog does not have is refused here and not in
+  // the browser, where the frame would have to report it.
+  const target = catalogTarget({ definitionId, fixtureId: "" });
+  if (target === undefined) {
+    throw new Error(`${definitionId} is not a definition in the catalog, so there is nothing to develop`);
+  }
+  return {
+    root: undefined,
+    packageId: "catalog",
+    definitionId: target.entry.definition.id,
+    fixtures: target.entry.fixtures.map((fixture) => fixture.id),
+    requestedCapabilities: target.entry.definition.requestedCapabilities,
+    entryUrl: "/catalog-runtime.html",
+    definition: {
+      textFallback: target.entry.definition.textFallback,
+      semanticDescription: target.entry.definition.semanticDescription,
+    },
+  };
+}
+
+export async function startDevHost(options: DevHostOptions): Promise<DevHost> {
+  if (options.builtin !== undefined && options.root !== undefined) {
+    throw new Error("a dev host takes either a package directory or a builtin definition id, not both");
+  }
+  if (options.builtin === undefined && options.root === undefined) {
+    throw new Error("a dev host needs a package directory, or a builtin definition id");
+  }
+
+  const source = options.builtin === undefined ? packageSource(options.root ?? "") : catalogSource(options.builtin);
+  const root = source.root;
+
+  /*
+   * Vite serves the catalog frame's module graph from the workspace source, so the preview is the production
+   * renderer rather than a copy of it, and there is no build step to forget. It is created only for a catalog
+   * widget: a package's frame is its own entry HTML, which this server already knows how to serve.
+   */
+  const vite: ViteDevServer | undefined =
+    source.root === undefined
+      ? await createViteServer({
+          configFile: false,
+          root: CLI_ROOT,
+          appType: "custom",
+          logLevel: "error",
+          plugins: [react()],
+          // The frame is an opaque origin, so its module requests arrive with `Origin: null`.
+          server: { middlewareMode: true, hmr: false, cors: true },
+        })
+      : undefined;
+
+  const fixtures = source.fixtures;
+  const capabilities = source.requestedCapabilities;
   let state = initialState({ fixtures, requestedCapabilities: capabilities });
   let reloadCount = 0;
   // Typed as the response itself rather than a structural lookalike: a cast here would be a comment about
@@ -255,24 +347,44 @@ export async function startDevHost(options: DevHostOptions): Promise<DevHost> {
       return;
     }
 
+    /*
+     * The frame's page for a catalog widget. Generated per request so it carries the fixture the shell is currently
+     * showing: the shell reloads the frame on every control change, so the state read here is the state on screen.
+     */
+    if (path === "/catalog-runtime.html" && source.root === undefined) {
+      response.writeHead(200, { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" });
+      response.end(catalogFrameHtml({ definitionId: source.definitionId, fixtureId: state.fixture }));
+      return;
+    }
+
     if (path === "/" || path === "/index.html") {
       response.writeHead(200, { "content-type": "text/html; charset=utf-8" });
       response.end(
         renderShell(
           {
-            packageId: pkg.manifest.id,
-            definitionId: facet.facetId,
+            packageId: source.packageId,
+            definitionId: source.definitionId,
             fixtures,
             requestedCapabilities: capabilities,
-            entryUrl: `/${facet.entryPath}`,
-            definition: {
-              textFallback: facet.definition.textFallback,
-              semanticDescription: facet.definition.semanticDescription,
-            },
+            entryUrl: source.entryUrl,
+            definition: source.definition,
           },
           state,
         ),
       );
+      return;
+    }
+
+    if (source.root === undefined || vite !== undefined) {
+      /*
+       * A catalog widget has no package files to serve: its module graph belongs to Vite, which resolves the
+       * workspace's sources the way the app's own build does. Handing the request over rather than answering it is
+       * what keeps the preview the production renderer instead of a second implementation of it.
+       */
+      vite?.middlewares(request, response, () => {
+        response.writeHead(404, { "content-type": "text/plain; charset=utf-8" });
+        response.end("not found\n");
+      });
       return;
     }
 
@@ -281,8 +393,9 @@ export async function startDevHost(options: DevHostOptions): Promise<DevHost> {
      * resolves to hands out the author's home directory, and it is the ordinary way a local tool becomes a way to
      * read files.
      */
-    const candidate = resolve(join(root, normalize(path)));
-    const inside = candidate === root || candidate.startsWith(root + sep);
+    const packageRoot = source.root;
+    const candidate = resolve(join(packageRoot, normalize(path)));
+    const inside = candidate === packageRoot || candidate.startsWith(packageRoot + sep);
     if (!inside) {
       response.writeHead(403, { "content-type": "text/plain; charset=utf-8" });
       response.end("refused: that path is outside the package\n");
@@ -299,7 +412,7 @@ export async function startDevHost(options: DevHostOptions): Promise<DevHost> {
   });
 
   let watcher: FSWatcher | undefined;
-  if (options.watchFiles !== false) {
+  if (root !== undefined && options.watchFiles !== false) {
     try {
       watcher = watch(root, { recursive: true }, () => {
         reloadCount += 1;
@@ -333,6 +446,7 @@ export async function startDevHost(options: DevHostOptions): Promise<DevHost> {
         watcher?.close();
         for (const client of clients) client.end();
         clients.clear();
+        void vite?.close();
         server.close(() => {
           done();
         });

@@ -11,39 +11,15 @@
  */
 import { createRoot } from "react-dom/client";
 
-import type { WidgetFixture } from "@clarkcant/contracts";
-import type { WidgetCatalogEntry } from "@clarkcant/widget-catalog";
-import { catalogEntry } from "@clarkcant/widget-catalog";
 import { WidgetPreview } from "@clarkcant/conversation-client";
 
-/** What the frame is told to draw: a catalog entry, and one of its fixtures. */
-export interface CatalogRuntimeInput {
-  definitionId: string;
-  fixtureId: string;
-}
-
-export interface CatalogRuntimeTarget {
-  entry: WidgetCatalogEntry;
-  fixture: WidgetFixture;
-}
+import { catalogTarget, type CatalogRuntimeInput } from "./catalog-target.ts";
 
 /**
- * The entry and fixture to draw, or `undefined` when the frame was told something this build cannot draw.
+ * Draws the target into `host`. Returns `false` when there was nothing this build could draw.
  *
- * A missing fixture falls back to the entry's first one rather than failing, because the shell's fixture control
- * lists what the entry has: a name that no longer exists means the page is one reload behind, not that the request
- * was wrong. A missing entry is a real refusal, and it is reported by returning `undefined` rather than throwing —
- * the frame has to leave the shell usable, since the shell is where the author reads what went wrong.
+ * The decision about what to draw is `catalogTarget` in `catalog-target.ts`; this only mounts it.
  */
-export function catalogTarget(input: CatalogRuntimeInput): CatalogRuntimeTarget | undefined {
-  const entry = catalogEntry(input.definitionId);
-  if (entry === undefined) return undefined;
-  const fixture = entry.fixtures.find((candidate) => candidate.id === input.fixtureId) ?? entry.fixtures[0];
-  if (fixture === undefined) return undefined;
-  return { entry, fixture };
-}
-
-/** Draws the target into `host`. Returns `false` when there was nothing this build could draw. */
 export function mountCatalogPreview(input: CatalogRuntimeInput, host: HTMLElement): boolean {
   const target = catalogTarget(input);
   if (target === undefined) return false;
@@ -59,8 +35,8 @@ declare global {
 }
 
 /*
- * The bootstrap. Absent in a test, where this module is imported for the functions above: a test that mounted
- * anything would be a test that needs a browser, which is what `apps/web/e2e` is for.
+ * The bootstrap. Absent in a test, where this module is imported for the function above: a test that mounted
+ * anything would be a test that needs a browser, which is what the browser suite is for.
  */
 const host = typeof document === "undefined" ? null : document.getElementById("cc-catalog-root");
 const input = typeof window === "undefined" ? undefined : window.__CC_CATALOG__;

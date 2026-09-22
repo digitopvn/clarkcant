@@ -491,6 +491,9 @@ importers:
       '@clarkcant/contracts':
         specifier: workspace:*
         version: link:../contracts
+      '@clarkcant/conversation-client':
+        specifier: workspace:*
+        version: link:../conversation-client
       '@clarkcant/core':
         specifier: workspace:*
         version: link:../core

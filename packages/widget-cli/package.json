@@ -23,6 +23,7 @@
   },
   "dependencies": {
     "@clarkcant/contracts": "workspace:*",
+    "@clarkcant/conversation-client": "workspace:*",
     "@clarkcant/widget-host": "workspace:*",
     "@clarkcant/widget-sdk": "workspace:*",
     "zod": "4.6.5",
