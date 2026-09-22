@@ -2,7 +2,7 @@ import { constants } from "node:fs";
 import { lstat, open, readdir, realpath, stat, type FileHandle } from "node:fs/promises";
 import { dirname, isAbsolute, join, parse, relative, sep } from "node:path";
 
-import { startGrepMatcher } from "./grep-matcher.ts";
+import { startPatternMatcher } from "./pattern-matcher.ts";
 import type { ToolDefinition } from "./types.ts";
 
 /**
@@ -91,6 +91,15 @@ export const SCOPED_FS_LIMITS = {
    * a timer. The match runs in a thread this process can kill, and this is the clock that kills it.
    */
   maxGrepMatchMs: 5_000,
+  /**
+   * Milliseconds one find's name matching may spend before its thread is terminated.
+   *
+   * The same clock as a grep's, on the same kind of unbounded expression: `*?` repeated eleven times is eleven
+   * `.*.` in a row once the glob is translated, and a name that does not end in the letter the pattern ends
+   * with makes the engine try every way of splitting it. Tighter than a grep's because the work is smaller —
+   * the names one traversal collected, not every line of every file under it.
+   */
+  maxFindMatchMs: 1_000,
   /** Matches one grep returns. */
   maxMatches: 100,
   /** Directory entries one traversal visits. */
@@ -374,14 +383,26 @@ function invalidPattern(reason: string): { text: string } {
 /**
  * Cut a body so that the header and the body together stay inside the per-tool output bound.
  *
- * The cut is labelled, because a file that looks whole and is not is what the bound exists to prevent.
+ * The cut is labelled, because a file that looks whole and is not is what the bound exists to prevent. It is
+ * also made between characters rather than between bytes: a byte cut can land inside a multi-byte character,
+ * and the replacement character the decoder leaves behind re-encodes to three bytes, which puts an answer that
+ * was cut to fit back over the bound it was cut for.
  */
 function boundedBody(body: string, header: string): string {
   const room = SCOPED_FS_LIMITS.maxOutputBytes - Buffer.byteLength(header) - 1;
   if (Buffer.byteLength(body) <= room) return body;
   const note = `\n… truncated: the output bound of ${SCOPED_FS_LIMITS.maxOutputBytes} byte was reached`;
-  const kept = Buffer.from(body, "utf8").subarray(0, Math.max(0, room - Buffer.byteLength(note)));
-  return `${kept.toString("utf8")}${note}`;
+  const limit = Math.max(0, room - Buffer.byteLength(note));
+  const kept: string[] = [];
+  let bytes = 0;
+  // Iterating a string visits whole code points, so the cut can only fall between characters.
+  for (const character of body) {
+    const size = Buffer.byteLength(character);
+    if (bytes + size > limit) break;
+    kept.push(character);
+    bytes += size;
+  }
+  return `${kept.join("")}${note}`;
 }
 
 /** One string parameter, trimmed, with an empty value treated as absent. */
@@ -634,7 +655,11 @@ function grepTool(roots: readonly ApprovedRoot[]): ToolDefinition {
       const searchNotes: string[] = [];
       let matched = 0;
       let cutAtMatches = false;
-      const matcher = startGrepMatcher({ pattern, budgetMs: SCOPED_FS_LIMITS.maxGrepMatchMs });
+      const matcher = startPatternMatcher({
+        kind: "regex",
+        pattern,
+        budgetMs: SCOPED_FS_LIMITS.maxGrepMatchMs,
+      });
       try {
         for (const file of walked.files) {
           if (matched >= maxMatches) {
@@ -705,7 +730,8 @@ function findTool(roots: readonly ApprovedRoot[]): ToolDefinition {
     label: "Find files inside the approved project roots",
     description:
       "Lists files under a path inside the approved project roots whose name matches a glob (`*` and `?`) or, when " +
-      "the pattern has neither, contains it as a substring. Symlinks that leave the roots are not followed.",
+      "the pattern has neither, contains it as a substring. Symlinks that leave the roots are not followed, and a " +
+      "glob that cannot finish matching inside its wall-clock budget is refused rather than left to run.",
     promptSnippet: "clarkcant_find: list files inside the approved project roots",
     parameters: {
       type: "object",
@@ -733,10 +759,41 @@ function findTool(roots: readonly ApprovedRoot[]): ToolDefinition {
           ? await traverse({ roots, start: resolved.path, maxDepth, maxEntries: SCOPED_FS_LIMITS.maxEntries })
           : { files: single, truncated: undefined, notes: [] };
 
-      const matching = walked.files
-        .filter((file) => matchesName(file.label.split("/").pop() ?? "", pattern))
-        .map((file) => file.label)
-        .sort((left, right) => left.localeCompare(right));
+      const names = walked.files.map((file) => file.label.split("/").pop() ?? "");
+      let matched: readonly TraversedFile[];
+      if (pattern === undefined) {
+        matched = walked.files;
+      } else if (!isGlobPattern(pattern)) {
+        /*
+         * A pattern with no wildcard is a substring, and `String.prototype.includes` has no backtracking to
+         * run away with: its cost is its input's length and nothing else. Only a glob needs a thread, because
+         * only a glob is translated into an expression whose match time is not bounded by the name it is
+         * tested against.
+         */
+        matched = walked.files.filter((_file, index) => (names[index] ?? "").includes(pattern));
+      } else {
+        const matcher = startPatternMatcher({
+          kind: "glob",
+          pattern,
+          budgetMs: SCOPED_FS_LIMITS.maxFindMatchMs,
+        });
+        try {
+          const outcome = await matcher.match(names);
+          if (!outcome.ok) {
+            if (outcome.kind === "invalid-pattern") return invalidPattern(outcome.reason);
+            // The matches found so far are a prefix of an answer nobody can trust, so a glob that outran its
+            // clock ends the whole listing rather than being reported as the complete one.
+            return refused(`${outcome.reason} (while matching the name "${pattern}")`);
+          }
+          matched = outcome.matches.flatMap((index) => {
+            const file = walked.files[index];
+            return file === undefined ? [] : [file];
+          });
+        } finally {
+          await matcher.dispose();
+        }
+      }
+      const matching = matched.map((file) => file.label).sort((left, right) => left.localeCompare(right));
       const shown = matching.slice(0, maxResults);
       const notes = [
         ...walked.notes,
@@ -753,15 +810,9 @@ function findTool(roots: readonly ApprovedRoot[]): ToolDefinition {
   };
 }
 
-/** Whether a file name matches a glob, or contains the pattern when it is not a glob. */
-function matchesName(name: string, pattern: string | undefined): boolean {
-  if (pattern === undefined) return true;
-  if (!pattern.includes("*") && !pattern.includes("?")) return name.includes(pattern);
-  const source = pattern
-    .replace(/[.+^${}()|[\]\\]/g, "\\$&")
-    .replaceAll("*", ".*")
-    .replaceAll("?", ".");
-  return new RegExp(`^${source}$`).test(name);
+/** Whether a pattern is a glob rather than a substring: only `*` and `?` are wildcards in this glob. */
+function isGlobPattern(pattern: string): boolean {
+  return pattern.includes("*") || pattern.includes("?");
 }
 
 /** The ls tool: one directory, its entries, bounded. */

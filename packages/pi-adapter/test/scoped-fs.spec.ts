@@ -303,6 +303,33 @@ describe("the scoped tools", () => {
     expect(result.text).toContain(String(SCOPED_FS_LIMITS.maxOutputBytes));
   });
 
+  it("cuts a read between characters, so a multi-byte file stays inside the output bound", async () => {
+    const roots = await approved(projectA);
+    /*
+     * `€` is three bytes, so a cut made at a byte offset can land inside one, and the replacement character a
+     * decoder then leaves behind re-encodes to three bytes: an answer cut to fit goes back over the bound it
+     * was cut for. Measured with the byte cut: 65 538 bytes against a bound of 65 536.
+     */
+    const read = tool(roots, "clarkcant_read");
+    // Three file sizes, because whether a byte offset lands inside a character depends on the header's own
+    // length, which the byte count in it changes; a bound that holds for one of them and not the others is
+    // not a bound.
+    const sizes = [100_000, 1_000_000, 10_000_000];
+    for (const size of sizes) {
+      const name = join(projectA, `euro-${size}.txt`);
+      await writeFile(name, "€".repeat(Math.ceil(size / 3)), "utf8");
+
+      const result = await read.execute({ path: name });
+
+      expect(
+        Buffer.byteLength(result.text, "utf8"),
+        `a read of ${size} byte of multi-byte text exceeded the output bound`,
+      ).toBeLessThanOrEqual(SCOPED_FS_LIMITS.maxOutputBytes);
+      // No replacement character: the cut fell between characters rather than inside one.
+      expect(result.text).not.toContain("\uFFFD");
+    }
+  });
+
   it("refuses a read of a symlink whose target is not there, rather than following it", async () => {
     const roots = await approved(projectA);
     await symlink(join(projectA, "not-there.txt"), join(projectA, "dangling.txt"));
@@ -320,7 +347,8 @@ describe("the scoped tools", () => {
      * A catastrophic pattern: `^(a+)+$` against `a`s that end in a `b` backtracks for longer than this test
      * will live, and a synchronous match would hold the whole event loop rather than one call. The clock the
      * tool is held to is what has to answer, and the ticker below is what proves the loop stayed free: a
-     * pattern matched in this process would starve it.
+     * pattern matched in this process would starve it. Matching this file in this process was measured at over
+     * ten seconds of no ticks at all, so the floor below is a floor a synchronous match cannot reach.
      */
     await writeFile(join(projectA, "catastrophic.txt"), `${"a".repeat(8_000)}b\n`, "utf8");
     const grep = tool(roots, "clarkcant_grep");
@@ -338,8 +366,74 @@ describe("the scoped tools", () => {
     expect(result.text).toContain("matching budget");
     // The budget is a wall-clock bound: the call answers shortly after it, rather than never.
     expect(elapsed).toBeLessThan(SCOPED_FS_LIMITS.maxGrepMatchMs + 5_000);
-    expect(ticks).toBeGreaterThan(2);
+    // A free event loop ticks this often a couple of hundred times inside the budget; a match in this process
+    // ticks it not once. Twenty is a floor that fails for the reason the test exists rather than a count that
+    // any answer at all would satisfy.
+    expect(ticks).toBeGreaterThanOrEqual(20);
   }, 30_000);
+
+  it("refuses a find glob that cannot finish matching, instead of holding the event loop", async () => {
+    const roots = await approved(projectA);
+    /*
+     * The counterexample, with the name it needs to bite: `*?` eleven times is eleven `.*.` in a row once the
+     * glob is translated, and a name that does not end in `z` makes the engine try every way of splitting the
+     * name between them. Matched in this process that took 10 010 ms with a 25 ms ticker firing 0 times (the
+     * probe run for the fix); matched in the thread the tool starts, the clock answers instead.
+     */
+    await writeFile(
+      join(projectA, "packages-pi-adapter-src-scoped-fs.ts"),
+      "a name long enough for the pattern to be expensive\n",
+      "utf8",
+    );
+    const find = tool(roots, "clarkcant_find");
+    let ticks = 0;
+    const ticker = setInterval(() => {
+      ticks += 1;
+    }, 10);
+
+    const started = Date.now();
+    const result = await find.execute({ path: projectA, pattern: "*?".repeat(11) + "z" });
+    const elapsed = Date.now() - started;
+    clearInterval(ticker);
+
+    expect(result.text).toMatch(/^refused: /);
+    expect(result.text).toContain("matching budget");
+    // Well under the ten seconds a match in this process costs, and inside the budget plus the thread's own
+    // start-up. A glob matched synchronously would return nothing at all to a ticker in the meantime.
+    expect(elapsed).toBeLessThan(SCOPED_FS_LIMITS.maxFindMatchMs + 1_000);
+    expect(ticks).toBeGreaterThanOrEqual(20);
+  }, 30_000);
+
+  it("matches a glob, and a pattern with no wildcard as a substring", async () => {
+    const roots = await approved(projectA);
+    const find = tool(roots, "clarkcant_find");
+
+    const glob = await find.execute({ path: projectA, pattern: "*.md" });
+    const wildcard = await find.execute({ path: projectA, pattern: "n?tes.*" });
+    const literal = await find.execute({ path: projectA, pattern: "notes" });
+    const nothing = await find.execute({ path: projectA, pattern: "*nothing-matches-this*" });
+
+    expect(glob.text).toContain("notes.md");
+    expect(glob.text).toContain("file under");
+    expect(wildcard.text).toContain("notes.md");
+    // A pattern with neither wildcard is a substring to look for, not an anchored name.
+    expect(literal.text).toContain("notes.md");
+    expect(nothing.text).toContain("0 file under");
+  });
+
+  it("reads the characters a glob names, not the regular expression it would be as a pattern", async () => {
+    const roots = await approved(projectA);
+    // A file name the pattern has to match literally: `(` and `[` are group and class syntax to a regular
+    // expression, and to this glob they are two characters in a name.
+    await writeFile(join(projectA, "a(b[c]+.txt"), "brackets in the name\n", "utf8");
+    const find = tool(roots, "clarkcant_find");
+
+    const exact = await find.execute({ path: projectA, pattern: "a(b[c]+.txt" });
+    const glob = await find.execute({ path: projectA, pattern: "a(b[*]+.txt" });
+
+    expect(exact.text).toContain("a(b[c]+.txt");
+    expect(glob.text).toContain("a(b[c]+.txt");
+  });
 
   it("labels a search that was cut at the match bound", async () => {
     const roots = await approved(projectA);
