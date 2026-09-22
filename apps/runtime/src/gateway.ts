@@ -9,6 +9,14 @@ import {
   checkArtifactAcceptance,
   grantSchema,
 } from "@clarkcant/contracts";
+import {
+  artifactRequest,
+  directoryBackedMetadata,
+  lockBindingForPlan,
+  materializeDependencyLock,
+  resolveDependencyClosure,
+  writeDependencyLock,
+} from "@clarkcant/capability-host";
 import { type PeerGatewayDeps, receiveEnvelope } from "@clarkcant/node-link";
 
 import {
@@ -1707,6 +1715,46 @@ export async function handleRequest(deps: GatewayDeps, request: GatewayRequest):
       description: `install ${entry.packageId}@${entry.version}`,
     });
 
+    /*
+     * Resolve the dependency closure **before** anything is installed.
+     *
+     * This node has not downloaded the artifact, so what it can resolve here is what the directory says this
+     * package is: its exact version, the digest the publisher published, and which kind of source it came from.
+     * The package's own dependency tree is not readable from here, and the lock says so rather than implying it
+     * was pinned (`artifact-only`). A build refuses a lock that does not cover the tree, for exactly that reason.
+     *
+     * A resolution that fails stops the install rather than letting a later step resolve it again: "we could not
+     * say what this would install" is not a state to proceed from.
+     */
+    const metadata = directoryBackedMetadata(index.entries);
+    const resolution =
+      entry.digest.trim() === ""
+        ? undefined
+        : resolveDependencyClosure({ requests: [artifactRequest(entry)], metadata });
+    if (resolution !== undefined && !resolution.ok) return fail(400, "DEPENDENCY_UNRESOLVED", resolution.message);
+
+    /*
+     * An entry that publishes no digest is refused by the installer with its own reason, and there is nothing to
+     * freeze for it: a lock whose integrity is blank would name bytes nobody can check.
+     */
+    const lock = resolution === undefined || !resolution.ok
+      ? undefined
+      : materializeDependencyLock({
+          packageId: entry.packageId,
+          version: entry.version,
+          coverage: "artifact-only",
+          resolved: resolution.resolved,
+          buildInputs: { platform, nodeAbi: process.versions.modules },
+        });
+    if (lock !== undefined) {
+      /*
+       * Kept next to the plans it will be consented with, under a reference that is its own digest, so a later
+       * resolution can never replace the bytes a consented plan names.
+       */
+      const stored = writeDependencyLock({ dir: join(runtime.dataDir, "locks"), lock });
+      if (!stored.ok) return fail(409, stored.code, stored.message);
+    }
+
     const outcome = installFromEntry(coordination, {
       entry,
       directory: index.entries,
@@ -1714,6 +1762,8 @@ export async function handleRequest(deps: GatewayDeps, request: GatewayRequest):
       ownerPrincipalId: principalId,
       codeGeneration: services.conductor.newId("codegen"),
       expiresAt: instantSchema.parse(new Date(Date.now() + INSTALL_APPROVAL_TTL_MS).toISOString()),
+      // The frozen closure, bound into the plan and the generation the install activates.
+      ...(lock === undefined ? {} : { dependencyLock: lockBindingForPlan(lock) }),
       ...(typeof parsed.value.localDigest === "string" ? { localDigest: parsed.value.localDigest } : {}),
       ...(Array.isArray(parsed.value.requestedCapabilityRefs)
         ? {
@@ -1742,6 +1792,12 @@ export async function handleRequest(deps: GatewayDeps, request: GatewayRequest):
        * package is known to work.
        */
       verified: INSTALL_VERIFICATION,
+      /*
+       * The frozen build input, and what it covers. `artifact-only` is stated rather than left out: this node
+       * pinned the artifact and the build inputs, and the package's own dependency tree is not something it could
+       * read without the bytes. Nothing frozen is reported as absent, which is a different statement again.
+       */
+      ...(lock === undefined ? { lock: null } : { lock: { ref: lock.lockRef, digest: lock.lockDigest, coverage: lock.coverage } }),
     });
   }
 

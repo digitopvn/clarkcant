@@ -20,6 +20,8 @@
   },
   "dependencies": {
     "@clarkcant/contracts": "workspace:*",
-    "@clarkcant/core": "workspace:*"
+    "@clarkcant/core": "workspace:*",
+    "@clarkcant/storage": "workspace:*",
+    "zod": "4.6.5"
   }
 }

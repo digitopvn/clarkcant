@@ -3,6 +3,8 @@ import { createHash } from "node:crypto";
 import { mkdirSync, readdirSync, readFileSync, lstatSync, writeFileSync } from "node:fs";
 import { isAbsolute, join, relative, resolve } from "node:path";
 
+import { frozenBuildEnvironment, incompleteCoverageRefusal, lifecycleScriptGate, readDependencyLock } from "./dependency-lock.ts";
+
 /**
  * The staged install pipeline: quarantine, then an isolated build.
  *
@@ -235,11 +237,101 @@ export type IsolatedBuildResult =
   | { ok: false; code: "REFUSED" | "BUILD_FAILED" | "TIMED_OUT"; message: string; stdout?: string };
 
 /**
+ * Run the package's build, contained, on the frozen lock and nothing else.
+ *
+ * `isolatedBuild` below runs a command in a contained process; this is the step in front of it that decides whether
+ * the command may run at all, and it reads exactly two things:
+ *
+ * 1. **The lock artifact the plan consented to.** Read from the node's lock directory and re-hashed on the way in,
+ *    so a missing or edited artifact stops the build. Nothing here resolves a range or asks a package manager what a
+ *    version means — the pins, the declared load-time scripts and the build inputs all come from the frozen file, and
+ *    the child is handed them as `CC_LOCKED_DEPENDENCIES` so it cannot resolve anything differently either.
+ * 2. **The scripts this node approved.** A script the artifact declares and nobody approved is not skipped: the
+ *    build does not start. Silently dropping part of a package's build would run a build the consent did not cover,
+ *    and the honest answer is to stop and ask rather than to run something else.
+ *
+ * The coverage check is done here and not only in `prepareLockedBuild`, because this function is the one that
+ * spawns: a lock that does not pin the package's dependency tree is refused at the point of execution, so a caller
+ * that reaches this runner without the pipeline in front of it gets the same refusal rather than a build on a tree
+ * nobody pinned.
+ */
+export async function isolatedLockedBuild(input: {
+  /** The node's lock directory. The reference is resolved inside it and nowhere else. */
+  lockDir: string;
+  /** The reference and digest the install plan consented to. */
+  lockRef: string;
+  lockDigest: string;
+  /** Load-time scripts this node approved. Nothing is approved by default. */
+  approvedLifecycleScripts?: readonly string[];
+  /** The build's working directory. It has to be inside quarantine, or it is not quarantine. */
+  root: string;
+  quarantineDir: string;
+  command: string;
+  args?: readonly string[];
+  timeoutMs?: number;
+  spawnImpl?: typeof spawn;
+}): Promise<LockedBuildResult> {
+  const stored = readDependencyLock({ dir: input.lockDir, lockRef: input.lockRef, lockDigest: input.lockDigest });
+  if (!stored.ok) return { ok: false, code: stored.code, message: stored.message };
+
+  const incomplete = incompleteCoverageRefusal(stored.lock);
+  if (incomplete !== undefined) return { ok: false, code: incomplete.code, message: incomplete.message };
+
+  const gate = lifecycleScriptGate({
+    declared: stored.lock.lifecycleScripts,
+    approved: input.approvedLifecycleScripts ?? [],
+  });
+  if (gate.refused.length > 0) {
+    return {
+      ok: false,
+      code: "LIFECYCLE_SCRIPT_NOT_APPROVED",
+      message: `the artifact declares load-time script(s) this node has not approved: ${gate.refused.join(", ")}; a build that quietly skipped them would not be the build the consent covered`,
+    };
+  }
+
+  const built = await isolatedBuild({
+    root: input.root,
+    quarantineDir: input.quarantineDir,
+    command: input.command,
+    ...(input.args === undefined ? {} : { args: input.args }),
+    ...(input.timeoutMs === undefined ? {} : { timeoutMs: input.timeoutMs }),
+    ...(input.spawnImpl === undefined ? {} : { spawnImpl: input.spawnImpl }),
+    // From the frozen artifact, not from anything resolved now: the child sees the consented versions.
+    extraEnv: frozenBuildEnvironment(stored.lock),
+  });
+  return built.ok ? built : { ok: false, code: built.code, message: built.message, ...(built.stdout === undefined ? {} : { stdout: built.stdout }) };
+}
+
+export type LockedBuildResult =
+  | { ok: true; stdout: string }
+  | {
+      ok: false;
+      code:
+        | "REFUSED"
+        | "BUILD_FAILED"
+        | "TIMED_OUT"
+        | "LOCK_MISSING"
+        | "LOCK_UNREADABLE"
+        | "LOCK_MUTATED"
+        | "LOCK_INCOMPLETE"
+        | "LIFECYCLE_SCRIPT_NOT_APPROVED";
+      message: string;
+      stdout?: string;
+    };
+
+/**
  * Run the package's build, contained.
  *
  * The environment is rebuilt rather than filtered. Filtering is how a variable nobody thought of — a provider
  * key added later, a token in a CI variable — reaches a build script; a list of what a build legitimately
  * needs is short and does not grow by accident.
+ *
+ * `isolatedLockedBuild` above is the entry point a build goes through: it reads the frozen lock, refuses one that
+ * does not cover the dependency tree, and checks the approved lifecycle scripts before anything is spawned. This
+ * function deliberately does not repeat any of that: it takes an environment as an argument and has no way to tell
+ * where that environment came from, so refusing "a lock it cannot verify" is not something it can decide. It stays
+ * the lower-level contained-process primitive — read and tested without the locking rules — and a caller that wants
+ * the frozen-input guarantee calls `isolatedLockedBuild`, which is the only path that enforces it.
  */
 export async function isolatedBuild(input: {
   /** The build's working directory. It has to be inside quarantine, or it is not quarantine. */

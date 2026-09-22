@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -239,5 +239,88 @@ describe("what the route refuses, with the code the resolver already uses", () =
 
     expect(response.status).toBe(400);
     expect((response.body as Record<string, unknown>)["code"]).toBe("INVALID_SCHEMA");
+  });
+});
+
+/** The installed packages the route reports. */
+async function packages(): Promise<{ packages: { packageId: string; digest: string; lock?: { ref: string; digest: string; coverage: string } }[] }> {
+  const request: GatewayRequest = {
+    method: "GET",
+    path: "/packages",
+    query: {},
+    headers: { authorization: `Bearer ${services.runtime.identity.localToken}` },
+    body: "",
+  };
+  const response = await handleRequest(deps, request);
+  return response.body as { packages: { packageId: string; digest: string; lock?: { ref: string; digest: string; coverage: string } }[] };
+}
+
+describe("the frozen build input the route records", () => {
+  it("resolves the closure before installing, and reports what the lock covers", async () => {
+    writeIndex([entry()]);
+
+    const response = await install({ packageId: "com.example.calendar", version: "1.2.0" });
+
+    expect(response.status).toBe(200);
+    const body = response.body as Record<string, unknown>;
+    const lock = body["lock"] as { ref: string; digest: string; coverage: string };
+    /*
+     * `artifact-only` is the honest answer for a node that has not downloaded the artifact: it pinned what the
+     * directory published and the platform it would build for, and the package's own tree is not something it can
+     * read from here. A build refuses a lock that does not cover the tree rather than reading this as "pinned".
+     */
+    expect(lock.coverage).toBe("artifact-only");
+    expect(lock.digest.startsWith("sha256:")).toBe(true);
+
+    // The artifact is on the node, under the reference the plan and the generation carry.
+    const stored = JSON.parse(readFileSync(join(dir, "locks", lock.ref), "utf8")) as {
+      lockDigest: string;
+      dependencies: { name: string; version: string; resolvedFrom: string }[];
+    };
+    expect(stored.lockDigest).toBe(lock.digest);
+    expect(stored.dependencies).toEqual([
+      {
+        name: "com.example.calendar",
+        version: "1.2.0",
+        integrity: "sha256:published-digest",
+        resolvedFrom: "npm:com.example.calendar@1.2.0",
+      },
+    ]);
+
+    // And the same statement comes back from what is installed: what is running is what was frozen.
+    const listed = await packages();
+    expect(listed.packages[0]?.lock?.digest).toBe(lock.digest);
+    expect(listed.packages[0]?.lock?.ref).toBe(lock.ref);
+  });
+
+  it("refuses a second install whose resolution is not the frozen one, naming the artifact", async () => {
+    writeIndex([entry()]);
+    const first = await install({ packageId: "com.example.calendar", version: "1.2.0" });
+    expect(first.status).toBe(200);
+
+    // The directory now publishes different bytes for the same version. Consent covered the first ones.
+    writeIndex([entry({ digest: "sha256:published-digest-2" })]);
+    const second = await install({ packageId: "com.example.calendar", version: "1.2.0" });
+
+    expect(second.status).toBe(400);
+    const body = second.body as Record<string, unknown>;
+    expect(body["code"]).toBe("LOCK_DRIFT");
+    expect(String(body["message"])).toContain("com.example.calendar");
+    // Nothing was installed a second time, and the first resolution is still the one that is running.
+    const listed = await packages();
+    expect(listed.packages).toHaveLength(1);
+    expect(listed.packages[0]?.digest).toBe("sha256:published-digest");
+  });
+
+  it("refuses an entry with no digest before it freezes anything", async () => {
+    writeIndex([entry({ digest: " " })]);
+
+    const response = await install({ packageId: "com.example.calendar", version: "1.2.0" });
+
+    // The installer's own refusal, unchanged: an entry with no digest is that, not "the closure failed to resolve".
+    expect(response.status).toBe(400);
+    expect((response.body as Record<string, unknown>)["code"]).toBe("DIGEST_MISMATCH");
+    // And no lock was written for bytes nobody can check.
+    expect(existsSync(join(dir, "locks"))).toBe(false);
   });
 });

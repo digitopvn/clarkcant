@@ -1,4 +1,4 @@
-import type { DirectoryEntry, Instant, Platform } from "@clarkcant/contracts";
+import type { DependencyLockBinding, DirectoryEntry, Instant, Platform } from "@clarkcant/contracts";
 
 import { installFromSource, type InstallOutcome } from "./install-from-source.ts";
 import type { InstallDeps } from "./install-lifecycle.ts";
@@ -37,6 +37,8 @@ export interface InstallFromEntryRequest {
   localDigest?: string;
   requestedCapabilityRefs?: readonly string[];
   grantedCapabilities?: readonly string[];
+  /** The frozen dependency closure resolved before this call, if one was. */
+  dependencyLock?: DependencyLockBinding;
 }
 
 /**
@@ -59,6 +61,7 @@ export function installFromEntry(deps: InstallDeps, request: InstallFromEntryReq
     platform: request.platform,
     ...(request.localDigest === undefined ? {} : { localDigest: request.localDigest }),
     ownerPrincipalId: request.ownerPrincipalId,
+    ...(request.dependencyLock === undefined ? {} : { dependencyLock: request.dependencyLock }),
     // One plan per package version, so two turns that ask for the same package share it rather than installing it
     // twice — which is what the requirement key exists for.
     requirementKey: `pkg:${request.entry.packageId}@${request.entry.version}`,

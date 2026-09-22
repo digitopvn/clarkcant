@@ -622,3 +622,27 @@ Question: does the installed Pi SDK honour `builtinTools: []`, i.e. can the raw 
 | Multiple roots | `projectRoots[0]`-only use removed from `apps/runtime/src/project-session.ts` |
 
 Note on how this was produced: the first Phase 2 worker died mid-run (async runner process exited before writing a result) after producing the implementation but before verifying or committing it. The verification above and the commit were done by the controller on that recovered work, and the two gate answers it could not report — TODO removal and multiple-root support — were confirmed by inspection.
+
+## Phase 2 — MERGED
+
+| Item | Value |
+| --- | --- |
+| PR | [#136](https://github.com/digitopvn/clarkcant/pull/136) |
+| Merge commit | `026d06120d35d70107675e9b452d1eb167b3f93c` |
+| Reviewed head (bound via `--match-head-commit`) | `b5ad2648642a49dafe3ac1be2ee4b860c082d1ed` |
+| CI on the reviewed head | terminal green — `verify` (node 22.19 and 24), `e2e`, `desktop smoke`, `secret scan`, GitGuardian |
+| `pnpm verify` on that head | exit 0 — 181 files passed / 1 skipped, 2208 tests passed / 7 skipped |
+
+### What the two review rounds caught
+
+The first review found no worker-reachable escape and independently reproduced the SDK allowlist behaviour, but raised four IMPORTANT items. The second round then found the first fix had only half-landed: **the `find` tool still compiled a model-supplied glob as a regex in the parent process**, which the re-reviewer reproduced as a 10 010 ms event-loop block with zero ticker ticks. Because project sessions run the adapter inside the gateway process, that would have wedged every conversation. After the fix the same probe measures 1 009 ms with 39 ticks and a refusal naming its budget, and the new test was verified to fail when the unbounded path is forced.
+
+Also fixed across those rounds: root identity is now `{dev, ino}` re-checked at every resolution (a rename-and-recreate was previously admitted); the `realpath` fallback fails closed instead of open; reads are cut on codepoint boundaries so the output bound cannot be exceeded; `worker.terminate()` rejections are consumed; and the type/doc claims now describe only what each lane actually enforces.
+
+### Known gap filed rather than hidden
+
+The packed-worker lane (`apps/runtime/src/pack-load.ts:118` to `apps/worker`) still sends `projectRoots: []`, so it runs the SDK's built-in `read`/`grep`/`find`/`ls` against its own working directory, and `apps/worker/src/tools.ts` still has a lexical containment check with no `realpath`. Both are pre-existing and outside Phase 2's file list, so they are filed as issue #137 rather than absorbed, and the adapter type comments now name that lane instead of overclaiming.
+
+## Phase 3 — deterministic install dependency lock
+
+Branch: `phase-3-install-lock`, cut from `main` at `026d061`.

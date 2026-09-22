@@ -359,6 +359,13 @@ export interface InstalledPackageView {
   /** The strongest lane among the package's facets: a package is as trusted as its least isolated part. */
   lane: "isolated-ui" | "service" | "declarative" | "trusted-native";
   consentedDigest?: string;
+  /**
+   * The frozen build input this generation was activated against, when there was one.
+   *
+   * Absent means nothing was frozen, which is a different statement from an empty closure. `coverage` says how much
+   * of the build input the lock covers, so `artifact-only` is never read as "the dependencies are pinned".
+   */
+  lock?: { ref: string; digest: string; coverage: string };
 }
 
 /**
