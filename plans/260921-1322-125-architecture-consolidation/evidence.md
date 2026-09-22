@@ -608,3 +608,17 @@ Question: does the installed Pi SDK honour `builtinTools: []`, i.e. can the raw 
 **Shadowing fallback is available but not needed:** a custom tool does shadow a built-in name (case F), but it must also be allowlisted (case G). Phase 2's own tool names are the cleaner route and case E confirms they work.
 
 **Consequence:** the "1.5-2 ngày" estimate holds; phase-02 needs no re-plan.
+
+### Phase 2 — implementation evidence
+
+| Item | Value |
+| --- | --- |
+| Branch | `phase-2-pi-confinement` (cut from `main` at `89be38d`) |
+| Implementation commit | `1ba5cc2f50cf29cd565d71383ec43d2eda1430de` |
+| `pnpm verify` | PASSED — `Test Files 180 passed \| 1 skipped (181)`, `Tests 2192 passed \| 7 skipped (2199)` |
+| `packages/pi-adapter/test/scoped-fs.spec.ts` | 19 tests passed on real temporary directories |
+| `apps/runtime/test/project-session.confinement.spec.ts` | 4 tests passed (inside read succeeds, sibling read refused) |
+| Confinement note | The adapter's disclaiming `TODO(P2)` is gone, replaced by a statement these tests make true |
+| Multiple roots | `projectRoots[0]`-only use removed from `apps/runtime/src/project-session.ts` |
+
+Note on how this was produced: the first Phase 2 worker died mid-run (async runner process exited before writing a result) after producing the implementation but before verifying or committing it. The verification above and the commit were done by the controller on that recovered work, and the two gate answers it could not report — TODO removal and multiple-root support — were confirmed by inspection.
