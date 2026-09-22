@@ -298,14 +298,7 @@ export type LockedBuildResult =
   | { ok: true; stdout: string }
   | {
       ok: false;
-      code:
-        | "REFUSED"
-        | "BUILD_FAILED"
-        | "TIMED_OUT"
-        | "LOCK_MISSING"
-        | "LOCK_MUTATED"
-        | "LOCK_IMMUTABLE"
-        | "LIFECYCLE_SCRIPT_NOT_APPROVED";
+      code: "REFUSED" | "BUILD_FAILED" | "TIMED_OUT" | "LOCK_MISSING" | "LOCK_MUTATED" | "LIFECYCLE_SCRIPT_NOT_APPROVED";
       message: string;
       stdout?: string;
     };

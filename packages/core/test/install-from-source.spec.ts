@@ -280,4 +280,90 @@ describe("what the node reports as installed", () => {
   it("reports nothing when nothing is installed, rather than a placeholder", () => {
     expect(listInstalledPackages(deps)).toEqual([]);
   });
+
+  it("says nothing was frozen when the install carried no lock, rather than an empty closure", () => {
+    const installed = installFromSource(deps, input());
+    expect(installed.ok).toBe(true);
+
+    // An empty closure and no closure are different statements: one would read as "this package has no
+    // dependencies", and nothing here resolved any.
+    expect(listInstalledPackages(deps)[0]?.lock).toBeUndefined();
+  });
+});
+
+describe("the frozen build input the plan carries", () => {
+  const LOCK = {
+    lockRef: "com-example-calendar@1-2-0.artifact-and-dependencies.sha256-aaaa.lock.json",
+    lockDigest: "sha256:lock-one",
+    coverage: "artifact-and-dependencies" as const,
+    dependencies: [
+      { name: "com.example.calendar", version: "1.2.0", integrity: DIGEST, resolvedFrom: "npm:com.example.calendar@1.2.0" },
+      { name: "left-pad", version: "1.2.5", integrity: "sha512-leftpad1", resolvedFrom: "npm:left-pad@1.2.5" },
+    ],
+  };
+
+  it("binds the reference, the digest and the pins into the plan and the generation", () => {
+    const outcome = installFromSource(deps, input({ dependencyLock: LOCK }));
+    expect(outcome.ok).toBe(true);
+    if (!outcome.ok) return;
+
+    const record = getPlan(deps, outcome.planId);
+    expect(record?.plan.lockRef).toBe(LOCK.lockRef);
+    expect(record?.plan.lockDigest).toBe(LOCK.lockDigest);
+    expect(record?.plan.lockCoverage).toBe("artifact-and-dependencies");
+    expect(record?.plan.resolvedDependencies.map((pin) => `${pin.id}@${pin.version}`)).toEqual([
+      "com.example.calendar@1.2.0",
+      "left-pad@1.2.5",
+    ]);
+    expect(record?.plan.resolvedDependencies[1]?.resolvedFrom).toBe("npm:left-pad@1.2.5");
+
+    // The generation carries it too: what is running has to be able to answer what it was built from, without a
+    // superseded plan being able to change the answer.
+    const generation = activeGeneration(deps, "com.example.calendar", "node_a");
+    expect(generation?.lockRef).toBe(LOCK.lockRef);
+    expect(generation?.lockDigest).toBe(LOCK.lockDigest);
+    expect(generation?.lockCoverage).toBe("artifact-and-dependencies");
+
+    expect(listInstalledPackages(deps)[0]?.lock).toEqual({
+      ref: LOCK.lockRef,
+      digest: LOCK.lockDigest,
+      coverage: "artifact-and-dependencies",
+    });
+  });
+
+  it("refuses to join an existing plan whose closure is not the one resolved now, naming the dependency", () => {
+    const first = installFromSource(deps, input({ dependencyLock: LOCK }));
+    expect(first.ok).toBe(true);
+
+    const moved = {
+      ...LOCK,
+      lockRef: "com-example-calendar@1-2-0.artifact-and-dependencies.sha256-bbbb.lock.json",
+      lockDigest: "sha256:lock-two",
+      dependencies: LOCK.dependencies.map((pin) =>
+        pin.name === "left-pad" ? { ...pin, version: "1.3.0", integrity: "sha512-leftpad2", resolvedFrom: "npm:left-pad@1.3.0" } : pin,
+      ),
+    };
+    const second = installFromSource(deps, input({ dependencyLock: moved }));
+
+    expect(second.ok).toBe(false);
+    if (second.ok) return;
+    expect(second.code).toBe("LOCK_DRIFT");
+    // The dependency that moved is named, with both versions: the point of the refusal is that somebody can act on it.
+    expect(second.message).toContain("left-pad");
+    expect(second.message).toContain("1.2.5");
+    expect(second.message).toContain("1.3.0");
+    // And the plan on the node is still the one that was consented to, not the second resolution.
+    expect(listInstalledPackages(deps)).toHaveLength(1);
+  });
+
+  it("joins again when the closure is the same, so two tasks still share one plan", () => {
+    const first = installFromSource(deps, input({ dependencyLock: LOCK }));
+    const second = installFromSource(deps, input({ dependencyLock: { ...LOCK, dependencies: [...LOCK.dependencies].reverse() } }));
+
+    expect(first.ok).toBe(true);
+    expect(second.ok).toBe(true);
+    if (!first.ok || !second.ok) return;
+    expect(second.joinedExisting).toBe(true);
+    expect(second.planId).toBe(first.planId);
+  });
 });

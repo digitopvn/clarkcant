@@ -277,7 +277,9 @@ describe("the lock artifact", () => {
     const binding = lockBindingForPlan(lock);
 
     expect(binding.lockRef).toBe(lock.lockRef);
-    expect(binding.lockRef.startsWith("locks/")).toBe(true);
+    expect(binding.lockRef.endsWith(".lock.json")).toBe(true);
+    // A file name, not a path: the directory is the node's to choose.
+    expect(binding.lockRef).not.toContain("/");
     expect(binding.lockDigest).toBe(lock.lockDigest);
     expect(binding.coverage).toBe("artifact-and-dependencies");
     // The plan's rows are the same pins: a plan that named the closure while the build read another one would be
@@ -285,7 +287,7 @@ describe("the lock artifact", () => {
     expect(binding.dependencies.map((pin) => pin.name)).toEqual(["com.example.calendar", "left-pad"]);
   });
 
-  it("does not replace a frozen artifact when a resolution produces a different one", () => {
+  it("keeps a frozen artifact as it was when a later resolution produces a different one", () => {
     const { dir, lock } = storedLock();
     const moved = materializeDependencyLock({
       ...PACKAGE,
@@ -294,12 +296,17 @@ describe("the lock artifact", () => {
       buildInputs: BUILD_INPUTS,
     });
 
+    // The reference is the digest, so a second resolution is a second artifact rather than a replacement of the one
+    // a consented plan already names.
+    expect(moved.lockRef).not.toBe(lock.lockRef);
     const written = writeDependencyLock({ dir, lock: moved });
+    expect(written.ok).toBe(true);
 
-    expect(written.ok ? "" : written.code).toBe("LOCK_IMMUTABLE");
-    // The consented artifact is untouched, so a later build still reads the closure that was approved.
     const stillThere = readDependencyLock({ dir, lockRef: lock.lockRef, lockDigest: lock.lockDigest });
     expect(stillThere.ok).toBe(true);
+    if (stillThere.ok) {
+      expect(stillThere.lock.dependencies.find((pin) => pin.name === "left-pad")?.version).toBe("1.2.5");
+    }
   });
 });
 
@@ -340,14 +347,19 @@ describe("the build consumes the frozen state", () => {
         root,
         quarantineDir,
         command: process.execPath,
-        args: ["-e", "process.stdout.write(JSON.stringify({ cwd: process.cwd(), key: process.env.TYPESAFE_API_KEY ?? null }))"],
+        args: [
+          "-e",
+          "process.stdout.write(JSON.stringify({ cwd: process.cwd(), key: process.env.TYPESAFE_API_KEY ?? null, pinned: process.env.CC_LOCKED_DEPENDENCIES ?? null }))",
+        ],
       });
 
       expect(built.ok).toBe(true);
       if (!built.ok) return;
-      const seen = JSON.parse(built.stdout) as { cwd: string; key: string | null };
+      const seen = JSON.parse(built.stdout) as { cwd: string; key: string | null; pinned: string | null };
       expect(seen.key).toBeNull();
       expect(seen.cwd.toLowerCase()).toContain("quarantine");
+      // Byte-identical to what the lock says, so a build cannot see a closure assembled anywhere else.
+      expect(seen.pinned).toBe(frozenBuildEnvironment(lock)["CC_LOCKED_DEPENDENCIES"]);
     } finally {
       delete process.env["TYPESAFE_API_KEY"];
     }

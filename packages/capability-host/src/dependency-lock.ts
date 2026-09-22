@@ -5,6 +5,7 @@ import {
   dependencyDrift,
   dependencyLockCoverageSchema,
   pinnedArtifactSchema,
+  semverSchema,
   type DependencyLockBinding,
   type DependencyLockCoverage,
   type DependencyProvenance,
@@ -103,20 +104,26 @@ export function resolveDependencyClosure(input: {
       };
     }
 
+    // A pin is only a pin if the version is one version: a metadata answer of `^1.2.0` or `latest` is a request to
+    // resolve again later, which is the thing being removed.
+    if (!semverSchema.safeParse(metadata.version).success) {
+      return {
+        ok: false,
+        code: "VERSION_NOT_EXACT",
+        message: `"${request.name}" resolved to "${metadata.version}", which is not one version; a lock has to name the exact artifact`,
+      };
+    }
     const pin = pinnedArtifactSchema.safeParse({
       name: request.name,
       version: metadata.version,
       integrity: metadata.integrity,
       resolvedFrom: metadata.resolvedFrom,
     });
-    if (!pin.success) {
-      const versionLooksFloating = !/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(metadata.version);
+    if (!pin.success || metadata.integrity.trim() === "" || metadata.resolvedFrom.trim() === "") {
       return {
         ok: false,
-        code: versionLooksFloating ? "VERSION_NOT_EXACT" : "INCOMPLETE_PIN",
-        message: versionLooksFloating
-          ? `"${request.name}" resolved to "${metadata.version}", which is not one version; a lock has to name the exact artifact`
-          : `"${request.name}" resolved without the version, integrity and provenance a pin needs`,
+        code: "INCOMPLETE_PIN",
+        message: `"${request.name}" resolved without the exact version, integrity and provenance a pin needs`,
       };
     }
 
@@ -190,7 +197,7 @@ export interface BuildInputs {
 }
 
 export interface DependencyLock {
-  /** Where this artifact lives under the node's lock directory. */
+  /** The file name this artifact is kept under, inside the node's lock directory. */
   lockRef: string;
   /** Canonical digest over everything below. */
   lockDigest: string;
@@ -207,19 +214,24 @@ export interface DependencyLock {
 const LOCK_FILE_SUFFIX = ".lock.json";
 
 /**
- * The name a lock artifact is kept under.
+ * The name a lock artifact is kept under, which is the digest it holds.
  *
- * Closed to `[A-Za-z0-9_-]` on purpose: a package id travels in from a publisher, and a reference built from it must
- * not be able to name a path outside the lock directory. Two ids that sanitise to the same name are not a silent
- * collision either — the digest inside the artifact is what a reader checks.
+ * A file name inside the node's lock directory, not a path: the directory is the node's to choose, and a reference
+ * that could name a directory would be a reference that could be edited into a path outside it.
+ *
+ * Content-addressed, so an artifact can never be replaced by a different one: another resolution is another
+ * reference, and the file a consented plan names keeps the bytes it was consented to. The id is closed to
+ * `[A-Za-z0-9_-]` on purpose, because a package id travels in from a publisher.
  */
 export function dependencyLockRef(
   packageId: string,
   version: string,
   coverage: DependencyLockCoverage,
+  lockDigest: string,
 ): string {
   const segment = (value: string) => value.replace(/[^A-Za-z0-9_-]/g, "-");
-  return `locks/${segment(packageId)}@${segment(version)}.${coverage}${LOCK_FILE_SUFFIX}`;
+  const hex = lockDigest.startsWith("sha256:") ? lockDigest.slice("sha256:".length) : lockDigest;
+  return `${segment(packageId)}@${segment(version)}.${coverage}.${segment(hex)}${LOCK_FILE_SUFFIX}`;
 }
 
 function comparePins(a: PinnedArtifact, b: PinnedArtifact): number {
@@ -263,9 +275,10 @@ export function materializeDependencyLock(input: {
     lifecycleScripts: [...new Set(input.lifecycleScripts ?? [])].sort(),
     buildInputs: { platform: input.buildInputs.platform, nodeAbi: input.buildInputs.nodeAbi },
   };
+  const lockDigest = payloadDigest(lockBody(body));
   return {
-    lockRef: dependencyLockRef(body.packageId, body.version, body.coverage),
-    lockDigest: payloadDigest(lockBody(body)),
+    lockRef: dependencyLockRef(body.packageId, body.version, body.coverage, lockDigest),
+    lockDigest,
     ...body,
   };
 }
@@ -281,7 +294,7 @@ const storedLockSchema = z.strictObject({
   buildInputs: z.strictObject({ platform: z.string().min(1).max(120), nodeAbi: z.string().min(1).max(40) }),
 });
 
-export type LockStoreRefusal = "LOCK_MISSING" | "LOCK_MUTATED" | "LOCK_IMMUTABLE";
+export type LockStoreRefusal = "LOCK_MISSING" | "LOCK_MUTATED";
 
 function withinDirectory(dir: string, path: string): boolean {
   const rel = relative(resolve(dir), path);
@@ -316,12 +329,12 @@ function readStoredLock(path: string): { ok: true; lock: DependencyLock } | { ok
 }
 
 /**
- * Write the artifact, and never replace a frozen one.
+ * Write the artifact.
  *
- * A reference that is already taken by a different digest is a refusal, not an overwrite: the node would otherwise
- * be able to change what a consented plan builds by resolving again, which is the failure this whole module exists
- * to prevent. The completed case is unaffected because a lock that covers more — the package's tree as well as the
- * artifact — has its own reference.
+ * A reference that is already taken holds the same bytes by construction — the name is the digest — so an existing
+ * file that does not match means the material was edited, and that is refused rather than overwritten. Two
+ * resolutions of the same package are two artifacts under two references, which is why a changed dependency can
+ * never quietly become the thing a consented plan builds from.
  */
 export function writeDependencyLock(input: {
   dir: string;
@@ -343,8 +356,8 @@ export function writeDependencyLock(input: {
     if (existing.lock.lockDigest !== input.lock.lockDigest) {
       return {
         ok: false,
-        code: "LOCK_IMMUTABLE",
-        message: `${input.lock.packageId}@${input.lock.version} is already frozen at ${existing.lock.lockDigest}, and this resolution produced ${input.lock.lockDigest}; a build input that moved has to be reviewed again rather than replaced`,
+        code: "LOCK_MUTATED",
+        message: `${input.lock.lockRef} holds ${existing.lock.lockDigest}, not the ${input.lock.lockDigest} its name claims`,
       };
     }
     return { ok: true, path };

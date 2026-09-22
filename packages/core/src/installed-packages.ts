@@ -32,6 +32,16 @@ export interface InstalledPackageView {
   lane: RiskLane;
   /** True when the plan that installed it is still the active one. */
   consentedDigest: string | undefined;
+  /**
+   * The frozen build input this generation was activated against, when it had one.
+   *
+   * From the generation rather than the plan: what is running is a fact about the generation, and a superseded plan
+   * must not be able to change the answer. Absent means nothing was frozen, which is a different statement from an
+   * empty closure and is reported as such.
+   */
+  lock:
+    | { ref: string; digest: string; coverage: string }
+    | undefined;
 }
 
 /**
@@ -84,6 +94,12 @@ export function listInstalledPackages(deps: InstallDeps): InstalledPackageView[]
         ["declarative", "service", "isolated-ui", "trusted-native"].includes(isolation),
       );
 
+    const generation = parseJson<{
+      lockRef?: string;
+      lockDigest?: string;
+      lockCoverage?: string;
+    }>(row.document, "package_generations.document");
+
     return {
       packageId: row.package_id,
       version: row.version,
@@ -97,6 +113,14 @@ export function listInstalledPackages(deps: InstallDeps): InstalledPackageView[]
       },
       lane: riskLaneFor(isolations),
       consentedDigest: planRow?.consented_digest ?? undefined,
+      lock:
+        generation.lockRef === undefined || generation.lockDigest === undefined
+          ? undefined
+          : {
+              ref: generation.lockRef,
+              digest: generation.lockDigest,
+              coverage: generation.lockCoverage ?? "unknown",
+            },
     };
   });
 }
