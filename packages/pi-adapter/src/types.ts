@@ -16,7 +16,24 @@ import type { Instant } from "@clarkcant/contracts";
 export interface WorkerBrief {
   /** Bounded task description. Context is curated, not dumped. */
   goal: string;
-  /** Directories the worker may touch, already policy-approved. */
+  /**
+   * Directories the worker may touch, already policy-approved.
+   *
+   * A non-empty list is an enforced boundary rather than a description of intent: the session gets the SDK's
+   * own `read`/`grep`/`find`/`ls` left out of its allowlist and only the four scoped `clarkcant_*` tools the
+   * adapter itself binds to these roots, each of which re-checks the identity of the root and canonicalises
+   * the candidate — through `scoped-fs.ts` — before it touches the filesystem. A root that cannot be approved
+   * stops the session by name rather than being dropped, and a caller's own tool under one of those four
+   * names does not replace the binding, because only the adapter's is built from this list.
+   *
+   * An empty list carries no boundary at all. Such a session runs whatever `builtinTools` the adapter was
+   * constructed with — the SDK's read-only set by default — and those resolve a path against the adapter's
+   * `cwd` themselves, so nothing above describes them. One lane lives there today: `apps/runtime/src/pack-load.ts`
+   * probes the packed worker with `projectRoots: []` and `apps/worker/src/index.ts` passes that straight
+   * through, so the packed-worker lane reads its own working directory through the SDK's built-ins rather than
+   * through `scoped-fs.ts`. That is a known follow-up for the phase that owns the lane, and it is recorded
+   * here rather than papered over: the boundary this field describes is the one the rooted lane has.
+   */
   projectRoots: string[];
   /** Capability refs the worker may call. Anything else is not registered. */
   allowedCapabilityRefs: string[];
@@ -30,6 +47,17 @@ export interface WorkerBrief {
    * invents them.
    */
   customTools?: readonly ToolDefinition[];
+  /**
+   * Whether this session may reach the filesystem only through the scoped tools, with nothing added later.
+   *
+   * The filesystem half of the boundary does not depend on this flag: any brief carrying a root runs with the
+   * scoped tools bound to it and without the SDK's own file tools. What this adds is the rest of the
+   * project-session lane — the adapter refuses `registerTool` afterwards, because a tool added after creation
+   * never passes the SDK allowlist and would be a filesystem primitive the boundary never saw. A brief that
+   * declares it without an approved root is refused by name: a session confined to nothing has no filesystem
+   * tool at all, which is a configuration error rather than a constraint somebody chose.
+   */
+  confineToProjectRoots?: boolean;
   /** Token budget for the run. */
   maxTokens?: number;
   maxWallClockMs?: number;
