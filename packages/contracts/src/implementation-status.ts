@@ -227,6 +227,10 @@ export const IMPLEMENTATION_STATUS: readonly ImplementationStatusEntry[] = [
         test: "asks for the range and reads the events back as live",
       },
       { file: SEAMS, test: "labels cached data as cached rather than live (T36)" },
+      {
+        file: "packs/google-calendar/test/connector.spec.ts",
+        test: "reads a real range with a token the exchange issued, in the pack's own event shape",
+      },
     ],
     externalGate: {
       issue: 2,
@@ -300,10 +304,12 @@ export const IMPLEMENTATION_STATUS: readonly ImplementationStatusEntry[] = [
         test: "applies a click on a real element and reports it as observed",
       },
       { file: `${RUNTIME}/session-preview.spec.ts`, test: "believes the bytes rather than the declaration" },
+      { file: `${RUNTIME}/session-preview-real.spec.ts`, test: "is served back from the route under its own digest, with the size it was captured at" },
+      { file: "apps/web/e2e/browser-takeover.spec.ts", test: "a takeover changes who may act, and a stop ends the session" },
     ],
     externalGate: {
       reason:
-        "the node's preview path stores a fixture PNG, so real BrowserDriver capturePreview() bytes do not yet reach the blob store and the authenticated /previews/<digest> route (phase 6)",
+        "no live site: every capture and every action so far is against a page this repository serves, so a third-party site behind a login — with its own consent and anti-automation boundaries — has never been driven. The preview path itself is real: the card's bytes are a Chromium capture of a served page, stored content-addressed and served from the authenticated route (phase 6)",
     },
   },
   {
@@ -523,6 +529,10 @@ export const IMPLEMENTATION_STATUS: readonly ImplementationStatusEntry[] = [
     evidenceTests: [
       { file: SEAMS, test: "keeps an all-day date apart from a timed instant" },
       { file: SEAMS, test: "detects an overlap before the user confirms a move" },
+      {
+        file: "packs/google-calendar/test/connector.spec.ts",
+        test: "reports a write that timed out as unknown, not as failed",
+      },
     ],
     externalGate: {
       issue: 2,

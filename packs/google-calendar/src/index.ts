@@ -1,5 +1,5 @@
-import type { ConnectionDescriptor } from "@clarkcant/integration-sdk";
-import { verifyScopes } from "@clarkcant/integration-sdk";
+import type { ConnectionDescriptor, TokenGrant } from "@clarkcant/integration-sdk";
+import { connectionUsable, readAgenda, verifyScopes, writeEvent } from "@clarkcant/integration-sdk";
 
 /**
  * Google Calendar reference integration.
@@ -185,12 +185,191 @@ export function freshnessOf(input: {
 
 export { verifyScopes };
 
+/* ------------------------------------------------------------------ *
+ * The connector path
+ * ------------------------------------------------------------------ */
+
+/**
+ * What a connection holds, and where the token lives.
+ *
+ * The token is a parameter of this object and nothing else: it is not stored in a preference, not put in a prompt
+ * and not written to a KV row the model can read. A calendar read is the one call that needs it, and it travels in
+ * the `authorization` header — the SDK's client owns that, so a token cannot end up in a query string that
+ * everything it passes through will log.
+ */
+export interface CalendarConnection {
+  /** The API base. The SDK validates it against `allowedOrigins` before anything is sent. */
+  endpoint: string;
+  allowedOrigins: readonly string[];
+  accessToken: string;
+  fetchImpl: typeof fetch;
+  /** A bounded request, in milliseconds. A calendar that never answers must not hold a call open forever. */
+  timeoutMs?: number;
+}
+
+/**
+ * Turn a token grant into a connection, or say why it is not one.
+ *
+ * A token arriving is not a connection working, and this pack has said so from the start: the scopes that came back
+ * have to cover the read, and the capability probe has to have passed. Both checks are the SDK's `connectionUsable`,
+ * called here rather than re-implemented, so "authorization succeeded" can never be reported as "the calendar
+ * works".
+ */
+export function connectionFromGrant(input: {
+  grant: TokenGrant;
+  endpoint: string;
+  allowedOrigins: readonly string[];
+  fetchImpl: typeof fetch;
+  /** The last result of the capability probe, whatever it was. `pass` is the only one that opens a connection. */
+  lastProbeResult: "pass" | "fail" | "not-run" | undefined;
+  timeoutMs?: number;
+}): { ok: true; connection: CalendarConnection } | { ok: false; reason: string } {
+  const usable = connectionUsable({
+    status: "connected",
+    grantedScopes: input.grant.scopes.granted,
+    requiredScopes: CONNECTION.requestedScopes,
+    lastProbeResult: input.lastProbeResult,
+  });
+  if (!usable.usable) return { ok: false, reason: usable.reason };
+  return {
+    ok: true,
+    connection: {
+      endpoint: input.endpoint,
+      allowedOrigins: input.allowedOrigins,
+      accessToken: input.grant.accessToken,
+      fetchImpl: input.fetchImpl,
+      ...(input.timeoutMs === undefined ? {} : { timeoutMs: input.timeoutMs }),
+    },
+  };
+}
+
+/**
+ * One day's agenda, read through the SDK's Calendar client.
+ *
+ * The events come back in this pack's own shape, because the agenda, the conflicts and the freshness label are the
+ * pack's rules and they need the time contract rather than a second one. A read that failed is never `live` — the
+ * freshness field is part of the answer, not a decoration on it — and an entry whose time cannot be read is skipped
+ * rather than invented as a blank row on somebody's day.
+ */
+export type ConnectorRead =
+  | { ok: true; events: CalendarEvent[]; freshness: "live" }
+  | { ok: false; code: string; message: string; freshness: "unknown" };
+
+export async function readAgendaThroughConnector(input: {
+  connection: CalendarConnection;
+  timeMin: string;
+  timeMax: string;
+  /** The zone to fall back to when the calendar stored none, which is the node's own. */
+  fallbackTimeZone: string;
+}): Promise<ConnectorRead> {
+  const read = await readAgenda({
+    endpoint: input.connection.endpoint,
+    allowedOrigins: input.connection.allowedOrigins,
+    accessToken: input.connection.accessToken,
+    timeMin: input.timeMin,
+    timeMax: input.timeMax,
+    fetchImpl: input.connection.fetchImpl,
+    ...(input.connection.timeoutMs === undefined ? {} : { timeoutMs: input.connection.timeoutMs }),
+  });
+  if (!read.ok) return { ok: false, code: read.code, message: read.message, freshness: "unknown" };
+
+  const events: CalendarEvent[] = [];
+  for (const event of read.events) {
+    const start = normalizeTime({
+      dateTime: event.startsAt,
+      timeZone: event.timezone,
+      fallbackTimeZone: input.fallbackTimeZone,
+    });
+    const end = normalizeTime({
+      dateTime: event.endsAt,
+      timeZone: event.timezone,
+      fallbackTimeZone: input.fallbackTimeZone,
+    });
+    if (!start.ok || !end.ok) continue;
+    events.push({
+      id: event.eventId,
+      summary: event.title,
+      start: start.time,
+      end: end.time,
+      status: event.status,
+      etag: event.etag,
+    });
+  }
+  // Through `buildAgenda`, so a cancelled instance is dropped and the order is the pack's rather than the API's.
+  return { ok: true, events: buildAgenda(events), freshness: "live" };
+}
+
+/**
+ * Create a timed event through the SDK's Calendar client.
+ *
+ * The four words are this pack's — `classifyWriteOutcome`'s vocabulary — and they are derived from the SDK's answer
+ * rather than from an HTTP status read a second time here. `unknown` stays `unknown`: a request that left the
+ * machine and timed out may well have created the event, and calling that a failure is how a retry puts two copies
+ * of the same meeting in somebody's calendar.
+ *
+ * An all-day event is refused. Google stores one as a `date` rather than a `dateTime`, and the write this connector
+ * has access to sends only the latter — turning `2026-09-21` into midnight in some zone is the drift the time
+ * contract exists to prevent, so the honest answer is that this path cannot write it.
+ */
+export async function createEventThroughConnector(input: {
+  connection: CalendarConnection;
+  event: { title: string; start: CalendarTime; end: CalendarTime };
+}): Promise<{
+  outcome: "confirmed" | "failed" | "unknown" | "conflict";
+  eventId: string | undefined;
+  reason: string | undefined;
+}> {
+  if (input.event.start.kind === "date" || input.event.end.kind === "date") {
+    return {
+      outcome: "failed",
+      eventId: undefined,
+      reason: "this connector writes timed events only; an all-day event is stored as a date, and sending it as an instant would move it",
+    };
+  }
+
+  const written = await writeEvent({
+    endpoint: input.connection.endpoint,
+    allowedOrigins: input.connection.allowedOrigins,
+    accessToken: input.connection.accessToken,
+    event: {
+      title: input.event.title,
+      startsAt: input.event.start.dateTime,
+      endsAt: input.event.end.dateTime,
+      // The start's zone, and the end's when the start has none: an event whose ends disagree about their zone is a
+      // malformed source rather than a second opinion to pick from.
+      timezone: input.event.start.timeZone,
+    },
+    fetchImpl: input.connection.fetchImpl,
+    ...(input.connection.timeoutMs === undefined ? {} : { timeoutMs: input.connection.timeoutMs }),
+  });
+
+  switch (written.status) {
+    case "applied":
+      return { outcome: "confirmed", eventId: written.eventId, reason: undefined };
+    case "refused":
+      return { outcome: "failed", eventId: undefined, reason: written.reason };
+    case "unknown":
+      return { outcome: "unknown", eventId: undefined, reason: written.reason };
+    case "failed":
+      return {
+        outcome: written.code === "CONFLICT" ? "conflict" : "failed",
+        eventId: undefined,
+        reason: written.message,
+      };
+  }
+}
+
 /**
  * @status-ref pack.google-calendar
- * TODO(P7): the live Calendar API client and token refresh. Scope verification, time
- * normalization, agenda construction, conflict detection, write-outcome classification
- * and freshness labelling are implemented and tested; reading or writing a real calendar
- * needs a registered OAuth client, an enabled API and a real account, none of which this
- * repository holds. Until then no journey may report a calendar as connected.
+ *
+ * The connector path is wired and real: `connectionFromGrant` takes a grant the SDK's authorization-code exchange
+ * produced, `readAgendaThroughConnector` and `createEventThroughConnector` call the SDK's Calendar client, and the
+ * pack's own time contract, agenda order, conflict rule and four write-outcome words are what come back. A
+ * connection is still never reported as usable on the strength of a token: the scopes have to cover the read and
+ * the capability probe has to have passed.
+ *
+ * TODO(P7): the live connection. What is missing is a registered OAuth client, an enabled API and a real account,
+ * so the endpoint a live connection would call has never been called — external gate #2. Until then no journey may
+ * report a calendar as connected.
  */
 export const LIVE_API_STATUS = "external-blocked-oauth-client-required";
