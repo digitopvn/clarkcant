@@ -158,10 +158,26 @@ docs/        the blueprint, the compatibility lock, and the conformance ledger
 ```
 
 Every workspace package declares `clarkcant.phase` and `clarkcant.status` in its
-`package.json`, so any file can be traced back to the milestone that owns it. `pnpm
-invariants` enforces that, along with the documentation manifest hashes, the absence of
-committed credentials, pinned dependency specifiers, and the TypeScript syntax that Node's
-type-stripping loader cannot execute.
+`package.json`, so any file can be traced back to the milestone that owns it. `phase` is the
+milestone that owns the package; `status` is the package-level claim about the package's own
+code, and it is one of three words. `implemented` — that code is written and exercised by
+tests in this repository. `stub` — the package still owes its own code, and nothing outside
+this repository is what holds that work back. `external-blocked` — the package still owes work
+that cannot be finished or validated here, because it waits on something outside this
+repository: an account, a signing identity, a service or device this machine does not have, or
+a second host — the gate the registry entry carrying the gap names in `externalGate` (#2, #3,
+#4 and #5 are the gates this program keeps open). The word is coarser than a capability's
+status in [`IMPLEMENTATION_STATUS`](packages/contracts/src/implementation-status.ts): one
+package can carry several entries at different statuses, and the entries are where the split
+lives. The two words split on the package's own purpose rather than on whether a gate exists
+somewhere in it: a package is `external-blocked` when the work its own purpose depends on
+cannot be finished or validated here, so nothing it ships can be exercised on this machine
+(`packs/google-calendar`, `packages/node-link`), while a package that also ships code this
+repository runs and tests stays `implemented` even when a capability it carries is incomplete —
+that incompleteness is named in the entry, not in the manifest
+(`packages/integration-sdk`, `packages/widget-cli`). `pnpm invariants` enforces the field's presence and vocabulary, along with the
+documentation manifest hashes, the absence of committed credentials, pinned dependency
+specifiers, and the TypeScript syntax that Node's type-stripping loader cannot execute.
 
 ## Design decisions worth knowing
 

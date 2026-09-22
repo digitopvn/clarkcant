@@ -196,16 +196,15 @@ export const FORBIDDEN_API_SURFACE = [
 ] as const;
 
 /**
- * @implementation-status implemented
+ * @status-ref widget-sdk.runtime-and-host-session
  *
  * The codec, nonce validation and API surface above, plus the runtime a mini-app imports
  * (`runtime.ts`) and the host end of one frame (`@clarkcant/widget-host`, `session.ts`). The handshake,
  * the refusals and the lifecycle are tested on both sides.
  *
- * Two things this does *not* claim, because they are not true yet: no mini-app ships against it, and the
- * conversation client does not yet mount one in a frame. Phase 12 is where an author gets a way to run
- * one, and that is when this status stops being a description of the packages and becomes a description
- * of something a user can reach.
+ * What this package does not claim: no mini-app ships against it, and the frame the conversation
+ * client mounts is exercised by `apps/web/e2e/widget-frame.spec.ts` rather than by a shipped
+ * package. The `V12` registry entry names the rest of that gap.
  */
 export const WIDGET_RUNTIME_STATUS = "runtime-and-host-session-implemented";
 

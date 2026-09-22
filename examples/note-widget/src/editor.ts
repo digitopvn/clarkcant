@@ -19,6 +19,12 @@ import {
   type SaveOutcome,
 } from "@clarkcant/core";
 
+/**
+ * The package's one copy of the label, on the module the registry's evidence tests exercise: what is
+ * implemented here is the revision-checked draft flow (`implemented-draft-flow`). The package-level gap -
+ * the isolated build that would produce a shippable bundle - is named in the registry entry
+ * `example.note-widget`, not restated as a second constant.
+ */
 export const NOTE_WIDGET_STATUS = "implemented-draft-flow";
 
 export interface NoteSession {

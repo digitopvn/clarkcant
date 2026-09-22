@@ -220,9 +220,11 @@ export function bootRuntime(options: RuntimeOptions): Runtime {
 }
 
 /**
- * @implementation-status stub
- * TODO(P1): the local Unix-socket transport. The identity, database, migrations and
- * bearer-token gate are implemented and tested; the socket listener that a desktop
- * helper would attach to is not, and only the loopback HTTP gateway is wired today.
+ * @status-ref runtime.local-transport
+ *
+ * `unix-socket.ts` is the listener, and `portable-runtime.spec.ts` drives `listenOnUnixSocket`
+ * against a real socket. `main.ts` starts it when `--socket <path>` is passed; no test drives that
+ * flag, so what is exercised is the listener rather than the command line that selects it. The
+ * loopback HTTP gateway is the other half.
  */
 export const LOCAL_SOCKET_STATUS = "identity-http-and-unix-socket-implemented";

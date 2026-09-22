@@ -458,9 +458,10 @@ export function runConformance(root: string, options: { frames?: FrameFacts } = 
     "interaction",
     "detach keeps one live owner",
     "requires-dev-host",
-    // Named precisely: this is not "needs a browser" but "needs a detached host window", and the product does not
-    // have one — phase 7 landed the ownership half only, so there is nothing here to exercise.
-    "a detached host window does not exist yet, so detach cannot be exercised from this command",
+    // Named precisely: this is not "needs a browser" but "needs a window that can be detached and re-attached", and
+    // this command drives a browser dev host, which has no detached window to drive. The desktop's detached window
+    // exists, in apps/desktop/src/main.mjs, and is covered by the desktop and browser suites rather than by this check.
+    "this command drives a browser dev host, which has no detached window to drive; the desktop detached window is covered by the desktop and browser suites, not by this check",
   );
 
   add(
@@ -468,7 +469,7 @@ export function runConformance(root: string, options: { frames?: FrameFacts } = 
     "interaction",
     "a spoken action and the same click agree",
     "requires-dev-host",
-    "needs a rendered frame and a voice session",
+    "needs a rendered frame and a voice session, and a voice session needs a provider account",
   );
 
   /* --------------------------------------------------------------- rendering */

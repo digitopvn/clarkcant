@@ -145,11 +145,11 @@ export function reviewAction(
 export { ESCALATION_ORDER, isConsequential };
 
 /**
- * @implementation-status stub
- * TODO(P8): the Playwright binding itself. Target description, locator resolution,
- * operation support and the shared safety review are implemented and tested; driving a
- * real page needs a downloaded browser engine, which is not installed by default
- * because most users never need one.
+ * @status-ref pack.browser-playwright
+ *
+ * `driver.ts` is the binding, and `driver.spec.ts` drives a real Chromium through it. The
+ * engine is downloaded on demand rather than installed by default, because most users never
+ * need one.
  *
  * The engine version must be pinned together with the library version; a mismatched
  * pair is a common and confusing failure.

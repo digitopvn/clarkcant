@@ -227,7 +227,7 @@ export function probePlatformCapabilities(env: {
 /**
  * Whether a driver pack may be used on this host.
  *
- * @implementation-status stub
+ * @status-ref host-adapters.platform-capabilities
  * TODO(P3): real macOS TCC permission queries and a rootless-container capability
  * check. The capability shape and the refusal logic are implemented; reading actual
  * permission state needs a signed bundle and a real desktop session.

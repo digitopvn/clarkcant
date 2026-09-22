@@ -3,13 +3,13 @@
  *
  * Browser client for the runtime gateway.
  *
- * @implementation-status implemented
+ * @status-ref app.web.client
  *
  * This header used to say the opposite: "stub", with a `TODO(P1)` claiming there was no Vite entry
  * point, no gateway transport and no HTML shell. All three exist and are exercised by the browser
  * suite in `apps/web/e2e/`, and the claim was left standing while the app was built around it —
  * the same failure the renderer comments had, where a written guarantee outlives the code it
- * described.
+ * described. That is why this file no longer states a status of its own.
  *
  * What is here, and no more than has been checked:
  *

@@ -19,7 +19,13 @@ import {
   type WidgetToHostMessage,
 } from "@clarkcant/widget-sdk";
 
-export const MCP_FIXTURE_STATUS = "implemented-against-reference-host";
+/**
+ * The package's one copy of the label, on the module the registry's evidence tests exercise. The host
+ * this names is the injected one the tests build from `FixtureHost`, never a reference MCP Apps host:
+ * there is no such host in this repository, and the registry entry `example.mcp-app-fixture` is where
+ * that gap is named.
+ */
+export const MCP_FIXTURE_STATUS = "implemented-against-injected-fixture";
 
 /** The one capability this fixture is allowed to request. */
 export const REQUESTED_CAPABILITY = "fixture.echo@1";
