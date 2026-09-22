@@ -1,13 +1,18 @@
 import { join } from "node:path";
 
-import { instantSchema, nowInstant, platformForHost } from "@clarkcant/contracts";
+import { instantSchema, nowInstant, platformForHost, type DirectoryEntry } from "@clarkcant/contracts";
 import {
   artifactRequest,
   directoryBackedMetadata,
+  incompleteCoverageRefusal,
   lockBindingForPlan,
   materializeDependencyLock,
+  readDependencyLock,
   resolveDependencyClosure,
   writeDependencyLock,
+  type BuildInputs,
+  type DependencyLock,
+  type DependencyMetadataSource,
 } from "@clarkcant/capability-host";
 import {
   decideExecution,
@@ -63,9 +68,112 @@ export type PackageInstallOutcome =
       version: string;
       generationId: string;
       state: string;
-      /** The frozen build input, or null when the directory published no digest to freeze. */
-      lock: { ref: string; digest: string; coverage: string } | null;
+      /**
+       * The frozen build input, or null when the directory published no digest to freeze.
+       *
+       * `buildable` is what the locked-build path would do with this closure: a lock that covers the artifact but
+       * not the package's tree is refused by name (`LOCK_INCOMPLETE`) rather than read as one a build would run,
+       * and saying so here keeps the frozen input from being mistaken for a complete one.
+       */
+      lock: {
+        ref: string;
+        digest: string;
+        coverage: string;
+        buildable: boolean;
+        /** Why the locked-build path would refuse this closure, when it would. */
+        buildRefusal?: string;
+      } | null;
     };
+
+/**
+ * The frozen build input, resolved and then read back the way a build reads it.
+ *
+ * Two properties this holds apart. What comes back is not the object this function just built but the artifact
+ * read out of the node's lock directory under the reference a consented plan will name: a build never sees the
+ * in-memory copy, so a plan bound to one that was never written would name bytes nobody can read. And the
+ * locked-build path's own admission travels with it, so a closure a build would refuse is refused here rather
+ * than being passed on as if it were a build input.
+ */
+export interface FrozenInstallClosure {
+  /** The closure as a build reads it. Absent when the directory published no digest to freeze. */
+  lock: DependencyLock | undefined;
+  /**
+   * The locked-build path's refusal, when it would refuse this closure.
+   *
+   * `undefined` means the closure covers what a build consumes. `LOCK_INCOMPLETE` is the honest answer for a
+   * closure that covers the artifact but not the package's tree, and it is kept rather than thrown away: the
+   * install proceeds (the package is activated), and a build refuses this input instead of resolving anything
+   * itself.
+   */
+  buildRefusal: { code: "LOCK_INCOMPLETE"; message: string } | undefined;
+}
+
+export type FreezeInstallClosureOutcome =
+  | { ok: true; frozen: FrozenInstallClosure }
+  | { ok: false; status: number; code: string; message: string };
+
+/**
+ * Resolve the dependency closure **before** anything is installed, then consume it the way a build does.
+ *
+ * This node has not downloaded the artifact, so what it can resolve here is what the directory says this package
+ * is: its exact version, the digest the publisher published, and which kind of source it came from. The package's
+ * own dependency tree is not readable from here — a manifest's dependencies live inside the artifact, and nothing
+ * in this repository turns a declared range into an exact version — so the lock says `artifact-only` rather than
+ * implying it pinned a tree. Widening that claim is the one direction this must never take: a lock that says it
+ * covers a tree nobody read is worse than one that says what it covers.
+ *
+ * A resolution that fails stops the install rather than letting a later step resolve it again: "we could not say
+ * what this would install" is not a state to proceed from.
+ */
+export function freezeInstallClosure(input: {
+  /** The node's lock directory. The reference is resolved inside it and nowhere else. */
+  lockDir: string;
+  entry: DirectoryEntry;
+  metadata: DependencyMetadataSource;
+  buildInputs: BuildInputs;
+}): FreezeInstallClosureOutcome {
+  const { entry } = input;
+
+  /*
+   * An entry that publishes no digest is refused by the installer with its own reason, and there is nothing to
+   * freeze for it: a lock whose integrity is blank would name bytes nobody can check.
+   */
+  if (entry.digest.trim() === "") return { ok: true, frozen: { lock: undefined, buildRefusal: undefined } };
+
+  const resolution = resolveDependencyClosure({ requests: [artifactRequest(entry)], metadata: input.metadata });
+  if (!resolution.ok) {
+    return { ok: false, status: 400, code: "DEPENDENCY_UNRESOLVED", message: resolution.message };
+  }
+
+  const materialized = materializeDependencyLock({
+    packageId: entry.packageId,
+    version: entry.version,
+    coverage: "artifact-only",
+    resolved: resolution.resolved,
+    buildInputs: input.buildInputs,
+  });
+
+  /*
+   * Kept next to the plans it will be consented with, under a reference that is its own digest, so a later
+   * resolution can never replace the bytes a consented plan names.
+   */
+  const stored = writeDependencyLock({ dir: input.lockDir, lock: materialized });
+  if (!stored.ok) return { ok: false, status: 409, code: stored.code, message: stored.message };
+
+  /*
+   * Read back through the same reader the locked-build runner uses, under the reference the plan is about to
+   * carry. A missing or edited artifact stops the install here instead of becoming a plan that names bytes no
+   * build can read.
+   */
+  const readBack = readDependencyLock({
+    dir: input.lockDir,
+    lockRef: materialized.lockRef,
+    lockDigest: materialized.lockDigest,
+  });
+  if (!readBack.ok) return { ok: false, status: 409, code: readBack.code, message: readBack.message };
+
+  return { ok: true, frozen: { lock: readBack.lock, buildRefusal: incompleteCoverageRefusal(readBack.lock) } };
+}
 
 export function installPackage(deps: PackageInstallDeps, request: PackageInstallRequest): PackageInstallOutcome {
   const { runtime, conductor } = deps;
@@ -149,46 +257,20 @@ export function installPackage(deps: PackageInstallDeps, request: PackageInstall
   });
 
   /*
-   * Resolve the dependency closure **before** anything is installed.
+   * Freeze the closure before anything is installed, and take the locked-build path's admission of it.
    *
-   * This node has not downloaded the artifact, so what it can resolve here is what the directory says this
-   * package is: its exact version, the digest the publisher published, and which kind of source it came from.
-   * The package's own dependency tree is not readable from here, and the lock says so rather than implying it
-   * was pinned (`artifact-only`). A build refuses a lock that does not cover the tree, for exactly that reason.
-   *
-   * A resolution that fails stops the install rather than letting a later step resolve it again: "we could not
-   * say what this would install" is not a state to proceed from.
+   * `buildable: false` is the honest answer for the lock this route can produce, and it is stated rather than
+   * left out: the route pins the artifact, its provenance and the build inputs, and a build refuses that input
+   * (`LOCK_INCOMPLETE`) instead of resolving a closure itself. That refusal is the guarantee, not a gap in it.
    */
-  const metadata = directoryBackedMetadata(index.entries);
-  const resolution =
-    entry.digest.trim() === ""
-      ? undefined
-      : resolveDependencyClosure({ requests: [artifactRequest(entry)], metadata });
-  if (resolution !== undefined && !resolution.ok) {
-    return { kind: "refused", status: 400, code: "DEPENDENCY_UNRESOLVED", message: resolution.message };
-  }
-
-  /*
-   * An entry that publishes no digest is refused by the installer with its own reason, and there is nothing to
-   * freeze for it: a lock whose integrity is blank would name bytes nobody can check.
-   */
-  const lock = resolution === undefined || !resolution.ok
-    ? undefined
-    : materializeDependencyLock({
-        packageId: entry.packageId,
-        version: entry.version,
-        coverage: "artifact-only",
-        resolved: resolution.resolved,
-        buildInputs: { platform, nodeAbi: process.versions.modules },
-      });
-  if (lock !== undefined) {
-    /*
-     * Kept next to the plans it will be consented with, under a reference that is its own digest, so a later
-     * resolution can never replace the bytes a consented plan names.
-     */
-    const stored = writeDependencyLock({ dir: join(runtime.dataDir, "locks"), lock });
-    if (!stored.ok) return { kind: "refused", status: 409, code: stored.code, message: stored.message };
-  }
+  const frozen = freezeInstallClosure({
+    lockDir: join(runtime.dataDir, "locks"),
+    entry,
+    metadata: directoryBackedMetadata(index.entries),
+    buildInputs: { platform, nodeAbi: process.versions.modules },
+  });
+  if (!frozen.ok) return { kind: "refused", status: frozen.status, code: frozen.code, message: frozen.message };
+  const { lock, buildRefusal } = frozen.frozen;
 
   const outcome = installFromEntry(coordination, {
     entry,
@@ -197,7 +279,8 @@ export function installPackage(deps: PackageInstallDeps, request: PackageInstall
     ownerPrincipalId: principalId,
     codeGeneration: conductor.newId("codegen"),
     expiresAt: instantSchema.parse(new Date(Date.now() + INSTALL_APPROVAL_TTL_MS).toISOString()),
-    // The frozen closure, bound into the plan and the generation the install activates.
+    // The frozen closure, bound into the plan and the generation the install activates — the one read back from
+    // the lock directory, so what the plan names is what a build would read.
     ...(lock === undefined ? {} : { dependencyLock: lockBindingForPlan(lock) }),
     ...(request.localDigest === undefined ? {} : { localDigest: request.localDigest }),
     ...(request.requestedCapabilityRefs === undefined
@@ -213,6 +296,14 @@ export function installPackage(deps: PackageInstallDeps, request: PackageInstall
     version: entry.version,
     generationId: outcome.generationId,
     state: outcome.state,
-    lock: lock === undefined ? null : { ref: lock.lockRef, digest: lock.lockDigest, coverage: lock.coverage },
+    lock: lock === undefined
+      ? null
+      : {
+          ref: lock.lockRef,
+          digest: lock.lockDigest,
+          coverage: lock.coverage,
+          buildable: buildRefusal === undefined,
+          ...(buildRefusal === undefined ? {} : { buildRefusal: buildRefusal.message }),
+        },
   };
 }

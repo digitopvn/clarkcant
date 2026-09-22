@@ -66,6 +66,13 @@ test("the Autonomy control lives in the Control tab, and saving it reaches the n
    */
   const policy = panel.locator('[data-segmented="autonomy-policy"]');
   await expect(policy.locator('[data-segment="auto"]')).toHaveAttribute("aria-pressed", "true");
+  /*
+   * One control for the mode, and no second one. A level control used to sit below this panel writing the legacy
+   * `execution.mode` preference, so a save on either could overwrite a mode just chosen on the other; this asserts
+   * the surface a person actually sees has exactly one place to change it.
+   */
+  await expect(panel.locator('[data-segmented="execution-mode"]')).toHaveCount(0);
+  await expect(panel.locator('[data-segmented="autonomy-policy"]')).toHaveCount(1);
   await expect(panel.locator('[data-toggle="autonomy-guardrails"] input[type="checkbox"]')).toBeChecked();
   // Reads are not guarded by default: a guardrail call on every read spends a provider call to decide nothing.
   await expect(panel.locator('[data-autonomy-class="reads"]')).not.toBeChecked();
