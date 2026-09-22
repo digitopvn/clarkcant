@@ -245,6 +245,10 @@ export async function startDevHost(options: DevHostOptions): Promise<DevHost> {
   }
 
   const source = options.builtin === undefined ? packageSource(options.root ?? "") : catalogSource(options.builtin);
+  /*
+   * The one discriminator for "this host serves a catalog widget": a package has a directory whose files may be
+   * served, and a catalog widget does not, which is also exactly when Vite is needed to serve the frame's module.
+   */
   const root = source.root;
 
   /*
@@ -253,7 +257,7 @@ export async function startDevHost(options: DevHostOptions): Promise<DevHost> {
    * widget: a package's frame is its own entry HTML, which this server already knows how to serve.
    */
   const vite: ViteDevServer | undefined =
-    source.root === undefined
+    root === undefined
       ? await createViteServer({
           configFile: false,
           root: CLI_ROOT,
@@ -350,7 +354,7 @@ export async function startDevHost(options: DevHostOptions): Promise<DevHost> {
      * The frame's page for a catalog widget. Generated per request so it carries the fixture the shell is currently
      * showing: the shell reloads the frame on every control change, so the state read here is the state on screen.
      */
-    if (path === "/catalog-runtime.html" && source.root === undefined) {
+    if (path === "/catalog-runtime.html" && root === undefined) {
       response.writeHead(200, { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" });
       response.end(catalogFrameHtml({ definitionId: source.definitionId, fixtureId: state.fixture }));
       return;
@@ -374,13 +378,20 @@ export async function startDevHost(options: DevHostOptions): Promise<DevHost> {
       return;
     }
 
-    if (source.root === undefined || vite !== undefined) {
+    if (root === undefined) {
       /*
        * A catalog widget has no package files to serve: its module graph belongs to Vite, which resolves the
        * workspace's sources the way the app's own build does. Handing the request over rather than answering it is
        * what keeps the preview the production renderer instead of a second implementation of it.
        */
-      vite?.middlewares(request, response, () => {
+      if (vite === undefined) {
+        // Unreachable, since Vite is created exactly when there is no package root. Answered rather than left
+        // hanging, because a request that never gets a response is the failure this branch exists to avoid.
+        response.writeHead(503, { "content-type": "text/plain; charset=utf-8" });
+        response.end("the catalog runtime is not running\n");
+        return;
+      }
+      vite.middlewares(request, response, () => {
         response.writeHead(404, { "content-type": "text/plain; charset=utf-8" });
         response.end("not found\n");
       });
@@ -392,9 +403,8 @@ export async function startDevHost(options: DevHostOptions): Promise<DevHost> {
      * resolves to hands out the author's home directory, and it is the ordinary way a local tool becomes a way to
      * read files.
      */
-    const packageRoot = source.root;
-    const candidate = resolve(join(packageRoot, normalize(path)));
-    const inside = candidate === packageRoot || candidate.startsWith(packageRoot + sep);
+    const candidate = resolve(join(root, normalize(path)));
+    const inside = candidate === root || candidate.startsWith(root + sep);
     if (!inside) {
       response.writeHead(403, { "content-type": "text/plain; charset=utf-8" });
       response.end("refused: that path is outside the package\n");
