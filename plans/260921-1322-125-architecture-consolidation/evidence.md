@@ -646,3 +646,32 @@ The packed-worker lane (`apps/runtime/src/pack-load.ts:118` to `apps/worker`) st
 ## Phase 3 — deterministic install dependency lock
 
 Branch: `phase-3-install-lock`, cut from `main` at `026d061`.
+
+## Phase 3 — MERGED
+
+| Item | Value |
+| --- | --- |
+| PR | [#139](https://github.com/digitopvn/clarkcant/pull/139) |
+| Merge commit | `e0871aeb1301a95fc8db7405ea211c92f647953f` |
+| Reviewed head (bound via `--match-head-commit`) | `83b5915ce98265f3d6c1dd84d264c2c5defa53e9` |
+| CI on the reviewed head | terminal green |
+| `pnpm verify` on the tree | exit 0 — 182 files passed / 1 skipped, 2243 tests passed / 7 skipped |
+| Focused | `packages/capability-host/test/` 44 tests, `dependency-lock.spec.ts` 23 |
+
+### Review outcome
+
+No CRITICAL and no security regression. Three IMPORTANT findings were raised and all fixed:
+
+1. **The coverage gate was in the wrong function.** `prepareLockedBuild` refused an `artifact-only` lock, but `isolatedLockedBuild` — the function that actually invokes the contained build — checked only the lifecycle gate, so a lock declaring no dependency coverage was accepted by the runner. Nothing in production calls either entry point yet, so the guarantee rested on a two-call protocol nothing enforced. The refusal is now shared and enforced inside the runner, and `isolatedBuild` is documented as the lower-level primitive that deliberately does not repeat it.
+2. **A plan recorded before this release was mislabelled.** A live pre-upgrade plan row made a repeat install return `LOCK_DRIFT` implying a closure had moved when none was ever recorded. The refusal stays (failing closed is correct); the message now names the plan's id and state, says it predates the frozen build input, and says what to do. Disclosed in the PR body as an upgrade interaction.
+3. **An over-claim was narrowed.** `resolveDependencyClosure` never reads the declared request spec, so ranges are pinned to whatever exact version the metadata source names and nothing checks range satisfaction; no range-to-version resolution exists in the repository. The V08 row and the module docs now claim only what the code proves — a range cannot enter a lock and a non-exact answer is refused.
+
+Also fixed: `LOCK_UNREADABLE` distinguishes an unreadable artifact from an absent one; `dependencyDrift` compares by name and version so two versions of one name cannot collapse; the `frozenBuildEnvironment` comment describes the stable key order it relies on rather than claiming canonical JSON.
+
+### Recorded, not fixed
+
+Four MINOR findings were left in place and are candidates for Phase 5's evidence work: `assertLockUnchanged` does not compare packageId/version although the digest covers them; lock artifacts written before a refused install are not pruned; the plan's lock refine is never actually parsed because `installPlanSchema` has no parse site; and one client field mirrors a new response field that no UI reads yet.
+
+## Phase 4 — runtime composition decomposition
+
+Branch: `phase-4-runtime-split`, cut from `main` at `e0871ae`. Behavior-preserving: the review of this phase must not accept any public-behavior change, and the baseline must be captured before each family moves.
