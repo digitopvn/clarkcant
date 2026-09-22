@@ -94,7 +94,7 @@ export function validateForegroundTarget(input: {
 }
 
 /**
- * @implementation-status stub
+ * @status-ref pack.computer-macos
  * TODO(P8): the native driver binding, including a signed and packaged launch context.
  * Permission gating, containment labelling, target validation and the lease/stop
  * contract are implemented and tested; delivering real input requires a signed bundle

@@ -11,9 +11,34 @@
 import { createHash } from "node:crypto";
 import { readFileSync, readdirSync, existsSync, statSync } from "node:fs";
 import { join, relative } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 const repoRoot = fileURLToPath(new URL("..", import.meta.url));
+
+const REGISTRY_PATH = "packages/contracts/src/implementation-status.ts";
+
+/**
+ * The registry is loaded rather than parsed, because it is a typed module: a status claim and the
+ * package metadata it points at are checked against each other, not against a regex.
+ *
+ * A load failure is reported by the check that needs it instead of crashing this script, so a
+ * broken registry still prints the check that owns it. Node strips the types of a `.ts` file for
+ * the same reason the runtime can execute one.
+ */
+let statusRegistry = null;
+let statusRegistryError = null;
+try {
+  ({ IMPLEMENTATION_STATUS: statusRegistry } = await import(
+    pathToFileURL(join(repoRoot, REGISTRY_PATH)).href,
+  ));
+} catch (error) {
+  statusRegistryError = error;
+}
+
+/** Registry entries by capability id, or an empty map when the registry could not be loaded. */
+const statusById = new Map(
+  (Array.isArray(statusRegistry) ? statusRegistry : []).map((entry) => [entry.capabilityId, entry]),
+);
 
 /** @type {{name: string, failures: string[], notes: string[]}[]} */
 const results = [];
@@ -136,9 +161,17 @@ function readJson(path) {
   let marked = 0;
   for (const file of files) {
     const source = readFileSync(file, "utf8");
-    const looksLikeStub =
+    /*
+     * A status reference is a stub claim when the registry does not call it implemented. That is why
+     * this reads the registry instead of a marker: the marker used to be a second copy of the status,
+     * so a file could say "stub" while the registry said otherwise and both would look fine.
+     */
+    const stubRef =
       /@implementation-status\s+stub/.test(source) ||
-      /throw new NotImplementedError/.test(source);
+      [...source.matchAll(/@status-ref\s+([A-Za-z0-9.-]+)/g)].some(
+        (match) => (statusById.get(match[1])?.status ?? "unknown") !== "implemented",
+      );
+    const looksLikeStub = stubRef || /throw new NotImplementedError/.test(source);
     if (!looksLikeStub) continue;
     if (!pattern.test(source)) {
       c.failures.push(
@@ -288,9 +321,40 @@ function readJson(path) {
         missing += 1;
       }
     }
+
+    /*
+     * A row that claims PASS or PARTIAL has to point at a test artifact that is on disk - either by
+     * quoting a test title that exists, or by naming a spec file that exists. A quoted title is the
+     * stronger evidence, so a row using one is done; a row that names only a file is allowed because
+     * some evidence is an integration path rather than a single titled case (`peers.spec.ts`, the
+     * desktop smoke run). What is not allowed is a status with no reachable artifact at all, which is
+     * how a table can be green about a journey nobody wrote.
+     */
+    const specBasenames = new Set();
+    for (const file of specFiles) {
+      const base = file.split("/").pop();
+      specBasenames.add(base);
+      specBasenames.add(base.replace(/\.tsx?$/, ""));
+    }
+    let unsupported = 0;
+    for (const line of source.split("\n")) {
+      const row = line.match(/^\| ((?:T|V)\d+) \| (PASS|PARTIAL) \|/);
+      if (!row) continue;
+      const quoted = [...line.matchAll(/"([a-z][a-z0-9 ,:'’()/.-]{11,})"/g)].some((match) =>
+        specText.includes(match[1]),
+      );
+      const named = [...line.matchAll(/([A-Za-z0-9_.-]+\.spec\b)/g)].some((match) =>
+        specBasenames.has(match[1]),
+      );
+      if (!quoted && !named) {
+        c.failures.push(`${row[1]} claims ${row[2]} but names no test title and no spec file that exists`);
+        unsupported += 1;
+      }
+    }
     c.notes.push(
       `${citedTitles.size} cited test titles checked against ${specFiles.length} spec files` +
-        (missing === 0 ? "" : `, ${missing} missing`),
+        (missing === 0 ? "" : `, ${missing} missing`) +
+        (unsupported === 0 ? "" : `, ${unsupported} row(s) claiming a status with no reachable evidence`),
     );
   }
 }
@@ -447,6 +511,178 @@ function readJson(path) {
   c.notes.push(
     `${reads} canonical policy read(s) across ${sources.length} module(s), ${allowed.size} allowed to open the key`,
   );
+}
+
+/* ------------------------------------------------------------------ *
+ * 10. The implementation-status registry.
+ *
+ * A registry that lies is worse than no registry, so this check is not a spelling test on a data
+ * file. It holds four properties at once:
+ *
+ *   - every entry names a workspace package that exists, with that package's declared phase;
+ *   - `implemented` names at least one test, and each named test exists in the file it names (the
+ *     reason "the schema exists" is not allowed to pass is here: a schema has no title);
+ *   - every other status names what is missing, and the five external gates #2/#3/#4/#5/#93 stay
+ *     represented by at least one entry, so a gate cannot quietly stop being a gate;
+ *   - every `@status-ref` in source resolves, every scope id agrees with
+ *     docs/conformance-traceability.md, and no `@implementation-status` marker survives.
+ * ------------------------------------------------------------------ */
+{
+  const c = check("implementation-status-registry");
+  const statuses = new Set(["implemented", "partial", "blocked", "not-implemented"]);
+  const docStatusOf = {
+    implemented: "PASS",
+    partial: "PARTIAL",
+    blocked: "BLOCKED",
+    "not-implemented": "NOT-IMPLEMENTED",
+  };
+
+  if (statusRegistryError) {
+    c.failures.push(`${REGISTRY_PATH} could not be loaded: ${statusRegistryError.message}`);
+  } else if (!Array.isArray(statusRegistry)) {
+    c.failures.push(`${REGISTRY_PATH} does not export an IMPLEMENTATION_STATUS array`);
+  } else {
+    const packagesByName = new Map();
+    for (const group of ["packages", "apps", "packs", "examples"]) {
+      const groupDir = join(repoRoot, group);
+      if (!existsSync(groupDir)) continue;
+      for (const entry of readdirSync(groupDir, { withFileTypes: true })) {
+        const manifestPath = join(groupDir, entry.name, "package.json");
+        if (!existsSync(manifestPath)) continue;
+        const manifest = readJson(manifestPath);
+        packagesByName.set(manifest.name, { phase: manifest.clarkcant?.phase, path: `${group}/${entry.name}` });
+      }
+    }
+
+    const seenIds = new Set();
+    for (const entry of statusRegistry) {
+      const id = entry?.capabilityId;
+      const label = typeof id === "string" ? id : "(entry without a capabilityId)";
+      if (typeof id !== "string" || !/^[A-Za-z][A-Za-z0-9.-]*$/.test(id)) {
+        c.failures.push(`${label} is not a usable capability id`);
+      } else if (seenIds.has(id)) {
+        c.failures.push(`the registry defines ${id} more than once`);
+      } else {
+        seenIds.add(id);
+      }
+      if (!statuses.has(entry.status)) {
+        c.failures.push(`${label} has status ${JSON.stringify(entry.status)}, which is not one of the four`);
+      }
+      if (typeof entry.summary !== "string" || entry.summary.length === 0) {
+        c.failures.push(`${label} has no summary`);
+      }
+      const owner = packagesByName.get(entry.owningPackage);
+      if (owner === undefined) {
+        c.failures.push(`${label} names owning package ${entry.owningPackage}, which is not a workspace package`);
+      } else if (owner.phase !== entry.phase) {
+        c.failures.push(
+          `${label} says phase ${entry.phase} but ${owner.path} declares clarkcant.phase ${owner.phase}`,
+        );
+      }
+
+      const evidence = Array.isArray(entry.evidenceTests) ? entry.evidenceTests : [];
+      if (!Array.isArray(entry.evidenceTests)) {
+        c.failures.push(`${label} has no evidenceTests array`);
+      }
+      for (const item of evidence) {
+        const full = typeof item?.file === "string" ? join(repoRoot, item.file) : null;
+        if (full === null || !existsSync(full)) {
+          c.failures.push(`${label} names a test file that does not exist: ${item?.file}`);
+          continue;
+        }
+        if (item.test !== undefined && !readFileSync(full, "utf8").includes(item.test)) {
+          c.failures.push(`${label} names a test that is not in ${item.file}: "${item.test}"`);
+        }
+      }
+
+      if (entry.status === "implemented") {
+        if (evidence.length === 0) {
+          c.failures.push(`${label} is implemented but names no test at all`);
+        }
+        for (const item of evidence) {
+          if (item.test === undefined) {
+            c.failures.push(`${label} is implemented but its evidence for ${item?.file} is untitled`);
+          }
+        }
+        if (entry.externalGate !== undefined) {
+          c.failures.push(`${label} is implemented and still carries an external gate; one of the two is wrong`);
+        }
+      }
+      if (entry.status === "partial" && evidence.length === 0) {
+        c.failures.push(`${label} is partial but names no test for the layer that does work`);
+      }
+      if (entry.status !== "implemented" && typeof entry.externalGate?.reason !== "string") {
+        c.failures.push(`${label} is ${entry.status} but does not name what is missing`);
+      }
+    }
+
+    /* Every `@status-ref` in source has to resolve, and no self-asserting marker may come back. */
+    const sources = ["packages", "apps", "packs", "examples"]
+      .flatMap((group) => walk(join(repoRoot, group), (path) => /\.tsx?$/.test(path)))
+      .map((path) => relative(repoRoot, path));
+    let references = 0;
+    for (const path of sources) {
+      const source = readFileSync(join(repoRoot, path), "utf8");
+      for (const match of source.matchAll(/@status-ref\s+([A-Za-z0-9.-]+)/g)) {
+        references += 1;
+        if (!statusById.has(match[1])) {
+          c.failures.push(`${path} references capability ${match[1]}, which the registry does not define`);
+        }
+      }
+      if (source.includes("@implementation-status")) {
+        c.failures.push(
+          `${path} still carries an @implementation-status marker; status lives in ${REGISTRY_PATH} - point at it with @status-ref <capabilityId>`,
+        );
+      }
+    }
+    if (references === 0) {
+      c.failures.push("no source file references the registry, so this check has no subject");
+    }
+
+    /* Scope ids carry two statuses at once, so they are checked against each other. */
+    const tracePath = join(repoRoot, "docs", "conformance-traceability.md");
+    const traceability = readFileSync(tracePath, "utf8");
+    const documented = new Map();
+    for (const line of traceability.split("\n")) {
+      const row = line.match(/^\| (V\d{2}) \| (PASS|PARTIAL|BLOCKED|NOT-IMPLEMENTED) \|/);
+      if (row) documented.set(row[1], row[2]);
+    }
+    for (const [id, documentedStatus] of documented) {
+      const entry = statusById.get(id);
+      if (entry === undefined) {
+        c.failures.push(`docs/conformance-traceability.md states ${id} but the registry has no entry for it`);
+      } else if (docStatusOf[entry.status] !== documentedStatus) {
+        c.failures.push(
+          `${id}: registry says ${entry.status} (${docStatusOf[entry.status]}) but the traceability document says ${documentedStatus}`,
+        );
+      }
+    }
+    for (const entry of statusRegistry) {
+      if (/^V\d{2}$/.test(entry.capabilityId) && !documented.has(entry.capabilityId)) {
+        c.failures.push(`the registry carries ${entry.capabilityId}, which docs/conformance-traceability.md omits`);
+      }
+    }
+
+    /* The external gates are the point of being honest about blocked work, so they stay named. */
+    const gateIssues = new Set();
+    for (const entry of statusRegistry) {
+      if (typeof entry.externalGate?.issue === "number") gateIssues.add(entry.externalGate.issue);
+    }
+    for (const issue of [2, 3, 4, 5, 93]) {
+      if (!gateIssues.has(issue)) {
+        c.failures.push(`external gate #${issue} is no longer represented by any registry entry`);
+      }
+    }
+
+    c.notes.push(
+      `${statusRegistry.length} entries (${[...statusRegistry].filter((e) => e.status === "implemented").length} implemented, ` +
+        `${[...statusRegistry].filter((e) => e.status === "partial").length} partial, ` +
+        `${[...statusRegistry].filter((e) => e.status === "blocked").length} blocked, ` +
+        `${[...statusRegistry].filter((e) => e.status === "not-implemented").length} not-implemented) verified against ${packagesByName.size} workspace packages`,
+    );
+    c.notes.push(`${references} @status-ref reference(s) across ${sources.length} source files`);
+    c.notes.push(`${documented.size} V row(s) agree with the registry; gates #${[...gateIssues].sort((a, b) => a - b).join("/#")} represented`);
+  }
 }
 
 /* ------------------------------------------------------------------ *

@@ -5,10 +5,10 @@
  * has at most one live media owner, and that restoring a pinned player does not start
  * playback on its own.
  *
- * @implementation-status stub
- * TODO(P6): the fixture component. The ownership rule it tests is already implemented and
- * tested in `@clarkcant/core` (`claimLiveOwner` refuses a second owner and reports who
- * holds it); what is missing is a component that surfaces it in a UI.
+ * @status-ref example.media-widget-contract
+ *
+ * The ownership and restore rules are implemented in `fixture.ts`; what this package does not
+ * contain is a mountable component, and the registry entry names that gap.
  *
  * This is deliberately **not** a vendor integration. No real SDK, account, DRM or
  * licensing path is involved, and the fixture must stay labelled as synthetic: passing it
@@ -34,7 +34,9 @@ export const CONTRACT_ASSERTIONS = [
 ] as const;
 
 /**
- * @implementation-status stub
- * TODO(P6): the fixture component.
+ * @status-ref example.media-widget-contract
+ *
+ * The declared assertions are the fixture's own contract, not a status: `fixture.spec.ts`
+ * checks the ones the state machine implements.
  */
 export const MEDIA_FIXTURE_STATUS = "assertions-declared-component-not-implemented";

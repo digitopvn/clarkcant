@@ -186,7 +186,7 @@ export function freshnessOf(input: {
 export { verifyScopes };
 
 /**
- * @implementation-status stub
+ * @status-ref pack.google-calendar
  * TODO(P7): the live Calendar API client and token refresh. Scope verification, time
  * normalization, agenda construction, conflict detection, write-outcome classification
  * and freshness labelling are implemented and tested; reading or writing a real calendar

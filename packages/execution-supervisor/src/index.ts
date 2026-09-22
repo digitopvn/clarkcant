@@ -215,7 +215,7 @@ export async function runUnderProfile(request: RunRequest): Promise<RunOutcome> 
 }
 
 /**
- * @implementation-status stub
+ * @status-ref execution-supervisor.container-adapters
  * TODO(P3): container and VM execution adapters. The profile model, environment
  * allowlist, timeout, cancellation and output bounding are implemented and tested;
  * running inside a container needs a container engine, and the `virtual-desktop`

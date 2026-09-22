@@ -168,7 +168,7 @@ export function negotiate(local: VersionHandshake, remote: VersionHandshake) {
 }
 
 /**
- * @implementation-status stub
+ * @status-ref nodelink.transport
  * TODO(P4): the TLS/WebSocket transport itself. `receiveEnvelope` and `sendEnvelope`
  * are transport-agnostic and fully exercised by tests, but the socket, reconnect
  * cursor and keepalive layer that carries them between two real hosts is not

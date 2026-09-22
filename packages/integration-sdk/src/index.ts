@@ -197,12 +197,12 @@ export function validateEndpoint(input: {
 }
 
 /**
- * @implementation-status implemented
+ * @status-ref integration-sdk.token-exchange
  *
  * The exchange and refresh loop live in `token-exchange.ts`. They are real: PKCE is sent and checked, state is
  * compared before a code travels, and scopes are verified against what was requested. What this repository still
  * does not hold is a registered OAuth client and a real account, so the endpoint a live connection would use has
- * never been called — which is why the conformance row stays PARTIAL.
+ * never been called — which is why the `V09` row in the registry and the conformance table stay PARTIAL.
  */
 export const LIVE_TOKEN_EXCHANGE_STATUS = "implemented-against-injected-endpoint";
 
