@@ -102,6 +102,10 @@ describe.skipIf(!POSIX)("POSIX only", () => {
     expect(platformSkippedTestTitles(source).has("POSIX only")).toBe(true);
   });
 
+  it("throws on a file it cannot parse rather than reporting that nothing is skipped", () => {
+    expect(() => platformSkippedTestTitles('describe("unclosed", () => {')).toThrow(/not parseable as TypeScript/u);
+  });
+
   it("reads the repository's real socket suite as skipped and its other tests as running", () => {
     const source = readFileSync(join(repoRoot, "apps/runtime/test/portable-runtime.spec.ts"), "utf8");
     const skipped = platformSkippedTestTitles(source);

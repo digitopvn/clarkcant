@@ -553,7 +553,16 @@ function readJson(path) {
     const platformSkippedByFile = new Map();
     const platformSkippedIn = (file) => {
       if (!platformSkippedByFile.has(file)) {
-        platformSkippedByFile.set(file, platformSkippedTestTitles(readFileSync(join(repoRoot, file), "utf8")));
+        try {
+          platformSkippedByFile.set(file, platformSkippedTestTitles(readFileSync(join(repoRoot, file), "utf8")));
+        } catch (error) {
+          /*
+           * A file that cannot be parsed yields no skips, which would read as "everything in it runs". That is the
+           * one answer this must never invent, so the file is failed rather than recorded as empty.
+           */
+          c.failures.push(`${file} could not be read for platform-conditional skips: ${error.message}`);
+          platformSkippedByFile.set(file, new Map());
+        }
       }
       return platformSkippedByFile.get(file);
     };
@@ -845,8 +854,8 @@ function readJson(path) {
   }
 
   c.notes.push(
-    `${bodies.length} checked-in PR body file(s) carry no closing keyword beside an issue reference ` +
-      `(${pairs} such pair(s) found)`,
+    `${bodies.length} checked-in PR body file(s) checked for a closing keyword beside an issue reference; ` +
+      `${pairs} such pair(s) found`,
   );
 }
 

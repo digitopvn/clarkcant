@@ -8,9 +8,10 @@
  *
  * It reads the TypeScript AST rather than matching text, because the property being asked about is nesting, and a
  * matcher that quietly fails to nest looks exactly like a repository with nothing wrong — the one outcome this
- * module must never produce. The condition is resolved rather than pattern-matched on the call: `!POSIX` counts
- * only because `POSIX` is bound in the same file to `process.platform`, and an opt-in gate such as
- * `describe.skipIf(!LIVE)` on an environment variable is deliberately not this module's subject.
+ * module must never produce. A file it cannot parse therefore throws instead of reporting an empty map. The
+ * condition is resolved rather than pattern-matched on the call: `!POSIX` counts only because `POSIX` is bound in
+ * the same file to `process.platform`, and an opt-in gate such as `describe.skipIf(!LIVE)` on an environment
+ * variable is deliberately not this module's subject.
  *
  * This lives outside check-invariants.mjs so the nesting can be tested on its own.
  */
@@ -90,9 +91,15 @@ function conditionOf(call) {
  *
  * @param {string} sourceText the contents of one spec file
  * @returns {Map<string, string>} title to the condition's own text
+ * @throws when the file cannot be parsed, rather than reporting that nothing is skipped: "nothing is skipped" is
+ * what a clean repository looks like, so an unreadable file must not be able to produce it
  */
 export function platformSkippedTestTitles(sourceText) {
   const file = ts.createSourceFile("spec.ts", sourceText, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
+  const broken = file.parseDiagnostics?.[0];
+  if (broken !== undefined) {
+    throw new Error(`not parseable as TypeScript: ${ts.flattenDiagnosticMessageText(broken.messageText, " ")}`);
+  }
   const platformNames = platformBoundNames(file);
 
   /** @type {Map<import("typescript").CallExpression, string>} */
