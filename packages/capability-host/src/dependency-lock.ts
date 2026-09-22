@@ -23,9 +23,12 @@ import { z } from "zod";
  * package one day apart can run different code while the plan, the consent and the digest all still name the same
  * artifact. This module removes that gap:
  *
- * 1. **Resolve metadata first.** `resolveDependencyClosure` turns what a package declared — `^1.2.0`, `latest`, a
- *    git ref, a path — into exact versions and integrities, before any executable step runs. A resolution that
- *    cannot be pinned fails the install; it does not fall back to "whatever the package manager finds".
+ * 1. **Metadata first, and metadata answers with one version.** `resolveDependencyClosure` asks a
+ *    `DependencyMetadataSource` what each request is and refuses anything that is not already one exact version
+ *    with an integrity and a provenance. It does **not** resolve a range itself: `request.spec` is never read here,
+ *    so `^1.2.0`, `1.2.5` and `latest` all pin whatever the metadata source names. Turning a range into a version
+ *    is that source's contract — what this module guarantees is the narrower, checkable half: a range can never
+ *    enter a lock, and a non-exact answer fails the install instead of being carried forward.
  * 2. **Materialise one immutable artifact.** The pins, the declared load-time scripts and the build inputs are
  *    hashed with the same canonical digest the rest of the repository uses, so the same inputs always produce the
  *    same digest and any changed pin produces a different one.
@@ -49,7 +52,13 @@ import { z } from "zod";
 
 export interface DependencyRequest {
   name: string;
-  /** What the package wrote: a range, a dist-tag, a git ref or a path. A range here is expected — that is the point. */
+  /**
+   * What the package wrote: a range, a dist-tag, a git ref or a path.
+   *
+   * Carried, not read: `resolveDependencyClosure` passes the request to its metadata source and never inspects this
+   * string, so it appears in refusal messages and nowhere else. Resolving it to a version is the metadata source's
+   * job, and an answer that is not already exact is refused (`VERSION_NOT_EXACT`).
+   */
   spec: string;
   /** Where to look. The resolved pin records where it actually came from, which may differ (a workspace override). */
   provenance: DependencyProvenance;
@@ -83,7 +92,10 @@ export type DependencyResolution =
   | { ok: false; code: DependencyResolutionRefusal; message: string };
 
 /**
- * Resolve every request to an exact artifact, or refuse the whole closure.
+ * Pin every request to the exact artifact its metadata source names, or refuse the whole closure.
+ *
+ * "Pin", not "resolve": the range-to-version decision happens in the metadata source, and this function's own
+ * answer to a request it cannot pin is a refusal.
  *
  * All-or-nothing on purpose: a closure with one unresolved entry is not a partial lock, it is an unknown build
  * input, and letting the rest through would mean the build runs against a tree nobody pinned.
