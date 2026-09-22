@@ -33,7 +33,7 @@ export function isEmbeddedPreview(definitionId: string): boolean {
 
 export interface WidgetGalleryProps {
   entries: readonly WidgetCatalogEntry[];
-  onSelect: (definitionId: string) => void;
+  onSelect: (cardId: string) => void;
 }
 
 export function WidgetGallery({ entries, onSelect }: WidgetGalleryProps): ReactElement {
@@ -50,22 +50,22 @@ export function WidgetGallery({ entries, onSelect }: WidgetGalleryProps): ReactE
       {entries.map((entry) => {
         const fixture = entry.fixtures[0];
         return (
-          <li key={entry.definition.id} className="cc-widget-card">
+          <li key={entry.cardId} className="cc-widget-card">
             <button
               type="button"
               className="cc-widget-card-btn"
-              onClick={() => onSelect(entry.definition.id)}
+              onClick={() => onSelect(entry.cardId)}
               aria-label={`${entry.displayName} — ${entry.description}`}
-              data-widget-card={entry.definition.id}
+              data-widget-card={entry.cardId}
             >
               <span className="cc-widget-card-preview">
                 {fixture === undefined ? (
-                  <span className="cc-widget-preview-missing" data-widget-preview-missing={entry.definition.id}>
+                  <span className="cc-widget-preview-missing" data-widget-preview-missing={entry.cardId}>
                     Chưa có fixture cho widget này.
                   </span>
                 ) : isEmbeddedPreview(entry.definition.id) ? (
                   // The text alternative the renderer itself would show, without the embed.
-                  <span className="cc-widget-card-text" data-widget-preview-deferred={entry.definition.id}>
+                  <span className="cc-widget-card-text" data-widget-preview-deferred={entry.cardId}>
                     {entry.definition.textFallback}
                   </span>
                 ) : (

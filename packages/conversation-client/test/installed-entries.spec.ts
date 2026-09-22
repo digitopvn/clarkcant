@@ -9,9 +9,9 @@ import { installedCatalogEntries } from "../src/widget-library/installed-entries
 /**
  * Turning installed packages into catalog entries.
  *
- * Every case here is about not overstating: a widget nobody can draw must not become a card, a duplicate must not
- * become two cards for one definition, and a package the node could not read must not become a package with no
- * widgets. The notes are asserted as carefully as the entries, because the notes are what the surface has to show.
+ * Every case here is about not overstating: a widget nobody can draw must not become a card, two packages' widgets
+ * must not collapse into one card, and a package the node could not read must not become a package with no widgets.
+ * The notes are asserted as carefully as the entries, because the notes are what the surface has to show.
  */
 
 function definition(id: string): WidgetDefinition {
@@ -32,6 +32,7 @@ function definition(id: string): WidgetDefinition {
 
 function knownEntry(id: string, family: string): WidgetCatalogEntry {
   return {
+    cardId: id,
     definition: definition(id),
     family,
     displayName: id,
@@ -71,6 +72,7 @@ describe("installed packages as catalog entries", () => {
     });
 
     expect(read.entries).toHaveLength(1);
+    expect(read.entries[0]?.cardId).toBe("com.example.panel/canvas.note@1");
     expect(read.entries[0]?.definition.id).toBe("canvas.note@1");
     expect(read.entries[0]?.source).toBe("local");
     expect(read.entries[0]?.fixtures[0]?.props).toEqual({ title: "Xin chào" });
@@ -101,28 +103,34 @@ describe("installed packages as catalog entries", () => {
     expect(read.notes[0]?.message).toContain("no renderer");
   });
 
-  it("does not show a second card for a definition the catalog already provides", () => {
+  it("gives a package's widget a card of its own, namespaced by the package", () => {
+    /*
+     * Every definition id a shipping renderer can draw is already a catalog entry, so a package keyed by its
+     * definition id could never show a card of its own: the catalog's entry would win the id every time.
+     */
     const read = installedCatalogEntries({
       packages: [readable("com.example.panel", ["canvas.note@1"])],
       known: [knownEntry("canvas.note@1", "note")],
       canRender: renderEverything,
     });
 
-    // Two cards with one definition id would be two cards that select the same thing.
-    expect(read.entries).toEqual([]);
-    expect(read.notes[0]?.message).toContain("already a widget of this catalog");
+    expect(read.entries).toHaveLength(1);
+    expect(read.entries[0]?.cardId).toBe("com.example.panel/canvas.note@1");
+    // The definition keeps its own id, because the id is what a renderer resolves from.
+    expect(read.entries[0]?.definition.id).toBe("canvas.note@1");
+    expect(read.notes).toEqual([]);
   });
 
-  it("keeps the catalog's family when a package re-declares a catalog definition", () => {
+  it("keeps the catalog's family for a definition the catalog already provides", () => {
     const read = installedCatalogEntries({
-      packages: [readable("com.example.panel", ["com.example.other@1"])],
-      known: [knownEntry("com.example.other@1", "tables")],
+      packages: [readable("com.example.panel", ["canvas.note@1"])],
+      known: [knownEntry("canvas.note@1", "note")],
       canRender: renderEverything,
     });
 
-    // Left out as a duplicate, so the family path is exercised through a definition the catalog does not provide.
-    expect(read.entries).toEqual([]);
+    expect(read.entries[0]?.family).toBe("note");
 
+    // A definition the catalog does not provide takes its own id namespace, which is a fact about the id.
     const fresh = installedCatalogEntries({
       packages: [readable("com.example.panel", ["com.example.panel.extra@1"])],
       known: [],
@@ -131,15 +139,18 @@ describe("installed packages as catalog entries", () => {
     expect(fresh.entries[0]?.family).toBe("com");
   });
 
-  it("shows the first package's widget once when two packages declare the same id", () => {
+  it("keeps two packages' widgets apart even when they declare the same definition", () => {
     const read = installedCatalogEntries({
       packages: [readable("com.first", ["com.shared@1"]), readable("com.second", ["com.shared@1"])],
       known: [],
       canRender: renderEverything,
     });
 
-    expect(read.entries).toHaveLength(1);
-    expect(read.notes.some((note) => note.message.includes("another installed package"))).toBe(true);
+    expect(read.entries.map((entry) => entry.cardId)).toEqual([
+      "com.first/com.shared@1",
+      "com.second/com.shared@1",
+    ]);
+    expect(read.notes).toEqual([]);
   });
 
   it("reports a package the node could not read with the node's own reason", () => {

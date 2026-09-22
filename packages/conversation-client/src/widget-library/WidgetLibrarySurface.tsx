@@ -117,10 +117,10 @@ export function WidgetLibrarySurface({
     };
   }, [open, client, entries]);
 
-  // The catalog's own entries come first, so a definition the catalog already provides is the one that shows.
+  // The catalog's own entries come first, then what packages declare under their own namespaced card ids.
   const allEntries = [...entries, ...installed.entries];
   const selected = selectedEntry(allEntries, state);
-  const selectedId = selected?.definition.id;
+  const selectedId = selected?.cardId;
 
   // A new widget starts from its own first fixture rather than inheriting the previous widget's
   // fixture id, which would silently select nothing.
@@ -266,16 +266,15 @@ export function WidgetLibrarySurface({
           {selected === undefined ? (
             <>
               {/*
-                The gallery is the built-in catalog and says so. Installed packages are reported below
-                it as provenance rather than mixed in: no route exposes an installed package's widget
-                definitions, fixtures or renderer, so a grid cell for one would have to invent the
-                fields that make a cell work.
+                The gallery is the built-in catalog and says so. A widget a package declares is a card too, but under
+                its own namespaced identity, so the two are never the same card and the source line on each says
+                which is which.
               */}
               <section className="cc-library-builtin" data-widget-provenance="built-in">
                 <h3>{BUILT_IN_LABEL}</h3>
                 <WidgetGallery
                   entries={visible}
-                  onSelect={(definitionId) => onAction({ kind: "select", definitionId })}
+                  onSelect={(cardId) => onAction({ kind: "select", cardId })}
                 />
               </section>
               {/*
@@ -299,7 +298,7 @@ export function WidgetLibrarySurface({
           ) : (
             <div
               className="cc-widget-detail"
-              data-widget-detail={selected.definition.id}
+              data-widget-detail={selected.cardId}
               data-widget-lab-pane={showInspector ? "inspector" : "preview"}
             >
               {develop && (
@@ -314,7 +313,7 @@ export function WidgetLibrarySurface({
 
               <div className="cc-widget-detail-preview" data-widget-lab-pane-preview="true">
                 {effectiveFixture === undefined ? (
-                  <p className="cc-widget-preview-missing" data-widget-preview-missing={selected.definition.id}>
+                  <p className="cc-widget-preview-missing" data-widget-preview-missing={selected.cardId}>
                     Chưa có fixture cho widget này.
                   </p>
                 ) : (

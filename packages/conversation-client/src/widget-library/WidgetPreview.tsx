@@ -53,7 +53,7 @@ export function WidgetPreview({ entry, fixture }: WidgetPreviewProps): ReactElem
   }
 
   return (
-    <div className="cc-widget-preview" data-widget-preview={entry.definition.id}>
+    <div className="cc-widget-preview" data-widget-preview={entry.cardId}>
       {renderer({
         definitionId: entry.definition.id,
         props: fixture.props,

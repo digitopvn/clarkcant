@@ -16,6 +16,15 @@ export type CatalogSource = "builtin" | "installed" | "local";
 export type CatalogStatus = "stable" | "experimental";
 
 export interface WidgetCatalogEntry {
+  /**
+   * The identity of this card, which is what the gallery keys a card and a selection by.
+   *
+   * A catalog entry's card id is its definition id. A package's widget is namespaced by its package
+   * (`<packageId>/<definitionId>`) instead, because every definition id a shipping renderer can draw is already a
+   * catalog entry - so a package using its definition id as its card identity could never show a card of its own.
+   * Rendering still resolves from `definition.id`, so there is exactly one renderer per id.
+   */
+  cardId: string;
   definition: WidgetDefinition;
   family: string;
   displayName: string;
@@ -170,6 +179,7 @@ export const CATALOG_DEFINITIONS: readonly WidgetDefinition[] = [...WIDGETS, NOT
 export const CATALOG_ENTRIES: readonly WidgetCatalogEntry[] = CATALOG_DEFINITIONS.map((definition) => {
   const meta = META[definition.id];
   return {
+    cardId: definition.id,
     definition,
     family: meta?.family ?? FAMILY_BY_DEFINITION[definition.id] ?? "unknown",
     displayName: meta?.displayName ?? definition.id,
