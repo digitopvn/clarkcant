@@ -42,3 +42,13 @@ V08 stayed PARTIAL because quarantine and build isolation existed but a package'
 ## Scope guard
 
 This PR **does not** close #93, #2, #3, #4 or #5, and contains no closing keyword for them. Those external gates stay open and are not proven by fixture.
+
+## Review outcomes (round 1)
+
+Three Important findings were fixed after review; two of them narrow what this PR may claim, so they are disclosed here rather than buried in commits.
+
+- **The coverage gate now sits inside the function that spawns the build.** Review found the refusal living in `prepareLockedBuild` (the pipeline in front of the runner) while `isolatedLockedBuild` — which actually invokes the contained build — checked only the lifecycle gate. A lock declaring `artifact-only` coverage passed straight to the runner was accepted, and nothing in production calls either entry point yet, so the guarantee rested on a two-call protocol nothing enforced. The check is now shared by both entries and enforced in the runner; `isolatedBuild` is documented as the lower-level primitive that deliberately does not repeat it, because it takes an environment and cannot know where that environment came from.
+- **A plan recorded before this release is named as such.** Installing a package that already has a live plan row from before the frozen build input existed returns `LOCK_DRIFT`; the refusal is deliberate and fails closed, but the message previously implied a closure had moved when none was ever recorded. It now identifies the plan id and state, says the plan predates the frozen build input, states plainly that this is not drift, and tells the person to wait for the rollout that plan records rather than installing twice. This is an upgrade interaction, and it is intentional: an unrecorded closure is not silently joined.
+- **Range resolution is the metadata source's contract, not this module's.** `resolveDependencyClosure` never reads the declared request spec, so a range like `^1.2.0` is pinned to whatever exact version the configured metadata source names; this module does not check that the named version satisfies the range, and no range-to-version resolution exists in the repository. What it does guarantee is that a range string can never enter a lock and that a non-exact answer is refused. The V08 row and the module documentation now say that instead of implying a resolver that is not there.
+
+Also fixed: an unreadable or non-file artifact is labelled `LOCK_UNREADABLE` with its errno instead of being reported as absent; `dependencyDrift` compares by name **and** version so two versions of one name cannot collapse into nothing; and the `frozenBuildEnvironment` comment now describes the stable key order it actually relies on rather than claiming canonical JSON.
