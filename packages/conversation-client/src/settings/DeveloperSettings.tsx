@@ -19,9 +19,10 @@ import { SettingsRow } from "./controls/SettingsRow.tsx";
 export interface DeveloperSettingsProps {
   client: GatewayClient;
   facts: { nodeId: string; label: string; createdAt: string } | undefined;
+  onOpenWidgetLibrary?: ((mode: "browse" | "develop") => void) | undefined;
 }
 
-export function DeveloperSettings({ client, facts }: DeveloperSettingsProps): ReactElement {
+export function DeveloperSettings({ client, facts, onOpenWidgetLibrary }: DeveloperSettingsProps): ReactElement {
   const [settings, setSettings] = useState<{ key: string; value: string }[] | undefined>(undefined);
   const [open, setOpen] = useState(false);
 
@@ -45,6 +46,31 @@ export function DeveloperSettings({ client, facts }: DeveloperSettingsProps): Re
 
   return (
     <>
+      {/*
+        The Widget Lab entry point.
+
+        Developer mode is where implementation metadata belongs, so the lab lives here rather than in
+        the Extensions tab: the same surface, opened with the inspector already showing.
+      */}
+      <section className="cc-panel-section" data-widget-lab-entry="true">
+        <h3>Widget Lab</h3>
+        <p className="cc-panel-note">
+          Xem fixture, props, state, events, semantic output, kích thước và trạng thái trợ năng.
+        </p>
+        <SettingsRow
+          label="Widget Lab"
+          description="Mở đúng surface của Widget Library ở chế độ developer, kèm bảng inspector."
+        >
+          <button
+            type="button"
+            className="cc-badge"
+            onClick={() => onOpenWidgetLibrary?.("develop")}
+            data-widget-library-open="develop"
+          >
+            Mở Lab
+          </button>
+        </SettingsRow>
+      </section>
       <section className="cc-panel-section" data-developer-node="true">
         <h3>Node này</h3>
         <SettingsRow label="Mã node" description="Dùng khi ghép nối hoặc khi báo lỗi.">
