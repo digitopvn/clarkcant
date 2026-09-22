@@ -228,8 +228,17 @@ async function walkPath(base: string, segments: readonly string[]): Promise<Insi
       return { ok: false, reason: `"${candidate}" is not a directory, so nothing can be under it` };
     }
     // The component's canonical target, so a symlink is followed and the next segment is joined to
-    // where it actually points rather than to its name.
-    current = await realpath(candidate).catch(() => candidate);
+    // where it actually points rather than to its name. A canonicalisation that fails here is refused
+    // rather than skipped: falling back to the un-canonicalised `candidate` would admit a path whose target
+    // the platform would not confirm, which is the one answer this walk exists to never give.
+    try {
+      current = await realpath(candidate);
+    } catch (cause) {
+      return {
+        ok: false,
+        reason: `"${candidate}" could not be canonicalised (${describeCause(cause)}), so whether it is inside an approved root cannot be decided`,
+      };
+    }
   }
 
   return { ok: true, path: current };
