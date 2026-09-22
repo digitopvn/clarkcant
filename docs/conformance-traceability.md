@@ -21,7 +21,8 @@ các dòng `V` của bảng này là bản đọc được của cùng dữ li�
 lệch nhau, khi một entry `implemented` không nêu test có thật — và tên test phải có trong chính file
 được nêu, nên “schema đã tồn tại” không đi qua được — hoặc khi entry
 `partial`/`blocked`/`not-implemented` không nêu điều còn thiếu. Các dòng `T01`–`T73` **không** có
-entry tương ứng trong registry: chúng vẫn chỉ được kiểm bằng sự có mặt của id và bằng những test
+entry tương ứng trong registry: chúng vẫn chỉ được kiểm bằng sự có mặt của dòng `| Tnn |` trong
+bảng — không phải bằng một chuỗi id xuất hiện đâu đó trong tài liệu — và bằng những test
 title được trích trong bảng, nên một title được trích phải tồn tại trong repo — còn một dòng chỉ nêu
 đường dẫn spec thì chưa được đối chiếu với ca test cụ thể nào. Comment trong source chỉ trỏ về
 registry bằng `@status-ref <capabilityId>`, không tự khẳng định trạng thái.
