@@ -145,9 +145,10 @@ describe("the frame checks, when a frame was measured", () => {
     }
 
     /*
-     * And two stay unverified, for reasons that are not about the harness: detach needs a detached host window,
-     * which the product does not have, and voice/click parity needs a voice session. Answering those from a frame
-     * would be the report inventing a measurement nobody took.
+     * And two stay unverified: detach needs a window that can be detached and re-attached, and this command drives a
+     * browser dev host, which has none to drive - the desktop's own detached window is covered by the desktop and
+     * browser suites, not here. Voice/click parity needs a voice session, whose precondition is a live provider
+     * account. Answering those from a frame would be the report inventing a measurement nobody took.
      */
     expect(byId.get("interaction.detach")).toBe("requires-dev-host");
     expect(byId.get("interaction.voiceClickParity")).toBe("requires-dev-host");

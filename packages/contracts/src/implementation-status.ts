@@ -28,7 +28,8 @@
  *
  * A gap that waits on nothing outside the repository is described by the gap itself rather than by an
  * issue number, so no wording here depends on an issue's state and none of it goes stale when one
- * closes.
+ * closes. `tools/check-invariants.mjs` enforces that by rejecting an `externalGate.issue` outside the
+ * four gates above.
  */
 
 /** What the repository can honestly say about one capability or scope item. */
@@ -267,8 +268,9 @@ export const IMPLEMENTATION_STATUS: readonly ImplementationStatusEntry[] = [
       },
     ],
     externalGate: {
+      issue: 4,
       reason:
-        "the harness leaves detach unverified because the product ships no detached host window, and voiceClickParity because no voice session runs; these are checks this repository has not built yet, not a gate waiting on an external account",
+        "the harness drives a browser dev host, which has no detached window to drive - the desktop's detached window is covered by the desktop and browser suites rather than by this check - and voiceClickParity needs a voice session, whose precondition is the provider account in #4",
     },
   },
   {
