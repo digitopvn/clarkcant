@@ -39,6 +39,12 @@ export default defineConfig({
       // That subpath is the browser-safe half of the package — the frame session — and it exists precisely because the
       // root also carries a digest helper that reads `node:crypto`, which a browser bundle cannot load.
       { find: /^@clarkcant\/widget-host\/session$/, replacement: `${root}packages/widget-host/src/session.ts` },
+      // Exact matches for the same reason: the catalog declares a `./preview` subpath so the Lab and
+      // the CLI dev host share one preview vocabulary, and a prefix alias for the bare package name
+      // would rewrite `@clarkcant/widget-catalog/preview` into a path under the barrel that does not
+      // exist.
+      { find: /^@clarkcant\/widget-catalog$/, replacement: `${root}packages/widget-catalog/src/index.ts` },
+      { find: /^@clarkcant\/widget-catalog\/preview$/, replacement: `${root}packages/widget-catalog/src/preview.ts` },
       ...Object.entries(aliases).map(([name, rel]) => ({ find: name, replacement: `${root}${rel}` })),
     ],
   },

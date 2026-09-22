@@ -26,6 +26,7 @@
     "@clarkcant/widget-host": "workspace:*",
     "@clarkcant/widget-sdk": "workspace:*",
     "zod": "4.6.5",
-    "@clarkcant/core": "workspace:*"
+    "@clarkcant/core": "workspace:*",
+    "@clarkcant/widget-catalog": "workspace:*"
   }
 }

@@ -44,6 +44,9 @@
       "@clarkcant/widget-host": [
         "packages/widget-host/src/index.ts"
       ],
+      "@clarkcant/widget-catalog": [
+        "packages/widget-catalog/src/index.ts"
+      ],
       "@clarkcant/mcp-adapters": [
         "packages/mcp-adapters/src/index.ts"
       ],

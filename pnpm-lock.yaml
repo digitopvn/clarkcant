@@ -239,6 +239,9 @@ importers:
       '@clarkcant/voice-adapters':
         specifier: workspace:*
         version: link:../../packages/voice-adapters
+      '@clarkcant/widget-catalog':
+        specifier: workspace:*
+        version: link:../../packages/widget-catalog
       '@clarkcant/widget-host':
         specifier: workspace:*
         version: link:../../packages/widget-host
@@ -365,6 +368,9 @@ importers:
       '@clarkcant/design-tokens':
         specifier: workspace:*
         version: link:../design-tokens
+      '@clarkcant/widget-catalog':
+        specifier: workspace:*
+        version: link:../widget-catalog
       '@clarkcant/widget-host':
         specifier: workspace:*
         version: link:../widget-host
@@ -471,6 +477,15 @@ importers:
         specifier: workspace:*
         version: link:../contracts
 
+  packages/widget-catalog:
+    dependencies:
+      '@clarkcant/contracts':
+        specifier: workspace:*
+        version: link:../contracts
+      '@clarkcant/data-canvas':
+        specifier: workspace:*
+        version: link:../../packs/data-canvas
+
   packages/widget-cli:
     dependencies:
       '@clarkcant/contracts':
@@ -479,6 +494,9 @@ importers:
       '@clarkcant/core':
         specifier: workspace:*
         version: link:../core
+      '@clarkcant/widget-catalog':
+        specifier: workspace:*
+        version: link:../widget-catalog
       '@clarkcant/widget-host':
         specifier: workspace:*
         version: link:../widget-host
