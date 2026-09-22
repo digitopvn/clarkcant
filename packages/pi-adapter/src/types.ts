@@ -19,14 +19,20 @@ export interface WorkerBrief {
   /**
    * Directories the worker may touch, already policy-approved.
    *
-   * An enforced boundary rather than a description of intent, and not something a caller opts into: a brief
-   * that declares any root gets the SDK's own `read`/`grep`/`find`/`ls` left out of its allowlist and only
-   * the four scoped `clarkcant_*` tools the adapter itself binds to these roots, each of which re-checks the
-   * identity of the root and canonicalises the candidate — through `scoped-fs.ts` — before it touches the
-   * filesystem. A root that cannot be approved stops the session by name rather than being dropped, and a
-   * caller's own tool under one of those four names does not replace the binding, because only the adapter's
-   * is built from this list. An empty list is the conversation path, which reads no file of its own through
-   * the adapter.
+   * A non-empty list is an enforced boundary rather than a description of intent: the session gets the SDK's
+   * own `read`/`grep`/`find`/`ls` left out of its allowlist and only the four scoped `clarkcant_*` tools the
+   * adapter itself binds to these roots, each of which re-checks the identity of the root and canonicalises
+   * the candidate — through `scoped-fs.ts` — before it touches the filesystem. A root that cannot be approved
+   * stops the session by name rather than being dropped, and a caller's own tool under one of those four
+   * names does not replace the binding, because only the adapter's is built from this list.
+   *
+   * An empty list carries no boundary at all. Such a session runs whatever `builtinTools` the adapter was
+   * constructed with — the SDK's read-only set by default — and those resolve a path against the adapter's
+   * `cwd` themselves, so nothing above describes them. One lane lives there today: `apps/runtime/src/pack-load.ts`
+   * probes the packed worker with `projectRoots: []` and `apps/worker/src/index.ts` passes that straight
+   * through, so the packed-worker lane reads its own working directory through the SDK's built-ins rather than
+   * through `scoped-fs.ts`. That is a known follow-up for the phase that owns the lane, and it is recorded
+   * here rather than papered over: the boundary this field describes is the one the rooted lane has.
    */
   projectRoots: string[];
   /** Capability refs the worker may call. Anything else is not registered. */

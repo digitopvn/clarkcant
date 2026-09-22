@@ -34,9 +34,13 @@ import type { ToolDefinition } from "./types.ts";
  *    rather than read.
  *
  * The four tools below are ClarkCant's own `read`/`grep`/`find`/`ls`. They exist because the SDK's
- * built-in ones resolve paths themselves: a project worker runs with those left out of its allowlist
- * and only these registered, so every filesystem call this package makes goes through
+ * built-in ones resolve paths themselves: a session with an approved root runs with those left out of its
+ * allowlist and only these registered, so every filesystem call that session makes goes through
  * `resolveInsideRoots` first. No raw `fs` primitive is handed to a tool or an extension.
+ *
+ * That is a property of a session with a root, and not of every session this package starts. A brief that
+ * declares no root keeps the SDK's own file tools, which this module cannot reach — see `types.ts`,
+ * `projectRoots`, for the lane that does that today and the follow-up it is recorded as.
  */
 
 /** A root that could not be approved, and why. Refusing a root is reported, never silent. */
@@ -110,7 +114,11 @@ export const SCOPED_FS_LIMITS = {
   maxDepth: 8,
 } as const;
 
-/** The names of the four tools, which are the whole filesystem surface of a confined session. */
+/**
+ * The names of the four tools, which are the whole filesystem surface of a session confined to an approved
+ * root. A session started from a brief with no root is not confined: it runs the SDK's own file tools, whose
+ * paths this module never sees (`types.ts`, `projectRoots`, names that lane and the follow-up it needs).
+ */
 export const SCOPED_FS_TOOL_NAMES = [
   "clarkcant_read",
   "clarkcant_grep",
