@@ -551,3 +551,27 @@ Not fully collapsed. `packages/conversation-client/src/settings/ControlSettings.
 ### Still open
 
 `pnpm verify:full` (browser e2e) was run by the worker (118 passed, 1 skipped) but has not been reproduced by the controller on this exact commit. CI runs the e2e job on the PR, which will settle it.
+
+## Phase 1 — MERGED
+
+| Item | Value |
+| --- | --- |
+| PR | [#130](https://github.com/digitopvn/clarkcant/pull/130) |
+| Merged at | 2026-09-22T04:46:19Z |
+| Merge commit | `89be38df14906aedc69673a513d38e113f904211` |
+| Reviewed head (bound via `--match-head-commit`) | `7f1d46492aa0874e5c2f0773add84db5badbea76` |
+| Method | `gh pr merge --merge --match-head-commit` (explicit, because `main` is unprotected and `allow_auto_merge = false`) |
+| CI on the reviewed head | all green — `verify` (node 22.19 and 24), `e2e` (4m21s / 5m3s), `desktop smoke`, `secret scan`, GitGuardian |
+| Review | 1 CRITICAL + 5 IMPORTANT found and all fixed; re-review verdict "no actionable findings remain"; review posted to the PR |
+
+Phase 1 acceptance criteria met: one canonical policy for command / widget / install / capability; modes stay Autonomous / Guarded / Ask every time; legacy `execution.*` and `autonomy` migrate without loosening a stricter setting; cross-surface and legacy-vs-canonical parity tests exist; host preflight and hard boundaries non-bypassable. Task 1.6 remains partial (the two-panel collapse is incomplete; legacy keys remain only as compatibility readers).
+
+Three informational findings carried forward, non-blocking: `GET /preferences` now migrates on read and reports the execution keys as non-default on a virgin node; `declaresAnyAxis` parses `rules` all-or-nothing where `parseStoredRules` is entry-wise; one parity spec still calls `decideExecution` three times identically and cannot fail. Candidates for Phase 5's status/evidence work.
+
+## Phase 2 — Pi projectRoots confinement
+
+Branch: `phase-2-pi-confinement`, cut from `main` at `89be38d`.
+
+### Pre-task 2.0 — spike A3 (in progress)
+
+Question: does the installed Pi SDK honour `builtinTools: []`, i.e. can the raw filesystem built-ins (`read`, `grep`, `find`, `ls`) actually be turned off for a project session? The red-team marked this unverified, and Phase 2's approach and effort estimate both depend on the answer.
