@@ -163,3 +163,14 @@ Các quyết định dưới đây đã được kongming advisory checkpoint x�
 - Surface/navigation mới; thay đổi UX invariant không có trong DESIGN.md.
 - Sửa migration đã apply trong `packages/storage/src/migrate.ts`.
 - Một PR gộp cho toàn program.
+
+## Trạng thái chương trình — HOÀN TẤT
+
+Cả sáu phase đã merge vào `main` (PR #130, #136, #139, #145, #147, #149), mỗi phase cắt từ `main` mới nhất, có CI xanh trên đúng SHA được merge (`--match-head-commit`), có review độc lập, và chỉ merge sau khi hết finding Critical/Important. `pnpm verify` trên cây đã merge (main tại `cef0234`) pass; gate của Phase 6 là 188 file pass / 1 skip, 2300 test pass / 7 skip, cộng 127 journey Playwright pass / 1 skip.
+
+Chi tiết đầy đủ, gồm cả defect và residual risk, nằm ở `evidence.md` mục "Program closeout". Hai điều phải đọc trước khi tin chương trình này đã xong:
+
+1. **#93 và #125 bị đóng do chính văn bản PR của chương trình** — câu phòng vệ "does not close …" vẫn chứa từ khoá mà GitHub parser bắt, nên #93 bị đóng lúc 04:46:20Z và #125 bị đóng lúc 10:26:54Z, tức khoảng một giờ **trước khi** Phase 6 hoàn tất. Bốn gate #2/#3/#4/#5 vẫn OPEN. #93 cần được chủ sở hữu mở lại hoặc xác minh lại, vì subject của nó (hardening trust-boundary của widget + chứng minh journey trình duyệt) **không** được chương trình này hoàn thành — Phase 5 ghi `V12` là PARTIAL với `detach` và `voiceClickParity` chưa chứng minh.
+2. **Chỉ có một kongming advisory checkpoint được thực hiện** (checkpoint cấp chương trình, 11/12 sửa đổi được áp dụng vào Phase 1), không phải một checkpoint cho mỗi PR như contract yêu cầu. Thay vào đó mỗi phase có một lượt `code-reviewer` độc lập. Đây là ghi nhận sai lệch, không phải tuyên bố tuân thủ.
+
+Bảy MINOR đã ghi nhận (bốn của Phase 3, ba của Phase 4) **cố ý không sửa** để giữ từng PR phase không lẫn việc dọn dẹp không liên quan; chúng là ứng viên cho một follow-up nhỏ. `#137` (làn packed-worker chưa được confine) vẫn mở.
