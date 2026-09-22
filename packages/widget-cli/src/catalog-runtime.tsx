@@ -27,17 +27,16 @@ export function mountCatalogPreview(input: CatalogRuntimeInput, host: HTMLElemen
   return true;
 }
 
-declare global {
-  interface Window {
-    /** Set by the frame HTML, so the shell has exactly one way to say what to draw. */
-    __CC_CATALOG__?: CatalogRuntimeInput;
-  }
-}
-
 /*
  * The bootstrap. Absent in a test, where this module is imported for the function above: a test that mounted
  * anything would be a test that needs a browser, which is what the browser suite is for.
+ *
+ * The global is read through a cast rather than declared with `declare global`: that is a namespace, and this
+ * workspace runs TypeScript by stripping types, which cannot execute one.
  */
 const host = typeof document === "undefined" ? null : document.getElementById("cc-catalog-root");
-const input = typeof window === "undefined" ? undefined : window.__CC_CATALOG__;
+const input =
+  typeof window === "undefined"
+    ? undefined
+    : (window as unknown as { __CC_CATALOG__?: CatalogRuntimeInput }).__CC_CATALOG__;
 if (host !== null && input !== undefined) mountCatalogPreview(input, host);

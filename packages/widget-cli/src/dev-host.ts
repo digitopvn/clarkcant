@@ -7,7 +7,6 @@ import react from "@vitejs/plugin-react";
 import { createServer as createViteServer, type ViteDevServer } from "vite";
 
 import { readPackage } from "@clarkcant/core";
-import { catalogEntry } from "@clarkcant/widget-catalog";
 import { catalogFrameHtml, catalogTarget } from "./catalog-target.ts";
 import { applyShellAction, initialState, renderShell, type DevShellAction, type DevShellState } from "./dev-shell.ts";
 
