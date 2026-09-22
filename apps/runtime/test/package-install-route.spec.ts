@@ -1,11 +1,13 @@
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { platformForHost, DEFAULT_EXECUTION_POLICY_CONFIG } from "@clarkcant/contracts";
+import { platformForHost, DEFAULT_EXECUTION_POLICY_CONFIG, directoryEntrySchema } from "@clarkcant/contracts";
+import { directoryBackedMetadata, isolatedLockedBuild, readDependencyLock } from "@clarkcant/capability-host";
 import { EXECUTION_POLICY_PREFERENCE_KEY, writeRegisteredPreference } from "@clarkcant/core";
 
+import { freezeInstallClosure } from "../src/application/package-install.ts";
 import { handleRequest, type GatewayDeps, type GatewayRequest, type GatewayResponse } from "../src/gateway.ts";
 import { bootNodeServices, type NodeServices } from "../src/services.ts";
 
@@ -321,6 +323,96 @@ describe("the frozen build input the route records", () => {
     expect(response.status).toBe(400);
     expect((response.body as Record<string, unknown>)["code"]).toBe("DIGEST_MISMATCH");
     // And no lock was written for bytes nobody can check.
+    expect(existsSync(join(dir, "locks"))).toBe(false);
+  });
+});
+
+/**
+ * The closure the route consumes, and the path it hands it to.
+ *
+ * The claim here is narrower than "the route builds": it freezes what it can pin, reads it back through the same
+ * reader the locked-build runner uses, and reports what that runner would do with it. A node that has not
+ * downloaded the artifact cannot pin the package's tree, so the honest answer is a closure a build refuses — and
+ * what must be proven is that the refusal is real and that nothing re-resolves around it.
+ */
+describe("the frozen closure the install route consumes", () => {
+  it("hands back the artifact a build reads, and keeps its coverage claim honest", () => {
+    const lockDir = join(dir, "locks");
+    const listed = directoryEntrySchema.parse(entry());
+    const outcome = freezeInstallClosure({
+      lockDir,
+      entry: listed,
+      metadata: directoryBackedMetadata([listed]),
+      buildInputs: { platform: HOST_PLATFORM ?? "web", nodeAbi: process.versions.modules },
+    });
+
+    expect(outcome.ok).toBe(true);
+    if (!outcome.ok) return;
+    const lock = outcome.frozen.lock;
+    expect(lock).toBeDefined();
+    if (lock === undefined) return;
+
+    /*
+     * What comes back is what a build reads under the same reference, not the in-memory copy: the plan is bound to
+     * bytes that were persisted and re-hashed, so a plan can never name an artifact no build can read.
+     */
+    const readBack = readDependencyLock({ dir: lockDir, lockRef: lock.lockRef, lockDigest: lock.lockDigest });
+    expect(readBack.ok).toBe(true);
+    if (!readBack.ok) return;
+    expect(readBack.lock).toEqual(lock);
+
+    // The coverage is stated rather than widened: the package's own tree is not readable from here.
+    expect(lock.coverage).toBe("artifact-only");
+    expect(outcome.frozen.buildRefusal?.code).toBe("LOCK_INCOMPLETE");
+  });
+
+  it("reports that a build would refuse the closure, and the runner really does", async () => {
+    writeIndex([entry()]);
+
+    const response = await install({ packageId: "com.example.calendar", version: "1.2.0" });
+
+    expect(response.status).toBe(200);
+    const lock = (response.body as Record<string, unknown>)["lock"] as {
+      ref: string;
+      digest: string;
+      coverage: string;
+      buildable: boolean;
+      buildRefusal?: string;
+    };
+    // Stated in the response rather than left to be assumed: this closure is not one a build would run.
+    expect(lock.buildable).toBe(false);
+    expect(String(lock.buildRefusal)).toContain("artifact-only");
+
+    const quarantineDir = join(dir, "quarantine");
+    const root = join(quarantineDir, "payload");
+    mkdirSync(root, { recursive: true });
+    const built = await isolatedLockedBuild({
+      lockDir: join(dir, "locks"),
+      lockRef: lock.ref,
+      lockDigest: lock.digest,
+      root,
+      quarantineDir,
+      command: process.execPath,
+      args: ["-e", "process.stdout.write('built')"],
+    });
+
+    // The runner reads the recorded closure and refuses it by name — it never resolves a closure of its own, and a
+    // build on a tree nobody pinned does not start.
+    expect(built.ok).toBe(false);
+    if (built.ok) return;
+    expect(built.code).toBe("LOCK_INCOMPLETE");
+    expect(built.message).toContain("artifact-only");
+  });
+
+  it("refuses a floating range before anything is frozen", async () => {
+    writeIndex([entry()]);
+
+    // The same package, asked for as a range. A range names whatever is current, so it names no artifact this node
+    // could pin — and the refusal arrives before any closure is resolved.
+    const response = await install({ packageId: "com.example.calendar", version: "^1.2.0" });
+
+    expect(response.status).toBe(404);
+    expect((response.body as Record<string, unknown>)["code"]).toBe("NOT_IN_DIRECTORY");
     expect(existsSync(join(dir, "locks"))).toBe(false);
   });
 });

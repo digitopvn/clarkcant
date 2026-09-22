@@ -194,7 +194,7 @@ export const IMPLEMENTATION_STATUS: readonly ImplementationStatusEntry[] = [
     ],
     externalGate: {
       reason:
-        "the runtime /packages/install route downloads and builds nothing, so it records an artifact-only lock; the dependency-closure build path (isolatedLockedBuild) is not wired to that route",
+        "the runtime /packages/install route downloads and builds nothing, and no metadata source here turns a package's declared dependency range into an exact version, so it records an artifact-only lock; the dependency-closure build path (isolatedLockedBuild) is not called from production, and a build refuses that closure by name (LOCK_INCOMPLETE) rather than reading it as pinned",
     },
   },
   {
