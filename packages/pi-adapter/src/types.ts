@@ -19,11 +19,14 @@ export interface WorkerBrief {
   /**
    * Directories the worker may touch, already policy-approved.
    *
-   * An enforced boundary rather than a description of intent. A brief that declares
-   * `confineToProjectRoots` runs with the SDK's own file tools left out of its allowlist and only the
-   * scoped `read`/`grep`/`find`/`ls` tools registered, each of which canonicalises the path against these
-   * roots — through `scoped-fs.ts` — before it touches the filesystem. An empty list is the conversation
-   * path, which reads no file of its own.
+   * An enforced boundary rather than a description of intent, and not something a caller opts into: a brief
+   * that declares any root gets the SDK's own `read`/`grep`/`find`/`ls` left out of its allowlist and only
+   * the four scoped `clarkcant_*` tools the adapter itself binds to these roots, each of which re-checks the
+   * identity of the root and canonicalises the candidate — through `scoped-fs.ts` — before it touches the
+   * filesystem. A root that cannot be approved stops the session by name rather than being dropped, and a
+   * caller's own tool under one of those four names does not replace the binding, because only the adapter's
+   * is built from this list. An empty list is the conversation path, which reads no file of its own through
+   * the adapter.
    */
   projectRoots: string[];
   /** Capability refs the worker may call. Anything else is not registered. */
@@ -39,13 +42,14 @@ export interface WorkerBrief {
    */
   customTools?: readonly ToolDefinition[];
   /**
-   * Whether this session may reach the filesystem only through the scoped tools built from `projectRoots`.
+   * Whether this session may reach the filesystem only through the scoped tools, with nothing added later.
    *
-   * A project worker is a session whose reach is a directory a person chose. The runtime builds the scoped
-   * tools from the approved roots and sets this, and the adapter then leaves the SDK's own
-   * `read`/`grep`/`find`/`ls` out of the allowlist and refuses to register a tool afterwards: the boundary is
-   * enforced where the act happens, not promised in a prompt. A brief that declares it without carrying the
-   * scoped tools is refused by name rather than started with no filesystem tool at all.
+   * The filesystem half of the boundary does not depend on this flag: any brief carrying a root runs with the
+   * scoped tools bound to it and without the SDK's own file tools. What this adds is the rest of the
+   * project-session lane — the adapter refuses `registerTool` afterwards, because a tool added after creation
+   * never passes the SDK allowlist and would be a filesystem primitive the boundary never saw. A brief that
+   * declares it without an approved root is refused by name: a session confined to nothing has no filesystem
+   * tool at all, which is a configuration error rather than a constraint somebody chose.
    */
   confineToProjectRoots?: boolean;
   /** Token budget for the run. */

@@ -7,7 +7,7 @@ import { nowInstant } from "@clarkcant/contracts";
 import { NotImplementedError, type ModelCatalogue,
   type PiExtension,
   type PiSetting, type PiAdapter, type ResourceRefreshRequest, type ToolDefinition, type WorkerBrief, type WorkerEvent, type WorkerSessionHandle, type WorkerUsage } from "./types.ts";
-import { SCOPED_FS_TOOL_NAMES } from "./scoped-fs.ts";
+import { canonicalRoots, createScopedFsTools, SCOPED_FS_TOOL_NAMES } from "./scoped-fs.ts";
 
 /**
  * Real Pi SDK adapter.
@@ -408,25 +408,56 @@ export class RealPiAdapter implements PiAdapter {
 
     const selection = await this.#resolveModel(sdk, brief.model ?? this.#options.model);
 
-    const customTools = brief.customTools ?? [];
+    /*
+     * The filesystem tools are bound to the brief's roots here, so no call site can forget to opt in.
+     *
+     * `projectRoots` is an enforced boundary rather than a description of intent, which means the tools that
+     * enforce it have to be built from the list the brief carries: a caller that built them from some other
+     * directory, or that carried roots without carrying tools at all, would leave the session on the SDK's own
+     * `read`/`grep`/`find`/`ls` — tools nobody can tell about an approved root. So any brief that declares a
+     * root gets the four scoped tools, bound to the approval of exactly those roots, and the SDK's built-ins
+     * are left out. Roots that cannot be approved stop the session by name; a root dropped silently would
+     * confine the worker to something other than what was approved.
+     */
     const confined = brief.confineToProjectRoots === true;
-    if (confined) {
-      const missing = SCOPED_FS_TOOL_NAMES.filter((name) => !customTools.some((tool) => tool.name === name));
-      if (missing.length > 0) {
+    const scopedToRoots = confined || brief.projectRoots.length > 0;
+    let filesystemTools: readonly ToolDefinition[] = [];
+    if (scopedToRoots) {
+      const approval = await canonicalRoots(brief.projectRoots);
+      if (approval.refused.length > 0) {
         throw new Error(
-          `a brief confined to its approved project roots carries no ${missing.join(", ")}; a confined session with no filesystem tool is a configuration error rather than a constraint`,
+          `a worker session cannot start confined to ${approval.refused
+            .map((entry) => `${entry.root} (${entry.reason})`)
+            .join("; ")}`,
         );
       }
+      if (approval.approved.length === 0) {
+        throw new Error(
+          "a brief confined to its approved project roots carries no approved project root, so the session it would start has no filesystem tool at all",
+        );
+      }
+      filesystemTools = createScopedFsTools({ roots: approval.approved });
     }
     /*
-     * A confined session gets no built-in tool at all.
+     * A caller's own tool under one of the four scoped names is not consulted: two definitions cannot share a
+     * name, and only this one is bound to the roots the brief declares. Any other tool the caller supplies is
+     * kept as it was — a brief carrying a root and an unrelated tool loses neither.
+     */
+    const customTools = [
+      ...filesystemTools,
+      ...(brief.customTools ?? []).filter(
+        (tool) => !SCOPED_FS_TOOL_NAMES.some((name) => name === tool.name),
+      ),
+    ];
+    /*
+     * A session bound to roots gets no built-in tool at all.
      *
      * `builtinTools` is the adapter's allowlist for an ordinary session and defaults to the read-only set, but
      * the SDK's own `read`, `grep`, `find` and `ls` resolve paths themselves — they cannot be told about an
-     * approved root, so a confined session must not have them. The scoped tools in `customTools` are the whole
-     * filesystem surface it has, and they check containment in `scoped-fs.ts` before they touch anything.
+     * approved root, so such a session must not have them. The scoped tools in `customTools` are the whole
+     * filesystem surface it has, and they re-check containment in `scoped-fs.ts` before they touch anything.
      */
-    const builtinTools = confined ? [] : [...(this.#options.builtinTools ?? READ_ONLY_TOOLS)];
+    const builtinTools = scopedToRoots ? [] : [...(this.#options.builtinTools ?? READ_ONLY_TOOLS)];
 
     const { session } = await sdk.createAgentSession({
       cwd: this.#options.cwd,
@@ -657,11 +688,10 @@ export class RealPiAdapter implements PiAdapter {
       );
     }
 
-    // The boundary this note used to deny is enforced where the act happens, not here: a session created with
-    // `confineToProjectRoots` runs with the SDK's own read/grep/find/ls left out of its allowlist and only the
-    // four `clarkcant_*` tools registered, each of which canonicalises a path against the approved roots before
-    // it touches the filesystem. Proven by `packages/pi-adapter/test/scoped-fs.spec.ts` and
-    // `apps/runtime/test/project-session.confinement.spec.ts`.
+    // The boundary this note used to deny is enforced where the act happens, not here: the adapter binds the
+    // four `clarkcant_*` tools to the brief's approved roots and leaves the SDK's own read/grep/find/ls out of
+    // the allowlist for any session that declares one. Proven by `packages/pi-adapter/test/scoped-fs.spec.ts`
+    // and `packages/pi-adapter/test/pi-adapter.spec.ts`.
   }
 
   /** Number of live listeners, so a leak is observable rather than argued about. */

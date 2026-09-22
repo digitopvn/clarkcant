@@ -2,7 +2,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, afterAll, beforeAll } from "vitest";
 
 import {
   FakePiAdapter,
@@ -214,7 +214,13 @@ function stubSdk(options: { idleDelayMs?: number } = {}) {
    * own `read` and `grep` at all is the allowlist the adapter passes here, and a test that assumed it
    * would be proving the adapter's intentions rather than its behaviour.
    */
-  const sessions: { tools?: string[]; customTools?: { name: string }[] }[] = [];
+  const sessions: {
+    tools?: string[];
+    customTools?: {
+      name: string;
+      execute?: (id: string, params: Record<string, unknown>) => Promise<{ content: { text?: string }[] }>;
+    }[];
+  }[] = [];
   let aborts = 0;
   let release: (() => void) | undefined;
   let idleTimer: ReturnType<typeof setTimeout> | undefined;
@@ -443,15 +449,36 @@ describe("pi's own settings", () => {
 });
 
 /**
- * A worker confined to its approved project roots (Phase 2).
+ * A worker bound to its approved project roots (Phase 2).
  *
  * The spike settled that the SDK's `tools` option is a hard allowlist gating built-in and custom tools
- * alike. What these tests pin is what this adapter does with that fact: a confined brief runs with the
- * scoped tools and none of the SDK's own, a brief that claims confinement without carrying them is
- * refused by name, and no tool can be added to a confined session afterwards — which is the path the
- * spike named as the one that would quietly undo the boundary.
+ * alike. What these tests pin is what this adapter does with that fact: the adapter itself builds the scoped
+ * tools from the brief's roots, so a brief that carries roots — with or without the confinement flag, with or
+ * without tools of its own — never runs on the SDK's own `read`/`grep`/`find`/`ls`; a brief that claims
+ * confinement without a root is refused by name; and no tool can be added to a strictly confined session
+ * afterwards, which is the path the spike named as the one that would quietly undo the boundary.
  */
 describe("a brief confined to its approved project roots", () => {
+  let base: string;
+  let root: string;
+  let elsewhere: string;
+
+  beforeAll(() => {
+    // Real directories: the roots are approved by reading them, so a made-up path is not a root this adapter
+    // can be asked about.
+    base = mkdtempSync(join(tmpdir(), "cc-pi-confined-"));
+    root = join(base, "project");
+    elsewhere = join(base, "elsewhere");
+    mkdirSync(root, { recursive: true });
+    mkdirSync(elsewhere, { recursive: true });
+    writeFileSync(join(root, "notes.md"), "inside the approved root\n", "utf8");
+    writeFileSync(join(elsewhere, "secret.txt"), "not for the worker\n", "utf8");
+  });
+
+  afterAll(() => {
+    rmSync(base, { recursive: true, force: true });
+  });
+
   const scoped = (name: string): ToolDefinition => ({
     name,
     label: name,
@@ -463,7 +490,7 @@ describe("a brief confined to its approved project roots", () => {
 
   const confinedBrief = (): WorkerBrief => ({
     goal: "work in the project",
-    projectRoots: ["/tmp/project"],
+    projectRoots: [root],
     allowedCapabilityRefs: [],
     confineToProjectRoots: true,
     customTools: SCOPED_FS_TOOL_NAMES.map(scoped),
@@ -483,19 +510,80 @@ describe("a brief confined to its approved project roots", () => {
     expect(created?.customTools?.map((custom) => custom.name)).toEqual([...SCOPED_FS_TOOL_NAMES]);
   });
 
-  it("refuses a brief that declares confinement without the scoped tools", async () => {
+  it("binds the scoped tools to the brief's roots when the brief only carries the roots", async () => {
+    const sdk = stubSdk();
+    const adapter = adapterWith(sdk);
+
+    // No confinement flag and no tools: the state `apps/worker` and the probe build, neither of which may be
+    // left running the SDK's `read` and `ls` against the adapter's working directory.
+    await adapter.createWorkerSession({
+      goal: "work in the project",
+      projectRoots: [root],
+      allowedCapabilityRefs: [],
+    });
+
+    const created = sdk.sessions[0];
+    expect(created?.tools).toEqual([...SCOPED_FS_TOOL_NAMES]);
+    expect(created?.tools).not.toContain("grep");
+    expect(created?.customTools?.map((custom) => custom.name)).toEqual([...SCOPED_FS_TOOL_NAMES]);
+  });
+
+  it("does not let a caller's own tool under a scoped name decide what the roots are", async () => {
+    const sdk = stubSdk();
+    const adapter = adapterWith(sdk);
+    const decoy: ToolDefinition = {
+      ...scoped("clarkcant_read"),
+      description: "a read the caller bound to some other directory",
+      execute: async () => ({ text: "the caller's tool answered" }),
+    };
+
+    // The same tool names, from a caller, so the session gets the adapter's binding of the brief's roots
+    // rather than a set of tools that could be pointed anywhere.
+    await adapter.createWorkerSession({
+      goal: "work in the project",
+      projectRoots: [root],
+      allowedCapabilityRefs: [],
+      customTools: [decoy],
+    });
+
+    const read = sdk.sessions[0]?.customTools?.find((custom) => custom.name === "clarkcant_read");
+    const inside = await read?.execute?.("call-1", { path: join(root, "notes.md") });
+    const outside = await read?.execute?.("call-2", { path: join(elsewhere, "secret.txt") });
+
+    expect(inside?.content[0]?.text).toContain("inside the approved root");
+    expect(inside?.content[0]?.text).not.toContain("the caller's tool answered");
+    expect(outside?.content[0]?.text).toMatch(/^refused: /);
+    expect(outside?.content[0]?.text).not.toContain("not for the worker");
+  });
+
+  it("refuses a brief that declares confinement with no approved root", async () => {
     const adapter = adapterWith(stubSdk());
 
-    // Fail closed and say so: a session that is confined with no filesystem tool at all is a
-    // configuration error, not a constraint somebody chose.
+    // Fail closed and say so: a session that is confined with no filesystem tool at all is a configuration
+    // error, not a constraint somebody chose.
     await expect(
       adapter.createWorkerSession({
         goal: "work in the project",
-        projectRoots: ["/tmp/project"],
+        projectRoots: [],
         allowedCapabilityRefs: [],
         confineToProjectRoots: true,
       }),
-    ).rejects.toThrow(/carries no clarkcant_read/);
+    ).rejects.toThrow(/carries no approved project root/);
+  });
+
+  it("refuses to start when a declared root cannot be approved", async () => {
+    const adapter = adapterWith(stubSdk());
+    const missing = join(base, "not-there");
+
+    // Dropping the root would confine the worker to something other than what was approved.
+    await expect(
+      adapter.createWorkerSession({
+        goal: "work in the project",
+        projectRoots: [missing],
+        allowedCapabilityRefs: [],
+        confineToProjectRoots: true,
+      }),
+    ).rejects.toThrow(new RegExp(missing.replace(/[/\\.]/g, "\\$&")));
   });
 
   it("refuses to register another tool on a confined session", async () => {
