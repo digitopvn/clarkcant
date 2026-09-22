@@ -425,6 +425,9 @@ Local isolated host có:
 - capability simulator;
 - accessibility checks.
 
+`clark widget dev [dir] [--port N] [--builtin <id>]`: không có `[dir]` thì lấy thư mục hiện tại, và
+`--builtin <id>` xem một widget của catalog trong **cùng** host đó thay vì một package trên đĩa — chi tiết ở 23.5.
+
 ### test
 
 Chạy conformance suite.
@@ -714,8 +717,20 @@ Lab là **cùng surface** ở `mode="develop"`, mở từ Settings → Developer
 đó chứ không phải chờ ai đó mở hai cửa sổ rồi so bằng mắt.
 
 Khác có chủ ý: dev host dùng bộ viewport riêng (tới 1024px) vì nó xem một package độc lập, còn Lab xem ở bề
-rộng hội thoại. `clark widget dev --builtin` **không** được thêm: dev host phục vụ facet entry của package,
-không phải catalog renderer.
+rộng hội thoại.
+
+`clark widget dev --builtin <definitionId>` chạy **cùng** shell đó cho một widget của catalog: cùng khung sandbox,
+cùng state machine, cùng bộ điều khiển. Khác duy nhất là nguồn — không đọc package nào trên đĩa, và frame được
+Vite phục vụ từ `packages/widget-cli/src/catalog-runtime.tsx`, entry mount `WidgetPreview`, tức **chính**
+`resolveRenderer` mà hội thoại và thư viện dùng. Nhờ vậy preview không thể lệch khỏi thứ người dùng sẽ thấy, và
+không có bước build nào để quên cũng như không có artifact nào phải commit. Id mà catalog không có thì bị từ chối
+**ngay lúc khởi động và kèm tên**, chứ không phải trong browser. Frame được sinh theo từng request nên nó mang
+đúng fixture mà shell đang hiện: đổi control fixture là đổi thứ được vẽ, không chỉ đổi thứ shell nói.
+
+Vì entry đó là code browser do một CLI Node phát đi, nó nằm trong danh sách entry của invariant
+`browser-entries-avoid-node-builtins` (115 module, 3 entry), và `tsconfig.web.json` phủ
+`packages/widget-cli/src/**/*.tsx`. Dòng config đó là bắt buộc: config Node chỉ include `**/*.ts` và không đặt
+`jsx`, nên nếu thiếu nó thì file **âm thầm** không được typecheck ở đâu cả.
 
 ### 23.6 Provenance của package đã cài
 
