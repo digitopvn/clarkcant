@@ -840,3 +840,29 @@ An independent completion audit rejected the closeout. Its objections were concr
 **Label history on #125, made honest.** The auditor was right that the only label ever applied was `ready to cook`, and that the issue was closed by a keyword match rather than deliberately. It was reopened and now carries `ready to cook` and `in progress`; `ready to ship stable` is added when the rework merges, and the issue is then closed deliberately with a completion comment. The earlier missing transitions cannot be rewritten, so they are recorded here rather than presented as having happened.
 
 **Advisory receipts.** A retrospective advisory assessment per phase is posted on each of the six phase PRs and in full on #125, and its source is `advisory-per-phase.md`. It did not affirm the phases: it names, per phase, the strongest surviving weakness — Phase 1's fourth effect surface having no production call site and a `prohibition: "all"` node being unreleasable from any UI; Phase 2's same defect class surviving in `package-files.ts` (tracked by the reopened #93); Phase 3's lock being consumed by no production build; Phase 5's `node-link` manifest contradicting its own `V04`/`V05` entries; Phase 6's capture having a single fixture caller. Those are the honest answer to whether the guard rails protected what they were built to protect.
+
+## CI failure found and fixed after the audit rework
+
+The rework that added the platform-skip rule to `tools/check-invariants.mjs` introduced a real CI failure, and it is worth recording because it is the one thing in this program that failed on the merged tree rather than in review.
+
+`tools/platform-skipped-tests.mjs` imported the `typescript` package at module top level. CI runs `node tools/check-invariants.mjs` **before** `pnpm install`, so both `verify` jobs died with `ERR_MODULE_NOT_FOUND`. The obvious fix — move the invariants step after Install — does not work, because the Install step is skipped entirely for prose-only changes, which would leave the invariants step running with no `node_modules` and failing identically.
+
+Fixed by making the scan self-contained: it now carries its own tokenizer and delimiter tree instead of the TypeScript compiler, keeping the old semantics (a skip condition counts only when it mentions `process.platform`/`process.arch` or a name bound to those in the same file, and a title is reported as running only when the scan can show it sits outside every platform skip it can see). Equivalence was measured rather than asserted: the old and new implementations were run over all 227 spec files with **zero differences** (the same 8 skipped titles, no throws), and the spec grew from 10 to 19 cases without dropping any.
+
+Two proofs were required and are recorded here:
+
+```
+# with node_modules genuinely absent, i.e. the real pre-install CI position
+$ node tools/check-invariants.mjs
+all 12 invariant checks passed      rc=0
+
+# the rule still bites: V02 mutated back to implemented with only POSIX-skipped evidence
+FAIL  implementation-status-registry
+      ✗ V02 is implemented but every test it names is skipped by a platform condition (!POSIX), so on a
+        runner where that condition does not hold it has no executed evidence
+rc=1
+```
+
+After the revert: `all 12 invariant checks passed`, and CI run [35727845109](https://github.com/digitopvn/clarkcant/actions/runs/35727845109) on main head `d95d4c8` is `completed/success` with all five jobs green, including `verify (node 22.19)` and `verify (node 24)`. Every import under `tools/**` is now a `node:` builtin or a local module, so no tool in the pre-install position can fail this way again; the two other pre-install tools were run with `node_modules` absent and both exit 0.
+
+This also settles the CI objection from the audit: the earlier `cancelled` runs on the merge commits were the concurrency group cancelling superseded runs, never a failure, and the green run on the current head covers every merge commit in its ancestry. The one genuine failure that did appear is the one above, and it is fixed on main.
