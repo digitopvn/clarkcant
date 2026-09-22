@@ -702,3 +702,43 @@ Folding comment-only edits into the branch would have changed the head after rev
 3. apps/runtime/src/routes/control.ts:24 and conversations.ts:74,84 — two of seventeen route modules take the whole NodeServices bundle instead of narrowing it, so "each takes an explicit dependency interface" is only partly true there. Injected, never looked up, so not the forbidden locator pattern.
 
 Two implementer claims were left unverified by the review and are not to be restated as established: the "187 route-focused tests before and after" figure, and "startup stderr byte-identical". Both are superseded by the reviewer's own dispatch probe.
+
+## Phase 5 — implementation-status source of truth (supersedes the placeholder above)
+
+Branch `phase-5-status`. Registry `packages/contracts/src/implementation-status.ts`: 34 entries — 16 implemented, 14 partial, 4 blocked, 0 not-implemented. Eighteen are the V01-V18 scope items, sixteen are capability claims covering all 18 former `@implementation-status` sites. `grep -rn "@implementation-status" packages apps packs examples` returns nothing, and the invariant fails if the marker returns.
+
+### The invariant
+
+A tenth check, `implementation-status-registry`, in `tools/check-invariants.mjs`: every entry names an existing workspace package with that package's declared `clarkcant.phase`; `implemented` requires at least one test whose title actually appears in the file it names, so "the schema exists" cannot pass because a schema has no title; every other status must name what is missing, and `implemented` may not carry an external gate; every `@status-ref` resolves; each `V<n>` entry's status must equal the traceability row's in both directions; and gates #2/#3/#4/#5 must each stay represented.
+
+Demonstrated able to fail (each mutation run on a scratch clone, exit 1, then reverted; the unmutated clone passes):
+
+```
+✗ references capability nodelink.transportt, which the registry does not define
+✗ example.note-widget names a test that is not in examples/note-widget/test/editor.spec.ts
+✗ example.note-widget is implemented but names no test at all
+✗ V14: registry says implemented (PASS) but the traceability document says PARTIAL
+✗ external gate #5 is no longer represented by any registry entry
+```
+
+### Review outcome
+
+No CRITICAL. Verdict was request changes with six IMPORTANT findings; five were supplied to the fix worker (the sixth was a bookkeeping item about this file, addressed by this section). All five fixed:
+
+1. **The docs presented a CLOSED gate as open.** `docs/conformance-traceability.md` listed #93 among gates "vẫn mở" while #93 is CLOSED (COMPLETED, closed 2026-09-22T04:46:20Z). The invariant could not catch it because it asserts only that an issue number appears somewhere — a presence check, not an openness check. Every mention now describes the gap itself rather than an issue, V12 stays PARTIAL on its own residual gaps (`detach`, `voiceClickParity`), and the check's pinned list is `[2, 3, 4, 5]`, the four gates the objective names. The registry header now states the rule that makes this non-repeatable: a gap that waits on nothing outside the repository is described by the gap.
+2. **A stub→implemented upgrade discarded the gap it named.** `example.media-widget-contract` claimed implemented while its own comment said the registry names a missing mountable component that nothing named. Re-gated to `partial` with the two fixture tests kept as evidence and the missing component named, rather than narrowing the capability summary to hide it. Two contradicting exported status constants in that package collapsed to one.
+3. **An added rule could false-pass.** The strengthened check 7 accepted an unrelated-but-existing spec basename as evidence. Requiring a quoted existing title would have rejected 46 of 73 rows because most cite an integration path rather than one titled case, so the added branch was reverted and its limit stated where the check lives. The surviving rule still bites: a quoted title that exists nowhere fails.
+4. **The registry asserted a client that does not exist** ("the Unix socket a desktop helper attaches to"); restored to conditional wording.
+5. **Package manifests disagreed with the registry.** `note-widget` (implemented), `mcp-app-fixture` (external-blocked) and `media-widget-contract` (implemented) now declare `stub`, which is what their own source headers said before the registry existed; all three registry entries are partial with no external issue.
+
+Deliberately NOT swept: nine further packages declare `implemented` while owning a non-implemented capability entry (`core`, `conversation-client`, `browser-playwright`, `integration-sdk`, `node-link`, `execution-supervisor`, `host-adapters`, `project-work`, `widget-cli`). No aggregation rule survives them, because `clarkcant.status` describes whether a package's own code is real, not the completeness of each capability it carries — forcing `@clarkcant/core` to declare `stub` would be false. No rule was added, and the boundary is recorded here rather than enforced.
+
+Also fixed: check 10 now states that evidence is checked for existence, not execution (naming the `describe.skipIf(!POSIX)` socket suite); a registry load failure no longer produces three misleading stub-check failures; `node.ts` says what the tests actually drive rather than claiming `--socket` is exercised.
+
+### Verification
+
+`pnpm invariants` all 10 checks passed; `pnpm typecheck` clean; `pnpm lint` clean; `pnpm test` 186 files passed / 1 skipped, 2288 tests passed / 7 skipped; `pnpm verify` exit 0. No test skipped, weakened or deleted. No `docs/manifest.json` entry was owed (19 entries; `docs/conformance-traceability.md` is not among them). The four Phase 3 and three Phase 4 MINORs recorded above were left untouched, because bundling them would violate the program's no-unrelated-cleanup criterion.
+
+### Direction of change
+
+No T-id or V-id was promoted or demoted: no status cell in the traceability table changed, and all 18 V rows already agreed with the registry. Several `@implementation-status` comments were corrected upward because a named test exists and was run (`runtime.local-transport`, `pack.browser-playwright`, `example.media-widget-contract`'s fixture assertions), and one stale prose claim was corrected (V05 no longer says artifact bytes are not transferred).
