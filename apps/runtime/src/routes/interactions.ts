@@ -8,7 +8,13 @@ import {
 import { recordAppIntentEvent } from "@clarkcant/core";
 import { type Database } from "@clarkcant/storage";
 
-import { type AppIntentDeps, consumeConfirmation, decideAppIntent, mintConfirmation } from "../app-intents.ts";
+import {
+  type AppIntentDeps,
+  consumeConfirmation,
+  decideAppIntent,
+  mintConfirmation,
+  preferredAppIntentLocale,
+} from "../app-intents.ts";
 import { buildSuggestions } from "../suggestions.ts";
 import { type GatewayRequest, type GatewayResponse, fail, json, readJson } from "./http.ts";
 
@@ -160,7 +166,7 @@ async function handleAppIntentRoutes(
         kind: "intent",
         intent: outcome.intent,
         requiresConfirmation: false,
-        readBack: describeAppIntent(outcome.intent),
+        readBack: describeAppIntent(outcome.intent, preferredAppIntentLocale(intentDeps, principalId)),
       },
     });
   }

@@ -4,8 +4,19 @@ import { SearchSelect } from "../search-select.tsx";
 import type { GatewayClient } from "../api.ts";
 import { PERSONAL_INSTRUCTIONS_MAX_CHARS, type ModelPool } from "@clarkcant/contracts";
 import { InlineStatus, SettingsRow, ToggleSwitch } from "./controls/primitives.tsx";
+import { CredentialsSection, type CredentialEntry } from "./controls/credentials-manager-section.tsx";
 import type { PreferencesHandle } from "./controls/use-preferences.ts";
 import { useT } from "../i18n/locale-context.tsx";
+
+/**
+ * Every credential the node holds, listed once. DESIGN.md 11.6 keeps a key's row in the domain that explains
+ * it (Gemini for voice, TypeSafe for Jev routing), so this array lives beside the routing tab that already
+ * hosted the TypeSafe form, and Devices & Voice now links here instead of embedding its own form (review U5).
+ */
+const CREDENTIAL_ENTRIES: readonly CredentialEntry[] = [
+  { name: "typesafe", labelKey: "settings.credentials.typesafe.label", purposeKey: "settings.credentials.typesafe.purpose" },
+  { name: "gemini", labelKey: "settings.credentials.gemini.label", purposeKey: "settings.credentials.gemini.purpose" },
+];
 
 /**
  * AI & Routing: what answers, and what it costs to run.
@@ -32,13 +43,6 @@ export interface AiRoutingSettingsProps {
 
 export function AiRoutingSettings({ client, prefs, facts }: AiRoutingSettingsProps): ReactElement {
   const t = useT();
-  const KEY_FIELDS = [
-    {
-      name: "typesafe",
-      label: t("settings.ai.typesafe.label"),
-      purpose: t("settings.ai.typesafe.purpose"),
-    },
-  ] as const;
   const [catalogue, setCatalogue] = useState<
     | { id: string; models: { provider: string; id: string; contextWindow?: number; current: boolean }[] }[]
     | undefined
@@ -46,8 +50,6 @@ export function AiRoutingSettings({ client, prefs, facts }: AiRoutingSettingsPro
   const [providerDraft, setProviderDraft] = useState<string | undefined>(undefined);
   const [modelDraft, setModelDraft] = useState<string | undefined>(undefined);
   const [modelStatus, setModelStatus] = useState<string | undefined>(undefined);
-  const [keyDraft, setKeyDraft] = useState("");
-  const [keyStatus, setKeyStatus] = useState<string | undefined>(undefined);
 
   useEffect(() => {
     let cancelled = false;
@@ -185,83 +187,7 @@ export function AiRoutingSettings({ client, prefs, facts }: AiRoutingSettingsPro
         )}
       </section>
 
-      <section className="cc-panel-section" data-models-key="true">
-        <h3>{t("settings.key.heading")}</h3>
-        <p className="cc-panel-note">{t("settings.key.intro")}</p>
-        {KEY_FIELDS.map((entry) => (
-          <form
-            key={entry.name}
-            className="cc-credential-form"
-            data-settings-key-form={entry.name}
-            onSubmit={(event) => {
-              event.preventDefault();
-              const value = keyDraft.trim();
-              if (value === "") return;
-              client
-                .putCredential({ fields: [{ name: entry.name, value }] })
-                .then((result) => {
-                  // Cleared the moment it is sent, so nothing later can read it off the screen or out of state.
-                  setKeyDraft("");
-                  setKeyStatus(
-                    result.names.includes(entry.name)
-                      ? t("settings.key.status.saved")
-                      : t("settings.key.status.sentNoName"),
-                  );
-                })
-                .catch(() =>
-                  // The message says nothing about what was typed: an error that repeated the value would be the
-                  // leak this field exists to avoid.
-                  setKeyStatus(t("settings.key.status.saveFailed")),
-                );
-            }}
-          >
-            <label className="cc-credential-field">
-              <span>{entry.label}</span>
-              <input
-                type="password"
-                name={entry.name}
-                autoComplete="off"
-                data-settings-key-field={entry.name}
-                value={keyDraft}
-                onChange={(event) => setKeyDraft(event.target.value)}
-              />
-            </label>
-            <button
-              type="submit"
-              className="cc-icon-btn"
-              style={{ width: "auto", padding: "0 var(--cc-space-sm)" }}
-              disabled={keyDraft.trim() === ""}
-              data-settings-key-submit={entry.name}
-            >
-              {t("settings.key.save")}
-            </button>
-            <p className="cc-freshness">{entry.purpose}</p>
-            {keyStatus === undefined ? null : (
-              <p className="cc-freshness" data-settings-key-status={entry.name}>
-                {keyStatus}
-              </p>
-            )}
-            <button
-              type="button"
-              className="cc-chip"
-              data-settings-key-remove={entry.name}
-              onClick={() => {
-                client
-                  .deleteCredential(entry.name)
-                  .then(() => setKeyStatus(t("settings.key.status.signedOut")))
-                  .catch(() =>
-                    // A refusal here usually means there was nothing to remove, which is a different answer from a
-                    // failure and is said as one rather than dressed up as an error.
-                    setKeyStatus(t("settings.key.status.removeFailed")),
-                  );
-              }}
-            >
-              {t("settings.key.signOut")}
-            </button>
-          </form>
-        ))}
-        <InlineStatus status={prefs.status} forKey="ai.personalInstructions" />
-      </section>
+      <CredentialsSection client={client} entries={CREDENTIAL_ENTRIES} />
 
       <PersonalInstructions prefs={prefs} />
 

@@ -35,8 +35,6 @@ export interface DevicesVoiceSettingsProps {
 
 export function DevicesVoiceSettings({ client, prefs, facts }: DevicesVoiceSettingsProps): ReactElement {
   const t = useT();
-  const [keyDraft, setKeyDraft] = useState("");
-  const [keyStatus, setKeyStatus] = useState<string | undefined>(undefined);
   /*
    * Asked rather than assumed.
    *
@@ -93,81 +91,14 @@ export function DevicesVoiceSettings({ client, prefs, facts }: DevicesVoiceSetti
         )}
 
         {/*
-          The key the live voice provider needs.
-
-          It lives beside the microphone because that is what it is for: a session that cannot start without it.
-          The name it is stored under is the node's own, and it cannot be imported here because the runtime is
-          not something the browser ships.
+          The key the live voice provider needs used to have its own form here. It moved to the unified
+          Credentials section (DESIGN.md 11.6, review U5): every stored key now has one place with its
+          connection status and Replace/Remove actions, and this row only points there so a Gemini row is not
+          entered twice.
         */}
-        <form
-          className="cc-credential-form"
-          data-settings-key-form="gemini"
-          onSubmit={(event) => {
-            event.preventDefault();
-            const value = keyDraft.trim();
-            if (value === "") return;
-            client
-              .putCredential({ fields: [{ name: "gemini", value }] })
-              .then((result) => {
-                // Cleared the moment it is sent, so nothing later can read it off the screen or out of state.
-                setKeyDraft("");
-                setKeyStatus(
-                  result.names.includes("gemini")
-                    ? t("settings.key.status.saved")
-                    : t("settings.key.status.sentNoName"),
-                );
-              })
-              .catch(() =>
-                // The message says nothing about what was typed: an error that repeated the value would be the leak
-                // this field exists to avoid.
-                setKeyStatus(t("settings.key.status.saveFailed")),
-              );
-          }}
-        >
-          <label className="cc-credential-field">
-            <span>{t("settings.devices.gemini.label")}</span>
-            <input
-              type="password"
-              name="gemini"
-              autoComplete="off"
-              data-settings-key-field="gemini"
-              value={keyDraft}
-              onChange={(event) => setKeyDraft(event.target.value)}
-            />
-          </label>
-          <button
-            type="submit"
-            className="cc-icon-btn"
-            style={{ width: "auto", padding: "0 var(--cc-space-sm)" }}
-            disabled={keyDraft.trim() === ""}
-            data-settings-key-submit="gemini"
-          >
-            {t("settings.key.save")}
-          </button>
-          <p className="cc-freshness">{t("settings.devices.gemini.purpose")}</p>
-          {keyStatus === undefined ? null : (
-            <p className="cc-freshness" data-settings-key-status="gemini">
-              {keyStatus}
-            </p>
-          )}
-          <button
-            type="button"
-            className="cc-chip"
-            data-settings-key-remove="gemini"
-            onClick={() => {
-              client
-                .deleteCredential("gemini")
-                .then(() => setKeyStatus(t("settings.key.status.signedOut")))
-                .catch(() =>
-                  // A refusal here usually means there was nothing to remove, which is a different answer from a
-                  // failure and is said as one rather than dressed up as an error.
-                  setKeyStatus(t("settings.key.status.removeFailed")),
-                );
-            }}
-          >
-            {t("settings.key.signOut")}
-          </button>
-        </form>
+        <p className="cc-panel-note" data-devices-credentials-link="gemini">
+          {t("settings.credentials.linkFromDevices")}
+        </p>
 
         <MicrophoneCheck />
       </section>
