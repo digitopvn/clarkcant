@@ -1,5 +1,6 @@
 import {
   type ActionProposal,
+  type AppIntentDecision,
   type AttachmentRef,
   type CapabilityRef,
   type ConversationId,
@@ -301,7 +302,13 @@ export type ModelTurnEvent =
       label: string;
       args: Record<string, unknown>;
     }
-  | { type: "tool-end"; toolCallId: string; status: "done" | "failed"; result: string };
+  | { type: "tool-end"; toolCallId: string; status: "done" | "failed"; result: string }
+  /**
+   * An app-control action the agent asked the host to carry out, delivered as an ephemeral event
+   * rather than stored in a message block: replaying the transcript must not repeat the side effect,
+   * so this travels only to a foreground stream that is watching the turn as it runs.
+   */
+  | { type: "host-control"; decision: AppIntentDecision };
 
 /** What the conductor reports to a caller that is watching. */
 export type ConductorEmit = ModelTurnEvent;
