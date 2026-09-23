@@ -224,7 +224,20 @@ export async function scanProjects(options: ScanOptions): Promise<ScanOutcome> {
   let truncated = false;
   let stoppedEarly = false;
 
-  const walk = (path: string, depth: number): void => {
+  /*
+   * Yield to the event loop every few directories. A synchronous walk over a home directory — one of which is a
+   * cloud drive on a real machine — blocks the process for as long as the walk takes: the abort budget cannot fire,
+   * requests are not answered, and a node that could not bind its port does not get to say so.
+   */
+  let sinceYield = 0;
+  const pause = async (): Promise<void> => {
+    sinceYield += 1;
+    if (sinceYield < 64) return;
+    sinceYield = 0;
+    await new Promise((done) => setImmediate(done));
+  };
+
+  const walk = async (path: string, depth: number): Promise<void> => {
     if (visited >= maxEntries) {
       truncated = true;
       return;
@@ -284,13 +297,14 @@ export async function scanProjects(options: ScanOptions): Promise<ScanOutcome> {
     }
 
     if (depth >= maxDepth) return;
+    await pause();
     for (const entry of entries) {
       // `isSymbolicLink` first: a symlink out of the approved root would let the scan index a tree the
       // user never approved, which is the escape this refuses.
       if (entry.isSymbolicLink()) continue;
       if (entry.isDirectory() !== true) continue;
       if (isIgnored(entry.name, ignores)) continue;
-      walk(join(path, entry.name), depth + 1);
+      await walk(join(path, entry.name), depth + 1);
       if (visited >= maxEntries || stoppedEarly) return;
     }
   };
@@ -300,7 +314,7 @@ export async function scanProjects(options: ScanOptions): Promise<ScanOutcome> {
       stoppedEarly = true;
       break;
     }
-    walk(root, 0);
+    await walk(root, 0);
     // Yielding between roots is what keeps a scan from blocking a turn in the same process.
     if (options.yieldBetweenRoots !== undefined) await options.yieldBetweenRoots();
     if (visited >= maxEntries) break;

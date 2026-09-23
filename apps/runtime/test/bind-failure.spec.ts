@@ -38,7 +38,7 @@ async function runNode(args: string[], deadlineMs = 20_000): Promise<Ran> {
     child.stderr.on("data", (chunk: Buffer) => (stderr += chunk.toString("utf8")));
 
     const timer = setTimeout(() => {
-      failure = new Error(`The runtime did not exit within ${deadlineMs}ms`);
+      failure = new Error(`The runtime did not exit within ${deadlineMs}ms; stderr so far:\n${stderr}`);
       child.kill("SIGKILL");
     }, deadlineMs);
 
