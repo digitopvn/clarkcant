@@ -152,7 +152,7 @@ export {
 // Re-exported so a host can type the preference it reads without depending on the contracts package for one
 // shape it only passes through.
 export type { RegisteredPreference } from "@clarkcant/contracts";
-export { ORB_DRAW_SIZE, ORB_RADIUS } from "./Conversation.tsx";
+export { ORB_DRAW_SIZE, ORB_RADIUS } from "./use-hero-orb-layout.ts";
 export { createOrbRenderer, type OrbOptions, type OrbRenderer } from "./orb.ts";
 export { ORB_PALETTE, ORB_SHAPE, ORB_SHADER_STATUS } from "./orb-shader.ts";
 export {
