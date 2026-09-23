@@ -1,5 +1,7 @@
 import { type ReactElement, useMemo, useState } from "react";
 
+import { useT } from "./i18n/locale-context.tsx";
+
 /** One choice in the list. */
 export interface SearchSelectOption {
   readonly value: string;
@@ -66,6 +68,7 @@ export function SearchSelect({
   onChange,
   emptyNote,
 }: SearchSelectProps): ReactElement {
+  const t = useT();
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [active, setActive] = useState(0);
@@ -132,7 +135,7 @@ export function SearchSelect({
         <ul className="cc-search-list" id={`cc-search-list-${name}`} role="listbox">
           {matched.length === 0 ? (
             <li className="cc-search-empty" data-search-empty={name}>
-              {emptyNote ?? "Không có lựa chọn nào khớp."}
+              {emptyNote ?? t("settings.searchSelect.noMatches")}
             </li>
           ) : (
             matched.map((option, index) => (

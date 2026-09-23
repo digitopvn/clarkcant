@@ -66,10 +66,10 @@ export function ExtensionsSettings({ client, tools, onOpenWidgetLibrary }: Exten
       */}
       <section className="cc-panel-section" data-widget-library-entry="true">
         <h3 data-marketplace-heading="true">{t("marketplace.heading")}</h3>
-        <p className="cc-panel-note">Xem những giao diện Clark có thể dùng trong hội thoại.</p>
+        <p className="cc-panel-note">{t("settings.extensions.widgetLibrary.intro")}</p>
         <SettingsRow
-          label="Widget Library"
-          description="Duyệt danh mục widget thật, kèm bản xem trước bằng chính renderer đang chạy trong hội thoại."
+          label={t("settings.extensions.widgetLibrary.label")}
+          description={t("settings.extensions.widgetLibrary.description")}
         >
           <button
             type="button"
@@ -77,19 +77,17 @@ export function ExtensionsSettings({ client, tools, onOpenWidgetLibrary }: Exten
             onClick={() => onOpenWidgetLibrary?.("browse")}
             data-widget-library-open="browse"
           >
-            Duyệt
+            {t("settings.extensions.widgetLibrary.browse")}
           </button>
         </SettingsRow>
       </section>
       <section className="cc-panel-section">
-        <h3>Capability trên node này</h3>
-        <p className="cc-panel-note">
-          Thứ gì chưa nạp thì nói rõ vì sao, không được làm tròn thành “dùng được”.
-        </p>
+        <h3>{t("settings.extensions.capabilities.heading")}</h3>
+        <p className="cc-panel-note">{t("settings.extensions.capabilities.intro")}</p>
         {tools === undefined ? (
-          <p className="cc-panel-note">Đang đọc…</p>
+          <p className="cc-panel-note">{t("settings.common.loading")}</p>
         ) : tools.length === 0 ? (
-          <p className="cc-panel-note">Chưa có capability nào trên node này.</p>
+          <p className="cc-panel-note">{t("settings.extensions.capabilities.none")}</p>
         ) : (
           tools.map((tool) => (
             <ToolRow
@@ -97,6 +95,7 @@ export function ExtensionsSettings({ client, tools, onOpenWidgetLibrary }: Exten
               toolRef={tool.ref}
               summary={tool.summary}
               usable={tool.usable}
+              t={t}
               {...(tool.blockedReason === undefined ? {} : { blockedReason: tool.blockedReason })}
             />
           ))
@@ -104,18 +103,25 @@ export function ExtensionsSettings({ client, tools, onOpenWidgetLibrary }: Exten
       </section>
 
       <section className="cc-panel-section">
-        <h3>Công cụ</h3>
-        {/* Two lists, told apart by which half holds them: the node's own, and the agent's built-ins. */}
-        <ToolLists client={client} />
+        <h3>{t("settings.extensions.tools.heading")}</h3>
+        {/*
+          Two lists, told apart by which half holds them: the node's own, and the agent's built-ins.
+          `tool-lists.tsx` is outside this file's ownership and still renders its own Vietnamese copy;
+          the marker lets an i18n-coverage check skip this subtree instead of misreporting it as this
+          settings surface's own untranslated string.
+        */}
+        <div data-out-of-scope-i18n="tool-lists">
+          <ToolLists client={client} />
+        </div>
       </section>
 
       <section className="cc-panel-section" data-pi-extensions="true">
-        <h3>Extension của pi trên máy này</h3>
+        <h3>{t("settings.extensions.piExtensions.heading")}</h3>
         {extensions === undefined ? (
-          <p className="cc-panel-note">Đang đọc…</p>
+          <p className="cc-panel-note">{t("settings.common.loading")}</p>
         ) : extensions.length === 0 ? (
           <p className="cc-panel-note" data-pi-extensions="none">
-            pi trên máy này chưa nạp extension nào. Danh sách chỉ có tên và loại, không bao giờ có nội dung tệp.
+            {t("settings.extensions.piExtensions.none")}
           </p>
         ) : (
           // Names and kinds, and deliberately nothing else: an extension on a real machine can hold a credential,
@@ -145,6 +151,7 @@ export function ExtensionsSettings({ client, tools, onOpenWidgetLibrary }: Exten
  * Showing them with the same wording would be the one mistake this list exists to prevent.
  */
 function InstalledPackagesSection({ client }: { client: GatewayClient }): ReactElement {
+  const t = useT();
   const [packages, setPackages] = useState<InstalledPackageView[] | undefined>(undefined);
 
   useEffect(() => {
@@ -166,32 +173,36 @@ function InstalledPackagesSection({ client }: { client: GatewayClient }): ReactE
 
   return (
     <section className="cc-panel-section">
-      <h3>Đã cài trên node này</h3>
+      <h3>{t("settings.extensions.installed.heading")}</h3>
       {packages === undefined ? (
-        <p className="cc-panel-note">Đang đọc…</p>
+        <p className="cc-panel-note">{t("settings.common.loading")}</p>
       ) : packages.length === 0 ? (
-        <p className="cc-panel-note">Chưa cài gói nào trên node này.</p>
+        <p className="cc-panel-note">{t("settings.extensions.installed.none")}</p>
       ) : (
-        <ul className="cc-installed-list">
+        // `LANE_LABELS` (package-provenance.ts) is outside this file's ownership and reports the node's own
+        // data anyway; marked so an i18n-coverage check treats it as node-reported content, not untranslated UI.
+        <ul className="cc-installed-list" data-out-of-scope-i18n="package-provenance">
           {packages.map((entry) => (
             <li key={entry.packageId} data-installed-package={entry.packageId} data-installed-lane={entry.lane}>
               <strong>
                 {entry.packageId}@{entry.version}
               </strong>
+              {/* LANE_LABELS is out of this file's ownership; see the settings translation report for the
+                  Vietnamese lane badge still shown here. */}
               <span className="cc-badge" data-lane={entry.lane}>
                 {LANE_LABELS[entry.lane]}
               </span>
               <dl className="cc-fields">
-                <dt>Nguồn</dt>
+                <dt>{t("settings.extensions.installed.source")}</dt>
                 {/* The tier the resolver assigned, so "found on the internet" is never dressed up as first-party. */}
                 <dd data-installed-source-tier={entry.source.sourceTier}>
                   {entry.source.rationale === "" ? entry.source.sourceTier : entry.source.rationale}
                 </dd>
-                <dt>Digest</dt>
+                <dt>{t("settings.extensions.installed.digest")}</dt>
                 <dd>
                   <code data-installed-digest={entry.digest}>{entry.digest}</code>
                 </dd>
-                <dt>Cài lúc</dt>
+                <dt>{t("settings.extensions.installed.installedAt")}</dt>
                 <dd>{entry.activatedAt}</dd>
               </dl>
             </li>

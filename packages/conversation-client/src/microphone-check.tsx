@@ -1,5 +1,6 @@
 import { type ReactElement, useEffect, useState } from "react";
 
+import { useT } from "./i18n/locale-context.tsx";
 import { rmsLevel } from "./voice-session.ts";
 
 /**
@@ -11,6 +12,7 @@ import { rmsLevel } from "./voice-session.ts";
  * a message saying the microphone is fine.
  */
 export function MicrophoneCheck(): ReactElement {
+  const t = useT();
   const [state, setState] = useState<"idle" | "asking" | "live" | "refused" | "unavailable">("idle");
   const [level, setLevel] = useState(0);
 
@@ -59,12 +61,12 @@ export function MicrophoneCheck(): ReactElement {
 
   const words =
     state === "live"
-      ? "Đang nghe thử. Nói gì đó để thấy mức âm thay đổi."
+      ? t("settings.mic.live")
       : state === "refused"
-        ? "Trình duyệt đã từ chối quyền micro. Mở quyền cho trang này rồi thử lại."
+        ? t("settings.mic.refused")
         : state === "unavailable"
-          ? "Trình duyệt này không cho trang đọc micro."
-          : "Micro chưa được hỏi quyền.";
+          ? t("settings.mic.unavailable")
+          : t("settings.mic.idle");
 
   return (
     <div className="cc-mic-check" data-mic-check={state}>
@@ -76,7 +78,7 @@ export function MicrophoneCheck(): ReactElement {
       </div>
       {/* The level is decorative; this is the same fact for a reader who cannot see the bar. */}
       <span className="cc-sr-only" data-mic-level={level.toFixed(3)}>
-        {`mức âm ${Math.round(Math.min(1, level) * 100)} phần trăm`}
+        {`${Math.round(Math.min(1, level) * 100)}% ${t("settings.mic.levelSuffix")}`}
       </span>
       <button
         type="button"
@@ -90,7 +92,7 @@ export function MicrophoneCheck(): ReactElement {
           setState(state === "live" ? "idle" : "live");
         }}
       >
-        {state === "live" ? "Dừng thử" : "Bật micro để thử"}
+        {state === "live" ? t("settings.mic.stop") : t("settings.mic.start")}
       </button>
     </div>
   );

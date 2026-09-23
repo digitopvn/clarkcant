@@ -1,5 +1,7 @@
 import type { ReactElement, ReactNode } from "react";
 
+import type { MessageKey } from "../../i18n/messages.ts";
+
 export interface SettingsRowProps {
   label: string;
   /** What the row means or why it is the way it is. Shown under the label, never as a tooltip. */
@@ -38,6 +40,12 @@ export interface ToolRowProps {
   summary: string;
   usable: boolean;
   blockedReason?: string;
+  /**
+   * Passed in explicitly rather than read via `useT()`: this component, like `SettingsRow`, is exercised by
+   * plain function calls in unit tests with no `LocaleProvider` mounted, so the translator has to arrive as
+   * data rather than through a hook.
+   */
+  t: (key: MessageKey) => string;
 }
 
 /**
@@ -47,7 +55,7 @@ export interface ToolRowProps {
  * The blueprint's rule for a blocked gate applies here too: a capability that is declared but not
  * loaded is reported as blocked, with what would unblock it — never rounded up to available.
  */
-export function ToolRow({ toolRef, summary, usable, blockedReason }: ToolRowProps): ReactElement {
+export function ToolRow({ toolRef, summary, usable, blockedReason, t }: ToolRowProps): ReactElement {
   return (
     <div className="cc-tool-row" data-usable={usable} data-tool-ref={toolRef}>
       <div className="cc-setting-text">
@@ -63,7 +71,7 @@ export function ToolRow({ toolRef, summary, usable, blockedReason }: ToolRowProp
       </div>
       {/* A word, not a colour: the state has to read without the swatch. */}
       <span className="cc-badge" data-tone={usable ? "ok" : "warn"}>
-        {usable ? "dùng được" : "chưa dùng được"}
+        {usable ? t("settings.toolRow.usable") : t("settings.toolRow.unusable")}
       </span>
     </div>
   );
