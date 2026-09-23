@@ -12,6 +12,8 @@ import { ExperienceSettings } from "./ExperienceSettings.tsx";
 import { ExtensionsSettings } from "./ExtensionsSettings.tsx";
 import { MemorySettings } from "./MemorySettings.tsx";
 import { usePreferences } from "./controls/use-preferences.ts";
+import { useT } from "../i18n/locale-context.tsx";
+import type { MessageKey } from "../i18n/messages.ts";
 
 export { SettingsRow, type SettingsRowProps, ToolRow, type ToolRowProps } from "./controls/SettingsRow.tsx";
 
@@ -43,19 +45,19 @@ export { SettingsRow, type SettingsRowProps, ToolRow, type ToolRowProps } from "
  */
 
 const TABS = [
-  { id: "experience", label: "Experience" },
+  { id: "experience", labelKey: "settings.tab.experience" },
   // Provider and model together, because choosing one means choosing the other: the second list belongs to
   // the first. Personal instructions land here with the phase that makes them reach the model.
-  { id: "ai", label: "AI & Routing" },
-  { id: "control", label: "Control" },
-  { id: "extensions", label: "Extensions" },
-  { id: "devices", label: "Devices & Voice" },
+  { id: "ai", labelKey: "settings.tab.ai" },
+  { id: "control", labelKey: "settings.tab.control" },
+  { id: "extensions", labelKey: "settings.tab.extensions" },
+  { id: "devices", labelKey: "settings.tab.devices" },
   // What the node remembers, and the way to remove it. A report like Developer, and placed next to it for the
   // same reason: nothing here is a choice the user is making about behaviour.
-  { id: "memory", label: "Memory" },
+  { id: "memory", labelKey: "settings.tab.memory" },
   // Last, and it is the only one whose contents are a report rather than a choice.
-  { id: "developer", label: "Developer" },
-] as const;
+  { id: "developer", labelKey: "settings.tab.developer" },
+] as const satisfies readonly { id: string; labelKey: MessageKey }[];
 
 type TabId = (typeof TABS)[number]["id"];
 
@@ -132,6 +134,7 @@ export function SettingsPanel({
   const [tab, setTab] = useState<TabId>(openAt ?? "experience");
 
   const prefs = usePreferences(client, open);
+  const t = useT();
 
   useEffect(() => {
     if (!open) return;
@@ -214,12 +217,12 @@ export function SettingsPanel({
     <Modal
       open={open}
       onClose={onClose}
-      title="Cài đặt"
-      description="Vài tuỳ chọn. Mọi thứ khác nằm trong hội thoại."
+      title={t("settings.title")}
+      description={t("settings.description")}
       // Narrower than a decision dialog: see the note on the prop. 560 is the design's number.
       width="560px"
     >
-      <div className="cc-tabs" role="tablist" aria-label="Nhóm cài đặt">
+      <div className="cc-tabs" role="tablist" aria-label={t("settings.tabs.group")}>
         {TABS.map((entry) => (
           <button
             key={entry.id}
@@ -265,7 +268,7 @@ export function SettingsPanel({
               else if (event.key === "End") move(TABS.length - 1);
             }}
           >
-            {entry.label}
+            {t(entry.labelKey)}
           </button>
         ))}
       </div>
@@ -334,7 +337,7 @@ export function SettingsPanel({
           {nodeStatus()}
         </span>
         <button type="button" className="cc-badge cc-modal-done" onClick={onClose}>
-          Xong
+          {t("settings.done")}
         </button>
       </footer>
     </Modal>

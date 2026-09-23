@@ -1,4 +1,4 @@
-import { useState, type ReactElement } from "react";
+import { useEffect, useState, type ReactElement } from "react";
 
 import { ORB_MOTION_BOUNDS, ORB_OPTICAL_BOUNDS, ORB_PHYSICS_BOUNDS } from "@clarkcant/contracts";
 
@@ -8,6 +8,7 @@ import { THEME_CHOICES, type ThemeChoice } from "../theme.ts";
 import type { ThemeName } from "@clarkcant/design-tokens";
 import { InlineStatus, RangeField, SegmentedControl, SettingsRow } from "./controls/primitives.tsx";
 import type { PreferencesHandle } from "./controls/use-preferences.ts";
+import { useT, useLocaleState } from "../i18n/locale-context.tsx";
 
 /**
  * Experience: how the product looks and moves.
@@ -70,6 +71,29 @@ export function ExperienceSettings({
   onThemeChoice,
   onOrbChange,
 }: ExperienceSettingsProps): ReactElement {
+  const t = useT();
+  const { locale, setLocale } = useLocaleState();
+  const LANGUAGE_OPTIONS = [
+    { value: "vi", label: t("settings.language.vi") },
+    { value: "en", label: t("settings.language.en") },
+  ] as const;
+
+  /*
+   * A node the user set language on from another device wins over this screen's own cache, but only
+   * once — the moment the registry answers with a value the user explicitly chose. `isDefault` guards
+   * this: a node that has never seen this key answers `vi` marked as a default, and applying that
+   * would silently override English chosen only on this device (the node cannot see the cache).
+   */
+  useEffect(() => {
+    const stored = prefs.preference("experience.language");
+    if (stored === undefined || stored.isDefault) return;
+    if (stored.value === locale) return;
+    if (stored.value === "vi" || stored.value === "en") setLocale(stored.value);
+    // Runs once the registry answers, and again only if the node reports a different value later.
+    // `setLocale` and `locale` are intentionally left out: including `setLocale` (stable) would add
+    // nothing, and including `locale` would re-run this on the write it just made, chasing its own tail.
+  }, [prefs.preferences]);
+
   const profileName = prefs.text("orb.profile", "clark");
   const custom = prefs.record("orb.custom") ?? {};
   const customPhysics = numbers(custom.physics);
@@ -102,6 +126,26 @@ export function ExperienceSettings({
 
   return (
     <>
+      <section className="cc-panel-section">
+        <h3>{t("settings.language.heading")}</h3>
+        <SettingsRow label={t("settings.language.heading")} description={t("settings.language.description")}>
+          <SegmentedControl
+            name="language"
+            label={t("settings.language.heading")}
+            options={LANGUAGE_OPTIONS}
+            value={locale}
+            pending={prefs.pending === "experience.language"}
+            onChange={(value) => {
+              // Applies to this screen immediately, independent of the round trip below: a slow or
+              // unreachable node must never block the one preference that has to work offline.
+              setLocale(value);
+              prefs.write("experience.language", value);
+            }}
+          />
+        </SettingsRow>
+        <InlineStatus status={prefs.status} forKey="experience.language" />
+      </section>
+
       <section className="cc-panel-section">
         <h3>Giao diện</h3>
         <SettingsRow label="Chủ đề" description="Áp dụng ngay, và giữ nguyên sau khi tải lại.">

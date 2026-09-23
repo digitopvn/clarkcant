@@ -107,11 +107,12 @@ export const IMPLEMENTATION_STATUS: readonly ImplementationStatusEntry[] = [
       "Persistent task/session runtime and the worker host that runs tasks out of process. A task the conductor " +
       "dispatches now runs: a bounded pool of worker processes, a lease per capability with fencing, root " +
       "confinement, a deadline and an output ceiling, and the run's evidence settling the task through the same " +
-      "state machine every other path uses. `capability:project.read` — the one project-work tool this repository " +
-      "actually implements — is the capability this proves against; the descriptors in `packs/project-work` use a " +
-      "different ref (`project.file.read@1`) that no worker tool answers to yet, so a task dispatched against that " +
-      "descriptor still runs a real worker and still fails honestly, for want of a matching tool rather than for " +
-      "want of a worker.",
+      "state machine every other path uses. The worker's tools now register under the refs " +
+      "`packs/project-work` actually declares — `project.file.read@1` (read/list, confined) and " +
+      "`project.code.change@1` (a confined write producing `read-after-write` evidence) — closing the " +
+      "mismatch this entry used to describe (`capability:project.read` answered to nothing the pack " +
+      "named). `task-dispatch.ts` also gates a non-`read` capability through the same Guarded-default " +
+      "execution policy every other effect on this node goes through, before a worker for it is started.",
     status: "implemented",
     owningPackage: "@clarkcant/runtime",
     phase: "P1",
@@ -139,6 +140,10 @@ export const IMPLEMENTATION_STATUS: readonly ImplementationStatusEntry[] = [
       {
         file: `${RUNTIME}/task-dispatch.spec.ts`,
         test: "kills a running worker on stop, and reports how many it stopped",
+      },
+      {
+        file: `${RUNTIME}/task-dispatch-project-work-pack.spec.ts`,
+        test: "runs a real worker child that calls write_project_file, and settles the task succeeded with evidence",
       },
     ],
   },
@@ -516,18 +521,23 @@ export const IMPLEMENTATION_STATUS: readonly ImplementationStatusEntry[] = [
   },
   {
     capabilityId: "pack.project-work",
-    summary: "Project work pack: capability descriptors, effect classification, schemas and the git-worktree lock.",
-    status: "partial",
+    summary:
+      "Project work pack: capability descriptors, effect classification, schemas, the git-worktree lock, and " +
+      "the worker tools behind both descriptors — `read_project_file`/`list_project_files` for " +
+      "`project.file.read@1`, and a confined `write_project_file` for `project.code.change@1` — implemented " +
+      "in `apps/worker/src/tools.ts` and dispatched through the Guarded-default execution-policy gate in " +
+      "`apps/runtime/src/task-dispatch.ts`.",
+    status: "implemented",
     owningPackage: "@clarkcant/project-work",
     phase: "P2",
     evidenceTests: [
       { file: "packs/project-work/test/worktree.spec.ts", test: "catches HEAD moving under a running task" },
       { file: "packs/project-work/test/worktree.spec.ts", test: "refuses an uncommitted edit and names the file" },
+      {
+        file: `${RUNTIME}/task-dispatch-project-work-pack.spec.ts`,
+        test: "runs a real worker child that calls write_project_file, and settles the task succeeded with evidence",
+      },
     ],
-    externalGate: {
-      reason:
-        "the functions that read a file or apply a patch are supplied by the worker host at run time; the pack declares and locks, it does not itself touch the tree",
-    },
   },
   {
     capabilityId: "pack.browser-playwright",

@@ -131,6 +131,27 @@ describe("installing from the directory", () => {
     expect(installed[0]?.category).toBe("local-write");
   });
 
+  it("does not let a forged grantedCapabilities in the request body become authority (issue #93, P1)", async () => {
+    writeIndex([entry()]);
+
+    const response = await install({
+      packageId: "com.example.calendar",
+      version: "1.2.0",
+      // A client is not this node's consent state. If this survived into the installed plan, a forged
+      // request body would grant a capability nobody on this node ever authorised.
+      grantedCapabilities: ["project.code.change@1", "some.other.capability@1"],
+    });
+
+    expect(response.status).toBe(200);
+
+    const row = services.runtime.db
+      .prepare("SELECT document FROM install_plans WHERE requirement_key = ?")
+      .get("pkg:com.example.calendar@1.2.0") as { document: string } | undefined;
+    expect(row).toBeDefined();
+    const plan = JSON.parse(row!.document) as { grantedCapabilities: readonly string[] };
+    expect(plan.grantedCapabilities).toEqual([]);
+  });
+
   it("asks first when the policy says to, and installs nothing", async () => {
     writeIndex([entry()]);
     // The canonical policy, written where the node reads it: this route asks the policy, not a row beside it.

@@ -20,7 +20,7 @@ import { runWorkerProcess } from "../src/worker-process.ts";
  * which capabilities it withheld, and it claimed no task state.
  */
 
-const CAPABILITY_READ = "capability:project.read";
+const CAPABILITY_READ = "project.file.read@1";
 
 let root: string;
 

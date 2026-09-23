@@ -84,10 +84,13 @@ export const CAPABILITIES = [READ_FILE_QUESTION, CONTROLLED_CODE_TASK];
 
 /**
  * @status-ref pack.project-work
- * TODO(P2): the tool implementations behind these descriptors. The capability
- * descriptors, their effect classification and their schemas are real and are what
- * the policy layer and the UI consume; the functions that actually read a file or
- * apply a patch are supplied by the worker host at run time.
+ *
+ * The capability descriptors, their effect classification and their schemas are real and are what
+ * the policy layer and the UI consume. The functions that actually read a file or apply a patch are
+ * supplied by the worker host at run time — `apps/worker/src/tools.ts`'s `read_project_file` /
+ * `list_project_files` / `write_project_file`, registered under exactly these refs and gated by the
+ * execution policy at dispatch time in `apps/runtime/src/task-dispatch.ts` — rather than by this
+ * package, which only declares what a worker is allowed to be granted.
  */
 export * from "./worktree.ts";
 

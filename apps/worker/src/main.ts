@@ -17,7 +17,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
-import { FakePiAdapter, RealPiAdapter, modelFromEnv, type PiAdapter } from "@clarkcant/pi-adapter";
+import { FakePiAdapter, RealPiAdapter, modelFromEnv, type PiAdapter, type ScriptedTurn } from "@clarkcant/pi-adapter";
 
 import { runWorker, workerBriefEnvelopeSchema, type WorkerBriefEnvelope, type WorkerDeps } from "./index.ts";
 import { allWorkerTools } from "./tools.ts";
@@ -28,10 +28,23 @@ interface Args {
   adapter: "fake" | "real";
   /** Where the transcript is written. Unset means an in-memory session. */
   dataDir: string | undefined;
+  /**
+   * Path to a JSON array of `ScriptedTurn`s for the fake adapter. Only meaningful with
+   * `--adapter fake`; a real provider has no script to read. Exists so a test can spawn the real
+   * worker process and still drive a deterministic tool call, rather than only ever getting the fake
+   * adapter's generic text reply.
+   */
+  scriptPath: string | undefined;
 }
 
 function parseArgs(argv: readonly string[]): Args {
-  const args: Args = { briefPath: undefined, nodeId: "node_local", adapter: "fake", dataDir: undefined };
+  const args: Args = {
+    briefPath: undefined,
+    nodeId: "node_local",
+    adapter: "fake",
+    dataDir: undefined,
+    scriptPath: undefined,
+  };
   for (let index = 0; index < argv.length; index += 1) {
     const flag = argv[index];
     const value = argv[index + 1];
@@ -47,9 +60,27 @@ function parseArgs(argv: readonly string[]): Args {
     } else if (flag === "--data-dir" && value !== undefined) {
       args.dataDir = value;
       index += 1;
+    } else if (flag === "--script" && value !== undefined) {
+      args.scriptPath = value;
+      index += 1;
     }
   }
   return args;
+}
+
+/** Read and validate the fake adapter's script file, when one was given. */
+function readScript(path: string | undefined): ScriptedTurn[] | undefined {
+  if (path === undefined) return undefined;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(readFileSync(path, "utf8"));
+  } catch (cause) {
+    throw new Error(`the script is not valid JSON: ${cause instanceof Error ? cause.message : String(cause)}`, {
+      cause,
+    });
+  }
+  if (!Array.isArray(parsed)) throw new Error("the script must be a JSON array of scripted turns");
+  return parsed as ScriptedTurn[];
 }
 
 function readBrief(path: string | undefined): WorkerBriefEnvelope {
@@ -104,7 +135,10 @@ async function main(): Promise<number> {
           ...(model === undefined ? {} : { model }),
           ...(args.dataDir === undefined ? {} : { sessionDir: join(args.dataDir, "sessions") }),
         })
-      : new FakePiAdapter();
+      : (() => {
+          const script = readScript(args.scriptPath);
+          return new FakePiAdapter(script === undefined ? {} : { script });
+        })();
   const availability = await adapter.availability();
   if (!availability.available) {
     // Honest failure: an unavailable adapter is not a worker that ran and found nothing.
