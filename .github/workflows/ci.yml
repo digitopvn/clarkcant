@@ -15,13 +15,19 @@ concurrency:
 
 jobs:
   verify:
-    name: verify (node ${{ matrix.node }})
-    runs-on: ubuntu-latest
+    name: verify (${{ matrix.os }}, node ${{ matrix.node }})
+    runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
         # The runtime executes TypeScript directly, so the floor matters.
         node: ["22.19", "24"]
+        os: [ubuntu-latest]
+        include:
+          # The first desktop target is macOS, whose temporary directory sits behind a
+          # symlink: path-canonicalisation tests that pass on Linux can fail there.
+          - os: macos-latest
+            node: "24"
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:

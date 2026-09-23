@@ -20,18 +20,34 @@ COPY . .
 # `--frozen-lockfile` is what makes the image reproducible rather than "whatever was newest that day", and it
 # is also what catches a dependency added without regenerating the lockfile.
 RUN pnpm install --frozen-lockfile
+# The web client, so a node reached from a browser serves its own interface (`CC_WEB_DIST`).
+RUN pnpm --filter @clarkcant/app-web run build
 
 FROM node:24-slim AS runtime
 RUN corepack enable
 WORKDIR /app
 COPY --from=build /app /app
+# Only what the runtime and its workspace packages need at run time. The build stage carried the toolchain,
+# the desktop shell's Electron binary and the test runners; none of that belongs in a running node.
+RUN rm -rf node_modules apps/*/node_modules packages/*/node_modules packs/*/node_modules examples/*/node_modules \
+  && pnpm install --frozen-lockfile --prod --filter "@clarkcant/runtime..." \
+  && chown -R node:node /app
 
 # The node's data — identity, database, blobs, transcripts — is mounted rather than baked in. An image that
 # carried an identity would give every container the same node id, which is the one thing pairing cannot
 # recover from.
 ENV CLARKCANT_DATA_DIR=/data
+ENV CC_WEB_DIST=/app/apps/web/dist
+RUN mkdir -p /data && chown node:node /data
 VOLUME ["/data"]
 EXPOSE 8765
+
+# Not root: a node runs commands on the user's behalf, and a container escape should not start with uid 0.
+USER node
+
+# `/health` is the one unauthenticated route, which is what makes it usable from here.
+HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
+  CMD ["node", "-e", "fetch('http://127.0.0.1:8765/health').then((r) => process.exit(r.ok ? 0 : 1), () => process.exit(1))"]
 
 ENTRYPOINT ["node", "apps/runtime/src/main.ts"]
 CMD ["--data-dir", "/data"]
