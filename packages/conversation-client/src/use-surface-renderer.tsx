@@ -1,10 +1,10 @@
+import type { MessageKey } from "./i18n/messages.ts";
 import { useCallback, type ReactElement, type RefObject } from "react";
 
 import type { GatewayClient, ResolvedDataset, SnapshotPresentationResponse, Timeline } from "./api.ts";
 import { type SurfaceBlockRef } from "./blocks.tsx";
 import { resolveRenderer, toRendererDataset } from "./renderers.tsx";
 import { MiniAppSurface, type CompositeSurfaceView } from "./mini-app-surface.tsx";
-import { useT } from "./i18n/locale-context.tsx";
 
 /**
  * Turn a captured bundle into what the surface renders.
@@ -56,6 +56,8 @@ function toSurfaceViewFromSnapshot(captured: SnapshotPresentationResponse, revis
 }
 
 export interface SurfaceRendererDeps {
+  /** Passed, not read via `useT()`: this hook runs in `Conversation`'s body, before its provider mounts. */
+  t: (key: MessageKey) => string;
   client: GatewayClient;
   conversationId: string | undefined;
   timeline: Timeline | undefined;
@@ -88,8 +90,8 @@ export function useSurfaceRenderer({
   applyTimeline,
   setError,
   liveTrigger,
+  t,
 }: SurfaceRendererDeps): (input: SurfaceBlockRef) => ReactElement {
-  const t = useT();
   return useCallback(
     (input: SurfaceBlockRef): ReactElement => {
       const instance = input.instanceId === undefined ? undefined : instanceById.get(input.instanceId);

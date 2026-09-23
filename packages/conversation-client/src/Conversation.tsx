@@ -234,6 +234,7 @@ export function Conversation({
   });
 
   const appIntents = useAppIntentSurfaces({
+    t: localeState.t,
     client,
     conversationId,
     restartSession,
@@ -271,6 +272,7 @@ export function Conversation({
   });
 
   const renderSurface = useSurfaceRenderer({
+    t: localeState.t,
     client,
     conversationId,
     timeline,

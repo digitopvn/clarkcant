@@ -6,7 +6,7 @@ import { hasDesktopChrome, requestWindowMode } from "./desktop-compact.ts";
 import { runAppIntent, type AppIntentHost } from "./app-intents.ts";
 import type { AppIntentDecision, AppIntentKind, SettingsTab } from "@clarkcant/contracts";
 import { CLOSED_LIBRARY, applyLibraryAction, type WidgetLibraryState } from "./widget-library/widget-library-state.ts";
-import { useT } from "./i18n/locale-context.tsx";
+import type { MessageKey } from "./i18n/messages.ts";
 
 export interface AppIntentSurfacesState {
   uiCheckOpen: boolean;
@@ -37,6 +37,11 @@ export interface AppIntentSurfacesState {
 }
 
 export interface AppIntentSurfacesDeps {
+  /**
+   * The translator, passed rather than read via `useT()`: this hook runs in `Conversation`'s own
+   * body, before its `<LocaleProvider>` mounts.
+   */
+  t: (key: MessageKey) => string;
   client: GatewayClient;
   conversationId: string | undefined;
   restartSession: () => void;
@@ -66,8 +71,8 @@ export function useAppIntentSurfaces({
   attachmentInput,
   setVoiceOpen,
   openVoice,
+  t,
 }: AppIntentSurfacesDeps): AppIntentSurfacesState {
-  const t = useT();
   const [uiCheckOpen, setUiCheckOpen] = useState(false);
   const [settingsTab, setSettingsTab] = useState<SettingsTab | undefined>(undefined);
   const [widgetLibrary, setWidgetLibrary] = useState<WidgetLibraryState>(CLOSED_LIBRARY);
