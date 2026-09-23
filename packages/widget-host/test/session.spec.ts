@@ -22,6 +22,9 @@ function makeSession(overrides: Partial<FrameSessionInput> = {}) {
     instanceId: "inst_1",
     nonce: NONCE,
     props: { title: "doanh thu" },
+    // The revision the host initialized the frame at; a test that omits it is testing a frame that would be refused
+    // by the node for acting on a revision it never saw.
+    revision: 0,
     brokeredCapabilities: ["dataset.read@1"],
     allowedOrigins: ["https://example.test"],
     knownActionBindings: ["act_1"],

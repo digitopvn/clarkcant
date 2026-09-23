@@ -210,8 +210,31 @@ export function VoiceOverlay({
   // the moment the recording stops, whether the user ended it or navigated away.
   useEffect(() => endSession, [endSession]);
 
+  const startingRef = useRef(false);
   const start = useCallback((): void => {
-    if (client === undefined || sessionRef.current !== undefined) return;
+    /*
+     * One session per request, guarded synchronously.
+     *
+     * `sessionRef` is only assigned once the session has actually opened, so a second call arriving while the first
+     * was still connecting passed the check and opened a second socket. In development React mounts an effect twice,
+     * which made that the rule rather than the exception: measured in a real browser, one click produced two voice
+     * sessions, the second refused `VOICE_SESSION_BUSY`, with the surface still reading that it was listening. The guard
+     * is therefore set before anything is awaited, and cleared wherever an attempt ends.
+     */
+    if (client === undefined || startingRef.current || sessionRef.current !== undefined) return;
+    /*
+     * A session with no conversation cannot answer.
+     *
+     * The node answers a spoken sentence inside the conversation the agent works in, so without one it transcribes the
+     * sentence and drops it: no reply, no error, and a surface that looks like it is listening. Saying so here is the
+     * difference between a person who knows what is missing and a person who reports that voice does not work.
+     */
+    if (conversationId === undefined) {
+      setProblem("Phiên giọng nói cần một hội thoại để trả lời, mà chưa có hội thoại nào.");
+      setState("failed");
+      return;
+    }
+    startingRef.current = true;
     setProblem(undefined);
     setAnswerProblem(undefined);
     setRecordedMessages(undefined);
@@ -262,6 +285,7 @@ export function VoiceOverlay({
             setProblem(message);
             setState("failed");
             sessionRef.current = undefined;
+            startingRef.current = false;
           },
           onRefused: (refusal) => {
             // Only the refusal that has something to do about it sets this: the name comes from the node, so the field
@@ -274,6 +298,7 @@ export function VoiceOverlay({
             setRecordedMessages(count);
             setState("ended");
             sessionRef.current = undefined;
+            startingRef.current = false;
             // A sentence the agent could not answer is still written, by the fallback, when the session
             // closes. Asking once more here is what makes that visible without a reload.
             onAnswered?.();
@@ -282,6 +307,7 @@ export function VoiceOverlay({
       })
       .then((session) => {
         sessionRef.current = session;
+        startingRef.current = false;
         setState(session.state);
       })
       .catch((cause: unknown) => {
@@ -289,6 +315,7 @@ export function VoiceOverlay({
         setProblem(cause instanceof Error ? cause.message : "không mở được phiên giọng nói");
         setState("failed");
         sessionRef.current = undefined;
+        startingRef.current = false;
       });
   }, [client, conversationId, onAnswered]);
 

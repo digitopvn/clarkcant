@@ -10,10 +10,39 @@
  */
 import { createHash } from "node:crypto";
 import { readFileSync, readdirSync, existsSync, statSync } from "node:fs";
-import { join, relative } from "node:path";
-import { fileURLToPath } from "node:url";
+import { join, relative, basename } from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
+
+import { uncoveredFiles } from "./tsconfig-coverage.mjs";
+import { platformSkippedTestTitles } from "./platform-skipped-tests.mjs";
+import { closingKeywordMatches } from "./issue-closing-keywords.mjs";
 
 const repoRoot = fileURLToPath(new URL("..", import.meta.url));
+
+const REGISTRY_PATH = "packages/contracts/src/implementation-status.ts";
+
+/**
+ * The registry is loaded rather than parsed, because it is a typed module: a status claim and the
+ * package metadata it points at are checked against each other, not against a regex.
+ *
+ * A load failure is reported by the check that needs it instead of crashing this script, so a
+ * broken registry still prints the check that owns it. Node strips the types of a `.ts` file for
+ * the same reason the runtime can execute one.
+ */
+let statusRegistry = null;
+let statusRegistryError = null;
+try {
+  ({ IMPLEMENTATION_STATUS: statusRegistry } = await import(
+    pathToFileURL(join(repoRoot, REGISTRY_PATH)).href,
+  ));
+} catch (error) {
+  statusRegistryError = error;
+}
+
+/** Registry entries by capability id, or an empty map when the registry could not be loaded. */
+const statusById = new Map(
+  (Array.isArray(statusRegistry) ? statusRegistry : []).map((entry) => [entry.capabilityId, entry]),
+);
 
 /** @type {{name: string, failures: string[], notes: string[]}[]} */
 const results = [];
@@ -136,9 +165,22 @@ function readJson(path) {
   let marked = 0;
   for (const file of files) {
     const source = readFileSync(file, "utf8");
-    const looksLikeStub =
+    /*
+     * A status reference is a stub claim when the registry does not call it implemented. That is why
+     * this reads the registry instead of a marker: the marker used to be a second copy of the status,
+     * so a file could say "stub" while the registry said otherwise and both would look fine.
+     *
+     * When the registry could not be loaded, every reference resolves to nothing, so this stays
+     * quiet: check 10 reports the load failure, and turning it into a stub claim here would bury it
+     * under owning-phase failures in files that carry no marker at all.
+     */
+    const stubRef =
       /@implementation-status\s+stub/.test(source) ||
-      /throw new NotImplementedError/.test(source);
+      (statusRegistry !== null &&
+        [...source.matchAll(/@status-ref\s+([A-Za-z0-9.-]+)/g)].some(
+          (match) => statusById.get(match[1])?.status !== "implemented",
+        ));
+    const looksLikeStub = stubRef || /throw new NotImplementedError/.test(source);
     if (!looksLikeStub) continue;
     if (!pattern.test(source)) {
       c.failures.push(
@@ -242,8 +284,8 @@ function readJson(path) {
 
 /* ------------------------------------------------------------------ *
  * 7. The blueprint names its scope items V01–V18 and acceptance tests
- *    T01–T72. Every one must appear in the traceability document, so a reader
- *    can find out what is real without reading source.
+ *    T01–T73. Every one must have its own row in the traceability document, so
+ *    a reader can find out what is real without reading source.
  * ------------------------------------------------------------------ */
 {
   const c = check("scope-and-acceptance-traceability");
@@ -252,15 +294,569 @@ function readJson(path) {
     c.failures.push("docs/conformance-traceability.md is missing");
   } else {
     const source = readFileSync(tracePath, "utf8");
+    /*
+     * A row marker, not a substring anywhere in the file.
+     *
+     * The previous version asked `source.includes(id)`, and the prose that introduces this table
+     * spells the ranges `V01`–`V18` and `T01`–`T73` out in full - so both ends of each range were
+     * satisfied by that sentence alone, and deleting the `| T73 | …` row left every check green. A
+     * presence check has to be about the row, because the row is what a reader uses.
+     */
+    const rowIds = new Set([...source.matchAll(/^\| (V\d{2}|T\d{2}) \|/gm)].map((match) => match[1]));
     for (let i = 1; i <= 18; i += 1) {
       const id = `V${String(i).padStart(2, "0")}`;
-      if (!source.includes(id)) c.failures.push(`traceability document omits ${id}`);
+      if (!rowIds.has(id)) c.failures.push(`traceability document omits the ${id} row`);
     }
-    for (let i = 1; i <= 72; i += 1) {
+    for (let i = 1; i <= 73; i += 1) {
       const id = `T${String(i).padStart(2, "0")}`;
-      if (!source.includes(id)) c.failures.push(`traceability document omits ${id}`);
+      if (!rowIds.has(id)) c.failures.push(`traceability document omits the ${id} row`);
+    }
+
+    /*
+     * A row that cites a test has to cite one that exists.
+     *
+     * An independent audit found why this belongs here: T73's row and the plan's voice criterion both named a
+     * browser journey that was not in the shipped file, and the browser suite was green precisely because the
+     * journey was absent - a test that does not exist cannot fail. Checking that an id appears is not checking
+     * that its evidence does, so a ledger could cite a test nobody ever wrote and every gate would agree.
+     *
+     * Only sentence-shaped quoted titles are checked, because rows also quote Vietnamese messages and file names,
+     * and those are not claims about a test.
+     */
+    const specFiles = ["packages", "apps", "packs", "examples"].flatMap((group) =>
+      walk(join(repoRoot, group), (f) => f.endsWith(".spec.ts") || f.endsWith(".spec.tsx")),
+    );
+    const specText = specFiles.map((file) => readFileSync(file, "utf8")).join("\n");
+    const citedTitles = new Set();
+    for (const line of source.split("\n")) {
+      if (!/^\| (?:T|V)\d+ \|/.test(line)) continue;
+      for (const match of line.matchAll(/"([a-z][a-z0-9 ,:'’()/.-]{11,})"/g)) citedTitles.add(match[1]);
+    }
+    let missing = 0;
+    for (const title of citedTitles) {
+      if (!specText.includes(title)) {
+        c.failures.push(`traceability cites a test that exists nowhere: "${title}"`);
+        missing += 1;
+      }
+    }
+
+    /*
+     * The loop above is the whole of this check, and its limit is worth naming where the check lives: a
+     * row is held to a quoted title only when it quotes one. A companion rule that also accepted a bare
+     * spec basename was tried and removed, because it proved nothing about the row it sat on - an
+     * unrelated but existing file name (`see widget.spec for the detail`) satisfied it. Proving a PASS or
+     * PARTIAL row is what it claims would mean requiring a quoted title that exists on every row, which
+     * several rows cannot give: their evidence is an integration path rather than one titled case.
+     */
+    c.notes.push(
+      `${citedTitles.size} cited test titles checked against ${specFiles.length} spec files` +
+        (missing === 0 ? "" : `, ${missing} missing`) +
+        "; rows that cite a path rather than a quoted title are not matched to a case",
+    );
+  }
+}
+
+/* ------------------------------------------------------------------ *
+ * Every browser entry must be free of Node builtins.
+ *
+ * A module that reads `node:crypto` at its top is fatal in the dev server and invisible in a bundle, because Rollup
+ * tree-shakes an unused import away while Vite's dev server serves each module as written and hoists the interop read
+ * to the first line. That asymmetry is exactly how the web client kept a broken dev experience: `WidgetFrame`
+ * imported a package's barrel, the barrel imported a digest helper that reads `node:crypto`, the build dropped both,
+ * and only `pnpm dev:web` failed — with the error in the browser console and nothing on the page. Walking the entries
+ * is what turns the dev path into a gate instead of a surprise.
+ * ------------------------------------------------------------------ */
+{
+  const c = check("browser-entries-avoid-node-builtins");
+
+  const manifestOf = (dir) => {
+    try {
+      return JSON.parse(readFileSync(join(dir, "package.json"), "utf8"));
+    } catch (error) {
+      // Named here rather than left as a bare SyntaxError from somewhere unhelpful: a manifest this check cannot read
+      // is a failure of the check's own input, and the path is what makes that actionable.
+      throw new Error(`could not read the manifest of ${relative(repoRoot, dir)}`, { cause: error });
+    }
+  };
+
+  const packageDirs = new Map();
+  for (const group of ["packages", "apps", "packs", "examples"]) {
+    const root = join(repoRoot, group);
+    if (!existsSync(root)) continue;
+    for (const entry of readdirSync(root)) {
+      const dir = join(root, entry);
+      if (existsSync(join(dir, "package.json"))) packageDirs.set(manifestOf(dir).name, dir);
     }
   }
+
+  /**
+   * What the bundler would load for one specifier, or undefined for a third-party module this check does not follow.
+   *
+   * A workspace package is resolved through its own `exports` map, because that map is what decides whether the browser
+   * is handed a browser-safe subpath or the whole barrel — the decision this check exists to enforce.
+   */
+  const resolveSpecifier = (fromDir, specifier) => {
+    if (specifier.startsWith(".")) {
+      const base = join(fromDir, specifier);
+      const candidates = [base, `${base}.ts`, `${base}.tsx`, join(base, "index.ts"), join(base, "index.tsx")];
+      return candidates.find((candidate) => existsSync(candidate) && statSync(candidate).isFile());
+    }
+    if (!specifier.startsWith("@clarkcant/")) return undefined;
+    const parts = specifier.split("/");
+    const dir = packageDirs.get(`${parts[0]}/${parts[1]}`);
+    if (dir === undefined) return undefined;
+    const manifest = manifestOf(dir);
+    const subpath = parts.length === 2 ? "." : `./${parts.slice(2).join("/")}`;
+    const target = manifest.exports?.[subpath] ?? (subpath === "." ? manifest.main : undefined);
+    return typeof target === "string" ? join(dir, target) : undefined;
+  };
+
+  const entries = [
+    "apps/web/src/main.tsx",
+    "apps/web/src/widget-runtime.ts",
+    // The dev host serves this to a frame, so it is a browser graph even though a Node CLI ships it.
+    "packages/widget-cli/src/catalog-runtime.tsx",
+  ];
+  const visited = new Set();
+  const offenders = [];
+  const visit = (file, via) => {
+    if (visited.has(file)) return;
+    visited.add(file);
+    const source = readFileSync(file, "utf8");
+    for (const match of source.matchAll(/(?:from\s+|import\()\s*["'](node:[^"']+)["']/g)) {
+      offenders.push(`${relative(repoRoot, file)} imports ${match[1]} — reached from ${via}`);
+    }
+    for (const match of source.matchAll(/(?:from\s+|import\()\s*["']([^"']+)["']/g)) {
+      const next = resolveSpecifier(join(file, ".."), match[1]);
+      if (next !== undefined) visit(next, relative(repoRoot, file));
+    }
+  };
+
+  for (const entry of entries) {
+    const file = join(repoRoot, entry);
+    if (existsSync(file)) visit(file, entry);
+    else c.failures.push(`browser entry ${entry} is missing`);
+  }
+
+  for (const offender of offenders.slice(0, 6)) c.failures.push(offender);
+  if (offenders.length > 6) c.failures.push(`and ${offenders.length - 6} more reachable module(s)`);
+  c.notes.push(`${visited.size} module(s) reachable from ${entries.length} browser entry/entries`);
+}
+
+/* ------------------------------------------------------------------ *
+ * 9. The execution policy has exactly one reader.
+ *
+ * Phase 1's AC-5 makes `readExecutionPolicy` the canonical reader and forbids a second one beside it. The reason is
+ * not tidiness: a module that reads the policy preference itself answers with the registry's default whenever no
+ * canonical row exists, so `apps/runtime/src/gateway.ts` reported `execution.mode: "autonomous"` in `GET
+ * /preferences` for an upgraded node whose legacy `autonomy` was `deny` — a node that refuses every effect,
+ * described as the loosest mode. Only the module that owns the decision, and the migration it delegates to, may
+ * open the key; everything else goes through the reader (or, for the projections that need the row's revision, the
+ * reader's own `readExecutionPolicyPreference`).
+ *
+ * The check reads the call rather than the line, because the key travels as an exported constant and a call can wrap
+ * across lines — and it fails when it finds no read at all, so it cannot pass by having lost its own subject.
+ * ------------------------------------------------------------------ */
+{
+  const c = check("single-execution-policy-reader");
+  const allowed = new Set([
+    "packages/core/src/execution-policy.ts",
+    "packages/core/src/execution-policy-migration.ts",
+  ]);
+  const readHelpers = ["readRegisteredPreference", "getPreference", "listRegisteredPreferences"];
+  const policyKey = /EXECUTION_POLICY_PREFERENCE_KEY|["']execution\.policy["']/;
+
+  /** The text of the call whose `(` is at `open`, by balancing parentheses. */
+  const callText = (source, open) => {
+    let depth = 0;
+    for (let index = open; index < source.length; index += 1) {
+      const character = source[index];
+      if (character === "(") depth += 1;
+      else if (character === ")") {
+        depth -= 1;
+        if (depth === 0) return source.slice(open, index + 1);
+      }
+    }
+    return source.slice(open);
+  };
+
+  const sources = [
+    ...walk(join(repoRoot, "apps"), (path) => path.endsWith(".ts")),
+    ...walk(join(repoRoot, "packages"), (path) => path.endsWith(".ts")),
+  ]
+    .map((path) => relative(repoRoot, path))
+    .filter((path) => path.includes("/src/") && !path.endsWith(".spec.ts"));
+
+  let reads = 0;
+  for (const path of sources) {
+    const source = readFileSync(join(repoRoot, path), "utf8");
+    for (const helper of readHelpers) {
+      for (const match of source.matchAll(new RegExp(`\\b${helper}\\s*\\(`, "g"))) {
+        const open = match.index + match[0].length - 1;
+        if (!policyKey.test(callText(source, open))) continue;
+        reads += 1;
+        if (!allowed.has(path)) {
+          c.failures.push(`${path} reads the canonical policy preference directly; use readExecutionPolicy`);
+        }
+      }
+    }
+  }
+
+  if (reads === 0) {
+    c.failures.push("nothing reads the canonical policy preference, so this check has no subject");
+  }
+  c.notes.push(
+    `${reads} canonical policy read(s) across ${sources.length} module(s), ${allowed.size} allowed to open the key`,
+  );
+}
+
+/* ------------------------------------------------------------------ *
+ * 10. The implementation-status registry.
+ *
+ * A registry that lies is worse than no registry, so this check is not a spelling test on a data
+ * file. It holds four properties at once:
+ *
+ *   - every entry names a workspace package that exists, with that package's declared phase;
+ *   - `implemented` names at least one test, and each named test exists in the file it names (the
+ *     reason "the schema exists" is not allowed to pass is here: a schema has no title);
+ *   - an `implemented` entry's evidence must also be able to run: a title a platform condition skips
+ *     (`describe.skipIf(!POSIX)`) is not evidence on a runner where that condition does not hold, so
+ *     an entry whose every named test sits under one is rejected rather than reported as green. Two
+ *     entries passed exactly that way before this rule existed, which is why it is here;
+ *   - every other status names what is missing, and the four external gates this program must keep
+ *     open (#2 Calendar account, #3 Computer Use signing, #4 live voice provider, #5 two-host
+ *     NodeLink) stay represented by at least one entry, so a gate cannot quietly stop being a gate;
+ *   - every `@status-ref` in source resolves, every scope id agrees with
+ *     docs/conformance-traceability.md, and no `@implementation-status` marker survives.
+ * ------------------------------------------------------------------ */
+{
+  const c = check("implementation-status-registry");
+  const statuses = new Set(["implemented", "partial", "blocked", "not-implemented"]);
+  const docStatusOf = {
+    implemented: "PASS",
+    partial: "PARTIAL",
+    blocked: "BLOCKED",
+    "not-implemented": "NOT-IMPLEMENTED",
+  };
+
+  if (statusRegistryError) {
+    c.failures.push(`${REGISTRY_PATH} could not be loaded: ${statusRegistryError.message}`);
+  } else if (!Array.isArray(statusRegistry)) {
+    c.failures.push(`${REGISTRY_PATH} does not export an IMPLEMENTATION_STATUS array`);
+  } else {
+    /*
+     * Which titles in a cited file a platform condition keeps from running, read once per file. The rule below is
+     * about evidence that cannot execute where the check runs, and the POSIX socket suite is the instance of it this
+     * repository actually has: `apps/runtime/test/portable-runtime.spec.ts` skips its socket tests on Windows with
+     * the reason named.
+     */
+    const platformSkippedByFile = new Map();
+    const platformSkippedIn = (file) => {
+      if (!platformSkippedByFile.has(file)) {
+        try {
+          platformSkippedByFile.set(file, platformSkippedTestTitles(readFileSync(join(repoRoot, file), "utf8")));
+        } catch (error) {
+          /*
+           * A file that cannot be parsed yields no skips, which would read as "everything in it runs". That is the
+           * one answer this must never invent, so the file is failed rather than recorded as empty.
+           */
+          c.failures.push(`${file} could not be read for platform-conditional skips: ${error.message}`);
+          platformSkippedByFile.set(file, new Map());
+        }
+      }
+      return platformSkippedByFile.get(file);
+    };
+
+    const packagesByName = new Map();
+    for (const group of ["packages", "apps", "packs", "examples"]) {
+      const groupDir = join(repoRoot, group);
+      if (!existsSync(groupDir)) continue;
+      for (const entry of readdirSync(groupDir, { withFileTypes: true })) {
+        const manifestPath = join(groupDir, entry.name, "package.json");
+        if (!existsSync(manifestPath)) continue;
+        const manifest = readJson(manifestPath);
+        packagesByName.set(manifest.name, { phase: manifest.clarkcant?.phase, path: `${group}/${entry.name}` });
+      }
+    }
+
+    const seenIds = new Set();
+    for (const entry of statusRegistry) {
+      const id = entry?.capabilityId;
+      const label = typeof id === "string" ? id : "(entry without a capabilityId)";
+      if (typeof id !== "string" || !/^[A-Za-z][A-Za-z0-9.-]*$/.test(id)) {
+        c.failures.push(`${label} is not a usable capability id`);
+      } else if (seenIds.has(id)) {
+        c.failures.push(`the registry defines ${id} more than once`);
+      } else {
+        seenIds.add(id);
+      }
+      if (!statuses.has(entry.status)) {
+        c.failures.push(`${label} has status ${JSON.stringify(entry.status)}, which is not one of the four`);
+      }
+      if (typeof entry.summary !== "string" || entry.summary.length === 0) {
+        c.failures.push(`${label} has no summary`);
+      }
+      const owner = packagesByName.get(entry.owningPackage);
+      if (owner === undefined) {
+        c.failures.push(`${label} names owning package ${entry.owningPackage}, which is not a workspace package`);
+      } else if (owner.phase !== entry.phase) {
+        c.failures.push(
+          `${label} says phase ${entry.phase} but ${owner.path} declares clarkcant.phase ${owner.phase}`,
+        );
+      }
+
+      const evidence = Array.isArray(entry.evidenceTests) ? entry.evidenceTests : [];
+      if (!Array.isArray(entry.evidenceTests)) {
+        c.failures.push(`${label} has no evidenceTests array`);
+      }
+      for (const item of evidence) {
+        const full = typeof item?.file === "string" ? join(repoRoot, item.file) : null;
+        if (full === null || !existsSync(full)) {
+          c.failures.push(`${label} names a test file that does not exist: ${item?.file}`);
+          continue;
+        }
+        if (item.test !== undefined && !readFileSync(full, "utf8").includes(item.test)) {
+          c.failures.push(`${label} names a test that is not in ${item.file}: "${item.test}"`);
+        }
+      }
+
+      if (entry.status === "implemented") {
+        if (evidence.length === 0) {
+          c.failures.push(`${label} is implemented but names no test at all`);
+        }
+        for (const item of evidence) {
+          if (item.test === undefined) {
+            c.failures.push(`${label} is implemented but its evidence for ${item?.file} is untitled`);
+          }
+        }
+        /*
+         * Evidence that exists and never executes is not evidence. A title inside `describe.skipIf(!POSIX)` is named
+         * and present and skipped on every runner where the condition does not hold, so an entry whose whole evidence
+         * set is like that is green with nothing executed. One test that runs where the check runs is enough; an
+         * entry that genuinely cannot be proven off its platform belongs in `partial`, naming that as the gap.
+         */
+        const runnable = evidence.filter(
+          (item) =>
+            typeof item?.file === "string" &&
+            typeof item?.test === "string" &&
+            existsSync(join(repoRoot, item.file)),
+        );
+        if (runnable.length > 0 && runnable.every((item) => platformSkippedIn(item.file).has(item.test))) {
+          const conditions = [...new Set(runnable.map((item) => platformSkippedIn(item.file).get(item.test)))];
+          c.failures.push(
+            `${label} is implemented but every test it names is skipped by a platform condition (${conditions.join("; ")}), ` +
+              "so on a runner where that condition does not hold it has no executed evidence: " +
+              runnable.map((item) => `${item.file} "${item.test}"`).join(", "),
+          );
+        }
+        if (entry.externalGate !== undefined) {
+          c.failures.push(`${label} is implemented and still carries an external gate; one of the two is wrong`);
+        }
+      }
+      if (entry.status === "partial" && evidence.length === 0) {
+        c.failures.push(`${label} is partial but names no test for the layer that does work`);
+      }
+      if (entry.status !== "implemented" && typeof entry.externalGate?.reason !== "string") {
+        c.failures.push(`${label} is ${entry.status} but does not name what is missing`);
+      }
+    }
+
+    /* Every `@status-ref` in source has to resolve, and no self-asserting marker may come back. */
+    const sources = ["packages", "apps", "packs", "examples"]
+      .flatMap((group) => walk(join(repoRoot, group), (path) => /\.tsx?$/.test(path)))
+      .map((path) => relative(repoRoot, path));
+    let references = 0;
+    for (const path of sources) {
+      const source = readFileSync(join(repoRoot, path), "utf8");
+      for (const match of source.matchAll(/@status-ref\s+([A-Za-z0-9.-]+)/g)) {
+        references += 1;
+        if (!statusById.has(match[1])) {
+          c.failures.push(`${path} references capability ${match[1]}, which the registry does not define`);
+        }
+      }
+      if (source.includes("@implementation-status")) {
+        c.failures.push(
+          `${path} still carries an @implementation-status marker; status lives in ${REGISTRY_PATH} - point at it with @status-ref <capabilityId>`,
+        );
+      }
+    }
+    if (references === 0) {
+      c.failures.push("no source file references the registry, so this check has no subject");
+    }
+
+    /* Scope ids carry two statuses at once, so they are checked against each other. */
+    const tracePath = join(repoRoot, "docs", "conformance-traceability.md");
+    const traceability = readFileSync(tracePath, "utf8");
+    const documented = new Map();
+    for (const line of traceability.split("\n")) {
+      const row = line.match(/^\| (V\d{2}) \| (PASS|PARTIAL|BLOCKED|NOT-IMPLEMENTED) \|/);
+      if (row) documented.set(row[1], row[2]);
+    }
+    for (const [id, documentedStatus] of documented) {
+      const entry = statusById.get(id);
+      if (entry === undefined) {
+        c.failures.push(`docs/conformance-traceability.md states ${id} but the registry has no entry for it`);
+      } else if (docStatusOf[entry.status] !== documentedStatus) {
+        c.failures.push(
+          `${id}: registry says ${entry.status} (${docStatusOf[entry.status]}) but the traceability document says ${documentedStatus}`,
+        );
+      }
+    }
+    for (const entry of statusRegistry) {
+      if (/^V\d{2}$/.test(entry.capabilityId) && !documented.has(entry.capabilityId)) {
+        c.failures.push(`the registry carries ${entry.capabilityId}, which docs/conformance-traceability.md omits`);
+      }
+    }
+
+    /*
+     * The external gates are the point of being honest about blocked work, so they stay named.
+     * Only the four this program must keep open are pinned to an issue number, and any other issue
+     * number is rejected rather than ignored: the header rule that a gap waiting on nothing outside
+     * this repository is described by the gap itself is a rule about the field, not advice for the
+     * reader, and a rejected number is the only way a check can enforce it.
+     */
+    const openGates = [2, 3, 4, 5];
+    const gateIssues = new Set();
+    for (const entry of statusRegistry) {
+      const issue = entry.externalGate?.issue;
+      if (typeof issue !== "number") continue;
+      if (!openGates.includes(issue)) {
+        c.failures.push(
+          `${entry.capabilityId} pins its external gate to #${issue}; #${openGates.join("/#")} are the only gates this program keeps open, and a gap that waits on nothing outside the repository is described by the gap itself`,
+        );
+        continue;
+      }
+      gateIssues.add(issue);
+    }
+    for (const issue of openGates) {
+      if (!gateIssues.has(issue)) {
+        c.failures.push(`external gate #${issue} is no longer represented by any registry entry`);
+      }
+    }
+
+    c.notes.push(
+      `${statusRegistry.length} entries (${[...statusRegistry].filter((e) => e.status === "implemented").length} implemented, ` +
+        `${[...statusRegistry].filter((e) => e.status === "partial").length} partial, ` +
+        `${[...statusRegistry].filter((e) => e.status === "blocked").length} blocked, ` +
+        `${[...statusRegistry].filter((e) => e.status === "not-implemented").length} not-implemented) verified against ${packagesByName.size} workspace packages`,
+    );
+    c.notes.push(`${references} @status-ref reference(s) across ${sources.length} source files`);
+    c.notes.push(`${documented.size} V row(s) agree with the registry; gates #${[...gateIssues].sort((a, b) => a - b).join("/#")} represented`);
+    const platformSkippedEntries = statusRegistry.filter((entry) =>
+      (entry.evidenceTests ?? []).some(
+        (item) =>
+          typeof item?.file === "string" &&
+          typeof item?.test === "string" &&
+          existsSync(join(repoRoot, item.file)) &&
+          platformSkippedIn(item.file).has(item.test),
+      ),
+    );
+    if (platformSkippedEntries.length > 0) {
+      c.notes.push(
+        `${platformSkippedEntries.map((entry) => entry.capabilityId).join(", ")} cite a test a platform condition skips on some runners, ` +
+          "so their evidence is thinner there than on this one",
+      );
+    }
+    c.notes.push(
+      "evidence is checked for existence and for a platform-conditional skip: a runtime condition that is not " +
+        "derived from process.platform or process.arch (an opt-in live provider, for instance) is not this check's subject",
+    );
+  }
+}
+
+/* ------------------------------------------------------------------ *
+ * 11. Every `.tsx` in the workspace is covered by a typecheck include.
+ *
+ * `tsconfig.json` matches `.ts` and never `.tsx`, and `tsconfig.web.json` names only the web roots it covers. A
+ * `.tsx` outside those roots is therefore in neither program: `pnpm typecheck` passes, `pnpm verify` passes, and
+ * nothing has read the file. The widget CLI's browser entry was written into exactly that hole and escaped only
+ * because its path was added to `tsconfig.web.json` by hand.
+ *
+ * The config list is read out of the `typecheck` script rather than naming the two files here, so a third config
+ * is covered the moment it is wired in — and the check fails when it resolves no config or finds no `.tsx`, so it
+ * cannot pass by having lost its own subject. The matching lives in tsconfig-coverage.mjs so it can be tested.
+ * ------------------------------------------------------------------ */
+{
+  const c = check("tsx-files-are-typechecked");
+  const roots = ["packages", "apps", "packs", "examples", "tools"];
+  const files = roots
+    .flatMap((root) => walk(join(repoRoot, root), (path) => path.endsWith(".tsx")))
+    .map((path) => relative(repoRoot, path));
+
+  const typecheck = readJson(join(repoRoot, "package.json")).scripts?.typecheck ?? "";
+  const names = [...typecheck.matchAll(/-p\s+(\S+)/g)].map((match) => match[1]);
+  const configs = [];
+  for (const name of names) {
+    const configPath = join(repoRoot, name);
+    if (!existsSync(configPath)) {
+      c.failures.push(`the typecheck script names ${name}, which does not exist`);
+      continue;
+    }
+    configs.push({ name, ...readJson(configPath) });
+  }
+
+  if (configs.length === 0) {
+    c.failures.push("no typecheck config could be read, so this check has no subject");
+  }
+  if (files.length === 0) {
+    c.failures.push("no .tsx file was found, so this check has no subject");
+  }
+
+  const { uncovered, problems } = uncoveredFiles(files, configs);
+  for (const problem of problems) c.failures.push(problem);
+  for (const file of uncovered.slice(0, 6)) {
+    c.failures.push(
+      `${file} is in no typecheck include (${names.join(", ")}), so nothing typechecks it: add its path to one of them`,
+    );
+  }
+  if (uncovered.length > 6) {
+    c.failures.push(`and ${uncovered.length - 6} more .tsx file(s) in no typecheck include`);
+  }
+  c.notes.push(
+    `${files.length} .tsx file(s) checked against ${configs.length} typecheck config(s) — ${names.join(", ")}`,
+  );
+}
+
+/* ------------------------------------------------------------------ *
+ * 12. No checked-in PR body may carry a closing keyword beside an issue reference.
+ *
+ * Every phase PR of the architecture-consolidation program carried a sentence saying it did not close the
+ * external gates. That sentence contained the literal pair, GitHub's parser matched it, and #93 and #125 were
+ * closed as a side effect of the merges while each body said the opposite. A negative statement about a closing
+ * keyword still contains the keyword.
+ *
+ * The bodies are committed as a `pr-*-body.md` file inside a plan directory, so this is the one control that
+ * could have fired before a PR existed. The check fails when it finds no such file at all, so it cannot pass by
+ * having lost its own subject. The matching lives in issue-closing-keywords.mjs so it can be tested, and it
+ * deliberately does not fire on prose that merely names an issue number: the honest sentence has to be writable.
+ *
+ * This is a second rule, not a replacement. The four external gates the program must keep open stay pinned to
+ * their issue numbers by the registry check above, which is about a gate being represented rather than about a
+ * merge closing something.
+ * ------------------------------------------------------------------ */
+{
+  const c = check("pr-bodies-close-nothing");
+  const bodies = walk(join(repoRoot, "plans"), (path) => /^pr-.+-body\.md$/.test(basename(path)));
+
+  if (bodies.length === 0) {
+    c.failures.push("no pr-*-body.md file is checked in under plans, so this check has no subject");
+  }
+
+  let pairs = 0;
+  for (const path of bodies) {
+    for (const match of closingKeywordMatches(readFileSync(path, "utf8"))) {
+      pairs += 1;
+      c.failures.push(
+        `${relative(repoRoot, path)}:${match.line} contains "${match.matched}", which GitHub reads as closing #${match.reference} ` +
+          "when the body is used to open the PR: name the issue without a closing keyword beside it",
+      );
+    }
+  }
+
+  c.notes.push(
+    `${bodies.length} checked-in PR body file(s) checked for a closing keyword beside an issue reference; ` +
+      `${pairs} such pair(s) found`,
+  );
 }
 
 /* ------------------------------------------------------------------ *

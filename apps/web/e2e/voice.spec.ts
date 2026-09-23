@@ -73,6 +73,33 @@ async function startConversation(page: Page): Promise<void> {
   await expect(page.locator('[data-role="user"]')).toHaveCount(1, { timeout: 15_000 });
 }
 
+test("a session opened before any conversation exists still gets an answer", async ({ page }) => {
+  /*
+   * The case this suite was blind to, and the one a person hits first.
+   *
+   * Every other test here starts a conversation before opening voice, so there was always somewhere to answer. A
+   * person who opens voice first has no conversation, and the node used to transcribe the sentence and then drop it:
+   * no reply, no error, and a surface that read "listening". Measured in a real browser before the fix, one click
+   * produced two sessions (the second refused `VOICE_SESSION_BUSY`) and the auth frame carried no conversation.
+   */
+  mkdirSync(EVIDENCE, { recursive: true });
+  await openApp(page);
+  // Deliberately no `startConversation`: a fresh page has nothing stored and no conversation yet.
+  await expect(page.locator("[data-suggestion]").first()).toBeVisible();
+
+  await page.locator('[data-voice-open="true"]').click();
+  await expect(page.locator('[data-voice-state="listening"]')).toBeVisible({ timeout: 15_000 });
+
+  await expect(page.locator(".cc-voice")).toContainText(FIXTURE_SPOKEN, { timeout: 20_000 });
+  // The discriminating assertion: this answer only exists if a conversation was there to hold it.
+  await expect(page.locator(".cc-voice")).toContainText(AGENT_REPLY, { timeout: 20_000 });
+  await page.screenshot({ path: join(EVIDENCE, "voice-opened-without-a-conversation.png") });
+
+  // One click, one session. A second one is refused by the node's single-session rule, and that refusal would be on
+  // this screen instead of the answer above.
+  await expect(page.locator(".cc-voice")).not.toContainText("already has a live voice session");
+});
+
 test("a microphone session carries audio both ways and records the transcript", async ({ page }) => {
   mkdirSync(EVIDENCE, { recursive: true });
   await openApp(page);

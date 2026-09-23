@@ -155,6 +155,17 @@ export function connectionUsable(input: {
  * invented, so endpoints are checked against a declared allowlist and refused
  * unless they are HTTPS.
  */
+
+/**
+ * Whether a host is this machine.
+ *
+ * `localhost` is included because a URL may name it, but the check is on the host, not on a resolved address: this
+ * function decides whether a string may be sent a credential, and DNS is not consulted to answer that.
+ */
+export function isLoopbackHost(hostname: string): boolean {
+  return hostname === "127.0.0.1" || hostname === "::1" || hostname === "localhost";
+}
+
 export function validateEndpoint(input: {
   url: string;
   allowedOrigins: readonly string[];
@@ -166,7 +177,15 @@ export function validateEndpoint(input: {
     return { ok: false, reason: `${input.url} is not a valid absolute URL` };
   }
   if (parsed.protocol !== "https:") {
-    return { ok: false, reason: `endpoint ${input.url} is not HTTPS; credentials must not travel in the clear` };
+    /*
+     * Loopback is the one exception, and it is not a weakening of the rule: traffic to 127.0.0.1 never leaves the
+     * machine, so "credentials must not travel in the clear" is not a statement about it. A desktop owner node's
+     * redirect is loopback by design, and a local token endpoint is how this machinery is exercised without an
+     * account. Anything else that is not HTTPS is still refused.
+     */
+    if (parsed.protocol !== "http:" || !isLoopbackHost(parsed.hostname)) {
+      return { ok: false, reason: `endpoint ${input.url} is not HTTPS; credentials must not travel in the clear` };
+    }
   }
   if (!input.allowedOrigins.includes(parsed.origin)) {
     return {
@@ -178,10 +197,35 @@ export function validateEndpoint(input: {
 }
 
 /**
- * @implementation-status stub
- * TODO(P7): the live authorization code exchange and refresh loop. PKCE, state
- * verification, scope verification and endpoint validation are implemented and
- * tested; exchanging a code for a token needs a registered OAuth client and a real
- * account, which this repository does not hold.
+ * @status-ref integration-sdk.token-exchange
+ *
+ * The exchange and refresh loop live in `token-exchange.ts`. They are real: PKCE is sent and checked, state is
+ * compared before a code travels, and scopes are verified against what was requested. What this repository still
+ * does not hold is a registered OAuth client and a real account, so the endpoint a live connection would use has
+ * never been called — which is why the `V09` row in the registry and the conformance table stay PARTIAL.
  */
-export const LIVE_TOKEN_EXCHANGE_STATUS = "external-blocked";
+export const LIVE_TOKEN_EXCHANGE_STATUS = "implemented-against-injected-endpoint";
+
+export {
+  exchangeAuthorizationCode,
+  refreshAccessToken,
+  type TokenExchangeResult,
+  type TokenGrant,
+} from "./token-exchange.ts";
+
+/**
+ * The reference integration's Calendar client.
+ *
+ * Exported because the pack that owns Google Calendar is where this belongs: the SDK owns the request shape and the
+ * vocabulary for what came back, the pack owns the events, the conflicts and the freshness rule. A pack that
+ * re-implemented the request would be a second client for one API, and the two would drift in exactly the place
+ * where "did that write land?" is decided.
+ */
+export {
+  CALENDAR_API_STATUS,
+  readAgenda,
+  writeEvent,
+  type AgendaRead,
+  type CalendarEvent as CalendarApiEvent,
+  type CalendarWriteOutcome,
+} from "./calendar-api.ts";

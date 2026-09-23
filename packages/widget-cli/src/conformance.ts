@@ -5,8 +5,9 @@ import { isHostOwnedBlock, type MessageBlock } from "@clarkcant/contracts";
 import { validateProps } from "@clarkcant/widget-host";
 import { FORBIDDEN_API_SURFACE, acceptBridgeMessage, createWidgetRuntime, type MessageEndpoint } from "@clarkcant/widget-sdk";
 import { createFrameSession } from "@clarkcant/widget-host";
+import { auditFrame, type FrameFacts } from "./dev-shell.ts";
 
-import { REQUIRED_FIXTURES, readPackage, type WidgetPackage } from "./manifest.ts";
+import { REQUIRED_FIXTURES, readPackage, type WidgetPackage } from "@clarkcant/core";
 
 /**
  * The conformance suite a widget has to pass before it is publish-ready.
@@ -57,7 +58,7 @@ function endpoint() {
   return { port, sent, deliver: (data: unknown) => listener?.({ data }), listening: () => listener !== undefined };
 }
 
-function initFor(pkg: WidgetPackage, props: Record<string, unknown>) {
+function initFor(_pkg: WidgetPackage, props: Record<string, unknown>) {
   return {
     kind: "init",
     protocol: "agent.widgetbridge",
@@ -85,7 +86,8 @@ function originsInEntry(path: string): string[] {
   return [...found];
 }
 
-export function runConformance(root: string): ConformanceReport {
+export function runConformance(root: string, options: { frames?: FrameFacts } = {}): ConformanceReport {
+  const frames = options.frames;
   const pkg = readPackage(root);
   const checks: ConformanceCheck[] = [];
   const add = (
@@ -329,6 +331,9 @@ export function runConformance(root: string): ConformanceReport {
     instanceId: "conformance",
     nonce: "conformance-nonce-000000",
     props: defaultProps,
+    // The harness speaks as an instance that has never moved, which is what makes its first action valid rather than
+    // a revision assertion about an instance it does not have.
+    revision: 0,
     brokeredCapabilities: [],
     allowedOrigins: [],
     knownActionBindings: ["act_conformance"],
@@ -404,16 +409,59 @@ export function runConformance(root: string): ConformanceReport {
     `compact: ${String(definition.sizing.compact)}, expanded: ${String(definition.sizing.expanded)}`,
   );
 
-  add("interaction.keyboard", "interaction", "keyboard reachability", "requires-dev-host", "needs a rendered frame");
-  add("interaction.touchSize", "interaction", "touch target size", "requires-dev-host", "needs a rendered frame");
+  /*
+   * The frame checks, answered from a frame when one was handed in.
+   *
+   * Without facts they stay `requires-dev-host`, which is the honest answer for a command with no browser: the
+   * check has not been performed. With facts the answer comes from `auditFrame` — the same function the dev host
+   * runs — so the suite and the host cannot disagree about what a frame showed, and a check that passes here
+   * passed because a frame was measured rather than because a package declared that it would.
+   */
+  const findings =
+    frames === undefined || frames.reducedMotion === undefined
+      ? undefined
+      : auditFrame(frames, { reducedMotion: frames.reducedMotion });
+  const finding = (id: string) => findings?.find((entry) => entry.id === id);
+
+  /*
+   * `no-tab-stops` is a warning and not a failure: a widget with nothing interactive is a legitimate widget, and
+   * the audit says so in those words. Only focus that cannot be seen is a failure, because that is a control the
+   * user can reach and cannot see.
+   */
+  const focus = finding("focus-visible");
+  add(
+    "interaction.keyboard",
+    "interaction",
+    "keyboard reachability",
+    findings === undefined ? "requires-dev-host" : focus === undefined ? "pass" : "fail",
+    findings === undefined
+      ? "needs a rendered frame"
+      : focus === undefined
+        ? `${String(frames?.tabbable.length ?? 0)} reachable element(s), each with a visible focus ring`
+        : focus.message,
+  );
+
+  const targetSize = finding("target-size");
+  add(
+    "interaction.touchSize",
+    "interaction",
+    "touch target size",
+    findings === undefined ? "requires-dev-host" : targetSize === undefined ? "pass" : "fail",
+    findings === undefined
+      ? "needs a rendered frame"
+      : targetSize === undefined
+        ? `${String(frames?.targets.length ?? 0)} interactive element(s), all at or above the minimum`
+        : targetSize.message,
+  );
   add(
     "interaction.detach",
     "interaction",
     "detach keeps one live owner",
     "requires-dev-host",
-    // Named precisely: this is not "needs a browser" but "needs a detached host window", and the product does not
-    // have one — phase 7 landed the ownership half only, so there is nothing here to exercise.
-    "a detached host window does not exist yet, so detach cannot be exercised from this command",
+    // Named precisely: this is not "needs a browser" but "needs a window that can be detached and re-attached", and
+    // this command drives a browser dev host, which has no detached window to drive. The desktop's detached window
+    // exists, in apps/desktop/src/main.mjs, and is covered by the desktop and browser suites rather than by this check.
+    "this command drives a browser dev host, which has no detached window to drive; the desktop detached window is covered by the desktop and browser suites, not by this check",
   );
 
   add(
@@ -421,7 +469,7 @@ export function runConformance(root: string): ConformanceReport {
     "interaction",
     "a spoken action and the same click agree",
     "requires-dev-host",
-    "needs a rendered frame and a voice session",
+    "needs a rendered frame and a voice session, and a voice session needs a provider account",
   );
 
   /* --------------------------------------------------------------- rendering */
@@ -445,16 +493,50 @@ export function runConformance(root: string): ConformanceReport {
     `textFallback: ${String(definition.textFallback.length)} characters`,
   );
 
-  for (const [id, name] of [
-    ["rendering.narrow", "the narrow layout"],
-    ["rendering.compact", "the compact layout"],
-    ["rendering.expanded", "the expanded layout"],
-    ["rendering.loading", "the loading state"],
-    ["rendering.readOnly", "the read-only state"],
-    ["rendering.reducedMotion", "reduced motion"],
+  for (const [id, name, layout] of [
+    ["rendering.narrow", "the narrow layout", "narrow"],
+    ["rendering.compact", "the compact layout", "compact"],
+    ["rendering.expanded", "the expanded layout", "expanded"],
   ] as const) {
-    add(id, "rendering", name, "requires-dev-host", "needs a rendered frame at a known viewport");
+    const fact = frames?.layouts?.find((entry) => entry.name === layout);
+    add(
+      id,
+      "rendering",
+      name,
+      fact === undefined ? "requires-dev-host" : fact.rendered && !fact.overflows ? "pass" : "fail",
+      fact === undefined
+        ? "needs a rendered frame at a known viewport"
+        : `${String(fact.viewportWidth)}px: rendered=${String(fact.rendered)}, overflows=${String(fact.overflows)}`,
+    );
   }
+
+  for (const [id, name, state] of [
+    ["rendering.loading", "the loading state", "loading"],
+    ["rendering.readOnly", "the read-only state", "readOnly"],
+  ] as const) {
+    const fact = frames?.states?.find((entry) => entry.name === state);
+    add(
+      id,
+      "rendering",
+      name,
+      fact === undefined ? "requires-dev-host" : fact.rendered ? "pass" : "fail",
+      fact === undefined ? "needs a rendered frame at a known viewport" : `rendered=${String(fact.rendered)}`,
+    );
+  }
+
+  const motion =
+    finding("zero-duration-animation") ?? finding("text-over-motion") ?? finding("reduced-motion-focus");
+  add(
+    "rendering.reducedMotion",
+    "rendering",
+    "reduced motion",
+    findings === undefined ? "requires-dev-host" : motion === undefined ? "pass" : "fail",
+    findings === undefined
+      ? "needs a rendered frame at a known viewport"
+      : motion === undefined
+        ? "rendered with reduced motion: nothing animates, and no text sits over motion"
+        : motion.message,
+  );
 
   return finish(root, checks);
 }

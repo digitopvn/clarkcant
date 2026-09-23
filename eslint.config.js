@@ -70,6 +70,9 @@ export default tseslint.config(
         __dirname: "readonly",
         setTimeout: "readonly",
         clearTimeout: "readonly",
+        // A Node global since 18, and the only way this process reaches the node it serves: the detached
+        // window's relay calls it with the host's own token.
+        fetch: "readonly",
       },
     },
   },
@@ -81,6 +84,25 @@ export default tseslint.config(
       globals: {
         document: "readonly",
         window: "readonly",
+      },
+    },
+  },
+  {
+    /*
+     * A widget's own scripts, which run in a sandboxed frame rather than in Node or in this app.
+     *
+     * They are the one kind of JavaScript in this repository that is neither: it is served to a frame, executed by a
+     * browser, and written against the DOM. Linting it with Node globals reported every `document` and `window`
+     * reference as undefined — which is what a widget is made of.
+     */
+    files: ["**/widgets/**/*.js"],
+    languageOptions: {
+      globals: {
+        document: "readonly",
+        window: "readonly",
+        setTimeout: "readonly",
+        crypto: "readonly",
+        CustomEvent: "readonly",
       },
     },
   },

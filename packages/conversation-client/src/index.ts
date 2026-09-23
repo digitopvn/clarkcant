@@ -14,6 +14,8 @@ import { themeStylesheet } from "@clarkcant/design-tokens";
 import { APP_CSS } from "./styles.ts";
 
 export { APP_CSS } from "./styles.ts";
+export { DetachedWidgetSurface, type DetachedBridge } from "./DetachedWidgetSurface.tsx";
+export { WidgetFrame, type WidgetFrameProps } from "./WidgetFrame.tsx";
 export {
   MiniAppSurface,
   unavailableSections,
@@ -33,6 +35,11 @@ export {
   type RendererDataset,
   type RendererProps,
 } from "./renderers.tsx";
+export {
+  rendererDataset,
+  WidgetPreview,
+  type WidgetPreviewProps,
+} from "./widget-library/WidgetPreview.tsx";
 export type {
   CalendarEventView,
   CompositionResponse,

@@ -6,8 +6,7 @@ import {
   type CompositionActionRef,
   type CompositionInitialState,
   type CompositionProvenance,
-  type ExecutionMode,
-  type ExecutionRule,
+  type ExecutionPolicyConfig,
   type Instant,
   type PresentationBundle,
   type Principal,
@@ -1089,7 +1088,7 @@ export interface MiniAppActionRequest extends ActionInvocation {
    * preference store. Absent keeps the behaviour that existed before the modes did: an effect action is
    * refused as needing the approval path.
    */
-  policy?: { mode: ExecutionMode; rules: readonly ExecutionRule[] };
+  policy?: ExecutionPolicyConfig;
 }
 
 export type MiniAppActionCode =
@@ -1188,8 +1187,7 @@ export function invokeMiniAppAction(deps: WidgetDeps, request: MiniAppActionRequ
       request.policy === undefined
         ? undefined
         : decideExecution({
-            mode: request.policy.mode,
-            rules: request.policy.rules,
+            policy: request.policy,
             explicitUserIntent: true,
             action: {
               kind: "effect",

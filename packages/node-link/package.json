@@ -12,7 +12,7 @@
   },
   "clarkcant": {
     "phase": "P4",
-    "status": "implemented",
+    "status": "external-blocked",
     "blueprint": "docs/system-architecture.md"
   },
   "scripts": {

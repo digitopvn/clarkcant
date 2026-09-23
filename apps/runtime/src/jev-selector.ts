@@ -200,6 +200,50 @@ export interface JevTransportResponse {
 export type JevTransport = (request: JevTransportRequest) => Promise<JevTransportResponse>;
 
 /**
+ * Thrown when a URL is refused at the sink.
+ *
+ * A distinct type rather than a message match, so the caller can report the refusal itself instead of the generic
+ * "the call failed" that a network error produces.
+ */
+class EndpointRefusedError extends Error {}
+
+/**
+ * The one URL this transport will call, or a refusal.
+ *
+ * A function rather than a variable so the refusal cannot be skipped: the value handed to `fetch` is only ever one
+ * that passed the policy, which is an allowlist and not a sanitizer - https only, no credentials in the URL, and no
+ * loopback or private address. The configuration path refuses the same things, and this is the second half of that
+ * check rather than a replacement for it.
+ */
+function allowlistedEndpoint(url: string): string {
+  const allowed = validateProviderEndpoint(url);
+  if (!allowed.ok) throw new EndpointRefusedError(allowed.reason);
+  return allowed.url;
+}
+
+/** The only protocols this transport will call. Written as data so the policy is reviewable, not inferred. */
+const CALLABLE_PROTOCOLS = Object.freeze(["https:"]);
+
+/**
+ * The endpoint as a URL this transport will call, or a refusal.
+ *
+ * A malformed URL is refused rather than thrown at the caller as a parse error: it is the same class of problem as
+ * a wrong scheme, and both mean this node will not open a socket.
+ */
+function callableTarget(url: string): URL {
+  let target: URL;
+  try {
+    target = new URL(allowlistedEndpoint(url));
+  } catch {
+    throw new EndpointRefusedError("the configured endpoint is not a URL this transport can call");
+  }
+  if (!CALLABLE_PROTOCOLS.includes(target.protocol)) {
+    throw new EndpointRefusedError(`scheme ${target.protocol} is not allowed; only ${CALLABLE_PROTOCOLS.join(", ")} is called`);
+  }
+  return target;
+}
+
+/**
  * The real transport.
  *
  * The error path is where this differs from a naive fetch: a non-JSON error body is returned as
@@ -209,7 +253,9 @@ export type JevTransport = (request: JevTransportRequest) => Promise<JevTranspor
  */
 export function createFetchTransport(): JevTransport {
   return async (request) => {
-    const response = await fetch(request.url, {
+    // A plain local name, assigned only from the allowlist above, so the call below cannot reach anything else.
+    const allowlistedUrl = callableTarget(request.url).href;
+    const response = await fetch(allowlistedUrl, {
       method: "POST",
       headers: {
         authorization: `Bearer ${request.apiKey}`,
@@ -455,7 +501,17 @@ async function callProvider(
     const durationMs = now() - startedAt;
 
     if (response.status !== 200) {
-      const reason = reasonForStatus(response.status);
+      /*
+       * A request the provider refused is named together with the model this node pinned.
+       *
+       * "HTTP 400" on its own leaves an operator guessing whether the key, the body or the pinned id was wrong, and
+       * this node pins a model precisely so that it is never evaluated against a different one. A transient status
+       * keeps its own reason: a rate limit has nothing to do with which model was pinned.
+       */
+      const requestRefused = response.status === 400 || response.status === 404 || response.status === 422;
+      const reason = requestRefused
+        ? `${reasonForStatus(response.status)} but this node pinned ${deps.config.model}`
+        : reasonForStatus(response.status);
       emit(deps, {
         event: "error",
         requestId,
@@ -515,7 +571,9 @@ async function callProvider(
     const aborted = controller.signal.aborted;
     const reason = aborted
       ? `the selector call exceeded the ${input.budget.timeoutMs ?? deps.config.timeoutMs} ms deadline for this decision`
-      : "the selector call failed before a response arrived";
+      : cause instanceof EndpointRefusedError
+        ? `the selector endpoint was refused before the call: ${cause.message}`
+        : "the selector call failed before a response arrived";
     emit(deps, {
       event: "error",
       requestId,

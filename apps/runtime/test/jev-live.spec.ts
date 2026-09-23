@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, it } from "vitest";
 
 import type { CompositionSlot } from "@clarkcant/contracts";
 
@@ -26,7 +26,6 @@ import type { MiniAppCandidateSet } from "../src/mini-app-candidates.ts";
 
 const LIVE = process.env.CLARKCANT_JEV_LIVE === "1";
 const config = jevConfigFromEnv(process.env).apiKey === undefined ? undefined : jevConfigFromEnv(process.env);
-const canRun = LIVE && config !== undefined && !config.localOnly;
 
 const SLOTS: CompositionSlot[] = ["metrics", "trend", "calendar"];
 
@@ -45,7 +44,11 @@ const CANDIDATES: MiniAppCandidateSet = {
   data: [{ ref: "ds_fixture_tasks", kind: "tasks", label: "Tasks", scale: "small", freshness: "sample" }],
 };
 
-describe.skipIf(!canRun)("live provider (opt-in)", () => {
+describe.skipIf(!LIVE)("live provider (opt-in)", () => {
+  beforeAll(() => {
+    if (config === undefined) throw new Error("BLOCKED: TYPESAFE_API_KEY is required for live provider evidence");
+    if (config.localOnly) throw new Error("BLOCKED: live provider evidence requires a non-local-only configuration");
+  });
   it("answers with a template that was offered, or abstains", async () => {
     const budget = createJevBudget(config!);
     const outcome = await selectTemplate(
@@ -69,7 +72,8 @@ describe.skipIf(!canRun)("live provider (opt-in)", () => {
         } margin=${outcome.margin === undefined ? "n/a" : outcome.margin.toFixed(3)}\n`,
       );
     } else {
-      expect(["abstained", "unavailable"]).toContain(outcome.status);
+      if (outcome.status === "unavailable") throw new Error(`BLOCKED: ${outcome.reason}`);
+      expect(outcome.status).toBe("abstained");
       process.stderr.write(`[jev-live] ${outcome.status}: ${outcome.reason}\n`);
     }
   });
@@ -91,7 +95,7 @@ describe.skipIf(!canRun)("live provider (opt-in)", () => {
       expect(["on", "off", "uncertain"]).toContain(outcome.verdict);
       process.stderr.write(`[jev-live] noul=${outcome.probability.toFixed(3)} verdict=${outcome.verdict}\n`);
     } else {
-      process.stderr.write(`[jev-live] noul ${outcome.status}: ${outcome.reason}\n`);
+      throw new Error(`BLOCKED: Noul did not answer: ${outcome.reason}`);
     }
   });
 
@@ -104,12 +108,15 @@ describe.skipIf(!canRun)("live provider (opt-in)", () => {
     );
     expect(outcome.status).toBe("unavailable");
     if (outcome.status === "unavailable") {
+      expect(outcome.reason, `BLOCKED: no model-drift evidence: ${outcome.reason}`).toContain(
+        `but this node pinned ${drifted.model}`,
+      );
       process.stderr.write(`[jev-live] wrong-model refusal: ${outcome.reason}\n`);
     }
   });
 });
 
-describe.skipIf(canRun)("live provider (skipped)", () => {
+describe.skipIf(LIVE)("live provider (skipped)", () => {
   it("names what it is waiting for", () => {
     const missing = [
       LIVE ? undefined : "CLARKCANT_JEV_LIVE=1",

@@ -147,7 +147,9 @@ export function recordConsent(
       return {
         ok: false as const,
         code: "CONSENT_STALE" as const,
-        message: `the plan changed since it was displayed (${validity.changed.join(", ")}); it must be reviewed again`,
+        // The field names say what moved; the detail says which dependency, when one did. A refusal a person cannot
+        // act on is indistinguishable from a bug.
+        message: `the plan changed since it was displayed (${validity.changed.join(", ")})${validity.detail.length === 0 ? "" : `: ${validity.detail.join("; ")}`}; it must be reviewed again`,
         changed: validity.changed,
       };
     }
@@ -217,7 +219,7 @@ export function activateGeneration(
       return {
         ok: false as const,
         code: "CONSENT_STALE" as const,
-        message: `consent no longer covers the plan (${validity.changed.join(", ")}); re-review before activating`,
+        message: `consent no longer covers the plan (${validity.changed.join(", ")})${validity.detail.length === 0 ? "" : `: ${validity.detail.join("; ")}`}; re-review before activating`,
       };
     }
 
@@ -231,6 +233,14 @@ export function activateGeneration(
       codeGeneration: input.codeGeneration,
       activatedAt: at,
       uiOnlyFacets: input.uiOnlyFacets,
+      // Carried from the plan rather than re-derived: what is running and what was consented to are two rows.
+      ...(input.currentPlan.lockRef === undefined
+        ? {}
+        : {
+            lockRef: input.currentPlan.lockRef,
+            ...(input.currentPlan.lockDigest === undefined ? {} : { lockDigest: input.currentPlan.lockDigest }),
+            ...(input.currentPlan.lockCoverage === undefined ? {} : { lockCoverage: input.currentPlan.lockCoverage }),
+          }),
     });
 
     // Supersede the previous generation for this package on this node. Keeping the

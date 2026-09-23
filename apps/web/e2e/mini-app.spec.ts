@@ -78,13 +78,27 @@ async function openOverview(page: Page): Promise<void> {
   await expect(page.locator("[data-surface-composition]").first()).toBeVisible({ timeout: 30_000 });
 }
 
+/**
+ * An instant inside the week the overview queries, whatever time of day the suite runs.
+ *
+ * The first version of this setup was `now + 1h`, and it was time-of-day dependent in the way that costs an
+ * afternoon. Run on a Sunday evening, the event landed on Monday, fell outside the "tuần này" range the composition
+ * asks the node for, and the calendar region — which is drawn only when it has rows — silently vanished. Both tests
+ * that use it then failed for a reason that had nothing to do with the code they were testing, and CI had passed
+ * earlier the same day because it ran before the boundary.
+ *
+ * Today at 09:00 in the event's own timezone is inside the week that contains today at every hour of every day.
+ */
+function eventTodayAtNine(): { startsAt: string; endsAt: string } {
+  const localToday = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Saigon" }).format(new Date());
+  return { startsAt: `${localToday}T09:00:00+07:00`, endsAt: `${localToday}T10:00:00+07:00` };
+}
+
 test("renders a composed overview whose figures come from the node's own records", async ({ page }) => {
   mkdirSync(EVIDENCE, { recursive: true });
 
   // A calendar event through the production API, on a day inside the current week.
-  const now = new Date();
-  const startsAt = new Date(now.getTime() + 60 * 60 * 1000).toISOString();
-  const endsAt = new Date(now.getTime() + 2 * 60 * 60 * 1000).toISOString();
+  const { startsAt, endsAt } = eventTodayAtNine();
   const created = await api<{ event: { eventId: string; date: string; title: string } }>("POST", "/calendar/events", {
     title: "Họp kế hoạch tuần",
     startsAt,
@@ -204,11 +218,9 @@ test("the live view changes while the transcript keeps what it showed", async ({
 test("the expanded view is operable and dismissible from the keyboard alone", async ({ page, context }) => {
   mkdirSync(EVIDENCE, { recursive: true });
 
-  const now = new Date();
   const created = await api<{ event: { date: string } }>("POST", "/calendar/events", {
     title: "Họp kế hoạch tuần",
-    startsAt: new Date(now.getTime() + 60 * 60 * 1000).toISOString(),
-    endsAt: new Date(now.getTime() + 2 * 60 * 60 * 1000).toISOString(),
+    ...eventTodayAtNine(),
     timezone: "Asia/Saigon",
   });
 

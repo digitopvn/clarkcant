@@ -99,7 +99,7 @@ export function platformSupports(requirement: {
 }
 
 /**
- * @implementation-status stub
+ * @status-ref pack.computer-linux-desktop
  * TODO(P8): the runner image, display server startup and the short-lived authenticated
  * preview transport. Profile validation, containment labelling and platform routing are
  * implemented and tested; running a real desktop session needs a container engine and a

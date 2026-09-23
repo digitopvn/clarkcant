@@ -8,6 +8,7 @@ import {
 import { donutSlices, monthGrid } from "@clarkcant/contracts";
 
 import type { ResolvedDataset } from "./api.ts";
+import { vendorEmbedUrl } from "./media-embed.ts";
 
 /**
  * Built-in catalog renderers.
@@ -823,6 +824,12 @@ function YouTubeEmbed({ props }: RendererProps): ReactElement {
   const title = String(props.title ?? "Video YouTube");
   const description = typeof props.description === "string" ? props.description : "";
   const usable = /^[A-Za-z0-9_-]{6,20}$/.test(videoId);
+  /*
+   * Where playback stopped, when this surface is a restored pin. `restorePinnedInstance` returns the position and
+   * the embed carries it in the vendor's own `start` parameter; the URL cannot ask for autoplay, because restoring
+   * a pin reopens a surface rather than starting a session.
+   */
+  const positionSeconds = typeof props.positionSeconds === "number" ? props.positionSeconds : 0;
 
   return (
     <Frame title={title} dataset={undefined} role="media">
@@ -831,7 +838,7 @@ function YouTubeEmbed({ props }: RendererProps): ReactElement {
       ) : (
         <div className="cc-embed">
           <iframe
-            src={`https://www.youtube-nocookie.com/embed/${videoId}`}
+            src={vendorEmbedUrl({ videoId, positionSeconds })}
             title={title}
             loading="lazy"
             allow="accelerometer; clipboard-write; encrypted-media; gyroscope; picture-in-picture"

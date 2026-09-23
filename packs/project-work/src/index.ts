@@ -83,7 +83,7 @@ export const CONTROLLED_CODE_TASK = descriptor({
 export const CAPABILITIES = [READ_FILE_QUESTION, CONTROLLED_CODE_TASK];
 
 /**
- * @implementation-status stub
+ * @status-ref pack.project-work
  * TODO(P2): the tool implementations behind these descriptors. The capability
  * descriptors, their effect classification and their schemas are real and are what
  * the policy layer and the UI consume; the functions that actually read a file or

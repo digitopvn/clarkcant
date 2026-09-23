@@ -34,6 +34,17 @@ export default defineConfig({
       // not exist. The pack is aliased at all so a test asserting catalog coverage can read the
       // definitions without every package having to depend on a pack.
       { find: /^@clarkcant\/data-canvas$/, replacement: `${root}packs/data-canvas/src/index.ts` },
+      // Exact, for the same reason as the pack above: the prefix aliases below rewrite everything that *starts with*
+      // a package name, so `@clarkcant/widget-host/session` would become a path under the barrel that does not exist.
+      // That subpath is the browser-safe half of the package — the frame session — and it exists precisely because the
+      // root also carries a digest helper that reads `node:crypto`, which a browser bundle cannot load.
+      { find: /^@clarkcant\/widget-host\/session$/, replacement: `${root}packages/widget-host/src/session.ts` },
+      // Exact matches for the same reason: the catalog declares a `./preview` subpath so the Lab and
+      // the CLI dev host share one preview vocabulary, and a prefix alias for the bare package name
+      // would rewrite `@clarkcant/widget-catalog/preview` into a path under the barrel that does not
+      // exist.
+      { find: /^@clarkcant\/widget-catalog$/, replacement: `${root}packages/widget-catalog/src/index.ts` },
+      { find: /^@clarkcant\/widget-catalog\/preview$/, replacement: `${root}packages/widget-catalog/src/preview.ts` },
       ...Object.entries(aliases).map(([name, rel]) => ({ find: name, replacement: `${root}${rel}` })),
     ],
   },
@@ -48,6 +59,7 @@ export default defineConfig({
       // The example fixtures are executable proofs of the contracts, so their tests belong in
       // the default run rather than behind a filter nobody remembers.
       "examples/*/test/**/*.spec.ts",
+      "tools/test/**/*.spec.ts",
     ],
     exclude: ["**/dist/**", "**/coverage/**", "**/node_modules/**"],
     environment: "node",

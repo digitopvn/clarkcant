@@ -922,6 +922,17 @@ figure.cc-attachment figcaption { margin-top: var(--cc-space-xs); color: var(--c
 .cc-tool-body { padding: 0 var(--cc-space-md) var(--cc-space-md); display: flex; flex-direction: column; gap: var(--cc-space-sm); }
 .cc-tool[open] > .cc-tool-body { border-top: 1px solid var(--cc-border); padding-top: var(--cc-space-sm); }
 .cc-reasoning-body { color: var(--cc-text-muted); }
+/*
+ * The reasoning block, while the model is still writing it.
+ *
+ * The words are the whole indicator and they carry no animation of their own: the mark already spins while a
+ * block is running, and that animation is switched off in the reduced-motion block. A second endless animation
+ * making the same statement would be one more thing that has to be remembered there, and one more chance for
+ * the two to disagree about whether the block is finished.
+ */
+.cc-reasoning-writing {
+  flex: none; font-size: var(--cc-text-meta); color: var(--cc-text-muted);
+}
 
 /*
  * Voice mode.
@@ -1511,4 +1522,103 @@ button:focus-visible, textarea:focus-visible, input:focus-visible, [tabindex]:fo
    * takes the window and hides what is underneath rather than removing it.
    */
   [data-compact="true"] .cc-voice-scrim { position: fixed; inset: 0; border-radius: 0; background: var(--cc-bg, #0d1117); }
+/* ------------------------------------------------------------------ *
+ * Widget Library
+ * ------------------------------------------------------------------ */
+
+/*
+ * A full-screen utility surface over the conversation. The scrim is above the settings panel's, because
+ * the library is the only dialog open while it is up: the settings panel closes itself before this opens,
+ * since Modal's Escape handler is document-level and would otherwise close both.
+ */
+.cc-widget-library-scrim { position: fixed; inset: 0; background: color-mix(in oklab, var(--cc-code) 78%, transparent); z-index: 80; }
+.cc-widget-library {
+  position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%);
+  width: min(1100px, calc(100vw - 24px)); max-height: calc(100vh - 32px);
+  display: flex; flex-direction: column;
+  background: var(--cc-surface); border: 1px solid var(--cc-border); border-radius: var(--cc-radius-lg);
+  z-index: 81; overflow: hidden;
+  animation: cc-panel-in var(--cc-motion-panel) var(--cc-motion-easing);
+}
+.cc-widget-library:focus-visible { outline: 2px solid var(--cc-focus); outline-offset: 2px; }
+.cc-widget-library-head { display: flex; align-items: center; gap: var(--cc-space-md); padding: var(--cc-space-lg); border-bottom: 1px solid var(--cc-border); }
+.cc-widget-library-head h2 { margin: 0; font-size: var(--cc-text-heading-md); line-height: var(--cc-leading-heading-md); }
+.cc-widget-library-head-left { display: flex; align-items: center; gap: var(--cc-space-sm); }
+.cc-widget-library-search { flex: 1; min-width: 0; }
+.cc-widget-library-facets { display: flex; flex-wrap: wrap; gap: var(--cc-space-xs); padding: var(--cc-space-sm) var(--cc-space-lg); border-bottom: 1px solid var(--cc-border); }
+.cc-widget-library-facet { cursor: pointer; font: inherit; padding: var(--cc-space-xs) var(--cc-space-sm); border-radius: var(--cc-radius-sm); border: 1px solid var(--cc-border); background: transparent; color: inherit; }
+.cc-widget-library-facet[data-selected="true"] { border-color: var(--cc-accent); }
+.cc-widget-library-body { overflow-y: auto; padding: var(--cc-space-lg); }
+.cc-widget-library-empty { margin: 0; color: var(--cc-text-muted); }
+.cc-library-builtin h3, .cc-library-provenance h3 { margin: 0 0 var(--cc-space-sm); font-weight: 600; }
+/* Installed packages are separated from the built-in catalog by a rule, so the two lists read as two
+   different claims rather than one mixed list. */
+.cc-library-provenance { margin-top: var(--cc-space-lg); padding-top: var(--cc-space-lg); border-top: 1px solid var(--cc-border); }
+.cc-provenance-retry { display: flex; flex-direction: column; align-items: flex-start; gap: var(--cc-space-sm); }
+.cc-provenance-retry button { cursor: pointer; font: inherit; padding: var(--cc-space-xs) var(--cc-space-sm); border-radius: var(--cc-radius-sm); border: 1px solid var(--cc-border); background: transparent; color: inherit; }
+.cc-provenance-retry button:focus-visible { outline: 2px solid var(--cc-focus); outline-offset: 2px; }
+/* What could not be shown from an installed package, kept beside the installed list rather than inside the grid. */
+.cc-library-notes { margin-top: var(--cc-space-lg); padding-top: var(--cc-space-lg); border-top: 1px solid var(--cc-border); }
+.cc-library-notes h3 { margin: 0 0 var(--cc-space-sm); font-weight: 600; }
+.cc-library-notes ul { margin: 0; padding-left: var(--cc-space-lg); color: var(--cc-text-muted); }
+.cc-widget-grid { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--cc-space-md); grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); }
+.cc-widget-card { margin: 0; }
+.cc-widget-card-btn { display: flex; flex-direction: column; gap: var(--cc-space-sm); width: 100%; text-align: left; cursor: pointer; font: inherit; color: inherit; padding: var(--cc-space-md); border: 1px solid var(--cc-border); border-radius: var(--cc-radius-md); background: transparent; }
+.cc-widget-card-btn:focus-visible { outline: 2px solid var(--cc-focus); outline-offset: 2px; }
+.cc-widget-card-preview { display: block; min-height: 96px; overflow: hidden; }
+.cc-widget-card-text { display: block; color: var(--cc-text-muted); }
+.cc-widget-card-meta { display: flex; flex-direction: column; gap: var(--cc-space-2xs); }
+.cc-widget-card-name { font-weight: 600; }
+.cc-widget-card-family { color: var(--cc-text-muted); }
+.cc-widget-card-desc { color: var(--cc-text-muted); }
+.cc-widget-card-source { color: var(--cc-text-muted); font-size: var(--cc-text-sm); }
+.cc-widget-preview { display: block; }
+.cc-widget-preview-missing { margin: 0; color: var(--cc-text-muted); }
+.cc-widget-detail { display: flex; flex-direction: column; gap: var(--cc-space-lg); }
+.cc-widget-detail-meta { display: grid; grid-template-columns: max-content 1fr; gap: var(--cc-space-2xs) var(--cc-space-md); margin: 0; }
+.cc-widget-detail-meta dt { color: var(--cc-text-muted); }
+.cc-widget-detail-meta dd { margin: 0; }
+
+/* A 320 px viewport is a supported width, not a degraded one: one column, and the surface still fits. */
+@media (max-width: 520px) {
+  .cc-widget-library { width: calc(100vw - 12px); max-height: calc(100vh - 16px); }
+  .cc-widget-grid { grid-template-columns: 1fr; }
+  .cc-widget-library-head { flex-wrap: wrap; }
+}
+
+/* ------------------------------------------------------------------ *
+ * Widget Lab (developer mode)
+ * ------------------------------------------------------------------ */
+
+.cc-widget-lab-controls { display: flex; flex-wrap: wrap; gap: var(--cc-space-md); align-items: flex-end; }
+.cc-widget-lab-control { display: flex; flex-direction: column; gap: var(--cc-space-2xs); }
+.cc-widget-lab-check { flex-direction: row; align-items: center; gap: var(--cc-space-xs); }
+.cc-widget-detail-preview { display: flex; flex-direction: column; gap: var(--cc-space-md); min-width: 0; }
+.cc-widget-detail-inspector { display: flex; flex-direction: column; gap: var(--cc-space-md); min-width: 0; }
+.cc-widget-preview-frame { border: 1px solid var(--cc-border); border-radius: var(--cc-radius-md); padding: var(--cc-space-sm); overflow: auto; }
+.cc-widget-inspector { display: flex; flex-direction: column; gap: var(--cc-space-sm); }
+.cc-widget-inspector-panel { border: 1px solid var(--cc-border); border-radius: var(--cc-radius-sm); padding: var(--cc-space-sm); }
+.cc-widget-inspector-panel summary { cursor: pointer; font-weight: 600; }
+.cc-widget-inspector-rows { display: flex; flex-direction: column; gap: var(--cc-space-2xs); margin: var(--cc-space-xs) 0 0; }
+.cc-widget-inspector-row { display: grid; grid-template-columns: max-content 1fr; gap: var(--cc-space-sm); }
+.cc-widget-inspector-row dt { color: var(--cc-text-muted); }
+.cc-widget-inspector-row dd { margin: 0; overflow-wrap: anywhere; }
+.cc-widget-props { display: flex; flex-direction: column; gap: var(--cc-space-sm); }
+.cc-widget-props-raw textarea { width: 100%; min-height: 120px; font-family: var(--cc-font-mono); }
+.cc-widget-props-problems { margin: 0; padding-left: var(--cc-space-lg); color: var(--cc-danger, var(--cc-text)); }
+
+/*
+ * Wide screens show the preview and the inspector together; narrow ones step between them, because
+ * three compressed columns at 320 px is a layout nobody can read.
+ */
+@media (min-width: 901px) {
+  .cc-widget-lab-pane-toggle { display: none; }
+  .cc-widget-detail { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 1fr); gap: var(--cc-space-lg); }
+  .cc-widget-lab-controls { grid-column: 1 / -1; }
+}
+@media (max-width: 900px) {
+  .cc-widget-detail[data-widget-lab-pane="preview"] .cc-widget-detail-inspector { display: none; }
+  .cc-widget-detail[data-widget-lab-pane="inspector"] .cc-widget-detail-preview { display: none; }
+  .cc-widget-detail { display: flex; flex-direction: column; gap: var(--cc-space-lg); }
+}
 `;

@@ -9,6 +9,7 @@ import {
   type Instant,
   type WidgetDefinition,
   compileActionBinding,
+  nowInstant,
 } from "@clarkcant/contracts";
 import { captureCompositeSurface } from "@clarkcant/core";
 import { appendMessage, appendEvent, upsertTask } from "@clarkcant/storage";
@@ -332,7 +333,10 @@ describe("view action route", () => {
 
 describe("live and snapshot reads", () => {
   it("resolves the live surface from current records, with availability per region", async () => {
-    // One completed task this week, written the way the reducer writes it.
+    // One completed task this week, written the way the reducer writes it. The live read asks the
+    // node for "tuần này" from its own clock rather than from `AT`, so the seed is anchored to the
+    // current instant, which is inside the week containing itself in every timezone.
+    const seededAt = nowInstant();
     const task = {
       taskId: "task_live",
       conversationId,
@@ -340,8 +344,8 @@ describe("live and snapshot reads", () => {
       state: "succeeded" as const,
       revision: 1,
       goal: "seeded",
-      createdAt: "2026-09-16T01:00:00.000Z" as never,
-      updatedAt: "2026-09-16T02:00:00.000Z" as never,
+      createdAt: seededAt as never,
+      updatedAt: seededAt as never,
     };
     upsertTask(services.runtime.db, task);
     appendEvent(services.runtime.db, {
@@ -352,7 +356,7 @@ describe("live and snapshot reads", () => {
       taskId: task.taskId,
       conversationId,
       document: { state: "succeeded" },
-      occurredAt: AT,
+      occurredAt: seededAt,
     });
 
     const seeds = seedComposition();

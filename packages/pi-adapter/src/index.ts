@@ -30,6 +30,17 @@ export {
   type RealPiAdapterOptions,
 } from "./real.ts";
 export {
+  canonicalRoots,
+  createScopedFsTools,
+  resolveInsideRoots,
+  SCOPED_FS_LIMITS,
+  SCOPED_FS_TOOL_NAMES,
+  type ApprovedRoot,
+  type CanonicalRoots,
+  type InsideRoots,
+  type RefusedRoot,
+} from "./scoped-fs.ts";
+export {
   readTranscriptFrom,
   redactSessionFile,
   transcriptSize,

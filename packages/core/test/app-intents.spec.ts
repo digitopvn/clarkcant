@@ -81,6 +81,19 @@ const DOCUMENTED: readonly { kind: AppIntentKind; vietnamese: readonly string[];
     vietnamese: ["thoát ứng dụng", "thoát app", "đóng ứng dụng"],
     english: "quit the app",
   },
+  {
+    // Opening the catalogue needs no target, so these phrases are testable without a target table.
+    kind: "widgets.open",
+    vietnamese: ["mở thư viện widget", "mở widget library"],
+    english: "open widget library",
+  },
+  {
+    // "show widget" with no widget named lands on the catalogue, which is the honest degradation:
+    // the library is a view action, so the worst case is a catalogue the person can close.
+    kind: "widgets.show",
+    vietnamese: ["hiện widget"],
+    english: "show widget",
+  },
 ];
 
 describe("every documented way of asking maps to one intent", () => {

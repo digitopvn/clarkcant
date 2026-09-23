@@ -50,6 +50,7 @@ import { getPreference } from "@clarkcant/core";
 import { type ComposeDeps } from "./compose-mini-app.ts";
 import { type ProjectFinderDeps } from "./project-finder.ts";
 import { type ProjectSessionStarter, createProjectSessionStarter } from "./project-session.ts";
+import { loadProjectWorkPack as loadPack, type PackLoadResult } from "./pack-load.ts";
 import {
   decideRuntimeTarget,
   decisionTimeoutMsFromEnv,
@@ -145,6 +146,14 @@ export interface NodeServices {
     /** Runs one request in a worker of its own, answering with what it said. */
     runInBackground(input: { conversationId: string; principal: Principal; text: string }): Promise<string>;
   };
+  /**
+   * Load the project-work pack by running one worker session, and write what the run demonstrated.
+   *
+   * On the container rather than in the entry point because the container already holds the database
+   * and the identity the readiness is keyed by, and because this is the app's own path — which is
+   * precisely what was missing: the capability was registered, and nothing ever tried to load it.
+   */
+  loadProjectWorkPack: (options?: { timeoutMs?: number }) => Promise<PackLoadResult>;
   /** The model this node is configured for, or null when it has none. */
   model: NodeModelInfo | null;
   /** The selector, its wiring, and the counters a test or the health route can read. */
@@ -274,7 +283,8 @@ function indexRoots(): string[] {
 }
 
 export function bootNodeServices(options: RuntimeOptions): NodeServices {
-  const runtime = bootRuntime(options);
+  // Opened by the entry point when it needs the choice before this container exists; see `RuntimeOptions.runtime`.
+  const runtime = options.runtime ?? bootRuntime(options);
   const nodeId = runtime.identity.nodeId;
   // The key a person typed into the interface, so the decider uses it without a restart. Read from the vault here
   // rather than passed in as a value, because the point of storing one is that the node is already running.
@@ -543,6 +553,12 @@ export function bootNodeServices(options: RuntimeOptions): NodeServices {
     vectors,
     projects,
     projectSessions,
+    loadProjectWorkPack: (loadOptions) =>
+      loadPack({
+        deps: { db: runtime.db, nodeId },
+        refs: PROJECT_WORK_CAPABILITIES.map((capability) => capability.ref),
+        ...(loadOptions?.timeoutMs === undefined ? {} : { timeoutMs: loadOptions.timeoutMs }),
+      }),
     describe: () => ({ node: process.version, platform: process.platform, arch: process.arch }),
   };
 }
@@ -616,8 +632,8 @@ export interface Timeline {
   activeTaskIds: string[];
 }
 
-/** Widget dependencies for read-only lookups. */
-function readDeps(services: NodeServices): WidgetDeps {
+/** Widget dependencies for read-only lookups. Only the node's own runtime is read, so that is all it asks for. */
+function readDeps(services: Pick<NodeServices, "runtime">): WidgetDeps {
   return {
     db: services.runtime.db,
     nodeId: services.runtime.identity.nodeId,
@@ -632,9 +648,12 @@ function readDeps(services: NodeServices): WidgetDeps {
  * Messages and the instances they reference are returned together. A message rendering a
  * widget whose props are missing would show an empty surface, and fetching the two halves
  * separately would let them disagree while the user is looking at them.
+ *
+ * Narrowed to the node's runtime because that is the whole of what it reads: a caller holding only part of the
+ * services bundle can still build a page.
  */
 export function buildTimeline(
-  services: NodeServices,
+  services: Pick<NodeServices, "runtime">,
   input: { conversationId: string; afterSequence: number; limit?: number },
 ): Timeline {
   const { db } = services.runtime;

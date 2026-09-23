@@ -87,6 +87,7 @@ không phải thứ tự đánh số ban đầu: vòng red-team đã đảo Stag
 | 3 | [Composer, timeline và nội dung tới agent](./phase-03-composer-timeline-and-agent-content.md) | Done |
 | 4 | [Journey đính kèm và evidence](./phase-04-attachments-journey-and-evidence.md) | Done |
 | 5 | [Registry app-intent dùng chung cho chat, click và voice](./phase-05-shared-app-control-intents.md) | Done |
+| 6 | [Voice và click chạm cùng một widget action state (T66)](./phase-06-voice-widget-action-parity.md) | Done — journey `apps/web/e2e/voice-widget-action.spec.ts` ("a spoken action and the same click reach the same state") xanh, và ledger T66 chuyển sang `PASS` kèm tên test đó |
 | 7 | [Cửa sổ desktop compact, shell load client và bridge có tên](./phase-07-desktop-compact-window.md) | Done — smoke Electron **đã chạy xanh** (exit 0, `"failed": []`, mọi check `true`), và CI chạy nó mỗi lần push trong job `desktop smoke (xvfb)` |
 | 8 | [Thanh voice tối giản, intent cửa sổ và phiên sống qua hai chiều](./phase-08-minimal-voice-bar.md) | Done |
 | 9 | [Gợi ý từ việc gần đây](./phase-09-recent-work-suggestions.md) | Done |
@@ -133,9 +134,9 @@ Phase 12 là cổng cuối, không sửa giữa các stage ship.
 ## Success Criteria
 
 - [x] `pnpm verify` xanh: invariant + typecheck + lint + unit test. — chạy trên cây hiện tại của `main`:
-      **1427 passed, 7 skipped (1434)**, và 7/7 invariant PASS.
+      **1474 passed, 7 skipped (1481)**, và 7/7 invariant PASS.
 - [x] `pnpm test:e2e` xanh, có journey mới cho từng tính năng trong năm mục của issue. — **83 passed, 0 failed**
-      (chromium, chạy trên cây hiện tại `c4e7576`). CI cũng chạy nó trong job `e2e` (PR #44 đã merge, xanh ở
+      (chromium, chạy trên cây hiện tại). CI cũng chạy nó trong job `e2e` (PR #44 đã merge, xanh ở
       cả hai lần chạy), và xanh lại trong CI của `main` ở run 35461135410 (commit `bac2f2e`), nên cổng này không còn phụ thuộc vào một lần chạy tay.
 - [x] `pnpm --filter @clarkcant/app-desktop run smoke` xanh, chạy trên máy có display, output JSON lưu lại. — Đã
       chạy trên máy này: exit 0, `"failed": []`, mọi check `true`, gồm "compact mode reads back the bounds
@@ -152,7 +153,7 @@ Phase 12 là cổng cuối, không sửa giữa các stage ship.
       `FakePiAdapter.promptsFor()`.
 - [x] Ảnh đính kèm render trong timeline **sau reload** (đọc từ history). — `apps/web/e2e/attachments.spec.ts`.
 - [x] Voice chạy được cả nhóm lệnh điều khiển app; lệnh dạng lệnh mà không khớp intent thì nói chưa hiểu và
-      **không hành động**; câu hỏi bình thường vẫn tới agent. — `apps/web/e2e/voice-control.spec.ts` (5 journey)
+      **không hành động**; câu hỏi bình thường vẫn tới agent. — `apps/web/e2e/voice-control.spec.ts` (8 journey: mở Settings, đổi tab được gọi tên, thoát app hỏi trước, lệnh lạ bị từ chối, kết thúc phiên, về home, đính kèm, lệnh cửa sổ bị từ chối trong browser)
       và `packages/core/test/app-intents.spec.ts`.
 - [x] Thoát app chỉ xảy ra sau một lần xác nhận lấy từ route confirm; token dùng lại bị từ chối. —
       `apps/runtime/test/app-intents.spec.ts` ("is not executable until the confirmation route returns it").
@@ -161,6 +162,10 @@ Phase 12 là cổng cuối, không sửa giữa các stage ship.
       reach the same state"), xanh và nằm trong suite.
 - [x] Gợi ý rỗng thì fallback về chip tĩnh hiện có, và không gọi model để sinh gợi ý. —
       `apps/web/e2e/suggestions.spec.ts`, `apps/runtime/test/suggestions.spec.ts`.
+- [x] Seed **hai** phiên khác nhau thì gợi ý phản ánh phiên **gần nhất** (tiêu chí của chính issue, không chỉ của
+      plan). — `apps/web/e2e/suggestions.spec.ts` — "with two sessions behind it, the offer is the one touched
+      last": hai conversation được seed lệch nhau về thời gian, và `ref` của gợi ý `conversation` bằng id của
+      phiên mới hơn. Một seed đơn không chứng minh được điều này, nên journey cũ chỉ nói được rằng có nguồn.
 - [x] Xoá một memory item thì item đó không còn trong brief của lượt sau (đọc lại từ store). —
       `apps/runtime/test/memory.spec.ts` ("a record that is deleted is gone from the next turn's brief") và
       `apps/web/e2e/memory.spec.ts`.
@@ -171,27 +176,43 @@ Phase 12 là cổng cuối, không sửa giữa các stage ship.
 Trước đó smoke desktop được ghi là "cần display" và chưa từng chạy — đó là một kết luận sai về máy này, không phải một
 điều kiện còn thiếu. Việc còn lại là nợ kỹ thuật có tên ở mục dưới, không phải tiêu chí của plan.
 
-## Gates còn mở (cần người xác nhận, không chặn code)
+Đã sửa xong và đo được, không còn là tiêu chí chưa đạt:
 
-- **Kích thước thanh voice tối giản trên display thật.** Issue ghi "~20×50px" cho *icon*; Done-when
-  ghi "bounds ≈20×50 khi compact". Plan lấy 20×50 làm **sàn** `setMinimumSize` và để thanh có kích
-  thước đủ chứa hai icon (hằng số có tên ở Phase 7). Cần chốt con số cuối trên máy thật; trên Windows
-  còn một sàn tracking size của OS mà chỉ display thật mới đo được.
-- **Loại file và ngưỡng.** Lấy đề xuất của issue: ảnh, PDF, text/markdown, tối đa 25 MB mỗi file.
-- **Lệnh voice nào được thoát app không cần xác nhận.** Lấy đề xuất của issue: luôn hỏi.
-- **Phạm vi gợi ý.** Chốt: node local (khớp với phạm vi voice).
-- **PDF và ảnh tới model.** Adapter chỉ nhận `text`, nên ảnh/PDF tới model dưới dạng **ref opaque**
-  cộng tool `read_attachment` của node; node chưa có bộ trích PDF nên tool trả lời trung thực rằng
-  chưa đọc được nội dung nhị phân. Kiểm chứng "model nhìn thấy ảnh" cần provider thật → ghi BLOCKED.
-- **Xoá conversation.** Retention thật (xoá blob khi conversation bị xoá) cần một đường xoá
-  conversation; repo chưa có, và 4 bảng tham chiếu không cascade. Plan giao
-  `releaseConversationAttachments` (có test) và ghi việc thêm route xoá conversation là gap có tên.
+- **`pnpm test:e2e` xanh** — **78 passed, 0 failed**. Bốn lỗi đỏ sằn ở `7f3127f` đã được sửa tại gốc:
+  T66 (trang thiếu handler cho frame `widget-action-result`), T73 (panel có hai effect cùng trigger, effect sau ghi đè
+  tab vừa được gọi tên), `appearance.spec.ts:277` (spec đòi ô model trong khi chính file này có journey khác khẳng định
+  node không có model — một node dùng chung không thể vừa có catalogue vừa báo không có), và `j1.spec.ts` (node fixture không có
+  turn control nên đường background bị từ chối, cộng thêm một phụ thuộc thứ tự: journey "header không nói gì khi không có" chỉ
+  đúng khi nó chạy trước journey tạo phiên nền).
+- **T66 → PASS** và **T73 → PASS**: cả hai journey đã xanh và nằm trong suite, ledger ghi đúng trạng thái kèm tên test.
+## Quyết định đã chốt, và nợ kỹ thuật còn lại
+
+Bốn câu hỏi mở ở giai đoạn lập kế hoạch đã được chốt trước khi thi công, nên chúng không còn là gate: ba PR ghép
+trên một nhánh; blob giữ theo conversation kèm quota theo principal; voice chỉ điều khiển app của node này; và tab
+Memory là xem–nguồn–rồi–xoá. Loại file và ngưỡng lấy đúng đề xuất của issue (ảnh, PDF, text/markdown, tối đa 25 MB
+mỗi file), và chỉ `app.quit` cần xác nhận. Kích thước thanh tối giản đã được đo trên cửa sổ thật: smoke đọc lại
+`getBounds()` và `getMinimumSize()` từ window và cả hai đều `true`, với 20×50 là sàn.
+
+Còn lại là nợ kỹ thuật có tên, không phải tiêu chí của plan:
+
+- ~~Extractor PDF/ảnh, và một adapter nhận được nội dung ảnh trong prompt~~ — **đã đóng**: PDF được trích văn
+  bản (`apps/runtime/src/pdf-text.ts`, PR #64) và ảnh được giao nguyên block ảnh cho SDK (PR #66: `toSdkTool`
+  phát `{ type: "image", data, mimeType }`, `read_attachment` trả chính bức ảnh). Nguyên nhân gốc hoá ra nằm ở
+  adapter, chỗ gộp mọi kết quả tool thành một block text. Phần còn phụ thuộc provider là phán đoán của model
+  trên nội dung đó, và các check cần provider thật vẫn là opt-in.
+- Route xoá conversation; retention hiện là `releaseConversationAttachments`.
+- ~~Nguồn `memory` trong gợi ý~~ — **đã đóng**: `buildSuggestions` nay phát nguồn `memory` từ chính bảng mà tab
+  Memory đọc (`listMemoryRecords`), nên contract không còn khai một nguồn không bao giờ xuất hiện. Test:
+  `apps/runtime/test/suggestions.spec.ts` — "offers something it was asked to remember, and says that is where it came
+  from" (chip trỏ đúng `memoryId`, và nói rõ nguồn).
+- Scoped session token cho voice.
+- Các check cần provider thật (`[calibration]`, `[jev-live]`): cần `CLARKCANT_JEV_LIVE=1` và một key.
 
 ## Red Team Review
 
 Bốn lăng kính đối nghịch (Assumption Destroyer, Failure Mode Analyst, Scope & Complexity Critic,
-Security Adversary) chạy trên ba reviewer độc lập + một checkpoint `kongming`; 14 phát hiện có
-`file:line`, 12 được chấp nhận và đã sửa vào plan, 2 bị từ chối.
+Security Adversary) chạy trên ba reviewer độc lập + một checkpoint `kongming`; 20 phát hiện có
+`file:line`, 19 được chấp nhận (một trong số đó đổi hướng thay vì sửa thẳng) và 1 bị từ chối kèm lý do.
 
 | # | Phát hiện | Mức | Quyết định | Sửa ở đâu |
 |---|-----------|-----|------------|-----------|
@@ -216,7 +237,7 @@ Security Adversary) chạy trên ba reviewer độc lập + một checkpoint `ko
 | 19 | Brief memory 20 dòng × 2000 ký tự mỗi lượt bất kể liên quan | Advisory | **Accept** | Phase 10: trần 12 dòng và 4000 ký tự tổng, có test |
 | 20 | Reorder: registry + T66 trước phần cửa sổ | Advisory | **Accept** | Thứ tự Stage B nay là 5 → 6 → 7 → 8 |
 
-Đã kiểm lại các phát hiện bằng `grep`/`read` trước khi sửa; cả 12 phát hiện được chấp nhận đều có
+Đã kiểm lại các phát hiện bằng `grep`/`read` trước khi sửa; cả 19 phát hiện được chấp nhận đều có
 `file:line` resolve được trong repo ở commit `7f3127f`.
 
 ## Validation log
@@ -240,7 +261,8 @@ Security Adversary) chạy trên ba reviewer độc lập + một checkpoint `ko
 ### Red-team verification (2026-09-19)
 
 - Reviewers: 2 độc lập (assumption/failure, scope/security) + 1 checkpoint kongming.
-- Phát hiện: 20 | Chấp nhận: 17 | Từ chối kèm lý do: 1 (ghi nhận) | Trùng lặp đã gộp: 2.
+- Phát hiện: 20 | Chấp nhận: 19 (một trong số đó đổi hướng thay vì sửa thẳng) | Từ chối kèm lý do: 1. Con số này
+  đếm từ chính bảng ở §Red Team Review, để hai chỗ trong cùng một tài liệu không nói hai điều khác nhau.
 - Kiểm lại bằng `git status`: reviewer không sửa file nào; mọi phát hiện đến từ đọc source.
 
 - 2026-09-19 (v1): plan khởi tạo; chốt bốn quyết định với user.

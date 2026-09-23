@@ -44,6 +44,7 @@ import {
   describeAppIntent,
 } from "@clarkcant/contracts";
 import { deletePreference, getPreference, recordAppIntentEvent, resolveAppIntent, setPreference } from "@clarkcant/core";
+import type { WidgetTarget } from "@clarkcant/core";
 import { type Database } from "@clarkcant/storage";
 
 export interface AppIntentDeps {
@@ -51,6 +52,14 @@ export interface AppIntentDeps {
   nodeId: string;
   now: () => Instant;
   newId: (prefix: string) => string;
+  /**
+   * The widgets a spoken or typed sentence may name.
+   *
+   * Supplied by the runtime from the canonical catalogue rather than imported by the matcher, which
+   * is what keeps `@clarkcant/core` free of a dependency on the catalogue (the pack's sample recipe
+   * imports `core`, so the other direction would be a cycle).
+   */
+  widgetTargets?: readonly WidgetTarget[];
 }
 
 const PENDING_PREFIX = "app.intent.pending.";
@@ -176,13 +185,15 @@ export function decideAppIntent(
     ...(input.request.kind === undefined
       ? {}
       : {
-          intent: appIntentSchema.parse(
-            input.request.tab === undefined
-              ? { kind: input.request.kind }
-              : { kind: input.request.kind, tab: input.request.tab },
-          ),
+          intent: appIntentSchema.parse({
+            kind: input.request.kind,
+            ...(input.request.tab === undefined ? {} : { tab: input.request.tab }),
+            ...(input.request.definitionId === undefined ? {} : { definitionId: input.request.definitionId }),
+            ...(input.request.family === undefined ? {} : { family: input.request.family }),
+          }),
         }),
     mintConfirmationToken: () => randomUUID() as ConfirmationToken,
+    ...(deps.widgetTargets === undefined ? {} : { widgetTargets: deps.widgetTargets }),
   });
 
   if (resolution.kind === "none" || resolution.kind === "refused") {

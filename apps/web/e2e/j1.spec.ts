@@ -218,11 +218,10 @@ test("a highlighted passage can be attached to the next prompt", async ({ page }
 });
 
 /*
- * Ordered before the journey below on purpose, and the order is the point.
+ * The empty case, ordered before the journey below.
  *
- * Both journeys run against one shared node, so this one's premise - that nothing has asked for background work -
- * only holds while it runs first. With the order reversed it fails because the journey below has just started a
- * session, which is not a bug in either journey but a dependency between them.
+ * It reads best before anything has run on this node. The order is not load-bearing any more: the mark is about work in
+ * flight, so a session that has finished does not keep it on screen — which the journey below asserts at its end.
  */
 test("the header says nothing about background work when there is none", async ({ page }) => {
   // The empty case, asserted rather than assumed: a mark that showed "0" would be a permanent line of noise, and the
@@ -253,4 +252,9 @@ test("a selected passage can be sent to a background session", async ({ page }) 
   // And the header now reports the work it started: this is the count the mark exists for, and it is the only way the
   // number is verifiable in a browser - the registry fills when something asks for background work, not on its own.
   await expect(page.locator("[data-background-count='true']")).toBeVisible({ timeout: 20_000 });
+
+  // And it goes away when the work does. The mark is about work in flight: the fixture session finishes in about a
+  // second and a half, and the client polls every five, so this is asserting that the header stops saying something
+  // about work that is over rather than that it says nothing the instant a worker exits.
+  await expect(page.locator("[data-background-sessions]")).toHaveCount(0, { timeout: 20_000 });
 });

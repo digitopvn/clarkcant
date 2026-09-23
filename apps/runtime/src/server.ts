@@ -201,9 +201,10 @@ function writeResult(response: ServerResponse, result: GatewayResponse, warn: (l
   if (result.binary !== undefined) {
     headers["content-type"] = result.binary.contentType;
     headers["content-length"] = String(result.binary.bytes.byteLength);
-    // Private: these bytes are authorized by a token, and a shared cache in front of a node must not
-    // hand one principal's file to another.
-    headers["cache-control"] = "private, max-age=300";
+    // Private by default: these bytes are authorized by a token, and a shared cache in front of a node must not
+    // hand one principal's file to another. A route that says `no-store` gets it, because the transport owns this
+    // key and a route cannot set it itself.
+    headers["cache-control"] = result.binary.cache === "no-store" ? "no-store" : "private, max-age=300";
     for (const [key, value] of Object.entries(result.binary.headers ?? {})) {
       const name = key.toLowerCase();
       if (HOST_OWNED_HEADERS.includes(name)) {

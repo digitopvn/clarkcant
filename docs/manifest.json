@@ -20,8 +20,8 @@
     },
     {
       "path": "README.md",
-      "bytes": 5298,
-      "sha256": "524daf4ac7bfcbfe461256171d372b06d93a08c47cc186fc4323de313f7b973e"
+      "bytes": 7426,
+      "sha256": "f9f97b9cd6ec869ab2ce8013eeb6282ce7d92e551cab66d2df77613ae7c42e34"
     },
     {
       "path": "browser-computer-use.md",
@@ -30,8 +30,8 @@
     },
     {
       "path": "distributed-runtime.md",
-      "bytes": 12896,
-      "sha256": "1c2da039084f33e22c4952996eb00edc0f3ed2053f38054596d0aafc5442bb0f"
+      "bytes": 15450,
+      "sha256": "606cb70dfd2bac096db923035c7815b7f604d6c8eacfd3540c55c5e03ea8c89c"
     },
     {
       "path": "examples/README.md",
@@ -74,9 +74,14 @@
       "sha256": "3d1b844e23ed173c48248f4843fb109bb44072d79154a426e7e2297637ae4997"
     },
     {
+      "path": "platform-smoke.md",
+      "bytes": 3641,
+      "sha256": "ab28bd80c30fe9d73430a457d4c7b3b0922dac7c9757891b60f0189b742de379"
+    },
+    {
       "path": "research-and-decisions.md",
-      "bytes": 15838,
-      "sha256": "e6b071f48a70c2a274345850503627366173efb8c63f724ea9d59ba29cfc9028"
+      "bytes": 18544,
+      "sha256": "bfe74b8707631b575d3194d089e7899f328ea300bc3c241ee73f63623d8c0ec9"
     },
     {
       "path": "scope-lock.md",
@@ -85,18 +90,18 @@
     },
     {
       "path": "system-architecture.md",
-      "bytes": 37883,
-      "sha256": "6ecda19ab5ac4cbc0e5b6c0bf68a4f834791df1304faf44421f2fc457ca56e51"
+      "bytes": 48074,
+      "sha256": "510e26df5c9aeb3701a3dacb742d1a91700e5a3bd5542bb2face58f543ec90b8"
     },
     {
       "path": "widget-development.md",
-      "bytes": 16756,
-      "sha256": "fb55baa52dc9b60bd34ce69b3b670c86eb2007ed57698fbd34f31748e56d960b"
+      "bytes": 28670,
+      "sha256": "f0bf7966d1ac3c0afee398adafb478f8f912ba1aa708832df6e2fd61f284f240"
     },
     {
       "path": "widgets-and-extensions.md",
-      "bytes": 27449,
-      "sha256": "3263bc181c616bc5afa20f1c459f54e7959a85f47134de26b16c100888f0805d"
+      "bytes": 28852,
+      "sha256": "85b0fec740180fdccf0b4d144abc4d72f09f9bae8c114d0bc611b3ecbddfc531"
     },
     {
       "path": "mini-app/jev-configuration.md",

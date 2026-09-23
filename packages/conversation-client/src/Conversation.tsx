@@ -22,7 +22,7 @@ import { hasDesktopChrome, requestWindowMode } from "./desktop-compact.ts";
 import { DesktopChrome } from "./desktop-chrome.tsx";
 import { fetchSuggestions } from "./suggestions.ts";
 import type { Suggestion } from "@clarkcant/contracts";
-import { ReasoningBlock, ToolActivityBlock, type BlockActions, type ArtifactOpenState, type ControlSessionActionState, type TaskStopState } from "./blocks.tsx";
+import { ReasoningBlock, ToolActivityBlock, type BlockActions, type ArtifactOpenState, type ControlSessionActionState, type PackageInstallState, type TaskStopState } from "./blocks.tsx";
 import { composerTextareaHeight } from "./composer-height.ts";
 import {
   attachmentReducer,
@@ -47,6 +47,12 @@ import { Orb } from "./Orb.tsx";
 import { useTypewriterPlaceholder, prefersReducedMotion } from "./typewriter.ts";
 import { VoiceOverlay } from "./VoiceOverlay.tsx";
 import { SettingsPanel } from "./settings/SettingsPanel.tsx";
+import { WidgetLibrarySurface } from "./widget-library/WidgetLibrarySurface.tsx";
+import {
+  CLOSED_LIBRARY,
+  applyLibraryAction,
+  type WidgetLibraryState,
+} from "./widget-library/widget-library-state.ts";
 import { runAppIntent, type AppIntentHost } from "./app-intents.ts";
 import { resolveRenderer, toRendererDataset } from "./renderers.tsx";
 import { MiniAppSurface, type CompositeSurfaceView } from "./mini-app-surface.tsx";
@@ -211,6 +217,15 @@ export function Conversation({
    */
   const liveTrigger = useRef<HTMLElement | null>(null);
   const [connection, setConnection] = useState<ConnectionState>("connecting");
+  /**
+   * A counter that tells the header's background mark to read again now.
+   *
+   * The mark polls, because it is a glance at a number rather than a stream. Polling alone would miss work that is
+   * shorter than the interval — a session can last a second and a half while the poll is every five — so the action
+   * that starts work says so and the mark reads immediately instead of waiting for the next tick. Only the start needs
+   * this; the end is what the poll is for.
+   */
+  const [backgroundTick, setBackgroundTick] = useState(0);
   const [draft, setDraft] = useState("");
   const [busy, setBusy] = useState(false);
   /**
@@ -270,6 +285,16 @@ export function Conversation({
    */
   const composerFrom = useRef<number | undefined>(undefined);
   const [uiCheckOpen, setUiCheckOpen] = useState(false);
+  /**
+   * The Widget Library, as surface state rather than a route.
+   *
+   * It is a sibling of the transcript, so opening it cannot unmount the conversation, its pins, its
+   * live-effect owners or its voice session. Closing it returns the closed state exactly.
+   */
+  const [widgetLibrary, setWidgetLibrary] = useState<WidgetLibraryState>(CLOSED_LIBRARY);
+  const openWidgetLibrary = useCallback((mode: "browse" | "develop"): void => {
+    setWidgetLibrary((current) => applyLibraryAction(current, { kind: "open", mode }));
+  }, []);
   /*
    * Bumped when the node reports that a spoken action has run.
    *
@@ -327,10 +352,6 @@ export function Conversation({
    * never the screen.
    */
   const [dynamicSuggestions, setDynamicSuggestions] = useState<Suggestion[]>([]);
-
-  useEffect(() => {
-    if (compactSurface) setVoiceOpen(true);
-  }, [compactSurface]);
 
   useEffect(() => {
     let cancelled = false;
@@ -977,6 +998,13 @@ export function Conversation({
       goHome: restartSession,
       openFilePicker: () => attachmentInput.current?.click(),
       endVoice: () => setVoiceOpen(false),
+      openWidgetLibrary: (mode: "browse" | "develop", target?: { definitionId?: string; family?: string }) => {
+        // The same state machine the Settings buttons drive: a spoken command and a click land on the
+        // same library state, which is the property the app-intent registry exists to buy.
+        setWidgetLibrary((current) =>
+          applyLibraryAction(current, { kind: "open", mode, ...(target === undefined ? {} : { target }) }),
+        );
+      },
       ...(desktop
         ? {
             expandWindow: () => {
@@ -1045,6 +1073,45 @@ export function Conversation({
     return () => clearTimeout(timer);
   }, [intentNotice]);
 
+  /**
+   * Opens the voice surface, with a conversation for it to answer in.
+   *
+   * The node answers a spoken sentence inside the conversation the agent works in, so a session opened before any
+   * conversation exists has nowhere to put what was said: the sentence is transcribed and dropped, and the person
+   * hears nothing at all. Measured on the real path, the same audio with a conversation bound produced the agent's
+   * answer and 468 KB of speech back, and without one it produced neither. So the conversation is made first, which
+   * is also what the first attachment does.
+   */
+  const openVoice = useCallback(async (): Promise<void> => {
+    if (conversationId !== undefined) {
+      setVoiceOpen(true);
+      return;
+    }
+    try {
+      const target = (await client.createConversation("Conversation")).conversationId;
+      setConversationId(target);
+      onConversationReady?.(target);
+      setVoiceOpen(true);
+    } catch (cause) {
+      // Said where the person is looking, and the microphone stays off: a session that cannot answer is worse than an
+      // honest refusal.
+      setIntentNotice(
+        cause instanceof Error ? `Không mở được phiên giọng nói: ${cause.message}` : "Không mở được phiên giọng nói.",
+      );
+    }
+  }, [client, conversationId, onConversationReady]);
+
+  /*
+   * The compact surface opens voice by itself.
+   *
+   * A desktop window shrinking to the voice bar is the same act as pressing the voice button, so it goes through the
+   * same path and gets a conversation to answer in. It used to set the flag directly, which opened a session the node
+   * had nowhere to answer - the same failure a person hits by pressing the button first.
+   */
+  useEffect(() => {
+    if (compactSurface) void openVoice();
+  }, [compactSurface, openVoice]);
+
   // A command that was typed and recognised is answered by the host, so the node sends the decision with the timeline
   // and the page carries it out here - the same executor a spoken command and a click use.
   useEffect(() => {
@@ -1076,6 +1143,42 @@ export function Conversation({
   );
 
   /**
+   * Answer a question the agent asked.
+   *
+   * The node records it and opens a new turn, and the timeline that comes back is the source of truth for what
+   * the card should say next — this handler holds no state of its own beyond clearing the last error.
+   */
+  /**
+   * The answer being composed, and the question whose answer is on its way.
+   *
+   * Both live here rather than in the card because the card is a pure function of what it is given: state inside
+   * it would be a second copy of a fact this conversation already tracks, and the two would disagree after a
+   * reload. The draft is cleared the moment an answer leaves, so a card never re-offers what was just sent.
+   */
+  const [questionDraft, setQuestionDraft] = useState<
+    { questionId: string; chosen: string[]; text: string } | undefined
+  >(undefined);
+  const [questionPendingId, setQuestionPendingId] = useState<string | undefined>(undefined);
+
+  const answerQuestion = useCallback(
+    (input: { questionId: string; text?: string; optionIds?: string[]; confirmed?: boolean }) => {
+      if (conversationId === undefined) return;
+      setError(undefined);
+      setQuestionPendingId(input.questionId);
+      setQuestionDraft(undefined);
+      void client
+        .answerQuestion(conversationId, input.questionId, input)
+        .then((result) => applyTimeline(result.timeline))
+        .catch((cause: unknown) => {
+          // The answer never reached the node, so the card may be tried again rather than staying disabled.
+          setQuestionPendingId(undefined);
+          setError(cause instanceof Error ? cause.message : String(cause));
+        });
+    },
+    [applyTimeline, client, conversationId],
+  );
+
+  /**
    * Approvals that already have a receipt in this transcript.
    *
    * The card in storage stays `pending` because messages are never rewritten, so the decision is read
@@ -1096,6 +1199,34 @@ export function Conversation({
   }, [timeline]);
 
   /**
+   * Questions this transcript already has an answer for.
+   *
+   * The same derivation as `decidedApprovals`, for the same reason: a card in storage keeps saying `waiting`
+   * because messages are never rewritten, and the record the node wrote when the answer arrived is what says
+   * otherwise. Without it a reload would offer the question again.
+   */
+  const answeredQuestions = useMemo(() => {
+    const answered = new Set<string>();
+    for (const message of timeline?.messages ?? []) {
+      for (const block of message.blocks) {
+        if (block.type !== "tool-activity" || block.name !== "ask_user_question") continue;
+        const args = (block.args ?? {}) as Record<string, unknown>;
+        if (typeof args.questionId === "string") answered.add(args.questionId);
+      }
+    }
+    return [...answered];
+  }, [timeline]);
+
+  /*
+   * Once the transcript carries the record of the answer, nothing is in flight any more. The card reads that
+   * record rather than a flag of its own, which is what keeps a reload from leaving a card disabled forever.
+   */
+  useEffect(() => {
+    if (questionPendingId === undefined) return;
+    if (answeredQuestions.includes(questionPendingId)) setQuestionPendingId(undefined);
+  }, [answeredQuestions, questionPendingId]);
+
+  /**
    * What the node said about the last secret submitted through a card.
    *
    * Held here rather than in the card because the card is a message in a transcript: it is re-rendered from
@@ -1103,8 +1234,54 @@ export function Conversation({
    * says. This is a fact about now, so it lives with the other facts about now.
    */
   const [credentialStatus, setCredentialStatus] = useState<{ requestId: string; message: string } | undefined>(undefined);
+
+  /**
+   * Which model profile the hotkey is on.
+   *
+   * Held here rather than derived from the settings panel, because the label sits beside the composer and has to be
+   * right without the panel ever having been opened. Undefined means "not read yet", which is different from "no
+   * pool": a node with no pool runs the model it was configured with and shows nothing here.
+   */
+  const [modelAlias, setModelAlias] = useState<string | undefined>(undefined);
+  const [modelNote, setModelNote] = useState<string>("");
+
+  useEffect(() => {
+    client
+      .modelPool()
+      .then((answer) => setModelAlias(answer.currentAlias))
+      .catch(() => undefined);
+  }, [client]);
+
+  /**
+   * One key to change the model, on the window rather than on the composer.
+   *
+   * A model switch is not typing — it has to work while the transcript has focus — and `preventDefault` because
+   * Cmd/Ctrl+] is a browser shortcut in some layouts and a resize gesture in others, neither of which should happen
+   * while somebody is choosing a model. What the press does is write a preference: the answer says it applies to a
+   * new generation, because a running turn keeps the model it started with.
+   */
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent): void => {
+      if (event.key !== "]" || !(event.metaKey || event.ctrlKey)) return;
+      event.preventDefault();
+      void client
+        .cycleModel()
+        .then((answer) => {
+          setModelAlias(answer.alias);
+          setModelNote(`Generation tiếp theo dùng ${answer.alias}.`);
+        })
+        .catch((cause: unknown) =>
+          setModelNote(cause instanceof Error ? cause.message : String(cause)),
+        );
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [client]);
   const submitCredential = useCallback(
-    (input: { requestId: string; fields: { name: string; value: string }[] }): void => {
+    (input: {
+      requestId: string;
+      fields: { name: string; value: string; description?: string; consumer?: string }[];
+    }): void => {
       client
         .putCredential({ fields: input.fields })
         .then((result) =>
@@ -1200,6 +1377,48 @@ export function Conversation({
    */
   const [artifactOpen, setArtifactOpen] = useState<Record<string, ArtifactOpenState>>({});
 
+  /**
+   * What became of each install attempt, keyed by package id.
+   *
+   * Four outcomes rather than a boolean, because they are four different things to tell someone: it is happening, it
+   * happened, a decision is needed before it can happen, or it was refused with a reason. "Not installed" would
+   * collapse the middle two, and one of those is waiting on the reader while the other is not.
+   */
+  const [packageInstall, setPackageInstall] = useState<Record<string, PackageInstallState>>({});
+
+  const installPackage = useCallback(
+    ({ packageId, version }: { packageId: string; version: string }) => {
+      setPackageInstall((current) => ({ ...current, [packageId]: { status: "installing" } }));
+      void client.installPackage(packageId, version).then(
+        (answer) => {
+          setPackageInstall((current) => ({
+            ...current,
+            [packageId]:
+              answer.code === "APPROVAL_REQUIRED"
+                ? { status: "approval-required", message: answer.message ?? "Cần bạn duyệt trước khi cài." }
+                : {
+                    status: "installed",
+                    message: "Đã cài.",
+                    ...(answer.generationId === undefined ? {} : { generationId: answer.generationId }),
+                    ...(answer.verified === undefined ? {} : { verified: answer.verified }),
+                  },
+          }));
+        },
+        (error: unknown) => {
+          // The node's own reason, where it gave one: it is the only thing that can say *why* the install stopped.
+          setPackageInstall((current) => ({
+            ...current,
+            [packageId]: {
+              status: "refused",
+              message: error instanceof Error ? error.message : "Không cài được gói này.",
+            },
+          }));
+        },
+      );
+    },
+    [client],
+  );
+
   const openArtifact = useCallback(
     (artifactId: string) => {
       setArtifactOpen((current) => ({ ...current, [artifactId]: { status: "pending" } }));
@@ -1274,6 +1493,19 @@ export function Conversation({
     () => ({
       onApprovalDecide: decideApproval,
       decidedApprovals,
+      onQuestionAnswer: answerQuestion,
+      answeredQuestions,
+      ...(questionDraft === undefined ? {} : { questionDraft }),
+      onQuestionDraft: (input) =>
+        setQuestionDraft((current) => {
+          const sameQuestion = current?.questionId === input.questionId;
+          return {
+            questionId: input.questionId,
+            chosen: input.chosen === undefined ? (sameQuestion ? current.chosen : []) : [...input.chosen],
+            text: input.text === undefined ? (sameQuestion ? current.text : "") : input.text,
+          };
+        }),
+      ...(questionPendingId === undefined ? {} : { questionPendingId }),
       ...(decidingApprovalId === undefined ? {} : { decidingApprovalId }),
       onCredentialSubmit: submitCredential,
       ...(credentialStatus === undefined ? {} : { credentialStatus }),
@@ -1281,8 +1513,6 @@ export function Conversation({
        * A chosen answer is sent as the user's own message — the same call the composer makes — so a click and a
        * typed reply are one act. Nothing here invents a second route into the agent for a click to take.
        */
-      onQuestionAnswer: ({ answer }) => void send(answer),
-      openQuestionIds: openCardIds.questions,
       /* The same path as a question: the answers become the user's own next message. */
       onFormSubmit: ({ summary }) => void send(summary),
       openFormIds: openCardIds.forms,
@@ -1290,11 +1520,13 @@ export function Conversation({
       taskStop,
       onArtifactOpen: ({ artifactId }) => openArtifact(artifactId),
       artifactOpen,
+      onInstallPackage: installPackage,
+      packageInstall,
       onControlTakeover: ({ sessionId }) => changeBrowserSession(sessionId, "takeover"),
       onControlStop: ({ sessionId }) => changeBrowserSession(sessionId, "stop"),
       controlSession,
     }),
-    [artifactOpen, controlSession, changeBrowserSession, credentialStatus, decideApproval, decidedApprovals, decidingApprovalId, openArtifact, openCardIds, send, stopTask, submitCredential, taskStop],
+    [artifactOpen, controlSession, changeBrowserSession, credentialStatus, decideApproval, decidedApprovals, decidingApprovalId, installPackage, openArtifact, openCardIds, packageInstall, questionDraft, questionPendingId, send, stopTask, submitCredential, taskStop],
   );
 
   const renderSurface = useCallback(
@@ -1361,9 +1593,8 @@ export function Conversation({
       }
 
       const Renderer = resolveRenderer(definitionId);
-      if (Renderer === undefined || instance === undefined) {
-        // An unknown definition is a normal outcome, not a failure: the snapshot's text alternative
-        // is what history keeps.
+      if (instance === undefined) {
+        // Without the instance there is nothing to open, and the snapshot's text alternative is what history keeps.
         return (
           <div className="cc-card cc-freshness" data-widget-fallback="true" style={{ padding: "var(--cc-space-md)" }}>
             {input.textAlternative}
@@ -1376,6 +1607,23 @@ export function Conversation({
 
       return (
         <div data-widget-instance={instance.instanceId} data-widget-definition={definitionId}>
+          {Renderer === undefined ? (
+            /*
+             * No catalog renderer for this definition — which is exactly the case for a widget that runs in its own
+             * frame. The text alternative stands in for the inline view, and the live view is still offered below.
+             *
+             * This used to be an early return, and the difference is the whole control: an instance whose definition
+             * the client cannot draw rendered its fallback and nothing else, so there was no way to open it. A widget
+             * the client has no renderer for is not a widget nobody can look at.
+             */
+            <div
+              className="cc-card cc-freshness"
+              data-widget-fallback="true"
+              style={{ padding: "var(--cc-space-md)" }}
+            >
+              {input.textAlternative}
+            </div>
+          ) : (
           <Renderer
             definitionId={definitionId}
             props={instance.props}
@@ -1391,19 +1639,30 @@ export function Conversation({
               void action;
             }}
           />
+          )}
           {conversationId !== undefined && (
             <button
               className="cc-icon-btn"
               style={{ width: "auto", padding: "0 var(--cc-space-sm)", marginTop: "var(--cc-space-xs)" }}
-              data-pin-instance={instance.instanceId}
+              {...(Renderer === undefined
+                ? { "data-open-live": instance.instanceId }
+                : { "data-pin-instance": instance.instanceId })}
               onClick={() => {
-                void client
-                  .pin(conversationId, instance.instanceId)
+                /*
+                 * A widget the client has no renderer for opens its live view; one it can draw is pinned compact.
+                 * The distinction matters because the live view is the only place such a widget can be seen at all:
+                 * "pin it again" would put it on the shelf with nothing on it.
+                 */
+                const request =
+                  Renderer === undefined
+                    ? client.pin(conversationId, instance.instanceId, "expanded")
+                    : client.pin(conversationId, instance.instanceId);
+                void request
                   .then((result) => applyTimeline(result.timeline))
                   .catch((cause: unknown) => setError(cause instanceof Error ? cause.message : String(cause)));
               }}
             >
-              Ghim lại
+              {Renderer === undefined ? "Mở bản hiện tại" : "Ghim lại"}
             </button>
           )}
         </div>
@@ -1491,14 +1750,15 @@ export function Conversation({
             {connection === "ready" ? "Ready" : connection === "connecting" ? "Đang kết nối" : "Mất kết nối"}
           </div>
           {/* The work behind the conversation. Absent while there is none: a header that always said "0" would be a
-              permanent line of noise, and the count only matters when it is not zero. */}
-          <BackgroundSessionsMark client={client} />
+              permanent line of noise, and the count only matters when it is not zero. `backgroundTick` is what makes it
+              appear at once for work that may already be over by the next poll. */}
+          <BackgroundSessionsMark client={client} refreshKey={backgroundTick} />
           {/*
             The gear is the only settings affordance, which is why it is here rather than in a
             menu: a setting that is two clicks deep is a setting nobody checks. It opens a panel
             that reads the live tokens back off the document, so what it shows is what rendered.
           */}
-          <button type="button" className="cc-icon-btn" aria-label="Cài đặt" title="Cài đặt" data-settings="true" onClick={() => clickIntent("settings.open")}>
+          <button type="button" className="cc-icon-btn" aria-label="Cài đặt" title="Cài đặt" data-settings="true" data-widget-library-anchor="true" onClick={() => clickIntent("settings.open")}>
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
               <circle cx="12" cy="12" r="3" />
               <path d="M19.4 15a1.7 1.7 0 0 0 .34 1.87l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.7 1.7 0 0 0-1.87-.34 1.7 1.7 0 0 0-1 1.55V21a2 2 0 1 1-4 0v-.09A1.7 1.7 0 0 0 9 19.4a1.7 1.7 0 0 0-1.87.34l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.7 1.7 0 0 0 4.6 15a1.7 1.7 0 0 0-1.55-1H3a2 2 0 1 1 0-4h.09A1.7 1.7 0 0 0 4.6 9a1.7 1.7 0 0 0-.34-1.87l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.7 1.7 0 0 0 9 4.6a1.7 1.7 0 0 0 1-1.55V3a2 2 0 1 1 4 0v.09a1.7 1.7 0 0 0 1 1.55 1.7 1.7 0 0 0 1.87-.34l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.7 1.7 0 0 0 19.4 9v0a1.7 1.7 0 0 0 1.55 1H21a2 2 0 1 1 0 4h-.09a1.7 1.7 0 0 0-1.51 1z" />
@@ -1665,7 +1925,16 @@ export function Conversation({
                             return <ToolActivityBlock key={`live-tool-${String(segment.block.toolCallId ?? index)}`} block={segment.block} />;
                           }
                           if (segment.kind === "reasoning") {
-                            return <ReasoningBlock key={`live-reasoning-${index}`} block={{ type: "reasoning", content: segment.text }} />;
+                            // `last` is the whole signal: the live view is drawn in the order the turn produced it, so
+                            // the most recent segment is the one still arriving. Reasoning stops being that segment the
+                            // moment text or a tool call follows it, which is exactly when reasoning stopped.
+                            return (
+                              <ReasoningBlock
+                                key={`live-reasoning-${index}`}
+                                block={{ type: "reasoning", content: segment.text }}
+                                writing={last}
+                              />
+                            );
                           }
                           return (
                             <div key={`live-text-${index}`} className="cc-text" data-streaming={last ? "true" : undefined}>
@@ -1690,7 +1959,15 @@ export function Conversation({
       */}
       {conversationId !== undefined &&
         pins
-          .filter((pin) => pin.displayMode === "expanded" && instanceById.get(pin.instanceId)?.definitionId === "canvas.overview@1")
+          /*
+           * Any expanded pin whose instance this node knows, rather than one hardcoded definition.
+           *
+           * The filter used to name `canvas.overview@1`, which made the expanded live view a feature of exactly one
+           * widget: every other definition could be pinned and would then render nothing at all. The condition that
+           * matters is the one below — an expanded pin is a request for a live view — and which shape that view
+           * takes is the node's answer, not the client's guess.
+           */
+          .filter((pin) => pin.displayMode === "expanded" && instanceById.get(pin.instanceId) !== undefined)
           .map((pin) => (
             <div key={`live-${pin.pinId}`} className="cc-pin-expanded" data-pin-live={pin.pinId}>
               <PinnedLiveSurface
@@ -1853,7 +2130,9 @@ export function Conversation({
               aria-label="Nói bằng giọng nói"
               title="Nói bằng giọng nói"
               data-voice-open="true"
-              onClick={() => setVoiceOpen(true)}
+              onClick={() => {
+                void openVoice();
+              }}
             >
               ◉
             </button>
@@ -1862,6 +2141,21 @@ export function Conversation({
             </button>
           </form>
         </div>
+        {/*
+          The model this conversation will continue on.
+
+          Beside the composer because that is where the question is asked, and showing the alias rather than the
+          provider and model id because that is what the person named it. The note under it is what the last press
+          said — including that it applies to the next generation, which is the part a label alone would hide.
+        */}
+        {modelAlias !== undefined && (
+          <div className="cc-model-switch" data-model-label={modelAlias}>
+            <span className="cc-freshness">model: {modelAlias}</span>
+            <span className="cc-freshness" data-model-note="true">
+              {modelNote === "" ? "⌘] để đổi" : modelNote}
+            </span>
+          </div>
+        )}
         {/*
           A statusline, not a motto.
 
@@ -1941,6 +2235,16 @@ export function Conversation({
         resolvedTheme={resolvedTheme}
         onThemeChoice={applyThemeChoice}
         {...(onOrbChange === undefined ? {} : { onOrbChange })}
+        onOpenWidgetLibrary={openWidgetLibrary}
+      />
+
+      {/*
+        The Widget Library, beside the conversation rather than in place of it.
+      */}
+      <WidgetLibrarySurface
+        state={widgetLibrary}
+        client={client}
+        onAction={(action) => setWidgetLibrary((current) => applyLibraryAction(current, action))}
       />
 
       {/*
@@ -1964,6 +2268,9 @@ export function Conversation({
         onBackground={async (text) => {
           if (conversationId === undefined) return;
           await client.startBackground({ conversationId, text });
+          // Read the header's mark again now: the node has recorded the session before it answers, so a read here sees
+          // it running, and waiting for the next poll could be waiting longer than the work lasts.
+          setBackgroundTick((tick) => tick + 1);
         }}
       />
 

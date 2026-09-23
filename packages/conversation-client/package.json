@@ -24,9 +24,12 @@
     "@clarkcant/widget-sdk": "workspace:*",
     "highlight.js": "11.12.0",
     "marked": "18.0.13",
-    "react": "19.3.0"
+    "react": "19.3.0",
+    "@clarkcant/widget-host": "workspace:*",
+    "@clarkcant/widget-catalog": "workspace:*"
   },
   "devDependencies": {
+    "@clarkcant/data-canvas": "workspace:*",
     "@types/react": "^19.3.0"
   }
 }

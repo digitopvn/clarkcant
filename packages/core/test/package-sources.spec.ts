@@ -1,4 +1,4 @@
-import type { DirectoryEntry } from "@clarkcant/contracts";
+import { platformForHost, type DirectoryEntry, type Platform } from "@clarkcant/contracts";
 import { describe, expect, it } from "vitest";
 
 import { artifactMatchesPlan, resolvePackageSource, riskLaneFor } from "../src/package-sources.ts";
@@ -17,9 +17,11 @@ const ENTRY: DirectoryEntry = {
   version: "1.2.0",
   displayName: "Calendar Plus",
   description: "A compact agenda and week view.",
+  source: { kind: "local", path: "/tmp/pkg" },
   publisher: { id: "example", sourceUrl: "https://github.com/example/calendar-plus", license: "MIT" },
   preview: {},
   facets: ["ui"],
+  isolations: [{ facetKind: "ui", isolation: "isolated-ui" }],
   platforms: ["darwin-arm64", "linux-x64"],
   hostApi: { min: 1, max: 2 },
   permissionsSummary: ["network: api.example.test"],
@@ -28,14 +30,19 @@ const ENTRY: DirectoryEntry = {
   digest: "sha256:published-digest",
 };
 
-const HOST = { hostApi: 1, platform: "linux-x64" };
+const HOST: { hostApi: number; platform: Platform } = { hostApi: 1, platform: "linux-x64" };
+
+/** A host that can run a Windows package, and one that cannot. The pair is the interesting case. */
+const HOST_WINDOWS: { hostApi: number; platform: Platform } = { hostApi: 1, platform: "win32-x64" };
 
 /*
- * `platformSchema` has no Windows value. The fixture above originally said `win32-x64` and every case here failed
- * with "the directory entry does not match the schema" — which is a real gap rather than a typo: this repository's
- * own desktop app is Electron on Windows, so a package cannot currently declare the platform it is running on.
- * Left as a finding rather than widened here, because changing the platform vocabulary is a decision about the
- * marketplace's contract and not something a test fixture should settle.
+ * The fixture above originally said `win32-x64` and every case here failed with "the directory entry does not match
+ * the schema" — a real gap rather than a typo, since this repository's own desktop app is Electron on Windows and a
+ * package could not declare the platform it runs on. It was left as a finding, because widening the platform
+ * vocabulary is a decision about the marketplace's contract rather than something a test fixture should settle.
+ *
+ * That decision has been taken, so what was a comment is now a test: the same package is offered to a host that can
+ * run it and refused by one that cannot.
  */
 
 describe("what the resolver refuses", () => {
@@ -201,5 +208,108 @@ describe("matching an artifact to its plan", () => {
     // The case that would otherwise install anything: no digest on the plan and no digest on the artifact.
     expect(artifactMatchesPlan("", "")).toBe(false);
     expect(artifactMatchesPlan("sha256:a", "  ")).toBe(false);
+  });
+});
+
+describe("the platform vocabulary", () => {
+  it("names the host it is running on instead of leaving it unnamed", () => {
+    /*
+     * Node says `win32` and `x64`; a package says `win32-x64`. Without the mapping the two strings never meet, and
+     * the failure looks like "no package fits this host" rather than like a missing translation — which is exactly
+     * how the absent Windows value stayed quiet for so long.
+     */
+    expect(platformForHost("win32", "x64")).toBe("win32-x64");
+    expect(platformForHost("darwin", "arm64")).toBe("darwin-arm64");
+    expect(platformForHost("linux", "arm64")).toBe("linux-arm64");
+  });
+
+  it("says nothing for a host it cannot describe, rather than guessing", () => {
+    // Guessing `web` would offer a native package to something that cannot run it.
+    expect(platformForHost("freebsd", "x64")).toBeUndefined();
+    expect(platformForHost("win32", "ia32")).toBeUndefined();
+  });
+
+  it("offers a Windows package to a Windows host, and refuses it on Linux", () => {
+    const windowsPackage = { ...ENTRY, platforms: ["win32-x64" as const] };
+    const source = { kind: "npm" as const, name: "com.example.calendar", version: "1.2.0" };
+
+    expect(resolvePackageSource({ source, directory: [windowsPackage], ...HOST_WINDOWS }).ok).toBe(true);
+
+    const refused = resolvePackageSource({ source, directory: [windowsPackage], ...HOST });
+    expect(refused.ok).toBe(false);
+    if (!refused.ok) {
+      expect(refused.code).toBe("PLATFORM_MISMATCH");
+      // The reason names the platform, so "nothing found" and "built for another machine" are distinguishable.
+      expect(refused.message).toContain("win32-x64");
+    }
+  });
+});
+
+describe("what a local path is called", () => {
+  const LOCAL = { kind: "local" as const, path: "/tmp/pkg" };
+  const DIGEST = "sha256:local-bytes";
+
+  it("takes the name the directory gives it, because a path is not a name", () => {
+    /*
+     * Recording the path as the package id gave one package two names: the listing said `com.example.calendar` and
+     * the installed row said `/tmp/pkg`, and the same person was shown both.
+     */
+    const result = resolvePackageSource({ source: LOCAL, directory: [ENTRY], localDigest: DIGEST, ...HOST });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.resolved.packageId).toBe("com.example.calendar");
+    expect(result.resolved.version).toBe("1.2.0");
+    // The artifact is still the directory on disk, and the digest is still the caller's hash of those bytes: the
+    // published digest describes a different set of bytes, and this is a local install.
+    expect(result.resolved.artifactUrl).toBe("file:/tmp/pkg");
+    expect(result.resolved.digest).toBe(DIGEST);
+  });
+
+  it("keeps the path when the directory does not list it", () => {
+    // Installing an unlisted local path works today, so it has to keep working; there is simply no name to prefer.
+    const result = resolvePackageSource({
+      source: { kind: "local", path: "/tmp/unlisted" },
+      directory: [ENTRY],
+      localDigest: DIGEST,
+      ...HOST,
+    });
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.resolved.packageId).toBe("/tmp/unlisted");
+      expect(result.resolved.version).toBe("0.0.0-local");
+    }
+  });
+
+  it("matches the listing by path rather than taking the first local entry", () => {
+    const other: DirectoryEntry = {
+      ...ENTRY,
+      packageId: "com.example.other",
+      source: { kind: "local", path: "/tmp/other" },
+    };
+
+    const result = resolvePackageSource({
+      source: { kind: "local", path: "/tmp/other" },
+      directory: [ENTRY, other],
+      localDigest: DIGEST,
+      ...HOST,
+    });
+
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.resolved.packageId).toBe("com.example.other");
+  });
+
+  it("does not gate a local package on the host, because it is already on this host", () => {
+    // A listing built for another machine still names the bytes that are on this one, and identity is not permission.
+    const result = resolvePackageSource({
+      source: LOCAL,
+      directory: [{ ...ENTRY, platforms: ["win32-x64" as const] }],
+      localDigest: DIGEST,
+      ...HOST,
+    });
+
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.resolved.packageId).toBe("com.example.calendar");
   });
 });

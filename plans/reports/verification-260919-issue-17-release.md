@@ -4,16 +4,46 @@ Năm tính năng của issue #17, làm qua ba stage. Stage A (#19), Stage B và 
 phần ghi chú về đúng sự thật, và PR #38 sửa nốt hai claim còn lại cùng cổng browser. Tài liệu này ghi **số thật đo
 trên cây đã merge `main`**, không phải số của lần chạy cũ.
 
-## Số thật, đo trên cây hiện tại của `main` (`c4e7576`)
+## Số thật, đo trên cây hiện tại (`308792a` = `main`)
 
 | Cổng | Lệnh | Kết quả |
 | --- | --- | --- |
-| Invariant | `pnpm run invariants` | 7/7 PASS |
-| Typecheck + lint + unit test | `pnpm verify` | **1427 passed, 7 skipped (1434)** |
-| Browser suite | `pnpm test:e2e` | **83 passed, 0 failed** |
-| CI trên `main` | `.github/workflows/ci.yml`, run 35461135410 ở commit `bac2f2e` | **cả năm job xanh**: `verify` (node 22.19 và 24), `secret scan`, `e2e (browser suite)`, `desktop smoke (xvfb)` |
-| Smoke desktop | `pnpm --filter @clarkcant/app-desktop run smoke` | **exit 0**, mọi check `true`, `"failed": []` (Electron 44.3.0, Chrome 152) |
-| Đồng bộ với `main` | `git rev-list HEAD..origin/main` | 0 (merge `7d9caea`, PR #38 squash thành `9e90535`; sau đó `main` nhận PR #39 và bản sửa tài liệu này) |
+| Invariant | `pnpm run invariants` | 7/7 PASS (54 tiêu đề test được ledger trích đã đối chiếu với 157 spec file) |
+| Typecheck + lint + unit test | `pnpm verify` | **1660 passed, 7 skipped (1667)** |
+| Browser suite | `pnpm test:e2e` | **107 passed, 1 skipped, 0 failed** (run 35492374408, job `e2e (browser suite)`) |
+| CI trên `main` | `.github/workflows/ci.yml`, chạy mỗi lần push | **cả năm job xanh** ở run 35492374408 (`308792a`): `verify` (node 22.19 và 24), `secret scan`, `e2e (browser suite)`, `desktop smoke (xvfb`) |
+| Smoke desktop | `pnpm --filter @clarkcant/app-desktop run smoke` | **exit 0**, mọi check `true`, `"failed": []` (Electron 44.3.0, Chrome 152); job `desktop smoke (xvfb)` xanh trên CI |
+| Đồng bộ với `main` | `git rev-list HEAD..origin/main` | 0: nhánh công việc bằng head của `main` (`308792a`), và nó đã được merge vào `main` bằng merge commit (`git merge-base --is-ancestor` trả về đúng) |
+
+Nhánh công việc được **merge vào `main` bằng merge commit**, sau khi cây của nó được đưa về đúng cây
+của `main`. Trước đó mọi PR đều được squash, nên nội dung đã ở `main` nhưng **lịch sử của nhánh thì chưa**:
+`git merge-base --is-ancestor <nhánh> main` trả về sai. Merge này làm điều đó thành đúng, và nó không đổi một byte
+nội dung nào ngoài ghi chú này.
+
+## Từng mục của issue, và test chứng minh nó
+
+| Mục của issue #17 | Test |
+| --- | --- |
+| 1. Đính kèm tệp | `apps/web/e2e/attachments.spec.ts` — "the agent answers using the content of an attached file" và "the agent answers using the content of an attached pdf" (hai tệp, câu trả lời dùng nội dung tệp văn bản, reload vẫn thấy cả hai), cộng chín journey còn lại của tệp; từ chối path/URL/mime/ngưỡng/quota ở `apps/runtime/test/attachment-routes.spec.ts` |
+| 2. Cửa sổ desktop tối giản | smoke của `apps/desktop` (bounds, sàn 20×50, always-on-top đọc từ cửa sổ thật; chạy trong CI dưới `xvfb`) và `apps/web/e2e/voice-bar.spec.ts` (phiên sống qua cả hai chiều) |
+| 3. Voice điều khiển app | `apps/web/e2e/voice-control.spec.ts` — 9 journey: mở Settings, **đổi tab được gọi tên**, thoát app (hỏi trước), lệnh lạ bị từ chối, kết thúc phiên, về home, đính kèm (mở file picker), và lệnh cửa sổ bị từ chối trong browser; cộng `packages/core/test/app-intents.spec.ts` cho từng nhóm lệnh |
+| 4. Gợi ý từ việc gần đây | `apps/web/e2e/suggestions.spec.ts` — gồm "with two sessions behind it, the offer is the one touched last" (seed **hai** phiên, và gợi ý trỏ đúng phiên được chạm sau cùng) — và `apps/runtime/test/suggestions.spec.ts` |
+| 5. Tab Memory | `apps/web/e2e/memory.spec.ts` (rỗng, có dữ liệu kèm nguồn, xoá), `apps/runtime/test/memory.spec.ts` |
+
+Cả ba loại nội dung của issue nay đều tới được agent. Văn bản và PDF đi vào prompt của lượt; ảnh được
+`read_attachment` giao nguyên block ảnh cho SDK (`toSdkTool` phát `{ type: "image", data, mimeType }`), nên model
+nhận chính bức ảnh. Dòng này từng ghi ảnh "chưa tới model": nguyên nhân là adapter gộp mọi kết quả tool thành
+một block văn bản, và điều đó đã được sửa tại gốc.
+
+## Tiêu chí của chính issue, không chỉ của plan
+
+Issue #17 §1 ghi điều kiện hoàn thành là: đính 2 tệp (1 text, 1 ảnh) → gửi → agent trả lời dùng nội dung tệp → reload vẫn thấy
+attachment. Journey `apps/web/e2e/attachments.spec.ts` — "the agent answers using the content of an attached file" —
+làm đúng chuỗi đó: hai tệp được đính, câu trả lời chứa nội dung của tệp văn bản, và cả hai tệp còn trong timeline sau khi
+reload. Model ở đó là fixture của node, nên điều được chứng minh là đường ống — tệp tới node, node đọc được nội dung,
+câu trả lời mang nó — chứ không phải phán đoán của model. Nội dung tệp tới agent theo ba đường: văn bản và PDF vào
+prompt của lượt, ảnh qua `read_attachment` dưới dạng block ảnh mà SDK mang nguyên vẹn tới model. Điều còn phụ thuộc
+provider là phán đoán của model trên nội dung đó, và các check cần provider thật vẫn là opt-in.
 
 ## Hai journey từng bị chặn, và đã sửa tại gốc
 
@@ -43,6 +73,22 @@ nào bị nới để cho qua: mỗi lỗi được đo trước, rồi sửa �
 | `j1.spec.ts` "the header says nothing about background work when there is none" | Phụ thuộc thứ tự trên node dùng chung: tiền đề "chưa có việc nền nào" chỉ đúng khi nó chạy trước journey tạo phiên nền. | Đưa journey đó lên trước journey tạo phiên, kèm ghi chú vì sao thứ tự là một phần của phép kiểm. |
 | hai journey `onboarding.spec.ts` | Journey first-run, đỏ ở commit gốc. | Xanh trên cây hiện tại ở các lần chạy gần nhất. |
 
+## Hai lỗi nữa, do chính CI tìm ra
+
+Hai cổng mới được đưa vào CI đã tìm ra hai lỗi thật mà máy này không thấy, và cả hai đều được sửa ở gốc:
+
+- **`e2e` bất định trên `appearance.spec.ts:122`** (journey bàn phím của tab Settings). Nguyên nhân:
+  `Modal` gộp phần chuyển focus vào dialog vào **cùng một effect** với listener bàn phím, nên effect chạy lại mỗi khi
+  identity của `onClose` đổi - tức là mỗi lần surface render lại. Mỗi lần chạy lại, nó trả focus về opener rồi
+  chuyển focus vào control đầu tiên của dialog, lấy mất chỗ đang đứng của người dùng bàn phím. Sự cố chỉ hiện
+  khi dữ liệu của panel về đúng lúc, nên nó đỏ trên CI và xanh trên máy này với cùng một cây. Đã tách
+  listener ra effect riêng và để việc chuyển focus chỉ phụ thuộc `open`.
+- **`docs-manifest-integrity` trên `main`**: entry của `docs/widget-development.md` ghi 16284 byte, còn tệp trong git là
+  15655 byte - digest được tính từ một bản Windows có CRLF, nên mọi checkout mới đều trượt invariant. Đã tính lại
+  từ byte được lưu trong git.
+
+Cả hai đều được đo trước khi sửa, và CI của `main` ở `0ce8722` xanh cả năm job.
+
 ## CI phủ những gì
 
 `.github/workflows/ci.yml` chạy `pnpm run invariants`, `typecheck`, `lint`, `pnpm run test`, probe Pi SDK, secret
@@ -54,13 +100,21 @@ không khởi động được vì sandbox SUID không cấu hình được trê
 `GitGuardian` đỏ vì một fixture hình-dạng-khoá nằm trong commit cũ (đã gỡ ở HEAD; `no-committed-secrets` của
 repo vẫn xanh) — nó là check tư vấn, không phải cổng của repo.
 
-## Cổng còn mở
+## Nợ kỹ thuật còn lại (không phải tiêu chí của plan)
 
-Smoke desktop **đã chạy và xanh** trên máy này (exit 0, `"failed": []`), nên nó không còn nằm ở đây: các check đọc
-`getBounds()`, `getMinimumSize()` và `isAlwaysOnTop()` từ cửa sổ thật và đều `true`. Điều còn lại là nợ kỹ thuật:
+Không tiêu chí nào còn đỏ. Cả hai cổng từng chỉ chạy tay nay chạy trong CI mỗi lần push (`e2e`, `desktop smoke (xvfb)`), nên
+evidence của cửa sổ không còn phụ thuộc vào một máy cụ thể.
 
-- Các check cần provider thật (`[calibration]`, `[jev-live]`) vẫn BLOCKED nếu thiếu `CLARKCANT_JEV_LIVE=1` và key;
-  quyết định "ghi nhớ" của chính model vì thế chưa được chứng minh.
-- Extractor PDF/ảnh, route xoá conversation, nguồn `memory` trong gợi ý, scoped session token: mỗi cái có tên và
-  điều kiện còn thiếu trong `docs/widgets-and-extensions.md` §4.1.
+- **Các check cần provider thật đã chạy, không còn BLOCKED.** Với `CLARKCANT_JEV_LIVE=1` và key của provider:
+  `apps/runtime/test/jev-calibration-live.spec.ts` xanh — selector chọn đúng **8/16** lượt routing (50,0%) so với
+  ranking, và phép so trên corpus search cũng xanh; `apps/runtime/test/jev-live.spec.ts` xanh (5 passed, 2 skipped).
+  Lần chạy đầu tiên tìm ra một lỗi thật: một model id bị provider từ chối trả về đúng `unavailable` nhưng lý do chỉ là
+  "HTTP 400" và không nêu model mà node đã pin — nay lý do nêu cả hai (`apps/runtime/src/jev-selector.ts`).
+- ~~Extractor PDF/ảnh~~ — **đã đóng**: PDF được trích văn bản (`apps/runtime/src/pdf-text.ts`, PR #64) và ảnh
+  được giao nguyên block ảnh cho SDK (PR #66: `read_attachment` trả chính bức ảnh, `toSdkTool` phát
+  `{ type: "image", data, mimeType }`). Nguyên nhân gốc nằm ở adapter, chỗ gộp mọi kết quả tool thành một block
+  text.
+- Route xoá conversation và scoped session token cho voice: mỗi cái có tên và điều kiện còn thiếu trong
+  `docs/widgets-and-extensions.md` §4.1. Nguồn `memory` trong gợi ý thì **đã đóng**: `buildSuggestions` nay phát nó từ
+  chính bảng mà tab Memory đọc (`listMemoryRecords`), nên contract không còn khai một nguồn không bao giờ xuất hiện.
 - `nodeReachable` là `false` trong smoke: cổng này kiểm tra shell và cửa sổ, không cần node đang chạy.

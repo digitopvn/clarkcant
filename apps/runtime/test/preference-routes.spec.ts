@@ -79,9 +79,39 @@ describe("a read answers for every registered key", () => {
   it("marks the ones nobody has set as defaults", async () => {
     const listed = await preferences();
     expect(listed.map((preference) => preference.key)).toEqual([...PREFERENCE_KEYS]);
-    const mode = listed.find((preference) => preference.key === "execution.mode");
-    expect(mode).toMatchObject({ value: "autonomous", isDefault: true, revision: 0, applies: "immediate" });
-    expect(mode?.updatedAt).toBeNull();
+    const theme = listed.find((preference) => preference.key === "experience.theme");
+    expect(theme).toMatchObject({ value: "system", isDefault: true, revision: 0, applies: "immediate" });
+    expect(theme?.updatedAt).toBeNull();
+  });
+
+  it("answers the execution keys from the policy in force, not from a second read of a preference key", async () => {
+    /*
+     * A node upgraded from the legacy vocabulary: the refusal lives in `autonomy`, and there is no canonical row
+     * yet. Reading the preference key directly answered with the registry's default, so this route reported
+     * `execution.mode: "autonomous"` for a node that refuses every effect — the one thing the settings surface must
+     * not be told. Both keys are projections of the policy the node will obey, so they are read from it.
+     */
+    putPreference(services.runtime.db, {
+      principalId: services.runtime.identity.ownerPrincipalId,
+      key: "autonomy",
+      value: JSON.stringify({
+        executionPolicy: "deny",
+        jevGuardrails: true,
+        instructions: "",
+        guardedClasses: ["commands"],
+        whenJevUnavailable: "allow",
+      }),
+      scope: "node",
+      source: "user",
+      at: AT as never,
+    });
+
+    const mode = await current("execution.mode");
+    expect(mode?.value).not.toBe("autonomous");
+    expect(mode?.value).toBe("guarded");
+
+    const policy = await current("execution.policy");
+    expect(policy?.value).toMatchObject({ mode: "guarded", prohibition: "all" });
   });
 
   it("reports a written value as a choice with the revision that wrote it", async () => {
@@ -167,6 +197,31 @@ describe("undo reports what it actually did", () => {
     const undone = await request("POST", "/preferences/nope/undo");
     expect(undone.status).toBe(404);
     expect(undone.body).toMatchObject({ code: "PREFERENCE_UNKNOWN" });
+  });
+
+  it("undoes a write that arrived through a legacy key, because that is the row the write changed", async () => {
+    /*
+     * A write through `execution.mode` is translated into the canonical policy, so there is nothing in the legacy
+     * row to undo: this used to answer `undone: false` for a value that had never been stored there, while the
+     * policy the write actually changed stayed changed.
+     */
+    const written = await request("PUT", "/preferences/execution.mode", { body: { value: "ask" } });
+    expect(written.status).toBe(200);
+    expect((written.body as { preference: RegisteredPreference }).preference).toMatchObject({
+      key: "execution.mode",
+      value: "ask",
+    });
+    expect((await current("execution.mode"))?.value).toBe("ask");
+
+    const undone = await request("POST", "/preferences/execution.mode/undo");
+    expect(undone.status).toBe(200);
+    expect(undone.body).toMatchObject({ undone: true });
+    // Answered under the key that was asked about, from the policy now in force.
+    expect((undone.body as { preference: RegisteredPreference }).preference).toMatchObject({
+      key: "execution.mode",
+      value: "autonomous",
+    });
+    expect((await current("execution.mode"))?.value).toBe("autonomous");
   });
 });
 

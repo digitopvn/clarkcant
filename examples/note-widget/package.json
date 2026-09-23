@@ -12,7 +12,7 @@
   },
   "clarkcant": {
     "phase": "P6",
-    "status": "implemented",
+    "status": "stub",
     "blueprint": "docs/system-architecture.md"
   },
   "scripts": {

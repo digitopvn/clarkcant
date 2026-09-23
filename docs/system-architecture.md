@@ -210,7 +210,7 @@ Ràng buộc bắt buộc cho lớp này:
 - Deadline riêng cho Jev (đề xuất ≤2 s trong tổng ≤2.5 s cho search); 429/529/timeout là `unavailable` có reason, không retry storm.
 - Telemetry: request id, model id thực tế trả về, duration, tokens, enum đã chọn, reason fallback. Không body, không prompt, không header.
 
-Ba đường A/B/C dùng chung một adapter, một policy confidence và một fallback chain: Jev vắng/uncertain → rank thuần → một câu hỏi làm rõ. Lớp quyết định nay có năm chỗ dùng, khác nhau chỉ ở tập candidate mà host đã lọc trước:
+Ba đường A/B/C dùng chung một adapter, một policy confidence và một fallback chain: Jev vắng/uncertain → rank thuần → một câu hỏi làm rõ. Lớp quyết định nay có năm chỗ dùng, khác nhau chỉ ở tập candidate mà host đã lọc trước — hai chỗ dùng nữa, `guard.operation` và `route.model`, được mô tả ở §7.4 và §7.6 kèm trạng thái implementation theo phase:
 
 | Đường | Câu hỏi | Code sở hữu |
 |---|---|---|
@@ -249,9 +249,63 @@ Sơ đồ tách "Pi Runtime — MAIN SESSION" khỏi "Other pi Workers". Mục n
 
 **Tool Main Pi thấy.** Node công bố tool của mình **lúc boot** (`apps/runtime/src/tool-catalogue.ts`), không dựng theo yêu cầu: một danh sách chỉ tồn tại trong closure thì không có gì khẳng định được nó. Tool chỉ-đọc cấp cho Main Pi ở `apps/runtime/src/node-tools.ts`; tool built-in của Pi được liệt kê riêng. Không dump toàn bộ MCP tools vào mọi lượt model (§7.1).
 
-**Worker.** Mỗi project một worker pi session với brief riêng (`WorkerBrief`: goal, `projectRoots` đã được duyệt, capability refs, tool set, model). Tool set phải đăng ký lúc tạo session: SDK cố định nó tại thời điểm đó, và một tool thêm sau vừa lọt allowlist vừa không xuất hiện trong system prompt. Pi chạy trong process của runtime; chỗ duy nhất runtime spawn process là `apps/runtime/src/run-command.ts`, và chỉ sau khi một người duyệt.
+**Worker.** Mỗi project một worker pi session với brief riêng (`WorkerBrief`: goal, `projectRoots` đã được duyệt, capability refs, tool set, model). Tool set phải đăng ký lúc tạo session: SDK cố định nó tại thời điểm đó, và một tool thêm sau vừa lọt allowlist vừa không xuất hiện trong system prompt. Pi chạy trong process của runtime; chỗ duy nhất runtime spawn process là `apps/runtime/src/run-command.ts`. Một lần spawn có cần người duyệt hay không do `ExecutionPolicy` quyết định (§7.4): mặc định là `guarded`, nghĩa là không hỏi ai và preflight của host vẫn giữ containment.
 
 **Session file.** Transcript là JSONL dưới `<dataDir>/sessions`; không cấu hình `sessionDir` thì session là in-memory và không có gì để search. Adapter báo đường dẫn qua `onSessionFile`, node kiểm tra nó nằm trong thư mục session rồi mới đăng ký index. Resume đi qua `checkResumable` trước: một row còn trong DB mà file đã mất là lỗi được trả về, không phải một lần mở hỏng sâu trong SDK.
+
+### 7.4 Autonomy: execution policy, host preflight, guardrail và secret broker
+
+**Trạng thái (2026-09-19):** đã triển khai trọn P1–P8 và governance. Preflight ở `apps/runtime/src/preflight.ts`, guardrail ở `jev-decider.guardOperation`, secret broker ở `apps/runtime/src/secret-broker.ts`, hồ sơ vết ở `packages/storage/src/audit.ts` (bảng `audit_log`). Mục này không thay sơ đồ — sơ đồ vẫn đúng ở mức biên chức năng; phần dưới ghi nơi cư trú trong code và những ranh giới mà một sơ đồ không hiển thị được.
+
+Triết lý đổi từ “model đề xuất → user duyệt → host chạy” sang “user cho intent → agent tự hành động → host giới hạn → Jev phán đoán → evidence báo cáo”. Thứ giữ nó kiểm soát được không phải hộp thoại xin phép, mà là bounded execution, resource ownership tường minh, secret isolation, Jev policy, evidence, emergency stop và audit trail.
+
+Thứ tự bắt buộc của một effect:
+
+```text
+intent (Pi tool / action)
+  → Host Preflight        deterministic, không gọi model
+  → Jev Guardrail         policy judgment, chỉ được thu hẹp
+  → Execution Broker      chạy ngay; approval không còn là mặc định
+  → Secret Broker         inject just-in-time
+  → evidence + audit
+```
+
+**Host Preflight là invariant cứng, không phải policy.** Nó chạy trước mọi quyết định của model và không bị ghi đè: schema của tool/action, capability có thật và đã cài, resource có thật và thuộc quyền sở hữu, budget (timeout, output cap, số target), và ranh giới secret. **Containment theo resource ownership** thuộc tầng này: mọi effect — cwd của command, đường dẫn ghi, target của tool — phải nằm trong resource mà conversation/node sở hữu; ra ngoài bị từ chối ngay ở preflight.
+
+**Jev là policy judgment layer, không phải security boundary.** Nó trả `allow` / `deny` / `constrain` / `clarify`, và **chỉ có quyền thu hẹp** một operation mà preflight đã xác định là technically valid. Nó không cấp quyền, không mở rộng scope, không đọc secret value. `clarify` không phải xin phép: đó là câu hỏi làm rõ giữa nhiều khả năng đều hợp lệ (“xoá project nào?”), đi qua Interaction Manager (§7.5), không phải “bạn có cho phép không?”.
+
+State gửi cho Jev tuân cùng ràng buộc sanitize ở §7.2. Với command, state là `effect`, `commandClass`, `cwdScope`, `executable`, `recursive`, `estimatedTargets` — không phải raw command, raw output hay secret. Khi một số command buộc phải xem đúng command text thì gửi bản redacted và bounded.
+
+**`ExecutionPolicy` thay cho boolean approval.** `auto` | `guarded` | `confirm` | `deny`, mặc định `guarded`: không hỏi user, Jev được phép block hoặc constrain. `confirm` tái tạo đúng hành vi approval hiện tại và tồn tại như một policy mode — approval infrastructure không bị xoá. Khi Jev không khả dụng, mặc định là allow (fail-open) và user đổi được trong settings, nhưng fail-open chỉ bỏ lớp judgment: preflight và containment vẫn hiệu lực.
+
+**Secret Broker.** Credential không còn là một KV mà model đọc được. Metadata của secret (name, description, kind, backend, allowed_consumers, injection_policy) nằm trong DB; value nằm ở backend (`os-keychain`, `encrypted-file`, `environment`, `external-vault`) và goal này implement abstraction với store hiện tại là backend đầu tiên, keychain adapter để sau. Agent chỉ nhận metadata. Value chỉ được resolve ở boundary của một invocation, theo bốn exposure mode: `tool-only` (mặc định), `process-env`, `http-header`, và `agent-context` (chỉ khi được chỉ định tường minh, không bao giờ là default). Secret sống trong lexical scope của invocation đó và không được ghi vào transcript, model context hay continuation. `request_secret` là host tool để agent xin một secret đang thiếu: host thấy đã có thì trả `available`, chưa có thì mở credential-card.
+
+**Stop và audit trail.** Hai control còn lại, và cả hai đều không mới về giao diện: `POST /stop` giết mọi child process đang chạy (`run-command.stopRunningCommands`), ngắt các turn đang chạy, rồi abort + dispose các background worker mà không ai đang chờ. Command bị dừng được ghi nhận là `stopped` chứ không phải `failed`, vì đó là hai sự việc khác nhau và một hồ sơ vết không phân biệt được thì sẽ đánh lừa người đọc sau. Mọi effect đi qua `appendAuditEvent`: command (đường guarded và đường confirm), mỗi lần dùng secret (theo **tên** và consumer, không bao giờ theo giá trị), và mỗi lần stop. Bảng chỉ ghi thêm, không sửa không xoá, và cố tình nông — một hồ sơ vết chứa đối số, output hay transcript sẽ là bản sao thứ hai của đúng những thứ phần còn lại của thiết kế này giữ ở một chỗ.
+
+### 7.5 Interaction Manager: một primitive cho mọi câu hỏi từ host
+
+Approval, câu hỏi làm rõ và yêu cầu credential là cùng một loại việc: host đang chờ người dùng, và Pi không được giữ một provider call mở để chờ. `PendingInteraction` là abstraction chung:
+
+```ts
+type PendingInteraction =
+  | ApprovalInteraction
+  | QuestionInteraction
+  | CredentialInteraction;
+```
+
+Interaction Manager sở hữu `create()` / `answer()` / `cancel()` / `expire()` / `pendingForConversation()`. Text UI, voice và widget cùng thao tác trên một interaction và gọi cùng một endpoint — không có hai code path cho cùng một câu trả lời.
+
+`ask_user_question` là host tool với bốn kind ưu tiên voice: `confirm`, `single-choice`, `multi-choice`, `text`. Host tự sinh voice prompt từ structured options nên agent không phải bảo trì hai bản. Tool này **kết thúc lượt hiện tại** rồi settle: câu trả lời được persist, append vào conversation như một message người dùng thấy, và mở một lượt Pi mới. Không await input bên trong tool execution.
+
+Ranh giới phải giữ: `ask_user_question` không dùng để hỏi secret. Câu trả lời đi vào conversation và model đọc được, nên host từ chối deterministic khi câu hỏi đòi secret và trỏ sang `request_secret`. Voice hiểu mọi dạng interaction đang pending, không chỉ thẻ duyệt: `answerFromUtterance` khớp lời nói với nhãn mà card đã đưa, rồi trả lời qua đúng một đường (`answerQuestionForNode`) mà một cú bấm cũng dùng.
+
+### 7.6 Model Registry: nhiều model profile, và đổi model là một generation mới
+
+`/model` hiện là một preference đơn (`key: "model"`, scope `node`). Đích là một registry của user: nhiều profile, mỗi profile có alias, provider, modelId, enabled, roles (foreground/background/coding/research/fast/long-context), priority và budget riêng. Catalogue không được copy — `provider/modelId` luôn validate lại với catalogue của Pi qua `packages/pi-adapter` (`validateProfileAgainstCatalogue`). Pool lưu trong preferences (`model-pool`), không thêm bảng.
+
+Pi resolve model lúc session được tạo, nên shortcut đổi model **không mutate session đang sống**: `POST /model-pool/cycle` ghi preferred model, và `apps/runtime/src/model-turn.ts` tạo generation mới bằng `handoff()` ở ranh giới lượt — ngay khi session rảnh, và sau lượt đang chạy vì `turnFor` chỉ chạy khi một lượt bắt đầu. Một conversation giữ nhiều generation với model khác nhau; durable memory nằm ngoài Pi nên không bị ảnh hưởng.
+
+Foreground tôn trọng model user chọn. Background worker đi qua deterministic filter trước (`apps/runtime/src/model-router.ts`: enabled, credential, provider health, context đủ, tool calling, budget, role), rồi Jev `route.model` (`decideModelRoute`) chọn trong tập còn lại; host verify lại profile trước khi tạo session. `role` xét hai lượt: profile khai báo đúng role thắng khi có, còn khi không ai khai báo thì capability quyết — từ chối chạy việc nền vì một lý do không hiện ra ở đâu trên màn hình là rút mất một tính năng cốt lõi. Fallback khi Jev vắng: backgroundDefault → foreground → first eligible. Router chết không làm task fail, và worker chạy model node đã cấu hình nếu không có profile nào đủ điều kiện.
 
 ## 8. Task/session routing
 
@@ -311,13 +365,13 @@ Mỗi node: SQLite WAL với migrations; app events/outbox/inbox; native Pi sess
 
 Memory & Search giữ hai corpus với hai authority khác nhau: bảng `messages` là nguồn sự thật của timeline, còn JSONL transcript của worker là thứ worker đã thực sự làm. Hai nguồn vào cùng một service nhưng không đồng bộ hai chiều: một row `session_files` cho mỗi transcript, con trỏ ingest chỉ tiến, và redaction chạy ở boundary do adapter chọn (cuối một lượt, khi không còn gì đang ghi) trước khi nội dung vào index. Tập bảng cụ thể do `packages/storage/src/migrate.ts` sở hữu; đừng chép lại ở đây.
 
-Hai thứ cố ý **không** bền vững, và lý do là một phần của thiết kế: danh sách background session sống trong bộ nhớ (`apps/runtime/src/background-sessions.ts`), vì một session sống lâu hơn process đã sinh ra nó là session không ai với tới; và telemetry của Jev bị chặn ở 200 dòng trong bộ nhớ, không ghi xuống DB.
+Hai thứ cố ý **không** bền vững, và lý do là một phần của thiết kế: danh sách background session sống trong bộ nhớ (`apps/runtime/src/background-sessions.ts`), vì một session sống lâu hơn process đã sinh ra nó là session không ai với tới — và danh sách đó bị chặn hai đầu (mục đã xong quá 10 phút thì bỏ, giữ tối đa 20 mục đã xong, không bao giờ bỏ mục đang chạy), vì kết quả của việc nền nằm ở hội thoại nên một danh sách dài vô hạn chỉ trả lời lại câu đã có câu trả lời; và telemetry của Jev bị chặn ở 200 dòng trong bộ nhớ, không ghi xuống DB.
 
 Khi một session mới được tạo cho hội thoại đã có mạch, lượt đầu được nhắc bằng brief của 12 message gần nhất, mỗi dòng cắt ngắn (`apps/runtime/src/model-turn.ts`). Đó là cách đặt model vào mạch đang làm, không phải chép lại hội thoại: một brief dài theo hội thoại thì không còn là brief.
 
 Nhóm bảng: principals/nodes/grants; conversations/messages; tasks/runs/delegations; commands/events/outbox/inbox; resources/leases; effects/approvals; packages/install_plans/generations; connections/auth_transactions; widget_instances/snapshots/pins/action_bindings; datasets/artifacts; preferences/onboarding_checkpoints/usage.
 
-Secrets lưu trong vault abstraction: macOS Keychain hoặc server secret store/encrypted-at-rest storage với key nằm ngoài DB backup. File permissions không thay encryption; container env cũng không là giải pháp tránh mọi leak. Bootstrap/recovery key và backup procedure phải có test; không tự sinh key rồi lưu cùng plaintext DB và gọi là bảo mật đầy đủ.
+Secrets lưu trong vault abstraction: macOS Keychain hoặc server secret store/encrypted-at-rest storage với key nằm ngoài DB backup. Metadata của secret — name, description, kind, backend, allowed_consumers, injection_policy — nằm trong DB; value nằm ở backend và chỉ được resolve ở boundary của một invocation, không đi vào context của model (§7.4). File permissions không thay encryption; container env cũng không là giải pháp tránh mọi leak. Bootstrap/recovery key và backup procedure phải có test; không tự sinh key rồi lưu cùng plaintext DB và gọi là bảo mật đầy đủ.
 
 **`memory_records` không phải index tìm kiếm thứ hai.** Nó là những câu agent chọn giữ, kèm conversation đã học được câu đó. Xoá một memory xoá **đường inject** vào các lượt sau — brief được đọc lại mỗi lượt từ DB chứ không cache trong tiến trình — nhưng tin nhắn gốc của người dùng vẫn nằm trong `messages` và vẫn nhìn thấy được trong hội thoại. Đây là lý do nó không phải hidden memory: thứ được nhớ luôn đọc được và xoá được ở tab Memory, và thứ bị xoá chỉ là đường nó quay lại prompt. Cùng lý do đó, đường sinh gợi ý không đọc `history_embeddings` và không gọi model: một gợi ý phải là cách đọc những gì người dùng cũng đọc được.
 
@@ -353,6 +407,7 @@ Kết thúc voice không dừng pinned read subscriptions hay jobs. Reload Pi kh
 8. Install approvals gồm package digest, dependency plan, target node, grants. Security scan/chữ ký xác thực không chứng minh code an toàn.
 9. HTTP fetch/auth discovery giới hạn redirects/private destinations/credential forwarding; user URL không là quyền truy cập internal network.
 10. Emergency stop trên máy đang bị điều khiển ưu tiên hơn remote commands. Revocation chặn thao tác tương lai; không hứa rollback effect đã xảy ra.
+11. Autonomous mặc định không xoá approval khỏi kiến trúc: containment theo resource ownership và budgets nằm ở host preflight và không model nào ghi đè được, còn Jev chỉ được thu hẹp. Khi Jev vắng, fail-open bỏ lớp judgment chứ không bỏ preflight. Secret value không bao giờ vào transcript, model context hay continuation; `agent-context` exposure phải được chỉ định tường minh.
 
 ## 14. Monorepo đề xuất
 

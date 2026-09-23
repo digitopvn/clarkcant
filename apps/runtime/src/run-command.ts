@@ -3,6 +3,8 @@ import { createHash } from "node:crypto";
 
 import type { Instant, MessageBlock } from "@clarkcant/contracts";
 
+import { preflightCommand, type CommandEnvelope, type OwnedResources } from "./preflight.ts";
+
 /**
  * Running one command, in the directory it was asked for, once a person has approved it.
  *
@@ -32,68 +34,48 @@ export const COMMAND_LIMITS = {
   maxOutputBytes: 8_000,
 } as const;
 
-export interface CommandGuardResult {
-  ok: boolean;
-  code?: "EMPTY_COMMAND" | "COMMAND_TOO_LONG";
-  message?: string;
-  /** The resolved directory the command would run in. */
-  cwd?: string;
-  /** Why this directory is allowed, written for the card: the user is approving a place as well as a command. */
-  because?: string;
-}
-
-/**
- * The digest the user approves.
- *
- * It covers the command *and* the directory, so approving "clone this here" cannot become running it
- * somewhere else: the stored digest is compared against a digest recomputed from what will actually
- * run, and a mismatch is refused rather than executed. That is the whole point of showing it.
- */
-export function commandDigest(command: string, cwd: string): string {
-  // Canonical form, so the same request always hashes the same way regardless of key order or spacing.
-  const canonical = JSON.stringify({ command: command.trim(), cwd });
-  return `sha256:${createHash("sha256").update(canonical).digest("hex").slice(0, 40)}`;
-}
-
-/*
- * The folder restriction is gone.
- *
- * A node used to decide where a command was allowed to run: a folder the user approved, a project the
- * finder had indexed, or the folder those live in. In use that refused the tree this product itself runs
- * from - the finder's scan stops at a file ceiling, so it had never reached the directory the operator
- * launched the app in, and every command there came back as somewhere the agent did not know.
- *
- * The decision now belongs to whoever is holding the approval card, which is the only control with a
- * person behind it, and permission management belongs to the host that runs the agent. Pi here is the
- * runtime that carries the instruction out, not the thing that decides whether it is allowed to.
- */
-export function guardCommand(input: { command: unknown; cwd?: unknown }): CommandGuardResult {
-  const command = typeof input.command === "string" ? input.command.trim() : "";
-  if (command === "") {
-    return { ok: false, code: "EMPTY_COMMAND", message: "Cần một lệnh để chạy." };
-  }
-  if (command.length > COMMAND_LIMITS.maxCommandLength) {
-    return {
-      ok: false,
-      code: "COMMAND_TOO_LONG",
-      message: `Lệnh dài hơn ${COMMAND_LIMITS.maxCommandLength} ký tự. Hãy đưa nó vào một tệp để đọc trước khi duyệt.`,
-    };
-  }
-
-  const requested = typeof input.cwd === "string" && input.cwd.trim() !== "" ? input.cwd.trim() : process.cwd();
-  return {
-    ok: true,
-    cwd: requested,
-    because: "node không giới hạn thư mục nữa, nên thẻ duyệt này là chỗ bạn quyết định",
-  };
-}
-
 export interface CommandOutcome {
   exitCode: number | null;
   stdout: string;
   stderr: string;
   durationMs: number;
   timedOut: boolean;
+  /**
+   * Killed because somebody stopped this node's work, rather than because it ran out of time.
+   *
+   * A distinct fact on purpose: a timeout is the command's own failure and a stop is a person's decision, and an
+   * audit trail that could not tell them apart would be a trail that misleads the next reader.
+   */
+  stopped?: boolean;
+}
+
+/**
+ * Every command this process is running.
+ *
+ * Kept here rather than on the command's caller because a stop has to reach a child process nobody is holding a
+ * reference to: the promise is what the caller awaits, and killing it needs the process, not the promise.
+ */
+const liveCommands = new Set<ChildProcess>();
+const stoppedByRequest = new Set<ChildProcess>();
+
+/**
+ * Kill everything running, and say how many there were.
+ *
+ * The emergency stop's command half. It kills rather than asks: the point of a stop is that it works on a command
+ * that is not listening, and a well-behaved shutdown is what a deadline is for.
+ */
+export function stopRunningCommands(): number {
+  const running = [...liveCommands];
+  for (const child of running) {
+    stoppedByRequest.add(child);
+    killTree(child);
+  }
+  return running.length;
+}
+
+/** How many commands are running right now, for a status line or a test. */
+export function runningCommandCount(): number {
+  return liveCommands.size;
 }
 
 export interface RunCommandOptions {
@@ -183,12 +165,22 @@ export async function runCommand(
 
     child.stdout?.on("data", (chunk: Buffer) => collect(chunk, "stdout"));
     child.stderr?.on("data", (chunk: Buffer) => collect(chunk, "stderr"));
+    // Registered before anything can finish, so a stop issued while the command is starting still reaches it.
+    liveCommands.add(child);
 
     const finish = (exitCode: number | null): void => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
-      resolve({ exitCode, stdout, stderr, durationMs: Date.now() - startedAt, timedOut });
+      liveCommands.delete(child);
+      resolve({
+        exitCode,
+        stdout,
+        stderr,
+        durationMs: Date.now() - startedAt,
+        timedOut,
+        ...(stoppedByRequest.delete(child) ? { stopped: true } : {}),
+      });
     };
 
     const timer = setTimeout(() => {
@@ -214,9 +206,11 @@ export async function runCommand(
  * block, and saying it in both places is what made a receipt print its own output twice.
  */
 export function describeCommandOutcome(command: string, outcome: CommandOutcome): string {
-  const verdict = outcome.timedOut
-    ? `hết thời gian sau ${outcome.durationMs} ms và bị dừng`
-    : `thoát với mã ${outcome.exitCode ?? "không rõ"} sau ${outcome.durationMs} ms`;
+  const verdict = outcome.stopped === true
+    ? `bị dừng theo yêu cầu sau ${outcome.durationMs} ms`
+    : outcome.timedOut
+      ? `hết thời gian sau ${outcome.durationMs} ms và bị dừng`
+      : `thoát với mã ${outcome.exitCode ?? "không rõ"} sau ${outcome.durationMs} ms`;
   return `\`${command}\` ${verdict}.`;
 }
 
@@ -234,7 +228,117 @@ export function commandOutput(outcome: CommandOutcome): string {
 }
 
 /**
- * Run an operation a user approved, having checked it is still the operation they approved.
+ * Run an operation the host has already cleared, and report what happened.
+ *
+ * This is the guarded path: no card, no digest, no person in the loop. What replaced the approval is not
+ * nothing — it is the preflight that produced this envelope (ownership, existence, budget, capability)
+ * and the guardrail that may have narrowed it. Both ran before this function was called, which is why it
+ * can be short: by the time a command gets here the only question left is what it printed.
+ *
+ * The blocks are the same shape the approved path records, so a command reads the same in the transcript
+ * whichever policy let it run. The receipt is returned as text as well as a block because the model is
+ * still holding the turn: unlike the approved path there is no second turn to hand the output to.
+ */
+export async function runGuardedCommand(input: {
+  operationId: string;
+  /** The envelope the preflight produced, already narrowed by the guardrail if it asked for that. */
+  envelope: CommandEnvelope;
+  /** Where the folder came from, in the finder's words. Shown to the person. */
+  reason?: string;
+  /** The model's own one-liner for why this is being run. */
+  why?: string;
+  /**
+   * The environment this one command runs with, when a secret was injected for it.
+   *
+   * Passed in rather than built here: the broker is what knows which secret a command may use and under which
+   * consumer, and a command runner that resolved secrets itself would be a second place that could read one.
+   */
+  env?: Record<string, string>;
+  now?: () => Instant;
+  /** Injected so the whole path can be tested without spawning anything. */
+  run?: (request: {
+    command: string;
+    cwd: string;
+    timeoutMs: number;
+    maxOutputBytes: number;
+    /** The environment for this one child process, when a secret was injected for it. */
+    env?: Record<string, string>;
+  }) => Promise<CommandOutcome>;
+}): Promise<{ blocks: MessageBlock[]; outcome: CommandOutcome; description: string; receipt: string }> {
+  const at = input.now ?? (() => new Date().toISOString() as Instant);
+  const startedAt = at();
+  const { command, cwd } = input.envelope;
+
+  const outcome = await (
+    input.run ??
+    ((request) =>
+      runCommand(
+        { command: request.command, cwd: request.cwd },
+        {
+          timeoutMs: request.timeoutMs,
+          maxOutputBytes: request.maxOutputBytes,
+          // The environment is passed whole, so an injected variable exists for this child process and nowhere else:
+          // not in the parent, not in a file, and not in anything this module returns.
+          ...(request.env === undefined ? {} : { env: { ...process.env, ...request.env } }),
+        },
+      ))
+  )({
+    command,
+    cwd,
+    timeoutMs: input.envelope.budget.timeoutMs,
+    maxOutputBytes: input.envelope.budget.maxOutputBytes,
+    ...(input.env === undefined ? {} : { env: input.env }),
+  });
+
+  const description = describeCommandOutcome(command, outcome);
+  const succeeded = outcome.exitCode === 0 && !outcome.timedOut;
+  const because = input.reason ?? "";
+  const why = input.why ?? "";
+
+  const blocks: MessageBlock[] = [
+    {
+      type: "tool-activity",
+      toolCallId: `run-${input.operationId}`,
+      name: "run_command",
+      label: `Chạy lệnh trong ${cwd}` + (because === "" ? "" : ` (${because})`) + (why === "" ? "" : `: ${why}`),
+      status: succeeded ? "done" : "failed",
+      args: { command, cwd, decision: "guarded", effect: input.envelope.classification.commandClass },
+      result: commandOutput(outcome),
+      path: cwd,
+      startedAt,
+      endedAt: at(),
+    },
+    {
+      type: "evidence",
+      kind: "exit-status",
+      summary: outcome.timedOut
+        ? `Lệnh bị dừng sau ${outcome.durationMs} ms vì vượt thời gian cho phép.`
+        : `Lệnh thoát với mã ${outcome.exitCode ?? "không rõ"} sau ${outcome.durationMs} ms.`,
+      // Non-zero is not "unverified": it is a result, and it contradicts success.
+      verdict: succeeded ? "verified" : "contradicted",
+      ref: input.operationId,
+    },
+  ];
+
+  // The model gets the output rather than a promise of it: it is still holding the turn, and a receipt
+  // that only says "it exited 0" is the bug the approved path already had to fix once.
+  return { blocks, outcome, description, receipt: receiptForModel(blocks) };
+}
+
+/**
+ * The digest the user approves.
+ *
+ * It covers the command *and* the directory, so approving "clone this here" cannot become running it
+ * somewhere else: the stored digest is compared against a digest recomputed from what will actually
+ * run, and a mismatch is refused rather than executed. That is the whole point of showing it.
+ */
+export function commandDigest(command: string, cwd: string): string {
+  // Canonical form, so the same request always hashes the same way regardless of key order or spacing.
+  const canonical = JSON.stringify({ command: command.trim(), cwd });
+  return `sha256:${createHash("sha256").update(canonical).digest("hex").slice(0, 40)}`;
+}
+
+/**
  *
  * The digest is recomputed from the payload that will actually run and compared with the digest the
  * decision was bound to, so a payload that changed between display and approval is refused instead of
@@ -273,20 +377,44 @@ export function receiptForModel(blocks: readonly MessageBlock[]): string {
   return parts.join("\n").trim();
 }
 
+/**
+ * One budget figure an approved payload asked for, clamped to what this host allows.
+ *
+ * `undefined` — a payload written before the budget travelled with the card — answers with the host's own limit,
+ * and so does anything that is not a positive number. The ceiling is `COMMAND_LIMITS`, because the payload is stored
+ * with the conversation: a guardrail may narrow, and nothing may widen.
+ */
+function narrowedTo(value: unknown, ceiling: number): number {
+  if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) return ceiling;
+  return Math.min(Math.floor(value), ceiling);
+}
+
 export async function runApprovedCommand(input: {
   payload: string;
   expectedDigest: string;
   approvalId: string;
+  /**
+   * The folders this node owns, checked again here rather than trusted from when the card was drawn.
+   *
+   * The same check the guarded path runs, which is what makes `confirm` a policy about *asking* rather than a
+   * different kind of gate: an approved operation is still an operation this node may perform.
+   */
+  resources: OwnedResources;
   /** Injected so the whole decision path can be tested without spawning anything. */
-  run?: (request: { command: string; cwd: string }) => Promise<CommandOutcome>;
+  run?: (request: {
+    command: string;
+    cwd: string;
+    timeoutMs: number;
+    maxOutputBytes: number;
+  }) => Promise<CommandOutcome>;
   now?: () => Instant;
 }): Promise<
   | { ok: true; blocks: MessageBlock[]; outcome: CommandOutcome; description: string }
   | { ok: false; code: string; message: string }
 > {
-  let parsed: { command?: unknown; cwd?: unknown };
+  let parsed: { command?: unknown; cwd?: unknown; timeoutMs?: unknown; maxOutputBytes?: unknown };
   try {
-    parsed = JSON.parse(input.payload) as { command?: unknown; cwd?: unknown };
+    parsed = JSON.parse(input.payload) as typeof parsed;
   } catch {
     return { ok: false, code: "APPROVAL_PAYLOAD_UNREADABLE", message: "the approved payload is not readable" };
   }
@@ -306,14 +434,33 @@ export async function runApprovedCommand(input: {
     };
   }
 
-  const guard = guardCommand({ command, cwd });
-  if (!guard.ok || guard.cwd === undefined) {
-    return { ok: false, code: guard.code ?? "COMMAND_REFUSED", message: guard.message ?? "refused" };
+  const preflight = preflightCommand({ command, cwd, resources: input.resources });
+  if (!preflight.ok || preflight.envelope.kind !== "command") {
+    return {
+      ok: false,
+      code: preflight.ok ? "COMMAND_REFUSED" : preflight.code,
+      message: preflight.ok ? "refused" : preflight.message,
+    };
   }
+  const resolvedCwd = preflight.envelope.cwd;
+  /*
+   * The budget the carded envelope carried, if any, and never more than this node's own limits.
+   *
+   * A guardrail may narrow what an approved command is allowed: a shorter deadline, a smaller output ceiling. The
+   * card travels with the envelope it displayed, so the narrowing arrives here with it instead of being lost
+   * between the question and the answer. It is clamped rather than trusted — the payload is stored with the
+   * conversation, and the host's own limits are the ceiling whatever it says.
+   */
+  const budget = {
+    timeoutMs: narrowedTo(parsed.timeoutMs, COMMAND_LIMITS.timeoutMs),
+    maxOutputBytes: narrowedTo(parsed.maxOutputBytes, COMMAND_LIMITS.maxOutputBytes),
+  };
 
   const at = input.now ?? (() => new Date().toISOString() as Instant);
   const startedAt = at();
-  const outcome = await (input.run ?? ((request) => runCommand(request)))({ command, cwd: guard.cwd });
+  const outcome = await (
+    input.run ?? ((request) => runCommand({ command: request.command, cwd: request.cwd }, request))
+  )({ command, cwd: resolvedCwd, ...budget });
   const description = describeCommandOutcome(command, outcome);
   const succeeded = outcome.exitCode === 0 && !outcome.timedOut;
 
@@ -322,13 +469,13 @@ export async function runApprovedCommand(input: {
       type: "tool-activity",
       toolCallId: `run-${input.approvalId}`,
       name: "run_command",
-      label: `Chạy lệnh trong ${guard.cwd}`,
+      label: `Chạy lệnh trong ${resolvedCwd}`,
       status: succeeded ? "done" : "failed",
       // The approval id travels with the receipt so the interface can mark the card it answered as
       // decided, including after a reload.
-      args: { command, cwd: guard.cwd, approvalId: input.approvalId, decision: "granted" },
+      args: { command, cwd: resolvedCwd, approvalId: input.approvalId, decision: "granted" },
       result: commandOutput(outcome),
-      path: guard.cwd,
+      path: resolvedCwd,
       startedAt,
       endedAt: at(),
     },

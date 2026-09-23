@@ -29,7 +29,11 @@ export * from "./voice.ts";
 export * from "./attachments.ts";
 export * from "./app-intents.ts";
 export * from "./surfaces.ts";
+export * from "./execution.ts";
+export * from "./interactions.ts";
+export * from "./models.ts";
 
 export * from "./suggestions.ts";
 
 export * from "./memory.ts";
+export * from "./implementation-status.ts";
