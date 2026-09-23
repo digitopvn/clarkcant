@@ -24,7 +24,7 @@
     "dev:web": "pnpm --filter @clarkcant/app-web run dev",
     "start:desktop": "pnpm --filter @clarkcant/app-desktop run start",
     "test:e2e": "playwright test",
-    "test:live": "CC_LIVE_PROVIDER=1 playwright test --grep '@live'",
+    "test:live": "CC_LIVE_PROVIDER_TEST=1 playwright test voice-live-provider",
     "verify:full": "pnpm run verify && pnpm run test:e2e"
   },
   "devDependencies": {

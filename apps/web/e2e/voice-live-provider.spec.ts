@@ -5,7 +5,6 @@ import { expect, test, type APIRequestContext, type Page } from "@playwright/tes
 
 /**
  * Live-provider test for voice (V17).
- * @live
  *
  * This test uses the real Gemini Live model to verify that:
  * 1. The model can route a spoken command that does not match the deterministic registry
@@ -14,7 +13,7 @@ import { expect, test, type APIRequestContext, type Page } from "@playwright/tes
  * 4. The executor (`runAppIntent`) delivers the same result as a header button click
  *
  * This is an opt-in test that requires:
- * - `CC_LIVE_PROVIDER=1` environment variable
+ * - `CC_LIVE_PROVIDER_TEST=1` environment variable on the node
  * - `GEMINI_API_KEY` to be present (either in environment or vault)
  *
  * Unlike the fixture-based tests (`apps/web/e2e/voice-agent-control.spec.ts`), this test
@@ -24,7 +23,7 @@ import { expect, test, type APIRequestContext, type Page } from "@playwright/tes
  * The test is skipped (with a named reason) if the live provider is not available, so it
  * never breaks CI. It is not run by default in `pnpm verify` or `pnpm test:e2e`.
  *
- * Run with: `CC_LIVE_PROVIDER=1 pnpm exec playwright test --grep @live`
+ * Run with: `GEMINI_API_KEY=sk-... CC_LIVE_PROVIDER_TEST=1 pnpm test:live`
  */
 
 const DATA_DIR = join(process.cwd(), ".data", "e2e");
@@ -42,7 +41,7 @@ const GATEWAY = `http://127.0.0.1:${NODE_PORT}`;
  * Names of the things this test looks for before proceeding.
  * These are printed in skip reasons so a reader can tell what is missing.
  */
-const LIVE_PROVIDER_ENV = "CC_LIVE_PROVIDER";
+const LIVE_PROVIDER_TEST_ENV = "CC_LIVE_PROVIDER_TEST";
 const GEMINI_API_KEY_ENV = "GEMINI_API_KEY";
 
 function token(): string {
@@ -70,12 +69,11 @@ async function startConversation(page: Page): Promise<void> {
 /**
  * Script what the live model will be understood to have heard.
  *
- * This is not the fixture route (which is fixture-only, 404 on a live provider node),
- * but a real voice session. The words are sent as the utterance the real Gemini Live
- * model will process. The model's response determines whether it calls `control_app`.
+ * This sends an utterance to the /voice-live/utterance endpoint for processing by the real Gemini Live
+ * model. The model's response determines whether it calls `control_app`.
  *
- * Refused with 404 if the node is not running with CC_LIVE_PROVIDER=1 (i.e., fixture mode),
- * which means this test properly fails if run against the wrong node.
+ * Refused with 404 if the node is not running with CC_LIVE_PROVIDER_TEST=1, which means this test
+ * properly fails if run against a node without the test flag explicitly enabled.
  */
 async function scriptLiveVoice(request: APIRequestContext, words: string): Promise<void> {
   const response = await request.post(`${GATEWAY}/voice-live/utterance`, {
@@ -84,7 +82,7 @@ async function scriptLiveVoice(request: APIRequestContext, words: string): Promi
   });
   if (response.status() === 404) {
     throw new Error(
-      `Voice live-provider endpoint not found. Is the node running with ${LIVE_PROVIDER_ENV}=1?`,
+      `Voice live-provider test endpoint not found. Is the node running with ${LIVE_PROVIDER_TEST_ENV}=1?`,
     );
   }
   expect(response.status()).toBe(200);
@@ -104,11 +102,11 @@ async function selectedTab(page: Page): Promise<string | null> {
 
 // Detect missing preconditions and decide whether to skip the suite
 const skipReason = (() => {
-  const liveProviderEnabled = process.env[LIVE_PROVIDER_ENV] === "1";
+  const liveProviderTestEnabled = process.env[LIVE_PROVIDER_TEST_ENV] === "1";
   const hasGeminiKey = process.env[GEMINI_API_KEY_ENV] !== undefined && process.env[GEMINI_API_KEY_ENV] !== "";
 
-  if (!liveProviderEnabled) {
-    return `${LIVE_PROVIDER_ENV} is not set to 1. Run with: ${LIVE_PROVIDER_ENV}=1 pnpm exec playwright test --grep '@live'`;
+  if (!liveProviderTestEnabled) {
+    return `${LIVE_PROVIDER_TEST_ENV} is not set to 1. Run with: ${LIVE_PROVIDER_TEST_ENV}=1 pnpm test:live`;
   }
   if (!hasGeminiKey) {
     return `${GEMINI_API_KEY_ENV} is not set. This test requires a real Gemini Live API key to be available in the environment or the node's vault.`;

@@ -15,6 +15,7 @@ export interface VoiceRouteDeps {
   services: Pick<NodeServices, "voiceCapabilities" | "voiceFixture" | "voiceLiveUtterance">;
   request: GatewayRequest;
   segments: string[];
+  env?: Record<string, string | undefined>;
 }
 
 /**
@@ -72,16 +73,23 @@ export function handleVoiceRoutes(deps: VoiceRouteDeps): GatewayResponse | undef
    * Live provider test utterance.
    *
    * This route allows browser tests to inject utterances that will be processed by the real voice session
-   * and the real agent model. It only exists when CC_LIVE_PROVIDER=1 and the real Gemini Live adapter is
-   * loaded (not the fixture).
+   * and the real agent model. It is test infrastructure only and protected by an explicit test-only flag
+   * (CC_LIVE_PROVIDER_TEST=1) to prevent accidental enablement in production.
    *
-   * Unreachable on a node running the voice fixture (CC_VOICE_FIXTURE=1) or a node with no voice configured,
-   * so this is safe to have in production - it does not expose any capability that doesn't already exist.
-   * The intent is to allow opt-in live-provider testing.
+   * Gated by both the service presence and the explicit flag: merely having the real provider loaded does
+   * not enable this route. The flag must be set on the node. Requests go through the normal gateway auth
+   * (bearer token in Authorization header), so the gate is: service present + flag set + authenticated.
+   *
+   * Returns 404 if the flag is not set, if the service is not available, or if the route pattern doesn't match.
    */
   if (segments[0] === "voice-live") {
+    const env = deps.env ?? {};
+    const testFlagEnabled = env.CC_LIVE_PROVIDER_TEST === "1";
     const liveUtterance = deps.services.voiceLiveUtterance;
-    if (liveUtterance === undefined) return fail(404, "NOT_FOUND", "no live voice provider is loaded on this node");
+
+    if (!testFlagEnabled || liveUtterance === undefined) {
+      return fail(404, "NOT_FOUND", "no live voice provider test is enabled on this node");
+    }
     if (segments.length !== 2 || segments[1] !== "utterance" || request.method !== "POST") {
       return fail(404, "NOT_FOUND", "no such voice-live route");
     }

@@ -96,9 +96,17 @@ export default defineConfig({
       // A fresh directory is also what a first run looks like, which is the state these specs are written about.
       command: `node -e "require('node:fs').rmSync('${DATA_DIR}',{recursive:true,force:true})" && node apps/runtime/src/main.ts --data-dir ${DATA_DIR} --port ${NODE_PORT} --label e2e-node`,
       env: {
-        CC_VOICE_FIXTURE: "1",
-        CC_MODEL_FIXTURE: "1",
-        CC_SESSION_FIXTURE: "1",
+        // For live-provider tests: if CC_LIVE_PROVIDER_TEST is set, disable fixtures so the real provider is used.
+        // Otherwise, use fixtures for predictable testing.
+        ...(process.env.CC_LIVE_PROVIDER_TEST === "1"
+          ? {}
+          : {
+              CC_VOICE_FIXTURE: "1",
+              CC_MODEL_FIXTURE: "1",
+              CC_SESSION_FIXTURE: "1",
+            }),
+        // Pass through the live-provider test flag if set, so the test endpoint is available.
+        ...(process.env.CC_LIVE_PROVIDER_TEST === "1" ? { CC_LIVE_PROVIDER_TEST: "1" } : {}),
         /*
          * A directory the install journey can resolve against. Without one the route refuses with NO_DIRECTORY, which
          * is the honest answer for a node nobody configured — but it would mean the only install journey a browser

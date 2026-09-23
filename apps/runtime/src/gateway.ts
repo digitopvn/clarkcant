@@ -170,7 +170,7 @@ export async function handleRequest(deps: GatewayDeps, request: GatewayRequest):
   const nodeResponse = await handleNodeRoutes({ services, request, segments, at });
   if (nodeResponse !== undefined) return nodeResponse;
 
-  const voiceResponse = handleVoiceRoutes({ services, request, segments });
+  const voiceResponse = handleVoiceRoutes({ services, request, segments, env: process.env });
   if (voiceResponse !== undefined) return voiceResponse;
 
   const controlResponse = await handleControlRoutes({ services, request, segments, at });
