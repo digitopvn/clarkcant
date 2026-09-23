@@ -267,6 +267,19 @@ export class GeminiLiveAdapter implements VoiceProviderAdapter {
   }
 
   /**
+   * Send user input text to the live session.
+   *
+   * Used for testing to inject utterances that the model processes like spoken input.
+   * The model receives this as a user message and responds, allowing test verification
+   * of model routing decisions (e.g., whether it calls control_app).
+   */
+  sendUserText(text: string): void {
+    const socket = this.#socket;
+    if (socket === undefined || this.#state === "connecting" || text.trim() === "") return;
+    socket.send(JSON.stringify(buildTextMessage(text)));
+  }
+
+  /**
    * Read a given text out loud.
    *
    * A text turn, which the provider speaks in the session's voice. Mute is deliberately not consulted:
@@ -274,8 +287,16 @@ export class GeminiLiveAdapter implements VoiceProviderAdapter {
    * microphone would be a bug shaped like a feature. Dropped before setup completes, because the setup
    * message has to be first on the socket, and dropped when empty because a silent turn still costs a
    * round trip and produces a stretch of silence that looks like a stall.
+   *
+   * For testing, use `sendUserText` to inject user input. This method sends the model's reply to be
+   * spoken by the session.
    */
   speak(text: string): void {
+    // Note: `speak` and `sendUserText` both send text, but in different contexts:
+    // - `sendUserText` is for injecting test input (user turn)
+    // - `speak` is for outputting the model's response (assistant turn read aloud)
+    // Both ultimately send a text message to Gemini Live because the session's protocol
+    // treats them the same way at the transport level.
     const socket = this.#socket;
     if (socket === undefined || this.#state === "connecting" || text.trim() === "") return;
     socket.send(JSON.stringify(buildTextMessage(text)));

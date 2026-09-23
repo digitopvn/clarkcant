@@ -125,22 +125,25 @@ export function attachNodeVoice(deps: NodeVoiceDeps): NodeVoice {
   if (scripted !== undefined) deps.services.voiceFixture = scripted.service;
 
   /**
-   * Live-provider test utterance queue.
+   * Live-provider test utterance service.
    *
-   * Present only when CC_LIVE_PROVIDER_TEST=1. This allows tests to inject utterances that are
-   * processed by the real agent and voice model. The queue is not connected to the actual voice
-   * session yet — that integration is future work. For now, this is a proof-of-concept that the
-   * endpoint exists and can accept utterances.
+   * Present only when CC_LIVE_PROVIDER_TEST=1. This allows tests to inject utterances via the
+   * /voice-live/utterance endpoint. The utterances are sent to the real Gemini Live session as
+   * user text input, so the model processes them like spoken input and can decide to call control_app.
+   * The decision flows through the existing control_app → runAppIntent executor.
    */
   const liveProviderTestEnabled = deps.env?.CC_LIVE_PROVIDER_TEST === "1";
+  let voiceLiveUtterance: { sendUserText?: (text: string) => void; enqueueUtterance(words: string): void } | undefined;
   if (liveProviderTestEnabled) {
-    const utteranceQueue: string[] = [];
-    deps.services.voiceLiveUtterance = {
+    voiceLiveUtterance = {
       enqueueUtterance(words: string) {
-        utteranceQueue.push(words);
-        // TODO: integrate with voice session to process queued utterances
+        // Send immediately if sendUserText is available (wired by the voice session).
+        // If not wired yet, the utterance is lost—but for testing, the voice session exists
+        // before test utterances are sent via the HTTP endpoint.
+        this.sendUserText?.(words);
       },
     };
+    deps.services.voiceLiveUtterance = voiceLiveUtterance;
   }
 
   const voice = attachVoiceGateway({
@@ -156,6 +159,7 @@ export function attachNodeVoice(deps: NodeVoiceDeps): NodeVoice {
           readCredential(deps.services.runtime.db, deps.services.runtime.identity.ownerPrincipalId, VOICE_CREDENTIAL_NAME),
     ...(scripted === undefined ? {} : { createAdapter: () => scripted.createAdapter() }),
     ...(voiceModel === undefined ? {} : { model: voiceModel }),
+    ...(voiceLiveUtterance === undefined ? {} : { voiceLiveUtterance }),
     /**
      * What a finished sentence does.
      *

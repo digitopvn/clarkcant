@@ -213,6 +213,13 @@ export interface VoiceGatewayOptions {
   }) => Promise<VoiceWidgetRun>;
   /** Injected by tests so the transport can be exercised without a provider. */
   createAdapter?: () => VoiceProviderAdapter;
+  /**
+   * Live-provider test utterance service.
+   *
+   * When present, the gateway will wire it up so queued utterances are sent to the live session
+   * as user text input for the model to process.
+   */
+  voiceLiveUtterance?: { sendUserText?: (text: string) => void };
   now?: () => Instant;
   /**
    * How long the transcription has to be quiet before the sentence is taken as finished.
@@ -924,6 +931,12 @@ export function attachVoiceGateway(options: VoiceGatewayOptions): VoiceGateway {
       authenticated = true;
       active = { sessionId, holder };
       adapter = createAdapter();
+
+      // Wire up live-provider test utterance injection if the service is available.
+      // This allows tests to inject user text that the live model processes like spoken input.
+      if (options.voiceLiveUtterance !== undefined && adapter !== undefined) {
+        options.voiceLiveUtterance.sendUserText = (text: string) => adapter!.sendUserText?.(text);
+      }
 
       adapter.onStateChange((state) => {
         // The provider says when it stops speaking; until it does, the audio it sends belongs to the reply we asked for.

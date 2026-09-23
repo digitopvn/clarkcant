@@ -34,6 +34,14 @@ export interface VoiceProviderAdapter {
    */
   speak(text: string): void;
   /**
+   * Send user input text to the live session (for testing).
+   *
+   * Used by live-provider tests to inject utterances that the real model processes like spoken input.
+   * The model receives this as a user message and responds, allowing test verification of routing
+   * decisions. Not all providers may support this; it is optional per provider.
+   */
+  sendUserText?(text: string): void;
+  /**
    * Audio coming back from the provider, as PCM16 at the provider's output rate.
    *
    * A callback rather than a queue the caller polls: the caller is a socket that has to forward
