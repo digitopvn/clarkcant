@@ -24,10 +24,13 @@ import {
   readPreference,
   recordInbox,
   revokeGrant,
+  searchProjects,
   unsettledEffects,
   upsertEffect,
   upsertGrant,
+  upsertProject,
   verifyBackup,
+  type ProjectRecord,
 } from "../src/index.ts";
 
 let dir: string;
@@ -592,6 +595,74 @@ describe("a stored preference", () => {
     });
     expect(readPreference(db, owner, "model", "conversation-1")).toBe("google/gemini-3-flash");
     expect(readPreference(db, owner, "model", "node")).toBe("google/gemini-3-pro");
+  });
+});
+
+describe("searchProjects", () => {
+  function project(overrides: Partial<ProjectRecord>): ProjectRecord {
+    return {
+      projectId: overrides.projectId ?? "proj_default",
+      nodeId: NODE_A,
+      path: "/home/duy/projects/default",
+      name: "default",
+      aliases: [],
+      gitRemote: undefined,
+      markers: [],
+      kind: "code",
+      mtime: 0,
+      lastUsedAt: undefined,
+      indexedAt: AT,
+      ...overrides,
+    };
+  }
+
+  it("matches by name via the FTS index, joined in a single query rather than one lookup per hit", () => {
+    const db = freshDb();
+    upsertProject(
+      db,
+      project({ projectId: "proj_clarkcant", path: "/home/duy/www/clarkcant-voice", name: "clarkcant-voice" }),
+    );
+    upsertProject(db, project({ projectId: "proj_agentkit", path: "/home/duy/www/agentkit", name: "agentkit" }));
+    // Different node: must never surface in another node's results.
+    upsertProject(
+      db,
+      project({
+        projectId: "proj_other_node",
+        nodeId: NODE_B,
+        path: "/home/other/clarkcant-voice",
+        name: "clarkcant-voice",
+      }),
+    );
+
+    const results = searchProjects(db, NODE_A, "clarkcant");
+    expect(results).toHaveLength(1);
+    expect(results[0]?.project.projectId).toBe("proj_clarkcant");
+    expect(results[0]?.how).toBe("search");
+    expect(results[0]?.score).toBeTypeOf("number");
+  });
+
+  it("prefers an exact alias match over a ranked search hit for the same project", () => {
+    const db = freshDb();
+    upsertProject(
+      db,
+      project({
+        projectId: "proj_alias",
+        path: "/home/duy/www/kit",
+        name: "the-kit-repo",
+        aliases: ["kit"],
+      }),
+    );
+
+    const results = searchProjects(db, NODE_A, "kit");
+    expect(results).toHaveLength(1);
+    expect(results[0]?.how).toBe("alias");
+    expect(results[0]?.score).toBeUndefined();
+  });
+
+  it("returns nothing for a node with no matching projects", () => {
+    const db = freshDb();
+    upsertProject(db, project({ projectId: "proj_clarkcant", path: "/home/duy/www/clarkcant", name: "clarkcant" }));
+    expect(searchProjects(db, NODE_B, "clarkcant")).toEqual([]);
   });
 });
 
