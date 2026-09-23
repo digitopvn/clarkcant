@@ -9,28 +9,26 @@
  */
 
 export const MESSAGES_CREDENTIALS_VI = {
-  "settings.credentials.heading": "Thong tin xac thuc",
-  "settings.credentials.intro": "Moi khoa node dang giu: ten, muc dich va trang thai ket noi. Gia tri da luu khong bao gio hien lai.",
-  "settings.credentials.readFailed": "Khong doc duoc trang thai thong tin xac thuc.",
-  "settings.credentials.status.connected": "Da ket noi",
-  "settings.credentials.status.notConnected": "Chua ket noi",
-  "settings.credentials.field.label": "Gia tri moi",
-  "settings.credentials.field.placeholder": "Dan khoa vao day",
-  "settings.credentials.replace": "Thay the",
-  "settings.credentials.remove": "Go bo",
-  "settings.credentials.status.saved": "Da luu - node dang dung khoa moi.",
-  "settings.credentials.status.saveFailed":
-    "Khong luu duoc khoa moi. Khoa cu (neu co) van duoc giu nguyen. Thu dan lai va luu lan nua.",
-  "settings.credentials.status.sentNoName": "Da gui, nhung node khong ghi nhan ten khoa nay. Khong co gi bi mat; thu lai.",
-  "settings.credentials.status.removed": "Da go - node khong con giu khoa nay.",
-  "settings.credentials.status.removeFailed":
-    "Khong go duoc khoa. Khoa hien tai (neu co) van duoc giu nguyen; thu lai hoac tai lai trang.",
-  "settings.credentials.linkFromAi": "Quan ly khoa TypeSafe trong muc Thong tin xac thuc ben duoi.",
-  "settings.credentials.linkFromDevices": "Quan ly khoa Gemini trong muc Thong tin xac thuc o tab AI and Dinh tuyen.",
-  "settings.credentials.typesafe.label": "Khoa TypeSafe (Jev)",
-  "settings.credentials.typesafe.purpose": "Dung cho Jev khi no phai quyet dinh cach xu ly mot viec.",
-  "settings.credentials.gemini.label": "Khoa Gemini",
-  "settings.credentials.gemini.purpose": "Dung cho Gemini Live khi ban noi. Lan mo voice ke tiep se dung khoa nay.",
+  "settings.credentials.heading": "Thông tin xác thực",
+  "settings.credentials.intro": "Mọi khoá node đang giữ: tên, mục đích và trạng thái kết nối. Giá trị đã lưu không bao giờ hiện lại.",
+  "settings.credentials.readFailed": "Không đọc được trạng thái thông tin xác thực.",
+  "settings.credentials.status.connected": "Đã kết nối",
+  "settings.credentials.status.notConnected": "Chưa kết nối",
+  "settings.credentials.field.label": "Giá trị mới",
+  "settings.credentials.field.placeholder": "Dán khoá vào đây",
+  "settings.credentials.replace": "Thay thế",
+  "settings.credentials.remove": "Gỡ bỏ",
+  "settings.credentials.status.saved": "Đã lưu — node đang dùng khoá mới.",
+  "settings.credentials.status.saveFailed": "Không lưu được khoá mới. Khoá cũ (nếu có) vẫn được giữ nguyên. Thử dán lại và lưu lần nữa.",
+  "settings.credentials.status.sentNoName": "Đã gửi, nhưng node không ghi nhận tên khoá này. Không có gì bị mất; thử lại.",
+  "settings.credentials.status.removed": "Đã gỡ — node không còn giữ khoá này.",
+  "settings.credentials.status.removeFailed": "Không gỡ được khoá. Khoá hiện tại (nếu có) vẫn được giữ nguyên; thử lại hoặc tải lại trang.",
+  "settings.credentials.linkFromAi": "Quản lý khoá TypeSafe trong mục Thông tin xác thực bên dưới.",
+  "settings.credentials.linkFromDevices": "Quản lý khoá Gemini trong mục Thông tin xác thực ở tab AI & Định tuyến.",
+  "settings.credentials.typesafe.label": "Khoá TypeSafe (Jev)",
+  "settings.credentials.typesafe.purpose": "Dùng cho Jev khi nó phải quyết định cách xử lý một việc.",
+  "settings.credentials.gemini.label": "Khoá Gemini",
+  "settings.credentials.gemini.purpose": "Dùng cho Gemini Live khi bạn nói. Lần mở voice kế tiếp sẽ dùng khoá này.",
 } as const;
 
 export const MESSAGES_CREDENTIALS_EN = {
@@ -52,7 +50,7 @@ export const MESSAGES_CREDENTIALS_EN = {
   "settings.credentials.status.removeFailed":
     "Could not remove the key. The current one, if any, was kept; try again or reload the page.",
   "settings.credentials.linkFromAi": "Manage the TypeSafe key in the Credentials section below.",
-  "settings.credentials.linkFromDevices": "Manage the Gemini key in the Credentials section on the AI and Routing tab.",
+  "settings.credentials.linkFromDevices": "Manage the Gemini key in the Credentials section on the AI & Routing tab.",
   "settings.credentials.typesafe.label": "TypeSafe key (Jev)",
   "settings.credentials.typesafe.purpose": "Used by Jev when it has to decide how to handle something.",
   "settings.credentials.gemini.label": "Gemini key",
