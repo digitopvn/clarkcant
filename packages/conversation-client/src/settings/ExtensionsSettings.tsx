@@ -1,5 +1,6 @@
 import { useEffect, useState, type ReactElement } from "react";
 
+import { useT } from "../i18n/locale-context.tsx";
 import { ToolLists } from "../tool-lists.tsx";
 import type { GatewayClient, InstalledPackageView } from "../api.ts";
 import { LANE_LABELS } from "../package-provenance.ts";
@@ -30,6 +31,7 @@ export interface ExtensionsSettingsProps {
 }
 
 export function ExtensionsSettings({ client, tools, onOpenWidgetLibrary }: ExtensionsSettingsProps): ReactElement {
+  const t = useT();
   const [extensions, setExtensions] = useState<{ name: string; kind: string }[] | undefined>(undefined);
 
   useEffect(() => {
@@ -63,7 +65,7 @@ export function ExtensionsSettings({ client, tools, onOpenWidgetLibrary }: Exten
         ("what can Clark draw?") rather than the one the list answers ("what is installed?").
       */}
       <section className="cc-panel-section" data-widget-library-entry="true">
-        <h3>Widget Library</h3>
+        <h3 data-marketplace-heading="true">{t("marketplace.heading")}</h3>
         <p className="cc-panel-note">Xem những giao diện Clark có thể dùng trong hội thoại.</p>
         <SettingsRow
           label="Widget Library"

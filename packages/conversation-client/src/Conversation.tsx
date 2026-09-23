@@ -101,16 +101,12 @@ export interface ConversationProps {
 }
 
 /**
- * The questions the empty composer types at the user, one at a time.
+ * The keys of the questions the empty composer types at the user, one at a time, in the catalog's own order.
  *
  * Asked as questions rather than shown as commands, because the empty state is a prompt for what to
  * say and a list of instructions reads as a menu of the only four things that work.
  */
-const PLACEHOLDER_PHRASES = [
-  "có cập nhật gì mới không?",
-  "cần làm gì hôm nay?",
-  "phân tích các commit gần nhất",
-] as const;
+const PLACEHOLDER_PHRASE_KEYS = ["composer.placeholder.1", "composer.placeholder.2", "composer.placeholder.3"] as const;
 
 export function Conversation({
   client,
@@ -281,7 +277,10 @@ export function Conversation({
   });
 
   const focusedInstanceId = pins.find((pin) => pin.displayMode === "expanded")?.instanceId;
-  const placeholder = useTypewriterPlaceholder(PLACEHOLDER_PHRASES, heroPhase === "shown" && draft === "");
+  // Re-derived from the current locale on every render rather than memoized: a language switch mid-typewriter
+  // must show the new language's phrases, not finish the cycle in the one that was active when it started.
+  const placeholderPhrases = PLACEHOLDER_PHRASE_KEYS.map((key) => localeState.t(key));
+  const placeholder = useTypewriterPlaceholder(placeholderPhrases, heroPhase === "shown" && draft === "");
   const showTimeline = blocks.length > 0 || pendingUser !== undefined || busy;
 
   return (

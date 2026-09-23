@@ -2,6 +2,7 @@ import type { ReactElement, RefObject } from "react";
 
 import type { Timeline } from "./api.ts";
 import { formatFileSize, type AttachmentChip } from "./attachments.ts";
+import { useT } from "./i18n/locale-context.tsx";
 import { latestTurnMetrics, statuslineParts } from "./statusline.ts";
 
 export interface ConversationComposerBarProps {
@@ -52,6 +53,7 @@ export function ConversationComposerBar({
   error,
   messages,
 }: ConversationComposerBarProps): ReactElement {
+  const t = useT();
   return (
     <div
       className="cc-composer-wrap"
@@ -126,8 +128,8 @@ export function ConversationComposerBar({
           <button
             type="button"
             className="cc-icon-btn"
-            aria-label="Đính kèm"
-            title="Đính kèm tệp"
+            aria-label={t("composer.attach")}
+            title={t("composer.attach")}
             data-attachment-open="true"
             onClick={() => attachmentInput.current?.click()}
           >
@@ -136,10 +138,10 @@ export function ConversationComposerBar({
           <textarea
             ref={composerInput}
             value={draft}
-            aria-label="Nhập tin nhắn"
+            aria-label={t("composer.input")}
             // The typed placeholder, and the plain one as soon as there is nothing to type — which
             // is also what a reduced-motion user sees, unchanged.
-            placeholder={placeholder === "" ? "Message anything…" : placeholder}
+            placeholder={placeholder === "" ? t("composer.placeholder") : placeholder}
             rows={1}
             data-composer="true"
             onChange={(event) => setDraft(event.target.value)}
@@ -153,14 +155,20 @@ export function ConversationComposerBar({
           <button
             type="button"
             className="cc-icon-btn"
-            aria-label="Nói bằng giọng nói"
-            title="Nói bằng giọng nói"
+            aria-label={t("composer.voice")}
+            title={t("composer.voice")}
             data-voice-open="true"
             onClick={onOpenVoice}
           >
             ◉
           </button>
-          <button type="submit" className="cc-icon-btn" aria-label="Gửi" disabled={busy || draft.trim() === ""} data-send="true">
+          <button
+            type="submit"
+            className="cc-icon-btn"
+            aria-label={t("composer.send")}
+            disabled={busy || draft.trim() === ""}
+            data-send="true"
+          >
             ↑
           </button>
         </form>

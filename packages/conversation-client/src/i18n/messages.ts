@@ -31,6 +31,20 @@ export const MESSAGES_VI = {
   "settings.language.vi": "Tiếng Việt",
   "settings.language.en": "English",
   "control.instructions": "Chỉ dẫn",
+  "composer.attach": "Đính kèm",
+  "composer.input": "Nhập tin nhắn",
+  "composer.placeholder": "Nhắn gì cũng được…",
+  "composer.voice": "Nói bằng giọng nói",
+  "composer.send": "Gửi",
+  "marketplace.heading": "Thư viện Widget",
+  "voice.unmute": "Bật micro",
+  "voice.mute": "Tắt micro",
+  "voice.expand": "Mở rộng",
+  "voice.collapse": "Thu gọn",
+  "voice.end": "Kết thúc",
+  "composer.placeholder.1": "có cập nhật gì mới không?",
+  "composer.placeholder.2": "cần làm gì hôm nay?",
+  "composer.placeholder.3": "phân tích các commit gần nhất",
 } as const;
 
 export type MessageKey = keyof typeof MESSAGES_VI;
@@ -52,6 +66,20 @@ export const MESSAGES_EN = {
   "settings.language.vi": "Tiếng Việt",
   "settings.language.en": "English",
   "control.instructions": "Instructions",
+  "composer.attach": "Attach",
+  "composer.input": "Message input",
+  "composer.placeholder": "Message anything…",
+  "composer.voice": "Speak by voice",
+  "composer.send": "Send",
+  "marketplace.heading": "Widget Library",
+  "voice.unmute": "Turn mic on",
+  "voice.mute": "Turn mic off",
+  "voice.expand": "Expand",
+  "voice.collapse": "Collapse",
+  "voice.end": "End",
+  "composer.placeholder.1": "any updates?",
+  "composer.placeholder.2": "what needs doing today?",
+  "composer.placeholder.3": "analyze the latest commits",
 } as const satisfies Record<MessageKey, string>;
 
 export const CATALOGS: Record<LocaleChoice, Record<MessageKey, string>> = {

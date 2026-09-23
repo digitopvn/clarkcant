@@ -3,6 +3,7 @@ import { type ReactElement, useCallback, useEffect, useRef, useState } from "rea
 import type { AppIntentDecision, VoiceState } from "@clarkcant/contracts";
 
 import type { GatewayClient } from "./api.ts";
+import { useT } from "./i18n/locale-context.tsx";
 import { Orb } from "./Orb.tsx";
 import { VoiceUnavailable } from "./voice-unavailable.tsx";
 import type { VoiceSession, VoiceTranscriptUpdate } from "./voice-session.ts";
@@ -146,6 +147,7 @@ export function VoiceOverlay({
   requires = "một phiên Live API đang mở",
   unblockedBy = "đặt GEMINI_API_KEY cho node rồi thử lại",
 }: VoiceOverlayProps): ReactElement {
+  const t = useT();
   const [state, setState] = useState<VoiceState>("connecting");
   const [muted, setMuted] = useState(false);
   /**
@@ -494,12 +496,12 @@ export function VoiceOverlay({
             className="cc-voice-action"
             data-voice-mute="true"
             data-muted={muted ? "true" : "false"}
-            aria-label={muted ? "Bật micro" : "Tắt micro"}
+            aria-label={muted ? t("voice.unmute") : t("voice.mute")}
             onClick={toggleMute}
             disabled={!live}
           >
             <span className="cc-voice-action-icon" aria-hidden="true">{muted ? "🎙" : "🔇"}</span>
-            <span className="cc-voice-action-text">{muted ? "Bật micro" : "Tắt micro"}</span>
+            <span className="cc-voice-action-text">{muted ? t("voice.unmute") : t("voice.mute")}</span>
           </button>
           <button
             type="button"
@@ -507,17 +509,17 @@ export function VoiceOverlay({
             data-voice-minimize="true"
             aria-pressed={collapsed}
             aria-expanded={!collapsed}
-            aria-label={collapsed ? "Mở rộng" : "Thu gọn"}
+            aria-label={collapsed ? t("voice.expand") : t("voice.collapse")}
             onClick={() => setCollapsed((current) => !current)}
           >
             <span className="cc-voice-action-icon" aria-hidden="true">{collapsed ? "▣" : "▭"}</span>
-            <span className="cc-voice-action-text">{collapsed ? "Mở rộng" : "Thu gọn"}</span>
+            <span className="cc-voice-action-text">{collapsed ? t("voice.expand") : t("voice.collapse")}</span>
           </button>
           <button
             type="button"
             className="cc-voice-action cc-voice-action-end"
             data-voice-end="true"
-            aria-label="Kết thúc"
+            aria-label={t("voice.end")}
             onClick={() => {
               endSession();
               onClose({ focusComposer: false });
