@@ -30,6 +30,22 @@ const ENTRY: DirectoryEntry = {
   digest: "sha256:published-digest",
 };
 
+/**
+ * `ENTRY` above is deliberately a `local` source, because several tests below resolve a `local` path against it by
+ * matching `source.path`. A git or npm resolution now matches the directory entry by its actual `source` (url+ref,
+ * or name), not by `packageId`, so those tests need entries whose `source` is really git/npm rather than a `local`
+ * fixture that happened to share a `packageId` string with the query.
+ */
+const GIT_REF = "9f2c4a1b7e5d3c8f1a2b3c4d5e6f7a8b9c0d1e2f";
+const GIT_ENTRY: DirectoryEntry = {
+  ...ENTRY,
+  source: { kind: "git", url: "https://github.com/example/calendar-plus", ref: GIT_REF },
+};
+const NPM_ENTRY: DirectoryEntry = {
+  ...ENTRY,
+  source: { kind: "npm", name: "com.example.calendar", version: "1.2.0" },
+};
+
 const HOST: { hostApi: number; platform: Platform } = { hostApi: 1, platform: "linux-x64" };
 
 /** A host that can run a Windows package, and one that cannot. The pair is the interesting case. */
@@ -65,20 +81,32 @@ describe("what the resolver refuses", () => {
   });
 
   it("accepts a commit id and a version tag", () => {
-    for (const ref of ["9f2c4a1b7e5d3c8f1a2b3c4d5e6f7a8b9c0d1e2f", "v1.2.0"]) {
+    for (const ref of [GIT_REF, "v1.2.0"]) {
       const result = resolvePackageSource({
-        source: { kind: "git", url: "com.example.calendar", ref },
-        directory: [ENTRY],
+        source: { kind: "git", url: "https://github.com/example/calendar-plus", ref },
+        directory: [{ ...GIT_ENTRY, source: { kind: "git", url: "https://github.com/example/calendar-plus", ref } }],
         ...HOST,
       });
       expect(result.ok, `${ref} should resolve`).toBe(true);
     }
   });
 
+  it("refuses a git source the directory does not have under that exact ref", () => {
+    const result = resolvePackageSource({
+      source: { kind: "git", url: "https://github.com/example/calendar-plus", ref: GIT_REF },
+      directory: [{ ...GIT_ENTRY, source: { kind: "git", url: "https://github.com/example/calendar-plus", ref: "a".repeat(40) } }],
+      ...HOST,
+    });
+
+    // A directory entry that matches the url but not the pinned ref is not the entry that was asked for.
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.code).toBe("NOT_IN_DIRECTORY");
+  });
+
   it("refuses an npm range, because a range is not one artifact", () => {
     const result = resolvePackageSource({
       source: { kind: "npm", name: "com.example.calendar", version: "^1.2.0" },
-      directory: [ENTRY],
+      directory: [NPM_ENTRY],
       ...HOST,
     });
 
@@ -89,7 +117,7 @@ describe("what the resolver refuses", () => {
   it("refuses an exact npm version the directory does not have", () => {
     const result = resolvePackageSource({
       source: { kind: "npm", name: "com.example.calendar", version: "9.9.9" },
-      directory: [ENTRY],
+      directory: [NPM_ENTRY],
       ...HOST,
     });
 
@@ -101,7 +129,7 @@ describe("what the resolver refuses", () => {
   it("refuses a package that needs another host API", () => {
     const result = resolvePackageSource({
       source: { kind: "npm", name: "com.example.calendar", version: "1.2.0" },
-      directory: [{ ...ENTRY, hostApi: { min: 5, max: 6 } }],
+      directory: [{ ...NPM_ENTRY, hostApi: { min: 5, max: 6 } }],
       ...HOST,
     });
 
@@ -113,7 +141,7 @@ describe("what the resolver refuses", () => {
   it("refuses a package that does not list this platform", () => {
     const result = resolvePackageSource({
       source: { kind: "npm", name: "com.example.calendar", version: "1.2.0" },
-      directory: [{ ...ENTRY, platforms: ["darwin-arm64"] }],
+      directory: [{ ...NPM_ENTRY, platforms: ["darwin-arm64"] }],
       ...HOST,
     });
 
@@ -124,7 +152,7 @@ describe("what the resolver refuses", () => {
   it("refuses a directory entry that publishes no digest", () => {
     const result = resolvePackageSource({
       source: { kind: "npm", name: "com.example.calendar", version: "1.2.0" },
-      directory: [{ ...ENTRY, digest: "   " }],
+      directory: [{ ...NPM_ENTRY, digest: "   " }],
       ...HOST,
     });
 
@@ -160,7 +188,7 @@ describe("what a resolved source carries", () => {
   it("carries the published digest and the rationale, so consent names what it approved", () => {
     const result = resolvePackageSource({
       source: { kind: "npm", name: "com.example.calendar", version: "1.2.0" },
-      directory: [ENTRY],
+      directory: [NPM_ENTRY],
       ...HOST,
     });
 
@@ -176,7 +204,7 @@ describe("what a resolved source carries", () => {
   it("carries the lane the directory declared", () => {
     const result = resolvePackageSource({
       source: { kind: "npm", name: "com.example.calendar", version: "1.2.0" },
-      directory: [{ ...ENTRY, riskTier: "trusted-native" }],
+      directory: [{ ...NPM_ENTRY, riskTier: "trusted-native" }],
       ...HOST,
     });
 
@@ -230,7 +258,7 @@ describe("the platform vocabulary", () => {
   });
 
   it("offers a Windows package to a Windows host, and refuses it on Linux", () => {
-    const windowsPackage = { ...ENTRY, platforms: ["win32-x64" as const] };
+    const windowsPackage = { ...NPM_ENTRY, platforms: ["win32-x64" as const] };
     const source = { kind: "npm" as const, name: "com.example.calendar", version: "1.2.0" };
 
     expect(resolvePackageSource({ source, directory: [windowsPackage], ...HOST_WINDOWS }).ok).toBe(true);

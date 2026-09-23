@@ -1,3 +1,4 @@
+import { join } from "node:path";
 
 import {
   type AppIntent,
@@ -13,6 +14,7 @@ import {
   surfaceCompositionSpecSchema,
 } from "@clarkcant/contracts";
 import {
+  brokeredCapabilities,
   claimLiveOwner,
   decideApproval,
   directoryIndexPath,
@@ -43,6 +45,7 @@ import {
 } from "@clarkcant/storage";
 
 import { type AppIntentDeps, decideAppIntent, mintConfirmation } from "../app-intents.ts";
+import { activeGenerationWithResolvedGrants } from "../application/package-install.ts";
 import { invokeWidgetAction } from "../application/widget-actions.ts";
 import { resolveAttachmentRefs } from "../attachments.ts";
 import { nodeBackgroundSessions } from "../background-sessions.ts";
@@ -136,8 +139,31 @@ function resolveLiveWidget(
   const isolated = findIsolatedFrame({
     directory: index.kind === "configured" ? index.entries : [],
     widgetId: instance.definitionRef.id,
+    // A git/npm entry this node has fetched is served from its cache path exactly like a local package (H1); the
+    // cache root here must match the one the install route fetched into.
+    cacheRoot: join(runtime.dataDir, "package-cache"),
   });
   if (isolated.ok) {
+    /*
+     * What the frame is actually brokered is the *granted* set, not the requested one.
+     *
+     * `isolated.requestedCapabilities` is the manifest's own request — metadata a package wrote about itself,
+     * never an authority (`packages/core/src/widget-package.ts`). The generation this node actually activated
+     * carries the capabilities a real consent decision granted (`install-consent.ts`, wired in
+     * `application/package-install.ts`), narrower than the request whenever the policy asked or refused one. A
+     * frame with no active generation on record (should not happen for a package this node just resolved a frame
+     * for, but is not proven impossible) is brokered nothing rather than the unchecked request.
+     */
+    // `activeGenerationWithResolvedGrants` rather than `activeGeneration` directly: a generation activated
+    // before `grantedCapabilities` existed on the schema carries a `null` marker (migration 22, N4), and this is
+    // exactly the read this generation's frame grant depends on — resolving it here is what "a frame picks up
+    // its grant on next mount" means for a legacy generation, not only for one grant/deny just resolved.
+    const generation = activeGenerationWithResolvedGrants(
+      { runtime: { db: runtime.db, identity: runtime.identity, dataDir: runtime.dataDir }, conductor: services.conductor },
+      isolated.packageId,
+    );
+    const grantedForFrame = brokeredCapabilities(isolated.requestedCapabilities, generation?.grantedCapabilities);
+
     return json(200, {
       kind: "isolated-frame",
       instanceId,
@@ -158,7 +184,7 @@ function resolveLiveWidget(
           expiresAtMs: Date.parse(nowInstant()) + 5 * 60 * 1000,
         })}/${isolated.entryPath}`,
         isolation: isolated.isolation,
-        requestedCapabilities: isolated.requestedCapabilities,
+        grantedCapabilities: grantedForFrame,
         allowedOrigins: isolated.allowedOrigins,
       },
       /*

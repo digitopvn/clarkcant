@@ -216,7 +216,7 @@ export async function handleRequest(deps: GatewayDeps, request: GatewayRequest):
   const credentialResponse = handleCredentialRoutes({ services, request, segments });
   if (credentialResponse !== undefined) return credentialResponse;
 
-  const packageResponse = handlePackageRoutes({ services, request, segments });
+  const packageResponse = await handlePackageRoutes({ services, request, segments });
   if (packageResponse !== undefined) return packageResponse;
 
 

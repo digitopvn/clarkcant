@@ -18,18 +18,19 @@ import { bootNodeServices, type NodeServices } from "../src/services.ts";
  * names what was actually verified.
  *
  * What this test does **not** claim: that the installed package's capability becomes usable by a
- * dispatched task. `installPackage` fails closed on `grantedCapabilities` (see the comment there and
- * in `routes/packages.ts` — issue #93, P1): a public install request has no consent/policy state from
- * which this node can honestly derive a grant today, so nothing is registered in the capability
- * registry by installing alone. That is a real, named gap rather than an oversight papered over here;
- * the second test below proves the boundary rather than faking past it.
+ * dispatched task purely because it was requested. `installPackage` derives the granted set from what
+ * was requested through `deriveGrantedCapabilities` (`install-consent.ts`), asking the same execution
+ * policy every other effect on this node answers to — never from the request body itself (issue #93,
+ * P1 stays fixed: a client cannot declare its own grant). This test requests no capabilities, so its
+ * granted set is empty regardless; the second test below proves the boundary that a forged
+ * `grantedCapabilities` in the body still cannot become authority, rather than faking past it.
  *
- * A second, equally real gap: this node never fetches an artifact. `git`/`npm` sources are pinned by
- * digest and refused when they do not resolve to one, but nothing here downloads the bytes and installs
- * from them — the transport that would turn a remote entry into files on disk does not exist yet. Only
- * a `local` source (bytes already on this machine) can actually activate; that is `INSTALL_VERIFICATION`
- * = `"digest-only"` made concrete, and it is why this test uses a local source rather than pretending a
- * remote one installs.
+ * `git`/`npm` sources are fetched into a node-owned cache before this route's own install path ever
+ * sees them (`fetchRemoteArtifact`, `package-fetch.ts`), so a remote entry now activates the same way a
+ * `local` one does — `apps/runtime/test/package-install-route.spec.ts` exercises that path end to end
+ * with a real git fixture, and `packages/core/test/package-fetch.spec.ts` covers the fetch transport
+ * itself (a local bare git repo, and a local fake npm registry). This test still uses a local source,
+ * because it is about the install lifecycle a fetched artifact is fed into, not about the fetch itself.
  */
 
 const AT = "2026-09-23T05:00:00.000Z";

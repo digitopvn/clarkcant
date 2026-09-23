@@ -1078,7 +1078,57 @@ export const MIGRATIONS: readonly Migration[] = [
       `);
     },
   },
+  {
+    version: 22,
+    name: "mark_generation_granted_capabilities_unresolved",
+    reversible: false,
+    up: (db) => {
+      /*
+       * Before `grantedCapabilities` existed on `package_generations`, an install granted whatever the package's
+       * manifest requested outright — there was no narrower "derived from policy" set at all. A generation
+       * activated under that old code has no `grantedCapabilities` key in its stored `document` JSON at all, and
+       * reading it back now (the schema requires the field) would silently produce `undefined` at runtime.
+       *
+       * This migration never shipped a release (N4, controller decision on re-review): backfilling from
+       * `install_plans.requestedCapabilityRefs` reached for a row this generation might not still have (a plan is
+       * prunable, and a superseded one is not this generation's own consent record either) and risked writing a
+       * wrong answer once, permanently. Instead this marks each such row `null` — an explicit "not yet resolved"
+       * rather than a guess — and `resolveGenerationGrantedCapabilities`
+       * (`apps/runtime/src/application/package-install.ts`) resolves it lazily the next time the generation is
+       * actually read: from the package's own manifest, the same `requestedCapabilities` source and
+       * `capabilityRefSchema` filter the install path itself uses, persisted back once resolved so the lazy path
+       * runs at most once per legacy generation rather than on every read.
+       */
+      const generations = readAll<{ generation_id: string; document: string }>(
+        db,
+        "SELECT generation_id, document FROM package_generations",
+      );
+
+      for (const row of generations) {
+        let parsedDocument: Record<string, unknown>;
+        try {
+          parsedDocument = JSON.parse(row.document) as Record<string, unknown>;
+        } catch {
+          // A document that does not even parse as JSON is a corruption this migration is not the place to fix;
+          // leave it untouched rather than overwrite it with a guess.
+          continue;
+        }
+        if (Array.isArray(parsedDocument["grantedCapabilities"])) continue;
+        if ("grantedCapabilities" in parsedDocument && parsedDocument["grantedCapabilities"] === null) continue;
+
+        parsedDocument["grantedCapabilities"] = null;
+        db.prepare("UPDATE package_generations SET document = ? WHERE generation_id = ?").run(
+          JSON.stringify(parsedDocument),
+          row.generation_id,
+        );
+      }
+    },
+  },
 ];
+
+function readAll<T>(db: Database, sql: string): T[] {
+  return db.prepare(sql).all() as T[];
+}
 
 export interface MigrationResult {
   from: number;

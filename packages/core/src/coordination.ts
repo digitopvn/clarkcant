@@ -344,7 +344,28 @@ export function decideApproval(
     seenOperationDigest: string;
   },
 ): ApprovalDecision {
-  return transaction(deps.db, () => {
+  return transaction(deps.db, () => decideApprovalWithinTransaction(deps, input));
+}
+
+/**
+ * The body of `decideApproval`, without opening its own transaction.
+ *
+ * Exported so a caller that must persist more than just the decision — R2: a capability approval's grant has to
+ * land in the same durability boundary as the decision that authorized it, or a crash between the two leaves the
+ * approval `granted` with the capability never actually applied — can run this inside its own outer `transaction`
+ * call instead of copying the decide/expected-revision/dedup logic above. `decideApproval` itself stays the
+ * default entry point for every caller that only needs the decision.
+ */
+export function decideApprovalWithinTransaction(
+  deps: CoordinationDeps,
+  input: {
+    approvalId: string;
+    decision: "granted" | "denied";
+    decidingPrincipal: Principal;
+    seenOperationDigest: string;
+  },
+): ApprovalDecision {
+  {
     if (input.decidingPrincipal.kind !== "user") {
       return {
         ok: false as const,
@@ -444,7 +465,7 @@ export function decideApproval(
         decidedAt,
       },
     };
-  });
+  }
 }
 
 /**

@@ -1,5 +1,6 @@
 import type { DirectoryEntry, IsolationClass } from "@clarkcant/contracts";
 
+import { resolveLocalSource } from "./package-fetch.ts";
 import { readPackage } from "./widget-package.ts";
 
 /**
@@ -41,20 +42,44 @@ export type IsolatedFrameLookup =
       message: string;
     };
 
+/**
+ * What a frame is actually brokered: the requested set, narrowed to what was granted.
+ *
+ * A manifest's `requestedCapabilities` is metadata the package wrote about itself, never an authority — the
+ * generation's `grantedCapabilities` (carried from a real consent decision, `install-consent.ts`) is the one
+ * that is. This is deliberately the intersection rather than the granted set alone: a capability the node granted
+ * for some other reason but this widget never asked for still has no business being handed to it.
+ */
+export function brokeredCapabilities(
+  requested: readonly string[],
+  granted: readonly string[] | undefined,
+): readonly string[] {
+  const grantedSet = new Set(granted ?? []);
+  return requested.filter((ref) => grantedSet.has(ref));
+}
+
 export function findIsolatedFrame(input: {
   directory: readonly DirectoryEntry[];
   widgetId: string;
+  /**
+   * Where fetched git/npm artifacts are cached. When given, a git/npm entry whose bytes this node has already
+   * fetched (H1) is served from that cache path the same way a `local` entry is — the fetch step already verified
+   * the bytes against the directory's published digest, so there is nothing more to check here.
+   */
+  cacheRoot?: string;
 }): IsolatedFrameLookup {
   let unreadable = 0;
 
   for (const entry of input.directory) {
-    // Only a package this node can read. A git or npm entry names bytes nobody here has, and a frame that cannot be
-    // given its code should say so rather than be given an address that will fail later.
-    if (entry.source.kind !== "local") continue;
+    const source = entry.source.kind === "local" ? entry.source : input.cacheRoot === undefined ? entry.source : resolveLocalSource(entry, input.cacheRoot);
+    // Only a package this node can read. A git or npm entry this node has not fetched (or has no cache root
+    // configured to check) names bytes nobody here has, and a frame that cannot be given its code should say so
+    // rather than be given an address that will fail later.
+    if (source.kind !== "local") continue;
 
     let pkg;
     try {
-      pkg = readPackage(entry.source.path);
+      pkg = readPackage(source.path);
     } catch {
       unreadable += 1;
       continue;

@@ -1,8 +1,10 @@
 import { randomUUID } from "node:crypto";
+import { join } from "node:path";
 
 import { nowInstant } from "@clarkcant/contracts";
 import {
   INSTALL_VERIFICATION,
+  activeGeneration,
   directoryIndexPath,
   installedWidgets,
   listInstalledPackages,
@@ -10,12 +12,13 @@ import {
   readPackage,
   readPackageFile,
   resolveAppOrigin,
+  resolveLocalSource,
   widgetDocument,
   widgetDocumentPolicy,
 } from "@clarkcant/core";
 import { type Database } from "@clarkcant/storage";
 
-import { installPackage } from "../application/package-install.ts";
+import { decideInstallCapabilityApproval, installPackage } from "../application/package-install.ts";
 import { type GatewayRequest, type GatewayResponse, fail, json, readJson } from "./http.ts";
 
 /**
@@ -35,7 +38,7 @@ export interface PackageRouteDeps {
   segments: string[];
 }
 
-export function handlePackageRoutes(deps: PackageRouteDeps): GatewayResponse | undefined {
+export async function handlePackageRoutes(deps: PackageRouteDeps): Promise<GatewayResponse | undefined> {
   const { request, segments } = deps;
   const { runtime } = deps.services;
   const services = deps.services;
@@ -155,7 +158,7 @@ export function handlePackageRoutes(deps: PackageRouteDeps): GatewayResponse | u
     if (packageId === "" || version === "") {
       return fail(400, "INVALID_SCHEMA", "an install request needs the package id and the version it is installing");
     }
-    const outcome = installPackage(
+    const outcome = await installPackage(
       { runtime, conductor: services.conductor },
       {
         packageId,
@@ -197,6 +200,75 @@ export function handlePackageRoutes(deps: PackageRouteDeps): GatewayResponse | u
        * read without the bytes. Nothing frozen is reported as absent, which is a different statement again.
        */
       lock: outcome.lock,
+      /*
+       * A capability the policy would ask about, or refused outright, named in the response rather than folded
+       * into "installed" as if it were granted. There is no UI control for a pending capability approval today
+       * (AGENTS: no control before its real action exists), so this plain-language note names the route that
+       * already resolves one — `POST /packages/approvals/:id/decision` — as the only place a caller can act on it
+       * until a UI is built; the structured arrays beside it are what that future UI or a CLI would read instead
+       * of parsing prose.
+       */
+      pendingCapabilities: outcome.pendingCapabilities,
+      deniedCapabilities: outcome.deniedCapabilities,
+      ...(outcome.pendingCapabilities.length === 0 && outcome.deniedCapabilities.length === 0
+        ? {}
+        : {
+            note: [
+              outcome.pendingCapabilities.length === 0
+                ? undefined
+                : `${String(outcome.pendingCapabilities.length)} capability request(s) need approval before they work: ${outcome.pendingCapabilities.map((pending) => `${pending.ref} (approvalId ${pending.approvalId})`).join(", ")}. Resolve each with POST /packages/approvals/:id/decision.`,
+              outcome.deniedCapabilities.length === 0
+                ? undefined
+                : `${String(outcome.deniedCapabilities.length)} capability request(s) were denied by policy: ${outcome.deniedCapabilities.join(", ")}.`,
+            ]
+              .filter((line): line is string => line !== undefined)
+              .join(" "),
+          }),
+    });
+  }
+
+  /*
+   * POST /packages/approvals/:id/decision
+   *
+   * Resolving a pending install-capability approval (N1). Node-scoped rather than conversation-scoped, because
+   * this approval was never a step in a dispatched task — it is `installPackage`'s own record of a capability the
+   * policy asked about. Owner-authenticated the same way the install route above is: the gateway's own token
+   * check already ran before this route is reached, and the deciding principal is built from that authenticated
+   * identity, never from the request body.
+   */
+  if (
+    segments.length === 4 &&
+    segments[0] === "packages" &&
+    segments[1] === "approvals" &&
+    segments[3] === "decision" &&
+    request.method === "POST"
+  ) {
+    const approvalId = segments[2];
+    const parsed = readJson(request);
+    if (!parsed.ok) return parsed.response;
+    const decisionValue = parsed.value.decision;
+    const decision = decisionValue === "granted" || decisionValue === "denied" ? decisionValue : undefined;
+    const digest = typeof parsed.value.digest === "string" ? parsed.value.digest : "";
+    if (approvalId === undefined || decision === undefined || digest === "") {
+      return fail(400, "INVALID_SCHEMA", "a decision must carry decision: granted|denied and the digest it was shown");
+    }
+
+    const decided = decideInstallCapabilityApproval(
+      { runtime, conductor: services.conductor },
+      {
+        approvalId,
+        decision,
+        decidingPrincipal: { principalId: runtime.identity.ownerPrincipalId, kind: "user", nodeId: runtime.identity.nodeId },
+        seenOperationDigest: digest,
+      },
+    );
+    if (!decided.ok) return fail(decided.status, decided.code, decided.message);
+
+    return json(200, {
+      decision: decided.decision,
+      ref: decided.ref,
+      alreadyDecided: decided.alreadyDecided,
+      ...(decided.generationId === undefined ? {} : { generationId: decided.generationId }),
     });
   }
 
@@ -230,7 +302,32 @@ export function handlePackageRoutes(deps: PackageRouteDeps): GatewayResponse | u
       return fail(404, "NOT_IN_DIRECTORY", `${packageId}@${version} is not in the directory`);
     }
 
-    const file = readPackageFile({ entry, relativePath: segments.slice(4).join("/") });
+    /*
+     * N2: a directory listing is a claim the publisher made, re-read fresh on every request, not proof this node
+     * ever installed the thing it now names — the directory could republish `packageId@version` against a
+     * different digest (a new source, a compromised registry entry) between install and this request, and the
+     * old comment here ("the digest was already verified... so there is nothing more to check") only covered the
+     * install that ran once, not every later `files` read of what is, from here, an untrusted listing. What this
+     * node actually consented to and fetched is its own `package_generations` row (`installPackage`), so serving
+     * checks that generation's digest, not merely that some file exists on disk for the current listing entry.
+     */
+    const generation = activeGeneration(
+      { db: runtime.db, nodeId: runtime.identity.nodeId, now: nowInstant, newId: () => "" },
+      packageId,
+      runtime.identity.nodeId,
+    );
+    if (generation === undefined || generation.version !== version || generation.digest !== entry.digest) {
+      return fail(
+        409,
+        "NOT_INSTALLED",
+        `${packageId}@${version} has no active installed generation on this node matching the directory's current digest`,
+      );
+    }
+
+    const resolvedSource = resolveLocalSource(entry, join(runtime.dataDir, "package-cache"));
+    const entry_ = resolvedSource === entry.source ? entry : { ...entry, source: resolvedSource };
+
+    const file = readPackageFile({ entry: entry_, relativePath: segments.slice(4).join("/") });
     if (!file.ok) {
       return fail(
         file.code === "FILE_NOT_FOUND" ? 404 : file.code === "FILE_OUTSIDE_PACKAGE" ? 403 : 409,
@@ -260,9 +357,9 @@ export function handlePackageRoutes(deps: PackageRouteDeps): GatewayResponse | u
       // network origin gets that origin in `connect-src`, and a widget that asked for nothing still gets
       // `'none'`, same as before this package's manifest was read here.
       // `readPackageFile` above only succeeds for a `kind: "local"` entry (see its own `NOT_A_LOCAL_PACKAGE`
-      // refusal), so `entry.source` is a local source by the time this line runs.
+      // refusal), so `entry_.source` is a local source by the time this line runs.
       const allowedOrigins =
-        entry.source.kind === "local" ? (readPackage(entry.source.path).manifest.permissions?.networkOrigins ?? []) : [];
+        entry_.source.kind === "local" ? (readPackage(entry_.source.path).manifest.permissions?.networkOrigins ?? []) : [];
       const document = widgetDocument({
         html: file.bytes.toString("utf8"),
         appOrigin: appOriginOutcome.origin,

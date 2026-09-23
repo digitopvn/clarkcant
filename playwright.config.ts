@@ -24,6 +24,12 @@ const DATA_DIR = ".data/e2e";
  */
 const NODE_PORT = Number(process.env.CC_E2E_NODE_PORT ?? 8876);
 const WEB_PORT = Number(process.env.CC_E2E_WEB_PORT ?? 4273);
+/**
+ * A local stand-in for the public npm registry (`apps/runtime/src/test-support/npm-fixture-registry.ts`), so the
+ * "install a remote npm package" journey never leaves the machine. Fixed like the other two ports: the runtime
+ * node needs this server's URL in its own `env` (`CC_NPM_REGISTRY_URL` below) before either process starts.
+ */
+const NPM_REGISTRY_PORT = Number(process.env.CC_E2E_NPM_REGISTRY_PORT ?? 8878);
 
 // Published so a test can point the client at the node this run started, rather than at the
 // default the client would otherwise assume.
@@ -125,8 +131,25 @@ export default defineConfig({
          * same-origin for an opaque-origin document.
          */
         CC_WEB_DIST: join(process.cwd(), "apps", "web", "dist"),
+        /*
+         * Points the "install a remote npm package" journey at the local fixture registry below instead of the
+         * public npm registry, which is unreachable from a sandboxed CI runner and does not have this fixture's
+         * package. Without this the runtime falls back to its own default (the real registry) and the suite's
+         * outcome depends on the network.
+         */
+        CC_NPM_REGISTRY_URL: `http://127.0.0.1:${NPM_REGISTRY_PORT}`,
       },
       url: `http://127.0.0.1:${NODE_PORT}/health`,
+      reuseExistingServer: false,
+      stdout: "pipe",
+    },
+    {
+      // Starts before the runtime node needs it (Playwright starts every `webServer` entry in parallel and
+      // waits on each `url`), serving the one npm package the install-journey fixtures reference
+      // (`com.acme.dashboard`) from a real tarball built at boot from `apps/web/e2e/fixtures/dashboard-widget`.
+      command: `node apps/runtime/src/test-support/npm-fixture-registry.ts`,
+      env: { CC_NPM_FIXTURE_REGISTRY_PORT: String(NPM_REGISTRY_PORT) },
+      url: `http://127.0.0.1:${NPM_REGISTRY_PORT}/com.acme.dashboard`,
       reuseExistingServer: false,
       stdout: "pipe",
     },

@@ -1,3 +1,4 @@
+import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -5,7 +6,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { platformForHost, DEFAULT_EXECUTION_POLICY_CONFIG, directoryEntrySchema } from "@clarkcant/contracts";
 import { directoryBackedMetadata, isolatedLockedBuild, readDependencyLock } from "@clarkcant/capability-host";
-import { EXECUTION_POLICY_PREFERENCE_KEY, writeRegisteredPreference } from "@clarkcant/core";
+import { EXECUTION_POLICY_PREFERENCE_KEY, digestOfDirectory, writeRegisteredPreference } from "@clarkcant/core";
 
 import { freezeInstallClosure } from "../src/application/package-install.ts";
 import { handleRequest, type GatewayDeps, type GatewayRequest, type GatewayResponse } from "../src/gateway.ts";
@@ -20,7 +21,16 @@ import { bootNodeServices, type NodeServices } from "../src/services.ts";
  *
  * The refusals are tested as carefully as the success. A route that installs is only half of what this has to be;
  * the other half is that the four ways a package can be wrong — the wrong platform, no digest, a host API the
- * package does not support, an entry the directory does not have — all stop before anything is fetched.
+ * package does not support, an entry the directory does not have — all stop before the policy is even asked,
+ * let alone before anything is fetched (`resolvePackageSource` runs as this route's own preflight, ahead of the
+ * fetch step `fetchRemoteArtifact` added).
+ *
+ * The happy-path fixture is a real, one-commit git repository on disk rather than a made-up digest: this node now
+ * fetches a git or npm source instead of trusting whatever the directory claims about it, so a fixture that never
+ * resolves to real bytes can no longer stand in for "installs". `GIT_SOURCE_URL`/`GIT_SOURCE_REF` are that
+ * repository's path and pinned commit, and `GIT_SOURCE_DIGEST` is what this node's own `digestOfDirectory`
+ * computes over the checked-out tree — the same function `fetchGitArtifact` uses — so the directory entry
+ * publishes exactly the digest a real fetch will produce.
  */
 
 const AT = "2026-09-20T05:00:00.000Z";
@@ -30,9 +40,33 @@ let services: NodeServices;
 let deps: GatewayDeps;
 let indexPath: string;
 let previousIndex: string | undefined;
+let previousAllowLocalGit: string | undefined;
+let gitSourceUrl: string;
+let gitSourceRef: string;
+let gitSourceDigest: string;
 
 /** The platform this test is running on, in the vocabulary packages and hosts share. */
 const HOST_PLATFORM = platformForHost(process.platform, process.arch);
+
+/** A one-commit git repository this route can actually fetch, built fresh per test so each run's digest is its own. */
+function buildGitSource(root: string): { url: string; ref: string; digest: string } {
+  const repo = join(root, "git-source");
+  mkdirSync(repo, { recursive: true });
+  const run = (...args: string[]): void => {
+    const result = spawnSync("git", ["-C", repo, ...args]);
+    if (result.status !== 0) throw new Error(`git ${args.join(" ")} failed: ${result.stderr.toString()}`);
+  };
+  run("init", "--quiet");
+  run("config", "user.email", "fixture@example.com");
+  run("config", "user.name", "fixture");
+  writeFileSync(join(repo, "widget.json"), JSON.stringify({ id: "com.example.calendar" }));
+  run("add", ".");
+  run("commit", "--quiet", "-m", "init");
+  const ref = spawnSync("git", ["-C", repo, "rev-parse", "HEAD"]).stdout.toString().trim();
+  const digest = digestOfDirectory(repo, { exclude: [".git"] });
+  if (!digest.ok) throw new Error(digest.message);
+  return { url: repo, ref, digest: digest.digest };
+}
 
 function entry(overrides: Record<string, unknown> = {}): Record<string, unknown> {
   return {
@@ -40,7 +74,7 @@ function entry(overrides: Record<string, unknown> = {}): Record<string, unknown>
     version: "1.2.0",
     displayName: "Calendar Plus",
     description: "A compact agenda and week view.",
-    source: { kind: "npm", name: "com.example.calendar", version: "1.2.0" },
+    source: { kind: "git", url: gitSourceUrl, ref: gitSourceRef },
     publisher: { id: "example", sourceUrl: "https://example.com", license: "MIT" },
     preview: {},
     facets: ["ui"],
@@ -51,7 +85,7 @@ function entry(overrides: Record<string, unknown> = {}): Record<string, unknown>
     permissionsSummary: [],
     riskTier: "isolated-ui",
     sizeBytes: 40_960,
-    digest: "sha256:published-digest",
+    digest: gitSourceDigest,
     ...overrides,
   };
 }
@@ -86,16 +120,27 @@ async function activity(): Promise<{ effects: { kind?: string; category?: string
 
 beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), "clarkcant-install-"));
+  const source = buildGitSource(dir);
+  gitSourceUrl = source.url;
+  gitSourceRef = source.ref;
+  gitSourceDigest = source.digest;
   indexPath = join(dir, "directory.json");
   services = bootNodeServices({ dataDir: dir, label: "install route test node" });
   deps = { services, now: () => AT as never };
   previousIndex = process.env["CC_DIRECTORY_INDEX"];
   process.env["CC_DIRECTORY_INDEX"] = indexPath;
+  // The fixture git "remote" is a bare filesystem path, which `fetchGitArtifact` refuses by default (C1: a
+  // directory listing is untrusted, and only a test harness or an explicit local-install flow may fetch from a
+  // local path). This test IS that explicit opt-in.
+  previousAllowLocalGit = process.env["CC_ALLOW_LOCAL_GIT_SOURCES"];
+  process.env["CC_ALLOW_LOCAL_GIT_SOURCES"] = "1";
 });
 
 afterEach(() => {
   if (previousIndex === undefined) delete process.env["CC_DIRECTORY_INDEX"];
   else process.env["CC_DIRECTORY_INDEX"] = previousIndex;
+  if (previousAllowLocalGit === undefined) delete process.env["CC_ALLOW_LOCAL_GIT_SOURCES"];
+  else process.env["CC_ALLOW_LOCAL_GIT_SOURCES"] = previousAllowLocalGit;
   services.runtime.close();
   rmSync(dir, { recursive: true, force: true });
 });
@@ -129,6 +174,29 @@ describe("installing from the directory", () => {
     );
     expect(installed).toHaveLength(1);
     expect(installed[0]?.category).toBe("local-write");
+  });
+
+  /**
+   * M4: a fetch that never produced bytes must never read back as "executed" — the audit trail this node keeps
+   * for every effect it actually performed (the test right above this one) would otherwise say something false
+   * for the one case where nothing was actually installed.
+   */
+  it("leaves no executed-effect audit row when the fetch fails, unlike a fetch that succeeds", async () => {
+    // A ref this fixture repository never had: `fetchGitArtifact` fails before any bytes reach the cache, and
+    // `installPackage` must return before `recordEffectExecution` runs for this package.
+    writeIndex([entry({ source: { kind: "git", url: gitSourceUrl, ref: "0000000000000000000000000000000000dead" } })]);
+
+    const response = await install({ packageId: "com.example.calendar", version: "1.2.0" });
+
+    expect(response.status).toBe(400);
+    expect((response.body as Record<string, unknown>)["code"]).toBeDefined();
+    expect(JSON.stringify(response.body)).not.toContain("generationId");
+
+    const listed = await activity();
+    const installed = listed.effects.filter(
+      (effect) => effect.kind === "effect.executed" && effect.description === "install com.example.calendar@1.2.0",
+    );
+    expect(installed).toHaveLength(0);
   });
 
   it("does not let a forged grantedCapabilities in the request body become authority (issue #93, P1)", async () => {
@@ -305,8 +373,8 @@ describe("the frozen build input the route records", () => {
       {
         name: "com.example.calendar",
         version: "1.2.0",
-        integrity: "sha256:published-digest",
-        resolvedFrom: "npm:com.example.calendar@1.2.0",
+        integrity: gitSourceDigest,
+        resolvedFrom: `git:${gitSourceUrl}#${gitSourceRef}`,
       },
     ]);
 
@@ -321,18 +389,23 @@ describe("the frozen build input the route records", () => {
     const first = await install({ packageId: "com.example.calendar", version: "1.2.0" });
     expect(first.status).toBe(200);
 
-    // The directory now publishes different bytes for the same version. Consent covered the first ones.
+    /*
+     * The directory now claims different bytes for the same version, but the git repository this node actually
+     * fetches from is unchanged. Because a git/npm source is fetched and its digest checked against real bytes
+     * now (rather than trusted from the listing), the mismatch this node reports is the fetch's own integrity
+     * check — the honest, earlier refusal for "the directory's claim and this node's own fetch disagree" —
+     * rather than the plan-comparison `LOCK_DRIFT` that fires only once a fetch would have succeeded.
+     */
     writeIndex([entry({ digest: "sha256:published-digest-2" })]);
     const second = await install({ packageId: "com.example.calendar", version: "1.2.0" });
 
-    expect(second.status).toBe(400);
+    expect(second.status).toBe(409);
     const body = second.body as Record<string, unknown>;
-    expect(body["code"]).toBe("LOCK_DRIFT");
-    expect(String(body["message"])).toContain("com.example.calendar");
+    expect(body["code"]).toBe("DIGEST_MISMATCH");
     // Nothing was installed a second time, and the first resolution is still the one that is running.
     const listed = await packages();
     expect(listed.packages).toHaveLength(1);
-    expect(listed.packages[0]?.digest).toBe("sha256:published-digest");
+    expect(listed.packages[0]?.digest).toBe(gitSourceDigest);
   });
 
   it("refuses an entry with no digest before it freezes anything", async () => {
