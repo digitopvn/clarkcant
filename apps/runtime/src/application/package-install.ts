@@ -30,7 +30,7 @@ import {
   HOST_API_VERSION,
   activeGeneration,
   artifactMatchesPlan,
-  decideApproval,
+  decideApprovalWithinTransaction,
   decideExecution,
   deriveGrantedCapabilities,
   directoryIndexPath,
@@ -44,8 +44,9 @@ import {
   recordEffectExecution,
   requestApproval,
   resolveLocalSource,
+  type CoordinationDeps,
 } from "@clarkcant/core";
-import { type Database, oneRow, parseJson, toJson } from "@clarkcant/storage";
+import { type Database, oneRow, parseJson, toJson, transaction } from "@clarkcant/storage";
 
 /**
  * Installing a package a directory listed.
@@ -579,7 +580,8 @@ export type CapabilityApprovalDecisionOutcome =
         | "APPROVAL_FORGED"
         | "APPROVAL_ALREADY_DECIDED"
         | "NOT_HOME_AUTHORITY"
-        | "NOT_A_CAPABILITY_APPROVAL";
+        | "NOT_A_CAPABILITY_APPROVAL"
+        | "NO_GENERATION_FOR_APPROVAL";
       message: string;
     };
 
@@ -613,13 +615,60 @@ export function decideInstallCapabilityApproval(
   const coordination = { db: runtime.db, nodeId: runtime.identity.nodeId, now: () => nowInstant(), newId: conductor.newId };
 
   /*
-   * Not wrapped in this function's own transaction: `decideApproval` already commits the decision atomically
-   * (it is the shared core this reuses rather than copies), and the grant-persist-and-audit step below only runs
-   * once that has already committed — nesting a second transaction around it would implicitly commit the first
-   * (SQLite has no true nested transactions), which is the durability bug this avoids rather than causes.
+   * R1: the approval's own kind is checked *before* `decideApproval` ever runs, not after. This route reuses
+   * `decideApproval` for its decide/expected-revision/dedup semantics, but it is not the only thing that creates
+   * a row in the `approvals` table — a dispatched task's own effect approval (`task_id` set) and this install
+   * seam's own capability approval (`operation_digest` shaped `${digest}:${ref}`, `task_id` null) share the same
+   * table and the same decide path. Deciding first and inspecting the shape *afterward* (the previous ordering)
+   * meant a caller who supplied any other approval's id — a `run_command` approval from an unrelated
+   * conversation, say — still flipped it to granted/denied for real, and only then got told the digest "did not
+   * name a package capability": the state change had already happened, and the conversation route that owns that
+   * approval never runs to act on it, so the underlying request it belonged to is now silently stuck. Nothing
+   * below this point may commit a decision for an approval that does not pass this check.
    */
-  {
-    const decided = decideApproval(coordination, {
+  const preflightRow = oneRow<{ task_id: string | null; operation_digest: string }>(
+    runtime.db,
+    "SELECT task_id, operation_digest FROM approvals WHERE approval_id = ?",
+    input.approvalId,
+  );
+  if (preflightRow === undefined) {
+    return { ok: false as const, status: 404, code: "APPROVAL_FORGED" as const, message: "approval does not exist" };
+  }
+  if (preflightRow.task_id !== null && preflightRow.task_id !== undefined) {
+    return {
+      ok: false as const,
+      status: 409,
+      code: "NOT_A_CAPABILITY_APPROVAL" as const,
+      message: "this approval belongs to a dispatched task, not an install-capability grant; decide it through the conversation's own approval route",
+    };
+  }
+  if (parseCapabilityOperationDigest(preflightRow.operation_digest) === undefined) {
+    return {
+      ok: false as const,
+      status: 409,
+      code: "NOT_A_CAPABILITY_APPROVAL" as const,
+      message: "this approval does not name a package capability",
+    };
+  }
+
+  /*
+   * Read (and, on a first-ever read, lazily migrate) the execution policy *before* opening the outer transaction
+   * below. `readExecutionPolicy` can itself write and open its own `transaction()` the first time it runs
+   * (`migrateExecutionPolicy`) — nested transactions are refused outright (SQLite would implicitly commit the
+   * outer one), so this has to happen outside the boundary R2 introduces, not inside it. It is read-mostly and
+   * has nothing to do with the decision/grant atomicity this function is otherwise responsible for.
+   */
+  const policy = readExecutionPolicy({ db: runtime.db, now: () => nowInstant() }, runtime.identity.ownerPrincipalId);
+
+  /*
+   * R2: the decision and the grant it authorizes land in one transaction. `decideApprovalWithinTransaction` is
+   * `decideApproval`'s own body without its own `BEGIN`/`COMMIT` (see coordination.ts), composed here inside a
+   * single outer `transaction()` alongside the grant write and its audit record — so a crash between "decided"
+   * and "granted" cannot happen: either both commit, or neither does, and a caller retrying after such a crash
+   * finds the approval still `pending` rather than a `granted` approval with a missing capability.
+   */
+  return transaction(runtime.db, () => {
+    const decided = decideApprovalWithinTransaction(coordination, {
       approvalId: input.approvalId,
       decision: input.decision,
       decidingPrincipal: input.decidingPrincipal,
@@ -628,9 +677,9 @@ export function decideInstallCapabilityApproval(
 
     if (!decided.ok) {
       if (decided.code === "APPROVAL_ALREADY_DECIDED") {
-        const row = oneRow<{ decision: string; operation_digest: string }>(
+        const row = oneRow<{ decision: string; operation_digest: string; effect_category: string }>(
           runtime.db,
-          "SELECT decision, operation_digest FROM approvals WHERE approval_id = ?",
+          "SELECT decision, operation_digest, effect_category FROM approvals WHERE approval_id = ?",
           input.approvalId,
         );
         if (row !== undefined && row.decision === input.decision && row.operation_digest === input.seenOperationDigest) {
@@ -638,12 +687,28 @@ export function decideInstallCapabilityApproval(
           if (parsed === undefined) {
             return {
               ok: false as const,
-              status: 400,
+              status: 409,
               code: "NOT_A_CAPABILITY_APPROVAL" as const,
               message: "this approval does not name a package capability",
             };
           }
+          // R2 replay: a client retrying the same already-decided submission (a network retry, a double click,
+          // or a genuine retry after the process crashed between the decision and the grant last time) must not
+          // get a silent no-op. If the grant is missing from the generation it belongs to, apply it now — this
+          // branch is what makes a partial-failure retry actually converge rather than reporting false success.
           const generation = findGenerationByDigest(runtime.db, runtime.identity.nodeId, parsed.digest);
+          if (row.decision === "granted" && generation !== undefined) {
+            applyCapabilityGrant(
+              deps,
+              coordination,
+              input,
+              generation,
+              parsed.ref,
+              row.operation_digest,
+              row.effect_category as EffectCategory,
+              policy.mode,
+            );
+          }
           return {
             ok: true as const,
             decision: input.decision,
@@ -660,34 +725,35 @@ export function decideInstallCapabilityApproval(
     if (parsed === undefined) {
       return {
         ok: false as const,
-        status: 400,
+        status: 409,
         code: "NOT_A_CAPABILITY_APPROVAL" as const,
         message: "this approval does not name a package capability",
       };
     }
 
     const generation = findGenerationByDigest(runtime.db, runtime.identity.nodeId, parsed.digest);
-    // `?? []` rather than trusting the field is an array: a generation activated before N4's field existed
-    // carries the `null` marker here too, and this is a write path, not `resolveGenerationGrantedCapabilities`'s
-    // own read path, so it starts the (rare) legacy case from an empty set rather than reading a manifest.
-    const currentGrants = generation?.grantedCapabilities ?? [];
-    if (input.decision === "granted" && generation !== undefined && !currentGrants.includes(parsed.ref)) {
-      const updated: PackageGeneration = {
-        ...generation,
-        grantedCapabilities: [...currentGrants, parsed.ref].sort(),
+    if (input.decision === "granted" && generation === undefined) {
+      // R2: no active, unsuperseded generation carries this digest (it was superseded by a newer install before
+      // the approval was decided, or never activated). There is nowhere to persist the grant, so this is a named
+      // refusal, not the false `ok: true` the previous code returned with no `generationId` to show for it.
+      return {
+        ok: false as const,
+        status: 409,
+        code: "NO_GENERATION_FOR_APPROVAL" as const,
+        message: `no active generation on this node carries digest ${parsed.digest}; the capability could not be granted anywhere`,
       };
-      runtime.db
-        .prepare("UPDATE package_generations SET document = ? WHERE generation_id = ?")
-        .run(toJson(updated), updated.generationId);
-      const policy = readExecutionPolicy({ db: runtime.db, now: () => nowInstant() }, runtime.identity.ownerPrincipalId);
-      recordEffectExecution(coordination, {
-        principalId: input.decidingPrincipal.principalId,
-        mode: policy.mode,
-        decision: { kind: "execute", reason: "the user approved this capability", audit: true },
-        category: decided.approval.effectCategory as EffectCategory,
-        operationDigest: decided.approval.operationDigest,
-        description: `grant ${parsed.ref} to ${updated.packageId}@${updated.version}`,
-      });
+    }
+    if (input.decision === "granted" && generation !== undefined) {
+      applyCapabilityGrant(
+        deps,
+        coordination,
+        input,
+        generation,
+        parsed.ref,
+        decided.approval.operationDigest,
+        decided.approval.effectCategory as EffectCategory,
+        policy.mode,
+      );
     }
 
     return {
@@ -697,7 +763,47 @@ export function decideInstallCapabilityApproval(
       ...(generation === undefined ? {} : { generationId: generation.generationId }),
       alreadyDecided: false,
     };
-  }
+  });
+}
+
+/**
+ * Add `ref` to `generation`'s granted capabilities and audit the grant, idempotently.
+ *
+ * R5(a): a `null` `grantedCapabilities` (migration 22's pre-N4 marker) is resolved via
+ * `resolveGenerationGrantedCapabilities` *first* — pulling the generation's full manifest-requested set — rather
+ * than treated as `[]`. Approving a single capability before a generation's grant has ever been lazily resolved
+ * must not discard the rest of that generation's manifest-requested capabilities: once this write lands,
+ * `grantedCapabilities` is no longer `null`, so the lazy-resolve path never runs again for this generation.
+ */
+function applyCapabilityGrant(
+  deps: PackageInstallDeps,
+  coordination: CoordinationDeps,
+  input: { decidingPrincipal: Principal },
+  generation: PackageGeneration,
+  ref: CapabilityRef,
+  operationDigest: string,
+  effectCategory: EffectCategory,
+  policyMode: Parameters<typeof recordEffectExecution>[1]["mode"],
+): void {
+  const { runtime } = deps;
+  const currentGrants = resolveGenerationGrantedCapabilities(deps, generation);
+  if (currentGrants.includes(ref)) return;
+
+  const updated: PackageGeneration = {
+    ...generation,
+    grantedCapabilities: [...currentGrants, ref].sort(),
+  };
+  runtime.db
+    .prepare("UPDATE package_generations SET document = ? WHERE generation_id = ?")
+    .run(toJson(updated), updated.generationId);
+  recordEffectExecution(coordination, {
+    principalId: input.decidingPrincipal.principalId,
+    mode: policyMode,
+    decision: { kind: "execute", reason: "the user approved this capability", audit: true },
+    category: effectCategory,
+    operationDigest,
+    description: `grant ${ref} to ${updated.packageId}@${updated.version}`,
+  });
 }
 
 /** The active generation on this node whose digest is the one a capability approval named. Node-scoped by construction. */
@@ -768,8 +874,14 @@ export function resolveGenerationGrantedCapabilities(
   const resolved: readonly CapabilityRef[] = requested ?? [];
 
   const updated: PackageGeneration = { ...generation, grantedCapabilities: [...resolved] };
+  // R5(b): the `IS NULL` guard makes this write a compare-and-swap rather than a blind overwrite. Two processes
+  // reading the same DB concurrently (this runtime and a CLI tool, say) can both observe the legacy `null`
+  // marker and both race to resolve it; without the guard, whichever writes second clobbers any grant the other
+  // applied in between (e.g. a capability approval decided between this function's read and its own write).
   runtime.db
-    .prepare("UPDATE package_generations SET document = ? WHERE generation_id = ? AND node_id = ?")
+    .prepare(
+      "UPDATE package_generations SET document = ? WHERE generation_id = ? AND node_id = ? AND json_extract(document, '$.grantedCapabilities') IS NULL",
+    )
     .run(toJson(updated), generation.generationId, runtime.identity.nodeId);
 
   return resolved;

@@ -953,6 +953,91 @@ describe("fetchNpmArtifact", () => {
         server.close();
       }
     }, 20_000);
+
+    it("R3: refuses a tar entry whose pax size override differs from its ustar header size", async () => {
+      // The pax "x" header's own body sets a size override (999) wildly different from the real entry that
+      // follows, whose own ustar header size is the actual (short) content length below. A reader that ignores
+      // the pax override (the pre-R3 code) advances past this entry using the header's own size instead, parsing
+      // the archive at a different byte offset than a standard pax-aware reader (npm's own tooling, a registry
+      // scanner) would — the exact digest-computed-against-one-parse-but-installed-from-another divergence R3
+      // exists to refuse.
+      const paxRecord = "size=999\n";
+      let recordLength = paxRecord.length + 2;
+      while (`${recordLength} ${paxRecord}`.length !== recordLength) recordLength += 1;
+      const paxBody = `${recordLength} ${paxRecord}`;
+      const tarball = buildRawTarball([
+        { name: "package/PaxHeaders/mismatch.txt", content: paxBody, typeflag: "x" },
+        { name: "package/mismatch.txt", content: "hello", typeflag: "0" },
+      ]);
+      const { url, server } = await startFakeRegistry({ name: "com.example.npm-widget", version: "1.0.0", tarball });
+      try {
+        const outcome = await fetchNpmArtifact({
+          name: "com.example.npm-widget",
+          version: "1.0.0",
+          cacheRoot: join(dir, "cache"),
+          registryUrl: url,
+        });
+        expect(outcome.ok).toBe(false);
+        if (outcome.ok) return;
+        expect(outcome.code).toBe("NPM_TARBALL_UNSAFE_ENTRY");
+        expect(outcome.message).toContain("pax size override");
+      } finally {
+        server.close();
+      }
+    });
+
+    it("R3: refuses a pax global extended header ('g') carrying a path or size override, rather than misapplying it to only the next entry", async () => {
+      const record = "path=package/should-not-be-used.txt\n";
+      let recordLength = record.length + 2;
+      while (`${recordLength} ${record}`.length !== recordLength) recordLength += 1;
+      const paxBody = `${recordLength} ${record}`;
+      const tarball = buildRawTarball([
+        { name: "package/PaxHeaders/global.txt", content: paxBody, typeflag: "g" },
+        { name: "package/widget.json", content: "{}", typeflag: "0" },
+      ]);
+      const { url, server } = await startFakeRegistry({ name: "com.example.npm-widget", version: "1.0.0", tarball });
+      try {
+        const outcome = await fetchNpmArtifact({
+          name: "com.example.npm-widget",
+          version: "1.0.0",
+          cacheRoot: join(dir, "cache"),
+          registryUrl: url,
+        });
+        expect(outcome.ok).toBe(false);
+        if (outcome.ok) return;
+        expect(outcome.code).toBe("NPM_TARBALL_UNSAFE_ENTRY");
+        expect(outcome.message).toContain("global");
+      } finally {
+        server.close();
+      }
+    });
+
+    it("R4: refuses a file entry followed by a same-prefix entry (a, then a/b), rather than throwing an uncaught ENOTDIR out of extraction", async () => {
+      // "package/conflict" and "package/conflict/nested.txt" are two different names, so `seenNames`'s exact-match
+      // check never fires; writing the second requires `mkdirSync` to turn "conflict" into a directory when it
+      // already exists on disk as a file from the first entry, which throws ENOTDIR.
+      const tarball = buildRawTarball([
+        { name: "package/conflict", content: "i am a file", typeflag: "0" },
+        { name: "package/conflict/nested.txt", content: "i want to be inside that file", typeflag: "0" },
+      ]);
+      const { url, server } = await startFakeRegistry({ name: "com.example.npm-widget", version: "1.0.0", tarball });
+      try {
+        const outcome = await fetchNpmArtifact({
+          name: "com.example.npm-widget",
+          version: "1.0.0",
+          cacheRoot: join(dir, "cache"),
+          registryUrl: url,
+        });
+        // Before R4, this threw ENOTDIR uncaught out of `fetchNpmArtifact` rather than returning a refusal —
+        // asserting `outcome.ok === false` here is itself the regression check: the old code never got this far
+        // to produce an `outcome` at all.
+        expect(outcome.ok).toBe(false);
+        if (outcome.ok) return;
+        expect(outcome.code).toBe("NPM_TARBALL_UNSAFE_ENTRY");
+      } finally {
+        server.close();
+      }
+    });
   });
 
   it("reuses the cache rather than refetching for the same name+version (M3)", async () => {

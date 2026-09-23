@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import {
+  decideInstallCapabilityApproval,
   resolveGenerationGrantedCapabilities,
   type LegacyPackageGeneration,
   type PackageInstallDeps,
@@ -174,5 +175,128 @@ describe("N4: resolving a legacy generation's null grantedCapabilities", () => {
     const generation = insertLegacyGeneration();
     const resolved = resolveGenerationGrantedCapabilities(deps, generation);
     expect(Array.isArray(resolved)).toBe(true);
+  });
+});
+
+/**
+ * R5(a): approving a single capability for a generation whose `grantedCapabilities` is still the legacy `null`
+ * marker (i.e. before that generation's grant was ever lazily resolved, which only happens on first mount) must
+ * resolve the manifest's full requested set first, then add the newly-approved ref on top — not treat `null` as
+ * `[]` and discard every other capability the manifest asked for.
+ */
+describe("R5(a): approving before the first mount resolves the null grant from the manifest first, then adds", () => {
+  const EXTRA_REF = "extra.capability@1";
+
+  function insertPendingCapabilityApproval(ref: string): string {
+    const approvalId = "appr_r5a";
+    services.runtime.db
+      .prepare(
+        `INSERT INTO approvals
+           (approval_id, task_id, effect_id, operation_digest, operation_description, effect_category,
+            target_node_id, account, decider, decision, requested_at, expires_at)
+         VALUES (?, NULL, NULL, ?, 'grant a capability before first mount', 'local-write',
+                 NULL, NULL, 'user', 'pending', '2026-01-01T00:00:00.000Z', '2099-01-01T00:00:00.000Z')`,
+      )
+      .run(approvalId, `${DIGEST}:${ref}`);
+    return approvalId;
+  }
+
+  it("resolves the manifest's full requested set before appending the newly-approved capability", () => {
+    insertLegacyGeneration();
+    const approvalId = insertPendingCapabilityApproval(EXTRA_REF);
+
+    const decided = decideInstallCapabilityApproval(deps, {
+      approvalId,
+      decision: "granted",
+      decidingPrincipal: { principalId: services.runtime.identity.ownerPrincipalId, kind: "user", nodeId: services.runtime.identity.nodeId },
+      seenOperationDigest: `${DIGEST}:${EXTRA_REF}`,
+    });
+
+    expect(decided.ok).toBe(true);
+    if (!decided.ok) return;
+    expect(decided.generationId).toBeDefined();
+
+    const row = services.runtime.db
+      .prepare("SELECT document FROM package_generations WHERE generation_id = ?")
+      .get(decided.generationId as string) as { document: string };
+    const persisted = JSON.parse(row.document) as { grantedCapabilities: readonly string[] };
+    // Both the manifest's originally-requested capabilities and the newly-approved one must survive — not just
+    // the newly-approved one alone.
+    expect(persisted.grantedCapabilities).toContain(EXTRA_REF);
+    for (const requested of REQUESTED) expect(persisted.grantedCapabilities).toContain(requested);
+  });
+
+  it("[fails on the old behaviour] treating null as [] discarded every manifest-requested capability but the newly-approved one", () => {
+    insertLegacyGeneration();
+    const approvalId = insertPendingCapabilityApproval(EXTRA_REF);
+
+    const decided = decideInstallCapabilityApproval(deps, {
+      approvalId,
+      decision: "granted",
+      decidingPrincipal: { principalId: services.runtime.identity.ownerPrincipalId, kind: "user", nodeId: services.runtime.identity.nodeId },
+      seenOperationDigest: `${DIGEST}:${EXTRA_REF}`,
+    });
+
+    expect(decided.ok).toBe(true);
+    if (!decided.ok) return;
+
+    const row = services.runtime.db
+      .prepare("SELECT document FROM package_generations WHERE generation_id = ?")
+      .get(decided.generationId as string) as { document: string };
+    const persisted = JSON.parse(row.document) as { grantedCapabilities: readonly string[] };
+    // Documents the regression by construction: the pre-R5(a) code's `generation?.grantedCapabilities ?? []`
+    // would have produced exactly `[EXTRA_REF]` here, losing `REQUESTED` permanently (once this write lands,
+    // `grantedCapabilities` is no longer `null`, so the lazy-resolve path never runs again for this generation).
+    // This asserts the full manifest set is still present, which that code path could not have satisfied.
+    expect(persisted.grantedCapabilities.length).toBeGreaterThan(1);
+  });
+});
+
+/**
+ * R5(b): the lazy-resolution `UPDATE` must not blindly overwrite a grant a concurrent writer already applied
+ * between this call's own read of the legacy `null` marker and its write — the `WHERE ... IS NULL` guard makes
+ * the write a compare-and-swap rather than a last-writer-wins race.
+ */
+describe("R5(b): the lazy resolution UPDATE guards against clobbering a concurrently-applied grant", () => {
+  it("does not overwrite a grant a concurrent writer already persisted while this call still held a null-generation snapshot", () => {
+    const generation = insertLegacyGeneration();
+
+    // Simulate a concurrent process (another node process, or a capability approval decided in between) already
+    // resolving and persisting a real array for this same generation.
+    const concurrentlyWritten = { ...generation, grantedCapabilities: ["concurrent.write@1"] };
+    services.runtime.db
+      .prepare("UPDATE package_generations SET document = ? WHERE generation_id = ?")
+      .run(JSON.stringify(concurrentlyWritten), generation.generationId);
+
+    // This call still holds the stale, pre-concurrent-write snapshot (grantedCapabilities: null) — the state a
+    // reader would have if it read the row before the concurrent writer's update landed.
+    resolveGenerationGrantedCapabilities(deps, generation);
+
+    const row = services.runtime.db
+      .prepare("SELECT document FROM package_generations WHERE generation_id = ?")
+      .get(generation.generationId) as { document: string };
+    const persisted = JSON.parse(row.document) as { grantedCapabilities: readonly string[] };
+    // The concurrent writer's value must survive; this call's own (manifest-derived) resolution must not clobber
+    // it just because its own in-memory snapshot was stale.
+    expect(persisted.grantedCapabilities).toEqual(["concurrent.write@1"]);
+  });
+
+  it("[fails on the old behaviour] an unguarded UPDATE clobbered whatever a concurrent writer had just persisted", () => {
+    const generation = insertLegacyGeneration();
+    const concurrentlyWritten = { ...generation, grantedCapabilities: ["concurrent.write@1"] };
+    services.runtime.db
+      .prepare("UPDATE package_generations SET document = ? WHERE generation_id = ?")
+      .run(JSON.stringify(concurrentlyWritten), generation.generationId);
+
+    resolveGenerationGrantedCapabilities(deps, generation);
+
+    const row = services.runtime.db
+      .prepare("SELECT document FROM package_generations WHERE generation_id = ?")
+      .get(generation.generationId) as { document: string };
+    const persisted = JSON.parse(row.document) as { grantedCapabilities: readonly string[] };
+    // Documents the regression by construction: the pre-R5(b) `UPDATE ... WHERE generation_id = ? AND node_id = ?`
+    // (no `IS NULL` guard) would have unconditionally overwritten the concurrent writer's array with this call's
+    // own manifest-derived `REQUESTED`, which is exactly what this asserts did NOT happen.
+    expect(persisted.grantedCapabilities).not.toEqual(REQUESTED);
   });
 });

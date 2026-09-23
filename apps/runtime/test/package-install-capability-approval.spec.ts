@@ -353,3 +353,225 @@ describe("N1: resolving a pending capability approval", () => {
     expect(decided.status).toBe(200);
   });
 });
+
+/**
+ * R1: `POST /packages/approvals/:id/decision` is node-scoped and must refuse any approval that is not actually
+ * an install-capability approval — before ever committing a decision to it, not after. The previous ordering
+ * called `decideApproval` first (mutating the row to granted/denied for real) and only afterward noticed the
+ * approval was the wrong shape; by then the conversation-scoped route that actually owns that approval never
+ * gets to decide it, and the request it belonged to is stuck forever with an approval that already says
+ * "decided".
+ */
+describe("R1: this route refuses an approval of any other kind before deciding it, not after", () => {
+  function insertRawApproval(row: {
+    approvalId: string;
+    taskId: string | null;
+    operationDigest: string;
+  }): void {
+    services.runtime.db
+      .prepare(
+        `INSERT INTO approvals
+           (approval_id, task_id, effect_id, operation_digest, operation_description, effect_category,
+            target_node_id, account, decider, decision, requested_at, expires_at)
+         VALUES (?, ?, NULL, ?, 'a task-scoped or non-capability approval', 'local-write',
+                 NULL, NULL, 'user', 'pending', ?, ?)`,
+      )
+      .run(row.approvalId, row.taskId, row.operationDigest, AT, "2026-09-23T07:00:00.000Z");
+  }
+
+  it("refuses a task-scoped approval (belongs to a dispatched task) without deciding it", async () => {
+    const approvalId = "approval-task-scoped-r1";
+    const operationDigest = `${DIGEST}:${REQUESTED_CAPABILITY}`;
+    insertRawApproval({ approvalId, taskId: "some-dispatched-task-id", operationDigest });
+
+    const decided = await request({
+      method: "POST",
+      path: `/packages/approvals/${approvalId}/decision`,
+      body: { decision: "granted", digest: operationDigest },
+    });
+
+    expect(decided.status).toBeGreaterThanOrEqual(400);
+    expect(decided.status).toBeLessThan(500);
+    const body = decided.body as Record<string, unknown>;
+    expect(body["code"]).toBe("NOT_A_CAPABILITY_APPROVAL");
+
+    // No state change: the row this route was never entitled to decide is still pending, so the conversation
+    // route that actually owns it can still decide it later.
+    const row = services.runtime.db
+      .prepare("SELECT decision FROM approvals WHERE approval_id = ?")
+      .get(approvalId) as { decision: string };
+    expect(row.decision).toBe("pending");
+  });
+
+  it("refuses a non-capability-shaped digest (e.g. the install's own approval, single-colon digest) without deciding it", async () => {
+    const approvalId = "approval-non-capability-r1";
+    // The install's own approval uses `operationDigest = entry.digest` alone (one colon, `sha256:<hex>`), never
+    // the two-colon `${digest}:${ref}` shape a capability approval carries.
+    const operationDigest = DIGEST;
+    insertRawApproval({ approvalId, taskId: null, operationDigest });
+
+    const decided = await request({
+      method: "POST",
+      path: `/packages/approvals/${approvalId}/decision`,
+      body: { decision: "granted", digest: operationDigest },
+    });
+
+    expect(decided.status).toBeGreaterThanOrEqual(400);
+    expect(decided.status).toBeLessThan(500);
+    const body = decided.body as Record<string, unknown>;
+    expect(body["code"]).toBe("NOT_A_CAPABILITY_APPROVAL");
+
+    const row = services.runtime.db
+      .prepare("SELECT decision FROM approvals WHERE approval_id = ?")
+      .get(approvalId) as { decision: string };
+    expect(row.decision).toBe("pending");
+  });
+
+  it("[fails on the old behaviour] a task-scoped approval got decided for real before the kind was checked", async () => {
+    /*
+     * Documents the regression by construction: the old code called `decideApproval` unconditionally first, which
+     * would have flipped this task-scoped row to `granted` and only afterward returned `NOT_A_CAPABILITY_APPROVAL`
+     * — leaving the row permanently stuck at "decided" with the conversation-scoped route (the one that actually
+     * owns it) never getting a chance to act on it. This asserts the row is untouched, which the old ordering
+     * could not have satisfied.
+     */
+    const approvalId = "approval-task-scoped-regression-r1";
+    const operationDigest = `${DIGEST}:${REQUESTED_CAPABILITY}`;
+    insertRawApproval({ approvalId, taskId: "another-dispatched-task-id", operationDigest });
+
+    await request({
+      method: "POST",
+      path: `/packages/approvals/${approvalId}/decision`,
+      body: { decision: "granted", digest: operationDigest },
+    });
+
+    const row = services.runtime.db
+      .prepare("SELECT decision, decided_at FROM approvals WHERE approval_id = ?")
+      .get(approvalId) as { decision: string; decided_at: string | null };
+    expect(row.decision).toBe("pending");
+    expect(row.decided_at).toBeNull();
+  });
+});
+
+/**
+ * R2: the decision and the capability grant it authorizes are two writes that must not be allowed to diverge.
+ * A retry of an already-decided approval must re-apply a grant that is missing (rather than silently no-op), and
+ * an approval that names a digest no active generation carries must be a named failure, not a false success.
+ */
+describe("R2: a replayed decision re-applies a missing grant, and a missing generation is a named failure", () => {
+  async function installAndGetPending(): Promise<{ approvalId: string; ref: string; digest: string }> {
+    writeIndex([directoryEntry()]);
+    setDestructiveRule("ask");
+    const response = await request({
+      method: "POST",
+      path: "/packages/install",
+      body: { packageId: PACKAGE_ID, version: VERSION, localDigest: DIGEST },
+    });
+    const body = response.body as Record<string, unknown>;
+    const pending = (body["pendingCapabilities"] as readonly { ref: string; approvalId: string }[])[0];
+    if (pending === undefined) throw new Error("expected a pending capability approval");
+    return { approvalId: pending.approvalId, ref: pending.ref, digest: `${DIGEST}:${pending.ref}` };
+  }
+
+  it("re-applies the grant on a replayed decision when it is missing from the generation (partial-failure retry)", async () => {
+    const { approvalId, ref, digest } = await installAndGetPending();
+
+    const first = await request({
+      method: "POST",
+      path: `/packages/approvals/${approvalId}/decision`,
+      body: { decision: "granted", digest },
+    });
+    const generationId = (first.body as Record<string, unknown>)["generationId"] as string;
+
+    // Simulate the partial failure R2 is about: the decision committed, but the grant write never landed (a
+    // crash between the two, in the pre-fix code's two-transaction world). Strip the ref back out directly.
+    const before = services.runtime.db
+      .prepare("SELECT document FROM package_generations WHERE generation_id = ?")
+      .get(generationId) as { document: string };
+    const beforeDoc = JSON.parse(before.document) as { grantedCapabilities: readonly string[] };
+    services.runtime.db
+      .prepare("UPDATE package_generations SET document = ? WHERE generation_id = ?")
+      .run(
+        JSON.stringify({ ...beforeDoc, grantedCapabilities: beforeDoc.grantedCapabilities.filter((g) => g !== ref) }),
+        generationId,
+      );
+
+    // A client retrying the same already-decided submission must converge the state, not just report success.
+    const retry = await request({
+      method: "POST",
+      path: `/packages/approvals/${approvalId}/decision`,
+      body: { decision: "granted", digest },
+    });
+
+    expect(retry.status).toBe(200);
+    expect((retry.body as Record<string, unknown>)["alreadyDecided"]).toBe(true);
+
+    const after = services.runtime.db
+      .prepare("SELECT document FROM package_generations WHERE generation_id = ?")
+      .get(generationId) as { document: string };
+    const afterDoc = JSON.parse(after.document) as { grantedCapabilities: readonly string[] };
+    expect(afterDoc.grantedCapabilities).toContain(ref);
+  });
+
+  it("returns a named failure, not a false success, when no active generation carries the approval's digest", async () => {
+    const { approvalId, digest } = await installAndGetPending();
+
+    // Supersede the generation this approval's digest names, simulating a reinstall that superseded it before
+    // the approval was decided.
+    services.runtime.db
+      .prepare(
+        "UPDATE package_generations SET superseded_at = ? WHERE node_id = ? AND digest = ?",
+      )
+      .run("2026-09-23T06:30:00.000Z", services.runtime.identity.nodeId, DIGEST);
+
+    const decided = await request({
+      method: "POST",
+      path: `/packages/approvals/${approvalId}/decision`,
+      body: { decision: "granted", digest },
+    });
+
+    expect(decided.status).toBe(409);
+    const body = decided.body as Record<string, unknown>;
+    expect(body["code"]).toBe("NO_GENERATION_FOR_APPROVAL");
+    // Not a false success: the previous behaviour returned `ok: true` with no `generationId` here.
+    expect(body["generationId"]).toBeUndefined();
+  });
+
+  it("[fails on the old behaviour] a replayed decision after a missing grant reported success without re-applying it", async () => {
+    const { approvalId, ref, digest } = await installAndGetPending();
+
+    const first = await request({
+      method: "POST",
+      path: `/packages/approvals/${approvalId}/decision`,
+      body: { decision: "granted", digest },
+    });
+    const generationId = (first.body as Record<string, unknown>)["generationId"] as string;
+
+    const before = services.runtime.db
+      .prepare("SELECT document FROM package_generations WHERE generation_id = ?")
+      .get(generationId) as { document: string };
+    const beforeDoc = JSON.parse(before.document) as { grantedCapabilities: readonly string[] };
+    services.runtime.db
+      .prepare("UPDATE package_generations SET document = ? WHERE generation_id = ?")
+      .run(
+        JSON.stringify({ ...beforeDoc, grantedCapabilities: beforeDoc.grantedCapabilities.filter((g) => g !== ref) }),
+        generationId,
+      );
+
+    await request({
+      method: "POST",
+      path: `/packages/approvals/${approvalId}/decision`,
+      body: { decision: "granted", digest },
+    });
+
+    // Documents the regression by construction: the old already-decided branch returned success straight from
+    // the stored row, without ever re-checking or re-applying the generation's own grant. This asserts the grant
+    // really is present after the replay, which the old code's silent no-op could not have satisfied once the
+    // grant had gone missing.
+    const after = services.runtime.db
+      .prepare("SELECT document FROM package_generations WHERE generation_id = ?")
+      .get(generationId) as { document: string };
+    const afterDoc = JSON.parse(after.document) as { grantedCapabilities: readonly string[] };
+    expect(afterDoc.grantedCapabilities).toContain(ref);
+  });
+});

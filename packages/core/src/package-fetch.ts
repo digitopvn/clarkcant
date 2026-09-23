@@ -647,11 +647,26 @@ export async function fetchNpmArtifact(input: {
       if (target !== resolve(tempDest) && !target.startsWith(resolve(tempDest) + sep)) {
         return { ok: false, code: "NPM_TARBALL_UNSAFE_ENTRY", message: `tar entry "${entry.name}" resolves outside the extraction root` };
       }
-      if (entry.type === "directory") {
-        mkdirSync(target, { recursive: true });
-      } else {
-        mkdirSync(join(target, ".."), { recursive: true });
-        writeFileSync(target, entry.content);
+      // R4: `extractUstarTarball`'s own `seenNames` check only catches an *exact* name collision (two entries
+      // both named "a"). It does not catch a file entry "a" followed by a file entry "a/b": those are two
+      // different names in that set, but writing "a/b" requires `mkdirSync(dirname("a/b"), ...)` to create "a" as
+      // a directory when "a" already exists on disk as a *file* — which throws ENOTDIR, uncaught, out of this
+      // loop. Any filesystem error while writing an entry (ENOTDIR, EISDIR, or anything else a hostile or merely
+      // malformed tarball can provoke) is caught here and turned into the same named refusal every other unsafe
+      // entry in this reader produces, rather than propagating as an unhandled exception/500.
+      try {
+        if (entry.type === "directory") {
+          mkdirSync(target, { recursive: true });
+        } else {
+          mkdirSync(join(target, ".."), { recursive: true });
+          writeFileSync(target, entry.content);
+        }
+      } catch (cause) {
+        return {
+          ok: false,
+          code: "NPM_TARBALL_UNSAFE_ENTRY",
+          message: `tar entry "${entry.name}" could not be extracted (${String(cause)}), which usually means it conflicts with another entry's path (e.g. a file and a directory sharing a name)`,
+        };
       }
     }
 
@@ -795,11 +810,29 @@ function extractUstarTarball(
     const content = buffer.subarray(contentStart, contentEnd);
     const paddedSize = Math.ceil(headerSize / 512) * 512;
 
-    // A pax extended header or a GNU long-name header describes the *next* entry, not itself; its own name/size
-    // are this header's own bookkeeping and are never written to disk.
-    if (typeflag === "x" || typeflag === "g") {
+    // A pax extended header describes the *next* entry only, not itself; its own name/size are this header's own
+    // bookkeeping and are never written to disk.
+    if (typeflag === "x") {
       const records = parsePaxRecords(Buffer.from(content));
       pendingOverrides = { ...pendingOverrides, ...records };
+      offset = contentStart + paddedSize;
+      continue;
+    }
+    // R3: a pax global extended header ('g') is, per POSIX, meant to apply to every entry from here to the end of
+    // the archive, not just the next one — a fundamentally different scope than 'x'. Silently folding it into
+    // `pendingOverrides` (the previous code here) applied it only to the immediate next entry, which is not what
+    // the standard says and not what a `g`-emitting archiver's own reader would do, so a `path`/`size` carried by
+    // a global header is refused by name rather than misapplied to the wrong scope. npm's own publish tooling
+    // never emits a `g` header carrying `path` or `size` (only `x` per-entry headers), so this refusal costs
+    // nothing against any tarball this node needs to install.
+    if (typeflag === "g") {
+      const records = parsePaxRecords(Buffer.from(content));
+      if (records.path !== undefined || records.size !== undefined) {
+        return {
+          ok: false,
+          message: `tar header at byte offset ${String(offset)} is a pax global extended header ("g") carrying a path or size override, which this reader refuses rather than misapply`,
+        };
+      }
       offset = contentStart + paddedSize;
       continue;
     }
@@ -814,10 +847,22 @@ function extractUstarTarball(
       continue;
     }
 
-    // `pendingOverrides.size` is deliberately not read here: the physical content this node actually has for this
-    // entry is always `content` (sliced above using the header's own size), and npm's own tarballs never need a
-    // pax size override to differ from that — pax `size` exists for content whose actual byte length legitimately
-    // differs from what fits an octal header field, which does not arise for anything this reader extracts.
+    // R3: a pax `size` override, per POSIX/GNU tar, is authoritative over the ustar header's own size field for
+    // where the *next* header starts — a reader that ignores it (the previous code here) parses the archive
+    // physically differently from any standard tar reader. A pax `size` smaller than the header's own size makes
+    // bytes that a standard reader treats as trailing content of *this* entry parse, here, as a wholly separate
+    // "next" entry instead — one a standard tool building or scanning this tarball never saw. The reverse (pax
+    // `size` larger) can hide a real entry a standard tool would see from this reader instead. Either direction
+    // is a genuine divergence between what a publisher's tooling computed a digest against and what this node
+    // would install, so it is refused by name rather than silently accepted: npm's own tarballs (built by
+    // node-tar) never need this to differ from the header's own size.
+    if (pendingOverrides.size !== undefined && pendingOverrides.size !== headerSize) {
+      return {
+        ok: false,
+        message: `tar entry "${headerName}" has a pax size override (${String(pendingOverrides.size)}) that differs from its ustar header size (${String(headerSize)}), which this reader refuses rather than let the two readings diverge`,
+      };
+    }
+
     const fullName = pendingOverrides.path ?? headerName;
     pendingOverrides = {};
 
@@ -852,10 +897,9 @@ function extractUstarTarball(
       });
     }
 
-    // Advance past this entry's content, padded up to the next 512-byte boundary. Note this uses the header's own
-    // size, not a pax `size` override: the override is what the *content* logically is (npm never actually needs
-    // this, since content never exceeds ustar's 12-octal-digit field in practice), while the header's size is
-    // always the true byte length physically stored and padded in the archive.
+    // Advance past this entry's content, padded up to the next 512-byte boundary. `headerSize` (what `paddedSize`
+    // is derived from) and any pax `size` override are guaranteed equal by the refusal above, so there is no
+    // remaining divergence between "where this reader thinks the entry ends" and "where a standard reader would".
     offset = contentStart + paddedSize;
   }
 
