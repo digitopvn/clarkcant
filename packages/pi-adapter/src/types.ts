@@ -28,11 +28,17 @@ export interface WorkerBrief {
    *
    * An empty list carries no boundary at all. Such a session runs whatever `builtinTools` the adapter was
    * constructed with — the SDK's read-only set by default — and those resolve a path against the adapter's
-   * `cwd` themselves, so nothing above describes them. One lane lives there today: `apps/runtime/src/pack-load.ts`
-   * probes the packed worker with `projectRoots: []` and `apps/worker/src/index.ts` passes that straight
-   * through, so the packed-worker lane reads its own working directory through the SDK's built-ins rather than
-   * through `scoped-fs.ts`. That is a known follow-up for the phase that owns the lane, and it is recorded
-   * here rather than papered over: the boundary this field describes is the one the rooted lane has.
+   * `cwd` themselves, so nothing above describes them. One lane lives there today:
+   * `apps/runtime/src/pack-load.ts` probes the packed worker with `projectRoots: []` on purpose — the probe's
+   * goal is only to prove the pack runs on this node, and it grants no capability that touches project files —
+   * so an unconfined session there is a scoped, named trade-off rather than an oversight. A packed worker
+   * dispatched with a *non-empty* `projectRoots` (a real task, once the runtime dispatches one) gets the same
+   * boundary the project-session lane gets, through this same `scopedToRoots` check in `real.ts`.
+   *
+   * `apps/worker/src/tools.ts`'s own custom tools (`read_project_file`, `list_project_files`) do not go through
+   * this field at all — they are registered by `apps/worker/src/index.ts`'s `runWorker`, outside the adapter —
+   * and they now resolve every path through `scoped-fs.ts`'s `canonicalRoots`/`resolveInsideRoots` as well, so
+   * a symlink inside an approved root cannot resolve outside it (see `apps/worker/test/worker.spec.ts`).
    */
   projectRoots: string[];
   /** Capability refs the worker may call. Anything else is not registered. */

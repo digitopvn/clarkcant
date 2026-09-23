@@ -8,10 +8,17 @@
  * `prompt`: the SDK resolves its own paths, so root containment has to be applied by wrapping
  * the operation rather than by inspecting the model's arguments afterwards. A worker that
  * refuses to read outside its approved roots is that wrapper.
+ *
+ * Containment is delegated to `@clarkcant/pi-adapter`'s `scoped-fs` primitive rather than
+ * reimplemented here: that module canonicalises both the root and the candidate with
+ * `fs.realpath` and walks the path component by component, so a symlink inside an approved
+ * root cannot resolve to a target outside it. A lexical `path.relative` comparison, which this
+ * module used before, cannot see through a symlink and would admit that escape.
  */
 
-import { isAbsolute, relative, resolve, sep } from "node:path";
 import { readFile } from "node:fs/promises";
+
+import { canonicalRoots, resolveInsideRoots, type ApprovedRoot } from "@clarkcant/pi-adapter";
 
 import type { WorkerTool } from "./index.ts";
 
@@ -24,24 +31,40 @@ export const LIST_PROJECT_FILES_TOOL = "list_project_files";
 const MAX_READ_BYTES = 64 * 1024;
 
 /**
- * Resolve a path and refuse anything outside the approved roots.
+ * Canonicalise `projectRoots` once per worker run and cache the result.
  *
- * Comparison is done on the resolved path, so `..` segments and symlinked roots are both
- * accounted for rather than string-matched.
+ * `canonicalRoots` is async (it calls `fs.realpath`/`fs.stat`), so the roots cannot be resolved
+ * at tool-construction time; every tool built by `createFileTools` shares one lazily-resolved
+ * promise instead of re-canonicalising the same roots on every call. A root that cannot be
+ * approved is refused by name, the same as the project-session lane.
  */
-function resolveWithinRoots(candidate: string, roots: readonly string[]): string {
-  const resolved = resolve(candidate);
-  for (const root of roots) {
-    const rootResolved = resolve(root);
-    const rel = relative(rootResolved, resolved);
-    // Inside the root when the relative path is empty (the root itself) or does not climb out.
-    if (rel === "" || (!rel.startsWith(`..${sep}`) && rel !== ".." && !isAbsolute(rel))) {
-      return resolved;
-    }
-  }
-  throw new Error(
-    `refused: ${resolved} is outside the approved project roots (${roots.map((root) => resolve(root)).join(", ")})`,
-  );
+function approvedRootsOf(projectRoots: readonly string[]): () => Promise<readonly ApprovedRoot[]> {
+  let cached: Promise<readonly ApprovedRoot[]> | undefined;
+  return async () => {
+    cached ??= canonicalRoots(projectRoots).then((result) => {
+      if (result.refused.length > 0) {
+        throw new Error(
+          `refused: ${result.refused.map((entry) => `${entry.root} (${entry.reason})`).join("; ")}`,
+        );
+      }
+      if (result.approved.length === 0) {
+        throw new Error("refused: no approved project root is in force, so no path can be allowed");
+      }
+      return result.approved;
+    });
+    return cached;
+  };
+}
+
+/** Resolve a candidate against the approved roots, or throw the refusal as an `Error`. */
+async function resolveWithinRoots(
+  candidate: string,
+  getRoots: () => Promise<readonly ApprovedRoot[]>,
+): Promise<string> {
+  const roots = await getRoots();
+  const resolved = await resolveInsideRoots(roots, candidate);
+  if (!resolved.ok) throw new Error(`refused: ${resolved.reason}`);
+  return resolved.path;
 }
 
 function stringParameter(params: Record<string, unknown>, name: string): string {
@@ -59,6 +82,7 @@ function stringParameter(params: Record<string, unknown>, name: string): string 
  * module-level tool would carry one run's roots into another's.
  */
 export function createFileTools(projectRoots: readonly string[]): WorkerTool[] {
+  const getRoots = approvedRootsOf(projectRoots);
   return [
     {
       name: READ_PROJECT_FILE_TOOL,
@@ -76,7 +100,7 @@ export function createFileTools(projectRoots: readonly string[]): WorkerTool[] {
         additionalProperties: false,
       },
       async execute(params: Record<string, unknown>) {
-        const target = resolveWithinRoots(stringParameter(params, "path"), projectRoots);
+        const target = await resolveWithinRoots(stringParameter(params, "path"), getRoots);
         const contents = await readFile(target, "utf8");
         // Bounded so one large file cannot consume the run's whole context. The truncation is
         // stated in the output rather than applied silently.
@@ -103,7 +127,7 @@ export function createFileTools(projectRoots: readonly string[]): WorkerTool[] {
         additionalProperties: false,
       },
       async execute(params: Record<string, unknown>) {
-        const target = resolveWithinRoots(stringParameter(params, "path"), projectRoots);
+        const target = await resolveWithinRoots(stringParameter(params, "path"), getRoots);
         const { readdir } = await import("node:fs/promises");
         const entries = await readdir(target, { withFileTypes: true });
         const names = entries.map((entry) => `${entry.isDirectory() ? "d" : "f"} ${entry.name}`);

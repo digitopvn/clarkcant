@@ -1,4 +1,5 @@
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { lstat, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -305,8 +306,36 @@ describe("file tools stay inside the approved roots", () => {
 
       const refused = result.record.evidence.find((item) => item.verdict === "contradicted");
       expect(refused, `expected a refusal for ${attempt}`).toBeDefined();
-      expect(refused?.summary).toContain("outside the approved project roots");
+      expect(refused?.summary).toContain("outside every approved root");
     }
+  });
+
+  it("refuses a symlink inside the root whose target is outside every root", async () => {
+    const adapter = new FakePiAdapter();
+    const link = join(root, "escape-link");
+    await symlink(join(elsewhere, "secret.txt"), link).catch(async (cause) => {
+      // Some CI sandboxes disallow symlink creation; skip rather than fail on an unrelated
+      // platform restriction, since the property under test is containment, not symlink support.
+      if ((cause as NodeJS.ErrnoException).code !== "EPERM") throw cause;
+    });
+    const linkExists = await lstat(link).then(
+      () => true,
+      () => false,
+    );
+    if (!linkExists) return;
+
+    const result = await runWorker(
+      brief({ runId: "run_symlink_escape" }),
+      deps(adapter, allWorkerTools([root]), {
+        drive: async (sessionId) => {
+          await adapter.callTool(sessionId, READ_PROJECT_FILE_TOOL, { path: link }).catch(() => undefined);
+        },
+      }),
+    );
+
+    const refused = result.record.evidence.find((item) => item.verdict === "contradicted");
+    expect(refused, "expected the symlink escape to be refused").toBeDefined();
+    expect(refused?.summary).toContain("outside every approved root");
   });
 });
 
