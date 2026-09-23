@@ -9,6 +9,7 @@
 import type { AutonomySettings, ModelPool, WidgetDefinition, WidgetFixture } from "@clarkcant/contracts";
 
 import {
+  appIntentDecisionSchema,
   memoryListSchema,
   suggestionsResponseSchema,
   type AppIntentDecision,
@@ -279,7 +280,15 @@ export type ReplyStreamEvent =
   | { type: "text-delta"; text: string }
   | { type: "reasoning-delta"; text: string }
   | { type: "tool-start"; toolCallId: string; name: string; label: string; args: Record<string, unknown> }
-  | { type: "tool-end"; toolCallId: string; status: "done" | "failed"; result: string };
+  | { type: "tool-end"; toolCallId: string; status: "done" | "failed"; result: string }
+  /**
+   * An app-control action the main agent asked for through `control_app`, mid-turn.
+   *
+   * Carried as its own event rather than folded into `tool-end`'s text result, because a decision is
+   * something the page runs through `runAppIntent` and a tool result is text the transcript shows — the
+   * two must not be read as the same thing by a caller that only looks at one of them.
+   */
+  | { type: "host-control"; decision: AppIntentDecision };
 
 /** One frame of a server-sent event stream. */
 export interface SseEvent {
@@ -662,6 +671,12 @@ export class GatewayClient {
             status: payload.status === "failed" ? "failed" : "done",
             result: typeof payload.result === "string" ? payload.result : "",
           });
+        } else if (frame.event === "host-control") {
+          // Validated rather than cast, the same guard `voice-session.ts` applies to the equivalent
+          // voice frame: this arrives from the node, and a decision that does not parse is not
+          // permission to run anything.
+          const parsedDecision = appIntentDecisionSchema.safeParse(payload.decision);
+          if (parsedDecision.success) listeners.onEvent({ type: "host-control", decision: parsedDecision.data });
         } else if (frame.event === "done") {
           finished = true;
           listeners.onDone({
@@ -822,6 +837,24 @@ export class GatewayClient {
     applies: string;
   }> {
     return this.#call("POST", "/model-pool/cycle", {});
+  }
+
+  /**
+   * Select a configured pool profile by its alias, without cycling through the others.
+   *
+   * The node re-validates the alias against the stored pool rather than trusting the caller, for the
+   * same reason `cycleModel` never accepts a bare provider/model string: this is a choice among what
+   * was configured, not a way to name an arbitrary model from the browser.
+   */
+  async selectModel(alias: string): Promise<{
+    ok: boolean;
+    previous?: string;
+    alias: string;
+    provider: string;
+    modelId: string;
+    applies: string;
+  }> {
+    return this.#call("POST", "/model-pool/select", { alias });
   }
 
   async chooseModel(input: {
@@ -1341,7 +1374,7 @@ export class GatewayClient {
       );
     }
     const body = (await response.json()) as { decision?: unknown };
-    return (body.decision ?? { kind: "refused", say: "Không có gì được thực hiện." }) as AppIntentDecision;
+    return (body.decision ?? { kind: "refused", say: "Nothing was carried out." }) as AppIntentDecision;
   }
 
   /**
@@ -1361,7 +1394,7 @@ export class GatewayClient {
       throw new GatewayError(
         response.status,
         "BACKGROUND_REFUSED",
-        typeof detail.message === "string" ? detail.message : "việc nền không bắt đầu được",
+        typeof detail.message === "string" ? detail.message : "the background task did not start",
       );
     }
     const body = (await response.json()) as { sessionId?: unknown };

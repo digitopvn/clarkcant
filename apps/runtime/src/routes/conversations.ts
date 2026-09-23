@@ -1,6 +1,7 @@
 
 import {
   type AppIntent,
+  type AppIntentDecision,
   type AppIntentResolution,
   type AttachmentRef,
   type Instant,
@@ -575,6 +576,10 @@ export async function handleConversationRoutes(deps: ConversationRouteDeps): Pro
     });
     if (!attachments.ok) return fail(400, "ATTACHMENT_NOT_AVAILABLE", attachments.message);
 
+    // A `control_app` call this turn makes is otherwise silent on this route: there is no stream to carry
+    // it, so it is collected here and reported in the response instead, for a caller of the plain HTTP
+    // route to run through the same `runAppIntent` executor the streaming and voice routes already reach.
+    const hostControlDecisions: AppIntentDecision[] = [];
     const outcome = await handleUserMessage(services.conductor, {
       conversationId: conversationId as never,
       principal,
@@ -583,6 +588,9 @@ export async function handleConversationRoutes(deps: ConversationRouteDeps): Pro
       attachmentRefs: attachments.refs,
       // Only the demo path asks for a scripted sample; a real message never gets one.
       ...(parsed.value.demo === true ? { demo: true } : {}),
+      emit: (event) => {
+        if (event.type === "host-control") hostControlDecisions.push(event.decision);
+      },
     });
 
     // Indexed here, where the messages were just written, so a message that exists is searchable.
@@ -602,6 +610,9 @@ export async function handleConversationRoutes(deps: ConversationRouteDeps): Pro
       // The whole timeline page is returned so the client does not have to guess whether
       // its cursor is still valid after its own write.
       timeline: buildTimeline(services, { conversationId, afterSequence: 0 }),
+      // Present only while non-zero: a caller that never sees `control_app` used should not learn the
+      // field exists.
+      ...(hostControlDecisions.length === 0 ? {} : { hostControl: hostControlDecisions }),
     });
   }
 
@@ -1227,6 +1238,11 @@ async function streamUserMessage(
           send(sse("tool-start", { toolCallId: event.toolCallId, name: event.name, label: event.label, args: event.args }));
         } else if (event.type === "tool-end") {
           send(sse("tool-end", { toolCallId: event.toolCallId, status: event.status, result: event.result }));
+        } else if (event.type === "host-control") {
+          // An agent-issued app-control action, delivered as its own frame rather than folded into a
+          // tool-end result: the client's one executor (`runAppIntent`) reads a decision, and the
+          // `control_app` tool's own text result stays a report to the model, not a second copy of it.
+          send(sse("host-control", { decision: event.decision }));
         }
       },
     });

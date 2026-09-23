@@ -12,6 +12,8 @@
 
 import { type CSSProperties, type ReactElement, type ReactNode, useCallback, useEffect, useRef } from "react";
 
+import { useT } from "./i18n/locale-context.tsx";
+
 export interface ModalProps {
   open: boolean;
   onClose: () => void;
@@ -36,6 +38,7 @@ const FOCUSABLE =
   'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
 
 export function Modal({ open, onClose, title, description, children, actions, width }: ModalProps): ReactElement | null {
+  const t = useT();
   const dialog = useRef<HTMLDivElement>(null);
   // Captured on open so focus can go back where it came from rather than to the top of the page.
   const opener = useRef<Element | null>(null);
@@ -127,7 +130,7 @@ export function Modal({ open, onClose, title, description, children, actions, wi
       >
         <header className="cc-modal-head">
           <h2 id="cc-modal-title">{title}</h2>
-          <button type="button" className="cc-icon-btn" onClick={onClose} aria-label="Đóng">
+          <button type="button" className="cc-icon-btn" onClick={onClose} aria-label={t("settings.modal.close")}>
             ✕
           </button>
         </header>

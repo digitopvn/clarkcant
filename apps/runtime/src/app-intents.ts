@@ -33,6 +33,7 @@ import {
   type AppIntent,
   type AppIntentConfirmationFailure,
   type AppIntentDecision,
+  type AppIntentLocale,
   type AppIntentRequest,
   type AppIntentResolution,
   type AppIntentSource,
@@ -83,6 +84,27 @@ interface PendingValue {
 
 function preferenceDeps(deps: AppIntentDeps) {
   return { db: deps.db, now: deps.now };
+}
+
+/**
+ * The UI language a read-back or refusal should be said in, for a given principal.
+ *
+ * `experience.language` is a `scope: "global"` preference the settings panel writes (see
+ * `packages/contracts/src/preferences.ts`), so it is read the same way here: no conversation- or
+ * node-scoped override exists for it. A person who switched the UI to English and then asks Clark
+ * to "open settings" — by voice or by typed command — should hear the English sentence back, not
+ * the Vietnamese default `describeAppIntent` falls back to when nobody names a locale.
+ *
+ * Falls back to `"vi"` when nothing was ever written, matching the preference's own registry default
+ * and `describeAppIntent`'s own default parameter.
+ */
+export function preferredAppIntentLocale(deps: AppIntentDeps, principalId: string): AppIntentLocale {
+  const record = getPreference(preferenceDeps(deps), {
+    principalId,
+    key: "experience.language",
+    scope: "global",
+  });
+  return record?.value === "en" ? "en" : "vi";
 }
 
 function pendingKey(token: string): string {
@@ -180,6 +202,9 @@ export function decideAppIntent(
   input: DecideInput,
   mint: (intent: AppIntent) => ConfirmationToken,
 ): AppIntentResolution {
+  // The typed/clicked path: read-backs and refusals follow the UI language the person chose in
+  // Settings, the same way the voice path does (see `preferredAppIntentLocale`).
+  const locale = preferredAppIntentLocale(deps, input.principalId);
   const resolution = resolveAppIntent({
     ...(input.request.text === undefined ? {} : { text: input.request.text }),
     ...(input.request.kind === undefined
@@ -194,6 +219,7 @@ export function decideAppIntent(
         }),
     mintConfirmationToken: () => randomUUID() as ConfirmationToken,
     ...(deps.widgetTargets === undefined ? {} : { widgetTargets: deps.widgetTargets }),
+    locale,
   });
 
   if (resolution.kind === "none" || resolution.kind === "refused") {
@@ -222,4 +248,4 @@ export const TAB_MISSING_SAY = APP_INTENT_NOT_UNDERSTOOD;
 export type { AppIntentSource };
 
 /** Re-exported so a caller testing a decision does not have to reach for the contract module. */
-export { describeAppIntent, type AppIntentDecision };
+export { describeAppIntent, type AppIntentDecision, type AppIntentLocale };

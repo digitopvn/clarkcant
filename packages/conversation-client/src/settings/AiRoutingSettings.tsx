@@ -4,7 +4,19 @@ import { SearchSelect } from "../search-select.tsx";
 import type { GatewayClient } from "../api.ts";
 import { PERSONAL_INSTRUCTIONS_MAX_CHARS, type ModelPool } from "@clarkcant/contracts";
 import { InlineStatus, SettingsRow, ToggleSwitch } from "./controls/primitives.tsx";
+import { CredentialsSection, type CredentialEntry } from "./controls/credentials-manager-section.tsx";
 import type { PreferencesHandle } from "./controls/use-preferences.ts";
+import { useT } from "../i18n/locale-context.tsx";
+
+/**
+ * Every credential the node holds, listed once. DESIGN.md 11.6 keeps a key's row in the domain that explains
+ * it (Gemini for voice, TypeSafe for Jev routing), so this array lives beside the routing tab that already
+ * hosted the TypeSafe form, and Devices & Voice now links here instead of embedding its own form (review U5).
+ */
+const CREDENTIAL_ENTRIES: readonly CredentialEntry[] = [
+  { name: "typesafe", labelKey: "settings.credentials.typesafe.label", purposeKey: "settings.credentials.typesafe.purpose" },
+  { name: "gemini", labelKey: "settings.credentials.gemini.label", purposeKey: "settings.credentials.gemini.purpose" },
+];
 
 /**
  * AI & Routing: what answers, and what it costs to run.
@@ -19,14 +31,6 @@ import type { PreferencesHandle } from "./controls/use-preferences.ts";
  * is decorative.
  */
 
-const KEY_FIELDS = [
-  {
-    name: "typesafe",
-    label: "TypeSafe API key (Jev)",
-    purpose: "Dùng cho Jev khi nó phải quyết định cách xử lý một việc.",
-  },
-] as const;
-
 interface NodeFacts {
   model: { provider: string; id: string; maxWallClockMs: number; maxTokens: number } | null;
 }
@@ -38,6 +42,7 @@ export interface AiRoutingSettingsProps {
 }
 
 export function AiRoutingSettings({ client, prefs, facts }: AiRoutingSettingsProps): ReactElement {
+  const t = useT();
   const [catalogue, setCatalogue] = useState<
     | { id: string; models: { provider: string; id: string; contextWindow?: number; current: boolean }[] }[]
     | undefined
@@ -45,8 +50,6 @@ export function AiRoutingSettings({ client, prefs, facts }: AiRoutingSettingsPro
   const [providerDraft, setProviderDraft] = useState<string | undefined>(undefined);
   const [modelDraft, setModelDraft] = useState<string | undefined>(undefined);
   const [modelStatus, setModelStatus] = useState<string | undefined>(undefined);
-  const [keyDraft, setKeyDraft] = useState("");
-  const [keyStatus, setKeyStatus] = useState<string | undefined>(undefined);
 
   useEffect(() => {
     let cancelled = false;
@@ -72,47 +75,47 @@ export function AiRoutingSettings({ client, prefs, facts }: AiRoutingSettingsPro
     const provider = chosenProvider.trim();
     const id = (modelDraft ?? facts?.model?.id ?? "").trim();
     if (provider === "" || id === "") {
-      setModelStatus("Chọn một provider và một model trước đã.");
+      setModelStatus(t("settings.ai.model.status.choose"));
       return;
     }
     if (catalogue !== undefined && catalogue.length > 0 && !chosenModels.some((model) => model.id === id)) {
       // Refused in front of the field it was typed into, rather than by the node after a round trip.
-      setModelStatus(`${provider} không có model ${id}.`);
+      setModelStatus(`${provider} ${t("settings.ai.model.status.noSuchModel")} ${id}.`);
       return;
     }
     client
       .chooseModel({ provider, id })
       .then((answer) =>
         setModelStatus(
-          `Đã lưu ${provider}/${id}. ` +
+          `${t("settings.ai.model.status.saved")} ${provider}/${id}. ` +
             (answer.applies === "next-session"
-              ? "Áp dụng cho hội thoại mới."
-              : "Node sẽ dùng model này từ lần khởi động sau."),
+              ? t("settings.ai.model.status.appliesNextSession")
+              : t("settings.ai.model.status.appliesNextRestart")),
         ),
       )
-      .catch(() => setModelStatus("Không lưu được lựa chọn."));
+      .catch(() => setModelStatus(t("settings.ai.model.status.saveFailed")));
   };
 
   return (
     <>
       <section className="cc-panel-section">
-        <h3>Model đang dùng</h3>
+        <h3>{t("settings.ai.currentModel.heading")}</h3>
         {facts === undefined ? (
-          <p className="cc-panel-note">Đang đọc…</p>
+          <p className="cc-panel-note">{t("settings.common.loading")}</p>
         ) : facts.model === null ? (
           // A node with no model is a working node. Saying so is the point.
           <p className="cc-panel-note" data-model="none">
-            Node này chưa cấu hình model. Nó trả lời bằng recipe và capability đã cài, và không gọi provider nào.
+            {t("settings.ai.currentModel.none")}
           </p>
         ) : (
           <>
-            <SettingsRow label="Provider" description="Lấy từ lựa chọn đã lưu, mặc định là CC_MODEL_PROVIDER.">
+            <SettingsRow label={t("settings.ai.provider.label")} description={t("settings.ai.provider.description")}>
               <code>{facts.model.provider}</code>
             </SettingsRow>
-            <SettingsRow label="Model" description="Lấy từ lựa chọn đã lưu, mặc định là CC_MODEL_ID.">
+            <SettingsRow label={t("settings.ai.model.label")} description={t("settings.ai.model.description")}>
               <code>{facts.model.id}</code>
             </SettingsRow>
-            <SettingsRow label="Trần một lượt" description="Một lượt vượt trần sẽ bị dừng, không chạy tiếp.">
+            <SettingsRow label={t("settings.ai.turnCap.label")} description={t("settings.ai.turnCap.description")}>
               <code>
                 {facts.model.maxWallClockMs} ms · {facts.model.maxTokens} token
               </code>
@@ -122,26 +125,25 @@ export function AiRoutingSettings({ client, prefs, facts }: AiRoutingSettingsPro
       </section>
 
       <section className="cc-panel-section" data-providers="true">
-        <h3>Chọn provider và model</h3>
+        <h3>{t("settings.ai.chooseProvider.heading")}</h3>
         {catalogue === undefined ? (
-          <p className="cc-panel-note">Đang đọc…</p>
+          <p className="cc-panel-note">{t("settings.common.loading")}</p>
         ) : catalogue.length === 0 ? (
           <p className="cc-panel-note" data-providers="none">
-            Node chưa báo provider nào. Danh sách này đọc từ pi trên máy, nên nó rỗng khi pi không thấy provider nào —
-            hoặc khi node không đọc được pi.
+            {t("settings.ai.chooseProvider.none")}
           </p>
         ) : (
           <>
             <label className="cc-credential-field">
-              <span>Provider</span>
+              <span>{t("settings.ai.provider.label")}</span>
               <SearchSelect
                 name="provider"
-                placeholder="Gõ để tìm provider"
+                placeholder={t("settings.ai.provider.placeholder")}
                 value={chosenProvider}
                 options={catalogue.map((provider) => ({
                   value: provider.id,
                   label: provider.id,
-                  note: `${provider.models.length} model`,
+                  note: `${provider.models.length} ${t("settings.ai.provider.modelCountSuffix")}`,
                 }))}
                 onChange={(next) => {
                   setProviderDraft(next);
@@ -149,15 +151,15 @@ export function AiRoutingSettings({ client, prefs, facts }: AiRoutingSettingsPro
                   // choice any more - keeping it would offer a pair this node cannot run.
                   setModelDraft("");
                 }}
-                emptyNote="Không có provider nào khớp."
+                emptyNote={t("settings.ai.provider.noMatches")}
               />
             </label>
 
             <label className="cc-credential-field">
-              <span>Model</span>
+              <span>{t("settings.ai.model.label")}</span>
               <SearchSelect
                 name="model"
-                placeholder="Gõ để tìm model"
+                placeholder={t("settings.ai.model.placeholder")}
                 value={modelDraft ?? facts?.model?.id ?? ""}
                 options={chosenModels.map((model) => ({
                   value: model.id,
@@ -167,13 +169,13 @@ export function AiRoutingSettings({ client, prefs, facts }: AiRoutingSettingsPro
                     : { note: `${Math.round(model.contextWindow / 1000)}K` }),
                 }))}
                 onChange={setModelDraft}
-                emptyNote="Không có model nào khớp."
+                emptyNote={t("settings.ai.model.noMatches")}
               />
             </label>
 
             <div className="cc-chip-row">
               <button type="button" className="cc-chip" data-model-save="true" onClick={saveModelChoice}>
-                Lưu lựa chọn
+                {t("settings.ai.model.save")}
               </button>
             </div>
           </>
@@ -185,86 +187,7 @@ export function AiRoutingSettings({ client, prefs, facts }: AiRoutingSettingsPro
         )}
       </section>
 
-      <section className="cc-panel-section" data-models-key="true">
-        <h3>Khoá TypeSafe</h3>
-        <p className="cc-panel-note">
-          Jev dùng TypeSafe khi nó phải quyết định cách xử lý một việc. Ở đây cùng provider và model, vì cả ba đều là
-          chuyện chọn cái gì để chạy.
-        </p>
-        {KEY_FIELDS.map((entry) => (
-          <form
-            key={entry.name}
-            className="cc-credential-form"
-            data-settings-key-form={entry.name}
-            onSubmit={(event) => {
-              event.preventDefault();
-              const value = keyDraft.trim();
-              if (value === "") return;
-              client
-                .putCredential({ fields: [{ name: entry.name, value }] })
-                .then((result) => {
-                  // Cleared the moment it is sent, so nothing later can read it off the screen or out of state.
-                  setKeyDraft("");
-                  setKeyStatus(
-                    result.names.includes(entry.name)
-                      ? "Đã lưu khoá."
-                      : "Đã gửi, nhưng node không ghi nhận tên khoá nào.",
-                  );
-                })
-                .catch(() =>
-                  // The message says nothing about what was typed: an error that repeated the value would be the
-                  // leak this field exists to avoid.
-                  setKeyStatus("Không lưu được khoá. Thử lại."),
-                );
-            }}
-          >
-            <label className="cc-credential-field">
-              <span>{entry.label}</span>
-              <input
-                type="password"
-                name={entry.name}
-                autoComplete="off"
-                data-settings-key-field={entry.name}
-                value={keyDraft}
-                onChange={(event) => setKeyDraft(event.target.value)}
-              />
-            </label>
-            <button
-              type="submit"
-              className="cc-icon-btn"
-              style={{ width: "auto", padding: "0 var(--cc-space-sm)" }}
-              disabled={keyDraft.trim() === ""}
-              data-settings-key-submit={entry.name}
-            >
-              Lưu khoá
-            </button>
-            <p className="cc-freshness">{entry.purpose}</p>
-            {keyStatus === undefined ? null : (
-              <p className="cc-freshness" data-settings-key-status={entry.name}>
-                {keyStatus}
-              </p>
-            )}
-            <button
-              type="button"
-              className="cc-chip"
-              data-settings-key-remove={entry.name}
-              onClick={() => {
-                client
-                  .deleteCredential(entry.name)
-                  .then(() => setKeyStatus("Đã đăng xuất: node không còn giữ khoá này."))
-                  .catch(() =>
-                    // A refusal here usually means there was nothing to remove, which is a different answer from a
-                    // failure and is said as one rather than dressed up as an error.
-                    setKeyStatus("Không xoá được — có thể node chưa giữ khoá này."),
-                  );
-              }}
-            >
-              Đăng xuất
-            </button>
-          </form>
-        ))}
-        <InlineStatus status={prefs.status} forKey="ai.personalInstructions" />
-      </section>
+      <CredentialsSection client={client} entries={CREDENTIAL_ENTRIES} />
 
       <PersonalInstructions prefs={prefs} />
 
@@ -283,6 +206,7 @@ export function AiRoutingSettings({ client, prefs, facts }: AiRoutingSettingsPro
  * so afterwards is worse than not offering the field.
  */
 function ModelPoolSection({ client }: { client: GatewayClient }): ReactElement {
+  const t = useT();
   const [pool, setPool] = useState<ModelPool | undefined>(undefined);
   const [checked, setChecked] = useState<{ alias: string; ok: boolean; message?: string }[]>([]);
   const [current, setCurrent] = useState<string | undefined>(undefined);
@@ -299,18 +223,18 @@ function ModelPoolSection({ client }: { client: GatewayClient }): ReactElement {
         setCurrent(answer.currentAlias);
       })
       .catch(() => {
-        if (live) setStatus("Không đọc được model pool của node này.");
+        if (live) setStatus(t("settings.modelPool.readFailed"));
       });
     return () => {
       live = false;
     };
-  }, [client]);
+  }, [client, t]);
 
   if (pool === undefined) {
     return (
       <section className="cc-panel-section" data-model-pool="none">
-        <h3>Model pool</h3>
-        <p className="cc-panel-note">{status === "" ? "Đang đọc…" : status}</p>
+        <h3>{t("settings.modelPool.heading")}</h3>
+        <p className="cc-panel-note">{status === "" ? t("settings.common.loading") : status}</p>
       </section>
     );
   }
@@ -323,24 +247,21 @@ function ModelPoolSection({ client }: { client: GatewayClient }): ReactElement {
 
   return (
     <section className="cc-panel-section" data-model-pool="true">
-      <h3>Model pool</h3>
-      <p className="cc-panel-note">
-        Hotkey ⌘] (Ctrl+] trên Windows) đi theo thứ tự ưu tiên này và áp dụng từ lượt kế tiếp, không đổi model của
-        lượt đang chạy.
-      </p>
+      <h3>{t("settings.modelPool.heading")}</h3>
+      <p className="cc-panel-note">{t("settings.modelPool.intro")}</p>
       {pool.profiles.length === 0 ? (
         <p className="cc-panel-note" data-model-pool="none">
-          Node này chưa có profile nào, nên hotkey ⌘] không có gì để chuyển. Nó vẫn chạy model đã cấu hình.
+          {t("settings.modelPool.empty")}
         </p>
       ) : (
         <table className="cc-model-pool" data-model-pool-table="true">
           <thead>
             <tr>
-              <th>Alias</th>
-              <th>Model</th>
-              <th>Vai trò</th>
-              <th>Ưu tiên</th>
-              <th>Bật</th>
+              <th>{t("settings.modelPool.table.alias")}</th>
+              <th>{t("settings.modelPool.table.model")}</th>
+              <th>{t("settings.modelPool.table.roles")}</th>
+              <th>{t("settings.modelPool.table.priority")}</th>
+              <th>{t("settings.modelPool.table.enabled")}</th>
             </tr>
           </thead>
           <tbody>
@@ -350,7 +271,7 @@ function ModelPoolSection({ client }: { client: GatewayClient }): ReactElement {
                 <tr key={profile.alias} data-model-profile={profile.alias} data-current={current === profile.alias}>
                   <td>
                     {profile.alias}
-                    {current === profile.alias && <span className="cc-badge">đang dùng</span>}
+                    {current === profile.alias && <span className="cc-badge">{t("settings.modelPool.current")}</span>}
                   </td>
                   <td>
                     {profile.provider}/{profile.modelId}
@@ -394,11 +315,11 @@ function ModelPoolSection({ client }: { client: GatewayClient }): ReactElement {
             client
               .putModelPool(pool)
               .then((answer) => setPool(answer.pool))
-              .then(() => setStatus("Đã lưu. Hotkey ⌘] đi theo thứ tự ưu tiên này."))
-              .catch((cause: unknown) => setStatus(cause instanceof Error ? cause.message : "Không lưu được."));
+              .then(() => setStatus(t("settings.modelPool.saved")))
+              .catch((cause: unknown) => setStatus(cause instanceof Error ? cause.message : t("settings.modelPool.saveFailed")));
           }}
         >
-          Lưu model pool
+          {t("settings.modelPool.save")}
         </button>
       </div>
       {status === "" ? null : <p className="cc-panel-note">{status}</p>}
@@ -423,6 +344,7 @@ function ModelPoolSection({ client }: { client: GatewayClient }): ReactElement {
  * The draft is local and only written on blur, so typing does not put a request on the wire per keystroke.
  */
 function PersonalInstructions({ prefs }: { prefs: PreferencesHandle }): ReactElement {
+  const t = useT();
   const stored = prefs.preference("ai.personalInstructions")?.value;
   const record = typeof stored === "object" && stored !== null ? (stored as Record<string, unknown>) : {};
   const enabled = record.enabled === true;
@@ -441,14 +363,14 @@ function PersonalInstructions({ prefs }: { prefs: PreferencesHandle }): ReactEle
 
   return (
     <section className="cc-panel-section" data-personal-instructions="true">
-      <h3>Chỉ dẫn riêng của bạn</h3>
+      <h3>{t("settings.personalInstructions.heading")}</h3>
       <SettingsRow
-        label="Bật chỉ dẫn riêng"
-        description="Clark sẽ nhận phần này ở lượt kế tiếp, sau các quy tắc của sản phẩm và công cụ."
+        label={t("settings.personalInstructions.toggle.label")}
+        description={t("settings.personalInstructions.toggle.description")}
       >
         <ToggleSwitch
           name="personal-instructions"
-          label="Bật chỉ dẫn riêng"
+          label={t("settings.personalInstructions.toggle.label")}
           checked={enabled}
           pending={prefs.pending === "ai.personalInstructions"}
           onChange={(next) => prefs.write("ai.personalInstructions", { enabled: next, text })}
@@ -456,7 +378,7 @@ function PersonalInstructions({ prefs }: { prefs: PreferencesHandle }): ReactEle
       </SettingsRow>
 
       <label className="cc-credential-field">
-        <span>Nội dung</span>
+        <span>{t("settings.personalInstructions.content.label")}</span>
         <textarea
           className="cc-personal-instructions"
           data-personal-instructions-input="true"
@@ -466,19 +388,17 @@ function PersonalInstructions({ prefs }: { prefs: PreferencesHandle }): ReactEle
           // disappeared would make it look as though turning the toggle off had discarded it.
           disabled={!enabled}
           value={shown}
-          placeholder="Ví dụ: trả lời ngắn gọn. Dùng TypeScript cho ví dụ code."
+          placeholder={t("settings.personalInstructions.content.placeholder")}
           onChange={(event) => setDraft(event.target.value)}
           onBlur={commit}
         />
       </label>
 
       <p className="cc-panel-note" data-personal-instructions-count="true" data-over-bound={overBound}>
-        {shown.length} / {PERSONAL_INSTRUCTIONS_MAX_CHARS} ký tự
+        {shown.length} / {PERSONAL_INSTRUCTIONS_MAX_CHARS} {t("settings.personalInstructions.count.suffix")}
       </p>
 
-      <p className="cc-panel-note">
-        Clark sẽ nhận thêm phần này, không thay thế chỉ dẫn sẵn có. Nó không đổi được quyền hay quy tắc an toàn.
-      </p>
+      <p className="cc-panel-note">{t("settings.personalInstructions.note")}</p>
 
       <div className="cc-panel-row">
         <button
@@ -492,7 +412,7 @@ function PersonalInstructions({ prefs }: { prefs: PreferencesHandle }): ReactEle
             prefs.reset("ai.personalInstructions");
           }}
         >
-          Đặt lại
+          {t("settings.personalInstructions.reset")}
         </button>
       </div>
 

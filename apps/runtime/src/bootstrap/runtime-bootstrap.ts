@@ -11,10 +11,12 @@ import { createModelCatalogue, type ModelTurn, type ViewDescriptor } from "../mo
 import { type CommandToolDeps } from "../node-tools.ts";
 import { ownedResources } from "../preflight.ts";
 import { refreshProjectIndex } from "../project-finder.ts";
+import { appendHostReply } from "../routes/conversations.ts";
 import { createSecretBroker } from "../secret-broker.ts";
 import { type RequestSecretDeps } from "../request-secret.ts";
 import { sessionsDirectory } from "../session-store.ts";
 import { type NodeServices } from "../services.ts";
+import { createTaskDispatcher } from "../task-dispatch.ts";
 import { buildViewCatalog } from "../view-catalog.ts";
 import { type FixtureGates } from "./fixtures.ts";
 
@@ -219,6 +221,44 @@ export function wireRuntime(deps: RuntimeBootstrapDeps): void {
     fixtures?.arrangeModelNode({ services: deps.services, dataDir: deps.dataDir });
   }
   wiring.model.compose = deps.services.compose;
+
+  /*
+   * The dispatch vertical slice: a dispatched task now has a worker behind it.
+   *
+   * Not on a fixture node, for the same reason the pack probe skips it: `CC_SESSION_FIXTURE` exists so
+   * a scripted node never spawns a real process, and a task the fixture path dispatches should stay
+   * honestly parked in `dispatched` rather than quietly running a worker no browser test expects.
+   *
+   * The reporting closure is built here, not inside `task-dispatch.ts`, because it is the one place
+   * both the dispatcher and `appendHostReply` exist — the module that owns the route family already
+   * exports it for exactly this reason (`startBackgroundWork` uses the same shape).
+   */
+  if (!sessionFixture) {
+    const dispatcher = createTaskDispatcher({
+      conductor: deps.services.conductor,
+      projectRoots: () => deps.services.projects.roots(),
+      ownedRoots: () =>
+        ownedResources([...deps.services.projects.roots(), deps.services.runtime.dataDir, process.cwd()]).roots,
+      ownerPrincipalId: () => deps.services.runtime.identity.ownerPrincipalId,
+      onSettled: ({ taskId, conversationId, outcome, message }) => {
+        const label =
+          outcome === "succeeded"
+            ? "Xong"
+            : outcome === "failed"
+              ? "Không xong"
+              : outcome === "cancelled"
+                ? "Đã hủy"
+                : "Chưa rõ kết quả";
+        appendHostReply(deps.services, {
+          conversationId,
+          text: `${label} (task ${taskId}): ${message}`,
+          at: new Date().toISOString() as Instant,
+        });
+      },
+    });
+    deps.services.taskDispatch = dispatcher;
+    deps.services.conductor.runTask = (input) => dispatcher.dispatch(input);
+  }
 
   if (sessionFixture) {
     process.stderr.write(

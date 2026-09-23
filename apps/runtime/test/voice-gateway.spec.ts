@@ -1318,6 +1318,36 @@ describe("a lease whose peer cannot be reached", () => {
   });
 });
 
+describe("shutting the gateway down while a peer cannot be reached", () => {
+  it("closes within a bounded time even when a client never completes the closing handshake", async () => {
+    /*
+     * A socket that is paused stops reading entirely: no close frame is ever acknowledged, and no FIN
+     * arrives. `wss.close(cb)` alone waits for every open connection to finish closing before its
+     * callback fires, so a gateway shutdown that only calls that, without terminating stuck sockets or
+     * bounding the wait, hangs forever on a peer like this one — exactly the shape a node restart hits
+     * when a tab died without a clean disconnect.
+     */
+    const adapter = new FakeAdapter();
+    // A long heartbeat on purpose: the property under test is what `close()` itself bounds, not
+    // what the heartbeat would eventually clean up on its own.
+    context = await startGateway(() => "key", adapter, { heartbeatMs: 60_000 });
+    const stuck = connect(context.url);
+    await stuck.opened;
+    stuck.auth(TOKEN);
+    await stuck.control("ready");
+    expect(context.gateway.activeSessionCount()).toBe(1);
+
+    stuck.ws.pause();
+
+    const startedAt = Date.now();
+    await context.gateway.close();
+    expect(Date.now() - startedAt).toBeLessThan(2000);
+    expect(context.gateway.activeSessionCount()).toBe(0);
+
+    // The gateway owns its own shutdown from here; afterEach's close() is idempotent.
+  });
+});
+
 describe("a spoken sentence with nowhere to be answered", () => {
   it("is answered by saying so, instead of being transcribed and dropped", async () => {
     /*

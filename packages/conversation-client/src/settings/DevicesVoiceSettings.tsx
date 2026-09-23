@@ -9,6 +9,7 @@ import { wakeAvailability } from "../wake-word.ts";
 import type { GatewayClient } from "../api.ts";
 import { InlineStatus, SettingsRow } from "./controls/primitives.tsx";
 import type { PreferencesHandle } from "./controls/use-preferences.ts";
+import { useT } from "../i18n/locale-context.tsx";
 
 /**
  * Devices & Voice: how Clark hears and speaks.
@@ -33,8 +34,7 @@ export interface DevicesVoiceSettingsProps {
 }
 
 export function DevicesVoiceSettings({ client, prefs, facts }: DevicesVoiceSettingsProps): ReactElement {
-  const [keyDraft, setKeyDraft] = useState("");
-  const [keyStatus, setKeyStatus] = useState<string | undefined>(undefined);
+  const t = useT();
   /*
    * Asked rather than assumed.
    *
@@ -46,16 +46,17 @@ export function DevicesVoiceSettings({ client, prefs, facts }: DevicesVoiceSetti
   return (
     <>
       <section className="cc-panel-section">
-        <h3>Thiết bị</h3>
+        <h3>{t("settings.devices.heading")}</h3>
         <DevicePairingPanel
-          nodeId={facts?.nodeId ?? "(chưa đọc được)"}
-          nodeLabel={facts?.label ?? "(chưa đọc được)"}
-          unblockedBy="chạy node thứ hai trên máy khác rồi ghép nối"
+          nodeId={facts?.nodeId ?? t("settings.developer.node.unread")}
+          nodeLabel={facts?.label ?? t("settings.developer.node.unread")}
+          unblockedBy={t("settings.devices.unblockedBy")}
+          t={t}
         />
       </section>
 
       <section className="cc-panel-section" data-voice-settings="true">
-        <h3>Giọng nói</h3>
+        <h3>{t("settings.devices.voice.heading")}</h3>
         <VoicePicker client={client} prefs={prefs} />
         <InlineStatus status={prefs.status} forKey="voice.voiceName" />
 
@@ -68,99 +69,36 @@ export function DevicesVoiceSettings({ client, prefs, facts }: DevicesVoiceSetti
           privacy decision disguised as a preference.
         */}
         {wake.available ? (
-          <SettingsRow label="“Hey Clark”" description="Nghe cục bộ bằng bộ nhận diện trên máy này.">
-            <span className="cc-badge">{wake.detector?.id ?? "cục bộ"}</span>
+          <SettingsRow label={t("settings.devices.wake.label")} description={t("settings.devices.wake.local")}>
+            <span className="cc-badge">{wake.detector?.id ?? t("settings.devices.wake.localBadge")}</span>
           </SettingsRow>
         ) : (
-          <SettingsRow
-            label="“Hey Clark”"
-            /* Spread rather than passing `undefined`: with exactOptionalPropertyTypes an optional prop may be
-               absent, but may not be explicitly undefined. */
-            {...(wake.reason === undefined ? {} : { description: wake.reason })}
-            state="absent"
-          >
-            <span className="cc-badge" data-tone="warn" data-wake-unavailable="true">
-              chưa có
-            </span>
-          </SettingsRow>
+          // wake.reason is worded by wake-word.ts, outside this file's ownership, so the row is marked as
+          // node/seam data rather than swept up as UI copy.
+          <div data-out-of-scope-i18n="wake-reason">
+            <SettingsRow
+              label={t("settings.devices.wake.label")}
+              /* Spread rather than passing `undefined`: with exactOptionalPropertyTypes an optional prop may be
+                 absent, but may not be explicitly undefined. */
+              {...(wake.reason === undefined ? {} : { description: wake.reason })}
+              state="absent"
+            >
+              <span className="cc-badge" data-tone="warn" data-wake-unavailable="true">
+                {t("settings.devices.wake.unavailableBadge")}
+              </span>
+            </SettingsRow>
+          </div>
         )}
 
         {/*
-          The key the live voice provider needs.
-
-          It lives beside the microphone because that is what it is for: a session that cannot start without it.
-          The name it is stored under is the node's own, and it cannot be imported here because the runtime is
-          not something the browser ships.
+          The key the live voice provider needs used to have its own form here. It moved to the unified
+          Credentials section (DESIGN.md 11.6, review U5): every stored key now has one place with its
+          connection status and Replace/Remove actions, and this row only points there so a Gemini row is not
+          entered twice.
         */}
-        <form
-          className="cc-credential-form"
-          data-settings-key-form="gemini"
-          onSubmit={(event) => {
-            event.preventDefault();
-            const value = keyDraft.trim();
-            if (value === "") return;
-            client
-              .putCredential({ fields: [{ name: "gemini", value }] })
-              .then((result) => {
-                // Cleared the moment it is sent, so nothing later can read it off the screen or out of state.
-                setKeyDraft("");
-                setKeyStatus(
-                  result.names.includes("gemini")
-                    ? "Đã lưu khoá."
-                    : "Đã gửi, nhưng node không ghi nhận tên khoá nào.",
-                );
-              })
-              .catch(() =>
-                // The message says nothing about what was typed: an error that repeated the value would be the leak
-                // this field exists to avoid.
-                setKeyStatus("Không lưu được khoá. Thử lại."),
-              );
-          }}
-        >
-          <label className="cc-credential-field">
-            <span>Gemini API key</span>
-            <input
-              type="password"
-              name="gemini"
-              autoComplete="off"
-              data-settings-key-field="gemini"
-              value={keyDraft}
-              onChange={(event) => setKeyDraft(event.target.value)}
-            />
-          </label>
-          <button
-            type="submit"
-            className="cc-icon-btn"
-            style={{ width: "auto", padding: "0 var(--cc-space-sm)" }}
-            disabled={keyDraft.trim() === ""}
-            data-settings-key-submit="gemini"
-          >
-            Lưu khoá
-          </button>
-          <p className="cc-freshness">Dùng cho Gemini Live khi bạn nói. Lần mở voice kế tiếp sẽ dùng khoá này.</p>
-          {keyStatus === undefined ? null : (
-            <p className="cc-freshness" data-settings-key-status="gemini">
-              {keyStatus}
-            </p>
-          )}
-          <button
-            type="button"
-            className="cc-chip"
-            data-settings-key-remove="gemini"
-            onClick={() => {
-              client
-                .deleteCredential("gemini")
-                .then(() => setKeyStatus("Đã đăng xuất: node không còn giữ khoá này."))
-                .catch(() =>
-                  // A refusal here usually means there was nothing to remove, which is a different answer from a
-                  // failure and is said as one rather than dressed up as an error.
-                  setKeyStatus("Không xoá được — có thể node chưa giữ khoá này."),
-                );
-            }}
-          >
-            Đăng xuất
-          </button>
-        </form>
+        <p className="cc-panel-note" data-devices-credentials-link="gemini">
+          {t("settings.credentials.linkFromDevices")}
+        </p>
 
         <MicrophoneCheck />
       </section>
@@ -183,6 +121,7 @@ export function DevicesVoiceSettings({ client, prefs, facts }: DevicesVoiceSetti
  * preview says why in its own words rather than this component inventing a reason.
  */
 function VoicePicker({ client, prefs }: { client: GatewayClient; prefs: PreferencesHandle }): ReactElement {
+  const t = useT();
   const [capabilities, setCapabilities] = useState<VoiceCapabilities | undefined>(undefined);
   const [problem, setProblem] = useState<string | undefined>(undefined);
 
@@ -197,12 +136,12 @@ function VoicePicker({ client, prefs }: { client: GatewayClient; prefs: Preferen
         if (cancelled) return;
         // Reported rather than left blank: a node that cannot answer and a node with no voice gateway would
         // otherwise look identical, and only one of them is worth acting on.
-        setProblem(cause instanceof Error ? cause.message : "Không đọc được khả năng của provider.");
+        setProblem(cause instanceof Error ? cause.message : t("settings.voice.capabilitiesFailed"));
       });
     return () => {
       cancelled = true;
     };
-  }, [client]);
+  }, [client, t]);
 
   if (problem !== undefined) {
     return (
@@ -212,34 +151,39 @@ function VoicePicker({ client, prefs }: { client: GatewayClient; prefs: Preferen
     );
   }
   if (capabilities === undefined) {
-    return <p className="cc-panel-note">Đang đọc…</p>;
+    return <p className="cc-panel-note">{t("settings.common.loading")}</p>;
   }
 
   const current = prefs.text("voice.voiceName", "");
 
   return (
     <div data-voice-capabilities={capabilities.provider}>
-      <SettingsRow label="Provider" description="Provider đang trả lời cho voice trên node này.">
+      <SettingsRow label={t("settings.ai.provider.label")} description={t("settings.voice.provider.description")}>
         <code>{capabilities.provider}</code>
       </SettingsRow>
 
       {!capabilities.supportsVoiceSelection || capabilities.voices.length === 0 ? (
-        <SettingsRow
-          label="Chọn giọng"
-          description={capabilities.note ?? "Provider này không cho chọn giọng."}
-          state="absent"
-        >
-          <span className="cc-badge" data-tone="warn">
-            không hỗ trợ
-          </span>
-        </SettingsRow>
+        // capabilities.note is worded by the provider/node (see apps/runtime/src/test-support/voice-fixture.ts
+        // for the fixture case), outside this file's ownership, so it is marked as node data rather than swept
+        // up as UI copy whenever the provider actually supplies one.
+        <div data-out-of-scope-i18n={capabilities.note === undefined ? undefined : "voice-capability-note"}>
+          <SettingsRow
+            label={t("settings.voice.select.label")}
+            description={capabilities.note ?? t("settings.voice.select.unsupported")}
+            state="absent"
+          >
+            <span className="cc-badge" data-tone="warn">
+              {t("settings.voice.select.unsupportedBadge")}
+            </span>
+          </SettingsRow>
+        </div>
       ) : (
         <>
           <label className="cc-credential-field">
-            <span>Giọng</span>
+            <span>{t("settings.voice.label")}</span>
             <SearchSelect
               name="voice"
-              placeholder="Gõ để tìm giọng"
+              placeholder={t("settings.voice.placeholder")}
               value={current}
               options={capabilities.voices.map((voice) => ({
                 value: voice.id,
@@ -247,12 +191,12 @@ function VoicePicker({ client, prefs }: { client: GatewayClient; prefs: Preferen
                 ...(voice.locale === undefined ? {} : { note: voice.locale }),
               }))}
               onChange={(next) => prefs.write("voice.voiceName", next)}
-              emptyNote="Không có giọng nào khớp."
+              emptyNote={t("settings.voice.noMatches")}
             />
           </label>
           {/* Said plainly, because the registry declares it: a session already speaking does not change voice. */}
           <p className="cc-panel-note" data-voice-applies="true">
-            Giọng đã chọn áp dụng cho phiên thoại kế tiếp.
+            {t("settings.voice.appliesNote")}
           </p>
         </>
       )}
@@ -267,13 +211,19 @@ function VoicePicker({ client, prefs }: { client: GatewayClient; prefs: Preferen
           className="cc-chip"
           data-voice-preview="true"
           disabled={!capabilities.supportsPreview}
-          title={capabilities.supportsPreview ? undefined : (capabilities.note ?? "Provider này chưa hỗ trợ nghe thử.")}
+          title={capabilities.supportsPreview ? undefined : (capabilities.note ?? t("settings.voice.previewUnsupported"))}
         >
-          ▶ Nghe thử
+          {t("settings.voice.preview")}
         </button>
         {capabilities.supportsPreview ? null : (
-          <span className="cc-setting-desc" data-voice-preview-blocked="true">
-            {capabilities.note ?? "Provider này chưa hỗ trợ nghe thử."}
+          // Same provider/node-worded note as above; only marked out-of-scope when the provider actually
+          // supplied one, since the fallback translated text still belongs to this file's coverage.
+          <span
+            className="cc-setting-desc"
+            data-voice-preview-blocked="true"
+            data-out-of-scope-i18n={capabilities.note === undefined ? undefined : "voice-capability-note"}
+          >
+            {capabilities.note ?? t("settings.voice.previewUnsupported")}
           </span>
         )}
       </div>

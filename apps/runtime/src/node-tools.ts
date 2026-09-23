@@ -1,11 +1,26 @@
 import { join } from "node:path";
 
-import { ATTACHMENT_LIMITS, attachmentIdSchema, memoryKindSchema, memoryScopeSchema, type ExecutionPolicyConfig, type GuardrailConstraint, type Instant } from "@clarkcant/contracts";
+import {
+  ATTACHMENT_LIMITS,
+  appIntentSchema,
+  attachmentIdSchema,
+  describeAppIntent,
+  memoryKindSchema,
+  memoryScopeSchema,
+  settingsTabSchema,
+  type AppIntentDecision,
+  type ConversationId,
+  type ExecutionPolicyConfig,
+  type GuardrailConstraint,
+  type Instant,
+} from "@clarkcant/contracts";
+import type { ModelTurnEvent } from "@clarkcant/core";
 import { getAttachment } from "@clarkcant/storage";
 import type { ToolDefinition } from "@clarkcant/pi-adapter";
 import {
   decideExecution,
   guardrailCovers,
+  recordAppIntentEvent,
   recordEffectExecution,
   requestApproval,
   type CoordinationDeps,
@@ -13,6 +28,7 @@ import {
   readDirectoryIndex,
   searchDirectory,
 } from "@clarkcant/core";
+import type { Database } from "@clarkcant/storage";
 
 import { blobsDir, readBlob } from "./blobs.ts";
 import { createAskUserQuestionTool } from "./ask-user-question.ts";
@@ -125,6 +141,14 @@ export function createNodeTools(input: {
    * wondering why the agent never looks.
    */
   directory?: { indexPath: string | undefined; newId: (prefix: string) => string };
+  /**
+   * The app-control channel, when this turn has a foreground surface that could act on it.
+   *
+   * Absent means `control_app` is not registered: a turn with no conversation has no host-control
+   * transport to deliver an event on, and offering the tool anyway would let the model believe an
+   * action could reach a screen that this call has no way to reach.
+   */
+  appControl?: ControlAppDeps;
 }): ToolDefinition[] {
   const roots = input.roots ?? machineRoots;
   return [
@@ -173,7 +197,163 @@ export function createNodeTools(input: {
             newId: input.memory.newId,
           }),
         ]),
+    ...(input.appControl === undefined ? [] : [createControlAppTool(input.appControl)]),
   ];
+}
+
+/**
+ * The kinds `control_app` may ask for.
+ *
+ * A deliberate subset of the full app-intent vocabulary: `app.quit` stays confirmation-gated and is not
+ * offered to a tool call at all, because this tool has no confirmation flow of its own and adding one
+ * here would be a second, divergent quit path. The widget kinds are reached through `read_attachment`'s
+ * sibling tools and the view surface instead, not through this generic channel.
+ */
+const CONTROL_APP_KINDS = [
+  "settings.open",
+  "settings.tab",
+  "nav.home",
+  "nav.conversation",
+  "voice.open",
+  "voice.end",
+  "model.cycle",
+  "model.select",
+] as const;
+
+/** What a node answers a `control_app` call with — always an honest account, never a claim of success it did not verify. */
+export type ControlAppResult =
+  | { status: "delivered"; say: string }
+  | { status: "refused"; reason: "unsupported" | "no-active-surface"; say: string };
+
+export interface ControlAppDeps {
+  db: Database;
+  nodeId: string;
+  now: () => Instant;
+  newId: (prefix: string) => string;
+  principalId: string;
+  conversationId?: ConversationId;
+  /** The live turn's event sink, read at call time; see `extraTools` in `model-turn.ts` for why this is a getter. */
+  onEvent: () => ((event: ModelTurnEvent) => void) | undefined;
+  /**
+   * Which surface the message this call belongs to came in on, read at call time for the same reason
+   * `onEvent` is a getter: the tool list is built once per session, and a session answers both typed
+   * and spoken messages over its life. Drives the audit record's `source` — `"agent"` for a message
+   * from the composer, `"voice"` for one the voice session's own conductor call answered — so a click,
+   * a deterministic spoken command, and a model's own decision never collapse into one indistinguishable
+   * record.
+   */
+  channel: () => "voice" | "chat";
+}
+
+const NO_ACTIVE_HOST_SURFACE_SAY =
+  "Không có màn hình nào đang mở phiên trò chuyện này để tôi thực hiện lệnh, nên tôi chưa làm gì cả.";
+
+/**
+ * Let the agent do what a click or a spoken command already can, through the one shared app-intent
+ * executor.
+ *
+ * This tool never claims success on its own: it validates the request against the same contract the
+ * typed and spoken paths use, records who asked with `source: "agent"` or `"voice"` (see `channel`) so
+ * the audit can tell a person's click from a model's own decision — and, among those, whether the
+ * decision was made answering the composer or a spoken sentence — and then delivers an ephemeral
+ * `host-control` event to whichever foreground stream is watching this turn. Whether the screen
+ * actually changed is answered by the client's one executor (`runAppIntent`), not guessed here — this
+ * call only reports that the event was delivered or, honestly, that there was nowhere to deliver it.
+ */
+export function createControlAppTool(deps: ControlAppDeps): ToolDefinition {
+  return {
+    name: "control_app",
+    label: "Điều khiển ứng dụng",
+    description:
+      "Ask the app to carry out one of its own semantic actions on the person's behalf: open Settings " +
+      "(optionally at a tab), return to the current conversation, go to the home screen, start or end " +
+      "voice mode, or switch the configured model (cycle to the next one, or select a specific alias). " +
+      "This is not a scripting surface — it accepts only these fixed kinds, never a URL, selector or " +
+      "arbitrary command. Only call it when the user's own request implies the app itself should change, " +
+      "not merely to narrate what you are about to say. The result tells you whether the request reached " +
+      "a screen; it does not by itself prove the screen changed.",
+    parameters: {
+      type: "object",
+      additionalProperties: false,
+      required: ["kind"],
+      properties: {
+        kind: {
+          type: "string",
+          enum: [...CONTROL_APP_KINDS],
+          description: "Which app-control action to perform.",
+        },
+        tab: {
+          type: "string",
+          description: "Required only for kind \"settings.tab\": which Settings tab to open.",
+        },
+        modelAlias: {
+          type: "string",
+          description: "Required only for kind \"model.select\": the configured profile's alias.",
+        },
+      },
+    },
+    promptSnippet: "control_app — open Settings, navigate, or switch voice/model state for the user",
+    execute: async (params: Record<string, unknown>): Promise<{ text: string }> => {
+      const outcome = decideControlApp(deps, params);
+      return { text: outcome.say };
+    },
+  };
+}
+
+/**
+ * The decision half of `control_app`, kept apart from `execute` so it can be asserted on its own: a
+ * `ToolDefinition.execute` must answer `{ text }` for the model, and squeezing the structured outcome —
+ * whether it was delivered, and why not when it was refused — through that one string would make the
+ * two claims this tool exists to keep separate (delivered vs. refused, and why) untestable without
+ * parsing prose.
+ */
+export function decideControlApp(deps: ControlAppDeps, params: Record<string, unknown>): ControlAppResult {
+  const kind = typeof params.kind === "string" ? params.kind : "";
+  if (!(CONTROL_APP_KINDS as readonly string[]).includes(kind)) {
+    return {
+      status: "refused",
+      reason: "unsupported",
+      say: `"${kind}" không phải một hành động control_app hợp lệ.`,
+    };
+  }
+
+  const parsed = appIntentSchema.safeParse({
+    kind,
+    ...(kind === "settings.tab" && settingsTabSchema.safeParse(params.tab).success ? { tab: params.tab } : {}),
+    ...(kind === "model.select" && typeof params.modelAlias === "string" && params.modelAlias.trim() !== ""
+      ? { modelAlias: params.modelAlias.trim() }
+      : {}),
+  });
+  if (!parsed.success) {
+    return {
+      status: "refused",
+      reason: "unsupported",
+      say:
+        kind === "settings.tab"
+          ? "settings.tab cần tên tab hợp lệ."
+          : "model.select cần modelAlias của một profile đã cấu hình.",
+    };
+  }
+
+  const intent = parsed.data;
+  const readBack = describeAppIntent(intent);
+  const onEvent = deps.onEvent();
+  if (onEvent === undefined) {
+    return { status: "refused", reason: "no-active-surface", say: NO_ACTIVE_HOST_SURFACE_SAY };
+  }
+
+  const decision: AppIntentDecision = { kind: "intent", intent, requiresConfirmation: false, readBack };
+  onEvent({ type: "host-control", decision });
+  recordAppIntentEvent(
+    { db: deps.db, nodeId: deps.nodeId, now: deps.now, newId: deps.newId },
+    {
+      intent,
+      source: deps.channel() === "voice" ? "voice" : "agent",
+      confirmed: false,
+      ...(deps.conversationId === undefined ? {} : { conversationId: deps.conversationId }),
+    },
+  );
+  return { status: "delivered", say: readBack };
 }
 
 /**

@@ -1,5 +1,6 @@
 import {
   type ActionProposal,
+  type AppIntentDecision,
   type AttachmentRef,
   type CapabilityRef,
   type ConversationId,
@@ -82,8 +83,17 @@ export interface ConductorDeps extends TaskServiceDeps, WidgetDeps, RegistryDeps
   newId: (prefix: string) => string;
   /** Scripted paths that need no provider account. Empty means model-only. */
   sampleRecipes: readonly SampleRecipe[];
-  /** Optional worker bridge. Absent means an install is proposed instead of a run. */
-  runTask?: (taskId: string) => Promise<void>;
+  /**
+   * Optional worker bridge. Absent means an install is proposed instead of a run.
+   *
+   * Called once, immediately after `dispatch.acknowledged`, and deliberately not awaited by the
+   * conductor: the message announcing the dispatch has already been appended, and this call is the
+   * host's own background work, reported back into the conversation whenever it settles. The
+   * capability and node are passed explicitly rather than re-read from the registry, because the
+   * choice was already made by `chooseExecutionNode` and re-reading it here could disagree with what
+   * the conversation was just told.
+   */
+  runTask?: (input: { taskId: string; capabilityRef: string; executionNodeId: string }) => void;
   /**
    * Answers a turn with a model, when this node has one.
    *
@@ -108,6 +118,17 @@ export interface ConductorDeps extends TaskServiceDeps, WidgetDeps, RegistryDeps
     text: string;
     messageId: string;
     at: Instant;
+    /**
+     * See `UserMessageInput.emit`, carried through unchanged.
+     *
+     * A composed surface is not a model turn, so most of this is never called for one — but a fixture
+     * standing in for the agent may still call a real tool that reports through it (`control_app` is
+     * the case this exists for), and that call has to reach the same place a model turn's tool call
+     * would: the host stream, or the voice session, watching this conversation.
+     */
+    emit?: (event: ConductorEmit) => void;
+    /** See `UserMessageInput.channel`, carried through unchanged. */
+    channel?: "voice" | "chat";
   }) => Promise<{ block: MessageBlock; text: string } | undefined>;
   /**
    * Choose between several usable capabilities, when there is a real choice.
@@ -153,6 +174,8 @@ export interface ModelTurnInput {
    * a reply, and a caller that ignores this still gets one.
    */
   onEvent?: (event: ModelTurnEvent) => void;
+  /** See `UserMessageInput.channel`, which this carries through unchanged. */
+  channel?: "voice" | "chat";
 }
 
 /**
@@ -256,6 +279,17 @@ export interface UserMessageInput {
    */
   note?: string;
   /**
+   * Which surface this message came in on: the composer, or a spoken sentence the deterministic
+   * matcher and the widget resolver both passed on.
+   *
+   * Defaults to `"chat"`. Carried through to `control_app`'s own audit record via `extraTools`'
+   * `channel` getter, so a tool call the voice agent made is distinguishable from one the same
+   * conductor answered for the text composer — the two are the same tools and the same executor, and
+   * this is the one fact about the request that is not otherwise recoverable from a turn already in
+   * flight.
+   */
+  channel?: "voice" | "chat";
+  /**
    * Files this message carries.
    *
    * The refs arrive already authorised — the gateway resolves each id against the conversation and the
@@ -292,7 +326,13 @@ export type ModelTurnEvent =
       label: string;
       args: Record<string, unknown>;
     }
-  | { type: "tool-end"; toolCallId: string; status: "done" | "failed"; result: string };
+  | { type: "tool-end"; toolCallId: string; status: "done" | "failed"; result: string }
+  /**
+   * An app-control action the agent asked the host to carry out, delivered as an ephemeral event
+   * rather than stored in a message block: replaying the transcript must not repeat the side effect,
+   * so this travels only to a foreground stream that is watching the turn as it runs.
+   */
+  | { type: "host-control"; decision: AppIntentDecision };
 
 /** What the conductor reports to a caller that is watching. */
 export type ConductorEmit = ModelTurnEvent;
@@ -489,6 +529,8 @@ export async function handleUserMessage(
       text: input.text,
       messageId,
       at,
+      ...(input.emit === undefined ? {} : { emit: input.emit }),
+      ...(input.channel === undefined ? {} : { channel: input.channel }),
     });
     if (composed !== undefined) {
       const message = appendAssistant(
@@ -578,6 +620,15 @@ export async function handleUserMessage(
   // A capability is available: dispatch, and let the worker bridge take it from here.
   advanceResolving(deps, task.taskId, { kind: "ready", executionNodeId: executionNode.executionNodeId });
   applyTaskEvent(deps, task.taskId, "dispatch.acknowledged");
+
+  // Started, not awaited: the message below is what tells the conversation the task is running, and
+  // the run itself reports its own outcome later. A host with no worker bridge leaves the task
+  // sitting in `dispatched` — honest, because nothing here would otherwise move it further.
+  deps.runTask?.({
+    taskId: task.taskId,
+    capabilityRef: executionNode.ref,
+    executionNodeId: executionNode.executionNodeId,
+  });
 
   const message = appendAssistant(
     deps,
@@ -684,6 +735,7 @@ async function runModelTurn(
       text: input.text,
       messageId,
       ...(input.note === undefined ? {} : { note: input.note }),
+      ...(input.channel === undefined ? {} : { channel: input.channel }),
       // Always supplied, and a no-op when nobody is streaming. A conditional spread here would have
       // to exist only to keep the optional field absent, which is a distinction nothing reads.
       onEvent: (event: ModelTurnEvent) => input.emit?.(event),

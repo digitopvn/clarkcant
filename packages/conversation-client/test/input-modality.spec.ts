@@ -3,11 +3,13 @@ import { describe, expect, it, vi } from "vitest";
 import {
   AGENT_STATES,
   INPUT_MODALITIES,
+  WINDOW_MODES,
   agentStateAttribute,
   agentStateFrom,
   attachInputModality,
   isAgentState,
   modalityFor,
+  windowModeFrom,
   type InputModalityTarget,
 } from "../src/input-modality.ts";
 
@@ -190,5 +192,38 @@ describe("one state is published, chosen in a visible order", () => {
       ].map((input) => agentStateFrom(input)),
     );
     expect(reachable.has("success")).toBe(false);
+  });
+});
+
+describe("windowModeFrom", () => {
+  it("is normal when nothing else is true", () => {
+    expect(windowModeFrom({ compactSurface: false, voiceOpen: false, hasFocusedPin: false })).toBe("normal");
+  });
+
+  it("is expanded when a pin is focused and the window is not compact", () => {
+    expect(windowModeFrom({ compactSurface: false, voiceOpen: false, hasFocusedPin: true })).toBe("expanded");
+  });
+
+  it("is compact when the window has shrunk and voice has not opened yet", () => {
+    expect(windowModeFrom({ compactSurface: true, voiceOpen: false, hasFocusedPin: false })).toBe("compact");
+  });
+
+  it("is orb once the compact window's own voice session opens", () => {
+    expect(windowModeFrom({ compactSurface: true, voiceOpen: true, hasFocusedPin: false })).toBe("orb");
+  });
+
+  it("prefers the compact/orb distinction over a focused pin", () => {
+    expect(windowModeFrom({ compactSurface: true, voiceOpen: false, hasFocusedPin: true })).toBe("compact");
+    expect(windowModeFrom({ compactSurface: true, voiceOpen: true, hasFocusedPin: true })).toBe("orb");
+  });
+
+  it("only ever reports one of the declared window modes", () => {
+    for (const compactSurface of [false, true]) {
+      for (const voiceOpen of [false, true]) {
+        for (const hasFocusedPin of [false, true]) {
+          expect(WINDOW_MODES).toContain(windowModeFrom({ compactSurface, voiceOpen, hasFocusedPin }));
+        }
+      }
+    }
   });
 });

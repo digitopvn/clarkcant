@@ -1,5 +1,6 @@
 import { type ReactElement } from "react";
 
+import { useT } from "../i18n/locale-context.tsx";
 import type { InspectorPanel } from "./widget-lab.ts";
 
 /**
@@ -16,6 +17,7 @@ export interface WidgetInspectorProps {
 }
 
 export function WidgetInspector({ panels }: WidgetInspectorProps): ReactElement {
+  const t = useT();
   return (
     <div className="cc-widget-inspector" data-widget-inspector="true">
       {panels.map((panel) => (
@@ -25,7 +27,7 @@ export function WidgetInspector({ panels }: WidgetInspectorProps): ReactElement 
             {panel.rows.length === 0 ? (
               <div className="cc-widget-inspector-row">
                 <dt>—</dt>
-                <dd>Không có gì được khai báo.</dd>
+                <dd>{t("widgets.inspector.nothingDeclared")}</dd>
               </div>
             ) : (
               panel.rows.map((row, index) => (

@@ -212,7 +212,7 @@ test("the extensions tab tells the node's tools from the agent's", async ({ page
   // asserted rather than one.
   await openApp(page);
   await page.locator("[data-settings='true']").click();
-  await page.getByRole("tab", { name: "Extensions" }).click();
+  await page.locator("#cc-tab-extensions").click();
 
   // The agent's built-ins are a fixed list, so this half is exact.
   await expect(page.locator("[data-tool-list='Công cụ của agent (pi)'] code").first()).toHaveText("read");
@@ -232,7 +232,7 @@ test("the settings panel lists what this node can run, or says plainly that it c
   await page.locator("[data-settings='true']").click();
 
   // Provider and model live together under AI & Routing now, because choosing one means choosing the other.
-  await page.getByRole("tab", { name: "AI & Routing" }).click();
+  await page.locator("#cc-tab-ai").click();
   const section = page.locator("[data-providers='true']");
   await expect(section).toBeVisible();
 
@@ -265,23 +265,29 @@ test("the settings panel lists what this node can run, or says plainly that it c
 test("every key in settings can be taken back again, which is how a provider is logged out of", async ({ page }) => {
   await openApp(page);
   await page.locator("[data-settings='true']").click();
-  await page.getByRole("tab", { name: "Devices & Voice" }).click();
 
-  // Both keys, because a logout for one and not the other is the kind of half-wired surface that looks finished.
-  // Gemini is the voice provider's key, so it stays beside the microphone. TypeSafe is asked for where a model is
-  // chosen, because that is what it pays for - the same list of fields, in the tab that explains each one.
-  await expect(page.locator("[data-settings-key-form='gemini']")).toBeVisible();
-  await expect(page.locator("[data-settings-key-remove='gemini']")).toBeVisible();
+  // Both keys live in the one Credentials section on AI & Routing now (DESIGN.md 11.6, review U5), rather than
+  // scattered one per domain tab. A logout for one and not the other is the kind of half-wired surface that
+  // looks finished, so both are asserted from the one place a person would actually go looking.
+  await page.locator("#cc-tab-ai").click();
+  const section = page.locator("[data-credentials-section='true']");
+  await expect(section).toBeVisible();
+  await expect(section.locator("[data-credential-row='gemini']")).toBeVisible();
+  await expect(section.locator("[data-credential-remove='gemini']")).toBeVisible();
+  await expect(section.locator("[data-credential-row='typesafe']")).toBeVisible();
+  await expect(section.locator("[data-credential-remove='typesafe']")).toBeVisible();
 
-  await page.getByRole("tab", { name: "AI & Routing" }).click();
-  await expect(page.locator("[data-settings-key-form='typesafe']")).toBeVisible();
-  await expect(page.locator("[data-settings-key-remove='typesafe']")).toBeVisible();
+  // Devices & Voice no longer embeds its own Gemini form; it points at the section above instead of
+  // duplicating it.
+  await page.locator("#cc-tab-devices").click();
+  await expect(page.locator("[data-devices-credentials-link='gemini']")).toBeVisible();
+  await expect(page.locator("[data-settings-key-form='gemini']")).toHaveCount(0);
 });
 
 test("the model in use is what the fields show before anybody types", async ({ page }) => {
   await openApp(page);
   await page.locator("[data-settings='true']").click();
-  await page.getByRole("tab", { name: "AI & Routing" }).click();
+  await page.locator("#cc-tab-ai").click();
 
   const model = page.locator("[data-search-input='model']");
   const absent = page.locator("[data-model='none']");
@@ -314,7 +320,7 @@ test("the model in use is what the fields show before anybody types", async ({ p
 test("the extensions tab says which extensions pi loads on this machine", async ({ page }) => {
   await openApp(page);
   await page.locator("[data-settings='true']").click();
-  await page.getByRole("tab", { name: "Extensions" }).click();
+  await page.locator("#cc-tab-extensions").click();
 
   const section = page.locator("[data-pi-extensions='true']");
   await expect(section).toBeVisible();
@@ -335,7 +341,7 @@ test("pi's own configuration is in the developer tab, behind a disclosure, as li
    * Developer, not the tab a normal user reads. Raw pi configuration is progressive disclosure: genuinely useful when
    * something is wrong, and noise the rest of the time.
    */
-  await page.getByRole("tab", { name: "Developer" }).click();
+  await page.locator("#cc-tab-developer").click();
 
   const section = page.locator("[data-pi-settings='true']");
   await expect(section).toBeVisible();
@@ -374,7 +380,7 @@ test("personal instructions can be written, survive a reload, and are never sent
 
   await openApp(page);
   await page.locator("[data-settings='true']").click();
-  await page.getByRole("tab", { name: "AI & Routing" }).click();
+  await page.locator("#cc-tab-ai").click();
 
   const section = page.locator("[data-personal-instructions='true']");
   await expect(section).toBeVisible();
@@ -422,7 +428,7 @@ test("personal instructions can be written, survive a reload, and are never sent
   await page.reload();
   await expect(page.locator("text=Ready")).toBeVisible({ timeout: 15_000 });
   await page.locator("[data-settings='true']").click();
-  await page.getByRole("tab", { name: "AI & Routing" }).click();
+  await page.locator("#cc-tab-ai").click();
   await expect(page.locator("[data-personal-instructions-input='true']")).toHaveValue(text);
 
   // Reset returns it to the state before any of this, which for a key written once means the default.
@@ -456,7 +462,7 @@ test("the voice picker is drawn from what the provider says it can do", async ({
    */
   await openApp(page);
   await page.locator("[data-settings='true']").click();
-  await page.getByRole("tab", { name: "Devices & Voice" }).click();
+  await page.locator("#cc-tab-devices").click();
 
   const section = page.locator("[data-voice-settings='true']");
   await expect(section).toBeVisible();

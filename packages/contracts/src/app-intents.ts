@@ -41,16 +41,20 @@ import { capabilityRefSchema } from "./grants.ts";
  */
 export const APP_INTENT_KINDS = [
   "voice.end",
+  "voice.open",
   "window.expand",
   "window.minimise",
   "window.minimal",
   "settings.open",
   "settings.tab",
   "nav.home",
+  "nav.conversation",
   "composer.attach",
   "app.quit",
   "widgets.open",
   "widgets.show",
+  "model.cycle",
+  "model.select",
 ] as const;
 
 export const appIntentKindSchema = z.enum(APP_INTENT_KINDS);
@@ -75,8 +79,19 @@ export type SettingsTab = z.infer<typeof settingsTabSchema>;
  * microphone hear something that sounded like it", which is the first question anyone asks after an
  * application does something surprising.
  */
-export const appIntentSourceSchema = z.enum(["chat", "click", "voice"]);
+/**
+ * `"agent"` marks a request the main or voice model made through a tool call rather than one a
+ * person typed, clicked or said. Kept in the same enum as the others rather than a separate
+ * `origin` field, because every caller of this schema already switches on `source` and a second
+ * field would let the two disagree - an "agent" request whose `source` still said "chat" would be
+ * audited as if a person had asked for it.
+ */
+export const appIntentSourceSchema = z.enum(["chat", "click", "voice", "agent"]);
 export type AppIntentSource = z.infer<typeof appIntentSourceSchema>;
+
+/** A configured model-pool profile alias, as `@clarkcant/core`'s model pool names it. */
+export const modelAliasSchema = z.string().min(1).max(80);
+export type ModelAlias = z.infer<typeof modelAliasSchema>;
 
 /** A catalog family word, as `widget-catalog` names it. */
 export const widgetFamilySchema = z
@@ -99,6 +114,8 @@ export const appIntentSchema = z
     tab: settingsTabSchema.optional(),
     definitionId: capabilityRefSchema.optional(),
     family: widgetFamilySchema.optional(),
+    /** Carried only by `model.select`, naming a profile from the configured pool - never a bare provider/model string. */
+    modelAlias: modelAliasSchema.optional(),
   })
   .refine((intent) => intent.kind !== "settings.tab" || intent.tab !== undefined, {
     message: "settings.tab must name the tab to change to",
@@ -111,7 +128,15 @@ export const appIntentSchema = z
       message: "only widgets.show may name a widget or a family",
       path: ["definitionId"],
     },
-  );
+  )
+  .refine((intent) => intent.kind !== "model.select" || intent.modelAlias !== undefined, {
+    message: "model.select must name the configured profile to switch to",
+    path: ["modelAlias"],
+  })
+  .refine((intent) => intent.kind === "model.select" || intent.modelAlias === undefined, {
+    message: "only model.select may name a model alias",
+    path: ["modelAlias"],
+  });
 export type AppIntent = z.infer<typeof appIntentSchema>;
 
 /** The one intent that is never executable from a single request. */
@@ -128,9 +153,27 @@ export type ConfirmationToken = z.infer<typeof confirmationTokenSchema>;
 export const confirmationDecisionSchema = z.enum(["granted", "denied"]);
 export type ConfirmationDecision = z.infer<typeof confirmationDecisionSchema>;
 
-/** What the person is told when a command-shaped sentence matched nothing. */
+/**
+ * The UI language an app-intent read-back or refusal is said in.
+ *
+ * A bare `"vi" | "en"` rather than an import of `LocaleChoice` from `@clarkcant/conversation-client`:
+ * `contracts` sits below the UI package in the dependency graph, and this schema has no business
+ * depending on a React package's i18n catalog. The two types are kept in sync by the shared literal
+ * values, not by an import.
+ */
+export type AppIntentLocale = "vi" | "en";
+
+/** What the person is told when a command-shaped sentence matched nothing, in Vietnamese - kept for callers that have not adopted `appIntentNotUnderstood`. */
 export const APP_INTENT_NOT_UNDERSTOOD =
   "Tôi chưa hiểu câu lệnh đó, nên tôi chưa làm gì cả. Bạn nói lại rõ hơn giúp tôi nhé.";
+
+const APP_INTENT_NOT_UNDERSTOOD_EN =
+  "I did not understand that command, so I have not done anything. Please say it again more clearly.";
+
+/** Locale-aware form of `APP_INTENT_NOT_UNDERSTOOD`. Defaults to Vietnamese, the product's own language. */
+export function appIntentNotUnderstood(locale: AppIntentLocale = "vi"): string {
+  return locale === "en" ? APP_INTENT_NOT_UNDERSTOOD_EN : APP_INTENT_NOT_UNDERSTOOD;
+}
 
 /**
  * What each tab is called, matching the panel rather than translating it.
@@ -149,16 +192,24 @@ const TAB_LABELS: Record<SettingsTab, string> = {
 };
 
 /**
- * The sentence read back before the application acts.
+ * The sentence read back before the application acts, in Vietnamese.
  *
  * Said out loud for a spoken command and shown for a typed one, which is why it is a property of the
  * intent rather than of the voice path. A read-back is the whole confirmation mechanism for the eight
  * intents that do not ask: hearing "I am closing the window" is what lets someone stop it.
  */
-export function describeAppIntent(intent: AppIntent): string {
+function describeAppIntentVi(intent: AppIntent): string {
   switch (intent.kind) {
     case "voice.end":
       return "Tôi kết thúc phiên thoại nhé.";
+    case "voice.open":
+      return "Tôi mở phiên thoại nhé.";
+    case "nav.conversation":
+      return "Tôi quay lại cuộc trò chuyện hiện tại nhé.";
+    case "model.cycle":
+      return "Tôi chuyển sang model tiếp theo trong pool nhé. Thay đổi áp dụng từ lượt tiếp theo.";
+    case "model.select":
+      return `Tôi chuyển sang model "${intent.modelAlias ?? ""}" nhé. Thay đổi áp dụng từ lượt tiếp theo.`;
     case "window.expand":
       return "Tôi mở rộng cửa sổ nhé.";
     case "window.minimise":
@@ -192,6 +243,60 @@ export function describeAppIntent(intent: AppIntent): string {
       throw new Error(`no read-back sentence for app intent ${String(unreachable)}`);
     }
   }
+}
+
+/** The English translation of `describeAppIntentVi`, kind for kind, same structure. */
+function describeAppIntentEn(intent: AppIntent): string {
+  switch (intent.kind) {
+    case "voice.end":
+      return "Ending the voice session.";
+    case "voice.open":
+      return "Opening a voice session.";
+    case "nav.conversation":
+      return "Going back to the current conversation.";
+    case "model.cycle":
+      return "Switching to the next model in the pool. The change applies from the next turn.";
+    case "model.select":
+      return `Switching to model "${intent.modelAlias ?? ""}". The change applies from the next turn.`;
+    case "window.expand":
+      return "Expanding the window.";
+    case "window.minimise":
+      return "Minimising the window to the taskbar.";
+    case "window.minimal":
+      return "Shrinking the window to the voice bar.";
+    case "settings.open":
+      return "Opening Settings.";
+    case "settings.tab":
+      return `Opening Settings on the ${TAB_LABELS[intent.tab ?? "experience"]} tab.`;
+    case "nav.home":
+      return "Going back to the start screen.";
+    case "composer.attach":
+      return "Opening the file picker.";
+    case "app.quit":
+      return "I understand you want to quit the app. Do you confirm?";
+    case "widgets.open":
+      return "Opening the widget library.";
+    case "widgets.show": {
+      if (intent.definitionId !== undefined) return `Opening the ${intent.definitionId} widget.`;
+      if (intent.family !== undefined) return `Opening the widget library on the ${intent.family} group.`;
+      return "Opening the widget library for you to choose.";
+    }
+    default: {
+      const unreachable: never = intent.kind;
+      throw new Error(`no read-back sentence for app intent ${String(unreachable)}`);
+    }
+  }
+}
+
+/**
+ * The sentence read back before the application acts.
+ *
+ * Locale-aware, defaulting to Vietnamese: an existing caller that has not been touched to pass a
+ * locale keeps behaving exactly as before, while a caller that knows the UI language can now get the
+ * matching sentence.
+ */
+export function describeAppIntent(intent: AppIntent, locale: AppIntentLocale = "vi"): string {
+  return locale === "en" ? describeAppIntentEn(intent) : describeAppIntentVi(intent);
 }
 
 /**
@@ -250,6 +355,8 @@ export const appIntentRequestSchema = z
     /** Carried so a click can name a widget; a spoken sentence gets its target from the matcher. */
     definitionId: capabilityRefSchema.optional(),
     family: widgetFamilySchema.optional(),
+    /** Carried so a click or an agent tool call can name a configured model-pool profile directly. */
+    modelAlias: modelAliasSchema.optional(),
     conversationId: z.string().min(1).max(128).optional(),
     source: appIntentSourceSchema,
   })
@@ -273,6 +380,8 @@ export const appIntentEventDocumentSchema = z.strictObject({
   /** Recorded so the audit can answer *which* widget was shown, not only that the library opened. */
   definitionId: capabilityRefSchema.optional(),
   family: widgetFamilySchema.optional(),
+  /** Recorded so the audit can answer which profile a `model.select` switched to. */
+  modelAlias: modelAliasSchema.optional(),
   source: appIntentSourceSchema,
   confirmed: z.boolean(),
 });

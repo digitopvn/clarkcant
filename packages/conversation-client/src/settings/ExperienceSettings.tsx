@@ -1,4 +1,4 @@
-import { useState, type ReactElement } from "react";
+import { useEffect, useState, type ReactElement } from "react";
 
 import { ORB_MOTION_BOUNDS, ORB_OPTICAL_BOUNDS, ORB_PHYSICS_BOUNDS } from "@clarkcant/contracts";
 
@@ -8,6 +8,8 @@ import { THEME_CHOICES, type ThemeChoice } from "../theme.ts";
 import type { ThemeName } from "@clarkcant/design-tokens";
 import { InlineStatus, RangeField, SegmentedControl, SettingsRow } from "./controls/primitives.tsx";
 import type { PreferencesHandle } from "./controls/use-preferences.ts";
+import { useT, useLocaleState } from "../i18n/locale-context.tsx";
+import type { MessageKey } from "../i18n/messages.ts";
 
 /**
  * Experience: how the product looks and moves.
@@ -20,29 +22,35 @@ import type { PreferencesHandle } from "./controls/use-preferences.ts";
  * that is missing, because the user concludes the app is broken rather than that the feature is not here.
  */
 
-const THEME_LABELS: Record<ThemeChoice, string> = {
-  dark: "Tối",
-  light: "Sáng",
-  system: "Theo hệ thống",
-};
+function themeLabels(t: (key: MessageKey) => string): Record<ThemeChoice, string> {
+  return {
+    dark: t("settings.experience.theme.dark"),
+    light: t("settings.experience.theme.light"),
+    system: t("settings.experience.theme.system"),
+  };
+}
 
-const MOTION_OPTIONS = [
-  { value: "system", label: "Theo hệ thống", note: "Tôn trọng thiết lập giảm chuyển động của máy." },
-  { value: "full", label: "Đầy đủ", note: "Chuyển động như thiết kế." },
-  {
-    value: "reduced",
-    label: "Giảm",
-    note: "Orb đứng yên và bỏ phản hồi theo con trỏ. Màu sắc vẫn giữ.",
-  },
-] as const;
+function motionOptions(
+  t: (key: MessageKey) => string,
+): readonly { value: "system" | "full" | "reduced"; label: string; note: string }[] {
+  return [
+    { value: "system", label: t("settings.experience.motion.system.label"), note: t("settings.experience.motion.system.note") },
+    { value: "full", label: t("settings.experience.motion.full.label"), note: t("settings.experience.motion.full.note") },
+    { value: "reduced", label: t("settings.experience.motion.reduced.label"), note: t("settings.experience.motion.reduced.note") },
+  ];
+}
 
-const ORB_PRESETS = [
-  { value: "clark", label: "Clark", note: "Orb gốc, đúng như bản phát hành." },
-  { value: "calm", label: "Calm", note: "Ít sáng, tắt dần nhanh hơn, phản hồi nhẹ." },
-  { value: "jelly", label: "Jelly", note: "Lò xo mềm, rung rõ hơn nhưng vẫn trong giới hạn." },
-  { value: "glass", label: "Glass", note: "Viền rõ hơn, chuyển động chậm." },
-  { value: "custom", label: "Custom", note: "Chỉnh tay trong khoảng an toàn." },
-] as const;
+function orbPresets(
+  t: (key: MessageKey) => string,
+): readonly { value: "clark" | "calm" | "jelly" | "glass" | "custom"; label: string; note: string }[] {
+  return [
+    { value: "clark", label: "Clark", note: t("settings.experience.orb.clark.note") },
+    { value: "calm", label: "Calm", note: t("settings.experience.orb.calm.note") },
+    { value: "jelly", label: "Jelly", note: t("settings.experience.orb.jelly.note") },
+    { value: "glass", label: "Glass", note: t("settings.experience.orb.glass.note") },
+    { value: "custom", label: "Custom", note: t("settings.experience.orb.custom.note") },
+  ];
+}
 
 /** The patch's own shape, read defensively: a stored value may predate this control. */
 function numbers(value: unknown): Record<string, number> {
@@ -70,6 +78,33 @@ export function ExperienceSettings({
   onThemeChoice,
   onOrbChange,
 }: ExperienceSettingsProps): ReactElement {
+  const t = useT();
+  const { locale, setLocale } = useLocaleState();
+  const LANGUAGE_OPTIONS = [
+    { value: "vi", label: t("settings.language.vi") },
+    { value: "en", label: t("settings.language.en") },
+  ] as const;
+
+  /*
+   * A node the user set language on from another device wins over this screen's own cache, but only
+   * once — the moment the registry answers with a value the user explicitly chose. `isDefault` guards
+   * this: a node that has never seen this key answers `vi` marked as a default, and applying that
+   * would silently override English chosen only on this device (the node cannot see the cache).
+   */
+  useEffect(() => {
+    const stored = prefs.preference("experience.language");
+    if (stored === undefined || stored.isDefault) return;
+    if (stored.value === locale) return;
+    if (stored.value === "vi" || stored.value === "en") setLocale(stored.value);
+    // Runs once the registry answers, and again only if the node reports a different value later.
+    // `setLocale` and `locale` are intentionally left out: including `setLocale` (stable) would add
+    // nothing, and including `locale` would re-run this on the write it just made, chasing its own tail.
+  }, [prefs.preferences]);
+
+  const THEME_LABELS = themeLabels(t);
+  const MOTION_OPTIONS = motionOptions(t);
+  const ORB_PRESETS = orbPresets(t);
+
   const profileName = prefs.text("orb.profile", "clark");
   const custom = prefs.record("orb.custom") ?? {};
   const customPhysics = numbers(custom.physics);
@@ -103,8 +138,28 @@ export function ExperienceSettings({
   return (
     <>
       <section className="cc-panel-section">
-        <h3>Giao diện</h3>
-        <SettingsRow label="Chủ đề" description="Áp dụng ngay, và giữ nguyên sau khi tải lại.">
+        <h3>{t("settings.language.heading")}</h3>
+        <SettingsRow label={t("settings.language.heading")} description={t("settings.language.description")}>
+          <SegmentedControl
+            name="language"
+            label={t("settings.language.heading")}
+            options={LANGUAGE_OPTIONS}
+            value={locale}
+            pending={prefs.pending === "experience.language"}
+            onChange={(value) => {
+              // Applies to this screen immediately, independent of the round trip below: a slow or
+              // unreachable node must never block the one preference that has to work offline.
+              setLocale(value);
+              prefs.write("experience.language", value);
+            }}
+          />
+        </SettingsRow>
+        <InlineStatus status={prefs.status} forKey="experience.language" />
+      </section>
+
+      <section className="cc-panel-section">
+        <h3>{t("settings.experience.appearance.heading")}</h3>
+        <SettingsRow label={t("settings.experience.theme.label")} description={t("settings.experience.theme.description")}>
           <div className="cc-panel-row">
             {THEME_CHOICES.map((choice) => (
               <button
@@ -122,21 +177,21 @@ export function ExperienceSettings({
           </div>
         </SettingsRow>
         <p className="cc-panel-note" data-resolved-theme={resolvedTheme}>
-          Đang hiển thị: {THEME_LABELS[resolvedTheme]}
-          {themeChoice === "system" ? " (theo hệ thống)" : ""}
+          {t("settings.experience.theme.showingPrefix")} {THEME_LABELS[resolvedTheme]}
+          {themeChoice === "system" ? ` ${t("settings.experience.theme.systemSuffix")}` : ""}
         </p>
         <InlineStatus status={prefs.status} forKey="experience.theme" />
       </section>
 
       <section className="cc-panel-section">
-        <h3>Chuyển động</h3>
+        <h3>{t("settings.experience.motion.heading")}</h3>
         <SettingsRow
-          label="Mức chuyển động"
-          description="Giảm chuyển động luôn thắng thiết lập riêng của Orb."
+          label={t("settings.experience.motion.label")}
+          description={t("settings.experience.motion.description")}
         >
           <SegmentedControl
             name="motion"
-            label="Mức chuyển động"
+            label={t("settings.experience.motion.label")}
             options={MOTION_OPTIONS}
             value={prefs.text("experience.motion", "system")}
             pending={prefs.pending === "experience.motion"}
@@ -150,10 +205,8 @@ export function ExperienceSettings({
       </section>
 
       <section className="cc-panel-section" data-orb-settings="true">
-        <h3>Orb</h3>
-        <p className="cc-panel-note">
-          Orb là nhận diện của ClarkCant và luôn hiện diện. Bạn đổi được cách nó thể hiện, trong giới hạn an toàn.
-        </p>
+        <h3>{t("settings.experience.orb.heading")}</h3>
+        <p className="cc-panel-note">{t("settings.experience.orb.intro")}</p>
 
         {/*
           One live orb, and the preset list beside it as flat swatches.
@@ -173,7 +226,7 @@ export function ExperienceSettings({
             <Orb
               size={96}
               className="cc-orb-preview-canvas"
-              label={`Xem trước Orb: ${preview.name}`}
+              label={`${t("settings.experience.orb.previewLabelPrefix")} ${preview.name}`}
               profile={preview}
               // A small preview does not need a retina buffer: the difference is invisible and the fragments
               // are not free.
@@ -185,12 +238,15 @@ export function ExperienceSettings({
               {ORB_PRESETS.find((preset) => preset.value === preview.name)?.label ?? preview.name}
             </span>
             <span className="cc-setting-desc">
-              {preview.reducedMotion ? "Đang giảm chuyển động." : "Đang chuyển động."}
+              {preview.reducedMotion ? t("settings.experience.orb.reducedMotion") : t("settings.experience.orb.moving")}
             </span>
           </div>
         </div>
 
-        <SettingsRow label="Kiểu Orb" description="Bốn kiểu có sẵn, hoặc tự chỉnh trong khoảng cho phép.">
+        <SettingsRow
+          label={t("settings.experience.orb.style.label")}
+          description={t("settings.experience.orb.style.description")}
+        >
           <div className="cc-panel-row">
             {ORB_PRESETS.map((preset) => (
               <button
@@ -226,7 +282,7 @@ export function ExperienceSettings({
             data-orb-advanced="true"
             onClick={() => setDraftOpen((current) => !current)}
           >
-            {draftOpen ? "Ẩn chỉnh tay" : "Chỉnh tay"}
+            {draftOpen ? t("settings.experience.orb.advanced.hide") : t("settings.experience.orb.advanced.show")}
           </button>
           <button
             type="button"
@@ -238,21 +294,21 @@ export function ExperienceSettings({
               onOrbChange();
             }}
           >
-            Về mặc định
+            {t("settings.experience.orb.reset")}
           </button>
         </div>
 
         {!draftOpen ? null : (
           <div data-orb-advanced-panel="true">
-            <p className="cc-panel-note">
-              Chỉ áp dụng cho kiểu Custom. Mọi giá trị bị kẹp trong khoảng ở đây, và node từ chối giá trị ngoài
-              khoảng trước khi lưu.
-            </p>
+            <p className="cc-panel-note">{t("settings.experience.orb.advanced.intro")}</p>
 
-            <SettingsRow label="Lò xo" description="Độ cứng và độ tắt dần của vỏ Orb.">
+            <SettingsRow
+              label={t("settings.experience.orb.spring.label")}
+              description={t("settings.experience.orb.spring.description")}
+            >
               <RangeField
                 name="stiffness"
-                label="Độ cứng"
+                label={t("settings.experience.orb.stiffness.label")}
                 value={customPhysics.stiffness ?? ORB_PHYSICS_BOUNDS.stiffness.default}
                 min={ORB_PHYSICS_BOUNDS.stiffness.min}
                 max={ORB_PHYSICS_BOUNDS.stiffness.max}
@@ -260,10 +316,13 @@ export function ExperienceSettings({
                 onChange={(value) => patchCustom("physics", "stiffness", value)}
               />
             </SettingsRow>
-            <SettingsRow label="Tắt dần" description="Thấp hơn thì rung lâu hơn.">
+            <SettingsRow
+              label={t("settings.experience.orb.damping.label")}
+              description={t("settings.experience.orb.damping.description")}
+            >
               <RangeField
                 name="damping"
-                label="Tắt dần"
+                label={t("settings.experience.orb.damping.label")}
                 value={customPhysics.damping ?? ORB_PHYSICS_BOUNDS.damping.default}
                 min={ORB_PHYSICS_BOUNDS.damping.min}
                 max={ORB_PHYSICS_BOUNDS.damping.max}
@@ -271,10 +330,13 @@ export function ExperienceSettings({
                 onChange={(value) => patchCustom("physics", "damping", value)}
               />
             </SettingsRow>
-            <SettingsRow label="Độ rung" description="Biên độ biến dạng khi kéo nhanh.">
+            <SettingsRow
+              label={t("settings.experience.orb.wobble.label")}
+              description={t("settings.experience.orb.wobble.description")}
+            >
               <RangeField
                 name="wobbleGain"
-                label="Độ rung"
+                label={t("settings.experience.orb.wobble.label")}
                 value={customPhysics.wobbleGain ?? ORB_PHYSICS_BOUNDS.wobbleGain.default}
                 min={ORB_PHYSICS_BOUNDS.wobbleGain.min}
                 max={ORB_PHYSICS_BOUNDS.wobbleGain.max}
@@ -282,10 +344,13 @@ export function ExperienceSettings({
                 onChange={(value) => patchCustom("physics", "wobbleGain", value)}
               />
             </SettingsRow>
-            <SettingsRow label="Phản hồi con trỏ" description="Mức sáng lên khi con trỏ lại gần.">
+            <SettingsRow
+              label={t("settings.experience.orb.pointer.label")}
+              description={t("settings.experience.orb.pointer.description")}
+            >
               <RangeField
                 name="pointerResponse"
-                label="Phản hồi con trỏ"
+                label={t("settings.experience.orb.pointer.label")}
                 value={customPhysics.pointerResponse ?? ORB_PHYSICS_BOUNDS.pointerResponse.default}
                 min={ORB_PHYSICS_BOUNDS.pointerResponse.min}
                 max={ORB_PHYSICS_BOUNDS.pointerResponse.max}
@@ -293,10 +358,13 @@ export function ExperienceSettings({
                 onChange={(value) => patchCustom("physics", "pointerResponse", value)}
               />
             </SettingsRow>
-            <SettingsRow label="Tốc độ" description="Tốc độ chuyển động của dải sáng bên trong.">
+            <SettingsRow
+              label={t("settings.experience.orb.speed.label")}
+              description={t("settings.experience.orb.speed.description")}
+            >
               <RangeField
                 name="speed"
-                label="Tốc độ"
+                label={t("settings.experience.orb.speed.label")}
                 value={customMotion.speed ?? ORB_MOTION_BOUNDS.speed.default}
                 min={ORB_MOTION_BOUNDS.speed.min}
                 max={ORB_MOTION_BOUNDS.speed.max}
@@ -304,10 +372,13 @@ export function ExperienceSettings({
                 onChange={(value) => patchCustom("motion", "speed", value)}
               />
             </SettingsRow>
-            <SettingsRow label="Độ sáng" description="Độ sáng của dải sáng bên trong vỏ.">
+            <SettingsRow
+              label={t("settings.experience.orb.exposure.label")}
+              description={t("settings.experience.orb.exposure.description")}
+            >
               <RangeField
                 name="exposure"
-                label="Độ sáng"
+                label={t("settings.experience.orb.exposure.label")}
                 value={customOptical.exposure ?? ORB_OPTICAL_BOUNDS.exposure.default}
                 min={ORB_OPTICAL_BOUNDS.exposure.min}
                 max={ORB_OPTICAL_BOUNDS.exposure.max}
@@ -315,10 +386,13 @@ export function ExperienceSettings({
                 onChange={(value) => patchCustom("optical", "exposure", value)}
               />
             </SettingsRow>
-            <SettingsRow label="Quầng sáng" description="Ánh sáng Orb toả ra xung quanh.">
+            <SettingsRow
+              label={t("settings.experience.orb.glow.label")}
+              description={t("settings.experience.orb.glow.description")}
+            >
               <RangeField
                 name="glow"
-                label="Quầng sáng"
+                label={t("settings.experience.orb.glow.label")}
                 value={customOptical.glow ?? ORB_OPTICAL_BOUNDS.glow.default}
                 min={ORB_OPTICAL_BOUNDS.glow.min}
                 max={ORB_OPTICAL_BOUNDS.glow.max}

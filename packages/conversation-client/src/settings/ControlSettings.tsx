@@ -11,6 +11,8 @@ import {
 import { InlineStatus, SegmentedControl, SettingsRow, ToggleSwitch } from "./controls/primitives.tsx";
 import type { PreferencesHandle } from "./controls/use-preferences.ts";
 import type { GatewayClient } from "../api.ts";
+import { useT } from "../i18n/locale-context.tsx";
+import type { MessageKey } from "../i18n/messages.ts";
 
 /**
  * Control: how much this node does on its own.
@@ -35,21 +37,25 @@ import type { GatewayClient } from "../api.ts";
  * A closed list, matching `effectCategorySchema`: a rule cannot be written about a category the resolver does
  * not know, because a rule nothing matches is a rule the user believes is protecting them.
  */
-const CATEGORY_LABELS: Record<EffectCategory, string> = {
-  read: "Đọc",
-  "local-write": "Ghi trong máy này",
-  "external-write": "Gửi ra ngoài",
-  destructive: "Xoá / phá huỷ",
-  financial: "Chi tiêu",
-  communication: "Liên lạc",
-  "media-capture": "Ghi âm / ghi hình",
-};
+function categoryLabels(t: (key: MessageKey) => string): Record<EffectCategory, string> {
+  return {
+    read: t("settings.control.category.read"),
+    "local-write": t("settings.control.category.localWrite"),
+    "external-write": t("settings.control.category.externalWrite"),
+    destructive: t("settings.control.category.destructive"),
+    financial: t("settings.control.category.financial"),
+    communication: t("settings.control.category.communication"),
+    "media-capture": t("settings.control.category.mediaCapture"),
+  };
+}
 
-const DECISION_LABELS: Record<ExecutionRule["decision"], string> = {
-  execute: "Chạy",
-  ask: "Hỏi",
-  deny: "Từ chối",
-};
+function decisionLabels(t: (key: MessageKey) => string): Record<ExecutionRule["decision"], string> {
+  return {
+    execute: t("settings.control.decision.execute"),
+    ask: t("settings.control.decision.ask"),
+    deny: t("settings.control.decision.deny"),
+  };
+}
 
 export interface ControlSettingsProps {
   prefs: PreferencesHandle;
@@ -61,49 +67,60 @@ export interface ControlSettingsProps {
   /** The effects this node performed without an approval card, newest first. */
   recentEffects: readonly { at: string; description: string; mode: string; category: string }[];
   recentProblem: string | undefined;
+  /** Called after a successful autonomy save, so the shell's `data-policy-mode` follows it. */
+  onPolicyChange?: () => void;
 }
 
 /** The words the node acts on, rather than a summary of them. */
-const POLICY_OPTIONS = [
-  {
-    value: "auto",
-    label: "Tự chủ",
-    note: "Chạy ngay việc bạn yêu cầu, không mở thẻ duyệt. Guardrail, nếu đang bật, vẫn phán đoán trước và có thể từ chối hoặc thu hẹp.",
-  },
-  {
-    value: "guarded",
-    label: "Có rào",
-    note: "Việc trong máy này chạy ngay. Việc gửi ra ngoài, xoá, chi tiêu, liên lạc hoặc ghi âm/ghi hình thì mở thẻ duyệt trước; guardrail vẫn phán đoán phần còn lại.",
-  },
-  {
-    value: "confirm",
-    label: "Hỏi mỗi lần",
-    note: "Mọi hiệu lực đều mở thẻ duyệt trước khi chạy.",
-  },
-  {
-    value: "deny",
-    label: "Từ chối tất cả",
-    note: "Node này từ chối mọi hiệu lực, kể cả khi một ứng dụng xin quyền từ hệ điều hành hay từ tài khoản.",
-  },
-] as const satisfies readonly { value: ExecutionPolicy; label: string; note: string }[];
+function policyOptions(
+  t: (key: MessageKey) => string,
+): readonly { value: ExecutionPolicy; label: string; note: string }[] {
+  return [
+    { value: "auto", label: t("settings.control.policy.auto.label"), note: t("settings.control.policy.auto.note") },
+    {
+      value: "guarded",
+      label: t("settings.control.policy.guarded.label"),
+      note: t("settings.control.policy.guarded.note"),
+    },
+    {
+      value: "confirm",
+      label: t("settings.control.policy.confirm.label"),
+      note: t("settings.control.policy.confirm.note"),
+    },
+    { value: "deny", label: t("settings.control.policy.deny.label"), note: t("settings.control.policy.deny.note") },
+  ];
+}
 
-const FAIL_OPEN_OPTIONS = [
-  {
-    value: "allow",
-    label: "Allow — chạy tiếp",
-    note: "Bỏ lớp phán đoán, không bỏ preflight hay containment.",
-  },
-  { value: "deny", label: "Deny — không chạy", note: "Không có phán đoán thì lệnh này không chạy." },
-] as const;
+function failOpenOptions(
+  t: (key: MessageKey) => string,
+): readonly { value: "allow" | "deny"; label: string; note: string }[] {
+  return [
+    { value: "allow", label: t("settings.control.failOpen.allow.label"), note: t("settings.control.failOpen.allow.note") },
+    { value: "deny", label: t("settings.control.failOpen.deny.label"), note: t("settings.control.failOpen.deny.note") },
+  ];
+}
 
-const GUARD_CLASS_LABELS: Record<GuardClass, string> = {
-  commands: "Lệnh",
-  "local-writes": "Ghi trong máy này",
-  "external-writes": "Gửi ra ngoài",
-  communication: "Liên lạc",
-  financial: "Chi tiêu",
-  reads: "Đọc",
-};
+function guardClassLabels(t: (key: MessageKey) => string): Record<GuardClass, string> {
+  return {
+    commands: t("settings.control.guardClass.commands"),
+    "local-writes": t("settings.control.guardClass.localWrites"),
+    "external-writes": t("settings.control.guardClass.externalWrites"),
+    communication: t("settings.control.guardClass.communication"),
+    financial: t("settings.control.guardClass.financial"),
+    reads: t("settings.control.guardClass.reads"),
+  };
+}
+
+/** The categories a rule may be written about, matching `effectCategorySchema`. Static, so `readRules` needs no translator. */
+const VALID_CATEGORIES: readonly EffectCategory[] = [
+  "read",
+  "local-write",
+  "external-write",
+  "destructive",
+  "financial",
+  "communication",
+  "media-capture",
+];
 
 /**
  * The one policy surface: the mode, the guardrails, and what the host preflight still enforces underneath.
@@ -121,7 +138,14 @@ const GUARD_CLASS_LABELS: Record<GuardClass, string> = {
  * The narrowing table travels with the read because the panel shows what the guardrail may ask for — a list the
  * host owns, and a model may only pick from.
  */
-function ExecutionPolicySettings({ client }: { client: GatewayClient }): ReactElement {
+function ExecutionPolicySettings({
+  client,
+  onPolicyChange,
+}: {
+  client: GatewayClient;
+  onPolicyChange?: () => void;
+}): ReactElement {
+  const t = useT();
   const [settings, setSettings] = useState<AutonomySettings | undefined>(undefined);
   const [narrowing, setNarrowing] = useState<{ id: string; description: string }[]>([]);
   const [status, setStatus] = useState("");
@@ -148,9 +172,9 @@ function ExecutionPolicySettings({ client }: { client: GatewayClient }): ReactEl
   if (unreadable) {
     return (
       <section className="cc-panel-section" data-autonomy-tab="true">
-        <h3>Mức tự chủ và rào chắn</h3>
+        <h3>{t("settings.control.autonomy.heading")}</h3>
         <p className="cc-panel-note" data-autonomy-error="true">
-          Không đọc được execution policy của node này.
+          {t("settings.control.autonomy.readFailed")}
         </p>
       </section>
     );
@@ -158,8 +182,8 @@ function ExecutionPolicySettings({ client }: { client: GatewayClient }): ReactEl
   if (settings === undefined) {
     return (
       <section className="cc-panel-section" data-autonomy-tab="true">
-        <h3>Mức tự chủ và rào chắn</h3>
-        <p className="cc-panel-note">Đang đọc cấu hình…</p>
+        <h3>{t("settings.control.autonomy.heading")}</h3>
+        <p className="cc-panel-note">{t("settings.control.autonomy.loading")}</p>
       </section>
     );
   }
@@ -175,27 +199,29 @@ function ExecutionPolicySettings({ client }: { client: GatewayClient }): ReactEl
     setPending(true);
     client
       .putAutonomy(settings)
-      .then(() => setStatus("Đã lưu. Áp dụng cho lệnh tiếp theo node chạy."))
-      .catch(() => setStatus("Không lưu được cấu hình."))
+      .then(() => {
+        setStatus(t("settings.control.saved"));
+        onPolicyChange?.();
+      })
+      .catch(() => setStatus(t("settings.control.saveFailed")))
       .finally(() => setPending(false));
   };
 
+  const GUARD_CLASS_LABELS = guardClassLabels(t);
+
   return (
     <section className="cc-panel-section" data-autonomy-tab="true">
-      <h3>Mức tự chủ và rào chắn</h3>
-      <p className="cc-panel-note">
-        Preflight của host luôn chạy trước mọi hiệu lực: lệnh phải nằm trong thư mục node sở hữu. Phần dưới đây
-        nói thêm điều gì xảy ra khi nó đã hợp lệ.
-      </p>
+      <h3>{t("settings.control.autonomy.heading")}</h3>
+      <p className="cc-panel-note">{t("settings.control.autonomy.intro")}</p>
 
       <SettingsRow
-        label="Cách node quyết định chạy"
-        description="Áp dụng cho lệnh agent đề xuất, hành động của widget và cài đặt — cùng một policy."
+        label={t("settings.control.autonomy.mode.label")}
+        description={t("settings.control.autonomy.mode.description")}
       >
         <SegmentedControl
           name="autonomy-policy"
-          label="Cách node quyết định chạy một hiệu lực"
-          options={POLICY_OPTIONS}
+          label={t("settings.control.autonomy.mode.label")}
+          options={policyOptions(t)}
           value={settings.executionPolicy}
           pending={pending}
           onChange={(value) => update({ executionPolicy: value })}
@@ -207,40 +233,34 @@ function ExecutionPolicySettings({ client }: { client: GatewayClient }): ReactEl
         mode and no rule can lift them, and a user who expected otherwise would find out at the worst possible
         moment.
       */}
-      <p className="cc-panel-note">
-        Quyền của hệ điều hành, của tài khoản provider, của trình duyệt và của bên thứ ba vẫn luôn được hỏi, ở mọi
-        mức — đó không phải là quyết định của ClarkCant.
-      </p>
+      <p className="cc-panel-note">{t("settings.control.autonomy.osNote")}</p>
 
       <SettingsRow
-        label="Jev guardrails"
-        description="Tắt thì không lớp phán đoán nào được gọi; preflight của host và các thẻ duyệt ở trên vẫn chạy."
+        label={t("settings.control.autonomy.guardrails.label")}
+        description={t("settings.control.autonomy.guardrails.description")}
       >
         <ToggleSwitch
           name="autonomy-guardrails"
-          label="Jev guardrails"
+          label={t("settings.control.autonomy.guardrails.label")}
           checked={settings.jevGuardrails}
           pending={pending}
           onChange={(next) => update({ jevGuardrails: next })}
         />
       </SettingsRow>
 
-      <SettingsRow
-        label="Instructions"
-        description="Luật của bạn, bằng lời của bạn. Guardrail chỉ có thể thu hẹp thêm, không bao giờ nới."
-      >
+      <SettingsRow label={t("control.instructions")} description={t("settings.control.instructions.description")}>
         <textarea
           value={settings.instructions}
           rows={4}
           data-autonomy-instructions="true"
-          placeholder="Ví dụ: Never delete git repositories."
+          placeholder={t("settings.control.instructions.placeholder")}
           onChange={(event) => update({ instructions: event.target.value })}
         />
       </SettingsRow>
 
       <SettingsRow
-        label="Lớp việc guardrail được phép phán đoán"
-        description="Lớp không được chọn thì chạy thẳng, không tốn một call nào."
+        label={t("settings.control.guardedCategories.label")}
+        description={t("settings.control.guardedCategories.description")}
       >
         <div className="cc-guard-classes">
           {GUARD_CLASSES.map((guardClass) => (
@@ -258,13 +278,13 @@ function ExecutionPolicySettings({ client }: { client: GatewayClient }): ReactEl
       </SettingsRow>
 
       <SettingsRow
-        label="Khi Jev không dùng được"
-        description="Fail-open bỏ lớp phán đoán, không bỏ preflight hay các thẻ duyệt."
+        label={t("settings.control.failOpen.label")}
+        description={t("settings.control.failOpen.description")}
       >
         <SegmentedControl
           name="autonomy-failopen"
-          label="Khi Jev không dùng được"
-          options={FAIL_OPEN_OPTIONS}
+          label={t("settings.control.failOpen.label")}
+          options={failOpenOptions(t)}
           value={settings.whenJevUnavailable}
           pending={pending}
           onChange={(value) => update({ whenJevUnavailable: value })}
@@ -273,14 +293,16 @@ function ExecutionPolicySettings({ client }: { client: GatewayClient }): ReactEl
 
       {narrowing.length === 0 ? null : (
         <p className="cc-panel-note">
-          Guardrail chỉ được chọn trong {narrowing.length} cách thu hẹp do host đặt ra:{" "}
-          {narrowing.map((entry) => entry.description).join("; ")}.
+          {t("settings.control.narrowing.prefix")} {narrowing.length} {t("settings.control.narrowing.waysSuffix")}{" "}
+          {/* Each narrowing's description is worded by the node (apps/runtime/src/autonomy-settings.ts), not
+              this catalog's copy, so it is marked as node data rather than swept up as UI text. */}
+          <span data-node-narrowing="true">{narrowing.map((entry) => entry.description).join("; ")}</span>.
         </p>
       )}
 
       <div className="cc-panel-row">
         <button type="button" className="cc-chip" data-autonomy-save="true" disabled={pending} onClick={save}>
-          Lưu policy
+          {t("settings.control.save")}
         </button>
       </div>
       {status === "" ? null : <p className="cc-panel-note">{status}</p>}
@@ -298,15 +320,24 @@ function readRules(value: unknown): ExecutionRule[] {
     const category = record.effectCategory;
     const decision = record.decision;
     if (typeof category !== "string" || typeof decision !== "string") continue;
-    if (!(category in CATEGORY_LABELS)) continue;
+    if (!VALID_CATEGORIES.includes(category as EffectCategory)) continue;
     if (decision !== "execute" && decision !== "ask" && decision !== "deny") continue;
     rules.push({ effectCategory: category as EffectCategory, decision });
   }
   return rules;
 }
 
-export function ControlSettings({ prefs, client, recentEffects, recentProblem }: ControlSettingsProps): ReactElement {
+export function ControlSettings({
+  prefs,
+  client,
+  recentEffects,
+  recentProblem,
+  onPolicyChange,
+}: ControlSettingsProps): ReactElement {
+  const t = useT();
   const rules = readRules(prefs.preference("execution.rules")?.value);
+  const CATEGORY_LABELS = categoryLabels(t);
+  const DECISION_LABELS = decisionLabels(t);
 
   /** Replace one category's rule, or remove it when the decision is the mode's own default. */
   const setRule = (category: EffectCategory, decision: ExecutionRule["decision"] | "default"): void => {
@@ -323,14 +354,12 @@ export function ControlSettings({ prefs, client, recentEffects, recentProblem }:
         overwrite a mode just chosen on the other. The mode lives here now, and `execution.mode` is a projection of
         it that nothing on this screen writes.
       */}
-      <ExecutionPolicySettings client={client} />
+      <ExecutionPolicySettings client={client} {...(onPolicyChange === undefined ? {} : { onPolicyChange })} />
 
       <section className="cc-panel-section" data-execution-rules="true">
-        <h3>Quy tắc theo loại việc</h3>
-        <p className="cc-panel-note">
-          Mặc định là theo mức ở trên. Đặt riêng ở đây thì quy tắc thắng, và “Từ chối” luôn thắng ở mọi mức.
-        </p>
-        {(Object.keys(CATEGORY_LABELS) as EffectCategory[]).map((category) => {
+        <h3>{t("settings.control.rules.heading")}</h3>
+        <p className="cc-panel-note">{t("settings.control.rules.intro")}</p>
+        {VALID_CATEGORIES.map((category) => {
           const current = rules.find((rule) => rule.effectCategory === category)?.decision ?? "default";
           return (
             <SettingsRow key={category} label={CATEGORY_LABELS[category]}>
@@ -338,7 +367,7 @@ export function ControlSettings({ prefs, client, recentEffects, recentProblem }:
                 name={`rule-${category}`}
                 label={CATEGORY_LABELS[category]}
                 options={[
-                  { value: "default", label: "Theo mức" },
+                  { value: "default", label: t("settings.control.rules.default") },
                   { value: "execute", label: DECISION_LABELS.execute },
                   { value: "ask", label: DECISION_LABELS.ask },
                   { value: "deny", label: DECISION_LABELS.deny },
@@ -354,10 +383,8 @@ export function ControlSettings({ prefs, client, recentEffects, recentProblem }:
       </section>
 
       <section className="cc-panel-section" data-recent-effects="true">
-        <h3>Việc đã chạy không hỏi</h3>
-        <p className="cc-panel-note">
-          Ở mức tự chủ, việc chạy mà không có thẻ duyệt vẫn để lại dấu vết ở đây. Đây là chỗ kiểm tra lại.
-        </p>
+        <h3>{t("settings.control.effects.heading")}</h3>
+        <p className="cc-panel-note">{t("settings.control.effects.intro")}</p>
         {recentProblem !== undefined ? (
           <p className="cc-panel-note" data-recent-effects-problem="true">
             {recentProblem}
@@ -365,7 +392,7 @@ export function ControlSettings({ prefs, client, recentEffects, recentProblem }:
         ) : recentEffects.length === 0 ? (
           // An empty list is a fact, not a missing feature: nothing has run without a card yet.
           <p className="cc-panel-note" data-recent-effects="none">
-            Chưa có việc nào chạy mà không hỏi.
+            {t("settings.control.effects.none")}
           </p>
         ) : (
           <ul className="cc-effect-list">

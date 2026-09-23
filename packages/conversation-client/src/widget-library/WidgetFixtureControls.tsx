@@ -7,6 +7,8 @@ import {
   type PreviewState,
 } from "@clarkcant/widget-catalog";
 
+import { useT } from "../i18n/locale-context.tsx";
+
 /**
  * The Lab's preview controls.
  *
@@ -27,10 +29,11 @@ export function WidgetFixtureControls({
   fixtures,
   onChange,
 }: WidgetFixtureControlsProps): ReactElement {
+  const t = useT();
   return (
     <div className="cc-widget-lab-controls" data-widget-lab-controls="true">
       <label className="cc-widget-lab-control">
-        <span>Fixture</span>
+        <span>{t("widgets.lab.fixture")}</span>
         <select
           value={preview.fixture}
           onChange={(event) => onChange({ kind: "fixture", value: event.target.value })}
@@ -45,7 +48,7 @@ export function WidgetFixtureControls({
       </label>
 
       <label className="cc-widget-lab-control">
-        <span>Khung</span>
+        <span>{t("widgets.lab.viewport")}</span>
         <select
           value={preview.viewport}
           onChange={(event) => onChange({ kind: "viewport", value: event.target.value })}
@@ -60,7 +63,7 @@ export function WidgetFixtureControls({
       </label>
 
       <label className="cc-widget-lab-control">
-        <span>Theme</span>
+        <span>{t("widgets.lab.theme")}</span>
         <select
           value={preview.theme}
           onChange={(event) => onChange({ kind: "theme", value: event.target.value })}
@@ -81,7 +84,7 @@ export function WidgetFixtureControls({
           onChange={(event) => onChange({ kind: "reduced-motion", value: event.target.checked })}
           data-widget-lab-reduced-motion="true"
         />
-        <span>Giảm chuyển động</span>
+        <span>{t("widgets.lab.reducedMotion")}</span>
       </label>
     </div>
   );

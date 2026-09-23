@@ -3,6 +3,7 @@ import { useEffect, useState, type ReactElement } from "react";
 import { readVar, TokenSpecimens } from "../TokenSpecimens.tsx";
 import type { GatewayClient } from "../api.ts";
 import { SettingsRow } from "./controls/SettingsRow.tsx";
+import { useT } from "../i18n/locale-context.tsx";
 
 /**
  * Developer / Advanced: the internals, behind a disclosure.
@@ -23,6 +24,7 @@ export interface DeveloperSettingsProps {
 }
 
 export function DeveloperSettings({ client, facts, onOpenWidgetLibrary }: DeveloperSettingsProps): ReactElement {
+  const t = useT();
   const [settings, setSettings] = useState<{ key: string; value: string }[] | undefined>(undefined);
   const [open, setOpen] = useState(false);
 
@@ -53,13 +55,11 @@ export function DeveloperSettings({ client, facts, onOpenWidgetLibrary }: Develo
         the Extensions tab: the same surface, opened with the inspector already showing.
       */}
       <section className="cc-panel-section" data-widget-lab-entry="true">
-        <h3>Widget Lab</h3>
-        <p className="cc-panel-note">
-          Xem fixture, props, state, events, semantic output, kích thước và trạng thái trợ năng.
-        </p>
+        <h3>{t("settings.developer.widgetLab.heading")}</h3>
+        <p className="cc-panel-note">{t("settings.developer.widgetLab.intro")}</p>
         <SettingsRow
-          label="Widget Lab"
-          description="Mở đúng surface của Widget Library ở chế độ developer, kèm bảng inspector."
+          label={t("settings.developer.widgetLab.label")}
+          description={t("settings.developer.widgetLab.description")}
         >
           <button
             type="button"
@@ -67,28 +67,29 @@ export function DeveloperSettings({ client, facts, onOpenWidgetLibrary }: Develo
             onClick={() => onOpenWidgetLibrary?.("develop")}
             data-widget-library-open="develop"
           >
-            Mở Lab
+            {t("settings.developer.widgetLab.open")}
           </button>
         </SettingsRow>
       </section>
       <section className="cc-panel-section" data-developer-node="true">
-        <h3>Node này</h3>
-        <SettingsRow label="Mã node" description="Dùng khi ghép nối hoặc khi báo lỗi.">
-          <code data-node-id="true">{facts?.nodeId ?? "(chưa đọc được)"}</code>
+        <h3>{t("settings.developer.node.heading")}</h3>
+        <SettingsRow label={t("settings.developer.node.id.label")} description={t("settings.developer.node.id.description")}>
+          <code data-node-id="true">{facts?.nodeId ?? t("settings.developer.node.unread")}</code>
         </SettingsRow>
-        <SettingsRow label="Tên node" description="Nhãn hiển thị của node này.">
-          <code>{facts?.label ?? "(chưa đọc được)"}</code>
+        <SettingsRow
+          label={t("settings.developer.node.label.label")}
+          description={t("settings.developer.node.label.description")}
+        >
+          <code>{facts?.label ?? t("settings.developer.node.unread")}</code>
         </SettingsRow>
-        <SettingsRow label="Tạo lúc">
-          <code>{facts?.createdAt ?? "(chưa đọc được)"}</code>
+        <SettingsRow label={t("settings.developer.node.createdAt.label")}>
+          <code>{facts?.createdAt ?? t("settings.developer.node.unread")}</code>
         </SettingsRow>
       </section>
 
       <section className="cc-panel-section" data-pi-settings="true">
-        <h3>Cấu hình pi trên máy này</h3>
-        <p className="cc-panel-note">
-          Chỉ đọc. Tên nào nghe như khoá bí mật thì node đã che sẵn, vì node là thứ duy nhất đọc được tệp gốc.
-        </p>
+        <h3>{t("settings.developer.piSettings.heading")}</h3>
+        <p className="cc-panel-note">{t("settings.developer.piSettings.intro")}</p>
         <div className="cc-panel-row">
           <button
             type="button"
@@ -97,14 +98,14 @@ export function DeveloperSettings({ client, facts, onOpenWidgetLibrary }: Develo
             data-pi-settings-toggle="true"
             onClick={() => setOpen((current) => !current)}
           >
-            {open ? "Ẩn" : "Đọc cấu hình"}
+            {open ? t("settings.developer.piSettings.hide") : t("settings.developer.piSettings.read")}
           </button>
         </div>
         {!open ? null : settings === undefined ? (
-          <p className="cc-panel-note">Đang đọc…</p>
+          <p className="cc-panel-note">{t("settings.common.loading")}</p>
         ) : settings.length === 0 ? (
           <p className="cc-panel-note" data-pi-settings="none">
-            Chưa đọc được cấu hình nào từ pi trên máy này.
+            {t("settings.developer.piSettings.none")}
           </p>
         ) : (
           // A key and a value per line. Anything whose name sounds like a secret arrives already redacted by the
@@ -120,12 +121,13 @@ export function DeveloperSettings({ client, facts, onOpenWidgetLibrary }: Develo
       </section>
 
       <section className="cc-panel-section" data-token-specimens="true">
-        <h3>Màu và token</h3>
-        <p className="cc-panel-note">
-          Giá trị thật của token đang áp dụng. Dùng khi kiểm tra tương phản, không phải để chỉnh.
-        </p>
-        <SettingsRow label="Accent đang dùng" description="Đọc từ token, không phải một giá trị viết cứng.">
-          <code>{readVar("--cc-accent") ?? "(không đọc được)"}</code>
+        <h3>{t("settings.developer.tokens.heading")}</h3>
+        <p className="cc-panel-note">{t("settings.developer.tokens.intro")}</p>
+        <SettingsRow
+          label={t("settings.developer.tokens.accent.label")}
+          description={t("settings.developer.tokens.accent.description")}
+        >
+          <code>{readVar("--cc-accent") ?? t("settings.developer.tokens.unreadable")}</code>
         </SettingsRow>
         <TokenSpecimens />
       </section>

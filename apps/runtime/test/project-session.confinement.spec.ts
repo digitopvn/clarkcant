@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -42,7 +42,8 @@ const INSIDE_TEXT = "three records\n";
 const SIBLING_TEXT = "SECRET-SIBLING\n";
 
 beforeEach(async () => {
-  base = await mkdtemp(join(tmpdir(), "clarkcant-project-session-"));
+  // Canonical, because macOS puts the temporary directory behind a `/var` -> `/private/var` symlink.
+  base = await realpath(await mkdtemp(join(tmpdir(), "clarkcant-project-session-")));
   project = join(base, "project");
   second = join(base, "second");
   sibling = join(base, "sibling");

@@ -27,17 +27,18 @@
  */
 
 import {
-  APP_INTENT_NOT_UNDERSTOOD,
   SETTINGS_TABS,
   type AppIntent,
   type AppIntentDecision,
   type AppIntentEventDocument,
   type AppIntentKind,
+  type AppIntentLocale,
   type AppIntentSource,
   type ConfirmationToken,
   type ConversationId,
   type Instant,
   type SettingsTab,
+  appIntentNotUnderstood,
   describeAppIntent,
   intentRequiresConfirmation,
 } from "@clarkcant/contracts";
@@ -105,6 +106,7 @@ const CONTROL_VERBS: readonly string[] = [
  */
 const APP_NOUNS: readonly string[] = [
   "cua so",
+  "window",
   "settings",
   "cai dat",
   "tab",
@@ -137,6 +139,25 @@ const PHRASES: readonly { phrase: string; kind: AppIntentKind }[] = [
   { phrase: "end the voice", kind: "voice.end" },
   { phrase: "end voice", kind: "voice.end" },
 
+  // Starting one.
+  { phrase: "mo phien thoai", kind: "voice.open" },
+  { phrase: "bat dau phien thoai", kind: "voice.open" },
+  { phrase: "start voice", kind: "voice.open" },
+  { phrase: "start the voice", kind: "voice.open" },
+
+  // Back to the conversation already open, without leaving it - distinct from nav.home below.
+  { phrase: "ve cuoc tro chuyen", kind: "nav.conversation" },
+  { phrase: "quay lai cuoc tro chuyen", kind: "nav.conversation" },
+  { phrase: "dong lai xem tro chuyen", kind: "nav.conversation" },
+  { phrase: "back to the conversation", kind: "nav.conversation" },
+  { phrase: "back to conversation", kind: "nav.conversation" },
+
+  // The configured model pool's hotkey, spoken.
+  { phrase: "chuyen sang model tiep theo", kind: "model.cycle" },
+  { phrase: "doi sang model khac", kind: "model.cycle" },
+  { phrase: "switch to the next model", kind: "model.cycle" },
+  { phrase: "cycle the model", kind: "model.cycle" },
+
   // The window.
   { phrase: "mo rong cua so", kind: "window.expand" },
   { phrase: "phong to cua so", kind: "window.expand" },
@@ -155,6 +176,8 @@ const PHRASES: readonly { phrase: string; kind: AppIntentKind }[] = [
   { phrase: "thu gon ve thanh voice", kind: "window.minimal" },
   { phrase: "thanh voice toi gian", kind: "window.minimal" },
   { phrase: "minimal bar", kind: "window.minimal" },
+  { phrase: "shrink to the voice bar", kind: "window.minimal" },
+  { phrase: "collapse to the voice bar", kind: "window.minimal" },
 
   // Settings, navigation, files.
   { phrase: "mo phan cai dat", kind: "settings.open" },
@@ -257,7 +280,12 @@ function containsPhrase(words: readonly string[], phrase: string): boolean {
 
 // Derived from the tabs that exist, so a tab added later is named in the refusal without anyone remembering to
 // update a sentence. A refusal that listed a tab which is not there would send the person looking for it.
-const TAB_REFUSAL = `Tôi chưa rõ bạn muốn mở tab nào. Các tab đang có: ${SETTINGS_TABS.join(", ")}.`;
+const TAB_REFUSAL_VI = `Tôi chưa rõ bạn muốn mở tab nào. Các tab đang có: ${SETTINGS_TABS.join(", ")}.`;
+const TAB_REFUSAL_EN = `I am not sure which tab you want to open. The tabs available are: ${SETTINGS_TABS.join(", ")}.`;
+
+function tabRefusal(locale: AppIntentLocale): string {
+  return locale === "en" ? TAB_REFUSAL_EN : TAB_REFUSAL_VI;
+}
 
 /**
  * Lowercase, strip tone marks, collapse whitespace.
@@ -355,16 +383,17 @@ function findWidgetTarget(bare: string, targets: readonly WidgetTarget[]): Widge
 
 export function matchAppIntent(
   text: string,
-  options?: { widgetTargets?: readonly WidgetTarget[] },
+  options?: { widgetTargets?: readonly WidgetTarget[]; locale?: AppIntentLocale },
 ): AppIntentMatch | undefined {
   if (!isAppCommandShaped(text)) return undefined;
   const normalised = normaliseIntentText(text);
+  const locale = options?.locale ?? "vi";
 
   // A tab change is checked before anything else: "mo cai dat tab cong cu" also contains "mo cai dat",
   // and the more specific request is the one the person meant.
   if (looksLikeTabRequest(normalised)) {
     const tab = findTab(normalised);
-    if (tab === undefined) return { kind: "refused", say: TAB_REFUSAL };
+    if (tab === undefined) return { kind: "refused", say: tabRefusal(locale) };
     return { kind: "intent", intent: { kind: "settings.tab", tab } };
   }
 
@@ -385,20 +414,24 @@ export function matchAppIntent(
   }
 
   const matched = [...PHRASES].sort((a, b) => b.phrase.length - a.phrase.length).find((entry) => normalised.includes(entry.phrase));
-  if (matched === undefined) return { kind: "refused", say: APP_INTENT_NOT_UNDERSTOOD };
+  if (matched === undefined) return { kind: "refused", say: appIntentNotUnderstood(locale) };
   return { kind: "intent", intent: { kind: matched.kind } };
 }
 
-function decisionFor(intent: AppIntent, mintConfirmationToken: () => ConfirmationToken): AppIntentDecision {
+function decisionFor(
+  intent: AppIntent,
+  mintConfirmationToken: () => ConfirmationToken,
+  locale: AppIntentLocale,
+): AppIntentDecision {
   if (intentRequiresConfirmation(intent.kind)) {
     return {
       kind: "needs-confirmation",
       intent,
-      readBack: describeAppIntent(intent),
+      readBack: describeAppIntent(intent, locale),
       confirmationToken: mintConfirmationToken(),
     };
   }
-  return { kind: "intent", intent, requiresConfirmation: false, readBack: describeAppIntent(intent) };
+  return { kind: "intent", intent, requiresConfirmation: false, readBack: describeAppIntent(intent, locale) };
 }
 
 export type AppIntentResolution = AppIntentDecision | { kind: "none" };
@@ -409,23 +442,28 @@ export type AppIntentResolution = AppIntentDecision | { kind: "none" };
  * A click already knows what it wants (`intent`); a typed or spoken command has to be matched
  * (`text`). Both come out of here in the same shape, which is what stops the three sources from
  * growing three sets of rules.
+ *
+ * `locale` defaults to Vietnamese, the product's own language, so an existing caller that has not
+ * been touched to pass one keeps getting exactly the sentences it got before.
  */
 export function resolveAppIntent(input: {
   text?: string;
   intent?: AppIntent;
   mintConfirmationToken: () => ConfirmationToken;
   widgetTargets?: readonly WidgetTarget[];
+  locale?: AppIntentLocale;
 }): AppIntentResolution {
+  const locale = input.locale ?? "vi";
   if (input.intent !== undefined) {
-    return decisionFor(input.intent, input.mintConfirmationToken);
+    return decisionFor(input.intent, input.mintConfirmationToken, locale);
   }
-  const match = matchAppIntent(
-    input.text ?? "",
-    input.widgetTargets === undefined ? undefined : { widgetTargets: input.widgetTargets },
-  );
+  const match = matchAppIntent(input.text ?? "", {
+    ...(input.widgetTargets === undefined ? {} : { widgetTargets: input.widgetTargets }),
+    locale,
+  });
   if (match === undefined) return { kind: "none" };
   if (match.kind === "refused") return { kind: "refused", say: match.say };
-  return decisionFor(match.intent, input.mintConfirmationToken);
+  return decisionFor(match.intent, input.mintConfirmationToken, locale);
 }
 
 export interface AppIntentAuditDeps {
@@ -457,6 +495,7 @@ export function recordAppIntentEvent(
     // Recorded so the audit can answer which widget was shown, not only that the library opened.
     ...(input.intent.definitionId === undefined ? {} : { definitionId: input.intent.definitionId }),
     ...(input.intent.family === undefined ? {} : { family: input.intent.family }),
+    ...(input.intent.modelAlias === undefined ? {} : { modelAlias: input.intent.modelAlias }),
     source: input.source,
     confirmed: input.confirmed,
   };

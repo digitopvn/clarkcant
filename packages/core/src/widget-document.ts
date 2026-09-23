@@ -45,6 +45,70 @@ export interface WidgetDocumentInput {
   runtimeUrl?: string;
 }
 
+export type AppOriginOutcome =
+  | { ok: true; origin: string }
+  | { ok: false; code: "CC_APP_ORIGIN_INVALID" | "HOST_HEADER_INVALID"; message: string };
+
+/**
+ * Where `frame-ancestors` in a widget document's policy points.
+ *
+ * `CC_APP_ORIGIN`, when set, must be exactly an origin — scheme, host, optional port, nothing else. `new
+ * URL(value).origin` both parses and normalises it, so a value with a path, query, credentials, or trailing
+ * slash (all of which round-trip through `URL` without becoming equal to the input) is rejected rather than
+ * silently truncated into the directive.
+ *
+ * Without the variable set, the previous behaviour trusted the request's own `Host` header unchecked: a header a
+ * client controls, fed straight into a CSP directive that says who may frame this document. A request naming a
+ * `Host` with a scheme, a path, or characters `URL` cannot parse as a bare `host[:port]` is refused rather than
+ * served with a directive built from whatever arrived — refusing to serve is the fail-closed choice for a value
+ * this function cannot make sense of.
+ */
+export function resolveAppOrigin(input: {
+  configured: string | undefined;
+  /** Node's HTTP headers type allows a header to repeat; only the first value is ever meaningful for `Host`. */
+  hostHeader: string | string[] | undefined;
+}): AppOriginOutcome {
+  if (input.configured !== undefined && input.configured !== "") {
+    try {
+      const url = new URL(input.configured);
+      if (url.origin !== input.configured || (url.protocol !== "http:" && url.protocol !== "https:")) {
+        throw new Error("not a bare http(s) origin");
+      }
+      return { ok: true, origin: url.origin };
+    } catch {
+      return {
+        ok: false,
+        code: "CC_APP_ORIGIN_INVALID",
+        message: `CC_APP_ORIGIN must be a bare http(s) origin (scheme://host[:port], no path); got ${JSON.stringify(input.configured)}`,
+      };
+    }
+  }
+
+  const host = Array.isArray(input.hostHeader) ? input.hostHeader[0] : input.hostHeader;
+  // No `Host` at all is not attacker input — there is nothing to have injected — so it falls back to a fixed,
+  // known-safe local origin rather than being refused. Refusing only starts once a `Host` value actually arrived
+  // and turned out not to be a bare `host[:port]`.
+  if (host === undefined || host === "") {
+    return { ok: true, origin: "http://127.0.0.1" };
+  }
+  try {
+    // A bare `host[:port]` has no scheme of its own, so it is parsed as the host component of a URL rather than
+    // as a URL itself; anything that does not survive that round-trip (a scheme, a path, whitespace, control
+    // characters) is not a value this function will turn into a CSP directive.
+    const probe = new URL(`http://${host}`);
+    if (probe.host !== host || probe.pathname !== "/" || probe.search !== "" || probe.username !== "" || probe.password !== "") {
+      throw new Error("not a bare host[:port]");
+    }
+    return { ok: true, origin: `http://${host}` };
+  } catch {
+    return {
+      ok: false,
+      code: "HOST_HEADER_INVALID",
+      message: `the request's Host header is not a bare host[:port] and CC_APP_ORIGIN is not configured; got ${JSON.stringify(host)}`,
+    };
+  }
+}
+
 /** The policy for a widget document. Returned rather than written as a header so a test can read it. */
 export function widgetDocumentPolicy(input: { appOrigin: string; nonce: string; allowedOrigins?: readonly string[] }): string {
   return [

@@ -286,7 +286,9 @@ Chạy `pnpm invariants` để kiểm tra các ràng buộc tự động trong
 không coi checker là bằng chứng cho những điều nó không kiểm tra:
 
 - Editing any file listed in docs/manifest.json requires updating that entry's
-  bytes and sha256. The check names the stale entry.
+  bytes and sha256. The check names the stale entry. `node
+  tools/check-invariants.mjs --fix-manifest` rewrites bytes+sha256 for every
+  listed file in place.
 - Every workspace package.json declares clarkcant.phase, clarkcant.status,
   clarkcant.blueprint. A stub file must say so with the marker the check expects.
 - docs/conformance-traceability.md never upgrades a T-id or V-id status without

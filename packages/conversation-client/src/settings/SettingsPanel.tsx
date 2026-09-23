@@ -12,6 +12,8 @@ import { ExperienceSettings } from "./ExperienceSettings.tsx";
 import { ExtensionsSettings } from "./ExtensionsSettings.tsx";
 import { MemorySettings } from "./MemorySettings.tsx";
 import { usePreferences } from "./controls/use-preferences.ts";
+import { useT } from "../i18n/locale-context.tsx";
+import type { MessageKey } from "../i18n/messages.ts";
 
 export { SettingsRow, type SettingsRowProps, ToolRow, type ToolRowProps } from "./controls/SettingsRow.tsx";
 
@@ -43,19 +45,19 @@ export { SettingsRow, type SettingsRowProps, ToolRow, type ToolRowProps } from "
  */
 
 const TABS = [
-  { id: "experience", label: "Experience" },
+  { id: "experience", labelKey: "settings.tab.experience" },
   // Provider and model together, because choosing one means choosing the other: the second list belongs to
   // the first. Personal instructions land here with the phase that makes them reach the model.
-  { id: "ai", label: "AI & Routing" },
-  { id: "control", label: "Control" },
-  { id: "extensions", label: "Extensions" },
-  { id: "devices", label: "Devices & Voice" },
+  { id: "ai", labelKey: "settings.tab.ai" },
+  { id: "control", labelKey: "settings.tab.control" },
+  { id: "extensions", labelKey: "settings.tab.extensions" },
+  { id: "devices", labelKey: "settings.tab.devices" },
   // What the node remembers, and the way to remove it. A report like Developer, and placed next to it for the
   // same reason: nothing here is a choice the user is making about behaviour.
-  { id: "memory", label: "Memory" },
+  { id: "memory", labelKey: "settings.tab.memory" },
   // Last, and it is the only one whose contents are a report rather than a choice.
-  { id: "developer", label: "Developer" },
-] as const;
+  { id: "developer", labelKey: "settings.tab.developer" },
+] as const satisfies readonly { id: string; labelKey: MessageKey }[];
 
 type TabId = (typeof TABS)[number]["id"];
 
@@ -95,6 +97,11 @@ export interface SettingsPanelProps {
   /** Called after a write that changes the orb, so the orb on screen follows the control that changed it. */
   onOrbChange?: () => void;
   /**
+   * Called after a write that changes the execution policy, so the shell's `data-policy-mode`
+   * (DESIGN.md §4) follows the mode the control just saved, the same way `onOrbChange` does for the orb.
+   */
+  onPolicyChange?: () => void;
+  /**
    * The tab to show, when something other than the panel chose one.
    *
    * A spoken command names a tab, and the speech path has to land where clicking that tab lands. Without this the
@@ -121,6 +128,7 @@ export function SettingsPanel({
   resolvedTheme,
   onThemeChoice,
   onOrbChange,
+  onPolicyChange,
   openAt,
   onOpenWidgetLibrary,
 }: SettingsPanelProps): ReactElement | null {
@@ -131,6 +139,7 @@ export function SettingsPanel({
   const [effectsProblem, setEffectsProblem] = useState<string | undefined>(undefined);
   const [tab, setTab] = useState<TabId>(openAt ?? "experience");
 
+  const t = useT();
   const prefs = usePreferences(client, open);
 
   useEffect(() => {
@@ -146,7 +155,8 @@ export function SettingsPanel({
       } catch (cause) {
         if (cancelled) return;
         // Reported rather than left blank: an empty settings screen and an unreachable node look identical,
-        // and only one of them is a problem the user can act on.
+        // and only one of them is a problem the user can act on. The raw error already carries whatever
+        // language the failure spoke in, so it is not translated here.
         setProblem(cause instanceof Error ? cause.message : String(cause));
       }
     };
@@ -171,7 +181,7 @@ export function SettingsPanel({
         if (cancelled) return;
         // A different failure from the node read above, and reported in the section it belongs to: an empty
         // audit list and an unreadable one mean different things.
-        setEffectsProblem(cause instanceof Error ? cause.message : "Không đọc được lịch sử.");
+        setEffectsProblem(cause instanceof Error ? cause.message : t("settings.panel.effectsReadFailed"));
       });
     return () => {
       cancelled = true;
@@ -200,9 +210,9 @@ export function SettingsPanel({
   if (!open) return null;
 
   const nodeStatus = (): string => {
-    if (problem !== undefined) return "Không đọc được trạng thái node";
-    if (facts === undefined) return "Đang đọc…";
-    return `${facts.label} · đã kết nối runtime cục bộ`;
+    if (problem !== undefined) return t("settings.panel.nodeReadFailed");
+    if (facts === undefined) return t("settings.common.loading");
+    return `${facts.label} · ${t("settings.panel.nodeConnected")}`;
   };
 
   const openWidgetLibrary = (mode: "browse" | "develop"): void => {
@@ -214,12 +224,12 @@ export function SettingsPanel({
     <Modal
       open={open}
       onClose={onClose}
-      title="Cài đặt"
-      description="Vài tuỳ chọn. Mọi thứ khác nằm trong hội thoại."
+      title={t("settings.title")}
+      description={t("settings.description")}
       // Narrower than a decision dialog: see the note on the prop. 560 is the design's number.
       width="560px"
     >
-      <div className="cc-tabs" role="tablist" aria-label="Nhóm cài đặt">
+      <div className="cc-tabs" role="tablist" aria-label={t("settings.tabs.group")}>
         {TABS.map((entry) => (
           <button
             key={entry.id}
@@ -265,7 +275,7 @@ export function SettingsPanel({
               else if (event.key === "End") move(TABS.length - 1);
             }}
           >
-            {entry.label}
+            {t(entry.labelKey)}
           </button>
         ))}
       </div>
@@ -286,7 +296,7 @@ export function SettingsPanel({
         */}
         {problem === undefined ? null : (
           <section className="cc-panel-section">
-            <h3>Không đọc được trạng thái node</h3>
+            <h3>{t("settings.panel.nodeReadFailed")}</h3>
             <p className="cc-panel-note" data-settings-error="true">
               {problem}
             </p>
@@ -294,7 +304,7 @@ export function SettingsPanel({
         )}
         {prefs.problem === undefined ? null : (
           <section className="cc-panel-section">
-            <h3>Không đọc được tuỳ chọn</h3>
+            <h3>{t("settings.panel.preferencesReadFailed")}</h3>
             <p className="cc-panel-note" data-settings-preference-error="true">
               {prefs.problem}
             </p>
@@ -317,6 +327,7 @@ export function SettingsPanel({
             client={client}
             recentEffects={effects}
             recentProblem={effectsProblem}
+            {...(onPolicyChange === undefined ? {} : { onPolicyChange })}
           />
         )}
         {tab === "extensions" && (
@@ -334,7 +345,7 @@ export function SettingsPanel({
           {nodeStatus()}
         </span>
         <button type="button" className="cc-badge cc-modal-done" onClick={onClose}>
-          Xong
+          {t("settings.done")}
         </button>
       </footer>
     </Modal>

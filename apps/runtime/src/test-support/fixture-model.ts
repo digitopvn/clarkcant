@@ -1,6 +1,7 @@
 import { type Instant, type MessageBlock, instantSchema } from "@clarkcant/contracts";
 import {
   type ConductorDeps,
+  type ConductorEmit,
   type CoordinationDeps,
   captureSnapshot,
   createInstance,
@@ -21,7 +22,7 @@ import { blobsDir, readBlob } from "../blobs.ts";
 import { composeMiniApp } from "../compose-mini-app.ts";
 import { type InteractionDeps } from "../interactions.ts";
 import { writeCurrentAlias, writeModelPool } from "../model-registry.ts";
-import { createNodeTools, createRememberTool, type CommandToolDeps } from "../node-tools.ts";
+import { createNodeTools, createRememberTool, decideControlApp, type CommandToolDeps } from "../node-tools.ts";
 import { extractPdfText } from "../pdf-text.ts";
 import { type ProjectFinderDeps } from "../project-finder.ts";
 import { createRequestSecretTool, type RequestSecretDeps } from "../request-secret.ts";
@@ -86,6 +87,8 @@ export function createModelComposer(deps: FixtureModelDeps): FixtureCompose {
     principal: { principalId: string };
     text: string;
     messageId: string;
+    emit?: (event: ConductorEmit) => void;
+    channel?: "voice" | "chat";
   }): Promise<{ block: MessageBlock; text: string } | undefined> => {
     /*
      * The attachment, read back - the acceptance criterion this feature is judged by.
@@ -187,6 +190,33 @@ export function createModelComposer(deps: FixtureModelDeps): FixtureCompose {
     if (/Trả lời cho câu hỏi/i.test(input.text)) {
       const reply = "Fixture: tui đã nhận câu trả lời và tiếp tục công việc.";
       return { text: reply, block: { type: "text", format: "plain", content: reply, streaming: false } };
+    }
+
+    /*
+     * The app-control tool, called the way a model turn calls it - the browser half of issue #129's voice
+     * criterion.
+     *
+     * `decideControlApp` is the same function `control_app` executes with in production: same validation,
+     * same audit call, same `host-control` event. What is scripted is only the decision to call it, which a
+     * live model made through a tool call this fixture cannot produce without a provider account. Calling
+     * the same function a model turn would have called is what keeps this a browser proof of `runAppIntent`
+     * reaching the page, rather than a proof of the fixture's own wiring.
+     */
+    if (/nhờ agent xử lý giúp tôi việc quay về màn hình bắt đầu|go home through the agent/i.test(input.text)) {
+      const outcome = decideControlApp(
+        {
+          db: deps.services().runtime.db,
+          nodeId: deps.services().runtime.identity.nodeId,
+          now: () => instantSchema.parse(new Date().toISOString()),
+          newId: deps.services().conductor.newId,
+          principalId: input.principal.principalId,
+          conversationId: input.conversationId as never,
+          onEvent: () => input.emit,
+          channel: () => input.channel ?? "chat",
+        },
+        { kind: "nav.home" },
+      );
+      return { text: outcome.say, block: { type: "text", format: "plain", content: outcome.say, streaming: false } };
     }
 
     /*

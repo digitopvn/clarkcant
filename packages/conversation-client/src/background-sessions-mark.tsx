@@ -1,6 +1,7 @@
 import { type ReactElement, useEffect, useState } from "react";
 
 import type { GatewayClient } from "./api.ts";
+import { useT } from "./i18n/locale-context.tsx";
 
 interface BackgroundState {
   running: number;
@@ -33,6 +34,7 @@ export function BackgroundSessionsMark({
    */
   refreshKey?: number;
 }): ReactElement | null {
+  const t = useT();
   const [state, setState] = useState<BackgroundState>({ running: 0, sessions: [] });
 
   useEffect(() => {
@@ -64,12 +66,12 @@ export function BackgroundSessionsMark({
   return (
     <div className="cc-bg-mark" data-background-sessions={String(state.running)} tabIndex={0}>
       <span className="cc-dot" data-state="ready" aria-hidden="true" />
-      <span data-background-count="true">{`${state.running} việc nền đang chạy`}</span>
+      <span data-background-count="true">{t("shell.background.runningCount").replace("{count}", String(state.running))}</span>
       <ul className="cc-bg-list" data-background-list="true">
         {running.map((session) => (
           <li key={session.sessionId}>
             <span data-background-title="true">{session.title}</span>
-            <span className="cc-freshness"> — đang chạy</span>
+            <span className="cc-freshness">{t("shell.background.runningSuffix")}</span>
           </li>
         ))}
       </ul>

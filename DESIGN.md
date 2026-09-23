@@ -853,6 +853,13 @@ chỗ user sẽ tìm — im lặng bỏ qua còn tệ hơn, vì user sẽ tưở
 Dùng segmented controls, toggles và swatches:
 
 - Appearance: System / Light / Dark.
+- Language: Tiếng Việt / English — segmented control, applies immediately (no save button), sets
+  `<html lang>`, and persists across reload and devices through the preference registry
+  (`experience.language`). Default is Vietnamese; there is no "follow system" option, because no
+  cross-platform signal for "UI language" is reliable enough not to silently switch a Vietnamese
+  speaker's product language away from Vietnamese. Only default chrome (composer, timeline chrome,
+  settings, error copy, voice controls, marketplace headings) is translated; agent output is never
+  translated.
 - Accent.
 - Motion: Full / Reduced / Follow system.
 - Density: Comfortable / Compact.

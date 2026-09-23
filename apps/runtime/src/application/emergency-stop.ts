@@ -27,12 +27,15 @@ export interface EmergencyStopDeps {
         stopBackgroundSessions?: () => Promise<number>;
       }
     | undefined;
+  /** Absent on a fixture node, which spawns no workers to kill. */
+  taskDispatch?: { stopAll(): number } | undefined;
 }
 
 export interface EmergencyStopReport {
   commands: number;
   turns: number;
   background: number;
+  tasks: number;
 }
 
 export async function performEmergencyStop(deps: EmergencyStopDeps): Promise<EmergencyStopReport> {
@@ -49,8 +52,12 @@ export async function performEmergencyStop(deps: EmergencyStopDeps): Promise<Eme
     const stopBackground = (control as { stopBackgroundSessions?: () => Promise<number> }).stopBackgroundSessions;
     background = stopBackground === undefined ? 0 : await stopBackground.call(control);
   }
+  // Dispatched task workers are their own child processes, outside `stopRunningCommands`'s registry
+  // (which only tracks the guarded-command path) and outside the turn control (which only tracks model
+  // turns). A stop that reached everything else and left a worker running would not be an emergency stop.
+  const tasks = deps.taskDispatch?.stopAll() ?? 0;
 
-  const stopped = commands + turns + background;
+  const stopped = commands + turns + background + tasks;
   if (stopped > 0) {
     // Written down whether or not anybody was watching: a stop is the event most likely to need explaining later.
     appendAuditEvent(deps.db, {
@@ -58,10 +65,10 @@ export async function performEmergencyStop(deps: EmergencyStopDeps): Promise<Eme
       principalId: deps.ownerPrincipalId,
       nodeId: deps.nodeId,
       kind: "stop",
-      summary: `dừng khẩn cấp: ${commands} lệnh, ${turns} lượt, ${background} việc nền`,
+      summary: `dừng khẩn cấp: ${commands} lệnh, ${turns} lượt, ${background} việc nền, ${tasks} worker task`,
       outcome: "stopped",
       at: nowInstant(),
     });
   }
-  return { commands, turns, background };
+  return { commands, turns, background, tasks };
 }

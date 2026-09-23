@@ -1,3 +1,5 @@
+import type { MessageKey } from "./i18n/messages.ts";
+
 /**
  * What a selection in the transcript can be turned into.
  *
@@ -5,6 +7,9 @@
  * it explained, and to have it worked on somewhere else while they carry on. The wording lives here rather than in
  * the component because it is the part worth testing: a menu that appears over the wrong text, or an attached quote
  * that loses the words around it, is a bug no screenshot shows.
+ *
+ * Each helper takes `t`, the catalog lookup from `useT()`, so the wording follows the current UI language rather
+ * than always being Vietnamese.
  */
 
 /** The longest selection that is offered as a whole. Menu 1 of 1: a wall of text is not a quote. */
@@ -39,8 +44,8 @@ export function attachedPrompt(selection: string, draft: string): string {
 }
 
 /** What asking for an explanation actually asks. */
-export function explainPrompt(selection: string): string {
-  return `Giải thích đoạn này:\n\n${selection}`;
+export function explainPrompt(selection: string, t: (key: MessageKey) => string): string {
+  return t("widgets.selection.explainPrompt").replace("{selection}", selection);
 }
 
 /**
@@ -49,13 +54,13 @@ export function explainPrompt(selection: string): string {
  * The selection's own opening words, clipped: a list of identical titles tells a person nothing about which worker
  * is which, and the title is the only thing a dropdown has room for.
  */
-export function backgroundTitle(selection: string): string {
+export function backgroundTitle(selection: string, t: (key: MessageKey) => string): string {
   const firstLine = selection.split("\n").find((line) => line.trim() !== "")?.trim() ?? "";
   const clipped = firstLine.length > 80 ? `${firstLine.slice(0, 80)}…` : firstLine;
-  return clipped === "" ? "Việc nền từ đoạn được chọn" : clipped;
+  return clipped === "" ? t("widgets.selection.backgroundTitleFallback") : clipped;
 }
 
 /** What a background session is asked to do with the selection. */
-export function backgroundPrompt(selection: string): string {
-  return `Xử lý đoạn này trong một phiên nền, rồi báo lại kết quả:\n\n${selection}`;
+export function backgroundPrompt(selection: string, t: (key: MessageKey) => string): string {
+  return t("widgets.selection.backgroundPrompt").replace("{selection}", selection);
 }

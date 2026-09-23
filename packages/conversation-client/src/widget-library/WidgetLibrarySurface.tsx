@@ -11,7 +11,8 @@ import {
 } from "@clarkcant/widget-catalog";
 
 import type { GatewayClient } from "../api.ts";
-import { BUILT_IN_LABEL } from "../package-provenance.ts";
+import { useT } from "../i18n/locale-context.tsx";
+import { builtInLabel } from "../package-provenance.ts";
 import { resolveRenderer } from "../renderers.tsx";
 import { InstalledProvenance } from "./InstalledProvenance.tsx";
 import { installedCatalogEntries, type InstalledEntriesRead } from "./installed-entries.ts";
@@ -70,6 +71,7 @@ export function WidgetLibrarySurface({
   client,
   onAction,
 }: WidgetLibrarySurfaceProps): ReactElement | null {
+  const t = useT();
   const dialog = useRef<HTMLDivElement>(null);
   const opener = useRef<Element | null>(null);
   const open = state.open;
@@ -107,7 +109,7 @@ export function WidgetLibrarySurface({
           notes: [
             {
               packageId: "node",
-              message: "Không đọc được widget của các gói đã cài. Danh mục dựng sẵn vẫn dùng được bình thường.",
+              message: t("widgets.library.installedUnreadable"),
             },
           ],
         });
@@ -115,7 +117,7 @@ export function WidgetLibrarySurface({
     return () => {
       cancelled = true;
     };
-  }, [open, client, entries]);
+  }, [open, client, entries, t]);
 
   // The catalog's own entries come first, then what packages declare under their own namespaced card ids.
   const allEntries = [...entries, ...installed.entries];
@@ -192,7 +194,7 @@ export function WidgetLibrarySurface({
         <header className="cc-widget-library-head">
           {selected === undefined ? (
             <h2 id="cc-widget-library-title">
-              {develop ? "Widget Lab" : "Widget Library"}
+              {develop ? t("widgets.library.titleLab") : t("widgets.library.titleBrowse")}
             </h2>
           ) : (
             <div className="cc-widget-library-head-left">
@@ -200,7 +202,7 @@ export function WidgetLibrarySurface({
                 type="button"
                 className="cc-icon-btn"
                 onClick={() => onAction({ kind: "back" })}
-                aria-label="Quay lại danh mục"
+                aria-label={t("widgets.library.back")}
                 data-widget-library-back="true"
               >
                 ←
@@ -213,8 +215,8 @@ export function WidgetLibrarySurface({
             <input
               type="search"
               className="cc-widget-library-search"
-              placeholder="Tìm widget…"
-              aria-label="Tìm widget"
+              placeholder={t("widgets.library.searchPlaceholder")}
+              aria-label={t("widgets.library.searchAria")}
               value={state.query}
               onChange={(event) => onAction({ kind: "query", value: event.target.value })}
               data-widget-library-search="true"
@@ -229,7 +231,7 @@ export function WidgetLibrarySurface({
               onClick={() => setShowInspector((current) => !current)}
               data-widget-lab-pane-toggle="true"
             >
-              {showInspector ? "Xem trước" : "Inspector"}
+              {showInspector ? t("widgets.library.showPreview") : t("widgets.library.showInspector")}
             </button>
           )}
 
@@ -237,7 +239,7 @@ export function WidgetLibrarySurface({
             type="button"
             className="cc-icon-btn"
             onClick={() => onAction({ kind: "close" })}
-            aria-label="Đóng"
+            aria-label={t("widgets.library.close")}
             data-widget-library-close="true"
           >
             ✕
@@ -245,7 +247,7 @@ export function WidgetLibrarySurface({
         </header>
 
         {selected === undefined && (
-          <nav className="cc-widget-library-facets" aria-label="Nhóm widget">
+          <nav className="cc-widget-library-facets" aria-label={t("widgets.library.familiesAria")}>
             {facets.map((family) => (
               <button
                 key={family}
@@ -256,7 +258,7 @@ export function WidgetLibrarySurface({
                 onClick={() => onAction({ kind: "family", value: family })}
                 data-widget-library-facet={family}
               >
-                {family === "all" ? "Tất cả" : family}
+                {family === "all" ? t("widgets.library.allFamilies") : family}
               </button>
             ))}
           </nav>
@@ -271,7 +273,7 @@ export function WidgetLibrarySurface({
                 which is which.
               */}
               <section className="cc-library-builtin" data-widget-provenance="built-in">
-                <h3>{BUILT_IN_LABEL}</h3>
+                <h3>{builtInLabel(t)}</h3>
                 <WidgetGallery
                   entries={visible}
                   onSelect={(cardId) => onAction({ kind: "select", cardId })}
@@ -283,7 +285,7 @@ export function WidgetLibrarySurface({
               */}
               {installed.notes.length > 0 && (
                 <section className="cc-library-notes" data-widget-installed-notes="true">
-                  <h3>Gói đã cài: phần chưa xem được</h3>
+                  <h3>{t("widgets.library.installedUnseenTitle")}</h3>
                   <ul>
                     {installed.notes.map((note) => (
                       <li key={`${note.packageId}:${note.message}`} data-widget-installed-note={note.packageId}>
@@ -314,7 +316,7 @@ export function WidgetLibrarySurface({
               <div className="cc-widget-detail-preview" data-widget-lab-pane-preview="true">
                 {effectiveFixture === undefined ? (
                   <p className="cc-widget-preview-missing" data-widget-preview-missing={selected.cardId}>
-                    Chưa có fixture cho widget này.
+                    {t("widgets.library.noFixture")}
                   </p>
                 ) : (
                   <div
@@ -330,15 +332,15 @@ export function WidgetLibrarySurface({
 
                 {!develop && (
                   <dl className="cc-widget-detail-meta">
-                    <dt>Nhóm</dt>
+                    <dt>{t("widgets.library.family")}</dt>
                     <dd>{selected.family}</dd>
-                    <dt>Mô tả ngữ nghĩa</dt>
+                    <dt>{t("widgets.library.semanticDescription")}</dt>
                     <dd>{selected.description}</dd>
-                    <dt>Nguồn</dt>
+                    <dt>{t("widgets.library.source")}</dt>
                     <dd>{selected.source === "builtin" ? "Built-in" : selected.source}</dd>
-                    <dt>Trạng thái</dt>
+                    <dt>{t("widgets.library.status")}</dt>
                     <dd>{selected.status}</dd>
-                    <dt>Phương án chữ</dt>
+                    <dt>{t("widgets.library.textFallback")}</dt>
                     <dd>{selected.definition.textFallback}</dd>
                   </dl>
                 )}
@@ -353,7 +355,7 @@ export function WidgetLibrarySurface({
                       onChange={(props) => setPropsOverride(props)}
                     />
                   )}
-                  <WidgetInspector panels={inspectorPanels(selected, effectiveFixture)} />
+                  <WidgetInspector panels={inspectorPanels(selected, effectiveFixture, t)} />
                 </div>
               )}
             </div>

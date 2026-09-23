@@ -29,6 +29,9 @@ import {
   describeAppIntent,
 } from "@clarkcant/contracts";
 
+import { readStoredLocale } from "./i18n/locale.ts";
+import { CATALOGS } from "./i18n/messages.ts";
+
 /**
  * What a page can be asked to do.
  *
@@ -41,6 +44,33 @@ export interface AppIntentHost {
   goHome(): void;
   openFilePicker(): void;
   endVoice(): void;
+  /**
+   * Starts voice mode, ensuring a conversation exists first.
+   *
+   * Optional for the same reason the widget library is: a host that has not wired a voice surface
+   * should be refused with a sentence, not reported as having opened one.
+   */
+  openVoice?(): void;
+  /**
+   * Closes Settings and the widget library and returns to the conversation already open, without
+   * resetting or leaving it.
+   *
+   * Distinct from `goHome`, which leaves the session: `nav.conversation` is "close what is on top
+   * of the conversation", and `goHome` is "leave the conversation". Optional is not meaningful here
+   * — every host that has a conversation surface can dismiss its own overlays — but it is declared
+   * alongside the other new members for the same reason: a host built before this existed should not
+   * silently gain a method it never implemented.
+   */
+  showConversation?(): void;
+  /**
+   * Moves the configured model pool to the next enabled profile, applying to a new generation.
+   *
+   * Optional: a host with no model pool (e.g. a fixture with no node behind it) cannot promise this,
+   * and a caller that reported success anyway would be lying about what changed.
+   */
+  cycleModel?(): void;
+  /** Selects a configured model-pool profile by its alias. See `cycleModel` for why this is optional. */
+  selectModel?(alias: string): void;
   /**
    * Opens the widget library.
    *
@@ -61,7 +91,15 @@ export interface AppIntentRun {
   say: string;
 }
 
-/** Said when an intent is understood and the window it needs is not there. */
+/**
+ * Said when an intent is understood and the window it needs is not there.
+ *
+ * The Vietnamese default, since this module has no React tree to read `useT` from — `runAppIntent`
+ * is called from a click, a typed command and a spoken command alike, some of them off the render
+ * path entirely. `missingCapabilitySay` below resolves the actual UI language at call time instead,
+ * from the same cached choice `useLocale` reads; this constant stays for callers (and this file's
+ * own tests) that want the fixed, unlocalized wording.
+ */
 export const NOT_DESKTOP_SAY =
   "Lệnh này cần cửa sổ desktop. Trình duyệt không điều khiển được cửa sổ của hệ điều hành.";
 
@@ -70,9 +108,21 @@ export const NOT_LIBRARY_SAY =
   "Bản dựng này không mở được thư viện widget, nên tôi chưa làm gì cả.";
 
 function missingCapabilitySay(intent: AppIntent): string {
-  return intent.kind === "widgets.open" || intent.kind === "widgets.show"
-    ? NOT_LIBRARY_SAY
-    : NOT_DESKTOP_SAY;
+  const catalog = CATALOGS[readStoredLocale()];
+  switch (intent.kind) {
+    case "widgets.open":
+    case "widgets.show":
+      return catalog["shell.intent.notLibrary"];
+    case "voice.open":
+      return catalog["shell.intent.notVoice"];
+    case "model.cycle":
+    case "model.select":
+      return catalog["shell.intent.notModelPool"];
+    case "nav.conversation":
+      return catalog["shell.intent.notConversation"];
+    default:
+      return catalog["shell.intent.notDesktop"];
+  }
 }
 
 /** Said when a decision came back that is not executable: a question, or a refusal. */
@@ -123,6 +173,18 @@ export function runAppIntent(decision: AppIntentDecision, host: AppIntentHost): 
     case "voice.end":
       host.endVoice();
       return { ran: true, say: readBack };
+    case "voice.open":
+      host.openVoice?.();
+      return { ran: true, say: readBack };
+    case "nav.conversation":
+      host.showConversation?.();
+      return { ran: true, say: readBack };
+    case "model.cycle":
+      host.cycleModel?.();
+      return { ran: true, say: readBack };
+    case "model.select":
+      host.selectModel?.(intent.modelAlias ?? "");
+      return { ran: true, say: readBack };
     case "window.expand":
       host.expandWindow?.();
       return { ran: true, say: readBack };
@@ -167,6 +229,14 @@ function hostHasCapability(host: AppIntentHost, intent: AppIntent): boolean {
     case "widgets.open":
     case "widgets.show":
       return host.openWidgetLibrary !== undefined;
+    case "voice.open":
+      return host.openVoice !== undefined;
+    case "nav.conversation":
+      return host.showConversation !== undefined;
+    case "model.cycle":
+      return host.cycleModel !== undefined;
+    case "model.select":
+      return host.selectModel !== undefined;
     default:
       return true;
   }

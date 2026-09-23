@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -41,7 +41,8 @@ let base: string;
 let project: string;
 
 beforeEach(async () => {
-  base = await mkdtemp(join(tmpdir(), "clarkcant-canonical-"));
+  // Canonical, because macOS puts the temporary directory behind a `/var` -> `/private/var` symlink.
+  base = await realpath(await mkdtemp(join(tmpdir(), "clarkcant-canonical-")));
   project = join(base, "project");
   // The component really is there, so `stat` answers for it and only the canonicalisation of it fails.
   await mkdir(join(project, FAILING_COMPONENT), { recursive: true });

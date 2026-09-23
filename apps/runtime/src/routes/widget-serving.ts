@@ -1,6 +1,14 @@
 import { randomUUID } from "node:crypto";
 
-import { directoryIndexPath, readDirectoryIndex, readPackageFile, widgetDocument, widgetDocumentPolicy } from "@clarkcant/core";
+import {
+  directoryIndexPath,
+  readDirectoryIndex,
+  readPackage,
+  readPackageFile,
+  resolveAppOrigin,
+  widgetDocument,
+  widgetDocumentPolicy,
+} from "@clarkcant/core";
 
 import { type GatewayRequest, type GatewayResponse, fail } from "./http.ts";
 
@@ -47,16 +55,34 @@ export function handleWidgetServingRoutes(deps: WidgetServingRouteDeps): Gateway
     );
   }
   if (file.contentType.startsWith("text/html")) {
+    const appOriginOutcome = resolveAppOrigin({
+      configured: process.env["CC_APP_ORIGIN"],
+      hostHeader: request.headers["host"],
+    });
+    if (!appOriginOutcome.ok) {
+      return fail(500, appOriginOutcome.code, appOriginOutcome.message);
+    }
     const nonce = randomUUID().replaceAll("-", "");
-    const appOrigin = process.env["CC_APP_ORIGIN"] ?? `http://${request.headers["host"] ?? "127.0.0.1"}`;
-    const document = widgetDocument({ html: file.bytes.toString("utf8"), appOrigin, nonce });
+    // Same rule as the bearer-authenticated package route: `connect-src` reflects what this package's own
+    // manifest declared, not the frame grant's request. `readPackageFile` above only succeeds for a
+    // `kind: "local"` entry, so `entry.source` is a local source by the time this line runs.
+    const allowedOrigins =
+      entry.source.kind === "local" ? (readPackage(entry.source.path).manifest.permissions?.networkOrigins ?? []) : [];
+    const document = widgetDocument({
+      html: file.bytes.toString("utf8"),
+      appOrigin: appOriginOutcome.origin,
+      nonce,
+      allowedOrigins,
+    });
     return {
       status: 200,
       body: null,
       binary: {
         bytes: Buffer.from(document, "utf8"),
         contentType: file.contentType,
-        headers: { "content-security-policy": widgetDocumentPolicy({ appOrigin, nonce }) },
+        headers: {
+          "content-security-policy": widgetDocumentPolicy({ appOrigin: appOriginOutcome.origin, nonce, allowedOrigins }),
+        },
       },
     };
   }

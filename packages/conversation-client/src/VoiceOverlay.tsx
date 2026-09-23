@@ -3,6 +3,8 @@ import { type ReactElement, useCallback, useEffect, useRef, useState } from "rea
 import type { AppIntentDecision, VoiceState } from "@clarkcant/contracts";
 
 import type { GatewayClient } from "./api.ts";
+import { useT } from "./i18n/locale-context.tsx";
+import type { MessageKey } from "./i18n/messages.ts";
 import { Orb } from "./Orb.tsx";
 import { VoiceUnavailable } from "./voice-unavailable.tsx";
 import type { VoiceSession, VoiceTranscriptUpdate } from "./voice-session.ts";
@@ -49,15 +51,15 @@ export function waveformBars(levels: readonly number[], count = WAVEFORM_BARS): 
   });
 }
 
-const STATE_WORDS: Record<VoiceState, string> = {
-  idle: "Chưa bắt đầu",
-  connecting: "Đang kết nối",
-  listening: "Đang nghe",
-  thinking: "Đang xử lý",
-  speaking: "Đang nói",
-  reconnecting: "Đang kết nối lại",
-  ended: "Đã kết thúc",
-  failed: "Không mở được",
+const STATE_WORD_KEYS: Record<VoiceState, MessageKey> = {
+  idle: "voice.state.idle",
+  connecting: "voice.state.connecting",
+  listening: "voice.state.listening",
+  thinking: "voice.state.thinking",
+  speaking: "voice.state.speaking",
+  reconnecting: "voice.state.reconnecting",
+  ended: "voice.state.ended",
+  failed: "voice.state.failed",
 };
 
 /**
@@ -143,9 +145,12 @@ export function VoiceOverlay({
   onWidgetActionResult,
   focusedInstanceId,
   startCollapsed = false,
-  requires = "một phiên Live API đang mở",
-  unblockedBy = "đặt GEMINI_API_KEY cho node rồi thử lại",
+  requires,
+  unblockedBy,
 }: VoiceOverlayProps): ReactElement {
+  const t = useT();
+  const effectiveRequires = requires ?? t("voice.defaultRequires");
+  const effectiveUnblockedBy = unblockedBy ?? t("voice.defaultUnblockedBy");
   const [state, setState] = useState<VoiceState>("connecting");
   const [muted, setMuted] = useState(false);
   /**
@@ -230,7 +235,7 @@ export function VoiceOverlay({
      * difference between a person who knows what is missing and a person who reports that voice does not work.
      */
     if (conversationId === undefined) {
-      setProblem("Phiên giọng nói cần một hội thoại để trả lời, mà chưa có hội thoại nào.");
+      setProblem(t("voice.noSessionNoConversation"));
       setState("failed");
       return;
     }
@@ -312,12 +317,12 @@ export function VoiceOverlay({
       })
       .catch((cause: unknown) => {
         // The node's refusal is worded for a person, so it is shown as it arrived.
-        setProblem(cause instanceof Error ? cause.message : "không mở được phiên giọng nói");
+        setProblem(cause instanceof Error ? cause.message : t("voice.startFailedGeneric"));
         setState("failed");
         sessionRef.current = undefined;
         startingRef.current = false;
       });
-  }, [client, conversationId, onAnswered]);
+  }, [client, conversationId, onAnswered, t]);
 
   // Opening the view is the act of starting to talk: the button that opened it said "voice", and a
   // surface that then waits for a second confirmation is a step nobody asked for.
@@ -338,13 +343,13 @@ export function VoiceOverlay({
   if (client === undefined) {
     return (
       <div className="cc-voice-scrim" role="presentation" onClick={() => onClose({ focusComposer: true })}>
-        <div className="cc-voice" role="dialog" aria-modal="true" aria-label="Giọng nói" data-voice-state="unavailable" onClick={(event) => event.stopPropagation()}>
+        <div className="cc-voice" role="dialog" aria-modal="true" aria-label={t("voice.dialogLabel")} data-voice-state="unavailable" onClick={(event) => event.stopPropagation()}>
           <div className="cc-voice-body">
-            <VoiceUnavailable requires={requires} unblockedBy={unblockedBy} />
+            <VoiceUnavailable requires={effectiveRequires} unblockedBy={effectiveUnblockedBy} />
             <div className="cc-voice-controls">
               <button type="button" className="cc-voice-action" data-voice-type-instead="true" onClick={() => onClose({ focusComposer: true })}>
                 <span className="cc-voice-action-icon" aria-hidden="true">⌨</span>
-                Viết thay vì nói
+                {t("voice.typeInstead")}
               </button>
             </div>
           </div>
@@ -359,7 +364,7 @@ export function VoiceOverlay({
         className="cc-voice"
         role="dialog"
         aria-modal="true"
-        aria-label="Giọng nói"
+        aria-label={t("voice.dialogLabel")}
         data-voice-state={state}
         data-voice-level={level.toFixed(2)}
         data-voice-capture-frames={frames.captured}
@@ -372,7 +377,7 @@ export function VoiceOverlay({
           </div>
           <div className="cc-voice-status">
             <span className="cc-dot" data-state={muted ? "connecting" : live ? "ready" : "offline"} aria-hidden="true" />
-            <span data-voice-state-label={state}>{muted && live ? "Micro đang tắt" : STATE_WORDS[state]}</span>
+            <span data-voice-state-label={state}>{muted && live ? t("voice.micOff") : t(STATE_WORD_KEYS[state])}</span>
           </div>
         </header>
 
@@ -382,23 +387,27 @@ export function VoiceOverlay({
           </div>
 
           <h1 className="cc-voice-headline">
-            {state === "failed" ? "Không mở được phiên" : state === "ended" ? "Đã kết thúc" : muted ? "Micro đang tắt" : "Tui đang nghe."}
+            {state === "failed"
+              ? t("voice.headline.failed")
+              : state === "ended"
+                ? t("voice.headline.ended")
+                : muted
+                  ? t("voice.micOff")
+                  : t("voice.headline.listening")}
           </h1>
-          <p className="cc-voice-sub">
-            {muted
-              ? "Bật micro lại khi bạn sẵn sàng."
-              : "Cứ nói tự nhiên. Bạn có thể ngắt lời tui bất cứ lúc nào."}
-          </p>
+          <p className="cc-voice-sub">{muted ? t("voice.sub.muted") : t("voice.sub.active")}</p>
 
           <div className="cc-voice-wave" data-voice-wave="true" aria-hidden="true">
             {bars.map((height, index) => (
-              <span key={index} className="cc-voice-bar" style={{ height: `${Math.round(height * 100)}%` }} />
+              // `transform: scaleY()` rather than `height`: the bar's box stays full height and only the
+              // paint scales, which the browser can animate without laying the row out again every frame.
+              <span key={index} className="cc-voice-bar" style={{ transform: `scaleY(${height.toFixed(3)})` }} />
             ))}
           </div>
 
           {problem !== undefined && (
             <p className="cc-voice-problem" data-voice-problem="true">
-              {problem} — {unblockedBy}
+              {problem} — {effectiveUnblockedBy}
             </p>
           )}
           {needsKey !== undefined && client !== undefined && (
@@ -418,15 +427,15 @@ export function VoiceOverlay({
                     setKeyDraft("");
                     setKeyStatus(
                       result.names.includes(name)
-                        ? "Đã lưu khoá. Mở lại giọng nói để dùng nó."
-                        : "Đã gửi, nhưng node không ghi nhận tên khoá nào.",
+                        ? t("voice.keySaved")
+                        : t("voice.keySentNoName"),
                     );
                   })
-                  .catch(() => setKeyStatus("Không lưu được khoá. Thử lại."));
+                  .catch(() => setKeyStatus(t("voice.keySaveFailed")));
               }}
             >
               <label className="cc-credential-field">
-                <span>Khoá cho {needsKey}</span>
+                <span>{t("voice.credentialLabel").replace("{name}", needsKey)}</span>
                 <input
                   type="password"
                   name={needsKey}
@@ -442,7 +451,7 @@ export function VoiceOverlay({
                 disabled={keyDraft.trim() === ""}
                 data-voice-key-submit="true"
               >
-                Lưu khoá
+                {t("voice.saveKey")}
               </button>
             </form>
           )}
@@ -454,7 +463,7 @@ export function VoiceOverlay({
 
           {problem === undefined && answerProblem !== undefined && (
             <p className="cc-voice-problem" data-voice-answer-problem="true">
-              Câu vừa rồi chưa trả lời được: {answerProblem}. Cứ nói tiếp, câu sau sẽ được thử lại.
+              {t("voice.answerProblem").replace("{message}", answerProblem)}
             </p>
           )}
 
@@ -472,18 +481,18 @@ export function VoiceOverlay({
           {state === "ended" && (
             <p className="cc-voice-note" data-voice-ended="true">
               {recordedMessages === 0
-                ? "Phiên đã kết thúc; không có nội dung nào được ghi vào hội thoại."
-                : `Phiên đã kết thúc; ${recordedMessages} tin nhắn đã được ghi vào hội thoại.`}
+                ? t("voice.endedNone")
+                : t("voice.endedCount").replace("{count}", String(recordedMessages))}
             </p>
           )}
           {live && conversationId !== undefined && (
             <p className="cc-voice-note" data-voice-records-as-spoken="true">
-              Mỗi câu bạn nói được ghi vào hội thoại ngay khi nói, và trợ lý trả lời ở đó.
+              {t("voice.recordsAsSpoken")}
             </p>
           )}
           {live && conversationId === undefined && (
             <p className="cc-voice-note" data-voice-will-record="false">
-              Chưa có hội thoại nào để ghi, nên phiên này sẽ không được lưu lại.
+              {t("voice.willNotRecord")}
             </p>
           )}
         </div>
@@ -494,12 +503,12 @@ export function VoiceOverlay({
             className="cc-voice-action"
             data-voice-mute="true"
             data-muted={muted ? "true" : "false"}
-            aria-label={muted ? "Bật micro" : "Tắt micro"}
+            aria-label={muted ? t("voice.unmute") : t("voice.mute")}
             onClick={toggleMute}
             disabled={!live}
           >
             <span className="cc-voice-action-icon" aria-hidden="true">{muted ? "🎙" : "🔇"}</span>
-            <span className="cc-voice-action-text">{muted ? "Bật micro" : "Tắt micro"}</span>
+            <span className="cc-voice-action-text">{muted ? t("voice.unmute") : t("voice.mute")}</span>
           </button>
           <button
             type="button"
@@ -507,24 +516,24 @@ export function VoiceOverlay({
             data-voice-minimize="true"
             aria-pressed={collapsed}
             aria-expanded={!collapsed}
-            aria-label={collapsed ? "Mở rộng" : "Thu gọn"}
+            aria-label={collapsed ? t("voice.expand") : t("voice.collapse")}
             onClick={() => setCollapsed((current) => !current)}
           >
             <span className="cc-voice-action-icon" aria-hidden="true">{collapsed ? "▣" : "▭"}</span>
-            <span className="cc-voice-action-text">{collapsed ? "Mở rộng" : "Thu gọn"}</span>
+            <span className="cc-voice-action-text">{collapsed ? t("voice.expand") : t("voice.collapse")}</span>
           </button>
           <button
             type="button"
             className="cc-voice-action cc-voice-action-end"
             data-voice-end="true"
-            aria-label="Kết thúc"
+            aria-label={t("voice.end")}
             onClick={() => {
               endSession();
               onClose({ focusComposer: false });
             }}
           >
             <span className="cc-voice-action-icon" aria-hidden="true">✕</span>
-            <span className="cc-voice-action-text">Kết thúc</span>
+            <span className="cc-voice-action-text">{t("voice.end")}</span>
           </button>
           <button
             type="button"
@@ -536,7 +545,7 @@ export function VoiceOverlay({
             }}
           >
             <span className="cc-voice-action-icon" aria-hidden="true">⌨</span>
-            Viết thay vì nói
+            {t("voice.typeInstead")}
           </button>
         </footer>
       </section>
