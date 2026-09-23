@@ -53,7 +53,12 @@ export interface IsolatedFrameLiveResponse {
     /** Relative to the node, and served from the package path so the widget's own imports resolve. */
     url: string;
     isolation: string;
-    requestedCapabilities: readonly string[];
+    /**
+     * What this frame is actually brokered — the *granted* set, already narrowed against what the package's
+     * manifest requested. Not the request itself: a manifest's requested capabilities are metadata the package
+     * wrote about itself, never an authority.
+     */
+    grantedCapabilities: readonly string[];
     allowedOrigins: readonly string[];
   };
   /**

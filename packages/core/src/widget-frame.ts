@@ -41,6 +41,22 @@ export type IsolatedFrameLookup =
       message: string;
     };
 
+/**
+ * What a frame is actually brokered: the requested set, narrowed to what was granted.
+ *
+ * A manifest's `requestedCapabilities` is metadata the package wrote about itself, never an authority — the
+ * generation's `grantedCapabilities` (carried from a real consent decision, `install-consent.ts`) is the one
+ * that is. This is deliberately the intersection rather than the granted set alone: a capability the node granted
+ * for some other reason but this widget never asked for still has no business being handed to it.
+ */
+export function brokeredCapabilities(
+  requested: readonly string[],
+  granted: readonly string[] | undefined,
+): readonly string[] {
+  const grantedSet = new Set(granted ?? []);
+  return requested.filter((ref) => grantedSet.has(ref));
+}
+
 export function findIsolatedFrame(input: {
   directory: readonly DirectoryEntry[];
   widgetId: string;

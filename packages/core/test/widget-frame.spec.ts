@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import type { DirectoryEntry } from "@clarkcant/contracts";
 
-import { findIsolatedFrame } from "../src/widget-frame.ts";
+import { brokeredCapabilities, findIsolatedFrame } from "../src/widget-frame.ts";
 
 /**
  * Finding the frame document for a widget.
@@ -202,5 +202,21 @@ describe("finding a widget's frame", () => {
     expect(found.ok).toBe(false);
     if (found.ok) return;
     expect(found.code).toBe("PACKAGE_UNREADABLE");
+  });
+});
+
+describe("what a frame is actually brokered", () => {
+  it("narrows what a package requested to what a generation actually granted", () => {
+    expect(brokeredCapabilities(["a@1", "b@1", "c@1"], ["b@1", "c@1", "d@1"])).toEqual(["b@1", "c@1"]);
+  });
+
+  it("brokers nothing for a package with no active generation on record", () => {
+    // Undefined rather than an empty array is the honest shape for "no generation found", and it must not be
+    // read as "granted everything".
+    expect(brokeredCapabilities(["a@1"], undefined)).toEqual([]);
+  });
+
+  it("brokers nothing a package never asked for, even if it was granted for another reason", () => {
+    expect(brokeredCapabilities([], ["a@1"])).toEqual([]);
   });
 });

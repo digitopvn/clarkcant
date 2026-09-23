@@ -35,7 +35,7 @@ export interface PackageRouteDeps {
   segments: string[];
 }
 
-export function handlePackageRoutes(deps: PackageRouteDeps): GatewayResponse | undefined {
+export async function handlePackageRoutes(deps: PackageRouteDeps): Promise<GatewayResponse | undefined> {
   const { request, segments } = deps;
   const { runtime } = deps.services;
   const services = deps.services;
@@ -155,7 +155,7 @@ export function handlePackageRoutes(deps: PackageRouteDeps): GatewayResponse | u
     if (packageId === "" || version === "") {
       return fail(400, "INVALID_SCHEMA", "an install request needs the package id and the version it is installing");
     }
-    const outcome = installPackage(
+    const outcome = await installPackage(
       { runtime, conductor: services.conductor },
       {
         packageId,

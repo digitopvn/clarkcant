@@ -785,3 +785,22 @@ phải digest đã publish: hai thứ đó mô tả hai chuyện khác nhau.
 
 Các row `package_generations` **đã** ghi đường dẫn từ trước vẫn còn trong DB, nên route `/packages/widgets` vẫn
 giữ fallback tìm entry theo `source.path`. Nếu xoá nó, những row cũ đó sẽ báo `NOT_IN_DIRECTORY` vĩnh viễn.
+
+**Nguồn git/npm giờ được fetch thật, không chỉ tin digest listing.** `packages/core/src/package-fetch.ts` là
+nơi làm việc đó: `fetchGitArtifact` clone nông đúng một commit đã pin (`git fetch --depth 1 <url> <sha40>`,
+refuse ref không phải commit id đầy đủ) vào một thư mục cache node sở hữu; `fetchNpmArtifact` đọc packument,
+tải tarball đúng version, kiểm `dist.integrity`/`dist.shasum` với chính byte tải về, rồi giải nén. Digest ghi
+vào plan là `digestOfDirectory` tính trên byte đã fetch — không phải digest publisher tự khai — và một mismatch
+bị refuse (`DIGEST_MISMATCH`) trước khi plan được đề xuất. `installPackage`
+(`apps/runtime/src/application/package-install.ts`) gọi fetch này rồi đổi `source` của entry thành `local` trỏ
+vào thư mục cache, nên phần còn lại của install (plan, consent, generation) là **đúng một** đường đi — không có
+installer thứ hai cho package từ xa.
+
+**`grantedCapabilities` giờ được suy ra, không còn luôn rỗng.** `deriveGrantedCapabilities`
+(`packages/core/src/install-consent.ts`) hỏi execution policy y hệt policy đang gác mọi effect khác trên node,
+theo từng capability đã request, ở category rủi ro mà lane mạnh nhất của package quy định (`declarative`/
+`isolated-ui` → `local-write`, `service`/`trusted-native` → `destructive`). Không có dialog riêng: một capability
+mà policy sẽ hỏi thì bị để ngoài granted set, một capability policy refuse thì bị denied — cả hai đều **không**
+tự động thành granted. Granted set được ghi vào `PackageGeneration.grantedCapabilities`, và widget frame chỉ
+được broker đúng **giao của requested và granted** (`brokeredCapabilities`, `widget-frame.ts`) — không còn gửi
+thẳng `requestedCapabilities` của manifest cho frame như trước.

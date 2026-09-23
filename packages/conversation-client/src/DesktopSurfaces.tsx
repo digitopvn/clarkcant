@@ -517,7 +517,7 @@ export function PinnedLiveSurface({
           url={client.nodeUrl(live.frame.url)}
           title={title ?? instanceId}
           props={live.props}
-          brokeredCapabilities={live.frame.requestedCapabilities}
+          brokeredCapabilities={live.frame.grantedCapabilities}
           allowedOrigins={live.frame.allowedOrigins}
           knownActionBindings={live.bindings.map((entry) => entry.actionBindingId)}
           revision={live.revision}

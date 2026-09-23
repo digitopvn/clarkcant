@@ -233,6 +233,7 @@ export function activateGeneration(
       codeGeneration: input.codeGeneration,
       activatedAt: at,
       uiOnlyFacets: input.uiOnlyFacets,
+      grantedCapabilities: input.currentPlan.grantedCapabilities,
       // Carried from the plan rather than re-derived: what is running and what was consented to are two rows.
       ...(input.currentPlan.lockRef === undefined
         ? {}

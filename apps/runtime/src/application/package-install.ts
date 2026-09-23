@@ -1,6 +1,13 @@
 import { join } from "node:path";
 
-import { instantSchema, nowInstant, platformForHost, type DirectoryEntry } from "@clarkcant/contracts";
+import {
+  entryFitsHost,
+  instantSchema,
+  nowInstant,
+  platformForHost,
+  type CapabilityRef,
+  type DirectoryEntry,
+} from "@clarkcant/contracts";
 import {
   artifactRequest,
   directoryBackedMetadata,
@@ -15,8 +22,13 @@ import {
   type DependencyMetadataSource,
 } from "@clarkcant/capability-host";
 import {
+  HOST_API_VERSION,
+  artifactMatchesPlan,
   decideExecution,
+  deriveGrantedCapabilities,
   directoryIndexPath,
+  fetchGitArtifact,
+  fetchNpmArtifact,
   installFromEntry,
   readDirectoryIndex,
   readExecutionPolicy,
@@ -174,7 +186,50 @@ export function freezeInstallClosure(input: {
   return { ok: true, frozen: { lock: readBack.lock, buildRefusal: incompleteCoverageRefusal(readBack.lock) } };
 }
 
-export function installPackage(deps: PackageInstallDeps, request: PackageInstallRequest): PackageInstallOutcome {
+export type RemoteFetchOutcome =
+  | { ok: true; entry: DirectoryEntry; localDigest?: string }
+  | { ok: false; status: number; code: string; message: string };
+
+/**
+ * Fetch a git or npm entry's bytes into the node's package cache, and re-point the entry at them.
+ *
+ * A `local` entry is returned unchanged: this node already holds its bytes, and there is nothing to fetch. A git
+ * or npm entry is fetched, its digest checked against the one the directory published
+ * (`artifactMatchesPlan`), and the returned entry's `source` is rewritten to `local` at the cache path — so
+ * everything downstream of this function (the dependency lock, the install plan, the consent digest) sees one
+ * shape of source and treats a remote package exactly like a package already on disk.
+ */
+export async function fetchRemoteArtifact(entry: DirectoryEntry, cacheRoot: string): Promise<RemoteFetchOutcome> {
+  if (entry.source.kind === "local") return { ok: true, entry };
+
+  const fetched =
+    entry.source.kind === "git"
+      ? fetchGitArtifact({ url: entry.source.url, ref: entry.source.ref, cacheRoot })
+      : await fetchNpmArtifact({ name: entry.source.name, version: entry.source.version, cacheRoot });
+
+  if (!fetched.ok) {
+    return { ok: false, status: 400, code: fetched.code, message: fetched.message };
+  }
+  if (!artifactMatchesPlan(fetched.artifact.digest, entry.digest)) {
+    return {
+      ok: false,
+      status: 409,
+      code: "DIGEST_MISMATCH",
+      message: `the fetched artifact for ${entry.packageId}@${entry.version} does not match the digest the directory published`,
+    };
+  }
+
+  return {
+    ok: true,
+    entry: { ...entry, source: { kind: "local", path: fetched.artifact.path } },
+    localDigest: fetched.artifact.digest,
+  };
+}
+
+export async function installPackage(
+  deps: PackageInstallDeps,
+  request: PackageInstallRequest,
+): Promise<PackageInstallOutcome> {
   const { runtime, conductor } = deps;
   const { packageId, version } = request;
 
@@ -203,6 +258,39 @@ export function installPackage(deps: PackageInstallDeps, request: PackageInstall
   );
   if (entry === undefined) {
     return { kind: "refused", status: 404, code: "NOT_IN_DIRECTORY", message: `${packageId}@${version} is not in the directory` };
+  }
+
+  /*
+   * The host's own compatibility preflight, before anything else — including before the policy decides and
+   * before a byte is fetched. The wrong platform, a host API this node does not implement, or an entry that
+   * publishes no digest are all facts this node already knows from the listing alone, and a listing that cannot
+   * run here must not be shown as one that can, let alone fetched.
+   *
+   * The two checks are asked separately, with `resolvePackageSource`'s own codes, rather than through
+   * `resolvePackageSource` itself — whose git/npm branches look an entry up in the directory *by source*
+   * (`findEntry`), a second search this route does not need for an entry it was already handed.
+   * `resolvePackageSource` still runs its full check once more inside `installFromEntry`, against the (by then
+   * local) resolved entry, so nothing here widens what it would refuse.
+   */
+  if (entry.hostApi.min > HOST_API_VERSION || entry.hostApi.max < HOST_API_VERSION) {
+    return {
+      kind: "refused",
+      status: 400,
+      code: "HOST_API_MISMATCH",
+      message: `needs host API ${String(entry.hostApi.min)}–${String(entry.hostApi.max)}, this host is ${String(HOST_API_VERSION)}`,
+    };
+  }
+  const fit = entryFitsHost({ entry, hostApi: HOST_API_VERSION, platform });
+  if (!fit.ok) {
+    return { kind: "refused", status: 400, code: "PLATFORM_MISMATCH", message: fit.reason };
+  }
+  if (entry.digest.trim() === "") {
+    return {
+      kind: "refused",
+      status: 400,
+      code: "DIGEST_MISMATCH",
+      message: "the directory entry publishes no digest",
+    };
   }
 
   const principalId = runtime.identity.ownerPrincipalId;
@@ -256,6 +344,21 @@ export function installPackage(deps: PackageInstallDeps, request: PackageInstall
   });
 
   /*
+   * A git or npm source is fetched here, to a node-owned cache directory, before anything else touches it.
+   *
+   * `resolvePackageSource` (inside `installFromEntry`) only ever compares against the digest the *directory*
+   * published — a claim the publisher made, not bytes this node looked at. Fetching now and re-pointing the
+   * entry at the cache directory means the digest that reaches the install plan is computed over the bytes this
+   * node actually holds, and a mismatch is refused here, before a plan is even proposed, rather than discovered
+   * after consent.
+   */
+  const cacheRoot = join(runtime.dataDir, "package-cache");
+  const fetched = await fetchRemoteArtifact(entry, cacheRoot);
+  if (!fetched.ok) return { kind: "refused", status: fetched.status, code: fetched.code, message: fetched.message };
+  const { entry: resolvedEntry, localDigest: fetchedLocalDigest } = fetched;
+  const directoryForInstall = index.entries.map((candidate) => (candidate === entry ? resolvedEntry : candidate));
+
+  /*
    * Freeze the closure before anything is installed, and take the locked-build path's admission of it.
    *
    * `buildable: false` is the honest answer for the lock this route can produce, and it is stated rather than
@@ -271,9 +374,27 @@ export function installPackage(deps: PackageInstallDeps, request: PackageInstall
   if (!frozen.ok) return { kind: "refused", status: frozen.status, code: frozen.code, message: frozen.message };
   const { lock, buildRefusal } = frozen.frozen;
 
+  /*
+   * The granted set, derived from what was requested rather than trusted from the request body (issue #93, P1):
+   * a client declaring its own grants would let a forged request body become authority. `deriveGrantedCapabilities`
+   * asks the same execution policy this install itself was just decided against, per requested capability, in the
+   * risk category the package's own strongest facet lane implies — so a `declarative`/`isolated-ui` package's
+   * requests are granted by the same explicit "install X" intent that authorized the install, and a
+   * `service`/`trusted-native` package's requests are only granted when the policy would execute that riskier
+   * category outright. Anything the policy would ask about, or refuse, is left out of the granted set rather than
+   * answered here.
+   */
+  const grant = deriveGrantedCapabilities({
+    requested: (request.requestedCapabilityRefs ?? []) as readonly CapabilityRef[],
+    riskTier: entry.riskTier,
+    policy,
+    explicitUserIntent: true,
+    artifactDigest: entry.digest,
+  });
+
   const outcome = installFromEntry(coordination, {
-    entry,
-    directory: index.entries,
+    entry: resolvedEntry,
+    directory: directoryForInstall,
     platform,
     ownerPrincipalId: principalId,
     codeGeneration: conductor.newId("codegen"),
@@ -281,23 +402,15 @@ export function installPackage(deps: PackageInstallDeps, request: PackageInstall
     // The frozen closure, bound into the plan and the generation the install activates — the one read back from
     // the lock directory, so what the plan names is what a build would read.
     ...(lock === undefined ? {} : { dependencyLock: lockBindingForPlan(lock) }),
-    ...(request.localDigest === undefined ? {} : { localDigest: request.localDigest }),
+    ...(fetchedLocalDigest !== undefined
+      ? { localDigest: fetchedLocalDigest }
+      : request.localDigest === undefined
+        ? {}
+        : { localDigest: request.localDigest }),
     ...(request.requestedCapabilityRefs === undefined
       ? {}
       : { requestedCapabilityRefs: request.requestedCapabilityRefs }),
-    /*
-     * Granted capabilities never come from the install request (issue #93, P1): a client declaring its
-     * own grants would let a forged request body become authority. This node has no consent/policy
-     * state yet from which to derive a real grant for a marketplace install, so it fails closed with an
-     * empty list rather than trusting the caller — the package still installs and activates, but no
-     * capability it names is registered as usable by that alone. `requestedCapabilityRefs` above is
-     * still accepted, because a request is metadata the plan records for review, not an authority.
-     *
-     * This is the precise seam a later consent flow fills: it needs to derive `grantedCapabilities` from
-     * an authoritative source (the manifest inside the fetched artifact, checked against a decision the
-     * owner principal actually made) and pass that here instead of `[]`.
-     */
-    grantedCapabilities: [],
+    grantedCapabilities: grant.granted,
   });
 
   if (!outcome.ok) return { kind: "refused", status: 400, code: outcome.code, message: outcome.message };

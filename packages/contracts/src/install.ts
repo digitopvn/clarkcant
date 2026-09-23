@@ -511,6 +511,15 @@ export const packageGenerationSchema = z.strictObject({
   supersededAt: instantSchema.optional(),
   /** Facets whose refresh scope is limited to the UI — no Pi restart needed. */
   uiOnlyFacets: z.array(z.string().min(1).max(160)).max(64),
+  /**
+   * The capabilities actually granted to this generation, carried from the consented plan.
+   *
+   * Requested and granted are recorded as two different facts everywhere else in this file, and a
+   * generation is where a widget frame's own broker reads its answer — so the generation carries the
+   * narrower one rather than making a caller re-fetch the plan (which may since have been superseded by
+   * a different requirement) to find out what was actually approved.
+   */
+  grantedCapabilities: z.array(capabilityRefSchema).max(128),
 });
 export type PackageGeneration = z.infer<typeof packageGenerationSchema>;
 

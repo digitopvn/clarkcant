@@ -144,6 +144,7 @@ beforeEach(() => {
         codeGeneration: "code-1",
         activatedAt: AT,
         uiOnlyFacets: [],
+        grantedCapabilities: [],
       }),
     );
 });
