@@ -211,6 +211,19 @@ export async function createNodeModelTurn(deps: ModelBootstrapDeps): Promise<Mod
         search,
         projects,
         command,
+        // The main agent's app-control channel: the same contract and audit trail a click or a typed
+        // command uses, with `source: "agent"` on the record so the two are never indistinguishable
+        // after the fact. `onEvent` is read lazily because this tool list is built once per session, not
+        // once per message — see the getter's own doc in `model-turn.ts`.
+        appControl: {
+          db: deps.services().runtime.db,
+          nodeId: deps.services().runtime.identity.nodeId,
+          now: () => instantSchema.parse(new Date().toISOString()),
+          newId: deps.services().conductor.newId,
+          principalId: search.principalId,
+          conversationId: turn.conversationId as never,
+          onEvent: turn.onEvent,
+        },
         // Reading an attached file is scoped to the conversation this turn belongs to, which is the
         // only thing the tool needs to check beyond the principal.
         attachments: { dataDir: deps.dataDir, conversationId: turn.conversationId },

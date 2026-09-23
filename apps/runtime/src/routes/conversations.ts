@@ -1227,6 +1227,11 @@ async function streamUserMessage(
           send(sse("tool-start", { toolCallId: event.toolCallId, name: event.name, label: event.label, args: event.args }));
         } else if (event.type === "tool-end") {
           send(sse("tool-end", { toolCallId: event.toolCallId, status: event.status, result: event.result }));
+        } else if (event.type === "host-control") {
+          // An agent-issued app-control action, delivered as its own frame rather than folded into a
+          // tool-end result: the client's one executor (`runAppIntent`) reads a decision, and the
+          // `control_app` tool's own text result stays a report to the model, not a second copy of it.
+          send(sse("host-control", { decision: event.decision }));
         }
       },
     });

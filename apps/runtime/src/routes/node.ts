@@ -8,7 +8,7 @@ import { credentialNames } from "@clarkcant/storage";
 import { nowInstant } from "@clarkcant/contracts";
 
 import { DEFAULT_NARROWING, readAutonomySettings, saveAutonomySettings } from "../autonomy-settings.ts";
-import { cycleModelPool, readCurrentAlias, readModelPool, writeModelPool } from "../model-registry.ts";
+import { cycleModelPool, readCurrentAlias, readModelPool, selectModelProfile, writeModelPool } from "../model-registry.ts";
 import { availableCredentials } from "../readiness.ts";
 import { PI_BUILTIN_TOOLS, nodeToolCatalogue } from "../tool-catalogue.ts";
 import { type NodeServices } from "../services.ts";
@@ -215,6 +215,34 @@ export async function handleNodeRoutes(deps: NodeRouteDeps): Promise<GatewayResp
       alias: cycled.next.alias,
       provider: cycled.next.provider,
       modelId: cycled.next.modelId,
+      applies: "a new generation; the running turn is not touched",
+    });
+  }
+
+  /*
+   * Select a specific configured profile by alias, the counterpart of the hotkey above for the
+   * app-control vocabulary (`model.select`): a click, an agent tool call and a voice request all name
+   * a profile the same way, and this is the one route all three end up calling.
+   */
+  if (request.method === "POST" && request.path === "/model-pool/select") {
+    const parsed = readJson(request);
+    if (!parsed.ok) return parsed.response;
+    const alias = typeof parsed.value.alias === "string" ? parsed.value.alias.trim() : "";
+    if (alias === "") return fail(400, "INVALID_SCHEMA", "an alias is required");
+    const selected = selectModelProfile(runtime.db, runtime.identity.ownerPrincipalId, alias, nowInstant());
+    if (selected.next === undefined) {
+      return fail(
+        409,
+        "NO_MODEL_PROFILE",
+        `pool này không có profile "${alias}" nào đang bật, nên không đổi được model.`,
+      );
+    }
+    return json(200, {
+      ok: true,
+      ...(selected.current === undefined ? {} : { previous: selected.current }),
+      alias: selected.next.alias,
+      provider: selected.next.provider,
+      modelId: selected.next.modelId,
       applies: "a new generation; the running turn is not touched",
     });
   }

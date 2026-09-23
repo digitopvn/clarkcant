@@ -513,8 +513,16 @@ export async function createModelTurn(options: {
    * Given the conversation, because one of those tools reads the files attached to *this* conversation
    * and has nothing to check without it. A tool that took the conversation from somewhere else would be a
    * second source of truth for which turn is running.
+   *
+   * `onEvent` is a getter rather than a value: the tool list is built once, at session creation, but a
+   * foreground stream only attaches its listener per message — so a tool that captured the listener at
+   * build time would find it `undefined` forever. Reading it through the getter at call time is what lets
+   * `control_app` tell a live stream from none: `NO_ACTIVE_HOST_SURFACE` is `onEvent() === undefined`.
    */
-  extraTools?: (turn: { conversationId: string }) => readonly ToolDefinition[];
+  extraTools?: (turn: {
+    conversationId: string;
+    onEvent: () => ((event: ModelTurnEvent) => void) | undefined;
+  }) => readonly ToolDefinition[];
   /**
    * What was remembered, for the turn about to run.
    *
@@ -552,8 +560,8 @@ export async function createModelTurn(options: {
 
   const readViews = (): readonly ViewDescriptor[] => options.views?.() ?? [];
   const readDatasetRefs = (): readonly string[] => options.datasetRefs?.() ?? [];
-  const readExtraTools = (conversationId: string): readonly ToolDefinition[] =>
-    options.extraTools?.({ conversationId }) ?? [];
+  const readExtraTools = (turn: Turn): readonly ToolDefinition[] =>
+    options.extraTools?.({ conversationId: turn.conversationId, onEvent: () => turn.onEvent }) ?? [];
   const budget = modelBudgetFromEnv(options.env);
   const adapter =
     options.adapter ??
@@ -699,7 +707,7 @@ export async function createModelTurn(options: {
     // and are registered whatever the catalog says.
     const customTools = [
       ...(views.length === 0 ? [] : [showViewTool(turn, principal, views, viewById, datasetRefs)]),
-      ...readExtraTools(conversationId),
+      ...readExtraTools(turn),
     ].map((tool) => withActivity(turn, tool));
 
     const chosen = options.model?.();
