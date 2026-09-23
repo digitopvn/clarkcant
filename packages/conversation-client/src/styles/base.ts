@@ -186,7 +186,15 @@ body {
   width: 100%; height: 6px; overflow: hidden;
   background: var(--cc-elevated); border-radius: var(--cc-radius-pill);
 }
-.cc-mic-level > span { display: block; height: 100%; background: currentColor; opacity: 0.7; transition: width 80ms linear; }
+/*
+ * Full width always; the level itself is drawn with 'transform: scaleX()' set inline (microphone-check.tsx)
+ * rather than by animating 'width', a layout property AGENTS.md's motion rules forbid animating every frame.
+ * Scaled from the left edge so a quiet reading stays pinned to where the bar starts.
+ */
+.cc-mic-level > span {
+  display: block; width: 100%; height: 100%; background: currentColor; opacity: 0.7;
+  transform-origin: left; transition: transform var(--cc-motion-micro) var(--cc-motion-easing);
+}
 
 /*
  * The background mark in the header.

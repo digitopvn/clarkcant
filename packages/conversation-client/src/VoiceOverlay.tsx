@@ -399,7 +399,9 @@ export function VoiceOverlay({
 
           <div className="cc-voice-wave" data-voice-wave="true" aria-hidden="true">
             {bars.map((height, index) => (
-              <span key={index} className="cc-voice-bar" style={{ height: `${Math.round(height * 100)}%` }} />
+              // `transform: scaleY()` rather than `height`: the bar's box stays full height and only the
+              // paint scales, which the browser can animate without laying the row out again every frame.
+              <span key={index} className="cc-voice-bar" style={{ transform: `scaleY(${height.toFixed(3)})` }} />
             ))}
           </div>
 

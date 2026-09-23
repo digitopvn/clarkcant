@@ -294,8 +294,18 @@ function DataTable({ props, dataset, onAction }: RendererProps): ReactElement {
             <tr
               key={index}
               aria-selected={selected === index}
+              // Focusable and Enter/Space-activated so the same selection a pointer makes is reachable
+              // from the keyboard; `role="button"` is not valid on `<tr>`, so the row keeps its table
+              // semantics and gets its interactivity from tabIndex and the key handler alone.
+              tabIndex={0}
               // Selection is a view action: it commits nothing and calls no model.
               onClick={() => {
+                setSelected(index);
+                onAction?.("row.select", { index, row });
+              }}
+              onKeyDown={(event) => {
+                if (event.key !== "Enter" && event.key !== " ") return;
+                event.preventDefault();
                 setSelected(index);
                 onAction?.("row.select", { index, row });
               }}

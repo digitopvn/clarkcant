@@ -1,6 +1,13 @@
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 
-import { applyDocumentLocale, readStoredLocale, storeLocale, type LocaleChoice } from "./locale.ts";
+import {
+  applyDocumentLocale,
+  notifyLocaleChange,
+  readStoredLocale,
+  storeLocale,
+  subscribeLocaleChange,
+  type LocaleChoice,
+} from "./locale.ts";
 import { CATALOGS, type MessageKey } from "./messages.ts";
 
 export interface LocaleState {
@@ -26,10 +33,21 @@ function readAndApplyStoredLocale(): LocaleChoice {
 export function useLocale(): LocaleState {
   const [locale, setLocaleState] = useState<LocaleChoice>(readAndApplyStoredLocale);
 
+  // A second, independent `useLocale()` call elsewhere in the tree (App.tsx alongside
+  // Conversation.tsx, for example) must repaint when this instance's `setLocale` runs, and vice
+  // versa — otherwise the two disagree about the current language until one of them remounts.
+  useEffect(() => {
+    return subscribeLocaleChange((next) => {
+      applyDocumentLocale(next);
+      setLocaleState(next);
+    });
+  }, []);
+
   const setLocale = useCallback((next: LocaleChoice) => {
     storeLocale(next);
     applyDocumentLocale(next);
     setLocaleState(next);
+    notifyLocaleChange(next);
   }, []);
 
   const t = useCallback((key: MessageKey): string => CATALOGS[locale][key], [locale]);

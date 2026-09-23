@@ -74,7 +74,7 @@ export function MicrophoneCheck(): ReactElement {
         {words}
       </p>
       <div className="cc-mic-level" aria-hidden="true">
-        <span style={{ width: `${Math.round(Math.min(1, level) * 100)}%` }} />
+        <span style={{ transform: `scaleX(${Math.min(1, level).toFixed(3)})` }} />
       </div>
       {/* The level is decorative; this is the same fact for a reader who cannot see the bar. */}
       <span className="cc-sr-only" data-mic-level={level.toFixed(3)}>

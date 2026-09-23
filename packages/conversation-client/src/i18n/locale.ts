@@ -64,3 +64,28 @@ export function applyDocumentLocale(choice: LocaleChoice): void {
   if (typeof document === "undefined") return;
   document.documentElement.lang = HTML_LANG[choice];
 }
+
+type LocaleListener = (choice: LocaleChoice) => void;
+
+/**
+ * Every live `useLocale()` instance in this document, so a write from one reaches the others.
+ *
+ * `App.tsx` and `Conversation.tsx` each call `useLocale()` independently rather than sharing one
+ * provider, so each holds its own React state seeded from the same cached choice at mount. Without
+ * this, a change made through one (for example `ExperienceSettings`, which writes through
+ * `Conversation`'s instance) would cache and re-paint `<html lang>` correctly but leave the other
+ * instance's `t()` frozen on the language that was active when it mounted — a `storage` event does
+ * not fire in the tab that made the write, so it cannot close this gap on its own.
+ */
+const listeners = new Set<LocaleListener>();
+
+/** Subscribe to a locale change made by any `useLocale()` instance. Returns the unsubscribe function. */
+export function subscribeLocaleChange(listener: LocaleListener): () => void {
+  listeners.add(listener);
+  return () => listeners.delete(listener);
+}
+
+/** Tell every other subscribed instance that the language changed. */
+export function notifyLocaleChange(choice: LocaleChoice): void {
+  for (const listener of listeners) listener(choice);
+}

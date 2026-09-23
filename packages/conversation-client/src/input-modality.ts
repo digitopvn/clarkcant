@@ -151,3 +151,21 @@ export function agentStateFrom(input: {
   if (input.busy === true) return "thinking";
   return "idle";
 }
+
+/** The shell's window mode, matching `windowModeSchema` in `@clarkcant/contracts` and DESIGN.md §4. */
+export const WINDOW_MODES = ["normal", "expanded", "compact", "orb"] as const;
+export type WindowModeAttribute = (typeof WINDOW_MODES)[number];
+
+/**
+ * Which single window mode to publish, from the surfaces the shell already tracks.
+ *
+ * `compactSurface` is the desktop window shrunk to the voice bar (`use-voice-session.ts`); it opens
+ * voice on its own, so a compact window with voice open is the `orb` presentation rather than a second
+ * "compact but somehow not listening" state nothing renders differently. `focusedInstanceId` mirrors
+ * the same pin state `Conversation` already reads to know which widget is fullscreen.
+ */
+export function windowModeFrom(input: { compactSurface: boolean; voiceOpen: boolean; hasFocusedPin: boolean }): WindowModeAttribute {
+  if (input.compactSurface) return input.voiceOpen ? "orb" : "compact";
+  if (input.hasFocusedPin) return "expanded";
+  return "normal";
+}

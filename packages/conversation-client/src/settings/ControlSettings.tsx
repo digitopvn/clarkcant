@@ -67,6 +67,8 @@ export interface ControlSettingsProps {
   /** The effects this node performed without an approval card, newest first. */
   recentEffects: readonly { at: string; description: string; mode: string; category: string }[];
   recentProblem: string | undefined;
+  /** Called after a successful autonomy save, so the shell's `data-policy-mode` follows it. */
+  onPolicyChange?: () => void;
 }
 
 /** The words the node acts on, rather than a summary of them. */
@@ -136,7 +138,13 @@ const VALID_CATEGORIES: readonly EffectCategory[] = [
  * The narrowing table travels with the read because the panel shows what the guardrail may ask for — a list the
  * host owns, and a model may only pick from.
  */
-function ExecutionPolicySettings({ client }: { client: GatewayClient }): ReactElement {
+function ExecutionPolicySettings({
+  client,
+  onPolicyChange,
+}: {
+  client: GatewayClient;
+  onPolicyChange?: () => void;
+}): ReactElement {
   const t = useT();
   const [settings, setSettings] = useState<AutonomySettings | undefined>(undefined);
   const [narrowing, setNarrowing] = useState<{ id: string; description: string }[]>([]);
@@ -191,7 +199,10 @@ function ExecutionPolicySettings({ client }: { client: GatewayClient }): ReactEl
     setPending(true);
     client
       .putAutonomy(settings)
-      .then(() => setStatus(t("settings.control.saved")))
+      .then(() => {
+        setStatus(t("settings.control.saved"));
+        onPolicyChange?.();
+      })
       .catch(() => setStatus(t("settings.control.saveFailed")))
       .finally(() => setPending(false));
   };
@@ -316,7 +327,13 @@ function readRules(value: unknown): ExecutionRule[] {
   return rules;
 }
 
-export function ControlSettings({ prefs, client, recentEffects, recentProblem }: ControlSettingsProps): ReactElement {
+export function ControlSettings({
+  prefs,
+  client,
+  recentEffects,
+  recentProblem,
+  onPolicyChange,
+}: ControlSettingsProps): ReactElement {
   const t = useT();
   const rules = readRules(prefs.preference("execution.rules")?.value);
   const CATEGORY_LABELS = categoryLabels(t);
@@ -337,7 +354,7 @@ export function ControlSettings({ prefs, client, recentEffects, recentProblem }:
         overwrite a mode just chosen on the other. The mode lives here now, and `execution.mode` is a projection of
         it that nothing on this screen writes.
       */}
-      <ExecutionPolicySettings client={client} />
+      <ExecutionPolicySettings client={client} {...(onPolicyChange === undefined ? {} : { onPolicyChange })} />
 
       <section className="cc-panel-section" data-execution-rules="true">
         <h3>{t("settings.control.rules.heading")}</h3>

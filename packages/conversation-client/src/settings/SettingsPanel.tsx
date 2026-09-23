@@ -97,6 +97,11 @@ export interface SettingsPanelProps {
   /** Called after a write that changes the orb, so the orb on screen follows the control that changed it. */
   onOrbChange?: () => void;
   /**
+   * Called after a write that changes the execution policy, so the shell's `data-policy-mode`
+   * (DESIGN.md §4) follows the mode the control just saved, the same way `onOrbChange` does for the orb.
+   */
+  onPolicyChange?: () => void;
+  /**
    * The tab to show, when something other than the panel chose one.
    *
    * A spoken command names a tab, and the speech path has to land where clicking that tab lands. Without this the
@@ -123,6 +128,7 @@ export function SettingsPanel({
   resolvedTheme,
   onThemeChoice,
   onOrbChange,
+  onPolicyChange,
   openAt,
   onOpenWidgetLibrary,
 }: SettingsPanelProps): ReactElement | null {
@@ -321,6 +327,7 @@ export function SettingsPanel({
             client={client}
             recentEffects={effects}
             recentProblem={effectsProblem}
+            {...(onPolicyChange === undefined ? {} : { onPolicyChange })}
           />
         )}
         {tab === "extensions" && (

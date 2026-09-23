@@ -1,7 +1,7 @@
 import { type CSSProperties, type ReactElement, useRef, useState } from "react";
 
 import type { GatewayClient, Timeline } from "./api.ts";
-import { agentStateFrom } from "./input-modality.ts";
+import { agentStateFrom, windowModeFrom } from "./input-modality.ts";
 import type { ResolvedOrbProfile } from "./orb-profile.ts";
 import { Markdown } from "./markdown.tsx";
 import { Orb } from "./Orb.tsx";
@@ -26,6 +26,7 @@ import { useConnectionStatus } from "./use-connection-status.ts";
 import { useModelAlias } from "./use-model-alias.ts";
 import { useDynamicSuggestions } from "./use-dynamic-suggestions.ts";
 import { useInputModalityState } from "./use-input-modality-state.ts";
+import { usePolicyModeState } from "./use-policy-mode-state.ts";
 import { useConversationTimeline } from "./use-conversation-timeline.ts";
 import { useHeroOrbLayout, ORB_DRAW_SIZE, ORB_RADIUS } from "./use-hero-orb-layout.ts";
 import { useAttachmentComposer } from "./use-attachment-composer.ts";
@@ -119,6 +120,7 @@ export function Conversation({
   needsModel,
 }: ConversationProps): ReactElement {
   const modality = useInputModalityState();
+  const { policyMode, refresh: refreshPolicyMode } = usePolicyModeState(client);
   const connection = useConnectionStatus(client);
   const { themeChoice, resolvedTheme, applyThemeChoice } = useTheme();
   const localeState = useLocale();
@@ -286,6 +288,11 @@ export function Conversation({
   });
 
   const focusedInstanceId = pins.find((pin) => pin.displayMode === "expanded")?.instanceId;
+  const windowMode = windowModeFrom({
+    compactSurface,
+    voiceOpen,
+    hasFocusedPin: focusedInstanceId !== undefined,
+  });
   // Re-derived from the current locale on every render rather than memoized: a language switch mid-typewriter
   // must show the new language's phrases, not finish the cycle in the one that was active when it started.
   const placeholderPhrases = PLACEHOLDER_PHRASE_KEYS.map((key) => localeState.t(key));
@@ -304,6 +311,8 @@ export function Conversation({
       data-compact={compactSurface ? "true" : "false"}
       data-input-modality={modality}
       data-agent-state={agentState}
+      data-window-mode={windowMode}
+      data-policy-mode={policyMode}
       ref={shell}
       style={{ "--cc-orb-dock": "720px" } as CSSProperties}
     >
@@ -445,6 +454,7 @@ export function Conversation({
         resolvedTheme={resolvedTheme}
         onThemeChoice={applyThemeChoice}
         {...(onOrbChange === undefined ? {} : { onOrbChange })}
+        onPolicyChange={refreshPolicyMode}
         onOpenWidgetLibrary={appIntents.openWidgetLibrary}
       />
 

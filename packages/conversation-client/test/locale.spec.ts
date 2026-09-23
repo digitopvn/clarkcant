@@ -6,8 +6,10 @@ import {
   isLocaleChoice,
   LOCALE_CHOICES,
   LOCALE_STORAGE_KEY,
+  notifyLocaleChange,
   readStoredLocale,
   storeLocale,
+  subscribeLocaleChange,
 } from "../src/i18n/locale.ts";
 import { CATALOGS, MESSAGES_EN, MESSAGES_VI, type MessageKey } from "../src/i18n/messages.ts";
 
@@ -137,5 +139,39 @@ describe("applying the locale to the document", () => {
     } finally {
       (globalThis as { document?: unknown }).document = original;
     }
+  });
+});
+
+describe("cross-instance locale change notification", () => {
+  // apps/web/src/App.tsx and packages/conversation-client/src/Conversation.tsx each call
+  // useLocale() independently. A change written through one instance must reach every other
+  // subscribed instance so both render the same language, without either polling or a
+  // same-tab `storage` event (which never fires for the tab that made the write).
+
+  it("delivers a change to every subscriber", () => {
+    const seenByA: string[] = [];
+    const seenByB: string[] = [];
+    const unsubA = subscribeLocaleChange((choice) => seenByA.push(choice));
+    const unsubB = subscribeLocaleChange((choice) => seenByB.push(choice));
+    try {
+      notifyLocaleChange("en");
+      expect(seenByA).toEqual(["en"]);
+      expect(seenByB).toEqual(["en"]);
+    } finally {
+      unsubA();
+      unsubB();
+    }
+  });
+
+  it("stops delivering after unsubscribe", () => {
+    const seen: string[] = [];
+    const unsubscribe = subscribeLocaleChange((choice) => seen.push(choice));
+    unsubscribe();
+    notifyLocaleChange("en");
+    expect(seen).toEqual([]);
+  });
+
+  it("does not throw when nothing is subscribed", () => {
+    expect(() => notifyLocaleChange("vi")).not.toThrow();
   });
 });

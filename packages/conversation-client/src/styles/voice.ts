@@ -98,9 +98,15 @@ export const VOICE_CSS = `
   display: flex; flex-direction: column; align-items: center; justify-content: center;
   gap: var(--cc-space-md); padding: var(--cc-space-xl) var(--cc-space-lg); text-align: center;
 }
-/* The orb grows a little with the voice, which is the one reaction the design's sphere has. */
+/*
+ * The orb grows a little with the voice, which is the one reaction the design's sphere has.
+ *
+ * Uses the raw micro duration rather than the 'press'/'release' helper: this is a continuous ambient
+ * reaction to audio level, not feedback for something the user just did, and AGENTS.md reserves the
+ * bounce for press/release/pin-drop/panel settle so an ambient effect stays subtle rather than springy.
+ */
 .cc-voice-orb {
-  border-radius: var(--cc-radius-pill); transition: transform 90ms linear;
+  border-radius: var(--cc-radius-pill); transition: transform var(--cc-motion-micro) var(--cc-motion-easing);
   animation: cc-enter var(--cc-motion-enter) var(--cc-motion-bounce) both;
 }
 .cc-voice-orb-canvas { border-radius: var(--cc-radius-pill); display: block; }
@@ -111,9 +117,16 @@ export const VOICE_CSS = `
   height: 64px; width: min(420px, 100%);
 }
 .cc-voice-bar {
-  width: 4px; border-radius: var(--cc-radius-pill); background: var(--cc-accent);
+  width: 4px; height: 100%; border-radius: var(--cc-radius-pill); background: var(--cc-accent);
+  /*
+   * Full height always; the level itself is drawn with 'transform: scaleY()' set inline per bar
+   * (VoiceOverlay.tsx) rather than by animating 'height', which is a layout property AGENTS.md's
+   * motion rules forbid animating every frame. Scaling from the bottom keeps a quiet bar pinned to
+   * the baseline instead of shrinking from the middle.
+   */
+  transform-origin: bottom;
   /* Short, so the bars follow the voice rather than lagging behind it. */
-  transition: height 80ms linear;
+  transition: transform var(--cc-motion-micro) var(--cc-motion-easing);
 }
 /* The live transcript of what the user said, as the design quotes it back to them. */
 .cc-voice-transcript {
