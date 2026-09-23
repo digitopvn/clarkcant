@@ -152,6 +152,12 @@ interface Turn {
    * request that has ended must not keep receiving events: the session outlives the stream.
    */
   onEvent: ((event: ModelTurnEvent) => void) | undefined;
+  /**
+   * Which surface the message this turn is answering came in on. Set alongside `onEvent`, on the same
+   * lifecycle: it is a property of the request in flight, not of the session, so a session that answers
+   * a typed message and then a spoken one must not keep reporting the first message's channel.
+   */
+  channel: "voice" | "chat";
   /** Numbers the tool calls this turn made, so a start and an end can name the same widget. */
   toolSequence: number;
   unsubscribe: () => void;
@@ -522,6 +528,8 @@ export async function createModelTurn(options: {
   extraTools?: (turn: {
     conversationId: string;
     onEvent: () => ((event: ModelTurnEvent) => void) | undefined;
+    /** See `Turn.channel`; read the same way and for the same reason. */
+    channel: () => "voice" | "chat";
   }) => readonly ToolDefinition[];
   /**
    * What was remembered, for the turn about to run.
@@ -561,7 +569,11 @@ export async function createModelTurn(options: {
   const readViews = (): readonly ViewDescriptor[] => options.views?.() ?? [];
   const readDatasetRefs = (): readonly string[] => options.datasetRefs?.() ?? [];
   const readExtraTools = (turn: Turn): readonly ToolDefinition[] =>
-    options.extraTools?.({ conversationId: turn.conversationId, onEvent: () => turn.onEvent }) ?? [];
+    options.extraTools?.({
+      conversationId: turn.conversationId,
+      onEvent: () => turn.onEvent,
+      channel: () => turn.channel,
+    }) ?? [];
   const budget = modelBudgetFromEnv(options.env);
   const adapter =
     options.adapter ??
@@ -696,6 +708,7 @@ export async function createModelTurn(options: {
       reasoning: [],
       segments: [],
       onEvent: undefined,
+      channel: "chat",
       toolSequence: 0,
       unsubscribe: () => {},
       abort: new AbortController(),
@@ -906,6 +919,7 @@ export async function createModelTurn(options: {
       turn.segments.length = 0;
       turn.messageId = input.messageId;
       turn.onEvent = input.onEvent;
+      turn.channel = input.channel ?? "chat";
       turn.toolSequence = 0;
       turn.abort = new AbortController();
 

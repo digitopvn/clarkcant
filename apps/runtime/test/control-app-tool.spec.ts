@@ -31,7 +31,10 @@ afterEach(() => {
   rmSync(dir, { recursive: true, force: true });
 });
 
-function deps(onEvent: () => ((event: ModelTurnEvent) => void) | undefined): ControlAppDeps {
+function deps(
+  onEvent: () => ((event: ModelTurnEvent) => void) | undefined,
+  channel: "voice" | "chat" = "chat",
+): ControlAppDeps {
   return {
     db: services.runtime.db,
     nodeId: services.runtime.identity.nodeId,
@@ -40,6 +43,7 @@ function deps(onEvent: () => ((event: ModelTurnEvent) => void) | undefined): Con
     principalId: services.runtime.identity.ownerPrincipalId,
     conversationId: "conv_test" as never,
     onEvent,
+    channel: () => channel,
   };
 }
 
@@ -102,5 +106,16 @@ describe("control_app", () => {
     const document = JSON.parse(events[0]!.document) as { source: string; kind: string };
     expect(document.source).toBe("agent");
     expect(document.kind).toBe("voice.open");
+  });
+
+  it("audits a delivered request answering a spoken turn with source: voice", () => {
+    decideControlApp(deps(() => () => {}, "voice"), { kind: "nav.home" });
+    const events = services.runtime.db
+      .prepare("SELECT document FROM events WHERE kind = 'app.intent' ORDER BY rowid DESC LIMIT 1")
+      .all() as { document: string }[];
+    expect(events).toHaveLength(1);
+    const document = JSON.parse(events[0]!.document) as { source: string; kind: string };
+    expect(document.source).toBe("voice");
+    expect(document.kind).toBe("nav.home");
   });
 });

@@ -223,6 +223,7 @@ export async function createNodeModelTurn(deps: ModelBootstrapDeps): Promise<Mod
           principalId: search.principalId,
           conversationId: turn.conversationId as never,
           onEvent: turn.onEvent,
+          channel: turn.channel,
         },
         // Reading an attached file is scoped to the conversation this turn belongs to, which is the
         // only thing the tool needs to check beyond the principal.

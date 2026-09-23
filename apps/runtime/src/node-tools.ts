@@ -234,6 +234,15 @@ export interface ControlAppDeps {
   conversationId?: ConversationId;
   /** The live turn's event sink, read at call time; see `extraTools` in `model-turn.ts` for why this is a getter. */
   onEvent: () => ((event: ModelTurnEvent) => void) | undefined;
+  /**
+   * Which surface the message this call belongs to came in on, read at call time for the same reason
+   * `onEvent` is a getter: the tool list is built once per session, and a session answers both typed
+   * and spoken messages over its life. Drives the audit record's `source` — `"agent"` for a message
+   * from the composer, `"voice"` for one the voice session's own conductor call answered — so a click,
+   * a deterministic spoken command, and a model's own decision never collapse into one indistinguishable
+   * record.
+   */
+  channel: () => "voice" | "chat";
 }
 
 const NO_ACTIVE_HOST_SURFACE_SAY =
@@ -244,11 +253,12 @@ const NO_ACTIVE_HOST_SURFACE_SAY =
  * executor.
  *
  * This tool never claims success on its own: it validates the request against the same contract the
- * typed and spoken paths use, records who asked with `source: "agent"` so the audit can tell a person's
- * click from a model's own decision, and then delivers an ephemeral `host-control` event to whichever
- * foreground stream is watching this turn. Whether the screen actually changed is answered by the
- * client's one executor (`runAppIntent`), not guessed here — this call only reports that the event was
- * delivered or, honestly, that there was nowhere to deliver it.
+ * typed and spoken paths use, records who asked with `source: "agent"` or `"voice"` (see `channel`) so
+ * the audit can tell a person's click from a model's own decision — and, among those, whether the
+ * decision was made answering the composer or a spoken sentence — and then delivers an ephemeral
+ * `host-control` event to whichever foreground stream is watching this turn. Whether the screen
+ * actually changed is answered by the client's one executor (`runAppIntent`), not guessed here — this
+ * call only reports that the event was delivered or, honestly, that there was nowhere to deliver it.
  */
 export function createControlAppTool(deps: ControlAppDeps): ToolDefinition {
   return {
@@ -338,7 +348,7 @@ export function decideControlApp(deps: ControlAppDeps, params: Record<string, un
     { db: deps.db, nodeId: deps.nodeId, now: deps.now, newId: deps.newId },
     {
       intent,
-      source: "agent",
+      source: deps.channel() === "voice" ? "voice" : "agent",
       confirmed: false,
       ...(deps.conversationId === undefined ? {} : { conversationId: deps.conversationId }),
     },
