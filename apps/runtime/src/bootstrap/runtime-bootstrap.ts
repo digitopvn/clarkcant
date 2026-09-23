@@ -239,6 +239,7 @@ export function wireRuntime(deps: RuntimeBootstrapDeps): void {
       projectRoots: () => deps.services.projects.roots(),
       ownedRoots: () =>
         ownedResources([...deps.services.projects.roots(), deps.services.runtime.dataDir, process.cwd()]).roots,
+      ownerPrincipalId: () => deps.services.runtime.identity.ownerPrincipalId,
       onSettled: ({ taskId, conversationId, outcome, message }) => {
         const label =
           outcome === "succeeded"
