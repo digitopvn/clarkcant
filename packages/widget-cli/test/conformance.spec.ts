@@ -190,6 +190,44 @@ describe("the frame checks, when a frame was measured", () => {
     expect(result.checks.find((check) => check.id === "interaction.keyboard")?.status).toBe("pass");
   });
 
+  describe("detach, once a real second window reported facts", () => {
+    it("passes when the lease moved to the detached surface and back with one owner throughout", async () => {
+      const result = runConformance(await tempPackage("form"), {
+        frames: { ...clean, detach: { afterDetach: "detached", everDoubleOwned: false, afterReattach: "inline" } },
+      });
+      const check = result.checks.find((c) => c.id === "interaction.detach");
+      expect(check?.status).toBe("pass");
+      expect(check?.detail).toContain("afterDetach: detached");
+    });
+
+    it("fails when the lease was ever held by two owners at once", async () => {
+      const result = runConformance(await tempPackage("form"), {
+        frames: { ...clean, detach: { afterDetach: "detached", everDoubleOwned: true, afterReattach: "inline" } },
+      });
+      const check = result.checks.find((c) => c.id === "interaction.detach");
+      expect(check?.status).toBe("fail");
+      expect(check?.detail).toContain("two owners at once");
+    });
+
+    it("fails when detaching never moved the lease off the shell", async () => {
+      const result = runConformance(await tempPackage("form"), {
+        frames: { ...clean, detach: { afterDetach: "inline", everDoubleOwned: false, afterReattach: "inline" } },
+      });
+      const check = result.checks.find((c) => c.id === "interaction.detach");
+      expect(check?.status).toBe("fail");
+      expect(check?.detail).toContain("did not move the lease");
+    });
+
+    it("fails when closing the detached window never handed the lease back", async () => {
+      const result = runConformance(await tempPackage("form"), {
+        frames: { ...clean, detach: { afterDetach: "detached", everDoubleOwned: false, afterReattach: "detached" } },
+      });
+      const check = result.checks.find((c) => c.id === "interaction.detach");
+      expect(check?.status).toBe("fail");
+      expect(check?.detail).toContain("did not hand the lease back");
+    });
+  });
+
   it("reads frame facts from a file, and refuses one it cannot read", async () => {
     const root = await tempPackage("form");
     const framesPath = join(root, "frames.json");

@@ -298,11 +298,15 @@ export const IMPLEMENTATION_STATUS: readonly ImplementationStatusEntry[] = [
         file: "packages/widget-cli/test/conformance.spec.ts",
         test: "reports the browser checks as unverified rather than as passing",
       },
+      {
+        file: "packages/widget-cli/test/detach-real-browser.e2e.spec.ts",
+        test: "moves the lease to a real detached window and back, with never more than one owner",
+      },
     ],
     externalGate: {
       issue: 4,
       reason:
-        "the harness drives a browser dev host, which has no detached window to drive - the desktop's detached window is covered by the desktop and browser suites rather than by this check - and voiceClickParity needs a voice session, whose precondition is the provider account in #4",
+        "detach is now answered from a real second window and the same claimLiveOwner/releaseLiveOwner the runtime calls (packages/widget-cli/src/dev-lease.ts); the one remaining check is voiceClickParity, which needs a voice session, whose precondition is the provider account in #4",
     },
   },
   {
