@@ -46,6 +46,15 @@ async function waitForFullPlaceholder(page: import("@playwright/test").Page, phr
     .toMatch(pattern);
 }
 
+
+/** The node keeps the language choice, and the suite shares one node: put it back for the specs after this one. */
+test.afterEach(async ({ request }) => {
+  await request.put(`${GATEWAY}/preferences/experience.language`, {
+    headers: { authorization: `Bearer ${token()}` },
+    data: { value: "vi" },
+  });
+});
+
 test("choosing English changes the composer, a voice control, and the marketplace heading", async ({ page }) => {
   await page.goto(`/?token=${token()}&gateway=${encodeURIComponent(GATEWAY)}`);
   await expect(page.locator("text=Ready")).toBeVisible({ timeout: 15_000 });

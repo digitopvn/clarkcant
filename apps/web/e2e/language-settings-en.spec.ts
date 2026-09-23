@@ -88,6 +88,15 @@ async function panelTextExcludingDataAndForeignScope(page: Page): Promise<string
   });
 }
 
+
+/** The node keeps the language choice, and the suite shares one node: put it back for the specs after this one. */
+test.afterEach(async ({ request }) => {
+  await request.put(`${GATEWAY}/preferences/experience.language`, {
+    headers: { authorization: `Bearer ${token()}` },
+    data: { value: "vi" },
+  });
+});
+
 test("every Settings tab renders with no leftover Vietnamese chrome once English is chosen", async ({ page }) => {
   await openApp(page);
 

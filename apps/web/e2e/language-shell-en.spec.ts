@@ -54,6 +54,15 @@ async function switchToEnglish(page: Page): Promise<void> {
   await expect(page.locator(".cc-modal-scrim")).toHaveCount(0);
 }
 
+
+/** The node keeps the language choice, and the suite shares one node: put it back for the specs after this one. */
+test.afterEach(async ({ request }) => {
+  await request.put(`${GATEWAY}/preferences/experience.language`, {
+    headers: { authorization: `Bearer ${token()}` },
+    data: { value: "vi" },
+  });
+});
+
 test("the hero empty state, header and an attachment failure read in English once the language is switched", async ({
   page,
 }) => {
