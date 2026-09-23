@@ -123,6 +123,26 @@ export function attachNodeVoice(deps: NodeVoiceDeps): NodeVoice {
   const voiceFixture = deps.fixtureVoice !== undefined;
   const scripted = deps.fixtureVoice;
   if (scripted !== undefined) deps.services.voiceFixture = scripted.service;
+
+  /**
+   * Live-provider test utterance queue.
+   *
+   * Present only when CC_LIVE_PROVIDER_TEST=1. This allows tests to inject utterances that are
+   * processed by the real agent and voice model. The queue is not connected to the actual voice
+   * session yet — that integration is future work. For now, this is a proof-of-concept that the
+   * endpoint exists and can accept utterances.
+   */
+  const liveProviderTestEnabled = deps.env?.CC_LIVE_PROVIDER_TEST === "1";
+  if (liveProviderTestEnabled) {
+    const utteranceQueue: string[] = [];
+    deps.services.voiceLiveUtterance = {
+      enqueueUtterance(words: string) {
+        utteranceQueue.push(words);
+        // TODO: integrate with voice session to process queued utterances
+      },
+    };
+  }
+
   const voice = attachVoiceGateway({
     server: deps.server,
     services: deps.services,
