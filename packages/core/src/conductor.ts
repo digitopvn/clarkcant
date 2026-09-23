@@ -118,6 +118,17 @@ export interface ConductorDeps extends TaskServiceDeps, WidgetDeps, RegistryDeps
     text: string;
     messageId: string;
     at: Instant;
+    /**
+     * See `UserMessageInput.emit`, carried through unchanged.
+     *
+     * A composed surface is not a model turn, so most of this is never called for one — but a fixture
+     * standing in for the agent may still call a real tool that reports through it (`control_app` is
+     * the case this exists for), and that call has to reach the same place a model turn's tool call
+     * would: the host stream, or the voice session, watching this conversation.
+     */
+    emit?: (event: ConductorEmit) => void;
+    /** See `UserMessageInput.channel`, carried through unchanged. */
+    channel?: "voice" | "chat";
   }) => Promise<{ block: MessageBlock; text: string } | undefined>;
   /**
    * Choose between several usable capabilities, when there is a real choice.
@@ -163,6 +174,8 @@ export interface ModelTurnInput {
    * a reply, and a caller that ignores this still gets one.
    */
   onEvent?: (event: ModelTurnEvent) => void;
+  /** See `UserMessageInput.channel`, which this carries through unchanged. */
+  channel?: "voice" | "chat";
 }
 
 /**
@@ -265,6 +278,17 @@ export interface UserMessageInput {
    * same stored message - so this is a sentence of guidance rather than a mode.
    */
   note?: string;
+  /**
+   * Which surface this message came in on: the composer, or a spoken sentence the deterministic
+   * matcher and the widget resolver both passed on.
+   *
+   * Defaults to `"chat"`. Carried through to `control_app`'s own audit record via `extraTools`'
+   * `channel` getter, so a tool call the voice agent made is distinguishable from one the same
+   * conductor answered for the text composer — the two are the same tools and the same executor, and
+   * this is the one fact about the request that is not otherwise recoverable from a turn already in
+   * flight.
+   */
+  channel?: "voice" | "chat";
   /**
    * Files this message carries.
    *
@@ -505,6 +529,8 @@ export async function handleUserMessage(
       text: input.text,
       messageId,
       at,
+      ...(input.emit === undefined ? {} : { emit: input.emit }),
+      ...(input.channel === undefined ? {} : { channel: input.channel }),
     });
     if (composed !== undefined) {
       const message = appendAssistant(
@@ -709,6 +735,7 @@ async function runModelTurn(
       text: input.text,
       messageId,
       ...(input.note === undefined ? {} : { note: input.note }),
+      ...(input.channel === undefined ? {} : { channel: input.channel }),
       // Always supplied, and a no-op when nobody is streaming. A conditional spread here would have
       // to exist only to keep the optional field absent, which is a distinction nothing reads.
       onEvent: (event: ModelTurnEvent) => input.emit?.(event),
