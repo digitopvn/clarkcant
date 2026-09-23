@@ -14,7 +14,7 @@
  */
 import { buildContext } from "./invariants/context.mjs";
 
-import docsManifestIntegrity from "./invariants/docs-manifest-integrity.mjs";
+import docsManifestIntegrity, { fixManifest } from "./invariants/docs-manifest-integrity.mjs";
 import workspacePhaseTraceability from "./invariants/workspace-phase-traceability.mjs";
 import stubMarksOwningPhase from "./invariants/stub-marks-owning-phase.mjs";
 import nodeTypeStrippingSyntax from "./invariants/node-type-stripping-syntax.mjs";
@@ -43,6 +43,12 @@ const CHECKS = [
 ];
 
 const ctx = await buildContext();
+
+if (process.argv.includes("--fix-manifest")) {
+  const updated = fixManifest(ctx);
+  process.stdout.write(`docs/manifest.json: rewrote bytes+sha256 for ${updated} file(s)\n`);
+  process.exit(0);
+}
 
 for (const runCheck of CHECKS) {
   await runCheck(ctx);

@@ -8,7 +8,7 @@
  * the entry point in `tools/check-invariants.mjs` prints `results` once every
  * check has run.
  */
-import { readFileSync, readdirSync, existsSync, statSync } from "node:fs";
+import { readFileSync, readdirSync, existsSync, statSync, writeFileSync } from "node:fs";
 import { join, relative as relativePath } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
@@ -38,6 +38,11 @@ export function readJson(path) {
   } catch (cause) {
     throw new Error(`${path} is not valid JSON`, { cause });
   }
+}
+
+/** Write JSON back with the repository's two-space indent and a trailing newline. */
+export function writeJson(path, value) {
+  writeFileSync(path, `${JSON.stringify(value, null, 2)}\n`);
 }
 
 export { existsSync, readFileSync, readdirSync, statSync };
@@ -81,6 +86,7 @@ export async function buildContext() {
     repoRoot,
     walk,
     readJson,
+    writeJson,
     relative,
     check,
     results,
