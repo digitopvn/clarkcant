@@ -3,6 +3,10 @@ import { type ReactElement, isValidElement } from "react";
 import { describe, expect, it } from "vitest";
 
 import { SettingsRow, ToolRow } from "../src/settings/controls/SettingsRow.tsx";
+import { MESSAGES_VI } from "../src/i18n/messages.ts";
+import type { MessageKey } from "../src/i18n/messages.ts";
+
+const t = (key: MessageKey): string => MESSAGES_VI[key];
 
 /**
  * Settings rows and capability rows.
@@ -42,7 +46,7 @@ function findAll(node: unknown, prop: string): ReactElement<Record<string, unkno
 
 describe("a capability row", () => {
   it("says it is usable in a word, not only in a colour", () => {
-    const element = ToolRow({ toolRef: "project.code.change@1", summary: "Sửa mã nguồn", usable: true });
+    const element = ToolRow({ toolRef: "project.code.change@1", summary: "Sửa mã nguồn", usable: true, t });
     expect(textOf(element)).toContain("dùng được");
   });
 
@@ -52,6 +56,7 @@ describe("a capability row", () => {
       summary: "Sửa mã nguồn",
       usable: false,
       blockedReason: "chưa worker nào nạp pack này trên node",
+      t,
     });
     const text = textOf(element);
     expect(text).toContain("chưa dùng được");
@@ -62,7 +67,7 @@ describe("a capability row", () => {
   });
 
   it("carries the reference and the usable flag as attributes", () => {
-    const element = ToolRow({ toolRef: "x@1", summary: "s", usable: false }) as ReactElement<
+    const element = ToolRow({ toolRef: "x@1", summary: "s", usable: false, t }) as ReactElement<
       Record<string, unknown>
     >;
     expect(element.props["data-tool-ref"]).toBe("x@1");
@@ -70,7 +75,7 @@ describe("a capability row", () => {
   });
 
   it("does not invent a reason when there is none", () => {
-    const element = ToolRow({ toolRef: "x@1", summary: "s", usable: true });
+    const element = ToolRow({ toolRef: "x@1", summary: "s", usable: true, t });
     expect(findAll(element, "data-blocked-reason")).toHaveLength(0);
     expect(textOf(element)).not.toContain("undefined");
   });

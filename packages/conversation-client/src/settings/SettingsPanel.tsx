@@ -133,8 +133,8 @@ export function SettingsPanel({
   const [effectsProblem, setEffectsProblem] = useState<string | undefined>(undefined);
   const [tab, setTab] = useState<TabId>(openAt ?? "experience");
 
-  const prefs = usePreferences(client, open);
   const t = useT();
+  const prefs = usePreferences(client, open);
 
   useEffect(() => {
     if (!open) return;
@@ -149,7 +149,8 @@ export function SettingsPanel({
       } catch (cause) {
         if (cancelled) return;
         // Reported rather than left blank: an empty settings screen and an unreachable node look identical,
-        // and only one of them is a problem the user can act on.
+        // and only one of them is a problem the user can act on. The raw error already carries whatever
+        // language the failure spoke in, so it is not translated here.
         setProblem(cause instanceof Error ? cause.message : String(cause));
       }
     };
@@ -174,7 +175,7 @@ export function SettingsPanel({
         if (cancelled) return;
         // A different failure from the node read above, and reported in the section it belongs to: an empty
         // audit list and an unreadable one mean different things.
-        setEffectsProblem(cause instanceof Error ? cause.message : "Không đọc được lịch sử.");
+        setEffectsProblem(cause instanceof Error ? cause.message : t("settings.panel.effectsReadFailed"));
       });
     return () => {
       cancelled = true;
@@ -203,9 +204,9 @@ export function SettingsPanel({
   if (!open) return null;
 
   const nodeStatus = (): string => {
-    if (problem !== undefined) return "Không đọc được trạng thái node";
-    if (facts === undefined) return "Đang đọc…";
-    return `${facts.label} · đã kết nối runtime cục bộ`;
+    if (problem !== undefined) return t("settings.panel.nodeReadFailed");
+    if (facts === undefined) return t("settings.common.loading");
+    return `${facts.label} · ${t("settings.panel.nodeConnected")}`;
   };
 
   const openWidgetLibrary = (mode: "browse" | "develop"): void => {
@@ -289,7 +290,7 @@ export function SettingsPanel({
         */}
         {problem === undefined ? null : (
           <section className="cc-panel-section">
-            <h3>Không đọc được trạng thái node</h3>
+            <h3>{t("settings.panel.nodeReadFailed")}</h3>
             <p className="cc-panel-note" data-settings-error="true">
               {problem}
             </p>
@@ -297,7 +298,7 @@ export function SettingsPanel({
         )}
         {prefs.problem === undefined ? null : (
           <section className="cc-panel-section">
-            <h3>Không đọc được tuỳ chọn</h3>
+            <h3>{t("settings.panel.preferencesReadFailed")}</h3>
             <p className="cc-panel-note" data-settings-preference-error="true">
               {prefs.problem}
             </p>

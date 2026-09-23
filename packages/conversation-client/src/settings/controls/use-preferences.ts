@@ -3,6 +3,7 @@ import { useCallback, useEffect, useState } from "react";
 import type { RegisteredPreference } from "@clarkcant/contracts";
 
 import type { GatewayClient } from "../../api.ts";
+import type { MessageKey } from "../../i18n/messages.ts";
 
 /**
  * The registered preferences, read and written through the gateway.
@@ -20,10 +21,32 @@ import type { GatewayClient } from "../../api.ts";
  *     exist, and the refusal would arrive after the user had moved on.
  */
 
+/**
+ * What happened, kept as data rather than a formatted sentence.
+ *
+ * Formatting happens at render time, in `InlineStatus`, using whatever the current UI language is — not the
+ * language that happened to be active the moment the write resolved. A preformatted string stored here would
+ * freeze in whatever language was live at that instant, which is wrong in exactly the one case a person can
+ * actually see it happen: switching the language itself writes `experience.language`, and the confirmation
+ * for that very write must not still read in the language just switched away from.
+ *
+ * `detail`, where present, is the node's own wording (a refusal reason or a caught error) and is never
+ * translated — it is not this catalog's text to translate.
+ */
+export type PreferenceStatusKind =
+  | { kind: "saved"; applies: string }
+  | { kind: "writeFailed"; detail?: string }
+  | { kind: "undone" }
+  | { kind: "neverSet" }
+  | { kind: "undoFailed"; detail?: string }
+  | { kind: "resetFailed" }
+  | { kind: "resetDone" }
+  | { kind: "resetFailedLater"; detail?: string };
+
 export interface PreferenceStatus {
   key: string;
   tone: "ok" | "error";
-  message: string;
+  status: PreferenceStatusKind;
 }
 
 export interface PreferencesHandle {
@@ -62,15 +85,20 @@ export interface PreferencesHandle {
  * When a change is actually in effect, in words.
  *
  * The point of the preference registry declaring this is that the surface can say it instead of implying
- * that something already running changed underneath the reader.
+ * that something already running changed underneath the reader. Exported so `InlineStatus` — which owns
+ * formatting `PreferenceStatusKind` into text — can use the same mapping at render time.
  */
-const APPLIES_LABEL: Record<string, string> = {
-  immediate: "áp dụng ngay",
-  "next-turn": "áp dụng từ lượt kế tiếp",
-  "next-session": "áp dụng cho phiên mới",
-  "next-voice-session": "áp dụng cho phiên thoại kế tiếp",
-  "desktop-restart": "áp dụng sau khi mở lại app",
-};
+export function appliesLabel(t: (key: MessageKey) => string, applies: string): string {
+  const labels: Record<string, MessageKey> = {
+    immediate: "settings.applies.immediate",
+    "next-turn": "settings.applies.nextTurn",
+    "next-session": "settings.applies.nextSession",
+    "next-voice-session": "settings.applies.nextVoiceSession",
+    "desktop-restart": "settings.applies.desktopRestart",
+  };
+  const key = labels[applies];
+  return key === undefined ? applies : t(key);
+}
 
 export function usePreferences(client: GatewayClient, open: boolean): PreferencesHandle {
   const [preferences, setPreferences] = useState<RegisteredPreference[] | undefined>(undefined);
@@ -151,14 +179,14 @@ export function usePreferences(client: GatewayClient, open: boolean): Preference
           setStatus({
             key,
             tone: "ok",
-            message: `Đã lưu — ${APPLIES_LABEL[answer.preference.applies] ?? answer.preference.applies}.`,
+            status: { kind: "saved", applies: answer.preference.applies },
           });
         })
         .catch((cause: unknown) => {
           setStatus({
             key,
             tone: "error",
-            message: cause instanceof Error ? cause.message : "Không lưu được lựa chọn này.",
+            status: { kind: "writeFailed", ...(cause instanceof Error ? { detail: cause.message } : {}) },
           });
         })
         .finally(() => {
@@ -184,14 +212,14 @@ export function usePreferences(client: GatewayClient, open: boolean): Preference
             tone: "ok",
             // Both outcomes are real answers: a key nobody has written has nothing to undo, and saying so is
             // better than reporting a change that did not happen.
-            message: answer.undone ? "Đã trả về giá trị trước đó." : "Chưa từng được đặt, nên không có gì để hoàn tác.",
+            status: { kind: answer.undone ? "undone" : "neverSet" },
           });
         })
         .catch((cause: unknown) => {
           setStatus({
             key,
             tone: "error",
-            message: cause instanceof Error ? cause.message : "Không hoàn tác được.",
+            status: { kind: "undoFailed", ...(cause instanceof Error ? { detail: cause.message } : {}) },
           });
         })
         .finally(() => {
@@ -216,7 +244,7 @@ export function usePreferences(client: GatewayClient, open: boolean): Preference
       setStatus(undefined);
       const step = async (remaining: number): Promise<void> => {
         if (remaining <= 0) {
-          setStatus({ key, tone: "error", message: "Không đưa được về mặc định. Thử lại sau." });
+          setStatus({ key, tone: "error", status: { kind: "resetFailed" } });
           return;
         }
         const answer = await client.undoPreference(key);
@@ -225,7 +253,7 @@ export function usePreferences(client: GatewayClient, open: boolean): Preference
           return current.map((entry) => (entry.key === key ? answer.preference : entry));
         });
         if (answer.preference.isDefault) {
-          setStatus({ key, tone: "ok", message: "Đã trở về mặc định." });
+          setStatus({ key, tone: "ok", status: { kind: "resetDone" } });
           return;
         }
         await step(remaining - 1);
@@ -235,7 +263,7 @@ export function usePreferences(client: GatewayClient, open: boolean): Preference
           setStatus({
             key,
             tone: "error",
-            message: cause instanceof Error ? cause.message : "Không đặt lại được.",
+            status: { kind: "resetFailedLater", ...(cause instanceof Error ? { detail: cause.message } : {}) },
           });
         })
         .finally(() => {

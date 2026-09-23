@@ -11,6 +11,8 @@
 
 import { type ReactElement } from "react";
 
+import type { MessageKey } from "./i18n/messages.ts";
+
 export interface DevicePairingPanelProps {
   /** The node's own identifier, so the user can see which node is asking. */
   nodeId: string;
@@ -19,6 +21,12 @@ export interface DevicePairingPanelProps {
   unblockedBy: string;
   /** Nodes already paired, if any. Empty on a single-node install. */
   pairedNodes?: { nodeId: string; label: string; lastSeenAt: string }[];
+  /**
+   * Passed in explicitly rather than read via `useT()`: this panel is exercised by plain function calls in
+   * unit tests with no `LocaleProvider` mounted, so the translator has to arrive as data rather than through
+   * a hook.
+   */
+  t: (key: MessageKey) => string;
 }
 
 export function DevicePairingPanel({
@@ -26,28 +34,31 @@ export function DevicePairingPanel({
   nodeLabel,
   unblockedBy,
   pairedNodes = [],
+  t,
 }: DevicePairingPanelProps): ReactElement {
   return (
     <section className="cc-card" data-host-card="pairing" data-owner="host" data-paired-count={pairedNodes.length}>
       <header className="cc-card-head">
-        <span className="cc-card-title">Ghép nối thiết bị</span>
+        <span className="cc-card-title">{t("settings.pairing.title")}</span>
         <span className="cc-badge" data-tone={pairedNodes.length === 0 ? "warn" : "ok"}>
-          {pairedNodes.length === 0 ? "chưa ghép" : `${pairedNodes.length} đã ghép`}
+          {pairedNodes.length === 0
+            ? t("settings.pairing.unpaired")
+            : `${pairedNodes.length} ${t("settings.pairing.pairedSuffix")}`}
         </span>
       </header>
       <div className="cc-card-body">
         <dl className="cc-fields">
-          <dt>Node này</dt>
+          <dt>{t("settings.pairing.thisNode")}</dt>
           <dd>
             {nodeLabel} · <code>{nodeId}</code>
           </dd>
-          <dt>Điều kiện mở</dt>
+          <dt>{t("settings.pairing.unblockedByLabel")}</dt>
           <dd data-pairing-unblocked-by="true">{unblockedBy}</dd>
         </dl>
         {pairedNodes.length === 0 ? (
           // The honest reason, in the product's own words rather than a generic "unavailable".
           <p className="cc-freshness" style={{ margin: 0 }} data-pairing-blocked="true">
-            Ghép nối cần hai máy chạy node độc lập. Máy này chỉ có một, nên chưa có gì để ghép.
+            {t("settings.pairing.blocked")}
           </p>
         ) : (
           <ul className="cc-root-list">

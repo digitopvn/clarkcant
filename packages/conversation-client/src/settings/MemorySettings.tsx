@@ -4,6 +4,7 @@ import type { MemoryRecord } from "@clarkcant/contracts";
 
 import type { GatewayClient } from "../api.ts";
 import { memoryView, type MemoryGroupView } from "../memory-groups.ts";
+import { useT } from "../i18n/locale-context.tsx";
 
 /**
  * What this node remembers, and the way to remove it.
@@ -30,6 +31,7 @@ export interface MemorySettingsProps {
 }
 
 export function MemorySettings({ client }: MemorySettingsProps): ReactElement {
+  const t = useT();
   const [panel, setPanel] = useState<PanelState>({ state: "loading" });
   const [deletingId, setDeletingId] = useState<string | undefined>(undefined);
 
@@ -70,7 +72,7 @@ export function MemorySettings({ client }: MemorySettingsProps): ReactElement {
   if (panel.state === "loading") {
     return (
       <p className="cc-memory-loading" data-memory-state="loading">
-        Đang đọc những gì đã ghi nhớ…
+        {t("settings.memory.loading")}
       </p>
     );
   }
@@ -80,7 +82,7 @@ export function MemorySettings({ client }: MemorySettingsProps): ReactElement {
       <div className="cc-memory-failed" data-memory-state="failed">
         <p>{panel.reason}</p>
         <button type="button" className="cc-secondary-button" data-memory-retry="true" onClick={() => void load()}>
-          Thử lại
+          {t("settings.memory.retry")}
         </button>
       </div>
     );
@@ -89,7 +91,7 @@ export function MemorySettings({ client }: MemorySettingsProps): ReactElement {
   if (panel.state === "empty") {
     return (
       <p className="cc-memory-empty" data-memory-state="empty">
-        Chưa có gì được ghi nhớ
+        {t("settings.memory.empty")}
       </p>
     );
   }
@@ -97,7 +99,14 @@ export function MemorySettings({ client }: MemorySettingsProps): ReactElement {
   const view = memoryView(panel.records, new Date().toISOString());
 
   return (
-    <div className="cc-memory" data-memory-state="ready" data-memory-count={view.count}>
+    // `memory-groups.ts` (group labels, relative-time and scope text) is outside this file's ownership and
+    // still renders its own Vietnamese copy; the marker lets an i18n-coverage check skip this subtree.
+    <div
+      className="cc-memory"
+      data-memory-state="ready"
+      data-memory-count={view.count}
+      data-out-of-scope-i18n="memory-groups"
+    >
       {view.groups.map((group) => (
         <MemoryGroup key={group.kind} group={group} deletingId={deletingId} onDelete={remove} />
       ))}
@@ -114,6 +123,7 @@ function MemoryGroup({
   deletingId: string | undefined;
   onDelete: (memoryId: string) => Promise<void>;
 }): ReactElement {
+  const t = useT();
   return (
     <section className="cc-memory-group" data-memory-kind={group.kind}>
       <h3 className="cc-memory-group-title">
@@ -139,11 +149,11 @@ function MemoryGroup({
               type="button"
               className="cc-memory-delete"
               data-memory-delete="true"
-              aria-label="Xoá mục đã ghi nhớ"
+              aria-label={t("settings.memory.deleteAria")}
               disabled={deletingId === row.memoryId}
               onClick={() => void onDelete(row.memoryId)}
             >
-              Xoá
+              {t("settings.memory.delete")}
             </button>
           </li>
         ))}

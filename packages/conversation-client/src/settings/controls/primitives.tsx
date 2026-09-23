@@ -1,5 +1,8 @@
 import type { ReactElement } from "react";
 
+import { useT } from "../../i18n/locale-context.tsx";
+import { appliesLabel, type PreferenceStatus } from "./use-preferences.ts";
+
 // Re-exported so a tab imports one module for its controls, and so a caller cannot end up with two copies of the
 // row component that look identical and drift.
 export { SettingsRow, ToolRow, type SettingsRowProps, type ToolRowProps } from "./SettingsRow.tsx";
@@ -104,6 +107,7 @@ export function ToggleSwitch({
   pending,
   disabledReason,
 }: ToggleSwitchProps): ReactElement {
+  const t = useT();
   const disabled = disabledReason !== undefined;
   return (
     <div className="cc-toggle-wrap">
@@ -117,7 +121,7 @@ export function ToggleSwitch({
           onChange={(event) => onChange(event.target.checked)}
         />
         <span className="cc-toggle-track" aria-hidden="true" />
-        <span className="cc-toggle-state">{checked ? "Bật" : "Tắt"}</span>
+        <span className="cc-toggle-state">{checked ? t("settings.toggle.on") : t("settings.toggle.off")}</span>
       </label>
       {/*
         A control that cannot be used says why, in words. AGENTS.md: disable it with a visible reason or omit
@@ -133,7 +137,7 @@ export function ToggleSwitch({
 }
 
 export interface InlineStatusProps {
-  status: { key: string; tone: "ok" | "error"; message: string } | undefined;
+  status: PreferenceStatus | undefined;
   /** Only render when the status belongs to this key, so one tab's message cannot appear under another's control. */
   forKey: string;
 }
@@ -141,15 +145,41 @@ export interface InlineStatusProps {
 /**
  * The outcome of a mutation, next to the control that caused it.
  *
- * Rendered from the node's own answer, including its refusal message, which names the field and never the
- * value. There is no separate error banner: a message that appears somewhere else on the page is a message
- * the user has to go looking for.
+ * `usePreferences` stores what happened as data (`PreferenceStatusKind`), not a formatted sentence, and this
+ * is where it becomes text — with whatever the UI language is right now. Formatting at write time would
+ * freeze the sentence in the language active at that instant, which is wrong for the one write that changes
+ * the language itself: the confirmation for `experience.language` must read in the language just chosen, not
+ * the one just left. A refusal's own detail, when the node or a caught error supplied one, is never
+ * translated — it is not this catalog's text to translate.
  */
 export function InlineStatus({ status, forKey }: InlineStatusProps): ReactElement | null {
+  const t = useT();
   if (status === undefined || status.key !== forKey) return null;
+
+  const message = ((): string => {
+    switch (status.status.kind) {
+      case "saved":
+        return `${t("settings.preferences.savedPrefix")} ${appliesLabel(t, status.status.applies)}.`;
+      case "writeFailed":
+        return status.status.detail ?? t("settings.preferences.writeFailed");
+      case "undone":
+        return t("settings.preferences.undone");
+      case "neverSet":
+        return t("settings.preferences.neverSet");
+      case "undoFailed":
+        return status.status.detail ?? t("settings.preferences.undoFailed");
+      case "resetFailed":
+        return t("settings.preferences.resetFailed");
+      case "resetDone":
+        return t("settings.preferences.resetDone");
+      case "resetFailedLater":
+        return status.status.detail ?? t("settings.preferences.resetFailedLater");
+    }
+  })();
+
   return (
     <p className="cc-panel-note cc-inline-status" data-inline-status={forKey} data-tone={status.tone} role="status">
-      {status.message}
+      {message}
     </p>
   );
 }
@@ -174,6 +204,7 @@ export interface RangeFieldProps {
  * registry rather than being written here, so the control cannot offer a value the node would refuse.
  */
 export function RangeField({ name, label, value, min, max, step, note, onChange }: RangeFieldProps): ReactElement {
+  const t = useT();
   const clamp = (next: number): number => Math.min(Math.max(next, min), max);
   return (
     <div className="cc-range" data-range={name}>
@@ -194,7 +225,7 @@ export function RangeField({ name, label, value, min, max, step, note, onChange 
           max={max}
           step={step ?? 1}
           value={value}
-          aria-label={`${label} (số)`}
+          aria-label={`${label} ${t("settings.range.numberSuffix")}`}
           data-range-number={name}
           onChange={(event) => {
             const next = Number(event.target.value);

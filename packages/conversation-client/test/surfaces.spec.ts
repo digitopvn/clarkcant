@@ -5,7 +5,11 @@ import { describe, expect, it } from "vitest";
 import { DevicePairingPanel } from "../src/DevicePairingPanel.tsx";
 import { MenuBarPopover } from "../src/DesktopSurfaces.tsx";
 import { VoiceUnavailable } from "../src/voice-unavailable.tsx";
+import { MESSAGES_VI } from "../src/i18n/messages.ts";
+import type { MessageKey } from "../src/i18n/messages.ts";
 import { findAll, textOf } from "./block-helpers.ts";
+
+const t = (key: MessageKey): string => MESSAGES_VI[key];
 
 /**
  * The two gated surfaces and the menu bar popover.
@@ -41,6 +45,7 @@ describe("a surface behind an external gate", () => {
       nodeId: "node_a",
       nodeLabel: "dev",
       unblockedBy: "chạy node thứ hai rồi ghép",
+      t,
     });
     const text = textOf(element);
     expect(text).toContain("hai máy chạy node độc lập");
@@ -54,6 +59,7 @@ describe("a surface behind an external gate", () => {
       nodeLabel: "dev",
       unblockedBy: "—",
       pairedNodes: [{ nodeId: "node_b", label: "laptop", lastSeenAt: "2026-09-16T10:00:00.000Z" }],
+      t,
     });
     expect((element as ReactElement<Record<string, unknown>>).props["data-paired-count"]).toBe(1);
     expect(findAll(element, "data-paired-node")[0]!.props["data-paired-node"]).toBe("node_b");
