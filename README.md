@@ -105,16 +105,20 @@ Stated plainly, because a bootstrap that hides this is worse than useless:
 
 - The **desktop shell** beyond the surface its typed IPC bridge exposes: the browser suite
   proves the client's branch when a directory dialog is present, not an Electron build.
-- **A worker for every capability a task might dispatch to.** A dispatched task now runs a
-  real worker process — see "Task dispatch" below — but `packs/project-work`'s capability refs
-  (`project.file.read@1`, `project.code.change@1`) do not match the one tool `apps/worker`
-  actually implements (`capability:project.read`). A task that resolves to the pack's own
-  capability still runs a worker, still holds a lease and still respects confinement; it
-  settles `failed` for want of a matching tool, not for want of a worker.
 - Live **OAuth**, **Google Calendar**, the **MCP streamable-HTTP transport** (stdio is built
   and tested), and the **macOS/Linux native drivers**. Their contracts, state machines and
   refusals are implemented and tested; those transports are not.
-- **Quarantine download and isolated build** for installs.
+- **A real artifact download for a `git`/`npm` install source.** `/packages/install` resolves,
+  locks and activates a `local` package end to end (bytes already on disk; see
+  `apps/runtime/test/package-install-local-chain.spec.ts`), because verification is `digest-only`
+  and there is nothing to fetch. A remote source still refuses before that point — the transport
+  that would turn a resolved `git`/`npm` entry into bytes on this node does not exist yet.
+- **A real consent flow feeding `grantedCapabilities`.** The public install route no longer trusts
+  a client-declared grant in the request body (a forged one could not become authority; see
+  `apps/runtime/test/package-install-route.spec.ts`) — it fails closed with an empty grant set
+  instead. A freshly installed package therefore activates but registers no capability a dispatched
+  task can use; that seam is precise and named in `apps/runtime/src/application/package-install.ts`,
+  not silently missing.
 - The **install and capability lifecycle** in the interface: the cards render and the
   refusals are honest, and no install has been run end to end from the browser.
 
