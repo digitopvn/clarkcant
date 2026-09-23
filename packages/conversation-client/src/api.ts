@@ -1374,7 +1374,7 @@ export class GatewayClient {
       );
     }
     const body = (await response.json()) as { decision?: unknown };
-    return (body.decision ?? { kind: "refused", say: "Không có gì được thực hiện." }) as AppIntentDecision;
+    return (body.decision ?? { kind: "refused", say: "Nothing was carried out." }) as AppIntentDecision;
   }
 
   /**
@@ -1394,7 +1394,7 @@ export class GatewayClient {
       throw new GatewayError(
         response.status,
         "BACKGROUND_REFUSED",
-        typeof detail.message === "string" ? detail.message : "việc nền không bắt đầu được",
+        typeof detail.message === "string" ? detail.message : "the background task did not start",
       );
     }
     const body = (await response.json()) as { sessionId?: unknown };

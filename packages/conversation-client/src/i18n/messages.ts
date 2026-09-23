@@ -13,8 +13,10 @@
  */
 
 import type { LocaleChoice } from "./locale.ts";
+import { MESSAGES_INTENTS_EN, MESSAGES_INTENTS_VI } from "./messages-intents.ts";
 
 export const MESSAGES_VI = {
+  ...MESSAGES_INTENTS_VI,
   "settings.title": "Cài đặt",
   "settings.description": "Vài tuỳ chọn. Mọi thứ khác nằm trong hội thoại.",
   "settings.done": "Xong",
@@ -50,6 +52,7 @@ export const MESSAGES_VI = {
 export type MessageKey = keyof typeof MESSAGES_VI;
 
 export const MESSAGES_EN = {
+  ...MESSAGES_INTENTS_EN,
   "settings.title": "Settings",
   "settings.description": "A few preferences. Everything else lives in the conversation.",
   "settings.done": "Done",

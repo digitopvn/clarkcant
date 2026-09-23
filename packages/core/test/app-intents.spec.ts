@@ -183,6 +183,28 @@ describe("a command the registry does not know", () => {
     for (const tab of SETTINGS_TABS) expect(match.say).toContain(tab);
     expect(match.say).not.toContain("plugins");
   });
+
+  it("refuses an unknown command in English when asked, and in Vietnamese by default", () => {
+    const sentence = "mở cửa sổ trời giúp tôi";
+    const vi = matchAppIntent(sentence);
+    const en = matchAppIntent(sentence, { locale: "en" });
+    if (vi?.kind !== "refused" || en?.kind !== "refused") throw new Error("unreachable");
+    expect(vi.say).toBe(APP_INTENT_NOT_UNDERSTOOD);
+    expect(en.say).not.toBe(vi.say);
+    expect(en.say.toLowerCase()).toContain("did not understand");
+
+    const resolution = resolveAppIntent({ text: sentence, mintConfirmationToken: mint, locale: "en" });
+    expect(resolution.kind).toBe("refused");
+    expect("say" in resolution && resolution.say).toBe(en.say);
+  });
+
+  it("refuses a tab change with no tab named in English when asked", () => {
+    const match = matchAppIntent("đổi sang tab", { locale: "en" });
+    if (match?.kind !== "refused") throw new Error("unreachable");
+    expect(match.say).toContain("extensions");
+    expect(match.say.toLowerCase()).toContain("not sure");
+    for (const tab of SETTINGS_TABS) expect(match.say).toContain(tab);
+  });
 });
 
 describe("a work request is not an app intent", () => {
@@ -269,6 +291,20 @@ describe("the read-back sentence", () => {
     expect(new Set(sentences).size).toBe(APP_INTENT_KINDS.length);
     expect(describeAppIntent({ kind: "app.quit" })).toMatch(/\?$/);
     expect(sentences.filter((sentence) => sentence.endsWith("?"))).toHaveLength(1);
+  });
+
+  it("reads back in English when the caller asks for it, defaulting to Vietnamese otherwise", () => {
+    const sentences = APP_INTENT_KINDS.map((kind) => describeAppIntent({ kind }, "en"));
+    for (const kind of APP_INTENT_KINDS) {
+      const english = describeAppIntent({ kind }, "en");
+      expect(english.length, kind).toBeGreaterThan(0);
+      // Every English sentence must differ from its Vietnamese counterpart: a kind that fell through
+      // to the Vietnamese branch untranslated would otherwise pass silently.
+      expect(english, kind).not.toBe(describeAppIntent({ kind }));
+    }
+    expect(new Set(sentences).size).toBe(APP_INTENT_KINDS.length);
+    expect(describeAppIntent({ kind: "app.quit" }, "en")).toMatch(/\?$/);
+    expect(describeAppIntent({ kind: "app.quit" })).toBe(describeAppIntent({ kind: "app.quit" }, "vi"));
   });
 });
 

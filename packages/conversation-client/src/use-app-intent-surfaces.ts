@@ -6,6 +6,7 @@ import { hasDesktopChrome, requestWindowMode } from "./desktop-compact.ts";
 import { runAppIntent, type AppIntentHost } from "./app-intents.ts";
 import type { AppIntentDecision, AppIntentKind, SettingsTab } from "@clarkcant/contracts";
 import { CLOSED_LIBRARY, applyLibraryAction, type WidgetLibraryState } from "./widget-library/widget-library-state.ts";
+import { useT } from "./i18n/locale-context.tsx";
 
 export interface AppIntentSurfacesState {
   uiCheckOpen: boolean;
@@ -66,6 +67,7 @@ export function useAppIntentSurfaces({
   setVoiceOpen,
   openVoice,
 }: AppIntentSurfacesDeps): AppIntentSurfacesState {
+  const t = useT();
   const [uiCheckOpen, setUiCheckOpen] = useState(false);
   const [settingsTab, setSettingsTab] = useState<SettingsTab | undefined>(undefined);
   const [widgetLibrary, setWidgetLibrary] = useState<WidgetLibraryState>(CLOSED_LIBRARY);
@@ -103,10 +105,10 @@ export function useAppIntentSurfaces({
         setWidgetLibrary(CLOSED_LIBRARY);
       },
       cycleModel: () => {
-        void client.cycleModel().catch(() => setIntentNotice("Không chuyển được model."));
+        void client.cycleModel().catch(() => setIntentNotice(t("intents.modelSwitchFailed")));
       },
       selectModel: (alias: string) => {
-        void client.selectModel(alias).catch(() => setIntentNotice("Không chuyển được model."));
+        void client.selectModel(alias).catch(() => setIntentNotice(t("intents.modelSwitchFailed")));
       },
       openWidgetLibrary: (mode: "browse" | "develop", target?: { definitionId?: string; family?: string }) => {
         setWidgetLibrary((current) =>
@@ -132,7 +134,7 @@ export function useAppIntentSurfaces({
           }
         : {}),
     };
-  }, [attachmentInput, restartSession, setVoiceOpen, openVoice, client]);
+  }, [attachmentInput, restartSession, setVoiceOpen, openVoice, client, t]);
 
   const runIntent = useCallback(
     (decision: AppIntentDecision): void => {
@@ -156,9 +158,9 @@ export function useAppIntentSurfaces({
         .then((decision) => {
           if (decision.kind !== "none") runIntent(decision);
         })
-        .catch(() => setIntentNotice("Không hỏi được node về lệnh đó."));
+        .catch(() => setIntentNotice(t("intents.commandLookupFailed")));
     },
-    [client, conversationId, runIntent],
+    [client, conversationId, runIntent, t],
   );
 
   // A notice is a remark about something that just happened, not a permanent line of text.
