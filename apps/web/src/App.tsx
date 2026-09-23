@@ -13,6 +13,7 @@ import {
   resolveTheme,
   sessionFromBridge,
   systemPrefersLight,
+  useLocale,
   useOrbProfile,
 } from "@clarkcant/conversation-client";
 
@@ -85,6 +86,7 @@ export function App(): ReactElement {
    */
   const [token, setToken] = useState(readToken);
   const baseUrl = readGateway();
+  const { t } = useLocale();
 
   useEffect(() => {
     let cancelled = false;
@@ -256,10 +258,10 @@ export function App(): ReactElement {
               {/* Reserves the space the orb is drawn into, exactly as the app's own hero does. It paints nothing. */}
               <div className="cc-hero-orb" ref={heroOrbRef} aria-hidden="true" />
               <h1>ClarkCant</h1>
-              <p>Nói điều bạn muốn làm.</p>
+              <p>{t("shell.onboarding.tagline")}</p>
               <div className="cc-chip-row">
                 <button type="button" className="cc-chip" data-onboarding-start="true" onClick={start}>
-                  Bắt đầu
+                  {t("shell.onboarding.start")}
                 </button>
               </div>
             </div>
@@ -282,16 +284,16 @@ export function App(): ReactElement {
           </div>
           <div className="cc-status">
             <span className="cc-dot" data-state="offline" aria-hidden="true" />
-            Chưa có token
+            {t("shell.onboarding.noToken")}
           </div>
         </header>
         <div className="cc-body">
           <div className="cc-scroll">
             <div className="cc-empty">
-              <h1>Chưa kết nối tới runtime</h1>
+              <h1>{t("shell.onboarding.notConnectedHeading")}</h1>
               <p data-needs-token="true">
-                Mở trang này kèm token của node, ví dụ{" "}
-                <code>?token=&lt;token trong identity.json&gt;</code>. Token chỉ được giữ trong tab này.
+                {t("shell.onboarding.notConnectedBody")}{" "}
+                <code>{t("shell.onboarding.notConnectedExample")}</code>. {t("shell.onboarding.notConnectedTokenNote")}
               </p>
             </div>
           </div>

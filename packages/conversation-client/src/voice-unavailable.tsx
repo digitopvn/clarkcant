@@ -1,5 +1,8 @@
 import { type ReactElement } from "react";
 
+import { readStoredLocale } from "./i18n/locale.ts";
+import { CATALOGS, type MessageKey } from "./i18n/messages.ts";
+
 /**
  * What a voice surface says when there is no node to record into.
  *
@@ -13,32 +16,36 @@ import { type ReactElement } from "react";
  * instead: what is missing and what would fix it.
  */
 export function VoiceUnavailable({
-  requires = "một phiên Live API đang mở",
-  unblockedBy = "đặt GEMINI_API_KEY cho node rồi thử lại",
+  requires,
+  unblockedBy,
 }: {
   requires?: string;
   unblockedBy?: string;
 }): ReactElement {
+  // Read from the cached locale directly rather than `useT()`: this component is deliberately hook-free (see
+  // the file's own doc comment) so the package's test suite, which has no DOM renderer, can call it as a plain
+  // function. `useContext` throws outside a render, so a hook here would break that.
+  const t = (key: MessageKey): string => CATALOGS[readStoredLocale()][key];
   return (
     <section className="cc-card" data-host-card="voice" data-owner="host" data-state="blocked">
       <header className="cc-card-head">
-        <span className="cc-card-title">Nói bằng giọng nói</span>
+        <span className="cc-card-title">{t("composer.voice")}</span>
         <span className="cc-badge" data-tone="warn">
-          chưa dùng được
+          {t("voice.unavailableBadge")}
         </span>
       </header>
       <div className="cc-card-body">
         <p style={{ margin: 0 }} data-voice-blocked="true">
-          Màn hình này chưa nối tới node nào, nên không thể mở phiên giọng nói ở đây.
+          {t("voice.noNodeMessage")}
         </p>
         <dl className="cc-fields">
-          <dt>Cần</dt>
-          <dd>{requires}</dd>
-          <dt>Điều kiện mở</dt>
-          <dd>{unblockedBy}</dd>
+          <dt>{t("voice.requiresLabel")}</dt>
+          <dd>{requires ?? t("voice.defaultRequires")}</dd>
+          <dt>{t("voice.unblockedByLabel")}</dt>
+          <dd>{unblockedBy ?? t("voice.defaultUnblockedBy")}</dd>
         </dl>
         <p className="cc-freshness" style={{ margin: 0 }}>
-          Không có nút ghi âm ở đây vì màn hình này không có kết nối để gửi audio tới.
+          {t("voice.noMicExplain")}
         </p>
       </div>
     </section>

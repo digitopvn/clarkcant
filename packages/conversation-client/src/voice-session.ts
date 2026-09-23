@@ -1,5 +1,8 @@
 import { type AppIntentDecision, type VoiceState, appIntentDecisionSchema } from "@clarkcant/contracts";
 
+import { readStoredLocale } from "./i18n/locale.ts";
+import { CATALOGS } from "./i18n/messages.ts";
+
 /**
  * The browser's half of a live voice session.
  *
@@ -265,7 +268,10 @@ export async function startVoiceSession(options: StartVoiceSessionOptions): Prom
           // again. The session still fails, so the failure path below runs unchanged.
           events.onRefused?.({
             code: typeof control["code"] === "string" ? control["code"] : "VOICE_REFUSED",
-            message: typeof control["message"] === "string" ? control["message"] : "node từ chối mở phiên thoại",
+            message:
+              typeof control["message"] === "string"
+                ? control["message"]
+                : CATALOGS[readStoredLocale()]["voice.nodeRefused"],
             ...(typeof control["reason"] === "string" ? { reason: control["reason"] } : {}),
             ...(typeof control["credentialName"] === "string" ? { credentialName: control["credentialName"] } : {}),
           });
@@ -316,7 +322,10 @@ export async function startVoiceSession(options: StartVoiceSessionOptions): Prom
         case "error": {
           events.onAnswerFailed?.({
             code: typeof control["code"] === "string" ? control["code"] : "VOICE_ERROR",
-            message: typeof control["message"] === "string" ? control["message"] : "node báo một lỗi không rõ",
+            message:
+              typeof control["message"] === "string"
+                ? control["message"]
+                : CATALOGS[readStoredLocale()]["voice.nodeUnknownError"],
           });
           return;
         }

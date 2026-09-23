@@ -2,6 +2,7 @@ import type { CSSProperties, ReactElement } from "react";
 
 import { AgentAvatar } from "./AgentAvatar.tsx";
 import { ReasoningBlock, ToolActivityBlock } from "./blocks.tsx";
+import { useT } from "./i18n/locale-context.tsx";
 import { Markdown } from "./markdown.tsx";
 import type { LiveSegment } from "./live-reply.ts";
 
@@ -19,13 +20,14 @@ export interface ConversationLiveReplyRowProps {
  * what is on screen.
  */
 export function ConversationLiveReplyRow({ live }: ConversationLiveReplyRowProps): ReactElement {
+  const t = useT();
   return (
     <article className="cc-row" data-role="assistant" data-live="true" style={{ "--cc-enter-delay": "0ms" } as CSSProperties}>
       <div className="cc-assistant">
         <AgentAvatar />
         <div className="cc-assistant-body">
           {live.length === 0 ? (
-            <div className="cc-thinking" data-thinking="true" role="status" aria-label="ClarkCant đang trả lời">
+            <div className="cc-thinking" data-thinking="true" role="status" aria-label={t("shell.reply.thinkingAria")}>
               <span className="cc-thinking-dot" aria-hidden="true" />
               <span className="cc-thinking-dot" aria-hidden="true" />
               <span className="cc-thinking-dot" aria-hidden="true" />

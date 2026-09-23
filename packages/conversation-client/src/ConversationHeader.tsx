@@ -3,6 +3,7 @@ import type { ReactElement, RefObject } from "react";
 import type { GatewayClient } from "./api.ts";
 import { Orb } from "./Orb.tsx";
 import { BackgroundSessionsMark } from "./background-sessions-mark.tsx";
+import { useT } from "./i18n/locale-context.tsx";
 import type { ResolvedOrbProfile } from "./orb-profile.ts";
 import type { ConnectionState } from "./use-connection-status.ts";
 
@@ -33,6 +34,7 @@ export function ConversationHeader({
   onHome,
   onOpenSettings,
 }: ConversationHeaderProps): ReactElement {
+  const t = useT();
   return (
     <header className="cc-header">
       <button
@@ -40,8 +42,8 @@ export function ConversationHeader({
         className="cc-brand"
         data-home="true"
         onClick={onHome}
-        title="Bắt đầu lại"
-        aria-label="Bắt đầu lại: về màn hình đầu và mở một phiên mới"
+        title={t("shell.header.restartTitle")}
+        aria-label={t("shell.header.restartAria")}
       >
         <Orb size={30} className="cc-orb" label="" pointerTarget={shell} {...(orbProfile === undefined ? {} : { profile: orbProfile })} />
         <span>ClarkCant</span>
@@ -49,7 +51,7 @@ export function ConversationHeader({
       <div className="cc-header-end">
         <div className="cc-status" role="status" aria-live="polite" data-connection={connection}>
           <span className="cc-dot" data-state={connection} aria-hidden="true" />
-          {connection === "ready" ? "Ready" : connection === "connecting" ? "Đang kết nối" : "Mất kết nối"}
+          {connection === "ready" ? t("shell.status.ready") : connection === "connecting" ? t("shell.status.connecting") : t("shell.status.offline")}
         </div>
         {/* The work behind the conversation. Absent while there is none: a header that always said "0" would be a
             permanent line of noise, and the count only matters when it is not zero. `backgroundTick` is what makes it
@@ -63,8 +65,8 @@ export function ConversationHeader({
         <button
           type="button"
           className="cc-icon-btn"
-          aria-label="Cài đặt"
-          title="Cài đặt"
+          aria-label={t("settings.title")}
+          title={t("settings.title")}
           data-settings="true"
           data-widget-library-anchor="true"
           onClick={onOpenSettings}

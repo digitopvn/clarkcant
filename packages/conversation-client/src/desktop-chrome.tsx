@@ -1,6 +1,7 @@
 import { type ReactElement, useCallback, useMemo, useState } from "react";
 
 import { hasDesktopChrome, requestWindowMode, type WindowModeAnswer } from "./desktop-compact.ts";
+import { useT } from "./i18n/locale-context.tsx";
 
 /**
  * The window's own chrome, for a window that has none.
@@ -13,6 +14,7 @@ import { hasDesktopChrome, requestWindowMode, type WindowModeAnswer } from "./de
  * said it is still expanded is expanded.
  */
 export function DesktopChrome(): ReactElement | null {
+  const t = useT();
   const desktop = useMemo(() => hasDesktopChrome(), []);
   const [answer, setAnswer] = useState<WindowModeAnswer | undefined>(undefined);
 
@@ -34,8 +36,8 @@ export function DesktopChrome(): ReactElement | null {
           type="button"
           className="cc-desktop-button"
           data-desktop-compact="true"
-          aria-label="Thu nhỏ cửa sổ thành thanh thoại"
-          title="Thu nhỏ thành thanh thoại"
+          aria-label={t("shell.desktop.compactAria")}
+          title={t("shell.desktop.compactTitle")}
           onClick={() => ask({ type: "enter-compact" })}
         >
           ▾
@@ -44,8 +46,8 @@ export function DesktopChrome(): ReactElement | null {
           type="button"
           className="cc-desktop-button"
           data-desktop-expand="true"
-          aria-label="Mở rộng cửa sổ"
-          title="Mở rộng"
+          aria-label={t("shell.desktop.expandAria")}
+          title={t("shell.desktop.expandTitle")}
           onClick={() => ask({ type: "expand" })}
         >
           ▴
@@ -56,8 +58,8 @@ export function DesktopChrome(): ReactElement | null {
           data-desktop-pin="true"
           data-pinned={pinned ? "true" : "false"}
           aria-pressed={pinned}
-          aria-label="Ghim cửa sổ lên trên các cửa sổ khác"
-          title="Luôn nổi trên cùng"
+          aria-label={t("shell.desktop.pinAria")}
+          title={t("shell.desktop.pinTitle")}
           onClick={() => ask({ type: "set-always-on-top", value: !pinned })}
         >
           ⚲
@@ -65,7 +67,7 @@ export function DesktopChrome(): ReactElement | null {
       </div>
       {/* What the shell last said, so a refusal is visible rather than silent. */}
       <span className="cc-desktop-mode" data-desktop-mode={mode}>
-        {mode === "compact" ? "Thanh thoại" : "Cửa sổ đầy đủ"}
+        {mode === "compact" ? t("shell.desktop.modeCompact") : t("shell.desktop.modeFull")}
       </span>
       {answer?.ok === false && <span className="cc-desktop-problem">{answer.refused}</span>}
     </div>

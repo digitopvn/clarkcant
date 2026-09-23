@@ -1,6 +1,8 @@
 import type { CSSProperties, ReactElement, RefObject } from "react";
 
 import type { Suggestion } from "@clarkcant/contracts";
+import { useT } from "./i18n/locale-context.tsx";
+import type { MessageKey } from "./i18n/messages.ts";
 import type { HeroPhase } from "./use-hero-orb-layout.ts";
 
 /**
@@ -12,14 +14,24 @@ import type { HeroPhase } from "./use-hero-orb-layout.ts";
  * a message nobody can handle teaches the user that the app is broken rather than that a model is
  * missing, and the fourth chip says which of those is true.
  */
-export const SUGGESTIONS = [
-  // `demo: true` is what makes these chips the only way a scripted sample runs: the label says the data is sample
-  // data, and the flag is what the node reads to decide whether a scripted reply is allowed at all.
-  { label: "Làm gì đó", text: "cho tui xem biểu đồ", detail: "chạy trên dữ liệu mẫu", demo: true },
-  { label: "Sửa một lỗi", text: "tạo note nhanh cho tui", detail: "chạy trên dữ liệu mẫu", demo: true },
-  { label: "Xem dự án của tui", text: "cho tui xem bảng dữ liệu", detail: "chạy trên dữ liệu mẫu", demo: true },
-  { label: "Chỉ trò chuyện", text: "chào bạn, bạn làm được gì?", detail: "cần model", demo: false },
-] as const;
+/**
+ * The static suggestion chips, with their `text` fixed regardless of UI language.
+ *
+ * `text` is the message the chip actually sends — a scripted recipe trigger for the sample-data
+ * chips — so it stays as written rather than following the interface language: translating it
+ * would silently break the recipe match. Only `label`/`detail`, the visible chrome, are looked up
+ * per locale by `suggestionsFor`.
+ */
+function suggestionsFor(t: (key: MessageKey) => string) {
+  return [
+    // `demo: true` is what makes these chips the only way a scripted sample runs: the label says the data is sample
+    // data, and the flag is what the node reads to decide whether a scripted reply is allowed at all.
+    { label: t("shell.hero.suggestion1Label"), text: "cho tui xem biểu đồ", detail: t("shell.hero.sampleDataDetail"), demo: true },
+    { label: t("shell.hero.suggestion2Label"), text: "tạo note nhanh cho tui", detail: t("shell.hero.sampleDataDetail"), demo: true },
+    { label: t("shell.hero.suggestion3Label"), text: "cho tui xem bảng dữ liệu", detail: t("shell.hero.sampleDataDetail"), demo: true },
+    { label: t("shell.hero.suggestion4Label"), text: "chào bạn, bạn làm được gì?", detail: t("shell.hero.needsModelDetail"), demo: false },
+  ] as const;
+}
 
 export interface ConversationHeroEmptyStateProps {
   heroPhase: HeroPhase;
@@ -46,7 +58,9 @@ export function ConversationHeroEmptyState({
   dynamicSuggestions,
   onSend,
 }: ConversationHeroEmptyStateProps): ReactElement | null {
+  const t = useT();
   if (heroPhase === "gone") return null;
+  const staticSuggestions = suggestionsFor(t);
   return (
     <div className="cc-empty" data-leaving={heroPhase === "leaving" ? "true" : "false"}>
       {/*
@@ -59,20 +73,17 @@ export function ConversationHeroEmptyState({
       {needsModel === true ? (
         <div className="cc-card cc-setup-card" data-needs-model="true" role="status">
           <div className="cc-setting-text">
-            <span className="cc-setting-label">Node này chưa có model</span>
-            <span className="cc-setting-desc">
-              Nó vẫn trả lời được bằng recipe và capability đã cài. Muốn hỏi tự do thì cần chọn provider và
-              model trước — mở Cài đặt, tab AI &amp; Routing.
-            </span>
+            <span className="cc-setting-label">{t("shell.hero.noModelTitle")}</span>
+            <span className="cc-setting-desc">{t("shell.hero.noModelDesc")}</span>
           </div>
           {/* The control that leads there, rather than a sentence that only describes the gap. */}
           <button type="button" className="cc-chip" data-open-model-settings="true" onClick={onOpenSettings}>
-            Mở Cài đặt
+            {t("shell.hero.openSettings")}
           </button>
         </div>
       ) : null}
-      <h1>Bạn đang nghĩ gì?</h1>
-      <p>Nói việc bạn muốn làm, hoặc bắt đầu từ một gợi ý dưới đây.</p>
+      <h1>{t("shell.hero.heading")}</h1>
+      <p>{t("shell.hero.subheading")}</p>
       {/*
         Two rows, not one row with two shapes in it. What the node offers is what the person was
         actually doing, and it is only shown when there is some; the four written chips are the floor,
@@ -98,8 +109,8 @@ export function ConversationHeroEmptyState({
           ))}
         </div>
       ) : (
-        <div className="cc-chip-row" data-suggestion-count={SUGGESTIONS.length} data-suggestion-static="true">
-          {SUGGESTIONS.map((suggestion, index) => (
+        <div className="cc-chip-row" data-suggestion-count={staticSuggestions.length} data-suggestion-static="true">
+          {staticSuggestions.map((suggestion, index) => (
             <button
               key={suggestion.text}
               type="button"
@@ -118,7 +129,7 @@ export function ConversationHeroEmptyState({
           ))}
         </div>
       )}
-      <p className="cc-freshness">Gợi ý đánh dấu “cần model” sẽ báo lỗi nếu node này chưa cấu hình model.</p>
+      <p className="cc-freshness">{t("shell.hero.footerNote")}</p>
     </div>
   );
 }
