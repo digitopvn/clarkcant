@@ -1,0 +1,1 @@
+{"ts":"2026-09-23T15:49:24.518Z","pid":77597,"turnId":"01a0cef5-1715-7011-a9d7-e8092a3ee3e7:0","level":"debug","subsystem":"project-trust","message":"project trust state transitioned: unknown -> trusted","metadata":{"previous":"unknown","next":"trusted"}}

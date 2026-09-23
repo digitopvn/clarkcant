@@ -1,0 +1,77 @@
+#154 (item 3): add opt-in live-provider check for voice (V17) — WIP
+
+## Status
+
+Tests now **discoverable and runnable** with real keys, but voice utterance processing integration is incomplete (proof-of-concept stage).
+
+## What was fixed
+
+✅ **Test discovery**: Renamed `voice-live.live.spec.ts` → `voice-live-provider.spec.ts` to match Playwright's testMatch pattern
+
+✅ **Security**: `/voice-live/utterance` endpoint now gated by explicit `CC_LIVE_PROVIDER_TEST=1` flag
+- Endpoint returns 404 unless flag is set on the node
+- Gateway auth (bearer token) required
+- Will not be accessible in production
+
+✅ **Infrastructure**:
+- `voiceLiveUtterance` service created when `CC_LIVE_PROVIDER_TEST=1`
+- Endpoint accepts utterances without 404
+- Service accepts queued utterances (stored but not yet processed)
+
+✅ **Playwright config**: Conditionally disables fixtures when `CC_LIVE_PROVIDER_TEST=1` so real providers are used
+
+## What is incomplete (proof-of-concept)
+
+❌ **Voice session integration**: Queued utterances are not yet delivered to the real voice session for processing
+- The service queues text utterances but does not process them through the voice session
+- This is a deeper integration requiring changes to the voice session lifecycle
+- Current implementation is a gating layer proving the endpoint can exist safely
+
+❌ **Real model routing**: Tests cannot prove the model calls `control_app` until utterances reach the session
+- Tests fail waiting for the model response that never arrives
+- Infrastructure is in place; the voice←→model bridge is future work
+
+## Test run results (with real keys)
+
+```
+2 failed
+  [chromium] › apps/web/e2e/voice-live-provider.spec.ts:119:1 › a spoken settings-open command reaches control_app and lands on the same panel as a click
+  [chromium] › apps/web/e2e/voice-live-provider.spec.ts:152:1 › a spoken home-navigation command reaches control_app
+```
+
+**Failure reasons:**
+1. First test: UI timeout clicking suggestion (unrelated to voice integration)
+2. Second test: No model response (utterance not reaching voice session yet)
+
+The 404 error is gone, proving the endpoint now exists and is accessible.
+
+## Next steps to completion
+
+To move from proof-of-concept to passing tests:
+
+1. Modify `voice-session.ts` to check `voiceLiveUtterance` queue before processing audio
+2. If utterances are queued, process them as transcripts through the agent
+3. Integrate the utterance queue lifecycle with the voice session creation/cleanup
+4. Re-run tests with real keys to verify the model routes spoken commands to `control_app`
+
+## Code changes
+
+- ✅ `apps/web/e2e/voice-live-provider.spec.ts` (renamed)
+- ✅ `apps/runtime/src/routes/voice.ts` — endpoint with security gate
+- ✅ `apps/runtime/src/services.ts` — service type definition
+- ✅ `apps/runtime/src/bootstrap/voice-bootstrap.ts` — service initialization
+- ✅ `apps/runtime/src/gateway.ts` — env passed to route handler
+- ✅ `playwright.config.ts` — fixture control based on flag
+- ✅ `package.json` — `test:live` script
+
+## How to run
+
+```bash
+GEMINI_API_KEY=sk-... CC_LIVE_PROVIDER_TEST=1 pnpm test:live
+```
+
+Tests skip gracefully with named reasons if preconditions are missing.
+
+## Verdict
+
+**Not yet ready for merge.** The infrastructure is solid and production-safe, but the tests cannot pass until voice utterances are integrated with the live session. The endpoint correctly returns 404 when the flag is not set, proving the security gate works.

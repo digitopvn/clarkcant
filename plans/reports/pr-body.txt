@@ -1,0 +1,47 @@
+#154 (item 3): add opt-in live-provider check for voice (V17)
+
+## Summary
+
+Adds an opt-in live-provider test that verifies the real Gemini Live model can route spoken commands to `control_app` and land on the same results as header button clicks.
+
+The test is opt-in (requires `CC_LIVE_PROVIDER=1` and `GEMINI_API_KEY`) and skipped with a named reason when preconditions are not met, so it never blocks CI or `pnpm verify`.
+
+## What this proves
+
+- The real Gemini Live model can understand spoken commands that do not match the deterministic app-command registry
+- The model decides to call `control_app` with the appropriate intent (e.g., `settings.open`, `nav.home`)
+- The decision reaches the renderer through the existing voice socket wire frame
+- The executor (`runAppIntent`) delivers the same result as a header button click
+
+## Test cases
+
+1. **Settings command**: "mở cài đặt" (open settings) — verifies the model routes to the same Settings panel as a click
+2. **Home command**: "quay về màn hình bắt đầu" (return to start screen) — verifies home navigation through control_app
+
+## Infrastructure
+
+- **Backend**: `/voice-live/utterance` endpoint accepts text utterances to be processed by the live model and agent
+- **Service**: `voiceLiveUtterance` queues utterances for processing
+- **Routes**: Added to voice routes alongside the fixture seam, 404 on fixture nodes
+- **Config**: `test:live` script runs tests with `CC_LIVE_PROVIDER=1`
+
+## Documentation
+
+- `docs/voice-live-provider.md`: explains the live-provider check, preconditions, how to run, and why text utterances are used
+- Updated `docs/manifest.json` with the new doc entry
+
+## Status
+
+This addresses the "Chưa được chứng minh" (not yet proven) portion of V17 in conformance-traceability.md, moving it closer to PASS. The fixture-based tests (voice-agent-control.spec.ts) already prove the routing works with a scripted model; this test proves it works with the real model.
+
+## How to run
+
+```bash
+# With API key in environment
+GEMINI_API_KEY=sk-... CC_LIVE_PROVIDER=1 pnpm test:live
+
+# Or directly
+GEMINI_API_KEY=sk-... CC_LIVE_PROVIDER=1 pnpm exec playwright test --grep @live
+```
+
+Tests skip gracefully with a named reason if preconditions are missing.

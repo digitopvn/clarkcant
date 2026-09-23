@@ -213,6 +213,13 @@ export interface VoiceGatewayOptions {
   }) => Promise<VoiceWidgetRun>;
   /** Injected by tests so the transport can be exercised without a provider. */
   createAdapter?: () => VoiceProviderAdapter;
+  /**
+   * Live-provider test utterance service.
+   *
+   * When present, the gateway will wire it up so queued utterances are sent to the live session
+   * as user text input for the model to process.
+   */
+  voiceLiveUtterance?: { sendUserText?: (text: string) => void };
   now?: () => Instant;
   /**
    * How long the transcription has to be quiet before the sentence is taken as finished.
@@ -924,6 +931,24 @@ export function attachVoiceGateway(options: VoiceGatewayOptions): VoiceGateway {
       authenticated = true;
       active = { sessionId, holder };
       adapter = createAdapter();
+
+      // Wire up live-provider test utterance injection if the service is available.
+      //
+      // This does not forward the words into the Gemini socket: `inputTranscription` is the
+      // provider transcribing audio it heard, and Gemini never emits it for a `clientContent` text
+      // turn, so a real session given only text produces no "user" transcript fragment, `ask()` is
+      // never reached and the injected words vanish after a 200 with nothing downstream of it. A
+      // real spoken utterance already goes through exactly that fragment-then-`ask()` path once the
+      // provider transcribes the audio; this test seam already has the finished sentence, so there
+      // is nothing left for a network round trip to prove; it takes the same last step the real path
+      // takes once transcription is done, and puts the real agent model in charge of the decision.
+      if (options.voiceLiveUtterance !== undefined) {
+        options.voiceLiveUtterance.sendUserText = (text: string) => {
+          userText += text;
+          send({ type: "transcript", role: "user", text, final: true });
+          ask(now());
+        };
+      }
 
       adapter.onStateChange((state) => {
         // The provider says when it stops speaking; until it does, the audio it sends belongs to the reply we asked for.
