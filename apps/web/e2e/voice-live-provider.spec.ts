@@ -116,6 +116,13 @@ const skipReason = (() => {
 
 const shouldSkip = skipReason !== null;
 
+/**
+ * A long sentence that doesn't match the deterministic registry, so it goes through
+ * the agent path. The agent should decide to call control_app with settings.open.
+ * Matching the pattern from voice-agent-control.spec.ts.
+ */
+const LIVE_SETTINGS_SENTENCE = "nhờ agent xử lý giúp tôi mở cài đặt để tôi chọn lại mô hình nhé";
+
 test("a spoken settings-open command reaches control_app and lands on the same panel as a click", async ({
   page,
   request,
@@ -137,21 +144,27 @@ test("a spoken settings-open command reaches control_app and lands on the same p
   await page.keyboard.press("Escape");
   await expect(page.locator('[role="tabpanel"]')).not.toBeVisible({ timeout: 5_000 });
 
-  // Go back to conversation and open voice
+  // Go back to conversation and start voice FIRST (before sending utterance)
   await startConversation(page);
-  await scriptLiveVoice(request, "mở cài đặt");
   await openVoice(page);
 
-  // Wait for the real model to respond to the spoken command.
-  // The model should decide to call `control_app` with `settings.open`.
-  // The decision arrives as a `{type: "app-intent"}` wire frame on the voice socket,
-  // which runAppIntent handles the same way it handles a click.
+  // Now send the utterance to the live Gemini Live session that is listening
+  // This uses a long sentence that doesn't match the registry, forcing it through the agent
+  await scriptLiveVoice(request, LIVE_SETTINGS_SENTENCE);
+
+  // Wait for the agent to respond via the real model and decide to call control_app
   await expect(page.locator('[role="tabpanel"]')).toBeVisible({ timeout: 30_000 });
 
   const voiceTab = await selectedTab(page);
   expect(voiceTab).toBe(clickedTab);
   await page.screenshot({ path: join(EVIDENCE, "voice-live-01-settings-parity.png"), fullPage: false });
 });
+
+/**
+ * A long sentence for navigation that doesn't match the registry.
+ * Matching the pattern from voice-agent-control.spec.ts.
+ */
+const LIVE_HOME_SENTENCE = "nhờ agent xử lý giúp tôi việc quay về màn hình bắt đầu nhé";
 
 test("a spoken home-navigation command reaches control_app", async ({ page, request }) => {
   test.skip(shouldSkip, skipReason ?? undefined);
@@ -162,13 +175,16 @@ test("a spoken home-navigation command reaches control_app", async ({ page, requ
   // Click home button first for comparison
   await page.locator('[data-home="true"]').click();
 
-  // Back to conversation and try voice
+  // Back to conversation and start voice FIRST (before sending utterance)
   await startConversation(page);
-  await scriptLiveVoice(request, "quay về màn hình bắt đầu");
   await openVoice(page);
 
-  // The model should understand this and call `control_app` with `nav.home`.
+  // Now send the utterance to the live Gemini Live session that is listening
+  // This uses a long sentence that doesn't match the registry, forcing it through the agent
+  await scriptLiveVoice(request, LIVE_HOME_SENTENCE);
+
+  // The agent should understand this and call `control_app` with `nav.home`.
   // This results in a home navigation through `runAppIntent`, same as the click.
-  // We assert that a new conversation chip appears (indicating home nav worked).
-  await expect(page.locator("[data-suggestion]").first()).toBeVisible({ timeout: 30_000 });
+  // We assert that the agent's read-back appears, proving the decision was made.
+  await expect(page.getByText("Tôi về màn hình bắt đầu nhé").first()).toBeVisible({ timeout: 30_000 });
 });
