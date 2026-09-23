@@ -453,15 +453,30 @@ export async function installPackage(
    * install still proceeds without it — the package activates with the narrower granted set — and the caller can
    * see, and later approve, exactly what is still pending.
    */
-  const pendingCapabilities = grant.needsApproval.map((ref) => ({
-    ref,
-    approvalId: requestApproval(coordination, {
-      operationDigest: `${entry.digest}:${ref}`,
-      operationDescription: `cấp quyền ${ref} cho ${entry.displayName} ${entry.version}`,
-      effectCategory: effectCategoryForLane(computedRiskTier),
-      ttlMs: INSTALL_APPROVAL_TTL_MS,
-    }).approvalId,
-  }));
+  const pendingCapabilities = grant.needsApproval.map((ref) => {
+    const operationDigest = `${entry.digest}:${ref}`;
+    /*
+     * A reinstall of the same digest asks the same question every time unless this reuses what is already
+     * pending: without this, calling install twice while a capability approval sits unanswered would pile up a
+     * second `approvals` row nobody asked for, and the caller would not know which one still matters. Reusing the
+     * row for the same `operationDigest` (this package's digest plus this capability ref) means "install this
+     * again" and "still waiting on the same grant" read as the one thing they are.
+     */
+    const existing = runtime.db
+      .prepare("SELECT approval_id FROM approvals WHERE operation_digest = ? AND decision = 'pending'")
+      .get(operationDigest) as { approval_id: string } | undefined;
+    return {
+      ref,
+      approvalId:
+        existing?.approval_id ??
+        requestApproval(coordination, {
+          operationDigest,
+          operationDescription: `cấp quyền ${ref} cho ${entry.displayName} ${entry.version}`,
+          effectCategory: effectCategoryForLane(computedRiskTier),
+          ttlMs: INSTALL_APPROVAL_TTL_MS,
+        }).approvalId,
+    };
+  });
 
   const outcome = installFromEntry(coordination, {
     entry: resolvedEntry,

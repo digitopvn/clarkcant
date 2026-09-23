@@ -176,6 +176,29 @@ describe("installing from the directory", () => {
     expect(installed[0]?.category).toBe("local-write");
   });
 
+  /**
+   * M4: a fetch that never produced bytes must never read back as "executed" — the audit trail this node keeps
+   * for every effect it actually performed (the test right above this one) would otherwise say something false
+   * for the one case where nothing was actually installed.
+   */
+  it("leaves no executed-effect audit row when the fetch fails, unlike a fetch that succeeds", async () => {
+    // A ref this fixture repository never had: `fetchGitArtifact` fails before any bytes reach the cache, and
+    // `installPackage` must return before `recordEffectExecution` runs for this package.
+    writeIndex([entry({ source: { kind: "git", url: gitSourceUrl, ref: "0000000000000000000000000000000000dead" } })]);
+
+    const response = await install({ packageId: "com.example.calendar", version: "1.2.0" });
+
+    expect(response.status).toBe(400);
+    expect((response.body as Record<string, unknown>)["code"]).toBeDefined();
+    expect(JSON.stringify(response.body)).not.toContain("generationId");
+
+    const listed = await activity();
+    const installed = listed.effects.filter(
+      (effect) => effect.kind === "effect.executed" && effect.description === "install com.example.calendar@1.2.0",
+    );
+    expect(installed).toHaveLength(0);
+  });
+
   it("does not let a forged grantedCapabilities in the request body become authority (issue #93, P1)", async () => {
     writeIndex([entry()]);
 

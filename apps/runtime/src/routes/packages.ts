@@ -199,6 +199,28 @@ export async function handlePackageRoutes(deps: PackageRouteDeps): Promise<Gatew
        * read without the bytes. Nothing frozen is reported as absent, which is a different statement again.
        */
       lock: outcome.lock,
+      /*
+       * A capability the policy would ask about, or refused outright, named in the response rather than folded
+       * into "installed" as if it were granted. There is no UI surface for a pending capability approval today
+       * (N1), so this plain-language note is the only place a caller can learn one exists at all until one is
+       * built; the structured arrays beside it are what a future UI or CLI would read instead of parsing prose.
+       */
+      pendingCapabilities: outcome.pendingCapabilities,
+      deniedCapabilities: outcome.deniedCapabilities,
+      ...(outcome.pendingCapabilities.length === 0 && outcome.deniedCapabilities.length === 0
+        ? {}
+        : {
+            note: [
+              outcome.pendingCapabilities.length === 0
+                ? undefined
+                : `${String(outcome.pendingCapabilities.length)} capability request(s) need approval before they work: ${outcome.pendingCapabilities.map((pending) => pending.ref).join(", ")}. Decide each with its approvalId.`,
+              outcome.deniedCapabilities.length === 0
+                ? undefined
+                : `${String(outcome.deniedCapabilities.length)} capability request(s) were denied by policy: ${outcome.deniedCapabilities.join(", ")}.`,
+            ]
+              .filter((line): line is string => line !== undefined)
+              .join(" "),
+          }),
     });
   }
 
