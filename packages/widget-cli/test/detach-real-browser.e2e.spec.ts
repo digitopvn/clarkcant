@@ -88,8 +88,13 @@ describe("detach against a real browser", () => {
 
     // Reattach: click the detached window's own control, which releases its claim, tells the shell over the
     // BroadcastChannel, and closes the window - exactly the desktop shell's "release before the next claim" order.
-    await detached.click("[data-detached-reattach='true']");
-    await detached.waitForEvent("close");
+    // The window closes itself as part of the click, so wait for "close" from before the click: registering after
+    // it can miss an event that already fired and wait forever.
+    const closed = detached.waitForEvent("close");
+    await detached.click("[data-detached-reattach='true']", { noWaitAfter: true }).catch((error: unknown) => {
+      if (!detached.isClosed()) throw error;
+    });
+    await closed;
 
     await expect
       .poll(async () => currentLeaseSurface(baseUrl))
@@ -115,5 +120,5 @@ describe("detach against a real browser", () => {
     });
     const check = result.checks.find((entry) => entry.id === "interaction.detach");
     expect(check?.status).toBe("pass");
-  }, 30_000);
+  }, 60_000);
 });
