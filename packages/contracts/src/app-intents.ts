@@ -41,16 +41,20 @@ import { capabilityRefSchema } from "./grants.ts";
  */
 export const APP_INTENT_KINDS = [
   "voice.end",
+  "voice.open",
   "window.expand",
   "window.minimise",
   "window.minimal",
   "settings.open",
   "settings.tab",
   "nav.home",
+  "nav.conversation",
   "composer.attach",
   "app.quit",
   "widgets.open",
   "widgets.show",
+  "model.cycle",
+  "model.select",
 ] as const;
 
 export const appIntentKindSchema = z.enum(APP_INTENT_KINDS);
@@ -75,8 +79,19 @@ export type SettingsTab = z.infer<typeof settingsTabSchema>;
  * microphone hear something that sounded like it", which is the first question anyone asks after an
  * application does something surprising.
  */
-export const appIntentSourceSchema = z.enum(["chat", "click", "voice"]);
+/**
+ * `"agent"` marks a request the main or voice model made through a tool call rather than one a
+ * person typed, clicked or said. Kept in the same enum as the others rather than a separate
+ * `origin` field, because every caller of this schema already switches on `source` and a second
+ * field would let the two disagree - an "agent" request whose `source` still said "chat" would be
+ * audited as if a person had asked for it.
+ */
+export const appIntentSourceSchema = z.enum(["chat", "click", "voice", "agent"]);
 export type AppIntentSource = z.infer<typeof appIntentSourceSchema>;
+
+/** A configured model-pool profile alias, as `@clarkcant/core`'s model pool names it. */
+export const modelAliasSchema = z.string().min(1).max(80);
+export type ModelAlias = z.infer<typeof modelAliasSchema>;
 
 /** A catalog family word, as `widget-catalog` names it. */
 export const widgetFamilySchema = z
@@ -99,6 +114,8 @@ export const appIntentSchema = z
     tab: settingsTabSchema.optional(),
     definitionId: capabilityRefSchema.optional(),
     family: widgetFamilySchema.optional(),
+    /** Carried only by `model.select`, naming a profile from the configured pool - never a bare provider/model string. */
+    modelAlias: modelAliasSchema.optional(),
   })
   .refine((intent) => intent.kind !== "settings.tab" || intent.tab !== undefined, {
     message: "settings.tab must name the tab to change to",
@@ -111,7 +128,15 @@ export const appIntentSchema = z
       message: "only widgets.show may name a widget or a family",
       path: ["definitionId"],
     },
-  );
+  )
+  .refine((intent) => intent.kind !== "model.select" || intent.modelAlias !== undefined, {
+    message: "model.select must name the configured profile to switch to",
+    path: ["modelAlias"],
+  })
+  .refine((intent) => intent.kind === "model.select" || intent.modelAlias === undefined, {
+    message: "only model.select may name a model alias",
+    path: ["modelAlias"],
+  });
 export type AppIntent = z.infer<typeof appIntentSchema>;
 
 /** The one intent that is never executable from a single request. */
@@ -159,6 +184,14 @@ export function describeAppIntent(intent: AppIntent): string {
   switch (intent.kind) {
     case "voice.end":
       return "Tôi kết thúc phiên thoại nhé.";
+    case "voice.open":
+      return "Tôi mở phiên thoại nhé.";
+    case "nav.conversation":
+      return "Tôi quay lại cuộc trò chuyện hiện tại nhé.";
+    case "model.cycle":
+      return "Tôi chuyển sang model tiếp theo trong pool nhé. Thay đổi áp dụng từ lượt tiếp theo.";
+    case "model.select":
+      return `Tôi chuyển sang model "${intent.modelAlias ?? ""}" nhé. Thay đổi áp dụng từ lượt tiếp theo.`;
     case "window.expand":
       return "Tôi mở rộng cửa sổ nhé.";
     case "window.minimise":
@@ -250,6 +283,8 @@ export const appIntentRequestSchema = z
     /** Carried so a click can name a widget; a spoken sentence gets its target from the matcher. */
     definitionId: capabilityRefSchema.optional(),
     family: widgetFamilySchema.optional(),
+    /** Carried so a click or an agent tool call can name a configured model-pool profile directly. */
+    modelAlias: modelAliasSchema.optional(),
     conversationId: z.string().min(1).max(128).optional(),
     source: appIntentSourceSchema,
   })
@@ -273,6 +308,8 @@ export const appIntentEventDocumentSchema = z.strictObject({
   /** Recorded so the audit can answer *which* widget was shown, not only that the library opened. */
   definitionId: capabilityRefSchema.optional(),
   family: widgetFamilySchema.optional(),
+  /** Recorded so the audit can answer which profile a `model.select` switched to. */
+  modelAlias: modelAliasSchema.optional(),
   source: appIntentSourceSchema,
   confirmed: z.boolean(),
 });
