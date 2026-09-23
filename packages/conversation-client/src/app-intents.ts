@@ -42,6 +42,33 @@ export interface AppIntentHost {
   openFilePicker(): void;
   endVoice(): void;
   /**
+   * Starts voice mode, ensuring a conversation exists first.
+   *
+   * Optional for the same reason the widget library is: a host that has not wired a voice surface
+   * should be refused with a sentence, not reported as having opened one.
+   */
+  openVoice?(): void;
+  /**
+   * Closes Settings and the widget library and returns to the conversation already open, without
+   * resetting or leaving it.
+   *
+   * Distinct from `goHome`, which leaves the session: `nav.conversation` is "close what is on top
+   * of the conversation", and `goHome` is "leave the conversation". Optional is not meaningful here
+   * — every host that has a conversation surface can dismiss its own overlays — but it is declared
+   * alongside the other new members for the same reason: a host built before this existed should not
+   * silently gain a method it never implemented.
+   */
+  showConversation?(): void;
+  /**
+   * Moves the configured model pool to the next enabled profile, applying to a new generation.
+   *
+   * Optional: a host with no model pool (e.g. a fixture with no node behind it) cannot promise this,
+   * and a caller that reported success anyway would be lying about what changed.
+   */
+  cycleModel?(): void;
+  /** Selects a configured model-pool profile by its alias. See `cycleModel` for why this is optional. */
+  selectModel?(alias: string): void;
+  /**
    * Opens the widget library.
    *
    * Optional for the same reason the window methods are: a host that cannot show the library should
@@ -69,10 +96,27 @@ export const NOT_DESKTOP_SAY =
 export const NOT_LIBRARY_SAY =
   "Bản dựng này không mở được thư viện widget, nên tôi chưa làm gì cả.";
 
+/** Said when an intent is understood and this build has no voice surface to open. */
+export const NOT_VOICE_SAY = "Bản dựng này không mở được phiên thoại, nên tôi chưa làm gì cả.";
+
+/** Said when an intent is understood and this build has no configured model pool to change. */
+export const NOT_MODEL_POOL_SAY = "Bản dựng này không đổi được model, nên tôi chưa làm gì cả.";
+
 function missingCapabilitySay(intent: AppIntent): string {
-  return intent.kind === "widgets.open" || intent.kind === "widgets.show"
-    ? NOT_LIBRARY_SAY
-    : NOT_DESKTOP_SAY;
+  switch (intent.kind) {
+    case "widgets.open":
+    case "widgets.show":
+      return NOT_LIBRARY_SAY;
+    case "voice.open":
+      return NOT_VOICE_SAY;
+    case "model.cycle":
+    case "model.select":
+      return NOT_MODEL_POOL_SAY;
+    case "nav.conversation":
+      return "Bản dựng này không quay lại được cuộc trò chuyện, nên tôi chưa làm gì cả.";
+    default:
+      return NOT_DESKTOP_SAY;
+  }
 }
 
 /** Said when a decision came back that is not executable: a question, or a refusal. */
@@ -123,6 +167,18 @@ export function runAppIntent(decision: AppIntentDecision, host: AppIntentHost): 
     case "voice.end":
       host.endVoice();
       return { ran: true, say: readBack };
+    case "voice.open":
+      host.openVoice?.();
+      return { ran: true, say: readBack };
+    case "nav.conversation":
+      host.showConversation?.();
+      return { ran: true, say: readBack };
+    case "model.cycle":
+      host.cycleModel?.();
+      return { ran: true, say: readBack };
+    case "model.select":
+      host.selectModel?.(intent.modelAlias ?? "");
+      return { ran: true, say: readBack };
     case "window.expand":
       host.expandWindow?.();
       return { ran: true, say: readBack };
@@ -167,6 +223,14 @@ function hostHasCapability(host: AppIntentHost, intent: AppIntent): boolean {
     case "widgets.open":
     case "widgets.show":
       return host.openWidgetLibrary !== undefined;
+    case "voice.open":
+      return host.openVoice !== undefined;
+    case "nav.conversation":
+      return host.showConversation !== undefined;
+    case "model.cycle":
+      return host.cycleModel !== undefined;
+    case "model.select":
+      return host.selectModel !== undefined;
     default:
       return true;
   }

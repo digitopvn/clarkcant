@@ -238,6 +238,10 @@ export function Conversation({
     restartSession,
     attachmentInput,
     setVoiceOpen,
+    // Reuses the same path the voice button already takes, so a `voice.open` intent - from a click, a
+    // typed command, or the main agent's `control_app` - ensures a conversation exists first exactly as
+    // clicking the button does.
+    openVoice: () => void openVoice(),
   });
 
   /**
