@@ -5,7 +5,6 @@ import type { MemoryRecord } from "@clarkcant/contracts";
 import type { GatewayClient } from "../api.ts";
 import { useT } from "../i18n/locale-context.tsx";
 import { memoryView, type MemoryGroupView } from "../memory-groups.ts";
-import { useT } from "../i18n/locale-context.tsx";
 
 /**
  * What this node remembers, and the way to remove it.
