@@ -1018,9 +1018,26 @@ export function attachVoiceGateway(options: VoiceGatewayOptions): VoiceGateway {
     activeSessionHolder: () => active?.holder,
     capabilities: () => createAdapter().capabilities,
     close: async () => {
+      // Releases the only lease this gateway holds. Set before anything that can block, so a
+      // shutdown that later times out still leaves the slot free for the node's next session.
       active = undefined;
-      for (const client of wss.clients) client.close(1001, "the node is shutting down");
-      await new Promise<void>((resolve) => wss.close(() => resolve()));
+
+      /*
+       * `wss.close(cb)` alone waits for every client's closing handshake to finish before its
+       * callback runs, and `ws`'s own per-socket close timer only fires after 30s — long past
+       * what a node shutdown can afford to block on. A peer that stops reading (network death, a
+       * killed tab) never answers a close frame, so terminating every client outright and
+       * bounding the wait is what keeps shutdown itself bounded; `terminate()` drops the
+       * connection immediately and is what removes it from `wss.clients`, which is what lets
+       * `wss.close(cb)`'s callback fire.
+       */
+      for (const client of wss.clients) client.terminate();
+
+      const CLOSE_TIMEOUT_MS = 2000;
+      await Promise.race([
+        new Promise<void>((resolve) => wss.close(() => resolve())),
+        new Promise<void>((resolve) => setTimeout(resolve, CLOSE_TIMEOUT_MS)),
+      ]);
     },
   };
 }
