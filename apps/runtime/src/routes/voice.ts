@@ -12,9 +12,10 @@ import { type GatewayRequest, type GatewayResponse, fail, json, readJson } from 
  * branches lived in the gateway.
  */
 export interface VoiceRouteDeps {
-  services: Pick<NodeServices, "voiceCapabilities" | "voiceFixture">;
+  services: Pick<NodeServices, "voiceCapabilities" | "voiceFixture" | "voiceLiveUtterance">;
   request: GatewayRequest;
   segments: string[];
+  env?: Record<string, string | undefined>;
 }
 
 /**
@@ -65,6 +66,40 @@ export function handleVoiceRoutes(deps: VoiceRouteDeps): GatewayResponse | undef
       return fail(400, "INVALID_SCHEMA", "words must be a non-empty string");
     }
     fixture.setWords(words.trim());
+    return json(200, { ok: true, words: words.trim() });
+  }
+
+  /*
+   * Live provider test utterance.
+   *
+   * This route allows browser tests to inject utterances that will be processed by the real voice session
+   * and the real agent model. It is test infrastructure only and protected by an explicit test-only flag
+   * (CC_LIVE_PROVIDER_TEST=1) to prevent accidental enablement in production.
+   *
+   * Gated by both the service presence and the explicit flag: merely having the real provider loaded does
+   * not enable this route. The flag must be set on the node. Requests go through the normal gateway auth
+   * (bearer token in Authorization header), so the gate is: service present + flag set + authenticated.
+   *
+   * Returns 404 if the flag is not set, if the service is not available, or if the route pattern doesn't match.
+   */
+  if (segments[0] === "voice-live") {
+    const env = deps.env ?? {};
+    const testFlagEnabled = env.CC_LIVE_PROVIDER_TEST === "1";
+    const liveUtterance = deps.services.voiceLiveUtterance;
+
+    if (!testFlagEnabled || liveUtterance === undefined) {
+      return fail(404, "NOT_FOUND", "no live voice provider test is enabled on this node");
+    }
+    if (segments.length !== 2 || segments[1] !== "utterance" || request.method !== "POST") {
+      return fail(404, "NOT_FOUND", "no such voice-live route");
+    }
+    const parsed = readJson(request);
+    if (!parsed.ok) return parsed.response;
+    const words = parsed.value.words;
+    if (typeof words !== "string" || words.trim() === "") {
+      return fail(400, "INVALID_SCHEMA", "words must be a non-empty string");
+    }
+    liveUtterance.enqueueUtterance(words.trim());
     return json(200, { ok: true, words: words.trim() });
   }
 

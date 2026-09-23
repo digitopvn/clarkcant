@@ -8,7 +8,15 @@ import { createServer as createViteServer, type ViteDevServer } from "vite";
 
 import { readPackage } from "@clarkcant/core";
 import { catalogFrameHtml, catalogTarget } from "./catalog-target.ts";
-import { applyShellAction, initialState, renderShell, type DevShellAction, type DevShellState } from "./dev-shell.ts";
+import {
+  applyShellAction,
+  initialState,
+  renderDetachedShell,
+  renderShell,
+  type DevShellAction,
+  type DevShellState,
+} from "./dev-shell.ts";
+import { openDevLeaseStore } from "./dev-lease.ts";
 
 /**
  * `clark widget dev` — the local isolated host.
@@ -177,6 +185,65 @@ window.addEventListener("message", (event) => {
   appendLog(new Date().toISOString() + " " + JSON.stringify(event.data).slice(0, 400));
   if (event.data && event.data.kind === "semantic.publish") semantic.textContent = event.data.summary;
 });
+
+/*
+ * The live-owner lease, claimed by this window and released before a detached window claims it — the same
+ * ordering apps/desktop's shell follows: the shell releases first, so there is never a moment with two owners.
+ * Every claim/release here is a real HTTP call into the server's lease store (dev-lease.ts, over the same
+ * @clarkcant/core functions the runtime calls), not a local flag.
+ */
+const liveOwnerText = document.querySelector("[data-dev-live-owner]");
+const ownerToken = "shell-" + crypto.randomUUID();
+const detachChannel = new BroadcastChannel("clark-dev-detach");
+
+async function claimInline() {
+  const response = await fetch("/dev/api/live-owner", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ ownerToken, surface: "inline" }),
+  });
+  const body = await response.json();
+  liveOwnerText.textContent = body.ok ? "inline (this window)" : "held by another surface: " + JSON.stringify(body);
+}
+
+document.querySelector("[data-dev-detach='true']")?.addEventListener("click", async () => {
+  await fetch("/dev/api/live-owner", {
+    method: "DELETE",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ ownerToken }),
+  });
+  liveOwnerText.textContent = "detached (in a second window)";
+  window.open("/detached", "clark-widget-detached", "width=480,height=640");
+});
+
+/* The detached window tells us it released and closed; we reclaim inline exactly like the shell does on reattach. */
+detachChannel.addEventListener("message", (event) => {
+  if (event.data && event.data.kind === "reattached") void claimInline();
+});
+
+void claimInline();
+`;
+
+/** The detached window's own in-page script: claims the lease for its surface and relays reattach. */
+const DETACHED_SCRIPT = `
+const ownerToken = "detached-" + crypto.randomUUID();
+const detachChannel = new BroadcastChannel("clark-dev-detach");
+
+await fetch("/dev/api/live-owner", {
+  method: "POST",
+  headers: { "content-type": "application/json" },
+  body: JSON.stringify({ ownerToken, surface: "detached" }),
+});
+
+document.querySelector("[data-detached-reattach='true']")?.addEventListener("click", async () => {
+  await fetch("/dev/api/live-owner", {
+    method: "DELETE",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ ownerToken }),
+  });
+  detachChannel.postMessage({ kind: "reattached" });
+  window.close();
+});
 `;
 
 /** Where a shell's facts come from, once the choice between a package and the catalog has been made. */
@@ -273,6 +340,11 @@ export async function startDevHost(options: DevHostOptions): Promise<DevHost> {
   const capabilities = source.requestedCapabilities;
   let state = initialState({ fixtures, requestedCapabilities: capabilities });
   let reloadCount = 0;
+  /*
+   * One lease store per dev host process, over the same claimLiveOwner/releaseLiveOwner the runtime calls
+   * (dev-lease.ts). A dev host shows one widget instance, so one store, closed with the server.
+   */
+  const lease = openDevLeaseStore();
   // Typed as the response itself rather than a structural lookalike: a cast here would be a comment about
   // Node's types instead of a fact about this code.
   const clients = new Set<ServerResponse>();
@@ -347,6 +419,77 @@ export async function startDevHost(options: DevHostOptions): Promise<DevHost> {
     if (path === "/dev/shell.js") {
       response.writeHead(200, { "content-type": "text/javascript; charset=utf-8" });
       response.end(SHELL_SCRIPT);
+      return;
+    }
+
+    if (path === "/dev/detached.js") {
+      response.writeHead(200, { "content-type": "text/javascript; charset=utf-8" });
+      response.end(DETACHED_SCRIPT);
+      return;
+    }
+
+    /*
+     * The live-owner lease, read and written for real.
+     *
+     * `GET` answers with the current claim so a collector (or a test) can observe the handoff without guessing
+     * from timing; `POST` claims and `DELETE` releases, both delegating straight to `lease`, which is `dev-lease.ts`
+     * over `@clarkcant/core`'s real `claimLiveOwner`/`releaseLiveOwner`.
+     */
+    if (path === "/dev/api/live-owner") {
+      if (request.method === "GET") {
+        response.writeHead(200, { "content-type": "application/json" });
+        response.end(JSON.stringify({ current: lease.current() ?? null }));
+        return;
+      }
+      if (request.method === "POST" || request.method === "DELETE") {
+        let body = "";
+        request.on("data", (chunk: unknown) => {
+          body += String(chunk);
+          if (body.length > 4_096) request.destroy();
+        });
+        request.on("end", () => {
+          let parsed: { ownerToken?: unknown; surface?: unknown };
+          try {
+            parsed = JSON.parse(body) as { ownerToken?: unknown; surface?: unknown };
+          } catch {
+            response.writeHead(400, { "content-type": "application/json" });
+            response.end(JSON.stringify({ ok: false, refused: "body must be JSON" }));
+            return;
+          }
+          const ownerToken = typeof parsed.ownerToken === "string" ? parsed.ownerToken : "";
+          if (ownerToken === "") {
+            response.writeHead(400, { "content-type": "application/json" });
+            response.end(JSON.stringify({ ok: false, refused: "ownerToken is required" }));
+            return;
+          }
+          if (request.method === "DELETE") {
+            const released = lease.release(ownerToken);
+            response.writeHead(200, { "content-type": "application/json" });
+            response.end(JSON.stringify({ ok: true, released }));
+            return;
+          }
+          const surface = parsed.surface === "pin" || parsed.surface === "detached" ? parsed.surface : "inline";
+          const claimed = lease.claim({ ownerToken, surface });
+          response.writeHead(200, { "content-type": "application/json" });
+          response.end(JSON.stringify(claimed));
+        });
+        return;
+      }
+    }
+
+    /*
+     * The detached window: the same sandboxed frame, opened by the shell's "Detach" button
+     * (`window.open("/detached", ...)`), with its own claim on the lease.
+     */
+    if (path === "/detached") {
+      response.writeHead(200, { "content-type": "text/html; charset=utf-8" });
+      response.end(
+        renderDetachedShell({
+          definitionId: source.definitionId,
+          entryUrl: source.entryUrl,
+          definition: source.definition,
+        }),
+      );
       return;
     }
 
@@ -456,6 +599,7 @@ export async function startDevHost(options: DevHostOptions): Promise<DevHost> {
         for (const client of clients) client.end();
         clients.clear();
         void vite?.close();
+        lease.close();
         server.close(() => {
           done();
         });

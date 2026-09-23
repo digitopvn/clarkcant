@@ -194,9 +194,27 @@ export function useHeroOrbLayout(messageCount: number): HeroOrbLayout {
   }, [heroPhase]);
 
   useLayoutEffect(() => {
-    measureOrb();
-    window.addEventListener("resize", measureOrb);
-    const observer = typeof ResizeObserver === "function" ? new ResizeObserver(() => measureOrb()) : undefined;
+    /*
+     * A trailing re-measure, debounced behind whatever just fired.
+     *
+     * The bounded settle window below assumes every layout-moving event - the readiness fetch that
+     * decides whether the setup card is there, the suggestion chips it brings with it, the webfont -
+     * lands inside a known number of milliseconds. On a loaded machine it does not: a ResizeObserver
+     * callback can catch the anchor mid-move (the frame the card's own entrance transition is still
+     * playing in), store that position, and then never fire again because nothing observed changes
+     * size after that frame - only position, which ResizeObserver does not report. Without this, that
+     * frame is what the orb is stuck at. Debounced rather than fired on every callback, so a burst of
+     * resizes settles into one final measurement instead of one per event.
+     */
+    let trailing: ReturnType<typeof setTimeout> | undefined;
+    const measureSoonAndAgain = (): void => {
+      measureOrb();
+      if (trailing !== undefined) clearTimeout(trailing);
+      trailing = setTimeout(() => measureOrb(), 250);
+    };
+    measureSoonAndAgain();
+    window.addEventListener("resize", measureSoonAndAgain);
+    const observer = typeof ResizeObserver === "function" ? new ResizeObserver(() => measureSoonAndAgain()) : undefined;
     // The hero's own box is observed as well as the reserved space inside it, because what moves
     // the anchor is the text around it growing - the heading arriving with the webfont, the
     // paragraph wrapping - and a resize of the anchor's parent re-measures where the anchor ended
@@ -206,15 +224,17 @@ export function useHeroOrbLayout(messageCount: number): HeroOrbLayout {
     }
     // And again as the layout settles over the first second - the health check returning, the
     // composer's own line arriving - because the first measurement describes the page before any
-    // of that. Bounded on purpose: a settle window, not a loop.
-    const settleTimers = [0, 50, 150, 400, 900].map((ms) => setTimeout(() => measureOrb(), ms));
+    // of that. Bounded on purpose: a settle window, not a loop - the trailing re-measure above is
+    // what covers whatever lands after this window closes.
+    const settleTimers = [0, 50, 150, 400, 900].map((ms) => setTimeout(() => measureSoonAndAgain(), ms));
     // The webfont arrives after the first paint and changes how tall the hero's text is, which
     // moves the reserved space the orb is placed against.
-    void document.fonts?.ready.then(() => measureOrb());
+    void document.fonts?.ready.then(() => measureSoonAndAgain());
     return () => {
       for (const timer of settleTimers) clearTimeout(timer);
+      if (trailing !== undefined) clearTimeout(trailing);
       observer?.disconnect();
-      window.removeEventListener("resize", measureOrb);
+      window.removeEventListener("resize", measureSoonAndAgain);
     };
   }, [measureOrb]);
 

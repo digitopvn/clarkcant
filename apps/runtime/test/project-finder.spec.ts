@@ -99,6 +99,25 @@ afterEach(() => {
 });
 
 describe("the scan", () => {
+  it("builds the index when one root lies inside another", async () => {
+    // The node's roots are the home folder and the drive it runs from, and on macOS or Linux the home folder is
+    // inside that drive. Both walks reached the same repositories, the second got a fresh id for a path the first
+    // had just written, and the whole refresh failed on the (node_id, path) constraint - so no index at all.
+    buildTree();
+    const drive = join(home, "..");
+    deps = { ...deps, roots: () => [home, drive] };
+
+    const outcome = await refreshProjectIndex(deps, { full: true });
+    const paths = listProjects(db, "node_local", 100).map((project) => project.path);
+
+    expect(paths.filter((path) => path === join(home, "agentkit"))).toHaveLength(1);
+    expect(new Set(paths).size).toBe(paths.length);
+    expect(outcome.scanned).toBe(paths.length);
+
+    const scan = await scanProjects({ roots: [home, drive], ignore: [] });
+    const scanned = scan.projects.map((project) => project.path);
+    expect(new Set(scanned).size).toBe(scanned.length);
+  });
 
   it("keeps looking inside a folder that only holds a docs subfolder", async () => {
     // Found on a real machine, and it cost a whole tree: `D:\www` holds `docs`, so it was classified as a

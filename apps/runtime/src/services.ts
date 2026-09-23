@@ -139,6 +139,19 @@ export interface NodeServices {
    */
   voiceFixture?: { setWords(words: string): void };
 
+  /**
+   * Queue utterances for processing by the live voice provider (test infrastructure only).
+   *
+   * Present only when CC_LIVE_PROVIDER_TEST=1 (an explicit test-only flag).
+   * This allows opt-in live-provider tests to inject utterances that will be processed by the real
+   * voice session and the real agent model, proving that the model can route spoken commands correctly.
+   *
+   * Test infrastructure only: never available in production. The flag must be explicitly set on the
+   * node; merely having the real provider loaded does not enable this capability, since it allows
+   * injecting utterances into a live voice session.
+   */
+  voiceLiveUtterance?: { enqueueUtterance(words: string): void };
+
   turnControl?: {
     running(): string[];
     interrupt(conversationId: string): boolean;

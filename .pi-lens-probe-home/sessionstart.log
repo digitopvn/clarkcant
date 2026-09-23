@@ -1,0 +1,13 @@
+[2026-09-23T15:49:23.348Z] pi-lens loaded: 13022ms after process start (from dist)
+[2026-09-23T15:49:26.214Z] session_start config_resolution_pending session=1nvh-muea3fuo-1 root=/Volumes/GOON/www/digitop/clarkcant/.claude/worktrees/agent-af68cc6ada368cadf
+[2026-09-23T15:49:26.215Z] config resolved documents=1 legacy=0 records=0 deniedServers=0 resolveMs=1 session=1nvh-muea3fuo-1 root=/Volumes/GOON/www/digitop/clarkcant/.claude/worktrees/agent-af68cc6ada368cadf
+[2026-09-23T15:49:26.220Z] tool_result: skipped turn tracking - toolName="control_app" is not a classified mutation
+[2026-09-23T15:49:26.226Z] turn_end: no modified files, scheduling LSP idle reset (360s)
+[2026-09-23T15:49:26.227Z] lsp status update skipped: Error: Theme not initialized. Call initTheme() first.
+[2026-09-23T15:49:27.502Z] turn_end: no modified files, scheduling LSP idle reset (360s)
+[2026-09-23T15:49:27.502Z] lsp status update skipped: Error: Theme not initialized. Call initTheme() first.
+[2026-09-23T15:49:27.503Z] lsp status update skipped: Error: Theme not initialized. Call initTheme() first.
+[2026-09-23T15:49:27.741Z] lsp status update skipped: Error: Theme not initialized. Call initTheme() first.
+[2026-09-23T15:49:35.616Z] tool_result: skipped turn tracking - toolName="control_app" is not a classified mutation
+[2026-09-23T15:49:35.617Z] turn_end: no modified files, scheduling LSP idle reset (360s)
+[2026-09-23T15:49:35.617Z] lsp status update skipped: Error: Theme not initialized. Call initTheme() first.

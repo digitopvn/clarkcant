@@ -107,6 +107,11 @@
       "path": "mini-app/jev-configuration.md",
       "bytes": 13391,
       "sha256": "c811c4fd7344455ba34a1ee0e358d7fab25d6ebb90fefb4390445a93329e3aed"
+    },
+    {
+      "path": "voice-live-provider.md",
+      "bytes": 4497,
+      "sha256": "42cefb8c498f1ec7c347ccc0ea6527acf5df89505f67b993c7a0b7e2ac004d1c"
     }
   ]
 }
