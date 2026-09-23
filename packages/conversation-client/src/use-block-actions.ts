@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import type { GatewayClient, Timeline } from "./api.ts";
+import type { MessageKey } from "./i18n/messages.ts";
 import type {
   ArtifactOpenState,
   BlockActions,
@@ -17,6 +18,12 @@ export interface BlockActionsDeps {
   setError: (message: string | undefined) => void;
   /** The same path as a question: an answer becomes the user's own next message. */
   send: (text: string) => void;
+  /**
+   * The translator for the current UI language, passed rather than read via `useT()`: this hook is
+   * called directly from `Conversation`'s own body, before `Conversation`'s `<LocaleProvider>` — a
+   * child of its return, not an ancestor of it — is mounted.
+   */
+  t: (key: MessageKey) => string;
 }
 
 /**
@@ -35,6 +42,7 @@ export function useBlockActions({
   applyTimeline,
   setError,
   send,
+  t,
 }: BlockActionsDeps): BlockActions {
   const [decidingApprovalId, setDecidingApprovalId] = useState<string | undefined>(undefined);
 
@@ -151,17 +159,17 @@ export function useBlockActions({
             requestId: input.requestId,
             message:
               result.names.length === 0
-                ? "Đã gửi, nhưng node không ghi nhận tên nào."
-                : `Đã lưu: ${result.names.join(", ")}.`,
+                ? t("shell.credential.sentNoName")
+                : t("shell.credential.saved").replace("{names}", result.names.join(", ")),
           }),
         )
         .catch(() =>
           // The failure message says nothing about what was typed. An error that repeated the
           // value would be the leak this card exists to prevent.
-          setCredentialStatus({ requestId: input.requestId, message: "Không lưu được. Thử lại." }),
+          setCredentialStatus({ requestId: input.requestId, message: t("shell.credential.saveFailed") }),
         );
     },
-    [client],
+    [client, t],
   );
 
   /**
@@ -214,12 +222,12 @@ export function useBlockActions({
             ...current,
             [taskId]: {
               status: "failed",
-              message: error instanceof Error ? error.message : "Không gửi được yêu cầu dừng task.",
+              message: error instanceof Error ? error.message : t("shell.task.stopFailed"),
             },
           })),
       );
     },
-    [client],
+    [client, t],
   );
 
   /**
@@ -256,12 +264,12 @@ export function useBlockActions({
             ...current,
             [artifactId]: {
               status: "failed",
-              message: error instanceof Error ? error.message : "Không mở được artifact này.",
+              message: error instanceof Error ? error.message : t("shell.artifact.openFailed"),
             },
           })),
       );
     },
-    [client],
+    [client, t],
   );
 
   /**
@@ -283,10 +291,10 @@ export function useBlockActions({
             ...current,
             [packageId]:
               answer.code === "APPROVAL_REQUIRED"
-                ? { status: "approval-required", message: answer.message ?? "Cần bạn duyệt trước khi cài." }
+                ? { status: "approval-required", message: answer.message ?? t("shell.package.approvalRequired") }
                 : {
                     status: "installed",
-                    message: "Đã cài.",
+                    message: t("shell.package.installed"),
                     ...(answer.generationId === undefined ? {} : { generationId: answer.generationId }),
                     ...(answer.verified === undefined ? {} : { verified: answer.verified }),
                   },
@@ -299,13 +307,13 @@ export function useBlockActions({
             ...current,
             [packageId]: {
               status: "refused",
-              message: error instanceof Error ? error.message : "Không cài được gói này.",
+              message: error instanceof Error ? error.message : t("shell.package.installFailed"),
             },
           }));
         },
       );
     },
-    [client],
+    [client, t],
   );
 
   /**
@@ -337,12 +345,12 @@ export function useBlockActions({
             ...current,
             [sessionId]: {
               status: "failed",
-              message: error instanceof Error ? error.message : "Không đổi được phiên browser này.",
+              message: error instanceof Error ? error.message : t("shell.control.sessionChangeFailed"),
             },
           })),
       );
     },
-    [client],
+    [client, t],
   );
 
   return useMemo<BlockActions>(

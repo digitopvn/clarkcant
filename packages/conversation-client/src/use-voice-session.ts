@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import type { GatewayClient } from "./api.ts";
+import type { MessageKey } from "./i18n/messages.ts";
 
 /** How often the conversation is re-read while a spoken turn runs, at most. */
 const VOICE_REFRESH_INTERVAL_MS = 400;
@@ -49,6 +50,12 @@ export interface VoiceSessionDeps {
   onConversationCreated: (conversationId: string) => void;
   onOpenFailed: (message: string) => void;
   refreshTimeline: () => void;
+  /**
+   * The translator for the current UI language, passed rather than read via `useT()`: this hook is
+   * called directly from `Conversation`'s own body, before `Conversation`'s `<LocaleProvider>` — a
+   * child of its return, not an ancestor of it — is mounted.
+   */
+  t: (key: MessageKey) => string;
 }
 
 export function useVoiceSession({
@@ -57,6 +64,7 @@ export function useVoiceSession({
   onConversationCreated,
   onOpenFailed,
   refreshTimeline,
+  t,
 }: VoiceSessionDeps): VoiceSessionState {
   const [voiceOpen, setVoiceOpen] = useState(false);
   const [compactSurface] = useState(
@@ -92,10 +100,10 @@ export function useVoiceSession({
       // Said where the person is looking, and the microphone stays off: a session that cannot
       // answer is worse than an honest refusal.
       onOpenFailed(
-        cause instanceof Error ? `Không mở được phiên giọng nói: ${cause.message}` : "Không mở được phiên giọng nói.",
+        cause instanceof Error ? t("voice.openFailed").replace("{message}", cause.message) : t("voice.openFailedGeneric"),
       );
     }
-  }, [client, conversationId, onConversationCreated, onOpenFailed]);
+  }, [client, conversationId, onConversationCreated, onOpenFailed, t]);
 
   /*
    * The compact surface opens voice by itself.

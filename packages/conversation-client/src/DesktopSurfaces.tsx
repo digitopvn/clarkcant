@@ -10,6 +10,9 @@
 import { type ReactElement, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import type { GatewayClient, IsolatedFrameLiveResponse, LiveWidgetResponse, Timeline } from "./api.ts";
+import { useT } from "./i18n/locale-context.tsx";
+import { readStoredLocale } from "./i18n/locale.ts";
+import { CATALOGS, type MessageKey } from "./i18n/messages.ts";
 import { MiniAppSurface, type CompositeSurfaceView } from "./mini-app-surface.tsx";
 import { WidgetFrame } from "./WidgetFrame.tsx";
 import { useImageUrls } from "./use-image-urls.ts";
@@ -28,9 +31,13 @@ export function MenuBarPopover({
   activeTaskCount,
   onOpenApp,
 }: MenuBarPopoverProps): ReactElement {
-  const stateText = connection === "ready" ? "Ready" : connection === "connecting" ? "Đang kết nối" : "Mất kết nối";
+  // Read from the cached locale directly rather than `useT()`: this component holds no state and the package's
+  // test suite calls it as a plain function with no React renderer, where a hook would throw on `useContext`.
+  const t = (key: MessageKey): string => CATALOGS[readStoredLocale()][key];
+  const stateText =
+    connection === "ready" ? t("shell.status.ready") : connection === "connecting" ? t("shell.status.connecting") : t("shell.status.offline");
   return (
-    <div className="cc-menubar" role="dialog" aria-label={`Trạng thái ${nodeLabel}`} data-connection={connection}>
+    <div className="cc-menubar" role="dialog" aria-label={t("shell.menubar.statusAria").replace("{nodeLabel}", nodeLabel)} data-connection={connection}>
       <div className="cc-menubar-head">
         {/* The same wording the app window uses. Two surfaces describing one node differently is
             how a user learns not to trust either of them. */}
@@ -38,10 +45,10 @@ export function MenuBarPopover({
         <span>{stateText}</span>
       </div>
       <p className="cc-freshness" style={{ margin: 0 }} data-menu-task-count={activeTaskCount}>
-        {activeTaskCount === 0 ? "Không có việc nào đang chạy." : `${activeTaskCount} việc đang chạy.`}
+        {activeTaskCount === 0 ? t("shell.menubar.noTasks") : t("shell.menubar.taskCount").replace("{count}", String(activeTaskCount))}
       </p>
       <button type="button" className="cc-badge" onClick={onOpenApp} style={{ cursor: "pointer", font: "inherit" }}>
-        Mở cửa sổ
+        {t("shell.menubar.openWindow")}
       </button>
     </div>
   );
@@ -61,6 +68,7 @@ export interface DesktopNotificationProps {
  * notified about.
  */
 export function DesktopNotification({ title, body }: DesktopNotificationProps): ReactElement {
+  const t = useT();
   const [outcome, setOutcome] = useState<"idle" | "sent" | "unsupported" | "denied">("idle");
 
   const send = useCallback(() => {
@@ -86,19 +94,19 @@ export function DesktopNotification({ title, body }: DesktopNotificationProps): 
   return (
     <div className="cc-notification-trigger" data-notification-outcome={outcome}>
       <button type="button" className="cc-badge" onClick={send} style={{ cursor: "pointer", font: "inherit" }}>
-        Báo cho tôi khi xong
+        {t("shell.notification.notifyMe")}
       </button>
       {outcome === "unsupported" && (
         <span className="cc-freshness" data-notification-unsupported="true">
-          Cửa sổ này không có quyền gửi thông báo.
+          {t("shell.notification.unsupported")}
         </span>
       )}
       {outcome === "denied" && (
         <span className="cc-freshness" data-notification-denied="true">
-          Bạn đã từ chối quyền thông báo.
+          {t("shell.notification.denied")}
         </span>
       )}
-      {outcome === "sent" && <span className="cc-freshness">Đã gửi.</span>}
+      {outcome === "sent" && <span className="cc-freshness">{t("shell.notification.sent")}</span>}
     </div>
   );
 }
@@ -189,6 +197,7 @@ export function PinnedLiveSurface({
   onClose,
   refreshSignal,
 }: PinnedLiveSurfaceProps): ReactElement {
+  const t = useT();
   const panel = useRef<HTMLDivElement>(null);
   const closeButton = useRef<HTMLButtonElement>(null);
   const [live, setLive] = useState<LiveWidgetResponse | IsolatedFrameLiveResponse | undefined>(undefined);
@@ -271,7 +280,7 @@ export function PinnedLiveSurface({
         setOwnership("elsewhere");
         setNotice(
           cause instanceof Error && cause.message.includes("ALREADY_OWNED")
-            ? "Bản hiện tại đang được mở ở một vị trí khác. Ở đây chỉ xem."
+            ? t("shell.live.ownedElsewhere")
             : cause instanceof Error
               ? cause.message
               : String(cause),
@@ -371,7 +380,7 @@ export function PinnedLiveSurface({
       live,
     });
     if (!answer.ok) {
-      setNotice(answer.refused ?? "Không mở được cửa sổ riêng.");
+      setNotice(answer.refused ?? t("shell.live.detachFailed"));
       await client
         .claimLiveOwner(conversationId, instanceId, {
           ownerToken: ownerToken.current,
@@ -383,8 +392,8 @@ export function PinnedLiveSurface({
       return;
     }
     setOwnership("elsewhere");
-    setNotice("Widget đang mở trong một cửa sổ riêng.");
-  }, [client, conversationId, instanceId, live, title]);
+    setNotice(t("shell.live.detachedOpen"));
+  }, [client, conversationId, instanceId, live, title, t]);
 
   /*
    * Taking the instance back when its window closes.
@@ -429,10 +438,10 @@ export function PinnedLiveSurface({
             className="cc-icon-btn"
             style={{ width: "auto", padding: "0 var(--cc-space-sm)" }}
             data-detach-widget="true"
-            aria-label="Mở widget này trong một cửa sổ riêng"
+            aria-label={t("shell.live.detachAria")}
             onClick={() => void detach()}
           >
-            Cửa sổ riêng
+            {t("shell.live.detachLabel")}
           </button>
         )}
         <button
@@ -441,10 +450,10 @@ export function PinnedLiveSurface({
           className="cc-icon-btn"
           style={{ width: "auto", padding: "0 var(--cc-space-sm)" }}
           data-close-live="true"
-          aria-label="Đóng bản hiện tại (Escape)"
+          aria-label={t("shell.live.closeAria")}
           onClick={onClose}
         >
-          Đóng (Esc)
+          {t("shell.live.closeLabel")}
         </button>
       </div>
     );
@@ -463,7 +472,7 @@ export function PinnedLiveSurface({
         data-display-mode={displayMode}
         data-lazy={inView ? "false" : "true"}
         role={displayMode === "expanded" ? "region" : undefined}
-        aria-label={displayMode === "expanded" ? `Bản hiện tại: ${title ?? instanceId}` : undefined}
+        aria-label={displayMode === "expanded" ? t("shell.live.expandedAria").replace("{title}", title ?? instanceId) : undefined}
       >
         {/* The close control is here in the loading state as well: a surface that is still opening is
             exactly when a keyboard user wants to be able to back out. */}
@@ -476,8 +485,8 @@ export function PinnedLiveSurface({
         <p className="cc-freshness" data-live-waiting={inView ? "opening" : "offscreen"} style={{ margin: 0 }}>
           {notice ??
             (inView
-              ? "Đang mở bản hiện tại…"
-              : `Chưa hiển thị${title === undefined ? "" : `: ${title}`} — cuộn tới để mở.`)}
+              ? t("shell.live.opening")
+              : t("shell.live.notVisible").replace("{title}", title === undefined ? "" : `: ${title}`))}
         </p>
       </div>
     );
@@ -500,7 +509,7 @@ export function PinnedLiveSurface({
         data-display-mode={displayMode}
         data-lazy={inView ? "false" : "true"}
         role={displayMode === "expanded" ? "region" : undefined}
-        aria-label={displayMode === "expanded" ? `Bản hiện tại: ${title ?? instanceId}` : undefined}
+        aria-label={displayMode === "expanded" ? t("shell.live.expandedAria").replace("{title}", title ?? instanceId) : undefined}
       >
         {head}
         <WidgetFrame
@@ -526,7 +535,7 @@ export function PinnedLiveSurface({
                */
               const binding = live.bindings.find((entry) => entry.actionBindingId === intent.actionBindingId);
               if (binding === undefined) {
-                return { status: "refused", message: "Hành động này không còn được gắn với widget." };
+                return { status: "refused", message: t("shell.live.actionUnbound") };
               }
               await client.invokeAction(conversationId, instanceId, {
                 actionBindingId: intent.actionBindingId,
@@ -535,11 +544,11 @@ export function PinnedLiveSurface({
                 input: intent.input,
                 invocationId: intent.invocationId,
               });
-              return { status: "accepted", message: "Đã gửi hành động." };
+              return { status: "accepted", message: t("shell.live.actionSent") };
             } catch (cause) {
               return {
                 status: "refused",
-                message: cause instanceof Error ? cause.message : "Máy chủ từ chối hành động này.",
+                message: cause instanceof Error ? cause.message : t("shell.live.actionRefusedGeneric"),
               };
             }
           }}
@@ -565,7 +574,7 @@ export function PinnedLiveSurface({
       data-display-mode={displayMode}
       data-lazy="false"
       role={displayMode === "expanded" ? "region" : undefined}
-      aria-label={displayMode === "expanded" ? `Bản hiện tại: ${title ?? instanceId}` : undefined}
+      aria-label={displayMode === "expanded" ? t("shell.live.expandedAria").replace("{title}", title ?? instanceId) : undefined}
     >
       {head}
       {notice !== undefined && (
@@ -598,14 +607,14 @@ export function PinnedLiveSurface({
                   })
                   .then((result) => {
                     onTimeline(result.timeline);
-                    if (result.duplicate) setNotice("Thao tác này đã được thực hiện trước đó.");
+                    if (result.duplicate) setNotice(t("shell.live.actionDuplicate"));
                     return load();
                   })
                   .catch((cause: unknown) => {
                     const message = cause instanceof Error ? cause.message : String(cause);
                     setNotice(
                       message.includes("REVISION_MISMATCH")
-                        ? "Bản hiển thị đã cũ so với máy chủ. Đã tải lại; thao tác chưa được áp dụng."
+                        ? t("shell.live.revisionMismatch")
                         : message,
                     );
                     return load();

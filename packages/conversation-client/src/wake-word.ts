@@ -1,4 +1,6 @@
 import type { AgentState } from "./input-modality.ts";
+import { readStoredLocale } from "./i18n/locale.ts";
+import { CATALOGS } from "./i18n/messages.ts";
 
 /**
  * A local wake-word listener.
@@ -69,7 +71,9 @@ export interface WakeAvailability {
 export function wakeAvailability(input: { detector?: WakeWordDetector } = {}): WakeAvailability {
   const detector = input.detector;
   if (detector === undefined) {
-    return { available: false, reason: WAKE_UNAVAILABLE_REASON };
+    // Resolved from the cached UI language rather than the `useT` context: this module is called from
+    // outside a render (see `DevicesVoiceSettings.tsx`), so it has no locale provider to read from.
+    return { available: false, reason: CATALOGS[readStoredLocale()]["voice.wakeUnavailableReason"] };
   }
   return { available: true, detector };
 }

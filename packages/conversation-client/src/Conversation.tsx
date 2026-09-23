@@ -122,7 +122,7 @@ export function Conversation({
   const connection = useConnectionStatus(client);
   const { themeChoice, resolvedTheme, applyThemeChoice } = useTheme();
   const localeState = useLocale();
-  const { modelAlias, modelNote } = useModelAlias(client);
+  const { modelAlias, modelNote } = useModelAlias(client, localeState.t);
   const dynamicSuggestions = useDynamicSuggestions(client);
 
   const {
@@ -184,6 +184,7 @@ export function Conversation({
       onConversationReady?.(id);
     },
     onErrorCleared: () => setError(undefined),
+    t: localeState.t,
   });
 
   const {
@@ -229,6 +230,7 @@ export function Conversation({
     },
     onOpenFailed: (message) => appIntents.setIntentNotice(message),
     refreshTimeline,
+    t: localeState.t,
   });
 
   const appIntents = useAppIntentSurfaces({
@@ -261,6 +263,7 @@ export function Conversation({
     applyTimeline,
     setError,
     send: (text) => void send(text),
+    t: localeState.t,
   });
 
   const renderSurface = useSurfaceRenderer({
@@ -408,7 +411,7 @@ export function Conversation({
               size={ORB_DRAW_SIZE}
               radius={ORB_RADIUS}
               className="cc-empty-orb"
-              label="Đang chờ bạn nói điều muốn làm"
+              label={localeState.t("shell.hero.orbLabel")}
               maxPixelRatio={1.25}
               pointerTarget={shell}
               {...(orbProfile === undefined ? {} : { profile: orbProfile })}

@@ -8,6 +8,7 @@ import {
   toBase64,
   type AttachmentChip,
 } from "./attachments.ts";
+import type { MessageKey } from "./i18n/messages.ts";
 import { ATTACHMENT_LIMITS } from "@clarkcant/contracts";
 
 export interface AttachmentComposerState {
@@ -42,6 +43,12 @@ export interface AttachmentComposerDeps {
   conversationId: string | undefined;
   onConversationCreated: (conversationId: string) => void;
   onErrorCleared: () => void;
+  /**
+   * The translator for the current UI language, passed rather than read via `useT()`: this hook is
+   * called directly from `Conversation`'s own body, before `Conversation`'s `<LocaleProvider>` — a
+   * child of its return, not an ancestor of it — is mounted.
+   */
+  t: (key: MessageKey) => string;
 }
 
 export function useAttachmentComposer({
@@ -49,6 +56,7 @@ export function useAttachmentComposer({
   conversationId,
   onConversationCreated,
   onErrorCleared,
+  t,
 }: AttachmentComposerDeps): AttachmentComposerState {
   const [chips, dispatchChips] = useReducer(attachmentReducer, [] as readonly AttachmentChip[]);
   const [dragging, setDragging] = useState(false);
@@ -77,7 +85,7 @@ export function useAttachmentComposer({
           dispatchChips({
             type: "failed",
             id: chip.id,
-            reason: `một tin nhắn chỉ mang được ${ATTACHMENT_LIMITS.maxPerMessage} tệp`,
+            reason: t("shell.attachment.tooMany").replace("{max}", String(ATTACHMENT_LIMITS.maxPerMessage)),
           });
         }
       }
@@ -122,7 +130,7 @@ export function useAttachmentComposer({
         }
       }
     },
-    [chips.length, client, conversationId, onConversationCreated, onErrorCleared],
+    [chips.length, client, conversationId, onConversationCreated, onErrorCleared, t],
   );
 
   return { chips, dispatchChips, dragging, setDragging, addFiles };

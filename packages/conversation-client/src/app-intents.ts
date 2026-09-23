@@ -29,6 +29,9 @@ import {
   describeAppIntent,
 } from "@clarkcant/contracts";
 
+import { readStoredLocale } from "./i18n/locale.ts";
+import { CATALOGS } from "./i18n/messages.ts";
+
 /**
  * What a page can be asked to do.
  *
@@ -61,7 +64,15 @@ export interface AppIntentRun {
   say: string;
 }
 
-/** Said when an intent is understood and the window it needs is not there. */
+/**
+ * Said when an intent is understood and the window it needs is not there.
+ *
+ * The Vietnamese default, since this module has no React tree to read `useT` from — `runAppIntent`
+ * is called from a click, a typed command and a spoken command alike, some of them off the render
+ * path entirely. `missingCapabilitySay` below resolves the actual UI language at call time instead,
+ * from the same cached choice `useLocale` reads; this constant stays for callers (and this file's
+ * own tests) that want the fixed, unlocalized wording.
+ */
 export const NOT_DESKTOP_SAY =
   "Lệnh này cần cửa sổ desktop. Trình duyệt không điều khiển được cửa sổ của hệ điều hành.";
 
@@ -70,9 +81,10 @@ export const NOT_LIBRARY_SAY =
   "Bản dựng này không mở được thư viện widget, nên tôi chưa làm gì cả.";
 
 function missingCapabilitySay(intent: AppIntent): string {
+  const catalog = CATALOGS[readStoredLocale()];
   return intent.kind === "widgets.open" || intent.kind === "widgets.show"
-    ? NOT_LIBRARY_SAY
-    : NOT_DESKTOP_SAY;
+    ? catalog["shell.intent.notLibrary"]
+    : catalog["shell.intent.notDesktop"];
 }
 
 /** Said when a decision came back that is not executable: a question, or a refusal. */
