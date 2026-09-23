@@ -41,6 +41,13 @@ export interface AppIntentSurfacesDeps {
   restartSession: () => void;
   attachmentInput: RefObject<HTMLInputElement | null>;
   setVoiceOpen: (open: boolean) => void;
+  /**
+   * Starts voice mode the same way the voice button does, ensuring a conversation exists first.
+   *
+   * Optional so a caller that has not wired voice at all (a fixture, a narrower embed) still gets a
+   * working host: `runAppIntent` reports the limitation honestly rather than throwing.
+   */
+  openVoice?: () => void;
 }
 
 /**
@@ -57,6 +64,7 @@ export function useAppIntentSurfaces({
   restartSession,
   attachmentInput,
   setVoiceOpen,
+  openVoice,
 }: AppIntentSurfacesDeps): AppIntentSurfacesState {
   const [uiCheckOpen, setUiCheckOpen] = useState(false);
   const [settingsTab, setSettingsTab] = useState<SettingsTab | undefined>(undefined);
@@ -88,11 +96,24 @@ export function useAppIntentSurfaces({
       goHome: restartSession,
       openFilePicker: () => attachmentInput.current?.click(),
       endVoice: () => setVoiceOpen(false),
+      // Closes whatever is on top of the conversation, without touching the conversation itself —
+      // distinct from `goHome`, which leaves it.
+      showConversation: () => {
+        setUiCheckOpen(false);
+        setWidgetLibrary(CLOSED_LIBRARY);
+      },
+      cycleModel: () => {
+        void client.cycleModel().catch(() => setIntentNotice("Không chuyển được model."));
+      },
+      selectModel: (alias: string) => {
+        void client.selectModel(alias).catch(() => setIntentNotice("Không chuyển được model."));
+      },
       openWidgetLibrary: (mode: "browse" | "develop", target?: { definitionId?: string; family?: string }) => {
         setWidgetLibrary((current) =>
           applyLibraryAction(current, { kind: "open", mode, ...(target === undefined ? {} : { target }) }),
         );
       },
+      ...(openVoice === undefined ? {} : { openVoice }),
       ...(desktop
         ? {
             expandWindow: () => {
@@ -111,7 +132,7 @@ export function useAppIntentSurfaces({
           }
         : {}),
     };
-  }, [attachmentInput, restartSession, setVoiceOpen]);
+  }, [attachmentInput, restartSession, setVoiceOpen, openVoice, client]);
 
   const runIntent = useCallback(
     (decision: AppIntentDecision): void => {

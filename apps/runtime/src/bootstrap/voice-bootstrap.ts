@@ -142,7 +142,8 @@ export function attachNodeVoice(deps: NodeVoiceDeps): NodeVoice {
      * answer needs. The words that come back are what the voice session reads aloud, which is why the
      * live model is told not to answer anything itself: this is the only answer in the room.
      */
-    answer: async ({ conversationId, text, at: spokenAt, onText }) => {
+    answer: async ({ conversationId, text, at: spokenAt, onText, onAppIntent }) => {
+      const forwardText = onText === undefined ? undefined : accumulateAnswerText(onText);
       const outcome = await handleUserMessage(deps.services.conductor, {
         conversationId: conversationId as never,
         principal: {
@@ -154,11 +155,22 @@ export function attachNodeVoice(deps: NodeVoiceDeps): NodeVoice {
         at: spokenAt as never,
         // Spoken turns are answered briefly: the session has to read the answer out loud.
         note: VOICE_ANSWER_NOTE,
+        // `source: "voice"` on a `control_app` call this turn makes: the tool reads this the same way
+        // `model-bootstrap.ts` does for a typed turn, off the same `Turn.channel` field.
+        channel: "voice",
         // The voice surface is a caller holding an open stream like any other, so it gets the same
-        // events the typed path gets. Only text is forwarded, accumulated: the surface replaces what it shows, so a
+        // events the typed path gets. Text is forwarded, accumulated: the surface replaces what it shows, so a
         // frame has to carry the answer so far rather than the fragment that just arrived. `accumulateAnswerText`
-        // holds the measurement that made this a function of its own.
-        ...(onText === undefined ? {} : { emit: accumulateAnswerText(onText) }),
+        // holds the measurement that made this a function of its own. A `host-control` event — the app-control
+        // tool's decision — is forwarded separately, over the wire frame the browser already knows how to run.
+        ...(forwardText === undefined && onAppIntent === undefined
+          ? {}
+          : {
+              emit: (event) => {
+                forwardText?.(event);
+                if (event.type === "host-control") onAppIntent?.(event.decision);
+              },
+            }),
       });
       // Indexed where the messages were just written, for the same reason the typed route does it:
       // a sentence that was spoken is a message like any other, and search must not disagree with the

@@ -42,6 +42,22 @@ const DOCUMENTED: readonly { kind: AppIntentKind; vietnamese: readonly string[];
     english: "end the voice session",
   },
   {
+    kind: "voice.open",
+    vietnamese: ["mở phiên thoại", "bắt đầu phiên thoại"],
+    english: "start voice",
+  },
+  {
+    // Distinct from nav.home: this closes what is on top of the conversation without leaving it.
+    kind: "nav.conversation",
+    vietnamese: ["về cuộc trò chuyện", "quay lại cuộc trò chuyện"],
+    english: "back to the conversation",
+  },
+  {
+    kind: "model.cycle",
+    vietnamese: ["chuyển sang model tiếp theo", "đổi sang model khác"],
+    english: "cycle the model",
+  },
+  {
     kind: "window.expand",
     vietnamese: ["mở rộng cửa sổ", "phóng to cửa sổ lên", "hiện lại cửa sổ"],
     english: "expand the window",
@@ -111,8 +127,15 @@ describe("every documented way of asking maps to one intent", () => {
     }
   });
 
-  it("covers every intent kind that exists", () => {
-    expect(DOCUMENTED.map((entry) => entry.kind).sort()).toEqual([...APP_INTENT_KINDS].sort());
+  it("covers every intent kind that a sentence with no target table can name", () => {
+    // `model.select` is the one kind this table cannot cover, and for the same reason `widgets.show`'s
+    // specific-widget phrases are not enumerated here: naming a specific configured model alias from a
+    // sentence needs the alias vocabulary injected the way a widget target does, and that is a runtime
+    // concern (see apps/runtime/test/app-intents.spec.ts), not this matcher's own. `model.select` is
+    // still reachable - by a click that already knows the alias, or by `control_app` - just not by a
+    // sentence this table alone resolves.
+    const coverableKinds = APP_INTENT_KINDS.filter((kind) => kind !== "model.select");
+    expect(DOCUMENTED.map((entry) => entry.kind).sort()).toEqual([...coverableKinds].sort());
   });
 
   it("a long command phrase wins over a short one", () => {
@@ -215,7 +238,7 @@ describe("a work request is not an app intent", () => {
 });
 
 describe("quitting always asks first", () => {
-  it("makes the eight other intents executable and the ninth a question", () => {
+  it("makes every intent but app.quit executable, and app.quit a question", () => {
     for (const kind of APP_INTENT_KINDS) {
       const resolution = resolveAppIntent({ intent: { kind }, mintConfirmationToken: mint });
       if (kind === "app.quit") {

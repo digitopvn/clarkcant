@@ -135,6 +135,16 @@ export interface VoiceGatewayOptions {
      * consumer replaces what it shows instead of having to guess whether two updates overlap.
      */
     onText?: (text: string) => void;
+    /**
+     * Forwards a `control_app` decision made while answering this utterance, so it reaches the renderer
+     * through the same wire frame a deterministic spoken app-command already uses - `{type: "app-intent",
+     * decision}` - and from there the same `runAppIntent` executor a click or a typed command runs.
+     *
+     * The agent turn that answers a spoken sentence has the app-control tool available exactly as a typed
+     * turn does; this is the one extra step voice needs, because a typed turn already reaches the browser
+     * over the SSE stream this socket has no part in.
+     */
+    onAppIntent?: (decision: AppIntentDecision) => void;
   }) => Promise<VoiceAnswerResult | undefined>;
   /**
    * Record the user's spoken decision on an operation.
@@ -783,6 +793,9 @@ export function attachVoiceGateway(options: VoiceGatewayOptions): VoiceGateway {
               if (draft.trim() === "") return;
               send({ type: "transcript", role: "assistant", text: draft, final: false });
             },
+            // Reuses the same wire frame a deterministic spoken app-command already sends, so the browser
+            // needs no new handler to run a `control_app` decision through `runAppIntent`.
+            onAppIntent: (decision) => send({ type: "app-intent", decision }),
           });
           if (result === undefined) return;
           answeredMessages += result.recordedMessages;

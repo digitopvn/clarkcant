@@ -86,6 +86,38 @@ export function cycleModelPool(
   return { pool, ...(current === undefined ? {} : { current }), next };
 }
 
+/**
+ * Select a specific configured profile by alias, rather than walking to the next one.
+ *
+ * The alias is checked against the stored pool and must name an enabled profile: this is a choice
+ * among what a person already configured, and it is what keeps `model.select` from becoming a way to
+ * run an arbitrary provider/model string from a tool call or a click. Writes both halves `cycleModelPool`
+ * does, for the same reason: the alias is what is shown, and the `model` preference is what the next
+ * session actually runs.
+ */
+export function selectModelProfile(
+  db: Database,
+  principalId: string,
+  alias: string,
+  at: Instant,
+): { pool: ModelPool; current?: string; next?: UserModelProfile } {
+  const pool = readModelPool(db, principalId);
+  const current = readCurrentAlias(db, principalId);
+  const next = pool.profiles.find((profile) => profile.alias === alias && profile.enabled !== false);
+  if (next === undefined) return { pool, ...(current === undefined ? {} : { current }) };
+
+  writeCurrentAlias(db, principalId, next.alias, at);
+  putPreference(db, {
+    principalId,
+    key: "model",
+    value: `${next.provider}/${next.modelId}`,
+    scope: "node",
+    source: "settings",
+    at,
+  });
+  return { pool, ...(current === undefined ? {} : { current }), next };
+}
+
 /** The alias a hotkey is on, if it has been set. */
 export function readCurrentAlias(db: Database, principalId: string): string | undefined {
   const stored = readPreference(db, principalId, MODEL_ALIAS_PREFERENCE_KEY, "node");

@@ -153,6 +153,13 @@ export function useTurnSend({
           {
             onEvent: (event) => {
               if (sessionGeneration.current !== generation) return;
+              // An agent-issued app-control action is not a transcript segment: it is handed straight
+              // to the same `pendingIntent` slot a typed command uses, so it reaches the one executor
+              // (`runAppIntent`) rather than being replayed from `live` on a later render.
+              if (event.type === "host-control") {
+                setPendingIntent(event.decision);
+                return;
+              }
               setLive((segments) => applyLiveEvent(segments, event));
             },
             onDone: (result) => {

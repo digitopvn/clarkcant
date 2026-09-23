@@ -137,6 +137,25 @@ const PHRASES: readonly { phrase: string; kind: AppIntentKind }[] = [
   { phrase: "end the voice", kind: "voice.end" },
   { phrase: "end voice", kind: "voice.end" },
 
+  // Starting one.
+  { phrase: "mo phien thoai", kind: "voice.open" },
+  { phrase: "bat dau phien thoai", kind: "voice.open" },
+  { phrase: "start voice", kind: "voice.open" },
+  { phrase: "start the voice", kind: "voice.open" },
+
+  // Back to the conversation already open, without leaving it - distinct from nav.home below.
+  { phrase: "ve cuoc tro chuyen", kind: "nav.conversation" },
+  { phrase: "quay lai cuoc tro chuyen", kind: "nav.conversation" },
+  { phrase: "dong lai xem tro chuyen", kind: "nav.conversation" },
+  { phrase: "back to the conversation", kind: "nav.conversation" },
+  { phrase: "back to conversation", kind: "nav.conversation" },
+
+  // The configured model pool's hotkey, spoken.
+  { phrase: "chuyen sang model tiep theo", kind: "model.cycle" },
+  { phrase: "doi sang model khac", kind: "model.cycle" },
+  { phrase: "switch to the next model", kind: "model.cycle" },
+  { phrase: "cycle the model", kind: "model.cycle" },
+
   // The window.
   { phrase: "mo rong cua so", kind: "window.expand" },
   { phrase: "phong to cua so", kind: "window.expand" },
@@ -457,6 +476,7 @@ export function recordAppIntentEvent(
     // Recorded so the audit can answer which widget was shown, not only that the library opened.
     ...(input.intent.definitionId === undefined ? {} : { definitionId: input.intent.definitionId }),
     ...(input.intent.family === undefined ? {} : { family: input.intent.family }),
+    ...(input.intent.modelAlias === undefined ? {} : { modelAlias: input.intent.modelAlias }),
     source: input.source,
     confirmed: input.confirmed,
   };
