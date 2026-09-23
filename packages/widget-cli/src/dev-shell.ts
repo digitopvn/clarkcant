@@ -187,6 +187,25 @@ export interface FrameFacts {
   layouts?: readonly { name: "narrow" | "compact" | "expanded"; viewportWidth: number; rendered: boolean; overflows: boolean }[];
   /** Each declared state the collector asked the frame to show. */
   states?: readonly { name: "loading" | "readOnly"; rendered: boolean }[];
+  /**
+   * What a real detach/reattach against the dev host's lease store showed, when the collector drove one.
+   *
+   * Every field here is read back from `openDevLeaseStore` (the same `claimLiveOwner`/`releaseLiveOwner` the
+   * runtime calls), not asserted by the collector script — see `evaluateDetach` for what they are checked
+   * against.
+   */
+  detach?: {
+    /** The surface holding the lease right after the widget moved into its own window. */
+    afterDetach: "inline" | "pin" | "detached" | "none";
+    /**
+     * Whether the lease was ever observed held by two different owner tokens for this instance at once, across
+     * every poll the collector took between detach and reattach. `false` is not "never checked"; the collector
+     * that produces this fact polls `current()` at each step of the handoff.
+     */
+    everDoubleOwned: boolean;
+    /** The surface holding the lease after the detached window closed and handed the instance back. */
+    afterReattach: "inline" | "pin" | "detached" | "none";
+  };
 }
 
 export interface A11yFinding {
@@ -271,6 +290,35 @@ export function auditFrame(facts: FrameFacts, state: { reducedMotion: boolean })
   }
 
   return findings;
+}
+
+/**
+ * Judge a collected detach/reattach fact set.
+ *
+ * The property that matters is the one in `docs/widgets-and-extensions.md` §6: "a player/call must not mount two
+ * live effect owners" — applied to detaching, that means the lease must move to the detached surface and never be
+ * held by both surfaces at once, and it must come back to the shell once the detached window is gone. A pass here
+ * is not "a window opened"; it is "the lease behaved like a lease with one owner throughout the whole handoff".
+ */
+export function evaluateDetach(
+  detach: NonNullable<FrameFacts["detach"]>,
+): { ok: true } | { ok: false; reason: string } {
+  if (detach.everDoubleOwned) {
+    return { ok: false, reason: "the lease was held by two owners at once during the handoff" };
+  }
+  if (detach.afterDetach !== "detached") {
+    return {
+      ok: false,
+      reason: `detaching did not move the lease to the detached surface (was ${detach.afterDetach})`,
+    };
+  }
+  if (detach.afterReattach !== "inline") {
+    return {
+      ok: false,
+      reason: `closing the detached window did not hand the lease back to the shell (was ${detach.afterReattach})`,
+    };
+  }
+  return { ok: true };
 }
 
 /* ----------------------------------------------------------------- shell */
@@ -429,9 +477,56 @@ export function renderShell(input: ShellInput, state: DevShellState): string {
           <ul data-dev-findings></ul>
           <button type="button" data-dev-action="a11y-audit">Kiểm tra lại</button>
         </section>
+        <section>
+          <h2>Live owner</h2>
+          <p data-dev-live-owner>chưa xác nhận</p>
+          <button type="button" data-dev-detach="true">Detach</button>
+        </section>
       </aside>
     </main>
     <script type="module" src="/dev/shell.js"></script>
+  </body>
+</html>
+`;
+}
+
+/**
+ * The detached window's markup.
+ *
+ * Deliberately the narrowest page this file renders: the same sandboxed frame, and one control — Reattach — which
+ * is the only thing `apps/desktop`'s detached window lets a person do to it either. `data-detached-surface` and
+ * `data-detached-instance` mirror the attributes the real app's `?detached=1` view exposes
+ * (`apps/web/e2e/detach.spec.ts`), so a collector or a person looking at either one is reading the same contract.
+ */
+export function renderDetachedShell(input: {
+  definitionId: string;
+  entryUrl: string;
+  definition: { textFallback: string };
+}): string {
+  return `<!doctype html>
+<html lang="vi">
+  <head>
+    <meta charset="utf-8" />
+    <title>detached — ${escapeHtml(input.definitionId)}</title>
+    <style>
+      body { margin: 0; background: #0b0b0c; color: #f4f4f5; font: 14px/1.5 system-ui, sans-serif; }
+      header { display: flex; justify-content: space-between; align-items: center; padding: 8px 12px; border-bottom: 1px solid #27272a; }
+      iframe { width: 100%; height: calc(100vh - 45px); border: 0; background: #fff; display: block; }
+      button { background: transparent; color: inherit; border: 1px solid #27272a; border-radius: 6px; padding: 4px 8px; cursor: pointer; }
+    </style>
+  </head>
+  <body data-detached-surface="true" data-detached-instance="${escapeHtml(input.definitionId)}">
+    <header>
+      <strong>${escapeHtml(input.definitionId)}</strong>
+      <button type="button" data-detached-reattach="true">Reattach</button>
+    </header>
+    <iframe
+      data-dev-frame
+      title="${escapeHtml(input.definition.textFallback)}"
+      sandbox="allow-scripts"
+      src="${escapeHtml(input.entryUrl)}"
+    ></iframe>
+    <script type="module" src="/dev/detached.js"></script>
   </body>
 </html>
 `;

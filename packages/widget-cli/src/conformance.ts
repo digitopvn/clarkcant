@@ -5,7 +5,7 @@ import { isHostOwnedBlock, type MessageBlock } from "@clarkcant/contracts";
 import { validateProps } from "@clarkcant/widget-host";
 import { FORBIDDEN_API_SURFACE, acceptBridgeMessage, createWidgetRuntime, type MessageEndpoint } from "@clarkcant/widget-sdk";
 import { createFrameSession } from "@clarkcant/widget-host";
-import { auditFrame, type FrameFacts } from "./dev-shell.ts";
+import { auditFrame, evaluateDetach, type FrameFacts } from "./dev-shell.ts";
 
 import { REQUIRED_FIXTURES, readPackage, type WidgetPackage } from "@clarkcant/core";
 
@@ -453,15 +453,27 @@ export function runConformance(root: string, options: { frames?: FrameFacts } = 
         ? `${String(frames?.targets.length ?? 0)} interactive element(s), all at or above the minimum`
         : targetSize.message,
   );
+  /*
+   * Answered from a real second window when the collector drove one.
+   *
+   * The dev host can now open a detached window of its own (`dev-host.ts`'s `/detached` route) and claim/release
+   * the same lease `apps/desktop` and the runtime call (`openDevLeaseStore`, over `@clarkcant/core`'s
+   * `claimLiveOwner`/`releaseLiveOwner`). Without a collected fact this stays `requires-dev-host`: a check that
+   * assumed the lease behaved because a route now exists would be exactly the "advertise what is not shipped"
+   * failure this suite is built to avoid.
+   */
+  const detach = frames?.detach;
+  const detachVerdict = detach === undefined ? undefined : evaluateDetach(detach);
   add(
     "interaction.detach",
     "interaction",
     "detach keeps one live owner",
-    "requires-dev-host",
-    // Named precisely: this is not "needs a browser" but "needs a window that can be detached and re-attached", and
-    // this command drives a browser dev host, which has no detached window to drive. The desktop's detached window
-    // exists, in apps/desktop/src/main.mjs, and is covered by the desktop and browser suites rather than by this check.
-    "this command drives a browser dev host, which has no detached window to drive; the desktop detached window is covered by the desktop and browser suites, not by this check",
+    detach === undefined ? "requires-dev-host" : detachVerdict?.ok === true ? "pass" : "fail",
+    detach === undefined
+      ? "needs a window that can be detached and re-attached; run the dev host's real detach/reattach and pass its facts with --frames"
+      : detachVerdict?.ok === true
+        ? `the lease moved to the detached surface and back without ever being held by two owners (afterDetach: ${detach.afterDetach}, afterReattach: ${detach.afterReattach})`
+        : (detachVerdict as { ok: false; reason: string }).reason,
   );
 
   add(
