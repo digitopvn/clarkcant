@@ -152,20 +152,24 @@ export function searchProjects(db: Database, nodeId: string, text: string, limit
   const match = toMatchExpression(trimmed);
   if (match === "") return matches;
 
-  const searchRows = allRows<{ project_id: string; score: number }>(
+  // Joined against project_index in one query rather than one getProject() call per FTS
+  // hit: a text search over a large index would otherwise cost N+1 round trips.
+  const searchRows = allRows<Record<string, unknown> & { score: number }>(
     db,
-    `SELECT project_id, bm25(project_fts) AS score
+    `SELECT project_index.*, bm25(project_fts) AS score
        FROM project_fts
+       JOIN project_index ON project_index.project_id = project_fts.project_id
       WHERE project_fts MATCH ?
+        AND project_index.node_id = ?
       ORDER BY score
       LIMIT ?`,
     match,
+    nodeId,
     limit * 2,
   );
   for (const row of searchRows) {
-    if (seen.has(row.project_id)) continue;
-    const project = getProject(db, row.project_id);
-    if (project === undefined || project.nodeId !== nodeId) continue;
+    const project = mapProject(row);
+    if (seen.has(project.projectId)) continue;
     matches.push({ project, score: Number(row.score), how: "search" });
     seen.add(project.projectId);
   }
