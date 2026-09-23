@@ -12,7 +12,7 @@ import { type GatewayRequest, type GatewayResponse, fail, json, readJson } from 
  * branches lived in the gateway.
  */
 export interface VoiceRouteDeps {
-  services: Pick<NodeServices, "voiceCapabilities" | "voiceFixture">;
+  services: Pick<NodeServices, "voiceCapabilities" | "voiceFixture" | "voiceLiveUtterance">;
   request: GatewayRequest;
   segments: string[];
 }
@@ -65,6 +65,33 @@ export function handleVoiceRoutes(deps: VoiceRouteDeps): GatewayResponse | undef
       return fail(400, "INVALID_SCHEMA", "words must be a non-empty string");
     }
     fixture.setWords(words.trim());
+    return json(200, { ok: true, words: words.trim() });
+  }
+
+  /*
+   * Live provider test utterance.
+   *
+   * This route allows browser tests to inject utterances that will be processed by the real voice session
+   * and the real agent model. It only exists when CC_LIVE_PROVIDER=1 and the real Gemini Live adapter is
+   * loaded (not the fixture).
+   *
+   * Unreachable on a node running the voice fixture (CC_VOICE_FIXTURE=1) or a node with no voice configured,
+   * so this is safe to have in production - it does not expose any capability that doesn't already exist.
+   * The intent is to allow opt-in live-provider testing.
+   */
+  if (segments[0] === "voice-live") {
+    const liveUtterance = deps.services.voiceLiveUtterance;
+    if (liveUtterance === undefined) return fail(404, "NOT_FOUND", "no live voice provider is loaded on this node");
+    if (segments.length !== 2 || segments[1] !== "utterance" || request.method !== "POST") {
+      return fail(404, "NOT_FOUND", "no such voice-live route");
+    }
+    const parsed = readJson(request);
+    if (!parsed.ok) return parsed.response;
+    const words = parsed.value.words;
+    if (typeof words !== "string" || words.trim() === "") {
+      return fail(400, "INVALID_SCHEMA", "words must be a non-empty string");
+    }
+    liveUtterance.enqueueUtterance(words.trim());
     return json(200, { ok: true, words: words.trim() });
   }
 

@@ -139,6 +139,15 @@ export interface NodeServices {
    */
   voiceFixture?: { setWords(words: string): void };
 
+  /**
+   * Queue utterances for processing by the live voice provider.
+   *
+   * Present only when CC_LIVE_PROVIDER=1 and the real Gemini Live adapter is loaded (not the fixture).
+   * This allows opt-in live-provider tests to inject utterances that will be processed by the real
+   * voice session and the real agent model, proving that the model can route spoken commands correctly.
+   */
+  voiceLiveUtterance?: { enqueueUtterance(words: string): void };
+
   turnControl?: {
     running(): string[];
     interrupt(conversationId: string): boolean;
