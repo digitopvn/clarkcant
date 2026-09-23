@@ -1,4 +1,4 @@
-import { spawn } from "node:child_process";
+import { spawn, type ChildProcess } from "node:child_process";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -6,6 +6,17 @@ import { fileURLToPath } from "node:url";
 
 import type { RunRecord } from "@clarkcant/contracts";
 import type { WorkerBriefEnvelope } from "@clarkcant/app-worker";
+import { BUILTIN_PROFILES, buildEnvironment, type ExecutionProfile } from "@clarkcant/execution-supervisor";
+
+/**
+ * The environment profile a worker child runs under.
+ *
+ * `build` is the narrowest builtin profile that still lets the worker's own tools shell out to `git`
+ * and read the filesystem (`PATH`, `HOME`, `LANG`, `TZ`, `CI`): no provider key, no SSH agent socket,
+ * no cloud credential. Indexed once here, typed, rather than at every call site — `BUILTIN_PROFILES`
+ * is keyed by string, and TypeScript cannot know the literal `"build"` is always present in it.
+ */
+const WORKER_ENV_PROFILE: ExecutionProfile = BUILTIN_PROFILES.build as ExecutionProfile;
 
 /**
  * Starting a worker as a process.
@@ -33,10 +44,22 @@ export interface WorkerProcessOptions {
   adapter?: "fake" | "real";
   /** Ceiling for the whole process, so a wedged worker cannot hold a run open forever. */
   timeoutMs?: number;
+  /**
+   * Ceiling on combined stdout+stderr bytes, so a worker that floods its own pipes cannot hold a run
+   * open through sheer volume. Defaults to the `build` execution profile's ceiling — generous enough
+   * for a worker's transcript and JSON record, and still bounded. Exceeding it kills the child.
+   */
+  maxOutputBytes?: number;
   /** Injected so a test can drive a different entry point. */
   spawnImpl?: typeof spawn;
   /** Where the worker writes its transcript. Unset leaves the session in memory. */
   dataDir?: string;
+  /**
+   * Handed the live child the moment it is spawned, so a caller that dispatches tasks can track and
+   * kill it later — `/stop` has no other way to reach a worker this function already returned control
+   * of internally. Never used to read output: stdout and stderr are only available through the result.
+   */
+  onChild?: (child: ChildProcess) => void;
 }
 
 export interface WorkerProcessResult {
@@ -61,6 +84,7 @@ function defaultWorkerEntry(): string {
 export async function runWorkerProcess(options: WorkerProcessOptions): Promise<WorkerProcessResult> {
   const entry = options.workerEntry ?? defaultWorkerEntry();
   const timeoutMs = options.timeoutMs ?? 120_000;
+  const maxOutputBytes = options.maxOutputBytes ?? WORKER_ENV_PROFILE.maxOutputBytes;
   const directory = mkdtempSync(join(tmpdir(), "clarkcant-worker-run-"));
   const briefPath = join(directory, "brief.json");
 
@@ -71,9 +95,17 @@ export async function runWorkerProcess(options: WorkerProcessOptions): Promise<W
     if (options.dataDir !== undefined) args.push("--data-dir", options.dataDir);
 
     const result = await new Promise<{ code: number | null; stdout: string; stderr: string }>((resolve, reject) => {
-      const child = (options.spawnImpl ?? spawn)(process.execPath, args, { stdio: ["ignore", "pipe", "pipe"] });
+      // The child never inherits this process's environment wholesale: only the names the `build`
+      // profile allows cross the boundary, so a provider key or an SSH agent socket sitting in this
+      // node's own environment is not handed to code the worker's tools may invoke on the user's behalf.
+      const child = (options.spawnImpl ?? spawn)(process.execPath, args, {
+        stdio: ["ignore", "pipe", "pipe"],
+        env: buildEnvironment(WORKER_ENV_PROFILE),
+      });
+      options.onChild?.(child);
       let stdout = "";
       let stderr = "";
+      let outputBytes = 0;
       let settled = false;
 
       const timer = setTimeout(() => {
@@ -82,12 +114,24 @@ export async function runWorkerProcess(options: WorkerProcessOptions): Promise<W
         reject(new Error(`the worker did not finish within ${String(timeoutMs)} ms`));
       }, timeoutMs);
 
+      const overCeiling = (): void => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        child.kill("SIGKILL");
+        reject(new Error(`the worker exceeded the output ceiling of ${String(maxOutputBytes)} bytes`));
+      };
+
       child.stdout?.setEncoding("utf8");
       child.stdout?.on("data", (chunk: string) => {
+        outputBytes += Buffer.byteLength(chunk, "utf8");
+        if (outputBytes > maxOutputBytes) return overCeiling();
         stdout += chunk;
       });
       child.stderr?.setEncoding("utf8");
       child.stderr?.on("data", (chunk: string) => {
+        outputBytes += Buffer.byteLength(chunk, "utf8");
+        if (outputBytes > maxOutputBytes) return overCeiling();
         stderr += chunk;
       });
 

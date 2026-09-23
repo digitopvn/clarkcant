@@ -82,8 +82,17 @@ export interface ConductorDeps extends TaskServiceDeps, WidgetDeps, RegistryDeps
   newId: (prefix: string) => string;
   /** Scripted paths that need no provider account. Empty means model-only. */
   sampleRecipes: readonly SampleRecipe[];
-  /** Optional worker bridge. Absent means an install is proposed instead of a run. */
-  runTask?: (taskId: string) => Promise<void>;
+  /**
+   * Optional worker bridge. Absent means an install is proposed instead of a run.
+   *
+   * Called once, immediately after `dispatch.acknowledged`, and deliberately not awaited by the
+   * conductor: the message announcing the dispatch has already been appended, and this call is the
+   * host's own background work, reported back into the conversation whenever it settles. The
+   * capability and node are passed explicitly rather than re-read from the registry, because the
+   * choice was already made by `chooseExecutionNode` and re-reading it here could disagree with what
+   * the conversation was just told.
+   */
+  runTask?: (input: { taskId: string; capabilityRef: string; executionNodeId: string }) => void;
   /**
    * Answers a turn with a model, when this node has one.
    *
@@ -578,6 +587,15 @@ export async function handleUserMessage(
   // A capability is available: dispatch, and let the worker bridge take it from here.
   advanceResolving(deps, task.taskId, { kind: "ready", executionNodeId: executionNode.executionNodeId });
   applyTaskEvent(deps, task.taskId, "dispatch.acknowledged");
+
+  // Started, not awaited: the message below is what tells the conversation the task is running, and
+  // the run itself reports its own outcome later. A host with no worker bridge leaves the task
+  // sitting in `dispatched` — honest, because nothing here would otherwise move it further.
+  deps.runTask?.({
+    taskId: task.taskId,
+    capabilityRef: executionNode.ref,
+    executionNodeId: executionNode.executionNodeId,
+  });
 
   const message = appendAssistant(
     deps,
