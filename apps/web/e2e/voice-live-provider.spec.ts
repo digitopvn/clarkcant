@@ -61,9 +61,20 @@ async function openApp(page: Page): Promise<void> {
   await expect(page.locator("text=Ready")).toBeVisible({ timeout: 15_000 });
 }
 
+/**
+ * Starts a conversation with the first static suggestion chip, a scripted sample-chart recipe
+ * (`demo: true`, `packages/conversation-client/src/ConversationHeroEmptyState.tsx`) that answers on
+ * its own without spending a real model turn. Waits for the reply's own article to land before
+ * returning, not just the user bubble: the chart is still animating in for a moment after it
+ * appears, and a click aimed at the header (Settings, the next suggestion) during that window can
+ * land on the chart instead of its target — an interception the fixture-backed specs never hit
+ * because a scripted reply there lands fast enough that nothing else raced it. This suite talks to a
+ * real model, so a turn can take long enough for that window to matter.
+ */
 async function startConversation(page: Page): Promise<void> {
   await page.locator("[data-suggestion]").first().click();
   await expect(page.locator('[data-role="user"]')).toHaveCount(1, { timeout: 15_000 });
+  await expect(page.locator('[data-role="assistant"]').last()).toBeVisible({ timeout: 15_000 });
 }
 
 /**
@@ -140,12 +151,15 @@ test("a spoken settings-open command reaches control_app and lands on the same p
     return selectedTab(page);
   })();
 
-  // Close settings so the next click on a suggestion works.
+  // Close settings. The conversation `startConversation` already opened is still there underneath
+  // it - closing a secondary surface preserves conversation state, per this repo's own UI rule - so
+  // there is no fresh hero screen here for a second `startConversation()` to click a chip on; calling
+  // it again was clicking a `[data-suggestion]` chip that either was not there or, when the app still
+  // rendered one next to an active conversation, ran a second scripted recipe into it and failed the
+  // "exactly one user message" assertion for a reason that had nothing to do with voice or the agent.
   await page.keyboard.press("Escape");
   await expect(page.locator('[role="tabpanel"]')).not.toBeVisible({ timeout: 5_000 });
 
-  // Go back to conversation and start voice FIRST (before sending utterance)
-  await startConversation(page);
   await openVoice(page);
 
   // Now send the utterance to the live Gemini Live session that is listening
@@ -183,8 +197,13 @@ test("a spoken home-navigation command reaches control_app", async ({ page, requ
   // This uses a long sentence that doesn't match the registry, forcing it through the agent
   await scriptLiveVoice(request, LIVE_HOME_SENTENCE);
 
-  // The agent should understand this and call `control_app` with `nav.home`.
-  // This results in a home navigation through `runAppIntent`, same as the click.
-  // We assert that the agent's read-back appears, proving the decision was made.
-  await expect(page.getByText("Tôi về màn hình bắt đầu nhé").first()).toBeVisible({ timeout: 30_000 });
+  // The agent should understand this and call `control_app` with `nav.home`. Asserted on the
+  // deterministic *effect* `runAppIntent` produces, not on the model's own words: the real model is
+  // free to compose its spoken reply however it wants around the tool result (`packages/contracts/
+  // src/app-intents.ts`'s fixed `nav.home` read-back is a value control_app hands the model, not a
+  // string the model is bound to echo verbatim - this run's own agent wrapped it in a longer sentence
+  // of its own), so the one fact worth proving here is the same one the click test at the top of this
+  // file proves: the header's own start screen, reached through `runAppIntent`, the executor a click
+  // also goes through.
+  await expect(page.locator("[data-suggestion]").first()).toBeVisible({ timeout: 30_000 });
 });

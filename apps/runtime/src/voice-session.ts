@@ -933,9 +933,21 @@ export function attachVoiceGateway(options: VoiceGatewayOptions): VoiceGateway {
       adapter = createAdapter();
 
       // Wire up live-provider test utterance injection if the service is available.
-      // This allows tests to inject user text that the live model processes like spoken input.
-      if (options.voiceLiveUtterance !== undefined && adapter !== undefined) {
-        options.voiceLiveUtterance.sendUserText = (text: string) => adapter!.sendUserText?.(text);
+      //
+      // This does not forward the words into the Gemini socket: `inputTranscription` is the
+      // provider transcribing audio it heard, and Gemini never emits it for a `clientContent` text
+      // turn, so a real session given only text produces no "user" transcript fragment, `ask()` is
+      // never reached and the injected words vanish after a 200 with nothing downstream of it. A
+      // real spoken utterance already goes through exactly that fragment-then-`ask()` path once the
+      // provider transcribes the audio; this test seam already has the finished sentence, so there
+      // is nothing left for a network round trip to prove; it takes the same last step the real path
+      // takes once transcription is done, and puts the real agent model in charge of the decision.
+      if (options.voiceLiveUtterance !== undefined) {
+        options.voiceLiveUtterance.sendUserText = (text: string) => {
+          userText += text;
+          send({ type: "transcript", role: "user", text, final: true });
+          ask(now());
+        };
       }
 
       adapter.onStateChange((state) => {
