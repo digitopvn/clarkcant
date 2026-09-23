@@ -2,6 +2,7 @@ import type { ReactElement, RefObject } from "react";
 
 import type { GatewayClient, Timeline } from "./api.ts";
 import { PinnedLiveSurface } from "./DesktopSurfaces.tsx";
+import { useT } from "./i18n/locale-context.tsx";
 
 export interface ConversationPinSurfacesProps {
   client: GatewayClient;
@@ -34,6 +35,7 @@ export function ConversationPinSurfaces({
   liveTrigger,
   scroller,
 }: ConversationPinSurfacesProps): ReactElement {
+  const t = useT();
   const shelf =
     pins.length === 0 ? null : (
       <div className="cc-pins" data-pin-shelf="true">
@@ -43,7 +45,7 @@ export function ConversationPinSurfaces({
             <span key={pin.pinId} className="cc-pin" data-pin-id={pin.pinId} data-refresh-policy={pin.refreshPolicy}>
               <span>{instance?.definitionId ?? pin.instanceId}</span>
               <button
-                aria-label="Bỏ ghim"
+                aria-label={t("widgets.pins.unpin")}
                 data-unpin={pin.pinId}
                 onClick={() => {
                   if (conversationId === undefined) return;

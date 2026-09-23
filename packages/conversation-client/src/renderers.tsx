@@ -9,6 +9,8 @@ import { donutSlices, monthGrid } from "@clarkcant/contracts";
 
 import type { ResolvedDataset } from "./api.ts";
 import { vendorEmbedUrl } from "./media-embed.ts";
+import { useT } from "./i18n/locale-context.tsx";
+import type { MessageKey } from "./i18n/messages.ts";
 
 /**
  * Built-in catalog renderers.
@@ -69,11 +71,11 @@ export type CatalogRenderer = (props: RendererProps) => ReactElement | null;
  * Shared chrome
  * ------------------------------------------------------------------ */
 
-const FRESHNESS_LABEL: Record<RendererDataset["freshness"], string> = {
-  live: "dữ liệu vừa đọc",
-  cached: "dữ liệu đã lưu",
-  sample: "dữ liệu mẫu",
-  unknown: "chưa rõ độ mới",
+const FRESHNESS_LABEL_KEY: Record<RendererDataset["freshness"], MessageKey> = {
+  live: "widgets.freshness.live",
+  cached: "widgets.freshness.cached",
+  sample: "widgets.freshness.sample",
+  unknown: "widgets.freshness.unknown",
 };
 
 /**
@@ -83,10 +85,11 @@ const FRESHNESS_LABEL: Record<RendererDataset["freshness"], string> = {
  * labelled in the browser, rather than trusting that the attribute was passed through.
  */
 function Freshness({ dataset }: { dataset: RendererDataset | undefined }): ReactElement | null {
+  const t = useT();
   if (!dataset) return null;
   return (
     <span className="cc-freshness" data-freshness={dataset.freshness}>
-      {FRESHNESS_LABEL[dataset.freshness]}
+      {t(FRESHNESS_LABEL_KEY[dataset.freshness])}
     </span>
   );
 }
@@ -140,11 +143,12 @@ function label(row: Record<string, unknown>, preferred: string[]): string {
  * ------------------------------------------------------------------ */
 
 function LineChart({ props, dataset }: RendererProps): ReactElement {
-  const title = String(props.title ?? "Biểu đồ");
+  const t = useT();
+  const title = String(props.title ?? t("widgets.lineChart.title"));
   if (!dataset || dataset.rows.length === 0) {
     return (
       <Frame title={title} dataset={dataset} role="chart">
-        <Unavailable reason="Chưa có dữ liệu để vẽ. Biểu đồ sẽ hiện khi dataset sẵn sàng." />
+        <Unavailable reason={t("widgets.lineChart.noData")} />
       </Frame>
     );
   }
@@ -198,11 +202,12 @@ function LineChart({ props, dataset }: RendererProps): ReactElement {
 }
 
 function BarChart({ props, dataset }: RendererProps): ReactElement {
-  const title = String(props.title ?? "Biểu đồ cột");
+  const t = useT();
+  const title = String(props.title ?? t("widgets.barChart.title"));
   if (!dataset || dataset.rows.length === 0) {
     return (
       <Frame title={title} dataset={dataset} role="chart">
-        <Unavailable reason="Chưa có dữ liệu để vẽ." />
+        <Unavailable reason={t("widgets.barChart.noData")} />
       </Frame>
     );
   }
@@ -256,13 +261,14 @@ function BarChart({ props, dataset }: RendererProps): ReactElement {
  * ------------------------------------------------------------------ */
 
 function DataTable({ props, dataset, onAction }: RendererProps): ReactElement {
-  const title = String(props.title ?? "Bảng dữ liệu");
+  const t = useT();
+  const title = String(props.title ?? t("widgets.table.title"));
   const [selected, setSelected] = useState<number | undefined>(undefined);
 
   if (!dataset || dataset.rows.length === 0) {
     return (
       <Frame title={title} dataset={dataset} role="table">
-        <Unavailable reason="Chưa có dữ liệu để hiển thị." />
+        <Unavailable reason={t("widgets.table.noData")} />
       </Frame>
     );
   }
@@ -310,7 +316,8 @@ function DataTable({ props, dataset, onAction }: RendererProps): ReactElement {
  * ------------------------------------------------------------------ */
 
 function Note({ props, state, onStateChange, onAction }: RendererProps): ReactElement {
-  const title = String(props.title ?? "Ghi chú");
+  const t = useT();
+  const title = String(props.title ?? t("widgets.note.title"));
   const initialBody = typeof state?.body === "string" ? state.body : String(props.body ?? "");
   const serverRevision = typeof state?.revision === "number" ? state.revision : 0;
 
@@ -334,13 +341,13 @@ function Note({ props, state, onStateChange, onAction }: RendererProps): ReactEl
           className="cc-note-input"
           value={title}
           readOnly
-          aria-label="Tiêu đề ghi chú"
+          aria-label={t("widgets.note.titleAria")}
         />
         <textarea
           className="cc-note-area"
           value={draft}
-          aria-label="Nội dung ghi chú"
-          placeholder="Viết gì đó…"
+          aria-label={t("widgets.note.bodyAria")}
+          placeholder={t("widgets.note.placeholder")}
           onChange={(event) => {
             // The draft lives locally until it is saved, so a failed save cannot lose text.
             setDraft(event.target.value);
@@ -348,11 +355,10 @@ function Note({ props, state, onStateChange, onAction }: RendererProps): ReactEl
           }}
         />
         <div className="cc-note-meta" data-note-status={status}>
-          {status === "draft" && "Có thay đổi chưa lưu."}
-          {status === "saved" && "Đã lưu."}
-          {status === "idle" && `Bản lưu hiện tại: revision ${revision}.`}
-          {status === "conflict" &&
-            "Bản trên máy đã đổi ở chỗ khác. Bản nháp của bạn vẫn còn — chọn giữ bản nháp hoặc tải bản mới."}
+          {status === "draft" && t("widgets.note.unsaved")}
+          {status === "saved" && t("widgets.note.saved")}
+          {status === "idle" && t("widgets.note.currentRevision").replace("{revision}", String(revision))}
+          {status === "conflict" && t("widgets.note.conflict")}
         </div>
         <div style={{ display: "flex", gap: "var(--cc-space-sm)" }}>
           <button
@@ -370,7 +376,7 @@ function Note({ props, state, onStateChange, onAction }: RendererProps): ReactEl
               onAction?.("draft.changed", { length: draft.length });
             }}
           >
-            Lưu
+            {t("widgets.note.save")}
           </button>
           <button
             className="cc-icon-btn"
@@ -381,7 +387,7 @@ function Note({ props, state, onStateChange, onAction }: RendererProps): ReactEl
               setDraft(initialBody);
             }}
           >
-            Bỏ thay đổi
+            {t("widgets.note.discard")}
           </button>
         </div>
       </>
@@ -402,11 +408,12 @@ function Note({ props, state, onStateChange, onAction }: RendererProps): ReactEl
  * and a zero total — are stated in text rather than drawn as an empty ring.
  */
 function Donut({ props, dataset }: RendererProps): ReactElement {
-  const title = String(props.title ?? "Phân bố");
+  const t = useT();
+  const title = String(props.title ?? t("widgets.donut.title"));
   if (!dataset || dataset.rows.length === 0) {
     return (
       <Frame title={title} dataset={dataset} role="chart">
-        <Unavailable reason="Chưa có dữ liệu để chia tỷ lệ." />
+        <Unavailable reason={t("widgets.donut.noData")} />
       </Frame>
     );
   }
@@ -418,7 +425,7 @@ function Donut({ props, dataset }: RendererProps): ReactElement {
   if (!result.ok) {
     return (
       <Frame title={title} dataset={dataset} role="chart">
-        <Unavailable reason={`Không vẽ được biểu đồ tròn: ${result.reason}.`} />
+        <Unavailable reason={t("widgets.donut.cannotDraw").replace("{reason}", result.reason)} />
       </Frame>
     );
   }
@@ -426,7 +433,7 @@ function Donut({ props, dataset }: RendererProps): ReactElement {
   if (result.totalZero) {
     return (
       <Frame title={title} dataset={dataset} role="chart">
-        <Unavailable reason="Tất cả giá trị bằng 0 nên không có tỷ lệ nào để vẽ. Bảng số liệu vẫn đúng." />
+        <Unavailable reason={t("widgets.donut.zeroTotal")} />
         <TextAlternative rows={dataset.rows} />
       </Frame>
     );
@@ -440,7 +447,12 @@ function Donut({ props, dataset }: RendererProps): ReactElement {
     <Frame title={title} dataset={dataset} role="chart">
       <>
         <div style={{ display: "flex", gap: "var(--cc-space-md)", alignItems: "center", flexWrap: "wrap" }}>
-          <svg className="cc-donut" viewBox="0 0 160 160" role="img" aria-label={`${title}: ${result.slices.length} phần`}>
+          <svg
+            className="cc-donut"
+            viewBox="0 0 160 160"
+            role="img"
+            aria-label={t("widgets.donut.ariaSlices").replace("{title}", title).replace("{count}", String(result.slices.length))}
+          >
             {result.slices.map((slice, index) => {
               const length = slice.share * circumference;
               const dash = `${length} ${circumference - length}`;
@@ -484,10 +496,11 @@ function Donut({ props, dataset }: RendererProps): ReactElement {
  * chart has to be readable by anyone, not only by assistive technology.
  */
 function TextAlternative({ rows }: { rows: Record<string, unknown>[] }): ReactElement {
+  const t = useT();
   const columns = Object.keys(rows[0] ?? {});
   return (
     <details className="cc-text-alt">
-      <summary>Bảng số liệu</summary>
+      <summary>{t("widgets.textAlternative.summary")}</summary>
       <table className="cc-table">
         <thead>
           <tr>
@@ -523,12 +536,13 @@ function TextAlternative({ rows }: { rows: Record<string, unknown>[] }): ReactEl
  * that is genuinely zero are different facts, and the API sends the first as absent.
  */
 function Metrics({ props, dataset }: RendererProps): ReactElement {
-  const title = String(props.title ?? "Chỉ số");
+  const t = useT();
+  const title = String(props.title ?? t("widgets.metrics.title"));
   const rows = dataset?.rows ?? [];
   if (rows.length === 0) {
     return (
       <Frame title={title} dataset={dataset} role="metrics">
-        <Unavailable reason="Chưa có số liệu trong khoảng đã chọn." />
+        <Unavailable reason={t("widgets.metrics.noData")} />
       </Frame>
     );
   }
@@ -567,28 +581,29 @@ function Metrics({ props, dataset }: RendererProps): ReactElement {
  * performs no fetch of its own until the parent supplies the new view.
  */
 function PeriodFilter({ props, onAction, state }: RendererProps): ReactElement {
+  const t = useT();
   const current = typeof state?.period === "string" ? state.period : String(props.period ?? "week");
   const timezone = String(props.timezone ?? "UTC");
   const busy = state?.pending === true;
 
   return (
-    <Frame title={String(props.title ?? "Khoảng thời gian")} dataset={undefined} role="filter">
+    <Frame title={String(props.title ?? t("widgets.periodFilter.title"))} dataset={undefined} role="filter">
       <>
         <label className="cc-filter">
-          <span className="cc-sr-only">Khoảng thời gian</span>
+          <span className="cc-sr-only">{t("widgets.periodFilter.label")}</span>
           <select
             value={current}
             disabled={busy}
             data-period-select="true"
             onChange={(event) => onAction?.("period.change", { period: event.target.value, timezone })}
           >
-            <option value="week">Tuần này</option>
-            <option value="month">Tháng này</option>
+            <option value="week">{t("widgets.periodFilter.week")}</option>
+            <option value="month">{t("widgets.periodFilter.month")}</option>
           </select>
         </label>
         <span className="cc-freshness" data-timezone={timezone}>
-          Múi giờ {timezone}
-          {busy ? " — đang tải khoảng mới" : ""}
+          {t("widgets.periodFilter.timezone").replace("{timezone}", timezone)}
+          {busy ? t("widgets.periodFilter.loadingNewRange") : ""}
         </span>
       </>
     </Frame>
@@ -603,7 +618,8 @@ function PeriodFilter({ props, onAction, state }: RendererProps): ReactElement {
  * surface that a snapshot cannot reproduce.
  */
 function Calendar({ props, dataset, state, onAction, onStateChange }: RendererProps): ReactElement {
-  const title = String(props.title ?? "Lịch");
+  const t = useT();
+  const title = String(props.title ?? t("widgets.calendar.title"));
   const month = String(props.month ?? "");
   const timezone = String(props.timezone ?? "UTC");
   const rows = dataset?.rows ?? [];
@@ -624,23 +640,34 @@ function Calendar({ props, dataset, state, onAction, onStateChange }: RendererPr
   if (cells.length === 0) {
     return (
       <Frame title={title} dataset={dataset} role="calendar">
-        <Unavailable reason="Tháng này không đọc được, nên lịch chưa hiển thị." />
+        <Unavailable reason={t("widgets.calendar.notReadable")} />
       </Frame>
     );
   }
 
   const selectedEvents = selectedDate === undefined ? [] : byDate.get(selectedDate) ?? [];
+  const weekdays: MessageKey[] = [
+    "widgets.calendar.day.mon",
+    "widgets.calendar.day.tue",
+    "widgets.calendar.day.wed",
+    "widgets.calendar.day.thu",
+    "widgets.calendar.day.fri",
+    "widgets.calendar.day.sat",
+    "widgets.calendar.day.sun",
+  ];
 
   return (
     <Frame title={title} dataset={dataset} role="calendar">
       <>
         <table className="cc-calendar" data-calendar-month={month}>
-          <caption className="cc-sr-only">{`Lịch tháng ${month} (${timezone})`}</caption>
+          <caption className="cc-sr-only">
+            {t("widgets.calendar.caption").replace("{month}", month).replace("{timezone}", timezone)}
+          </caption>
           <thead>
             <tr>
-              {["T2", "T3", "T4", "T5", "T6", "T7", "CN"].map((day) => (
-                <th key={day} scope="col">
-                  {day}
+              {weekdays.map((dayKey) => (
+                <th key={dayKey} scope="col">
+                  {t(dayKey)}
                 </th>
               ))}
             </tr>
@@ -656,7 +683,9 @@ function Calendar({ props, dataset, state, onAction, onStateChange }: RendererPr
                         type="button"
                         className="cc-calendar-day"
                         aria-pressed={selectedDate === cell.date}
-                        aria-label={`${cell.date}, ${events.length} sự kiện`}
+                        aria-label={t("widgets.calendar.dayAriaEvents")
+                          .replace("{date}", cell.date)
+                          .replace("{count}", String(events.length))}
                         onClick={() => {
                           onStateChange?.({ selectedDate: cell.date });
                           onAction?.("date.select", { date: cell.date });
@@ -674,9 +703,9 @@ function Calendar({ props, dataset, state, onAction, onStateChange }: RendererPr
         </table>
         <div className="cc-calendar-detail" data-selected-date={selectedDate ?? ""}>
           {selectedDate === undefined
-            ? "Chọn một ngày để xem sự kiện."
+            ? t("widgets.calendar.selectADay")
             : selectedEvents.length === 0
-              ? "Ngày này chưa có sự kiện nào."
+              ? t("widgets.calendar.noEventsThatDay")
               : (
                 <ul>
                   {selectedEvents.map((event, index) => (
@@ -688,7 +717,7 @@ function Calendar({ props, dataset, state, onAction, onStateChange }: RendererPr
                 </ul>
               )}
         </div>
-        <span className="cc-freshness">Sự kiện do bạn nhập trên máy này; chưa đồng bộ với Google Calendar.</span>
+        <span className="cc-freshness">{t("widgets.calendar.localOnlyNotice")}</span>
       </>
     </Frame>
   );
@@ -702,7 +731,8 @@ function Calendar({ props, dataset, state, onAction, onStateChange }: RendererPr
  * cannot be.
  */
 function LocalImage({ props, imageUrl }: RendererProps): ReactElement {
-  const title = String(props.title ?? "Hình ảnh");
+  const t = useT();
+  const title = String(props.title ?? t("widgets.image.title"));
   const alt = String(props.alt ?? "");
   const imageRef = String(props.imageRef ?? "");
   const url = imageRef === "" ? undefined : imageUrl?.(imageRef);
@@ -710,7 +740,7 @@ function LocalImage({ props, imageUrl }: RendererProps): ReactElement {
   return (
     <Frame title={title} dataset={undefined} role="media">
       {url === undefined ? (
-        <Unavailable reason={`Chưa tải được hình ảnh. Mô tả: ${alt}`} />
+        <Unavailable reason={t("widgets.image.notLoaded").replace("{alt}", alt)} />
       ) : (
         <figure className="cc-image">
           <img src={url} alt={alt} loading="lazy" decoding="async" data-image-ref={imageRef} />
@@ -743,6 +773,7 @@ function pictureAlts(value: unknown, count: number): string[] {
 
 /** Several pictures seen one at a time, with the controls a keyboard can reach. */
 function Carousel({ props, imageUrl }: RendererProps): ReactElement {
+  const t = useT();
   const refs = pictureRefs(props.imageRefs);
   const alts = pictureAlts(props.alts, refs.length);
   const [index, setIndex] = useState(0);
@@ -752,9 +783,11 @@ function Carousel({ props, imageUrl }: RendererProps): ReactElement {
   const url = ref === undefined ? undefined : imageUrl?.(ref);
 
   return (
-    <Frame title={String(props.title ?? "Bộ ảnh")} dataset={undefined} role="media">
+    <Frame title={String(props.title ?? t("widgets.carousel.title"))} dataset={undefined} role="media">
       {refs.length === 0 || url === undefined ? (
-        <Unavailable reason={`Chưa tải được hình ảnh. Mô tả: ${alts.filter((entry) => entry !== "").join(" · ")}`} />
+        <Unavailable
+          reason={t("widgets.image.notLoaded").replace("{alt}", alts.filter((entry) => entry !== "").join(" · "))}
+        />
       ) : (
         <div className="cc-carousel" data-carousel-index={current}>
           <figure className="cc-image">
@@ -764,7 +797,7 @@ function Carousel({ props, imageUrl }: RendererProps): ReactElement {
           <div className="cc-carousel-controls">
             <button
               type="button"
-              aria-label="Ảnh trước"
+              aria-label={t("widgets.carousel.previous")}
               onClick={() => setIndex(current <= 0 ? refs.length - 1 : current - 1)}
             >
               ‹
@@ -772,7 +805,7 @@ function Carousel({ props, imageUrl }: RendererProps): ReactElement {
             <span className="cc-freshness">
               {current + 1}/{refs.length}
             </span>
-            <button type="button" aria-label="Ảnh sau" onClick={() => setIndex((current + 1) % refs.length)}>
+            <button type="button" aria-label={t("widgets.carousel.next")} onClick={() => setIndex((current + 1) % refs.length)}>
               ›
             </button>
           </div>
@@ -784,6 +817,7 @@ function Carousel({ props, imageUrl }: RendererProps): ReactElement {
 
 /** The same pictures as a grid, for when seeing them together is the point. */
 function Gallery({ props, imageUrl }: RendererProps): ReactElement {
+  const t = useT();
   const refs = pictureRefs(props.imageRefs);
   const alts = pictureAlts(props.alts, refs.length);
   const shown = refs.flatMap((ref, index) => {
@@ -792,9 +826,11 @@ function Gallery({ props, imageUrl }: RendererProps): ReactElement {
   });
 
   return (
-    <Frame title={String(props.title ?? "Thư viện ảnh")} dataset={undefined} role="media">
+    <Frame title={String(props.title ?? t("widgets.gallery.title"))} dataset={undefined} role="media">
       {shown.length === 0 ? (
-        <Unavailable reason={`Chưa tải được hình ảnh. Mô tả: ${alts.filter((entry) => entry !== "").join(" · ")}`} />
+        <Unavailable
+          reason={t("widgets.image.notLoaded").replace("{alt}", alts.filter((entry) => entry !== "").join(" · "))}
+        />
       ) : (
         <ul className="cc-gallery" data-gallery-count={shown.length}>
           {shown.map((picture) => (
@@ -820,8 +856,9 @@ function Gallery({ props, imageUrl }: RendererProps): ReactElement {
  * internet.
  */
 function YouTubeEmbed({ props }: RendererProps): ReactElement {
+  const t = useT();
   const videoId = String(props.videoId ?? "");
-  const title = String(props.title ?? "Video YouTube");
+  const title = String(props.title ?? t("widgets.video.youtubeTitle"));
   const description = typeof props.description === "string" ? props.description : "";
   const usable = /^[A-Za-z0-9_-]{6,20}$/.test(videoId);
   /*
@@ -834,7 +871,11 @@ function YouTubeEmbed({ props }: RendererProps): ReactElement {
   return (
     <Frame title={title} dataset={undefined} role="media">
       {!usable ? (
-        <Unavailable reason={`Video: ${title}${description === "" ? "" : ` — ${description}`}`} />
+        <Unavailable
+          reason={t("widgets.video.youtubeUnavailable")
+            .replace("{title}", title)
+            .replace("{description}", description === "" ? "" : ` — ${description}`)}
+        />
       ) : (
         <div className="cc-embed">
           <iframe
@@ -860,6 +901,7 @@ function YouTubeEmbed({ props }: RendererProps): ReactElement {
  * the description instead of an invented address.
  */
 function LocalVideo({ props, imageUrl }: RendererProps): ReactElement {
+  const t = useT();
   const ref = String(props.videoRef ?? "");
   const alt = String(props.alt ?? "");
   const posterRef = typeof props.posterRef === "string" ? props.posterRef : "";
@@ -867,9 +909,9 @@ function LocalVideo({ props, imageUrl }: RendererProps): ReactElement {
   const poster = posterRef === "" ? undefined : imageUrl?.(posterRef);
 
   return (
-    <Frame title={String(props.title ?? "Video")} dataset={undefined} role="media">
+    <Frame title={String(props.title ?? t("widgets.video.title"))} dataset={undefined} role="media">
       {url === undefined ? (
-        <Unavailable reason={`Chưa phát được video. Mô tả: ${alt}`} />
+        <Unavailable reason={t("widgets.video.notPlayable").replace("{alt}", alt)} />
       ) : (
         <figure className="cc-video">
           <video
@@ -895,7 +937,8 @@ function LocalVideo({ props, imageUrl }: RendererProps): ReactElement {
  * show success for something that had not happened.
  */
 function CallToAction({ props, onAction }: RendererProps): ReactElement {
-  const label = String(props.label ?? "Lưu bản xem");
+  const t = useT();
+  const label = String(props.label ?? t("widgets.cta.defaultLabel"));
   const actionId = String(props.actionId ?? "");
   // No `onAction` means this surface has no authorization to act — a historical snapshot, or a
   // surface another tab owns. Offering a live-looking button there would be a control that does
@@ -906,7 +949,7 @@ function CallToAction({ props, onAction }: RendererProps): ReactElement {
       <div>
         <div className="cc-card-title">{label}</div>
         {typeof props.description === "string" && <p className="cc-freshness">{props.description}</p>}
-        {!actionable && <p className="cc-freshness">Chỉ xem: bản này không thao tác được.</p>}
+        {!actionable && <p className="cc-freshness">{t("widgets.cta.viewOnlyNotice")}</p>}
       </div>
       <button
         type="button"

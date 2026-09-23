@@ -3,6 +3,7 @@ import { type ReactElement, useCallback, useEffect, useState } from "react";
 import type { MemoryRecord } from "@clarkcant/contracts";
 
 import type { GatewayClient } from "../api.ts";
+import { useT } from "../i18n/locale-context.tsx";
 import { memoryView, type MemoryGroupView } from "../memory-groups.ts";
 import { useT } from "../i18n/locale-context.tsx";
 
@@ -96,7 +97,7 @@ export function MemorySettings({ client }: MemorySettingsProps): ReactElement {
     );
   }
 
-  const view = memoryView(panel.records, new Date().toISOString());
+  const view = memoryView(panel.records, new Date().toISOString(), t);
 
   return (
     // `memory-groups.ts` (group labels, relative-time and scope text) is outside this file's ownership and

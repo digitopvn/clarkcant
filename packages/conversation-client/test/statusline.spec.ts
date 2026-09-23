@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 
 import { formatTokenCount, latestTurnMetrics, statuslineParts } from "../src/statusline.ts";
+import { MESSAGES_VI, type MessageKey } from "../src/i18n/messages.ts";
+
+/** The Vietnamese catalog lookup, standing in for `useT()` since these are plain-function tests. */
+const t = (key: MessageKey): string => MESSAGES_VI[key];
 
 const card = (metrics: Record<string, unknown>): { blocks: unknown[] } => ({
   blocks: [{ type: "system-card", owner: "host", metrics }],
@@ -18,30 +22,32 @@ describe("the statusline under the composer", () => {
   });
 
   it("says how full the context is, first, because it is the number with a ceiling", () => {
-    expect(statuslineParts({ metrics: { contextTokens: 12_300, contextWindow: 1_000_000 } })).toEqual(["12k/1.00M (1%)"]);
+    expect(statuslineParts({ metrics: { contextTokens: 12_300, contextWindow: 1_000_000 } }, t)).toEqual([
+      "12k/1.00M (1%)",
+    ]);
   });
 
   it("states the cache hit rate against the input that could have been cached", () => {
     // 750 read of 1000 total input. Counting it against output would report a rate for a quantity that was
     // never in the cache in the first place.
-    expect(statuslineParts({ metrics: { cacheReadTokens: 750, inputTokens: 250 } })).toEqual(["cache 75%"]);
+    expect(statuslineParts({ metrics: { cacheReadTokens: 750, inputTokens: 250 } }, t)).toEqual(["cache 75%"]);
   });
 
   it("leaves out what was never reported rather than printing it as zero", () => {
     // "cache 0%" and "the provider said nothing about a cache" are different facts, and only one of them is
     // true when the field is absent.
-    expect(statuslineParts({ metrics: { outputTokens: 10 } })).toEqual([]);
-    expect(statuslineParts({})).toEqual([]);
+    expect(statuslineParts({ metrics: { outputTokens: 10 } }, t)).toEqual([]);
+    expect(statuslineParts({}, t)).toEqual([]);
   });
 
   it("counts background work by state, and stays quiet when there is none", () => {
-    expect(statuslineParts({ background: { running: 2, done: 1, failed: 0 } })).toEqual(["nền: 2 đang chạy, 1 xong"]);
-    expect(statuslineParts({ background: { running: 0, done: 0, failed: 0 } })).toEqual([]);
+    expect(statuslineParts({ background: { running: 2, done: 1, failed: 0 } }, t)).toEqual(["nền: 2 đang chạy, 1 xong"]);
+    expect(statuslineParts({ background: { running: 0, done: 0, failed: 0 } }, t)).toEqual([]);
   });
 
   it("passes a provider's quota line through verbatim", () => {
-    expect(statuslineParts({ quota: "zen 0% r 100% w 62% m" })).toEqual(["zen 0% r 100% w 62% m"]);
-    expect(statuslineParts({ quota: "" })).toEqual([]);
+    expect(statuslineParts({ quota: "zen 0% r 100% w 62% m" }, t)).toEqual(["zen 0% r 100% w 62% m"]);
+    expect(statuslineParts({ quota: "" }, t)).toEqual([]);
   });
 
   it("formats token counts so a reader can compare them at a glance", () => {

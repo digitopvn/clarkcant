@@ -3,6 +3,7 @@ import { type ReactElement, useState } from "react";
 import type { WidgetDefinition } from "@clarkcant/contracts";
 import { validateProps } from "@clarkcant/widget-catalog";
 
+import { useT } from "../i18n/locale-context.tsx";
 import { propFields } from "./widget-lab.ts";
 
 /**
@@ -23,6 +24,7 @@ export interface WidgetPropsFormProps {
 }
 
 export function WidgetPropsForm({ definition, props, onChange }: WidgetPropsFormProps): ReactElement {
+  const t = useT();
   const fields = propFields(definition);
   const [problems, setProblems] = useState<readonly string[]>([]);
   const [rawOpen, setRawOpen] = useState(false);
@@ -43,11 +45,16 @@ export function WidgetPropsForm({ definition, props, onChange }: WidgetPropsForm
     try {
       parsed = JSON.parse(rawText);
     } catch (cause) {
-      setProblems([`JSON không đọc được: ${cause instanceof Error ? cause.message : String(cause)}`]);
+      setProblems([
+        t("widgets.propsForm.jsonUnreadable").replace(
+          "{message}",
+          cause instanceof Error ? cause.message : String(cause),
+        ),
+      ]);
       return;
     }
     if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
-      setProblems(["JSON phải là một object."]);
+      setProblems([t("widgets.propsForm.jsonMustBeObject")]);
       return;
     }
     commit(parsed as Record<string, unknown>);
@@ -73,7 +80,7 @@ export function WidgetPropsForm({ definition, props, onChange }: WidgetPropsForm
         if (field.type === "other") {
           return (
             <p className="cc-panel-note" key={field.key} data-widget-prop-unsupported={field.key}>
-              {`${field.key} là kiểu phức tạp — sửa ở chế độ JSON nâng cao.`}
+              {t("widgets.propsForm.complexType").replace("{field}", field.key)}
             </p>
           );
         }
@@ -108,15 +115,15 @@ export function WidgetPropsForm({ definition, props, onChange }: WidgetPropsForm
           if (next) setRawText(JSON.stringify(props, null, 2));
         }}
       >
-        <summary>JSON nâng cao</summary>
+        <summary>{t("widgets.propsForm.advancedJson")}</summary>
         <textarea
           value={rawText}
           onChange={(event) => setRawText(event.target.value)}
-          aria-label="Props dạng JSON"
+          aria-label={t("widgets.propsForm.jsonAria")}
           data-widget-props-raw="true"
         />
         <button type="button" className="cc-badge" onClick={commitRaw} data-widget-props-apply="true">
-          Áp dụng
+          {t("widgets.propsForm.apply")}
         </button>
       </details>
 

@@ -2,6 +2,7 @@ import { type ReactElement } from "react";
 
 import type { WidgetCatalogEntry } from "@clarkcant/widget-catalog";
 
+import { useT } from "../i18n/locale-context.tsx";
 import { WidgetPreview } from "./WidgetPreview.tsx";
 
 /**
@@ -37,10 +38,11 @@ export interface WidgetGalleryProps {
 }
 
 export function WidgetGallery({ entries, onSelect }: WidgetGalleryProps): ReactElement {
+  const t = useT();
   if (entries.length === 0) {
     return (
       <p className="cc-widget-library-empty" data-widget-library-empty="true" role="status">
-        Không có widget nào khớp với bộ lọc này. Xoá ô tìm kiếm hoặc chọn “Tất cả” để xem lại danh mục.
+        {t("widgets.gallery.noMatches")}
       </p>
     );
   }
@@ -55,13 +57,15 @@ export function WidgetGallery({ entries, onSelect }: WidgetGalleryProps): ReactE
               type="button"
               className="cc-widget-card-btn"
               onClick={() => onSelect(entry.cardId)}
-              aria-label={`${entry.displayName} — ${entry.description}`}
+              aria-label={t("widgets.gallery.cardAria")
+                .replace("{name}", entry.displayName)
+                .replace("{description}", entry.description)}
               data-widget-card={entry.cardId}
             >
               <span className="cc-widget-card-preview">
                 {fixture === undefined ? (
                   <span className="cc-widget-preview-missing" data-widget-preview-missing={entry.cardId}>
-                    Chưa có fixture cho widget này.
+                    {t("widgets.gallery.noFixture")}
                   </span>
                 ) : isEmbeddedPreview(entry.definition.id) ? (
                   // The text alternative the renderer itself would show, without the embed.
@@ -77,8 +81,12 @@ export function WidgetGallery({ entries, onSelect }: WidgetGalleryProps): ReactE
                 <span className="cc-widget-card-family">{entry.family}</span>
                 <span className="cc-widget-card-desc">{entry.description}</span>
                 <span className="cc-widget-card-source">
-                  {entry.source === "builtin" ? "Built-in" : entry.source === "installed" ? "Installed package" : "Local development package"}
-                  {entry.status === "experimental" ? " · experimental" : ""}
+                  {entry.source === "builtin"
+                    ? t("widgets.gallery.sourceBuiltin")
+                    : entry.source === "installed"
+                      ? t("widgets.gallery.sourceInstalled")
+                      : t("widgets.gallery.sourceLocal")}
+                  {entry.status === "experimental" ? t("widgets.gallery.experimentalSuffix") : ""}
                 </span>
               </span>
             </button>

@@ -1,4 +1,5 @@
 import type { MessageBlock } from "@clarkcant/contracts";
+import type { MessageKey } from "./i18n/messages.ts";
 
 /** The typed numbers a status card carries, when it carries any. */
 export type TurnMetrics = Extract<MessageBlock, { type: "system-card" }>["metrics"];
@@ -49,13 +50,16 @@ export function formatTokenCount(count: number): string {
  * behind the conversation. A part whose number was never reported is left out rather than shown as zero,
  * because "cache 0%" and "the provider said nothing about a cache" are different facts.
  */
-export function statuslineParts(input: {
-	metrics?: TurnMetrics;
-	/** Background sessions by state, when the node counts any. */
-	background?: { running: number; done: number; failed: number };
-	/** The provider's own quota line, verbatim, when it publishes one. */
-	quota?: string;
-}): string[] {
+export function statuslineParts(
+	input: {
+		metrics?: TurnMetrics;
+		/** Background sessions by state, when the node counts any. */
+		background?: { running: number; done: number; failed: number };
+		/** The provider's own quota line, verbatim, when it publishes one. */
+		quota?: string;
+	},
+	t: (key: MessageKey) => string,
+): string[] {
 	const parts: string[] = [];
 	const metrics = input.metrics;
 
@@ -65,9 +69,18 @@ export function statuslineParts(input: {
 	}
 	if (metrics?.cacheReadTokens !== undefined) {
 		const reusable = metrics.cacheReadTokens + (metrics.inputTokens ?? 0);
-		if (reusable > 0) parts.push(`cache ${Math.round((metrics.cacheReadTokens / reusable) * 100)}%`);
+		if (reusable > 0) {
+			parts.push(
+				t("widgets.statusline.cache").replace(
+					"{percent}",
+					String(Math.round((metrics.cacheReadTokens / reusable) * 100)),
+				),
+			);
+		}
 	}
-	if (metrics?.tokensPerSecond !== undefined) parts.push(`${metrics.tokensPerSecond.toFixed(1)} tok/s`);
+	if (metrics?.tokensPerSecond !== undefined) {
+		parts.push(t("widgets.statusline.tokPerSec").replace("{value}", metrics.tokensPerSecond.toFixed(1)));
+	}
 	if (metrics?.costUsd !== undefined) parts.push(`$${metrics.costUsd.toFixed(4)}`);
 
 	const background = input.background;
@@ -76,10 +89,14 @@ export function statuslineParts(input: {
 		const finished = background.done + background.failed;
 		if (running > 0 || finished > 0) {
 			const states: string[] = [];
-			if (running > 0) states.push(`${running} đang chạy`);
-			if (background.done > 0) states.push(`${background.done} xong`);
-			if (background.failed > 0) states.push(`${background.failed} lỗi`);
-			parts.push(`nền: ${states.join(", ")}`);
+			if (running > 0) states.push(t("widgets.statusline.backgroundRunning").replace("{count}", String(running)));
+			if (background.done > 0) {
+				states.push(t("widgets.statusline.backgroundDone").replace("{count}", String(background.done)));
+			}
+			if (background.failed > 0) {
+				states.push(t("widgets.statusline.backgroundFailed").replace("{count}", String(background.failed)));
+			}
+			parts.push(t("widgets.statusline.backgroundPrefix").replace("{states}", states.join(", ")));
 		}
 	}
 	if (input.quota !== undefined && input.quota !== "") parts.push(input.quota);

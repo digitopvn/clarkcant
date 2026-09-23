@@ -1,4 +1,5 @@
 import type { InstalledPackageView } from "./api.ts";
+import type { MessageKey } from "./i18n/messages.ts";
 
 /**
  * How a package's trust lane is worded, in one place.
@@ -7,28 +8,28 @@ import type { InstalledPackageView } from "./api.ts";
  * one mistake that list exists to prevent", so the wording lives here and every surface imports it
  * instead of keeping its own copy that can drift.
  */
-export const LANE_LABELS: Record<InstalledPackageView["lane"], string> = {
-  declarative: "chỉ dữ liệu",
-  "isolated-ui": "widget cách ly",
-  service: "service riêng tiến trình",
-  "trusted-native": "extension Pi gốc — chạy cùng tiến trình",
+const LANE_LABEL_KEY: Record<InstalledPackageView["lane"], MessageKey> = {
+	declarative: "widgets.provenanceLane.declarative",
+	"isolated-ui": "widgets.provenanceLane.isolatedUi",
+	service: "widgets.provenanceLane.service",
+	"trusted-native": "widgets.provenanceLane.trustedNative",
 };
 
 /** Where a package came from, as far as this node can say. */
 export type ProvenanceKind = "installed" | "local";
 
 export interface ProvenanceRow {
-  packageId: string;
-  version: string;
-  /** Shortened for display. A digest is not a secret, but a 64-character string is unreadable. */
-  digest: string;
-  /** Kept so the shortened form can still be expanded on demand. */
-  fullDigest: string;
-  sourceTier: string;
-  sourceRationale: string;
-  lane: InstalledPackageView["lane"];
-  laneLabel: string;
-  kind: ProvenanceKind;
+	packageId: string;
+	version: string;
+	/** Shortened for display. A digest is not a secret, but a 64-character string is unreadable. */
+	digest: string;
+	/** Kept so the shortened form can still be expanded on demand. */
+	fullDigest: string;
+	sourceTier: string;
+	sourceRationale: string;
+	lane: InstalledPackageView["lane"];
+	laneLabel: string;
+	kind: ProvenanceKind;
 }
 
 /**
@@ -36,7 +37,7 @@ export interface ProvenanceRow {
  * package always read the same and a person can compare two rows by eye.
  */
 export function shortDigest(digest: string): string {
-  return digest.slice(0, 12);
+	return digest.slice(0, 12);
 }
 
 /**
@@ -46,21 +47,29 @@ export function shortDigest(digest: string): string {
  * inventing a second trust model - the thing the issue explicitly rules out.
  */
 export function provenanceKind(sourceTier: string): ProvenanceKind {
-  return /local|path|dev/i.test(sourceTier) ? "local" : "installed";
+	return /local|path|dev/i.test(sourceTier) ? "local" : "installed";
 }
 
-export function provenanceRows(packages: readonly InstalledPackageView[]): ProvenanceRow[] {
-  return packages.map((entry) => ({
-    packageId: entry.packageId,
-    version: entry.version,
-    digest: shortDigest(entry.digest),
-    fullDigest: entry.digest,
-    sourceTier: entry.source.sourceTier,
-    sourceRationale: entry.source.rationale,
-    lane: entry.lane,
-    laneLabel: LANE_LABELS[entry.lane],
-    kind: provenanceKind(entry.source.sourceTier),
-  }));
+/** The trust lane's wording, for a single package outside the full row list. */
+export function laneLabel(lane: InstalledPackageView["lane"], t: (key: MessageKey) => string): string {
+	return t(LANE_LABEL_KEY[lane]);
+}
+
+export function provenanceRows(
+	packages: readonly InstalledPackageView[],
+	t: (key: MessageKey) => string,
+): ProvenanceRow[] {
+	return packages.map((entry) => ({
+		packageId: entry.packageId,
+		version: entry.version,
+		digest: shortDigest(entry.digest),
+		fullDigest: entry.digest,
+		sourceTier: entry.source.sourceTier,
+		sourceRationale: entry.source.rationale,
+		lane: entry.lane,
+		laneLabel: laneLabel(entry.lane, t),
+		kind: provenanceKind(entry.source.sourceTier),
+	}));
 }
 
 /**
@@ -69,4 +78,6 @@ export function provenanceRows(packages: readonly InstalledPackageView[]): Prove
  * The gallery's entries are not packages, so they are labelled by what they are rather than being
  * given a version and a digest they do not have.
  */
-export const BUILT_IN_LABEL = "widget dựng sẵn trong Clark";
+export function builtInLabel(t: (key: MessageKey) => string): string {
+	return t("widgets.provenance.builtInLabel");
+}

@@ -3,7 +3,7 @@ import { useEffect, useState, type ReactElement } from "react";
 import { useT } from "../i18n/locale-context.tsx";
 import { ToolLists } from "../tool-lists.tsx";
 import type { GatewayClient, InstalledPackageView } from "../api.ts";
-import { LANE_LABELS } from "../package-provenance.ts";
+import { laneLabel } from "../package-provenance.ts";
 import { SettingsRow, ToolRow } from "./controls/SettingsRow.tsx";
 
 /**
@@ -190,7 +190,7 @@ function InstalledPackagesSection({ client }: { client: GatewayClient }): ReactE
               {/* LANE_LABELS is out of this file's ownership; see the settings translation report for the
                   Vietnamese lane badge still shown here. */}
               <span className="cc-badge" data-lane={entry.lane}>
-                {LANE_LABELS[entry.lane]}
+                {laneLabel(entry.lane, t)}
               </span>
               <dl className="cc-fields">
                 <dt>{t("settings.extensions.installed.source")}</dt>

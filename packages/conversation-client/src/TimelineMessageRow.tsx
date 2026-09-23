@@ -3,6 +3,7 @@ import { memo, type CSSProperties, type ReactElement } from "react";
 import type { GatewayClient, Timeline } from "./api.ts";
 import { AgentAvatar } from "./AgentAvatar.tsx";
 import { renderBlock, type BlockActions, type SurfaceBlockRef } from "./blocks.tsx";
+import { useT } from "./i18n/locale-context.tsx";
 
 export interface TimelineMessageRowProps {
   message: Timeline["messages"][number];
@@ -38,6 +39,7 @@ function TimelineMessageRowComponent({
   client,
   settled,
 }: TimelineMessageRowProps): ReactElement {
+  const t = useT();
   return (
     <article
       className="cc-row"
@@ -57,13 +59,17 @@ function TimelineMessageRowComponent({
         <div className="cc-assistant">
           <AgentAvatar />
           <div className="cc-assistant-body">
-            {message.blocks.map((block, blockIndex) => renderBlock(block, blockIndex, renderSurface, blockActions, client))}
+            {message.blocks.map((block, blockIndex) =>
+              renderBlock(block, blockIndex, renderSurface, blockActions, client, t),
+            )}
           </div>
         </div>
       ) : (
         // A bubble, because it is the user's own words coming back to them at a glance.
         <div className="cc-bubble" data-bubble="user">
-          {message.blocks.map((block, blockIndex) => renderBlock(block, blockIndex, renderSurface, blockActions, client))}
+          {message.blocks.map((block, blockIndex) =>
+            renderBlock(block, blockIndex, renderSurface, blockActions, client, t),
+          )}
         </div>
       )}
     </article>

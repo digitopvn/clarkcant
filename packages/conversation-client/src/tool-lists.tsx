@@ -1,6 +1,7 @@
 import { type ReactElement, useEffect, useState } from "react";
 
 import type { GatewayClient } from "./api.ts";
+import { useT } from "./i18n/locale-context.tsx";
 
 interface ToolRow {
   name: string;
@@ -24,6 +25,7 @@ interface ToolLists {
  * person is checking what is possible.
  */
 export function ToolLists({ client }: { client: GatewayClient }): ReactElement {
+  const t = useT();
   const [lists, setLists] = useState<ToolLists | undefined>(undefined);
   const [problem, setProblem] = useState<string | undefined>(undefined);
 
@@ -35,15 +37,15 @@ export function ToolLists({ client }: { client: GatewayClient }): ReactElement {
         if (!cancelled) setLists(loaded as ToolLists);
       })
       .catch(() => {
-        if (!cancelled) setProblem("Không đọc được danh sách công cụ từ node.");
+        if (!cancelled) setProblem(t("widgets.toolLists.readFailed"));
       });
     return () => {
       cancelled = true;
     };
-  }, [client]);
+  }, [client, t]);
 
   if (problem !== undefined) return <p className="cc-panel-note">{problem}</p>;
-  if (lists === undefined) return <p className="cc-panel-note">Đang đọc…</p>;
+  if (lists === undefined) return <p className="cc-panel-note">{t("widgets.toolLists.loading")}</p>;
 
   const section = (title: string, rows: ToolRow[], empty: string): ReactElement => (
     <>
@@ -66,8 +68,8 @@ export function ToolLists({ client }: { client: GatewayClient }): ReactElement {
 
   return (
     <>
-      {section("Công cụ của node này", lists.self, "Node này chưa đăng ký công cụ nào.")}
-      {section("Công cụ của agent (pi)", lists.agent, "Agent không báo công cụ gốc nào.")}
+      {section(t("widgets.toolLists.nodeToolsTitle"), lists.self, t("widgets.toolLists.nodeToolsEmpty"))}
+      {section(t("widgets.toolLists.agentToolsTitle"), lists.agent, t("widgets.toolLists.agentToolsEmpty"))}
       {lists.agentNote !== undefined && <p className="cc-panel-note">{lists.agentNote}</p>}
     </>
   );

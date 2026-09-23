@@ -3,6 +3,8 @@ import { type ReactElement, useMemo, useState } from "react";
 import { type CompositionSlot, orderSections } from "@clarkcant/contracts";
 
 import { type RendererDataset, resolveRenderer } from "./renderers.tsx";
+import { useT } from "./i18n/locale-context.tsx";
+import type { MessageKey } from "./i18n/messages.ts";
 
 /**
  * The composed surface container.
@@ -85,13 +87,13 @@ export interface MiniAppSurfaceProps {
   busy?: boolean | undefined;
 }
 
-const AVAILABILITY_TEXT: Record<RegionAvailability, string | undefined> = {
+const AVAILABILITY_TEXT_KEY: Record<RegionAvailability, MessageKey | undefined> = {
   live: undefined,
   cached: undefined,
-  missing: "Chưa có dữ liệu cho vùng này.",
-  denied: "Bạn không có quyền xem vùng này.",
-  error: "Không đọc được dữ liệu cho vùng này.",
-  loading: "Đang tải vùng này…",
+  missing: "widgets.surface.regionMissing",
+  denied: "widgets.surface.regionDenied",
+  error: "widgets.surface.regionError",
+  loading: "widgets.surface.regionLoading",
 };
 
 function regionDataset(section: CompositeSurfaceSection, availability: RegionAvailability): RendererDataset | undefined {
@@ -105,6 +107,7 @@ function regionDataset(section: CompositeSurfaceSection, availability: RegionAva
 }
 
 export function MiniAppSurface(props: MiniAppSurfaceProps): ReactElement {
+  const t = useT();
   const { view, onIntent, busy } = props;
   const [state, setState] = useState<Record<string, Record<string, unknown>>>({});
   const sections = useMemo(() => orderSections(view.sections), [view.sections]);
@@ -124,12 +127,12 @@ export function MiniAppSurface(props: MiniAppSurfaceProps): ReactElement {
     return (
       <figure className="cc-card cc-surface" data-surface-instance={view.instanceId} data-surface-tombstone="true">
         <figcaption className="cc-card-head">
-          <span className="cc-card-title">{props.title ?? "Tổng quan"}</span>
-          <span className="cc-freshness">bản lưu đã bị xoá</span>
+          <span className="cc-card-title">{props.title ?? t("widgets.surface.overviewTitle")}</span>
+          <span className="cc-freshness">{t("widgets.surface.snapshotDeleted")}</span>
         </figcaption>
         <div className="cc-card-body">
           <p className="cc-freshness" style={{ margin: 0 }} data-tombstone-reason={view.tombstone.reason}>
-            {`Bản lưu này đã bị xoá khỏi máy: ${view.tombstone.reason}. Nội dung đã xoá không được đọc lại từ dữ liệu hiện tại.`}
+            {t("widgets.surface.tombstoneReason").replace("{reason}", view.tombstone.reason)}
           </p>
           <ul className="cc-surface-alt">
             {sections.map((section) => (
@@ -144,18 +147,19 @@ export function MiniAppSurface(props: MiniAppSurfaceProps): ReactElement {
   return (
     <figure className="cc-card cc-surface" data-surface-instance={view.instanceId} data-surface-composition={view.compositionId}>
       <figcaption className="cc-card-head">
-        <span className="cc-card-title">{props.title ?? "Tổng quan"}</span>
+        <span className="cc-card-title">{props.title ?? t("widgets.surface.overviewTitle")}</span>
         <span className="cc-freshness" data-surface-captured-at={view.capturedAt ?? ""}>
-          {view.capturedAt === undefined ? "" : `chụp lúc ${view.capturedAt}`}
-          {view.stale === true ? " — bản hiện tại đã thay đổi" : ""}
+          {view.capturedAt === undefined ? "" : t("widgets.surface.capturedAt").replace("{at}", view.capturedAt)}
+          {view.stale === true ? t("widgets.surface.staleSuffix") : ""}
         </span>
       </figcaption>
       <div className="cc-card-body">
-        <div className="cc-surface-grid" role="group" aria-label="Các vùng của tổng quan">
+        <div className="cc-surface-grid" role="group" aria-label={t("widgets.surface.regionsAria")}>
           {sections.map((section) => {
             const availability = view.availability?.[section.sectionId] ?? (section.rows === undefined ? "missing" : "live");
             const Renderer = resolveRenderer(section.definitionRef.id);
-            const message = AVAILABILITY_TEXT[availability];
+            const availabilityKey = AVAILABILITY_TEXT_KEY[availability];
+            const message = availabilityKey === undefined ? undefined : t(availabilityKey);
             const action = actionBySection.get(section.sectionId);
             const sectionState: Record<string, unknown> = {
               period: view.initialState.period,
@@ -179,17 +183,17 @@ export function MiniAppSurface(props: MiniAppSurfaceProps): ReactElement {
                       {message}
                     </p>
                     <details className="cc-text-alt">
-                      <summary>Mô tả vùng này</summary>
+                      <summary>{t("widgets.surface.regionDescription")}</summary>
                       <p>{section.textAlternative}</p>
                     </details>
                     {availability === "missing" && section.slot === "calendar" && (
                       <p className="cc-freshness" style={{ margin: 0 }}>
-                        Nhập sự kiện đầu tiên bằng API của node, hoặc hỏi trợ lý để thêm.
+                        {t("widgets.surface.calendarMissingHint")}
                       </p>
                     )}
                     {availability === "missing" && section.slot === "image" && (
                       <p className="cc-freshness" style={{ margin: 0 }}>
-                        Nhập một ảnh (PNG, JPEG, WebP, GIF) kèm mô tả để vùng này có nội dung.
+                        {t("widgets.surface.imageMissingHint")}
                       </p>
                     )}
                   </>
@@ -226,7 +230,7 @@ export function MiniAppSurface(props: MiniAppSurfaceProps): ReactElement {
                 )}
                 {action !== undefined && availability !== "denied" && (
                   <span className="cc-freshness" data-section-action={action.actionBindingId}>
-                    {`Hành động khả dụng: ${action.label}`}
+                    {t("widgets.surface.availableAction").replace("{label}", action.label)}
                   </span>
                 )}
               </section>
