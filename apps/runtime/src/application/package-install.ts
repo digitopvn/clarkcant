@@ -231,12 +231,28 @@ export async function fetchRemoteArtifact(entry: DirectoryEntry, cacheRoot: stri
           // `file://` url in it must never be fetched. The one caller allowed to opt in is a test harness that
           // sets this explicitly, or a future "install from a path on this machine" flow that is not this one.
           allowLocalPaths: process.env["CC_ALLOW_LOCAL_GIT_SOURCES"] === "1",
+          // N2: checked inside the fetch, before the staged bytes are ever renamed into the servable cache path,
+          // rather than only here after the rename already happened.
+          expectedDigest: entry.digest,
         })
-      : await fetchNpmArtifact({ name: entry.source.name, version: entry.source.version, cacheRoot });
+      : await fetchNpmArtifact({
+          name: entry.source.name,
+          version: entry.source.version,
+          cacheRoot,
+          expectedDigest: entry.digest,
+        });
 
   if (!fetched.ok) {
-    return { ok: false, status: 400, code: fetched.code, message: fetched.message };
+    // `ARTIFACT_DIGEST_MISMATCH` from the fetch itself (N2) reports the same fact `artifactMatchesPlan` below
+    // would have, under the code this route's callers already handle.
+    const status = fetched.code === "ARTIFACT_DIGEST_MISMATCH" ? 409 : 400;
+    const code = fetched.code === "ARTIFACT_DIGEST_MISMATCH" ? "DIGEST_MISMATCH" : fetched.code;
+    return { ok: false, status, code, message: fetched.message };
   }
+  // Defense in depth: `fetchGitArtifact`/`fetchNpmArtifact` already checked this before anything was cached
+  // (N2), so this should never fire for a fresh fetch. Kept as a second, independent check against whatever
+  // `fetched.artifact.digest` actually says — the seam that catches a future fetch implementation forgetting to
+  // pass `expectedDigest` through, rather than trusting the inner check silently.
   if (!artifactMatchesPlan(fetched.artifact.digest, entry.digest)) {
     return {
       ok: false,

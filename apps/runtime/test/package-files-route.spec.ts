@@ -60,6 +60,23 @@ async function get(path: string): Promise<GatewayResponse> {
   return handleRequest(deps, request);
 }
 
+/**
+ * N2: this route now refuses to serve a package the node never actually installed (see "an active generation,
+ * not just a file on disk" below), so every test that expects a file to be served has to install it for real
+ * first, through the same route the marketplace uses, rather than only writing a directory entry and a file on
+ * disk. `localDigest` matches the fixture entry's own `digest`, so the install activates without a mismatch.
+ */
+async function install(digest = "sha256:widget-digest"): Promise<GatewayResponse> {
+  const request: GatewayRequest = {
+    method: "POST",
+    path: "/packages/install",
+    query: {},
+    headers: { authorization: `Bearer ${services.runtime.identity.localToken}` },
+    body: JSON.stringify({ packageId: "com.example.widget", version: "1.0.0", localDigest: digest }),
+  };
+  return handleRequest(deps, request);
+}
+
 beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), "clarkcant-files-"));
   packageRoot = join(dir, "package");
@@ -86,6 +103,7 @@ afterEach(() => {
 
 describe("serving a package file", () => {
   it("serves a file from inside the package, with the type the frame needs", async () => {
+    expect((await install()).status).toBe(200);
     const response = await get("/packages/com.example.widget/1.0.0/files/widgets/main/index.html");
 
     expect(response.status).toBe(200);
@@ -94,6 +112,7 @@ describe("serving a package file", () => {
   });
 
   it("names a script as a script, so the frame can load it as a module", async () => {
+    expect((await install()).status).toBe(200);
     const response = await get("/packages/com.example.widget/1.0.0/files/widgets/main/main.js");
 
     expect(response.status).toBe(200);
@@ -101,6 +120,7 @@ describe("serving a package file", () => {
   });
 
   it("refuses a path that escapes the package, resolved rather than read literally", async () => {
+    expect((await install()).status).toBe(200);
     // `widgets/../../outside.txt` normalises to `../outside.txt`: a path that starts inside the package and is not.
     const response = await get("/packages/com.example.widget/1.0.0/files/widgets/../../outside.txt");
 
@@ -110,6 +130,7 @@ describe("serving a package file", () => {
   });
 
   it("says there is no such file rather than serving something else", async () => {
+    expect((await install()).status).toBe(200);
     const response = await get("/packages/com.example.widget/1.0.0/files/widgets/main/missing.js");
 
     expect(response.status).toBe(404);
@@ -117,6 +138,9 @@ describe("serving a package file", () => {
   });
 
   it("refuses to serve a package whose bytes this node does not have", async () => {
+    // Installed once while the entry still names a local source, so an active generation exists at this digest;
+    // the directory is then republished pointing the same packageId@version at an npm source it never fetched.
+    expect((await install()).status).toBe(200);
     writeFileSync(
       indexPath,
       JSON.stringify([entry({ source: { kind: "npm", name: "com.example.widget", version: "1.0.0" } })]),
@@ -127,6 +151,28 @@ describe("serving a package file", () => {
     // Serving it would mean proxying whatever that source returns, which is a different and much larger thing.
     expect(response.status).toBe(409);
     expect((response.body as Record<string, unknown>)["code"]).toBe("NOT_A_LOCAL_PACKAGE");
+  });
+
+  it("[N2] refuses to serve a package this node never installed, even though a matching directory entry and cached bytes exist", async () => {
+    // No `install()` call: the directory entry and the files on disk are both real, exactly as a stale or
+    // never-consented listing would look. Before N2, the route only checked `resolveLocalSource` + file
+    // existence, so this would have served the file; the active-generation check is what refuses it now.
+    const response = await get("/packages/com.example.widget/1.0.0/files/widgets/main/index.html");
+
+    expect(response.status).toBe(409);
+    expect((response.body as Record<string, unknown>)["code"]).toBe("NOT_INSTALLED");
+  });
+
+  it("[N2] refuses to serve once the directory republishes the same packageId@version at a different digest than what this node actually installed", async () => {
+    expect((await install()).status).toBe(200);
+    // The directory now claims a different digest for the same packageId@version than the one this node's own
+    // generation was activated with — a republish or a compromised listing, not a fetch this node ever did.
+    writeFileSync(indexPath, JSON.stringify([entry({ digest: "sha256:a-different-digest-entirely" })]));
+
+    const response = await get("/packages/com.example.widget/1.0.0/files/widgets/main/index.html");
+
+    expect(response.status).toBe(409);
+    expect((response.body as Record<string, unknown>)["code"]).toBe("NOT_INSTALLED");
   });
 
   it("refuses a package the directory does not list", async () => {
@@ -185,6 +231,7 @@ describe("the policy the widget entry is served under", () => {
   });
 
   it("admits the bootstrap by the nonce the document actually carries, and nothing else inline", async () => {
+    expect((await install()).status).toBe(200);
     const response = await get("/packages/com.example.widget/1.0.0/files/widgets/main/index.html");
 
     const policy = response.binary?.headers?.["content-security-policy"];
@@ -205,6 +252,7 @@ describe("the policy the widget entry is served under", () => {
   });
 
   it("closes what the document does not need, and lets only the app frame it", async () => {
+    expect((await install()).status).toBe(200);
     const response = await get("/packages/com.example.widget/1.0.0/files/widgets/main/index.html");
     const policy = response.binary?.headers?.["content-security-policy"] ?? "";
 

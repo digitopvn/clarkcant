@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { nowInstant } from "@clarkcant/contracts";
 import {
   INSTALL_VERIFICATION,
+  activeGeneration,
   directoryIndexPath,
   installedWidgets,
   listInstalledPackages,
@@ -301,9 +302,28 @@ export async function handlePackageRoutes(deps: PackageRouteDeps): Promise<Gatew
       return fail(404, "NOT_IN_DIRECTORY", `${packageId}@${version} is not in the directory`);
     }
 
-    // A git/npm entry this node has already fetched is served from its cache path exactly like a local package
-    // (H1): the digest was already verified against the directory's published digest at fetch time, so there is
-    // nothing more to check here, only where to read the bytes from.
+    /*
+     * N2: a directory listing is a claim the publisher made, re-read fresh on every request, not proof this node
+     * ever installed the thing it now names — the directory could republish `packageId@version` against a
+     * different digest (a new source, a compromised registry entry) between install and this request, and the
+     * old comment here ("the digest was already verified... so there is nothing more to check") only covered the
+     * install that ran once, not every later `files` read of what is, from here, an untrusted listing. What this
+     * node actually consented to and fetched is its own `package_generations` row (`installPackage`), so serving
+     * checks that generation's digest, not merely that some file exists on disk for the current listing entry.
+     */
+    const generation = activeGeneration(
+      { db: runtime.db, nodeId: runtime.identity.nodeId, now: nowInstant, newId: () => "" },
+      packageId,
+      runtime.identity.nodeId,
+    );
+    if (generation === undefined || generation.version !== version || generation.digest !== entry.digest) {
+      return fail(
+        409,
+        "NOT_INSTALLED",
+        `${packageId}@${version} has no active installed generation on this node matching the directory's current digest`,
+      );
+    }
+
     const resolvedSource = resolveLocalSource(entry, join(runtime.dataDir, "package-cache"));
     const entry_ = resolvedSource === entry.source ? entry : { ...entry, source: resolvedSource };
 

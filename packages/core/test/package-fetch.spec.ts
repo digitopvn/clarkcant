@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { gzipSync } from "node:zlib";
 
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { readPackageFile } from "../src/package-files.ts";
 import {
@@ -14,7 +14,9 @@ import {
   digestOfDirectory,
   fetchGitArtifact,
   fetchNpmArtifact,
+  killProcessGroup,
   redactCredentials,
+  redactCredentialsInText,
   resolveLocalSource,
 } from "../src/package-fetch.ts";
 
@@ -203,6 +205,87 @@ describe("fetchGitArtifact", () => {
   });
 });
 
+describe("N2: expectedDigest is checked before a fetch becomes servable", () => {
+  it("refuses a git fetch whose bytes do not match expectedDigest, and leaves no servable cache directory (staged, before rename)", async () => {
+    const { repoPath, commit } = buildGitRepo();
+    const cacheRoot = join(dir, "cache");
+
+    const outcome = await fetchGitArtifact({
+      url: repoPath,
+      ref: commit,
+      cacheRoot,
+      allowLocalPaths: true,
+      expectedDigest: "sha256:not-the-real-digest",
+    });
+
+    expect(outcome.ok).toBe(false);
+    if (outcome.ok) return;
+    expect(outcome.code).toBe("ARTIFACT_DIGEST_MISMATCH");
+    // The bug this guards: before N2, the digest was checked by the *caller*, after this function had already
+    // renamed the staged fetch into its content-addressed cache path — so a mismatch still left a servable
+    // directory any later `resolveLocalSource` call for the same url+ref would find and trust. Proof the fix
+    // holds is that nothing landed at that path at all, not merely that the outer caller refused afterwards.
+    expect(existsSync(cachedGitPath(cacheRoot, repoPath, commit))).toBe(false);
+  });
+
+  it("refuses a git cache hit whose already-cached bytes do not match a newly expected digest, without deleting the cache", async () => {
+    const { repoPath, commit } = buildGitRepo();
+    const cacheRoot = join(dir, "cache");
+    const first = await fetchGitArtifact({ url: repoPath, ref: commit, cacheRoot, allowLocalPaths: true });
+    expect(first.ok).toBe(true);
+    if (!first.ok) return;
+
+    const outcome = await fetchGitArtifact({
+      url: repoPath,
+      ref: commit,
+      cacheRoot,
+      allowLocalPaths: true,
+      expectedDigest: "sha256:not-the-real-digest",
+    });
+
+    expect(outcome.ok).toBe(false);
+    if (outcome.ok) return;
+    expect(outcome.code).toBe("ARTIFACT_DIGEST_MISMATCH");
+    // The cache entry itself is still valid content for a caller with the correct expected digest, so it is not
+    // deleted here — only this particular call, with the wrong expectation, is refused.
+    expect(existsSync(first.artifact.path)).toBe(true);
+  });
+
+  it("succeeds when expectedDigest matches what was actually fetched", async () => {
+    const { repoPath, commit } = buildGitRepo();
+    const cacheRoot = join(dir, "cache");
+    const probe = await fetchGitArtifact({ url: repoPath, ref: commit, cacheRoot: join(dir, "probe-cache"), allowLocalPaths: true });
+    expect(probe.ok).toBe(true);
+    if (!probe.ok) return;
+
+    const outcome = await fetchGitArtifact({
+      url: repoPath,
+      ref: commit,
+      cacheRoot,
+      allowLocalPaths: true,
+      expectedDigest: probe.artifact.digest,
+    });
+
+    expect(outcome.ok).toBe(true);
+  });
+
+  it("[fails on the old behaviour] a digest mismatch used to be caught only by the caller, after the rename already made the bytes servable", async () => {
+    // This is the exact scenario the old ordering got wrong: fetchGitArtifact itself had no expectedDigest
+    // parameter at all, so it always reported `ok: true` for any bytes it could fetch, regardless of what the
+    // directory published. Passing expectedDigest and getting a refusal back, from this function directly
+    // (not from a caller checking afterwards), is the behaviour that did not exist before N2.
+    const { repoPath, commit } = buildGitRepo();
+    const outcome = await fetchGitArtifact({
+      url: repoPath,
+      ref: commit,
+      cacheRoot: join(dir, "cache"),
+      allowLocalPaths: true,
+      expectedDigest: "sha256:not-the-real-digest",
+    });
+    expect(outcome.ok).toBe(false);
+  });
+});
+
 describe("H1: a fetched git artifact actually serves a file end to end", () => {
   it("resolves the entry's source to the cache path and reads a file out of it, once fetched", async () => {
     const { repoPath, commit } = buildGitRepo();
@@ -295,6 +378,68 @@ describe("redactCredentials", () => {
   });
 });
 
+describe("redactCredentialsInText (Low: git's own stderr, not only the urls this node builds, can carry a credential)", () => {
+  it("strips userinfo out of a url embedded anywhere in a block of free-form text", () => {
+    const stderr =
+      "fatal: unable to access 'https://user:hunter2@github.com/example/repo.git/': The requested URL returned error: 401";
+    expect(redactCredentialsInText(stderr)).toBe(
+      "fatal: unable to access 'https://github.com/example/repo.git/': The requested URL returned error: 401",
+    );
+    expect(redactCredentialsInText(stderr)).not.toContain("hunter2");
+  });
+
+  it("redacts every credentialed url in the text, not only the first", () => {
+    const stderr = "tried https://a:1@host-a/x then https://b:2@host-b/y, both failed";
+    const redacted = redactCredentialsInText(stderr);
+    expect(redacted).not.toContain("a:1");
+    expect(redacted).not.toContain("b:2");
+    expect(redacted).toBe("tried https://host-a/x then https://host-b/y, both failed");
+  });
+
+  it("leaves text with no embedded credential unchanged", () => {
+    const stderr = "fatal: repository 'https://github.com/example/repo.git/' not found";
+    expect(redactCredentialsInText(stderr)).toBe(stderr);
+  });
+});
+
+describe("killProcessGroup (Low: a timed-out child's own subprocess must not survive it)", () => {
+  it("signals the whole process group by the child's negative pid, on a POSIX platform", () => {
+    if (process.platform === "win32") return;
+    const killSpy = vi.spyOn(process, "kill").mockReturnValue(true);
+    const childKill = vi.fn().mockReturnValue(true);
+    killProcessGroup({ pid: 4242, kill: childKill });
+
+    expect(killSpy).toHaveBeenCalledWith(-4242, "SIGKILL");
+    // The group signal reached the whole tree already; a second, single-pid kill is redundant and would just be
+    // an extra signal to a process that is already gone.
+    expect(childKill).not.toHaveBeenCalled();
+    killSpy.mockRestore();
+  });
+
+  it("falls back to killing only the child's own pid when the group signal throws (the group is already gone, or this process cannot signal it)", () => {
+    if (process.platform === "win32") return;
+    const killSpy = vi.spyOn(process, "kill").mockImplementation(() => {
+      throw new Error("ESRCH");
+    });
+    const childKill = vi.fn().mockReturnValue(true);
+    killProcessGroup({ pid: 4242, kill: childKill });
+
+    expect(killSpy).toHaveBeenCalledWith(-4242, "SIGKILL");
+    expect(childKill).toHaveBeenCalledWith("SIGKILL");
+    killSpy.mockRestore();
+  });
+
+  it("falls back to killing only the child's own pid when it has no pid (never actually spawned)", () => {
+    const killSpy = vi.spyOn(process, "kill");
+    const childKill = vi.fn().mockReturnValue(true);
+    killProcessGroup({ pid: undefined, kill: childKill });
+
+    expect(killSpy).not.toHaveBeenCalled();
+    expect(childKill).toHaveBeenCalledWith("SIGKILL");
+    killSpy.mockRestore();
+  });
+});
+
 /* ------------------------------------------------------------------ *
  * npm: a local fake registry
  * ------------------------------------------------------------------ */
@@ -322,6 +467,9 @@ function buildNpmTarball(files: Record<string, string | TarEntrySpec>): Buffer {
     if (normalized.type === "symlink" && normalized.linkTarget !== undefined) {
       header.write(normalized.linkTarget, 157, "utf8"); // linkname field
     }
+    // ustar magic + version (N3: extractUstarTarball refuses a header without it), same as a real npm tarball
+    // (built by node-tar) always carries.
+    header.write("ustar\0", 257, "utf8");
     let checksum = 0;
     for (const byte of header) checksum += byte;
     header.write(checksum.toString(8).padStart(6, "0") + "\0 ", 148, "utf8");
@@ -441,6 +589,77 @@ describe("fetchNpmArtifact", () => {
     }
   });
 
+  describe("N2: expectedDigest is checked before an npm fetch becomes servable", () => {
+    it("refuses a staged extraction whose content digest does not match expectedDigest, and leaves no servable cache directory", async () => {
+      const tarball = buildNpmTarball({ "widget.json": JSON.stringify({ id: "com.example.npm-widget" }) });
+      const { url, server } = await startFakeRegistry({ name: "com.example.npm-widget", version: "1.0.0", tarball });
+      const cacheRoot = join(dir, "cache");
+      try {
+        const outcome = await fetchNpmArtifact({
+          name: "com.example.npm-widget",
+          version: "1.0.0",
+          cacheRoot,
+          registryUrl: url,
+          expectedDigest: "sha256:not-the-real-digest",
+        });
+
+        expect(outcome.ok).toBe(false);
+        if (outcome.ok) return;
+        expect(outcome.code).toBe("ARTIFACT_DIGEST_MISMATCH");
+        // Same bug shape as the git case: before N2 the mismatch was only caught by the caller, after the
+        // staged extraction had already been renamed into the servable content-addressed cache path. The
+        // final, content-addressed destination is what must never exist — the `.tmp-*` staging directory
+        // beside it is expected to exist transiently and gets cleaned up by the function's own `finally`.
+        expect(existsSync(join(cacheRoot, "npm", "com.example.npm-widget-1.0.0"))).toBe(false);
+      } finally {
+        server.close();
+      }
+    });
+
+    it("succeeds when expectedDigest matches the extracted content", async () => {
+      const tarball = buildNpmTarball({ "widget.json": JSON.stringify({ id: "com.example.npm-widget" }) });
+      const { url, server } = await startFakeRegistry({ name: "com.example.npm-widget", version: "1.0.0", tarball });
+      try {
+        const probe = await fetchNpmArtifact({
+          name: "com.example.npm-widget",
+          version: "1.0.0",
+          cacheRoot: join(dir, "probe-cache"),
+          registryUrl: url,
+        });
+        expect(probe.ok).toBe(true);
+        if (!probe.ok) return;
+
+        const outcome = await fetchNpmArtifact({
+          name: "com.example.npm-widget",
+          version: "1.0.0",
+          cacheRoot: join(dir, "cache"),
+          registryUrl: url,
+          expectedDigest: probe.artifact.digest,
+        });
+        expect(outcome.ok).toBe(true);
+      } finally {
+        server.close();
+      }
+    });
+
+    it("[fails on the old behaviour] fetchNpmArtifact had no expectedDigest parameter, so any fetched bytes were reported ok regardless of what the directory published", async () => {
+      const tarball = buildNpmTarball({ "widget.json": JSON.stringify({ id: "com.example.npm-widget" }) });
+      const { url, server } = await startFakeRegistry({ name: "com.example.npm-widget", version: "1.0.0", tarball });
+      try {
+        const outcome = await fetchNpmArtifact({
+          name: "com.example.npm-widget",
+          version: "1.0.0",
+          cacheRoot: join(dir, "cache"),
+          registryUrl: url,
+          expectedDigest: "sha256:not-the-real-digest",
+        });
+        expect(outcome.ok).toBe(false);
+      } finally {
+        server.close();
+      }
+    });
+  });
+
   it("refuses a tarball whose declared content-length is over the size cap, before downloading its bytes (H5)", async () => {
     const tarball = buildNpmTarball({ "widget.json": "{}" });
     const { url, server } = await startFakeRegistry({
@@ -509,6 +728,231 @@ describe("fetchNpmArtifact", () => {
     } finally {
       server.close();
     }
+  });
+
+  describe("N3: tar hardening", () => {
+    /** A header block for a raw, hand-built tar entry, bypassing `buildNpmTarball`'s one-entry-per-object-key
+     * shape — needed here because a name conflict, a pax header, and a GNU long-name header all require either two
+     * entries sharing one name (impossible as two keys of the same JS object) or a typeflag `buildNpmTarball` does
+     * not know how to write. */
+    function tarHeaderBlock(name: string, size: number, typeflag: string): Buffer {
+      const header = Buffer.alloc(512);
+      header.write(name.slice(0, 100), 0, "utf8");
+      header.write("0000644\0", 100, "utf8");
+      header.write("0000000\0", 108, "utf8");
+      header.write("0000000\0", 116, "utf8");
+      header.write(`${size.toString(8).padStart(11, "0")}\0`, 124, "utf8");
+      header.write("00000000000\0", 136, "utf8");
+      header.write("        ", 148, "utf8");
+      header.write(typeflag, 156, "utf8");
+      header.write("ustar\0", 257, "utf8");
+      let checksum = 0;
+      for (const byte of header) checksum += byte;
+      header.write(`${checksum.toString(8).padStart(6, "0")}\0 `, 148, "utf8");
+      return header;
+    }
+
+    function padBlock(content: Buffer): Buffer {
+      return Buffer.concat([content, Buffer.alloc((512 - (content.length % 512)) % 512)]);
+    }
+
+    function buildRawTarball(entries: { name: string; content: string; typeflag: string }[]): Buffer {
+      const parts: Buffer[] = [];
+      for (const entry of entries) {
+        const content = Buffer.from(entry.content, "utf8");
+        parts.push(tarHeaderBlock(entry.name, content.length, entry.typeflag), padBlock(content));
+      }
+      parts.push(Buffer.alloc(1024));
+      return gzipSync(Buffer.concat(parts));
+    }
+
+    it("refuses a tarball with two entries that resolve to the same final name, by name rather than a thrown filesystem error", async () => {
+      const tarball = buildRawTarball([
+        { name: "package/widget.json", content: '{"first":true}', typeflag: "0" },
+        { name: "package/widget.json", content: '{"second":true}', typeflag: "0" },
+      ]);
+      const { url, server } = await startFakeRegistry({ name: "com.example.npm-widget", version: "1.0.0", tarball });
+      try {
+        const outcome = await fetchNpmArtifact({
+          name: "com.example.npm-widget",
+          version: "1.0.0",
+          cacheRoot: join(dir, "cache"),
+          registryUrl: url,
+        });
+        // Before N3, the second entry's `writeFileSync` over the first's already-written bytes silently
+        // overwrote it (a file/file conflict) or the extraction loop crashed with an uncaught EISDIR/ENOTDIR (a
+        // file/directory conflict) — neither of which is the named refusal every other unsafe entry gets here.
+        expect(outcome.ok).toBe(false);
+        if (outcome.ok) return;
+        expect(outcome.code).toBe("NPM_TARBALL_UNSAFE_ENTRY");
+        expect(outcome.message).toContain("conflicts");
+      } finally {
+        server.close();
+      }
+    });
+
+    it("refuses a tar header that is missing the ustar magic, rather than trusting its fields", async () => {
+      // Built directly, rather than through `buildRawTarball`, specifically so the magic bytes at offset
+      // 257..262 are left zeroed — every other tarball in this suite writes them, deliberately, so this is the
+      // one entry that does not.
+      const header = Buffer.alloc(512);
+      header.write("package/widget.json", 0, "utf8");
+      header.write("0000644\0", 100, "utf8");
+      header.write("0000000\0", 108, "utf8");
+      header.write("0000000\0", 116, "utf8");
+      header.write("00000000002\0", 124, "utf8");
+      header.write("00000000000\0", 136, "utf8");
+      header.write("        ", 148, "utf8");
+      header.write("0", 156, "utf8");
+      // No magic written at 257 — left as zero bytes, unlike every other entry in this file.
+      let checksum = 0;
+      for (const byte of header) checksum += byte;
+      header.write(`${checksum.toString(8).padStart(6, "0")}\0 `, 148, "utf8");
+      const noMagicTarball = gzipSync(Buffer.concat([header, padBlock(Buffer.from("{}")), Buffer.alloc(1024)]));
+
+      const { url, server } = await startFakeRegistry({
+        name: "com.example.npm-widget",
+        version: "1.0.0",
+        tarball: noMagicTarball,
+      });
+      try {
+        const outcome = await fetchNpmArtifact({
+          name: "com.example.npm-widget",
+          version: "1.0.0",
+          cacheRoot: join(dir, "cache"),
+          registryUrl: url,
+        });
+        expect(outcome.ok).toBe(false);
+        if (outcome.ok) return;
+        expect(outcome.code).toBe("NPM_TARBALL_UNSAFE_ENTRY");
+        expect(outcome.message).toContain("ustar magic");
+      } finally {
+        server.close();
+      }
+    });
+
+    it("honours a GNU long-name header for a path too long for ustar's own 100-byte name field, rather than silently truncating it", async () => {
+      const longPath = `package/${"deeply/nested/directory/".repeat(6)}widget.json`;
+      expect(longPath.length).toBeGreaterThan(100);
+      const nameContent = `${longPath}\0`;
+      const tarball = buildRawTarball([
+        { name: "", content: nameContent, typeflag: "L" },
+        // The real entry's own 100-byte name field is left truncated/irrelevant on purpose — the GNU long-name
+        // header above is what must win.
+        { name: longPath.slice(0, 90), content: '{"id":"long-name-widget"}', typeflag: "0" },
+      ]);
+      const { url, server } = await startFakeRegistry({ name: "com.example.npm-widget", version: "1.0.0", tarball });
+      try {
+        const cacheRoot = join(dir, "cache");
+        const outcome = await fetchNpmArtifact({ name: "com.example.npm-widget", version: "1.0.0", cacheRoot, registryUrl: url });
+        expect(outcome.ok).toBe(true);
+        if (!outcome.ok) return;
+        // stripComponents: 1 removes the leading "package/" segment, same as every other entry in this suite.
+        const expectedRelativePath = longPath.replace(/^package\//, "");
+        expect(readFileSync(join(outcome.artifact.path, expectedRelativePath), "utf8")).toContain("long-name-widget");
+      } finally {
+        server.close();
+      }
+    });
+
+    it("honours a pax extended header's path override, the same way node-tar/npm's own real tarballs use it for a path or a name with characters ustar's own field cannot carry", async () => {
+      const longPath = `package/${"pax/extended/header/path/segment/".repeat(4)}component.js`;
+      expect(longPath.length).toBeGreaterThan(100);
+      const record = `path=${longPath}\n`;
+      // Pax record format is "<total-length> <key>=<value>\n", where <total-length> includes its own digit count.
+      let recordLength = record.length + 2;
+      while (`${recordLength} ${record}`.length !== recordLength) recordLength += 1;
+      const paxBody = `${recordLength} ${record}`;
+      const tarball = buildRawTarball([
+        { name: "package/PaxHeaders/component.js", content: paxBody, typeflag: "x" },
+        { name: longPath.slice(0, 90), content: "export const pax = true;\n", typeflag: "0" },
+      ]);
+      const { url, server } = await startFakeRegistry({ name: "com.example.npm-widget", version: "1.0.0", tarball });
+      try {
+        const cacheRoot = join(dir, "cache");
+        const outcome = await fetchNpmArtifact({ name: "com.example.npm-widget", version: "1.0.0", cacheRoot, registryUrl: url });
+        expect(outcome.ok).toBe(true);
+        if (!outcome.ok) return;
+        const expectedRelativePath = longPath.replace(/^package\//, "");
+        expect(readFileSync(join(outcome.artifact.path, expectedRelativePath), "utf8")).toContain("pax = true");
+      } finally {
+        server.close();
+      }
+    });
+
+    it("still refuses a symlink named through a GNU long-name header, rather than letting the metadata header bypass the type check", async () => {
+      const longPath = `package/${"nested/".repeat(20)}escape-link`;
+      const tarball = buildRawTarball([
+        { name: "", content: `${longPath}\0`, typeflag: "L" },
+        { name: longPath.slice(0, 90), content: "", typeflag: "2" },
+      ]);
+      const { url, server } = await startFakeRegistry({ name: "com.example.npm-widget", version: "1.0.0", tarball });
+      try {
+        const outcome = await fetchNpmArtifact({
+          name: "com.example.npm-widget",
+          version: "1.0.0",
+          cacheRoot: join(dir, "cache"),
+          registryUrl: url,
+        });
+        expect(outcome.ok).toBe(false);
+        if (outcome.ok) return;
+        expect(outcome.code).toBe("NPM_TARBALL_UNSAFE_ENTRY");
+        expect(outcome.message).toContain("symlink");
+      } finally {
+        server.close();
+      }
+    });
+
+    it("aborts a download that exceeds the size cap while streaming, even when the server sends no content-length at all", async () => {
+      // Content-Length is set automatically by Node's http server for a Buffer body unless Transfer-Encoding is
+      // set explicitly — set here so the client genuinely never learns the size up front, the exact condition the
+      // old content-length-only check could not catch.
+      const oversized = Buffer.alloc(64 * 1024 * 1024 + 4096, 7);
+      const server = createServer((req, res) => {
+        const url = req.url ?? "";
+        if (url === "/com.example.oversized-npm-widget") {
+          res.writeHead(200, { "content-type": "application/json" });
+          res.end(
+            JSON.stringify({
+              name: "com.example.oversized-npm-widget",
+              versions: {
+                "1.0.0": {
+                  dist: {
+                    tarball: `http://127.0.0.1:${String((server.address() as { port: number }).port)}/tarball.tgz`,
+                    integrity: `sha512-${createHash("sha512").update(oversized).digest("base64")}`,
+                  },
+                },
+              },
+            }),
+          );
+          return;
+        }
+        if (url === "/tarball.tgz") {
+          // No content-length header at all: chunked transfer, which is exactly the case this test exists for.
+          res.writeHead(200, { "content-type": "application/octet-stream", "Transfer-Encoding": "chunked" });
+          res.end(oversized);
+          return;
+        }
+        res.writeHead(404);
+        res.end();
+      });
+      await new Promise<void>((resolvePromise) => server.listen(0, "127.0.0.1", () => resolvePromise()));
+      try {
+        const address = server.address() as { port: number };
+        const outcome = await fetchNpmArtifact({
+          name: "com.example.oversized-npm-widget",
+          version: "1.0.0",
+          cacheRoot: join(dir, "cache"),
+          registryUrl: `http://127.0.0.1:${String(address.port)}`,
+        });
+        expect(outcome.ok).toBe(false);
+        if (outcome.ok) return;
+        expect(outcome.code).toBe("NPM_TARBALL_TOO_LARGE");
+        expect(outcome.message).toContain("streaming");
+      } finally {
+        server.close();
+      }
+    }, 20_000);
   });
 
   it("reuses the cache rather than refetching for the same name+version (M3)", async () => {
