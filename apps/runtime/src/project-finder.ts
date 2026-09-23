@@ -229,6 +229,13 @@ export async function scanProjects(options: ScanOptions): Promise<ScanOutcome> {
    * cloud drive on a real machine — blocks the process for as long as the walk takes: the abort budget cannot fire,
    * requests are not answered, and a node that could not bind its port does not get to say so.
    */
+  /*
+   * Directories already walked. The roots can nest - the home folder and the drive the node runs from are both
+   * roots, and on macOS or Linux one is inside the other - so without this the second walk reports every project
+   * the first one found, and the refresh writes the same path twice.
+   */
+  const walked = new Set<string>();
+
   let sinceYield = 0;
   const pause = async (): Promise<void> => {
     sinceYield += 1;
@@ -246,6 +253,9 @@ export async function scanProjects(options: ScanOptions): Promise<ScanOutcome> {
       stoppedEarly = true;
       return;
     }
+    const key = resolve(path);
+    if (walked.has(key)) return;
+    walked.add(key);
 
     let entries: { name: string; isDirectory: () => boolean; isSymbolicLink: () => boolean }[];
     try {
@@ -385,7 +395,9 @@ export async function refreshProjectIndex(
   const at = deps.now();
   let kept = 0;
   for (const project of scan.projects) {
-    const existing = known.get(project.path);
+    // Read again at write time when the snapshot misses: the walk yields, so a project indexed on request can land
+    // after the snapshot was taken, and a fresh id for its path would break the (node_id, path) constraint.
+    const existing = known.get(project.path) ?? findProjectByPath(deps.db, deps.nodeId, project.path);
     // Incremental: a directory whose mtime has not moved is already indexed, and re-writing it would
     // churn the search index for nothing. A name or marker change moves the directory's mtime.
     if (options.full !== true && existing !== undefined && existing.mtime === project.mtime) {
