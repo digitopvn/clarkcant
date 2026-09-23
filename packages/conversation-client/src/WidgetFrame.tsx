@@ -156,7 +156,10 @@ export function WidgetFrame(input: WidgetFrameProps): ReactElement {
     const live = session.current;
     const frame = element.current;
     if (live === undefined || frame === null) return;
-    frame.contentWindow?.postMessage(live.init(), "*");
+    // `init()` sends the message itself (via the session's `post`, wired to this frame's `contentWindow` above) and
+    // returns what it sent only so a caller can inspect it. Posting the return value again here produced two init
+    // messages for one load, and the widget runtime's `DUPLICATE_INIT` rejection was that second message arriving.
+    live.init();
   };
 
   return (
