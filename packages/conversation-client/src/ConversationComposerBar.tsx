@@ -198,7 +198,7 @@ export function ConversationComposerBar({
       */}
       <div className="cc-hint" data-statusline={error === undefined ? "true" : "false"}>
         {error === undefined ? (
-          statuslineParts({ metrics: latestTurnMetrics(messages) }).map((part) => (
+          statuslineParts({ metrics: latestTurnMetrics(messages) }, t).map((part) => (
             <span key={part} className="cc-statusline-part">
               {part}
             </span>

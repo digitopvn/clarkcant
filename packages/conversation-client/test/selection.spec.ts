@@ -8,6 +8,10 @@ import {
   explainPrompt,
   selectedText,
 } from "../src/selection.ts";
+import { MESSAGES_VI, type MessageKey } from "../src/i18n/messages.ts";
+
+/** The Vietnamese catalog lookup, standing in for `useT()` since these are plain-function tests. */
+const t = (key: MessageKey): string => MESSAGES_VI[key];
 
 describe("what a highlighted passage can be turned into", () => {
   it("treats a click that happened to drag as no selection", () => {
@@ -35,15 +39,15 @@ describe("what a highlighted passage can be turned into", () => {
   });
 
   it("names a background session after the passage's own opening words", () => {
-    expect(backgroundTitle("kiểm thử lại phần thanh toán\nvà báo lại")).toBe("kiểm thử lại phần thanh toán");
-    expect(backgroundTitle(`${"d".repeat(120)}`)).toHaveLength(81);
+    expect(backgroundTitle("kiểm thử lại phần thanh toán\nvà báo lại", t)).toBe("kiểm thử lại phần thanh toán");
+    expect(backgroundTitle(`${"d".repeat(120)}`, t)).toHaveLength(81);
     // A title that is a list of identical labels tells nobody which worker is which.
-    expect(backgroundTitle("   \n  ")).toBe("Việc nền từ đoạn được chọn");
+    expect(backgroundTitle("   \n  ", t)).toBe("Việc nền từ đoạn được chọn");
   });
 
   it("asks for an explanation and for background work in the words the model receives", () => {
-    expect(explainPrompt("một đoạn")).toContain("một đoạn");
-    expect(explainPrompt("một đoạn")).toContain("Giải thích");
-    expect(backgroundPrompt("một đoạn")).toContain("phiên nền");
+    expect(explainPrompt("một đoạn", t)).toContain("một đoạn");
+    expect(explainPrompt("một đoạn", t)).toContain("Giải thích");
+    expect(backgroundPrompt("một đoạn", t)).toContain("phiên nền");
   });
 });

@@ -11,6 +11,8 @@ import { type ReactElement, useEffect, useRef, useState } from "react";
  */
 import { createFrameSession, type FrameActionOutcome, type FrameSession } from "@clarkcant/widget-host/session";
 
+import { useT } from "./i18n/locale-context.tsx";
+
 /**
  * A widget running in its own frame.
  *
@@ -67,6 +69,7 @@ function newNonce(): string {
 }
 
 export function WidgetFrame(input: WidgetFrameProps): ReactElement {
+  const t = useT();
   const element = useRef<HTMLIFrameElement>(null);
   const session = useRef<FrameSession | undefined>(undefined);
   const nonce = useRef<string>(newNonce());
@@ -178,7 +181,7 @@ export function WidgetFrame(input: WidgetFrameProps): ReactElement {
         title={input.title}
         data-frame-url={input.url}
       />
-      {status === "loading" && <p className="cc-freshness">Đang mở widget…</p>}
+      {status === "loading" && <p className="cc-freshness">{t("widgets.frame.opening")}</p>}
       {notice !== undefined && (
         <p className="cc-freshness" data-frame-notice="true">
           {notice}

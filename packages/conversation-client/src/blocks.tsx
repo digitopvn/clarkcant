@@ -7,6 +7,19 @@ import { formatFileSize } from "./attachments.ts";
 import { useAttachmentUrls } from "./use-attachment-urls.ts";
 import { useObjectUrls } from "./use-object-urls.ts";
 import type { GatewayClient } from "./api.ts";
+import { useT } from "./i18n/locale-context.tsx";
+import { MESSAGES_VI, type MessageKey } from "./i18n/messages.ts";
+
+/**
+ * The Vietnamese catalog lookup, used as the default for cards that accept `t` as a prop rather than
+ * calling `useT()` directly.
+ *
+ * Those cards' own unit tests call the exported function directly rather than through React's render
+ * pass (see `test/block-helpers.ts`), and calling a hook outside of render throws. Accepting `t` as an
+ * optional prop keeps the component callable as a plain function while still letting the real render
+ * path (`renderBlock`, itself called from a component that owns a `useT()`) supply the live locale.
+ */
+const defaultT = (key: MessageKey): string => MESSAGES_VI[key];
 
 /**
  * Block renderers.
@@ -61,6 +74,7 @@ export function TextBlock({ block }: { block: Record<string, unknown> }): ReactE
  * by a screen reader without anything extra to remember.
  */
 export function ToolActivityBlock({ block }: { block: Record<string, unknown> }): ReactElement {
+  const t = useT();
   const status = typeof block.status === "string" ? block.status : "done";
   const name = typeof block.name === "string" ? block.name : "tool";
   const label = typeof block.label === "string" && block.label !== "" ? block.label : name;
@@ -92,12 +106,20 @@ export function ToolActivityBlock({ block }: { block: Record<string, unknown> })
         <span className="cc-tool-label">{label}</span>
         {path !== undefined && <code className="cc-tool-path">{path}</code>}
         <span className="cc-sr-only">
-          {status === "running" ? "đang chạy" : status === "failed" ? "lỗi" : "xong"}
+          {status === "running"
+            ? t("blocks.tool.status.running")
+            : status === "failed"
+              ? t("blocks.tool.status.failed")
+              : t("blocks.tool.status.done")}
         </span>
       </summary>
       <div className="cc-tool-body">
-        {Object.keys(args).length > 0 && <CodeBlock code={JSON.stringify(args, null, 2)} language="json" label="tham số" />}
-        {result !== "" && <CodeBlock code={result} {...(language === undefined ? {} : { language })} label="kết quả" />}
+        {Object.keys(args).length > 0 && (
+          <CodeBlock code={JSON.stringify(args, null, 2)} language="json" label={t("blocks.tool.args.label")} />
+        )}
+        {result !== "" && (
+          <CodeBlock code={result} {...(language === undefined ? {} : { language })} label={t("blocks.tool.result.label")} />
+        )}
       </div>
     </details>
   );
@@ -124,6 +146,7 @@ export function ReasoningBlock({
   block: Record<string, unknown>;
   writing?: boolean;
 }): ReactElement {
+  const t = useT();
   const content = typeof block.content === "string" ? block.content : "";
   const [open, setOpen] = useState(false);
 
@@ -139,8 +162,8 @@ export function ReasoningBlock({
         <span className="cc-tool-mark" data-status={writing ? "running" : "done"} aria-hidden="true">
           ✳
         </span>
-        <span className="cc-tool-label">Suy luận của agent</span>
-        {writing && <span className="cc-reasoning-writing">đang viết…</span>}
+        <span className="cc-tool-label">{t("blocks.reasoning.label")}</span>
+        {writing && <span className="cc-reasoning-writing">{t("blocks.reasoning.writing")}</span>}
       </summary>
       <div className="cc-tool-body cc-reasoning-body">
         <Markdown text={content} />
@@ -166,9 +189,11 @@ export function EvidenceBlock({ block }: { block: Record<string, unknown> }): Re
 export function ArtifactBlock({
   block,
   actions,
+  t = defaultT,
 }: {
   block: Record<string, unknown>;
   actions?: BlockActions;
+  t?: (key: MessageKey) => string;
 }): ReactElement {
   const labelValue = typeof block.label === "string" ? block.label : "artifact";
   const mimeType = typeof block.mimeType === "string" ? block.mimeType : "application/octet-stream";
@@ -182,8 +207,8 @@ export function ArtifactBlock({
       <div className="cc-card-head">
         <span className="cc-card-title">{labelValue}</span>
         <span>
-          {/* A node id is an internal name; "a node khác" says the same useful thing without exposing one. */}
-          {mimeType} · {sizeBytes} B{originNodeId === undefined ? "" : " · từ một node khác"}
+          {/* A node id is an internal name; the fallback phrase says the same useful thing without exposing one. */}
+          {mimeType} · {sizeBytes} B{originNodeId === undefined ? "" : t("blocks.artifact.fromAnotherNode")}
         </span>
       </div>
       {/*
@@ -204,7 +229,7 @@ export function ArtifactBlock({
             disabled={state?.status === "pending"}
             onClick={() => actions.onArtifactOpen?.({ artifactId })}
           >
-            {state?.status === "pending" ? "Đang mở…" : "Mở lại"}
+            {state?.status === "pending" ? t("blocks.artifact.opening") : t("blocks.artifact.reopen")}
           </button>
         </div>
       ) : null}
@@ -221,24 +246,28 @@ export function ArtifactBlock({
           */}
           {state.expired ? (
             <p className="cc-freshness" data-artifact-expiry="true">
-              Node đã từng giữ artifact này nhưng đã hết hạn lưu trữ{state.expiresAt === null ? "" : ` từ ${state.expiresAt}`}.
-              Nội dung không còn, nên hãy yêu cầu tạo lại nếu vẫn cần.
+              {t("blocks.artifact.expiredNotice").replace(
+                "{since}",
+                state.expiresAt === null
+                  ? ""
+                  : t("blocks.artifact.expiredSince").replace("{at}", state.expiresAt),
+              )}
             </p>
           ) : null}
-          <dt>Kích thước</dt>
+          <dt>{t("blocks.artifact.size")}</dt>
           <dd>{state.sizeBytes} B</dd>
-          <dt>Loại</dt>
+          <dt>{t("blocks.artifact.type")}</dt>
           <dd>{state.mimeType}</dd>
-          <dt>Digest</dt>
+          <dt>{t("blocks.artifact.digest")}</dt>
           <dd>
             <code>{state.digest}</code>
           </dd>
-          <dt>Tạo lúc</dt>
+          <dt>{t("blocks.artifact.createdAt")}</dt>
           <dd>{state.createdAt}</dd>
-          <dt>Nguồn</dt>
+          <dt>{t("blocks.artifact.source")}</dt>
           <dd>{state.originNodeId}</dd>
-          <dt>Hết hạn</dt>
-          <dd>{state.expiresAt ?? "không"}</dd>
+          <dt>{t("blocks.artifact.expiresAt")}</dt>
+          <dd>{state.expiresAt ?? t("blocks.artifact.none")}</dd>
         </dl>
       )}
     </div>
@@ -539,9 +568,11 @@ export type TaskStopState =
 export function QuestionCardBlock({
   block,
   actions,
+  t = defaultT,
 }: {
   block: Record<string, unknown>;
   actions?: BlockActions;
+  t?: (key: MessageKey) => string;
 }): ReactElement | null {
   if (block.owner !== "host") return null;
   const questionId = typeof block.questionId === "string" ? block.questionId : "";
@@ -590,7 +621,7 @@ export function QuestionCardBlock({
       aria-label={prompt}
     >
       <header className="cc-card-head">
-        <span className="cc-card-title">{answered ? "Câu hỏi đã có câu trả lời" : "Cần bạn chọn"}</span>
+        <span className="cc-card-title">{answered ? t("blocks.question.answered") : t("blocks.question.needsChoice")}</span>
       </header>
       <div className="cc-card-body">
         <p style={{ margin: 0 }}>{prompt}</p>
@@ -598,10 +629,10 @@ export function QuestionCardBlock({
         {!answered && canAnswer && kind === "confirm" && (
           <div className="cc-card-actions">
             <button type="button" className="cc-action" data-question-answer="yes" disabled={!canAnswer} onClick={() => submit({ confirmed: true })}>
-              Đồng ý
+              {t("blocks.question.yes")}
             </button>
             <button type="button" className="cc-action" data-question-answer="no" disabled={!canAnswer} onClick={() => submit({ confirmed: false })}>
-              Không
+              {t("blocks.question.no")}
             </button>
           </div>
         )}
@@ -638,7 +669,7 @@ export function QuestionCardBlock({
                 disabled={!canAnswer || chosen.length === 0}
                 onClick={() => submit({ optionIds: [...chosen] })}
               >
-                Gửi
+                {t("blocks.common.send")}
               </button>
             )}
           </div>
@@ -650,7 +681,7 @@ export function QuestionCardBlock({
               className="cc-action"
               data-question-text="true"
               value={text}
-              placeholder="Trả lời của bạn"
+              placeholder={t("blocks.question.answerPlaceholder")}
               disabled={!canAnswer}
               onChange={(event) => actions?.onQuestionDraft?.({ questionId, text: event.target.value })}
             />
@@ -661,20 +692,20 @@ export function QuestionCardBlock({
               disabled={!canAnswer || text.trim() === ""}
               onClick={() => submit({ text })}
             >
-              Gửi
+              {t("blocks.common.send")}
             </button>
           </div>
         )}
 
         {sending && !answered && (
           <p className="cc-freshness" style={{ margin: 0 }}>
-            Đang gửi câu trả lời…
+            {t("blocks.question.sending")}
           </p>
         )}
 
         {answered && (
           <p className="cc-freshness" style={{ margin: 0 }}>
-            Câu trả lời đã được ghi vào hội thoại này.
+            {t("blocks.question.recorded")}
           </p>
         )}
 
@@ -708,6 +739,7 @@ export function ApprovalCardBlock({
   block: Record<string, unknown>;
   actions?: BlockActions;
 }): ReactElement | null {
+  const t = useT();
   if (block.owner !== "host") return null;
   const description = typeof block.operationDescription === "string" ? block.operationDescription : "";
   const digest = typeof block.operationDigest === "string" ? block.operationDigest : "";
@@ -722,7 +754,7 @@ export function ApprovalCardBlock({
   return (
     <section className="cc-card" data-host-card="approval" data-owner="host" data-decision={decision} data-approval-id={approvalId}>
       <header className="cc-card-head">
-        <span className="cc-card-title">Cần bạn xác nhận</span>
+        <span className="cc-card-title">{t("blocks.approval.needsConfirm")}</span>
         <span className="cc-badge" data-tone={effect === "destructive" ? "danger" : "warn"}>
           {effect}
         </span>
@@ -733,7 +765,7 @@ export function ApprovalCardBlock({
           <CodeBlock
             code={commandOf(payload) ?? payload}
             {...(commandOf(payload) === undefined ? {} : { language: "bash" })}
-            label="lệnh sẽ chạy"
+            label={t("blocks.approval.commandLabel")}
           />
         )}
         {/* The digest is shown so an approved plan cannot be swapped for another one. */}
@@ -741,7 +773,7 @@ export function ApprovalCardBlock({
           operation {digest.slice(0, 20)}…
         </p>
         <p className="cc-freshness" style={{ margin: 0 }}>
-          Chỉ bạn xác nhận được. Model không thể tự duyệt.
+          {t("blocks.approval.onlyYouCanConfirm")}
         </p>
         {decision === "pending" && !decided ? (
           <div className="cc-card-actions">
@@ -752,7 +784,7 @@ export function ApprovalCardBlock({
               disabled={!canDecide || deciding}
               onClick={() => actions?.onApprovalDecide?.({ approvalId, digest, decision: "granted" })}
             >
-              {deciding ? "Đang chạy…" : "Duyệt và chạy"}
+              {deciding ? t("blocks.approval.running") : t("blocks.approval.approveAndRun")}
             </button>
             <button
               type="button"
@@ -761,12 +793,12 @@ export function ApprovalCardBlock({
               disabled={!canDecide || deciding}
               onClick={() => actions?.onApprovalDecide?.({ approvalId, digest, decision: "denied" })}
             >
-              Từ chối
+              {t("blocks.approval.deny")}
             </button>
           </div>
         ) : (
           <span className="cc-badge" data-approval-decision={decided ? "answered" : decision}>
-            {decided ? "đã quyết định" : decision}
+            {decided ? t("blocks.approval.decided") : decision}
           </span>
         )}
       </div>
@@ -785,6 +817,7 @@ function commandOf(payload: string): string | undefined {
 }
 
 export function ConnectionCardBlock({ block }: { block: Record<string, unknown> }): ReactElement | null {
+  const t = useT();
   if (block.owner !== "host") return null;
   const provider = typeof block.provider === "string" ? block.provider : "connection";
   const status = typeof block.status === "string" ? block.status : "unconfigured";
@@ -802,11 +835,11 @@ export function ConnectionCardBlock({ block }: { block: Record<string, unknown> 
       <div className="cc-card-body">
         {/* A partial grant is stated, never smoothed over into "connected". */}
         <p style={{ margin: 0 }}>
-          {account === undefined ? "Chưa xác minh tài khoản." : `Tài khoản: ${account}`}
+          {account === undefined ? t("blocks.connection.unverified") : `${t("blocks.connection.accountLabel")}: ${account}`}
         </p>
         {missing.length > 0 && (
           <p className="cc-freshness" style={{ margin: 0 }} data-missing-scopes="true">
-            Chưa được cấp: {missing.join(", ")}
+            {t("blocks.connection.missingScopesLabel")}: {missing.join(", ")}
           </p>
         )}
       </div>
@@ -821,6 +854,7 @@ export function CredentialCardBlock({
   block: Record<string, unknown>;
   actions?: BlockActions;
 }): ReactElement | null {
+  const t = useT();
   if (block.owner !== "host") return null;
   const purpose = typeof block.purpose === "string" ? block.purpose : "";
   const destination = typeof block.destination === "string" ? block.destination : "vault-node";
@@ -851,7 +885,7 @@ export function CredentialCardBlock({
   return (
     <section className="cc-card" data-host-card="credential" data-owner="host">
       <header className="cc-card-head">
-        <span className="cc-card-title">Cần thông tin đăng nhập</span>
+        <span className="cc-card-title">{t("blocks.credential.needed")}</span>
         <span className="cc-badge">{destination}</span>
       </header>
       <div className="cc-card-body">
@@ -863,12 +897,12 @@ export function CredentialCardBlock({
         )}
         {consumer !== "" && (
           <p className="cc-freshness" style={{ margin: 0 }} data-credential-consumer={consumer}>
-            Sẽ được dùng bởi: {consumer}
+            {t("blocks.credential.usedByLabel")}: {consumer}
           </p>
         )}
         {scope !== "" && (
           <p className="cc-freshness" style={{ margin: 0 }} data-credential-scope={scope}>
-            Lưu trên: {scope}
+            {t("blocks.credential.storedOnLabel")}: {scope}
           </p>
         )}
         {fields.length === 0 ? null : (
@@ -914,7 +948,7 @@ export function CredentialCardBlock({
               disabled={!complete}
               data-credential-submit="true"
             >
-              Lưu
+              {t("blocks.credential.save")}
             </button>
           </form>
         )}
@@ -925,7 +959,7 @@ export function CredentialCardBlock({
         )}
         {/* The value is entered in a host-owned field; it never enters the transcript. */}
         <p className="cc-freshness" style={{ margin: 0 }}>
-          Giá trị bạn nhập không đi vào hội thoại, không vào model.
+          {t("blocks.credential.notInTranscript")}
         </p>
       </div>
     </section>
@@ -981,9 +1015,11 @@ function listOf(value: unknown): Record<string, unknown>[] {
 export function TaskProgressCardBlock({
   block,
   actions,
+  t = defaultT,
 }: {
   block: Record<string, unknown>;
   actions?: BlockActions;
+  t?: (key: MessageKey) => string;
 }): ReactElement | null {
   if (block.owner !== "host") return null;
   const goal = fieldText(block.goal);
@@ -1023,18 +1059,18 @@ export function TaskProgressCardBlock({
           </ol>
         )}
         <dl className="cc-fields">
-          <dt>Bắt đầu</dt>
+          <dt>{t("blocks.task.started")}</dt>
           <dd>{startedAt}</dd>
           {targetNode !== undefined && (
             <>
               {/* Named, because a task running elsewhere must not read as a local one. */}
-              <dt>Chạy trên</dt>
-              {/* Named only if it has a name a person would recognise; otherwise "một node khác", not an id. */}
-              <dd>{fieldText(targetNode.label, "một node khác")}</dd>
+              <dt>{t("blocks.task.runsOn")}</dt>
+              {/* Named only if it has a name a person would recognise; otherwise the generic fallback, not an id. */}
+              <dd>{fieldText(targetNode.label, t("blocks.task.anotherNode"))}</dd>
             </>
           )}
-          <dt>Dừng được</dt>
-          <dd data-task-cancellable={cancellable ? "true" : "false"}>{cancellable ? "có" : "không"}</dd>
+          <dt>{t("blocks.task.cancellable")}</dt>
+          <dd data-task-cancellable={cancellable ? "true" : "false"}>{cancellable ? t("blocks.task.yes") : t("blocks.task.no")}</dd>
         </dl>
         {/*
           The card used to say a task could be stopped and offer nothing that stopped it. The control appears
@@ -1049,7 +1085,7 @@ export function TaskProgressCardBlock({
               disabled={stopState !== undefined && stopState.status !== "failed"}
               onClick={() => actions.onTaskStop?.({ taskId })}
             >
-              {stopState?.status === "pending" ? "Đang gửi yêu cầu dừng…" : "Dừng lại"}
+              {stopState?.status === "pending" ? t("blocks.task.stopSending") : t("blocks.task.stop")}
             </button>
           </div>
         ) : null}
@@ -1063,9 +1099,7 @@ export function TaskProgressCardBlock({
             data-task-stop-outcome={stopState.state}
             data-task-stop-confirmed={String(stopState.confirmed)}
           >
-            {stopState.confirmed
-              ? "Đã dừng. Không có việc nào đang chạy nên không còn gì đang chờ."
-              : "Đã yêu cầu dừng. Nơi đang chạy việc này sẽ xác nhận khi nó thật sự dừng — trong lúc đó task đang dừng dở, chưa phải đã dừng."}
+            {stopState.confirmed ? t("blocks.task.stoppedConfirmed") : t("blocks.task.stopRequested")}
           </p>
         )}
       </div>
@@ -1126,7 +1160,13 @@ export function TaskSummaryCardBlock({ block }: { block: Record<string, unknown>
  * The count of unfinished work is stated in words above the list, because a user scanning a
  * conversation needs to know whether anything is still running without reading every row.
  */
-export function TaskOverviewCardBlock({ block }: { block: Record<string, unknown> }): ReactElement | null {
+export function TaskOverviewCardBlock({
+  block,
+  t = defaultT,
+}: {
+  block: Record<string, unknown>;
+  t?: (key: MessageKey) => string;
+}): ReactElement | null {
   if (block.owner !== "host") return null;
   const tasks = listOf(block.tasks);
   const unfinished = tasks.filter((task) => {
@@ -1137,12 +1177,14 @@ export function TaskOverviewCardBlock({ block }: { block: Record<string, unknown
   return (
     <section className="cc-card" data-host-card="task-overview" data-owner="host" data-unfinished={unfinished}>
       <header className="cc-card-head">
-        <span className="cc-card-title">Các việc trong hội thoại</span>
+        <span className="cc-card-title">{t("blocks.taskOverview.title")}</span>
         <span className="cc-badge">{tasks.length}</span>
       </header>
       <div className="cc-card-body">
         <p className="cc-freshness" style={{ margin: 0 }} data-unfinished-count={unfinished}>
-          {unfinished === 0 ? "Không còn việc nào đang chạy." : `${unfinished} việc còn dở.`}
+          {unfinished === 0
+            ? t("blocks.taskOverview.noneRunning")
+            : t("blocks.taskOverview.unfinishedCount").replace("{count}", String(unfinished))}
         </p>
         <ul className="cc-task-list">
           {tasks.map((task, index) => {
@@ -1170,7 +1212,13 @@ export function TaskOverviewCardBlock({ block }: { block: Record<string, unknown
  * colours come from the theme and the text stays selectable and copyable. A truncated diff says so:
  * a change cut for size and not marked as cut reads as the whole change.
  */
-export function CodeDiffCardBlock({ block }: { block: Record<string, unknown> }): ReactElement | null {
+export function CodeDiffCardBlock({
+  block,
+  t = defaultT,
+}: {
+  block: Record<string, unknown>;
+  t?: (key: MessageKey) => string;
+}): ReactElement | null {
   if (block.owner !== "host") return null;
   const summary = fieldText(block.summary);
   const files = listOf(block.files);
@@ -1193,7 +1241,7 @@ export function CodeDiffCardBlock({ block }: { block: Record<string, unknown> })
        */
       tabIndex={0}
       role="group"
-      aria-label={`Diff: ${summary}`}
+      aria-label={t("blocks.diff.ariaLabel").replace("{summary}", summary)}
       data-diff-keyboard="true"
     >
       <header className="cc-card-head">
@@ -1236,7 +1284,7 @@ export function CodeDiffCardBlock({ block }: { block: Record<string, unknown> })
         {truncated && (
           // Stated, not implied by an ellipsis: an unmarked truncation reads as a complete change.
           <p className="cc-freshness" data-diff-truncated="true" style={{ margin: 0 }}>
-            Diff đã được rút gọn để vừa khung. Phần còn lại không hiển thị ở đây.
+            {t("blocks.diff.truncatedNotice")}
           </p>
         )}
         {/*
@@ -1254,10 +1302,10 @@ export function CodeDiffCardBlock({ block }: { block: Record<string, unknown> })
         */}
         <div className="cc-card-actions" data-card-actions="code-diff">
           <button type="button" className="cc-action" disabled data-action="open-in-editor">
-            Mở trong editor
+            {t("blocks.diff.openInEditor")}
           </button>
           <span className="cc-freshness" data-action-blocked-reason="true">
-            Node chưa có capability mở editor, nên nút này chưa nối được.
+            {t("blocks.diff.noEditorCapability")}
           </span>
         </div>
       </div>
@@ -1272,7 +1320,13 @@ export function CodeDiffCardBlock({ block }: { block: Record<string, unknown> })
  * appearing to work. The alternative — a control that looks live and does nothing — is the failure
  * this codebase refuses everywhere else.
  */
-export function ProjectPickerCardBlock({ block }: { block: Record<string, unknown> }): ReactElement | null {
+export function ProjectPickerCardBlock({
+  block,
+  t = defaultT,
+}: {
+  block: Record<string, unknown>;
+  t?: (key: MessageKey) => string;
+}): ReactElement | null {
   if (block.owner !== "host") return null;
   const prompt = fieldText(block.prompt);
   const roots = listOf(block.roots);
@@ -1281,14 +1335,14 @@ export function ProjectPickerCardBlock({ block }: { block: Record<string, unknow
   return (
     <section className="cc-card" data-host-card="project-picker" data-owner="host">
       <header className="cc-card-head">
-        <span className="cc-card-title">Chọn project</span>
+        <span className="cc-card-title">{t("blocks.projectPicker.title")}</span>
         <span className="cc-badge">{roots.length}</span>
       </header>
       <div className="cc-card-body">
         <p style={{ margin: 0 }}>{prompt}</p>
         {roots.length === 0 ? (
           <p className="cc-freshness" style={{ margin: 0 }}>
-            Node này chưa được cấp project root nào.
+            {t("blocks.projectPicker.none")}
           </p>
         ) : (
           <ul className="cc-root-list">
@@ -1298,14 +1352,16 @@ export function ProjectPickerCardBlock({ block }: { block: Record<string, unknow
                   <span className="cc-setting-label">{fieldText(root.label)}</span>
                   <code className="cc-setting-desc">{fieldText(root.path)}</code>
                 </span>
-                <span className="cc-badge">{root.readOnly === true ? "chỉ đọc" : "đọc và ghi"}</span>
+                <span className="cc-badge">
+                  {root.readOnly === true ? t("blocks.projectPicker.readOnly") : t("blocks.projectPicker.readWrite")}
+                </span>
               </li>
             ))}
           </ul>
         )}
         {allowManualEntry && (
           <p className="cc-freshness" style={{ margin: 0 }}>
-            Root ngoài danh sách cần được duyệt riêng, không thêm thẳng ở đây.
+            {t("blocks.projectPicker.manualEntryNotice")}
           </p>
         )}
       </div>
@@ -1319,7 +1375,13 @@ export function ProjectPickerCardBlock({ block }: { block: Record<string, unknow
  * "Since when" and "is it still trying" are the two questions a user has when something stops
  * working, so the last-seen time and the attempt count are on the card rather than inferred.
  */
-export function ReconnectCardBlock({ block }: { block: Record<string, unknown> }): ReactElement | null {
+export function ReconnectCardBlock({
+  block,
+  t = defaultT,
+}: {
+  block: Record<string, unknown>;
+  t?: (key: MessageKey) => string;
+}): ReactElement | null {
   if (block.owner !== "host") return null;
   const nodeLabel = fieldText(block.nodeLabel);
   const nodeId = fieldText(block.nodeId);
@@ -1331,20 +1393,20 @@ export function ReconnectCardBlock({ block }: { block: Record<string, unknown> }
   return (
     <section className="cc-card" data-host-card="reconnect" data-owner="host" data-status={status}>
       <header className="cc-card-head">
-        <span className="cc-card-title">Mất kết nối tới {nodeLabel}</span>
+        <span className="cc-card-title">{t("blocks.reconnect.lostTo").replace("{node}", nodeLabel)}</span>
         <span className="cc-badge" data-tone={status === "failed" ? "danger" : "warn"}>
           {status}
         </span>
       </header>
       <div className="cc-card-body">
         <dl className="cc-fields">
-          <dt>Node</dt>
+          <dt>{t("blocks.reconnect.node")}</dt>
           <dd>
             <code>{nodeId}</code>
           </dd>
-          <dt>Lần cuối thấy</dt>
+          <dt>{t("blocks.reconnect.lastSeen")}</dt>
           <dd>{lastSeenAt}</dd>
-          <dt>Số lần thử</dt>
+          <dt>{t("blocks.reconnect.attempts")}</dt>
           <dd data-reconnect-attempts={attempt}>{attempt}</dd>
         </dl>
         {reason !== "" && (
@@ -1418,6 +1480,7 @@ function AttachmentCard({
   attachment: AttachmentRef;
   client: GatewayClient | undefined;
 }): ReactElement {
+  const t = useT();
   const resolve = useAttachmentUrls(client, [attachment.attachmentId]);
   const url = resolve(attachment.attachmentId);
   const size = formatFileSize(attachment.sizeBytes);
@@ -1433,7 +1496,7 @@ function AttachmentCard({
         {url === undefined ? (
           // A sentence with the file's name, not an empty frame: bytes that cannot be read are a description.
           <div className="cc-attachment-missing" data-attachment-missing="true">
-            Không hiện được ảnh {attachment.filename}.
+            {t("blocks.attachment.imageMissing").replace("{filename}", attachment.filename)}
           </div>
         ) : (
           <img src={url} alt={attachment.filename} data-attachment-image="true" />
@@ -1458,11 +1521,11 @@ function AttachmentCard({
       <span className="cc-attachment-size">{size}</span>
       {url === undefined ? (
         <span className="cc-attachment-missing" data-attachment-missing="true">
-          Không tải được tệp đính kèm.
+          {t("blocks.attachment.fileMissing")}
         </span>
       ) : (
         <a className="cc-attachment-open" href={url} download={attachment.filename} data-attachment-download="true">
-          Tải về
+          {t("blocks.attachment.download")}
         </a>
       )}
     </div>
@@ -1479,6 +1542,12 @@ export function renderBlock(
    * key holding undefined are different types there, and this one is forwarded as a value.
    */
   client?: GatewayClient | undefined,
+  /**
+   * The live locale lookup. Optional and defaulting to the Vietnamese catalog, for the same reason the
+   * cards below accept `t` as a prop rather than calling `useT()`: `renderBlock` is itself called as a
+   * plain function by its own unit tests, not only from within a component's render pass.
+   */
+  t: (key: MessageKey) => string = defaultT,
 ): ReactElement | null {
   const type = typeof block.type === "string" ? block.type : "";
 
@@ -1498,13 +1567,15 @@ export function renderBlock(
     case "artifact":
       // Forwarded, for the reason the task card's control taught: a component tested by calling it directly
       // passes whether or not the dispatcher hands it anything.
-      return <ArtifactBlock key={index} block={block} {...(actions === undefined ? {} : { actions })} />;
+      return <ArtifactBlock key={index} block={block} t={t} {...(actions === undefined ? {} : { actions })} />;
     case "system-card":
       return <SystemCardBlock key={index} block={block} />;
     case "approval-card":
       return <ApprovalCardBlock key={index} block={block} {...(actions === undefined ? {} : { actions })} />;
     case "question-card":
-      return <QuestionCardBlock key={index} block={block} {...(actions === undefined ? {} : { actions })} />;
+      return (
+        <QuestionCardBlock key={index} block={block} t={t} {...(actions === undefined ? {} : { actions })} />
+      );
     case "connection-card":
       return <ConnectionCardBlock key={index} block={block} />;
     case "credential-card":
@@ -1513,16 +1584,16 @@ export function renderBlock(
       // `actions` must be forwarded, or the card's Stop control is unreachable in the browser while its
       // own unit test — which calls the component directly — still passes.
       return (
-        <TaskProgressCardBlock key={index} block={block} {...(actions === undefined ? {} : { actions })} />
+        <TaskProgressCardBlock key={index} block={block} t={t} {...(actions === undefined ? {} : { actions })} />
       );
     case "task-summary-card":
       return <TaskSummaryCardBlock key={index} block={block} />;
     case "task-overview-card":
-      return <TaskOverviewCardBlock key={index} block={block} />;
+      return <TaskOverviewCardBlock key={index} block={block} t={t} />;
     case "code-diff-card":
-      return <CodeDiffCardBlock key={index} block={block} />;
+      return <CodeDiffCardBlock key={index} block={block} t={t} />;
     case "project-picker-card":
-      return <ProjectPickerCardBlock key={index} block={block} />;
+      return <ProjectPickerCardBlock key={index} block={block} t={t} />;
     case "form-card":
       return <FormCardBlock key={index} block={block} {...(actions === undefined ? {} : { actions })} />;
     case "browser-session-card":
@@ -1534,6 +1605,7 @@ export function renderBlock(
           key={index}
           block={block}
           client={client}
+          t={t}
           {...(actions === undefined ? {} : { actions })}
         />
       );
@@ -1542,7 +1614,7 @@ export function renderBlock(
       // whether or not the dispatcher hands it anything, and the install action is exactly what would go missing.
       return <MarketplaceResultsBlock key={index} block={block} {...(actions === undefined ? {} : { actions })} />;
     case "reconnect-card":
-      return <ReconnectCardBlock key={index} block={block} />;
+      return <ReconnectCardBlock key={index} block={block} t={t} />;
     case "surface": {
       const snapshot = (block.snapshot ?? {}) as Record<string, unknown>;
       const definitionRef = (block.definitionRef ?? {}) as Record<string, unknown>;
@@ -1595,11 +1667,12 @@ export function FormCardBlock({
   block: Record<string, unknown>;
   actions?: BlockActions;
 }): ReactElement | null {
+  const t = useT();
   if (block.owner !== "host") return null;
 
   const formId = typeof block.formId === "string" ? block.formId : "";
   const title = typeof block.title === "string" ? block.title : "";
-  const submitLabel = typeof block.submitLabel === "string" ? block.submitLabel : "Gửi";
+  const submitLabel = typeof block.submitLabel === "string" ? block.submitLabel : t("blocks.common.send");
   const raw = Array.isArray(block.fields) ? (block.fields as Record<string, unknown>[]) : [];
   const fields = raw
     .filter((entry) => typeof entry.id === "string" && typeof entry.label === "string")
@@ -1706,7 +1779,7 @@ export function FormCardBlock({
           </div>
           {complete ? null : (
             <p className="cc-freshness" data-form-incomplete="true">
-              Còn thiếu: {missing.map((field) => field.label).join(", ")}
+              {t("blocks.form.missingFieldsLabel")}: {missing.map((field) => field.label).join(", ")}
             </p>
           )}
         </>
@@ -1727,20 +1800,31 @@ export function FormCardBlock({
  * still admissible, so a reader who cannot see it cannot tell whether a takeover actually took effect.
  */
 /** The risk lanes in words, because a lane name is not something a reader should have to learn. */
-const RISK_LANE_LABELS: Record<string, string> = {
-  "isolated-ui": "widget cách ly",
-  service: "service",
-  declarative: "khai báo",
-  "trusted-native": "native tin cậy",
-};
+function riskLaneLabel(t: (key: MessageKey) => string, lane: string): string {
+  switch (lane) {
+    case "isolated-ui":
+      return t("blocks.marketplace.lane.isolatedUi");
+    case "service":
+      return t("blocks.marketplace.lane.service");
+    case "declarative":
+      return t("blocks.marketplace.lane.declarative");
+    case "trusted-native":
+      return t("blocks.marketplace.lane.trustedNative");
+    default:
+      return lane;
+  }
+}
 
 /** Where a result would be fetched from, in one line. */
-function describePackageSource(raw: unknown): string {
+function describePackageSource(
+  raw: unknown,
+  t: (key: MessageKey) => string,
+): string {
   const source = (raw ?? {}) as Record<string, unknown>;
   if (source.kind === "local" && typeof source.path === "string") return source.path;
   if (source.kind === "git" && typeof source.url === "string") return `${source.url}@${String(source.ref ?? "")}`;
   if (source.kind === "npm" && typeof source.name === "string") return `${source.name}@${String(source.version ?? "")}`;
-  return "không rõ nguồn";
+  return t("blocks.marketplace.unknownSource");
 }
 
 /**
@@ -1762,21 +1846,22 @@ export function MarketplaceResultsBlock({
   block: Record<string, unknown>;
   actions?: BlockActions | undefined;
 }): ReactElement {
+  const t = useT();
   const directory = typeof block.directory === "string" ? block.directory : "";
   const query = typeof block.query === "string" ? block.query : "";
   const reason = typeof block.unavailableReason === "string" ? block.unavailableReason : undefined;
   const results = Array.isArray(block.results) ? block.results : [];
 
   return (
-    <div className="cc-card cc-marketplace" role="group" aria-label="Kết quả tìm gói" data-marketplace="true">
-      <div className="cc-card-title">Kết quả trong {directory}</div>
+    <div className="cc-card cc-marketplace" role="group" aria-label={t("blocks.marketplace.searchResultsAria")} data-marketplace="true">
+      <div className="cc-card-title">{t("blocks.marketplace.resultsIn").replace("{directory}", directory)}</div>
       {reason !== undefined ? (
         // A directory that could not be consulted is a different truth from one that had nothing, so it says so.
         <p className="cc-card-note" data-marketplace-unavailable="true">
           {reason}
         </p>
       ) : results.length === 0 ? (
-        <p className="cc-card-note">Không có gói nào khớp “{query}”.</p>
+        <p className="cc-card-note">{t("blocks.marketplace.noMatch").replace("{query}", query)}</p>
       ) : (
         <ul className="cc-marketplace-list">
           {results.map((raw, position) => {
@@ -1795,8 +1880,8 @@ export function MarketplaceResultsBlock({
                 </div>
                 {description !== "" && <div className="cc-marketplace-desc">{description}</div>}
                 <div className="cc-marketplace-meta">
-                  <span data-marketplace-source="true">{describePackageSource(result.source)}</span>
-                  <span data-marketplace-risk={lane}>{RISK_LANE_LABELS[lane] ?? lane}</span>
+                  <span data-marketplace-source="true">{describePackageSource(result.source, t)}</span>
+                  <span data-marketplace-risk={lane}>{riskLaneLabel(t, lane)}</span>
                   {/* Truncated for the line, complete in the title: the digest is checkable, not decorative. */}
                   <span className="cc-marketplace-digest" title={digest} data-marketplace-digest="true">
                     {digest.length > 18 ? `${digest.slice(0, 18)}…` : digest}
@@ -1817,7 +1902,7 @@ export function MarketplaceResultsBlock({
                       disabled={installState?.status === "installing"}
                       onClick={() => actions.onInstallPackage?.({ packageId, version })}
                     >
-                      {installState?.status === "installing" ? "Đang cài…" : "Cài"}
+                      {installState?.status === "installing" ? t("blocks.marketplace.installing") : t("blocks.marketplace.install")}
                     </button>
                     {installState !== undefined && installState.status !== "installing" && (
                       <span className="cc-marketplace-install-state" data-install-state={installState.status}>
@@ -1858,6 +1943,7 @@ function SessionPreviewFrame({
   viewport: { width: number; height: number } | undefined;
   capturedAt: string | undefined;
 }): ReactElement {
+  const t = useT();
   const url = useObjectUrls(
     (wanted) =>
       client === undefined
@@ -1866,7 +1952,7 @@ function SessionPreviewFrame({
     [digest],
   )(digest);
 
-  const taken = capturedAt === undefined ? "" : ` lúc ${capturedAt}`;
+  const taken = capturedAt === undefined ? "" : t("blocks.session.takenAtSuffix").replace("{at}", capturedAt);
   return (
     /*
      * The digest is on the element as well as in the fetch, so an assertion can ask the node for the frame the
@@ -1876,16 +1962,20 @@ function SessionPreviewFrame({
     <figure className="cc-card-preview" data-control-preview-frame="true" data-control-preview-digest={digest}>
       {url === undefined ? (
         <p className="cc-card-preview-pending" role="status">
-          Đang tải ảnh chụp màn hình…
+          {t("blocks.session.loadingScreenshot")}
         </p>
       ) : (
         <img
           src={url}
-          alt={`Ảnh chụp màn hình phiên ${label}${taken}`}
+          alt={t("blocks.session.screenshotAlt").replace("{label}", label).replace("{taken}", taken)}
           {...(viewport === undefined ? {} : { width: viewport.width, height: viewport.height })}
         />
       )}
-      <figcaption>Ảnh chụp{taken}, không phải màn hình trực tiếp.</figcaption>
+      <figcaption>
+        {t("blocks.session.captionPrefix")}
+        {taken}
+        {t("blocks.session.captionSuffix")}
+      </figcaption>
     </figure>
   );
 }
@@ -1894,10 +1984,12 @@ export function ControlSessionCardBlock({
   block,
   actions,
   client,
+  t = defaultT,
 }: {
   block: Record<string, unknown>;
   actions?: BlockActions;
   client?: GatewayClient | undefined;
+  t?: (key: MessageKey) => string;
 }): ReactElement | null {
   if (block.owner !== "host") return null;
 
@@ -1948,7 +2040,7 @@ export function ControlSessionCardBlock({
       data-control-epoch={leaseEpoch}
       data-control-driver={driver}
       data-control-status={stopped ? "stopped" : "running"}
-      aria-label={`Phiên browser: ${label}`}
+      aria-label={t("blocks.session.browserSessionAria").replace("{label}", label)}
     >
       {frameDigest === undefined ? null : (
         <SessionPreviewFrame
@@ -1962,12 +2054,12 @@ export function ControlSessionCardBlock({
       <header className="cc-card-head">
         <span className="cc-card-title">{label}</span>
         <span className="cc-badge" data-tone={stopped ? "" : "ok"}>
-          {stopped ? "đã dừng" : "đang chạy"}
+          {stopped ? t("blocks.session.stopped") : t("blocks.session.running")}
         </span>
       </header>
       <dl className="cc-fields">
-        <dt>Ai đang điều khiển</dt>
-        <dd data-control-driver-label="true">{driver === "user" ? "bạn" : "agent"}</dd>
+        <dt>{t("blocks.session.whoIsDriving")}</dt>
+        <dd data-control-driver-label="true">{driver === "user" ? t("blocks.session.you") : t("blocks.session.agent")}</dd>
 
       </dl>
       {/*
@@ -1977,9 +2069,9 @@ export function ControlSessionCardBlock({
       */}
       {observable ? null : (
         <p className="cc-freshness" data-control-preview-notice={declaredPreview}>
-          {declaredPreview === "needs-permission" ? "Chưa được cấp quyền xem màn hình" : "Không xem được màn hình"}
-          {previewReason === undefined ? "" : `: ${previewReason}`}. Quyền này do hệ điều hành cấp, node không tự cấp
-          được, và node sẽ không hành động khi không nhìn thấy gì.
+          {declaredPreview === "needs-permission" ? t("blocks.session.needsPermission") : t("blocks.session.cannotView")}
+          {previewReason === undefined ? "" : `: ${previewReason}`}
+          {t("blocks.session.permissionNotice")}
         </p>
       )}
       {running ? (
@@ -1996,7 +2088,7 @@ export function ControlSessionCardBlock({
               disabled={busy}
               onClick={() => actions.onControlTakeover?.({ sessionId })}
             >
-              {busy ? "Đang chuyển…" : "Tôi tự điều khiển"}
+              {busy ? t("blocks.session.switching") : t("blocks.session.takeControl")}
             </button>
           ) : null}
           {actions?.onControlStop !== undefined ? (
@@ -2007,7 +2099,7 @@ export function ControlSessionCardBlock({
               disabled={busy}
               onClick={() => actions.onControlStop?.({ sessionId })}
             >
-              Dừng phiên
+              {t("blocks.session.stopSession")}
             </button>
           ) : null}
         </div>
@@ -2023,9 +2115,7 @@ export function ControlSessionCardBlock({
         </p>
       ) : !running ? (
         <p className="cc-freshness" data-control-notice="stopped">
-          {state?.status === "stopped"
-            ? "Phiên đã dừng theo yêu cầu của bạn. Không có hành động nào của agent còn được nhận cho phiên này."
-            : "Phiên này đã dừng. Không có hành động nào của agent còn được nhận cho phiên này."}
+          {state?.status === "stopped" ? t("blocks.session.stoppedByYou") : t("blocks.session.stoppedOther")}
         </p>
       ) : state?.status === "taken-over" ? (
         /*
@@ -2033,8 +2123,7 @@ export function ControlSessionCardBlock({
          * planned action was refused, because that is the part that makes the browser theirs.
          */
         <p className="cc-freshness" data-control-notice="taken-over">
-          Bạn đang điều khiển. Hành động agent đã lên kế hoạch từ trước đã bị từ chối vì lease cũ, và agent chỉ
-          lấy lại được khi bạn dừng phiên rồi mở phiên mới.
+          {t("blocks.session.takenOverNotice")}
         </p>
       ) : null}
     </section>

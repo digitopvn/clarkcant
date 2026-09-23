@@ -3,6 +3,7 @@ import { type ReactElement, useEffect, useState } from "react";
 import { MiniAppSurface } from "./mini-app-surface.tsx";
 import { toSurfaceViewFromLive } from "./DesktopSurfaces.tsx";
 import type { LiveWidgetResponse } from "./api.ts";
+import { useT } from "./i18n/locale-context.tsx";
 
 /**
  * The detached widget window's document.
@@ -34,6 +35,7 @@ export interface DetachedBridge {
 }
 
 export function DetachedWidgetSurface({ bridge }: { bridge: DetachedBridge }): ReactElement {
+  const t = useT();
   const [loaded, setLoaded] = useState<
     { instanceRef: string; title: string; live: LiveWidgetResponse } | undefined
   >(undefined);
@@ -61,7 +63,7 @@ export function DetachedWidgetSurface({ bridge }: { bridge: DetachedBridge }): R
   if (refusal !== undefined) {
     return (
       <main className="cc-card" data-detached-surface="true" data-detached-error="true">
-        <h1 className="cc-card-title">Không mở được widget này</h1>
+        <h1 className="cc-card-title">{t("widgets.detached.cannotOpen")}</h1>
         <p className="cc-card-note">{refusal}</p>
       </main>
     );
@@ -70,7 +72,7 @@ export function DetachedWidgetSurface({ bridge }: { bridge: DetachedBridge }): R
     // A window that is opening says so; it does not show an empty frame and call it loaded.
     return (
       <main className="cc-card" data-detached-surface="true" data-detached-loading="true">
-        <p className="cc-card-note">Đang mở widget…</p>
+        <p className="cc-card-note">{t("widgets.detached.opening")}</p>
       </main>
     );
   }
@@ -85,7 +87,7 @@ export function DetachedWidgetSurface({ bridge }: { bridge: DetachedBridge }): R
           * so the instance goes back to the conversation whether the user clicks this or closes the window.
           */}
         <button type="button" data-detached-release="true" onClick={() => void bridge.release()}>
-          Gắn lại vào hội thoại
+          {t("widgets.detached.reattach")}
         </button>
       </header>
       {notice !== undefined && (
@@ -100,7 +102,7 @@ export function DetachedWidgetSurface({ bridge }: { bridge: DetachedBridge }): R
         onIntent={(intent) => {
           const action = loaded.live.spec.actions.find((entry) => entry.sectionId === intent.sectionId);
           if (action === undefined) {
-            setNotice("Hành động này không còn được gắn với widget.");
+            setNotice(t("widgets.detached.actionDetached"));
             return;
           }
           setBusy(true);
@@ -116,7 +118,7 @@ export function DetachedWidgetSurface({ bridge }: { bridge: DetachedBridge }): R
             })
             .then((answer) => {
               setBusy(false);
-              if (!answer.ok) setNotice(answer.refused ?? "Máy chủ từ chối hành động này.");
+              if (!answer.ok) setNotice(answer.refused ?? t("widgets.detached.serverRefused"));
             });
         }}
       />

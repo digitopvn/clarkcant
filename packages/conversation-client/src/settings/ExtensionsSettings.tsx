@@ -3,7 +3,7 @@ import { useEffect, useState, type ReactElement } from "react";
 import { useT } from "../i18n/locale-context.tsx";
 import { ToolLists } from "../tool-lists.tsx";
 import type { GatewayClient, InstalledPackageView } from "../api.ts";
-import { LANE_LABELS } from "../package-provenance.ts";
+import { laneLabel } from "../package-provenance.ts";
 import { SettingsRow, ToolRow } from "./controls/SettingsRow.tsx";
 
 /**
@@ -145,6 +145,7 @@ export function ExtensionsSettings({ client, tools, onOpenWidgetLibrary }: Exten
  * Showing them with the same wording would be the one mistake this list exists to prevent.
  */
 function InstalledPackagesSection({ client }: { client: GatewayClient }): ReactElement {
+  const t = useT();
   const [packages, setPackages] = useState<InstalledPackageView[] | undefined>(undefined);
 
   useEffect(() => {
@@ -179,7 +180,7 @@ function InstalledPackagesSection({ client }: { client: GatewayClient }): ReactE
                 {entry.packageId}@{entry.version}
               </strong>
               <span className="cc-badge" data-lane={entry.lane}>
-                {LANE_LABELS[entry.lane]}
+                {laneLabel(entry.lane, t)}
               </span>
               <dl className="cc-fields">
                 <dt>Nguồn</dt>

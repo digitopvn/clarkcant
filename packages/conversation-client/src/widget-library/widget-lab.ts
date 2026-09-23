@@ -1,6 +1,15 @@
 import type { WidgetDefinition } from "@clarkcant/contracts";
 import type { WidgetFixture } from "@clarkcant/contracts";
 import type { PreviewTheme, WidgetCatalogEntry } from "@clarkcant/widget-catalog";
+import { MESSAGES_VI, type MessageKey } from "../i18n/messages.ts";
+
+/**
+ * The Vietnamese catalog lookup, used as `inspectorPanels`' default `t`.
+ *
+ * `inspectorPanels` is called directly by its own unit tests rather than through a component's
+ * render pass, so its `t` parameter defaults rather than requiring a live `useT()` result.
+ */
+const defaultT = (key: MessageKey): string => MESSAGES_VI[key];
 
 /**
  * The Widget Lab's derivations.
@@ -88,92 +97,107 @@ export interface InspectorPanel {
 
 /** The inspector's panels, in the order the developer standard lists them. */
 export function inspectorPanels(
-  entry: WidgetCatalogEntry,
-  fixture: WidgetFixture | undefined,
+	entry: WidgetCatalogEntry,
+	fixture: WidgetFixture | undefined,
+	t: (key: MessageKey) => string = defaultT,
 ): readonly InspectorPanel[] {
-  const definition = entry.definition;
-  const sizing = definition.sizing;
+	const definition = entry.definition;
+	const sizing = definition.sizing;
 
-  return [
-    {
-      id: "props",
-      label: "Props",
-      rows: propFields(definition).map((field) => ({
-        label: field.key,
-        value: [
-          field.type,
-          field.required ? "bắt buộc" : "tuỳ chọn",
-          ...(field.maxLength === undefined ? [] : [`tối đa ${field.maxLength}`]),
-        ].join(" · "),
-      })),
-    },
-    {
-      id: "state",
-      label: "State",
-      rows: [
-        {
-          label: "Giá trị hiện tại",
-          value: fixture?.state === undefined ? "fixture này không khai báo state" : JSON.stringify(fixture.state),
-        },
-        {
-          label: "stateSchema",
-          value: definition.stateSchema === undefined ? "không khai báo" : "có khai báo",
-        },
-        {
-          label: "stateVersion",
-          value: definition.stateVersion === undefined ? "không khai báo" : String(definition.stateVersion),
-        },
-      ],
-    },
-    {
-      id: "events",
-      label: "Events",
-      rows: Object.keys(definition.eventSchemas ?? {}).map((name) => ({ label: name, value: "khai báo" })),
-    },
-    {
-      id: "actions",
-      label: "Actions",
-      rows: [
-        { label: "effectCategories", value: definition.effectCategories.join(", ") || "không" },
-        {
-          label: "Chạy được trong Lab",
-          value: isActionExecutable(definition) ? "có" : "không — preview chỉ đọc",
-        },
-        { label: "Cần phê duyệt", value: requiresApproval(definition) ? "có thể" : "không" },
-      ],
-    },
-    {
-      id: "semantic",
-      label: "Semantic",
-      rows: [{ label: "semanticDescription", value: definition.semanticDescription }],
-    },
-    {
-      id: "sizing",
-      label: "Sizing",
-      rows: [
-        { label: "compact", value: sizing.compact ? "hỗ trợ" : "không" },
-        { label: "expanded", value: sizing.expanded ? "hỗ trợ" : "không" },
-        { label: "minHeight", value: `${sizing.minHeight}px` },
-      ],
-    },
-    {
-      id: "capabilities",
-      label: "Capabilities",
-      rows:
-        definition.requestedCapabilities.length === 0
-          ? [{ label: "yêu cầu", value: "không yêu cầu capability nào" }]
-          : definition.requestedCapabilities.map((capability) => ({
-              label: String(capability),
-              value: "được yêu cầu",
-            })),
-    },
-    {
-      id: "fallback",
-      label: "Fallback",
-      rows: [
-        { label: "semanticDescription", value: definition.semanticDescription },
-        { label: "textFallback", value: definition.textFallback },
-      ],
-    },
-  ];
+	return [
+		{
+			id: "props",
+			label: t("widgets.lab.panel.props"),
+			rows: propFields(definition).map((field) => ({
+				label: field.key,
+				value: [
+					field.type,
+					field.required ? t("widgets.lab.required") : t("widgets.lab.optional"),
+					...(field.maxLength === undefined
+						? []
+						: [t("widgets.lab.maxLength").replace("{max}", String(field.maxLength))]),
+				].join(" · "),
+			})),
+		},
+		{
+			id: "state",
+			label: t("widgets.lab.panel.state"),
+			rows: [
+				{
+					label: t("widgets.lab.currentValue"),
+					value: fixture?.state === undefined ? t("widgets.lab.fixtureNoState") : JSON.stringify(fixture.state),
+				},
+				{
+					label: "stateSchema",
+					value: definition.stateSchema === undefined ? t("widgets.lab.notDeclared") : t("widgets.lab.declared"),
+				},
+				{
+					label: "stateVersion",
+					value:
+						definition.stateVersion === undefined ? t("widgets.lab.notDeclared") : String(definition.stateVersion),
+				},
+			],
+		},
+		{
+			id: "events",
+			label: t("widgets.lab.panel.events"),
+			rows: Object.keys(definition.eventSchemas ?? {}).map((name) => ({
+				label: name,
+				value: t("widgets.lab.eventDeclared"),
+			})),
+		},
+		{
+			id: "actions",
+			label: t("widgets.lab.panel.actions"),
+			rows: [
+				{
+					label: t("widgets.lab.effectCategories"),
+					value: definition.effectCategories.join(", ") || t("widgets.lab.none"),
+				},
+				{
+					label: t("widgets.lab.runnableInLab"),
+					value: isActionExecutable(definition) ? t("widgets.lab.runnableYes") : t("widgets.lab.runnableNo"),
+				},
+				{
+					label: t("widgets.lab.needsApproval"),
+					value: requiresApproval(definition)
+						? t("widgets.lab.needsApprovalMaybe")
+						: t("widgets.lab.needsApprovalNo"),
+				},
+			],
+		},
+		{
+			id: "semantic",
+			label: t("widgets.lab.panel.semantic"),
+			rows: [{ label: "semanticDescription", value: definition.semanticDescription }],
+		},
+		{
+			id: "sizing",
+			label: t("widgets.lab.panel.sizing"),
+			rows: [
+				{ label: "compact", value: sizing.compact ? t("widgets.lab.supported") : t("widgets.lab.unsupported") },
+				{ label: "expanded", value: sizing.expanded ? t("widgets.lab.supported") : t("widgets.lab.unsupported") },
+				{ label: "minHeight", value: `${sizing.minHeight}px` },
+			],
+		},
+		{
+			id: "capabilities",
+			label: t("widgets.lab.panel.capabilities"),
+			rows:
+				definition.requestedCapabilities.length === 0
+					? [{ label: t("widgets.lab.capabilitiesRequestedLabel"), value: t("widgets.lab.capabilitiesNoneRequested") }]
+					: definition.requestedCapabilities.map((capability) => ({
+							label: String(capability),
+							value: t("widgets.lab.capabilityRequested"),
+						})),
+		},
+		{
+			id: "fallback",
+			label: t("widgets.lab.panel.fallback"),
+			rows: [
+				{ label: "semanticDescription", value: definition.semanticDescription },
+				{ label: "textFallback", value: definition.textFallback },
+			],
+		},
+	];
 }

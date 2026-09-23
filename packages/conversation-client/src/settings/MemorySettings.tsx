@@ -3,6 +3,7 @@ import { type ReactElement, useCallback, useEffect, useState } from "react";
 import type { MemoryRecord } from "@clarkcant/contracts";
 
 import type { GatewayClient } from "../api.ts";
+import { useT } from "../i18n/locale-context.tsx";
 import { memoryView, type MemoryGroupView } from "../memory-groups.ts";
 
 /**
@@ -30,6 +31,7 @@ export interface MemorySettingsProps {
 }
 
 export function MemorySettings({ client }: MemorySettingsProps): ReactElement {
+  const t = useT();
   const [panel, setPanel] = useState<PanelState>({ state: "loading" });
   const [deletingId, setDeletingId] = useState<string | undefined>(undefined);
 
@@ -94,7 +96,7 @@ export function MemorySettings({ client }: MemorySettingsProps): ReactElement {
     );
   }
 
-  const view = memoryView(panel.records, new Date().toISOString());
+  const view = memoryView(panel.records, new Date().toISOString(), t);
 
   return (
     <div className="cc-memory" data-memory-state="ready" data-memory-count={view.count}>

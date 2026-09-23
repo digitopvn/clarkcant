@@ -4,6 +4,7 @@ import type { GatewayClient, ResolvedDataset, SnapshotPresentationResponse, Time
 import { type SurfaceBlockRef } from "./blocks.tsx";
 import { resolveRenderer, toRendererDataset } from "./renderers.tsx";
 import { MiniAppSurface, type CompositeSurfaceView } from "./mini-app-surface.tsx";
+import { useT } from "./i18n/locale-context.tsx";
 
 /**
  * Turn a captured bundle into what the surface renders.
@@ -88,6 +89,7 @@ export function useSurfaceRenderer({
   setError,
   liveTrigger,
 }: SurfaceRendererDeps): (input: SurfaceBlockRef) => ReactElement {
+  const t = useT();
   return useCallback(
     (input: SurfaceBlockRef): ReactElement => {
       const instance = input.instanceId === undefined ? undefined : instanceById.get(input.instanceId);
@@ -143,7 +145,7 @@ export function useSurfaceRenderer({
                     .catch((cause: unknown) => setError(cause instanceof Error ? cause.message : String(cause)));
                 }}
               >
-                Mở bản hiện tại
+                {t("widgets.surface.openCurrent")}
               </button>
             )}
           </div>
@@ -215,12 +217,12 @@ export function useSurfaceRenderer({
                   .catch((cause: unknown) => setError(cause instanceof Error ? cause.message : String(cause)));
               }}
             >
-              {Renderer === undefined ? "Mở bản hiện tại" : "Ghim lại"}
+              {Renderer === undefined ? t("widgets.surface.openCurrent") : t("widgets.surface.pinAgain")}
             </button>
           )}
         </div>
       );
     },
-    [applyTimeline, client, conversationId, datasets, imageUrl, instanceById, liveTrigger, setError, snapshots, timeline],
+    [applyTimeline, client, conversationId, datasets, imageUrl, instanceById, liveTrigger, setError, snapshots, t, timeline],
   );
 }

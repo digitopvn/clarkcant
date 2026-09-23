@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState, type ReactElement } from "react";
 
 import type { GatewayClient, InstalledPackageView } from "../api.ts";
+import { useT } from "../i18n/locale-context.tsx";
 import { provenanceRows } from "../package-provenance.ts";
 
 /**
@@ -23,6 +24,7 @@ type Read =
   | { status: "read"; packages: readonly InstalledPackageView[] };
 
 export function InstalledProvenance({ client }: { client: GatewayClient }): ReactElement {
+  const t = useT();
   const [read, setRead] = useState<Read>({ status: "loading" });
   const [attempt, setAttempt] = useState(0);
 
@@ -46,28 +48,26 @@ export function InstalledProvenance({ client }: { client: GatewayClient }): Reac
     setAttempt((current) => current + 1);
   }, []);
 
-  const rows = read.status === "read" ? provenanceRows(read.packages) : [];
+  const rows = read.status === "read" ? provenanceRows(read.packages, t) : [];
 
   return (
     <section className="cc-library-provenance" data-widget-provenance="installed">
-      <h3>Gói đã cài trên node này</h3>
+      <h3>{t("widgets.provenance.title")}</h3>
 
       {read.status === "loading" ? (
         <p className="cc-panel-note" data-provenance-state="loading">
-          Đang đọc danh sách gói…
+          {t("widgets.provenance.loading")}
         </p>
       ) : read.status === "unread" ? (
         <div className="cc-provenance-retry" data-provenance-state="unread">
-          <p className="cc-panel-note">
-            Không đọc được danh sách gói đã cài. Thư viện widget dựng sẵn vẫn dùng được bình thường.
-          </p>
+          <p className="cc-panel-note">{t("widgets.provenance.unread")}</p>
           <button type="button" onClick={retry}>
-            Thử lại
+            {t("widgets.provenance.retry")}
           </button>
         </div>
       ) : rows.length === 0 ? (
         <p className="cc-panel-note" data-provenance-state="empty">
-          Chưa cài gói nào trên node này.
+          {t("widgets.provenance.empty")}
         </p>
       ) : (
         <ul className="cc-installed-list">
@@ -85,11 +85,11 @@ export function InstalledProvenance({ client }: { client: GatewayClient }): Reac
                 {row.laneLabel}
               </span>
               <dl className="cc-fields">
-                <dt>Loại</dt>
-                <dd>{row.kind === "local" ? "gói phát triển cục bộ" : "gói đã cài"}</dd>
-                <dt>Nguồn</dt>
+                <dt>{t("widgets.provenance.kindLabel")}</dt>
+                <dd>{row.kind === "local" ? t("widgets.provenance.kindLocal") : t("widgets.provenance.kindInstalled")}</dd>
+                <dt>{t("widgets.provenance.sourceLabel")}</dt>
                 <dd>{row.sourceTier}</dd>
-                <dt>Digest</dt>
+                <dt>{t("widgets.provenance.digestLabel")}</dt>
                 {/* The full digest stays available on hover rather than being truncated away. */}
                 <dd title={row.fullDigest}>{row.digest}</dd>
               </dl>

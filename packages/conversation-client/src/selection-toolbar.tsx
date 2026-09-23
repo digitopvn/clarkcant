@@ -1,6 +1,7 @@
 import { type ReactElement, type RefObject, useEffect, useState } from "react";
 
 import { selectedText } from "./selection.ts";
+import { useT } from "./i18n/locale-context.tsx";
 
 interface Placement {
   text: string;
@@ -39,6 +40,7 @@ export function SelectionToolbar({
    */
   canBackground?: boolean;
 }): ReactElement | null {
+  const t = useT();
   const [placement, setPlacement] = useState<Placement | undefined>(undefined);
   const [status, setStatus] = useState<string | undefined>(undefined);
 
@@ -85,7 +87,7 @@ export function SelectionToolbar({
       className="cc-selection-menu"
       data-selection-menu="true"
       role="toolbar"
-      aria-label="Đoạn được chọn"
+      aria-label={t("widgets.selection.toolbarAria")}
       style={{ left: `${placement.x}px`, top: `${placement.y}px` }}
     >
       <button
@@ -99,7 +101,7 @@ export function SelectionToolbar({
           setPlacement(undefined);
         }}
       >
-        Đính vào prompt
+        {t("widgets.selection.attach")}
       </button>
       <button
         type="button"
@@ -110,7 +112,7 @@ export function SelectionToolbar({
           setPlacement(undefined);
         }}
       >
-        Giải thích
+        {t("widgets.selection.explain")}
       </button>
       {canBackground && onBackground !== undefined && (
         <button
@@ -121,14 +123,14 @@ export function SelectionToolbar({
             // The menu stays open for this one: the answer takes a moment and may be a refusal, and a menu that closed
             // on a failure would leave the person with nothing to read.
             void onBackground(text)
-              .then(() => setStatus("Đã gửi vào một phiên nền. Kết quả sẽ hiện trong hội thoại khi xong."))
+              .then(() => setStatus(t("widgets.selection.backgroundSent")))
               .catch((cause: unknown) =>
-                setStatus(cause instanceof Error ? cause.message : "Không bắt đầu được việc nền."),
+                setStatus(cause instanceof Error ? cause.message : t("widgets.selection.backgroundFailed")),
               );
             window.getSelection()?.removeAllRanges();
           }}
         >
-          Chạy ở phiên nền
+          {t("widgets.selection.runInBackground")}
         </button>
       )}
       {status !== undefined && (

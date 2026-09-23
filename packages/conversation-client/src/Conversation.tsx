@@ -455,7 +455,7 @@ export function Conversation({
       <SelectionToolbar
         container={scroller}
         onAttach={(text) => setDraft((current) => attachedPrompt(text, current))}
-        onExplain={(text) => void send(explainPrompt(text))}
+        onExplain={(text) => void send(explainPrompt(text, localeState.t))}
         canBackground={conversationId !== undefined}
         onBackground={async (text) => {
           if (conversationId === undefined) return;
