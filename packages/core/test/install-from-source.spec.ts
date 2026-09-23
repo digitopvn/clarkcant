@@ -37,6 +37,14 @@ const ENTRY: DirectoryEntry = {
   digest: DIGEST,
 };
 
+/**
+ * `input()` below resolves an npm source (`com.example.calendar@1.2.0`) against `[ENTRY]`. `resolvePackageSource`
+ * now matches an npm source by the directory entry's actual `source.name`, not by `packageId` (the "findEntry"
+ * fix) — so the directory entry these npm-resolving fixtures search against has to really be an npm source, not
+ * `ENTRY`'s `local` one, which shares a `packageId` string but is a different kind of source entirely.
+ */
+const NPM_ENTRY: DirectoryEntry = { ...ENTRY, source: { kind: "npm", name: "com.example.calendar", version: "1.2.0" } };
+
 let counter = 0;
 
 function makeDeps() {
@@ -59,7 +67,7 @@ beforeEach(() => {
 function input(overrides: Partial<InstallFromSourceInput> = {}): InstallFromSourceInput {
   return {
     source: { kind: "npm", name: "com.example.calendar", version: "1.2.0" },
-    directory: [ENTRY],
+    directory: [NPM_ENTRY],
     hostApi: 1,
     platform: "linux-x64",
     ownerPrincipalId: "prin_owner",
@@ -89,7 +97,7 @@ describe("what the install refuses before it plans anything", () => {
   });
 
   it("refuses a directory entry whose digest is missing", () => {
-    const outcome = installFromSource(deps, input({ directory: [{ ...ENTRY, digest: " " }] }));
+    const outcome = installFromSource(deps, input({ directory: [{ ...NPM_ENTRY, digest: " " }] }));
 
     // "No digest" must never behave like "digest matched".
     expect(outcome.ok).toBe(false);
@@ -97,7 +105,7 @@ describe("what the install refuses before it plans anything", () => {
   });
 
   it("refuses a package built for another host API, before download", () => {
-    const outcome = installFromSource(deps, input({ directory: [{ ...ENTRY, hostApi: { min: 9, max: 10 } }] }));
+    const outcome = installFromSource(deps, input({ directory: [{ ...NPM_ENTRY, hostApi: { min: 9, max: 10 } }] }));
 
     expect(outcome.ok).toBe(false);
     if (!outcome.ok) expect(outcome.code).toBe("HOST_API_MISMATCH");
@@ -287,6 +295,9 @@ describe("what the node reports as installed", () => {
       deps,
       input({
         source: { kind: "local", path: "/tmp/pkg" },
+        // `ENTRY` (not the default `NPM_ENTRY`) is the one directory entry whose own `source` is really `local`
+        // at this path, which is what a local resolution matches against.
+        directory: [ENTRY],
         localDigest: "sha256:local-bytes",
         requirementKey: "cap:local",
       }),

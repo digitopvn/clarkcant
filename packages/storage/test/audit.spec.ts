@@ -47,9 +47,11 @@ function append(overrides: Partial<Parameters<typeof appendAuditEvent>[1]> = {})
 
 describe("what is written down", () => {
   it("applies the migration that adds the table", () => {
-    // 21: this branch's two migrations were renumbered when main took 18, and main's pairing migration then took
-    // 21 rather than the 19 this branch already uses. The schema version is the count of migrations that have run.
-    expect(currentSchemaVersion(db)).toBe(21);
+    // 22: this branch's two migrations were renumbered when main took 18, and main's pairing migration then took
+    // 21 rather than the 19 this branch already uses; migration 22 (backfilling `grantedCapabilities` onto a
+    // pre-existing package generation, M2) is the next one after that. The schema version is the count of
+    // migrations that have run.
+    expect(currentSchemaVersion(db)).toBe(22);
   });
 
   it("reads back newest first, with the fields it was given", () => {

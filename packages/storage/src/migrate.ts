@@ -1078,7 +1078,75 @@ export const MIGRATIONS: readonly Migration[] = [
       `);
     },
   },
+  {
+    version: 22,
+    name: "backfill_generation_granted_capabilities",
+    reversible: false,
+    up: (db) => {
+      /*
+       * Before `grantedCapabilities` existed on `package_generations`, an install granted whatever the package's
+       * manifest requested outright — there was no narrower "derived from policy" set at all, and a frame was
+       * brokered the full `requestedCapabilities` unconditionally. A generation activated under that old code has
+       * no `grantedCapabilities` key in its stored `document` JSON at all, and reading it back now (the schema
+       * requires the field) would silently produce `undefined` at runtime — which then brokers *nothing* to a
+       * widget that was, under the semantics it was actually installed with, entitled to what it asked for.
+       *
+       * The decision here (recorded by the controller reviewing this fix, not invented by this migration) is to
+       * backfill each such row as if it had gone through the plan it actually did: the `install_plans` row this
+       * generation's own package+version last resolved through, read for the `requestedCapabilityRefs` its
+       * document carried, which is the closest honest answer to "what this generation was actually consented for"
+       * under the old semantics — not a fresh policy re-decision, which would use today's policy against
+       * yesterday's install and could grant or deny something the original consent never considered. A generation
+       * with no matching plan row (already superseded and pruned, or never had one) is backfilled to `[]` rather
+       * than guessed at: an empty grant under-serves rather than over-grants, which is the direction a backward-
+       * compatibility gap should err.
+       */
+      const generations = readAll<{ generation_id: string; package_id: string; version: string; document: string }>(
+        db,
+        "SELECT generation_id, package_id, version, document FROM package_generations",
+      );
+
+      for (const row of generations) {
+        let parsedDocument: Record<string, unknown>;
+        try {
+          parsedDocument = JSON.parse(row.document) as Record<string, unknown>;
+        } catch {
+          // A document that does not even parse as JSON is a corruption this migration is not the place to fix;
+          // leave it untouched rather than overwrite it with a guess.
+          continue;
+        }
+        if (Array.isArray(parsedDocument["grantedCapabilities"])) continue;
+
+        const requirementKey = `pkg:${row.package_id}@${row.version}`;
+        const plan = db
+          .prepare(`SELECT document FROM install_plans WHERE requirement_key = ? ORDER BY created_at DESC LIMIT 1`)
+          .get(requirementKey) as { document: string } | undefined;
+
+        let backfilled: unknown[] = [];
+        if (plan !== undefined) {
+          try {
+            const planDocument = JSON.parse(plan.document) as { requestedCapabilityRefs?: unknown };
+            if (Array.isArray(planDocument.requestedCapabilityRefs)) {
+              backfilled = planDocument.requestedCapabilityRefs;
+            }
+          } catch {
+            // Same reasoning as above: an unparseable plan document backfills to `[]` rather than guessing.
+          }
+        }
+
+        parsedDocument["grantedCapabilities"] = backfilled;
+        db.prepare("UPDATE package_generations SET document = ? WHERE generation_id = ?").run(
+          JSON.stringify(parsedDocument),
+          row.generation_id,
+        );
+      }
+    },
+  },
 ];
+
+function readAll<T>(db: Database, sql: string): T[] {
+  return db.prepare(sql).all() as T[];
+}
 
 export interface MigrationResult {
   from: number;

@@ -40,6 +40,7 @@ let services: NodeServices;
 let deps: GatewayDeps;
 let indexPath: string;
 let previousIndex: string | undefined;
+let previousAllowLocalGit: string | undefined;
 let gitSourceUrl: string;
 let gitSourceRef: string;
 let gitSourceDigest: string;
@@ -62,7 +63,9 @@ function buildGitSource(root: string): { url: string; ref: string; digest: strin
   run("add", ".");
   run("commit", "--quiet", "-m", "init");
   const ref = spawnSync("git", ["-C", repo, "rev-parse", "HEAD"]).stdout.toString().trim();
-  return { url: repo, ref, digest: digestOfDirectory(repo, { exclude: [".git"] }) };
+  const digest = digestOfDirectory(repo, { exclude: [".git"] });
+  if (!digest.ok) throw new Error(digest.message);
+  return { url: repo, ref, digest: digest.digest };
 }
 
 function entry(overrides: Record<string, unknown> = {}): Record<string, unknown> {
@@ -126,11 +129,18 @@ beforeEach(() => {
   deps = { services, now: () => AT as never };
   previousIndex = process.env["CC_DIRECTORY_INDEX"];
   process.env["CC_DIRECTORY_INDEX"] = indexPath;
+  // The fixture git "remote" is a bare filesystem path, which `fetchGitArtifact` refuses by default (C1: a
+  // directory listing is untrusted, and only a test harness or an explicit local-install flow may fetch from a
+  // local path). This test IS that explicit opt-in.
+  previousAllowLocalGit = process.env["CC_ALLOW_LOCAL_GIT_SOURCES"];
+  process.env["CC_ALLOW_LOCAL_GIT_SOURCES"] = "1";
 });
 
 afterEach(() => {
   if (previousIndex === undefined) delete process.env["CC_DIRECTORY_INDEX"];
   else process.env["CC_DIRECTORY_INDEX"] = previousIndex;
+  if (previousAllowLocalGit === undefined) delete process.env["CC_ALLOW_LOCAL_GIT_SOURCES"];
+  else process.env["CC_ALLOW_LOCAL_GIT_SOURCES"] = previousAllowLocalGit;
   services.runtime.close();
   rmSync(dir, { recursive: true, force: true });
 });

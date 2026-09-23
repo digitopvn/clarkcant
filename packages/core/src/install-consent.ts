@@ -23,7 +23,10 @@ import { decideExecution } from "./execution-policy.ts";
 
 const HIGH_RISK_LANES: ReadonlySet<RiskLane> = new Set<RiskLane>(["service", "trusted-native"]);
 
-function effectCategoryForLane(lane: RiskLane): EffectCategory {
+/** The effect category a capability at this risk lane is decided in — exported so a caller deriving a grant can
+ * route a still-pending capability through `requestApproval` under the same category the grant decision itself
+ * used, rather than guessing a different one. */
+export function effectCategoryForLane(lane: RiskLane): EffectCategory {
   return HIGH_RISK_LANES.has(lane) ? "destructive" : "local-write";
 }
 

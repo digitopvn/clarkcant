@@ -1,3 +1,4 @@
+import { join } from "node:path";
 
 import {
   type AppIntent,
@@ -138,6 +139,9 @@ function resolveLiveWidget(
   const isolated = findIsolatedFrame({
     directory: index.kind === "configured" ? index.entries : [],
     widgetId: instance.definitionRef.id,
+    // A git/npm entry this node has fetched is served from its cache path exactly like a local package (H1); the
+    // cache root here must match the one the install route fetched into.
+    cacheRoot: join(runtime.dataDir, "package-cache"),
   });
   if (isolated.ok) {
     /*

@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { join } from "node:path";
 
 import { nowInstant } from "@clarkcant/contracts";
 import {
@@ -10,6 +11,7 @@ import {
   readPackage,
   readPackageFile,
   resolveAppOrigin,
+  resolveLocalSource,
   widgetDocument,
   widgetDocumentPolicy,
 } from "@clarkcant/core";
@@ -230,7 +232,13 @@ export async function handlePackageRoutes(deps: PackageRouteDeps): Promise<Gatew
       return fail(404, "NOT_IN_DIRECTORY", `${packageId}@${version} is not in the directory`);
     }
 
-    const file = readPackageFile({ entry, relativePath: segments.slice(4).join("/") });
+    // A git/npm entry this node has already fetched is served from its cache path exactly like a local package
+    // (H1): the digest was already verified against the directory's published digest at fetch time, so there is
+    // nothing more to check here, only where to read the bytes from.
+    const resolvedSource = resolveLocalSource(entry, join(runtime.dataDir, "package-cache"));
+    const entry_ = resolvedSource === entry.source ? entry : { ...entry, source: resolvedSource };
+
+    const file = readPackageFile({ entry: entry_, relativePath: segments.slice(4).join("/") });
     if (!file.ok) {
       return fail(
         file.code === "FILE_NOT_FOUND" ? 404 : file.code === "FILE_OUTSIDE_PACKAGE" ? 403 : 409,
@@ -260,9 +268,9 @@ export async function handlePackageRoutes(deps: PackageRouteDeps): Promise<Gatew
       // network origin gets that origin in `connect-src`, and a widget that asked for nothing still gets
       // `'none'`, same as before this package's manifest was read here.
       // `readPackageFile` above only succeeds for a `kind: "local"` entry (see its own `NOT_A_LOCAL_PACKAGE`
-      // refusal), so `entry.source` is a local source by the time this line runs.
+      // refusal), so `entry_.source` is a local source by the time this line runs.
       const allowedOrigins =
-        entry.source.kind === "local" ? (readPackage(entry.source.path).manifest.permissions?.networkOrigins ?? []) : [];
+        entry_.source.kind === "local" ? (readPackage(entry_.source.path).manifest.permissions?.networkOrigins ?? []) : [];
       const document = widgetDocument({
         html: file.bytes.toString("utf8"),
         appOrigin: appOriginOutcome.origin,

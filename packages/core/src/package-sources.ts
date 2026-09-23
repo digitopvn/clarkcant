@@ -77,9 +77,12 @@ export function resolvePackageSource(input: ResolveInput): ResolveResult {
         message: `git ref "${source.ref}" is not a commit id or a version tag, so it does not name one revision`,
       };
     }
-    const entry = findEntry(input, source.url);
+    const entry = findEntry(
+      input,
+      (candidate) => candidate.source.kind === "git" && candidate.source.url === source.url && candidate.source.ref === source.ref,
+    );
     if (entry === undefined) {
-      return { ok: false, code: "NOT_IN_DIRECTORY", message: `${source.url} is not in the directory` };
+      return { ok: false, code: "NOT_IN_DIRECTORY", message: `${source.url}#${source.ref} is not in the directory` };
     }
     return finish(input, entry, `git ${source.url}@${source.ref}`, "curated-registry", `${source.url}#${source.ref}`);
   }
@@ -92,7 +95,7 @@ export function resolvePackageSource(input: ResolveInput): ResolveResult {
         message: `npm version "${source.version}" is a range, so it does not name one artifact`,
       };
     }
-    const entry = findEntry(input, source.name);
+    const entry = findEntry(input, (candidate) => candidate.source.kind === "npm" && candidate.source.name === source.name);
     if (entry === undefined) {
       return { ok: false, code: "NOT_IN_DIRECTORY", message: `${source.name} is not in the directory` };
     }
@@ -145,8 +148,16 @@ export function resolvePackageSource(input: ResolveInput): ResolveResult {
   };
 }
 
-function findEntry(input: ResolveInput, key: string): DirectoryEntry | undefined {
-  return input.directory?.find((entry) => entry.packageId === key);
+/**
+ * Finds a directory entry by its actual source, not by `packageId`.
+ *
+ * `packageId` is a display label a publisher chose; matching a git source by `packageId === source.url`, or an npm
+ * source by `packageId === source.name`, only ever worked when a publisher happened to set the id to the url/name.
+ * A directory that named its git package `com.example.calendar` while listing `source.url` as the real git remote
+ * would never resolve — the caller passes a matcher over the source itself instead.
+ */
+function findEntry(input: ResolveInput, matches: (entry: DirectoryEntry) => boolean): DirectoryEntry | undefined {
+  return input.directory?.find(matches);
 }
 
 function finish(

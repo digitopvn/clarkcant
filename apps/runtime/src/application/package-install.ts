@@ -1,10 +1,12 @@
 import { join } from "node:path";
 
 import {
+  capabilityRefSchema,
   entryFitsHost,
   instantSchema,
   nowInstant,
   platformForHost,
+  riskLaneFor,
   type CapabilityRef,
   type DirectoryEntry,
 } from "@clarkcant/contracts";
@@ -27,11 +29,13 @@ import {
   decideExecution,
   deriveGrantedCapabilities,
   directoryIndexPath,
+  effectCategoryForLane,
   fetchGitArtifact,
   fetchNpmArtifact,
   installFromEntry,
   readDirectoryIndex,
   readExecutionPolicy,
+  readPackage,
   recordEffectExecution,
   requestApproval,
 } from "@clarkcant/core";
@@ -94,6 +98,15 @@ export type PackageInstallOutcome =
         /** Why the locked-build path would refuse this closure, when it would. */
         buildRefusal?: string;
       } | null;
+      /**
+       * Capabilities the manifest requested that were not granted (M1): each is reported here rather than
+       * silently dropped, split by why. `pendingCapabilities` went through the same approval path
+       * (`requestApproval`) an install itself would take when the policy is `ask` — an approval record now exists
+       * for each one, under its own operation digest, for a caller to act on. `deniedCapabilities` were refused
+       * outright by policy and have no approval to grant.
+       */
+      pendingCapabilities: readonly { ref: string; approvalId: string }[];
+      deniedCapabilities: readonly string[];
     };
 
 /**
@@ -204,7 +217,15 @@ export async function fetchRemoteArtifact(entry: DirectoryEntry, cacheRoot: stri
 
   const fetched =
     entry.source.kind === "git"
-      ? fetchGitArtifact({ url: entry.source.url, ref: entry.source.ref, cacheRoot })
+      ? await fetchGitArtifact({
+          url: entry.source.url,
+          ref: entry.source.ref,
+          cacheRoot,
+          // Off by default (C1): a production directory listing is untrusted input, and a bare local path or
+          // `file://` url in it must never be fetched. The one caller allowed to opt in is a test harness that
+          // sets this explicitly, or a future "install from a path on this machine" flow that is not this one.
+          allowLocalPaths: process.env["CC_ALLOW_LOCAL_GIT_SOURCES"] === "1",
+        })
       : await fetchNpmArtifact({ name: entry.source.name, version: entry.source.version, cacheRoot });
 
   if (!fetched.ok) {
@@ -330,21 +351,11 @@ export async function installPackage(
   }
 
   /*
-   * Autonomy without a record is the one combination this node refuses, the same way `run_command` does: an effect
-   * nobody approved and nobody can find afterwards is worse than a question. Recorded before the install starts,
-   * so one that hangs or dies still shows that it began.
-   */
-  recordEffectExecution(coordination, {
-    principalId,
-    mode: policy.mode,
-    decision,
-    category: "local-write",
-    operationDigest: entry.digest,
-    description: `install ${entry.packageId}@${entry.version}`,
-  });
-
-  /*
-   * A git or npm source is fetched here, to a node-owned cache directory, before anything else touches it.
+   * A git or npm source is fetched here, to a node-owned cache directory, before anything else touches it — and,
+   * per M4, before the effect is recorded as executed. Fetching can fail (a dead remote, a digest mismatch, a
+   * refused url) for reasons that have nothing to do with this node's own decision to install, and an audit trail
+   * that already says "executed" for a fetch that never produced bytes would be false. What "autonomy without a
+   * record" (below) actually guards is the effect this node *performed*, not merely attempted.
    *
    * `resolvePackageSource` (inside `installFromEntry`) only ever compares against the digest the *directory*
    * published — a claim the publisher made, not bytes this node looked at. Fetching now and re-pointing the
@@ -357,6 +368,21 @@ export async function installPackage(
   if (!fetched.ok) return { kind: "refused", status: fetched.status, code: fetched.code, message: fetched.message };
   const { entry: resolvedEntry, localDigest: fetchedLocalDigest } = fetched;
   const directoryForInstall = index.entries.map((candidate) => (candidate === entry ? resolvedEntry : candidate));
+
+  /*
+   * Autonomy without a record is the one combination this node refuses, the same way `run_command` does: an effect
+   * nobody approved and nobody can find afterwards is worse than a question. Recorded only once the artifact this
+   * node is about to install is actually in hand (M4) — a fetch failure above returns before this line runs, and
+   * is never recorded as an executed effect.
+   */
+  recordEffectExecution(coordination, {
+    principalId,
+    mode: policy.mode,
+    decision,
+    category: "local-write",
+    operationDigest: entry.digest,
+    description: `install ${entry.packageId}@${entry.version}`,
+  });
 
   /*
    * Freeze the closure before anything is installed, and take the locked-build path's admission of it.
@@ -375,22 +401,67 @@ export async function installPackage(
   const { lock, buildRefusal } = frozen.frozen;
 
   /*
-   * The granted set, derived from what was requested rather than trusted from the request body (issue #93, P1):
-   * a client declaring its own grants would let a forged request body become authority. `deriveGrantedCapabilities`
-   * asks the same execution policy this install itself was just decided against, per requested capability, in the
-   * risk category the package's own strongest facet lane implies — so a `declarative`/`isolated-ui` package's
-   * requests are granted by the same explicit "install X" intent that authorized the install, and a
-   * `service`/`trusted-native` package's requests are only granted when the policy would execute that riskier
-   * category outright. Anything the policy would ask about, or refuse, is left out of the granted set rather than
-   * answered here.
+   * What was actually requested: the fetched package's own manifest, never the HTTP request body (H2).
+   *
+   * `request.requestedCapabilityRefs` is a value the *caller* sent — a client asking to install a package can put
+   * anything in its own request body, so treating it as "what the package requested" would let a forged request
+   * body become the very set of capabilities this step grants. The manifest inside the artifact this node just
+   * fetched and digest-verified (`resolvedEntry.source.path`) is the one thing here that cannot be a forgery: it
+   * either produced the bytes the directory's published digest names, or the install already refused above. Only a
+   * `local` entry has a manifest this node can read; a resolved entry is always `local` by this point (the fetch
+   * step re-points git/npm sources at the cache path), so this is not a narrowing beyond what already had to
+   * succeed. Values that do not parse as a `CapabilityRef` are dropped rather than trusted — the manifest is
+   * package-authored content, not a schema-checked boundary.
+   */
+  const manifestRequestedCapabilities: readonly CapabilityRef[] =
+    resolvedEntry.source.kind === "local"
+      ? (readPackage(resolvedEntry.source.path).manifest.requestedCapabilities ?? [])
+          .map((ref) => capabilityRefSchema.safeParse(ref))
+          .filter((parsed): parsed is { success: true; data: CapabilityRef } => parsed.success)
+          .map((parsed) => parsed.data)
+      : [];
+
+  /*
+   * The risk tier the granted-set decision is made in, computed from the package's own facet isolations rather
+   * than trusted from the directory's `riskTier` claim alone (H3). `riskLaneFor` takes the strongest of a list, so
+   * folding the directory's claim into that same list means the claim can only ever raise the computed tier, never
+   * lower it — a directory that under-claimed a native facet as `declarative` cannot use that claim to grant
+   * capabilities at a weaker risk category than the facets it actually isolates.
+   */
+  const computedRiskTier = riskLaneFor([...entry.isolations.map((facet) => facet.isolation), entry.riskTier]);
+
+  /*
+   * The granted set, derived from the manifest's request rather than trusted from the request body (issue #93,
+   * P1). `deriveGrantedCapabilities` asks the same execution policy this install itself was just decided against,
+   * per requested capability, in the risk category the package's own strongest facet lane implies — so a
+   * `declarative`/`isolated-ui` package's requests are granted by the same explicit "install X" intent that
+   * authorized the install, and a `service`/`trusted-native` package's requests are only granted when the policy
+   * would execute that riskier category outright. A capability the policy would ask about (M1) is surfaced back to
+   * the caller as pending rather than silently dropped, and one the policy denies is surfaced as denied.
    */
   const grant = deriveGrantedCapabilities({
-    requested: (request.requestedCapabilityRefs ?? []) as readonly CapabilityRef[],
-    riskTier: entry.riskTier,
+    requested: manifestRequestedCapabilities,
+    riskTier: computedRiskTier,
     policy,
     explicitUserIntent: true,
     artifactDigest: entry.digest,
   });
+
+  /*
+   * A capability the policy would ask about goes through the same approval path an install itself takes when the
+   * policy is `ask` (M1): a real `requestApproval` record, not a value quietly folded out of the response. The
+   * install still proceeds without it — the package activates with the narrower granted set — and the caller can
+   * see, and later approve, exactly what is still pending.
+   */
+  const pendingCapabilities = grant.needsApproval.map((ref) => ({
+    ref,
+    approvalId: requestApproval(coordination, {
+      operationDigest: `${entry.digest}:${ref}`,
+      operationDescription: `cấp quyền ${ref} cho ${entry.displayName} ${entry.version}`,
+      effectCategory: effectCategoryForLane(computedRiskTier),
+      ttlMs: INSTALL_APPROVAL_TTL_MS,
+    }).approvalId,
+  }));
 
   const outcome = installFromEntry(coordination, {
     entry: resolvedEntry,
@@ -429,5 +500,7 @@ export async function installPackage(
           buildable: buildRefusal === undefined,
           ...(buildRefusal === undefined ? {} : { buildRefusal: buildRefusal.message }),
         },
+    pendingCapabilities,
+    deniedCapabilities: grant.denied,
   };
 }
