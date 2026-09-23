@@ -133,6 +133,10 @@ test("a spoken settings-open command reaches control_app and lands on the same p
     return selectedTab(page);
   })();
 
+  // Close settings so the next click on a suggestion works.
+  await page.keyboard.press("Escape");
+  await expect(page.locator('[role="tabpanel"]')).not.toBeVisible({ timeout: 5_000 });
+
   // Go back to conversation and open voice
   await startConversation(page);
   await scriptLiveVoice(request, "mở cài đặt");
