@@ -104,7 +104,8 @@ test("replace and remove both work, and removing drops the connected status", as
   // recoverable from anything on screen.
   await gemini.locator("[data-credential-field='gemini']").fill("gemini-test-key-fghij");
   await gemini.locator("[data-credential-replace='gemini']").click();
-  await expect(gemini.locator("[data-credential-status-message='gemini']")).toBeVisible();
+  // The field empties once the node has taken the value, which is the moment the value must be gone.
+  await expect(gemini.locator("[data-credential-field='gemini']")).toHaveValue("", { timeout: 10_000 });
   expect((await page.content()).includes("gemini-test-key-fghij")).toBe(false);
 
   await gemini.locator("[data-credential-remove='gemini']").click();
