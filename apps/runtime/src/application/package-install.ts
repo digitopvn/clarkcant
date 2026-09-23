@@ -9,6 +9,9 @@ import {
   riskLaneFor,
   type CapabilityRef,
   type DirectoryEntry,
+  type EffectCategory,
+  type PackageGeneration,
+  type Principal,
 } from "@clarkcant/contracts";
 import {
   artifactRequest,
@@ -25,7 +28,9 @@ import {
 } from "@clarkcant/capability-host";
 import {
   HOST_API_VERSION,
+  activeGeneration,
   artifactMatchesPlan,
+  decideApproval,
   decideExecution,
   deriveGrantedCapabilities,
   directoryIndexPath,
@@ -38,8 +43,9 @@ import {
   readPackage,
   recordEffectExecution,
   requestApproval,
+  resolveLocalSource,
 } from "@clarkcant/core";
-import { type Database } from "@clarkcant/storage";
+import { type Database, oneRow, parseJson, toJson } from "@clarkcant/storage";
 
 /**
  * Installing a package a directory listed.
@@ -518,4 +524,254 @@ export async function installPackage(
     pendingCapabilities,
     deniedCapabilities: grant.denied,
   };
+}
+
+/* ------------------------------------------------------------------ *
+ * Resolving a pending capability approval (N1)
+ * ------------------------------------------------------------------ */
+
+/**
+ * The install seam's own `operationDigest` for a pending capability, built and consumed only here:
+ * `${entry.digest}:${ref}`. `entry.digest` is always `sha256:<hex>` (`digestOfDirectory`,
+ * `package-fetch.ts`), which never itself contains a third `:`, and `capabilityRefSchema` refuses a
+ * `:` in a ref — so splitting on the first two `:` is unambiguous rather than a guess.
+ */
+function parseCapabilityOperationDigest(operationDigest: string): { digest: string; ref: CapabilityRef } | undefined {
+  const firstColon = operationDigest.indexOf(":");
+  const secondColon = operationDigest.indexOf(":", firstColon + 1);
+  if (firstColon === -1 || secondColon === -1) return undefined;
+  const digest = operationDigest.slice(0, secondColon);
+  const ref = capabilityRefSchema.safeParse(operationDigest.slice(secondColon + 1));
+  return ref.success ? { digest, ref: ref.data } : undefined;
+}
+
+export type CapabilityApprovalDecisionOutcome =
+  | {
+      ok: true;
+      decision: "granted" | "denied";
+      ref: CapabilityRef;
+      /** The generation the capability was granted to, when one was found for this digest on this node. */
+      generationId?: string;
+      /** True when this decision was already recorded — the same decision replayed rather than applied twice. */
+      alreadyDecided: boolean;
+    }
+  | {
+      ok: false;
+      status: number;
+      code:
+        | "APPROVAL_EXPIRED"
+        | "APPROVAL_FORGED"
+        | "APPROVAL_ALREADY_DECIDED"
+        | "NOT_HOME_AUTHORITY"
+        | "NOT_A_CAPABILITY_APPROVAL";
+      message: string;
+    };
+
+/**
+ * Resolve a pending install-capability approval: `POST /packages/approvals/:id/decision`.
+ *
+ * Node-scoped, not conversation-scoped — this approval has no `taskId`, because it was never a step in a
+ * dispatched task; it is the install route's own record of a capability the policy asked about (M1/N1). It
+ * reuses `decideApproval` (the same decide/expected-revision semantics `/conversations/:id/approvals/:id/decide`
+ * uses) rather than a second decision routine, and adds only what a capability approval needs beyond a plain
+ * one: on grant, the capability is added to the generation that requested it, persisted, and audited; on deny,
+ * the approval record itself (already `denied`) is the whole answer, since nothing runs for a capability nobody
+ * granted.
+ *
+ * Idempotent on a repeated submission of the *same* decision: `decideApproval` refuses a second decide with
+ * `APPROVAL_ALREADY_DECIDED`, and a caller retrying the exact call it already made (a network retry, a double
+ * click) is not the "someone is trying to flip an already-decided approval" case that refusal exists for. This
+ * checks the stored decision first and returns the same success rather than an error when it already matches.
+ */
+export function decideInstallCapabilityApproval(
+  deps: PackageInstallDeps,
+  input: {
+    approvalId: string;
+    decision: "granted" | "denied";
+    decidingPrincipal: Principal;
+    /** The digest the approver actually saw, so an approved capability cannot be swapped (same rule as any approval). */
+    seenOperationDigest: string;
+  },
+): CapabilityApprovalDecisionOutcome {
+  const { runtime, conductor } = deps;
+  const coordination = { db: runtime.db, nodeId: runtime.identity.nodeId, now: () => nowInstant(), newId: conductor.newId };
+
+  /*
+   * Not wrapped in this function's own transaction: `decideApproval` already commits the decision atomically
+   * (it is the shared core this reuses rather than copies), and the grant-persist-and-audit step below only runs
+   * once that has already committed — nesting a second transaction around it would implicitly commit the first
+   * (SQLite has no true nested transactions), which is the durability bug this avoids rather than causes.
+   */
+  {
+    const decided = decideApproval(coordination, {
+      approvalId: input.approvalId,
+      decision: input.decision,
+      decidingPrincipal: input.decidingPrincipal,
+      seenOperationDigest: input.seenOperationDigest,
+    });
+
+    if (!decided.ok) {
+      if (decided.code === "APPROVAL_ALREADY_DECIDED") {
+        const row = oneRow<{ decision: string; operation_digest: string }>(
+          runtime.db,
+          "SELECT decision, operation_digest FROM approvals WHERE approval_id = ?",
+          input.approvalId,
+        );
+        if (row !== undefined && row.decision === input.decision && row.operation_digest === input.seenOperationDigest) {
+          const parsed = parseCapabilityOperationDigest(row.operation_digest);
+          if (parsed === undefined) {
+            return {
+              ok: false as const,
+              status: 400,
+              code: "NOT_A_CAPABILITY_APPROVAL" as const,
+              message: "this approval does not name a package capability",
+            };
+          }
+          const generation = findGenerationByDigest(runtime.db, runtime.identity.nodeId, parsed.digest);
+          return {
+            ok: true as const,
+            decision: input.decision,
+            ref: parsed.ref,
+            ...(generation === undefined ? {} : { generationId: generation.generationId }),
+            alreadyDecided: true,
+          };
+        }
+      }
+      return { ok: false as const, status: 409, code: decided.code, message: decided.message };
+    }
+
+    const parsed = parseCapabilityOperationDigest(decided.approval.operationDigest);
+    if (parsed === undefined) {
+      return {
+        ok: false as const,
+        status: 400,
+        code: "NOT_A_CAPABILITY_APPROVAL" as const,
+        message: "this approval does not name a package capability",
+      };
+    }
+
+    const generation = findGenerationByDigest(runtime.db, runtime.identity.nodeId, parsed.digest);
+    // `?? []` rather than trusting the field is an array: a generation activated before N4's field existed
+    // carries the `null` marker here too, and this is a write path, not `resolveGenerationGrantedCapabilities`'s
+    // own read path, so it starts the (rare) legacy case from an empty set rather than reading a manifest.
+    const currentGrants = generation?.grantedCapabilities ?? [];
+    if (input.decision === "granted" && generation !== undefined && !currentGrants.includes(parsed.ref)) {
+      const updated: PackageGeneration = {
+        ...generation,
+        grantedCapabilities: [...currentGrants, parsed.ref].sort(),
+      };
+      runtime.db
+        .prepare("UPDATE package_generations SET document = ? WHERE generation_id = ?")
+        .run(toJson(updated), updated.generationId);
+      const policy = readExecutionPolicy({ db: runtime.db, now: () => nowInstant() }, runtime.identity.ownerPrincipalId);
+      recordEffectExecution(coordination, {
+        principalId: input.decidingPrincipal.principalId,
+        mode: policy.mode,
+        decision: { kind: "execute", reason: "the user approved this capability", audit: true },
+        category: decided.approval.effectCategory as EffectCategory,
+        operationDigest: decided.approval.operationDigest,
+        description: `grant ${parsed.ref} to ${updated.packageId}@${updated.version}`,
+      });
+    }
+
+    return {
+      ok: true as const,
+      decision: input.decision,
+      ref: parsed.ref,
+      ...(generation === undefined ? {} : { generationId: generation.generationId }),
+      alreadyDecided: false,
+    };
+  }
+}
+
+/** The active generation on this node whose digest is the one a capability approval named. Node-scoped by construction. */
+function findGenerationByDigest(db: Database, nodeId: string, digest: string): PackageGeneration | undefined {
+  const row = oneRow<{ document: string }>(
+    db,
+    "SELECT document FROM package_generations WHERE node_id = ? AND digest = ? AND superseded_at IS NULL",
+    nodeId,
+    digest,
+  );
+  return row === undefined ? undefined : parseJson<PackageGeneration>(row.document, "package_generations.document");
+}
+
+/* ------------------------------------------------------------------ *
+ * Lazily resolving a legacy generation's grantedCapabilities (N4)
+ * ------------------------------------------------------------------ */
+
+/**
+ * A `package_generations` row's `grantedCapabilities`, allowing the `null` marker migration 22 writes for a
+ * generation that predates the field — everywhere else in this codebase that reads a generation off the raw
+ * `document` column has to allow for it too, rather than trusting `PackageGeneration`'s schema type (which,
+ * correctly, only describes a generation this code itself just activated).
+ */
+export type LegacyPackageGeneration = Omit<PackageGeneration, "grantedCapabilities"> & {
+  grantedCapabilities: readonly CapabilityRef[] | null;
+};
+
+/**
+ * Resolve a generation's `grantedCapabilities`, lazily backfilling the pre-N4-field case rather than trusting it
+ * was already migrated to a real array.
+ *
+ * `null` (migration 22's marker, see its comment in `packages/storage/src/migrate.ts`) means this generation
+ * activated before this field existed, back when an install granted whatever the manifest requested outright.
+ * The honest resolution for that generation, read now rather than guessed at migration time, is exactly that:
+ * the package's own manifest `requestedCapabilities`, filtered through `capabilityRefSchema` the same way the
+ * current install path treats a manifest's own request (never trusted as authority beyond what parses). This
+ * only reads a manifest this node can already reach — a local install directly, or a git/npm source already
+ * fetched into this node's own cache (`resolveLocalSource`) — and resolves to `[]` without persisting when it
+ * cannot, so a package this node cannot currently read is under-served rather than granted a guess.
+ *
+ * Resolved once: the result is written back onto the generation's own row, so a second call for the same
+ * generation reads the array directly and never re-reads the manifest.
+ */
+export function resolveGenerationGrantedCapabilities(
+  deps: PackageInstallDeps,
+  generation: LegacyPackageGeneration,
+): readonly CapabilityRef[] {
+  if (generation.grantedCapabilities !== null) return generation.grantedCapabilities;
+
+  const { runtime } = deps;
+  const index = readDirectoryIndex(directoryIndexPath(process.env));
+  const entry =
+    index.kind === "configured"
+      ? index.entries.find(
+          (candidate) => candidate.packageId === generation.packageId && candidate.version === generation.version,
+        )
+      : undefined;
+  if (entry === undefined) return [];
+
+  const cacheRoot = join(runtime.dataDir, "package-cache");
+  const resolvedSource = resolveLocalSource(entry, cacheRoot);
+  if (resolvedSource.kind !== "local") return []; // Not fetched onto this node (yet); nothing to read a manifest from.
+
+  const requested = readPackage(resolvedSource.path)
+    .manifest.requestedCapabilities?.map((ref) => capabilityRefSchema.safeParse(ref))
+    .filter((parsed): parsed is { success: true; data: CapabilityRef } => parsed?.success === true)
+    .map((parsed) => parsed.data);
+  const resolved: readonly CapabilityRef[] = requested ?? [];
+
+  const updated: PackageGeneration = { ...generation, grantedCapabilities: [...resolved] };
+  runtime.db
+    .prepare("UPDATE package_generations SET document = ? WHERE generation_id = ? AND node_id = ?")
+    .run(toJson(updated), generation.generationId, runtime.identity.nodeId);
+
+  return resolved;
+}
+
+/** `activeGeneration`, then resolved through `resolveGenerationGrantedCapabilities` — the one call site every
+ * reader of "what is this node's active generation for this package granted" should use instead of reading
+ * `.grantedCapabilities` off `activeGeneration`'s own result directly, which does not allow for the legacy
+ * `null` marker. */
+export function activeGenerationWithResolvedGrants(
+  deps: PackageInstallDeps,
+  packageId: string,
+): PackageGeneration | undefined {
+  const generation = activeGeneration(
+    { db: deps.runtime.db, nodeId: deps.runtime.identity.nodeId, now: nowInstant, newId: deps.conductor.newId },
+    packageId,
+    deps.runtime.identity.nodeId,
+  ) as LegacyPackageGeneration | undefined;
+  if (generation === undefined) return undefined;
+  return { ...generation, grantedCapabilities: [...resolveGenerationGrantedCapabilities(deps, generation)] };
 }

@@ -14,7 +14,6 @@ import {
   surfaceCompositionSpecSchema,
 } from "@clarkcant/contracts";
 import {
-  activeGeneration,
   brokeredCapabilities,
   claimLiveOwner,
   decideApproval,
@@ -46,6 +45,7 @@ import {
 } from "@clarkcant/storage";
 
 import { type AppIntentDeps, decideAppIntent, mintConfirmation } from "../app-intents.ts";
+import { activeGenerationWithResolvedGrants } from "../application/package-install.ts";
 import { invokeWidgetAction } from "../application/widget-actions.ts";
 import { resolveAttachmentRefs } from "../attachments.ts";
 import { nodeBackgroundSessions } from "../background-sessions.ts";
@@ -154,10 +154,13 @@ function resolveLiveWidget(
      * frame with no active generation on record (should not happen for a package this node just resolved a frame
      * for, but is not proven impossible) is brokered nothing rather than the unchecked request.
      */
-    const generation = activeGeneration(
-      { db: runtime.db, nodeId: runtime.identity.nodeId, now: nowInstant, newId: () => "" },
+    // `activeGenerationWithResolvedGrants` rather than `activeGeneration` directly: a generation activated
+    // before `grantedCapabilities` existed on the schema carries a `null` marker (migration 22, N4), and this is
+    // exactly the read this generation's frame grant depends on — resolving it here is what "a frame picks up
+    // its grant on next mount" means for a legacy generation, not only for one grant/deny just resolved.
+    const generation = activeGenerationWithResolvedGrants(
+      { runtime: { db: runtime.db, identity: runtime.identity, dataDir: runtime.dataDir }, conductor: services.conductor },
       isolated.packageId,
-      runtime.identity.nodeId,
     );
     const grantedForFrame = brokeredCapabilities(isolated.requestedCapabilities, generation?.grantedCapabilities);
 

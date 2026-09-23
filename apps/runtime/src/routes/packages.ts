@@ -17,7 +17,7 @@ import {
 } from "@clarkcant/core";
 import { type Database } from "@clarkcant/storage";
 
-import { installPackage } from "../application/package-install.ts";
+import { decideInstallCapabilityApproval, installPackage } from "../application/package-install.ts";
 import { type GatewayRequest, type GatewayResponse, fail, json, readJson } from "./http.ts";
 
 /**
@@ -201,9 +201,11 @@ export async function handlePackageRoutes(deps: PackageRouteDeps): Promise<Gatew
       lock: outcome.lock,
       /*
        * A capability the policy would ask about, or refused outright, named in the response rather than folded
-       * into "installed" as if it were granted. There is no UI surface for a pending capability approval today
-       * (N1), so this plain-language note is the only place a caller can learn one exists at all until one is
-       * built; the structured arrays beside it are what a future UI or CLI would read instead of parsing prose.
+       * into "installed" as if it were granted. There is no UI control for a pending capability approval today
+       * (AGENTS: no control before its real action exists), so this plain-language note names the route that
+       * already resolves one — `POST /packages/approvals/:id/decision` — as the only place a caller can act on it
+       * until a UI is built; the structured arrays beside it are what that future UI or a CLI would read instead
+       * of parsing prose.
        */
       pendingCapabilities: outcome.pendingCapabilities,
       deniedCapabilities: outcome.deniedCapabilities,
@@ -213,7 +215,7 @@ export async function handlePackageRoutes(deps: PackageRouteDeps): Promise<Gatew
             note: [
               outcome.pendingCapabilities.length === 0
                 ? undefined
-                : `${String(outcome.pendingCapabilities.length)} capability request(s) need approval before they work: ${outcome.pendingCapabilities.map((pending) => pending.ref).join(", ")}. Decide each with its approvalId.`,
+                : `${String(outcome.pendingCapabilities.length)} capability request(s) need approval before they work: ${outcome.pendingCapabilities.map((pending) => `${pending.ref} (approvalId ${pending.approvalId})`).join(", ")}. Resolve each with POST /packages/approvals/:id/decision.`,
               outcome.deniedCapabilities.length === 0
                 ? undefined
                 : `${String(outcome.deniedCapabilities.length)} capability request(s) were denied by policy: ${outcome.deniedCapabilities.join(", ")}.`,
@@ -221,6 +223,51 @@ export async function handlePackageRoutes(deps: PackageRouteDeps): Promise<Gatew
               .filter((line): line is string => line !== undefined)
               .join(" "),
           }),
+    });
+  }
+
+  /*
+   * POST /packages/approvals/:id/decision
+   *
+   * Resolving a pending install-capability approval (N1). Node-scoped rather than conversation-scoped, because
+   * this approval was never a step in a dispatched task — it is `installPackage`'s own record of a capability the
+   * policy asked about. Owner-authenticated the same way the install route above is: the gateway's own token
+   * check already ran before this route is reached, and the deciding principal is built from that authenticated
+   * identity, never from the request body.
+   */
+  if (
+    segments.length === 4 &&
+    segments[0] === "packages" &&
+    segments[1] === "approvals" &&
+    segments[3] === "decision" &&
+    request.method === "POST"
+  ) {
+    const approvalId = segments[2];
+    const parsed = readJson(request);
+    if (!parsed.ok) return parsed.response;
+    const decisionValue = parsed.value.decision;
+    const decision = decisionValue === "granted" || decisionValue === "denied" ? decisionValue : undefined;
+    const digest = typeof parsed.value.digest === "string" ? parsed.value.digest : "";
+    if (approvalId === undefined || decision === undefined || digest === "") {
+      return fail(400, "INVALID_SCHEMA", "a decision must carry decision: granted|denied and the digest it was shown");
+    }
+
+    const decided = decideInstallCapabilityApproval(
+      { runtime, conductor: services.conductor },
+      {
+        approvalId,
+        decision,
+        decidingPrincipal: { principalId: runtime.identity.ownerPrincipalId, kind: "user", nodeId: runtime.identity.nodeId },
+        seenOperationDigest: digest,
+      },
+    );
+    if (!decided.ok) return fail(decided.status, decided.code, decided.message);
+
+    return json(200, {
+      decision: decided.decision,
+      ref: decided.ref,
+      alreadyDecided: decided.alreadyDecided,
+      ...(decided.generationId === undefined ? {} : { generationId: decided.generationId }),
     });
   }
 

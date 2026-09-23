@@ -1080,30 +1080,28 @@ export const MIGRATIONS: readonly Migration[] = [
   },
   {
     version: 22,
-    name: "backfill_generation_granted_capabilities",
+    name: "mark_generation_granted_capabilities_unresolved",
     reversible: false,
     up: (db) => {
       /*
        * Before `grantedCapabilities` existed on `package_generations`, an install granted whatever the package's
-       * manifest requested outright — there was no narrower "derived from policy" set at all, and a frame was
-       * brokered the full `requestedCapabilities` unconditionally. A generation activated under that old code has
-       * no `grantedCapabilities` key in its stored `document` JSON at all, and reading it back now (the schema
-       * requires the field) would silently produce `undefined` at runtime — which then brokers *nothing* to a
-       * widget that was, under the semantics it was actually installed with, entitled to what it asked for.
+       * manifest requested outright — there was no narrower "derived from policy" set at all. A generation
+       * activated under that old code has no `grantedCapabilities` key in its stored `document` JSON at all, and
+       * reading it back now (the schema requires the field) would silently produce `undefined` at runtime.
        *
-       * The decision here (recorded by the controller reviewing this fix, not invented by this migration) is to
-       * backfill each such row as if it had gone through the plan it actually did: the `install_plans` row this
-       * generation's own package+version last resolved through, read for the `requestedCapabilityRefs` its
-       * document carried, which is the closest honest answer to "what this generation was actually consented for"
-       * under the old semantics — not a fresh policy re-decision, which would use today's policy against
-       * yesterday's install and could grant or deny something the original consent never considered. A generation
-       * with no matching plan row (already superseded and pruned, or never had one) is backfilled to `[]` rather
-       * than guessed at: an empty grant under-serves rather than over-grants, which is the direction a backward-
-       * compatibility gap should err.
+       * This migration never shipped a release (N4, controller decision on re-review): backfilling from
+       * `install_plans.requestedCapabilityRefs` reached for a row this generation might not still have (a plan is
+       * prunable, and a superseded one is not this generation's own consent record either) and risked writing a
+       * wrong answer once, permanently. Instead this marks each such row `null` — an explicit "not yet resolved"
+       * rather than a guess — and `resolveGenerationGrantedCapabilities`
+       * (`apps/runtime/src/application/package-install.ts`) resolves it lazily the next time the generation is
+       * actually read: from the package's own manifest, the same `requestedCapabilities` source and
+       * `capabilityRefSchema` filter the install path itself uses, persisted back once resolved so the lazy path
+       * runs at most once per legacy generation rather than on every read.
        */
-      const generations = readAll<{ generation_id: string; package_id: string; version: string; document: string }>(
+      const generations = readAll<{ generation_id: string; document: string }>(
         db,
-        "SELECT generation_id, package_id, version, document FROM package_generations",
+        "SELECT generation_id, document FROM package_generations",
       );
 
       for (const row of generations) {
@@ -1116,25 +1114,9 @@ export const MIGRATIONS: readonly Migration[] = [
           continue;
         }
         if (Array.isArray(parsedDocument["grantedCapabilities"])) continue;
+        if ("grantedCapabilities" in parsedDocument && parsedDocument["grantedCapabilities"] === null) continue;
 
-        const requirementKey = `pkg:${row.package_id}@${row.version}`;
-        const plan = db
-          .prepare(`SELECT document FROM install_plans WHERE requirement_key = ? ORDER BY created_at DESC LIMIT 1`)
-          .get(requirementKey) as { document: string } | undefined;
-
-        let backfilled: unknown[] = [];
-        if (plan !== undefined) {
-          try {
-            const planDocument = JSON.parse(plan.document) as { requestedCapabilityRefs?: unknown };
-            if (Array.isArray(planDocument.requestedCapabilityRefs)) {
-              backfilled = planDocument.requestedCapabilityRefs;
-            }
-          } catch {
-            // Same reasoning as above: an unparseable plan document backfills to `[]` rather than guessing.
-          }
-        }
-
-        parsedDocument["grantedCapabilities"] = backfilled;
+        parsedDocument["grantedCapabilities"] = null;
         db.prepare("UPDATE package_generations SET document = ? WHERE generation_id = ?").run(
           JSON.stringify(parsedDocument),
           row.generation_id,

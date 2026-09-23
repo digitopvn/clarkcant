@@ -233,3 +233,123 @@ describe("M1: a capability the policy would ask about or deny is reported, not s
     expect(Object.hasOwn(body, "deniedCapabilities")).toBe(true);
   });
 });
+
+/**
+ * N1: resolving a pending capability approval through its own node-scoped route
+ * (`POST /packages/approvals/:id/decision`), not the conversation-scoped one — this approval was never a step
+ * in a dispatched task, so it has no conversation to be scoped to.
+ */
+describe("N1: resolving a pending capability approval", () => {
+  async function installAndGetPending(): Promise<{ approvalId: string; ref: string; digest: string }> {
+    writeIndex([directoryEntry()]);
+    setDestructiveRule("ask");
+    const response = await request({
+      method: "POST",
+      path: "/packages/install",
+      body: { packageId: PACKAGE_ID, version: VERSION, localDigest: DIGEST },
+    });
+    const body = response.body as Record<string, unknown>;
+    const pending = (body["pendingCapabilities"] as readonly { ref: string; approvalId: string }[])[0];
+    if (pending === undefined) throw new Error("expected a pending capability approval");
+    return { approvalId: pending.approvalId, ref: pending.ref, digest: `${DIGEST}:${pending.ref}` };
+  }
+
+  it("adds the capability to the generation's grantedCapabilities once approved, and persists it", async () => {
+    const { approvalId, ref, digest } = await installAndGetPending();
+
+    const decided = await request({
+      method: "POST",
+      path: `/packages/approvals/${approvalId}/decision`,
+      body: { decision: "granted", digest },
+    });
+
+    expect(decided.status).toBe(200);
+    const decidedBody = decided.body as Record<string, unknown>;
+    expect(decidedBody["decision"]).toBe("granted");
+    expect(decidedBody["ref"]).toBe(ref);
+    const generationId = decidedBody["generationId"];
+    expect(typeof generationId).toBe("string");
+
+    // Persisted: read back the generation's own row, the same one `invocationPreflight` reads at dispatch time
+    // (package-install-local-chain.spec.ts) — nothing here is only true in the response.
+    const generationRow = services.runtime.db
+      .prepare("SELECT document FROM package_generations WHERE generation_id = ?")
+      .get(generationId as string) as { document: string };
+    const generationDoc = JSON.parse(generationRow.document) as { grantedCapabilities: readonly string[] };
+    expect(generationDoc.grantedCapabilities).toContain(ref);
+
+    // Audited: the same effect-execution ledger every other granted effect on this node writes to.
+    const activity = await request({ method: "GET", path: "/activity" });
+    const effects = (activity.body as { effects: { kind?: string; description?: string }[] }).effects;
+    expect(effects.some((effect) => effect.kind === "effect.executed" && effect.description === `grant ${ref} to ${PACKAGE_ID}@${VERSION}`)).toBe(true);
+  });
+
+  it("records a denied capability as denied, and grants nothing", async () => {
+    const { approvalId, ref, digest } = await installAndGetPending();
+
+    const decided = await request({
+      method: "POST",
+      path: `/packages/approvals/${approvalId}/decision`,
+      body: { decision: "denied", digest },
+    });
+
+    expect(decided.status).toBe(200);
+    const decidedBody = decided.body as Record<string, unknown>;
+    expect(decidedBody["decision"]).toBe("denied");
+
+    const approvalRow = services.runtime.db
+      .prepare("SELECT decision FROM approvals WHERE approval_id = ?")
+      .get(approvalId) as { decision: string };
+    expect(approvalRow.decision).toBe("denied");
+
+    if (typeof decidedBody["generationId"] === "string") {
+      const generationRow = services.runtime.db
+        .prepare("SELECT document FROM package_generations WHERE generation_id = ?")
+        .get(decidedBody["generationId"]) as { document: string };
+      const generationDoc = JSON.parse(generationRow.document) as { grantedCapabilities: readonly string[] };
+      expect(generationDoc.grantedCapabilities).not.toContain(ref);
+    }
+  });
+
+  it("is idempotent on a repeated submission of the same decision, rather than an error or a second grant", async () => {
+    const { approvalId, ref, digest } = await installAndGetPending();
+
+    const firstDecision = await request({
+      method: "POST",
+      path: `/packages/approvals/${approvalId}/decision`,
+      body: { decision: "granted", digest },
+    });
+    const secondDecision = await request({
+      method: "POST",
+      path: `/packages/approvals/${approvalId}/decision`,
+      body: { decision: "granted", digest },
+    });
+
+    expect(firstDecision.status).toBe(200);
+    expect(secondDecision.status).toBe(200);
+    expect((secondDecision.body as Record<string, unknown>)["alreadyDecided"]).toBe(true);
+
+    const generationId = (firstDecision.body as Record<string, unknown>)["generationId"] as string;
+    const generationRow = services.runtime.db
+      .prepare("SELECT document FROM package_generations WHERE generation_id = ?")
+      .get(generationId) as { document: string };
+    const generationDoc = JSON.parse(generationRow.document) as { grantedCapabilities: readonly string[] };
+    // Not duplicated: the ref appears exactly once even though the same grant was submitted twice.
+    expect(generationDoc.grantedCapabilities.filter((granted) => granted === ref)).toHaveLength(1);
+  });
+
+  it("[fails on the old behaviour] there was no route to resolve a capability approval at all", async () => {
+    const { approvalId, digest } = await installAndGetPending();
+
+    const decided = await request({
+      method: "POST",
+      path: `/packages/approvals/${approvalId}/decision`,
+      body: { decision: "granted", digest },
+    });
+
+    // Before N1, `/packages/approvals/:id/decision` did not exist, so this same request fell through every route
+    // handler to the gateway's catch-all 404 — a caller had no way to ever grant a capability the policy asked
+    // about. Kept as its own case so a future regression that removes the route fails here by name.
+    expect(decided.status).toBe(200);
+  });
+});
