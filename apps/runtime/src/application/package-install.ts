@@ -56,7 +56,6 @@ export interface PackageInstallRequest {
   /** A digest the caller computed for a local source, when it sent one. */
   localDigest?: string;
   requestedCapabilityRefs?: string[];
-  grantedCapabilities?: string[];
 }
 
 export type PackageInstallOutcome =
@@ -286,7 +285,19 @@ export function installPackage(deps: PackageInstallDeps, request: PackageInstall
     ...(request.requestedCapabilityRefs === undefined
       ? {}
       : { requestedCapabilityRefs: request.requestedCapabilityRefs }),
-    ...(request.grantedCapabilities === undefined ? {} : { grantedCapabilities: request.grantedCapabilities }),
+    /*
+     * Granted capabilities never come from the install request (issue #93, P1): a client declaring its
+     * own grants would let a forged request body become authority. This node has no consent/policy
+     * state yet from which to derive a real grant for a marketplace install, so it fails closed with an
+     * empty list rather than trusting the caller — the package still installs and activates, but no
+     * capability it names is registered as usable by that alone. `requestedCapabilityRefs` above is
+     * still accepted, because a request is metadata the plan records for review, not an authority.
+     *
+     * This is the precise seam a later consent flow fills: it needs to derive `grantedCapabilities` from
+     * an authoritative source (the manifest inside the fetched artifact, checked against a decision the
+     * owner principal actually made) and pass that here instead of `[]`.
+     */
+    grantedCapabilities: [],
   });
 
   if (!outcome.ok) return { kind: "refused", status: 400, code: outcome.code, message: outcome.message };
