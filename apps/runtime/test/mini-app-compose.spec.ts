@@ -4,7 +4,7 @@ import { join } from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import type { CompositionSlot, Instant } from "@clarkcant/contracts";
+import { type CompositionSlot, type Instant, nowInstant } from "@clarkcant/contracts";
 import { findCompositionByMessage, upsertTask, type Database } from "@clarkcant/storage";
 
 import { type MiniAppDataDeps, importLocalImage } from "../src/mini-app-data.ts";
@@ -436,6 +436,10 @@ describe("composeMiniApp", () => {
   });
 
   it("composes the sketch's regions from real records", async () => {
+    // The composition reads "tuần này" from the node's own clock, not from `AT`, so a seed pinned to
+    // a fixed date leaves the window as soon as the real week moves past it. The current instant is
+    // inside the week containing itself in every timezone, which is the one property the seed needs.
+    const seededAt = nowInstant();
     upsertTask(db(), {
       taskId: "task_a",
       conversationId: CONVERSATION,
@@ -443,8 +447,8 @@ describe("composeMiniApp", () => {
       state: "succeeded",
       revision: 1,
       goal: "seeded",
-      createdAt: "2026-09-16T01:00:00.000Z" as never,
-      updatedAt: "2026-09-16T02:00:00.000Z" as never,
+      createdAt: seededAt as never,
+      updatedAt: seededAt as never,
     });
 
     const outcome = await composeMiniApp(compose, {

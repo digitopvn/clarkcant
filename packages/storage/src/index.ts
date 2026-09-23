@@ -9,4 +9,6 @@
 export * from "./db.ts";
 export * from "./migrate.ts";
 export * from "./repositories.ts";
+export * from "./secrets.ts";
+export * from "./audit.ts";
 export * from "./backup.ts";

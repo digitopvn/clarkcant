@@ -44,6 +44,29 @@ const bridge = {
     return ipcRenderer.invoke("desktop:getSession");
   },
   /**
+   * Move a widget instance into its own window.
+   *
+   * The widget's composition travels with the request because the shell already has it, and the host decides
+   * whether it may: the window that opens receives that composition and no credential, so it can draw the
+   * instance without being able to read the conversation it came from.
+   */
+  detachWidget(input) {
+    return ipcRenderer.invoke("desktop:detachWidget", input);
+  },
+  /** Hand the instance back, closing its window. */
+  attachWidget() {
+    return ipcRenderer.invoke("desktop:attachWidget");
+  },
+  /**
+   * Told when a detached window closes, so the shell can take the instance back.
+   *
+   * A named subscription rather than a generic `on(channel)`: a generic listener would hand the renderer every
+   * channel the main process can push, which is the same mistake as a generic `invoke`.
+   */
+  onWidgetReattached(callback) {
+    ipcRenderer.on("desktop:widgetReattached", (_event, payload) => callback(payload));
+  },
+  /**
    * Shrink the window to the voice bar, grow it back, or pin it above other windows.
    *
    * Answers with the bounds and the pin state the window actually has afterwards, not with what was asked for,

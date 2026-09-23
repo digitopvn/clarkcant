@@ -5,11 +5,9 @@
  * exists to prove the MCP Apps bridge against a reference implementation rather than
  * against a vendor, and to prove that an attempted host-storage read fails.
  *
- * @implementation-status stub
- * TODO(P6): the fixture UI and its host bridge wiring, against the exact negotiated MCP
- * Apps specification. The bridge codec this will use is implemented and tested
- * (`@clarkcant/widget-sdk`: nonce validation, opaque-origin source matching, and a
- * message schema that has no secret-reading verb).
+ * @status-ref example.mcp-app-fixture
+ * TODO(P6): the fixture UI and its host bridge wiring, against the exact negotiated MCP Apps
+ * specification. `bridge.ts` is the codec path the host brokers; it has no host to run against.
  *
  * Deliberately absent from the codec, and therefore unavailable to this fixture:
  * `readAllSecrets`, `shell`, `queryCoreDb`, `approve` and `installAnything`. A capability
@@ -28,10 +26,3 @@ export const MUST_FAIL = [
   "mint an approval record",
   "reach an origin that is not in the declared allowlist",
 ] as const;
-
-/**
- * @implementation-status stub
- * TODO(P6): the fixture UI. It also needs a reference MCP Apps host, which this
- * repository does not yet provide.
- */
-export const MCP_FIXTURE_STATUS = "blocked-on-reference-host";

@@ -2,7 +2,10 @@ import { createHash } from "node:crypto";
 
 import {
   capabilityRefSchema,
+  lockDriftBetween,
+  planPredatesFrozenBuildInput,
   type CapabilityRef,
+  type DependencyLockBinding,
   type DirectoryEntry,
   type EffectCategory,
   type FacetKind,
@@ -11,11 +14,13 @@ import {
   type Instant,
   type IsolationClass,
   type PackageSource,
+  type Platform,
 } from "@clarkcant/contracts";
 
 import {
   activateGeneration,
   advanceInstall,
+  getPlan,
   joinOrCreatePlan,
   recordConsent,
   rollbackGeneration,
@@ -44,7 +49,7 @@ export interface InstallFromSourceInput {
   source: PackageSource;
   directory?: readonly DirectoryEntry[];
   hostApi: number;
-  platform: string;
+  platform: Platform;
   /** Required for a local source: the digest the caller computed from the package directory. */
   localDigest?: string;
   ownerPrincipalId: string;
@@ -60,6 +65,14 @@ export interface InstallFromSourceInput {
   /** Run after activation is staged, and before the generation becomes active. */
   healthcheck: () => boolean;
   expiresAt: Instant;
+  /**
+   * The frozen dependency closure this install was resolved against, before anything is staged.
+   *
+   * Absent means no closure was resolved — which is a state this node can honestly be in for a package it has not
+   * downloaded, and is not the same as an empty closure. A build refuses a plan without one rather than resolving
+   * the closure itself, so "no lock" stays visible instead of becoming "resolved at build time".
+   */
+  dependencyLock?: DependencyLockBinding;
 }
 
 export type InstallOutcome =
@@ -79,6 +92,7 @@ export type InstallOutcome =
         | "CONSENT_STALE"
         | "CONSENT_MISSING"
         | "HEALTHCHECK_FAILED"
+        | "LOCK_DRIFT"
         | "ROLLBACK_REFUSED";
       message: string;
       /** Set when a healthcheck failure was followed by a rollback attempt. */
@@ -104,6 +118,26 @@ export function installFromSource(deps: InstallDeps, input: InstallFromSourceInp
   const requested = input.requestedCapabilityRefs.map((ref) => capabilityRefSchema.parse(ref) as CapabilityRef);
   const granted = input.grantedCapabilities.map((ref) => capabilityRefSchema.parse(ref) as CapabilityRef);
 
+  /*
+   * The plan carries the frozen pins as well as the lock reference. Both, rather than just the reference: a plan shown
+   * for consent has to name the closure it would install, and a refusal has to be able to say which dependency moved
+   * without reading a file on the node's disk from inside a database transaction.
+   */
+  const resolvedDependencies = (input.dependencyLock?.dependencies ?? []).map((pin) => ({
+    id: pin.name,
+    version: pin.version,
+    digest: pin.integrity,
+    resolvedFrom: pin.resolvedFrom,
+  }));
+  const lock =
+    input.dependencyLock === undefined
+      ? {}
+      : {
+          lockRef: input.dependencyLock.lockRef,
+          lockDigest: input.dependencyLock.lockDigest,
+          lockCoverage: input.dependencyLock.coverage,
+        };
+
   const body = {
     requirementKey: input.requirementKey,
     ownerPrincipalId: input.ownerPrincipalId,
@@ -119,7 +153,8 @@ export function installFromSource(deps: InstallDeps, input: InstallFromSourceInp
     requestedCapabilityRefs: requested,
     grantedCapabilities: granted,
     isolationPlan: input.isolationPlan,
-    resolvedDependencies: [],
+    resolvedDependencies,
+    ...lock,
     effectCategories: input.effectCategories ?? [],
     dataRecipients: [...(input.dataRecipients ?? [])],
   };
@@ -130,7 +165,8 @@ export function installFromSource(deps: InstallDeps, input: InstallFromSourceInp
     requirementKey: input.requirementKey,
     requestedCapabilityRefs: requested,
     candidate: body.candidate as InstallPlan["candidate"],
-    resolvedDependencies: [],
+    resolvedDependencies,
+    ...lock,
     targetNodeId: deps.nodeId as InstallPlan["targetNodeId"],
     grantedCapabilities: granted,
     effectCategories: (input.effectCategories ?? []) as InstallPlan["effectCategories"],
@@ -144,8 +180,31 @@ export function installFromSource(deps: InstallDeps, input: InstallFromSourceInp
   const joined = joinOrCreatePlan(deps, plan);
   if (joined.status === "joined-existing") {
     /*
-     * Someone else is already installing this. Joining rather than competing is what the unique index is for: two
-     * tasks that need the same pack produce one prompt and one install, not two.
+     * Somebody is already installing this, and joining is what the unique index is for. But joining a plan whose
+     * frozen build input is not the one resolved here would hand somebody a consent that covers a closure they did
+     * not approve — so the closure is compared first, and a difference is reported rather than joined (T21).
+     */
+    const existing = getPlan(deps, joined.planId);
+    const drift = existing === undefined ? [] : lockDriftBetween(existing.plan, plan);
+    if (drift.length > 0) {
+      /*
+       * A plan recorded before this node froze a build input has no closure on its side, so the same refusal would
+       * otherwise read as "the lock covered nothing and now covers ..." — as though a closure had moved. Nothing
+       * moved: that plan predates the frozen input, so the comparison has one side missing. The refusal is the same
+       * either way, but the sentence a person reads has to name the cause they can act on, and "review it again" is
+       * not an action for a plan that is already installing (T21).
+       */
+      const legacy = existing !== undefined && planPredatesFrozenBuildInput(existing.plan);
+      return {
+        ok: false,
+        code: "LOCK_DRIFT",
+        message: legacy
+          ? `a plan for this requirement is already on this node (${joined.planId}, state ${joined.state}) and predates the frozen build input: it was recorded before this node froze a dependency closure, so there is no consented lock on that side to compare against — a legacy plan, not drift in a closure that moved. That plan already covers this requirement, so wait for it rather than installing a second time; if it has to be replaced, roll that generation back first and resolve the closure again`
+          : `a plan for this requirement is already on this node with a different frozen build input: ${drift.join("; ")}; review it again rather than joining it`,
+      };
+    }
+    /*
+     * Two tasks that need the same pack produce one prompt and one install, not two.
      */
     return {
       ok: true,

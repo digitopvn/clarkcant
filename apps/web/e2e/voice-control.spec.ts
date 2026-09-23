@@ -113,6 +113,31 @@ test("a spoken command and the same click open Settings in the same state", asyn
   await page.screenshot({ path: join(EVIDENCE, "voice-control-01-settings-by-voice.png"), fullPage: false });
 });
 
+/*
+ * The second half of the parity claim, and the one that was missing.
+ *
+ * T73's ledger row and the plan's voice criterion both cited this journey while it was not in the file: a spoken
+ * sentence that names a tab has to land where clicking that tab lands. Clicking first is what makes it a parity
+ * claim rather than a shortcut, and closing the panel in between is what makes it a claim about the tab rather than
+ * about the panel still being open.
+ */
+test("a spoken tab change lands on the tab that was named", async ({ page, request }) => {
+  await openApp(page);
+  await startConversation(page);
+
+  await page.locator('[data-settings="true"]').click();
+  await page.locator("#cc-tab-extensions").click();
+  const afterClick = await selectedTab(page);
+  expect(afterClick).toBe("cc-tab-extensions");
+  await page.keyboard.press("Escape");
+
+  await scriptVoice(request, "đổi sang tab công cụ");
+  await openVoice(page);
+
+  await expect(page.locator("#cc-tab-extensions")).toHaveAttribute("data-selected", "true");
+  expect(await selectedTab(page)).toBe(afterClick);
+});
+
 test("a spoken quit asks instead of closing anything", async ({ page, request }) => {
   await openApp(page);
   await startConversation(page);
@@ -144,6 +169,68 @@ test("a command the registry does not know is refused and changes nothing", asyn
   expect(page.url()).toBe(before);
 });
 
+/*
+ * The rest of the command groups, spoken.
+ *
+ * Issue #17 asks the voice fixture to execute every group of commands in a browser, and five journeys proved four of
+them. These are the rest of the ones a browser can execute: ending the session, going home, opening the file picker.
+The window group cannot be executed here at all - there is no window in a browser - so what is asserted for it is the
+refusal, which is the behaviour a person actually gets, and the desktop smoke proves the real window separately.
+ */
+test("a spoken end closes the voice session", async ({ page, request }) => {
+  await openApp(page);
+  await startConversation(page);
+  await scriptVoice(request, "kết thúc phiên thoại");
+  await openVoice(page);
+
+  // The overlay goes and the composer is back: ending the session is not the same as hiding it.
+  await expect(page.locator(".cc-voice")).toBeHidden({ timeout: 20_000 });
+  await expect(page.locator("[data-composer='true']")).toBeVisible();
+});
+
+test("a spoken home returns to the start screen", async ({ page, request }) => {
+  await openApp(page);
+  await startConversation(page);
+  await scriptVoice(request, "về trang chủ");
+  await openVoice(page);
+
+  /*
+   * Asserted on the app's own read-back rather than on the start screen being visible.
+   *
+   * The command does run - the client is handed `nav.home` and reports `ran: true`, measured - and it does restart the
+   * session. What cannot be observed here is the start screen staying up: the session repeats its utterance, so the
+   * read-back re-enters the conversation view within the same second. Asserting the read-back is asserting the
+   * execution without asserting a view the voice session is about to replace.
+   */
+  await expect(page.getByText("Tôi về màn hình bắt đầu").first()).toBeVisible({ timeout: 20_000 });
+});
+
+test("a spoken attach opens the file picker", async ({ page, request }) => {
+  await openApp(page);
+  await startConversation(page);
+
+  // Waited for before the command is spoken: the picker opens the moment the intent runs, and an event nobody was
+  // listening for is an event that did not happen.
+  const chooser = page.waitForEvent("filechooser", { timeout: 30_000 });
+  await scriptVoice(request, "đính kèm tệp");
+  await openVoice(page);
+
+  // The intent calls the same input the attach button does, so a file chooser is what proves it ran rather than
+  // merely being understood.
+  await chooser;
+});
+
+test("a spoken window command is refused here rather than reported as done", async ({ page, request }) => {
+  await openApp(page);
+  await startConversation(page);
+  await scriptVoice(request, "thu nhỏ tối thiểu");
+  await openVoice(page);
+
+  // There is no window in a browser, so the intent is refused with a reason instead of a resize that never happened.
+  // This is the whole window group's behaviour here, and it is asserted rather than assumed.
+  await expect(page.locator("[data-intent-notice]")).toBeVisible({ timeout: 20_000 });
+});
+
 test("the fixture route is not there unless a scripted provider is loaded", async ({ page, request }) => {
   // The gate, checked rather than trusted. This suite runs against the fixture node, where the route exists; the
   // assertion that it is *unreachable* without one is a unit test on the seam, because a suite cannot start a second
@@ -156,4 +243,5 @@ test("the fixture route is not there unless a scripted provider is loaded", asyn
   expect(refused.status()).toBe(400);
   await expect(page.locator("text=Ready")).toBeVisible();
 });
+
 

@@ -47,22 +47,27 @@ test("an answer becomes the user's own message, and the card stops asking", asyn
   await expect(card).toBeVisible({ timeout: 20_000 });
   // The scripted producer names the answers, so the card offers exactly those and no free-text field.
   await expect(card).toContainText("Bạn muốn tôi mở dự án nào?");
-  await expect(card).toHaveAttribute("data-answerable", "true");
+  await expect(card).toHaveAttribute("data-answered", "false");
 
-  const answer = card.locator("[data-question-answer='option-2']");
-  await expect(answer).toHaveText("Dự án khác");
+  const answer = card.locator("[data-question-option='option-2']");
+  // The label, then the fixture's description of it: what the button says is what the person is choosing between.
+  await expect(answer).toContainText("Dự án khác");
   await answer.click();
 
   // The answer is in the transcript as the user's message — the same shape a typed reply has.
   await expect(page.locator("[data-role='user']").last()).toContainText("Dự án khác");
 
   /*
-   * And the card is no longer answerable. The transcript is immutable, so the card derives this from "nothing has
-   * come after me" — which is the only rule that cannot offer a second answer to a question already answered.
+   * And the card is no longer answerable. The transcript is immutable, so the card derives this from the record
+   * the node wrote when the answer arrived — which is the only rule that cannot offer a second answer to a question
+   * already answered.
    */
-  await expect(card).toHaveAttribute("data-answerable", "false");
-  await expect(card.locator("[data-question-answer='option-1']")).toHaveCount(0);
-  await expect(card.locator("[data-question-closed='true']")).toBeVisible();
+  await expect(card).toHaveAttribute("data-answered", "true");
+  await expect(card.locator("[data-question-option='option-1']")).toHaveCount(0);
+  // The options stay readable as text, which is what makes this card's text alternative the same thing as its
+  // control: a reader who cannot press anything still learns what was offered.
+  await expect(card).toContainText("Câu trả lời đã được ghi");
+  await expect(card).toContainText("Dự án khác");
 });
 
 test("a form's draft survives a rerender, and submitting sends the answers as a message", async ({ page }) => {

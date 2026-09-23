@@ -5,6 +5,7 @@ import { attachmentRefSchema, type AttachmentRef } from "@clarkcant/contracts";
 import { CodeBlock, Markdown } from "./markdown.tsx";
 import { formatFileSize } from "./attachments.ts";
 import { useAttachmentUrls } from "./use-attachment-urls.ts";
+import { useObjectUrls } from "./use-object-urls.ts";
 import type { GatewayClient } from "./api.ts";
 
 /**
@@ -108,8 +109,21 @@ export function ToolActivityBlock({ block }: { block: Record<string, unknown> })
  * Collapsed by default and in its own widget, because it is not the reply: someone who wants to know how
  * the answer was reached can open it, and someone who does not is never shown text the model did not
  * address to them.
+ *
+ * `writing` is set while this is the most recent thing the turn produced, which is what "still arriving"
+ * means for a segment: it stops being the most recent one when text or a tool call follows, and the turn
+ * ending removes the live view entirely. The mark therefore has to sit in the head — the block is
+ * collapsed, so a marker in the body would be behind a click — and the words carry the state on their own,
+ * because a person who cannot see the spin still has to be able to tell a finished block from a running
+ * one. A stored block never sets it: history is not still being written.
  */
-export function ReasoningBlock({ block }: { block: Record<string, unknown> }): ReactElement {
+export function ReasoningBlock({
+  block,
+  writing = false,
+}: {
+  block: Record<string, unknown>;
+  writing?: boolean;
+}): ReactElement {
   const content = typeof block.content === "string" ? block.content : "";
   const [open, setOpen] = useState(false);
 
@@ -117,14 +131,16 @@ export function ReasoningBlock({ block }: { block: Record<string, unknown> }): R
     <details
       className="cc-tool cc-reasoning"
       data-reasoning="true"
+      data-writing={writing ? "true" : undefined}
       open={open}
       onToggle={(event) => setOpen((event.currentTarget as HTMLDetailsElement).open)}
     >
       <summary className="cc-tool-head">
-        <span className="cc-tool-mark" data-status="done" aria-hidden="true">
+        <span className="cc-tool-mark" data-status={writing ? "running" : "done"} aria-hidden="true">
           ✳
         </span>
         <span className="cc-tool-label">Suy luận của agent</span>
+        {writing && <span className="cc-reasoning-writing">đang viết…</span>}
       </summary>
       <div className="cc-tool-body cc-reasoning-body">
         <Markdown text={content} />
@@ -346,6 +362,21 @@ export function SystemCardBlock({ block }: { block: Record<string, unknown> }): 
  * history as well as from live turns and only the conversation knows whether a decision is possible right
  * now. A card with no handler draws the decision buttons disabled instead of pretending.
  */
+/**
+ * What became of an install attempt, as the card shows it.
+ *
+ * Four states because the four are different truths: it is happening, it happened, a person has to decide first, or
+ * it was refused. Collapsing the middle two into "not installed" would hide that one of them is waiting on the
+ * reader and the other is not.
+ */
+export interface PackageInstallState {
+  status: "installing" | "installed" | "approval-required" | "refused";
+  /** The node's own words where it gave them. */
+  message?: string;
+  generationId?: string;
+  verified?: string;
+}
+
 export interface BlockActions {
   onApprovalDecide?: (input: { approvalId: string; digest: string; decision: "granted" | "denied" }) => void;
   /**
@@ -354,7 +385,10 @@ export interface BlockActions {
    * The callback receives the values because that is what it posts; nothing in this interface keeps them, and the
    * card clears its own inputs as soon as it hands them over, so a value cannot be shown again by accident.
    */
-  onCredentialSubmit?: (input: { requestId: string; fields: { name: string; value: string }[] }) => void;
+  onCredentialSubmit?: (input: {
+    requestId: string;
+    fields: { name: string; value: string; kind?: string; description?: string; consumer?: string }[];
+  }) => void;
   /** What the node said about the last submission for one request, in words a reader can act on. */
   credentialStatus?: { requestId: string; message: string };
   /** Which approval is waiting on the node, so its own card says so rather than all of them. */
@@ -369,21 +403,54 @@ export interface BlockActions {
    */
   decidedApprovals?: readonly string[];
   /**
+   * Post an answer to a question card.
+   *
+   * One callback for all four kinds, because an answer is one shape: a click, a typed sentence and a spoken
+   * utterance all end up here, and the node decides whether the shape fits the question that was asked.
+   */
+  onQuestionAnswer?: (input: { questionId: string; text?: string; optionIds?: string[]; confirmed?: boolean }) => void;
+  /**
+   * Questions this conversation already has an answer recorded for.
+   *
+   * Derived from the transcript, exactly as `decidedApprovals` is: a card keeps saying `waiting` because messages
+   * are never rewritten, and the answer record is what says otherwise. Without it, a reload would offer the
+   * question again — and the node would have to refuse a second answer rather than the card never asking.
+   */
+  answeredQuestions?: readonly string[];
+  /**
    * The answer to a question the agent asked, on its way back as the user's own message.
    *
    * Not a new action route. The answer travels the path a typed reply takes — the same `send` the composer
    * calls — which is what makes a click, a keystroke and a spoken answer the same thing rather than three
    * implementations that have to be kept in step.
    */
-  onQuestionAnswer?: (input: { questionId: string; answer: string }) => void;
   /**
-   * Questions that may still be answered.
+   * Install a package a directory listing named.
    *
-   * Computed from the transcript rather than kept as state: a question is open exactly while the conversation
-   * has not moved past it, and the messages are history that never gets rewritten. Without this a card would
-   * stay answerable forever, inviting a second answer to a question the node already received one for.
+   * Absent where there is nothing to install into: a read-only snapshot, or a build with no node behind it. The
+   * control is not rendered at all in that case rather than rendered and refused, which is the difference between a
+   * disabled button with a reason and a button that looks usable and is not.
    */
-  openQuestionIds?: readonly string[];
+  onInstallPackage?: (input: { packageId: string; version: string }) => void;
+  /** The attempt for each package id, so the card shows an outcome instead of a spinner that never ends. */
+  packageInstall?: Record<string, PackageInstallState>;
+  /**
+   * The answer being composed for a question card, owned by the surface that draws it.
+   *
+   * The card stays a pure function of what it is given, like the other cards in this file: state kept inside the
+   * card would be a second copy of something the conversation also tracks, and the two would disagree exactly when
+   * it matters — after a reload, or when the same card appears twice in one snapshot.
+   */
+  questionDraft?: { questionId: string; chosen: readonly string[]; text: string };
+  /** A change to that draft: the selection for a choice, or the text typed so far. */
+  onQuestionDraft?: (input: { questionId: string; chosen?: readonly string[]; text?: string }) => void;
+  /**
+   * The question whose answer is on its way to the node.
+   *
+   * Sent by the surface that posted the answer, because only it knows a request is in flight. The card reading it
+   * is what stops a second press while the first answer is still travelling.
+   */
+  questionPendingId?: string;
   /**
    * A filled-in form, on its way back as the user's own message.
    *
@@ -459,6 +526,181 @@ export type TaskStopState =
  * shown because it is what the decision is bound to: the operation that runs is compared against it, so
  * a plan that changed after display is refused rather than executed.
  */
+/**
+ * The question card.
+ *
+ * A host-owned card, and the same boundary an approval card draws: the model asks, the person answers, and the
+ * model never draws the question. Four kinds because those are the four a voice can answer, and every kind
+ * posts to the same route the voice path uses.
+ *
+ * Not a permission dialog. The agent asks because the work is under-specified — which project, which
+ * environment — so the wording says what is being chosen rather than whether it may proceed.
+ */
+export function QuestionCardBlock({
+  block,
+  actions,
+}: {
+  block: Record<string, unknown>;
+  actions?: BlockActions;
+}): ReactElement | null {
+  if (block.owner !== "host") return null;
+  const questionId = typeof block.questionId === "string" ? block.questionId : "";
+  const prompt = typeof block.prompt === "string" ? block.prompt : "";
+  const kind = typeof block.questionType === "string" ? block.questionType : "text";
+  const offered = (Array.isArray(block.options) ? block.options : []).flatMap((entry) => {
+    const option = entry as { id?: unknown; label?: unknown; description?: unknown };
+    if (typeof option.id !== "string" || typeof option.label !== "string") return [];
+    return [
+      {
+        id: option.id,
+        label: option.label,
+        ...(typeof option.description === "string" ? { description: option.description } : {}),
+      },
+    ];
+  });
+
+  const draft = actions?.questionDraft?.questionId === questionId ? actions.questionDraft : undefined;
+  const chosen = draft?.chosen ?? [];
+  const text = draft?.text ?? "";
+  /*
+   * The node says which question it is still waiting on, and the answer on its way is one of those. The card
+   * does not track its own press: a press is not an answer until the node records it, and a flag kept here would
+   * be a second copy of a fact the transcript already carries.
+   */
+  const sending = actions?.questionPendingId === questionId;
+  const answered = questionId !== "" && actions?.answeredQuestions?.includes(questionId) === true;
+  const canAnswer = questionId !== "" && actions?.onQuestionAnswer !== undefined && !answered && !sending;
+  const submit = (answer: { text?: string; optionIds?: string[]; confirmed?: boolean }): void => {
+    if (!canAnswer) return;
+    actions?.onQuestionAnswer?.({ questionId, ...answer });
+  };
+  const toggle = (id: string): void => {
+    const next = chosen.includes(id) ? chosen.filter((entry) => entry !== id) : [...chosen, id];
+    actions?.onQuestionDraft?.({ questionId, chosen: next });
+  };
+
+  return (
+    <section
+      className="cc-card"
+      data-host-card="question"
+      data-owner="host"
+      data-question-id={questionId}
+      data-question-kind={kind}
+      data-answered={answered ? "true" : "false"}
+      aria-label={prompt}
+    >
+      <header className="cc-card-head">
+        <span className="cc-card-title">{answered ? "Câu hỏi đã có câu trả lời" : "Cần bạn chọn"}</span>
+      </header>
+      <div className="cc-card-body">
+        <p style={{ margin: 0 }}>{prompt}</p>
+
+        {!answered && canAnswer && kind === "confirm" && (
+          <div className="cc-card-actions">
+            <button type="button" className="cc-action" data-question-answer="yes" disabled={!canAnswer} onClick={() => submit({ confirmed: true })}>
+              Đồng ý
+            </button>
+            <button type="button" className="cc-action" data-question-answer="no" disabled={!canAnswer} onClick={() => submit({ confirmed: false })}>
+              Không
+            </button>
+          </div>
+        )}
+
+        {!answered && canAnswer && (kind === "single-choice" || kind === "multi-choice") && (
+          <div className="cc-card-actions">
+            {offered.map((option) => (
+              <button
+                key={option.id}
+                type="button"
+                className="cc-action"
+                data-question-option={option.id}
+                data-selected={chosen.includes(option.id)}
+                disabled={!canAnswer}
+                onClick={() => {
+                  if (kind === "single-choice") {
+                    submit({ optionIds: [option.id] });
+                    return;
+                  }
+                  toggle(option.id);
+                }}
+              >
+                {option.label}
+                {option.description === undefined ? null : (
+                  <span className="cc-setting-desc"> {option.description}</span>
+                )}
+              </button>
+            ))}
+            {kind === "multi-choice" && (
+              <button
+                type="button"
+                className="cc-action"
+                data-question-answer="submit"
+                disabled={!canAnswer || chosen.length === 0}
+                onClick={() => submit({ optionIds: [...chosen] })}
+              >
+                Gửi
+              </button>
+            )}
+          </div>
+        )}
+
+        {!answered && canAnswer && kind === "text" && (
+          <div className="cc-card-actions">
+            <input
+              className="cc-action"
+              data-question-text="true"
+              value={text}
+              placeholder="Trả lời của bạn"
+              disabled={!canAnswer}
+              onChange={(event) => actions?.onQuestionDraft?.({ questionId, text: event.target.value })}
+            />
+            <button
+              type="button"
+              className="cc-action"
+              data-question-answer="submit"
+              disabled={!canAnswer || text.trim() === ""}
+              onClick={() => submit({ text })}
+            >
+              Gửi
+            </button>
+          </div>
+        )}
+
+        {sending && !answered && (
+          <p className="cc-freshness" style={{ margin: 0 }}>
+            Đang gửi câu trả lời…
+          </p>
+        )}
+
+        {answered && (
+          <p className="cc-freshness" style={{ margin: 0 }}>
+            Câu trả lời đã được ghi vào hội thoại này.
+          </p>
+        )}
+
+        {/*
+         * The options as text whenever they cannot be pressed: once an answer is recorded, and on a surface with no
+         * node behind it. This is what makes the card's text alternative the same thing as its control — a snapshot,
+         * a screen reader and an answered card all read the same list — and it is why the list is not simply hidden
+         * behind the buttons.
+         */}
+        {(answered || !canAnswer) && offered.length > 0 && (
+          <ul className="cc-question-options" data-question-options={offered.length}>
+            {offered.map((option) => (
+              <li key={option.id}>
+                {option.label}
+                {option.description === undefined ? null : (
+                  <span className="cc-setting-desc"> — {option.description}</span>
+                )}
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+    </section>
+  );
+}
+
 export function ApprovalCardBlock({
   block,
   actions,
@@ -583,6 +825,12 @@ export function CredentialCardBlock({
   const purpose = typeof block.purpose === "string" ? block.purpose : "";
   const destination = typeof block.destination === "string" ? block.destination : "vault-node";
   const requestId = typeof block.requestId === "string" ? block.requestId : "";
+  // The three fields that answer "what is this for, who will use it, on which machine". They travel with the
+  // submission as well as being shown, so the node records the same answer the person was given when they typed.
+  const description = typeof block.description === "string" ? block.description : "";
+  const consumer = typeof block.consumer === "string" ? block.consumer : "";
+  const scope = typeof block.scope === "string" ? block.scope : "";
+  const secretKind = typeof block.secretKind === "string" ? block.secretKind : "";
   const fields = Array.isArray(block.fields)
     ? (block.fields as { name?: unknown; label?: unknown; masked?: unknown }[]).flatMap((field) =>
         typeof field?.name === "string" && field.name !== ""
@@ -608,6 +856,21 @@ export function CredentialCardBlock({
       </header>
       <div className="cc-card-body">
         <p style={{ margin: 0 }}>{purpose}</p>
+        {description !== "" && description !== purpose && (
+          <p className="cc-freshness" style={{ margin: 0 }} data-credential-description="true">
+            {description}
+          </p>
+        )}
+        {consumer !== "" && (
+          <p className="cc-freshness" style={{ margin: 0 }} data-credential-consumer={consumer}>
+            Sẽ được dùng bởi: {consumer}
+          </p>
+        )}
+        {scope !== "" && (
+          <p className="cc-freshness" style={{ margin: 0 }} data-credential-scope={scope}>
+            Lưu trên: {scope}
+          </p>
+        )}
         {fields.length === 0 ? null : (
           <form
             className="cc-credential-form"
@@ -616,7 +879,13 @@ export function CredentialCardBlock({
               if (!complete) return;
               actions?.onCredentialSubmit?.({
                 requestId,
-                fields: fields.map((field) => ({ name: field.name, value: values[field.name] ?? "" })),
+                fields: fields.map((field) => ({
+                  name: field.name,
+                  value: values[field.name] ?? "",
+                  ...(secretKind === "" ? {} : { kind: secretKind }),
+                  ...(description === "" ? {} : { description }),
+                  ...(consumer === "" ? {} : { consumer }),
+                })),
               });
               // Cleared as soon as it is handed over, so the value cannot be read back off the screen or out of
               // the component's state by anything that comes later.
@@ -1234,6 +1503,8 @@ export function renderBlock(
       return <SystemCardBlock key={index} block={block} />;
     case "approval-card":
       return <ApprovalCardBlock key={index} block={block} {...(actions === undefined ? {} : { actions })} />;
+    case "question-card":
+      return <QuestionCardBlock key={index} block={block} {...(actions === undefined ? {} : { actions })} />;
     case "connection-card":
       return <ConnectionCardBlock key={index} block={block} />;
     case "credential-card":
@@ -1252,15 +1523,24 @@ export function renderBlock(
       return <CodeDiffCardBlock key={index} block={block} />;
     case "project-picker-card":
       return <ProjectPickerCardBlock key={index} block={block} />;
-    case "question-card":
-      return <QuestionCardBlock key={index} block={block} {...(actions === undefined ? {} : { actions })} />;
     case "form-card":
       return <FormCardBlock key={index} block={block} {...(actions === undefined ? {} : { actions })} />;
     case "browser-session-card":
     case "computer-session-card":
       // One renderer for both surfaces: the question "who may act on this" does not change with the surface, and
       // two components would be two places for the answer to drift.
-      return <ControlSessionCardBlock key={index} block={block} {...(actions === undefined ? {} : { actions })} />;
+      return (
+        <ControlSessionCardBlock
+          key={index}
+          block={block}
+          client={client}
+          {...(actions === undefined ? {} : { actions })}
+        />
+      );
+    case "marketplace-results":
+      // Forwarded, for the reason the task card's control taught: a component tested by calling it directly passes
+      // whether or not the dispatcher hands it anything, and the install action is exactly what would go missing.
+      return <MarketplaceResultsBlock key={index} block={block} {...(actions === undefined ? {} : { actions })} />;
     case "reconnect-card":
       return <ReconnectCardBlock key={index} block={block} />;
     case "surface": {
@@ -1291,88 +1571,6 @@ export function renderBlock(
       // client does not understand must not reach the DOM.
       return null;
   }
-}
-
-/**
- * A question the agent is asking, with the answers it will accept.
- *
- * The primitive the plan singles out, and the reason is structural rather than cosmetic. An agent that needs a
- * decision otherwise writes a paragraph and then guesses which sentence answered it — or asks again. Here the
- * answers are a list the agent itself named, and the chosen one travels back **as the user's own message**: the
- * same `send` the composer calls, so a click, a keystroke and a spoken answer are the same act rather than three
- * implementations to keep in step.
- *
- * Read-only once the conversation has moved past it. The transcript is immutable, so a card that stayed
- * answerable would invite a second answer to a question the node already received one for — and the node would
- * take it as a second message, which is a duplicate the user never intended to send.
- *
- * The options are always rendered as text, which is what makes this card's text alternative the same thing as
- * its control: a snapshot, a screen reader and an answered card all read the same list.
- */
-export function QuestionCardBlock({
-  block,
-  actions,
-}: {
-  block: Record<string, unknown>;
-  actions?: BlockActions;
-}): ReactElement | null {
-  if (block.owner !== "host") return null;
-
-  const questionId = typeof block.questionId === "string" ? block.questionId : "";
-  const question = typeof block.question === "string" ? block.question : "";
-  const raw = Array.isArray(block.options) ? (block.options as Record<string, unknown>[]) : [];
-  const options = raw
-    .filter((entry) => typeof entry.id === "string" && typeof entry.label === "string")
-    .map((entry) => ({
-      id: entry.id as string,
-      label: entry.label as string,
-      ...(typeof entry.detail === "string" ? { detail: entry.detail } : {}),
-    }));
-
-  const answerable =
-    questionId !== "" &&
-    actions?.onQuestionAnswer !== undefined &&
-    actions.openQuestionIds?.includes(questionId) === true;
-
-  return (
-    <section
-      className="cc-card"
-      data-host-card="question"
-      data-owner="host"
-      data-question-id={questionId}
-      data-answerable={answerable ? "true" : "false"}
-      aria-label={question}
-    >
-      <div className="cc-card-title">{question}</div>
-      <ul className="cc-question-options" data-question-options={options.length}>
-        {options.map((option) => (
-          <li key={option.id}>
-            {answerable ? (
-              <button
-                type="button"
-                className="cc-chip"
-                data-question-answer={option.id}
-                onClick={() => actions?.onQuestionAnswer?.({ questionId, answer: option.label })}
-              >
-                {option.label}
-              </button>
-            ) : (
-              <span className="cc-chip" data-question-option={option.id}>
-                {option.label}
-              </span>
-            )}
-            {option.detail === undefined ? null : <span className="cc-freshness"> {option.detail}</span>}
-          </li>
-        ))}
-      </ul>
-      {answerable ? null : (
-        // Says why the buttons are gone rather than leaving a reader to wonder whether the card broke.
-        <p className="cc-freshness" data-question-closed="true">
-          Hội thoại đã đi tiếp, nên câu hỏi này không còn nhận câu trả lời.
-        </p>
-      )}
-    </section>
-  );
 }
 
 /**
@@ -1528,12 +1726,178 @@ export function FormCardBlock({
  * The epoch is shown rather than kept internal. It is what decides whether an action the agent planned earlier is
  * still admissible, so a reader who cannot see it cannot tell whether a takeover actually took effect.
  */
-export function ControlSessionCardBlock({
+/** The risk lanes in words, because a lane name is not something a reader should have to learn. */
+const RISK_LANE_LABELS: Record<string, string> = {
+  "isolated-ui": "widget cách ly",
+  service: "service",
+  declarative: "khai báo",
+  "trusted-native": "native tin cậy",
+};
+
+/** Where a result would be fetched from, in one line. */
+function describePackageSource(raw: unknown): string {
+  const source = (raw ?? {}) as Record<string, unknown>;
+  if (source.kind === "local" && typeof source.path === "string") return source.path;
+  if (source.kind === "git" && typeof source.url === "string") return `${source.url}@${String(source.ref ?? "")}`;
+  if (source.kind === "npm" && typeof source.name === "string") return `${source.name}@${String(source.version ?? "")}`;
+  return "không rõ nguồn";
+}
+
+/**
+ * The results of a marketplace search.
+ *
+ * It shows what a listing has to show to be judgeable — where it comes from, which version, the digest the install
+ * path will check, and the lane the isolation implies — and it carries the install control on the row it acts on.
+ * The control reports what the install route answered rather than installing anything itself: the digest is verified,
+ * policy and consent are decided, and the effect is audited, all in one place. A second entry point here would be
+ * the one place where a listing could become an authorisation.
+ *
+ * The directory is named in the heading. A result whose origin was invisible would present what some index says as
+ * something this machine knows.
+ */
+export function MarketplaceResultsBlock({
   block,
   actions,
 }: {
   block: Record<string, unknown>;
+  actions?: BlockActions | undefined;
+}): ReactElement {
+  const directory = typeof block.directory === "string" ? block.directory : "";
+  const query = typeof block.query === "string" ? block.query : "";
+  const reason = typeof block.unavailableReason === "string" ? block.unavailableReason : undefined;
+  const results = Array.isArray(block.results) ? block.results : [];
+
+  return (
+    <div className="cc-card cc-marketplace" role="group" aria-label="Kết quả tìm gói" data-marketplace="true">
+      <div className="cc-card-title">Kết quả trong {directory}</div>
+      {reason !== undefined ? (
+        // A directory that could not be consulted is a different truth from one that had nothing, so it says so.
+        <p className="cc-card-note" data-marketplace-unavailable="true">
+          {reason}
+        </p>
+      ) : results.length === 0 ? (
+        <p className="cc-card-note">Không có gói nào khớp “{query}”.</p>
+      ) : (
+        <ul className="cc-marketplace-list">
+          {results.map((raw, position) => {
+            const result = (raw ?? {}) as Record<string, unknown>;
+            const packageId = typeof result.packageId === "string" ? result.packageId : "";
+            const version = typeof result.version === "string" ? result.version : "";
+            const displayName = typeof result.displayName === "string" ? result.displayName : packageId;
+            const description = typeof result.description === "string" ? result.description : "";
+            const digest = typeof result.digest === "string" ? result.digest : "";
+            const lane = typeof result.riskTier === "string" ? result.riskTier : "";
+            const installState = actions?.packageInstall?.[packageId];
+            return (
+              <li className="cc-marketplace-item" key={`${packageId}-${version}-${position}`} data-marketplace-package={packageId}>
+                <div className="cc-marketplace-name">
+                  {displayName} <span className="cc-marketplace-version">{version}</span>
+                </div>
+                {description !== "" && <div className="cc-marketplace-desc">{description}</div>}
+                <div className="cc-marketplace-meta">
+                  <span data-marketplace-source="true">{describePackageSource(result.source)}</span>
+                  <span data-marketplace-risk={lane}>{RISK_LANE_LABELS[lane] ?? lane}</span>
+                  {/* Truncated for the line, complete in the title: the digest is checkable, not decorative. */}
+                  <span className="cc-marketplace-digest" title={digest} data-marketplace-digest="true">
+                    {digest.length > 18 ? `${digest.slice(0, 18)}…` : digest}
+                  </span>
+                </div>
+                {/*
+                  Installing goes through the single install route, which applies the execution policy and the install
+                  supervisor that already existed. The card was deliberately without this control while that route did
+                  not exist, because a button whose action is missing is worse than no button; it exists now, so the
+                  control does too — and only where a caller supplied the action, which a read-only snapshot does not.
+                */}
+                {actions?.onInstallPackage !== undefined && (
+                  <div className="cc-marketplace-actions">
+                    <button
+                      type="button"
+                      className="cc-chip"
+                      data-install-package={packageId}
+                      disabled={installState?.status === "installing"}
+                      onClick={() => actions.onInstallPackage?.({ packageId, version })}
+                    >
+                      {installState?.status === "installing" ? "Đang cài…" : "Cài"}
+                    </button>
+                    {installState !== undefined && installState.status !== "installing" && (
+                      <span className="cc-marketplace-install-state" data-install-state={installState.status}>
+                        {installState.message ?? ""}
+                      </span>
+                    )}
+                  </div>
+                )}
+              </li>
+            );
+          })}
+        </ul>
+      )}
+    </div>
+  );
+}
+
+/**
+ * The captured frame of a session, as a picture.
+ *
+ * Its own component so the hook that fetches the bytes runs unconditionally: the card below returns early for a
+ * block that is not host-owned, and a hook placed after that return would be a hook that sometimes does not run.
+ *
+ * A frame is never presented as the live screen. The moment it was taken is part of the picture, and while the
+ * bytes are still being fetched the caption says so rather than showing an empty box that could be mistaken for a
+ * blank screen.
+ */
+function SessionPreviewFrame({
+  client,
+  label,
+  digest,
+  viewport,
+  capturedAt,
+}: {
+  client: GatewayClient | undefined;
+  label: string;
+  digest: string;
+  viewport: { width: number; height: number } | undefined;
+  capturedAt: string | undefined;
+}): ReactElement {
+  const url = useObjectUrls(
+    (wanted) =>
+      client === undefined
+        ? Promise.reject(new Error("this view has no node connection"))
+        : client.previewObjectUrl(wanted),
+    [digest],
+  )(digest);
+
+  const taken = capturedAt === undefined ? "" : ` lúc ${capturedAt}`;
+  return (
+    /*
+     * The digest is on the element as well as in the fetch, so an assertion can ask the node for the frame the
+     * card names and check that what comes back hashes to it. Without that the two halves — a card carrying a
+     * reference, and a node holding bytes — could each be right about a different picture.
+     */
+    <figure className="cc-card-preview" data-control-preview-frame="true" data-control-preview-digest={digest}>
+      {url === undefined ? (
+        <p className="cc-card-preview-pending" role="status">
+          Đang tải ảnh chụp màn hình…
+        </p>
+      ) : (
+        <img
+          src={url}
+          alt={`Ảnh chụp màn hình phiên ${label}${taken}`}
+          {...(viewport === undefined ? {} : { width: viewport.width, height: viewport.height })}
+        />
+      )}
+      <figcaption>Ảnh chụp{taken}, không phải màn hình trực tiếp.</figcaption>
+    </figure>
+  );
+}
+
+export function ControlSessionCardBlock({
+  block,
+  actions,
+  client,
+}: {
+  block: Record<string, unknown>;
   actions?: BlockActions;
+  client?: GatewayClient | undefined;
 }): ReactElement | null {
   if (block.owner !== "host") return null;
 
@@ -1555,6 +1919,22 @@ export function ControlSessionCardBlock({
   const leaseEpoch = state?.status === "taken-over" ? state.leaseEpoch : declaredEpoch;
   const running = !stopped;
   const busy = state?.status === "pending";
+  /*
+   * The captured frame, when there is one. Read defensively because a block is untyped data: a frame that is not
+   * shaped like one leaves the card without a picture rather than rendering something that is not the screen.
+   */
+  const declaredFrame = block.previewFrame;
+  const frame = typeof declaredFrame === "object" && declaredFrame !== null ? (declaredFrame as Record<string, unknown>) : undefined;
+  const frameDigest = typeof frame?.digest === "string" ? frame.digest : undefined;
+  const frameCapturedAt = typeof frame?.capturedAt === "string" ? frame.capturedAt : undefined;
+  const declaredViewport =
+    typeof frame?.viewport === "object" && frame.viewport !== null
+      ? (frame.viewport as Record<string, unknown>)
+      : undefined;
+  const frameViewport =
+    typeof declaredViewport?.width === "number" && typeof declaredViewport.height === "number"
+      ? { width: declaredViewport.width, height: declaredViewport.height }
+      : undefined;
 
   return (
     <section
@@ -1570,6 +1950,15 @@ export function ControlSessionCardBlock({
       data-control-status={stopped ? "stopped" : "running"}
       aria-label={`Phiên browser: ${label}`}
     >
+      {frameDigest === undefined ? null : (
+        <SessionPreviewFrame
+          client={client}
+          label={label}
+          digest={frameDigest}
+          viewport={frameViewport}
+          capturedAt={frameCapturedAt}
+        />
+      )}
       <header className="cc-card-head">
         <span className="cc-card-title">{label}</span>
         <span className="cc-badge" data-tone={stopped ? "" : "ok"}>

@@ -18,10 +18,14 @@ import {
   legalEvents,
   mayRetrySubmit,
   negotiateVersions,
+  dependencyDrift,
+  planPredatesFrozenBuildInput,
   reduceTask,
   requiredRefreshScope,
   retryabilityOf,
   routeVoiceIntent,
+  taskIdSchema,
+  runIdSchema,
   taskStateSchema,
   taskEventSchema,
   validatePeerEnvelope,
@@ -40,18 +44,10 @@ const OWNER = principalIdSchema.parse("prin_owner");
 
 describe("identifier contracts", () => {
   it("rejects a run id used where a task id belongs", () => {
-    const parsed = taskStateSchema.safeParse("queued");
-    expect(parsed.success).toBe(true);
-    // The brands are real: a run id cannot be substituted for a task id at the type
-    // level, and the runtime schema refuses the wrong prefix too.
-    expect(
-      validatePeerEnvelope({}, {
-        authenticatedSenderNodeId: "node_a",
-        supportedVersions: { min: 1, max: 2 },
-        lastSeenSequence: undefined,
-        knownDelegationIds: new Set<string>(),
-      }).valid,
-    ).toBe(false);
+    const taskId = taskIdSchema.parse("task_1");
+    const runId = runIdSchema.parse("run_1");
+    expect(taskIdSchema.safeParse(runId).success).toBe(false);
+    expect(runIdSchema.safeParse(taskId).success).toBe(false);
   });
 });
 
@@ -181,7 +177,7 @@ describe("effect ledger (T05)", () => {
     expect(mayRetrySubmit({ state: "confirmed", externalSupportsDedup: true })).toBe(false);
   });
 
-  it("marks a lost-acknowledgement timeout as unknown rather than failed", () => {
+  it("refuses to retry a submitted effect without acknowledgement", () => {
     expect(base.state).toBe("submitted");
     expect(mayRetrySubmit(base)).toBe(false);
   });
@@ -401,6 +397,96 @@ describe("install consent (T21)", () => {
       grantedCapabilities: ["calendar.events.list@1", "calendar.events.create@1"],
     });
     expect(result.valid).toBe(false);
+  });
+
+  it("invalidates consent when the frozen build input moved, and names the dependency", () => {
+    const frozen = {
+      ...plan,
+      lockRef: "pkg.artifact-and-dependencies.sha256-aaaa.lock.json",
+      lockDigest: "sha256:lock-one",
+      lockCoverage: "artifact-and-dependencies" as const,
+      resolvedDependencies: [
+        { id: "left-pad", version: "1.2.5", digest: "sha512-leftpad1", resolvedFrom: "npm:left-pad@1.2.5" },
+      ],
+    };
+    const moved = {
+      ...frozen,
+      lockRef: "pkg.artifact-and-dependencies.sha256-bbbb.lock.json",
+      lockDigest: "sha256:lock-two",
+      resolvedDependencies: [
+        { id: "left-pad", version: "1.3.0", digest: "sha512-leftpad2", resolvedFrom: "npm:left-pad@1.3.0" },
+      ],
+    };
+
+    const result = consentStillValid(frozen, moved);
+
+    expect(result.valid).toBe(false);
+    if (result.valid) return;
+    expect(result.changed).toContain("lockDigest");
+    expect(result.changed).toContain("resolvedDependencies");
+    // The field name is for a log; the detail is what somebody reads before deciding what to do.
+    expect(result.detail.join(" ")).toContain("left-pad");
+    expect(result.detail.join(" ")).toContain("1.2.5");
+    expect(result.detail.join(" ")).toContain("1.3.0");
+  });
+
+  it("reports drift when a plan frozen with a lock is compared with one that froze nothing", () => {
+    const frozen = {
+      ...plan,
+      lockRef: "pkg.artifact-only.sha256-aaaa.lock.json",
+      lockDigest: "sha256:lock-one",
+      lockCoverage: "artifact-only" as const,
+      resolvedDependencies: [
+        { id: "com.example.calendar", version: "1.2.0", digest: "sha256:aa", resolvedFrom: "npm:com.example.calendar@1.2.0" },
+      ],
+    };
+
+    const result = consentStillValid(frozen, plan);
+
+    // "No lock" is a different build input from "a lock that pins this artifact", and it must not read as agreement.
+    expect(result.valid).toBe(false);
+    expect(result.valid === false && result.changed).toContain("lockRef");
+  });
+
+  it("compares two versions of one name rather than collapsing them into one row", () => {
+    const consented = [
+      { name: "left-pad", version: "1.2.5", integrity: "sha512-leftpad1", resolvedFrom: "npm:left-pad@1.2.5" },
+      { name: "left-pad", version: "1.3.0", integrity: "sha512-leftpad2", resolvedFrom: "npm:left-pad@1.3.0" },
+    ];
+    const current = [
+      { name: "left-pad", version: "1.3.0", integrity: "sha512-leftpad2", resolvedFrom: "npm:left-pad@1.3.0" },
+    ];
+
+    const drift = dependencyDrift(consented, current);
+
+    /*
+     * Keyed by name alone, both sides held one entry and compared 1.3.0 with 1.3.0, reporting nothing while a
+     * version the user consented to had left the closure.
+     */
+    expect(drift).toHaveLength(1);
+    const line = drift[0] ?? "";
+    expect(line).toContain("left-pad");
+    expect(line).toContain("1.2.5");
+    expect(line).toContain("1.3.0");
+    // The other direction is a difference too, and a closure that did not move is still no difference at all.
+    expect(dependencyDrift(current, consented)).toHaveLength(1);
+    expect(dependencyDrift(consented, consented)).toEqual([]);
+  });
+
+  it("tells apart a plan that predates the frozen build input from one that recorded a closure", () => {
+    const frozen = {
+      ...plan,
+      lockRef: "pkg.artifact-and-dependencies.sha256-aaaa.lock.json",
+      lockDigest: "sha256:lock-one",
+      lockCoverage: "artifact-and-dependencies" as const,
+    };
+
+    /*
+     * The distinction the installing path needs to phrase its refusal: a plan with no reference, digest or coverage
+     * was written before anything was frozen, so it has no closure to have drifted away from.
+     */
+    expect(planPredatesFrozenBuildInput(plan)).toBe(true);
+    expect(planPredatesFrozenBuildInput(frozen)).toBe(false);
   });
 });
 

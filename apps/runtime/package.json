@@ -19,6 +19,8 @@
     "typecheck": "tsc -p ../../tsconfig.json"
   },
   "dependencies": {
+    "@clarkcant/app-worker": "workspace:*",
+    "@clarkcant/browser-playwright": "workspace:*",
     "@clarkcant/capability-host": "workspace:*",
     "@clarkcant/contracts": "workspace:*",
     "@clarkcant/core": "workspace:*",
@@ -32,7 +34,8 @@
     "@clarkcant/voice-adapters": "workspace:*",
     "@clarkcant/widget-host": "workspace:*",
     "ws": "8.21.3",
-    "zod": "4.6.5"
+    "zod": "4.6.5",
+    "@clarkcant/widget-catalog": "workspace:*"
   },
   "devDependencies": {
     "@types/ws": "8.18.1"

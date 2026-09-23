@@ -1,0 +1,10 @@
+{
+  "datasetId": "fixture_chart_widget",
+  "source": "sample",
+  "columns": ["week", "runs"],
+  "rows": [
+    { "week": "W36", "runs": 128 },
+    { "week": "W37", "runs": 141 },
+    { "week": "W38", "runs": 137 }
+  ]
+}

@@ -213,6 +213,25 @@ export class BrowserDriver {
    * The policy check runs before anything touches the page, so a refused action has no
    * observable side effect at all.
    */
+  /**
+   * Capture the frame as bytes.
+   *
+   * Deliberately separate from `observe`, and for the reason that function's own comment gives: raw frames never
+   * enter the event log, so an observation carries a reference and the bytes are fetched only when somebody is
+   * actually looking at a screen. A takeover preview is that occasion — and the bytes belong to whoever asked for
+   * them now, not to an observation recorded earlier that nobody retained.
+   */
+  async capturePreview(): Promise<{
+    bytes: Uint8Array;
+    contentType: "image/png";
+    viewport: { width: number; height: number };
+  }> {
+    const page = await this.#ensurePage();
+    const viewport = await page.evaluate(() => ({ width: window.innerWidth, height: window.innerHeight }));
+    const bytes = await page.screenshot({ type: "png" });
+    return { bytes, contentType: "image/png", viewport };
+  }
+
   async act(action: AutomationAction, options: { approvalGranted: boolean }): Promise<ActResult> {
     // A stop and a human takeover outrank every operation, including navigation.
     if (this.#stopped) {

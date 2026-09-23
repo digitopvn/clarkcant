@@ -25,12 +25,19 @@
 
 import { z } from "zod";
 
+import { capabilityRefSchema } from "./grants.ts";
+
 /**
- * The nine kinds.
+ * The kinds.
  *
  * Issue #17 says "all 8 command groups" and then lists nine things to do. Nine kinds implement the
  * list; the count in the prose is the thing that is wrong, and it is named here rather than quietly
- * matched to whichever number was easier.
+ * matched to whichever number was easier. The two widget kinds bring it to eleven.
+ *
+ * A widget target is not a scripting surface. `definitionId` reuses the capability-ref grammar
+ * (`namespace.name@major`) and `family` is a bare catalog family word, so the parameter space stays
+ * a pair of enumerated-looking identifiers rather than free text: opening the library is a view
+ * action, and nothing in it can be widened by saying more words.
  */
 export const APP_INTENT_KINDS = [
   "voice.end",
@@ -42,6 +49,8 @@ export const APP_INTENT_KINDS = [
   "nav.home",
   "composer.attach",
   "app.quit",
+  "widgets.open",
+  "widgets.show",
 ] as const;
 
 export const appIntentKindSchema = z.enum(APP_INTENT_KINDS);
@@ -69,15 +78,40 @@ export type SettingsTab = z.infer<typeof settingsTabSchema>;
 export const appIntentSourceSchema = z.enum(["chat", "click", "voice"]);
 export type AppIntentSource = z.infer<typeof appIntentSourceSchema>;
 
+/** A catalog family word, as `widget-catalog` names it. */
+export const widgetFamilySchema = z
+  .string()
+  .min(2)
+  .max(40)
+  .regex(/^[a-z][a-z0-9-]*$/, { error: "must be a catalog family name" });
+export type WidgetFamily = z.infer<typeof widgetFamilySchema>;
+
+/**
+ * The two widget kinds.
+ *
+ * `widgets.open` opens the library on the catalogue; `widgets.show` opens it on a particular widget
+ * or family. Neither carries anything executable, which is why neither needs confirmation: the worst
+ * an unwanted one can do is show a catalogue the person can close.
+ */
 export const appIntentSchema = z
   .strictObject({
     kind: appIntentKindSchema,
     tab: settingsTabSchema.optional(),
+    definitionId: capabilityRefSchema.optional(),
+    family: widgetFamilySchema.optional(),
   })
   .refine((intent) => intent.kind !== "settings.tab" || intent.tab !== undefined, {
     message: "settings.tab must name the tab to change to",
     path: ["tab"],
-  });
+  })
+  .refine(
+    (intent) =>
+      intent.kind === "widgets.show" || (intent.definitionId === undefined && intent.family === undefined),
+    {
+      message: "only widgets.show may name a widget or a family",
+      path: ["definitionId"],
+    },
+  );
 export type AppIntent = z.infer<typeof appIntentSchema>;
 
 /** The one intent that is never executable from a single request. */
@@ -141,6 +175,16 @@ export function describeAppIntent(intent: AppIntent): string {
       return "Tôi mở hộp thoại chọn tệp nhé.";
     case "app.quit":
       return "Tôi hiểu là bạn muốn thoát ứng dụng. Bạn xác nhận chứ?";
+    case "widgets.open":
+      return "Tôi mở thư viện widget nhé.";
+    case "widgets.show": {
+      if (intent.definitionId !== undefined) return `Tôi mở widget ${intent.definitionId} nhé.`;
+      if (intent.family !== undefined) return `Tôi mở thư viện widget ở nhóm ${intent.family} nhé.`;
+      // Distinct from `widgets.open` on purpose: the existing suite asserts that every kind reads back
+      // differently, and a person who asked for a widget and got "I am opening the library" should be
+      // able to tell that the widget itself was not named.
+      return "Tôi mở thư viện widget để bạn chọn nhé.";
+    }
     default: {
       // Every kind above returns, so this is unreachable today. It exists so that adding a tenth kind
       // without a sentence is a loud failure in a test rather than `undefined` read aloud by a voice.
@@ -203,6 +247,9 @@ export const appIntentRequestSchema = z
     text: z.string().min(1).optional(),
     kind: appIntentKindSchema.optional(),
     tab: settingsTabSchema.optional(),
+    /** Carried so a click can name a widget; a spoken sentence gets its target from the matcher. */
+    definitionId: capabilityRefSchema.optional(),
+    family: widgetFamilySchema.optional(),
     conversationId: z.string().min(1).max(128).optional(),
     source: appIntentSourceSchema,
   })
@@ -223,6 +270,9 @@ export type AppIntentConfirmRequest = z.infer<typeof appIntentConfirmRequestSche
 export const appIntentEventDocumentSchema = z.strictObject({
   kind: appIntentKindSchema,
   tab: settingsTabSchema.optional(),
+  /** Recorded so the audit can answer *which* widget was shown, not only that the library opened. */
+  definitionId: capabilityRefSchema.optional(),
+  family: widgetFamilySchema.optional(),
   source: appIntentSourceSchema,
   confirmed: z.boolean(),
 });

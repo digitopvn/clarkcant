@@ -94,6 +94,14 @@ export interface FacetGeneration {
   activeSince: string;
   /** Previous generation kept addressable so rollback is a pointer move. */
   previousGenerationId?: string;
+  /**
+   * The frozen build input this generation was activated against, when it had one.
+   *
+   * Carried on the generation rather than looked up from a plan, because what is running and what was consented to
+   * are two rows, and a superseded plan must not be able to change the answer for a live generation.
+   */
+  lockRef?: string;
+  lockDigest?: string;
 }
 
 export interface FacetHostState {
@@ -117,7 +125,15 @@ export type ActivateResult =
  */
 export function activateFacet(
   state: FacetHostState,
-  input: { facetKind: FacetKind; isolation: IsolationClass; generationId: string; at: string },
+  input: {
+    facetKind: FacetKind;
+    isolation: IsolationClass;
+    generationId: string;
+    at: string;
+    /** The frozen build input the generation was built from, carried through rather than re-derived. */
+    lockRef?: string;
+    lockDigest?: string;
+  },
 ): ActivateResult {
   const refreshScope = requiredRefreshScope({
     facetKinds: [input.facetKind],
@@ -142,6 +158,8 @@ export function activateFacet(
     generationId: input.generationId,
     activeSince: input.at,
     ...(existing === undefined ? {} : { previousGenerationId: existing.generationId }),
+    ...(input.lockRef === undefined ? {} : { lockRef: input.lockRef }),
+    ...(input.lockDigest === undefined ? {} : { lockDigest: input.lockDigest }),
   });
   return { ok: true, state: next, refreshScope };
 }
@@ -181,12 +199,21 @@ export function decideRequirementAction(input: {
 }
 
 /**
- * @implementation-status stub
- * TODO(P5): the staged install pipeline — quarantine download, dependency locking,
- * checksum verification and isolated build. Manifest validation, candidate ranking,
- * plan creation and generation activation are implemented and tested; the download
- * and sandboxed build steps need a real artifact source and an isolation backend.
+ * Manifest validation, candidate ranking, plan creation and generation activation are implemented and tested.
+ *
+ * The staged install pipeline now has the three steps that touch code from somewhere else: `dependency-lock.ts`
+ * resolves the dependency closure to exact versions and integrities and freezes it into one artifact whose digest
+ * is bound to the install plan, and `quarantine.ts` downloads the artifact into a directory of its own and hashes
+ * it before anything may look at it, checks the frozen lock and the approved lifecycle scripts, and then builds in a
+ * process of its own with a working directory inside quarantine and an environment stripped of the node's
+ * credentials. Unpacking is guarded against an entry — a symlink included — that resolves outside the root.
+ *
+ * What a lock does not do is make third-party code safe. It proves that a build consumes the artifacts that were
+ * approved rather than whatever a package manager resolved today; whether the pinned code is harmless is a question
+ * this node still has no way to answer.
  */
 export const INSTALL_PIPELINE_STATE: InstallState = "proposed";
 
 export * from "./secrets.ts";
+export * from "./quarantine.ts";
+export * from "./dependency-lock.ts";

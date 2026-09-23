@@ -1,4 +1,4 @@
-import { directoryEntrySchema, riskLaneFor, type DirectoryEntry, type PackageSource, type RiskLane } from "@clarkcant/contracts";
+import { directoryEntrySchema, riskLaneFor, type DirectoryEntry, type PackageSource, type Platform, type RiskLane } from "@clarkcant/contracts";
 
 /**
  * Resolving where a package comes from.
@@ -52,7 +52,7 @@ export interface ResolveInput {
   /** The directory listing, when the source is a registry rather than a path. */
   directory?: readonly DirectoryEntry[];
   hostApi: number;
-  platform: string;
+  platform: Platform;
   /**
    * The digest computed from a local package by the caller.
    *
@@ -115,11 +115,25 @@ export function resolvePackageSource(input: ResolveInput): ResolveResult {
       message: "a local package must be hashed before it can be planned, so the plan names the bytes it approved",
     };
   }
+
+  /*
+   * A local path has a name when the directory lists it.
+   *
+   * The path is where the bytes are, not what the package is called, so recording the path as the package id gives
+   * one package two names: the listing says `com.example.chart-widget` while the installed row said
+   * `apps/web/e2e/fixtures/chart-widget`, and both were shown to the same person. The listing is this node's own
+   * record of what that path is, so its name is the better answer. A path the directory does not list keeps the
+   * path: installing an unlisted local path works today, and it has nothing better to be called.
+   *
+   * The digest stays the caller's hash of the local bytes rather than the listed digest. Those two describe
+   * different things - the bytes on disk right now against whatever was published - and this is a local install.
+   */
+  const listed = input.directory?.find((entry) => entry.source.kind === "local" && entry.source.path === source.path);
   return {
     ok: true,
     resolved: {
-      packageId: source.path,
-      version: "0.0.0-local",
+      packageId: listed?.packageId ?? source.path,
+      version: listed?.version ?? "0.0.0-local",
       artifactUrl: `file:${source.path}`,
       digest: input.localDigest,
       rationale: `local path ${source.path}`,
@@ -154,8 +168,14 @@ function finish(
       message: `needs host API ${String(entry.hostApi.min)}–${String(entry.hostApi.max)}, this host is ${String(input.hostApi)}`,
     };
   }
-  if (!entry.platforms.includes(input.platform as never)) {
-    return { ok: false, code: "PLATFORM_MISMATCH", message: `does not list ${input.platform}` };
+  if (!entry.platforms.includes(input.platform)) {
+    // Names both sides. "Does not list linux-x64" tells a reader what this host is and nothing about what the
+    // package is for, so it reads as a malformed package rather than as one built for another machine.
+    return {
+      ok: false,
+      code: "PLATFORM_MISMATCH",
+      message: `is built for ${entry.platforms.join(", ")}; this host is ${input.platform}`,
+    };
   }
   if (entry.digest.trim() === "") {
     // A directory entry with no digest is refused rather than trusted: there would be nothing to check the artifact

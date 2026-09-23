@@ -6,7 +6,8 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import { runCli } from "../src/cli.ts";
 import { runConformance } from "../src/conformance.ts";
-import { readPackage } from "../src/manifest.ts";
+import type { FrameFacts } from "../src/dev-shell.ts";
+import { readPackage } from "@clarkcant/core";
 
 /**
  * The author's three commands, run for real.
@@ -102,6 +103,102 @@ describe("the conformance status split", () => {
     expect(passed).toContain("lifecycle.disposeCleanup");
     expect(passed).toContain("interaction.dedup");
     expect(passed).toContain("interaction.staleRevision");
+  });
+});
+
+describe("the frame checks, when a frame was measured", () => {
+  /** Facts a dev host collected from a real frame, with nothing wrong with it. */
+  const clean: FrameFacts = {
+    tabbable: [{ name: "Nút", focusVisible: true }],
+    targets: [{ name: "Nút", width: 40, height: 32 }],
+    images: [{ src: "a.png", alt: "mô tả" }],
+    textOverMotion: false,
+    zeroDurationAnimation: false,
+    declaredTextFallback: "fallback",
+    reducedMotion: false,
+    layouts: [
+      { name: "narrow", viewportWidth: 320, rendered: true, overflows: false },
+      { name: "compact", viewportWidth: 480, rendered: true, overflows: false },
+      { name: "expanded", viewportWidth: 1024, rendered: true, overflows: false },
+    ],
+    states: [
+      { name: "loading", rendered: true },
+      { name: "readOnly", rendered: true },
+    ],
+  };
+
+  it("answers the checks a frame can answer, and leaves the ones it cannot", async () => {
+    const result = runConformance(await tempPackage("form"), { frames: clean });
+    const byId = new Map(result.checks.map((check) => [check.id, check.status]));
+
+    for (const id of [
+      "interaction.keyboard",
+      "interaction.touchSize",
+      "rendering.narrow",
+      "rendering.compact",
+      "rendering.expanded",
+      "rendering.loading",
+      "rendering.readOnly",
+      "rendering.reducedMotion",
+    ]) {
+      expect(byId.get(id), id).toBe("pass");
+    }
+
+    /*
+     * And two stay unverified: detach needs a window that can be detached and re-attached, and this command drives a
+     * browser dev host, which has none to drive - the desktop's own detached window is covered by the desktop and
+     * browser suites, not here. Voice/click parity needs a voice session, whose precondition is a live provider
+     * account. Answering those from a frame would be the report inventing a measurement nobody took.
+     */
+    expect(byId.get("interaction.detach")).toBe("requires-dev-host");
+    expect(byId.get("interaction.voiceClickParity")).toBe("requires-dev-host");
+  });
+
+  it("fails a check the frame showed a problem with, and says what it saw", async () => {
+    const result = runConformance(await tempPackage("form"), {
+      frames: { ...clean, targets: [{ name: "Nút", width: 16, height: 16 }] },
+    });
+    const target = result.checks.find((check) => check.id === "interaction.touchSize");
+
+    expect(target?.status).toBe("fail");
+    expect(target?.detail).toContain("16x16");
+    expect(result.ok).toBe(false);
+  });
+
+  it("reports a layout that overflowed rather than passing it because it rendered", async () => {
+    const result = runConformance(await tempPackage("form"), {
+      frames: { ...clean, layouts: [{ name: "narrow", viewportWidth: 320, rendered: true, overflows: true }] },
+    });
+    const narrow = result.checks.find((check) => check.id === "rendering.narrow");
+
+    expect(narrow?.status).toBe("fail");
+    expect(narrow?.detail).toContain("320px");
+    expect(narrow?.detail).toContain("overflows=true");
+  });
+
+  it("keeps a check unverified when the fact it needs was not collected", async () => {
+    const { layouts: _layouts, ...withoutLayouts } = clean;
+    const result = runConformance(await tempPackage("form"), { frames: withoutLayouts });
+
+    // A collector that did not ask about the layouts is not a reason to assume they were fine.
+    expect(result.checks.find((check) => check.id === "rendering.narrow")?.status).toBe("requires-dev-host");
+  });
+
+  it("does not treat a widget with nothing to tab to as a keyboard failure", async () => {
+    // The audit calls that a warning and says why: a widget with nothing interactive is a legitimate widget.
+    const result = runConformance(await tempPackage("blank"), { frames: { ...clean, tabbable: [] } });
+    expect(result.checks.find((check) => check.id === "interaction.keyboard")?.status).toBe("pass");
+  });
+
+  it("reads frame facts from a file, and refuses one it cannot read", async () => {
+    const root = await tempPackage("form");
+    const framesPath = join(root, "frames.json");
+    writeFileSync(framesPath, JSON.stringify(clean));
+
+    expect(await runCli(["widget", "test", root, "--frames", framesPath])).toBe(0);
+    // Exit 2 rather than a silent fallback: a suite that quietly reported the package unchecked when somebody had
+    // already measured it would erase the distinction this report exists for.
+    expect(await runCli(["widget", "test", root, "--frames", join(root, "not-there.json")])).toBe(2);
   });
 });
 
@@ -213,9 +310,61 @@ describe("commands that are not implemented", () => {
     expect(await runCli(["nonsense"])).toBe(2);
   });
 
-  it("says publish arrives with the directory, and that a local path needs no account", async () => {
-    // Named rather than stubbed: a command that printed a placeholder would be a control that looks usable before
-    // its action exists.
-    expect(await runCli(["widget", "publish", await tempPackage()])).toBe(2);
+  it("prepares the submission rather than claiming to have submitted it", async () => {
+    /*
+     * The plan scopes this as "may initially prepare directory submission", and the difference matters: the command
+     * writes what a directory would receive and says that sending it needs an account. A command that looked as
+     * though it had already published would be a control whose action does not exist.
+     */
+    const root = await tempPackage();
+    expect(await runCli(["widget", "publish", root])).toBe(0);
+    expect(existsSync(join(root, "dist", "directory-entry.json"))).toBe(true);
+  });
+
+});
+
+describe("clark widget publish", () => {
+  it("prepares a directory entry with the artifact's own digest and the declared risk lane", async () => {
+    const root = await tempPackage("dashboard");
+
+    expect(await runCli(["widget", "publish", root])).toBe(0);
+
+    const entry = JSON.parse(readFileSync(join(root, "dist", "directory-entry.json"), "utf8")) as Record<string, unknown>;
+    const artifact = JSON.parse(readFileSync(join(root, "dist", "artifact.json"), "utf8")) as { digest: string };
+
+    /*
+     * The digest is the artifact's, read from what `pack` produced rather than recomputed. Two computations of the
+     * same thing is how a listing comes to name an artifact nobody can produce.
+     */
+    expect(entry["digest"]).toBe(artifact.digest);
+    const manifest = JSON.parse(readFileSync(join(root, "clarkcant.json"), "utf8")) as { id: string };
+    expect(entry["packageId"]).toBe(manifest.id);
+    expect(entry["riskTier"]).toBe("isolated-ui");
+    expect(entry["facets"]).toEqual(["ui"]);
+    expect(entry["sizeBytes"]).toBeGreaterThan(0);
+    // Every field the standard requires, present — a directory would reject the entry otherwise.
+    for (const field of ["version", "displayName", "description", "publisher", "platforms", "hostApi", "permissionsSummary", "preview"]) {
+      expect(entry[field], field).toBeDefined();
+    }
+  });
+
+  it("refuses to publish a package that fails conformance", async () => {
+    const root = await tempPackage();
+    rmSync(join(root, "fixtures", "error.json"));
+
+    expect(await runCli(["widget", "publish", root])).toBe(1);
+    expect(existsSync(join(root, "dist", "directory-entry.json"))).toBe(false);
+  });
+
+  it("refuses to prepare the same version twice after its bytes changed", async () => {
+    const root = await tempPackage();
+    expect(await runCli(["widget", "publish", root])).toBe(0);
+
+    const entry = join(root, "widgets", "main", "index.html");
+    writeFileSync(entry, readFileSync(entry, "utf8") + "\n<!-- changed -->\n");
+
+    // A version whose bytes changed is a different package wearing the same number, and a directory that received
+    // both would hold two entries nobody can tell apart.
+    expect(await runCli(["widget", "publish", root])).toBe(1);
   });
 });

@@ -69,10 +69,30 @@ export function Modal({ open, onClose, title, description, children, actions, wi
     [onClose],
   );
 
+  // The listener is separate from the focus work on purpose: a handler whose identity changes re-registers
+  // a listener, which is harmless, while re-running the focus work would pull focus out of whatever the user
+  // is on. That is not harmless, and it is not hypothetical - see the note on the effect below.
+  useEffect(() => {
+    if (!open || typeof document === "undefined") return;
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("keydown", onKeyDown);
+    };
+  }, [open, onKeyDown]);
+
+  /*
+   * Opening moves focus into the dialog; closing returns it to whatever opened it.
+   *
+   * This depends on `open` and nothing else. It used to share one effect with the listener above, so it re-ran
+   * whenever the close handler's identity changed - which happens on every re-render of the surface that owns
+   * the dialog. Each re-run restored focus to the opener and then moved it to the dialog's first control, so a
+   * keyboard user's focus was taken while they were using the dialog. It appeared as an intermittent browser
+   * suite failure: a journey that presses arrow keys in the settings tab strip failed in CI and passed on a
+   * faster machine, because the panel's data landing at the wrong moment was enough to re-render it.
+   */
   useEffect(() => {
     if (!open || typeof document === "undefined") return;
     opener.current = document.activeElement;
-    document.addEventListener("keydown", onKeyDown);
 
     const node = dialog.current;
     const firstFocusable = node?.querySelector<HTMLElement>(FOCUSABLE);
@@ -84,11 +104,10 @@ export function Modal({ open, onClose, title, description, children, actions, wi
     document.body.style.overflow = "hidden";
 
     return () => {
-      document.removeEventListener("keydown", onKeyDown);
       document.body.style.overflow = previousOverflow;
       if (opener.current instanceof HTMLElement) opener.current.focus();
     };
-  }, [open, onKeyDown]);
+  }, [open]);
 
   if (!open) return null;
 

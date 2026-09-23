@@ -27,6 +27,7 @@ import {
   type PreferenceDefinition,
   type RegisteredPreference,
 } from "@clarkcant/contracts";
+import { asJsonValue } from "@clarkcant/storage";
 
 import {
   getPreference,
@@ -87,7 +88,18 @@ function envelope(
     applies: definition.applies,
   };
   if (record === undefined) {
-    return { ...shared, value: definition.default, isDefault: true, revision: 0, updatedAt: null };
+    /*
+     * A default is module-level state — `DEFAULT_EXECUTION_POLICY_CONFIG` holds arrays this process shares with
+     * every read — so it is copied rather than handed out by reference: a caller that mutated what it read would
+     * otherwise edit the default for every later read, and a widget holding one would hold the declaration.
+     */
+    return {
+      ...shared,
+      value: asJsonValue(definition.default, `preferences.${definition.key}.default`),
+      isDefault: true,
+      revision: 0,
+      updatedAt: null,
+    };
   }
   return {
     ...shared,

@@ -101,6 +101,16 @@ export interface SettingsPanelProps {
    * command was understood and then quietly ignored, which reads as the microphone not working.
    */
   openAt?: TabId | undefined;
+  /**
+   * Opens the Widget Library. The settings panel closes itself first.
+   *
+   * `Modal` registers a document-level Escape handler and a Tab trap with no notion of nesting, so a
+   * library opened on top of it would be closed by the same Escape and would leave Tab cycling
+   * inside the dialog behind it. Making the library the only open dialog is the fix; the cost is
+   * that the Browse button no longer exists when focus is returned, which is why the surface takes
+   * an explicit fallback.
+   */
+  onOpenWidgetLibrary?: ((mode: "browse" | "develop") => void) | undefined;
 }
 
 export function SettingsPanel({
@@ -112,6 +122,7 @@ export function SettingsPanel({
   onThemeChoice,
   onOrbChange,
   openAt,
+  onOpenWidgetLibrary,
 }: SettingsPanelProps): ReactElement | null {
   const [facts, setFacts] = useState<NodeFacts | undefined>(undefined);
   const [tools, setTools] = useState<ToolFacts[] | undefined>(undefined);
@@ -192,6 +203,11 @@ export function SettingsPanel({
     if (problem !== undefined) return "Không đọc được trạng thái node";
     if (facts === undefined) return "Đang đọc…";
     return `${facts.label} · đã kết nối runtime cục bộ`;
+  };
+
+  const openWidgetLibrary = (mode: "browse" | "develop"): void => {
+    onClose();
+    onOpenWidgetLibrary?.(mode);
   };
 
   return (
@@ -296,12 +312,21 @@ export function SettingsPanel({
         )}
         {tab === "ai" && <AiRoutingSettings client={client} prefs={prefs} facts={facts} />}
         {tab === "control" && (
-          <ControlSettings prefs={prefs} recentEffects={effects} recentProblem={effectsProblem} />
+          <ControlSettings
+            prefs={prefs}
+            client={client}
+            recentEffects={effects}
+            recentProblem={effectsProblem}
+          />
         )}
-        {tab === "extensions" && <ExtensionsSettings client={client} tools={tools} />}
+        {tab === "extensions" && (
+          <ExtensionsSettings client={client} tools={tools} onOpenWidgetLibrary={openWidgetLibrary} />
+        )}
         {tab === "devices" && <DevicesVoiceSettings client={client} prefs={prefs} facts={facts} />}
         {tab === "memory" && <MemorySettings client={client} />}
-        {tab === "developer" && <DeveloperSettings client={client} facts={facts} />}
+        {tab === "developer" && (
+          <DeveloperSettings client={client} facts={facts} onOpenWidgetLibrary={openWidgetLibrary} />
+        )}
       </div>
 
       <footer className="cc-modal-foot">

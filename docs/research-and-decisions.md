@@ -49,7 +49,21 @@ query không trùng từ vựng) không cải thiện: 9/12 ở cả hai đườ
 corpus này, nên `CLARKCANT_SEARCH_SEMANTIC` mặc định tắt**; code hybrid vẫn nằm sau flag để đo lại khi
 có corpus lớn hơn hoặc model tốt hơn.
 
-| ADR | Quyết định | Thay thế / đánh đổi |
+### ADR 2026-09-19 — autonomous execution mặc định, và authority nằm ở host chứ không ở thẻ duyệt
+
+Ở trạng thái trước quyết định này, `run_command` dùng thẻ duyệt làm security boundary chính: `guardCommand()` trong `apps/runtime/src/run-command.ts` đã bỏ giới hạn thư mục và tự nói ra lý do ("node không giới hạn thư mục nữa, nên thẻ duyệt này là chỗ bạn quyết định"). Xoá approval rồi giao quyền quyết định cho Jev là biến Jev thành security boundary duy nhất — một model làm việc đó là kiến trúc bị bác.
+
+Quyết định: mặc định chuyển sang autonomous, và authority vẫn ở host.
+
+- **Host preflight là invariant cứng.** Schema, capability tồn tại, resource tồn tại, budget (timeout, output cap, số target) và ranh giới secret chạy trước mọi quyết định của model; không model nào ghi đè được. **Containment theo resource ownership** thuộc tầng này: effect phải nằm trong resource mà conversation/node sở hữu, ra ngoài bị từ chối ở preflight.
+- **Jev chỉ được thu hẹp.** Nó trả `allow`/`deny`/`constrain`/`clarify` trên một operation mà preflight đã xác định là technically valid; nó không cấp quyền, không mở rộng scope, không đọc secret value.
+- **`ExecutionPolicy` thay boolean approval:** `auto | guarded | confirm | deny`, mặc định `guarded` — không hỏi user, Jev được block/constrain. `confirm` tái tạo đúng hành vi approval cũ như một policy mode, nên approval infrastructure không bị xoá ở phase đầu; đổi default trước, giữ đường cũ cho regression, rồi mới hạ nó xuống optional.
+- **Fail-open khi Jev vắng** là mặc định và đổi được trong settings. Fail-open bỏ lớp judgment, không bao giờ bỏ preflight hay containment.
+- **`clarify` không phải xin phép.** Câu hỏi làm rõ giữa nhiều khả năng đều hợp lệ đi qua Interaction Manager (§7.5 system-architecture); “bạn có cho phép không?” không phải clarify.
+
+Đánh đổi: autonomous mặc định giảm ma sát nhưng tăng blast radius khi model sai. Bù lại bằng containment, budget, secret isolation, emergency stop và audit trail — không bằng hộp thoại xác nhận.
+
+
 |---|---|---|
 | B01 | Portable Node runtime + shared web UI + optional Electron | Bỏ desktop-only coupling; thêm package/platform matrix |
 | B02 | One home/conversation, autonomous execution peers | Không multi-master/offline failover tự động; rõ authority |
@@ -66,6 +80,8 @@ có corpus lớn hơn hoặc model tốt hơn.
 | B13 | Guided onboarding hoặc clearly labeled quick play | Không bắt key để xem sample; AI thật vẫn cần provider hợp lệ |
 | B14 | Version-pinned optional Chord spike | Không reimplement toolkit nếu fit; cũng không khóa framework chưa thử |
 | B15 | Native mobile/marketplace/cross-owner federation về sau | Foundation release vẫn lớn nhưng không xây mọi business layer |
+| B16 | Autonomous execution mặc định; approval hạ thành policy mode `confirm` | Bỏ thẻ duyệt làm security boundary, nên phải có containment + budget + stop/audit thay thế |
+| B17 | Host preflight giữ authority; Jev chỉ được thu hẹp | Không để model quyết định quyền; Jev vắng thì mất judgment chứ không mất kiểm soát |
 
 ## 3. Những điều còn phải đo/kiểm chứng trước code lock
 

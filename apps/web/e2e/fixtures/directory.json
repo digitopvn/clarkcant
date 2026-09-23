@@ -1,0 +1,120 @@
+[
+  {
+    "packageId": "com.acme.dashboard",
+    "version": "1.0.0",
+    "displayName": "Dashboard",
+    "description": "biểu đồ cho dự án",
+    "source": {
+      "kind": "npm",
+      "name": "com.acme.dashboard",
+      "version": "1.0.0"
+    },
+    "publisher": {
+      "id": "acme",
+      "sourceUrl": "https://example.com/acme",
+      "license": "MIT"
+    },
+    "preview": {},
+    "facets": [
+      "ui"
+    ],
+    "isolations": [
+      {
+        "facetKind": "ui",
+        "isolation": "isolated-ui"
+      }
+    ],
+    "platforms": [
+      "darwin-arm64",
+      "linux-x64",
+      "win32-x64",
+      "web"
+    ],
+    "hostApi": {
+      "min": 1,
+      "max": 1
+    },
+    "permissionsSummary": [],
+    "riskTier": "isolated-ui",
+    "sizeBytes": 40960,
+    "digest": "sha256:1111111111111111111111111111111111111111111111111111111111111111"
+  },
+  {
+    "packageId": "com.example.frame-widget",
+    "version": "1.0.0",
+    "displayName": "Frame widget",
+    "description": "A widget that runs in its own frame.",
+    "source": {
+      "kind": "local",
+      "path": "apps/web/e2e/fixtures/frame-widget"
+    },
+    "publisher": {
+      "id": "example",
+      "sourceUrl": "https://example.com",
+      "license": "MIT"
+    },
+    "preview": {},
+    "facets": [
+      "ui"
+    ],
+    "isolations": [
+      {
+        "facetKind": "ui",
+        "isolation": "isolated-ui"
+      }
+    ],
+    "platforms": [
+      "darwin-arm64",
+      "linux-x64",
+      "win32-x64",
+      "web"
+    ],
+    "hostApi": {
+      "min": 1,
+      "max": 1
+    },
+    "permissionsSummary": [],
+    "riskTier": "isolated-ui",
+    "sizeBytes": 2048,
+    "digest": "sha256:frame-widget-digest"
+  },
+  {
+    "packageId": "com.example.chart-widget",
+    "version": "1.0.0",
+    "displayName": "Chart widget",
+    "description": "A chart a package declares, rendered by the catalog's own renderer.",
+    "source": {
+      "kind": "local",
+      "path": "apps/web/e2e/fixtures/chart-widget"
+    },
+    "publisher": {
+      "id": "example",
+      "sourceUrl": "https://example.com",
+      "license": "MIT"
+    },
+    "preview": {},
+    "facets": [
+      "ui"
+    ],
+    "isolations": [
+      {
+        "facetKind": "ui",
+        "isolation": "isolated-ui"
+      }
+    ],
+    "platforms": [
+      "darwin-arm64",
+      "linux-x64",
+      "win32-x64",
+      "web"
+    ],
+    "hostApi": {
+      "min": 1,
+      "max": 1
+    },
+    "permissionsSummary": [],
+    "riskTier": "isolated-ui",
+    "sizeBytes": 2048,
+    "digest": "sha256:chart-widget-digest"
+  }
+]

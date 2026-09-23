@@ -95,6 +95,12 @@ test.describe("the first run", () => {
     // Its own navigation rather than the shared helper: that one waits for the connection status in the header, and this
     // screen deliberately has no header - which is exactly what made the first version of this test fail, and the
     // failure looked like the screen not rendering.
+    //
+    // The node's answer is stubbed, and it has to be: this suite's node is a fixture with no provider and no key, so on
+    // its real answer the client correctly walks the steps instead of going straight in, and the claim this test makes -
+    // that the screen is dismissed and stays dismissed - is about the ready path. The steps path has its own test below,
+    // which stubs the opposite answer.
+    await page.route("**/readiness", (route) => route.fulfill({ json: { model: true, credentials: ["typesafe"] } }));
     await page.goto(`/?token=${token()}&gateway=${encodeURIComponent(GATEWAY)}`);
 
     await expect(page.locator("[data-onboarding='true']")).toBeVisible({ timeout: 15_000 });

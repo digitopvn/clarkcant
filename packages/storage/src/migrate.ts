@@ -955,6 +955,129 @@ export const MIGRATIONS: readonly Migration[] = [
       `);
     },
   },
+  {
+    version: 19,
+    name: "secrets",
+    reversible: true,
+    up: (db) => {
+      db.exec(`
+        -- What a secret is for, who may use it, and where the value actually lives.
+        --
+        -- Metadata only. The value stays in a backend — the node's own store today, a keychain or an external
+        -- vault later — and this table is what lets the agent and the interface talk about a secret without ever
+        -- holding one. That split is the whole point: the model may learn that "github_token" exists, what it is
+        -- for, and which consumers are allowed to use it, and still has no way to read it.
+        --
+        -- backend_ref is opaque to callers: the node-store backend reads it as a credential name, a keychain
+        -- backend would read it as a service path. Keeping it opaque here is what lets the backend change without
+        -- a migration that rewrites rows.
+        --
+        -- allowed_consumers and injection_policy are JSON and text rather than joined tables because they are
+        -- read whole, written whole, and small: a secret's consumer list is not something to query across.
+        CREATE TABLE secrets (
+          secret_id         TEXT PRIMARY KEY,
+          principal_id      TEXT NOT NULL,
+          node_id           TEXT,
+          name              TEXT NOT NULL,
+          description       TEXT NOT NULL DEFAULT '',
+          kind              TEXT NOT NULL DEFAULT 'api-key',
+          backend           TEXT NOT NULL DEFAULT 'node-store',
+          backend_ref       TEXT NOT NULL,
+          allowed_consumers TEXT NOT NULL DEFAULT '[]',
+          injection_policy  TEXT NOT NULL DEFAULT 'tool-only',
+          created_at        TEXT NOT NULL,
+          updated_at        TEXT NOT NULL,
+          last_used_at      TEXT,
+          UNIQUE (principal_id, name)
+        );
+        CREATE INDEX idx_secrets_principal ON secrets(principal_id);
+      `);
+    },
+  },
+  {
+    version: 20,
+    name: "audit_log",
+    reversible: true,
+    up: (db) => {
+      db.exec(`
+        -- What this node did, in order, in words.
+        --
+        -- Append-only by convention rather than by trigger: nothing in the codebase updates or deletes a row here,
+        -- and the reason to keep it is the question asked after something surprising happened. A row says what was
+        -- done and how it ended; it never holds a secret value, an argument dump or a transcript, because an audit
+        -- trail that leaked is worse than the failure it was kept for.
+        --
+        -- Separate from the effect ledger, which tracks how far an external effect got. This is the human-readable
+        -- record of what a person or an agent asked this node to do and what came of it.
+        CREATE TABLE audit_log (
+          audit_id     TEXT PRIMARY KEY,
+          principal_id TEXT NOT NULL,
+          node_id      TEXT,
+          at           TEXT NOT NULL,
+          kind         TEXT NOT NULL,
+          summary      TEXT NOT NULL,
+          outcome      TEXT NOT NULL,
+          ref          TEXT
+        );
+        CREATE INDEX idx_audit_principal_at ON audit_log(principal_id, at);
+      `);
+    },
+  },
+  {
+    // 21, not 19: main added this migration at the version this branch already uses for `secrets`, and the two are
+    // kept — a schema version is the count of migrations, so the next free number is the honest one.
+    version: 21,
+    name: "peers-and-pairing",
+    reversible: true,
+    up: (db) => {
+      db.exec(`
+        -- A single-use introduction between two nodes.
+        --
+        -- The invite is an introduction, not a credential: claiming it establishes only that two
+        -- nodes know each other's identity. Nothing becomes reachable and no grant is created until
+        -- a person confirms the pairing, which is a separate act on each side.
+        --
+        -- A claimed invite is kept rather than deleted, because "this invite was already used" and
+        -- "this invite never existed" are different answers to a replay, and collapsing them would
+        -- hide a stolen invite behind an ordinary 404.
+        CREATE TABLE pair_invites (
+          invite_id       TEXT PRIMARY KEY,
+          issuer_node_id  TEXT NOT NULL,
+          endpoint        TEXT NOT NULL,
+          fingerprint     TEXT NOT NULL,
+          created_at      TEXT NOT NULL,
+          expires_at      TEXT NOT NULL,
+          claimed_at      TEXT,
+          claimed_by      TEXT
+        );
+
+        -- A node this one knows.
+        --
+        -- Recorded when a claim arrives, trusted only after a person confirms it: trusted_at null
+        -- means the pairing is pending, and a pending peer is refused an envelope rather than having
+        -- one queued for later.
+        --
+        -- token_hash is the sha256 of the token the peer presents to this node, so the credential
+        -- itself is never stored and a copy of this database cannot be replayed at the peer.
+        CREATE TABLE peers (
+          peer_node_id    TEXT PRIMARY KEY,
+          endpoint        TEXT NOT NULL,
+          public_key      TEXT NOT NULL,
+          fingerprint     TEXT NOT NULL,
+          token_hash      TEXT NOT NULL,
+          paired_at       TEXT NOT NULL,
+          trusted_at      TEXT,
+          revoked_at      TEXT
+        );
+
+        -- Inbound peer requests are authenticated by looking the presented token's hash up here, so
+        -- the lookup has to be direct. Unique as well: two peers sharing a token would make the hash
+        -- ambiguous about which node a request came from, and that identity is what every envelope is
+        -- validated against.
+        CREATE UNIQUE INDEX idx_peers_token_hash ON peers(token_hash);
+      `);
+    },
+  },
 ];
 
 export interface MigrationResult {

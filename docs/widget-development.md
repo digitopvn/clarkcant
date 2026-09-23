@@ -107,7 +107,7 @@ Target root manifest:
         "camera": false,
         "lifecycleScripts": []
       },
-      "platforms": ["darwin-arm64", "linux-x64"],
+      "platforms": ["darwin-arm64", "linux-x64", "win32-x64"],
       "publisher": {
         "id": "example",
         "sourceUrl": "https://github.com/example/calendar-plus",
@@ -425,6 +425,9 @@ Local isolated host có:
 - capability simulator;
 - accessibility checks.
 
+`clark widget dev [dir] [--port N] [--builtin <id>]`: không có `[dir]` thì lấy thư mục hiện tại, và
+`--builtin <id>` xem một widget của catalog trong **cùng** host đó thay vì một package trên đĩa — chi tiết ở 23.5.
+
 ### test
 
 Chạy conformance suite.
@@ -506,6 +509,12 @@ Directory entry cần:
 - preview image/video;
 - widget/facet types;
 - supported platforms;
+
+Giá trị `platforms` lấy từ **một** vocabulary dùng chung cho cả package lẫn host: `darwin-arm64`, `darwin-x64`,
+`linux-x64`, `linux-arm64`, `win32-x64`, `win32-arm64`, `web`. Tên theo dạng `<node platform>-<arch>`, nên Windows
+là `win32-*` chứ không phải `windows-*`. Host tự khai bằng `platformForHost(process.platform, process.arch)`; host
+nào vocabulary không mô tả được thì hàm trả `undefined`, và lời từ chối nêu tên platform của **cả hai** bên — thay
+vì đoán `web` rồi đưa một package native cho thứ không chạy được.
 - host API compatibility;
 - requested permissions summary;
 - risk tier;
@@ -620,10 +629,159 @@ Mục này nói rõ phần nào của tài liệu đã có code, để không ai
 
 **Chưa có:**
 
-- `clark widget publish` — chờ directory ở phase 13; đường local/git/npm đã là first-class nên không cần
-  account để chạy widget của mình.
+- `clark widget publish` — **đã có, ở mức "prepare"**: nó validate, pack, rồi ghi `dist/directory-entry.json`
+  với đủ field mà §18 yêu cầu và digest của artifact đã pack (đọc từ `dist/artifact.json`, không tính lại —
+  hai lần tính cùng một thứ là cách một listing nói tới artifact không ai tạo được). Nó **không** nộp thay
+  người dùng: nộp cần account directory, và một lệnh trông như đã nộp rồi là control có action không tồn tại.
+  Đường local/git/npm vẫn là first-class nên không cần account để chạy widget của mình.
+- **Directory search** — đã có ở mức đọc một index: `CC_DIRECTORY_INDEX` trỏ tới một file JSON các entry theo
+  §18, và `search_directory` trả về card `marketplace-results` hiển thị **source, version, digest và risk lane**,
+  kèm tên directory mà kết quả đến từ đó. Chưa cấu hình index là một *trạng thái* được nói ra, khác với "không
+  tìm thấy gì". Card **không có nút install**: cài đặt đi qua đúng install path nơi digest được kiểm và consent
+  được ghi; một nút ở đây sẽ là entry point thứ hai để cài, và là chỗ duy nhất một listing có thể biến thành
+  authorization. Không có registry từ xa — search chỉ đọc thứ tồn tại trên máy hoặc ở URL người dùng chỉ định.
 - Script trong trang của dev host: nó thu thập fact và chuyển action, còn mọi quyết định nằm ở hàm đã test —
   nhưng bản thân script cần browser để chạy, và điều đó được nói ra thay vì ngụ ý rằng cả dev host đã được phủ.
-- Detach/attach: chưa có host window tách rời, nên không có gì để chạy. Nửa sở hữu (`detached` trên
-  live-owner claim) đã có.
+- Detach/attach: cửa sổ host tách rời của desktop **đã có thật** (`apps/desktop/src/main.mjs` mở nó qua
+  `detachedWindowOptions`, `apps/web/src/App.tsx` phục vụ `?detached=1`), và được
+  `apps/desktop/test/detached-window.spec.ts` cùng `apps/web/e2e/detach.spec.ts` phủ — **không phải** bởi
+  check `detach` của bộ conformance: harness chỉ chạy trên dev host trong trình duyệt, mà dev host không có
+  cửa sổ tách rời nào để điều khiển. Nửa sở hữu (`detached` trên live-owner claim) đã có.
 - Runtime cho MCP Apps: đường isolated-app đã có; MCP Apps chưa được chứng minh trên cùng đường đó.
+
+---
+
+## 23. Widget Library và Widget Lab
+
+Mục này mô tả hai surface đã có code: thư viện để **xem** catalog, và Lab để **phát triển** widget. Cả hai
+dùng chung một surface, khác nhau ở chế độ.
+
+### 23.1 Một catalog chuẩn
+
+`packages/widget-catalog` là lớp discovery duy nhất: `CATALOG_DEFINITIONS` = `WIDGETS` của `packs/data-canvas`
+cộng `NOTE`. Note **không** nằm trong `WIDGETS` vì danh sách đó là từ vựng view mà model được phép gọi
+(`apps/runtime/src/services.ts`), nên thêm vào đó là thay đổi bề mặt model chứ không phải refactor metadata.
+Note được export từ barrel của pack, **không** từ `sample.ts`: `sample.ts` import `@clarkcant/core`, và đi qua
+nó sẽ kéo `packages/storage` (`node:sqlite`, `node:crypto`) vào bundle browser — đúng thứ invariant
+`browser-entries-avoid-node-builtins` bắt được.
+
+Metadata hiển thị (tên, mô tả, family, tag) nằm trong `widget-catalog`, và test khẳng định không entry nào rơi
+về id thô, cũng không entry metadata nào trỏ tới definition không tồn tại.
+
+### 23.2 Hợp đồng fixture
+
+`widgetFixtureSchema` trong `packages/contracts/src/widgets.ts` là hợp đồng dùng chung: `strictObject` với
+`{id, label, props, state?, dataset?, mode?}`. Strict nghĩa là một fixture mang thêm khoá lạ — ví dụ một effect
+binding — sẽ fail thay vì được render như thể vô hại. Đó là cách "fixture là data, không phải code" trở thành
+điều kiểm được.
+
+Hai artifact khác nhau, không phải hai bản sao của một thứ:
+
+- **fixture của catalog** — `WidgetFixture`, có `dataset` và `mode`, do `widget-catalog` cung cấp;
+- **`fixtures/*.json` của một package** — props trần; `readPackage` đọc chúng và `conformance.ts` kiểm bằng
+  props schema của chính widget đó.
+
+Một fixture của package có thể mang thêm dữ liệu: file `fixtures/<name>.dataset.json` đi kèm
+`fixtures/<name>.json`. Node đọc cặp này thành **một** `WidgetFixture` — props từ file thứ nhất, `dataset` từ
+file thứ hai — và validate dataset bằng đúng `fixtureDatasetSchema` mà catalog dùng. Dataset sai schema thì bị
+nêu tên trong `problems` và **không** được gắn vào fixture, chứ không được render như thể hợp lệ.
+
+Vì sao cần file riêng thay vì nhét dataset vào props: renderer đọc dataset từ **fixture**, không từ props
+(`WidgetPreview.tsx`), nên một widget có dữ liệu sẽ mãi vẽ đường "chưa có dữ liệu" nếu dataset chỉ nằm trong
+props.
+
+### 23.3 Xem trước bằng renderer thật
+
+Preview gọi `resolveRenderer` trong `packages/conversation-client/src/renderers.tsx` — cùng renderer mà hội
+thoại dùng. Không có renderer thứ hai, không ảnh chụp, không mock: một preview bằng ảnh sẽ không nói được gì
+về widget đang chạy. Definition không có renderer thì hiện `data-widget-preview-missing` kèm lý do, chứ không
+im lặng.
+
+Widget media (`canvas.youtube@1`, `video`, `image`, `carousel`, `gallery`) chỉ mount ở detail view; ở lưới
+chúng chỉ có text alternative. Nhờ vậy duyệt catalog không gọi bên thứ ba.
+
+### 23.4 Widget Lab
+
+Lab là **cùng surface** ở `mode="develop"`, mở từ Settings → Developer. Nó thêm:
+
+- props form dựng từ props schema, nên control phản ánh đúng schema chứ không phải danh sách viết tay;
+- inspector 8 panel, đúng theo `inspectorPanels` trong `widget-lab.ts`: props, state, events, actions,
+  semantic, sizing, capabilities, fallback. Tên trong tài liệu là **id** của panel, không phải nhãn hiển thị
+  (`Props`, `State`, …), để người đọc đối chiếu được với code;
+- fixture, viewport, theme và reduced motion áp trong **phạm vi preview** (`data-cc-theme`,
+  `data-cc-reduced-motion` trên frame), nên xem widget ở dark mode không đổi tuỳ chọn của người dùng;
+- màn hẹp thì pane tiến (preview ↔ inspector) thay vì hai cột.
+
+### 23.5 Hội tụ với dev host
+
+`clark widget dev` và Lab dùng chung **ngữ nghĩa preview**: từ vựng theme (`PREVIEW_THEMES`) và ba luật chuyển
+`fixture`/`theme`/`reduced-motion` (dev shell uỷ quyền cho `applyPreviewAction`). Test
+`packages/widget-cli/test/dev-shell-convergence.spec.ts` so sánh trực tiếp hai cài đặt, nên lệch nhau sẽ fail ở
+đó chứ không phải chờ ai đó mở hai cửa sổ rồi so bằng mắt.
+
+Khác có chủ ý: dev host dùng bộ viewport riêng (tới 1024px) vì nó xem một package độc lập, còn Lab xem ở bề
+rộng hội thoại.
+
+`clark widget dev --builtin <definitionId>` chạy **cùng** shell đó cho một widget của catalog: cùng khung sandbox,
+cùng state machine, cùng bộ điều khiển. Khác duy nhất là nguồn — không đọc package nào trên đĩa, và frame được
+Vite phục vụ từ `packages/widget-cli/src/catalog-runtime.tsx`, entry mount `WidgetPreview`, tức **chính**
+`resolveRenderer` mà hội thoại và thư viện dùng. Nhờ vậy preview không thể lệch khỏi thứ người dùng sẽ thấy, và
+không có bước build nào để quên cũng như không có artifact nào phải commit. Id mà catalog không có thì bị từ chối
+**ngay lúc khởi động và kèm tên**, chứ không phải trong browser. Frame được sinh theo từng request nên nó mang
+đúng fixture mà shell đang hiện: đổi control fixture là đổi thứ được vẽ, không chỉ đổi thứ shell nói.
+
+Một khác biệt đã biết: chế độ này **không** tự reload khi source đổi. Chế độ package theo dõi thư mục package và
+báo qua `/dev/events`; frame của catalog chưa nối vào cơ chế đó, nên phải **refresh thủ công**.
+
+Vì entry đó là code browser do một CLI Node phát đi, nó nằm trong danh sách entry của invariant
+`browser-entries-avoid-node-builtins` (115 module, 3 entry), và `tsconfig.web.json` phủ
+`packages/widget-cli/src/**/*.tsx`. Dòng config đó là bắt buộc: config Node chỉ include `**/*.ts` và không đặt
+`jsx`, nên nếu thiếu nó thì file **âm thầm** không được typecheck ở đâu cả.
+
+### 23.6 Provenance của package đã cài
+
+Thư viện liệt kê package đã cài như **provenance**, trên danh sách riêng: `packageId@version`, source tier,
+digest (rút gọn, bản đầy đủ ở `title`) và trust lane; wording của lane nằm một chỗ trong
+`packages/conversation-client/src/package-provenance.ts` để extension Pi gốc và widget cách ly không bao giờ
+đọc giống nhau. Ba trạng thái được tách: đang đọc, không đọc được (có nút thử lại), và chưa cài gì. Widget mà
+package khai báo là card thật, ở mục 23.8.
+
+### 23.7 Đường vào
+
+Nút trong Settings, câu lệnh gõ và voice đều đi qua **một** app-intent path: `widgets.open` (mở thư viện) và
+`widgets.show` (hiện một widget, có target). Matcher chỉ nhận target khi câu có dạng mệnh lệnh, và một câu nhắc
+widget không resolve được target sẽ mở thư viện thay vì đoán — đây là hành động chỉ xem, không bao giờ đoán
+một effect.
+
+### 23.8 Widget do package khai báo
+
+Một package có thể khai báo widget, và widget đó trở thành card thật trong thư viện. Đường đọc:
+
+1. client gọi `GET /packages/widgets` **khi mở** thư viện, không phải khi mount — thư viện không ai mở thì
+   không hỏi node câu nào;
+2. node tìm package trong directory index (`CC_DIRECTORY_INDEX`) rồi đọc định nghĩa từ đĩa
+   (`installedWidgets` trong `packages/core/src/installed-widgets.ts`);
+3. card chỉ được tạo nếu **client** có renderer cho definition id đó (`resolveRenderer`). Cổng nằm ở client vì
+   renderer nằm ở client; một ý kiến thứ hai ở node sẽ lệch khỏi ý kiến này.
+
+**Card id được namespace.** Mọi definition id mà renderer hiện có vẽ được đều đã là entry của catalog, nên một
+package dùng chính definition id làm danh tính card sẽ không bao giờ hiện được: entry của catalog thắng id đó
+mọi lần. Vì vậy card id là `<packageId>/<definitionId>` — một sự thật về nguồn gốc, không phải một cái tên đẹp
+hơn. Việc vẽ vẫn resolve từ `definition.id`, nên vẫn đúng **một** renderer cho mỗi id, và card của catalog cho
+cùng definition vẫn hiện bên cạnh (nhãn `Built-in` so với `Local development package`).
+
+**Giới hạn, và nó được nói ra.** Chỉ package **local** và **có trong directory index** mới đọc được: generation
+trong DB không mang đường dẫn, và artifact của nguồn git/npm không nằm trên máy này. Nguồn khác nhận
+`NOT_LOCAL`/`NOT_IN_DIRECTORY` và được **nêu tên** trong mục "Gói đã cài: phần chưa xem được" — một danh sách
+ngắn hơn sẽ nói "package này không khai báo widget nào" trong khi sự thật là node không đọc được nó.
+
+Danh tính của một package local là **danh tính của directory entry**, không phải đường dẫn. Một lần cài từ đĩa
+từng ghi `packageId` là chính đường dẫn đó, mà đường dẫn là nơi byte nằm chứ không phải tên của package — nên
+cùng một package có hai tên: listing nói `com.example.chart-widget` còn row đã cài nói
+`apps/web/e2e/fixtures/chart-widget`. Nhánh local của `resolvePackageSource` nay lấy tên từ entry khớp **theo
+đường dẫn** trong directory index. Một đường dẫn **không** được liệt kê vẫn cài được như trước và giữ đường dẫn
+làm tên, vì nó không có tên nào tốt hơn. `digest` vẫn là hash của chính byte trên đĩa do caller tính, **không**
+phải digest đã publish: hai thứ đó mô tả hai chuyện khác nhau.
+
+Các row `package_generations` **đã** ghi đường dẫn từ trước vẫn còn trong DB, nên route `/packages/widgets` vẫn
+giữ fallback tìm entry theo `source.path`. Nếu xoá nó, những row cũ đó sẽ báo `NOT_IN_DIRECTORY` vĩnh viễn.

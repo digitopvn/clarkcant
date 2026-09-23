@@ -48,12 +48,22 @@ export function openDatabase(options: OpenDatabaseOptions): Database {
   // construction — where Node requires it — and the runtime decides whether anything gets loaded.
   const db = new DatabaseSync(options.path, { allowExtension: true });
 
-  if (options.enableWal !== false && !isMemory) {
-    db.exec("PRAGMA journal_mode = WAL");
+  /*
+   * The setup statements run inside a try, because opening a file is not the same as being able to use it: a copy
+   * whose pages are corrupt opens and then fails on its first statement. Without this the handle leaked, and the
+   * caller — `verifyBackup`, deciding whether a backup is restorable — could not clean up after the failure either.
+   */
+  try {
+    if (options.enableWal !== false && !isMemory) {
+      db.exec("PRAGMA journal_mode = WAL");
+    }
+    db.exec("PRAGMA synchronous = NORMAL");
+    db.exec("PRAGMA foreign_keys = ON");
+    db.exec(`PRAGMA busy_timeout = ${options.busyTimeoutMs ?? 5000}`);
+  } catch (cause) {
+    db.close();
+    throw cause;
   }
-  db.exec("PRAGMA synchronous = NORMAL");
-  db.exec("PRAGMA foreign_keys = ON");
-  db.exec(`PRAGMA busy_timeout = ${options.busyTimeoutMs ?? 5000}`);
   return db;
 }
 

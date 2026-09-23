@@ -32,6 +32,32 @@ export default defineConfig({
     outDir: "dist",
     emptyOutDir: true,
     sourcemap: true,
+    rollupOptions: {
+      /*
+       * Two entries: the app, and the widget runtime a frame loads.
+       *
+       * The second one carries a fixed file name on purpose. The node injects a script tag pointing at it into the
+       * widget document it serves, and a hashed name would mean the node had to be told what the build produced —
+       * a coupling that breaks the first time somebody rebuilds.
+       */
+      input: {
+        main: `${here}index.html`,
+        widgetRuntime: `${here}src/widget-runtime.ts`,
+      },
+      /*
+       * Keep the runtime entry's exports, which Vite otherwise strips.
+       *
+       * Vite defaults `preserveEntrySignatures` to `false` for an app, which lets Rollup treat an entry as a
+       * run-for-side-effects file. This entry does nothing *but* re-export, so the default built a `widget-runtime.js`
+       * that loaded, parsed and exported nothing — the frame's bootstrap imported it successfully, found no
+       * `createWidgetRuntime`, and the frame sat at `loading` with no error a person could act on. `strict` makes the
+       * build either keep every export or fail, which is the behaviour this entry needs to be trustworthy.
+       */
+      preserveEntrySignatures: "strict",
+      output: {
+        entryFileNames: (chunk) => (chunk.name === "widgetRuntime" ? "widget-runtime.js" : "assets/[name]-[hash].js"),
+      },
+    },
     /**
      * The capture worklet must be emitted as its own file, never inlined.
      *

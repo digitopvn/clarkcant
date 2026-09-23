@@ -6,6 +6,8 @@
  * principal, because the gateway derives the caller from the channel rather than the body.
  */
 
+import type { AutonomySettings, ModelPool, WidgetDefinition, WidgetFixture } from "@clarkcant/contracts";
+
 import {
   memoryListSchema,
   suggestionsResponseSchema,
@@ -34,7 +36,42 @@ export interface GatewayClientOptions {
   fetchImpl?: typeof fetch;
 }
 /** What a live composed surface resolves to right now. */
+/**
+ * A widget that runs in its own frame.
+ *
+ * A different shape rather than more fields on the one below, because the two are not the same thing: a composition
+ * is data the client draws, and this is a URL it mounts plus the bindings that mount may invoke. A single interface
+ * with half its fields empty would make every reader check which half it is holding.
+ */
+export interface IsolatedFrameLiveResponse {
+  kind: "isolated-frame";
+  instanceId: string;
+  revision: number;
+  readOnly: boolean;
+  frame: {
+    /** Relative to the node, and served from the package path so the widget's own imports resolve. */
+    url: string;
+    isolation: string;
+    requestedCapabilities: readonly string[];
+    allowedOrigins: readonly string[];
+  };
+  /**
+   * The bindings the frame may invoke, with the digest to send back.
+   *
+   * A frame names one of these ids and nothing else: the session refuses an unknown id before the node ever sees it.
+   */
+  bindings: {
+    actionBindingId: string;
+    label: string;
+    effectCategory: string;
+    bindingDigest: string;
+  }[];
+  /** What the widget was created with, sent to it in the init message and nowhere else. */
+  props: Record<string, unknown>;
+}
+
 export interface LiveWidgetResponse {
+  kind: "composition";
   compositionId: string;
   readOnly: boolean;
   spec: CompositionResponse["spec"];
@@ -322,7 +359,46 @@ export interface InstalledPackageView {
   /** The strongest lane among the package's facets: a package is as trusted as its least isolated part. */
   lane: "isolated-ui" | "service" | "declarative" | "trusted-native";
   consentedDigest?: string;
+  /**
+   * The frozen build input this generation was activated against, when there was one.
+   *
+   * Absent means nothing was frozen, which is a different statement from an empty closure. `coverage` says how much
+   * of the build input the lock covers, so `artifact-only` is never read as "the dependencies are pinned".
+   */
+  lock?: { ref: string; digest: string; coverage: string };
 }
+
+/**
+ * A widget definition an installed package declares, as the node reports it.
+ *
+ * Data only. A package never contributes a renderer, so what arrives is a definition and the fixtures the package
+ * wrote, and whether any of it can be drawn is decided where the renderers are.
+ */
+export interface InstalledWidgetRead {
+  packageId: string;
+  version: string;
+  facetId: string;
+  definition: WidgetDefinition;
+  fixtures: WidgetFixture[];
+}
+
+/**
+ * One installed package's widgets, or the reason this node could not read them.
+ *
+ * The failure arm is not an empty list, because "this package declares no widgets" and "this node cannot read that
+ * package" are different facts: a git or npm entry names bytes nobody here holds, and a package the configured
+ * directory does not list cannot be located at all.
+ */
+export type InstalledPackageRead =
+  | {
+      packageId: string;
+      version: string;
+      ok: true;
+      widgets: InstalledWidgetRead[];
+      /** Facets that did not parse, named rather than silently dropped. */
+      problems: string[];
+    }
+  | { packageId: string; version: string; ok: false; code: string; message: string };
 
 export interface ArtifactView {
   artifactId: string;
@@ -713,11 +789,71 @@ export class GatewayClient {
    * The node stores the choice and answers with the scope it reaches: a conversation already open keeps the model it
    * began with, so this is not a switch that changes what is running underneath somebody mid-sentence.
    */
+  /**
+   * The pool of models this node keeps, with what the catalogue says about each one.
+   *
+   * `checked` is the node's own answer about whether it can run a profile, not something the client derives: the
+   * catalogue lives on the node, and a client that guessed would disagree with the node at the first upgrade.
+   */
+  async modelPool(): Promise<{
+    pool: ModelPool;
+    currentAlias?: string;
+    checked: { alias: string; ok: boolean; message?: string }[];
+  }> {
+    return this.#call("GET", "/model-pool");
+  }
+
+  async putModelPool(pool: ModelPool): Promise<{ ok: boolean; pool: ModelPool }> {
+    return this.#call("POST", "/model-pool", { pool });
+  }
+
+  /**
+   * Move to the next enabled profile.
+   *
+   * The node answers with the alias it moved to and says what that applies to, because the honest answer is "a new
+   * generation" rather than "now": a running turn keeps the model it started with.
+   */
+  async cycleModel(): Promise<{
+    ok: boolean;
+    previous?: string;
+    alias: string;
+    provider: string;
+    modelId: string;
+    applies: string;
+  }> {
+    return this.#call("POST", "/model-pool/cycle", {});
+  }
+
   async chooseModel(input: {
     provider: string;
     id: string;
-  }): Promise<{ ok: boolean; stored: { provider: string; id: string } }> {
+  }): Promise<{
+    ok: boolean;
+    stored: { provider: string; id: string };
+    /**
+     * When the choice takes effect.
+     *
+     * `next-session` when the node already has a model turn to read it — the choice lands on the next conversation.
+     * `next-start` when it has none, which is the node that has never run a model: the choice is stored, and the node
+     * starts with it next time. The copy beside the field says which, rather than promising the sooner of the two.
+     */
+    applies: "next-session" | "next-start";
+  }> {
     return this.#call("POST", "/model", input);
+  }
+
+  /**
+   * How much this node does on its own, and what may stop it.
+   *
+   * The narrowing list comes back with the settings because the panel shows what the guardrail is allowed to
+   * ask for: a host-owned list a guardrail may pick from, never compose.
+   */
+  async autonomy(): Promise<{ settings: AutonomySettings; narrowing: { id: string; description: string }[] }> {
+    return this.#call("GET", "/autonomy");
+  }
+
+  async putAutonomy(settings: AutonomySettings): Promise<{ ok: boolean; settings: AutonomySettings }> {
+    return this.#call("POST", "/autonomy", { settings });
   }
 
   /**
@@ -858,8 +994,34 @@ export class GatewayClient {
     return this.#call("POST", `/conversations/${conversationId}/approvals/${approvalId}/decide`, decision);
   }
 
+  /**
+   * Answer a question the agent asked, or drop it.
+   *
+   * The node records the answer and opens a new turn with it, which is why this route exists separately from the
+   * turn that asked: nothing was waiting on the node for this answer, so nothing needs resuming. A click and a
+   * spoken utterance post to this same route, so the two can never disagree about what an answer means.
+   */
+  answerQuestion(
+    conversationId: string,
+    questionId: string,
+    answer: { text?: string; optionIds?: string[]; confirmed?: boolean; viaVoice?: boolean },
+  ): Promise<{ ok: boolean; note: string; timeline: Timeline }> {
+    return this.#call(
+      "POST",
+      `/conversations/${conversationId}/questions/${encodeURIComponent(questionId)}/answer`,
+      answer,
+    );
+  }
+
+  cancelQuestion(conversationId: string, questionId: string): Promise<{ ok: boolean; timeline: Timeline }> {
+    return this.#call("POST", `/conversations/${conversationId}/questions/${encodeURIComponent(questionId)}/cancel`, {});
+  }
+
   /** Resolve the live surface for an instance: current state, sections and ownership. */
-  liveWidget(conversationId: string, instanceId: string): Promise<LiveWidgetResponse> {
+  liveWidget(
+    conversationId: string,
+    instanceId: string,
+  ): Promise<LiveWidgetResponse | IsolatedFrameLiveResponse> {
     return this.#call("GET", `/conversations/${conversationId}/widgets/${instanceId}/live`);
   }
 
@@ -948,8 +1110,52 @@ export class GatewayClient {
    * The digest is part of the answer on purpose: it is the only thing tying what is running to what was approved,
    * and a list that showed a version without one would be inviting trust it has not earned.
    */
+  /**
+   * A node-relative path as an absolute URL.
+   *
+   * The node hands out paths relative to itself, and the client is not always served by the node — in the browser
+   * suite it is served by a different origin entirely — so a path put straight into a frame's `src` would resolve
+   * against the wrong host. One place does the join, so a caller cannot forget it.
+   */
+  nodeUrl(path: string): string {
+    return `${this.#baseUrl}${path.startsWith("/") ? path : `/${path}`}`;
+  }
+
   packages(): Promise<{ packages: InstalledPackageView[] }> {
     return this.#call("GET", "/packages");
+  }
+
+  /**
+   * The widget definitions of the packages installed on this node.
+   *
+   * Each package answers for itself: its widgets, or why this node could not read them. A caller that turned the
+   * failure arm into an empty list would be reporting a package as having no widgets when the truth is that nobody
+   * here can tell.
+   */
+  packageWidgets(): Promise<{ packages: InstalledPackageRead[] }> {
+    return this.#call("GET", "/packages/widgets");
+  }
+
+  /**
+   * Install a package a directory listed.
+   *
+   * Refusals are thrown, like every other call here: a caller that has to tell "refused" from "installed" by reading
+   * a field inside a resolved promise is a caller that will one day not. An approval is not a refusal and arrives as
+   * an ordinary answer with `code: "APPROVAL_REQUIRED"`, because nothing failed — the next step is a decision.
+   */
+  installPackage(
+    packageId: string,
+    version: string,
+  ): Promise<{
+    installed?: { packageId: string; version: string };
+    code?: string;
+    message?: string;
+    approvalId?: string;
+    generationId?: string;
+    /** What the node actually checked. `digest-only` means the plan was bound to a published digest. */
+    verified?: string;
+  }> {
+    return this.#call("POST", "/packages/install", { packageId, version });
   }
 
   claimLiveOwner(
@@ -1029,13 +1235,33 @@ export class GatewayClient {
   }
 
   /**
+   * Object URL for the frame a session card was captured at.
+   *
+   * The same shape as an attachment read, and for the same reason: the route re-checks that the frame belongs to
+   * the principal on every read, so this URL is not a capability that outlives the conversation it was issued for.
+   * A card shows what the screen looked like when it was captured, never what it looks like now.
+   */
+  async previewObjectUrl(digest: string): Promise<string> {
+    const response = await this.#fetch(`${this.#baseUrl}/previews/${encodeURIComponent(digest)}`, {
+      headers: { authorization: `Bearer ${this.#token}` },
+    });
+    if (!response.ok) {
+      throw new GatewayError(response.status, "PREVIEW_UNAVAILABLE", "that frame could not be read");
+    }
+    const blob = await response.blob();
+    return URL.createObjectURL(blob);
+  }
+
+  /**
    * Store a secret the person typed.
    *
    * The answer is a status, not the value: the node never hands a secret back, so there is nothing here to
    * cache, redisplay or log. The value travels once, in the request body, and that is the only place it exists
    * on this side of the wire.
    */
-  async putCredential(input: { fields: { name: string; value: string }[] }): Promise<{ names: string[] }> {
+  async putCredential(input: {
+    fields: { name: string; value: string; kind?: string; description?: string; consumer?: string }[];
+  }): Promise<{ names: string[] }> {
     const response = await this.#fetch(`${this.#baseUrl}/credentials`, {
       method: "POST",
       headers: { authorization: `Bearer ${this.#token}`, "content-type": "application/json" },

@@ -805,7 +805,11 @@ describe("approving a command by voice", () => {
     const adapter = new FakeAdapter();
     const calls: Array<{ approvalId: string; decision: string; digest: string }> = [];
     context = await startGateway(() => "credential", adapter, {
-      answer: async () => ({ reply: "Tui cần chạy một lệnh.", recordedMessages: 2, pendingApproval: PROPOSAL }),
+      answer: async () => ({
+        reply: "Tui cần chạy một lệnh.",
+        recordedMessages: 2,
+        pendingInteraction: { kind: "approval", ...PROPOSAL },
+      }),
       decideApproval: async (input) => {
         // Only what the decision consists of: the conversation is implied by the session.
         calls.push({ approvalId: input.approvalId, decision: input.decision, digest: input.digest });
@@ -835,7 +839,6 @@ describe("approving a command by voice", () => {
 
     sayFor(adapter, "clone giúp tui một repo");
     // The question names the operation and reaches the person as words, not as a card they cannot press.
-    await client.waitFor(asked, "the approval question");
     await client.waitFor(asked, "the approval question");
 
     sayFor(adapter, "đồng ý");
@@ -910,6 +913,92 @@ describe("reading a spoken decision", () => {
 });
 
 /**
+ * Answering a question by voice.
+ *
+ * The same path a click takes: the session matches the words against the question's own options and hands the
+ * result to the one function the HTTP route also calls. What only this suite shows is that a spoken sentence
+ * becomes exactly the answer a button would have sent — the option id, not the word that was heard.
+ */
+describe("answering a question by voice", () => {
+  const QUESTION = {
+    kind: "question" as const,
+    questionId: "q_1",
+    questionType: "single-choice" as const,
+    prompt: "Chọn môi trường triển khai.",
+    options: [
+      { id: "staging", label: "Staging" },
+      { id: "production", label: "Production" },
+    ],
+    allowOther: false,
+    voicePrompt: "Chọn môi trường triển khai. Staging hay Production?",
+  };
+
+  const spoken = (text: string) => (message: Received): boolean =>
+    !message.binary && message.control["type"] === "transcript" && message.control["text"] === text;
+
+  async function withQuestion(): Promise<{
+    adapter: FakeAdapter;
+    client: ReturnType<typeof connect>;
+    calls: Array<{ questionId: string; optionIds?: string[]; confirmed?: boolean }>;
+  }> {
+    const adapter = new FakeAdapter();
+    const calls: Array<{ questionId: string; optionIds?: string[]; confirmed?: boolean }> = [];
+    context = await startGateway(() => "credential", adapter, {
+      answer: async () => ({
+        reply: "Tui cần biết bạn muốn môi trường nào.",
+        recordedMessages: 1,
+        pendingInteraction: QUESTION,
+      }),
+      answerQuestion: async (input) => {
+        calls.push({
+          questionId: input.questionId,
+          ...(input.optionIds === undefined ? {} : { optionIds: input.optionIds }),
+          ...(input.confirmed === undefined ? {} : { confirmed: input.confirmed }),
+        });
+        return { ok: true, message: "đã ghi" };
+      },
+    });
+    const client = connect(context.url);
+    await client.opened;
+    client.auth(TOKEN, CONVERSATION);
+    await client.control("ready");
+    return { adapter, client, calls };
+  }
+
+  it("reads the question out with its own options, and takes a spoken option as the answer", async () => {
+    const { adapter, client, calls } = await withQuestion();
+
+    sayFor(adapter, "triển khai giúp tui");
+    await client.waitFor(spoken(QUESTION.voicePrompt), "the question read out loud");
+
+    sayFor(adapter, "production");
+    await client.waitFor(spoken("Đã ghi câu trả lời của bạn."), "the answer being recorded");
+
+    expect(calls).toEqual([{ questionId: "q_1", optionIds: ["production"] }]);
+  });
+
+  it("asks again when the words do not fit the question, and records nothing", async () => {
+    const { adapter, client, calls } = await withQuestion();
+
+    sayFor(adapter, "triển khai giúp tui");
+    await client.waitFor(spoken(QUESTION.voicePrompt), "the question read out loud");
+    sayFor(adapter, "cái gì cũng được");
+    await new Promise((resolve) => setTimeout(resolve, 30));
+
+    const asked = client.received.filter(
+      (message) =>
+        !message.binary &&
+        message.control["type"] === "transcript" &&
+        typeof message.control["text"] === "string" &&
+        message.control["text"].includes("chưa khớp được câu trả lời"),
+    );
+    // Asked again rather than guessed at, because a misheard choice is not recoverable the way a second question is.
+    expect(asked.length).toBe(1);
+    expect(calls).toEqual([]);
+  });
+});
+
+/*
  * A spoken command to the application.
  *
  * The property under test is that the voice path is the same path as a click: the node's registry decides, the
@@ -1126,7 +1215,7 @@ describe("a spoken command to the application", () => {
             ? {
                 reply: "Tui cần bạn duyệt lệnh này.",
                 recordedMessages: 2,
-                pendingApproval: { approvalId: "appr_1", digest: "digest", description: "chạy lệnh" },
+                pendingInteraction: { kind: "approval", approvalId: "appr_1", digest: "digest", description: "chạy lệnh" },
               }
             : { reply: "xong", recordedMessages: 1 };
         },
@@ -1164,5 +1253,111 @@ describe("a spoken command to the application", () => {
     expect(resolved).toEqual(["chạy lệnh này giúp tui"]);
     expect(decisions).toEqual([]);
     expect(executableFrames(client)).toHaveLength(0);
+  });
+});
+
+describe("a lease whose peer cannot be reached", () => {
+  it("is released, because one vanished peer would otherwise hold the node's only slot forever", async () => {
+    /*
+     * Measured before this existed: with a proxy frozen in the middle — the peer gone, this side's socket still
+     * open — the next session was refused `VOICE_SESSION_BUSY` naming the gone peer, and only a restart changed
+     * that. The socket is real here and the peer is made unreachable by pausing it, which is what a frozen path
+     * looks like from the node: connected, silent, never closing.
+     */
+    const adapter = new FakeAdapter();
+    context = await startGateway(() => "key", adapter, { heartbeatMs: 40 });
+    const gone = connect(context.url);
+    await gone.opened;
+    gone.auth(TOKEN);
+    await gone.control("ready");
+    expect(context.gateway.activeSessionCount()).toBe(1);
+
+    // No close frame and no FIN: the peer stops reading, so it never answers a ping.
+    gone.ws.pause();
+
+    const released = Date.now() + 3000;
+    while (context.gateway.activeSessionCount() > 0 && Date.now() < released) {
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+
+    // What matters is not the count but the slot: somebody else has to be let in.
+    expect(context.gateway.activeSessionCount()).toBe(0);
+    const next = connect(context.url);
+    await next.opened;
+    next.auth(TOKEN);
+    const ready = await next.control("ready");
+    expect(ready.binary === false && ready.control["type"]).toBe("ready");
+  });
+
+  it("is kept while the peer keeps answering, so a live session is never ended for being quiet", async () => {
+    /*
+     * The other half of the same rule, and the half that would do damage if it were wrong: a heartbeat that ends
+     * live sessions is worse than the leak it fixes. Nothing is sent from the page across these intervals — the
+     * pong is the transport's own, which is also why a browser answers it with its tab in the background.
+     */
+    const adapter = new FakeAdapter();
+    /*
+     * 200 ms, not 20.
+     *
+     * At 20 ms this failed in a full-suite run: a loaded machine cannot schedule a pong inside one 20 ms window, so the
+     * server did exactly what it is supposed to do and ended a peer it could not reach. The property under test is that
+     * a peer which answers keeps its session, and a window no scheduler can meet tests the machine rather than the rule.
+     */
+    context = await startGateway(() => "key", adapter, { heartbeatMs: 200 });
+    const live = connect(context.url);
+    await live.opened;
+    live.auth(TOKEN);
+    await live.control("ready");
+
+    // Three intervals, so a missed pong would have to happen three times in a row.
+    await new Promise((resolve) => setTimeout(resolve, 650));
+
+    expect(context.gateway.activeSessionCount()).toBe(1);
+    expect(adapter.disconnected).toBe(0);
+    expect(live.ws.readyState).toBe(WebSocket.OPEN);
+  });
+});
+
+describe("a spoken sentence with nowhere to be answered", () => {
+  it("is answered by saying so, instead of being transcribed and dropped", async () => {
+    /*
+     * The failure this replaces was silent: the words were transcribed, `ask` returned early because the session had
+     * no conversation, and nothing else happened. No reply, no error, and a surface that read "listening" — which is
+     * what a person reports as "voice does not work" while every other layer checks out.
+     *
+     * Measured on the real path: the same audio with a conversation bound produced the agent's answer and 468 KB of
+     * speech back; without one it produced neither.
+     */
+    const adapter = new FakeAdapter();
+    const asked: string[] = [];
+    context = await startGateway(() => "key", adapter, {
+      answer: async ({ text }) => {
+        asked.push(text);
+        return undefined;
+      },
+    });
+
+    const client = connect(context.url);
+    await client.opened;
+    // No conversation id: the session is not bound to one.
+    client.auth(TOKEN);
+    await client.control("ready");
+
+    sayFor(adapter, "xin chào");
+
+    const said = await client.waitFor(
+      (message) =>
+        !message.binary &&
+        message.control["type"] === "transcript" &&
+        message.control["final"] === true &&
+        String(message.control["text"]).includes("chưa gắn với hội thoại"),
+      "the explanation that there is nowhere to answer",
+    );
+
+    // Spoken as well as written: the person is in a voice session and is owed the reason out loud.
+    expect(adapter.spoken.join(" ")).toContain("chưa gắn với hội thoại");
+    expect(said.binary === false && typeof said.control["text"]).toBe("string");
+    // The agent is never asked: there is no conversation for an answer to belong to.
+    expect(asked).toEqual([]);
   });
 });

@@ -4,17 +4,20 @@ import { join, relative } from "node:path";
 import { pathToFileURL } from "node:url";
 
 import { definitionDigest } from "@clarkcant/widget-host";
+import { directoryEntrySchema, riskLaneFor, type DirectoryEntry } from "@clarkcant/contracts";
 
 import { runConformance, type ConformanceReport } from "./conformance.ts";
+import type { FrameFacts } from "./dev-shell.ts";
 import { startDevHost } from "./dev-host.ts";
-import { readPackage } from "./manifest.ts";
+import { readPackage } from "@clarkcant/core";
 
 /**
- * `clark widget …` — the author's three commands.
+ * `clark widget …` — the author's commands, from `docs/widget-development.md` §16.
  *
- * The shape comes from `docs/widget-development.md` §16. `dev` is not implemented here, and that is stated rather
- * than stubbed: the dev host is a browser application (hot reload, a viewport switcher, an accessibility inspector),
- * and a command that printed "coming soon" would be a control that looks usable before its action exists.
+ * This comment used to say `dev` was not implemented, and the help text used to say the same thing while `runCli`
+ * ran it. Both are corrected here, and the shape of the fix is the point: the list below is what the dispatch
+ * accepts *and* what the help prints, so the two cannot disagree. A hand-written help block beside a chain of `if`s
+ * drifts exactly as that shape invites — it already had, twice over, with `publish` missing from the help as well.
  *
  * `pack` is where the interesting decision lives. It refuses to pack a package that fails conformance, and it
  * refuses to overwrite an artifact for a version that was already packed at a different digest — because a version
@@ -25,19 +28,65 @@ import { readPackage } from "./manifest.ts";
 const TEMPLATES = ["blank", "form", "dashboard"] as const;
 type Template = (typeof TEMPLATES)[number];
 
+/**
+ * The commands this CLI accepts, with the line each shows in the help.
+ *
+ * One list, read twice: `runCli` refuses a command that is not here, and `usage()` prints exactly these. That is the
+ * whole design — the previous shape was a chain of `if`s plus a hand-written block of text, and the text had gone
+ * stale in two ways at once (`dev` described as unimplemented while it ran, `publish` never mentioned while it also
+ * ran). A list both sides read has nothing to disagree with.
+ */
+export const WIDGET_COMMANDS = [
+  { name: "init", usage: "clark widget init <dir> [--template blank|form|dashboard]   scaffold a package" },
+  { name: "test", usage: "clark widget test [dir]                                     run the conformance suite" },
+  { name: "pack", usage: "clark widget pack [dir]                                     build the artifact and its digest" },
+  {
+    name: "dev",
+    usage: "clark widget dev [dir] [--port N] [--builtin <id>]          run the dev host and its browser shell",
+  },
+  { name: "publish", usage: "clark widget publish [dir]                                  prepare the directory submission" },
+] as const;
+
 function usage(): string {
   return [
-    "clark widget init <dir> [--template blank|form|dashboard]",
-    "clark widget test [dir]",
-    "clark widget pack [dir]",
+    "clark widget <command> [dir]",
     "",
-    "clark widget dev is not implemented: the dev host is a browser application and is not part of this CLI yet.",
+    ...WIDGET_COMMANDS.map((entry) => `  ${entry.usage}`),
+    "",
+    // Named because it is the product decision behind the whole surface: a local path needs no account.
+    "A local path needs no account. init, test, pack and dev all work without a directory or a login.",
   ].join("\n");
 }
+
+/**
+ * Flags that carry a value, so the argument after one belongs to the flag rather than to the command.
+ *
+ * Declared once because two readers have to agree on it: `flag` reads the value that follows a name, and
+ * `positional` has to step over that same value. While only the first of them knew, `clark widget dev --port 4000`
+ * read `4000` as the package directory.
+ */
+const FLAGS_WITH_VALUES: readonly string[] = ["--template", "--frames", "--port", "--builtin"];
 
 function flag(args: readonly string[], name: string): string | undefined {
   const index = args.indexOf(name);
   return index === -1 ? undefined : args[index + 1];
+}
+
+/**
+ * The command's positional argument: the first argument that is neither a flag nor a flag's value.
+ *
+ * `dev --port 4000 .` names `.`, and `dev --port 4000` names nothing at all rather than naming `4000`. What nothing
+ * means is the caller's decision, because it is not the same for every command: `dev` falls back to the working
+ * directory, while a command that needs a directory can refuse instead.
+ */
+export function positional(args: readonly string[]): string | undefined {
+  for (let index = 0; index < args.length; index += 1) {
+    const arg = args[index];
+    if (arg === undefined) continue;
+    if (!arg.startsWith("--")) return arg;
+    if (FLAGS_WITH_VALUES.includes(arg)) index += 1;
+  }
+  return undefined;
 }
 
 /* ------------------------------------------------------------------ init */
@@ -98,6 +147,8 @@ function init(root: string, template: Template): void {
     requestedCapabilities: [],
     // Empty by default, so a widget that reaches a network has to say so and the conformance suite can notice.
     permissions: { networkOrigins: [], filesystem: [], microphone: false, camera: false, lifecycleScripts: [] },
+    // Windows is listed because this repository's own desktop app is Electron on Windows: a template that could
+    // not declare it would scaffold a package unable to say where it runs.
     platforms: ["darwin-arm64", "linux-x64", "win32-x64"],
     publisher: { id: "example", sourceUrl: "https://github.com/example/my-widget", license: "MIT" },
   };
@@ -154,6 +205,22 @@ function walk(root: string, dir = root): string[] {
     else files.push(relative(root, path).replaceAll("\\", "/"));
   }
   return files.sort();
+}
+
+/**
+ * Frame facts a browser collected, read from a file.
+ *
+ * This is how the checks that need a rendered frame are answered: the dev host collects the facts in the page and
+ * posts them, and the suite reads them here. Without a file they stay `requires-dev-host`, which is the honest
+ * answer — the check has not been performed — rather than a guess about what the browser would have shown.
+ */
+function readFrames(path: string): FrameFacts | undefined {
+  try {
+    const parsed: unknown = JSON.parse(readFileSync(path, "utf8"));
+    return typeof parsed === "object" && parsed !== null ? (parsed as FrameFacts) : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 function pack(root: string): number {
@@ -228,6 +295,133 @@ function pack(root: string): number {
   return 0;
 }
 
+/* --------------------------------------------------------------- publish */
+
+/** Facet kinds as the directory names them: the manifest says `widget`, the contract says `ui`. */
+const DIRECTORY_FACETS: Record<string, "ui" | "tools" | "skills" | "prompts" | "themes" | "setup" | "driver" | "voice"> = {
+  widget: "ui",
+  composition: "ui",
+  tools: "tools",
+  services: "tools",
+  skills: "skills",
+  recipes: "prompts",
+  themes: "themes",
+};
+
+function requestedSummary(permissions: {
+  networkOrigins: readonly string[];
+  filesystem: readonly string[];
+  microphone: boolean;
+  camera: boolean;
+}): string[] {
+  const out = permissions.networkOrigins.map((origin) => "network: " + origin);
+  for (const path of permissions.filesystem) out.push("filesystem: " + path);
+  if (permissions.microphone) out.push("microphone");
+  if (permissions.camera) out.push("camera");
+  return out;
+}
+
+/**
+ * `clark widget publish` — prepare the directory submission.
+ *
+ * "Prepare" is the whole of it, and the plan says as much ("publish command may initially prepare directory
+ * submission"). It writes the entry a directory would carry — every field the standard requires, plus the digest
+ * of the packed artifact — and stops there. Submitting needs an account, and a command that looked as though it
+ * had already submitted would be a control whose action does not exist.
+ *
+ * It reads `dist/artifact.json` rather than recomputing anything, so the digest in the entry is by construction
+ * the digest of the artifact that was packed. Two computations of the same thing is how a listing comes to name
+ * an artifact nobody can produce.
+ */
+function publish(root: string): number {
+  const result = runConformance(root);
+  if (!result.ok) {
+    process.stderr.write(report(result));
+    process.stderr.write("Refusing to publish a package that fails conformance.");
+    return 1;
+  }
+  if (pack(root) !== 0) return 1;
+
+  const artifactPath = join(root, "dist", "artifact.json");
+  let artifact: { digest?: string; files?: { bytes: number }[] } | undefined;
+  try {
+    artifact = JSON.parse(readFileSync(artifactPath, "utf8")) as { digest?: string; files?: { bytes: number }[] };
+  } catch {
+    process.stderr.write(artifactPath + " is missing or unreadable, so there is nothing to describe.");
+    return 1;
+  }
+  const digest = artifact.digest ?? "";
+  if (digest === "") {
+    // An entry with no digest names bytes nobody can check, and "no digest" must never behave like a match.
+    process.stderr.write("the packed artifact carries no digest, so an entry would name bytes nobody can check.");
+    return 1;
+  }
+
+  const pkg = readPackage(root);
+  const entry: DirectoryEntry = {
+    packageId: pkg.manifest.id,
+    version: pkg.manifest.version,
+    displayName: pkg.manifest.displayName,
+    description: pkg.manifest.description,
+    // The package's own directory. A submission would name the published source (a git ref or an npm version);
+    // preparing from a checkout can only honestly say where it is now.
+    source: { kind: "local", path: root },
+    publisher: pkg.manifest.publisher,
+    // Empty rather than absent: a package without preview media is listed, not hidden.
+    preview: {},
+    facets: [...new Set(pkg.manifest.facets.map((facet) => DIRECTORY_FACETS[facet.kind] ?? "ui"))],
+    // From the manifest, one entry per facet: the install supervisor plans isolation per facet, and this is the
+    // only place that knows the answer without guessing it back out of the strongest lane.
+    isolations: pkg.manifest.facets.map((facet) => ({
+      facetKind: DIRECTORY_FACETS[facet.kind] ?? "ui",
+      isolation: facet.isolation,
+    })),
+    platforms: pkg.manifest.platforms as DirectoryEntry["platforms"],
+    hostApi: pkg.manifest.hostApi,
+    permissionsSummary: requestedSummary(pkg.manifest.permissions),
+    // From the isolation the facets declare, never from what the publisher says about their own package.
+    riskTier: riskLaneFor(pkg.manifest.facets.map((facet) => facet.isolation)),
+    sizeBytes: (artifact.files ?? []).reduce((sum, file) => sum + file.bytes, 0),
+    digest,
+  };
+
+  const parsed = directoryEntrySchema.safeParse(entry);
+  if (!parsed.success) {
+    const first = parsed.error.issues[0];
+    process.stderr.write(
+      "the entry this package would produce is not valid: " +
+        (first?.path.join(".") ?? "") +
+        " " +
+        (first?.message ?? "does not match the schema"),
+    );
+    return 1;
+  }
+
+  const entryPath = join(root, "dist", "directory-entry.json");
+  if (existsSync(entryPath)) {
+    let previous: { version?: string; digest?: string } | undefined;
+    try {
+      previous = JSON.parse(readFileSync(entryPath, "utf8")) as { version?: string; digest?: string };
+    } catch {
+      process.stderr.write(entryPath + " exists but is not readable JSON; refusing to overwrite it.");
+      return 1;
+    }
+    // The same rule as packing: a version whose bytes changed is a different package wearing the same number.
+    if (previous.version === entry.version && previous.digest !== digest) {
+      process.stderr.write("version " + entry.version + " was already prepared with a different digest; bump the version.");
+      return 1;
+    }
+  }
+  mkdirSync(join(root, "dist"), { recursive: true });
+  writeFileSync(entryPath, JSON.stringify(parsed.data, null, 2));
+  process.stdout.write("prepared the directory entry for " + entry.packageId + "@" + entry.version);
+  process.stdout.write("  risk lane: " + entry.riskTier);
+  process.stdout.write("  digest: " + digest);
+  process.stdout.write("  " + entryPath);
+  // Named, so the limit is not mistaken for a failure: a local path needs no account, which is why dev and pack do not.
+  process.stdout.write("Submitting needs a directory account; a local path needs none.");
+  return 0;
+}
 /* ------------------------------------------------------------------- run */
 
 export async function runCli(argv: readonly string[]): Promise<number> {
@@ -236,7 +430,17 @@ export async function runCli(argv: readonly string[]): Promise<number> {
     process.stdout.write(`${usage()}\n`);
     return 2;
   }
-  const dir = rest.find((arg) => !arg.startsWith("--")) ?? process.cwd();
+  const dir = positional(rest) ?? process.cwd();
+
+  /*
+   * The list is the gate, not just the help text. An unknown command is refused here rather than falling through
+   * the chain of `if`s to the same help output, so "is this a command?" has exactly one answer and adding one means
+   * editing one place.
+   */
+  if (!WIDGET_COMMANDS.some((entry) => entry.name === command)) {
+    process.stdout.write(`${usage()}\n`);
+    return 2;
+  }
 
   if (command === "init") {
     const template = (flag(rest, "--template") ?? "blank") as Template;
@@ -249,26 +453,35 @@ export async function runCli(argv: readonly string[]): Promise<number> {
     return 0;
   }
   if (command === "test") {
-    const result = runConformance(dir);
+    const framesPath = flag(rest, "--frames");
+    const frames = framesPath === undefined ? undefined : readFrames(framesPath);
+    if (framesPath !== undefined && frames === undefined) {
+      // Reported rather than ignored: a suite that silently fell back would call a package unchecked when somebody
+      // had already checked it, which is the one thing this report exists to distinguish.
+      process.stderr.write(`--frames ${framesPath} could not be read as frame facts\n`);
+      return 2;
+    }
+    const result = runConformance(dir, frames === undefined ? {} : { frames });
     process.stdout.write(`${report(result)}\n`);
     return result.ok ? 0 : 1;
   }
   if (command === "pack") return pack(dir);
   if (command === "dev") {
     const requested = Number(flag(rest, "--port") ?? "0");
-    const host = await startDevHost({ root: dir, port: Number.isInteger(requested) ? requested : 0 });
+    const builtin = flag(rest, "--builtin");
+    const host = await startDevHost({
+      ...(builtin === undefined ? { root: dir } : { builtin }),
+      port: Number.isInteger(requested) ? requested : 0,
+    });
     process.stdout.write(`dev host: ${host.url}
-  package: ${dir}
+  ${builtin === undefined ? `package: ${dir}` : `catalog widget: ${builtin}`}
   ctrl-c để dừng
 `);
     // Stay alive until ctrl-c: the listening server keeps the event loop busy, which is the whole of "running".
     await new Promise(() => {});
     return 0;
   }
-  if (command === "publish") {
-    process.stderr.write("clark widget publish arrives with the directory (phase 13); local paths need no account.\n");
-    return 2;
-  }
+  if (command === "publish") return publish(dir);
   process.stdout.write(`${usage()}\n`);
   return 2;
 }
@@ -286,4 +499,4 @@ export { applyShellAction, auditFrame, initialState, renderShell } from "./dev-s
 if (process.argv[1] !== undefined && import.meta.url === pathToFileURL(process.argv[1]).href) {
   process.exitCode = await runCli(process.argv.slice(2));
 }
-export { readPackage, manifestSchema } from "./manifest.ts";
+export { readPackage, manifestSchema } from "@clarkcant/core";
