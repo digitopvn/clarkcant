@@ -13,6 +13,7 @@ import {
   consumeConfirmation,
   decideAppIntent,
   mintConfirmation,
+  preferredAppIntentLocale,
 } from "../app-intents.ts";
 import {
   answerQuestionForNode,
@@ -326,7 +327,10 @@ export function attachNodeVoice(deps: NodeVoiceDeps): NodeVoice {
         kind: "intent",
         intent: outcome.intent,
         requiresConfirmation: false,
-        readBack: describeAppIntent(outcome.intent),
+        readBack: describeAppIntent(
+          outcome.intent,
+          preferredAppIntentLocale(intentDeps, deps.services.runtime.identity.ownerPrincipalId),
+        ),
       };
     },
     /**

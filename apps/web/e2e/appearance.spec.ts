@@ -265,17 +265,23 @@ test("the settings panel lists what this node can run, or says plainly that it c
 test("every key in settings can be taken back again, which is how a provider is logged out of", async ({ page }) => {
   await openApp(page);
   await page.locator("[data-settings='true']").click();
-  await page.locator("#cc-tab-devices").click();
 
-  // Both keys, because a logout for one and not the other is the kind of half-wired surface that looks finished.
-  // Gemini is the voice provider's key, so it stays beside the microphone. TypeSafe is asked for where a model is
-  // chosen, because that is what it pays for - the same list of fields, in the tab that explains each one.
-  await expect(page.locator("[data-settings-key-form='gemini']")).toBeVisible();
-  await expect(page.locator("[data-settings-key-remove='gemini']")).toBeVisible();
-
+  // Both keys live in the one Credentials section on AI & Routing now (DESIGN.md 11.6, review U5), rather than
+  // scattered one per domain tab. A logout for one and not the other is the kind of half-wired surface that
+  // looks finished, so both are asserted from the one place a person would actually go looking.
   await page.locator("#cc-tab-ai").click();
-  await expect(page.locator("[data-settings-key-form='typesafe']")).toBeVisible();
-  await expect(page.locator("[data-settings-key-remove='typesafe']")).toBeVisible();
+  const section = page.locator("[data-credentials-section='true']");
+  await expect(section).toBeVisible();
+  await expect(section.locator("[data-credential-row='gemini']")).toBeVisible();
+  await expect(section.locator("[data-credential-remove='gemini']")).toBeVisible();
+  await expect(section.locator("[data-credential-row='typesafe']")).toBeVisible();
+  await expect(section.locator("[data-credential-remove='typesafe']")).toBeVisible();
+
+  // Devices & Voice no longer embeds its own Gemini form; it points at the section above instead of
+  // duplicating it.
+  await page.locator("#cc-tab-devices").click();
+  await expect(page.locator("[data-devices-credentials-link='gemini']")).toBeVisible();
+  await expect(page.locator("[data-settings-key-form='gemini']")).toHaveCount(0);
 });
 
 test("the model in use is what the fields show before anybody types", async ({ page }) => {

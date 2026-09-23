@@ -328,3 +328,54 @@ describe("a typed command on the streaming route", () => {
     expect(decision.confirmationToken).toMatch(/^[0-9a-f-]{36}$/);
   });
 });
+
+/**
+ * The read-back follows the stored UI language, not the language the answer used to default to.
+ *
+ * `experience.language` is the same `scope: "global"` preference the settings panel's Language control
+ * writes, so setting it through `/preferences/experience.language` is exactly what a person switching
+ * the UI to English does. Before this, `decideAppIntent`/`describeAppIntent` never saw that choice: a
+ * click, a typed command and a spoken one all read back in Vietnamese regardless of the UI language,
+ * which is the bug this suite guards against.
+ */
+describe("the read-back follows the stored UI language", () => {
+  it("answers a click in Vietnamese by default", async () => {
+    const click = await request("POST", "/app-intents", { kind: "settings.open", source: "click" });
+    expect(click.status).toBe(200);
+    const decision = json(click).decision as { readBack: string };
+    expect(decision.readBack).toBe("Tôi mở Settings nhé.");
+  });
+
+  it("answers a click in English once the UI language preference is set", async () => {
+    const written = await request("PUT", "/preferences/experience.language", { value: "en" });
+    expect(written.status).toBe(200);
+
+    const click = await request("POST", "/app-intents", { kind: "settings.open", source: "click" });
+    expect(click.status).toBe(200);
+    const decision = json(click).decision as { readBack: string };
+    expect(decision.readBack).toBe("Opening Settings.");
+  });
+
+  it("answers a typed command through the chat path in English too", async () => {
+    await request("PUT", "/preferences/experience.language", { value: "en" });
+
+    const chat = await request("POST", `/conversations/${conversationId}/messages`, { text: "mở settings" });
+    expect(chat.status).toBe(200);
+    const appIntent = json(chat).appIntent as { readBack: string };
+    expect(appIntent.readBack).toBe("Opening Settings.");
+  });
+
+  it("answers a confirmed quit in English once the UI language preference is set", async () => {
+    await request("PUT", "/preferences/experience.language", { value: "en" });
+
+    const asked = await request("POST", "/app-intents", { text: "thoát ứng dụng", source: "click" });
+    const token = (json(asked).decision as { confirmationToken: string }).confirmationToken;
+    const confirmed = await request("POST", "/app-intents/confirm", {
+      confirmationToken: token,
+      decision: "granted",
+    });
+    expect(confirmed.status).toBe(200);
+    const decision = json(confirmed).decision as { readBack: string };
+    expect(decision.readBack).toBe("I understand you want to quit the app. Do you confirm?");
+  });
+});
