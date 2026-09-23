@@ -274,3 +274,43 @@ Ba khoảng trống nêu ở Stage G, và trạng thái hiện tại của từn
 ---
 
 trước đó. Nếu Phase 13 chỉ có test happy path của install thì câu này coi như chưa trả lời.
+
+---
+
+## Stage G — Phase 14 (polish, accessibility, performance & release gates)
+
+### Câu 10 — Một design target chưa implement có bị UI/docs quảng bá như shipped không?
+
+**Trả lời lại ở đây vì Stage G chính là stage release gate**, và câu trả lời bây giờ khác Stage D ở một chỗ
+quan trọng.
+
+Đã đúng:
+
+- UI không tự nhận đã làm điều chưa làm: wake word disable kèm lý do, voice preview báo `supportsPreview:
+  false`, phiên desktop mặc định `needs-permission`, danh sách gói nói rõ khi chưa cài gì.
+- `docs/widget-development.md` giờ có mục "Trạng thái triển khai" nói thẳng phần nào đã có và phần nào chưa
+  (publish, script trong trang của dev host, detach, MCP Apps).
+- Ledger chỉ được nâng khi test tồn tại: V12 nêu tên ba test của phase 11 và vẫn giữ MCP Apps là chưa chứng
+  minh.
+
+**Chỗ chưa đúng, và đây là phát hiện của chính stage này:** runtime và frame session đã có, conformance đã
+chạy được trên package thật — nhưng **conversation client không mount một frame isolated nào cả**. Không có
+`sandbox=`, không có `iframe` trong `mini-app-surface.tsx`; surface hiện được vẽ như một `figure` với dữ liệu
+đã chụp. Nghĩa là "executable widget platform" đúng ở tầng package và **chưa chạm tới bề mặt người dùng**.
+
+Hệ quả trực tiếp cho Phase 14: ba mục performance của phase — lazy mount widget nặng, offscreen suspend, và
+"không duplicate live subscription sau detach" — **không có gì để gắn vào**. Không thể viết test cho một frame
+chưa được mount, và viết wiring rồi tự test nó trong cùng một change là cách tự xác nhận mình. Nên chúng được
+báo là thiếu, không được đánh dấu xong.
+
+### Câu 4 — Orb personalization có thể gây GPU runaway/unbounded physics/CSS injection không?
+
+Kiểm lại ở stage này:
+
+- Physics bị chặn bởi bộ preset + clamp có test (`orb-profile.spec.ts`), và giá trị lưu là tên preset chứ
+  không phải shader source — nên không có đường CSS/GLSL tuỳ ý từ Settings.
+- Vòng lặp pointer nằm ngoài React state, và stage này thêm test rằng canvas không bị dựng lại khi pointer
+  quét qua (20 lần di chuyển, cùng một element).
+- Vòng lặp dừng khi offscreen: `Orb.tsx` dùng `IntersectionObserver`.
+- Reduced motion thắng: bộ token `reduced` là bộ riêng, và test khẳng định mọi key của bộ đầy đủ đều có bản
+  reduced (một key thiếu sẽ âm thầm giữ nguyên giá trị full-motion).
