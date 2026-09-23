@@ -1,7 +1,7 @@
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
-import { createServer, type Server } from "node:http";
+import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { gzipSync } from "node:zlib";
@@ -19,6 +19,7 @@ import {
   redactCredentialsInText,
   resolveLocalSource,
 } from "../src/package-fetch.ts";
+import { buildNpmTarballFromFiles, startFakeNpmRegistry } from "../src/test-support/fake-npm-registry.ts";
 
 /**
  * Fetching a git or npm source to an exact, verified artifact.
@@ -442,96 +443,17 @@ describe("killProcessGroup (Low: a timed-out child's own subprocess must not sur
 
 /* ------------------------------------------------------------------ *
  * npm: a local fake registry
+ *
+ * `buildNpmTarballFromFiles` and `startFakeNpmRegistry` live in
+ * `../src/test-support/fake-npm-registry.ts`, shared with the browser e2e suite's own fixture registry
+ * (`apps/runtime/src/test-support/npm-fixture-registry.ts`) so both places build and serve a tarball the exact
+ * same way rather than keeping two copies in sync by hand.
  * ------------------------------------------------------------------ */
-
-type TarEntrySpec = { content: string; type?: "file" | "symlink" | "traversal"; linkTarget?: string };
-
-/** A minimal npm tarball: a gzip'd tar with one `package/` entry per file, built with plain buffers so the test
- * has no dependency on a tar-writing library. Extended beyond a plain file to be able to construct the malicious
- * shapes `extractUstarTarball` (in `package-fetch.ts`) must refuse: a symlink entry and a path-traversal name. */
-function buildNpmTarball(files: Record<string, string | TarEntrySpec>): Buffer {
-  const blocks: Buffer[] = [];
-  for (const [relativePath, spec] of Object.entries(files)) {
-    const normalized: TarEntrySpec = typeof spec === "string" ? { content: spec } : spec;
-    const name = normalized.type === "traversal" ? relativePath : `package/${relativePath}`;
-    const contentBuffer = Buffer.from(normalized.content, "utf8");
-    const header = Buffer.alloc(512);
-    header.write(name, 0, "utf8");
-    header.write("0000644\0", 100, "utf8"); // mode
-    header.write("0000000\0", 108, "utf8"); // uid
-    header.write("0000000\0", 116, "utf8"); // gid
-    header.write(contentBuffer.length.toString(8).padStart(11, "0") + "\0", 124, "utf8"); // size, octal
-    header.write("00000000000\0", 136, "utf8"); // mtime
-    header.write("        ", 148, "utf8"); // checksum placeholder
-    header.write(normalized.type === "symlink" ? "2" : "0", 156, "utf8"); // typeflag
-    if (normalized.type === "symlink" && normalized.linkTarget !== undefined) {
-      header.write(normalized.linkTarget, 157, "utf8"); // linkname field
-    }
-    // ustar magic + version (N3: extractUstarTarball refuses a header without it), same as a real npm tarball
-    // (built by node-tar) always carries.
-    header.write("ustar\0", 257, "utf8");
-    let checksum = 0;
-    for (const byte of header) checksum += byte;
-    header.write(checksum.toString(8).padStart(6, "0") + "\0 ", 148, "utf8");
-    const padded = Buffer.concat([contentBuffer, Buffer.alloc((512 - (contentBuffer.length % 512)) % 512)]);
-    blocks.push(header, padded);
-  }
-  blocks.push(Buffer.alloc(1024)); // two zero blocks terminate the archive
-  return gzipSync(Buffer.concat(blocks));
-}
-
-function startFakeRegistry(input: {
-  name: string;
-  version: string;
-  tarball: Buffer;
-  /** Corrupt the published integrity so a consuming test can prove the mismatch is refused. */
-  wrongIntegrity?: boolean;
-  /** Lie about the tarball's size in `content-length`, without changing the actual bytes served. */
-  declaredContentLength?: number;
-}): Promise<{ url: string; server: Server }> {
-  const integrity = `sha512-${createHash("sha512").update(input.tarball).digest("base64")}`;
-  return new Promise((resolvePromise) => {
-    const server = createServer((req, res) => {
-      const url = req.url ?? "";
-      if (url === `/${input.name}`) {
-        res.writeHead(200, { "content-type": "application/json" });
-        res.end(
-          JSON.stringify({
-            name: input.name,
-            versions: {
-              [input.version]: {
-                dist: {
-                  tarball: `http://127.0.0.1:${String((server.address() as { port: number }).port)}/tarball.tgz`,
-                  integrity: input.wrongIntegrity === true ? `sha512-${"A".repeat(88)}` : integrity,
-                },
-              },
-            },
-          }),
-        );
-        return;
-      }
-      if (url === "/tarball.tgz") {
-        res.writeHead(200, {
-          "content-type": "application/octet-stream",
-          ...(input.declaredContentLength === undefined ? {} : { "content-length": String(input.declaredContentLength) }),
-        });
-        res.end(input.tarball);
-        return;
-      }
-      res.writeHead(404);
-      res.end();
-    });
-    server.listen(0, "127.0.0.1", () => {
-      const port = (server.address() as { port: number }).port;
-      resolvePromise({ url: `http://127.0.0.1:${String(port)}`, server });
-    });
-  });
-}
 
 describe("fetchNpmArtifact", () => {
   it("fetches an exact version, verifies its integrity, and extracts it under the cache root", async () => {
-    const tarball = buildNpmTarball({ "widget.json": JSON.stringify({ id: "com.example.npm-widget" }) });
-    const { url, server } = await startFakeRegistry({ name: "com.example.npm-widget", version: "1.0.0", tarball });
+    const tarball = buildNpmTarballFromFiles({ "widget.json": JSON.stringify({ id: "com.example.npm-widget" }) });
+    const { url, server } = await startFakeNpmRegistry({ name: "com.example.npm-widget", version: "1.0.0", tarball });
     try {
       const outcome = await fetchNpmArtifact({
         name: "com.example.npm-widget",
@@ -549,8 +471,8 @@ describe("fetchNpmArtifact", () => {
   });
 
   it("refuses a tarball whose bytes do not match the published integrity", async () => {
-    const tarball = buildNpmTarball({ "widget.json": "{}" });
-    const { url, server } = await startFakeRegistry({
+    const tarball = buildNpmTarballFromFiles({ "widget.json": "{}" });
+    const { url, server } = await startFakeNpmRegistry({
       name: "com.example.npm-widget",
       version: "1.0.0",
       tarball,
@@ -572,8 +494,8 @@ describe("fetchNpmArtifact", () => {
   });
 
   it("refuses a version the registry never published", async () => {
-    const tarball = buildNpmTarball({ "widget.json": "{}" });
-    const { url, server } = await startFakeRegistry({ name: "com.example.npm-widget", version: "1.0.0", tarball });
+    const tarball = buildNpmTarballFromFiles({ "widget.json": "{}" });
+    const { url, server } = await startFakeNpmRegistry({ name: "com.example.npm-widget", version: "1.0.0", tarball });
     try {
       const outcome = await fetchNpmArtifact({
         name: "com.example.npm-widget",
@@ -591,8 +513,8 @@ describe("fetchNpmArtifact", () => {
 
   describe("N2: expectedDigest is checked before an npm fetch becomes servable", () => {
     it("refuses a staged extraction whose content digest does not match expectedDigest, and leaves no servable cache directory", async () => {
-      const tarball = buildNpmTarball({ "widget.json": JSON.stringify({ id: "com.example.npm-widget" }) });
-      const { url, server } = await startFakeRegistry({ name: "com.example.npm-widget", version: "1.0.0", tarball });
+      const tarball = buildNpmTarballFromFiles({ "widget.json": JSON.stringify({ id: "com.example.npm-widget" }) });
+      const { url, server } = await startFakeNpmRegistry({ name: "com.example.npm-widget", version: "1.0.0", tarball });
       const cacheRoot = join(dir, "cache");
       try {
         const outcome = await fetchNpmArtifact({
@@ -617,8 +539,8 @@ describe("fetchNpmArtifact", () => {
     });
 
     it("succeeds when expectedDigest matches the extracted content", async () => {
-      const tarball = buildNpmTarball({ "widget.json": JSON.stringify({ id: "com.example.npm-widget" }) });
-      const { url, server } = await startFakeRegistry({ name: "com.example.npm-widget", version: "1.0.0", tarball });
+      const tarball = buildNpmTarballFromFiles({ "widget.json": JSON.stringify({ id: "com.example.npm-widget" }) });
+      const { url, server } = await startFakeNpmRegistry({ name: "com.example.npm-widget", version: "1.0.0", tarball });
       try {
         const probe = await fetchNpmArtifact({
           name: "com.example.npm-widget",
@@ -643,8 +565,8 @@ describe("fetchNpmArtifact", () => {
     });
 
     it("[fails on the old behaviour] fetchNpmArtifact had no expectedDigest parameter, so any fetched bytes were reported ok regardless of what the directory published", async () => {
-      const tarball = buildNpmTarball({ "widget.json": JSON.stringify({ id: "com.example.npm-widget" }) });
-      const { url, server } = await startFakeRegistry({ name: "com.example.npm-widget", version: "1.0.0", tarball });
+      const tarball = buildNpmTarballFromFiles({ "widget.json": JSON.stringify({ id: "com.example.npm-widget" }) });
+      const { url, server } = await startFakeNpmRegistry({ name: "com.example.npm-widget", version: "1.0.0", tarball });
       try {
         const outcome = await fetchNpmArtifact({
           name: "com.example.npm-widget",
@@ -661,8 +583,8 @@ describe("fetchNpmArtifact", () => {
   });
 
   it("refuses a tarball whose declared content-length is over the size cap, before downloading its bytes (H5)", async () => {
-    const tarball = buildNpmTarball({ "widget.json": "{}" });
-    const { url, server } = await startFakeRegistry({
+    const tarball = buildNpmTarballFromFiles({ "widget.json": "{}" });
+    const { url, server } = await startFakeNpmRegistry({
       name: "com.example.npm-widget",
       version: "1.0.0",
       tarball,
@@ -684,11 +606,11 @@ describe("fetchNpmArtifact", () => {
   });
 
   it("refuses a tarball entry that is a symlink, and writes nothing to disk (H5)", async () => {
-    const tarball = buildNpmTarball({
+    const tarball = buildNpmTarballFromFiles({
       "widget.json": "{}",
       "link-to-etc-passwd": { content: "", type: "symlink", linkTarget: "/etc/passwd" },
     });
-    const { url, server } = await startFakeRegistry({ name: "com.example.npm-widget", version: "1.0.0", tarball });
+    const { url, server } = await startFakeNpmRegistry({ name: "com.example.npm-widget", version: "1.0.0", tarball });
     try {
       const cacheRoot = join(dir, "cache");
       const outcome = await fetchNpmArtifact({
@@ -709,11 +631,11 @@ describe("fetchNpmArtifact", () => {
   });
 
   it("refuses a tarball entry that names a path outside the extraction root (H5)", async () => {
-    const tarball = buildNpmTarball({
+    const tarball = buildNpmTarballFromFiles({
       "widget.json": "{}",
       "../../../etc/cron.d/evil": { content: "* * * * * root touch /tmp/pwned", type: "traversal" },
     });
-    const { url, server } = await startFakeRegistry({ name: "com.example.npm-widget", version: "1.0.0", tarball });
+    const { url, server } = await startFakeNpmRegistry({ name: "com.example.npm-widget", version: "1.0.0", tarball });
     try {
       const outcome = await fetchNpmArtifact({
         name: "com.example.npm-widget",
@@ -771,7 +693,7 @@ describe("fetchNpmArtifact", () => {
         { name: "package/widget.json", content: '{"first":true}', typeflag: "0" },
         { name: "package/widget.json", content: '{"second":true}', typeflag: "0" },
       ]);
-      const { url, server } = await startFakeRegistry({ name: "com.example.npm-widget", version: "1.0.0", tarball });
+      const { url, server } = await startFakeNpmRegistry({ name: "com.example.npm-widget", version: "1.0.0", tarball });
       try {
         const outcome = await fetchNpmArtifact({
           name: "com.example.npm-widget",
@@ -810,7 +732,7 @@ describe("fetchNpmArtifact", () => {
       header.write(`${checksum.toString(8).padStart(6, "0")}\0 `, 148, "utf8");
       const noMagicTarball = gzipSync(Buffer.concat([header, padBlock(Buffer.from("{}")), Buffer.alloc(1024)]));
 
-      const { url, server } = await startFakeRegistry({
+      const { url, server } = await startFakeNpmRegistry({
         name: "com.example.npm-widget",
         version: "1.0.0",
         tarball: noMagicTarball,
@@ -841,7 +763,7 @@ describe("fetchNpmArtifact", () => {
         // header above is what must win.
         { name: longPath.slice(0, 90), content: '{"id":"long-name-widget"}', typeflag: "0" },
       ]);
-      const { url, server } = await startFakeRegistry({ name: "com.example.npm-widget", version: "1.0.0", tarball });
+      const { url, server } = await startFakeNpmRegistry({ name: "com.example.npm-widget", version: "1.0.0", tarball });
       try {
         const cacheRoot = join(dir, "cache");
         const outcome = await fetchNpmArtifact({ name: "com.example.npm-widget", version: "1.0.0", cacheRoot, registryUrl: url });
@@ -867,7 +789,7 @@ describe("fetchNpmArtifact", () => {
         { name: "package/PaxHeaders/component.js", content: paxBody, typeflag: "x" },
         { name: longPath.slice(0, 90), content: "export const pax = true;\n", typeflag: "0" },
       ]);
-      const { url, server } = await startFakeRegistry({ name: "com.example.npm-widget", version: "1.0.0", tarball });
+      const { url, server } = await startFakeNpmRegistry({ name: "com.example.npm-widget", version: "1.0.0", tarball });
       try {
         const cacheRoot = join(dir, "cache");
         const outcome = await fetchNpmArtifact({ name: "com.example.npm-widget", version: "1.0.0", cacheRoot, registryUrl: url });
@@ -886,7 +808,7 @@ describe("fetchNpmArtifact", () => {
         { name: "", content: `${longPath}\0`, typeflag: "L" },
         { name: longPath.slice(0, 90), content: "", typeflag: "2" },
       ]);
-      const { url, server } = await startFakeRegistry({ name: "com.example.npm-widget", version: "1.0.0", tarball });
+      const { url, server } = await startFakeNpmRegistry({ name: "com.example.npm-widget", version: "1.0.0", tarball });
       try {
         const outcome = await fetchNpmArtifact({
           name: "com.example.npm-widget",
@@ -969,7 +891,7 @@ describe("fetchNpmArtifact", () => {
         { name: "package/PaxHeaders/mismatch.txt", content: paxBody, typeflag: "x" },
         { name: "package/mismatch.txt", content: "hello", typeflag: "0" },
       ]);
-      const { url, server } = await startFakeRegistry({ name: "com.example.npm-widget", version: "1.0.0", tarball });
+      const { url, server } = await startFakeNpmRegistry({ name: "com.example.npm-widget", version: "1.0.0", tarball });
       try {
         const outcome = await fetchNpmArtifact({
           name: "com.example.npm-widget",
@@ -995,7 +917,7 @@ describe("fetchNpmArtifact", () => {
         { name: "package/PaxHeaders/global.txt", content: paxBody, typeflag: "g" },
         { name: "package/widget.json", content: "{}", typeflag: "0" },
       ]);
-      const { url, server } = await startFakeRegistry({ name: "com.example.npm-widget", version: "1.0.0", tarball });
+      const { url, server } = await startFakeNpmRegistry({ name: "com.example.npm-widget", version: "1.0.0", tarball });
       try {
         const outcome = await fetchNpmArtifact({
           name: "com.example.npm-widget",
@@ -1020,7 +942,7 @@ describe("fetchNpmArtifact", () => {
         { name: "package/conflict", content: "i am a file", typeflag: "0" },
         { name: "package/conflict/nested.txt", content: "i want to be inside that file", typeflag: "0" },
       ]);
-      const { url, server } = await startFakeRegistry({ name: "com.example.npm-widget", version: "1.0.0", tarball });
+      const { url, server } = await startFakeNpmRegistry({ name: "com.example.npm-widget", version: "1.0.0", tarball });
       try {
         const outcome = await fetchNpmArtifact({
           name: "com.example.npm-widget",
@@ -1041,8 +963,8 @@ describe("fetchNpmArtifact", () => {
   });
 
   it("reuses the cache rather than refetching for the same name+version (M3)", async () => {
-    const tarball = buildNpmTarball({ "widget.json": "{}" });
-    const { url, server } = await startFakeRegistry({ name: "com.example.npm-widget", version: "1.0.0", tarball });
+    const tarball = buildNpmTarballFromFiles({ "widget.json": "{}" });
+    const { url, server } = await startFakeNpmRegistry({ name: "com.example.npm-widget", version: "1.0.0", tarball });
     try {
       const cacheRoot = join(dir, "cache");
       const first = await fetchNpmArtifact({ name: "com.example.npm-widget", version: "1.0.0", cacheRoot, registryUrl: url });

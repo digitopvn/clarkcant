@@ -37,7 +37,7 @@
     "permissionsSummary": [],
     "riskTier": "isolated-ui",
     "sizeBytes": 40960,
-    "digest": "sha256:1111111111111111111111111111111111111111111111111111111111111111"
+    "digest": "sha256:ef8eb8dd74e61d7d083d347f43ba696fff56b4037d1045849cb04da333192281"
   },
   {
     "packageId": "com.example.frame-widget",

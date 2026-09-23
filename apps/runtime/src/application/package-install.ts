@@ -241,6 +241,12 @@ export async function fetchRemoteArtifact(entry: DirectoryEntry, cacheRoot: stri
           version: entry.source.version,
           cacheRoot,
           expectedDigest: entry.digest,
+          // Overridable so the e2e suite (and a future self-hosted registry deployment) can point npm fetches
+          // at a registry other than the public one. Omitted in production, where the default inside
+          // `fetchNpmArtifact` (the real npmjs.org registry) is exactly what should run. `exactOptionalPropertyTypes`
+          // rejects an explicit `undefined` for an optional property, so the key itself is left out rather than
+          // set to `process.env[...]` directly.
+          ...(process.env["CC_NPM_REGISTRY_URL"] === undefined ? {} : { registryUrl: process.env["CC_NPM_REGISTRY_URL"] }),
         });
 
   if (!fetched.ok) {

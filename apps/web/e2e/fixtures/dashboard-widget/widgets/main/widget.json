@@ -1,0 +1,29 @@
+{
+  "id": "canvas.overview@1",
+  "version": "1.0.0",
+  "renderer": "catalog",
+  "propsSchema": {
+    "type": "object",
+    "properties": {
+      "title": {
+        "type": "string",
+        "maxLength": 200
+      }
+    },
+    "required": [
+      "title"
+    ],
+    "additionalProperties": false
+  },
+  "eventSchemas": {},
+  "semanticDescription": "Biểu đồ tổng quan do một package npm khai báo, vẽ bằng renderer của catalog.",
+  "requestedCapabilities": [],
+  "sizing": {
+    "compact": true,
+    "expanded": true,
+    "minHeight": 160
+  },
+  "textFallback": "Dashboard: nội dung chưa xem được ở chế độ chỉ có chữ.",
+  "effectCategories": [],
+  "datasetRefs": []
+}
