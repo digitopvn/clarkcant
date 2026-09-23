@@ -20,6 +20,8 @@ import { ConversationPinSurfaces } from "./ConversationPinSurfaces.tsx";
 import { ConversationLiveReplyRow } from "./ConversationLiveReplyRow.tsx";
 import { TimelineMessageRow } from "./TimelineMessageRow.tsx";
 import { useTheme } from "./use-theme.ts";
+import { useLocale } from "./i18n/use-locale.ts";
+import { LocaleProvider } from "./i18n/locale-context.tsx";
 import { useConnectionStatus } from "./use-connection-status.ts";
 import { useModelAlias } from "./use-model-alias.ts";
 import { useDynamicSuggestions } from "./use-dynamic-suggestions.ts";
@@ -123,6 +125,7 @@ export function Conversation({
   const modality = useInputModalityState();
   const connection = useConnectionStatus(client);
   const { themeChoice, resolvedTheme, applyThemeChoice } = useTheme();
+  const localeState = useLocale();
   const { modelAlias, modelNote } = useModelAlias(client);
   const dynamicSuggestions = useDynamicSuggestions(client);
 
@@ -282,6 +285,7 @@ export function Conversation({
   const showTimeline = blocks.length > 0 || pendingUser !== undefined || busy;
 
   return (
+    <LocaleProvider value={localeState}>
     <div
       className="cc-shell"
       data-view={heroPhase === "shown" ? "hero" : "conversation"}
@@ -478,6 +482,7 @@ export function Conversation({
         />
       )}
     </div>
+    </LocaleProvider>
   );
 }
 

@@ -11,6 +11,7 @@ import {
 import { InlineStatus, SegmentedControl, SettingsRow, ToggleSwitch } from "./controls/primitives.tsx";
 import type { PreferencesHandle } from "./controls/use-preferences.ts";
 import type { GatewayClient } from "../api.ts";
+import { useT } from "../i18n/locale-context.tsx";
 
 /**
  * Control: how much this node does on its own.
@@ -122,6 +123,7 @@ const GUARD_CLASS_LABELS: Record<GuardClass, string> = {
  * host owns, and a model may only pick from.
  */
 function ExecutionPolicySettings({ client }: { client: GatewayClient }): ReactElement {
+  const t = useT();
   const [settings, setSettings] = useState<AutonomySettings | undefined>(undefined);
   const [narrowing, setNarrowing] = useState<{ id: string; description: string }[]>([]);
   const [status, setStatus] = useState("");
@@ -226,7 +228,7 @@ function ExecutionPolicySettings({ client }: { client: GatewayClient }): ReactEl
       </SettingsRow>
 
       <SettingsRow
-        label="Instructions"
+        label={t("control.instructions")}
         description="Luật của bạn, bằng lời của bạn. Guardrail chỉ có thể thu hẹp thêm, không bao giờ nới."
       >
         <textarea

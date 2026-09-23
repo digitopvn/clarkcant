@@ -457,6 +457,13 @@ export const PREFERENCE_REGISTRY = {
     default: "system",
     schema: z.enum(["system", "full", "reduced"]),
   },
+  "experience.language": {
+    key: "experience.language",
+    scope: "global",
+    applies: "immediate",
+    default: "vi",
+    schema: z.enum(["vi", "en"]),
+  },
   "experience.density": {
     key: "experience.density",
     scope: "global",
