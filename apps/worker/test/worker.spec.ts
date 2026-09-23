@@ -25,7 +25,7 @@ import { allWorkerTools, READ_PROJECT_FILE_TOOL } from "../src/tools.ts";
  * success.
  */
 
-const CAPABILITY_READ = "capability:project.read";
+const CAPABILITY_READ = "project.file.read@1";
 const CAPABILITY_WRITE = "capability:project.write";
 
 let root: string;

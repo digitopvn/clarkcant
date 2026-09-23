@@ -166,13 +166,12 @@ export function handlePackageRoutes(deps: PackageRouteDeps): GatewayResponse | u
               ),
             }
           : {}),
-        ...(Array.isArray(parsed.value.grantedCapabilities)
-          ? {
-              grantedCapabilities: parsed.value.grantedCapabilities.filter(
-                (reference): reference is string => typeof reference === "string",
-              ),
-            }
-          : {}),
+        // `grantedCapabilities` is deliberately not read from the request body: a client declaring its
+        // own grants is exactly the authority-boundary violation issue #93 (P1) reported — a manifest
+        // request is metadata, not authority, and the public install route has no consent/policy state
+        // from which to derive a grant today. `installPackage` fails closed on this (empty grants)
+        // rather than trusting whatever JSON arrived here; see the comment there for the seam a later
+        // consent implementation fills.
       },
     );
     if (outcome.kind === "refused") return fail(outcome.status, outcome.code, outcome.message);

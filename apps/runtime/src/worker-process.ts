@@ -55,6 +55,12 @@ export interface WorkerProcessOptions {
   /** Where the worker writes its transcript. Unset leaves the session in memory. */
   dataDir?: string;
   /**
+   * Path to a `ScriptedTurn[]` JSON file for the fake adapter (`@clarkcant/pi-adapter`'s `fake.ts`).
+   * Ignored with `--adapter real`. Exists so a test can prove a real worker child process, not a fake
+   * one substituted for `runWorker`, actually calls a registered tool and produces evidence.
+   */
+  scriptPath?: string;
+  /**
    * Handed the live child the moment it is spawned, so a caller that dispatches tasks can track and
    * kill it later — `/stop` has no other way to reach a worker this function already returned control
    * of internally. Never used to read output: stdout and stderr are only available through the result.
@@ -93,6 +99,7 @@ export async function runWorkerProcess(options: WorkerProcessOptions): Promise<W
 
     const args = [entry, "--brief", briefPath, "--node", options.nodeId, "--adapter", options.adapter ?? "fake"];
     if (options.dataDir !== undefined) args.push("--data-dir", options.dataDir);
+    if (options.scriptPath !== undefined) args.push("--script", options.scriptPath);
 
     const result = await new Promise<{ code: number | null; stdout: string; stderr: string }>((resolve, reject) => {
       // The child never inherits this process's environment wholesale: only the names the `build`

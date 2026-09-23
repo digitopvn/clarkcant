@@ -1,4 +1,4 @@
-import { readFileSync, statSync } from "node:fs";
+import { constants, openSync, closeSync, fstatSync, readFileSync, realpathSync } from "node:fs";
 import { join, normalize, resolve, sep } from "node:path";
 
 import type { DirectoryEntry } from "@clarkcant/contracts";
@@ -18,6 +18,17 @@ import type { DirectoryEntry } from "@clarkcant/contracts";
  * **Only a package the node can actually read.** A git or npm entry names bytes nobody here has; serving those
  * would mean the node acting as a proxy for whatever that URL returns, which is a different and much larger thing
  * than serving a widget.
+ *
+ * **Containment is checked on canonical paths, not lexical ones.** `resolve()` plus `startsWith()` blocks `../`
+ * but is blind to a symlink: a file `leak.txt -> ../secret.txt` placed inside the package root resolves
+ * lexically to a path inside the root while pointing at bytes outside it. Both the root and the candidate are
+ * run through `realpathSync` before the containment check, and the file that is actually opened is the
+ * canonical path the check approved — not the original candidate — so a symlink cannot pass a check performed
+ * on one path and then be read through a different one. A residual TOCTOU window remains between the
+ * `realpathSync` call and the `openSync` immediately after it: if the filesystem is mutated by a concurrent
+ * process in that narrow window, the check and the read could in principle disagree. That is a property of any
+ * check-then-open on a POSIX filesystem without O_BENEATH/openat2-style kernel support, which Node does not
+ * expose; `O_NOFOLLOW` on the open call at least refuses a symlink swapped in at the last instant.
  */
 
 export type PackageFileOutcome =
@@ -71,20 +82,47 @@ export function readPackageFile(input: {
     };
   }
 
-  const root = resolve(input.entry.source.path);
-  const candidate = resolve(join(root, normalize(input.relativePath)));
-  if (candidate !== root && !candidate.startsWith(root + sep)) {
-    // Checked on the resolved path: `normalize` alone would let a symlink or a drive-relative form through, and the
-    // string that arrived is not the thing being opened.
+  const lexicalRoot = resolve(input.entry.source.path);
+  const lexicalCandidate = resolve(join(lexicalRoot, normalize(input.relativePath)));
+  if (lexicalCandidate !== lexicalRoot && !lexicalCandidate.startsWith(lexicalRoot + sep)) {
+    // The cheap lexical check first: `../../` never needs a syscall to refuse.
     return { ok: false, code: "FILE_OUTSIDE_PACKAGE", message: "that path is outside the package" };
   }
 
+  let root: string;
+  let candidate: string;
   try {
-    if (!statSync(candidate).isFile()) throw new Error("not a file");
-    return { ok: true, bytes: readFileSync(candidate), contentType: contentTypeFor(candidate) };
+    // Canonicalise both sides with `realpath` so a symlink is resolved by the platform, not by string
+    // arithmetic. A root or candidate that cannot be resolved (missing, dangling symlink, permission
+    // denied) is reported as not-found — there is nothing this node can prove exists at that path.
+    root = realpathSync(lexicalRoot);
+    candidate = realpathSync(lexicalCandidate);
   } catch {
-    // A directory, a missing file and an unreadable one are one answer here, because they are one answer to the
-    // frame: there is nothing at that path. Which of the three it was is not the frame's business.
     return { ok: false, code: "FILE_NOT_FOUND", message: "there is no such file in this package" };
+  }
+
+  if (candidate !== root && !candidate.startsWith(root + sep)) {
+    // The canonical check: a symlink inside the lexically-approved path whose target resolves outside
+    // the canonical root is refused here, after following it, which the lexical check above cannot see.
+    return { ok: false, code: "FILE_OUTSIDE_PACKAGE", message: "that path is outside the package" };
+  }
+
+  // The file that is opened is the canonical path the check just approved, opened with O_NOFOLLOW so a
+  // symlink swapped into that exact name between the check and this call is refused rather than followed.
+  let fd: number;
+  try {
+    fd = openSync(candidate, constants.O_RDONLY | constants.O_NOFOLLOW);
+  } catch {
+    return { ok: false, code: "FILE_NOT_FOUND", message: "there is no such file in this package" };
+  }
+  try {
+    if (!fstatSync(fd).isFile()) {
+      return { ok: false, code: "FILE_NOT_FOUND", message: "there is no such file in this package" };
+    }
+    return { ok: true, bytes: readFileSync(fd), contentType: contentTypeFor(candidate) };
+  } catch {
+    return { ok: false, code: "FILE_NOT_FOUND", message: "there is no such file in this package" };
+  } finally {
+    closeSync(fd);
   }
 }

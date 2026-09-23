@@ -18,7 +18,7 @@ export {
   hasPersonalInstructions,
   type PersonalInstructionsInput,
 } from "./personal-instructions.ts";
-export { FakePiAdapter } from "./fake.ts";
+export { FakePiAdapter, type ScriptedTurn } from "./fake.ts";
 export {
   RealPiAdapter,
   READ_ONLY_TOOLS,

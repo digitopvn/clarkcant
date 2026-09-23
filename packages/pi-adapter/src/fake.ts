@@ -13,6 +13,24 @@ import type {
 } from "./types.ts";
 
 /**
+ * One scripted turn: either the model's own words, or a tool call the model decides to make before
+ * replying. A worker session's tools are registered through `registerTool`/`setActiveTools`, not
+ * through `WorkerBrief.customTools` — that field is a different session's lane (see `types.ts`) — so
+ * this is the seam by which a scripted prompt can exercise a tool the worker really registered:
+ * `run()` calls it through the same `callToolResult` path a live agent loop would use, which means the
+ * call is observed by every subscriber exactly like a real tool call, including the `tool-start`/
+ * `tool-end` events the worker's evidence collection depends on.
+ */
+export type ScriptedTurn =
+  | string
+  | {
+      /** The tool to call before the reply, exactly as the worker registered it. */
+      callTool: { name: string; params: Record<string, unknown> };
+      /** The words that follow the call. Defaults to a generic scripted reply. */
+      reply?: string;
+    };
+
+/**
  * Deterministic in-process adapter.
  *
  * Exists so the whole application can be exercised end to end without a provider
@@ -31,7 +49,7 @@ export class FakePiAdapter implements PiAdapter {
       tools: Map<string, ToolDefinition>;
       activeTools: string[];
       listeners: Set<(event: WorkerEvent) => void>;
-      script: string[];
+      script: ScriptedTurn[];
       disposed: boolean;
       turns: number;
       tokens: number;
@@ -49,9 +67,9 @@ export class FakePiAdapter implements PiAdapter {
 
   #counter = 0;
   #aborted = new Set<string>();
-  readonly #options: { script?: string[]; now?: () => Instant };
+  readonly #options: { script?: ScriptedTurn[]; now?: () => Instant };
 
-  constructor(options: { script?: string[]; now?: () => Instant } = {}) {
+  constructor(options: { script?: ScriptedTurn[]; now?: () => Instant } = {}) {
     // Assigned rather than declared as a constructor parameter property, because Node's
     // type-stripping loader cannot execute that syntax (enforced by `pnpm invariants`).
     this.#options = options;
@@ -211,11 +229,25 @@ export class FakePiAdapter implements PiAdapter {
     return [...this.#sessions.values()].flatMap((session) => session.prompts);
   }
 
-  /** Test-only driver: run the scripted reply for a session. */
+  /**
+   * Test-only driver: run the scripted reply for a session.
+   *
+   * A scripted turn that names a tool call is played out through `callToolResult` before the reply is
+   * emitted, so a prompt can exercise a tool the worker actually registered rather than only ever
+   * producing text. A call whose tool is not registered or not active is not swallowed: it is let
+   * through to `callToolResult`'s own refusal, because a script asking for a tool the brief withheld is
+   * a fixture bug, not a scenario to hide.
+   */
   async run(sessionId: string, prompt: string): Promise<string> {
     const session = this.#require(sessionId);
     session.prompts.push(prompt);
-    const scripted = session.script.shift() ?? `scripted reply to: ${prompt}`;
+    const turn = session.script.shift();
+    const hadToolCalls = typeof turn === "object";
+
+    if (hadToolCalls) {
+      await this.callToolResult(sessionId, turn.callTool.name, turn.callTool.params);
+    }
+    const scripted = typeof turn === "string" ? turn : (turn?.reply ?? `scripted reply to: ${prompt}`);
     session.turns += 1;
     session.tokens += Math.ceil(scripted.length / 4);
 
@@ -227,7 +259,7 @@ export class FakePiAdapter implements PiAdapter {
     for (const chunk of chunkText(scripted)) {
       this.#emit(sessionId, { type: "text-delta", sessionId, delta: chunk });
     }
-    this.#emit(sessionId, { type: "turn-end", sessionId, hadToolCalls: false });
+    this.#emit(sessionId, { type: "turn-end", sessionId, hadToolCalls });
     this.#emit(sessionId, { type: "settled", sessionId });
     return scripted;
   }

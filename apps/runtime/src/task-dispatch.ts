@@ -1,7 +1,17 @@
 import type { ChildProcess } from "node:child_process";
 
-import type { Instant, TaskId } from "@clarkcant/contracts";
-import { acquireLease, releaseLease, runDispatchedTask, type ConductorDeps } from "@clarkcant/core";
+import type { CapabilityRef, Instant, TaskId } from "@clarkcant/contracts";
+import {
+  acquireLease,
+  decideExecution,
+  getCapability,
+  readExecutionPolicy,
+  recordEffectExecution,
+  releaseLease,
+  requestApproval,
+  runDispatchedTask,
+  type ConductorDeps,
+} from "@clarkcant/core";
 import { getTask } from "@clarkcant/storage";
 
 import { containingRoot, ownedResources } from "./preflight.ts";
@@ -35,6 +45,15 @@ export interface TaskDispatcherDeps {
    * a test, which is the only way "refused" is distinguishable from "trivially true".
    */
   ownedRoots: () => readonly string[];
+  /**
+   * The principal whose execution policy gates a dispatched task's effect.
+   *
+   * Optional, and its absence is deliberate rather than a default: a caller that does not supply it
+   * gets the pre-existing behaviour (no gate here at all), which is what every test built before this
+   * gate existed still exercises. A caller that wires this node for real (`bootstrap/runtime-bootstrap.ts`)
+   * always supplies it, so the gate is live for every task this node actually dispatches to a user.
+   */
+  ownerPrincipalId?: () => string;
   /** Reported once a run settles, so the conversation can say what happened without the caller asking. */
   onSettled: (input: {
     taskId: string;
@@ -69,6 +88,7 @@ interface QueuedRun {
 
 const DEFAULT_MAX_CONCURRENT = 2;
 const DEFAULT_LEASE_TTL_MS = 15 * 60_000;
+const DEFAULT_APPROVAL_TTL_MS = 10 * 60_000;
 
 /**
  * `runDispatchedTask` only knows five evidence kinds. A worker tool can prove things this narrower
@@ -162,6 +182,69 @@ export function createTaskDispatcher(deps: TaskDispatcherDeps): TaskDispatcher {
       });
       settle(job, outcome.outcome, refusal);
       return;
+    }
+
+    /*
+     * The execution-policy gate.
+     *
+     * A worker process has no database connection, so it cannot ask the same question the node's own
+     * effects (a run_command, an install) already ask before they run — this is that question, asked
+     * here, before a worker exists at all. A capability with no known `effectCategory` (not registered,
+     * or `deps.ownerPrincipalId` not wired by this caller) is let through unchanged: this gate is additive
+     * on top of the lease and root checks above, not a replacement admission system, and a descriptor
+     * this node cannot read is not evidence of risk it can act on.
+     */
+    if (deps.ownerPrincipalId !== undefined) {
+      const descriptor = getCapability(deps.conductor, job.capabilityRef as CapabilityRef, job.executionNodeId);
+      if (descriptor !== undefined && descriptor.effectCategory !== "read") {
+        const principalId = deps.ownerPrincipalId();
+        const policy = readExecutionPolicy({ db: deps.conductor.db, now: at }, principalId);
+        const operationDigest = `sha256:task-effect:${job.taskId}:${job.capabilityRef}`;
+        const decision = decideExecution({
+          policy,
+          action: { kind: "effect", category: descriptor.effectCategory, operationDigest },
+          // The task was created from the user's own request; dispatching the capability it needs is
+          // not the agent deciding to do something on its own.
+          explicitUserIntent: true,
+        });
+
+        const coordination = { db: deps.conductor.db, nodeId: deps.conductor.nodeId, now: at, newId: deps.conductor.newId };
+        if (decision.kind === "deny") {
+          releaseLease(coordination, lease.lease.leaseId);
+          const refusal = `refused: ${decision.reason}`;
+          const outcome = await runDispatchedTask(deps.conductor, {
+            taskId: job.taskId,
+            collectEvidence: async () => ({ kind: "exit-status", summary: refusal, verified: false }),
+          });
+          settle(job, outcome.outcome, refusal);
+          return;
+        }
+        if (decision.kind === "ask") {
+          releaseLease(coordination, lease.lease.leaseId);
+          const approval = requestApproval(coordination, {
+            taskId: job.taskId,
+            operationDigest,
+            operationDescription: `run ${job.capabilityRef} for task ${job.taskId} (${descriptor.effectCategory})`,
+            effectCategory: descriptor.effectCategory,
+            ttlMs: DEFAULT_APPROVAL_TTL_MS,
+          });
+          const refusal = `capability ${job.capabilityRef} needs approval before it can run (${approval.approvalId}); the task was not run and can be retried once it is granted`;
+          const outcome = await runDispatchedTask(deps.conductor, {
+            taskId: job.taskId,
+            collectEvidence: async () => ({ kind: "exit-status", summary: refusal, verified: false }),
+          });
+          settle(job, outcome.outcome, refusal);
+          return;
+        }
+        recordEffectExecution(coordination, {
+          principalId,
+          mode: policy.mode,
+          decision,
+          category: descriptor.effectCategory,
+          operationDigest,
+          description: `dispatch ${job.capabilityRef} for task ${job.taskId}`,
+        });
+      }
     }
 
     try {

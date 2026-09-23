@@ -170,7 +170,7 @@ describe("dispatching a task runs a worker", () => {
       timeoutMs: 20_000,
     });
 
-    dispatcher.dispatch({ taskId: task.taskId, capabilityRef: "capability:project.read", executionNodeId: node.runtime.identity.nodeId });
+    dispatcher.dispatch({ taskId: task.taskId, capabilityRef: "project.file.read@1", executionNodeId: node.runtime.identity.nodeId });
     await waitUntil(() => settled.length > 0, 20_000);
 
     expect(settled[0]?.outcome).toBe("failed");
