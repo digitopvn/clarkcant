@@ -66,6 +66,16 @@ These are exercised by tests in this repository, not described in prose:
   only the matching lines to the model. (`apps/runtime/src/fs-search.ts`)
 - **A headless node that boots.** `node apps/runtime/src/main.ts` runs a node with its own
   identity and database, and refuses any command without its bearer token.
+- **Task dispatch.** Once the conductor picks a capability for a task, a worker actually runs
+  it: a bounded pool of worker processes (queued beyond the pool), a lease per capability with
+  fencing so two runs of the same capability cannot collide, confinement of the worker's roots
+  to what the node owns, a deadline and an output ceiling on the child process, and an
+  execution-supervisor environment allowlist so the child never inherits a provider key or an
+  SSH agent socket. The run's evidence settles the task through the same state machine every
+  other path uses — success only through verification — and the outcome reaches the
+  conversation as an ordinary host reply, the same mechanism a background request already
+  uses. `POST /stop` kills every worker still running. (`apps/runtime/src/task-dispatch.ts`,
+  `apps/runtime/src/worker-process.ts`)
 - **Verifiable backups.** SQLite `VACUUM INTO`, integrity and foreign-key checks, row-count
   comparison, and a refusal to restore a backup taken by a newer schema.
 
@@ -95,9 +105,12 @@ Stated plainly, because a bootstrap that hides this is worse than useless:
 
 - The **desktop shell** beyond the surface its typed IPC bridge exposes: the browser suite
   proves the client's branch when a directory dialog is present, not an Electron build.
-- The **conductor's task dispatch** and a live worker pool: the conductor is wired and the
-  task state machine runs, but no worker loads a capability on this node, so a dispatched
-  task has nothing to execute it. `apps/worker` is a CLI the runtime does not spawn.
+- **A worker for every capability a task might dispatch to.** A dispatched task now runs a
+  real worker process — see "Task dispatch" below — but `packs/project-work`'s capability refs
+  (`project.file.read@1`, `project.code.change@1`) do not match the one tool `apps/worker`
+  actually implements (`capability:project.read`). A task that resolves to the pack's own
+  capability still runs a worker, still holds a lease and still respects confinement; it
+  settles `failed` for want of a matching tool, not for want of a worker.
 - Live **OAuth**, **Google Calendar**, the **MCP streamable-HTTP transport** (stdio is built
   and tested), and the **macOS/Linux native drivers**. Their contracts, state machines and
   refusals are implemented and tested; those transports are not.

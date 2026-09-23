@@ -103,7 +103,15 @@ export const IMPLEMENTATION_STATUS: readonly ImplementationStatusEntry[] = [
   },
   {
     capabilityId: "V03",
-    summary: "Persistent task/session runtime and the worker host that runs tasks out of process.",
+    summary:
+      "Persistent task/session runtime and the worker host that runs tasks out of process. A task the conductor " +
+      "dispatches now runs: a bounded pool of worker processes, a lease per capability with fencing, root " +
+      "confinement, a deadline and an output ceiling, and the run's evidence settling the task through the same " +
+      "state machine every other path uses. `capability:project.read` — the one project-work tool this repository " +
+      "actually implements — is the capability this proves against; the descriptors in `packs/project-work` use a " +
+      "different ref (`project.file.read@1`) that no worker tool answers to yet, so a task dispatched against that " +
+      "descriptor still runs a real worker and still fails honestly, for want of a matching tool rather than for " +
+      "want of a worker.",
     status: "implemented",
     owningPackage: "@clarkcant/runtime",
     phase: "P1",
@@ -115,6 +123,22 @@ export const IMPLEMENTATION_STATUS: readonly ImplementationStatusEntry[] = [
       {
         file: `${RUNTIME}/worker-process.spec.ts`,
         test: "runs it in a separate process and returns the record it produced",
+      },
+      {
+        file: `${RUNTIME}/task-dispatch.spec.ts`,
+        test: "succeeds and settles the task through verification when the run produces verified evidence",
+      },
+      {
+        file: `${RUNTIME}/task-dispatch.spec.ts`,
+        test: "runs a real worker child process, which honestly reports not-verified and fails the task",
+      },
+      {
+        file: `${RUNTIME}/task-dispatch.spec.ts`,
+        test: "refuses a project root this node does not own, without starting a worker",
+      },
+      {
+        file: `${RUNTIME}/task-dispatch.spec.ts`,
+        test: "kills a running worker on stop, and reports how many it stopped",
       },
     ],
   },

@@ -26,7 +26,7 @@ import { type GatewayRequest, type GatewayResponse, fail, json, readJson } from 
 export interface ControlRouteDeps {
   services: Pick<
     NodeServices,
-    "runtime" | "conductor" | "controlSessions" | "search" | "turnControl"
+    "runtime" | "conductor" | "controlSessions" | "search" | "turnControl" | "taskDispatch"
   >;
   request: GatewayRequest;
   segments: string[];
@@ -54,6 +54,7 @@ export async function handleControlRoutes(deps: ControlRouteDeps): Promise<Gatew
       nodeId: runtime.identity.nodeId,
       newId: services.conductor.newId,
       turnControl: services.turnControl,
+      taskDispatch: services.taskDispatch,
     });
     return json(200, { ok: true, stopped });
   }

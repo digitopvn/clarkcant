@@ -191,6 +191,15 @@ export interface NodeServices {
   projectSessions: ProjectSessionStarter;
   /** Runtime description surfaced by the health route. Contains no node identity. */
   describe: () => { node: string; platform: string; arch: string };
+  /**
+   * The dispatcher that runs a task's capability in a worker process, once one is dispatched.
+   *
+   * Assigned after boot, like `turnControl` and `loadProjectWorkPack`: it needs `conductor.runTask`
+   * wired to itself and the conversation-reporting closure that only exists once the rest of the node
+   * does. Absent on a fixture node, which reports that honestly rather than spawning a worker a
+   * scripted journey never asked to see.
+   */
+  taskDispatch?: { stopAll(): number; runningCount(): number; queuedCount(): number };
 }
 
 /**
