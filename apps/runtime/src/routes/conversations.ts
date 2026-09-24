@@ -56,9 +56,9 @@ import { type AppIntentDeps, decideAppIntent, mintConfirmation } from "../app-in
 import { activeGenerationWithResolvedGrants } from "../application/package-install.ts";
 import { invokeWidgetAction } from "../application/widget-actions.ts";
 import { resolveAttachmentRefs } from "../attachments.ts";
-import { nodeBackgroundSessions } from "../background-sessions.ts";
 import { type InteractionDeps, answerQuestion, cancelQuestion } from "../interactions.ts";
 import { resolveLiveSections } from "../mini-app-data.ts";
+import { WorkAbort, nodeWork } from "../work-supervisor.ts";
 import { decideTurnAction, decisionTimeoutMsFromEnv, searchDecisionBudget } from "../jev-decider.ts";
 import { type OwnedResources, ownedResources } from "../preflight.ts";
 import { markProjectUsed, projectContext, resolveProject } from "../project-finder.ts";
@@ -484,9 +484,11 @@ export function ownedResourcesFor(services: Pick<NodeServices, "runtime" | "proj
  * has blocks that do not contain each other and a declaration in one of them is invisible from another - which is what
  * a first attempt at this did.
  *
- * The registry is written before the worker starts rather than after, so the count is right while somebody is looking at
- * it, and a failure comes back into the conversation as a message too: background work that fails in silence is worse
- * than work that never started.
+ * Admission is the node's supervisor's (`work-supervisor.ts`): it runs the request now, queues it behind the node's
+ * limit, or refuses it in words when the queue is full. However the run ends it comes back into the conversation as a
+ * message, because background work that ends in silence is worse than work that never started — except a run the
+ * node's own shutdown interrupted, which the next boot reports instead (`work-recovery.ts`), so the conversation is
+ * not told twice.
  */
 export function startBackgroundWork(
   services: Pick<NodeServices, "runtime" | "conductor" | "search" | "turnControl">,
@@ -494,27 +496,52 @@ export function startBackgroundWork(
   at: () => Instant,
   conversationId: string,
   text: string,
-): { sessionId: string } | { refusal: string } {
+  options: { workId?: string; attempt?: number } = {},
+):
+  | { sessionId: string; state: "running" | "queued"; position?: number }
+  | { refusal: string; busy?: true } {
   const control = services.turnControl;
   if (control === undefined) return { refusal: "node này không có model để chạy việc nền" };
 
-  const sessionId = services.conductor.newId("bg");
-  nodeBackgroundSessions.start({ sessionId, title: text.slice(0, 120), at: at() });
-  void (async () => {
-    try {
-      const said = await control.runInBackground({ conversationId, principal, text });
-      nodeBackgroundSessions.finish({ sessionId, status: "done", at: at() });
-      if (said !== "") appendHostReply(services, { conversationId, text: said, at: at() });
-    } catch (cause) {
-      nodeBackgroundSessions.finish({ sessionId, status: "failed", at: at() });
-      appendHostReply(services, {
-        conversationId,
-        text: `Việc nền không xong: ${cause instanceof Error ? cause.message : String(cause)}`,
-        at: at(),
-      });
-    }
-  })();
-  return { sessionId };
+  const title = text.replace(/\s+/g, " ").trim().slice(0, 120);
+  const submitted = nodeWork().submitBackground({
+    ...(options.workId === undefined ? {} : { workId: options.workId }),
+    ...(options.attempt === undefined ? {} : { attempt: options.attempt }),
+    conversationId,
+    title,
+    requestText: text,
+    run: async (signal, workId) => {
+      try {
+        const said = await control.runInBackground({ workId, conversationId, principal, text, signal });
+        signal.throwIfAborted();
+        if (said !== "") appendHostReply(services, { conversationId, text: said, at: at() });
+      } catch (cause) {
+        const reply = backgroundEndingReply(signal, cause, title);
+        if (reply !== undefined) appendHostReply(services, { conversationId, text: reply, at: at() });
+        throw cause;
+      }
+    },
+  });
+  if (!submitted.accepted) {
+    const busy = submitted.running.map((view) => `“${view.title}”`).join("; ");
+    return { refusal: busy === "" ? submitted.message : `${submitted.message} Đang chạy: ${busy}.`, busy: true };
+  }
+  return {
+    sessionId: submitted.workId,
+    state: submitted.state,
+    ...(submitted.position === undefined ? {} : { position: submitted.position }),
+  };
+}
+
+/** What the conversation is told when a background run ends without an answer, or nothing when the next boot says it. */
+function backgroundEndingReply(signal: AbortSignal, cause: unknown, title: string): string | undefined {
+  const reason: unknown = signal.aborted ? signal.reason : undefined;
+  if (reason instanceof WorkAbort) {
+    if (reason.cause_ === "shutdown") return undefined;
+    if (reason.cause_ === "stopped") return `Đã dừng việc nền “${title}” theo yêu cầu. Kết quả dở dang không được giữ lại.`;
+    return `Việc nền không xong: ${reason.message}. Bạn có thể yêu cầu lại, hoặc chia nhỏ việc này.`;
+  }
+  return `Việc nền không xong: ${cause instanceof Error ? cause.message : String(cause)}`;
 }
 
 export function appendHostReply(
@@ -652,8 +679,9 @@ export async function handleConversationRoutes(deps: ConversationRouteDeps): Pro
      * third - doing this in the background while the current work carries on - still needs a worker, so a background
      * answer is treated as an interrupt, because running the message is what sending it asked for.
      *
-     * A turn's elapsed time is not tracked yet, so the decider is told zero. That biases it toward interrupt, which is
-     * the recoverable direction rather than the silent one.
+     * The decider is told how long the running turn has gone on: a long turn is worth keeping, so a new message is more
+     * likely to belong beside it than in place of it. A control that cannot tell says zero, which biases toward
+     * interrupt — the recoverable direction rather than the silent one.
      */
     const control = services.turnControl;
     if (control !== undefined && control.running().includes(conversationId)) {
@@ -662,7 +690,7 @@ export async function handleConversationRoutes(deps: ConversationRouteDeps): Pro
           jev: services.jev.deps,
           budget: () => searchDecisionBudget(services.jev.config, { timeoutMs: decisionTimeoutMsFromEnv(process.env) }),
         },
-        { text, runningMs: 0 },
+        { text, runningMs: control.runningMs?.(conversationId) ?? 0 },
       );
       const action = decided.status === "decided" ? decided.action : "interrupt";
       if (action === "steer" && (await control.steer(conversationId, text))) {
@@ -674,11 +702,18 @@ export async function handleConversationRoutes(deps: ConversationRouteDeps): Pro
       }
       if (action === "background") {
         const started = startBackgroundWork(services, principal, () => at() as never, conversationId, text);
-        // No worker to run it in: the message is what the person asked for, so it becomes the turn instead.
+        // No worker to run it in, or no place for one: the message is what the person asked for, so it becomes the
+        // turn instead. The main turn never counts against the background limit, so the conversation still answers.
         if ("refusal" in started) {
           control.interrupt(conversationId);
         } else {
-          return json(202, { accepted: true, resolution: "background", sessionId: started.sessionId });
+          return json(202, {
+            accepted: true,
+            resolution: "background",
+            sessionId: started.sessionId,
+            state: started.state,
+            ...(started.position === undefined ? {} : { position: started.position }),
+          });
         }
       }
       // An interrupt, or a steer that found nothing left to join: either way this message becomes its own turn.
@@ -1298,6 +1333,7 @@ export async function decideApprovalForNode(
     // Re-checked here rather than trusted from the card: the folders this node owns can change between the card being
     // drawn and the decision being made, and this is the moment it matters.
     resources: ownedResourcesFor(services),
+    conversationId: input.conversationId,
   });
   if (!ran.ok) return { ok: false, code: ran.code, message: ran.message };
 

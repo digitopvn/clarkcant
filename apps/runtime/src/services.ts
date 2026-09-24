@@ -59,6 +59,7 @@ import {
 } from "./jev-decider.ts";
 import type { RuntimeCandidate } from "./runtime-candidates.ts";
 import type { SessionSearchDeps } from "./session-search.ts";
+import type { BackgroundRunInput } from "./model-turn.ts";
 import { createTerminalRegistry, type TerminalRegistry } from "./terminal-sessions.ts";
 import { createPiSessionWatcher, defaultPiSessionRoots, type PiSessionWatcher } from "./pi-session-watch.ts";
 import {
@@ -166,8 +167,10 @@ export interface NodeServices {
     running(): string[];
     interrupt(conversationId: string): boolean;
     steer(conversationId: string, text: string): Promise<boolean>;
-    /** Runs one request in a worker of its own, answering with what it said. */
-    runInBackground(input: { conversationId: string; principal: Principal; text: string }): Promise<string>;
+    /** Runs one request in a worker of its own, answering with what it said. Honours `input.signal`. */
+    runInBackground(input: BackgroundRunInput): Promise<string>;
+    /** How long the conversation's running turn has gone on, when the control can tell. */
+    runningMs?(conversationId: string): number | undefined;
   };
   /**
    * Load the project-work pack by running one worker session, and write what the run demonstrated.

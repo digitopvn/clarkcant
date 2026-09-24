@@ -8,6 +8,8 @@ import type { RunRecord } from "@clarkcant/contracts";
 import type { WorkerBriefEnvelope } from "@clarkcant/app-worker";
 import { BUILTIN_PROFILES, buildEnvironment, type ExecutionProfile } from "@clarkcant/execution-supervisor";
 
+import { stopTree } from "./process-tree.ts";
+
 /**
  * The environment profile a worker child runs under.
  *
@@ -108,6 +110,9 @@ export async function runWorkerProcess(options: WorkerProcessOptions): Promise<W
       const child = (options.spawnImpl ?? spawn)(process.execPath, args, {
         stdio: ["ignore", "pipe", "pipe"],
         env: buildEnvironment(WORKER_ENV_PROFILE),
+        // Its own process group, so a stop reaches what the worker's tools started as well as the worker.
+        detached: process.platform !== "win32",
+        windowsHide: true,
       });
       options.onChild?.(child);
       let stdout = "";
@@ -117,7 +122,7 @@ export async function runWorkerProcess(options: WorkerProcessOptions): Promise<W
 
       const timer = setTimeout(() => {
         settled = true;
-        child.kill("SIGKILL");
+        void stopTree(child);
         reject(new Error(`the worker did not finish within ${String(timeoutMs)} ms`));
       }, timeoutMs);
 
@@ -125,7 +130,7 @@ export async function runWorkerProcess(options: WorkerProcessOptions): Promise<W
         if (settled) return;
         settled = true;
         clearTimeout(timer);
-        child.kill("SIGKILL");
+        void stopTree(child);
         reject(new Error(`the worker exceeded the output ceiling of ${String(maxOutputBytes)} bytes`));
       };
 

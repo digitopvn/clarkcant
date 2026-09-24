@@ -1143,6 +1143,38 @@ export const MIGRATIONS: readonly Migration[] = [
       `);
     },
   },
+  {
+    version: 24,
+    name: "work_runs",
+    reversible: true,
+    up: (db) => {
+      db.exec(`
+        -- The work a node started on the person's behalf, written while it runs so the next boot can tell what an
+        -- earlier process left unfinished: a background request whose result never arrived, or a command whose
+        -- process group may still be alive. A process's pid is only acted on when the start time the kernel reports
+        -- for it now matches the one recorded here, on the same machine boot.
+        CREATE TABLE work_runs (
+          work_id           TEXT PRIMARY KEY,
+          node_id           TEXT NOT NULL,
+          kind              TEXT NOT NULL,
+          conversation_id   TEXT,
+          title             TEXT NOT NULL,
+          request_text      TEXT,
+          pid               INTEGER,
+          pgid              INTEGER,
+          proc_start_time   TEXT,
+          machine_boot_id   TEXT,
+          node_boot_id      TEXT NOT NULL,
+          state             TEXT NOT NULL,
+          effectful         INTEGER NOT NULL DEFAULT 0,
+          attempt           INTEGER NOT NULL DEFAULT 0,
+          started_at        TEXT NOT NULL,
+          ended_at          TEXT
+        );
+        CREATE INDEX idx_work_runs_open ON work_runs(node_id, state);
+      `);
+    },
+  },
 ];
 
 function readAll<T>(db: Database, sql: string): T[] {

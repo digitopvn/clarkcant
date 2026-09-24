@@ -1,9 +1,9 @@
 import { type Principal, nowInstant } from "@clarkcant/contracts";
 import { cancelTask } from "@clarkcant/core";
 
-import { nodeBackgroundSessions } from "../background-sessions.ts";
 import { performEmergencyStop } from "../application/emergency-stop.ts";
 import { type NodeServices } from "../services.ts";
+import { nodeWork } from "../work-supervisor.ts";
 import { appendHostReply, startBackgroundWork } from "./conversations.ts";
 import { type GatewayRequest, type GatewayResponse, fail, json, readJson } from "./http.ts";
 
@@ -89,15 +89,50 @@ export async function handleControlRoutes(deps: ControlRouteDeps): Promise<Gatew
       nodeId: runtime.identity.nodeId as Principal["nodeId"],
     };
     const started = startBackgroundWork(services, owner, () => deps.at() as never, requested, text);
-    if ("refusal" in started) return fail(409, "BACKGROUND_UNAVAILABLE", started.refusal);
-    return json(202, { accepted: true, sessionId: started.sessionId });
+    if ("refusal" in started) {
+      return started.busy === true
+        ? fail(429, "BACKGROUND_BUSY", started.refusal)
+        : fail(409, "BACKGROUND_UNAVAILABLE", started.refusal);
+    }
+    return json(202, {
+      accepted: true,
+      sessionId: started.sessionId,
+      state: started.state,
+      ...(started.position === undefined ? {} : { position: started.position }),
+    });
   }
 
   if (segments.length === 1 && segments[0] === "background-sessions" && request.method === "GET") {
+    const lane = nodeWork().background();
     return json(200, {
-      running: nodeBackgroundSessions.running(),
-      sessions: nodeBackgroundSessions.list(),
+      running: lane.running,
+      queued: lane.queued,
+      limit: nodeWork().backgroundLimit(),
+      sessions: lane.sessions,
     });
+  }
+
+  /*
+   * What is running, of every kind, as one list — and stopping one of them by the id that list showed.
+   *
+   * The answer to "what is running" and "stop that" without the caller having to know which mechanism started the
+   * work. Listed without pids, paths beyond the title, or environment: the id is the handle, and it is only good for
+   * a stop on this node.
+   */
+  if (segments.length === 1 && segments[0] === "work" && request.method === "GET") {
+    const conversationId = request.query["conversationId"];
+    const includeFinished = request.query["includeFinished"] === "1";
+    return json(200, {
+      limit: nodeWork().backgroundLimit(),
+      work: nodeWork().list({ ...(conversationId === undefined ? {} : { conversationId }), includeFinished }),
+    });
+  }
+
+  if (segments.length === 3 && segments[0] === "work" && segments[2] === "cancel" && request.method === "POST") {
+    const workId = decodeURIComponent(segments[1] ?? "");
+    const outcome = nodeWork().cancel(workId);
+    if (outcome === "unknown") return fail(404, "WORK_NOT_FOUND", "không có việc nào mang mã này trên node này", { workId });
+    return json(200, { workId, outcome });
   }
 
   /*

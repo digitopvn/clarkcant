@@ -51,7 +51,7 @@ describe("what is written down", () => {
     // 21 rather than the 19 this branch already uses; migration 22 (backfilling `grantedCapabilities` onto a
     // pre-existing package generation) is the next one after that, and 23 records the lifecycle an uninstall
     // replaced. The schema version is the count of migrations that have run.
-    expect(currentSchemaVersion(db)).toBe(23);
+    expect(currentSchemaVersion(db)).toBe(24);
   });
 
   it("reads back newest first, with the fields it was given", () => {

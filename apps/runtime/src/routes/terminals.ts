@@ -3,10 +3,10 @@ import { homedir } from "node:os";
 import { nowInstant, terminalSessionCardSchema } from "@clarkcant/contracts";
 import { getConversation } from "@clarkcant/storage";
 
-import { nodeBackgroundSessions } from "../background-sessions.ts";
 import { listRunningCommands } from "../run-command.ts";
 import { type NodeServices } from "../services.ts";
 import { terminalCard } from "../terminal-tools.ts";
+import { nodeWork } from "../work-supervisor.ts";
 import { appendHostReply } from "./conversations.ts";
 import { type GatewayRequest, type GatewayResponse, fail, json, readJson } from "./http.ts";
 
@@ -38,7 +38,7 @@ export async function handleTerminalRoutes(deps: TerminalRouteDeps): Promise<Gat
       ...(availability.ok ? {} : { reason: availability.reason }),
       terminals: services.terminals.list().map(({ driver: _driver, ...info }) => info),
       commands: listRunningCommands().map(({ command, cwd, startedAt }) => ({ command, cwd, startedAt })),
-      background: nodeBackgroundSessions.list(),
+      background: nodeWork().background().sessions,
       piSessions: services.piSessions.list(),
     });
   }

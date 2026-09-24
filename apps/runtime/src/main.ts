@@ -18,6 +18,9 @@ import type { ViewDescriptor } from "./model-turn.ts";
 import { fixtureGatesFromEnv, loadFixtureComposition } from "./bootstrap/fixtures.ts";
 import { createNodeModelTurn } from "./bootstrap/model-bootstrap.ts";
 import { createRuntimeWiring, wireRuntime } from "./bootstrap/runtime-bootstrap.ts";
+import { attachNodeWork } from "./bootstrap/work-bootstrap.ts";
+import { performEmergencyStop } from "./application/emergency-stop.ts";
+import { STOP_GRACE_MS } from "./process-tree.ts";
 import { attachNodeVoice } from "./bootstrap/voice-bootstrap.ts";
 import { attachTerminalGateway } from "./terminal-gateway.ts";
 import { bootRuntime } from "./node.ts";
@@ -199,6 +202,12 @@ async function main(): Promise<void> {
    * After the services exist, because every seam published here reads them, and before the browser can connect,
    * because a turn arriving in the first second has to find them.
    */
+  /*
+   * The work supervisor, the journal, and what a child inherits — before anything can start work, so the first
+   * command is journaled and the first shell already has the node's keys withheld.
+   */
+  const work = attachNodeWork({ services, env: process.env, envLoaded: envFile.loaded });
+
   wireRuntime({
     services,
     dataDir: options.dataDir,
@@ -207,7 +216,31 @@ async function main(): Promise<void> {
     fixtures,
     modelTurn,
     viewCatalog,
+    work,
   });
+
+  /*
+   * What the previous process of this node left open, reported where it was asked for.
+   *
+   * After `wireRuntime`, because a re-run needs the turn control it publishes, and before the server listens, so a
+   * person opening the conversation sees the report rather than a request that silently never answers.
+   */
+  try {
+    const recovered = work.recover();
+    if (recovered.interrupted + recovered.uncertainTasks > 0) {
+      process.stderr.write(
+        `recovered ${String(recovered.interrupted)} unfinished run(s) from the previous process: ` +
+          `${String(recovered.rerun)} re-run, ${String(recovered.reaped)} leftover process group(s) stopped, ` +
+          `${String(recovered.uncertainTasks)} task(s) marked uncertain\n`,
+      );
+    }
+    if (recovered.unsettledEffects > 0) {
+      process.stderr.write(`${String(recovered.unsettledEffects)} effect(s) on this node still need reconciling\n`);
+    }
+  } catch (cause) {
+    // A recovery that cannot run leaves the rows for the next boot; it must not stop this one from serving.
+    process.stderr.write(`could not recover unfinished work: ${cause instanceof Error ? cause.message : String(cause)}\n`);
+  }
 
   const server = createNodeServer({
     services,
@@ -309,6 +342,7 @@ async function main(): Promise<void> {
           projects: services.projects,
           command: bootCommand,
           terminals: { registry: services.terminals, newId: services.conductor.newId },
+          work: {},
         }).map(
           (tool) => ({ name: tool.name, label: tool.label, description: tool.description }),
         ),
@@ -365,17 +399,63 @@ async function main(): Promise<void> {
     server.listen(options.port, options.host, reportListening);
   }
 
+  /*
+   * Closing the node: stop what it started, then let go of what it holds.
+   *
+   * Everything this process started goes first — commands, task workers, shells, background runs — through the same
+   * stop a person uses, so a shutdown can never leave behind what a stop would have ended. Background runs are
+   * marked interrupted rather than stopped, and say nothing in their conversation: the next boot reports them once,
+   * with what it did about them. Then the sessions, the sockets and the database.
+   *
+   * Bounded, because a shutdown that waits on something that is not listening is a node that will not close: past
+   * the grace the process exits anyway, and whatever is left is the next boot's to find in the journal. A second
+   * signal exits at once.
+   */
+  const SHUTDOWN_GRACE_MS = 5_000;
+  let closing = false;
   const shutdown = (signal: string): void => {
+    if (closing) {
+      process.stderr.write(`received ${signal} again; exiting now\n`);
+      process.exit(1);
+    }
+    closing = true;
     process.stderr.write(`received ${signal}; closing the node\n`);
-    void voice.close();
-    // Shells are children of this process; a node that exits must not leave them running without a view.
-    services.terminals.stopAll();
-    void terminalGateway.close();
-    server.close(() => {
-      void modelTurn?.dispose();
-      services.runtime.close();
-      process.exit(0);
-    });
+    const hardStop = setTimeout(() => {
+      process.stderr.write(`the node did not close within ${String(SHUTDOWN_GRACE_MS)} ms; exiting anyway\n`);
+      process.exit(1);
+    }, SHUTDOWN_GRACE_MS);
+    hardStop.unref();
+    void (async () => {
+      try {
+        const stopped = await performEmergencyStop({
+          db: services.runtime.db,
+          ownerPrincipalId: services.runtime.identity.ownerPrincipalId,
+          nodeId: services.runtime.identity.nodeId,
+          newId: services.conductor.newId,
+          turnControl: services.turnControl,
+          taskDispatch: services.taskDispatch,
+          terminals: services.terminals,
+          work: work.supervisor,
+          reason: "shutdown",
+        });
+        await work.supervisor.drain(1_500);
+        // A child given SIGTERM gets its grace before the group is killed; exiting first would skip the second step.
+        if (stopped.commands + stopped.tasks > 0) {
+          await new Promise((resolve) => setTimeout(resolve, STOP_GRACE_MS + 100));
+        }
+        await modelTurn?.dispose();
+        await voice.close();
+        await terminalGateway.close();
+      } catch (cause) {
+        process.stderr.write(`while closing: ${cause instanceof Error ? cause.message : String(cause)}\n`);
+      }
+      server.close(() => {
+        services.runtime.close();
+        process.exit(0);
+      });
+      // Idle keep-alive connections would otherwise hold `close` open until they time out.
+      server.closeIdleConnections();
+    })();
   };
   process.on("SIGINT", () => shutdown("SIGINT"));
   process.on("SIGTERM", () => shutdown("SIGTERM"));

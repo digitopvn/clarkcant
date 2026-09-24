@@ -3,6 +3,7 @@ import { randomBytes, randomUUID } from "node:crypto";
 import { mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
 import { basename, isAbsolute, join, resolve } from "node:path";
 
+import { terminalEnvironment } from "./child-env.ts";
 import { createMarkScanner, keepTail, plainTerminalText, stripControlCharacters } from "./terminal-output.ts";
 
 /**
@@ -588,7 +589,10 @@ export function createTerminalRegistry(options: {
       }
       if (!loaded.ok) return { ok: false, reason: loaded.reason };
 
-      const baseEnv = options.env ?? process.env;
+      // Without what the node put into its own environment (`child-env.ts`): a shell has two drivers, and a key the
+      // person never exported is not theirs to hand to either of them. Their rc file still runs, so what they did
+      // export is back in the shell.
+      const baseEnv = terminalEnvironment(options.env ?? process.env);
       const shell = chooseShell(baseEnv, platform);
       const env: Record<string, string> = {};
       for (const [key, value] of Object.entries(baseEnv)) if (value !== undefined) env[key] = value;

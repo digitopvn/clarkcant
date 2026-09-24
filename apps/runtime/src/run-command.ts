@@ -1,9 +1,11 @@
 import { spawn, type ChildProcess } from "node:child_process";
-import { createHash } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 
 import type { Instant, MessageBlock } from "@clarkcant/contracts";
 
+import { commandEnvironment } from "./child-env.ts";
 import { preflightCommand, type CommandEnvelope, type OwnedResources } from "./preflight.ts";
+import { STOP_GRACE_MS, readProcStartTime, stopTree } from "./process-tree.ts";
 
 /**
  * Running one command, in the directory it was asked for, once a person has approved it.
@@ -68,9 +70,45 @@ export function stopRunningCommands(): number {
   const running = [...liveCommands.keys()];
   for (const child of running) {
     stoppedByRequest.add(child);
-    killTree(child);
+    void stopTree(child);
   }
   return running.length;
+}
+
+/**
+ * Stop the one command a work id names, answering whether it was running.
+ *
+ * The same two steps as the emergency stop — SIGTERM to the group, SIGKILL after the grace — for one command, so
+ * "stop that" in a conversation ends that command and leaves every other one alone.
+ */
+export function stopCommand(workId: string): boolean {
+  for (const [child, entry] of liveCommands) {
+    if (entry.workId !== workId) continue;
+    stoppedByRequest.add(child);
+    void stopTree(child);
+    return true;
+  }
+  return false;
+}
+
+/**
+ * Where a command's process is written down while it runs.
+ *
+ * So a node that crashes can find, on its next boot, the process group it left behind — and prove, by the start time
+ * the kernel recorded, that the pid still names that process before it kills anything.
+ */
+export interface CommandJournal {
+  started(entry: RunningCommand & { procStartTime?: string }): void;
+  ended(workId: string, state: "done" | "failed" | "stopped"): void;
+}
+
+let commandJournal: CommandJournal | undefined;
+
+/** Set by the node at boot; a test that wants none leaves it unset. Answers the one it replaced. */
+export function setCommandJournal(journal: CommandJournal | undefined): CommandJournal | undefined {
+  const previous = commandJournal;
+  commandJournal = journal;
+  return previous;
 }
 
 /** How many commands are running right now, for a status line or a test. */
@@ -80,9 +118,13 @@ export function runningCommandCount(): number {
 
 /** One command this process is running, as the process view shows it: what, where and since when. */
 export interface RunningCommand {
+  /** The id a stop and a listing use. Not the pid: a pid is the kernel's, and it is reused. */
+  workId: string;
   command: string;
   cwd: string;
   startedAt: string;
+  /** The conversation that ran it, when it was run from one — so "what is running here" can answer per conversation. */
+  conversationId?: string;
   pid?: number;
 }
 
@@ -101,33 +143,13 @@ export interface RunCommandOptions {
   maxOutputBytes?: number;
   /** Injected so a test can drive the promise without a real child process. */
   spawnImpl?: typeof spawn;
+  /**
+   * The whole environment of this child. Absent means the command allowlist (`commandEnvironment`), never this
+   * process's own environment: a command the model runs is not handed the node's keys by default.
+   */
   env?: NodeJS.ProcessEnv;
-}
-
-/**
- * Kill the command, not just the shell it was started through.
- *
- * `shell: true` means the child is a shell and the command is its child, so killing the shell alone
- * leaves the command running: a test on this machine showed a `setTimeout` process still alive four
- * seconds after its deadline, with the promise unable to settle because the grandchild held the pipes.
- * Windows needs `taskkill /T` for the tree; everywhere else the child is put in its own process group so
- * one signal reaches all of it.
- */
-function killTree(child: ChildProcess): void {
-  if (child.pid === undefined) return;
-  if (process.platform === "win32") {
-    try {
-      spawn("taskkill", ["/pid", String(child.pid), "/T", "/F"], { windowsHide: true });
-      return;
-    } catch {
-      // Falls through to the plain signal: a machine without taskkill still gets the shell killed.
-    }
-  }
-  try {
-    process.kill(-child.pid, "SIGKILL");
-  } catch {
-    child.kill("SIGKILL");
-  }
+  /** The conversation this command belongs to, for listing and stopping per conversation. */
+  conversationId?: string;
 }
 
 /**
@@ -137,10 +159,10 @@ function killTree(child: ChildProcess): void {
  * are the evidence, and turning that into an exception would lose all three at the only moment they
  * matter.
  *
- * The credentials question was settled by the operator as "let Pi handle it": the child inherits this
- * process's environment, so `git` resolves credentials exactly as it would in a shell on this machine —
- * a credential helper, an agent key, or a token in the environment. Nothing is stripped and nothing is
- * injected here.
+ * The environment is an allowlist (`child-env.ts`): the session basics a command needs, and nothing that
+ * authenticates. A command that needs a credential gets it from the broker, for that command, through
+ * `options.env` — which is how `git` reaches a token without every command reaching every key. `git`
+ * still resolves a credential helper through `HOME`, as it would in a shell.
  */
 export async function runCommand(
   input: { command: string; cwd: string },
@@ -154,13 +176,14 @@ export async function runCommand(
     const child = (options.spawnImpl ?? spawn)(input.command, {
       cwd: input.cwd,
       shell: true,
-      // Its own process group on POSIX, so killing the group reaches a shell's children. Windows uses
-      // taskkill /T instead; see `killTree`.
+      // Its own process group on POSIX, so killing the group reaches a shell's children: `shell: true`
+      // makes the child a shell and the command its child, and killing the shell alone leaves the command
+      // holding the pipes. Windows uses taskkill /T instead; see `process-tree.ts`.
       detached: process.platform !== "win32",
       // `windowsHide` so a command run from a conversation does not flash a console window on the
       // operator's desktop, which is how a headless node stops being headless.
       windowsHide: true,
-      ...(options.env === undefined ? {} : { env: options.env }),
+      env: options.env ?? commandEnvironment(),
     });
 
     let stdout = "";
@@ -184,34 +207,52 @@ export async function runCommand(
     child.stdout?.on("data", (chunk: Buffer) => collect(chunk, "stdout"));
     child.stderr?.on("data", (chunk: Buffer) => collect(chunk, "stderr"));
     // Registered before anything can finish, so a stop issued while the command is starting still reaches it.
-    liveCommands.set(child, {
+    const entry: RunningCommand = {
+      workId: `cmd-${randomBytes(6).toString("hex")}`,
       command: input.command,
       cwd: input.cwd,
       startedAt: new Date(startedAt).toISOString(),
+      ...(options.conversationId === undefined ? {} : { conversationId: options.conversationId }),
       ...(child.pid === undefined ? {} : { pid: child.pid }),
-    });
+    };
+    liveCommands.set(child, entry);
+    if (child.pid !== undefined) {
+      // Read now, while the pid is certainly this child: it is what makes the pid safe to act on after a restart.
+      const procStartTime = readProcStartTime(child.pid);
+      try {
+        commandJournal?.started({ ...entry, ...(procStartTime === undefined ? {} : { procStartTime }) });
+      } catch {
+        // A journal that cannot write does not stop the command: the command is what was asked for.
+      }
+    }
 
     const finish = (exitCode: number | null): void => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
       liveCommands.delete(child);
+      const stopped = stoppedByRequest.delete(child);
+      try {
+        commandJournal?.ended(entry.workId, stopped ? "stopped" : exitCode === 0 && !timedOut ? "done" : "failed");
+      } catch {
+        // The outcome below is the command's result; a journal that could not record it does not change it.
+      }
       resolve({
         exitCode,
         stdout,
         stderr,
         durationMs: Date.now() - startedAt,
         timedOut,
-        ...(stoppedByRequest.delete(child) ? { stopped: true } : {}),
+        ...(stopped ? { stopped: true } : {}),
       });
     };
 
     const timer = setTimeout(() => {
       timedOut = true;
-      killTree(child);
+      void stopTree(child);
       // A command that survived the kill can hold the pipes open for ever, and the outcome is already
       // known: the promise settles rather than waiting on something that may never close.
-      setTimeout(() => finish(null), 1_500);
+      setTimeout(() => finish(null), STOP_GRACE_MS + 1_500);
     }, timeoutMs);
 
     child.on("error", (cause: Error) => {
@@ -277,6 +318,8 @@ export async function runGuardedCommand(input: {
    * consumer, and a command runner that resolved secrets itself would be a second place that could read one.
    */
   env?: Record<string, string>;
+  /** The conversation the command runs for, so it can be listed and stopped from there. */
+  conversationId?: string;
   now?: () => Instant;
   /** Injected so the whole path can be tested without spawning anything. */
   run?: (request: {
@@ -300,9 +343,10 @@ export async function runGuardedCommand(input: {
         {
           timeoutMs: request.timeoutMs,
           maxOutputBytes: request.maxOutputBytes,
-          // The environment is passed whole, so an injected variable exists for this child process and nowhere else:
+          // The allowlist plus the injected variable, so the variable exists for this child process and nowhere else:
           // not in the parent, not in a file, and not in anything this module returns.
-          ...(request.env === undefined ? {} : { env: { ...process.env, ...request.env } }),
+          env: commandEnvironment(request.env),
+          ...(input.conversationId === undefined ? {} : { conversationId: input.conversationId }),
         },
       ))
   )({
@@ -423,6 +467,8 @@ export async function runApprovedCommand(input: {
    * different kind of gate: an approved operation is still an operation this node may perform.
    */
   resources: OwnedResources;
+  /** The conversation the approval was given in, so the running command can be listed and stopped from there. */
+  conversationId?: string;
   /** Injected so the whole decision path can be tested without spawning anything. */
   run?: (request: {
     command: string;
@@ -482,7 +528,12 @@ export async function runApprovedCommand(input: {
   const at = input.now ?? (() => new Date().toISOString() as Instant);
   const startedAt = at();
   const outcome = await (
-    input.run ?? ((request) => runCommand({ command: request.command, cwd: request.cwd }, request))
+    input.run ??
+    ((request) =>
+      runCommand(
+        { command: request.command, cwd: request.cwd },
+        { ...request, ...(input.conversationId === undefined ? {} : { conversationId: input.conversationId }) },
+      ))
   )({ command, cwd: resolvedCwd, ...budget });
   const description = describeCommandOutcome(command, outcome);
   const succeeded = outcome.exitCode === 0 && !outcome.timedOut;
