@@ -129,7 +129,7 @@ const APP_COMMAND_MAX_WORDS = 8;
  * cannot be stolen by the shorter "thu nho". Relying on table order for that would make the table's
  * meaning depend on where a line sits.
  */
-const PHRASES: readonly { phrase: string; kind: AppIntentKind; wholeSentence?: true }[] = [
+const PHRASES: readonly { phrase: string; kind: AppIntentKind; wholeSentence?: true; opener?: string }[] = [
   // Ending the voice session.
   { phrase: "ket thuc phien thoai", kind: "voice.end" },
   { phrase: "ket thuc phien", kind: "voice.end" },
@@ -192,7 +192,9 @@ const PHRASES: readonly { phrase: string; kind: AppIntentKind; wholeSentence?: t
   { phrase: "go back home", kind: "nav.home" },
   { phrase: "go home", kind: "nav.home" },
 
-  { phrase: "mo hop thoai chon tep", kind: "composer.attach" },
+  // Its opener is three words: "mở hộp" alone also opens "mở hộp thư email của tôi", a request for the
+  // agent, and see the note on COMMAND_OPENERS for what a too-broad opener does to such a sentence.
+  { phrase: "mo hop thoai chon tep", kind: "composer.attach", opener: "mo hop thoai" },
   { phrase: "chon tep dinh kem", kind: "composer.attach" },
   { phrase: "dinh kem tep", kind: "composer.attach" },
   { phrase: "attach a file", kind: "composer.attach" },
@@ -301,6 +303,9 @@ const TAB_INTENT_MARKERS: readonly string[] = [
  * command-shaped, matched no phrase, and were refused with "tôi chưa hiểu câu lệnh đó" instead of reaching
  * the agent. The gallery journey in apps/web/e2e/widget.spec.ts caught it.
  *
+ * A phrase whose first two words are too common to claim declares a longer `opener` instead: "mo hop" from
+ * "mo hop thoai chon tep" made "mở hộp thư email của tôi" command-shaped in the same way.
+ *
  * Excluding them costs nothing: the widget sentences are shaped by the control-verb-plus-noun rule, because
  * "widget" is in APP_NOUNS and "mở"/"hiện"/"show" are in CONTROL_VERBS. Deriving openers only from phrases
  * whose first two words are genuinely command-like is the property that matters here.
@@ -310,7 +315,7 @@ const COMMAND_OPENERS: readonly string[] = [
     PHRASES.filter(
       (entry) => entry.kind !== "widgets.open" && entry.kind !== "widgets.show" && entry.wholeSentence !== true,
     ).map(
-      (entry) => entry.phrase.split(" ").slice(0, 2).join(" "),
+      (entry) => entry.opener ?? entry.phrase.split(" ").slice(0, 2).join(" "),
     ),
   ),
   "mo tab",

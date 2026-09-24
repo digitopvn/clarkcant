@@ -280,6 +280,15 @@ describe("a work request is not an app intent", () => {
     expect(match?.kind === "intent" && match.intent.kind).toBe("nav.conversation");
   });
 
+  it("leaves a request that only starts like the file dialog to the agent", () => {
+    expect(matchAppIntent("mở hộp thư email của tôi")).toBeUndefined();
+    expect(matchAppIntent("mở hộp đựng bút trong ảnh")).toBeUndefined();
+    const inbox = matchAppIntent("mở hộp thư");
+    expect(inbox?.kind === "intent" && inbox.intent.kind).toBe("inbox.open");
+    const attach = matchAppIntent("mở hộp thoại chọn tệp");
+    expect(attach?.kind === "intent" && attach.intent.kind).toBe("composer.attach");
+  });
+
   it("is not fooled by a tab name inside a question", () => {
     expect(resolveAppIntent({ text: "model nào đang chạy vậy", mintConfirmationToken: mint }).kind).toBe("none");
   });
