@@ -48,8 +48,8 @@ Phần tiếp theo của hộp thư (#175). PR này thêm những producer và r
 - Chưa có nút "Cập nhật", vì route cập nhật thật chưa được nối vào lifecycle cài/rollback.
 
 ## Kiểm chứng
-- `pnpm verify`: 242 file test pass, 2891 test pass, 7 skipped.
-- `pnpm test:e2e` (bỏ env provider): E2E_RESULT.
+- `pnpm verify` (sau rebase lên main mới nhất): 243 file test pass, 2893 test pass, 7 skipped.
+- `pnpm test:e2e` (bỏ env provider): 163 pass, 3 skipped. Hai lỗi của spec e2e mới (#171) lộ ra khi chạy cả bộ đã được sửa: bấm công tắc qua nhãn thay vì input bị che, và dùng nội dung việc nền riêng để spec hộp thư chạy sau không khớp hai thông báo.
 - Chưa kiểm tra tay hành vi click OS notification trên Electron có GUI.
 
 🤖 Generated with [Claude Code](https://claude.com/claude-code)
