@@ -66,6 +66,28 @@ describe("the node's tools", () => {
     expect(Object.keys(tool?.parameters.properties ?? {})).toEqual(["attachmentId"]);
   });
 
+  it("offers read_inbox only when the node has an inbox to read, and asks it afresh on every call", async () => {
+    const without = createNodeTools({ search: services.search, projects: services.projects });
+    expect(without.map((tool) => tool.name)).not.toContain("read_inbox");
+
+    let reads = 0;
+    const with_ = createNodeTools({
+      search: services.search,
+      projects: services.projects,
+      inbox: () => {
+        reads += 1;
+        return { waiting: [], notices: [], unread: 0, readAt: "2026-09-24T07:00:00.000Z" as never };
+      },
+    });
+    const tool = with_.find((candidate) => candidate.name === "read_inbox");
+    expect(tool?.description.length).toBeGreaterThan(20);
+    // Built without reading: what is waiting is derived when it is asked, not when the tool list is made.
+    expect(reads).toBe(0);
+    await tool?.execute({});
+    await tool?.execute({});
+    expect(reads).toBe(2);
+  });
+
   it("offers run_command even when this node has no approval route", () => {
     // The change this phase makes: a node that cannot record a decision is not a node that cannot run a command.
     // Registration follows the command path now, and the approval route is only what an asking mode needs —

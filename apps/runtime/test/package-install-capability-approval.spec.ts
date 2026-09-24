@@ -615,6 +615,32 @@ describe("the pending capability questions Settings puts to the person", () => {
     expect(((await request({ method: "GET", path: "/packages/approvals" })).body as { approvals: unknown[] }).approvals).toEqual([]);
   });
 
+  it("puts the same question in the inbox, and takes it out once it is answered", async () => {
+    await installAsking();
+
+    const inbox = await request({ method: "GET", path: "/inbox" });
+    expect(inbox.status).toBe(200);
+    const { waiting } = inbox.body as { waiting: { kind: string; approvalId?: string; operationDigest?: string }[] };
+    expect(waiting).toEqual([
+      expect.objectContaining({
+        kind: "capability-approval",
+        packageId: PACKAGE_ID,
+        version: VERSION,
+        ref: REQUESTED_CAPABILITY,
+        operationDigest: `${DIGEST}:${REQUESTED_CAPABILITY}`,
+      }),
+    ]);
+
+    const item = waiting[0]!;
+    const decided = await request({
+      method: "POST",
+      path: `/packages/approvals/${item.approvalId}/decision`,
+      body: { decision: "granted", digest: item.operationDigest },
+    });
+    expect(decided.status).toBe(200);
+    expect(((await request({ method: "GET", path: "/inbox" })).body as { waiting: unknown[] }).waiting).toEqual([]);
+  });
+
   it("does not offer a question whose package is no longer installed, since a grant would have nowhere to land", async () => {
     await installAsking();
 

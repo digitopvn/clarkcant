@@ -265,6 +265,7 @@ describe("a work request is not an app intent", () => {
     // to mention an inbox or a notification, and refusing it as an unknown command would be the worse failure.
     for (const request of [
       "open my gmail inbox",
+      "mở hộp thư email của tôi",
       "check the inbox of the support mailbox",
       "tắt thông báo lỗi này",
       "mở thông báo lỗi ra xem",

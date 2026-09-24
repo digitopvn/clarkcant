@@ -32,21 +32,20 @@ import type { NodeServices } from "./services.ts";
  * ## Why the scans are bounded
  *
  * Every waiting thing has a deadline. A command approval expires with its row; a question with its card
- * (`QUESTION_TTL_MS`). So only recent messages can hold something still open, and neither scan reads history: a
- * node with years of it still reads a few minutes' worth.
+ * (`QUESTION_TTL_MS`). So only recent messages can hold something still open, and neither scan reads history: both
+ * read the newest `RECENT_MESSAGES` rows by `rowid`, the table's own b-tree, so a node with years of history reads
+ * the same bounded window as a new one. A filter on `created_at` alone would not do that - the column has no index,
+ * so it scans every message the node ever wrote, on a route the header polls every few seconds.
  *
- * The command-approval scan is bounded by the newest messages rather than by the approval's time, because the two
- * clocks are not the same event. A card's message is stamped when its turn wrote it, which is before the approval row
+ * The command-approval scan is also not narrowed by the approval's time, because the two clocks are not the same
+ * event. A card's message is stamped when its turn wrote it, which is before the approval row
  * it carries is requested — a millisecond before in a fast turn, longer in a slow one. A window starting at the
  * approval's `requested_at` therefore misses the very card it is looking for.
  */
 export type InboxServices = Pick<NodeServices, "runtime" | "conductor" | "search">;
 
-/** The cap on how many messages a scan reads. Far above a quarter hour of real traffic; a guard, not a limit. */
-const SCAN_LIMIT = 500;
-
 /**
- * How many of the newest messages the command-approval scan reads, newest first by insertion order.
+ * How many of the newest messages a scan reads, newest first by insertion order.
  *
  * An approval still in time was raised minutes ago, so its card is among the latest messages the node wrote unless
  * thousands were written since; that is the one case where an open approval is left to its card and not repeated
@@ -133,11 +132,11 @@ function pendingQuestions(services: InboxServices, now: Instant): WaitingItem[] 
   const since = new Date(Date.parse(now) - QUESTION_TTL_MS).toISOString();
   const conversations = allRows<{ conversation_id: string }>(
     services.runtime.db,
-    `SELECT DISTINCT conversation_id FROM messages
-      WHERE created_at >= ? AND document LIKE '%"question-card"%'
-      LIMIT ?`,
+    `SELECT DISTINCT conversation_id FROM
+      (SELECT rowid, conversation_id, created_at, document FROM messages ORDER BY rowid DESC LIMIT ?)
+      WHERE created_at >= ? AND document LIKE '%"question-card"%'`,
+    RECENT_MESSAGES,
     since,
-    SCAN_LIMIT,
   ).map((row) => row.conversation_id);
 
   return conversations.flatMap((conversationId) =>
@@ -154,9 +153,12 @@ function pendingQuestions(services: InboxServices, now: Instant): WaitingItem[] 
   );
 }
 
-/** Capability approvals an install left open: node-scoped, answered through the same route Settings uses. */
-function pendingCapabilityApprovals(services: InboxServices): WaitingItem[] {
-  return listPendingCapabilityApprovals(services).map((approval) => ({
+/**
+ * Capability approvals an install left open: node-scoped, answered through the same route Settings uses. Read at the
+ * inbox's own `now`, like the other two kinds, so all three agree on what is still in time.
+ */
+function pendingCapabilityApprovals(services: InboxServices, now: Instant): WaitingItem[] {
+  return listPendingCapabilityApprovals(services, now).map((approval) => ({
     kind: "capability-approval",
     approvalId: approval.approvalId,
     packageId: approval.packageId,
@@ -169,11 +171,11 @@ function pendingCapabilityApprovals(services: InboxServices): WaitingItem[] {
   }));
 }
 
-/** Everything waiting for the person, oldest first: the one that expires soonest is the one to see first. */
+/** Everything waiting for the person, oldest request first, so the list reads in the order things were asked. */
 export function waitingItems(services: InboxServices, now: Instant): WaitingItem[] {
   return [
     ...pendingCommandApprovals(services, now),
-    ...pendingCapabilityApprovals(services),
+    ...pendingCapabilityApprovals(services, now),
     ...pendingQuestions(services, now),
   ].sort((a, b) => a.requestedAt.localeCompare(b.requestedAt));
 }

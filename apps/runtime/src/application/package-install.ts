@@ -832,7 +832,10 @@ export interface PendingCapabilityApproval {
  * to land (`NO_GENERATION_FOR_APPROVAL`), and a button that can only fail is not a control. Expired ones are left
  * out for the same reason; the next install of the package asks again.
  */
-export function listPendingCapabilityApprovals(deps: PackageInstallDeps): PendingCapabilityApproval[] {
+export function listPendingCapabilityApprovals(
+  deps: PackageInstallDeps,
+  now: string = nowInstant(),
+): PendingCapabilityApproval[] {
   const { runtime } = deps;
   const rows = allRows<{
     approval_id: string;
@@ -845,7 +848,7 @@ export function listPendingCapabilityApprovals(deps: PackageInstallDeps): Pendin
     `SELECT approval_id, operation_digest, operation_description, requested_at, expires_at FROM approvals
       WHERE task_id IS NULL AND decision = 'pending' AND expires_at > ?
       ORDER BY requested_at, approval_id`,
-    nowInstant(),
+    now,
   );
   return rows.flatMap((row) => {
     const parsed = parseCapabilityOperationDigest(row.operation_digest);

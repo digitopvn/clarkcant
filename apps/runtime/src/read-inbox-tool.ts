@@ -1,4 +1,4 @@
-import type { InboxResponse, WaitingItem } from "@clarkcant/contracts";
+import { type InboxResponse, type WaitingItem, redactSecrets } from "@clarkcant/contracts";
 import type { ToolDefinition } from "@clarkcant/pi-adapter";
 
 /** How many notices the tool reports. The inbox keeps more; a turn needs the recent ones, not the archive. */
@@ -30,8 +30,9 @@ export function createReadInboxTool(read: () => InboxResponse): ToolDefinition {
       let inbox: InboxResponse;
       try {
         inbox = read();
-      } catch (cause) {
-        return { text: `Could not read the inbox: ${cause instanceof Error ? cause.message : String(cause)}. Nothing was changed.` };
+      } catch {
+        // The storage error stays on the node: it names tables and constraints, which is nothing a model can act on.
+        return { text: "Could not read the inbox right now. Nothing was changed; try again, or open it with control_app kind inbox.open." };
       }
       return { text: describeInbox(inbox) };
     },
@@ -67,18 +68,22 @@ export function describeInbox(inbox: InboxResponse): string {
   return lines.join("\n");
 }
 
+/**
+ * One waiting item as a line. The command and the question come from other conversations, and this report may go to
+ * a different model provider than the one that wrote them, so they are redacted again on the way out.
+ */
 function describeWaiting(item: WaitingItem): string {
   switch (item.kind) {
     case "command-approval":
       return (
-        `command approval in conversation ${item.conversationId}: ${item.command ?? item.description}` +
+        `command approval in conversation ${item.conversationId}: ${redactSecrets(item.command ?? item.description)}` +
         ` (expires ${item.expiresAt})`
       );
     case "capability-approval":
       return `extension ${item.packageId}@${item.version} asks for capability ${item.ref}: ${item.description} (expires ${item.expiresAt})`;
     case "question":
       return (
-        `question in conversation ${item.conversationId}: ${item.prompt}` +
+        `question in conversation ${item.conversationId}: ${redactSecrets(item.prompt)}` +
         (item.expiresAt === undefined ? "" : ` (expires ${item.expiresAt})`)
       );
   }

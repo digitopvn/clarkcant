@@ -39,6 +39,25 @@ export function messagesSince(db: Database, conversationId: string, afterSequenc
   return rows.map((row) => parseJson<MessageRecord>(row.document, "messages.document"));
 }
 
+/**
+ * The newest `limit` messages of one conversation, oldest first.
+ *
+ * For readers looking for something still open - a card waiting for a decision, a question waiting for an answer.
+ * Those live at the end of a transcript, so reading from the start with a limit, as `messagesSince` does, misses
+ * them in exactly the conversations that are long enough to matter.
+ */
+export function latestMessages(db: Database, conversationId: string, limit: number): MessageRecord[] {
+  const rows = allRows<{ document: string }>(
+    db,
+    `SELECT document FROM messages
+      WHERE conversation_id = ?
+      ORDER BY sequence DESC LIMIT ?`,
+    conversationId,
+    limit,
+  );
+  return rows.reverse().map((row) => parseJson<MessageRecord>(row.document, "messages.document"));
+}
+
 export function conversationMetadata(
   db: Database,
   conversationId: string,
