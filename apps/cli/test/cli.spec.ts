@@ -119,6 +119,22 @@ describe("commands", () => {
     expect(await runCli(["api", "GET", "/conversations/conv_missing/timeline"], missing)).toBe(1);
   });
 
+  it("does not carry an approval decision through api", async () => {
+    const run = io();
+    expect(await runCli(["api", "POST", "/conversations/conv_x/approvals/appr_y/decide", "{}"], run)).toBe(1);
+    expect(run.err.join("")).toContain("decided by the person");
+  });
+
+  it("refuses an unknown option and an option missing its value instead of guessing", async () => {
+    const unknown = io();
+    expect(await runCli(["--port", "9000", "status"], unknown)).toBe(1);
+    expect(unknown.err.join("")).toContain("unknown option --port");
+
+    const missing = io();
+    expect(await runCli(["status", "--url"], missing)).toBe(1);
+    expect(missing.err.join("")).toContain("--url needs a value");
+  });
+
   it("prints the discovery document", async () => {
     const run = io();
     expect(await runCli(["discover"], run)).toBe(0);

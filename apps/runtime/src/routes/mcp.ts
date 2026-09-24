@@ -38,6 +38,9 @@ interface ToolResult {
   isError?: boolean;
 }
 
+/** Enough for any real client, few enough that one request cannot queue unbounded tool calls. */
+const MAX_BATCH = 32;
+
 const SERVER_INFO = { name: "clarkcant", title: "ClarkCant", version: "1.0.0" };
 
 const INSTRUCTIONS =
@@ -94,13 +97,14 @@ const TOOLS = [
   {
     name: "answer_question",
     title: "Answer Clark's question",
-    description: "Answer a question Clark asked, by free text or by the option ids it offered.",
+    description: "Answer a question Clark asked: free text, the option ids it offered, or confirmed true/false for a yes/no question.",
     inputSchema: objectSchema(
       {
         conversationId: { type: "string" },
         questionId: { type: "string" },
         text: { type: "string" },
         optionIds: { type: "array", items: { type: "string" } },
+        confirmed: { type: "boolean" },
       },
       ["conversationId", "questionId"],
     ),
@@ -136,6 +140,12 @@ export async function handleMcpRoute(deps: McpRouteDeps): Promise<GatewayRespons
   }
 
   const batch = Array.isArray(parsed);
+  if (batch && (parsed as unknown[]).length === 0) {
+    return json(400, rpcError(null, -32600, "an empty batch is not a JSON-RPC request"));
+  }
+  if (batch && (parsed as unknown[]).length > MAX_BATCH) {
+    return json(400, rpcError(null, -32600, `at most ${String(MAX_BATCH)} messages may be sent in one batch`));
+  }
   const messages = batch ? (parsed as unknown[]) : [parsed];
   const answers: unknown[] = [];
   for (const message of messages) {
@@ -163,7 +173,10 @@ async function answerOne(deps: McpRouteDeps, message: unknown): Promise<unknown>
     return undefined;
   }
 
-  const id = rpc.id as string | number;
+  if (typeof rpc.id !== "string" && typeof rpc.id !== "number") {
+    return rpcError(null, -32600, "id must be a string or a number");
+  }
+  const id = rpc.id;
   if (rpc.jsonrpc !== "2.0") return rpcError(id, -32600, "jsonrpc must be \"2.0\"");
   const params = rpc.params ?? {};
 
@@ -216,7 +229,10 @@ async function callTool(deps: McpRouteDeps, name: string, args: Record<string, u
     case "ask_clark": {
       const text = args.text;
       if (typeof text !== "string" || text.trim() === "") return toolError("text must be a non-empty string");
-      let conversationId = typeof args.conversationId === "string" ? args.conversationId : undefined;
+      if (args.conversationId !== undefined && typeof args.conversationId !== "string") {
+        return toolError("conversationId must be a string; leave it out to start a new conversation");
+      }
+      let conversationId = args.conversationId as string | undefined;
       if (conversationId === undefined) {
         const title = typeof args.title === "string" ? args.title : text.trim().slice(0, 60);
         const created = await call("POST", "/conversations", { title });
@@ -277,6 +293,7 @@ async function callTool(deps: McpRouteDeps, name: string, args: Record<string, u
         {
           ...(typeof args.text === "string" ? { text: args.text } : {}),
           ...(Array.isArray(args.optionIds) ? { optionIds: args.optionIds } : {}),
+          ...(typeof args.confirmed === "boolean" ? { confirmed: args.confirmed } : {}),
         },
       );
       if (answered.status >= 400) return refused(answered);

@@ -68,12 +68,14 @@ part of the stable description and may change.
 | `list_conversations` | – | `GET /conversations` |
 | `create_conversation` | `title?` | `POST /conversations` |
 | `read_conversation` | `conversationId`, `after?` | `GET /conversations/{id}/timeline` |
-| `answer_question` | `conversationId`, `questionId`, `text?`, `optionIds?` | `POST …/questions/{questionId}/answer` |
+| `answer_question` | `conversationId`, `questionId`, `text?`, `optionIds?`, `confirmed?` | `POST …/questions/{questionId}/answer` |
 | `stop_all_work` | – | `POST /stop` |
 | `node_status` | – | `GET /node` |
 
 **No approval tool, on purpose.** An approval is the person's decision about something an agent wants to do; an MCP
-tool for it would let an AI client approve its own guarded action. Approvals stay on the person's own surfaces.
+tool for it would let an AI client approve its own guarded action. Approvals stay on the person's own surfaces, and
+the generic relays (a WebSocket `request` frame, `clarkcant api`) refuse the approval-decision routes with
+`403 PERSON_ONLY` for the same reason.
 
 Client configuration — HTTP:
 
@@ -101,7 +103,8 @@ stdio, for clients that launch a process (the bridge reads the token from `~/.cl
 ← { "type": "response", "id": "1", "status": 200, "body": null }
 ```
 
-- Any REST route can be sent as a `request` frame; the answer is the gateway's own status and body.
+- Any REST route except an approval decision can be sent as a `request` frame; the answer is the gateway's own status
+  and body.
 - Query parameters go in a `query` object on the frame, not in `path`.
 - Up to 16 requests may run at once per socket, told apart by `id`.
 - A refused request (`INVALID_FRAME`, `TOO_MANY_REQUESTS`) gets an `error` frame carrying its `id` instead of a
@@ -120,7 +123,7 @@ from a checkout with `node apps/cli/src/main.ts` or `pnpm clarkcant`.
 | `clarkcant status` | node label, URL, model |
 | `clarkcant conversations` / `new [title]` / `read <id>` | conversations |
 | `clarkcant stop` | emergency stop |
-| `clarkcant api <METHOD> <path> [jsonBody]` | any route |
+| `clarkcant api <METHOD> <path> [jsonBody]` | any route except an approval decision |
 | `clarkcant mcp` | MCP over stdio |
 | `clarkcant discover` | the discovery document |
 

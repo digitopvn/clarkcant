@@ -30,6 +30,7 @@ export * from "./voice.ts";
 export * from "./attachments.ts";
 export * from "./app-intents.ts";
 export * from "./surfaces.ts";
+export * from "./machine-surfaces.ts";
 export * from "./sse.ts";
 export * from "./execution.ts";
 export * from "./interactions.ts";

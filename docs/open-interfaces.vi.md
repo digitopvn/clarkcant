@@ -69,12 +69,14 @@ có thể thay đổi.
 | `list_conversations` | – | `GET /conversations` |
 | `create_conversation` | `title?` | `POST /conversations` |
 | `read_conversation` | `conversationId`, `after?` | `GET /conversations/{id}/timeline` |
-| `answer_question` | `conversationId`, `questionId`, `text?`, `optionIds?` | `POST …/questions/{questionId}/answer` |
+| `answer_question` | `conversationId`, `questionId`, `text?`, `optionIds?`, `confirmed?` | `POST …/questions/{questionId}/answer` |
 | `stop_all_work` | – | `POST /stop` |
 | `node_status` | – | `GET /node` |
 
 **Cố ý không có tool duyệt approval.** Approval là quyết định của con người về việc agent muốn làm; một MCP tool cho
-nó sẽ cho phép client AI tự duyệt hành động bị guard của chính nó. Approval chỉ nằm trên bề mặt của người dùng.
+nó sẽ cho phép client AI tự duyệt hành động bị guard của chính nó. Approval chỉ nằm trên bề mặt của người dùng, và
+các relay tổng quát (frame `request` qua WebSocket, `clarkcant api`) từ chối các route quyết định approval với
+`403 PERSON_ONLY` vì cùng lý do đó.
 
 Cấu hình client — HTTP:
 
@@ -102,7 +104,8 @@ socket `/voice` và `/terminal`:
 ← { "type": "response", "id": "1", "status": 200, "body": null }
 ```
 
-- Gửi được mọi route REST dưới dạng frame `request`; câu trả lời là status và body của chính gateway.
+- Gửi được mọi route REST, trừ route quyết định approval, dưới dạng frame `request`; câu trả lời là status và body
+  của chính gateway.
 - Tham số query đặt trong object `query` của frame, không đặt trong `path`.
 - Tối đa 16 request chạy đồng thời trên một socket, phân biệt bằng `id`.
 - Request bị từ chối (`INVALID_FRAME`, `TOO_MANY_REQUESTS`) nhận một frame `error` mang `id` của nó thay cho
@@ -121,7 +124,7 @@ socket `/voice` và `/terminal`:
 | `clarkcant status` | nhãn node, URL, model |
 | `clarkcant conversations` / `new [title]` / `read <id>` | hội thoại |
 | `clarkcant stop` | dừng khẩn cấp |
-| `clarkcant api <METHOD> <path> [jsonBody]` | gọi route bất kỳ |
+| `clarkcant api <METHOD> <path> [jsonBody]` | gọi route bất kỳ, trừ route quyết định approval |
 | `clarkcant mcp` | MCP qua stdio |
 | `clarkcant discover` | discovery document |
 

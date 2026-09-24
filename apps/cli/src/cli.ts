@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
-import { type MessageBlock, messageBlocksAsText, parseSseChunk } from "@clarkcant/contracts";
+import { isPersonOnlyRoute, type MessageBlock, messageBlocksAsText, PERSON_ONLY_REFUSAL, parseSseChunk } from "@clarkcant/contracts";
 
 /**
  * The `clarkcant` command.
@@ -40,7 +40,7 @@ Commands:
   new [title]                          Create a conversation
   read <conversationId>                Print a conversation
   stop                                 Emergency stop: interrupt turns, kill running work
-  api <METHOD> <path> [jsonBody]       Call any REST route
+  api <METHOD> <path> [jsonBody]       Call any REST route except an approval decision
   mcp                                  Serve MCP over stdio, bridged to the node's /mcp
   discover                             Print the node's discovery document
 
@@ -61,6 +61,7 @@ function parseArgs(argv: string[]): Parsed {
   const positional: string[] = [];
   const flags = new Map<string, string | true>();
   const takesValue = new Set(["url", "token", "data-dir", "c", "conversation"]);
+  const switches = new Set(["json", "h", "help"]);
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index] ?? "";
     if (arg === "--") {
@@ -74,12 +75,14 @@ function parseArgs(argv: string[]): Parsed {
     }
     if (takesValue.has(name)) {
       const value = argv[index + 1];
-      if (value !== undefined) {
-        flags.set(name, value);
-        index += 1;
-      }
-    } else {
+      if (value === undefined) throw new CliError(`${arg} needs a value`);
+      flags.set(name, value);
+      index += 1;
+    } else if (switches.has(name)) {
       flags.set(name, true);
+    } else {
+      // Refused rather than read as a switch: `--port 9000 status` must not run a command called "9000".
+      throw new CliError(`unknown option ${arg} (text that starts with "-" goes after --)`);
     }
   }
   return { positional, flags };
@@ -114,7 +117,15 @@ export function resolveConnection(flags: Map<string, string | true>, io: CliIo):
 class CliError extends Error {}
 
 export async function runCli(argv: string[], io: CliIo): Promise<number> {
-  const { positional, flags } = parseArgs(argv);
+  let parsed: Parsed;
+  try {
+    parsed = parseArgs(argv);
+  } catch (cause) {
+    if (!(cause instanceof CliError)) throw cause;
+    io.stderr(`clarkcant: ${cause.message}\n\n${USAGE}`);
+    return 1;
+  }
+  const { positional, flags } = parsed;
   const [command, ...rest] = positional;
   if (command === undefined || flags.has("h") || flags.has("help") || command === "help") {
     io.stdout(USAGE);
@@ -236,6 +247,10 @@ export async function runCli(argv: string[], io: CliIo): Promise<number> {
             throw new CliError("the body must be JSON, e.g. '{\"text\":\"hi\"}'");
           }
         }
+        if (isPersonOnlyRoute(method, path)) {
+          // An approval is the person's decision; a scriptable relay that an AI tool can drive does not carry it.
+          throw new CliError(PERSON_ONLY_REFUSAL.message);
+        }
         const result = await call(method.toUpperCase(), path, payload);
         io.stdout(`${typeof result.body === "string" ? result.body : JSON.stringify(result.body, null, 2)}\n`);
         return result.status < 400 ? 0 : 1;
@@ -317,29 +332,40 @@ async function ask(rest: string[], flags: Map<string, string | true>, context: A
   let wrote = false;
   let failed = false;
   let done: Record<string, unknown> | undefined;
-  for await (const chunk of response.body as unknown as AsyncIterable<Uint8Array>) {
-    const parsed = parseSseChunk(buffer + decoder.decode(chunk, { stream: true }));
-    buffer = parsed.rest;
-    for (const event of parsed.events) {
-      let data: Record<string, unknown>;
-      try {
-        data = JSON.parse(event.data) as Record<string, unknown>;
-      } catch {
-        data = { text: event.data };
-      }
-      if (event.event === "delta" && typeof data.text === "string") {
-        if (!context.asJson) io.stdout(data.text);
-        wrote = wrote || data.text !== "";
-      } else if (event.event === "tool-start" && !context.asJson) {
-        const label = typeof data.label === "string" ? data.label : typeof data.name === "string" ? data.name : "a tool";
-        io.stderr(`[${label}]\n`);
-      } else if (event.event === "error") {
-        failed = true;
-        io.stderr(`clarkcant: ${typeof data.message === "string" ? data.message : "the turn failed"}\n`);
-      } else if (event.event === "done") {
-        done = data;
+  try {
+    for await (const chunk of response.body as unknown as AsyncIterable<Uint8Array>) {
+      const parsed = parseSseChunk(buffer + decoder.decode(chunk, { stream: true }));
+      buffer = parsed.rest;
+      for (const event of parsed.events) {
+        let data: Record<string, unknown>;
+        try {
+          data = JSON.parse(event.data) as Record<string, unknown>;
+        } catch {
+          data = { text: event.data };
+        }
+        if (event.event === "delta" && typeof data.text === "string") {
+          if (!context.asJson) io.stdout(data.text);
+          wrote = wrote || data.text !== "";
+        } else if (event.event === "tool-start" && !context.asJson) {
+          const label = typeof data.label === "string" ? data.label : typeof data.name === "string" ? data.name : "a tool";
+          io.stderr(`[${label}]\n`);
+        } else if (event.event === "error") {
+          failed = true;
+          io.stderr(`clarkcant: ${typeof data.message === "string" ? data.message : "the turn failed"}\n`);
+        } else if (event.event === "done") {
+          done = data;
+        }
       }
     }
+  } catch (cause) {
+    // A connection that drops mid-turn is a failure to report, not a crash with a stack trace.
+    throw new CliError(`the stream from the node broke off: ${cause instanceof Error ? cause.message : String(cause)}`);
+  }
+  if (done === undefined && !failed) {
+    // No `done` means the answer is incomplete; a script redirecting stdout must not take it as the whole reply.
+    if (wrote) io.stdout("\n");
+    io.stderr("clarkcant: the stream ended before the turn finished, so the answer above may be incomplete\n");
+    return 1;
   }
 
   if (context.asJson) {
@@ -404,7 +430,16 @@ async function bridgeMcp(context: { connection: Connection; io: CliIo; doFetch: 
       const text = await response.text();
       if (response.status === 202 || text.trim() === "") continue;
       if (response.ok) {
-        io.stdout(`${JSON.stringify(JSON.parse(text))}\n`);
+        let answer: unknown;
+        try {
+          answer = JSON.parse(text);
+        } catch {
+          const message = "the node answered with something other than JSON";
+          if (id !== null) io.stdout(`${JSON.stringify({ jsonrpc: "2.0", id, error: { code: -32603, message } })}\n`);
+          else io.stderr(`clarkcant mcp: ${message}\n`);
+          continue;
+        }
+        io.stdout(`${JSON.stringify(answer)}\n`);
         continue;
       }
       // A refusal from the gateway itself (a wrong token, a node that is not there) becomes an error on this request.
