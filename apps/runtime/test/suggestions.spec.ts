@@ -4,10 +4,18 @@ import { join } from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { createConversation, createPin, migrate, openDatabase, upsertProject, type Database } from "@clarkcant/storage";
+import {
+  createConversation,
+  createPin,
+  migrate,
+  openDatabase,
+  upsertProject,
+  upsertTask,
+  type Database,
+} from "@clarkcant/storage";
 
 import { rememberMemory } from "../src/memory.ts";
-import { buildSuggestions } from "../src/suggestions.ts";
+import { buildSuggestions, withoutContinuePrefix } from "../src/suggestions.ts";
 
 /**
  * What the node offers when somebody opens the app.
@@ -191,5 +199,41 @@ describe("a node with records", () => {
     const first = suggest();
     const second = suggest();
     expect(first.map((item) => item.suggestionId)).toEqual(second.map((item) => item.suggestionId));
+  });
+});
+
+/** An unfinished task in a conversation, with only the fields the suggestion reads. */
+function task(taskId: string, conversationId: string, goal: string, at = NOW): void {
+  upsertTask(db, {
+    taskId,
+    conversationId,
+    homeNodeId: NODE,
+    state: "queued",
+    revision: 1,
+    goal,
+    createdAt: at,
+    updatedAt: at,
+  } as never);
+}
+
+describe("continuing unfinished work", () => {
+  it("offers the work, not a stack of the prefix a previous offer added", () => {
+    conversation("conv_a");
+    task("task_a", "conv_a", "Tiếp tục việc: Tiếp tục việc: viết báo cáo");
+    const offer = suggest().find((item) => item.source === "task");
+    expect(offer?.label).toBe("viết báo cáo");
+    expect(offer?.text).toBe("Tiếp tục việc: viết báo cáo");
+  });
+
+  it("offers one chip for goals that are the same once the prefix is gone", () => {
+    conversation("conv_a");
+    task("task_a", "conv_a", "viết báo cáo", "2026-09-19T11:00:00.000Z");
+    task("task_b", "conv_a", "Tiếp tục việc: viết báo cáo");
+    expect(suggest().filter((item) => item.source === "task")).toHaveLength(1);
+  });
+
+  it("keeps a goal that is nothing but the prefix rather than offering an empty chip", () => {
+    expect(withoutContinuePrefix("Tiếp tục việc:")).toBe("Tiếp tục việc:");
+    expect(withoutContinuePrefix("  làm tiếp  ")).toBe("làm tiếp");
   });
 });

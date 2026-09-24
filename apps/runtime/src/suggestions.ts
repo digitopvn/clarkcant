@@ -68,6 +68,16 @@ function recencyLabel(at: string, now: string): string {
   return "trước đó";
 }
 
+/** What a "continue this" offer puts in front of the task's goal. */
+const CONTINUE_PREFIX = "Tiếp tục việc: ";
+
+/** A goal without any number of continue prefixes in front of it; the goal itself if that would leave nothing. */
+export function withoutContinuePrefix(goal: string): string {
+  let rest = goal.trim();
+  while (rest.startsWith(CONTINUE_PREFIX.trim())) rest = rest.slice(CONTINUE_PREFIX.trim().length).trim();
+  return rest === "" ? goal.trim() : rest;
+}
+
 export function buildSuggestions(deps: SuggestionDeps): Suggestion[] {
   const limit = deps.limit ?? 4;
   const now = deps.now();
@@ -104,10 +114,19 @@ export function buildSuggestions(deps: SuggestionDeps): Suggestion[] {
 
   if (latest !== undefined) {
     // (a) Work left unfinished, which is the most useful thing to offer and the only one that says what for.
+    //
+    // The goal is read without the prefix this offer adds. Pressing the chip sends its text as a new turn, and
+    // that turn's task keeps the text verbatim as its goal, so without this each round trip stacked one more
+    // "Tiếp tục việc: " in front and the chip filled with the prefix instead of the work.
+    // Goals that come out the same after that are one piece of work and get one chip.
+    const seenGoals = new Set<string>();
     for (const task of listActiveTasks(deps.db, latest)) {
+      const goal = withoutContinuePrefix(task.goal);
+      if (seenGoals.has(goal)) continue;
+      seenGoals.add(goal);
       offer({
-        label: task.goal,
-        text: `Tiếp tục việc: ${task.goal}`,
+        label: goal,
+        text: `${CONTINUE_PREFIX}${goal}`,
         source: "task",
         sourceLabel: `việc còn dang dở, ${recencyLabel(task.updatedAt, now)}`,
         at: task.updatedAt,
