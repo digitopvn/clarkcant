@@ -1,6 +1,6 @@
 # Phân tích kiến trúc quản lý process của ClarkCant
 
-**Ngày:** 24/09/2026 · **Phạm vi:** `apps/runtime`, `apps/worker`, `apps/desktop`, `packages/core`, `packages/storage`, `packages/pi-adapter`, `packages/execution-supervisor`, `packages/mcp-adapters`, `packages/capability-host` · **Commit:** `34fe9eb`
+**Ngày:** 24/09/2026 · **Trạng thái:** đề xuất, chờ duyệt · **Phạm vi:** `apps/runtime`, `apps/worker`, `apps/desktop`, `packages/core`, `packages/storage`, `packages/pi-adapter`, `packages/execution-supervisor`, `packages/mcp-adapters`, `packages/capability-host` · **Commit:** `34fe9eb`
 
 ## Kết luận
 
@@ -109,7 +109,7 @@ Các nguyên tắc cho Work Supervisor:
 1. **Shutdown dùng lại emergency stop rồi mới đóng.** `shutdown()` gọi `await performEmergencyStop(...)` (đường này đã phủ commands, turns, background, tasks, terminals), sau đó `await modelTurn.dispose()`, `await voice.close()`, `await terminalGateway.close()`, rồi `runtime.close()`. Thêm hard-timeout (khoảng 5 s) để tránh treo. Đăng ký thêm `uncaughtException`/`unhandledRejection` để chạy cùng đường này, và đảm bảo shutdown chỉ chạy một lần.
 2. **`dispose()` dọn cả `backgroundSessions`.**
 3. **Sửa khoá `backgroundSessions`**: dùng `Map<workId, {conversationId, sessionId}>`, và trả về đúng id mà UI đang hiển thị để có thể huỷ theo id.
-4. **Áp allowlist env cho `run_command` và terminal do model điều khiển.** Dùng `buildEnvironment(profile)` thay cho `process.env`, và chỉ cộng thêm secret đã được broker cấp. Terminal do người dùng tự mở có thể giữ env đầy đủ nếu đó là quyết định sản phẩm (xem câu hỏi mở). Cần sửa câu trong README cho đúng với hành vi thật.
+4. **Lọc env theo nguồn gốc của biến, không theo người mở terminal** (xem quyết định D1). `run_command` dùng `buildEnvironment(profile)` và chỉ cộng thêm secret do broker cấp. Terminal loại bỏ mọi biến mà node tự nạp (`applyEnvFile(...).loaded` ở `main.ts:77`, tên các provider key đã cấu hình, và secret thuộc backend `environment` của broker). Cần sửa câu trong README cho đúng với hành vi thật.
 
 **P1: Work Supervisor và khả năng quan sát qua hội thoại**
 
@@ -137,11 +137,30 @@ Các nguyên tắc cho Work Supervisor:
 - E2E (`apps/web/e2e`): hỏi "đang chạy gì?" và nhận câu trả lời đúng, nói "dừng việc X" thì chỉ việc X dừng. Cần theo UI definition of done trong AGENTS.md.
 - Cập nhật `docs/system-architecture.md` §7.3/§7.4/§10 (đoạn "danh sách background session sống trong bộ nhớ" sẽ đổi) và `docs/conformance-traceability.md` khi có test thật.
 
-## Câu hỏi còn mở
+## Đề xuất cho ba quyết định (chờ duyệt)
 
-1. Terminal do **người dùng** tự mở có nên giữ env đầy đủ như một shell thật không, trong khi terminal do **model** điều khiển thì bị lọc? Hay lọc cả hai?
-2. Sau restart, Clark nên **tự chạy lại** việc nền bị gián đoạn, hay chỉ báo và hỏi? Đề xuất mặc định là chỉ báo và hỏi, vì việc chạy lại có thể có side effect.
-3. Trần việc nền toàn node nên là bao nhiêu? Đề xuất là 3, cấu hình được qua Settings > Control.
+**D1. Môi trường của terminal.** Lọc theo **nguồn gốc của biến**, không theo người mở terminal.
+
+- Mọi child process, gồm cả terminal của người dùng, không nhận biến mà **node tự nạp**. Danh sách này node đã biết chính xác: `applyEnvFile(...).loaded` (`main.ts:77`), tên các provider key đã cấu hình, và tên secret thuộc backend `environment` của broker.
+- Terminal giữ phần môi trường còn lại (`PATH`, `SSH_AUTH_SOCK`, `LANG`…). Shell vẫn source `~/.bashrc` hoặc `.zshrc` của người dùng (`terminal-sessions.ts:220-225`), nên mọi thứ người dùng tự export vẫn còn nguyên. Việc lọc chỉ bỏ những gì người dùng chưa từng đặt vào shell của mình.
+- `run_command` (chỉ model dùng, không có người ngồi trước) dùng allowlist chặt `buildEnvironment(profile)` và chỉ cộng thêm secret do broker cấp cho đúng consumer.
+- Lý do không chia theo người mở: một terminal có hai người điều khiển. Model gõ được vào terminal người dùng mở (`terminal-tools.ts`), và người dùng lấy lại quyền điều khiển terminal do model mở (driver lease di chuyển, DESIGN.md). `redactCredentials` chỉ che output khi model đọc, không chặn được lệnh gửi key ra ngoài như `curl -H "Authorization: $KEY" …`.
+
+**D2. Sau khi khởi động lại.** Luôn báo vào đúng hội thoại. Việc có chạy lại hay không do effect ledger và execution policy quyết định, không dùng một luật chung cho mọi việc.
+
+- Việc **không có effect** được tự chạy lại **một lần** khi policy là Autonomous, và hội thoại có một dòng báo điều này. Việc nền hiện tại thuộc nhóm này: worker không có project root nên chỉ có tool chỉ-đọc (`READ_ONLY_TOOLS`, `pi-adapter/src/real.ts`). Cách này tránh bắt người dùng nhắc lại ý định (AGENTS.md).
+- Việc **có effect ở trạng thái `submitted`/`unknown`** thì không bao giờ tự chạy lại. Node reconcile trước rồi báo và hỏi, đúng bất biến "submit mất ack thì không re-send".
+- Policy Guarded hoặc Ask every time: chỉ báo và hỏi.
+- Hai chốt an toàn:
+  - Mỗi việc chỉ được tự chạy lại tối đa một lần theo `work_id`, để tránh vòng lặp crash khi chính việc đó làm node sập.
+  - Không tự chạy lại việc đã cũ hơn 24 giờ, vì ý định đó đã không còn "hiện tại".
+
+**D3. Giới hạn số việc chạy cùng lúc.** Tách theo loại tài nguyên thay vì dùng một con số chung.
+
+- Việc nền Pi (chạy in-process, tốn token và rate limit của provider): **3 trên toàn node**. Thay đổi được qua Settings > Control bằng segmented control 1 / 3 / 5.
+- Task worker (OS process, tốn CPU/RAM): giữ mặc định 2 như hiện nay (`task-dispatch.ts:89`). Build cô lập tính chung quota này.
+- Lượt trả lời chính của hội thoại **không bao giờ** tính vào quota, để phiên chính luôn phản hồi được.
+- Khi quota đầy thì **xếp hàng có biên** (khoảng 10 việc) với trạng thái "đang chờ" hiển thị rõ, không từ chối. Khi hàng đợi cũng đầy thì mới trả lời rõ trong hội thoại rằng node đang bận và những việc gì đang chạy.
 
 ## Nguồn tham khảo
 
