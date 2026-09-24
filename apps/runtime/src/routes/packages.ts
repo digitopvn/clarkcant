@@ -8,6 +8,7 @@ import {
   directoryIndexPath,
   installedWidgets,
   listInstalledPackages,
+  listRestorablePackages,
   readDirectoryIndex,
   readPackage,
   readPackageFile,
@@ -19,6 +20,7 @@ import {
 import { type Database } from "@clarkcant/storage";
 
 import { decideInstallCapabilityApproval, installPackage } from "../application/package-install.ts";
+import { changePackage } from "../application/package-lifecycle.ts";
 import { type GatewayRequest, type GatewayResponse, fail, json, readJson } from "./http.ts";
 
 /**
@@ -49,14 +51,37 @@ export async function handlePackageRoutes(deps: PackageRouteDeps): Promise<Gatew
    * it — and a superseded generation is not listed, because a package that was replaced is not present.
    */
   if (segments.length === 1 && segments[0] === "packages" && request.method === "GET") {
+    const deps = { db: runtime.db, nodeId: runtime.identity.nodeId, now: nowInstant, newId: services.conductor.newId };
     return json(200, {
-      packages: listInstalledPackages({
-        db: runtime.db,
-        nodeId: runtime.identity.nodeId,
-        now: nowInstant,
-        newId: services.conductor.newId,
-      }),
+      packages: listInstalledPackages(deps),
+      // Uninstalled here and restorable without fetching anything: the generation rows outlive an uninstall.
+      restorable: listRestorablePackages(deps),
     });
+  }
+
+  /*
+   * POST /packages/:id/uninstall | restore | rollback
+   *
+   * No body and no confirmation step: the request is the person's explicit intent, each of the three is undone by
+   * another of them, and none deletes a widget's state or a conversation's snapshots. The id is percent-encoded by
+   * the client because a package installed from disk is recorded under its path.
+   */
+  if (
+    segments.length === 3 &&
+    segments[0] === "packages" &&
+    (segments[2] === "uninstall" || segments[2] === "restore" || segments[2] === "rollback") &&
+    request.method === "POST"
+  ) {
+    let packageId: string;
+    try {
+      packageId = decodeURIComponent(segments[1] ?? "");
+    } catch {
+      return fail(400, "INVALID_SCHEMA", "the package id in the path is not valid percent-encoding");
+    }
+    const outcome = changePackage({ runtime, conductor: services.conductor }, { action: segments[2], packageId, source: "click" });
+    if (outcome.kind === "refused") return fail(outcome.status, outcome.code, outcome.message);
+    const { kind: _kind, ...changed } = outcome;
+    return json(200, changed);
   }
 
   /*

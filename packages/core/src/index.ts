@@ -28,6 +28,7 @@ export * from "./installed-widgets.ts";
 export * from "./coordination.ts";
 export * from "./capability-registry.ts";
 export * from "./install-lifecycle.ts";
+export * from "./package-lifecycle.ts";
 export * from "./widget-service.ts";
 export * from "./widget-lifecycle.ts";
 export * from "./widget-state.ts";

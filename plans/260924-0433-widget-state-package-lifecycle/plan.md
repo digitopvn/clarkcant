@@ -56,9 +56,9 @@ flowchart LR
 
 | Phase | Nội dung | Trạng thái |
 |---|---|---|
-| [phase-01](phase-01-durable-widget-state.md) | State bền qua bridge, tách revision | đang làm |
-| [phase-02](phase-02-declarative-state-migration.md) | Migration khai báo do host chạy, conformance chạy thật | chờ |
-| [phase-03](phase-03-package-uninstall-restore-rollback.md) | Gỡ / khôi phục / quay về: route, Settings, app intent | chờ |
+| [phase-01](phase-01-durable-widget-state.md) | State bền qua bridge, tách revision | xong |
+| [phase-02](phase-02-declarative-state-migration.md) | Migration khai báo do host chạy, conformance chạy thật | xong |
+| [phase-03](phase-03-package-uninstall-restore-rollback.md) | Gỡ / khôi phục / quay về: route, Settings, tool manage_package | xong |
 | [phase-04](phase-04-capability-approvals-ui.md) | UI duyệt capability đang chờ, grant ∩ preflight | chờ |
 | [phase-05](phase-05-publish-version-rules-and-ship.md) | Publish áp quy tắc §20, docs, verify, PR | chờ |
 

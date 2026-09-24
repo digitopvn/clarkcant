@@ -396,6 +396,13 @@ button:focus-visible, textarea:focus-visible, input:focus-visible, [tabindex]:fo
 .cc-provenance-retry { display: flex; flex-direction: column; align-items: flex-start; gap: var(--cc-space-sm); }
 .cc-provenance-retry button { cursor: pointer; font: inherit; padding: var(--cc-space-xs) var(--cc-space-sm); border-radius: var(--cc-radius-sm); border: 1px solid var(--cc-border); background: transparent; color: inherit; }
 .cc-provenance-retry button:focus-visible { outline: 2px solid var(--cc-focus); outline-offset: 2px; }
+/* Uninstall, roll back and restore sit under the facts they act on, as plain buttons: a pill would read as a suggestion. */
+.cc-package-actions { display: flex; flex-wrap: wrap; gap: var(--cc-space-sm); margin-top: var(--cc-space-sm); }
+.cc-package-actions button { cursor: pointer; font: inherit; padding: var(--cc-space-xs) var(--cc-space-sm); border-radius: var(--cc-radius-sm); border: 1px solid var(--cc-border); background: transparent; color: inherit; transition: border-color var(--cc-motion-micro) var(--cc-motion-easing); }
+.cc-package-actions button:hover:not(:disabled) { border-color: var(--cc-accent); }
+.cc-package-actions button:focus-visible { outline: 2px solid var(--cc-focus); outline-offset: 2px; }
+.cc-package-actions button:disabled { opacity: 0.45; cursor: default; }
+.cc-panel-note[data-package-status="failed"] { color: var(--cc-danger); }
 /* What could not be shown from an installed package, kept beside the installed list rather than inside the grid. */
 .cc-library-notes { margin-top: var(--cc-space-lg); padding-top: var(--cc-space-lg); border-top: 1px solid var(--cc-border); }
 .cc-library-notes h3 { margin: 0 0 var(--cc-space-sm); font-weight: 600; }

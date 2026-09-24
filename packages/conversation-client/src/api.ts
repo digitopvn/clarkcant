@@ -49,6 +49,10 @@ export interface IsolatedFrameLiveResponse {
   instanceId: string;
   revision: number;
   readOnly: boolean;
+  /**
+   * The code to mount, or null when the widget's package was uninstalled: then `textFallback` and the kept `state` are
+   * what there is to show, and `stateStatus` says why.
+   */
   frame: {
     /** Relative to the node, and served from the package path so the widget's own imports resolve. */
     url: string;
@@ -60,7 +64,9 @@ export interface IsolatedFrameLiveResponse {
      */
     grantedCapabilities: readonly string[];
     allowedOrigins: readonly string[];
-  };
+  } | null;
+  /** Present when `frame` is null: the widget's own text alternative, from its definition. */
+  textFallback?: string;
   /**
    * The bindings the frame may invoke, with the digest to send back.
    *
@@ -399,6 +405,29 @@ export interface InstalledPackageView {
    * of the build input the lock covers, so `artifact-only` is never read as "the dependencies are pinned".
    */
   lock?: { ref: string; digest: string; coverage: string };
+  /** The version a rollback would make active again; absent when no other version was ever active here. */
+  previousVersion?: string;
+}
+
+/** A package that was uninstalled here and can be restored without fetching anything. */
+export interface RestorablePackageView {
+  packageId: string;
+  version: string;
+  digest: string;
+  uninstalledAt: string;
+}
+
+/** What uninstalling, restoring or rolling back a package did. */
+export interface PackageChangeResponse {
+  action: "uninstall" | "restore" | "rollback";
+  packageId: string;
+  activeVersion?: string;
+  previousVersion?: string;
+  instancesOffline: number;
+  instancesRestored: number;
+  statesKept: number;
+  /** The package carries trusted native code, which only reaches Pi when Pi restarts. */
+  restartNeeded: boolean;
 }
 
 /**
@@ -1204,8 +1233,17 @@ export class GatewayClient {
     return `${this.#baseUrl}${path.startsWith("/") ? path : `/${path}`}`;
   }
 
-  packages(): Promise<{ packages: InstalledPackageView[] }> {
+  packages(): Promise<{ packages: InstalledPackageView[]; restorable?: RestorablePackageView[] }> {
     return this.#call("GET", "/packages");
+  }
+
+  /**
+   * Uninstall, restore or roll back a package. None of the three deletes a widget's data, and each is undone by another.
+   *
+   * The id is percent-encoded because a package installed from disk is recorded under its path.
+   */
+  changePackage(packageId: string, action: PackageChangeResponse["action"]): Promise<PackageChangeResponse> {
+    return this.#call("POST", `/packages/${encodeURIComponent(packageId)}/${action}`);
   }
 
   /**

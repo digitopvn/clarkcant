@@ -1,8 +1,8 @@
-import { useEffect, useState, type ReactElement } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactElement } from "react";
 
 import { useT } from "../i18n/locale-context.tsx";
 import { ToolLists } from "../tool-lists.tsx";
-import type { GatewayClient, InstalledPackageView } from "../api.ts";
+import type { GatewayClient, InstalledPackageView, PackageChangeResponse, RestorablePackageView } from "../api.ts";
 import { laneLabel } from "../package-provenance.ts";
 import { SettingsRow, ToolRow } from "./controls/SettingsRow.tsx";
 
@@ -153,23 +153,86 @@ export function ExtensionsSettings({ client, tools, onOpenWidgetLibrary }: Exten
 function InstalledPackagesSection({ client }: { client: GatewayClient }): ReactElement {
   const t = useT();
   const [packages, setPackages] = useState<InstalledPackageView[] | undefined>(undefined);
+  const [restorable, setRestorable] = useState<RestorablePackageView[]>([]);
+  /*
+   * One change at a time, and the buttons say so: a second click while the first is on its way would ask the node to
+   * undo what it has not finished doing. The outcome stays in one status line for the section, because the row it
+   * was about may be gone once it lands — an uninstalled package leaves this list.
+   */
+  const [busy, setBusy] = useState<string | undefined>(undefined);
+  const [status, setStatus] = useState<{ tone: "done" | "failed"; text: string } | undefined>(undefined);
+  const statusLine = useRef<HTMLParagraphElement>(null);
+
+  const load = useCallback(async (): Promise<void> => {
+    try {
+      const answer = await client.packages();
+      setPackages(answer.packages);
+      setRestorable(answer.restorable ?? []);
+    } catch {
+      // Named as unread rather than shown as empty: an empty list would say "nothing is installed", which is a
+      // different claim from "this node could not say".
+      setPackages([]);
+      setRestorable([]);
+    }
+  }, [client]);
 
   useEffect(() => {
     let cancelled = false;
     void client
       .packages()
       .then((answer) => {
-        if (!cancelled) setPackages(answer.packages);
+        if (cancelled) return;
+        setPackages(answer.packages);
+        setRestorable(answer.restorable ?? []);
       })
       .catch(() => {
-        // Named as unread rather than shown as empty: an empty list would say "nothing is installed", which is a
-        // different claim from "this node could not say".
         if (!cancelled) setPackages([]);
       });
     return () => {
       cancelled = true;
     };
   }, [client]);
+
+  const change = (packageId: string, action: PackageChangeResponse["action"]): void => {
+    if (busy !== undefined) return;
+    setBusy(`${packageId}:${action}`);
+    setStatus(undefined);
+    void client
+      .changePackage(packageId, action)
+      .then((done) => {
+        const restart = done.restartNeeded ? ` ${t("settings.extensions.installed.restartNeeded")}` : "";
+        const text =
+          done.action === "uninstall"
+            ? t("settings.extensions.installed.uninstalled")
+                .replace("{package}", done.packageId)
+                .replace("{offline}", String(done.instancesOffline))
+            : done.action === "rollback"
+              ? t("settings.extensions.installed.rolledBack")
+                  .replace("{package}", done.packageId)
+                  .replace("{version}", done.activeVersion ?? "")
+              : t("settings.extensions.installed.restored")
+                  .replace("{package}", done.packageId)
+                  .replace("{version}", done.activeVersion ?? "")
+                  .replace("{restored}", String(done.instancesRestored));
+        setStatus({ tone: "done", text: `${text}${restart}` });
+      })
+      .catch((cause: unknown) => {
+        setStatus({
+          tone: "failed",
+          text: t("settings.extensions.installed.failed")
+            .replace("{action}", t(`settings.extensions.installed.verb.${action}`))
+            .replace("{package}", packageId)
+            .replace("{reason}", cause instanceof Error ? cause.message : String(cause)),
+        });
+      })
+      .finally(() => {
+        setBusy(undefined);
+        void load().then(() => {
+          // The button that was pressed may no longer exist, so focus lands on what it did rather than on the page.
+          statusLine.current?.focus();
+        });
+      });
+  };
 
   return (
     <section className="cc-panel-section">
@@ -205,9 +268,78 @@ function InstalledPackagesSection({ client }: { client: GatewayClient }): ReactE
                 <dt>{t("settings.extensions.installed.installedAt")}</dt>
                 <dd>{entry.activatedAt}</dd>
               </dl>
+              <div className="cc-package-actions">
+                <button
+                  type="button"
+                  data-package-uninstall={entry.packageId}
+                  disabled={busy !== undefined}
+                  onClick={() => change(entry.packageId, "uninstall")}
+                >
+                  {busy === `${entry.packageId}:uninstall`
+                    ? t("settings.extensions.installed.working")
+                    : t("settings.extensions.installed.uninstall")}
+                </button>
+                {/* Offered only when another version was active here: a rollback with nowhere to go is not a control. */}
+                {entry.previousVersion !== undefined && (
+                  <button
+                    type="button"
+                    data-package-rollback={entry.packageId}
+                    disabled={busy !== undefined}
+                    onClick={() => change(entry.packageId, "rollback")}
+                  >
+                    {busy === `${entry.packageId}:rollback`
+                      ? t("settings.extensions.installed.working")
+                      : t("settings.extensions.installed.rollback").replace("{version}", entry.previousVersion)}
+                  </button>
+                )}
+              </div>
             </li>
           ))}
         </ul>
+      )}
+      <p
+        ref={statusLine}
+        className="cc-panel-note"
+        role="status"
+        tabIndex={-1}
+        data-package-status={status?.tone ?? "idle"}
+        hidden={status === undefined}
+      >
+        {status?.text}
+      </p>
+      {restorable.length > 0 && (
+        <>
+          <h4>{t("settings.extensions.restorable.heading")}</h4>
+          <ul className="cc-installed-list">
+            {restorable.map((entry) => (
+              <li key={entry.packageId} data-restorable-package={entry.packageId}>
+                <strong>
+                  {entry.packageId}@{entry.version}
+                </strong>
+                <dl className="cc-fields">
+                  <dt>{t("settings.extensions.installed.digest")}</dt>
+                  <dd>
+                    <code>{entry.digest}</code>
+                  </dd>
+                  <dt>{t("settings.extensions.restorable.uninstalledAt")}</dt>
+                  <dd>{entry.uninstalledAt}</dd>
+                </dl>
+                <div className="cc-package-actions">
+                  <button
+                    type="button"
+                    data-package-restore={entry.packageId}
+                    disabled={busy !== undefined}
+                    onClick={() => change(entry.packageId, "restore")}
+                  >
+                    {busy === `${entry.packageId}:restore`
+                      ? t("settings.extensions.installed.working")
+                      : t("settings.extensions.restorable.restore").replace("{version}", entry.version)}
+                  </button>
+                </div>
+              </li>
+            ))}
+          </ul>
+        </>
       )}
     </section>
   );

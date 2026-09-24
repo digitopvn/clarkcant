@@ -270,6 +270,23 @@ export const MESSAGES_SETTINGS_VI = {
   "settings.extensions.installed.source": "Nguồn",
   "settings.extensions.installed.digest": "Digest",
   "settings.extensions.installed.installedAt": "Cài lúc",
+  "settings.extensions.installed.uninstall": "Gỡ",
+  "settings.extensions.installed.rollback": "Quay về {version}",
+  "settings.extensions.installed.working": "Đang thực hiện…",
+  "settings.extensions.installed.uninstalled":
+    "Đã gỡ {package}. {offline} widget chuyển sang chỉ xem, hiển thị bản văn bản; dữ liệu và lịch sử được giữ. Có thể khôi phục ở mục Đã gỡ bên dưới.",
+  "settings.extensions.installed.rolledBack":
+    "Đã quay {package} về {version}. Dữ liệu widget giữ nguyên; widget có dữ liệu do bản mới hơn ghi sẽ mở ở chế độ chỉ xem.",
+  "settings.extensions.installed.restored": "Đã khôi phục {package} {version}; {restored} widget hoạt động lại với dữ liệu cũ.",
+  "settings.extensions.installed.restartNeeded": "Gói này có mã native của Pi: thay đổi có hiệu lực sau khi khởi động lại Pi.",
+  "settings.extensions.installed.failed":
+    "Không {action} được {package}: {reason}. Không có gì bị thay đổi hay xoá; thử lại hoặc cài lại gói từ marketplace.",
+  "settings.extensions.installed.verb.uninstall": "gỡ",
+  "settings.extensions.installed.verb.restore": "khôi phục",
+  "settings.extensions.installed.verb.rollback": "quay về bản trước của",
+  "settings.extensions.restorable.heading": "Đã gỡ",
+  "settings.extensions.restorable.restore": "Khôi phục {version}",
+  "settings.extensions.restorable.uninstalledAt": "Gỡ lúc",
 
   // MemorySettings
   "settings.memory.loading": "Đang đọc những gì đã ghi nhớ…",
@@ -562,6 +579,23 @@ export const MESSAGES_SETTINGS_EN = {
   "settings.extensions.installed.source": "Source",
   "settings.extensions.installed.digest": "Digest",
   "settings.extensions.installed.installedAt": "Installed at",
+  "settings.extensions.installed.uninstall": "Uninstall",
+  "settings.extensions.installed.rollback": "Roll back to {version}",
+  "settings.extensions.installed.working": "Working…",
+  "settings.extensions.installed.uninstalled":
+    "Uninstalled {package}. {offline} widget(s) are now read-only and show their text version; their data and history are kept. You can restore it under Uninstalled below.",
+  "settings.extensions.installed.rolledBack":
+    "Rolled {package} back to {version}. Widget data is unchanged; a widget whose data a newer version wrote opens read-only.",
+  "settings.extensions.installed.restored": "Restored {package} {version}; {restored} widget(s) are working again with their data.",
+  "settings.extensions.installed.restartNeeded": "This package has native Pi code: the change applies after Pi restarts.",
+  "settings.extensions.installed.failed":
+    "Could not {action} {package}: {reason}. Nothing was changed or deleted; try again, or reinstall the package from the marketplace.",
+  "settings.extensions.installed.verb.uninstall": "uninstall",
+  "settings.extensions.installed.verb.restore": "restore",
+  "settings.extensions.installed.verb.rollback": "roll back",
+  "settings.extensions.restorable.heading": "Uninstalled",
+  "settings.extensions.restorable.restore": "Restore {version}",
+  "settings.extensions.restorable.uninstalledAt": "Uninstalled at",
 
   "settings.memory.loading": "Reading what has been remembered…",
   "settings.memory.retry": "Retry",

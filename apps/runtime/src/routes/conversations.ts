@@ -14,6 +14,7 @@ import {
   surfaceCompositionSpecSchema,
 } from "@clarkcant/contracts";
 import {
+  activePackageVersions,
   brokeredCapabilities,
   claimLiveOwner,
   decideApproval,
@@ -35,6 +36,7 @@ import {
   unpinInstance,
 } from "@clarkcant/core";
 import {
+  type Database,
   appendAuditEvent,
   appendMessage,
   createConversation,
@@ -124,14 +126,24 @@ const STATE_REFUSAL_STATUS = {
  * Shared by the live route and the state route so both hold the widget to the same definition: the one the frame
  * the user is looking at was mounted from.
  */
-function locateIsolatedFrame(dataDir: string, widgetId: string) {
+function locateIsolatedFrame(runtime: { dataDir: string; db: Database; identity: { nodeId: string } }, widgetId: string) {
   const index = readDirectoryIndex(directoryIndexPath(process.env));
+  /*
+   * The version this node is running comes first. A directory lists every version it knows, and after a rollback the
+   * newest listing is not what is installed: the frame must load the code of the active generation, or rolling back
+   * would change the label and not the widget.
+   */
+  const active = activePackageVersions({ db: runtime.db, nodeId: runtime.identity.nodeId });
+  const entries = index.kind === "configured" ? index.entries : [];
   return findIsolatedFrame({
-    directory: index.kind === "configured" ? index.entries : [],
+    directory: [
+      ...entries.filter((entry) => active.has(`${entry.packageId}@${entry.version}`)),
+      ...entries.filter((entry) => !active.has(`${entry.packageId}@${entry.version}`)),
+    ],
     widgetId,
     // A git/npm entry this node has fetched is served from its cache path exactly like a local package (H1); the
     // cache root here must match the one the install route fetched into.
-    cacheRoot: join(dataDir, "package-cache"),
+    cacheRoot: join(runtime.dataDir, "package-cache"),
   });
 }
 
@@ -165,7 +177,7 @@ function resolveLiveWidget(
    * and that is what this returns instead. The check comes first because it is what decides which of the two shapes
    * this route answers with, and a client that had to guess would be a client that guessed wrong once.
    */
-  const isolated = locateIsolatedFrame(runtime.dataDir, instance.definitionRef.id);
+  const isolated = locateIsolatedFrame(runtime, instance.definitionRef.id);
   if (isolated.ok) {
     /*
      * What the frame is actually brokered is the *granted* set, not the requested one.
@@ -192,6 +204,29 @@ function resolveLiveWidget(
      * show it; `readOnly` and `stateStatus` are what stop anyone writing over it.
      */
     const frameState = prepareFrameState(services.conductor, { instanceId, definition: isolated.definition });
+
+    /*
+     * An instance whose package was uninstalled has no code to run. It still has a text alternative and the state it
+     * kept, and those are what come back: no frame to mount, no binding to invoke, and a status that says why, so the
+     * conversation shows what the widget last said instead of an empty box or a frame that fails to load.
+     */
+    if (frameState.status.kind === "offline") {
+      return json(200, {
+        kind: "isolated-frame",
+        instanceId,
+        revision: instance.revision,
+        readOnly: true,
+        stateRevision: frameState.stateRevision,
+        stateVersion: frameState.stateVersion,
+        state: frameState.state,
+        stateStatus: frameState.status,
+        ephemeralStateKeys: [],
+        frame: null,
+        textFallback: isolated.definition.textFallback,
+        bindings: [],
+        props: instance.props,
+      });
+    }
 
     return json(200, {
       kind: "isolated-frame",
@@ -987,7 +1022,7 @@ export async function handleConversationRoutes(deps: ConversationRouteDeps): Pro
      * action, validated operation by operation; letting it write a raw patch here would be a second, weaker path
      * around those operations.
      */
-    const isolated = locateIsolatedFrame(runtime.dataDir, instance.definitionRef.id);
+    const isolated = locateIsolatedFrame(runtime, instance.definitionRef.id);
     if (!isolated.ok) {
       return fail(
         isolated.code === "NOT_AN_ISOLATED_APP" ? 409 : 404,

@@ -1,6 +1,6 @@
 # Migration khai báo do host chạy
 
-Trạng thái: chờ.
+Trạng thái: xong.
 
 ## Yêu cầu
 

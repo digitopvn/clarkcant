@@ -259,6 +259,12 @@ export async function createNodeModelTurn(deps: ModelBootstrapDeps): Promise<Mod
         // Remembering is scoped to the turn's conversation the same way, and the id comes from the node's own
         // generator: the model supplies what to remember, never who it belongs to.
         memory: { conversationId: turn.conversationId, newId: deps.services().conductor.newId },
+        // The same action as the Settings buttons, so a spoken or typed "uninstall it" and a click are one path.
+        packages: {
+          packages: { runtime: deps.services().runtime, conductor: deps.services().conductor },
+          conversationId: turn.conversationId,
+          channel: turn.channel,
+        },
         // "Where should this go?" goes through the finder, which is where Jev decides when several folders
         // could be meant. The model is told to look before it proposes, and an ambiguous answer comes back
         // as a question rather than as a guess.

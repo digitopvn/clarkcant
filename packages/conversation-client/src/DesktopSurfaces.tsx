@@ -507,6 +507,7 @@ export function PinnedLiveSurface({
    * body.
    */
   if (live.kind === "isolated-frame") {
+    const frame = live.frame;
     return (
       <div
         ref={panel}
@@ -524,9 +525,18 @@ export function PinnedLiveSurface({
             {frameStateNotice(live.stateStatus, t)}
           </p>
         )}
+        {/*
+          No frame means the package is gone: what the widget said about itself is what is left to show, and it is
+          shown as text rather than as an empty box or a frame that would fail to load.
+        */}
+        {frame === null ? (
+          <p data-widget-text-fallback="true" style={{ margin: 0 }}>
+            {live.textFallback ?? title ?? instanceId}
+          </p>
+        ) : (
         <WidgetFrame
           instanceId={live.instanceId}
-          url={client.nodeUrl(live.frame.url)}
+          url={client.nodeUrl(frame.url)}
           title={title ?? instanceId}
           props={live.props}
           state={live.state}
@@ -558,8 +568,8 @@ export function PinnedLiveSurface({
               return { ok: false, code: "STATE_NOT_SAVED", message: cause instanceof Error ? cause.message : String(cause) };
             }
           }}
-          brokeredCapabilities={live.frame.grantedCapabilities}
-          allowedOrigins={live.frame.allowedOrigins}
+          brokeredCapabilities={frame.grantedCapabilities}
+          allowedOrigins={frame.allowedOrigins}
           knownActionBindings={live.bindings.map((entry) => entry.actionBindingId)}
           revision={live.revision}
           /*
@@ -600,6 +610,7 @@ export function PinnedLiveSurface({
             openExternal: () => undefined,
           }}
         />
+        )}
       </div>
     );
   }

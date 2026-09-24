@@ -2,6 +2,7 @@ import { directoryEntrySchema, riskLaneFor, type RiskLane } from "@clarkcant/con
 import { allRows, parseJson, oneRow } from "@clarkcant/storage";
 
 import type { InstallDeps } from "./install-lifecycle.ts";
+import { previousPackageVersion } from "./package-lifecycle.ts";
 
 /**
  * What is installed, and what it is.
@@ -42,6 +43,8 @@ export interface InstalledPackageView {
   lock:
     | { ref: string; digest: string; coverage: string }
     | undefined;
+  /** The version a rollback would make active again, when another version was ever active on this node. */
+  previousVersion: string | undefined;
 }
 
 /**
@@ -121,6 +124,7 @@ export function listInstalledPackages(deps: InstallDeps): InstalledPackageView[]
               digest: generation.lockDigest,
               coverage: generation.lockCoverage ?? "unknown",
             },
+      previousVersion: previousPackageVersion(deps, row.package_id),
     };
   });
 }

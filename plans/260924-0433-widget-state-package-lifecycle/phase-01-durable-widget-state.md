@@ -1,6 +1,6 @@
 # State bền qua bridge, tách revision
 
-Trạng thái: **đang làm**.
+Trạng thái: xong.
 
 ## Ngữ cảnh
 

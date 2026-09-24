@@ -44,6 +44,7 @@ import { commandDigest, runGuardedCommand, type CommandOutcome } from "./run-com
 import type { ProjectFinderDeps } from "./project-finder.ts";
 import { createFindProjectTool } from "./project-finder.ts";
 import { createFindRuntimeTool } from "./runtime-candidates.ts";
+import { createManagePackageTool, type ManagePackageToolDeps } from "./manage-package-tool.ts";
 import { rememberMemory, type MemoryDeps } from "./memory.ts";
 import type { SessionSearchDeps } from "./session-search.ts";
 import { createSearchHistoryTool } from "./session-search.ts";
@@ -149,6 +150,12 @@ export function createNodeTools(input: {
    * action could reach a screen that this call has no way to reach.
    */
   appControl?: ControlAppDeps;
+  /**
+   * Uninstalling, restoring and rolling back packages, when this turn belongs to a node that holds them.
+   *
+   * Absent means `manage_package` is not registered. Present, it calls the same action the Settings buttons call.
+   */
+  packages?: ManagePackageToolDeps;
 }): ToolDefinition[] {
   const roots = input.roots ?? machineRoots;
   return [
@@ -198,6 +205,7 @@ export function createNodeTools(input: {
           }),
         ]),
     ...(input.appControl === undefined ? [] : [createControlAppTool(input.appControl)]),
+    ...(input.packages === undefined ? [] : [createManagePackageTool(input.packages)]),
   ];
 }
 
