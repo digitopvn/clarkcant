@@ -30,6 +30,12 @@ const WEB_PORT = Number(process.env.CC_E2E_WEB_PORT ?? 4273);
  * node needs this server's URL in its own `env` (`CC_NPM_REGISTRY_URL` below) before either process starts.
  */
 const NPM_REGISTRY_PORT = Number(process.env.CC_E2E_NPM_REGISTRY_PORT ?? 8878);
+/**
+ * `--no-env-file` keeps a developer's local `.env` out of the node this suite starts, so a provider key in that file
+ * cannot make the node report a credential CI's node does not have. Left off for a live-provider run, which is the one
+ * case that wants a real key and may keep it in `.env`.
+ */
+const NODE_ENV_FILE_FLAG = process.env.CC_LIVE_PROVIDER_TEST === "1" ? "" : " --no-env-file";
 
 // Published so a test can point the client at the node this run started, rather than at the
 // default the client would otherwise assume.
@@ -100,7 +106,7 @@ export default defineConfig({
       // a transcript with exactly one card), and a data directory kept from a previous run makes those assertions false
       // for a reason that has nothing to do with the code — a failure that reads like a regression and is not one.
       // A fresh directory is also what a first run looks like, which is the state these specs are written about.
-      command: `node -e "require('node:fs').rmSync('${DATA_DIR}',{recursive:true,force:true})" && node apps/runtime/src/main.ts --data-dir ${DATA_DIR} --port ${NODE_PORT} --label e2e-node`,
+      command: `node -e "require('node:fs').rmSync('${DATA_DIR}',{recursive:true,force:true})" && node apps/runtime/src/main.ts --data-dir ${DATA_DIR} --port ${NODE_PORT} --label e2e-node${NODE_ENV_FILE_FLAG}`,
       env: {
         // For live-provider tests: if CC_LIVE_PROVIDER_TEST is set, disable fixtures so the real provider is used.
         // Otherwise, use fixtures for predictable testing.
