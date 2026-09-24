@@ -2,10 +2,10 @@ import { useEffect, useState, type ReactElement } from "react";
 
 import type { EffectCategory, ExecutionRule, InboxNotificationGroup, InboxNotificationsPreference } from "@clarkcant/contracts";
 import {
-  DEFAULT_INBOX_NOTIFICATIONS_PREFERENCE,
   GUARD_CLASSES,
   INBOX_NOTIFICATION_GROUPS,
-  inboxNotificationsPreferenceSchema,
+  parseInboxNotificationsPreference,
+  timeOfDaySchema,
   type AutonomySettings,
   type ExecutionPolicy,
   type GuardClass,
@@ -15,6 +15,7 @@ import { InlineStatus, SegmentedControl, SettingsRow, ToggleSwitch } from "./con
 import type { PreferencesHandle } from "./controls/use-preferences.ts";
 import type { GatewayClient } from "../api.ts";
 import { hasDesktopChrome } from "../desktop-compact.ts";
+import { effectCategoryLabels } from "../inbox/inbox-model.ts";
 import { useT } from "../i18n/locale-context.tsx";
 import type { MessageKey } from "../i18n/messages.ts";
 
@@ -34,24 +35,6 @@ import type { MessageKey } from "../i18n/messages.ts";
  * over a mode just chosen on the other one within the same open Settings; a mode a person can silently lose is
  * worse than a control they have to find.
  */
-
-/**
- * The categories a rule can be written about, in the taxonomy's own words.
- *
- * A closed list, matching `effectCategorySchema`: a rule cannot be written about a category the resolver does
- * not know, because a rule nothing matches is a rule the user believes is protecting them.
- */
-function categoryLabels(t: (key: MessageKey) => string): Record<EffectCategory, string> {
-  return {
-    read: t("settings.control.category.read"),
-    "local-write": t("settings.control.category.localWrite"),
-    "external-write": t("settings.control.category.externalWrite"),
-    destructive: t("settings.control.category.destructive"),
-    financial: t("settings.control.category.financial"),
-    communication: t("settings.control.category.communication"),
-    "media-capture": t("settings.control.category.mediaCapture"),
-  };
-}
 
 function decisionLabels(t: (key: MessageKey) => string): Record<ExecutionRule["decision"], string> {
   return {
@@ -338,12 +321,6 @@ function readBackgroundLimit(value: unknown): "1" | "3" | "5" {
 
 const INBOX_NOTIFICATIONS_KEY = "inbox.notifications";
 
-/** The current preference, read defensively: an unreadable or not-yet-answered value falls back to the default. */
-function readInboxNotifications(prefs: PreferencesHandle): InboxNotificationsPreference {
-  const parsed = inboxNotificationsPreferenceSchema.safeParse(prefs.preference(INBOX_NOTIFICATIONS_KEY)?.value);
-  return parsed.success ? parsed.data : DEFAULT_INBOX_NOTIFICATIONS_PREFERENCE;
-}
-
 function groupLabelKey(group: InboxNotificationGroup): MessageKey {
   switch (group) {
     case "waitingApprovals":
@@ -364,19 +341,79 @@ function webNotificationApi(): typeof Notification | undefined {
 }
 
 /**
- * Per-group toggles, the OS/web channel switches and quiet hours for #171.
+ * Why the last explicit ask for web permission did not turn the toggle on.
  *
- * The browser's notification permission is a hard consent boundary this control does not lift: `web` only
- * ever becomes `true` here, from the explicit act of turning this toggle on, and only after
- * `Notification.requestPermission()` itself answers `granted` — never from the background poll that later
- * delivers a notification, and never assumed from a previous session.
+ * `dismissed` and `denied` are different facts and read differently: closing the browser's own prompt without
+ * choosing (`Notification.permission` answers `"default"`) is not the same as the browser refusing outright
+ * (`"denied"`), and telling the person they were refused when they simply clicked away would be inventing a
+ * decision nobody made.
  */
-function InboxNotificationSettings({ prefs }: { prefs: PreferencesHandle }): ReactElement {
+type WebPermissionRefusal = "unsupported" | "denied" | "dismissed" | "requestFailed";
+
+function webRefusalMessageKey(refusal: WebPermissionRefusal): MessageKey {
+  switch (refusal) {
+    case "unsupported":
+      return "settings.control.notifications.web.unsupported";
+    case "denied":
+      return "settings.control.notifications.web.denied";
+    case "dismissed":
+      return "settings.control.notifications.web.dismissed";
+    case "requestFailed":
+      return "settings.control.notifications.web.requestFailed";
+  }
+}
+
+/**
+ * `Notification.requestPermission()` in both shapes a browser offers it: the modern one returns a Promise, and
+ * an old Safari accepts only a callback and returns `undefined` — calling `.then` on that return value throws.
+ * Passing `settle` as the (deprecated but still honoured) callback argument answers both: a modern browser
+ * invokes it once and also resolves the Promise this awaits below, and old Safari has nothing else that ever
+ * calls it. `settled` keeps the double-fire from a modern browser harmless.
+ */
+function requestWebPermission(NotificationApi: typeof Notification): Promise<NotificationPermission> {
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const settle = (permission: NotificationPermission): void => {
+      if (settled) return;
+      settled = true;
+      resolve(permission);
+    };
+    let returned: unknown;
+    try {
+      returned = NotificationApi.requestPermission(settle);
+    } catch (cause) {
+      reject(cause instanceof Error ? cause : new Error(String(cause)));
+      return;
+    }
+    const maybeThenable = returned as { then?: unknown } | null | undefined;
+    if (typeof maybeThenable?.then === "function") {
+      (returned as Promise<NotificationPermission>).then(settle, reject);
+    }
+  });
+}
+
+/**
+ * Per-group toggles, the OS/web channel switches and quiet hours for #171, once the stored preference is known.
+ *
+ * The browser's notification permission is a hard consent boundary this control does not lift: `web` only ever
+ * becomes `true` here, from the explicit act of turning this toggle on, and only after `requestWebPermission`
+ * itself answers `"granted"` — never from the background poll that later delivers a notification, and never
+ * assumed from a previous session. The toggle's own `checked` reflects that live permission rather than the
+ * stored choice alone, so a permission revoked from the browser's own settings since the value was saved shows
+ * as off rather than as a control lying about what will happen.
+ */
+function InboxNotificationSettingsReady({ prefs, value }: { prefs: PreferencesHandle; value: InboxNotificationsPreference }): ReactElement {
   const t = useT();
-  const value = readInboxNotifications(prefs);
   const pending = prefs.pending === INBOX_NOTIFICATIONS_KEY;
+  // Every control in this section writes the same preference key, and `usePreferences` serializes writes to one
+  // in-flight request per key — a second click before the first resolves would otherwise send a patch built on
+  // an already-stale `value`, silently discarding whatever the first write was about to confirm.
+  const pendingReason = pending ? t("settings.control.notifications.pending") : undefined;
   const desktop = hasDesktopChrome();
-  const [webRefusal, setWebRefusal] = useState<"unsupported" | "denied" | undefined>(undefined);
+  const NotificationApi = webNotificationApi();
+  const webGranted = NotificationApi !== undefined && NotificationApi.permission === "granted";
+  const webSupported = NotificationApi !== undefined;
+  const [webRefusal, setWebRefusal] = useState<WebPermissionRefusal | undefined>(undefined);
   const [startDraft, setStartDraft] = useState<string | undefined>(undefined);
   const [endDraft, setEndDraft] = useState<string | undefined>(undefined);
 
@@ -390,24 +427,59 @@ function InboxNotificationSettings({ prefs }: { prefs: PreferencesHandle }): Rea
       write({ web: false });
       return;
     }
-    const api = webNotificationApi();
-    if (api === undefined) {
+    if (NotificationApi === undefined) {
       setWebRefusal("unsupported");
       return;
     }
-    void api.requestPermission().then((permission) => {
-      if (permission === "granted") {
-        write({ web: true });
-      } else {
-        setWebRefusal("denied");
-      }
-    });
+    void requestWebPermission(NotificationApi)
+      .then((permission) => {
+        if (permission === "granted") write({ web: true });
+        // "default" is the browser's own prompt closed with no choice made — not a refusal.
+        else setWebRefusal(permission === "denied" ? "denied" : "dismissed");
+      })
+      .catch(() => setWebRefusal("requestFailed"));
   };
 
   const commitQuietTime = (field: "start" | "end", draft: string | undefined): void => {
-    if (draft === undefined || draft.length === 0 || draft === value.quietHours[field]) return;
+    if (draft === undefined || draft === value.quietHours[field]) return;
+    if (!timeOfDaySchema.safeParse(draft).success) return;
     write({ quietHours: { ...value.quietHours, [field]: draft } });
   };
+
+  const quietTimeField = (
+    field: "start" | "end",
+    draft: string | undefined,
+    setDraft: (next: string | undefined) => void,
+  ): ReactElement => (
+    <input
+      type="time"
+      value={draft ?? value.quietHours[field]}
+      disabled={pending}
+      onChange={(event) => {
+        const next = event.target.value;
+        setDraft(next);
+        commitQuietTime(field, next);
+      }}
+      onKeyDown={(event) => {
+        if (event.key !== "Enter") return;
+        commitQuietTime(field, draft);
+        setDraft(undefined);
+      }}
+      onBlur={() => {
+        commitQuietTime(field, draft);
+        setDraft(undefined);
+      }}
+    />
+  );
+
+  // The web toggle's own note: the freshest explicit refusal outranks the passive "stored on but not actually
+  // granted" note, since it is the more specific and more recent fact.
+  const webNote =
+    webRefusal !== undefined
+      ? { key: `refusal-${webRefusal}`, text: t(webRefusalMessageKey(webRefusal)) }
+      : !desktop && webSupported && value.web && !webGranted
+        ? { key: "revoked", text: t("settings.control.notifications.web.revoked") }
+        : undefined;
 
   return (
     <section className="cc-panel-section" data-inbox-notifications="true">
@@ -422,6 +494,13 @@ function InboxNotificationSettings({ prefs }: { prefs: PreferencesHandle }): Rea
             checked={value.groups[group]}
             pending={pending}
             onChange={(next) => write({ groups: { ...value.groups, [group]: next } })}
+            // otherDevices has no producer yet (#170's pairing is not built): the preference is kept so a
+            // choice made once will already be correct the day it ships, but the row cannot do anything today.
+            {...(group === "otherDevices"
+              ? { disabledReason: t("settings.control.notifications.group.otherDevices.unavailable") }
+              : pendingReason === undefined
+                ? {}
+                : { disabledReason: pendingReason })}
           />
         </SettingsRow>
       ))}
@@ -436,7 +515,11 @@ function InboxNotificationSettings({ prefs }: { prefs: PreferencesHandle }): Rea
           checked={value.os}
           pending={pending}
           onChange={(next) => write({ os: next })}
-          {...(desktop ? {} : { disabledReason: t("settings.control.notifications.os.needsDesktop") })}
+          {...(!desktop
+            ? { disabledReason: t("settings.control.notifications.os.needsDesktop") }
+            : pendingReason === undefined
+              ? {}
+              : { disabledReason: pendingReason })}
         />
       </SettingsRow>
 
@@ -447,18 +530,23 @@ function InboxNotificationSettings({ prefs }: { prefs: PreferencesHandle }): Rea
         <ToggleSwitch
           name="inbox-notify-web"
           label={t("settings.control.notifications.web.label")}
-          checked={value.web}
+          // Live permission, not the stored choice alone: a browser that revoked permission since the value was
+          // saved shows off, never a switch claiming an effect that will not happen.
+          checked={!desktop && webSupported && value.web && webGranted}
           pending={pending}
           onChange={toggleWeb}
+          {...(desktop
+            ? { disabledReason: t("settings.control.notifications.web.unavailableOnDesktop") }
+            : !webSupported
+              ? { disabledReason: t("settings.control.notifications.web.unsupported") }
+              : pendingReason === undefined
+                ? {}
+                : { disabledReason: pendingReason })}
         />
       </SettingsRow>
-      {webRefusal === undefined ? null : (
-        <p className="cc-panel-note" data-inbox-notify-web-refusal={webRefusal}>
-          {t(
-            webRefusal === "unsupported"
-              ? "settings.control.notifications.web.unsupported"
-              : "settings.control.notifications.web.denied",
-          )}
+      {webNote === undefined ? null : (
+        <p className="cc-panel-note" data-inbox-notify-web-refusal={webNote.key} role="status">
+          {webNote.text}
         </p>
       )}
 
@@ -472,33 +560,18 @@ function InboxNotificationSettings({ prefs }: { prefs: PreferencesHandle }): Rea
           checked={value.quietHours.enabled}
           pending={pending}
           onChange={(next) => write({ quietHours: { ...value.quietHours, enabled: next } })}
+          {...(pendingReason === undefined ? {} : { disabledReason: pendingReason })}
         />
       </SettingsRow>
       {!value.quietHours.enabled ? null : (
         <div className="cc-panel-row" data-inbox-notify-quiet-hours="true">
           <label className="cc-credential-field">
             <span>{t("settings.control.notifications.quietHours.start")}</span>
-            <input
-              type="time"
-              value={startDraft ?? value.quietHours.start}
-              onChange={(event) => setStartDraft(event.target.value)}
-              onBlur={() => {
-                commitQuietTime("start", startDraft);
-                setStartDraft(undefined);
-              }}
-            />
+            {quietTimeField("start", startDraft, setStartDraft)}
           </label>
           <label className="cc-credential-field">
             <span>{t("settings.control.notifications.quietHours.end")}</span>
-            <input
-              type="time"
-              value={endDraft ?? value.quietHours.end}
-              onChange={(event) => setEndDraft(event.target.value)}
-              onBlur={() => {
-                commitQuietTime("end", endDraft);
-                setEndDraft(undefined);
-              }}
-            />
+            {quietTimeField("end", endDraft, setEndDraft)}
           </label>
         </div>
       )}
@@ -506,6 +579,36 @@ function InboxNotificationSettings({ prefs }: { prefs: PreferencesHandle }): Rea
       <InlineStatus status={prefs.status} forKey={INBOX_NOTIFICATIONS_KEY} />
     </section>
   );
+}
+
+/**
+ * Gates the section on the one thing every control here needs: the stored preference, or its confirmed absence
+ * (the node answered and this key simply was not written, which is a known state — the registry default — not
+ * an unknown one). Rendering the controls before that is known would show the default as if it were a choice
+ * somebody made, and would let a write happen before there is a confirmed value to patch.
+ */
+function InboxNotificationSettings({ prefs }: { prefs: PreferencesHandle }): ReactElement {
+  const t = useT();
+  if (prefs.problem !== undefined) {
+    return (
+      <section className="cc-panel-section" data-inbox-notifications="true">
+        <h3>{t("settings.control.notifications.heading")}</h3>
+        <p className="cc-panel-note" data-inbox-notifications-error="true" role="status">
+          {t("settings.control.notifications.loadFailed").replace("{reason}", prefs.problem)}
+        </p>
+      </section>
+    );
+  }
+  if (prefs.preferences === undefined) {
+    return (
+      <section className="cc-panel-section" data-inbox-notifications="true">
+        <h3>{t("settings.control.notifications.heading")}</h3>
+        <p className="cc-panel-note">{t("settings.control.notifications.loading")}</p>
+      </section>
+    );
+  }
+  const value = parseInboxNotificationsPreference(prefs.preference(INBOX_NOTIFICATIONS_KEY)?.value);
+  return <InboxNotificationSettingsReady prefs={prefs} value={value} />;
 }
 
 export function ControlSettings({
@@ -517,7 +620,7 @@ export function ControlSettings({
 }: ControlSettingsProps): ReactElement {
   const t = useT();
   const rules = readRules(prefs.preference("execution.rules")?.value);
-  const CATEGORY_LABELS = categoryLabels(t);
+  const CATEGORY_LABELS = effectCategoryLabels(t);
   const DECISION_LABELS = decisionLabels(t);
 
   /** Replace one category's rule, or remove it when the decision is the mode's own default. */

@@ -63,7 +63,10 @@ describe("groupForNotice", () => {
   it("sends an update to updates and everything else to backgroundResults", () => {
     expect(groupForNotice(notice("c", { category: "update" }))).toBe("updates");
     expect(groupForNotice(notice("d", { category: "result" }))).toBe("backgroundResults");
-    expect(groupForNotice(notice("e", { category: "alert" }))).toBe("backgroundResults");
+  });
+
+  it("sends an alert to waitingApprovals, the same group the panel lists it under", () => {
+    expect(groupForNotice(notice("e", { category: "alert" }))).toBe("waitingApprovals");
   });
 });
 
@@ -134,14 +137,20 @@ describe("decideInboxNotifications", () => {
     expect(result.candidates).toHaveLength(0);
   });
 
-  it("notifies for a new waiting item under the waitingApprovals group", () => {
+  it("notifies for a new waiting item under the waitingApprovals group, its body the time left rather than the command", () => {
     const result = decideInboxNotifications(baseInput({ waiting: [commandApproval("w1")] }));
     expect(result.candidates).toEqual([
-      { id: "command-approval:w1", group: "waitingApprovals", title: t("inbox.command.title"), body: "run w1", reason: "new" },
+      {
+        id: "command-approval:w1",
+        group: "waitingApprovals",
+        title: t("inbox.command.title"),
+        body: t("inbox.expires.minutes").replace("{count}", "15"),
+        reason: "new",
+      },
     ]);
   });
 
-  it("titles a task approval with the capability it asks for, the same words the panel shows", () => {
+  it("titles a task approval with the localized label for the capability it asks for, the same words the panel shows", () => {
     const item: WaitingItem = {
       kind: "task-approval",
       approvalId: "a1",
@@ -157,7 +166,7 @@ describe("decideInboxNotifications", () => {
       {
         id: "task-approval:a1",
         group: "waitingApprovals",
-        title: t("inbox.task.title").replace("{capability}", "external-write"),
+        title: t("inbox.task.title").replace("{capability}", t("settings.control.category.externalWrite")),
         body: "gửi email báo cáo",
         reason: "new",
       },
@@ -191,7 +200,18 @@ describe("decideInboxNotifications", () => {
   });
 
   it("redacts a secret shape out of a waiting item's body", () => {
-    const item = commandApproval("w1", { description: "token=sk-abcdefghijklmnop leaked" });
+    // A command approval's body is always the time left, not its description (see the test above), so this
+    // has to use a kind whose body still carries free text through to the notification.
+    const item: WaitingItem = {
+      kind: "task-approval",
+      approvalId: "a1",
+      taskId: "t1",
+      description: "token=sk-abcdefghijklmnop leaked",
+      operationDigest: "sha256:x",
+      effectCategory: "external-write",
+      requestedAt: NOW,
+      expiresAt: "2026-09-24T07:15:00.000Z" as Instant,
+    };
     const result = decideInboxNotifications(baseInput({ waiting: [item] }));
     expect(result.candidates[0]?.body).not.toContain("sk-abcdefghijklmnop");
     expect(result.candidates[0]?.body).toContain("[redacted]");

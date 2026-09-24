@@ -37,9 +37,9 @@ export const MESSAGES_INBOX_VI = {
   "inbox.task.approve": "Duyệt",
   "inbox.task.deny": "Từ chối",
   "inbox.task.running": "Đang chạy lại…",
-  "inbox.task.decided.redispatched": "Đã duyệt. Task đang chạy lại với quyền vừa cấp.",
-  "inbox.task.decided.grantedNotRun": "Đã duyệt, nhưng chưa có gì được chạy lại (task không còn hoặc chưa được gán nơi chạy).",
-  "inbox.task.decided.denied": "Đã từ chối. Task không chạy gì.",
+  "inbox.task.decided.redispatched": "Đã duyệt. Việc này đang chạy lại với quyền vừa cấp.",
+  "inbox.task.decided.grantedNotRun": "Đã duyệt, nhưng node chưa nhận chạy lại việc này (đang tắt, hàng đợi đã đầy, hoặc việc chưa được gán nơi chạy). Bạn có thể yêu cầu lại.",
+  "inbox.task.decided.denied": "Đã từ chối. Việc này đã dừng và không chạy gì.",
   "inbox.openConversation": "Mở hội thoại",
   "inbox.openConversation.blocked":
     "Hội thoại này còn dở: bản nháp, phiên thoại hoặc lượt đang chạy chưa xong. Gửi hoặc kết thúc trước khi mở hội thoại khác.",
@@ -51,6 +51,8 @@ export const MESSAGES_INBOX_VI = {
     "Quyết định đã được ghi, nhưng không xác nhận được là lệnh đã chạy. Xem hội thoại của nó để biết chi tiết.",
   "inbox.decideFailed.stillWaiting":
     "Chưa ghi được quyết định. Việc này vẫn chờ bạn, ở đây và trong hội thoại của nó.",
+  "inbox.decideFailed.taskNotWaiting": "Task không còn chờ duyệt nữa (đã bị hủy hoặc đã tiếp tục cách khác). Không có gì bị ghi.",
+  "inbox.decideFailed.taskNotFound": "Không còn tìm thấy task này. Không có gì bị ghi.",
   "inbox.unread": "chưa đọc",
   "inbox.dismiss": "Bỏ",
   "inbox.dismissed": "Đã bỏ thông báo.",
@@ -70,6 +72,7 @@ export const MESSAGES_INBOX_VI = {
   "inbox.age.days": "{count} ngày trước",
   "inbox.expires.soon": "sắp hết hạn",
   "inbox.expires.minutes": "còn {count} phút",
+  "inbox.notify.nearExpiry": "Còn dưới 1 phút: ",
 } as const;
 
 export type MessageInboxKey = keyof typeof MESSAGES_INBOX_VI;
@@ -105,8 +108,8 @@ export const MESSAGES_INBOX_EN = {
   "inbox.task.deny": "Deny",
   "inbox.task.running": "Running again…",
   "inbox.task.decided.redispatched": "Approved. The task is running again with the permission just granted.",
-  "inbox.task.decided.grantedNotRun": "Approved, but nothing ran again (the task is gone, or has no execution node).",
-  "inbox.task.decided.denied": "Denied. The task ran nothing.",
+  "inbox.task.decided.grantedNotRun": "Approved, but the node did not take the task back (it is shutting down, its queue is full, or the task has nowhere to run). You can ask again.",
+  "inbox.task.decided.denied": "Denied. The task stopped and ran nothing.",
   "inbox.openConversation": "Open conversation",
   "inbox.openConversation.blocked":
     "This conversation has unfinished work: a draft, a voice session, or an active turn. Send or end it before opening another conversation.",
@@ -118,6 +121,8 @@ export const MESSAGES_INBOX_EN = {
     "The decision was recorded, but whether the command ran could not be confirmed. See its conversation for details.",
   "inbox.decideFailed.stillWaiting":
     "The decision was not recorded. It is still waiting for you, here and in its conversation.",
+  "inbox.decideFailed.taskNotWaiting": "The task is no longer waiting on this (it was cancelled, or resumed another way). Nothing was recorded.",
+  "inbox.decideFailed.taskNotFound": "This task could no longer be found. Nothing was recorded.",
   "inbox.unread": "unread",
   "inbox.dismiss": "Dismiss",
   "inbox.dismissed": "Dismissed the notice.",
@@ -137,4 +142,5 @@ export const MESSAGES_INBOX_EN = {
   "inbox.age.days": "{count} d ago",
   "inbox.expires.soon": "expires soon",
   "inbox.expires.minutes": "{count} min left",
+  "inbox.notify.nearExpiry": "Under 1 minute left: ",
 } as const satisfies Record<MessageInboxKey, string>;

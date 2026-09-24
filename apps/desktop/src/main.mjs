@@ -149,9 +149,34 @@ const EXPECTED_BRIDGE_METHODS = Object.freeze([
  */
 let windowMode;
 
+/**
+ * Notifications currently on screen, kept alive here.
+ *
+ * `Notification` fires its events for as long as something holds a reference to the instance; a `new
+ * Notification(...)` with nothing keeping it means V8 is free to collect it before the person ever clicks it,
+ * and a garbage-collected notification's `click` handler simply never runs. Each entry is deleted (`forget`)
+ * once its own click, close or failure fires, so this set holds exactly the notifications still capable of
+ * doing something — never a growing history of every notification ever shown.
+ */
+const activeNotifications = new Set();
+
 /** The work area of the display the window is on, so a compact window lands somewhere reachable. */
 function workAreaFor(window) {
   return screen.getDisplayMatching(window.getBounds()).workArea;
+}
+
+/**
+ * Bring a collapsed window back to its normal size and place, before it is focused and handed a notification's
+ * click — the same "expand" transform `desktop:restoreWindow` already performs, reused here rather than
+ * duplicated so the two paths cannot drift apart.
+ *
+ * Only `compact` and `orb` count as collapsed: `expanded` is still the conversation, just given more room, so a
+ * click there is left alone the way clicking any other visible window would be.
+ */
+function restoreToNormalIfCollapsed(window) {
+  if (windowMode === undefined || (windowMode.mode !== "compact" && windowMode.mode !== "orb")) return;
+  windowMode = nextWindowMode({ ...windowMode, workArea: workAreaFor(window) }, { type: "expand" });
+  window.setBounds(windowMode.bounds);
 }
 
 /**
@@ -281,18 +306,27 @@ function registerHandlers() {
     const body = typeof input?.body === "string" ? input.body.slice(0, 500) : "";
     if (title.length === 0) return { ok: false, refused: "a notification needs a title" };
     if (!Notification.isSupported()) return { ok: false, refused: "this OS does not support notifications" };
+    if (shellWindow === undefined || shellWindow.isDestroyed()) {
+      return { ok: false, refused: "there is no shell window left to open the inbox in" };
+    }
     // Host-owned: only the redacted title and body the renderer already bounded ever reach the OS. Clicking it
-    // restores and focuses the window the same way `desktop:focusWindow` does, then tells every renderer so the
-    // one that is actually showing the conversation can open the inbox through its own `inbox.open` intent.
+    // restores the window from orb/compact if it was collapsed, focuses it the same way `desktop:focusWindow`
+    // does, then tells the shell window's own renderer so it can open the inbox through its own `inbox.open`
+    // intent — never every window, and never an arbitrary `getAllWindows()[0]`, both of which could reach a
+    // detached widget window instead of the one actually showing the conversation.
     const notification = new Notification({ title, body });
+    const forget = () => activeNotifications.delete(notification);
     notification.on("click", () => {
-      const window = BrowserWindow.getAllWindows()[0];
-      if (window !== undefined) {
-        if (window.isMinimized()) window.restore();
-        window.focus();
-      }
-      for (const win of BrowserWindow.getAllWindows()) win.webContents.send("desktop:notificationClicked");
+      forget();
+      if (shellWindow.isDestroyed()) return;
+      restoreToNormalIfCollapsed(shellWindow);
+      if (shellWindow.isMinimized()) shellWindow.restore();
+      shellWindow.focus();
+      shellWindow.webContents.send("desktop:notificationClicked");
     });
+    notification.on("close", forget);
+    notification.on("failed", forget);
+    activeNotifications.add(notification);
     notification.show();
     return { ok: true, shown: { title, body } };
   });

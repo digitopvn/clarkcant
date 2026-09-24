@@ -1,10 +1,6 @@
 import { useEffect, useRef } from "react";
 
-import {
-  DEFAULT_INBOX_NOTIFICATIONS_PREFERENCE,
-  inboxNotificationsPreferenceSchema,
-  type InboxNotificationsPreference,
-} from "@clarkcant/contracts";
+import { parseInboxNotificationsPreference, type InboxNotificationsPreference } from "@clarkcant/contracts";
 
 import type { GatewayClient } from "../api.ts";
 import { desktopBridge, hasDesktopChrome } from "../desktop-compact.ts";
@@ -14,11 +10,19 @@ import { decideInboxNotifications, type InboxNotifyCandidate } from "./inbox-not
 import { waitingKey } from "./inbox-model.ts";
 
 /**
- * The OS/web notification for #171, delivered from the same poll the header mark already runs.
+ * The OS/web notification for #171.
  *
  * Everything DOM- or Electron-shaped lives here rather than in `inbox-notify-decide.ts`: which channel a
  * platform gets, whether the document currently has focus, and the two ways a click can open the inbox. The
  * decision of *whether* to notify stays in the pure module so it can be tested without any of this.
+ *
+ * This runs its own 5-second poll rather than sharing the header mark's `/inbox/summary` one: the mark only
+ * ever needs two counts, and deciding a notification needs the full waiting/notice lists and the stored
+ * preference, which `/inbox/summary` does not carry. The `/inbox` read runs even while no channel could deliver
+ * (no granted web permission, or both channels off): the set of ids already seen has to keep tracking what the
+ * person could already see in the app, or turning notifications on mid-session would either flood them with
+ * everything that arrived while it was off, or — re-seeding at that moment instead — silently swallow whatever
+ * lands in the seconds right after they turned it on.
  */
 
 const POLL_INTERVAL_MS = 5000;
@@ -27,11 +31,6 @@ interface NotifyState {
   initialized: boolean;
   knownIds: Set<string>;
   remindedNearExpiryIds: Set<string>;
-}
-
-function readPreference(value: unknown): InboxNotificationsPreference {
-  const parsed = inboxNotificationsPreferenceSchema.safeParse(value);
-  return parsed.success ? parsed.data : DEFAULT_INBOX_NOTIFICATIONS_PREFERENCE;
 }
 
 /**
@@ -50,6 +49,13 @@ function webNotificationApi(scope: unknown = globalThis): typeof Notification | 
   const candidate = (scope as { Notification?: unknown }).Notification;
   return typeof candidate === "function" ? (candidate as typeof Notification) : undefined;
 }
+
+/**
+ * `renotify` has been in every shipping browser's Notification API for years, but this repo's `lib.dom.d.ts`
+ * does not declare it on `NotificationOptions`. Extending locally keeps the real DOM type for everything else
+ * instead of widening to `Record<string, unknown>` or sprinkling `as` casts at each use site.
+ */
+type WebNotificationOptions = NotificationOptions & { renotify?: boolean };
 
 export interface UseInboxNotificationsInput {
   client: GatewayClient;
@@ -77,15 +83,21 @@ export function useInboxNotifications({ client, t, windowMode, onOpenInbox }: Us
   tRef.current = t;
 
   // Desktop notifications are click-through: the main process broadcasts one event for whichever notification
-  // was clicked, and any of them opening the inbox is the right reaction. Subscribed once, not per notification.
+  // was clicked, and any of them opening the inbox is the right reaction. Subscribed once, not per notification,
+  // and unsubscribed on cleanup so a remount never leaves a second, stale listener behind.
   useEffect(() => {
     const bridge = desktopBridge();
     if (bridge?.onNotificationClicked === undefined) return;
-    bridge.onNotificationClicked(() => onOpenInboxRef.current());
+    const unsubscribe = bridge.onNotificationClicked(() => onOpenInboxRef.current());
+    return () => unsubscribe();
   }, []);
 
   useEffect(() => {
     let cancelled = false;
+    // A poll still in flight when the timer fires again is skipped rather than started twice: two polls racing
+    // over the same `stateRef.current.knownIds` could each read it before the other's write lands, and the
+    // slower one's write would silently undo whatever the faster one just added.
+    let inFlight = false;
 
     const deliver = (candidate: InboxNotifyCandidate, preference: InboxNotificationsPreference): void => {
       if (hasDesktopChrome()) {
@@ -102,8 +114,14 @@ export function useInboxNotifications({ client, t, windowMode, onOpenInbox }: Us
       const NotificationApi = webNotificationApi();
       if (NotificationApi === undefined || NotificationApi.permission !== "granted") return;
       try {
-        const shown = new NotificationApi(candidate.title, candidate.body === undefined ? {} : { body: candidate.body });
+        // `tag` is the same id `decideInboxNotifications` already tracks: a second notification for the same
+        // waiting item or notice replaces the first tab's copy instead of stacking one per open tab, and
+        // `renotify` re-alerts for the one case that id legitimately fires twice — the near-expiry reminder.
+        const options: WebNotificationOptions = { tag: candidate.id, renotify: candidate.reason === "near-expiry" };
+        if (candidate.body !== undefined) options.body = candidate.body;
+        const shown = new NotificationApi(candidate.title, options);
         shown.onclick = () => {
+          shown.close();
           window.focus();
           onOpenInboxRef.current();
         };
@@ -114,12 +132,20 @@ export function useInboxNotifications({ client, t, windowMode, onOpenInbox }: Us
     };
 
     const poll = (): void => {
-      void Promise.all([client.preferences(), client.inbox()])
-        .then(([preferencesAnswer, inboxAnswer]) => {
-          if (cancelled) return;
-          const preference = readPreference(
+      if (inFlight) return;
+      inFlight = true;
+      void client
+        .preferences()
+        .then((preferencesAnswer) => {
+          const preference = parseInboxNotificationsPreference(
             preferencesAnswer.preferences.find((entry) => entry.key === "inbox.notifications")?.value,
           );
+          if (cancelled) return undefined;
+          return client.inbox().then((inboxAnswer) => ({ preference, inboxAnswer }));
+        })
+        .then((result) => {
+          if (cancelled || result === undefined) return;
+          const { preference, inboxAnswer } = result;
           const state = stateRef.current;
 
           if (!state.initialized) {
@@ -130,7 +156,7 @@ export function useInboxNotifications({ client, t, windowMode, onOpenInbox }: Us
           }
 
           const now = new Date();
-          const result = decideInboxNotifications({
+          const decided = decideInboxNotifications({
             preference,
             notices: inboxAnswer.notices,
             waiting: inboxAnswer.waiting,
@@ -141,13 +167,16 @@ export function useInboxNotifications({ client, t, windowMode, onOpenInbox }: Us
             documentHidden: isDocumentHidden(windowModeRef.current),
             t: tRef.current,
           });
-          state.knownIds = result.seenIds;
-          state.remindedNearExpiryIds = result.remindedNearExpiryIds;
-          for (const candidate of result.candidates) deliver(candidate, preference);
+          state.knownIds = decided.seenIds;
+          state.remindedNearExpiryIds = decided.remindedNearExpiryIds;
+          for (const candidate of decided.candidates) deliver(candidate, preference);
         })
         .catch(() => {
           // A node that cannot answer this poll is not a reason to notify about nothing, or to crash the
           // conversation surface — the next poll tries again.
+        })
+        .finally(() => {
+          inFlight = false;
         });
     };
 

@@ -9,7 +9,7 @@ import {
 } from "@clarkcant/contracts";
 
 import type { MessageKey } from "../i18n/messages.ts";
-import { waitingKey } from "./inbox-model.ts";
+import { effectCategoryLabels, timeLeft, waitingKey } from "./inbox-model.ts";
 
 /**
  * Which notice or waiting item earns an OS/web notification, apart from the polling and the delivery API so the
@@ -31,12 +31,16 @@ const NEAR_EXPIRY_MS = 60_000;
  * though the pairing feature it will eventually come from (#170) is not built yet — the toggle exists ahead of
  * its producer on purpose (see `otherDevices` in `packages/contracts/src/preferences.ts`). `update` is its own
  * group because a person who wants to know about approvals but not about package updates is a common split.
- * Everything else — a finished background task, a system alert — is a "background result": the node did
- * something on its own and is reporting back.
+ * `alert` (`apps/runtime/src/expiry-notices.ts`'s "expired without a decision" notices) belongs with
+ * `waitingApprovals` rather than background results: it reports on the very approval or question that group's
+ * toggle already covers, so a person who muted waiting-item notifications does not still hear about one expiring
+ * unanswered. Everything else — a finished background task — is a "background result": the node did something
+ * on its own and is reporting back.
  */
 export function groupForNotice(notice: Notice): InboxNotificationGroup {
   if (notice.originNodeId !== undefined || notice.category === "message") return "otherDevices";
   if (notice.category === "update") return "updates";
+  if (notice.category === "alert") return "waitingApprovals";
   return "backgroundResults";
 }
 
@@ -71,15 +75,21 @@ function boundedText(text: string, max: number): string {
  * A waiting item's title, reusing the exact words the inbox panel already renders for the same kind — a person
  * who glances at the OS notification and then opens the panel sees the same sentence twice, not two summaries
  * of the same thing that might not agree.
+ *
+ * A capability approval's title is its own plain-language `description`, the same text the panel's own
+ * `cc-card-title` shows: the package id and capability ref are progressive disclosure behind the panel's own
+ * `<details>`, so a notification that put them in the title would leak more than the panel's default row does.
+ * A task approval's title names the category in the same shared label the rule editor and the panel use
+ * (`effectCategoryLabels`), never the raw `EffectCategory` wire slug.
  */
 function waitingTitle(item: WaitingItem, t: (key: MessageKey) => string): string {
   switch (item.kind) {
     case "command-approval":
       return t("inbox.command.title");
     case "capability-approval":
-      return t("inbox.capability.title").replace("{package}", item.packageId).replace("{capability}", item.ref);
+      return boundedText(item.description, NOTICE_TITLE_MAX);
     case "task-approval":
-      return t("inbox.task.title").replace("{capability}", item.effectCategory);
+      return t("inbox.task.title").replace("{capability}", effectCategoryLabels(t)[item.effectCategory]);
     case "question":
       return t("inbox.question.title");
   }
@@ -88,9 +98,12 @@ function waitingTitle(item: WaitingItem, t: (key: MessageKey) => string): string
 /**
  * A waiting item's body: the description or prompt a person already reads in the panel, never the raw
  * `command` a command-approval carries — that field exists so the card can run what it shows, not so a
- * notification can repeat it outside the app.
+ * notification can repeat it outside the app. A command approval's own `description` can still be model-written
+ * text describing the command in ways that echo it, so its body is the same "time left" sentence the panel
+ * shows underneath the card instead — internal to no one, and never the command.
  */
-function waitingBody(item: WaitingItem): string | undefined {
+function waitingBody(item: WaitingItem, now: string, t: (key: MessageKey) => string): string | undefined {
+  if (item.kind === "command-approval") return timeLeft(item.expiresAt, now, t);
   const text = item.kind === "question" ? item.prompt : item.description;
   return text.length === 0 ? undefined : boundedText(text, NOTICE_BODY_MAX);
 }
@@ -186,12 +199,14 @@ export function decideInboxNotifications(input: DecideInboxNotificationsInput): 
     const isNew = !knownIds.has(id);
     if (!isNew && !nearExpiry) continue;
 
+    const reason = isNew ? "new" : "near-expiry";
+    const title = reason === "near-expiry" ? `${t("inbox.notify.nearExpiry")}${waitingTitle(item, t)}` : waitingTitle(item, t);
     candidates.push({
       id,
       group: WAITING_GROUP,
-      title: waitingTitle(item, t),
-      body: waitingBody(item),
-      reason: isNew ? "new" : "near-expiry",
+      title,
+      body: waitingBody(item, input.now, t),
+      reason,
     });
     if (nearExpiry) remindedNearExpiryIds.add(id);
   }

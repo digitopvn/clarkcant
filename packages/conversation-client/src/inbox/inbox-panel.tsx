@@ -9,6 +9,7 @@ import {
   canOpenOtherConversation,
   decideFailureCategory,
   decideFailureMessageKey,
+  effectCategoryLabels,
   nextNoticeFocusTarget,
   noticeIdsToMarkRead,
   noticesMayBeCapped,
@@ -74,6 +75,7 @@ export function InboxPanel({
   switchGuard,
 }: InboxPanelProps): ReactElement | null {
   const t = useT();
+  const categoryLabels = effectCategoryLabels(t);
   const { locale } = useLocaleState();
   const [load, setLoad] = useState<Load>({ state: "loading" });
   const [busy, setBusy] = useState<Busy | undefined>(undefined);
@@ -446,7 +448,7 @@ export function InboxPanel({
                           {item.kind === "task-approval" && (
                             <>
                               <span className="cc-card-title">
-                                {t("inbox.task.title").replace("{capability}", item.effectCategory)}
+                                {t("inbox.task.title").replace("{capability}", categoryLabels[item.effectCategory])}
                               </span>
                               <p style={{ margin: 0 }}>{item.description}</p>
                               <p className="cc-freshness" style={{ margin: 0 }}>
