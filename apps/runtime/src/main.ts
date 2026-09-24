@@ -455,6 +455,7 @@ async function main(): Promise<void> {
     hardStop.unref();
     leaseSweeper.stop();
     runtimeHandles.stopUpdateChecks();
+    services.expirySweep?.stop();
     void (async () => {
       try {
         const stopped = await performEmergencyStop({

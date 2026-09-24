@@ -11,6 +11,7 @@ import { createModelCatalogue, type ModelTurn, type ViewDescriptor } from "../mo
 import { type CommandToolDeps } from "../node-tools.ts";
 import { ownedResources } from "../preflight.ts";
 import { refreshProjectIndex } from "../project-finder.ts";
+import { startExpiryNoticeSweep } from "../expiry-notices.ts";
 import { tryRecordNodeNotice, workerSettledNotice } from "../notices.ts";
 import { appendHostReply } from "../routes/conversations.ts";
 import { createSecretBroker } from "../secret-broker.ts";
@@ -271,12 +272,32 @@ export function wireRuntime(deps: RuntimeBootstrapDeps): RuntimeHandles {
         // The pointer for a person who is not looking at that conversation.
         tryRecordNodeNotice(deps.services, workerSettledNotice({ taskId, conversationId, outcome, message, at }));
       },
+      // A park is not a settlement: it is reported to the conversation so the wait is not silent, but never
+      // through `tryRecordNodeNotice`/`workerSettledNotice` above - that dedup key (`worker:<taskId>`) belongs to
+      // this run's eventual real outcome, and a notice recorded here would suppress it once the approval is
+      // decided and the run actually settles. The inbox already surfaces the pending approval itself as a
+      // waiting item, derived live, so no separate notice is needed for the park to be visible.
+      onWaitingApproval: ({ taskId, conversationId, message }) => {
+        appendHostReply(deps.services, {
+          conversationId,
+          text: `Đang chờ bạn duyệt (task ${taskId}): ${message}`,
+          at: new Date().toISOString() as Instant,
+        });
+      },
     });
     deps.services.taskDispatch = dispatcher;
     // Task workers are listed and stopped with everything else, by task id.
     deps.work?.addSource({ kind: "task", list: () => dispatcher.work(), cancel: (taskId) => dispatcher.stop(taskId) });
     deps.services.conductor.runTask = (input) => dispatcher.dispatch(input);
   }
+
+  /*
+   * A person who never looked deserves to learn that something they might have wanted to run never ran, or
+   * that a question went unanswered - not silence. Runs on every node, fixture or not: it only reads the
+   * approvals table and the transcript, and reuses `expireQuestions`, the same idempotent close a real answer
+   * route would race against.
+   */
+  deps.services.expirySweep = startExpiryNoticeSweep(deps.services);
 
   if (sessionFixture) {
     process.stderr.write(
