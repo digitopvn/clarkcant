@@ -71,6 +71,27 @@ describe("connection", () => {
   });
 });
 
+describe("the identity file's token", () => {
+  const file = (): string => JSON.stringify({ localToken: "from-file" });
+  const quiet = { stdout: () => undefined, stderr: () => undefined, readFile: file };
+
+  it("is used for a node on this machine", () => {
+    for (const url of ["http://127.0.0.1:8765", "http://localhost:1", "http://[::1]:2"]) {
+      expect(resolveConnection(new Map([["url", url]]), { env: {}, ...quiet }).token).toBe("from-file");
+    }
+  });
+
+  it("is never sent to another host", () => {
+    for (const url of ["https://other.example", "http://10.0.0.5:8765", "http://127.0.0.1.evil.example"]) {
+      expect(resolveConnection(new Map([["url", url]]), { env: {}, ...quiet }).token).toBeUndefined();
+    }
+    // An explicit token still reaches a remote node; that is the person's own choice.
+    expect(resolveConnection(new Map([["url", "https://other.example"]]), { env: { CLARKCANT_TOKEN: "given" }, ...quiet }).token).toBe(
+      "given",
+    );
+  });
+});
+
 describe("commands", () => {
   it("reports the node's status", async () => {
     const run = io();
@@ -155,8 +176,34 @@ describe("commands", () => {
     });
     expect(await runCli(["mcp"], run)).toBe(0);
     const answers = run.out.join("").trim().split("\n").map((line) => JSON.parse(line) as { id: unknown; error?: unknown });
-    expect(answers.map((answer) => answer.id)).toEqual([1, 2, null]);
-    expect(answers[2]?.error).toMatchObject({ code: -32700 });
+    // Lines are forwarded concurrently, so answers arrive in completion order; each is matched by its id.
+    expect(answers.map((answer) => answer.id).sort()).toEqual([1, 2, null].sort());
+    expect(answers.find((answer) => answer.id === null)?.error).toMatchObject({ code: -32700 });
+  });
+
+  it("answers a ping while an earlier MCP request is still running", async () => {
+    let release: () => void = () => undefined;
+    const slow = new Promise<void>((resolve) => (release = resolve));
+    const written: unknown[] = [];
+    const run = io({
+      fetch: (async (_input: string | URL | Request, init?: RequestInit) => {
+        const message = JSON.parse(String(init?.body)) as { id: number; method: string };
+        if (message.method === "tools/call") await slow;
+        return new Response(JSON.stringify({ jsonrpc: "2.0", id: message.id, result: {} }), { status: 200 });
+      }) as typeof fetch,
+      stdout: (text: string) => {
+        const answer = JSON.parse(text) as { id: number };
+        written.push(answer.id);
+        // The ping's answer is written while the slow call is still held open; only then is it let go.
+        if (answer.id === 2) release();
+      },
+      stdinLines: async function* () {
+        yield JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "ask_clark", arguments: {} } });
+        yield JSON.stringify({ jsonrpc: "2.0", id: 2, method: "ping" });
+      },
+    });
+    expect(await runCli(["mcp"], run)).toBe(0);
+    expect(written).toEqual([2, 1]);
   });
 
   it("turns a refused MCP request into a JSON-RPC error rather than silence", async () => {
