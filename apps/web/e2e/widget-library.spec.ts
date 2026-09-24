@@ -177,8 +177,15 @@ test("the Lab shows developer controls that actually change the preview", async 
   await page.locator("[data-widget-lab-reduced-motion='true']").check();
   await expect(page.locator("[data-widget-preview-frame][data-cc-reduced-motion='true']")).toHaveCount(1);
 
+  /*
+   * The attribute alone proved nothing: the tokens were declared on `:root` only, so a dark frame kept drawing
+   * light colours. What the control owns is the colour the frame paints, so the colour is compared.
+   */
+  await page.locator("[data-widget-lab-theme='true']").selectOption("light");
+  const lightBackground = await frame.evaluate((element) => getComputedStyle(element).backgroundColor);
   await page.locator("[data-widget-lab-theme='true']").selectOption("dark");
   await expect(page.locator("[data-widget-preview-frame][data-cc-theme='dark']")).toHaveCount(1);
+  await expect(frame).not.toHaveCSS("background-color", lightBackground);
 
   /*
    * At a desktop width the Lab shows the preview and the inspector together, so the inspector is part

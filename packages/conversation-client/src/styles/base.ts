@@ -112,7 +112,7 @@ body {
 }
 .cc-search-list li[data-active="true"] { background: var(--cc-card); }
 .cc-search-list li[aria-selected="true"] { color: var(--cc-accent); }
-.cc-search-list li em { opacity: 0.6; font-style: normal; font-size: var(--cc-font-small); }
+.cc-search-list li em { opacity: 0.6; font-style: normal; font-size: var(--cc-text-label); }
 .cc-search-empty { cursor: default; opacity: 0.7; }
 
 /*
@@ -205,7 +205,7 @@ body {
  */
 .cc-bg-mark {
   position: relative; display: flex; align-items: center; gap: var(--cc-space-xs);
-  font-size: var(--cc-font-small); outline: none;
+  font-size: var(--cc-text-label); outline: none;
 }
 .cc-bg-list {
   position: absolute; top: 100%; right: 0; margin: var(--cc-space-xs) 0 0; padding: var(--cc-space-sm);
@@ -235,7 +235,7 @@ body {
   padding: var(--cc-space-xs) var(--cc-space-sm); border-radius: var(--cc-radius-pill);
 }
 .cc-selection-menu button:hover { background: var(--cc-card); }
-.cc-credential-field { display: flex; flex-direction: column; gap: var(--cc-space-xs); font-size: var(--cc-font-small); }
+.cc-credential-field { display: flex; flex-direction: column; gap: var(--cc-space-xs); font-size: var(--cc-text-label); }
 .cc-credential-field input {
   font: inherit; color: inherit; padding: var(--cc-space-sm);
   background: var(--cc-elevated); border: 1px solid var(--cc-border); border-radius: var(--cc-radius-card);

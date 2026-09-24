@@ -66,7 +66,7 @@ export interface FixtureModelWiring {
 
 export interface FixtureModelDeps {
   /** The node this fixture stands in for, read when a turn asks rather than when the composer is built. */
-  services: () => Pick<NodeServices, "runtime" | "conductor" | "controlSessions">;
+  services: () => Pick<NodeServices, "runtime" | "conductor" | "controlSessions" | "terminals">;
   dataDir: string;
   wiring: FixtureModelWiring;
 }
@@ -248,6 +248,42 @@ export function createModelComposer(deps: FixtureModelDeps): FixtureCompose {
       // SAFETY: this is the tool-activity block the guarded run built from the message-block union; the
       // adapter's shape is loose because it must not depend on contracts, and the node validates blocks
       // before they reach a transcript.
+      return { text: answer.text, block: first as unknown as MessageBlock };
+    }
+
+    /*
+     * A terminal, opened through the real tool.
+     *
+     * The decision to call `terminal_open` is scripted; everything after it is the node's own path — the policy, the
+     * PTY, the card — so the browser journey types into a real shell rather than a picture of one.
+     */
+    if (/mở terminal|open a terminal/i.test(input.text)) {
+      const command = deps.wiring.command();
+      const search = deps.wiring.search();
+      const projects = deps.wiring.projects();
+      if (command === undefined || search === undefined || projects === undefined) return undefined;
+      const tool = createNodeTools({
+        search,
+        projects,
+        command,
+        terminals: {
+          registry: deps.services().terminals,
+          newId: deps.services().conductor.newId,
+          conversationId: input.conversationId,
+        },
+      }).find((entry) => entry.name === "terminal_open");
+      if (tool === undefined) return undefined;
+      const prefill = /điền sẵn|prefill/i.test(input.text);
+      const answer = await tool.execute({
+        cwd: deps.dataDir,
+        title: "fixture terminal",
+        ...(prefill ? { command: "echo điền-sẵn" } : {}),
+      });
+      const first = answer.hostBlocks?.[0];
+      if (first === undefined) {
+        return { text: answer.text, block: { type: "text", format: "plain", content: answer.text, streaming: false } };
+      }
+      // SAFETY: the card `terminal_open` built against the message-block union; the node validates it before storing.
       return { text: answer.text, block: first as unknown as MessageBlock };
     }
 

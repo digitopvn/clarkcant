@@ -19,6 +19,7 @@ import { fixtureGatesFromEnv, loadFixtureComposition } from "./bootstrap/fixture
 import { createNodeModelTurn } from "./bootstrap/model-bootstrap.ts";
 import { createRuntimeWiring, wireRuntime } from "./bootstrap/runtime-bootstrap.ts";
 import { attachNodeVoice } from "./bootstrap/voice-bootstrap.ts";
+import { attachTerminalGateway } from "./terminal-gateway.ts";
 import { bootRuntime } from "./node.ts";
 import { detectContainerEngine } from "./container-engine.ts";
 import { listenOnUnixSocket, prepareSocketPath } from "./unix-socket.ts";
@@ -229,6 +230,14 @@ async function main(): Promise<void> {
     env: process.env,
   });
 
+  // The terminal socket, on the same server and behind the same token, for the same reason as the voice socket.
+  const terminalGateway = attachTerminalGateway({
+    server,
+    localToken: services.runtime.identity.localToken,
+    terminals: services.terminals,
+    piSessions: services.piSessions,
+  });
+
   /**
    * A port that is already taken, reported plainly.
    *
@@ -295,7 +304,12 @@ async function main(): Promise<void> {
     const bootCommand = wiring.command.deps;
     if (bootCommand !== undefined) {
       registerNodeTools(
-        createNodeTools({ search: services.search, projects: services.projects, command: bootCommand }).map(
+        createNodeTools({
+          search: services.search,
+          projects: services.projects,
+          command: bootCommand,
+          terminals: { registry: services.terminals, newId: services.conductor.newId },
+        }).map(
           (tool) => ({ name: tool.name, label: tool.label, description: tool.description }),
         ),
       );
@@ -354,6 +368,9 @@ async function main(): Promise<void> {
   const shutdown = (signal: string): void => {
     process.stderr.write(`received ${signal}; closing the node\n`);
     void voice.close();
+    // Shells are children of this process; a node that exits must not leave them running without a view.
+    services.terminals.stopAll();
+    void terminalGateway.close();
     server.close(() => {
       void modelTurn?.dispose();
       services.runtime.close();

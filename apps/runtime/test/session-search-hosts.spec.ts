@@ -183,6 +183,16 @@ const FIXTURES = {
     previewReason: "ứng dụng chưa được cấp quyền ghi màn hình",
     updatedAt: AT,
   },
+  "terminal-session-card": {
+    type: "terminal-session-card",
+    owner: "host",
+    cardId: "card_10",
+    terminalId: "term_1",
+    title: "clarkcant",
+    cwd: "/home/user/clarkcant",
+    prefill: "pnpm test",
+    createdAt: AT,
+  },
   "marketplace-results": {
     type: "marketplace-results",
     owner: "host",
@@ -228,6 +238,7 @@ describe("the text of every host card", () => {
     expect(textOfBlock(asBlock(FIXTURES["task-overview-card"]))).toContain("sửa lỗi đăng nhập");
     expect(textOfBlock(asBlock(FIXTURES["browser-session-card"]))).toContain("agent");
     expect(textOfBlock(asBlock(FIXTURES["computer-session-card"]))).toContain("bạn");
+    expect(textOfBlock(asBlock(FIXTURES["terminal-session-card"]))).toContain("/home/user/clarkcant");
   });
 
   it("names the answers a question offered, not only the question", () => {

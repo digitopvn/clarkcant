@@ -183,6 +183,34 @@ export const computerSessionCardSchema = z.strictObject({
 export type ComputerSessionCard = z.infer<typeof computerSessionCardSchema>;
 
 /**
+ * A terminal the node opened: a real shell in a pseudo-terminal, on this node, with the person's own permissions.
+ *
+ * Host-owned for the reason a browser session is: the thing behind it acts on the machine, so neither a pack nor a
+ * model may mint the card that connects to it. The card is a **reference**, not a recording — the live screen comes
+ * from the node over its own channel, and a card whose terminal no longer exists says so instead of replaying
+ * anything as if it were live.
+ *
+ * `prefill` and `ran` are separate facts. A command typed into the prompt and waiting for Enter is the way a person
+ * confirms it, and a card that could not tell "waiting for you" from "already ran" would be claiming an effect
+ * nobody performed.
+ */
+export const terminalSessionCardSchema = z.strictObject({
+  type: z.literal("terminal-session-card"),
+  owner: z.literal("host"),
+  cardId: z.string().min(1).max(128),
+  terminalId: z.string().min(1).max(128),
+  title: z.string().min(1).max(300),
+  /** The directory the shell started in. Shown, because it is the one fact that says what a command will touch. */
+  cwd: z.string().min(1).max(1000),
+  /** A command left at the prompt, not run. */
+  prefill: z.string().min(1).max(2000).optional(),
+  /** A command the node ran when it opened the terminal, after policy allowed it. */
+  ran: z.string().min(1).max(2000).optional(),
+  createdAt: instantSchema,
+});
+export type TerminalSessionCard = z.infer<typeof terminalSessionCardSchema>;
+
+/**
  * One directory listing.
  *
  * A search result is a **claim by a directory**, not a fact about the local machine, and it carries exactly the
@@ -734,6 +762,7 @@ export const messageBlockSchema = z.discriminatedUnion("type", [
   artifactBlockSchema,
   browserSessionCardSchema,
   computerSessionCardSchema,
+  terminalSessionCardSchema,
   marketplaceResultsBlockSchema,
   evidenceBlockSchema,
   systemCardBlockSchema,
@@ -776,6 +805,7 @@ export const HOST_OWNED_BLOCK_TYPES = [
   "form-card",
   "browser-session-card",
   "computer-session-card",
+  "terminal-session-card",
   "marketplace-results",
 ] as const satisfies readonly MessageBlock["type"][];
 

@@ -389,6 +389,8 @@ export function useBlockActions({
       onControlTakeover: ({ sessionId }) => changeBrowserSession(sessionId, "takeover"),
       onControlStop: ({ sessionId }) => changeBrowserSession(sessionId, "stop"),
       controlSession,
+      // A terminal's result goes back the way a typed reply does, for the reason forms do.
+      onTerminalShare: ({ text }) => void send(text),
     }),
     [
       artifactOpen,
