@@ -1,96 +1,98 @@
 # Scope Lock v2 — Conversation-first, runtime-anywhere
 
-**Ngày:** 16/09/2026 · **Release mục tiêu:** v0.2 foundation beta. “v2” là phiên bản blueprint, không phải phiên bản phần mềm đã phát hành.
+> English (default) · [Tiếng Việt](scope-lock.vi.md)
+
+**Date:** 16/09/2026 · **Target release:** v0.2 foundation beta. “v2” is the blueprint version, not a released software version.
 
 ## 1. North star
 
-Người dùng giao việc, tùy biến app, kết nối dịch vụ, cài extensions và tạo/pin mini-apps bằng hội thoại. Họ không cần học session, MCP config, process, node topology hay trang settings nhiều cấp. Chat, voice và widget là ba cách tương tác với cùng hệ thống, không phải ba sản phẩm.
+The user assigns work, customizes the app, connects services, installs extensions and creates/pins mini-apps through conversation. They do not need to learn sessions, MCP config, processes, node topology or multi-level settings pages. Chat, voice and widgets are three ways to interact with the same system, not three products.
 
-Tối giản là **giảm công sức ra quyết định**, không phải buộc mọi thao tác thành câu chữ. Một nút play, form đăng nhập bảo mật, chọn ngày, nút dừng và pin là hợp lệ; sidebar session, file tree bắt buộc và dashboard quản trị thường trực thì không.
+Minimalism means **reducing decision effort**, not forcing every operation into words. A play button, a secure sign-in form, a date picker, a stop button and pin are valid; a session sidebar, a mandatory file tree and a permanent admin dashboard are not.
 
 ## 2. Product boundary
 
-App gồm **Agent Runtime + Conversation Client + Capability Packs + optional Connectivity Adapter**. Electron chỉ là vỏ desktop. Cài lên VPS không cài Electron, không chạy virtual desktop chỉ để có khung chat.
+The app consists of **Agent Runtime + Conversation Client + Capability Packs + optional Connectivity Adapter**. Electron is only the desktop shell. An install on a VPS does not install Electron and does not run a virtual desktop just to get a chat frame.
 
-Mỗi cài đặt runtime là một **node tự chủ**, có state, credentials và phạm vi tài nguyên riêng. Desktop có thể dùng node local, attach một node server, hoặc dùng node home để điều phối các node đã pair. Vai trò home là theo conversation; không có máy “master” cố định cho toàn mạng.
+Each runtime install is an **autonomous node** with its own state, credentials and resource scope. The desktop can use a local node, attach a server node, or use a home node to coordinate paired nodes. The home role is per conversation; there is no fixed “master” machine for the whole network.
 
-Đối tượng đầu: một owner có một hoặc nhiều máy/VPS. Kiến trúc có owner/principal/scopes nhưng chưa là SaaS đa tenant đối nghịch hay công cụ chia sẻ nội bộ doanh nghiệp hoàn chỉnh.
+Initial audience: one owner with one or more machines/VPSes. The architecture has owner/principal/scopes but is not yet an adversarial multi-tenant SaaS or a complete enterprise internal sharing tool.
 
-## 3. Quyết định đã khóa
+## 3. Locked decisions
 
-| Vấn đề | Chốt v2 |
+| Issue | v2 decision |
 |---|---|
-| Stack | TypeScript xuyên client/runtime; Node LTS + Pi SDK; React; Electron chỉ cho desktop |
-| VPS | OCI image non-root, volume bền vững; native headless package/service là đường thứ hai; web chat dùng cùng UI |
-| Persistence | SQLite + outbox/inbox trên từng node; không sync SQLite bằng shared volume hoặc multi-master |
-| Peer communication | Native versioned command/event/delegation protocol, TLS và app-level pairing; A2A là adapter interoperability về sau |
-| Connectivity | HTTPS endpoint reachable hoặc adapter mạng riêng Tailscale; không tự xây NAT traversal/crypto từ đầu |
-| Rich UI | Catalog khai báo nhanh + sandboxed mini-app runtime; MCP Apps được đưa vào scope |
-| Widget actions | Agent định nghĩa action từ capability đã discover, agent intent, workflow hoặc local view action; core validate/quyền hóa |
-| Pin | Pin instance/state vào vùng nhỏ trong conversation; không mở dashboard riêng hoặc một agent mới |
-| Extensions | Research → proposal → consent → staged install → test → activate/reload → resume; user-authored packages được hỗ trợ |
-| Browser Use | First-party pack dựa trên Playwright; API/DOM-first, screenshot khi cần; binary tải theo nhu cầu |
-| Computer Use | Optional first-party driver packs: macOS desktop + Linux virtual desktop; core giữ lease, permissions, cancellation |
-| Auth | Guided flow trong chat, nhưng OAuth/OS consent có thể mở system browser/settings rồi quay lại |
-| Onboarding | Hai đường: quick play bằng sample rõ nhãn, hoặc setup theo nhu cầu; không questionnaire dài |
-| Voice | Gemini Live (`gemini-3.8-live`) sau proxy WebSocket phía node theo tài khoản kiểm chứng; cùng command gateway; không restart voice khi reload Pi. Provider đã đổi khỏi GPT-Live theo [ADR-001](research/adr-001-gemini-live-provider.md) |
-| Personalization | Preferences/skills/recipes/widgets/extensions; scope/source/undo; không hidden memory |
+| Stack | TypeScript across client/runtime; Node LTS + Pi SDK; React; Electron only for desktop |
+| VPS | Non-root OCI image, persistent volume; native headless package/service is the second path; web chat uses the same UI |
+| Persistence | SQLite + outbox/inbox on each node; no syncing SQLite via shared volume or multi-master |
+| Peer communication | Native versioned command/event/delegation protocol, TLS and app-level pairing; A2A is a later interoperability adapter |
+| Connectivity | Reachable HTTPS endpoint or Tailscale private-network adapter; do not build NAT traversal/crypto from scratch |
+| Rich UI | Fast declarative catalog + sandboxed mini-app runtime; MCP Apps are brought into scope |
+| Widget actions | The agent defines actions from discovered capabilities, agent intent, workflows or local view actions; core validates/authorizes |
+| Pin | Pin instance/state to a small area in the conversation; does not open a separate dashboard or a new agent |
+| Extensions | Research → proposal → consent → staged install → test → activate/reload → resume; user-authored packages are supported |
+| Browser Use | First-party pack based on Playwright; API/DOM-first, screenshots when needed; binary downloaded on demand |
+| Computer Use | Optional first-party driver packs: macOS desktop + Linux virtual desktop; core keeps lease, permissions, cancellation |
+| Auth | Guided flow in chat, but OAuth/OS consent may open the system browser/settings and then return |
+| Onboarding | Two paths: quick play with a clearly labeled sample, or needs-based setup; no long questionnaire |
+| Voice | Gemini Live (`gemini-3.8-live`) behind a node-side WebSocket proxy on a verified account; same command gateway; voice does not restart when Pi reloads. Provider changed away from GPT-Live per [ADR-001](research/adr-001-gemini-live-provider.md) |
+| Personalization | Preferences/skills/recipes/widgets/extensions; scope/source/undo; no hidden memory |
 
-## 4. IN — đầy đủ trong v0.2 foundation beta
+## 4. IN — complete in v0.2 foundation beta
 
 | ID | Feature | Acceptance boundary |
 |---|---|---|
-| V01 | Conversation client | Một timeline/composer; text/voice/actions; shared React UI desktop/web; không cần session picker |
-| V02 | Portable runtime | macOS helper và Linux headless; server chạy không cần GUI/global Pi; version/health reporting |
+| V01 | Conversation client | One timeline/composer; text/voice/actions; shared React UI desktop/web; no session picker needed |
+| V02 | Portable runtime | macOS helper and Linux headless; server runs without GUI/global Pi; version/health reporting |
 | V03 | Persistent task/session runtime | Conductor responsive, worker budgets; task≠session; resume/steer/cancel/evidence |
-| V04 | Trusted node linking | Pair/revoke/inspect bằng chat; local + hai VPS test topology; scoped capability discovery |
-| V05 | Remote collaboration | Delegate/subtask/status/artifacts/input requests; stable IDs, retry dedup, reconnect; không blind failover write |
-| V06 | Workspace registry | Node-qualified paths/resources, aliases, roots; một writer/resource; explicit file transfer |
+| V04 | Trusted node linking | Pair/revoke/inspect via chat; local + two VPS test topology; scoped capability discovery |
+| V05 | Remote collaboration | Delegate/subtask/status/artifacts/input requests; stable IDs, retry dedup, reconnect; no blind failover write |
+| V06 | Workspace registry | Node-qualified paths/resources, aliases, roots; one writer/resource; explicit file transfer |
 | V07 | Capability platform | API/MCP/Pi/native/UI facets; lazy discovery; install plan, exact versions, dependency lifecycle |
-| V08 | Conversational install | Research nguồn → consent → sandboxed staging hoặc explicit trusted-host path → healthcheck → activate → resume |
-| V09 | Credential/auth setup | Secure input, browser OAuth, scopes, connection test, revoke/reauth; secrets không vào chat transcript |
-| V10 | Reference integration | Google Calendar: connect, chọn calendar, đọc agenda, tạo/sửa event có preview/consent; refresh/reconnect |
-| V11 | Rich built-ins | Catalog phong phú ở widgets-and-extensions; interactive actions, nguồn/freshness và accessibility |
-| V12 | Custom widgets | Chat-authored catalog compositions; user/third-party executable UI trong isolated mini-app host; MCP Apps bridge |
-| V13 | Pins | Persistent logical instance, compact/expanded mode; không duplicate player/call; pin không grant background privileges |
+| V08 | Conversational install | Source research → consent → sandboxed staging or explicit trusted-host path → healthcheck → activate → resume |
+| V09 | Credential/auth setup | Secure input, browser OAuth, scopes, connection test, revoke/reauth; secrets do not enter the chat transcript |
+| V10 | Reference integration | Google Calendar: connect, choose calendar, read agenda, create/edit event with preview/consent; refresh/reconnect |
+| V11 | Rich built-ins | Rich catalog in widgets-and-extensions; interactive actions, source/freshness and accessibility |
+| V12 | Custom widgets | Chat-authored catalog compositions; user/third-party executable UI in isolated mini-app host; MCP Apps bridge |
+| V13 | Pins | Persistent logical instance, compact/expanded mode; no duplicate player/call; pin does not grant background privileges |
 | V14 | Browser Use | Managed profile, DOM tools + screenshot, browser preview/takeover, capability & outcome checks |
-| V15 | Computer Use | One macOS driver và one Linux virtual-desktop profile; app/window scope where enforceable; explicit foreground consent |
+| V15 | Computer Use | One macOS driver and one Linux virtual-desktop profile; app/window scope where enforceable; explicit foreground consent |
 | V16 | Onboarding/personalization | Quick play, needs-based setup, skip/resume, minimal useful install plan; preference undo |
 | V17 | Live voice | Natural interruption/correction; same surface/action/task state; text fallback; media focus coordination |
 | V18 | Operations/security | Upgrade/drain, backups, rollback of package activation, telemetry redaction, resource budgets, failure injection |
 
-“Reference integration” không cấm cài connector khác. Nó xác định integration mà chính sản phẩm phải chứng minh chạy end-to-end để release; các dịch vụ khác chạy qua extension protocol theo compatibility và quyền thực tế.
+“Reference integration” does not forbid installing other connectors. It names the integration the product itself must prove works end-to-end for release; other services run through the extension protocol subject to actual compatibility and permissions.
 
-## 5. OUT — vẫn chủ động chưa làm
+## 5. OUT — still deliberately not done
 
-Native mobile client, Windows desktop release, cộng tác đa người realtime/CRDT, multi-master timeline, tự failover side effects sang node khác khi partition, đồng bộ mọi session/secrets giữa các máy, public unauthenticated agent endpoint, custom internet-wide peer discovery, marketplace/payment/review social network, tự patch core app, swarm sinh vô hạn.
+Native mobile client, Windows desktop release, realtime/CRDT multi-user collaboration, multi-master timeline, automatic failover of side effects to another node during a partition, syncing all sessions/secrets between machines, public unauthenticated agent endpoint, custom internet-wide peer discovery, marketplace/payment/review social network, self-patching the core app, unbounded swarm spawning.
 
-Không cam kết sản phẩm đã có đầy đủ Spotify/Telegram/Zoom/Notion integrations ở ngày đầu. SDK và host phải biểu đạt được các use case đó; examples và conformance tests chứng minh khả năng. Chính sách vendor, OAuth approval, SDK/browser support và quyền tài khoản vẫn là gate riêng.
+No commitment that the product has full Spotify/Telegram/Zoom/Notion integrations on day one. The SDK and host must be able to express those use cases; examples and conformance tests prove the capability. Vendor policy, OAuth approval, SDK/browser support and account permissions remain separate gates.
 
-Không yêu cầu viết lại browser engine, media conferencing server hay native automation engine. Reuse driver/SDK đã kiểm chứng qua adapter. Không coi một webpage có thể iframe tùy ý là “third-party integration”.
+Rewriting a browser engine, media conferencing server or native automation engine is not required. Reuse proven drivers/SDKs through adapters. An arbitrarily iframeable webpage is not treated as a “third-party integration”.
 
-## 6. Core tối thiểu nhưng không yếu
+## 6. Minimal but not weak core
 
-Core: identity/policy/consent; commands/events; task/effects; capabilities/install supervisor; integration/auth vault; surface/state/pin/action host; node transport; resource leases/cancel; retention/budget. Đây là hạ tầng dùng chung để extension không tự làm một hệ thứ hai.
+Core: identity/policy/consent; commands/events; task/effects; capabilities/install supervisor; integration/auth vault; surface/state/pin/action host; node transport; resource leases/cancel; retention/budget. This is shared infrastructure so extensions do not build a second system of their own.
 
-Pack: domain tools, API adapter, MCP server config, Pi skills/extensions, widgets, browser/computer drivers, onboarding recipes. Driver có thể không cài, nhưng contract và quyền tương ứng đã có trong core.
+Pack: domain tools, API adapter, MCP server config, Pi skills/extensions, widgets, browser/computer drivers, onboarding recipes. A driver may not be installed, but its contract and corresponding permissions already exist in core.
 
 ## 7. Golden journeys
 
-**J1 — tò mò:** mở app → chọn thử ngay → tương tác chart/map/note mẫu → pin → hiểu cách chat; không cần API key cho scripted sample. Muốn chat AI thật thì setup provider trong cùng flow; không ngụy trang demo thành inference thật.
+**J1 — curious:** open the app → choose try now → interact with a sample chart/map/note → pin → understand how to chat; no API key needed for the scripted sample. To chat with real AI, set up a provider in the same flow; do not disguise the demo as real inference.
 
-**J2 — lịch cá nhân:** “Xem lịch tuần này” → app chọn integration phù hợp → xin consent → auth ở browser tin cậy → probe → calendar thật → pin → nói “dời lịch này” → preview mutation → xác nhận → verify.
+**J2 — personal calendar:** “Show my calendar this week” → the app chooses a suitable integration → asks for consent → auth in a trusted browser → probe → real calendar → pin → say “move this event” → mutation preview → confirm → verify.
 
-**J3 — cài thứ đang thiếu:** task nhận ra cần một capability → app research → đề xuất một lựa chọn có nguồn/phiên bản/quyền → user đồng ý → stage/test → activate đúng node → reload đúng worker khi cần → tiếp tục đúng task revision.
+**J3 — install what is missing:** the task recognizes it needs a capability → the app researches → proposes one option with source/version/permissions → user agrees → stage/test → activate on the right node → reload the right worker when needed → continue on the right task revision.
 
-**J4 — nhiều máy:** desktop nhờ VPS A build, VPS B kiểm tra một môi trường khác theo quyền → results/artifacts về cùng chat; desktop đóng thì remote jobs không chết. Mất mạng không biến thành fake progress hoặc duplicate run.
+**J4 — multiple machines:** the desktop asks VPS A to build, VPS B checks another environment per permissions → results/artifacts come back to the same chat; when the desktop closes, remote jobs do not die. Network loss does not turn into fake progress or a duplicate run.
 
-**J5 — custom mini-app:** “Tạo widget ghi chú checklist và ghim lại” → composition hoặc isolated bundle → preview/test/approve → pin; restart vẫn giữ draft, không tự grant filesystem/network.
+**J5 — custom mini-app:** “Create a checklist note widget and pin it” → composition or isolated bundle → preview/test/approve → pin; restart still keeps the draft, does not auto-grant filesystem/network.
 
-**J6 — browser/computer:** API thiếu thao tác → app đề xuất managed browser; nếu cần desktop app thì chọn đúng device, hỏi foreground/capture/input → preview/takeover → dừng bằng host control; không bấm consent bằng computer tool.
+**J6 — browser/computer:** the API lacks an operation → the app proposes a managed browser; if a desktop app is needed, choose the right device, ask for foreground/capture/input → preview/takeover → stop via host control; never click consent with the computer tool.
 
 ## 8. Definition of done
 
-V01–V18 có trace tới milestone/test. J1–J6 chạy trên clean environments, có ít nhất một provider/connector thật và bằng chứng hai VPS phối hợp. Toàn bộ UI có thể vận hành qua chat cùng các system/native consent bắt buộc. Không dùng prototype video thay cho fault/recovery tests.
+V01–V18 trace to milestones/tests. J1–J6 run on clean environments, with at least one real provider/connector and evidence of two VPSes coordinating. The whole UI can be operated through chat together with the required system/native consent. Prototype videos do not replace fault/recovery tests.
 
-Các feature chưa đạt API/account/signing/driver gate phải ghi blocked, không đổi tên thành “supported” để kịp release. Scope mở rộng là có chủ đích; thứ tự implementation theo dependencies, không ép tất cả vào một PR.
+Features that have not passed an API/account/signing/driver gate must be recorded as blocked, not renamed “supported” to make the release. The expanded scope is deliberate; implementation order follows dependencies, not forcing everything into one PR.

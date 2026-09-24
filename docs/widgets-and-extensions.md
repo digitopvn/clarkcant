@@ -1,17 +1,19 @@
 # Widgets, Mini-apps, Pins & Extension SDK v2
 
-**Ngày:** 16/09/2026. Đây là contract đề xuất của app, không phải upstream Pi/MCP wire schema.
+> English (default) · [Tiếng Việt](widgets-and-extensions.vi.md)
 
-## 1. Định nghĩa lại widget
+**Date:** 16/09/2026. This is the app's proposed contract, not the upstream Pi/MCP wire schema.
 
-Widget là một implementation UI nhận **props + data bindings + agent-defined actions**. Agent không cần viết một webapp cho mỗi response, và app developer không phải hardcode business logic cho từng nút mà agent có thể nghĩ ra.
+## 1. Redefining the widget
 
-Có hai con đường đồng thời:
+A widget is a UI implementation that receives **props + data bindings + agent-defined actions**. The agent does not need to write a webapp for every response, and the app developer does not have to hardcode business logic for every button the agent might come up with.
 
-1. **Catalog widgets:** components đã cài, render nhanh từ JSON có schema. Agent chọn component, truyền params, nối actions. Có thể ghép thành mini-app bằng layout/state primitives.
-2. **Custom mini-apps:** user hoặc third party viết UI thực sự, đóng thành package được approve. Chạy trong isolated host, có SDK để nhận props/context, lưu state, gửi events, gọi approved capabilities. MCP Apps là integration protocol được hỗ trợ cho nhánh này [R06–R08].
+There are two paths at the same time:
 
-Một widget có thể chỉ là chart tĩnh. Cũng có thể là note editor, player, conversation view hoặc video call. Độ phong phú của SDK không có nghĩa mọi vendor integration đã được đóng gói sẵn.
+1. **Catalog widgets:** installed components that render quickly from schema-backed JSON. The agent picks the component, passes params and wires up actions. They can be composed into a mini-app with layout/state primitives.
+2. **Custom mini-apps:** the user or a third party writes a real UI and packages it as an approved package. It runs in an isolated host, with an SDK to receive props/context, store state, send events and call approved capabilities. MCP Apps is the supported integration protocol for this path [R06–R08].
+
+A widget can be just a static chart. It can also be a note editor, a player, a conversation view or a video call. A rich SDK does not mean every vendor integration is already packaged.
 
 ## 2. Mental model
 
@@ -31,11 +33,11 @@ View update OR capability invocation OR new agent intent/workflow
 Verified state/result → update widget and conversation
 ```
 
-“Agent xác định action” là thật: agent được chọn tool và arguments trong phạm vi capabilities hiện có, hoặc tạo một ý định cho lượt agent mới. Core chỉ kiểm tra và thực thi theo quyền, không thu hẹp thành danh sách business buttons cố định.
+"The agent defines the action" is real: the agent may choose the tool and arguments within the scope of the available capabilities, or create an intent for a new agent turn. The core only checks and executes according to permissions; it does not narrow this down to a fixed list of business buttons.
 
-## 3. Widget definition và instance
+## 3. Widget definition and instance
 
-### 3.1 Definition đăng ký bởi package
+### 3.1 Definition registered by a package
 
 ```typescript
 interface WidgetDefinition {
@@ -54,9 +56,9 @@ interface WidgetDefinition {
 }
 ```
 
-Definition được discover như một capability, với preview/examples/prop docs. Không nhét toàn bộ widget catalog vào model context. Unknown component/version có fallback; không fetch JavaScript từ URL model tự cung cấp.
+A definition is discovered like a capability, with preview/examples/prop docs. The whole widget catalog is not stuffed into the model context. An unknown component/version has a fallback; JavaScript is never fetched from a URL the model supplied itself.
 
-### 3.2 Instance và snapshot
+### 3.2 Instance and snapshot
 
 ```typescript
 interface WidgetInstance {
@@ -90,16 +92,16 @@ interface Pin {
 }
 ```
 
-Schemas phải validate các trường `unknown` theo definition; không pass-through tới DOM. History giữ snapshots có ngày cập nhật. Pin giữ instance hiện hành; lịch sử không bị viết lại thành dữ liệu hiện tại mà không dấu hiệu rõ.
+Schemas must validate the `unknown` fields against the definition; nothing is passed through to the DOM. History keeps snapshots with their update date. A pin holds the current instance; history is not rewritten into current data without a clear indication.
 
 ## 4. Rich built-in catalog
 
-Core chỉ sở hữu renderer/registry/action/state primitives. Các implementation nặng có thể shipped/lazy-loaded như first-party UI packs; user vẫn thấy một app thống nhất.
+The core owns only the renderer/registry/action/state primitives. Heavy implementations can be shipped/lazy-loaded as first-party UI packs; the user still sees one unified app.
 
-| Nhóm | Components và interaction chính | Gate thực tế |
+| Group | Main components and interactions | Practical gate |
 |---|---|---|
-| Layout | Stack, Row, Grid, Card, Tabs, Divider, collapsible group | Responsive, bounded layout, không tự tạo global navigation |
-| Text / status | Rich text, Markdown, code, badge, metric, progress | Sanitization, evidence/state nguồn thật |
+| Layout | Stack, Row, Grid, Card, Tabs, Divider, collapsible group | Responsive, bounded layout, does not create its own global navigation |
+| Text / status | Rich text, Markdown, code, badge, metric, progress | Sanitization, evidence/state from a real source |
 | Choice | Chips, select, multiselect, command choice | Stable IDs, keyboard, no hidden expanded permissions |
 | Form | Text, number, date/time, slider, checkbox, file request | Client+server validation, no raw secrets in ordinary form |
 | Lists | Result list, checklist, tree subset, contacts | Filter/select, not session sidebar by default |
@@ -117,51 +119,51 @@ Core chỉ sở hữu renderer/registry/action/state primitives. Các implementa
 | Browser / computer | Screenshot/live preview, target, takeover, stop | Session lease, authenticated media, never privileged app browser |
 | Operational cards | Connection status, install plan, device/task state | Host-owned trust indicators, typed underlying state |
 
-“Một rich editor” không có nghĩa sao chép toàn bộ Notion. “Conversation widget” không có nghĩa mọi service có cùng quyền inbox. Domain behavior đến từ adapter/extension đang có.
+"A rich editor" does not mean copying all of Notion. "Conversation widget" does not mean every service has the same inbox permissions. Domain behavior comes from the existing adapter/extension.
 
-Host-only approval/credential/device consent cards không nằm trong ordinary third-party catalog. Model có thể request host mở một flow nhưng không tự định nghĩa trạng thái “đã được cấp quyền”.
+Host-only approval/credential/device consent cards are not part of the ordinary third-party catalog. The model can ask the host to open a flow, but it cannot define a "permission granted" state itself.
 
-### 4.1 Trạng thái triển khai (2026-09-17)
+### 4.1 Implementation status (2026-09-17)
 
-Ghi rõ phần nào của §4 đã có trong repo và phần nào còn là thiết kế, để không đọc bảng trên như một bản kiểm kê tính năng đã xong.
+This records which parts of §4 are already in the repo and which are still design, so the table above is not read as an inventory of finished features.
 
-**Đã có, kèm test:**
+**Present, with tests:**
 
-- Định nghĩa catalog + family trong `packs/data-canvas`: `canvas.line/bar/donut/table`, `canvas.metrics`, `canvas.filter`, `canvas.calendar`, `canvas.image`, `canvas.cta`, và container `canvas.overview@1`.
-- Leaf renderer trong `packages/conversation-client` (donut thật, month grid, KPI tile, image, CTA) cùng text alternative cho mọi vùng.
-- Vùng **ảnh** của sketch nay thật sự tới được người dùng: `publishMiniAppData` trả ảnh mới nhất đã nhập, template `overview` có slot `image` (fixed, optional theo dữ liệu), và text alternative của vùng mang **alt text người dùng nhập**. Ảnh đi qua `blob:` URL vì token không thể nằm trong `<img src>`, nên CSP của `apps/web/index.html` phải cho `img-src ... blob:` — thiếu điều đó thì mọi ảnh đã nhập render thành "Chưa tải được hình ảnh" dù node trả bytes đúng.
-- **Declarative composition** (trust tier thứ hai trong bảng trên) là tier đang được dùng cho mini-app: spec có version, mỗi section pin `definitionRef.digest`, không có payload thực thi, action chỉ là tham chiếu tới binding do server compile.
-- Snapshot là **bundle bất biến** trong bảng riêng (`presentation_bundles`), không phải `catalog:id` trỏ tới dữ liệu hiện tại; xoá nguồn dữ liệu → tombstone, không đọc lại live.
-- Pin = cùng một logical instance, một live owner có lease (`widget_live_owners.lease_expires_at`), vị trí còn lại read-only.
-- **Read-only chỉ chặn action, không chặn view state**: snapshot lịch sử và surface do tab khác sở hữu vẫn đổi được ngày đang chọn / kỳ đang xem (đó là trình bày), nhưng không có `onAction` nên không có đường nào tới server; nút CTA hiện trạng thái disabled kèm lý do thay vì giả vờ bấm được.
-- Snapshot trỏ đúng message chứa nó: `messageId` được cấp **một lần** rồi dùng cho cả lời gọi composer và message được ghi, nên không có snapshot mồ côi (test `apps/web/e2e/mini-app.spec.ts` phủ đường lịch sử này).
-- Action M1 chỉ gồm `period.change`, `date.select`, `view.save` (`view` kind). `invoke`/`agent`/`workflow` bị từ chối ở `invokeMiniAppAction` và phải đi đường approval.
-- Composer tất định `CC_MODEL_FIXTURE=1` chỉ tồn tại để browser suite chạy được đường composed-surface mà không gọi provider; node in cảnh báo lúc khởi động và câu trả lời tự nói nó là fixture.
+- Catalog + family definitions in `packs/data-canvas`: `canvas.line/bar/donut/table`, `canvas.metrics`, `canvas.filter`, `canvas.calendar`, `canvas.image`, `canvas.cta`, and the container `canvas.overview@1`.
+- Leaf renderers in `packages/conversation-client` (a real donut, month grid, KPI tile, image, CTA) together with a text alternative for every region.
+- The sketch's **image** region now actually reaches the user: `publishMiniAppData` returns the most recently imported image, the `overview` template has an `image` slot (fixed, optional depending on the data), and the region's text alternative carries the **alt text the user entered**. Images go through a `blob:` URL because the token cannot sit in `<img src>`, so the CSP in `apps/web/index.html` must allow `img-src ... blob:` — without it, every imported image renders as "Could not load the image" even though the node returns the correct bytes.
+- **Declarative composition** (the second trust tier in the table above) is the tier currently used for mini-apps: the spec is versioned, each section pins `definitionRef.digest`, there is no executable payload, and an action is only a reference to a server-compiled binding.
+- A snapshot is an **immutable bundle** in its own table (`presentation_bundles`), not a `catalog:id` pointing at current data; deleting the data source → tombstone, it is not re-read live.
+- Pin = the same logical instance, one live owner with a lease (`widget_live_owners.lease_expires_at`), the remaining locations are read-only.
+- **Read-only blocks actions only, not view state**: a historical snapshot and a surface owned by another tab can still change the selected date / viewed period (that is presentation), but they have no `onAction`, so there is no path to the server; the CTA button shows a disabled state with a reason instead of pretending to be clickable.
+- A snapshot points at the message that contains it: `messageId` is issued **once** and then used for both the composer call and the recorded message, so there are no orphaned snapshots (the test `apps/web/e2e/mini-app.spec.ts` covers this history path).
+- M1 actions consist only of `period.change`, `date.select`, `view.save` (`view` kind). `invoke`/`agent`/`workflow` are rejected in `invokeMiniAppAction` and must go through the approval path.
+- The deterministic composer `CC_MODEL_FIXTURE=1` exists only so the browser suite can run the composed-surface path without calling a provider; the node prints a warning at startup and the answer states that it is a fixture.
 
-- **Đính kèm tệp đi tới được agent**: composer tải lên, bytes nằm trong blob store dùng chung (`dataDir/blobs`, content-addressed, `mode: 0o600`), quota tính theo principal, và loại tệp do **magic bytes** quyết định chứ không do đuôi tên. Prompt chỉ mang `att_…` opaque và **không bao giờ** có path; agent đọc nội dung qua tool của host `read_attachment(attachmentId)`, tool này không nhận tham số path nên không có đường nào mở tệp khác. Tin nhắn đã lưu là nguồn duy nhất — timeline và prompt là hai cách đọc cùng một dòng (`apps/web/e2e/attachments.spec.ts`; phần prompt được chứng minh ở ranh giới adapter bằng `FakePiAdapter.promptsFor()`).
-- **Memory** (`memory_records`, migration 18) **không** phải một index tìm kiếm thứ hai. Xoá một memory xoá **đường inject** vào lượt sau — brief được đọc lại mỗi lượt chứ không cache trong tiến trình — còn tin nhắn gốc của người dùng vẫn nằm trong lịch sử hội thoại và vẫn nhìn thấy được. Vì vậy đây không phải hidden memory: mọi thứ được nhớ đều đọc được và xoá được ở tab Memory (`apps/web/e2e/memory.spec.ts`).
-- **Cửa sổ desktop** vào tới client thật: `electron . --renderer-url <url> --data-dir <dir>`, CSP suy ra từ origin, và một bridge có tên `getSession()` trả `{ baseUrl, token }` đọc từ `identity.json`. Token **không** đi vào argv hay URL, nơi nó sẽ nằm trong danh sách tiến trình và trong lịch sử trình duyệt.
-- `?cc-compact=1` là **đường test-only** để browser suite chạm được thanh voice tối giản, không phải một tính năng. Đường thật vào trạng thái đó là cửa sổ thu nhỏ.
-- **Widget Library và Widget Lab**: catalog widget dựng sẵn nay duyệt được từ Settings → Extensions (library) và Settings → Developer (Lab). Preview gọi chính `resolveRenderer` mà hội thoại dùng, nên nó là renderer đang chạy chứ không phải ảnh chụp, và definition thiếu renderer thì hiện lý do thay vì im lặng. Surface nằm **bên cạnh** hội thoại: mở nó không unmount composer. Package đã cài được liệt kê như **provenance** trên danh sách riêng (version, source tier, digest, trust lane) chứ không thành card trong catalog, vì không route nào expose widget definition của một package. Chi tiết ở [widget-development.md](./widget-development.md) §23.
+- **File attachments reach the agent**: the composer uploads, the bytes live in the shared blob store (`dataDir/blobs`, content-addressed, `mode: 0o600`), the quota is counted per principal, and the file type is decided by **magic bytes**, not by the file extension. The prompt carries only an opaque `att_…` and **never** a path; the agent reads the content through the host tool `read_attachment(attachmentId)`, which takes no path parameter, so there is no way to open another file. The stored message is the single source — the timeline and the prompt are two readings of the same row (`apps/web/e2e/attachments.spec.ts`; the prompt part is proven at the adapter boundary with `FakePiAdapter.promptsFor()`).
+- **Memory** (`memory_records`, migration 18) is **not** a second search index. Deleting a memory deletes the **injection path** into the next turn — the brief is re-read every turn rather than cached in the process — while the user's original message stays in the conversation history and remains visible. So this is not hidden memory: everything remembered can be read and deleted in the Memory tab (`apps/web/e2e/memory.spec.ts`).
+- The **desktop window** reaches the real client: `electron . --renderer-url <url> --data-dir <dir>`, a CSP derived from the origin, and a named bridge `getSession()` that returns `{ baseUrl, token }` read from `identity.json`. The token does **not** go into argv or the URL, where it would sit in the process list and in the browser history.
+- `?cc-compact=1` is a **test-only path** so the browser suite can reach the minimal voice bar; it is not a feature. The real path into that state is the minimized window.
+- **Widget Library and Widget Lab**: the built-in widget catalog can now be browsed from Settings → Extensions (library) and Settings → Developer (Lab). The preview calls the same `resolveRenderer` the conversation uses, so it is the running renderer rather than a screenshot, and a definition without a renderer shows a reason instead of staying silent. The surface sits **beside** the conversation: opening it does not unmount the composer. Installed packages are listed as **provenance** on a separate list (version, source tier, digest, trust lane) rather than as cards in the catalog, because no route exposes a package's widget definitions. Details in [widget-development.md](./widget-development.md) §23.
 
-**Chưa có (deferred, không được claim là đã xong):**
+**Not present (deferred, must not be claimed as done):**
 
-- `isolated-app` và `mcp-app`: sandbox policy/registry có code và test, nhưng **renderer runtime cho app cách ly chưa được chứng minh**. Không có app runtime trong repo.
-- Google Calendar connector, custom iframe mini-app, và CTA dạng “agent làm việc X” đều ngoài M1.
-- Bảng family coverage trong §4 vẫn là đích đến của release gate: repo hiện có test cho các family mà composed surface cần (`metrics`, `filter`, `trend`, `calendar`, `media`, `cta`, `tables`, `layout`), không phải cho toàn bộ danh sách.
+- `isolated-app` and `mcp-app`: the sandbox policy/registry has code and tests, but **the renderer runtime for isolated apps is not proven**. There is no app runtime in the repo.
+- The Google Calendar connector, custom iframe mini-apps and "agent does X" style CTAs are all outside M1.
+- The family coverage table in §4 is still the release-gate target: the repo currently has tests for the families the composed surface needs (`metrics`, `filter`, `trend`, `calendar`, `media`, `cta`, `tables`, `layout`), not for the whole list.
 
-- **Nội dung tệp tới agent**: tệp văn bản đi vào prompt của lượt (`attachmentBrief` chèn nội dung, `read_attachment` đọc lại theo id), **PDF được trích văn bản** bằng `apps/runtime/src/pdf-text.ts` (không thêm dependency), và hai journey chứng minh câu trả lời **dùng** nội dung đó — một cho tệp văn bản, một cho PDF ([attachments](../apps/web/e2e/attachments.spec.ts)). **Ảnh được giao như một ảnh**: `read_attachment` trả `{ type: "image", data, mimeType }` và `toSdkTool` chuyển nguyên block đó cho SDK, nên model nhận chính bức ảnh thay vì một câu mô tả nó. Hai test giữ điều đó: một ở seam adapter (`packages/pi-adapter/test/pi-adapter.spec.ts`, "hands the image to the SDK as an image block, not as a sentence about one") và một ở tool (`apps/runtime/test/read-attachment-tool.spec.ts`, "hands a picture over as a picture rather than describing it").
-- **Chưa có route xoá conversation**: retention hiện là `releaseConversationAttachments`. Bốn bảng tham chiếu `conversations` mà không có `ON DELETE CASCADE`, và `PRAGMA foreign_keys = ON`, nên xoá một conversation cần một migration xử lý các tham chiếu trước.
+- **File content reaches the agent**: text files go into the turn's prompt (`attachmentBrief` inserts the content, `read_attachment` re-reads it by id), **PDFs have their text extracted** with `apps/runtime/src/pdf-text.ts` (no added dependency), and two journeys prove the answer **uses** that content — one for a text file, one for a PDF ([attachments](../apps/web/e2e/attachments.spec.ts)). **An image is delivered as an image**: `read_attachment` returns `{ type: "image", data, mimeType }` and `toSdkTool` passes that block unchanged to the SDK, so the model receives the image itself rather than a sentence describing it. Two tests hold this: one at the adapter seam (`packages/pi-adapter/test/pi-adapter.spec.ts`, "hands the image to the SDK as an image block, not as a sentence about one") and one at the tool (`apps/runtime/test/read-attachment-tool.spec.ts`, "hands a picture over as a picture rather than describing it").
+- **No conversation delete route yet**: retention is currently `releaseConversationAttachments`. Four tables reference `conversations` without `ON DELETE CASCADE`, and `PRAGMA foreign_keys = ON`, so deleting a conversation needs a migration that handles those references first.
 
-Cả hai cổng này chạy trong CI: job `e2e` chạy browser suite, và job `desktop smoke (xvfb)` chạy
-`electron . --smoke-test` dưới `xvfb-run` (thêm ở PR #44). Evidence của cửa sổ vì thế không còn phụ thuộc vào một
-lần người vận hành chạy. Lần chạy đầu của hai job đó tìm ra hai lỗi thật và cả hai đã được sửa ở gốc: Electron
-không khởi động được vì sandbox SUID không cấu hình được trên runner, và một journey bàn phím lấy focus khi
-panel còn đang hiện nên `focus()` bị bỏ.
+Both of these gates run in CI: the `e2e` job runs the browser suite, and the `desktop smoke (xvfb)` job runs
+`electron . --smoke-test` under `xvfb-run` (added in PR #44). The window evidence therefore no longer depends on a
+run by an operator. The first run of those two jobs found two real bugs, and both were fixed at the root: Electron
+could not start because the SUID sandbox could not be configured on the runner, and a keyboard journey took focus while
+the panel was still appearing, so `focus()` was dropped.
 
 ## 5. Agent-defined actions
 
-### 5.1 Bốn loại action
+### 5.1 Four kinds of action
 
 ```typescript
 type ActionProposal =
@@ -171,19 +173,19 @@ type ActionProposal =
   | { kind: 'workflow'; steps: WorkflowStep[]; inputSchema?: object };
 ```
 
-- **view:** client-local transient gesture hoặc canonical view state. Filter/zoom/playhead UI không gọi model mỗi lần.
-- **invoke:** agent chọn một discovered tool/API/MCP capability, target node/account, arguments và cho phép user cung cấp fields đã bind. Không cần app viết riêng “PlaySpotifyButton”.
-- **agent:** click trở thành một ý định mới với context đã xác định, ví dụ “tìm khung giờ khác cho event này”. Intent có thể do model viết; host trình bày đúng label và không coi text đó là permission.
-- **workflow:** một chuỗi bounded steps từ các capabilities đã biết, có condition/transform enum được kiểm soát. Không arbitrary JS, shell interpolation hoặc vòng lặp vô hạn.
+- **view:** a client-local transient gesture or canonical view state. Filter/zoom/playhead UI does not call the model every time.
+- **invoke:** the agent picks a discovered tool/API/MCP capability, target node/account and arguments, and lets the user provide bound fields. The app does not need to write a dedicated "PlaySpotifyButton".
+- **agent:** a click becomes a new intent with defined context, for example "find another time slot for this event". The intent may be written by the model; the host presents the label exactly and does not treat that text as permission.
+- **workflow:** a chain of bounded steps from known capabilities, with a controlled enum of conditions/transforms. No arbitrary JS, shell interpolation or infinite loops.
 
-View operations có registry, nhưng domain action không bị giới hạn vào registry business handlers cố định của core. Capability registry từ installed extensions là nơi mở rộng. Muốn capability chưa có phải đi qua install/connect flow, không coi tên tool do model bịa là executable.
+View operations have a registry, but domain actions are not limited to a fixed registry of core business handlers. The capability registry from installed extensions is the extension point. A capability that does not exist yet must go through an install/connect flow; a tool name invented by the model is not treated as executable.
 
-### 5.2 Ví dụ Calendar
+### 5.2 Calendar example
 
 ```json
 {
   "widget": "agent.calendar.agenda@1",
-  "props": { "title": "Tuần này", "eventsRef": "dataset_events_demo", "timezone": "Asia/Ho_Chi_Minh" },
+  "props": { "title": "This week", "eventsRef": "dataset_events_demo", "timezone": "Asia/Ho_Chi_Minh" },
   "actions": {
     "refresh": {
       "kind": "invoke",
@@ -192,60 +194,60 @@ View operations có registry, nhưng domain action không bị giới hạn vào
     },
     "findAnotherTime": {
       "kind": "agent",
-      "intent": "Đề xuất thời gian khác cho sự kiện được chọn; chưa cập nhật lịch.",
+      "intent": "Suggest another time for the selected event; the calendar has not been updated.",
       "contextRefs": ["selectedEvent", "conn_demo"]
     }
   }
 }
 ```
 
-Đây là dữ liệu minh họa, không integration đã connected. Host resolve refs, verify ownership, bind real account/node, whitelist user-controlled fields và xác minh requested scopes. Một label “Xem lịch” không được giấu action xóa event: host phân loại effect từ capability, hiện operation thật khi xin quyền.
+This is illustrative data, not a connected integration. The host resolves refs, verifies ownership, binds the real account/node, whitelists user-controlled fields and verifies requested scopes. A "View calendar" label must not hide an event-delete action: the host classifies the effect from the capability and shows the real operation when asking for permission.
 
-### 5.3 Binding và execute
+### 5.3 Binding and execute
 
-Host cấp action ID với instance/definition/package generation, input schema, allowed data refs, fixed connection/resource constraints, policy requirement và action spec digest. Action ID không là bearer authorization token.
+The host issues an action ID with the instance/definition/package generation, input schema, allowed data refs, fixed connection/resource constraints, policy requirement and action spec digest. The action ID is not a bearer authorization token.
 
-Client gửi `instanceId + actionId + expectedRevision + input + commandId`. Backend authenticate, dedup, validate inputs/schema/refs, check current generation/connection/grants, rồi commit intent. Giới hạn token/rate/deadline trước gọi conductor từ agent-intent action.
+The client sends `instanceId + actionId + expectedRevision + input + commandId`. The backend authenticates, dedups, validates inputs/schema/refs, checks the current generation/connection/grants, then commits the intent. Token/rate/deadline limits apply before calling the conductor from an agent-intent action.
 
-Versioning phân biệt presentation-only revision, data revision và action-binding revision; không vô hiệu hóa mọi nút chỉ vì tooltip đổi. Nhưng target/account/tool generation/meaning thay đổi phải tạo binding mới, approval cũ không theo sang.
+Versioning distinguishes presentation-only revision, data revision and action-binding revision; it does not invalidate every button just because a tooltip changed. But a change in target/account/tool generation/meaning must create a new binding, and the old approval does not carry over.
 
-Task có thể đã complete nhưng instance action vẫn hợp lệ, vì invocation mới tạo operation/task mới. Một task approval cũ không biến thành vĩnh viễn cho pinned widget.
+A task may already be complete while the instance action is still valid, because a new invocation creates a new operation/task. An old task approval does not become permanent for a pinned widget.
 
-## 6. Pin UX và state ownership
+## 6. Pin UX and state ownership
 
-**Pin là một gesture giữ mini-app trong conversation, không phải mở thêm sản phẩm dashboard.** User có thể nói “ghim cái lịch này”, bấm pin, “thu nhỏ player”, “bỏ ghim”.
+**A pin is a gesture that keeps a mini-app in the conversation, not the opening of an extra dashboard product.** The user can say "pin this calendar", press pin, "minimize the player", "unpin".
 
-Default không có pin. Khi có, vùng compact nằm sát chat/composer hoặc header, không session/sidebar. Chỉ một expanded surface mặc định; các pin khác là compact chips/cards; overflow không chiếm toàn màn hình. Tất cả operations vẫn gọi được bằng chat. Không auto-pin theo ý agent khi user chưa yêu cầu.
+By default there are no pins. When there are, the compact area sits next to the chat/composer or header, not a session/sidebar. Only one expanded surface by default; other pins are compact chips/cards; overflow does not take over the whole screen. All operations remain callable through chat. No auto-pin at the agent's discretion when the user has not asked for it.
 
-Pin points tới cùng logical instance. Timeline có thể hiện snapshot của nó và nút focus. **Một player/call không được mount hai live effect owners** khi vừa inline vừa pinned. Renderer chuyển vị trí/ownership; bản khác chỉ preview read-only. Pin reordering không restart audio.
+A pin points at the same logical instance. The timeline can show its snapshot and a focus button. **A player/call must not mount two live effect owners** when it is both inline and pinned. The renderer moves the location/ownership; the other copy is only a read-only preview. Reordering pins does not restart audio.
 
-### 6.1 Vòng đời
+### 6.1 Lifecycle
 
-- Unpin bỏ presentation preference, không xóa note hoặc tự hủy remote job.
-- Close mini-app khác với unpin; active call cần rõ “rời cuộc gọi”.
-- Restart khôi phục snapshot/draft/pin order. Không tự play media, join call hoặc bật mic.
-- Subscription đọc được resume chỉ khi user đã cấp standing refresh grant, đúng visibility/budget. Nếu không có, hiện “cập nhật khi mở”.
-- Pin không tự tạo periodic LLM task. Refresh dữ liệu dùng adapter deterministic, có TTL/backoff và last-updated.
-- Offline giữ cached read view, field drafts; mutations không tự gửi khi mạng trở lại trừ policy queue được user hiểu/chấp thuận. Sensitive mutation cần revalidation trước send.
-- Widget/server/package unavailable vẫn hiển thị text/snapshot; không “biến mất khỏi lịch sử”.
+- Unpin removes the presentation preference; it does not delete the note or cancel a remote job by itself.
+- Closing a mini-app is different from unpinning; an active call needs an explicit "leave call".
+- Restart restores snapshot/draft/pin order. It does not auto-play media, join a call or turn on the mic.
+- A read subscription resumes only when the user has granted a standing refresh grant, with the correct visibility/budget. Without one, show "updates when opened".
+- A pin does not create a periodic LLM task by itself. Data refresh uses a deterministic adapter, with TTL/backoff and last-updated.
+- Offline keeps the cached read view and field drafts; mutations are not sent automatically when the network returns unless there is a policy queue the user understands/accepted. A sensitive mutation needs revalidation before sending.
+- An unavailable widget/server/package still shows text/snapshot; it does not "disappear from history".
 
-### 6.2 Drafts và xung đột
+### 6.2 Drafts and conflicts
 
-Note editor, form và messaging composer có draft store tách external committed state. Autosave remote chỉ sau grant có nội dung; hiện saving/saved/conflict. API supports ETag/version thì dùng; không có thì fetch-compare hoặc cảnh báo merge best effort, không giả conflict-free editing.
+The note editor, forms and the messaging composer have a draft store separate from external committed state. Remote autosave happens only after a grant covering the content; show saving/saved/conflict. If the API supports ETag/version, use it; if not, fetch-compare or warn of a best-effort merge, and do not pretend editing is conflict-free.
 
-Thay schema không tự gửi draft sang fields khác. State migrations có version/test/backup, failing upgrade giữ snapshot và recovery choices. Không multi-user CRDT trong release đầu.
+A schema change does not automatically send a draft into different fields. State migrations have version/test/backup; a failing upgrade keeps the snapshot and recovery choices. No multi-user CRDT in the first release.
 
 ## 7. Custom widget development
 
-User có ba lựa chọn, tất cả discover được từ chat:
+The user has three options, all discoverable from chat:
 
-1. Ghép existing components và action descriptors; không cần build code.
-2. Nhờ agent tạo package UI từ template SDK trong isolated build workspace; preview, test, approve capabilities, cài vào user scope.
-3. Cài vendor package hoặc MCP App đã tồn tại; exact source/version và quyền như extension khác.
+1. Compose existing components and action descriptors; no code build needed.
+2. Ask the agent to create a UI package from the SDK template in an isolated build workspace; preview, test, approve capabilities, install into user scope.
+3. Install an existing vendor package or MCP App; exact source/version and permissions like any other extension.
 
-Không cho agent tự hot-evaluate generated JSX trong app renderer. Tự viết widget không bị cấm; nó đi qua build/install boundary giống third party. Không cần developer mode toàn quyền chỉ để có note widget không network.
+The agent is not allowed to hot-evaluate generated JSX in the app renderer. Writing your own widget is not forbidden; it goes through the same build/install boundary as a third party. A full-power developer mode is not needed just to have a note widget without network.
 
-### SDK chức năng
+### SDK functions
 
 ```text
 props.read / props.subscribe
@@ -259,49 +261,49 @@ semantic.publish(summary, selectedIds, availableActions)
 lifecycle.onMount / onSuspend / onResume / onDispose
 ```
 
-`requestPin` là proposal trừ khi originated trực tiếp từ user gesture đã rõ. SDK không có `readAllSecrets`, `shell`, `queryCoreDb`, `disableCSP`, `approve`, `installAnything` hoặc `registerSidebar`.
+`requestPin` is a proposal unless it originated directly from a clear user gesture. The SDK has no `readAllSecrets`, `shell`, `queryCoreDb`, `disableCSP`, `approve`, `installAnything` or `registerSidebar`.
 
 ### Trust tiers
 
-| Type | Execution | Quyền mặc định |
+| Type | Execution | Default permissions |
 |---|---|---|
-| Built-in catalog | Trusted client code | Render props; actions qua host |
+| Built-in catalog | Trusted client code | Render props; actions via host |
 | Declarative composition | No executable payload | Existing components + bound actions |
 | User/third-party UI | Isolated origin/iframe | No Node/fs/host cookies; explicit network/media/actions |
-| Tool/API/MCP service | Separate executor/service | Granted resources; OS isolation khi code không tin cậy |
-| Native Pi extension | Full Pi process code | Trusted mode hoặc sandbox entire worker; never privileged core by default |
+| Tool/API/MCP service | Separate executor/service | Granted resources; OS isolation when code is untrusted |
+| Native Pi extension | Full Pi process code | Trusted mode or sandbox entire worker; never privileged core by default |
 
 ## 8. Mini-app isolation
 
-MCP Apps cung cấp host/UI communication primitives, nhưng app vẫn phải triển khai sandbox/CSP/origin checks và consent đúng [R06–R08]. SDK use không tự làm tất cả code an toàn.
+MCP Apps provides host/UI communication primitives, but the app still has to implement sandbox/CSP/origin checks and consent correctly [R06–R08]. Using the SDK does not by itself make all code safe.
 
-Default custom iframe `allow-scripts`, không top navigation/download/popups/camera/mic/geolocation. Opaque-origin messaging cần exact source-window + negotiated MessagePort/nonce validation, không chỉ `origin == null`. SDK cần storage/origin có thể chạy trên separate per-app origin với approved sandbox policy; **không cùng origin với main chat**.
+A default custom iframe gets `allow-scripts`, with no top navigation/download/popups/camera/mic/geolocation. Opaque-origin messaging needs exact source-window + negotiated MessagePort/nonce validation, not just `origin == null`. When the SDK needs storage/origin, it can run on a separate per-app origin with an approved sandbox policy; **never the same origin as the main chat**.
 
-CSP define connect/resource/frame domains theo package manifest đã consent. Network egress từ renderer và backend khác nhau, đều cần budget/policy. No remote script updates bypass pinned bundle; vendor SDK remote URL chỉ cho approved version/origin theo declared policy và platform constraints.
+The CSP defines connect/resource/frame domains according to the consented package manifest. Network egress from the renderer and from the backend are different, and both need budget/policy. No remote script updates bypass the pinned bundle; a vendor SDK remote URL is allowed only for an approved version/origin under the declared policy and platform constraints.
 
-Host-owned frame chrome hiển thị app/source/account, permission controls và close/stop ngoài quyền iframe. Embedded UI có thể vẽ hình giả approval, nhưng không mint record; user phải phân biệt host consent bằng chrome/placement nhất quán.
+Host-owned frame chrome shows app/source/account, permission controls and close/stop outside the iframe's control. Embedded UI can draw a fake approval, but it cannot mint a record; the user must be able to tell host consent apart by consistent chrome/placement.
 
-Unsafe HTML/SVG/Markdown sanitize; Mermaid strict wrapper và worker timeout; no script callbacks from agent props. Dataset/attachments qua opaque refs, no arbitrary paths, executable URLs, SQL hay CSS property injection.
+Unsafe HTML/SVG/Markdown is sanitized; Mermaid gets a strict wrapper and a worker timeout; no script callbacks from agent props. Datasets/attachments go through opaque refs, with no arbitrary paths, executable URLs, SQL or CSS property injection.
 
-## 9. Frontend credentials: ngoại lệ phải thiết kế đúng
+## 9. Frontend credentials: an exception that must be designed correctly
 
-“Không gửi secrets tới renderer” cần phân biệt loại credential. API secret, refresh token, node private key không đi vào renderer/model. Một số playback/call SDK cần **short-lived scoped access/session token ở browser**. Khi vậy, auth broker chỉ cấp token phù hợp cho isolated widget origin/session đã consent, TTL ngắn nếu provider hỗ trợ, không đưa vào props, persisted state, logs hoặc conductor context.
+"Do not send secrets to the renderer" needs to distinguish credential types. API secrets, refresh tokens and node private keys do not go into the renderer/model. Some playback/call SDKs need a **short-lived scoped access/session token in the browser**. In that case, the auth broker issues a suitable token only to the consented isolated widget origin/session, with a short TTL if the provider supports it, and never puts it into props, persisted state, logs or conductor context.
 
-Không giả token nào cũng scope/expire được theo ý app: adapter ghi chính xác provider hỗ trợ gì. Nếu token quyền quá rộng và SDK đòi browser thì nêu risk/thiết kế fallback. Uninstall/revoke ngừng refresh và thu hồi khi API hỗ trợ; không hứa đã thu hồi mọi access token ngay khi vendor không có cơ chế đó.
+Do not assume every token can be scoped/expired as the app wishes: the adapter records exactly what the provider supports. If a token is too broad and the SDK requires the browser, state the risk/design a fallback. Uninstall/revoke stops refresh and revokes when the API supports it; do not promise that every access token has been revoked immediately when the vendor has no mechanism for it.
 
-## 10. Use cases bên thứ ba — khả năng và giới hạn
+## 10. Third-party use cases — capabilities and limits
 
-| Ví dụ | Widget/adapter hợp lý | Không được hứa mặc định |
+| Example | Reasonable widget/adapter | Must not be promised by default |
 |---|---|---|
-| Spotify | Player/playlist qua approved SDK hoặc device-control API | Embedded playback cần account/SDK/DRM/policy phù hợp; Premium và commercial streaming restrictions phải kiểm tra [R23] |
-| Telegram | Conversation view + composer; Bot API connector hoặc user-client adapter riêng | Bot token không mở toàn bộ inbox cá nhân; user client auth/API ID là flow khác [R24] |
-| Zoom | Meeting SDK call surface, explicit mic/camera, join/leave | Mobile support tùy view; human Meeting SDK không tự thành AI meeting bot/recorder [R25] |
-| Notion | Note/block editor trên API và authorized pages | Không phải toàn bộ Notion webapp nhúng; capabilities/page access/sync conflict là gate [R22] |
-| Google Calendar | Agenda/week + event editor qua reference connector | Render calendar không chứng minh OAuth scopes đủ để sửa lịch [R20–R21] |
+| Spotify | Player/playlist via approved SDK or device-control API | Embedded playback needs a suitable account/SDK/DRM/policy; Premium and commercial streaming restrictions must be checked [R23] |
+| Telegram | Conversation view + composer; Bot API connector or a separate user-client adapter | A bot token does not open the whole personal inbox; user client auth/API ID is a different flow [R24] |
+| Zoom | Meeting SDK call surface, explicit mic/camera, join/leave | Mobile support depends on the view; the human Meeting SDK does not become an AI meeting bot/recorder by itself [R25] |
+| Notion | Note/block editor on the API and authorized pages | Not the whole Notion webapp embedded; capabilities/page access/sync conflict are the gate [R22] |
+| Google Calendar | Agenda/week + event editor via reference connector | Rendering a calendar does not prove the OAuth scopes are sufficient to edit it [R20–R21] |
 
-Release chứng minh custom editor và một conformance media fixture, không claim đã được mọi vendor certify. Fixture sample label rõ; genuine vendor playback/call phải test trên exact Electron/browser/platform versions.
+The release proves a custom editor and one conformance media fixture; it does not claim certification by every vendor. The fixture sample is clearly labeled; genuine vendor playback/call must be tested on exact Electron/browser/platform versions.
 
-## 11. Extension packages nhiều facets
+## 11. Multi-facet extension packages
 
 ```json
 {
@@ -319,20 +321,20 @@ Release chứng minh custom editor và một conformance media fixture, không c
 }
 ```
 
-Manifest là proposal metadata của package; không tự cấp các capabilities kê khai. Install record bổ sung resolved versions/digests, transitive dependencies, target node, auth/data recipients và approved grants. Fields có schema strict, no arbitrary lifecycle script auto-run.
+The manifest is the package's proposal metadata; it does not grant the capabilities it declares. The install record adds resolved versions/digests, transitive dependencies, target node, auth/data recipients and approved grants. Fields have a strict schema, and no arbitrary lifecycle script auto-runs.
 
-Pi-compatible facets có thể đóng extension/skills/prompts/themes theo manifest upstream, nhưng app lifecycle riêng không được gọi là Pi official API [R02–R04]. Facets độc lập giúp update UI không restart Pi; update skill có thể reload resources; connector tool service có thể restart riêng. Chord là P0 candidate cho composition implementation, không security/federation shortcut [R05].
+Pi-compatible facets can package extensions/skills/prompts/themes according to the upstream manifest, but the app's own lifecycle must not be called an official Pi API [R02–R04]. Independent facets let a UI update happen without restarting Pi; a skill update can reload resources; a connector tool service can restart on its own. Chord is a P0 candidate for the composition implementation, not a security/federation shortcut [R05].
 
-## 12. Resource limits và accessibility
+## 12. Resource limits and accessibility
 
-Initial targets (phải đo): ordinary catalog spec ≤256 KiB; lazy mount heavy widgets; per-app CPU/memory/frame budgets; bounded logs/network/API rate; datasets lớn pagination/downsampling có nhãn. Không auto-limit rich widget thành vô dụng, nhưng một chart không được freeze composer.
+Initial targets (must be measured): ordinary catalog spec ≤256 KiB; lazy mount heavy widgets; per-app CPU/memory/frame budgets; bounded logs/network/API rate; large datasets get labeled pagination/downsampling. Do not auto-limit rich widgets into uselessness, but one chart must not freeze the composer.
 
-Offscreen widgets suspend rendering/subscriptions theo loại; active user-authorized player/call có exception và clear indicator. Stalled widget có timeout/error boundary/text fallback, không crash chat. Text alternatives, keyboard controls, reduced motion, contrast, focus restore và không focus-steal là release gates.
+Offscreen widgets suspend rendering/subscriptions depending on type; an active user-authorized player/call is an exception with a clear indicator. A stalled widget has a timeout/error boundary/text fallback and does not crash the chat. Text alternatives, keyboard controls, reduced motion, contrast, focus restore and no focus-stealing are release gates.
 
-State chia rõ client view, durable instance state và external service truth. Giá trị optimistic chỉ là pending; không hiện “đã gửi tin” trước provider ack/verification.
+State is clearly split into client view, durable instance state and external service truth. An optimistic value is only pending; do not show "message sent" before provider ack/verification.
 
 ## 13. Conformance tests
 
-Catalog/iframe đều phải pass: malformed props reject; unknown action reject; forged grants fail; stale account/version binding fail; voice/click same outcome; double click dedup; reopen no effect; pin no duplicate media; unpin preserve note; reinstall preserves compatible state; auth revoked disables protected actions; custom widget cannot read host storage/secret; microphone off actually ends capture.
+Catalog/iframe must both pass: malformed props reject; unknown action reject; forged grants fail; stale account/version binding fail; voice/click same outcome; double click dedup; reopen no effect; pin no duplicate media; unpin preserve note; reinstall preserves compatible state; auth revoked disables protected actions; custom widget cannot read host storage/secret; microphone off actually ends capture.
 
-MCP App test dùng reference fixture và exact negotiated spec. Features SDK không hỗ trợ hoặc browser permissions không cho thì fallback rõ, không silently pretend mounted means functional.
+The MCP App test uses a reference fixture and the exact negotiated spec. Features the SDK does not support, or that browser permissions do not allow, fall back visibly; do not silently pretend that mounted means functional.

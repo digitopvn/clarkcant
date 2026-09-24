@@ -351,6 +351,11 @@ không coi checker là bằng chứng cho những điều nó không kiểm tra:
   default (`name.md`, `/docs/...`), Vietnamese is the pair (`name.vi.md`,
   `/vi/docs/...`). A change to one language changes the other in the same PR.
   An existing Vietnamese-only doc gains its English pair when it is next edited.
+  A Vietnamese doc links to the `.vi.md` sibling of a doc that has one.
+- Exception: `docs/conformance-traceability.md` is English-only and has no
+  `.vi.md` pair. It is the one ledger of T-/V-id status that `pnpm invariants`
+  checks against `packages/contracts/src/implementation-status.ts`; a translated
+  copy would be a second, unchecked statement of the same status.
 - Whenever a change makes the official docs stale or incomplete (a new or changed
   surface, command, setup step or user-visible behavior), open an issue on
   `digitopvn/clarkcant-web` labelled `ai-handle`, naming what changed and linking

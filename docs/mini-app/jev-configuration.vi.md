@@ -1,6 +1,6 @@
 # Jev selector: configuration and privacy
 
-> English (default) · [Tiếng Việt](jev-configuration.vi.md)
+> [English](jev-configuration.md) (mặc định) · Tiếng Việt
 
 Jev (TypeSafe System One) is the node's *selector*. It chooses among options the host has already
 authorized — a presentation template, a renderer for one region, a runtime to dispatch to — and it
