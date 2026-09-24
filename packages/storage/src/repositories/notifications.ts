@@ -16,15 +16,20 @@ import { type Database, allRows, oneRow, transaction } from "../db.ts";
  * ------------------------------------------------------------------ */
 
 /**
- * How many notices a principal keeps.
+ * How many *undismissed* notices a principal keeps.
  *
  * An inbox that grows without bound is an inbox nobody reads past the first screen, and a table that grows without
  * bound is a node that slows down for a reason nobody can see. Two hundred is several days of background work; the
- * result of each one is also in its conversation, which is the record that outlives this list.
+ * result of each one is also in its conversation, which is the record that outlives this list. Dismissed notices
+ * do not count against this cap — see `DISMISSED_RETENTION_MS` — so a busy inbox can never prune a dismissed
+ * notice before its own window and make it reappear.
  */
 export const MAX_NOTIFICATIONS = 200;
 
-/** How long a dismissed notice is kept, so a producer that repeats itself inside that window stays deduplicated. */
+/**
+ * How long a dismissed notice is kept, so a producer that repeats itself inside that window stays deduplicated.
+ * This is the only rule that removes a dismissed notice; it is independent of `MAX_NOTIFICATIONS`.
+ */
 export const DISMISSED_RETENTION_MS = 30 * 24 * 60 * 60_000;
 
 export interface RecordNotificationInput {
@@ -69,21 +74,34 @@ function clean(text: string, max: number): string {
  *
  * Idempotent on `(principalId, dedupKey)`: a second delivery of the same event — a resend, a retry, a check that
  * ran twice — returns the first notice and changes nothing, including its read or dismissed state. A notice the
- * person dismissed does not come back because its producer repeated itself.
+ * person dismissed does not come back because its producer repeated itself. The key is normalised (bounded to the
+ * column's 300 chars) once, up front, so the lookup and the write agree on the same string; looking one up
+ * unsliced while the other stores it sliced is how a key longer than 300 chars turns a duplicate delivery into a
+ * `UNIQUE constraint failed` instead of `created: false`.
  *
  * Pruning happens in the same transaction as the write, so the table is bounded by construction rather than by a
- * job somebody has to remember to schedule.
+ * job somebody has to remember to schedule. Two independent rules apply:
+ *
+ *   - A dismissed notice is removed only once it is more than 30 days past dismissal. It never counts against the
+ *     `MAX_NOTIFICATIONS` cap, so it cannot be pruned early just because the inbox stayed busy — which is what
+ *     "a dismissed notice does not come back" depends on: a producer that repeats itself inside the window has to
+ *     find the row still there to dedupe against.
+ *   - The undismissed inbox is capped at `MAX_NOTIFICATIONS`, oldest by insertion (`rowid`) first. Ordering by
+ *     insertion rather than by the caller-supplied `at` means the row this call just wrote is always the newest
+ *     by that ordering and is never the one the same transaction deletes, even if its `at` is backdated behind
+ *     existing rows.
  */
 export function recordNotification(
   db: Database,
   input: RecordNotificationInput,
 ): { notificationId: string; created: boolean } {
+  const dedupKey = input.dedupKey.slice(0, 300);
   return transaction(db, () => {
     const existing = oneRow<{ notification_id: string }>(
       db,
       "SELECT notification_id FROM notifications WHERE principal_id = ? AND dedup_key = ?",
       input.principalId,
-      input.dedupKey,
+      dedupKey,
     );
     if (existing !== undefined) return { notificationId: existing.notification_id, created: false };
 
@@ -104,7 +122,7 @@ export function recordNotification(
       body === "" ? null : body,
       input.conversationId ?? null,
       input.originNodeId ?? null,
-      input.dedupKey.slice(0, 300),
+      dedupKey,
       input.at,
     );
 
@@ -114,9 +132,9 @@ export function recordNotification(
       dismissedBefore,
     );
     db.prepare(
-      `DELETE FROM notifications WHERE principal_id = ? AND notification_id NOT IN (
-         SELECT notification_id FROM notifications WHERE principal_id = ?
-          ORDER BY created_at DESC, rowid DESC LIMIT ?
+      `DELETE FROM notifications WHERE principal_id = ? AND dismissed_at IS NULL AND notification_id NOT IN (
+         SELECT notification_id FROM notifications WHERE principal_id = ? AND dismissed_at IS NULL
+          ORDER BY rowid DESC LIMIT ?
        )`,
     ).run(input.principalId, input.principalId, MAX_NOTIFICATIONS);
 
