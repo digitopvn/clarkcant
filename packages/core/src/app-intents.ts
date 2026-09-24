@@ -129,7 +129,7 @@ const APP_COMMAND_MAX_WORDS = 8;
  * cannot be stolen by the shorter "thu nho". Relying on table order for that would make the table's
  * meaning depend on where a line sits.
  */
-const PHRASES: readonly { phrase: string; kind: AppIntentKind }[] = [
+const PHRASES: readonly { phrase: string; kind: AppIntentKind; wholeSentence?: true }[] = [
   // Ending the voice session.
   { phrase: "ket thuc phien thoai", kind: "voice.end" },
   { phrase: "ket thuc phien", kind: "voice.end" },
@@ -216,7 +216,55 @@ const PHRASES: readonly { phrase: string; kind: AppIntentKind }[] = [
   { phrase: "widget gallery", kind: "widgets.open" },
   { phrase: "hien widget", kind: "widgets.show" },
   { phrase: "show widget", kind: "widgets.show" },
+
+  // The inbox. Whole-sentence only - see WHOLE_SENTENCE_POLITE. "hộp thư" and "inbox" are not app nouns,
+  // because a person also has an email inbox: "open my gmail inbox" and "mở hộp thư email" are requests for
+  // work, and a noun here would have made them command-shaped and then refused. Only the bare request,
+  // said as the whole sentence, means this application's inbox.
+  { phrase: "mo hop thu", kind: "inbox.open", wholeSentence: true },
+  { phrase: "xem hop thu", kind: "inbox.open", wholeSentence: true },
+  { phrase: "mo thong bao", kind: "inbox.open", wholeSentence: true },
+  { phrase: "xem thong bao", kind: "inbox.open", wholeSentence: true },
+  { phrase: "open inbox", kind: "inbox.open", wholeSentence: true },
+  { phrase: "open the inbox", kind: "inbox.open", wholeSentence: true },
+  { phrase: "open my inbox", kind: "inbox.open", wholeSentence: true },
+  { phrase: "show inbox", kind: "inbox.open", wholeSentence: true },
+  { phrase: "show my inbox", kind: "inbox.open", wholeSentence: true },
+  { phrase: "open notifications", kind: "inbox.open", wholeSentence: true },
+  { phrase: "show notifications", kind: "inbox.open", wholeSentence: true },
+  // Closing it is going back to the conversation, which is what closing any surface over it already means.
+  { phrase: "dong hop thu", kind: "nav.conversation", wholeSentence: true },
+  { phrase: "close the inbox", kind: "nav.conversation", wholeSentence: true },
+  { phrase: "close inbox", kind: "nav.conversation", wholeSentence: true },
 ];
+
+/**
+ * Courtesy a whole-sentence command may end with, in the bare spelling.
+ *
+ * A whole-sentence phrase is recognised only when it is the entire request, so "mở hộp thư" opens the inbox and
+ * "mở hộp thư email của tôi" goes to the agent. These endings are the ones that do not change what was asked.
+ */
+const WHOLE_SENTENCE_POLITE: readonly string[] = [" giup toi", " cho toi", " cua toi", " di", " nhe", " nha", " please", " for me"];
+
+/** The request with punctuation and courtesy trimmed off its end, for comparing against a whole-sentence phrase. */
+function wholeSentenceOf(bare: string): string {
+  let sentence = bare.replace(/[.!?,;:]+$/g, "").trim();
+  for (let changed = true; changed; ) {
+    changed = false;
+    for (const ending of WHOLE_SENTENCE_POLITE) {
+      if (sentence.endsWith(ending)) {
+        sentence = sentence.slice(0, -ending.length).trim();
+        changed = true;
+      }
+    }
+  }
+  return sentence;
+}
+
+function wholeSentenceMatch(bare: string): { phrase: string; kind: AppIntentKind } | undefined {
+  const sentence = wholeSentenceOf(bare);
+  return PHRASES.find((entry) => entry.wholeSentence === true && entry.phrase === sentence);
+}
 
 /** Words that name a Settings tab, longest first so "cong cu" is not read as "cong". */
 const TAB_WORDS: readonly { words: readonly string[]; tab: SettingsTab }[] = [
@@ -259,7 +307,9 @@ const TAB_INTENT_MARKERS: readonly string[] = [
  */
 const COMMAND_OPENERS: readonly string[] = [
   ...new Set(
-    PHRASES.filter((entry) => entry.kind !== "widgets.open" && entry.kind !== "widgets.show").map(
+    PHRASES.filter(
+      (entry) => entry.kind !== "widgets.open" && entry.kind !== "widgets.show" && entry.wholeSentence !== true,
+    ).map(
       (entry) => entry.phrase.split(" ").slice(0, 2).join(" "),
     ),
   ),
@@ -317,6 +367,9 @@ export function isAppCommandShaped(text: string): boolean {
   if (spokenWords.length > APP_COMMAND_MAX_WORDS) return false;
 
   const bare = normaliseIntentText(text);
+  // 0. It is, in its entirety, one of the phrases that only count as a command when said on their own.
+  if (wholeSentenceMatch(bare) !== undefined) return true;
+
   // 1. It opens the way a known command opens. Compared without tone marks, so a transcription that dropped them
   // still lands here, and two words long, so an ordinary word that happens to share a bare spelling does not.
   if (COMMAND_OPENERS.some((opener) => bare === opener || bare.startsWith(`${opener} `))) return true;
@@ -413,7 +466,13 @@ export function matchAppIntent(
     }
   }
 
-  const matched = [...PHRASES].sort((a, b) => b.phrase.length - a.phrase.length).find((entry) => normalised.includes(entry.phrase));
+  const whole = wholeSentenceMatch(normalised);
+  if (whole !== undefined) return { kind: "intent", intent: { kind: whole.kind } };
+
+  const matched = [...PHRASES]
+    .filter((entry) => entry.wholeSentence !== true)
+    .sort((a, b) => b.phrase.length - a.phrase.length)
+    .find((entry) => normalised.includes(entry.phrase));
   if (matched === undefined) return { kind: "refused", say: appIntentNotUnderstood(locale) };
   return { kind: "intent", intent: { kind: matched.kind } };
 }

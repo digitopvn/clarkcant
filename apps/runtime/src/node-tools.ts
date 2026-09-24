@@ -245,6 +245,7 @@ const CONTROL_APP_KINDS = [
   "voice.end",
   "model.cycle",
   "model.select",
+  "inbox.open",
 ] as const;
 
 /** What a node answers a `control_app` call with — always an honest account, never a claim of success it did not verify. */
@@ -293,8 +294,8 @@ export function createControlAppTool(deps: ControlAppDeps): ToolDefinition {
     label: "Điều khiển ứng dụng",
     description:
       "Ask the app to carry out one of its own semantic actions on the person's behalf: open Settings " +
-      "(optionally at a tab), return to the current conversation, go to the home screen, start or end " +
-      "voice mode, or switch the configured model (cycle to the next one, or select a specific alias). " +
+      "(optionally at a tab), open the inbox (what is waiting for the person and the notices from background " +
+      "work), return to the current conversation, go to the home screen, start or end voice mode, or switch the configured model (cycle to the next one, or select a specific alias). " +
       "This is not a scripting surface — it accepts only these fixed kinds, never a URL, selector or " +
       "arbitrary command. Only call it when the user's own request implies the app itself should change, " +
       "not merely to narrate what you are about to say. The result tells you whether the request reached " +
@@ -319,7 +320,7 @@ export function createControlAppTool(deps: ControlAppDeps): ToolDefinition {
         },
       },
     },
-    promptSnippet: "control_app — open Settings, navigate, or switch voice/model state for the user",
+    promptSnippet: "control_app — open Settings or the inbox, navigate, or switch voice/model state for the user",
     execute: async (params: Record<string, unknown>): Promise<{ text: string }> => {
       const outcome = decideControlApp(deps, params);
       return { text: outcome.say };

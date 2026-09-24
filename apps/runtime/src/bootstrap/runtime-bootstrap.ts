@@ -11,6 +11,7 @@ import { createModelCatalogue, type ModelTurn, type ViewDescriptor } from "../mo
 import { type CommandToolDeps } from "../node-tools.ts";
 import { ownedResources } from "../preflight.ts";
 import { refreshProjectIndex } from "../project-finder.ts";
+import { tryRecordNodeNotice } from "../notices.ts";
 import { appendHostReply } from "../routes/conversations.ts";
 import { createSecretBroker } from "../secret-broker.ts";
 import { type RequestSecretDeps } from "../request-secret.ts";
@@ -249,10 +250,25 @@ export function wireRuntime(deps: RuntimeBootstrapDeps): void {
               : outcome === "cancelled"
                 ? "Đã hủy"
                 : "Chưa rõ kết quả";
+        const at = new Date().toISOString() as Instant;
         appendHostReply(deps.services, {
           conversationId,
           text: `${label} (task ${taskId}): ${message}`,
-          at: new Date().toISOString() as Instant,
+          at,
+        });
+        // The pointer for a person who is not looking at that conversation. A cancellation was the person's own
+        // doing, so it is recorded as information rather than as something that went wrong; "uncertain" is a
+        // warning because the task may or may not have had its effect, and that is worth a look.
+        tryRecordNodeNotice(deps.services, {
+          sourceKind: "worker",
+          category: "result",
+          severity:
+            outcome === "succeeded" ? "success" : outcome === "failed" ? "error" : outcome === "uncertain" ? "warning" : "info",
+          title: `${label}: task ${taskId}`,
+          body: message,
+          conversationId,
+          dedupKey: `worker:${taskId}`,
+          at,
         });
       },
     });

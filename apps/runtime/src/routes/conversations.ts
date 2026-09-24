@@ -63,6 +63,7 @@ import { decideTurnAction, decisionTimeoutMsFromEnv, searchDecisionBudget } from
 import { type OwnedResources, ownedResources } from "../preflight.ts";
 import { markProjectUsed, projectContext, resolveProject } from "../project-finder.ts";
 import { initialPrompt } from "../project-session.ts";
+import { tryRecordNodeNotice } from "../notices.ts";
 import { receiptForModel, runApprovedCommand } from "../run-command.ts";
 import { type NodeServices, buildTimeline } from "../services.ts";
 import { indexMessages, textOfMessage } from "../session-search.ts";
@@ -500,16 +501,40 @@ export function startBackgroundWork(
 
   const sessionId = services.conductor.newId("bg");
   nodeBackgroundSessions.start({ sessionId, title: text.slice(0, 120), at: at() });
+  const title = text.slice(0, 120);
   void (async () => {
     try {
       const said = await control.runInBackground({ conversationId, principal, text });
       nodeBackgroundSessions.finish({ sessionId, status: "done", at: at() });
       if (said !== "") appendHostReply(services, { conversationId, text: said, at: at() });
+      // The result is the message above; the notice is the pointer to it, for a person who is not looking at this
+      // conversation. Keyed by the session so a retry of this closure cannot write a second one.
+      tryRecordNodeNotice(services, {
+        sourceKind: "background",
+        category: "result",
+        severity: "success",
+        title: `Việc nền đã xong: ${title}`,
+        ...(said === "" ? {} : { body: said }),
+        conversationId,
+        dedupKey: `background:${sessionId}`,
+        at: at(),
+      });
     } catch (cause) {
+      const reason = cause instanceof Error ? cause.message : String(cause);
       nodeBackgroundSessions.finish({ sessionId, status: "failed", at: at() });
       appendHostReply(services, {
         conversationId,
-        text: `Việc nền không xong: ${cause instanceof Error ? cause.message : String(cause)}`,
+        text: `Việc nền không xong: ${reason}`,
+        at: at(),
+      });
+      tryRecordNodeNotice(services, {
+        sourceKind: "background",
+        category: "result",
+        severity: "error",
+        title: `Việc nền không xong: ${title}`,
+        body: reason,
+        conversationId,
+        dedupKey: `background:${sessionId}`,
         at: at(),
       });
     }

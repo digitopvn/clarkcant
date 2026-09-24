@@ -110,6 +110,12 @@ const DOCUMENTED: readonly { kind: AppIntentKind; vietnamese: readonly string[];
     vietnamese: ["hiện widget"],
     english: "show widget",
   },
+  {
+    // Whole-sentence phrases: recognised only when they are the entire request, courtesy aside.
+    kind: "inbox.open",
+    vietnamese: ["mở hộp thư", "Mở hộp thư giúp tôi.", "xem thông báo", "mo hop thu", "mở hộp thư của tôi"],
+    english: "open my inbox",
+  },
 ];
 
 describe("every documented way of asking maps to one intent", () => {
@@ -252,6 +258,26 @@ describe("a work request is not an app intent", () => {
     expect(normaliseIntentText(sentence)).toBe("thu do la paris.");
     expect(isAppCommandShaped(sentence)).toBe(false);
     expect(resolveAppIntent({ text: sentence, mintConfirmationToken: mint }).kind).toBe("none");
+  });
+
+  it("leaves a request about an email inbox or an error message to the agent", () => {
+    // The inbox phrases count only as the whole sentence. Anything longer is somebody asking for work that happens
+    // to mention an inbox or a notification, and refusing it as an unknown command would be the worse failure.
+    for (const request of [
+      "open my gmail inbox",
+      "check the inbox of the support mailbox",
+      "tắt thông báo lỗi này",
+      "mở thông báo lỗi ra xem",
+      "đóng hợp đồng với khách hàng",
+      "mở thư viện ảnh",
+    ]) {
+      expect(resolveAppIntent({ text: request, mintConfirmationToken: mint }).kind, request).toBe("none");
+    }
+  });
+
+  it("closes the inbox by going back to the conversation", () => {
+    const match = matchAppIntent("đóng hộp thư");
+    expect(match?.kind === "intent" && match.intent.kind).toBe("nav.conversation");
   });
 
   it("is not fooled by a tab name inside a question", () => {

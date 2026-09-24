@@ -21,6 +21,7 @@ import { handleAttachmentRoutes } from "./routes/attachments.ts";
 import { handlePreviewRoutes } from "./routes/previews.ts";
 import { handlePreferenceRoutes } from "./routes/preferences.ts";
 import { handlePackageRoutes } from "./routes/packages.ts";
+import { handleInboxRoutes } from "./routes/inbox.ts";
 import { handleInteractionRoutes } from "./routes/interactions.ts";
 import { handleConversationRoutes, handleRawCommand } from "./routes/conversations.ts";
 
@@ -202,6 +203,11 @@ export async function handleRequest(deps: GatewayDeps, request: GatewayRequest):
 
   const memoryResponse = handleMemoryRoutes({ services, request, segments });
   if (memoryResponse !== undefined) return memoryResponse;
+
+  // What is waiting for the person, and what happened while they were elsewhere. Reads only: every decision it
+  // offers goes back through the route that already owns that decision.
+  const inboxResponse = handleInboxRoutes({ services, request, segments, at });
+  if (inboxResponse !== undefined) return inboxResponse;
 
   const interactionResponse = await handleInteractionRoutes({ services, request, segments, at });
   if (interactionResponse !== undefined) return interactionResponse;
