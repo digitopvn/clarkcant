@@ -2,7 +2,7 @@ import type { Server } from "node:http";
 
 import { type RawData, WebSocketServer, type WebSocket } from "ws";
 
-import { parseSseChunk } from "@clarkcant/contracts";
+import { isPersonOnlyRoute, PERSON_ONLY_REFUSAL, parseSseChunk } from "@clarkcant/contracts";
 
 import { handleRequest, type GatewayRequest } from "./gateway.ts";
 import { API_SOCKET_PATH, API_SOCKET_PROTOCOL } from "./open-interfaces.ts";
@@ -55,7 +55,7 @@ export function attachApiSocket(options: { server: Server; services: NodeService
     const send = (frame: Record<string, unknown>): void => {
       if (ws.readyState === ws.OPEN) ws.send(JSON.stringify(frame));
     };
-    const error = (code: string, message: string, id?: string): void =>
+    const error = (code: string, message: string, id?: string | number): void =>
       send({ type: "error", ...(id === undefined ? {} : { id }), code, message });
 
     ws.on("message", (data: RawData) => {
@@ -65,6 +65,12 @@ export function attachApiSocket(options: { server: Server; services: NodeService
         if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) throw new Error("not an object");
         frame = parsed as Record<string, unknown>;
       } catch {
+        if (token === undefined) {
+          // Nothing but a valid auth frame is read before the socket verifies, so junk ends it like a wrong token.
+          error("UNAUTHENTICATED", "the first frame must be auth with a valid token");
+          ws.close(4401, "unauthenticated");
+          return;
+        }
         error("INVALID_FRAME", "every frame must be a JSON object");
         return;
       }
@@ -92,7 +98,8 @@ export function attachApiSocket(options: { server: Server; services: NodeService
         return;
       }
 
-      const id = typeof frame.id === "string" || typeof frame.id === "number" ? String(frame.id) : undefined;
+      // Echoed exactly as sent, so a client matching `response.id === 7` finds its answer.
+      const id = typeof frame.id === "string" || typeof frame.id === "number" ? frame.id : undefined;
       if (id === undefined) {
         error("INVALID_FRAME", "a request needs an id to answer it by");
         return;
@@ -101,6 +108,12 @@ export function attachApiSocket(options: { server: Server; services: NodeService
       const requestPath = typeof frame.path === "string" ? frame.path : "";
       if (!METHODS.has(method) || !requestPath.startsWith("/")) {
         error("INVALID_FRAME", "a request needs a method (GET, POST, PUT, PATCH, DELETE) and a path starting with /", id);
+        return;
+      }
+      if (isPersonOnlyRoute(method, requestPath)) {
+        // Answered as the route's refusal rather than an error frame: the request was well formed, it is just not
+        // one this surface carries.
+        send({ type: "response", id, status: 403, body: PERSON_ONLY_REFUSAL });
         return;
       }
       if (inFlight >= MAX_IN_FLIGHT) {
@@ -133,7 +146,7 @@ export function attachApiSocket(options: { server: Server; services: NodeService
     ws.on("error", () => clearTimeout(authTimer));
   }
 
-  async function run(request: GatewayRequest, id: string, send: (frame: Record<string, unknown>) => void): Promise<void> {
+  async function run(request: GatewayRequest, id: string | number, send: (frame: Record<string, unknown>) => void): Promise<void> {
     try {
       const result = await handleRequest({ services: options.services }, request);
       if (result.binary !== undefined) {

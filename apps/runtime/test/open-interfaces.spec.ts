@@ -71,6 +71,14 @@ describe("discovery", () => {
     expect(JSON.stringify(document)).not.toContain(token());
   });
 
+  it("tells a tool up front that a person's decisions are refused on the machine surfaces", async () => {
+    const discovery = (await (await fetch(`${base}/.well-known/clarkcant.json`)).json()) as Record<string, unknown>;
+    expect(discovery.personDecisions).toEqual({
+      refusedOn: ["websocket", "mcp", "cli api"],
+      refusal: { status: 403, code: "PERSON_ONLY" },
+    });
+  });
+
   it("serves an OpenAPI 3.1 document naming the stable routes", async () => {
     const response = await fetch(`${base}/openapi.json`);
     expect(response.status).toBe(200);
@@ -164,6 +172,31 @@ describe("MCP endpoint", () => {
     expect(JSON.stringify(read.body)).toContain("RESOURCE_NOT_FOUND");
   });
 
+  it("refuses an empty batch, an oversized batch and an id that is not a string or a number", async () => {
+    const empty = await mcp([]);
+    expect(empty.status).toBe(400);
+    expect(empty.body).toMatchObject({ error: { code: -32600 } });
+
+    const oversized = await mcp(Array.from({ length: 33 }, (_, index) => ({ jsonrpc: "2.0", id: index, method: "ping" })));
+    expect(oversized.body).toMatchObject({ error: { code: -32600 } });
+
+    expect((await mcp({ jsonrpc: "2.0", id: { nested: true }, method: "ping" })).body).toMatchObject({ id: null, error: { code: -32600 } });
+  });
+
+  it("offers confirmed on answer_question and refuses a conversationId that is not a string", async () => {
+    const listed = await mcp({ jsonrpc: "2.0", id: 1, method: "tools/list" });
+    const answer = (listed.body as { result: { tools: { name: string; inputSchema: { properties: Record<string, unknown> } }[] } }).result.tools.find(
+      (tool) => tool.name === "answer_question",
+    );
+    expect(answer?.inputSchema.properties.confirmed).toEqual({ type: "boolean" });
+
+    const asked = await mcp({ jsonrpc: "2.0", id: 2, method: "tools/call", params: { name: "ask_clark", arguments: { text: "hi", conversationId: 7 } } });
+    expect(asked.body).toMatchObject({ result: { isError: true } });
+    // Refused before any route ran, so no conversation was started by accident.
+    const conversations = await mcp({ jsonrpc: "2.0", id: 3, method: "tools/call", params: { name: "list_conversations", arguments: {} } });
+    expect(JSON.stringify(conversations.body)).not.toContain("conv_");
+  });
+
   it("does not accept GET, because the server never speaks first", async () => {
     const response = await fetch(`${base}/mcp`, { headers: { authorization: `Bearer ${token()}` } });
     expect(response.status).toBe(405);
@@ -203,6 +236,54 @@ describe("WebSocket gateway", () => {
     client.send({ type: "auth", token: "wrong" });
     expect(await client.next()).toMatchObject({ type: "error", code: "UNAUTHENTICATED" });
     expect(await client.closed).toBe(4401);
+  });
+
+  it("closes an unauthenticated socket whose first frame is not even a JSON object", async () => {
+    const client = await openSocket();
+    client.send("not a frame");
+    expect(await client.next()).toMatchObject({ type: "error", code: "UNAUTHENTICATED" });
+    expect(await client.closed).toBe(4401);
+  });
+
+  it("does not relay an approval decision, which is the person's to make", async () => {
+    const client = await openSocket();
+    client.send({ type: "auth", token: token() });
+    await client.next();
+    client.send({ type: "request", id: "d", method: "POST", path: "/conversations/conv_x/approvals/appr_y/decide", body: { decision: "granted", digest: "z" } });
+    expect(await client.next()).toMatchObject({ type: "response", id: "d", status: 403, body: { code: "PERSON_ONLY" } });
+    client.send({ type: "request", id: "p", method: "POST", path: "/packages/approvals/appr_y/decision", body: {} });
+    expect(await client.next()).toMatchObject({ type: "response", id: "p", status: 403, body: { code: "PERSON_ONLY" } });
+    client.close();
+  });
+
+  it("does not relay a grant, an app-intent confirmation or a peer's trust either, under any spelling", async () => {
+    const client = await openSocket();
+    client.send({ type: "auth", token: token() });
+    await client.next();
+    const decisions = [
+      "/app-intents/confirm",
+      "/peers/node_x/confirm",
+      "/grants",
+      // The gateway drops empty segments, so a doubled slash reaches the same route and is refused the same way.
+      "//conversations//conv_x/approvals/appr_x/decide/",
+    ];
+    for (const [index, path] of decisions.entries()) {
+      client.send({ type: "request", id: index, method: "POST", path, body: {} });
+      expect(await client.next()).toMatchObject({ type: "response", id: index, status: 403, body: { code: "PERSON_ONLY" } });
+    }
+    // Stop stays reachable: refusing decisions must not take away the way to end work.
+    client.send({ type: "request", id: 99, method: "POST", path: "/stop" });
+    expect(await client.next()).toMatchObject({ type: "response", id: 99, status: 200 });
+    client.close();
+  });
+
+  it("echoes a numeric id as a number", async () => {
+    const client = await openSocket();
+    client.send({ type: "auth", token: token() });
+    await client.next();
+    client.send({ type: "request", id: 7, method: "GET", path: "/node" });
+    expect((await client.next()).id).toBe(7);
+    client.close();
   });
 
   it("answers a request frame with the gateway's own response", async () => {

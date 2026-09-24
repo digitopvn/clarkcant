@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
-import { type MessageBlock, messageBlocksAsText, parseSseChunk } from "@clarkcant/contracts";
+import { isPersonOnlyRoute, type MessageBlock, messageBlocksAsText, PERSON_ONLY_REFUSAL, parseSseChunk } from "@clarkcant/contracts";
 
 /**
  * The `clarkcant` command.
@@ -40,7 +40,7 @@ Commands:
   new [title]                          Create a conversation
   read <conversationId>                Print a conversation
   stop                                 Emergency stop: interrupt turns, kill running work
-  api <METHOD> <path> [jsonBody]       Call any REST route
+  api <METHOD> <path> [jsonBody]       Call any REST route except a person's decision
   mcp                                  Serve MCP over stdio, bridged to the node's /mcp
   discover                             Print the node's discovery document
 
@@ -61,6 +61,7 @@ function parseArgs(argv: string[]): Parsed {
   const positional: string[] = [];
   const flags = new Map<string, string | true>();
   const takesValue = new Set(["url", "token", "data-dir", "c", "conversation"]);
+  const switches = new Set(["json", "h", "help"]);
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index] ?? "";
     if (arg === "--") {
@@ -74,12 +75,14 @@ function parseArgs(argv: string[]): Parsed {
     }
     if (takesValue.has(name)) {
       const value = argv[index + 1];
-      if (value !== undefined) {
-        flags.set(name, value);
-        index += 1;
-      }
-    } else {
+      if (value === undefined) throw new CliError(`${arg} needs a value`);
+      flags.set(name, value);
+      index += 1;
+    } else if (switches.has(name)) {
       flags.set(name, true);
+    } else {
+      // Refused rather than read as a switch: `--port 9000 status` must not run a command called "9000".
+      throw new CliError(`unknown option ${arg} (text that starts with "-" goes after --)`);
     }
   }
   return { positional, flags };
@@ -90,6 +93,9 @@ function parseArgs(argv: string[]): Parsed {
  *
  * A flag wins over the environment, and the environment over the node's own identity file, so a script can point
  * one command elsewhere without touching the shell. The token is only read from the file, never written anywhere.
+ *
+ * The identity file holds this machine's own token, so it is only used for a node on this machine. Pointed at
+ * another host, the CLI needs `--token` or `CLARKCANT_TOKEN`; it never sends the local token somewhere else.
  */
 export function resolveConnection(flags: Map<string, string | true>, io: CliIo): Connection {
   const flag = (name: string): string | undefined => {
@@ -98,7 +104,7 @@ export function resolveConnection(flags: Map<string, string | true>, io: CliIo):
   };
   const url = (flag("url") ?? io.env.CLARKCANT_URL ?? DEFAULT_URL).replace(/\/+$/, "");
   let token = flag("token") ?? io.env.CLARKCANT_TOKEN;
-  if (token === undefined || token === "") {
+  if ((token === undefined || token === "") && isLoopbackUrl(url)) {
     const dataDir = flag("data-dir") ?? io.env.CLARKCANT_DATA_DIR ?? join(homedir(), ".clarkcant");
     try {
       const read = io.readFile ?? ((path: string) => readFileSync(path, "utf8"));
@@ -111,10 +117,28 @@ export function resolveConnection(flags: Map<string, string | true>, io: CliIo):
   return { url, token: token === "" ? undefined : token };
 }
 
+function isLoopbackUrl(url: string): boolean {
+  let host: string;
+  try {
+    host = new URL(url).hostname;
+  } catch {
+    return false;
+  }
+  return host === "localhost" || host === "[::1]" || host === "::1" || /^127(?:\.\d{1,3}){3}$/.test(host);
+}
+
 class CliError extends Error {}
 
 export async function runCli(argv: string[], io: CliIo): Promise<number> {
-  const { positional, flags } = parseArgs(argv);
+  let parsed: Parsed;
+  try {
+    parsed = parseArgs(argv);
+  } catch (cause) {
+    if (!(cause instanceof CliError)) throw cause;
+    io.stderr(`clarkcant: ${cause.message}\n\n${USAGE}`);
+    return 1;
+  }
+  const { positional, flags } = parsed;
   const [command, ...rest] = positional;
   if (command === undefined || flags.has("h") || flags.has("help") || command === "help") {
     io.stdout(USAGE);
@@ -236,6 +260,10 @@ export async function runCli(argv: string[], io: CliIo): Promise<number> {
             throw new CliError("the body must be JSON, e.g. '{\"text\":\"hi\"}'");
           }
         }
+        if (isPersonOnlyRoute(method, path)) {
+          // An approval is the person's decision; a scriptable relay that an AI tool can drive does not carry it.
+          throw new CliError(PERSON_ONLY_REFUSAL.message);
+        }
         const result = await call(method.toUpperCase(), path, payload);
         io.stdout(`${typeof result.body === "string" ? result.body : JSON.stringify(result.body, null, 2)}\n`);
         return result.status < 400 ? 0 : 1;
@@ -317,29 +345,40 @@ async function ask(rest: string[], flags: Map<string, string | true>, context: A
   let wrote = false;
   let failed = false;
   let done: Record<string, unknown> | undefined;
-  for await (const chunk of response.body as unknown as AsyncIterable<Uint8Array>) {
-    const parsed = parseSseChunk(buffer + decoder.decode(chunk, { stream: true }));
-    buffer = parsed.rest;
-    for (const event of parsed.events) {
-      let data: Record<string, unknown>;
-      try {
-        data = JSON.parse(event.data) as Record<string, unknown>;
-      } catch {
-        data = { text: event.data };
-      }
-      if (event.event === "delta" && typeof data.text === "string") {
-        if (!context.asJson) io.stdout(data.text);
-        wrote = wrote || data.text !== "";
-      } else if (event.event === "tool-start" && !context.asJson) {
-        const label = typeof data.label === "string" ? data.label : typeof data.name === "string" ? data.name : "a tool";
-        io.stderr(`[${label}]\n`);
-      } else if (event.event === "error") {
-        failed = true;
-        io.stderr(`clarkcant: ${typeof data.message === "string" ? data.message : "the turn failed"}\n`);
-      } else if (event.event === "done") {
-        done = data;
+  try {
+    for await (const chunk of response.body as unknown as AsyncIterable<Uint8Array>) {
+      const parsed = parseSseChunk(buffer + decoder.decode(chunk, { stream: true }));
+      buffer = parsed.rest;
+      for (const event of parsed.events) {
+        let data: Record<string, unknown>;
+        try {
+          data = JSON.parse(event.data) as Record<string, unknown>;
+        } catch {
+          data = { text: event.data };
+        }
+        if (event.event === "delta" && typeof data.text === "string") {
+          if (!context.asJson) io.stdout(data.text);
+          wrote = wrote || data.text !== "";
+        } else if (event.event === "tool-start" && !context.asJson) {
+          const label = typeof data.label === "string" ? data.label : typeof data.name === "string" ? data.name : "a tool";
+          io.stderr(`[${label}]\n`);
+        } else if (event.event === "error") {
+          failed = true;
+          io.stderr(`clarkcant: ${typeof data.message === "string" ? data.message : "the turn failed"}\n`);
+        } else if (event.event === "done") {
+          done = data;
+        }
       }
     }
+  } catch (cause) {
+    // A connection that drops mid-turn is a failure to report, not a crash with a stack trace.
+    throw new CliError(`the stream from the node broke off: ${cause instanceof Error ? cause.message : String(cause)}`);
+  }
+  if (done === undefined && !failed) {
+    // No `done` means the answer is incomplete; a script redirecting stdout must not take it as the whole reply.
+    if (wrote) io.stdout("\n");
+    io.stderr("clarkcant: the stream ended before the turn finished, so the answer above may be incomplete\n");
+    return 1;
   }
 
   if (context.asJson) {
@@ -381,47 +420,66 @@ async function bridgeMcp(context: { connection: Connection; io: CliIo; doFetch: 
   if (connection.token === undefined) {
     io.stderr("clarkcant mcp: no token found; every call will be refused. Set CLARKCANT_TOKEN or --data-dir.\n");
   }
+  // Each line is forwarded without waiting for the one before it, so a `ping` or a cancellation is answered while a
+  // long `ask_clark` is still running. Every response carries its own id, so the order they are written in is free.
+  const pending = new Set<Promise<void>>();
   for await (const line of io.stdinLines()) {
     if (line.trim() === "") continue;
-    let id: unknown;
-    try {
-      const message = JSON.parse(line) as { id?: unknown };
-      id = message.id ?? null;
-    } catch {
-      io.stdout(`${JSON.stringify({ jsonrpc: "2.0", id: null, error: { code: -32700, message: "not valid JSON" } })}\n`);
-      continue;
-    }
-    try {
-      const response = await context.doFetch(`${connection.url}/mcp`, {
-        method: "POST",
-        headers: {
-          ...(connection.token === undefined ? {} : { authorization: `Bearer ${connection.token}` }),
-          "content-type": "application/json",
-          accept: "application/json, text/event-stream",
-        },
-        body: line,
-      });
-      const text = await response.text();
-      if (response.status === 202 || text.trim() === "") continue;
-      if (response.ok) {
-        io.stdout(`${JSON.stringify(JSON.parse(text))}\n`);
-        continue;
-      }
-      // A refusal from the gateway itself (a wrong token, a node that is not there) becomes an error on this request.
-      let message = `the node answered HTTP ${String(response.status)}`;
-      try {
-        const body = JSON.parse(text) as { message?: string; error?: { message?: string } };
-        message = body.error?.message ?? body.message ?? message;
-      } catch {
-        // Keep the status line.
-      }
-      if (id !== null) io.stdout(`${JSON.stringify({ jsonrpc: "2.0", id, error: { code: -32000, message } })}\n`);
-      else io.stderr(`clarkcant mcp: ${message}\n`);
-    } catch (cause) {
-      const message = `could not reach the node at ${connection.url}: ${cause instanceof Error ? cause.message : String(cause)}`;
-      if (id !== null) io.stdout(`${JSON.stringify({ jsonrpc: "2.0", id, error: { code: -32000, message } })}\n`);
-      else io.stderr(`clarkcant mcp: ${message}\n`);
-    }
+    const forwarded = forwardMcpLine(context, line).finally(() => pending.delete(forwarded));
+    pending.add(forwarded);
   }
+  await Promise.all(pending);
   return 0;
+}
+
+async function forwardMcpLine(context: { connection: Connection; io: CliIo; doFetch: typeof fetch }, line: string): Promise<void> {
+  const { io, connection } = context;
+  let id: unknown;
+  try {
+    const message = JSON.parse(line) as { id?: unknown };
+    id = message.id ?? null;
+  } catch {
+    io.stdout(`${JSON.stringify({ jsonrpc: "2.0", id: null, error: { code: -32700, message: "not valid JSON" } })}\n`);
+    return;
+  }
+  try {
+    const response = await context.doFetch(`${connection.url}/mcp`, {
+      method: "POST",
+      headers: {
+        ...(connection.token === undefined ? {} : { authorization: `Bearer ${connection.token}` }),
+        "content-type": "application/json",
+        accept: "application/json, text/event-stream",
+      },
+      body: line,
+    });
+    const text = await response.text();
+    if (response.status === 202 || text.trim() === "") return;
+    if (response.ok) {
+      let answer: unknown;
+      try {
+        answer = JSON.parse(text);
+      } catch {
+        const message = "the node answered with something other than JSON";
+        if (id !== null) io.stdout(`${JSON.stringify({ jsonrpc: "2.0", id, error: { code: -32603, message } })}\n`);
+        else io.stderr(`clarkcant mcp: ${message}\n`);
+        return;
+      }
+      io.stdout(`${JSON.stringify(answer)}\n`);
+      return;
+    }
+    // A refusal from the gateway itself (a wrong token, a node that is not there) becomes an error on this request.
+    let message = `the node answered HTTP ${String(response.status)}`;
+    try {
+      const body = JSON.parse(text) as { message?: string; error?: { message?: string } };
+      message = body.error?.message ?? body.message ?? message;
+    } catch {
+      // Keep the status line.
+    }
+    if (id !== null) io.stdout(`${JSON.stringify({ jsonrpc: "2.0", id, error: { code: -32000, message } })}\n`);
+    else io.stderr(`clarkcant mcp: ${message}\n`);
+  } catch (cause) {
+    const message = `could not reach the node at ${connection.url}: ${cause instanceof Error ? cause.message : String(cause)}`;
+    if (id !== null) io.stdout(`${JSON.stringify({ jsonrpc: "2.0", id, error: { code: -32000, message } })}\n`);
+    else io.stderr(`clarkcant mcp: ${message}\n`);
+  }
 }

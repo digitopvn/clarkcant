@@ -9,7 +9,7 @@ import { scanCredentialChunk, scanSecretHistory } from "../scan-secret-history.m
 const directories: string[] = [];
 const script = fileURLToPath(new URL("../scan-secret-history.mjs", import.meta.url));
 afterEach(() => {
-  for (const directory of directories.splice(0)) rmSync(directory, { recursive: true, force: true });
+  for (const directory of directories.splice(0)) rmSync(directory, { recursive: true, force: true, maxRetries: 3 });
 });
 function directory() {
   const path = mkdtempSync(join(tmpdir(), "clarkcant-secret-scan-"));
@@ -23,6 +23,9 @@ function repository() {
   git("config", "user.name", "Test Fixture");
   git("config", "user.email", "fixture@example.invalid");
   git("config", "commit.gpgsign", "false");
+  // Background auto-maintenance can still be writing .git/objects when afterEach deletes the fixture.
+  git("config", "maintenance.auto", "false");
+  git("config", "gc.auto", "0");
   const commit = () => { git("add", "-A"); git("commit", "-m", "fixture"); };
   writeFileSync(join(cwd, "clean.txt"), "no credentials\n");
   commit();
