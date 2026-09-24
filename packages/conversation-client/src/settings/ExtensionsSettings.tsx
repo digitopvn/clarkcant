@@ -2,7 +2,13 @@ import { useCallback, useEffect, useRef, useState, type ReactElement } from "rea
 
 import { useT } from "../i18n/locale-context.tsx";
 import { ToolLists } from "../tool-lists.tsx";
-import type { GatewayClient, InstalledPackageView, PackageChangeResponse, RestorablePackageView } from "../api.ts";
+import type {
+  GatewayClient,
+  InstalledPackageView,
+  PackageChangeResponse,
+  PendingCapabilityApprovalView,
+  RestorablePackageView,
+} from "../api.ts";
 import { laneLabel } from "../package-provenance.ts";
 import { SettingsRow, ToolRow } from "./controls/SettingsRow.tsx";
 
@@ -33,6 +39,8 @@ export interface ExtensionsSettingsProps {
 export function ExtensionsSettings({ client, tools, onOpenWidgetLibrary }: ExtensionsSettingsProps): ReactElement {
   const t = useT();
   const [extensions, setExtensions] = useState<{ name: string; kind: string }[] | undefined>(undefined);
+  // Bumped when a package changes, so the questions about it are read again: an uninstalled package's are gone.
+  const [packagesRevision, setPackagesRevision] = useState(0);
 
   useEffect(() => {
     let cancelled = false;
@@ -57,7 +65,8 @@ export function ExtensionsSettings({ client, tools, onOpenWidgetLibrary }: Exten
         What is installed, and where it came from.
         ...
       */}
-      <InstalledPackagesSection client={client} />
+      <CapabilityApprovalsSection client={client} revision={packagesRevision} />
+      <InstalledPackagesSection client={client} onChanged={() => setPackagesRevision((value) => value + 1)} />
       {/*
         The library entry point.
 
@@ -140,6 +149,118 @@ export function ExtensionsSettings({ client, tools, onOpenWidgetLibrary }: Exten
 }
 
 /**
+ * Capability questions an install left open, answered here and nowhere else.
+ *
+ * A package asked for a capability the execution policy wanted a person to decide. This is host chrome: a widget can
+ * never draw it, and the model cannot answer it, because both are the party that would be asking. Each answer is sent
+ * with the digest the row showed, so what gets granted is exactly what was read. Nothing is shown while there is
+ * nothing to decide.
+ */
+function CapabilityApprovalsSection({ client, revision }: { client: GatewayClient; revision: number }): ReactElement | null {
+  const t = useT();
+  const [approvals, setApprovals] = useState<PendingCapabilityApprovalView[]>([]);
+  const [readFailed, setReadFailed] = useState(false);
+  const [busy, setBusy] = useState<string | undefined>(undefined);
+  const [status, setStatus] = useState<{ tone: "done" | "failed"; text: string } | undefined>(undefined);
+  const statusLine = useRef<HTMLParagraphElement>(null);
+
+  const load = useCallback(async (): Promise<void> => {
+    try {
+      setApprovals((await client.capabilityApprovals()).approvals);
+      setReadFailed(false);
+    } catch {
+      setReadFailed(true);
+    }
+  }, [client]);
+
+  useEffect(() => {
+    void load();
+  }, [load, revision]);
+
+  const decide = (approval: PendingCapabilityApprovalView, decision: "granted" | "denied"): void => {
+    if (busy !== undefined) return;
+    setBusy(approval.approvalId);
+    setStatus(undefined);
+    void client
+      .decideCapabilityApproval(approval, decision)
+      .then(() => {
+        setStatus({
+          tone: "done",
+          text: t(decision === "granted" ? "settings.extensions.approvals.granted" : "settings.extensions.approvals.denied")
+            .replace("{capability}", approval.ref)
+            .replace("{package}", approval.packageId),
+        });
+      })
+      .catch((cause: unknown) => {
+        setStatus({
+          tone: "failed",
+          text: t("settings.extensions.approvals.failed")
+            .replace("{capability}", approval.ref)
+            .replace("{reason}", cause instanceof Error ? cause.message : String(cause)),
+        });
+      })
+      .finally(() => {
+        setBusy(undefined);
+        void load().then(() => statusLine.current?.focus());
+      });
+  };
+
+  if (approvals.length === 0 && !readFailed && status === undefined) return null;
+
+  return (
+    <section className="cc-panel-section" data-capability-approvals="true">
+      <h3>{t("settings.extensions.approvals.heading")}</h3>
+      {readFailed && <p className="cc-panel-note">{t("settings.extensions.approvals.unread")}</p>}
+      {approvals.length > 0 && (
+        <ul className="cc-installed-list">
+          {approvals.map((approval) => (
+            <li key={approval.approvalId} data-capability-approval={approval.approvalId}>
+              <strong>{approval.ref}</strong>
+              <dl className="cc-fields">
+                <dt>{t("settings.extensions.approvals.package")}</dt>
+                <dd>
+                  {approval.packageId}@{approval.version}
+                </dd>
+                <dt>{t("settings.extensions.approvals.expires")}</dt>
+                <dd>{approval.expiresAt}</dd>
+              </dl>
+              <div className="cc-package-actions">
+                <button
+                  type="button"
+                  data-capability-grant={approval.approvalId}
+                  disabled={busy !== undefined}
+                  onClick={() => decide(approval, "granted")}
+                >
+                  {busy === approval.approvalId ? t("settings.extensions.installed.working") : t("settings.extensions.approvals.grant")}
+                </button>
+                <button
+                  type="button"
+                  data-capability-deny={approval.approvalId}
+                  disabled={busy !== undefined}
+                  onClick={() => decide(approval, "denied")}
+                >
+                  {t("settings.extensions.approvals.deny")}
+                </button>
+              </div>
+            </li>
+          ))}
+        </ul>
+      )}
+      <p
+        ref={statusLine}
+        className="cc-panel-note"
+        role="status"
+        tabIndex={-1}
+        data-capability-status={status?.tone ?? "idle"}
+        hidden={status === undefined}
+      >
+        {status?.text}
+      </p>
+    </section>
+  );
+}
+
+/**
  * What is installed, and where each package came from.
  *
  * Four facts, and three of them are ones a user cannot check for themselves: where it came from, which version,
@@ -150,7 +271,7 @@ export function ExtensionsSettings({ client, tools, onOpenWidgetLibrary }: Exten
  * the host; an isolated widget is opaque-origin code in a frame with no Node, no filesystem and no host cookies.
  * Showing them with the same wording would be the one mistake this list exists to prevent.
  */
-function InstalledPackagesSection({ client }: { client: GatewayClient }): ReactElement {
+function InstalledPackagesSection({ client, onChanged }: { client: GatewayClient; onChanged: () => void }): ReactElement {
   const t = useT();
   const [packages, setPackages] = useState<InstalledPackageView[] | undefined>(undefined);
   const [restorable, setRestorable] = useState<RestorablePackageView[]>([]);
@@ -227,6 +348,7 @@ function InstalledPackagesSection({ client }: { client: GatewayClient }): ReactE
       })
       .finally(() => {
         setBusy(undefined);
+        onChanged();
         void load().then(() => {
           // The button that was pressed may no longer exist, so focus lands on what it did rather than on the page.
           statusLine.current?.focus();

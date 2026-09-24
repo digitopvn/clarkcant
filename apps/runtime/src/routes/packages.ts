@@ -19,7 +19,7 @@ import {
 } from "@clarkcant/core";
 import { type Database } from "@clarkcant/storage";
 
-import { decideInstallCapabilityApproval, installPackage } from "../application/package-install.ts";
+import { decideInstallCapabilityApproval, installPackage, listPendingCapabilityApprovals } from "../application/package-install.ts";
 import { changePackage } from "../application/package-lifecycle.ts";
 import { type GatewayRequest, type GatewayResponse, fail, json, readJson } from "./http.ts";
 
@@ -250,6 +250,16 @@ export async function handlePackageRoutes(deps: PackageRouteDeps): Promise<Gatew
               .join(" "),
           }),
     });
+  }
+
+  /*
+   * GET /packages/approvals
+   *
+   * The capability questions an install left open, for the host's own Settings to put to the person. Read here and
+   * answered by the route below; never handed to a widget, which is exactly the party asking.
+   */
+  if (segments.length === 2 && segments[0] === "packages" && segments[1] === "approvals" && request.method === "GET") {
+    return json(200, { approvals: listPendingCapabilityApprovals({ runtime, conductor: services.conductor }) });
   }
 
   /*

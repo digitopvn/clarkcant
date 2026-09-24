@@ -2,7 +2,7 @@ import { nowInstant } from "@clarkcant/contracts";
 import { listInstalledPackages, listRestorablePackages } from "@clarkcant/core";
 import type { ToolDefinition } from "@clarkcant/pi-adapter";
 
-import type { PackageInstallDeps } from "./application/package-install.ts";
+import { listPendingCapabilityApprovals, type PackageInstallDeps } from "./application/package-install.ts";
 import { changePackage, type PackageChange, type PackageChangeOutcome } from "./application/package-lifecycle.ts";
 
 /**
@@ -51,6 +51,7 @@ function describeList(deps: PackageInstallDeps): string {
   };
   const installed = listInstalledPackages(core);
   const restorable = listRestorablePackages(core);
+  const approvals = listPendingCapabilityApprovals(deps);
   const lines = [
     installed.length === 0
       ? "Chưa cài gói nào."
@@ -60,6 +61,14 @@ function describeList(deps: PackageInstallDeps): string {
     ...(restorable.length === 0
       ? []
       : [`Đã gỡ, có thể khôi phục: ${restorable.map((entry) => `${entry.packageId} ${entry.version}`).join("; ")}.`]),
+    // Named so the model can point there; answering them is the person's, in host-owned Settings, never this tool's.
+    ...(approvals.length === 0
+      ? []
+      : [
+          `Quyền đang chờ người dùng duyệt trong Cài đặt → Tiện ích & widget (công cụ này không duyệt được): ${approvals
+            .map((entry) => `${entry.ref} cho ${entry.packageId} ${entry.version}`)
+            .join("; ")}.`,
+        ]),
   ];
   return lines.join(" ");
 }

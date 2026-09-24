@@ -402,7 +402,7 @@ button:focus-visible, textarea:focus-visible, input:focus-visible, [tabindex]:fo
 .cc-package-actions button:hover:not(:disabled) { border-color: var(--cc-accent); }
 .cc-package-actions button:focus-visible { outline: 2px solid var(--cc-focus); outline-offset: 2px; }
 .cc-package-actions button:disabled { opacity: 0.45; cursor: default; }
-.cc-panel-note[data-package-status="failed"] { color: var(--cc-danger); }
+.cc-panel-note[data-package-status="failed"], .cc-panel-note[data-capability-status="failed"] { color: var(--cc-danger); }
 /* What could not be shown from an installed package, kept beside the installed list rather than inside the grid. */
 .cc-library-notes { margin-top: var(--cc-space-lg); padding-top: var(--cc-space-lg); border-top: 1px solid var(--cc-border); }
 .cc-library-notes h3 { margin: 0 0 var(--cc-space-sm); font-weight: 600; }

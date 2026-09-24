@@ -9,6 +9,7 @@ import {
   activeGeneration,
   createInstance,
   initialiseState,
+  registerCapability,
   writeRegisteredPreference,
 } from "@clarkcant/core";
 import { allRows } from "@clarkcant/storage";
@@ -52,7 +53,7 @@ let services: NodeServices;
 let deps: GatewayDeps;
 let previousIndex: string | undefined;
 
-function writePackage(root: string, version: string): void {
+function writePackage(root: string, version: string, requestedCapabilities: readonly string[] = []): void {
   mkdirSync(join(root, "widgets", "main"), { recursive: true });
   writeFileSync(join(root, "widgets", "main", "index.html"), "<!doctype html><div id=root></div>\n");
   writeFileSync(join(root, "widgets", "main", "widget.json"), JSON.stringify(definition(version)));
@@ -68,7 +69,7 @@ function writePackage(root: string, version: string): void {
       facets: [
         { kind: "widget", id: WIDGET_ID, entry: "widgets/main/index.html", definition: "widgets/main/widget.json", isolation: "isolated-ui" },
       ],
-      requestedCapabilities: [],
+      requestedCapabilities,
       permissions: { networkOrigins: [], filesystem: [], microphone: false, camera: false, lifecycleScripts: [] },
       platforms: ["darwin-arm64", "linux-x64", "win32-x64", "web"],
       publisher: { id: "example", sourceUrl: "https://example.com", license: "MIT" },
@@ -98,7 +99,7 @@ function entry(version: string, root: string) {
 
 /** Record a generation as the install supervisor does, retiring whatever was active. */
 let tick = 0;
-function recordInstall(version: string, digest = `sha256:board-${version}`): void {
+function recordInstall(version: string, digest = `sha256:board-${version}`, grantedCapabilities: readonly string[] = []): void {
   const db = services.runtime.db;
   const nodeId = services.runtime.identity.nodeId;
   const at = new Date(Date.UTC(2026, 8, 24, 5, 0, tick++)).toISOString();
@@ -116,7 +117,7 @@ function recordInstall(version: string, digest = `sha256:board-${version}`): voi
     codeGeneration: `code_${version}`,
     activatedAt: at,
     uiOnlyFacets: ["ui"],
-    grantedCapabilities: [],
+    grantedCapabilities,
   };
   db.prepare(
     `INSERT INTO package_generations
@@ -311,5 +312,45 @@ describe("the same actions from the conversation", () => {
     expect(isActive()).toBe(true);
     expect((await change("uninstall")).status).toBe(200);
     expect(isActive()).toBe(false);
+  });
+});
+
+describe("what a running frame is brokered", () => {
+  it("holds back a granted capability that is not ready, names why, and brokers it once it is", async () => {
+    // Version 3 asks for one capability and was granted it; nothing on this node provides it yet.
+    const v3 = join(dir, "board-3");
+    writePackage(v3, "3.0.0", ["calendar.read@1"]);
+    writeFileSync(process.env["CC_DIRECTORY_INDEX"]!, JSON.stringify([entry("3.0.0", v3)]));
+    recordInstall("3.0.0", "sha256:board-3.0.0", ["calendar.read@1"]);
+    const instanceId = makeInstance();
+
+    const before = (await live(instanceId)).body as {
+      frame: { grantedCapabilities: string[]; unavailableCapabilities: { ref: string; code: string }[] };
+    };
+    expect(before.frame.grantedCapabilities).toEqual([]);
+    expect(before.frame.unavailableCapabilities).toEqual([
+      expect.objectContaining({ ref: "calendar.read@1", code: "CAPABILITY_MISSING" }),
+    ]);
+
+    registerCapability(
+      { db: services.runtime.db, nodeId: services.runtime.identity.nodeId },
+      {
+        ref: "calendar.read@1" as never,
+        executionNodeId: services.runtime.identity.nodeId as never,
+        summary: "đọc lịch",
+        resourceKinds: ["calendar"],
+        effectCategory: "read",
+        supportsCancellation: false,
+        requiresConnection: false,
+        readiness: { installed: true, loaded: true, authenticated: true, authorized: true, healthy: true },
+        uiAffordances: [],
+      },
+    );
+
+    const after = (await live(instanceId)).body as {
+      frame: { grantedCapabilities: string[]; unavailableCapabilities: unknown[] };
+    };
+    expect(after.frame.grantedCapabilities).toEqual(["calendar.read@1"]);
+    expect(after.frame.unavailableCapabilities).toEqual([]);
   });
 });

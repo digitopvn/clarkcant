@@ -9,6 +9,7 @@ import {
   type MessageBlock,
   type MessageRecord,
   type Principal,
+  capabilityRefSchema,
   commandEnvelopeSchema,
   nowInstant,
   surfaceCompositionSpecSchema,
@@ -23,6 +24,7 @@ import {
   getActionBinding,
   getInstance,
   handleUserMessage,
+  invocationPreflight,
   liveOwnerOf,
   liveStateOf,
   applyWidgetStatePatch,
@@ -31,6 +33,7 @@ import {
   prepareFrameState,
   readDirectoryIndex,
   readSnapshotForDisplay,
+  readyCapabilities,
   releaseLiveOwner,
   sweepExpiredLiveOwners,
   unpinInstance,
@@ -198,6 +201,13 @@ function resolveLiveWidget(
       isolated.packageId,
     );
     const grantedForFrame = brokeredCapabilities(isolated.requestedCapabilities, generation?.grantedCapabilities);
+    // Granted is permission; the registry says whether each one can run now. A granted capability still missing its
+    // connection is held back and named, rather than handed to a frame that would find out on first use.
+    const capabilities = readyCapabilities(grantedForFrame, (ref) => {
+      const parsed = capabilityRefSchema.safeParse(ref);
+      if (!parsed.success) return { ready: false, code: "CAPABILITY_MISSING", message: `${ref} is not a capability reference` };
+      return invocationPreflight({ db: runtime.db, nodeId: runtime.identity.nodeId }, parsed.data);
+    });
     /*
      * The durable state the frame starts from, migrated here — on the node, once, before any code of this version
      * reads it. State that could not be migrated, or that a newer version wrote, is still returned so the widget can
@@ -253,7 +263,8 @@ function resolveLiveWidget(
           expiresAtMs: Date.parse(nowInstant()) + 5 * 60 * 1000,
         })}/${isolated.entryPath}`,
         isolation: isolated.isolation,
-        grantedCapabilities: grantedForFrame,
+        grantedCapabilities: capabilities.ready,
+        unavailableCapabilities: capabilities.unavailable,
         allowedOrigins: isolated.allowedOrigins,
       },
       /*

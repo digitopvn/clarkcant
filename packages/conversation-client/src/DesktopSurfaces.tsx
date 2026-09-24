@@ -525,6 +525,15 @@ export function PinnedLiveSurface({
             {frameStateNotice(live.stateStatus, t)}
           </p>
         )}
+        {/* A capability that was granted but cannot run yet is named, so a missing feature reads as "not connected" and not as a broken widget. */}
+        {frame !== null && (frame.unavailableCapabilities?.length ?? 0) > 0 && (
+          <p className="cc-freshness" data-live-notice="true" data-unavailable-capabilities="true" role="status">
+            {t("shell.live.capabilitiesUnavailable").replace(
+              "{capabilities}",
+              (frame.unavailableCapabilities ?? []).map((entry) => entry.ref).join(", "),
+            )}
+          </p>
+        )}
         {/*
           No frame means the package is gone: what the widget said about itself is what is left to show, and it is
           shown as text rather than as an empty box or a frame that would fail to load.

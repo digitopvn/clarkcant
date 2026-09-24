@@ -63,6 +63,38 @@ export function brokeredCapabilities(
   return requested.filter((ref) => grantedSet.has(ref));
 }
 
+/** A brokered capability the frame is not given yet, and why — so the widget and the person can be told which. */
+export interface UnavailableCapability {
+  ref: string;
+  code: string;
+  message: string;
+}
+
+/** Whether a capability can run now; the runtime answers it from the capability registry. */
+export type CapabilityPreflight = (ref: string) => { ready: true } | { ready: false; code: string; message: string };
+
+/**
+ * Narrow what a frame is brokered to what can actually run now.
+ *
+ * A grant is permission, not readiness: a capability the person approved can still be missing a connection or a
+ * loaded extension. Handing the frame such a capability tells it something works that will fail on first use, so
+ * it is held back and reported with the reason instead — and it is brokered again, with no new approval, on the
+ * next mount after the prerequisite is met.
+ */
+export function readyCapabilities(
+  brokered: readonly string[],
+  preflight: CapabilityPreflight,
+): { ready: readonly string[]; unavailable: readonly UnavailableCapability[] } {
+  const ready: string[] = [];
+  const unavailable: UnavailableCapability[] = [];
+  for (const ref of brokered) {
+    const checked = preflight(ref);
+    if (checked.ready) ready.push(ref);
+    else unavailable.push({ ref, code: checked.code, message: checked.message });
+  }
+  return { ready, unavailable };
+}
+
 export function findIsolatedFrame(input: {
   directory: readonly DirectoryEntry[];
   widgetId: string;

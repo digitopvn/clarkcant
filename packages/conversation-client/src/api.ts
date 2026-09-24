@@ -63,6 +63,8 @@ export interface IsolatedFrameLiveResponse {
      * wrote about itself, never an authority.
      */
     grantedCapabilities: readonly string[];
+    /** Granted capabilities held back because they cannot run yet, each with the reason the node gave. */
+    unavailableCapabilities?: readonly { ref: string; code: string; message: string }[];
     allowedOrigins: readonly string[];
   } | null;
   /** Present when `frame` is null: the widget's own text alternative, from its definition. */
@@ -428,6 +430,19 @@ export interface PackageChangeResponse {
   statesKept: number;
   /** The package carries trusted native code, which only reaches Pi when Pi restarts. */
   restartNeeded: boolean;
+}
+
+/** A capability an install asked the person about, still unanswered. Decided only through host-owned Settings. */
+export interface PendingCapabilityApprovalView {
+  approvalId: string;
+  ref: string;
+  packageId: string;
+  version: string;
+  /** Sent back with the decision, so the answer applies to exactly what was shown. */
+  operationDigest: string;
+  description: string;
+  requestedAt: string;
+  expiresAt: string;
 }
 
 /**
@@ -1244,6 +1259,21 @@ export class GatewayClient {
    */
   changePackage(packageId: string, action: PackageChangeResponse["action"]): Promise<PackageChangeResponse> {
     return this.#call("POST", `/packages/${encodeURIComponent(packageId)}/${action}`);
+  }
+
+  capabilityApprovals(): Promise<{ approvals: PendingCapabilityApprovalView[] }> {
+    return this.#call("GET", "/packages/approvals");
+  }
+
+  /** Answer one capability question with the digest it was shown under; a changed operation is refused, not granted. */
+  decideCapabilityApproval(
+    approval: Pick<PendingCapabilityApprovalView, "approvalId" | "operationDigest">,
+    decision: "granted" | "denied",
+  ): Promise<{ decision: "granted" | "denied"; ref: string; alreadyDecided: boolean }> {
+    return this.#call("POST", `/packages/approvals/${encodeURIComponent(approval.approvalId)}/decision`, {
+      decision,
+      digest: approval.operationDigest,
+    });
   }
 
   /**
