@@ -42,7 +42,20 @@ It is a host-owned secondary surface, not a sidebar or a session picker. A mark 
 
 ## Verification
 
-VERIFICATION
+Both runs are on this branch with `main` merged in.
+
+- `pnpm verify`: pass. That covers invariants, both typechecks, lint, and 2735 unit tests, 7 of them opt-in live-provider tests that were skipped.
+  - `apps/runtime/test/inbox.spec.ts` covers derivation across conversations, dedup, pruning, redaction, the routes, and `read_inbox`. It includes the regression for the card stamped before its approval.
+  - `packages/storage` covers the notifications repository.
+  - `packages/core` covers the `inbox.open` phrases.
+  - `packages/conversation-client/test/inbox-model.spec.ts` covers the mark and panel decisions.
+- `pnpm test:e2e`: 159 passed, 3 skipped, 0 failed. The skips are the opt-in live voice provider checks and the orb canvas check.
+  - `apps/web/e2e/inbox.spec.ts` covers:
+    - deny and approve from the inbox, through the card's route;
+    - opening by click, keyboard and "mở hộp thư", with focus returned on Escape;
+    - 390 px width with reduced motion;
+    - a background run that leaves an unread notice and leads back to its conversation, then read and dismiss.
+  - Provider key variables were unset for this run. `credentials.spec` expects no key before one is stored, and `readiness.ts` counts `OPENROUTER_API_KEY` as the typesafe key.
 
 ## Not in this PR
 
