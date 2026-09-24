@@ -17,7 +17,7 @@ Trước khi sửa UI/UX, đọc [DESIGN.md](../DESIGN.md) để giữ đúng đ
 3. [Distributed runtime](distributed-runtime.md): cài VPS, pairing, remote delegation, disconnect/recovery.
 4. [Widgets & extensions](widgets-and-extensions.md): rich catalog, agent-defined actions, custom mini-apps, pin và lifecycle.
 5. [Widget developer standard](widget-development.md): authoring contract, SDK UX, conformance, package/publish flow và directory metadata.
-6. [Integration & onboarding](integration-onboarding.md): research/install/auth/reload, Google Calendar, quick play và setup theo nhu cầu.
+6. [Cài đặt](installation.md): installer cross-platform, onboarding tương tác, Docker và VPS có HTTPS. [Integration & onboarding](integration-onboarding.md): research/install/auth/reload, Google Calendar, quick play và setup theo nhu cầu.
 7. [Browser & Computer Use](browser-computer-use.md): core/pack boundary, driver, node targeting và takeover.
 8. [Implementation plan](implementation-plan.md): dependencies, work packages, gates, acceptance scenarios.
 9. [Research & decisions](research-and-decisions.md): kết quả kiểm chứng upstream, lựa chọn/rejected alternatives, nguồn.

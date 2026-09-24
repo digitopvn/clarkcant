@@ -1,0 +1,6 @@
+# TLS termination for a public ClarkCant node. Caddy obtains and renews the certificate itself.
+# The node still requires its bearer token on every route but /health; TLS protects that token in transit.
+{$CLARKCANT_DOMAIN} {
+	encode zstd gzip
+	reverse_proxy clarkcant:8765
+}

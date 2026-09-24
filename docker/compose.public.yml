@@ -1,0 +1,32 @@
+# Overlay: put Caddy with automatic HTTPS in front of the node, for a VPS with a domain.
+#
+#   CLARKCANT_DOMAIN=clark.example.com in .env, DNS pointing at this server, ports 80/443 open, then
+#   docker compose -f docker-compose.yml -f docker/compose.public.yml up -d
+#
+# The node's own port is withdrawn from the host: the only way in is through Caddy, over TLS, which is the
+# acknowledgement --allow-public-bind stands for.
+services:
+  clarkcant:
+    ports: !reset []
+    expose:
+      - "8765"
+
+  caddy:
+    image: caddy:2.10-alpine
+    restart: unless-stopped
+    depends_on:
+      - clarkcant
+    environment:
+      CLARKCANT_DOMAIN: ${CLARKCANT_DOMAIN:?set CLARKCANT_DOMAIN in .env}
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ./docker/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+
+volumes:
+  caddy-data:
+  caddy-config:
