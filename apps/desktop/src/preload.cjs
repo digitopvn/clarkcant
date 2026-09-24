@@ -21,6 +21,20 @@ const bridge = {
   notify(input) {
     return ipcRenderer.invoke("desktop:notify", input);
   },
+  /**
+   * Told when the person clicks an OS notification the shell showed, so the renderer that is actually
+   * displaying the conversation can open the inbox through its own `inbox.open` intent.
+   *
+   * A named subscription rather than a generic `on(channel)`, for the same reason `onWidgetReattached` is one.
+   * Returns the unsubscribe: the polling hook that calls this remounts on every client change, and an
+   * `ipcRenderer.on` this preload never removes would pile up one live listener per remount, each still firing
+   * its now-stale closure on every future click.
+   */
+  onNotificationClicked(callback) {
+    const listener = () => callback();
+    ipcRenderer.on("desktop:notificationClicked", listener);
+    return () => ipcRenderer.removeListener("desktop:notificationClicked", listener);
+  },
   /** Opens the OS directory dialog. Answers with the chosen path, or `canceled` when dismissed. */
   pickDirectory(input) {
     return ipcRenderer.invoke("desktop:pickDirectory", input);

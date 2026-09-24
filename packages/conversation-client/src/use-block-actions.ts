@@ -92,21 +92,25 @@ export function useBlockActions({
   );
 
   /**
-   * Approvals that already have a receipt in this transcript.
+   * Approvals that already have a receipt in this transcript, and which of them were refused.
    *
    * The card in storage stays `pending` because messages are never rewritten, so the decision is
-   * read from the receipt instead: the operation the user approved carries its approval id.
+   * read from the receipt instead: the operation the user approved carries its approval id, and so
+   * does the record a refusal leaves.
    */
-  const decidedApprovals = useMemo(() => {
+  const { decidedApprovals, deniedApprovals } = useMemo(() => {
     const decided = new Set<string>();
+    const denied = new Set<string>();
     for (const message of timeline?.messages ?? []) {
       for (const block of message.blocks) {
         if (block.type !== "tool-activity") continue;
         const args = (block.args ?? {}) as Record<string, unknown>;
-        if (typeof args.approvalId === "string") decided.add(args.approvalId);
+        if (typeof args.approvalId !== "string") continue;
+        decided.add(args.approvalId);
+        if (args.decision === "denied") denied.add(args.approvalId);
       }
     }
-    return [...decided];
+    return { decidedApprovals: [...decided], deniedApprovals: [...denied] };
   }, [timeline]);
 
   /**
@@ -357,6 +361,7 @@ export function useBlockActions({
     () => ({
       onApprovalDecide: decideApproval,
       decidedApprovals,
+      deniedApprovals,
       onQuestionAnswer: answerQuestion,
       answeredQuestions,
       ...(questionDraft === undefined ? {} : { questionDraft }),
@@ -399,6 +404,7 @@ export function useBlockActions({
       credentialStatus,
       decideApproval,
       decidedApprovals,
+      deniedApprovals,
       decidingApprovalId,
       installPackage,
       openArtifact,

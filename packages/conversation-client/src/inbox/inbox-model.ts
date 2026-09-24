@@ -1,4 +1,4 @@
-import type { InboxSummary, Notice, NoticeSeverity, NoticeSourceKind, WaitingItem } from "@clarkcant/contracts";
+import type { EffectCategory, InboxSummary, Notice, NoticeSeverity, NoticeSourceKind, WaitingItem } from "@clarkcant/contracts";
 
 import type { MessageKey } from "../i18n/messages.ts";
 
@@ -78,6 +78,25 @@ export function noticeSourceKey(sourceKind: NoticeSourceKind): MessageKey {
   }
 }
 
+/**
+ * Every effect category's label, in the taxonomy's own words rather than the wire's `EffectCategory` slug.
+ *
+ * A closed list, matching `effectCategorySchema` — shared by Settings' rule editor, the panel's task-approval
+ * title and its notification twin (`inbox-notify-decide.ts`), so AGENTS.md's "no capability refs in the
+ * default UI" rule is satisfied in one place instead of three copies that could drift apart.
+ */
+export function effectCategoryLabels(t: (key: MessageKey) => string): Record<EffectCategory, string> {
+  return {
+    read: t("settings.control.category.read"),
+    "local-write": t("settings.control.category.localWrite"),
+    "external-write": t("settings.control.category.externalWrite"),
+    destructive: t("settings.control.category.destructive"),
+    financial: t("settings.control.category.financial"),
+    communication: t("settings.control.category.communication"),
+    "media-capture": t("settings.control.category.mediaCapture"),
+  };
+}
+
 /** A stable key for a waiting item, for React and for the busy state of its buttons. */
 export function waitingKey(item: WaitingItem): string {
   return item.kind === "question" ? `question:${item.questionId}` : `${item.kind}:${item.approvalId}`;
@@ -153,17 +172,24 @@ export function sanitizeReason(cause: unknown): string | undefined {
  *
  * `expired` and `alreadyDecided` are certain — `decideApproval` (`packages/core/src/coordination.ts`) returns
  * those codes before writing anything, or (for `alreadyDecided`) because somebody else's decision already landed.
+ * `taskNotWaiting` and `taskNotFound` are the same kind of certain for a task approval specifically: the gateway
+ * refuses with `TASK_NOT_WAITING` (the task was cancelled, or resumed some other way, before this decision
+ * arrived) or `TASK_NOT_FOUND` *before* writing any decision, so neither one is the "decision written, outcome
+ * unclear" case the generic `ambiguous`/`notRun` copy describes — showing that copy for these two codes would be
+ * unreachable-in-practice-but-still-wrong: a task-specific sentence exists precisely because nothing was written.
  * Every other code is `ambiguous` on purpose: a granted decision can fail *after* being recorded (the payload is
  * missing, the run itself refuses), and the client cannot tell a not-yet-recorded refusal from a recorded one that
  * could not run by the code alone. Resolving "ambiguous" is `decideFailureMessageKey`'s job, once a fresh read says
  * whether the item is still waiting.
  */
-export type DecideFailureCategory = "expired" | "alreadyDecided" | "ambiguous";
+export type DecideFailureCategory = "expired" | "alreadyDecided" | "taskNotWaiting" | "taskNotFound" | "ambiguous";
 
 export function decideFailureCategory(cause: unknown): DecideFailureCategory {
   const code = gatewayErrorCode(cause);
   if (code === "APPROVAL_EXPIRED") return "expired";
   if (code === "APPROVAL_ALREADY_DECIDED") return "alreadyDecided";
+  if (code === "TASK_NOT_WAITING") return "taskNotWaiting";
+  if (code === "TASK_NOT_FOUND") return "taskNotFound";
   return "ambiguous";
 }
 
@@ -177,6 +203,8 @@ export function decideFailureCategory(cause: unknown): DecideFailureCategory {
 export function decideFailureMessageKey(category: DecideFailureCategory, stillWaitingAfterRead: boolean | undefined): MessageKey {
   if (category === "expired") return "inbox.decideFailed.expired";
   if (category === "alreadyDecided") return "inbox.decideFailed.alreadyDecided";
+  if (category === "taskNotWaiting") return "inbox.decideFailed.taskNotWaiting";
+  if (category === "taskNotFound") return "inbox.decideFailed.taskNotFound";
   if (stillWaitingAfterRead === false) return "inbox.decideFailed.notRun";
   return "inbox.decideFailed.stillWaiting";
 }

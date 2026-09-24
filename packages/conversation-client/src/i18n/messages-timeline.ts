@@ -52,6 +52,7 @@ export const MESSAGES_TIMELINE_VI = {
   "blocks.approval.approveAndRun": "Duyệt và chạy",
   "blocks.approval.deny": "Từ chối",
   "blocks.approval.decided": "đã quyết định",
+  "blocks.approval.denied": "đã từ chối",
 
   // blocks.tsx — connection card
   "blocks.connection.unverified": "Chưa xác minh tài khoản.",
@@ -484,6 +485,7 @@ export const MESSAGES_TIMELINE_EN = {
   "blocks.approval.approveAndRun": "Approve and run",
   "blocks.approval.deny": "Deny",
   "blocks.approval.decided": "decided",
+  "blocks.approval.denied": "denied",
 
   "blocks.connection.unverified": "Account not verified.",
   "blocks.connection.accountLabel": "Account",

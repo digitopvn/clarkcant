@@ -15,6 +15,7 @@ import { SelectionToolbar } from "./selection-toolbar.tsx";
 import { DesktopChrome } from "./desktop-chrome.tsx";
 import { ConversationHeader } from "./ConversationHeader.tsx";
 import { InboxPanel } from "./inbox/inbox-panel.tsx";
+import { useInboxNotifications } from "./inbox/use-inbox-notifications.ts";
 import { ConversationHeroEmptyState } from "./ConversationHeroEmptyState.tsx";
 import { ConversationComposerBar } from "./ConversationComposerBar.tsx";
 import { ConversationPinSurfaces } from "./ConversationPinSurfaces.tsx";
@@ -303,6 +304,12 @@ export function Conversation({
     compactSurface,
     voiceOpen,
     hasFocusedPin: focusedInstanceId !== undefined,
+  });
+  useInboxNotifications({
+    client,
+    t: localeState.t,
+    windowMode,
+    onOpenInbox: () => appIntents.clickIntent("inbox.open"),
   });
   // Re-derived from the current locale on every render rather than memoized: a language switch mid-typewriter
   // must show the new language's phrases, not finish the cycle in the one that was active when it started.

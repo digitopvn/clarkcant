@@ -86,6 +86,12 @@ function describeWaiting(item: WaitingItem): string {
         `question in conversation ${item.conversationId}: ${redactSecrets(item.prompt)}` +
         (item.expiresAt === undefined ? "" : ` (expires ${item.expiresAt})`)
       );
+    case "task-approval":
+      return (
+        `task approval for task ${item.taskId} (${item.effectCategory}): ${redactSecrets(item.description)}` +
+        (item.conversationId === undefined ? "" : ` (conversation ${item.conversationId})`) +
+        ` (expires ${item.expiresAt})`
+      );
   }
 }
 

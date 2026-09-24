@@ -1,12 +1,14 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  DEFAULT_INBOX_NOTIFICATIONS_PREFERENCE,
   ORB_PALETTE_CHANNELS,
   PREFERENCE_KEYS,
   PREFERENCE_REGISTRY,
   executionModeSchema,
   executionRulesPreferenceSchema,
   orbCustomPreferenceSchema,
+  parseInboxNotificationsPreference,
   preferenceDefinition,
 } from "../src/preferences.ts";
 
@@ -114,5 +116,44 @@ describe("execution policy preferences stay inside the closed vocabularies", () 
       { effectCategory: "destructive", decision: "ask" },
     ]);
     expect(parsed.success).toBe(true);
+  });
+});
+
+describe("parseInboxNotificationsPreference merges a partial stored value over the defaults", () => {
+  it("falls back to every default when nothing is stored", () => {
+    expect(parseInboxNotificationsPreference(undefined)).toEqual(DEFAULT_INBOX_NOTIFICATIONS_PREFERENCE);
+    expect(parseInboxNotificationsPreference(null)).toEqual(DEFAULT_INBOX_NOTIFICATIONS_PREFERENCE);
+  });
+
+  it("keeps a stored document's real choices, even one written before a group existed", () => {
+    // The document a node wrote before `otherDevices` shipped: it has no `otherDevices` key at all, and this
+    // must not reset `waitingApprovals` or `os` back to their defaults alongside the one it never wrote.
+    const stored = {
+      groups: { waitingApprovals: false, backgroundResults: true, updates: false },
+      os: false,
+      web: true,
+      quietHours: { enabled: true, start: "23:00", end: "06:30" },
+    };
+    expect(parseInboxNotificationsPreference(stored)).toEqual({
+      groups: { waitingApprovals: false, backgroundResults: true, updates: false, otherDevices: true },
+      os: false,
+      web: true,
+      quietHours: { enabled: true, start: "23:00", end: "06:30" },
+    });
+  });
+
+  it("falls back to just one field's own default when only that field is the wrong shape", () => {
+    const stored = {
+      groups: { waitingApprovals: "yes", backgroundResults: true },
+      os: true,
+      web: false,
+      quietHours: { enabled: true, start: "not-a-time", end: "06:30" },
+    };
+    expect(parseInboxNotificationsPreference(stored)).toEqual({
+      groups: { waitingApprovals: true, backgroundResults: true, updates: true, otherDevices: true },
+      os: true,
+      web: false,
+      quietHours: { enabled: true, start: "22:00", end: "06:30" },
+    });
   });
 });

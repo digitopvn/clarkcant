@@ -29,8 +29,9 @@ export function isPersonOnlyRoute(method: string, path: string): boolean {
       // POST /packages/approvals/:id/decision
       return first === "packages" && second === "approvals" && fourth === "decision";
     case 5:
-      // POST /conversations/:id/approvals/:approvalId/decide
-      return first === "conversations" && third === "approvals" && fifth === "decide";
+      // POST /conversations/:id/approvals/:approvalId/decide (a card) and
+      // POST /tasks/:id/approvals/:approvalId/decide (an approval a running task raised, which has no card)
+      return (first === "conversations" || first === "tasks") && third === "approvals" && fifth === "decide";
     default:
       return false;
   }

@@ -5,8 +5,8 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { nodeIdSchema } from "@clarkcant/contracts";
 import { FakePiAdapter, type WorkerBrief } from "@clarkcant/pi-adapter";
-import { requestApproval, setPreference, type ModelTurnInput } from "@clarkcant/core";
-import { appendMessage, nextMessageSequence, readCredential, readPreference } from "@clarkcant/storage";
+import { createTask, requestApproval, setPreference, type ModelTurnInput } from "@clarkcant/core";
+import { appendMessage, nextMessageSequence, oneRow, readCredential, readPreference } from "@clarkcant/storage";
 
 import { handleRequest, type GatewayDeps, type GatewayRequest, type GatewayResponse } from "../src/gateway.ts";
 import { commandDigest } from "../src/run-command.ts";
@@ -729,8 +729,63 @@ describe("a command runs only when the user approves the one that was displayed"
 
     expect(response.status).toBe(200);
     const blocks = blocksOf(response);
-    expect(blocks.some((block) => block.type === "tool-activity")).toBe(false);
-    expect(JSON.stringify(blocks)).toContain("Đã từ chối");
+    // Nothing ran, so there is no command receipt and no exit status to show.
+    expect(blocks.some((block) => block.type === "tool-activity" && block.name === "run_command")).toBe(false);
+    expect(blocks.some((block) => block.type === "evidence")).toBe(false);
+    // The refusal is a record carrying the approval id, which is what lets the card stop offering its buttons.
+    const refusal = blocks.find((block) => block.type === "tool-activity" && block.name === "decide_approval");
+    expect(refusal?.args).toEqual({ approvalId: approval.approvalId, decision: "denied" });
+    expect(String(refusal?.label)).toContain("Đã từ chối");
+  });
+
+  it("refuses to decide a task approval through the command route, pointing at the task route instead", async () => {
+    const conversationId = await createConversation();
+    const owner = { principalId: services.runtime.identity.ownerPrincipalId, kind: "user" as const, nodeId: services.runtime.identity.nodeId as never };
+    const task = createTask(
+      { db: services.runtime.db, nodeId: services.runtime.identity.nodeId, now: () => AT as never, newId: services.conductor.newId },
+      { conversationId: conversationId as never, goal: "chạy việc", principal: owner },
+    );
+    const approval = requestApproval(
+      { db: services.runtime.db, nodeId: services.runtime.identity.nodeId, now: () => AT as never, newId: services.conductor.newId },
+      {
+        taskId: task.taskId,
+        operationDigest: `sha256:task-effect:${task.taskId}:demo.write@1`,
+        operationDescription: "ghi một file demo",
+        effectCategory: "local-write",
+        ttlMs: 900_000,
+      },
+    );
+
+    // Denied here as much as granted - a task approval has no card in this conversation to check the payload
+    // against, and `decideApproval`'s own row lookup is not scoped by kind or conversation, so without this
+    // guard either decision could reach it through the command route.
+    const response = await request("POST", `/conversations/${conversationId}/approvals/${approval.approvalId}/decide`, {
+      body: { decision: "denied", digest: approval.operationDigest },
+    });
+
+    expect(response.status).toBe(409);
+    expect((response.body as { code: string }).code).toBe("APPROVAL_FORGED");
+    expect(String((response.body as { message: string }).message)).toContain(`/tasks/${task.taskId}/approvals/${approval.approvalId}/decide`);
+
+    // Refused before anything was written: the approval is still there to decide through its own route.
+    const row = oneRow<{ decision: string }>(services.runtime.db, "SELECT decision FROM approvals WHERE approval_id = ?", approval.approvalId);
+    expect(row?.decision).toBe("pending");
+  });
+
+  it("refuses to decide an approval whose card was never shown in this conversation", async () => {
+    const shownIn = await createConversation();
+    const decidedFrom = await createConversation();
+    const approval = await propose(shownIn, `node -e "process.stdout.write('khong-duoc')"`, dir);
+
+    const response = await request("POST", `/conversations/${decidedFrom}/approvals/${approval.approvalId}/decide`, {
+      body: { decision: "denied", digest: approval.operationDigest },
+    });
+
+    expect(response.status).toBe(409);
+    expect((response.body as { code: string }).code).toBe("APPROVAL_PAYLOAD_MISSING");
+
+    const row = oneRow<{ decision: string }>(services.runtime.db, "SELECT decision FROM approvals WHERE approval_id = ?", approval.approvalId);
+    expect(row?.decision).toBe("pending");
   });
 });
 

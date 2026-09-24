@@ -46,6 +46,9 @@ export interface SessionHandover {
 interface DesktopBridge {
   getSession?: () => Promise<unknown>;
   setCompactMode?: (input: WindowModeAction) => Promise<unknown>;
+  notify?: (input: { title: string; body: string }) => Promise<unknown>;
+  /** Returns the unsubscribe: called once, it stops this callback from hearing any later click. */
+  onNotificationClicked?: (callback: () => void) => () => void;
 }
 
 /**

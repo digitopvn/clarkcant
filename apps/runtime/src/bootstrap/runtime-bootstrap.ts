@@ -11,6 +11,7 @@ import { createModelCatalogue, type ModelTurn, type ViewDescriptor } from "../mo
 import { type CommandToolDeps } from "../node-tools.ts";
 import { ownedResources } from "../preflight.ts";
 import { refreshProjectIndex } from "../project-finder.ts";
+import { startExpiryNoticeSweep } from "../expiry-notices.ts";
 import { tryRecordNodeNotice, workerSettledNotice } from "../notices.ts";
 import { appendHostReply } from "../routes/conversations.ts";
 import { createSecretBroker } from "../secret-broker.ts";
@@ -19,6 +20,7 @@ import { sessionsDirectory } from "../session-store.ts";
 import { type NodeServices } from "../services.ts";
 import type { NodeWork } from "./work-bootstrap.ts";
 import { createTaskDispatcher } from "../task-dispatch.ts";
+import { startUpdateCheckTimer } from "../update-checks.ts";
 import { buildViewCatalog } from "../view-catalog.ts";
 import { type FixtureGates } from "./fixtures.ts";
 
@@ -78,10 +80,16 @@ export interface RuntimeBootstrapDeps {
   work?: NodeWork;
 }
 
+/** What `wireRuntime` starts that the entry point has to stop again when the node closes. */
+export interface RuntimeHandles {
+  /** Stops the periodic update-check timer (§ update-checks.ts). A no-op on a fixture node, which never starts one. */
+  stopUpdateChecks: () => void;
+}
+
 /**
  * Publish every seam the node owns, and report what the node is.
  */
-export function wireRuntime(deps: RuntimeBootstrapDeps): void {
+export function wireRuntime(deps: RuntimeBootstrapDeps): RuntimeHandles {
   const { wiring } = deps;
   const modelTurn = deps.modelTurn;
   const modelFixture = deps.gates.model;
@@ -264,6 +272,18 @@ export function wireRuntime(deps: RuntimeBootstrapDeps): void {
         // The pointer for a person who is not looking at that conversation.
         tryRecordNodeNotice(deps.services, workerSettledNotice({ taskId, conversationId, outcome, message, at }));
       },
+      // A park is not a settlement: it is reported to the conversation so the wait is not silent, but never
+      // through `tryRecordNodeNotice`/`workerSettledNotice` above - that dedup key (`worker:<taskId>`) belongs to
+      // this run's eventual real outcome, and a notice recorded here would suppress it once the approval is
+      // decided and the run actually settles. The inbox already surfaces the pending approval itself as a
+      // waiting item, derived live, so no separate notice is needed for the park to be visible.
+      onWaitingApproval: ({ taskId, conversationId, message }) => {
+        appendHostReply(deps.services, {
+          conversationId,
+          text: `Đang chờ bạn duyệt (task ${taskId}): ${message}`,
+          at: new Date().toISOString() as Instant,
+        });
+      },
     });
     deps.services.taskDispatch = dispatcher;
     // Task workers are listed and stopped with everything else, by task id.
@@ -271,11 +291,40 @@ export function wireRuntime(deps: RuntimeBootstrapDeps): void {
     deps.services.conductor.runTask = (input) => dispatcher.dispatch(input);
   }
 
+  /*
+   * A person who never looked deserves to learn that something they might have wanted to run never ran, or
+   * that a question went unanswered - not silence. Runs on every node, fixture or not: it only reads the
+   * approvals table and the transcript, and reuses `expireQuestions`, the same idempotent close a real answer
+   * route would race against.
+   */
+  deps.services.expirySweep = startExpiryNoticeSweep(deps.services);
+
   if (sessionFixture) {
     process.stderr.write(
       "project sessions: FIXTURE starter loaded — a session is reported, and no worker is spawned\n",
     );
   }
+
+  /*
+   * The periodic update-check job: installed packages/widgets against the directory index, and the Pi SDK
+   * against the npm registry when there is network.
+   *
+   * Not on a fixture node, for the same reason the task dispatcher skips it above: a browser suite must never
+   * depend on a real npm registry answering, and a scripted node has nothing installed worth checking. The timer
+   * is unref'd (see `update-checks.ts`) so it never holds the process open on its own; `stopUpdateChecks` below is
+   * what the entry point calls when the node closes, the same as every other resource this function starts.
+   */
+  const updateChecks = sessionFixture
+    ? undefined
+    : startUpdateCheckTimer({
+        services: deps.services,
+        installDeps: {
+          db: deps.services.runtime.db,
+          nodeId: deps.services.runtime.identity.nodeId,
+          now: () => new Date().toISOString() as Instant,
+          newId: deps.services.conductor.newId,
+        },
+      });
 
   if (modelFixture) {
     // Said out loud, because a fixture that is indistinguishable from a model is worse than no
@@ -380,4 +429,11 @@ export function wireRuntime(deps: RuntimeBootstrapDeps): void {
       ? `selector: ${deps.services.jev.config.model} pinned, ${deps.services.jev.config.timeoutMs} ms per turn\n`
       : "selector: disabled (no credential or local-only); composed surfaces use the deterministic path\n",
   );
+  process.stderr.write(
+    sessionFixture
+      ? "update check: FIXTURE — no periodic job started, no registry is called\n"
+      : "update check: periodic job started — installed packages/widgets against the directory index, the Pi SDK against npm when there is network\n",
+  );
+
+  return { stopUpdateChecks: () => updateChecks?.stop() };
 }

@@ -73,6 +73,10 @@ export const taskEventSchema = z.enum([
   "approval.granted",
   "dispatch.acknowledged",
   "dispatch.timed_out",
+  "run.needs_approval",
+  "run.approval_granted",
+  "run.approval_denied",
+  "run.approval_expired",
   "run.verifying",
   "verify.passed",
   "verify.failed",
@@ -117,7 +121,15 @@ const TRANSITIONS: Record<TaskState, Partial<Record<TaskEvent, TaskState>>> = {
     "capability.ready": "queued",
   },
   waiting_approval: {
+    // Resolution parked before a worker ever ran; the resolver picks up again from `queued`.
     "approval.granted": "queued",
+    // The execution-policy gate parked a run already dispatched; it resumes where it left off, on the same
+    // execution node, rather than being resolved a second time.
+    "run.approval_granted": "dispatched",
+    // A person refused the operation the task was parked for, or nobody decided before its deadline passed.
+    // Either way there is no path left to resume on: the task is terminal rather than parked forever.
+    "run.approval_denied": "failed",
+    "run.approval_expired": "failed",
   },
   dispatched: {
     "dispatch.acknowledged": "running",
@@ -128,6 +140,9 @@ const TRANSITIONS: Record<TaskState, Partial<Record<TaskEvent, TaskState>>> = {
     "run.verifying": "verifying",
     "pause.requested": "pause_requested",
     "effect.unknown": "uncertain",
+    // The execution-policy gate needs a decision before this run's effect may happen. No evidence exists yet, so
+    // this is not a failure - the task is parked exactly like an approval requested during resolution.
+    "run.needs_approval": "waiting_approval",
   },
   pause_requested: {
     "pause.reached": "paused",

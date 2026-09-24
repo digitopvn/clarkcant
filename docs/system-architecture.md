@@ -316,28 +316,98 @@ The boundary to keep: `ask_user_question` is not used to ask for secrets. The an
 
 The inbox (`apps/runtime/src/inbox.ts`, `routes/inbox.ts`) gathers two things with different authority into one place to read:
 
-- **Pending work** — commands needing approval, package permissions requested, open questions — **is not stored**. Each read derives it again from
-  the `approvals` table, cards in `messages` and `pendingForConversation`, so the inbox cannot say something is still pending after
-  it has been decided on the card or has expired. The inbox has no decision route of its own: the Approve/Reject buttons call
-  exactly `POST /conversations/:id/approvals/:aid/decide` and the package-permission route the card uses. Approvals without a card, or
-  belonging to a dispatched task, are not surfaced yet, because there is no decision route for them yet. Cards and questions are looked up
-  in the 2000 most recent messages (by `rowid`, because `created_at` has no index); the decision route reads the same end of the
-  conversation (`latestMessages`), so an item the inbox surfaces is always one the route can find. Cards older than that window are not
-  surfaced, and their approvals still expire by TTL.
-- **Notices** — background job results, worker dispatches; later Pi/package/widget updates and messages from other nodes — are
-  events that have already happened, **stored** in the `notifications` table (migration 26). Producers call `recordNodeNotice` /
-  `tryRecordNodeNotice` (`apps/runtime/src/notices.ts`); recording a notice never breaks the work that produced it.
-  Writes are idempotent on `(principal, dedupKey)` — the same event sent again (a retry, or via NodeLink) does not become
-  two rows — text is redacted and truncated, and the table cleans itself up: each principal keeps at most 200 **undismissed** notices (oldest
-  first out), while dismissed notices are deleted only after 30 days, so dismissing does not push an unread notice
-  out. A dispatched background task records one notice per task when it finishes (`workerSettledNotice`, key `worker:<taskId>`).
-  `originNodeId` is reserved for notices coming from other nodes.
+- **Pending work** — commands needing approval, package permissions requested, approvals a running task raised, open
+  questions — **is not stored**. Each read derives it again from the `approvals` table, cards in `messages` and
+  `pendingForConversation`, so the inbox cannot say something is still pending after it has been decided or has
+  expired. Commands and package permissions have a card and are decided through
+  `POST /conversations/:id/approvals/:aid/decide` and the package-permission route the card uses. An approval a
+  running task raised through the execution-policy gate (`apps/runtime/src/task-dispatch.ts`, §7.4) has no card — a
+  worker process cannot write one — so it has its own route, `POST /tasks/:taskId/approvals/:approvalId/decide`
+  (`decideTaskApprovalForNode`): a grant does not only record the decision, it moves the task from
+  `waiting_approval` (task state machine, §9) back to `dispatched` and runs that capability again right away, this
+  time let through by `approvalAuthorizes` instead of asking again; a denial (`run.approval_denied`) or an expiry
+  nobody decided (`run.approval_expired`, applied when a decision lands late or by the expiry sweep) moves the task
+  to `failed` — there is no resume path left, so leaving it parked forever would be a lie. The gate does not fail
+  the task when it asks — it used to, which cut off any resume because `failed` is terminal — it parks the task in
+  `waiting_approval` with `run.needs_approval`, the same way `resolve.need_approval` parks a task before dispatch, and
+  creates the approval only once the park actually succeeded. The policy is always consulted first: a stored grant
+  only lets the gate skip *asking again* when the policy says `ask`, never past a `deny` or a `prohibition`. The
+  approval just granted rides with the re-dispatch it unlocks (`authorizedByApprovalId`), so queue latency does not
+  turn a grant into a new question; `dispatch()` returns whether the node took the job, so the route does not say
+  "running again" when the node refused. The route checks the task is still `waiting_approval` **before** writing
+  the decision (`TASK_NOT_WAITING`, `TASK_NOT_FOUND`), the inbox only surfaces an approval whose task is still
+  waiting, and cancelling a task that is waiting for approval retires that approval. The card route
+  (`/conversations/:id/approvals/:aid/decide`) refuses an approval that belongs to a task (`APPROVAL_FORGED`) and
+  requires the card to be in that same conversation for a grant and a denial alike. An approval's description and
+  the park message are readable Vietnamese taken from the capability's `summary`, never a capability ref, approval
+  id or digest. Cards and questions are looked up in the 2000 most recent messages (by `rowid`, because
+  `created_at` has no index); the decision route reads the same end of the conversation (`latestMessages`), so an
+  item the inbox surfaces is always one the route can find. Cards older than that window are not surfaced, and
+  their approvals still expire by TTL.
+- **Notices** — background job results, worker dispatches, approvals/questions that expired unanswered,
+  Pi/package/widget updates; later messages from other nodes — are events that have already happened, **stored** in
+  the `notifications` table (migration 26). Producers call `recordNodeNotice` / `tryRecordNodeNotice`
+  (`apps/runtime/src/notices.ts`); recording a notice never breaks the work that produced it.
+  Writes are idempotent on `(principal, dedupKey)` — the same event sent again (a retry, or via NodeLink) does not
+  become two rows — text is redacted and truncated, and the table cleans itself up: each principal keeps at most 200
+  **undismissed** notices (oldest first out), while dismissed notices are deleted only after 30 days, so dismissing
+  does not push an unread notice out. A dispatched background task records one notice per task when it finishes
+  (`workerSettledNotice`, key `worker:<taskId>`). `originNodeId` is reserved for notices coming from other nodes.
+  - **Expired approvals/questions.** An approval or question that expires without a decision drops out of the
+    pending list silently — right for the list, but someone who was not looking at that moment would never find
+    out. `apps/runtime/src/expiry-notices.ts` sweeps periodically (an unref'd interval, started in `wireRuntime`,
+    stopped when the node closes) for approvals still `pending` past `expires_at` and questions still `waiting` past
+    their deadline (reusing the existing `expireQuestions`, itself idempotent), and records exactly one notice for
+    each (`dedupKey: expired:<id>`) pointing back to its conversation. Questions are only considered within the
+    sweep's recent-message window, so a card weeks old is not closed or announced the first time a sweep runs over
+    it; the notice is recorded *before* the question is closed, so a failed close does not lose the notice. An
+    expired task approval also moves its task to `failed` (`run.approval_expired`). A capability approval (package
+    install, no task, no card) has no conversation to point to and is not swept — the same reason it is not offered
+    as pending work before it expires.
+  - **Update checks** (`apps/runtime/src/update-checks.ts`) are a periodic job, started from
+    `bootstrap/runtime-bootstrap.ts` on an `unref()` timer (it does not keep the process alive) and stopped when the
+    node closes. It compares the version of installed packages/widgets (`listInstalledPackages`, `packages/core`)
+    with the available directory index (`readDirectoryIndex`, the same resolver the installer uses — no second
+    resolver), and the Pi SDK version (`sdkVersion()`, `packages/pi-adapter`) with the npm registry through a `fetch`
+    with a timeout. A directory often lists several versions of the same package: every entry for that package is
+    filtered through the same preflight the installer runs (`entryFitsHost` for host API/platform, plus a non-empty
+    digest), then the highest remaining version wins — it never offers a version the install would refuse. Version
+    comparison is strict semver: a side that does not parse is never considered newer, prereleases compare per
+    identifier, and a stable install is never offered a prerelease; the version npm returns must also pass
+    `semverSchema`. `stop()` also aborts a fetch in flight (`AbortController`), so a check stopped midway ends
+    silently like an offline one instead of recording a notice after the node closed. A network failure or a
+    registry that does not answer **creates no error notice** — it stays silent and retries on the next run —
+    because an offline node is a normal state, not an incident. The `dedupKey` is
+    `update:<npm|git|local>:<packageId>@<newVersion>` (package/widget) or `update:pi:<package name>@<newVersion>`
+    (Pi SDK), so a later check does not create a second row for the same version while the earlier row still exists
+    (a dismissed notice is cleaned up after 30 days, and the same version may then be announced again); a newer
+    version still gets its own row. The text states the current → new version and the risk lane
+    (`trusted-native`/`isolated-ui`/`service`/`declarative`, named the same way as the marketplace — AGENTS.md treats
+    mixing the two namings as the mistake to avoid). The inbox does not draw an "Update" button yet: the real update
+    route goes through an install/rollback lifecycle that is not wired to this notice.
+  - A `git`-sourced package is compared only on the `version` field its directory entry declares, so it cannot
+    detect a new commit whose publisher did not bump the version — there is no way to know a git ref has a newer
+    version short of cloning it, and this module does not pretend to.
 
 Routes: `GET /inbox`, `GET /inbox/summary` (two numbers for the header badge), `POST /inbox/read` (`noticeIds` or all),
 `POST /inbox/notices/:id/dismiss`. The contract is in `packages/contracts/src/inbox.ts`. UI in DESIGN.md §6.7; opened with
 the `inbox.open` intent (text, voice, `control_app`). The agent reads the same data through the read-only tool `read_inbox`
 (`apps/runtime/src/read-inbox-tool.ts`): it does not mark anything as read (the user has not seen it yet) and cannot decide anything
 (the model is not the user).
+
+**Out-of-app notifications** are the client's job, not the node's. `use-inbox-notifications.ts` polls `GET /inbox`
+and the `inbox.notifications` preference (`packages/contracts/src/preferences.ts`; a stored value missing a field is
+merged over the defaults), while the decision *whether to notify* lives in the pure module `inbox-notify-decide.ts`:
+only when the tab is hidden, the window has lost focus or it is in orb/compact mode; by group and quiet hours; the
+first poll only remembers, it does not notify a backlog. The content is only a redacted, length-capped title/body —
+never a command line, capability ref or internal id. On desktop the renderer calls `desktop:notify`; the main process
+keeps a reference to each `Notification` still on screen, and on click restores the shell window from orb/compact,
+focuses it and sends `desktop:notificationClicked` **only to the shell window** (never to a detached widget window);
+preload returns a function that unsubscribes that listener. In the browser, the Web Notification API is used only
+once the user has turned it on in Settings → Control and the browser granted permission; each notification carries
+the item's id as its `tag`, so several tabs do not stack copies. The poll still reads `GET /inbox` when no channel
+can deliver, so the set of seen ids stays current: turning notifications on midway neither floods a backlog nor
+swallows an item that just arrived. The "other devices" group stays off with a reason until NodeLink pairing exists.
 
 The `notifications` table is not NodeLink's `inbox` in §10: the latter is a command queue between nodes, the former is
 what the user is told.
@@ -374,6 +444,9 @@ stateDiagram-v2
   waiting_approval --> queued: consent valid
   resolving --> dispatched
   dispatched --> running: executor accepts
+  running --> waiting_approval: execution policy asks
+  waiting_approval --> dispatched: consent valid, same run
+  waiting_approval --> failed: denied or expired
   dispatched --> uncertain: acknowledgement missing
   running --> verifying
   verifying --> succeeded: evidence sufficient
