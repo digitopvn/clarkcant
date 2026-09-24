@@ -23,8 +23,7 @@ function repository() {
   git("config", "user.name", "Test Fixture");
   git("config", "user.email", "fixture@example.invalid");
   git("config", "commit.gpgsign", "false");
-  // A commit or merge can start git's detached auto-maintenance, which may still be writing .git/objects when
-  // afterEach deletes the fixture; the fixture has too few objects to need it anyway.
+  // Background auto-maintenance can still be writing .git/objects when afterEach deletes the fixture.
   git("config", "maintenance.auto", "false");
   git("config", "gc.auto", "0");
   const commit = () => { git("add", "-A"); git("commit", "-m", "fixture"); };
