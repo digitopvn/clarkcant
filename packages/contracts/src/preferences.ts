@@ -391,6 +391,62 @@ export const windowModeSchema = z.enum(["normal", "expanded", "compact", "orb"])
 export type WindowMode = z.infer<typeof windowModeSchema>;
 
 /**
+ * The groups an OS/web notification can belong to, in the product's own words.
+ *
+ * A closed list rather than the notice categories or waiting-item kinds directly: a person turns off
+ * "background results", not `category: "result"`, and the mapping from the wire vocabulary to these four
+ * is a client concern (`groupForNotice` in `@clarkcant/conversation-client`) precisely because it is a
+ * UX grouping, not a wire contract. `otherDevices` exists ahead of its own producer (§6.7 "Chưa ship"):
+ * the notice shape already carries `originNodeId` for a paired node, and a preference the write path
+ * refuses today would be a worse upgrade than a toggle that has nothing to control yet.
+ */
+export const inboxNotificationGroupSchema = z.enum(["waitingApprovals", "backgroundResults", "updates", "otherDevices"]);
+export type InboxNotificationGroup = z.infer<typeof inboxNotificationGroupSchema>;
+export const INBOX_NOTIFICATION_GROUPS = inboxNotificationGroupSchema.options;
+
+/** A clock reading as a person types it into a time field: zero-padded hours and minutes, local time. */
+const timeOfDaySchema = z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/, "must be a 24-hour HH:MM time");
+
+/**
+ * What decides whether one poll raises an OS or a web notification.
+ *
+ * `os` and `web` are separate switches because they are separate consent stories: `os` is host-owned and
+ * Electron's own notification permission (an OS boundary this preference does not lift, only enables asking
+ * for) while `web` may only ever become `true` after `Notification.requestPermission()` itself answered
+ * `granted` — the write path accepts either value, but the settings surface is the one place that is allowed
+ * to set `web: true`, and only from that explicit toggle.
+ */
+export const inboxNotificationsPreferenceSchema = z.strictObject({
+  groups: z.strictObject({
+    waitingApprovals: z.boolean(),
+    backgroundResults: z.boolean(),
+    updates: z.boolean(),
+    otherDevices: z.boolean(),
+  }),
+  os: z.boolean(),
+  web: z.boolean(),
+  quietHours: z.strictObject({
+    enabled: z.boolean(),
+    start: timeOfDaySchema,
+    end: timeOfDaySchema,
+  }),
+});
+export type InboxNotificationsPreference = z.infer<typeof inboxNotificationsPreferenceSchema>;
+
+/**
+ * What a node with nothing stored uses: every group on, OS notifications on, web off until granted, and no
+ * quiet hours. OS defaults on because it is what closes the gap #171 reports — an approval expiring unseen
+ * while the window has no focus — and Electron's own permission prompt is the boundary that still gates it
+ * on the platforms that have one. `web` defaults off because turning it on is itself the consent action.
+ */
+export const DEFAULT_INBOX_NOTIFICATIONS_PREFERENCE: InboxNotificationsPreference = {
+  groups: { waitingApprovals: true, backgroundResults: true, updates: true, otherDevices: true },
+  os: true,
+  web: false,
+  quietHours: { enabled: false, start: "22:00", end: "07:00" },
+};
+
+/**
  * One registered preference.
  *
  * Loose generics on purpose: the registry holds heterogeneous values, and a caller that wants the
@@ -580,6 +636,13 @@ export const PREFERENCE_REGISTRY = {
     applies: "immediate",
     default: true,
     schema: z.boolean(),
+  },
+  "inbox.notifications": {
+    key: "inbox.notifications",
+    scope: "node",
+    applies: "immediate",
+    default: DEFAULT_INBOX_NOTIFICATIONS_PREFERENCE,
+    schema: inboxNotificationsPreferenceSchema,
   },
 } as const satisfies Record<string, PreferenceDefinition>;
 
