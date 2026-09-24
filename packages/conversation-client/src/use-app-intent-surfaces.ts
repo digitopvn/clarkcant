@@ -2,7 +2,13 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import type { RefObject } from "react";
 
 import type { GatewayClient } from "./api.ts";
-import { hasDesktopChrome, requestWindowMode } from "./desktop-compact.ts";
+import {
+  hasDesktopChrome,
+  hasWindowControls,
+  requestFullScreen,
+  requestMinimize,
+  requestWindowMode,
+} from "./desktop-compact.ts";
 import { runAppIntent, type AppIntentHost } from "./app-intents.ts";
 import type { AppIntentDecision, AppIntentKind, SettingsTab } from "@clarkcant/contracts";
 import { CLOSED_LIBRARY, applyLibraryAction, type WidgetLibraryState } from "./widget-library/widget-library-state.ts";
@@ -103,6 +109,8 @@ export function useAppIntentSurfaces({
    */
   const intentHost = useMemo<AppIntentHost>(() => {
     const desktop = hasDesktopChrome();
+    // Minimize and full screen need a shell new enough to have them; an older one leaves both intents refused.
+    const windowControls = hasWindowControls();
     return {
       // Settings and the inbox are both modals, and modals do not nest: opening one closes the other.
       openSettings: (tab?: SettingsTab) => {
@@ -145,15 +153,27 @@ export function useAppIntentSurfaces({
             expandWindow: () => {
               void requestWindowMode({ type: "expand" });
             },
-            minimiseWindow: () => {
-              void requestWindowMode({ type: "enter-compact" });
-            },
             setMinimal: () => {
               // This build has one compact size, so "thu nhỏ" and "thu nhỏ tối thiểu" reach the same bar.
               void requestWindowMode({ type: "enter-compact" });
             },
             quit: () => {
               window.close();
+            },
+          }
+        : {}),
+      /*
+       * "Thu nhỏ cửa sổ" reads back as going to the taskbar, so it goes to the taskbar. It used to reach the voice bar
+       * because the shell had no minimize verb; a shell without one now refuses the intent rather than doing
+       * something other than what was read back.
+       */
+      ...(windowControls
+        ? {
+            minimiseWindow: () => {
+              void requestMinimize();
+            },
+            setFullScreen: (value: boolean) => {
+              void requestFullScreen(value);
             },
           }
         : {}),

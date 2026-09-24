@@ -85,6 +85,7 @@ export interface AppIntentHost {
   openWidgetLibrary?(mode: "browse" | "develop", target?: { definitionId?: string; family?: string }): void;
   expandWindow?(): void;
   minimiseWindow?(): void;
+  setFullScreen?(value: boolean): void;
   setMinimal?(compact: boolean): void;
   quit?(): void;
 }
@@ -204,6 +205,12 @@ export function runAppIntent(decision: AppIntentDecision, host: AppIntentHost): 
     case "window.minimal":
       host.setMinimal?.(true);
       return { ran: true, say: readBack };
+    case "window.fullscreen":
+      host.setFullScreen?.(true);
+      return { ran: true, say: readBack };
+    case "window.windowed":
+      host.setFullScreen?.(false);
+      return { ran: true, say: readBack };
     case "app.quit":
       host.quit?.();
       return { ran: true, say: readBack };
@@ -234,6 +241,9 @@ function hostHasCapability(host: AppIntentHost, intent: AppIntent): boolean {
       return host.minimiseWindow !== undefined;
     case "window.minimal":
       return host.setMinimal !== undefined;
+    case "window.fullscreen":
+    case "window.windowed":
+      return host.setFullScreen !== undefined;
     case "app.quit":
       return host.quit !== undefined;
     case "widgets.open":
