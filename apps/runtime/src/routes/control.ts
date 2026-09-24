@@ -2,7 +2,8 @@ import { type Principal, nowInstant } from "@clarkcant/contracts";
 import { cancelTask } from "@clarkcant/core";
 
 import { performEmergencyStop } from "../application/emergency-stop.ts";
-import { type NodeServices } from "../services.ts";
+import { buildTimeline, type NodeServices } from "../services.ts";
+import { decideTaskApprovalForNode } from "../task-dispatch.ts";
 import { nodeWork } from "../work-supervisor.ts";
 import { appendHostReply, startBackgroundWork } from "./conversations.ts";
 import { type GatewayRequest, type GatewayResponse, fail, json, readJson } from "./http.ts";
@@ -157,6 +158,66 @@ export async function handleControlRoutes(deps: ControlRouteDeps): Promise<Gatew
         : `Đã ghi nhận yêu cầu dừng task ${taskId}. Việc đang chạy vẫn có thể đang hoàn tất, nên task chưa được coi là đã dừng cho tới khi nơi chạy xác nhận.`,
     });
     return json(200, { taskId: outcome.task.taskId, state: outcome.task.state, confirmed: outcome.confirmed });
+  }
+
+  /*
+   * Decide an approval a dispatched task raised through the execution-policy gate.
+   *
+   * There is no card for this kind of approval — the worker process that needed the capability has no way to
+   * write one — so the digest the caller says it saw is checked against the row alone, the same binding a card
+   * gives a command. A grant is not just recorded: it is what turns a task that was left refused ("can be
+   * retried once it is granted") back into a run, on the same task's execution node, this time authorized by
+   * the approval just decided rather than asked for again.
+   */
+  if (
+    segments.length === 5 &&
+    segments[0] === "tasks" &&
+    segments[2] === "approvals" &&
+    segments[4] === "decide" &&
+    request.method === "POST"
+  ) {
+    const taskId = decodeURIComponent(segments[1] ?? "");
+    const approvalId = decodeURIComponent(segments[3] ?? "");
+    const parsed = readJson(request);
+    if (!parsed.ok) return parsed.response;
+    const decisionValue = parsed.value.decision;
+    const decision = decisionValue === "granted" || decisionValue === "denied" ? decisionValue : undefined;
+    const digest = typeof parsed.value.digest === "string" ? parsed.value.digest : "";
+    if (taskId === "" || approvalId === "" || decision === undefined || digest === "") {
+      return fail(400, "INVALID_SCHEMA", "a decision must carry decision: granted|denied and the digest it was shown");
+    }
+
+    const owner: Principal = {
+      principalId: runtime.identity.ownerPrincipalId as Principal["principalId"],
+      kind: "user",
+      nodeId: runtime.identity.nodeId as Principal["nodeId"],
+    };
+    const at = deps.at() as never;
+    const decided = decideTaskApprovalForNode(
+      {
+        coordination: { db: runtime.db, nodeId: runtime.identity.nodeId, now: () => at, newId: services.conductor.newId },
+        ...(services.taskDispatch === undefined
+          ? {}
+          : { dispatch: (input) => services.taskDispatch?.dispatch(input) }),
+      },
+      { taskId, approvalId, decision, decidingPrincipal: owner, seenOperationDigest: digest },
+    );
+    if (!decided.ok) return fail(409, decided.code, decided.message);
+
+    const text =
+      decision === "denied"
+        ? `Đã từ chối. Task ${taskId} không chạy gì.`
+        : decided.redispatched
+          ? `Đã duyệt. Task ${taskId} đang được chạy lại với quyền vừa cấp.`
+          : `Đã duyệt, nhưng chưa có nơi để chạy lại task ${taskId} (task không còn hoặc chưa được gán nơi chạy), nên chưa có gì được chạy.`;
+    appendHostReply(services, { conversationId: decided.conversationId, at, text });
+
+    return json(200, {
+      decision,
+      taskId,
+      redispatched: decided.redispatched,
+      timeline: buildTimeline(services, { conversationId: decided.conversationId, afterSequence: 0 }),
+    });
   }
 
   /*

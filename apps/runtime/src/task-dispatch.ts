@@ -1,8 +1,11 @@
 import type { ChildProcess } from "node:child_process";
 
-import type { CapabilityRef, Instant, TaskId } from "@clarkcant/contracts";
+import type { ApprovalId, CapabilityRef, Instant, Principal, TaskId } from "@clarkcant/contracts";
 import {
   acquireLease,
+  applyTaskEvent,
+  approvalAuthorizes,
+  decideApproval,
   decideExecution,
   getCapability,
   readExecutionPolicy,
@@ -11,8 +14,10 @@ import {
   requestApproval,
   runDispatchedTask,
   type ConductorDeps,
+  type CoordinationDeps,
+  type PolicyDecision,
 } from "@clarkcant/core";
-import { getTask } from "@clarkcant/storage";
+import { getTask, oneRow } from "@clarkcant/storage";
 
 import { containingRoot, ownedResources } from "./preflight.ts";
 import { signalTree, stopTree } from "./process-tree.ts";
@@ -62,6 +67,20 @@ export interface TaskDispatcherDeps {
     taskId: string;
     conversationId: string;
     outcome: "succeeded" | "failed" | "uncertain" | "cancelled";
+    message: string;
+  }) => void;
+  /**
+   * Reported when the gate parks a dispatched run waiting for approval, instead of settling it.
+   *
+   * Deliberately not folded into `onSettled`: the task has not reached any of `onSettled`'s four
+   * outcomes yet (it is parked in `waiting_approval`, honestly, not failed), and reusing the same
+   * `worker:<taskId>` dedup key a caller typically keys its notice on would silently swallow the
+   * real settlement notice this run eventually produces once the approval is decided.
+   */
+  onWaitingApproval?: (input: {
+    taskId: string;
+    conversationId: string;
+    approvalId: string;
     message: string;
   }) => void;
   at?: () => Instant;
@@ -255,15 +274,37 @@ export function createTaskDispatcher(deps: TaskDispatcherDeps): TaskDispatcher {
         const principalId = deps.ownerPrincipalId();
         const policy = readExecutionPolicy({ db: deps.conductor.db, now: at }, principalId);
         const operationDigest = `sha256:task-effect:${job.taskId}:${job.capabilityRef}`;
-        const decision = decideExecution({
-          policy,
-          action: { kind: "effect", category: descriptor.effectCategory, operationDigest },
-          // The task was created from the user's own request; dispatching the capability it needs is
-          // not the agent deciding to do something on its own.
-          explicitUserIntent: true,
-        });
-
         const coordination = { db: deps.conductor.db, nodeId: deps.conductor.nodeId, now: at, newId: deps.conductor.newId };
+
+        /*
+         * A re-dispatch of this same task after its approval was granted must not ask again — the person
+         * already decided this exact operation, and asking a second time would be the node ignoring its own
+         * record. `approvalAuthorizes` is the same check a repeat run of a pinned widget uses, bound to this
+         * task's digest so a grant for one capability can never wave through another.
+         */
+        const priorGrant = oneRow<{ approval_id: string }>(
+          deps.conductor.db,
+          `SELECT approval_id FROM approvals WHERE task_id = ? AND operation_digest = ? AND decision = 'granted'
+             ORDER BY decided_at DESC LIMIT 1`,
+          job.taskId,
+          operationDigest,
+        );
+        const priorAuthorization =
+          priorGrant === undefined
+            ? undefined
+            : approvalAuthorizes(coordination, priorGrant.approval_id as ApprovalId, operationDigest);
+
+        const decision: PolicyDecision =
+          priorAuthorization?.authorized === true
+            ? { kind: "execute", reason: "an approval already granted this exact operation", audit: true }
+            : decideExecution({
+                policy,
+                action: { kind: "effect", category: descriptor.effectCategory, operationDigest },
+                // The task was created from the user's own request; dispatching the capability it needs is
+                // not the agent deciding to do something on its own.
+                explicitUserIntent: true,
+              });
+
         if (decision.kind === "deny") {
           releaseLease(coordination, lease.lease.leaseId);
           const refusal = `refused: ${decision.reason}`;
@@ -283,12 +324,18 @@ export function createTaskDispatcher(deps: TaskDispatcherDeps): TaskDispatcher {
             effectCategory: descriptor.effectCategory,
             ttlMs: DEFAULT_APPROVAL_TTL_MS,
           });
-          const refusal = `capability ${job.capabilityRef} needs approval before it can run (${approval.approvalId}); the task was not run and can be retried once it is granted`;
-          const outcome = await runDispatchedTask(deps.conductor, {
+          const message = `capability ${job.capabilityRef} needs approval before it can run (${approval.approvalId}); the task was not run and can be retried once it is granted`;
+          // Park, not fail: nothing was verified either way, and `failed` has no legal exit in the task
+          // state machine, which would make the grant this approval exists to unblock unable to resume
+          // the run. `waiting_approval` is exactly the state a pre-dispatch approval request already
+          // parks a task in; this is the same park, reached mid-run instead of during resolution.
+          applyTaskEvent(deps.conductor, job.taskId, "run.needs_approval", { parkedReason: message });
+          deps.onWaitingApproval?.({
             taskId: job.taskId,
-            collectEvidence: async () => ({ kind: "exit-status", summary: refusal, verified: false }),
+            conversationId: task.conversationId,
+            approvalId: approval.approvalId,
+            message,
           });
-          settle(job, outcome.outcome, refusal);
           return;
         }
         recordEffectExecution(coordination, {
@@ -499,4 +546,95 @@ export function createTaskDispatcher(deps: TaskDispatcherDeps): TaskDispatcher {
       }
     },
   };
+}
+
+/**
+ * Decide an approval a dispatched task raised through the gate above.
+ *
+ * Unlike `decideApprovalForNode` (the command-approval route), there is no card whose payload has to be found
+ * first: the operation is named entirely by the approval row itself, and `decideApproval` re-checks the digest
+ * the caller says it saw against the one stored, the same binding a card gives a command. What this adds is the
+ * task match — an approval belongs to exactly one task, checked before the decision is written rather than
+ * after, so a caller cannot decide a different task's approval by guessing its id — and, on a grant, turning the
+ * decision into the re-dispatch it exists to unblock: the capability the digest names is read back out of it and
+ * queued again on the task's execution node, this time authorized by `approvalAuthorizes` in the gate above.
+ *
+ * `redispatched` is `false` rather than a failure when a grant cannot be turned into a run — the task no longer
+ * exists, was never assigned an execution node, or this node was not wired with a dispatcher at all (a fixture
+ * node, per `TaskDispatcherDeps.ownerPrincipalId`'s own doc comment) — because the decision itself still
+ * succeeded and must not be reported as failed.
+ */
+export function decideTaskApprovalForNode(
+  deps: {
+    coordination: CoordinationDeps;
+    /** Absent on a node that never wired a dispatcher (a fixture node); a grant is then recorded but not run. */
+    dispatch?: (input: { taskId: string; capabilityRef: string; executionNodeId: string }) => void;
+  },
+  input: {
+    taskId: string;
+    approvalId: string;
+    decision: "granted" | "denied";
+    decidingPrincipal: Principal;
+    /** Digest the approver actually saw, so an approved operation cannot be swapped for a different one. */
+    seenOperationDigest: string;
+  },
+):
+  | { ok: true; conversationId: string; redispatched: boolean }
+  | { ok: false; code: string; message: string } {
+  const row = oneRow<{ task_id: string | null }>(
+    deps.coordination.db,
+    "SELECT task_id FROM approvals WHERE approval_id = ?",
+    input.approvalId,
+  );
+  if (row === undefined) {
+    return { ok: false, code: "APPROVAL_FORGED", message: "approval does not exist" };
+  }
+  if (row.task_id !== input.taskId) {
+    return { ok: false, code: "APPROVAL_FORGED", message: "that approval does not belong to this task" };
+  }
+
+  const decided = decideApproval(deps.coordination, {
+    approvalId: input.approvalId as ApprovalId,
+    decision: input.decision,
+    decidingPrincipal: input.decidingPrincipal,
+    seenOperationDigest: input.seenOperationDigest,
+  });
+  if (!decided.ok) return { ok: false, code: decided.code, message: decided.message };
+
+  const task = getTask(deps.coordination.db, input.taskId);
+  if (task === undefined) {
+    return { ok: false, code: "TASK_NOT_FOUND", message: "the task this approval belonged to no longer exists" };
+  }
+
+  if (input.decision === "denied") {
+    return { ok: true, conversationId: task.conversationId, redispatched: false };
+  }
+
+  // The gate wrote this digest as `sha256:task-effect:<taskId>:<capabilityRef>`; read the capability back out of
+  // it rather than storing it a second time anywhere.
+  const prefix = `sha256:task-effect:${input.taskId}:`;
+  const capabilityRef = decided.approval.operationDigest.startsWith(prefix)
+    ? decided.approval.operationDigest.slice(prefix.length)
+    : undefined;
+
+  if (capabilityRef === undefined || deps.dispatch === undefined || task.executionNodeId === undefined) {
+    return { ok: true, conversationId: task.conversationId, redispatched: false };
+  }
+
+  // The gate parked this task in `waiting_approval` without touching its run; resume it back through
+  // `dispatched` so the worker it already had a lease for can be re-queued, rather than resolving it a
+  // second time. Either replay can legally fail — the task moved on while the approval sat pending (it
+  // was cancelled, or somehow already resumed) — and that is reported as "granted but not re-run", the
+  // same as any other reason a grant cannot be turned into a run, never as a failed decision.
+  const parked = applyTaskEvent(deps.coordination, input.taskId, "run.approval_granted");
+  if (!parked.ok) {
+    return { ok: true, conversationId: task.conversationId, redispatched: false };
+  }
+  const resumed = applyTaskEvent(deps.coordination, input.taskId, "dispatch.acknowledged");
+  if (!resumed.ok) {
+    return { ok: true, conversationId: task.conversationId, redispatched: false };
+  }
+
+  deps.dispatch({ taskId: input.taskId, capabilityRef, executionNodeId: task.executionNodeId });
+  return { ok: true, conversationId: task.conversationId, redispatched: true };
 }
