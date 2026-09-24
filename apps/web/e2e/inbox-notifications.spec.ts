@@ -119,13 +119,14 @@ test("disabling a group silences its notification, the other group's still shows
   const panel = page.locator("#cc-tabpanel-control");
   await expect(panel).toBeVisible();
 
+  // The visible track covers the input, so the click goes to the label a person actually presses.
   const webToggle = panel.locator('[data-toggle="inbox-notify-web"] input[type="checkbox"]');
-  await webToggle.check();
+  await panel.locator('[data-toggle="inbox-notify-web"]').click();
   // Not optimistic: the control only shows on, once the node has confirmed the write the permission prompt allowed.
   await expect(webToggle).toBeChecked({ timeout: 10_000 });
 
   const waitingToggle = panel.locator('[data-toggle="inbox-notify-group-waitingApprovals"] input[type="checkbox"]');
-  await waitingToggle.uncheck();
+  await panel.locator('[data-toggle="inbox-notify-group-waitingApprovals"]').click();
   await expect(waitingToggle).not.toBeChecked({ timeout: 10_000 });
 
   await page.keyboard.press("Escape");
