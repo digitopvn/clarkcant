@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 
-import { meetsVersion, parseFlags, readEnv, upsertEnv } from "../setup.mjs";
+import { parseEnvFile } from "@clarkcant/pi-adapter";
+
+import { checkPlain, meetsVersion, parseFlags, quoteEnv, readEnv, upsertEnv } from "../setup.mjs";
 
 describe("upsertEnv", () => {
   it("replaces an assignment in place and keeps comments and unrelated lines", () => {
@@ -19,7 +21,20 @@ describe("upsertEnv", () => {
   });
 
   it("appends a name the file never mentions and quotes values with spaces", () => {
-    expect(upsertEnv("A=1\n", { CLARKCANT_LABEL: "my clark" })).toBe('A=1\nCLARKCANT_LABEL="my clark"\n');
+    expect(upsertEnv("A=1\n", { CLARKCANT_LABEL: "my clark" })).toBe("A=1\nCLARKCANT_LABEL='my clark'\n");
+  });
+
+  it("writes values the runtime's env parser reads back unchanged", () => {
+    for (const value of ["plain", "has space", "sk-a$b", "back\\slash", 'dq"inside', "hash#tag"]) {
+      expect(parseEnvFile(upsertEnv("", { KEY: value })).KEY).toBe(value);
+    }
+  });
+
+  it("refuses values it cannot write faithfully", () => {
+    expect(() => quoteEnv("a\nb")).toThrow();
+    expect(() => quoteEnv("it's here")).toThrow();
+    expect(checkPlain("Label", "my clark")).toBe("my clark");
+    expect(() => checkPlain("Label", "a$b")).toThrow("Label");
   });
 
   it("ignores undefined values", () => {

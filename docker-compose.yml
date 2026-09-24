@@ -21,6 +21,8 @@ services:
         required: false
     environment:
       CLARKCANT_DATA_DIR: /data
+      # The image's own web build. A host path written to .env by local onboarding must not replace it.
+      CC_WEB_DIST: /app/apps/web/dist
     command:
       - --data-dir
       - /data

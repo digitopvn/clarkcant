@@ -69,8 +69,24 @@ export function upsertEnv(content, values) {
   return `${lines.join("\n")}\n`;
 }
 
-function quoteEnv(value) {
-  return /[\s#"']/.test(value) ? `"${value.replace(/"/g, '\\"')}"` : value;
+/**
+ * Quote a value so the runtime's `.env` parser and Docker Compose's read the same bytes.
+ *
+ * Neither unescapes the same way, so nothing is escaped: a value that needs quoting is single-quoted, which both
+ * parsers take literally (Compose does not expand `$` inside single quotes), and a value that cannot be written
+ * that way is refused rather than silently changed.
+ */
+export function quoteEnv(value) {
+  if (/[\r\n]/.test(value)) throw new Error("A value cannot span lines");
+  if (!/[\s#"'$\\]/.test(value)) return value;
+  if (value.includes("'")) throw new Error("A value that needs quoting cannot also contain a single quote");
+  return `'${value}'`;
+}
+
+/** Plain identifiers (label, model, domain) are checked where they are typed, so the error names the field. */
+export function checkPlain(name, value) {
+  if (/["'$\\\r\n`]/.test(value)) throw new Error(`${name} cannot contain quotes, backslashes, backticks or $`);
+  return value;
 }
 
 /** Live (uncommented, non-empty) values in `.env` content. */
@@ -173,15 +189,11 @@ function createPrompter(flags) {
   const queued = [];
   const waiting = [];
   let closed = false;
-  let muted = false;
   rl.on("line", (line) => (waiting.length > 0 ? waiting.shift()(line) : queued.push(line)));
   rl.on("close", () => {
     closed = true;
     for (const resolveLine of waiting.splice(0)) resolveLine(undefined);
   });
-  // Readline echoes typed characters through this method; a secret prompt silences it.
-  const writeToOutput = rl._writeToOutput?.bind(rl);
-  if (writeToOutput !== undefined) rl._writeToOutput = (text) => (muted ? undefined : writeToOutput(text));
   const line = async (prompt) => {
     stdout.write(prompt);
     const answer = queued.length > 0 ? queued.shift() : closed ? undefined : await new Promise((resolveLine) => waiting.push(resolveLine));
@@ -211,12 +223,37 @@ function createPrompter(flags) {
     },
     /** A secret: typed characters are not echoed, and an empty answer keeps what is there. */
     async secret(question) {
-      muted = stdin.isTTY;
+      if (!stdin.isTTY) return line(`${question}: `);
+      // Readline would echo each key, so the terminal is read raw and nothing typed is written back.
+      // Readline's own key listener is detached for the duration, or it would buffer the secret as the next line.
+      const keyListeners = stdin.listeners("keypress");
+      for (const listener of keyListeners) stdin.off("keypress", listener);
+      stdout.write(`${question}: `);
+      stdin.setRawMode(true);
+      stdin.resume();
       try {
-        return await line(`${question}: `);
+        return await new Promise((resolveSecret, rejectSecret) => {
+          let value = "";
+          const onData = (chunk) => {
+            for (const char of chunk.toString("utf8")) {
+              if (char === "\r" || char === "\n") {
+                stdin.off("data", onData);
+                return resolveSecret(value.trim());
+              }
+              if (char === "\u0003") {
+                stdin.off("data", onData);
+                return rejectSecret(new Error("Stopped. Nothing was written."));
+              }
+              if (char === "\u007f" || char === "\b") value = value.slice(0, -1);
+              else if (char >= " ") value += char;
+            }
+          };
+          stdin.on("data", onData);
+        });
       } finally {
-        if (muted) stdout.write("\n");
-        muted = false;
+        stdin.setRawMode(false);
+        stdout.write("\n");
+        for (const listener of keyListeners) stdin.on("keypress", listener);
       }
     },
     close() {
@@ -322,6 +359,7 @@ async function main() {
         model = await ask.text(`  Model id for ${provider.label}`);
       }
       if (model === "") throw new Error(`--provider ${provider.id} needs --model`);
+      checkPlain("Model id", model);
       updates.CC_MODEL_PROVIDER = provider.id;
       updates.CC_MODEL_ID = model;
       const hasKey = current[provider.keyVar] !== undefined || process.env[provider.keyVar] !== undefined;
@@ -333,18 +371,23 @@ async function main() {
     // Step 4: where the node lives.
     stdout.write(`\n${bold("4/5  Node identity and storage\n")}`);
     const label = flags.label ?? (await ask.text("  Label shown for this node", current.CLARKCANT_LABEL ?? "my clark"));
-    const port = flags.port ?? (await ask.text("  Gateway port", current.CLARKCANT_PORT ?? "8765"));
-    if (!/^\d{2,5}$/.test(port) || Number(port) > 65535) throw new Error(`Port ${port} is not a TCP port`);
+    checkPlain("Label", label);
     updates.CLARKCANT_LABEL = label;
-    updates.CLARKCANT_PORT = port;
+    // Behind Caddy the node's port is never published, so there is nothing to choose.
+    const port = mode === "docker-public" ? "8765" : flags.port ?? (await ask.text("  Gateway port", current.CLARKCANT_PORT ?? "8765"));
+    if (!/^\d{2,5}$/.test(port) || Number(port) > 65535) throw new Error(`Port ${port} is not a TCP port`);
+    if (mode !== "docker-public") updates.CLARKCANT_PORT = port;
     let dataDir;
     if (mode === "local") {
       dataDir = flags.dataDir ?? (await ask.text("  Data directory (identity, database, blobs)", current.CLARKCANT_DATA_DIR ?? "./.data"));
       updates.CLARKCANT_DATA_DIR = dataDir;
+      // Where the node finds the widget runtime it serves to widget frames; Docker sets its own.
+      updates.CC_WEB_DIST = join(ROOT, "apps", "web", "dist");
     }
     if (mode === "docker-public") {
       const domain = flags.domain ?? (await ask.text("  Public domain that points at this server (for HTTPS)", current.CLARKCANT_DOMAIN ?? ""));
       if (domain === "") throw new Error("docker-public needs a domain whose DNS points at this server");
+      checkPlain("Domain", domain);
       updates.CLARKCANT_DOMAIN = domain;
     }
 
@@ -354,7 +397,7 @@ async function main() {
     const rows = [
       ["Mode", mode],
       ["Model", provider.id === "none" ? "none (scripted only)" : `${updates.CC_MODEL_PROVIDER} / ${updates.CC_MODEL_ID}`],
-      ["API key", provider.keyVar === "" ? "not needed" : shown[provider.keyVar] || process.env[provider.keyVar] ? "set (hidden)" : yellow("not set — the node starts and reports the model unreachable")],
+      ["API key", keyStatus(provider, shown, mode)],
       ["Label", label],
       ["Port", port],
       ...(dataDir ? [["Data dir", dataDir]] : []),
@@ -388,17 +431,34 @@ async function main() {
     }
 
     stdout.write(`\n${green(bold("Ready."))} Start the node with:\n\n  ${bold(start)}\n\n`);
-    if (mode === "local") {
-      stdout.write(`Open ${bold(`http://127.0.0.1:${port}`)} once it prints its identity. The bearer token is in ${dataDir}/identity.json.\n`);
-    } else if (mode === "docker") {
-      stdout.write(`Open ${bold(`http://127.0.0.1:${port}`)}. Read the token with: docker compose exec clarkcant cat /data/identity.json\n`);
-    } else {
-      stdout.write(`Open ${bold(`https://${updates.CLARKCANT_DOMAIN}`)} once Caddy has issued the certificate (ports 80 and 443 must be open).\n`);
-    }
+    // The node is a gateway, not a web server for the app: the conversation client runs separately and is told
+    // which gateway to talk to.
+    const gateway = mode === "docker-public" ? `https://${updates.CLARKCANT_DOMAIN}` : `http://127.0.0.1:${port}`;
+    stdout.write(`Check it: ${bold(`curl ${gateway}/health`)}\n`);
+    stdout.write(
+      mode === "local"
+        ? `The bearer token is in ${dataDir}/identity.json (localToken).\n`
+        : "Read the bearer token with: docker compose exec clarkcant cat /data/identity.json\n",
+    );
+    stdout.write(`Then open the conversation client from this checkout: ${bold("pnpm dev:web")} and visit ${bold(`http://127.0.0.1:5173/?gateway=${gateway}`)}\n`);
+    if (mode === "docker-public") stdout.write(dim("Caddy issues the certificate on first start; ports 80 and 443 must be open.\n"));
     stdout.write(dim("Guide: docs/installation.md\n"));
   } finally {
     ask.close();
   }
+}
+
+/**
+ * What the summary says about the key. A key only in this shell reaches a node started from this shell, never a
+ * container, which reads `.env` alone, so the two are reported differently.
+ */
+export function keyStatus(provider, envValues, mode) {
+  if (provider.keyVar === "") return "not needed";
+  if (envValues[provider.keyVar]) return "set in .env (hidden)";
+  if (process.env[provider.keyVar]) {
+    return mode === "local" ? yellow("set in this shell only; start the node from this shell") : yellow("set in this shell only; the container will not see it");
+  }
+  return yellow("not set; the node starts and reports the model unreachable");
 }
 
 function composeFiles(mode) {
@@ -412,12 +472,16 @@ function startCommand(mode, { dataDir, label, port }) {
 }
 
 function installLocal() {
+  if (versionOf("pnpm") === undefined && !which("corepack")) {
+    stdout.write(yellow("Neither pnpm nor Corepack was found (Node 25+ no longer bundles Corepack). Run: npm install -g corepack\n"));
+    return false;
+  }
   if (versionOf("pnpm") === undefined && !run("corepack", ["enable"])) {
     stdout.write(yellow("corepack enable failed; on Linux/macOS it may need sudo, on Windows an elevated shell.\n"));
     return false;
   }
   if (!run("pnpm", ["install", "--frozen-lockfile"])) return false;
-  // The browser client, so the node serves its own interface at the gateway port.
+  // The web build holds the widget runtime the node serves to widget frames (CC_WEB_DIST).
   return run("pnpm", ["run", "build"]);
 }
 

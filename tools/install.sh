@@ -48,6 +48,8 @@ fi
 cd "$ROOT"
 
 if ! command -v pnpm >/dev/null 2>&1; then
+  command -v corepack >/dev/null 2>&1 \
+    || fail "Corepack is not bundled with this Node.js (25+). Install it with: npm install -g corepack"
   say "Enabling pnpm through Corepack ..."
   corepack enable 2>/dev/null || sudo corepack enable \
     || fail "corepack enable failed. Run it yourself (it may need sudo), then re-run this script."
@@ -56,8 +58,9 @@ fi
 # A piped installer has no terminal on stdin; give the onboarding the real one.
 if [ -t 0 ]; then
   exec node tools/setup.mjs "$@"
-elif [ -r /dev/tty ]; then
+elif (exec </dev/tty) 2>/dev/null; then
   exec node tools/setup.mjs "$@" </dev/tty
 else
+  say "No terminal available; continuing non-interactively with defaults (DeepSeek, key from DEEPSEEK_API_KEY)."
   exec node tools/setup.mjs --yes "$@"
 fi
