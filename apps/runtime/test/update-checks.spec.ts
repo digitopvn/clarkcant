@@ -4,7 +4,7 @@ import { join } from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import type { Instant } from "@clarkcant/contracts";
+import type { Instant, Platform } from "@clarkcant/contracts";
 import type { InstalledPackageView } from "@clarkcant/core";
 
 import { listNotifications } from "@clarkcant/storage";
@@ -28,6 +28,8 @@ import { bootNodeServices, type NodeServices } from "../src/services.ts";
  */
 
 const AT = "2026-09-24T08:00:00.000Z" as Instant;
+/** Pinned, so the fixtures' `linux-x64` entries fit whatever machine runs this suite. */
+const HOST: Platform = "linux-x64";
 
 let dir: string;
 let services: NodeServices;
@@ -123,6 +125,7 @@ describe("checkForUpdates — packages and widgets", () => {
       piInstalledVersion: "1.0.0",
       fetchImpl: fetchReturning("1.0.0"),
       now: () => AT,
+      platform: HOST,
     });
 
     expect(report.packageUpdates).toBe(1);
@@ -144,6 +147,7 @@ describe("checkForUpdates — packages and widgets", () => {
       piInstalledVersion: "1.0.0",
       fetchImpl: fetchReturning("1.0.0"),
       now: () => AT,
+      platform: HOST,
     });
     await checkForUpdates({
       services,
@@ -152,6 +156,7 @@ describe("checkForUpdates — packages and widgets", () => {
       piInstalledVersion: "1.0.0",
       fetchImpl: fetchReturning("1.0.0"),
       now: () => AT,
+      platform: HOST,
     });
 
     const notices = listNotifications(services.runtime.db, services.runtime.identity.ownerPrincipalId);
@@ -171,6 +176,7 @@ describe("checkForUpdates — packages and widgets", () => {
       piInstalledVersion: "1.0.0",
       fetchImpl: fetchReturning("1.0.0"),
       now: () => AT,
+      platform: HOST,
     });
     expect(report.packageUpdates).toBe(0);
     expect(listNotifications(services.runtime.db, services.runtime.identity.ownerPrincipalId)).toHaveLength(0);
@@ -184,6 +190,7 @@ describe("checkForUpdates — packages and widgets", () => {
       piInstalledVersion: "1.0.0",
       fetchImpl: fetchReturning("1.0.0"),
       now: () => AT,
+      platform: HOST,
     });
     expect(report.packageUpdates).toBe(0);
     expect(listNotifications(services.runtime.db, services.runtime.identity.ownerPrincipalId)).toHaveLength(0);
@@ -201,6 +208,7 @@ describe("checkForUpdates — packages and widgets", () => {
       piInstalledVersion: "1.0.0",
       fetchImpl: fetchReturning("1.0.0"),
       now: () => AT,
+      platform: HOST,
     });
     expect(report.packageUpdates).toBe(1);
     const notices = listNotifications(services.runtime.db, services.runtime.identity.ownerPrincipalId);
@@ -218,6 +226,7 @@ describe("checkForUpdates — packages and widgets", () => {
       piInstalledVersion: "1.0.0",
       fetchImpl: fetchReturning("1.0.0"),
       now: () => AT,
+      platform: HOST,
     });
     expect(report.packageUpdates).toBe(0);
     expect(listNotifications(services.runtime.db, services.runtime.identity.ownerPrincipalId)).toHaveLength(0);
@@ -231,6 +240,7 @@ describe("checkForUpdates — packages and widgets", () => {
       piInstalledVersion: "1.0.0",
       fetchImpl: fetchReturning("1.0.0"),
       now: () => AT,
+      platform: HOST,
     });
     expect(report.packageUpdates).toBe(0);
     expect(listNotifications(services.runtime.db, services.runtime.identity.ownerPrincipalId)).toHaveLength(0);
@@ -244,6 +254,7 @@ describe("checkForUpdates — packages and widgets", () => {
       piInstalledVersion: "1.0.0",
       fetchImpl: fetchReturning("1.0.0"),
       now: () => AT,
+      platform: HOST,
     };
     await checkForUpdates(input);
     await checkForUpdates(input);
@@ -260,6 +271,7 @@ describe("checkForUpdates — packages and widgets", () => {
       piInstalledVersion: "1.0.0",
       fetchImpl: fetchReturning("1.0.0"),
       now: () => AT,
+      platform: HOST,
     });
     await checkForUpdates({
       services,
@@ -268,6 +280,7 @@ describe("checkForUpdates — packages and widgets", () => {
       piInstalledVersion: "1.0.0",
       fetchImpl: fetchReturning("1.0.0"),
       now: () => AT,
+      platform: HOST,
     });
 
     const notices = listNotifications(services.runtime.db, services.runtime.identity.ownerPrincipalId);
@@ -284,6 +297,7 @@ describe("checkForUpdates — Pi SDK", () => {
       piInstalledVersion: "0.85.1",
       fetchImpl: fetchReturning("0.86.0"),
       now: () => AT,
+      platform: HOST,
     });
 
     expect(report.piUpdate).toBe(true);
@@ -305,6 +319,7 @@ describe("checkForUpdates — Pi SDK", () => {
       piInstalledVersion: "0.85.1",
       fetchImpl: fetchReturning("0.85.1"),
       now: () => AT,
+      platform: HOST,
     });
     expect(report.piUpdate).toBe(false);
     expect(listNotifications(services.runtime.db, services.runtime.identity.ownerPrincipalId)).toHaveLength(0);
@@ -318,6 +333,7 @@ describe("checkForUpdates — Pi SDK", () => {
       piInstalledVersion: "0.85.1",
       fetchImpl: fetchOffline(),
       now: () => AT,
+      platform: HOST,
     });
     expect(report.piOffline).toBe(true);
     expect(report.piUpdate).toBe(false);
@@ -333,6 +349,7 @@ describe("checkForUpdates — Pi SDK", () => {
       piInstalledVersion: "0.85.1",
       fetchImpl,
       now: () => AT,
+      platform: HOST,
     });
     expect(report.piOffline).toBe(true);
     expect(listNotifications(services.runtime.db, services.runtime.identity.ownerPrincipalId)).toHaveLength(0);
@@ -346,6 +363,7 @@ describe("checkForUpdates — Pi SDK", () => {
       piInstalledVersion: "0.85.1",
       fetchImpl: fetchReturning("not-a-version"),
       now: () => AT,
+      platform: HOST,
     });
     expect(report.piOffline).toBe(true);
     expect(report.piUpdate).toBe(false);
@@ -360,6 +378,7 @@ describe("checkForUpdates — Pi SDK", () => {
       piInstalledVersion: "0.85.1",
       fetchImpl: fetchReturning("0.86.0-beta.1"),
       now: () => AT,
+      platform: HOST,
     });
     expect(report.piUpdate).toBe(false);
     expect(listNotifications(services.runtime.db, services.runtime.identity.ownerPrincipalId)).toHaveLength(0);
@@ -373,6 +392,7 @@ describe("checkForUpdates — Pi SDK", () => {
       piInstalledVersion: "0.85.1",
       fetchImpl: fetchOffline(),
       now: () => AT,
+      platform: HOST,
     });
     expect(report.packageUpdates).toBe(1);
     expect(report.piOffline).toBe(true);
@@ -393,6 +413,7 @@ describe("runUpdateCheckOnce", () => {
       fetchImpl: fetchReturning("9.9.9"),
       piInstalledVersion: async () => "1.0.0",
       now: () => AT,
+      platform: HOST,
     });
     expect(report.piUpdate).toBe(true);
     expect(report.packageUpdates).toBe(0);
@@ -466,6 +487,7 @@ describe("runUpdateCheckOnce", () => {
       fetchImpl: fetchReturning("1.0.0"),
       piInstalledVersion: async () => "1.0.0",
       now: () => AT,
+      platform: HOST,
     });
 
     expect(report.packageUpdates).toBe(1);

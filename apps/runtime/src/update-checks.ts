@@ -152,6 +152,8 @@ export interface CheckForUpdatesInput {
   now: () => Instant;
   /** Aborts the Pi SDK registry fetch, combined with the 5s timeout. Set by `startUpdateCheckTimer` on `stop()`. */
   signal?: AbortSignal;
+  /** The platform the installer checks entries against. Defaults to this process's host; a test pins it. */
+  platform?: Platform | undefined;
 }
 
 /**
@@ -182,7 +184,7 @@ function isInstallableCandidate(candidate: UpdateCandidate, platform: Platform):
  */
 export async function checkForUpdates(input: CheckForUpdatesInput): Promise<UpdateCheckReport> {
   let packageUpdates = 0;
-  const platform = platformForHost(process.platform, process.arch);
+  const platform = "platform" in input ? input.platform : platformForHost(process.platform, process.arch);
   if (platform !== undefined) {
     for (const installed of input.installedPackages) {
       const newest = input.directory
@@ -291,6 +293,8 @@ export interface UpdateCheckJobDeps {
   /** Reads the Pi SDK version this node actually runs. Defaults to `sdkVersion` from `@clarkcant/pi-adapter`. */
   piInstalledVersion?: () => Promise<string>;
   intervalMs?: number;
+  /** The platform directory entries are checked against. Defaults to this process's host; a test pins it. */
+  platform?: Platform | undefined;
 }
 
 /** One pass: read what is installed, what the directory says, what the SDK reports, and check. */
@@ -324,6 +328,7 @@ export async function runUpdateCheckOnce(
     ...(deps.fetchImpl === undefined ? {} : { fetchImpl: deps.fetchImpl }),
     ...(deps.timeoutMs === undefined ? {} : { timeoutMs: deps.timeoutMs }),
     ...(options.signal === undefined ? {} : { signal: options.signal }),
+    ...("platform" in deps ? { platform: deps.platform } : {}),
     now,
   });
 }
