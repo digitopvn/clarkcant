@@ -12,6 +12,7 @@ import {
   type ConversationId,
   type ExecutionPolicyConfig,
   type GuardrailConstraint,
+  type InboxResponse,
   type Instant,
 } from "@clarkcant/contracts";
 import type { ModelTurnEvent } from "@clarkcant/core";
@@ -45,6 +46,7 @@ import type { ProjectFinderDeps } from "./project-finder.ts";
 import { createFindProjectTool } from "./project-finder.ts";
 import { createFindRuntimeTool } from "./runtime-candidates.ts";
 import { createManagePackageTool, type ManagePackageToolDeps } from "./manage-package-tool.ts";
+import { createReadInboxTool } from "./read-inbox-tool.ts";
 import { createTerminalTools } from "./terminal-tools.ts";
 import type { TerminalRegistry } from "./terminal-sessions.ts";
 import { rememberMemory, type MemoryDeps } from "./memory.ts";
@@ -165,6 +167,14 @@ export function createNodeTools(input: {
    * deps, and a node that cannot run commands cannot type them either.
    */
   terminals?: { registry: TerminalRegistry; newId: (prefix: string) => string; conversationId?: string };
+  /**
+   * The inbox, read the way the panel reads it, when this node has one to read.
+   *
+   * Absent means `read_inbox` is not registered. A function rather than a value because what is waiting is derived
+   * at the moment it is asked, and a snapshot taken when the tool list was built would be the stale answer the inbox
+   * exists not to give.
+   */
+  inbox?: () => InboxResponse;
 }): ToolDefinition[] {
   const roots = input.roots ?? machineRoots;
   return [
@@ -225,6 +235,7 @@ export function createNodeTools(input: {
         ]),
     ...(input.appControl === undefined ? [] : [createControlAppTool(input.appControl)]),
     ...(input.packages === undefined ? [] : [createManagePackageTool(input.packages)]),
+    ...(input.inbox === undefined ? [] : [createReadInboxTool(input.inbox)]),
   ];
 }
 

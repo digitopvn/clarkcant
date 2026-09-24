@@ -9,7 +9,9 @@ import { appendMessage, nextMessageSequence } from "@clarkcant/storage";
 
 import { handleRequest, type GatewayDeps, type GatewayRequest, type GatewayResponse } from "../src/gateway.ts";
 import { createQuestion } from "../src/interactions.ts";
+import { readInbox } from "../src/inbox.ts";
 import { recordNodeNotice } from "../src/notices.ts";
+import { createReadInboxTool } from "../src/read-inbox-tool.ts";
 import { interactionDepsFor } from "../src/routes/conversations.ts";
 import { commandDigest } from "../src/run-command.ts";
 import { bootNodeServices, type NodeServices } from "../src/services.ts";
@@ -67,7 +69,7 @@ async function createConversation(): Promise<string> {
   return (response.body as { conversationId: string }).conversationId;
 }
 
-async function readInbox() {
+async function readInboxOverHttp() {
   const response = await request("GET", "/inbox");
   expect(response.status).toBe(200);
   return inboxResponseSchema.parse(response.body);
@@ -120,7 +122,7 @@ describe("what is waiting for the person", () => {
     const conversationId = await createConversation();
     const approval = proposeCommand(conversationId, "git status");
 
-    const inbox = await readInbox();
+    const inbox = await readInboxOverHttp();
     expect(inbox.waiting).toHaveLength(1);
     expect(inbox.waiting[0]).toMatchObject({
       kind: "command-approval",
@@ -141,7 +143,7 @@ describe("what is waiting for the person", () => {
     const conversationId = await createConversation();
     const approval = proposeCommand(conversationId, "git status", 900_000, "2026-09-24T06:59:59.990Z");
 
-    const inbox = await readInbox();
+    const inbox = await readInboxOverHttp();
     expect(inbox.waiting.map((item) => (item.kind === "command-approval" ? item.approvalId : ""))).toEqual([
       approval.approvalId,
     ]);
@@ -156,16 +158,16 @@ describe("what is waiting for the person", () => {
       digest: approval.operationDigest,
     });
     expect(decided.status).toBe(200);
-    expect((await readInbox()).waiting).toEqual([]);
+    expect((await readInboxOverHttp()).waiting).toEqual([]);
   });
 
   it("drops the approval once it has run out of time, without anybody deciding it", async () => {
     const conversationId = await createConversation();
     proposeCommand(conversationId, "git status", 60_000);
-    expect((await readInbox()).waiting).toHaveLength(1);
+    expect((await readInboxOverHttp()).waiting).toHaveLength(1);
 
     now = new Date(Date.parse(AT) + 61_000).toISOString();
-    expect((await readInbox()).waiting).toEqual([]);
+    expect((await readInboxOverHttp()).waiting).toEqual([]);
   });
 
   it("does not offer an approval whose card it cannot find, since deciding it could only fail", async () => {
@@ -173,7 +175,7 @@ describe("what is waiting for the person", () => {
       { db: services.runtime.db, nodeId: services.runtime.identity.nodeId, now: () => now as never, newId: services.conductor.newId },
       { operationDigest: "sha256:mo-coi", operationDescription: "Không có card", effectCategory: "local-write", ttlMs: 900_000 },
     );
-    expect((await readInbox()).waiting).toEqual([]);
+    expect((await readInboxOverHttp()).waiting).toEqual([]);
   });
 
   it("lists a question the agent is waiting on, and drops it once it expires", async () => {
@@ -191,12 +193,12 @@ describe("what is waiting for the person", () => {
     );
     expect(created.ok).toBe(true);
 
-    const inbox = await readInbox();
+    const inbox = await readInboxOverHttp();
     expect(inbox.waiting).toHaveLength(1);
     expect(inbox.waiting[0]).toMatchObject({ kind: "question", conversationId, prompt: "Chọn môi trường triển khai." });
 
     now = new Date(Date.parse(AT) + 16 * 60_000).toISOString();
-    expect((await readInbox()).waiting).toEqual([]);
+    expect((await readInboxOverHttp()).waiting).toEqual([]);
   });
 });
 
@@ -216,16 +218,16 @@ describe("notices", () => {
   it("marks read only the ids the surface showed, then dismisses one", async () => {
     const shown = notice("background:bg_1");
     notice("background:bg_2");
-    expect((await readInbox()).unread).toBe(2);
+    expect((await readInboxOverHttp()).unread).toBe(2);
 
     const marked = await request("POST", "/inbox/read", { noticeIds: [shown.notificationId] });
     expect(marked.status).toBe(200);
     expect(marked.body).toEqual({ marked: 1 });
-    expect((await readInbox()).unread).toBe(1);
+    expect((await readInboxOverHttp()).unread).toBe(1);
 
     const dismissed = await request("POST", `/inbox/notices/${shown.notificationId}/dismiss`);
     expect(dismissed.status).toBe(200);
-    expect((await readInbox()).notices.map((item) => item.noticeId)).not.toContain(shown.notificationId);
+    expect((await readInboxOverHttp()).notices.map((item) => item.noticeId)).not.toContain(shown.notificationId);
 
     const again = await request("POST", `/inbox/notices/${shown.notificationId}/dismiss`);
     expect(again.status).toBe(404);
@@ -235,7 +237,7 @@ describe("notices", () => {
     notice("background:bg_1");
     notice("background:bg_2");
     expect((await request("POST", "/inbox/read", {})).body).toEqual({ marked: 2 });
-    expect((await readInbox()).unread).toBe(0);
+    expect((await readInboxOverHttp()).unread).toBe(0);
 
     expect((await request("POST", "/inbox/read", { noticeIds: "tat-ca" })).status).toBe(400);
   });
@@ -266,9 +268,9 @@ describe("background work reports into the inbox", () => {
     expect(started.status).toBeLessThan(300);
 
     await vi.waitFor(async () => {
-      expect((await readInbox()).notices).toHaveLength(1);
+      expect((await readInboxOverHttp()).notices).toHaveLength(1);
     });
-    const [only] = (await readInbox()).notices;
+    const [only] = (await readInboxOverHttp()).notices;
     expect(only).toMatchObject({
       sourceKind: "background",
       category: "result",
@@ -292,8 +294,51 @@ describe("background work reports into the inbox", () => {
 
     await request("POST", "/background-sessions", { conversationId, text: "đọc log" });
     await vi.waitFor(async () => {
-      expect((await readInbox()).notices).toHaveLength(1);
+      expect((await readInboxOverHttp()).notices).toHaveLength(1);
     });
-    expect((await readInbox()).notices[0]).toMatchObject({ severity: "error", body: "hết hạn mức model" });
+    expect((await readInboxOverHttp()).notices[0]).toMatchObject({ severity: "error", body: "hết hạn mức model" });
+  });
+});
+
+describe("the agent reads the inbox", () => {
+  it("reports what the panel would show, and changes nothing", async () => {
+    const conversationId = await createConversation();
+    proposeCommand(conversationId, "git status");
+    recordNodeNotice(services, {
+      sourceKind: "background",
+      category: "result",
+      severity: "error",
+      title: "Việc nền không xong: đọc log",
+      body: "hết hạn mức model",
+      conversationId,
+      dedupKey: "background:bg_agent",
+      at: now as Instant,
+    });
+
+    const tool = createReadInboxTool(() => readInbox(services, now as Instant));
+    const { text } = await tool.execute({});
+    expect(text).toContain(`command approval in conversation ${conversationId}: git status`);
+    expect(text).toContain("only the user can answer these");
+    expect(text).toContain("[unread] error from background");
+    expect(text).toContain("hết hạn mức model");
+    expect(text).toContain("control_app kind inbox.open");
+
+    // Reading is not seeing: the person has not looked, so nothing is marked read and nothing is decided.
+    const after = await readInboxOverHttp();
+    expect(after.unread).toBe(1);
+    expect(after.waiting).toHaveLength(1);
+  });
+
+  it("says plainly when there is nothing", async () => {
+    const { text } = await createReadInboxTool(() => readInbox(services, now as Instant)).execute({});
+    expect(text).toContain("Nothing is waiting for the user's decision.");
+    expect(text).toContain("No notices.");
+  });
+
+  it("reports a read that failed as a failure, not as an empty inbox", async () => {
+    const { text } = await createReadInboxTool(() => {
+      throw new Error("database is locked");
+    }).execute({});
+    expect(text).toBe("Could not read the inbox: database is locked. Nothing was changed.");
   });
 });
