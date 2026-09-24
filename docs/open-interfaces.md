@@ -102,7 +102,10 @@ stdio, for clients that launch a process (the bridge reads the token from `~/.cl
 ```
 
 - Any REST route can be sent as a `request` frame; the answer is the gateway's own status and body.
+- Query parameters go in a `query` object on the frame, not in `path`.
 - Up to 16 requests may run at once per socket, told apart by `id`.
+- A refused request (`INVALID_FRAME`, `TOO_MANY_REQUESTS`) gets an `error` frame carrying its `id` instead of a
+  `response`; that frame is the last one for the `id`.
 - A route that answers with bytes (attachments, images) returns `415 USE_HTTP`.
 - `ping` → `pong`. No auth within 10 s, or a wrong token: an `error` frame and close code `4401`.
 

@@ -103,7 +103,10 @@ socket `/voice` và `/terminal`:
 ```
 
 - Gửi được mọi route REST dưới dạng frame `request`; câu trả lời là status và body của chính gateway.
+- Tham số query đặt trong object `query` của frame, không đặt trong `path`.
 - Tối đa 16 request chạy đồng thời trên một socket, phân biệt bằng `id`.
+- Request bị từ chối (`INVALID_FRAME`, `TOO_MANY_REQUESTS`) nhận một frame `error` mang `id` của nó thay cho
+  `response`; đó là frame cuối cùng của `id` đó.
 - Route trả về bytes (attachment, ảnh) trả `415 USE_HTTP`.
 - `ping` → `pong`. Không xác thực trong 10 giây, hoặc sai token: frame `error` và close code `4401`.
 
