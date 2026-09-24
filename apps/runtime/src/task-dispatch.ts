@@ -15,7 +15,9 @@ import {
 import { getTask } from "@clarkcant/storage";
 
 import { containingRoot, ownedResources } from "./preflight.ts";
+import { signalTree, stopTree } from "./process-tree.ts";
 import { runWorkerProcess, type WorkerProcessResult } from "./worker-process.ts";
+import type { WorkView } from "./work-supervisor.ts";
 
 /**
  * The dispatch vertical slice.
@@ -30,7 +32,8 @@ import { runWorkerProcess, type WorkerProcessResult } from "./worker-process.ts"
  * through the same state machine every other path uses — success only through verification.
  *
  * Concurrency is bounded. A node with `maxConcurrent` workers already running queues the rest rather
- * than fork-bombing itself the moment three tasks dispatch in the same second.
+ * than fork-bombing itself the moment three tasks dispatch in the same second — and the queue is bounded
+ * too, so a burst past it is refused in the conversation rather than held out of sight for ever.
  */
 
 export interface TaskDispatcherDeps {
@@ -65,6 +68,13 @@ export interface TaskDispatcherDeps {
   /** Injected so a test can substitute a fake worker without spawning a real process. */
   runWorker?: (options: Parameters<typeof runWorkerProcess>[0]) => Promise<WorkerProcessResult>;
   maxConcurrent?: number;
+  /** How many tasks may wait for a worker. Past this a task is failed with a reason rather than queued. */
+  maxQueued?: number;
+  /** Where worker processes are written down, so a later boot can find one this process left behind. */
+  journal?: {
+    taskStarted(entry: { workId: string; conversationId: string; title: string; pid?: number }): void;
+    taskEnded(workId: string, state: "done" | "failed" | "stopped"): void;
+  };
   /** Ceiling passed to the worker process. Defaults to `runWorkerProcess`'s own default. */
   timeoutMs?: number;
   /** How long a lease on a capability is held before it is reclaimable. */
@@ -74,10 +84,21 @@ export interface TaskDispatcherDeps {
 export interface TaskDispatcher {
   /** Queue one task for execution, honouring the concurrency cap. Never throws: failures settle the task instead. */
   dispatch(input: { taskId: string; capabilityRef: string; executionNodeId: string }): void;
-  /** Kills every worker currently running, and drops anything still queued. Returns how many were stopped. */
+  /**
+   * Stops every worker currently running (the whole process group, SIGTERM then SIGKILL) and fails anything still
+   * queued with a reason. Returns how many workers were stopped.
+   */
   stopAll(): number;
+  /** Stop one task's worker, or take it out of the queue. Answers whether there was one to stop. */
+  stop(taskId: string): boolean;
+  /** Running and queued tasks, as the node's work list shows them. */
+  work(): WorkView[];
   runningCount(): number;
   queuedCount(): number;
+  /** Refuse every dispatch from now on. Called once, when the node starts to close. */
+  close(): void;
+  /** SIGKILL every worker's group now, without the grace: for a node that exits before the grace runs out. */
+  killAllNow(): void;
 }
 
 interface QueuedRun {
@@ -87,6 +108,7 @@ interface QueuedRun {
 }
 
 const DEFAULT_MAX_CONCURRENT = 2;
+const DEFAULT_MAX_QUEUED = 10;
 const DEFAULT_LEASE_TTL_MS = 15 * 60_000;
 const DEFAULT_APPROVAL_TTL_MS = 10 * 60_000;
 
@@ -119,12 +141,36 @@ function narrowEvidenceKind(
 export function createTaskDispatcher(deps: TaskDispatcherDeps): TaskDispatcher {
   const at = deps.at ?? ((): Instant => new Date().toISOString() as Instant);
   const maxConcurrent = deps.maxConcurrent ?? DEFAULT_MAX_CONCURRENT;
+  const maxQueued = deps.maxQueued ?? DEFAULT_MAX_QUEUED;
   const leaseTtlMs = deps.leaseTtlMs ?? DEFAULT_LEASE_TTL_MS;
   const runWorker = deps.runWorker ?? runWorkerProcess;
 
-  const queue: QueuedRun[] = [];
-  const liveChildren = new Map<string, ChildProcess>();
+  const queue: (QueuedRun & { queuedAt: string })[] = [];
+  const liveChildren = new Map<string, { taskId: string; child: ChildProcess }>();
+  let closing = false;
+  /** Tasks whose worker is running, by task id, with when it started — what `work()` lists. */
+  const active = new Map<string, { startedAt: string }>();
+  /** Tasks a person stopped, so the report says "stopped" rather than a worker failure nobody caused. */
+  const stopping = new Set<string>();
   let running = 0;
+
+  const journal = (write: (journal: NonNullable<TaskDispatcherDeps["journal"]>) => void): void => {
+    if (deps.journal === undefined) return;
+    try {
+      write(deps.journal);
+    } catch {
+      // A journal that cannot write does not stop the task; it only means a later boot cannot report it.
+    }
+  };
+
+  /** Fail a task that never got a worker, through the same state machine a finished run goes through. */
+  const refuse = async (job: QueuedRun, refusal: string): Promise<void> => {
+    const outcome = await runDispatchedTask(deps.conductor, {
+      taskId: job.taskId,
+      collectEvidence: async () => ({ kind: "exit-status", summary: refusal, verified: false }),
+    });
+    settle(job, outcome.outcome, refusal);
+  };
 
   const pump = (): void => {
     while (running < maxConcurrent) {
@@ -141,7 +187,16 @@ export function createTaskDispatcher(deps: TaskDispatcherDeps): TaskDispatcher {
   async function runOne(job: QueuedRun): Promise<void> {
     const task = getTask(deps.conductor.db, job.taskId);
     if (task === undefined) return;
+    active.set(job.taskId, { startedAt: at() });
+    try {
+      await runAdmitted(job, task);
+    } finally {
+      active.delete(job.taskId);
+      stopping.delete(job.taskId);
+    }
+  }
 
+  async function runAdmitted(job: QueuedRun, task: NonNullable<ReturnType<typeof getTask>>): Promise<void> {
     const runId = deps.conductor.newId("run");
     const lease = acquireLease(
       { db: deps.conductor.db, nodeId: deps.conductor.nodeId, now: at, newId: deps.conductor.newId },
@@ -247,6 +302,32 @@ export function createTaskDispatcher(deps: TaskDispatcherDeps): TaskDispatcher {
       }
     }
 
+    /*
+     * The wall-clock budget.
+     *
+     * `task.budget.maxWallClockMs` is a ceiling on this run, not on the queue wait before it, so the
+     * timer is armed here rather than at admission. It does the same thing a person's `stop(taskId)`
+     * does — `stopTree` on the live child — because that is the only way this dispatcher ever ends a
+     * worker; the two are told apart at settle time by `wallClockExceeded` instead of `stopping`, so
+     * the report says "the budget ran out" and never "you stopped this" for a thing nobody asked for.
+     * Unref'd so an armed timer never keeps this process alive past the run it bounds, and cleared on
+     * every settle path below so a run that finishes first does not leave a dangling timer that later
+     * kills a since-reused `runId`.
+     */
+    const maxWallClockMs = task.budget?.maxWallClockMs;
+    let wallClockExceeded = false;
+    const wallClockTimer =
+      maxWallClockMs === undefined
+        ? undefined
+        : setTimeout(() => {
+            wallClockExceeded = true;
+            const live = liveChildren.get(runId);
+            if (live !== undefined) void stopTree(live.child);
+          }, maxWallClockMs);
+    wallClockTimer?.unref();
+    const wallClockRefusal = (): string =>
+      `the wall-clock budget of ${String(maxWallClockMs)} ms was exhausted before the worker finished; nothing it did was verified; raise the task's budget or re-run it`;
+
     try {
       const result = await runWorker({
         nodeId: job.executionNodeId,
@@ -261,9 +342,42 @@ export function createTaskDispatcher(deps: TaskDispatcherDeps): TaskDispatcher {
         },
         ...(deps.timeoutMs === undefined ? {} : { timeoutMs: deps.timeoutMs }),
         onChild: (child) => {
-          liveChildren.set(runId, child);
+          liveChildren.set(runId, { taskId: job.taskId, child });
+          journal((j) =>
+            j.taskStarted({
+              workId: job.taskId,
+              conversationId: task.conversationId,
+              title: task.goal,
+              ...(child.pid === undefined ? {} : { pid: child.pid }),
+            }),
+          );
         },
       });
+
+      if (wallClockExceeded) {
+        journal((j) => j.taskEnded(job.taskId, "failed"));
+        await refuse(job, wallClockRefusal());
+        return;
+      }
+
+      if (stopping.has(job.taskId)) {
+        journal((j) => j.taskEnded(job.taskId, "stopped"));
+        const refusal = "stopped on request before the worker finished; nothing it did was verified";
+        await refuse(job, refusal);
+        return;
+      }
+
+      // Post-hoc token enforcement: the tokens are already spent by the time the worker's usage comes
+      // back, so this is not a prevention, only an honest refusal to accept work that ran over budget —
+      // reported as what it is rather than folded into a generic failure.
+      const maxTokens = task.budget?.maxTokens;
+      const tokensUsed = result.usage?.tokens;
+      if (maxTokens !== undefined && tokensUsed !== undefined && tokensUsed > maxTokens) {
+        journal((j) => j.taskEnded(job.taskId, "failed"));
+        const refusal = `the token budget of ${String(maxTokens)} was exceeded (the worker used ${String(tokensUsed)}); the run already happened but is not accepted, and can be retried with a higher budget`;
+        await refuse(job, refusal);
+        return;
+      }
 
       const outcome = await runDispatchedTask(deps.conductor, {
         taskId: job.taskId,
@@ -277,10 +391,26 @@ export function createTaskDispatcher(deps: TaskDispatcherDeps): TaskDispatcher {
         },
       });
 
+      journal((j) => j.taskEnded(job.taskId, outcome.outcome === "succeeded" ? "done" : "failed"));
       settle(job, outcome.outcome, outcome.message);
     } catch (cause) {
-      settle(job, "failed", `the worker could not run: ${cause instanceof Error ? cause.message : String(cause)}`);
+      // A worker ended by a signal — a person's stop, the wall-clock budget, a crash — rejects rather than returning,
+      // so this is the path most stops actually take. It settles the task through the state machine like every
+      // other refusal: a message alone would leave the task `running` until the next boot called it uncertain.
+      const stopped = stopping.has(job.taskId);
+      journal((j) => j.taskEnded(job.taskId, wallClockExceeded ? "failed" : stopped ? "stopped" : "failed"));
+      const refusal = wallClockExceeded
+        ? wallClockRefusal()
+        : stopped
+          ? "stopped on request before the worker finished; nothing it did was verified"
+          : `the worker could not run: ${cause instanceof Error ? cause.message : String(cause)}`;
+      try {
+        await refuse(job, refusal);
+      } catch {
+        settle(job, "failed", refusal);
+      }
     } finally {
+      if (wallClockTimer !== undefined) clearTimeout(wallClockTimer);
       liveChildren.delete(runId);
       releaseLease({ db: deps.conductor.db, nodeId: deps.conductor.nodeId, now: at, newId: deps.conductor.newId }, lease.lease.leaseId);
     }
@@ -298,17 +428,75 @@ export function createTaskDispatcher(deps: TaskDispatcherDeps): TaskDispatcher {
 
   return {
     dispatch(input) {
-      queue.push({ taskId: input.taskId, capabilityRef: input.capabilityRef, executionNodeId: input.executionNodeId });
+      const job = { taskId: input.taskId, capabilityRef: input.capabilityRef, executionNodeId: input.executionNodeId };
+      if (closing) {
+        void refuse(job, "this node is shutting down; the task was not run and can be retried once the node is back");
+        return;
+      }
+      if (running >= maxConcurrent && queue.length >= maxQueued) {
+        void refuse(
+          job,
+          `this node already has ${String(running)} task workers running and ${String(queue.length)} waiting, which is its limit; the task was not run and can be retried once one finishes`,
+        );
+        return;
+      }
+      queue.push({ ...job, queuedAt: at() });
       pump();
     },
     stopAll() {
       const stopped = liveChildren.size;
-      for (const child of liveChildren.values()) child.kill("SIGKILL");
-      liveChildren.clear();
-      queue.length = 0;
+      for (const { taskId, child } of liveChildren.values()) {
+        stopping.add(taskId);
+        void stopTree(child);
+      }
+      // A queued task is failed with a reason rather than dropped: dropped, it would stay `dispatched` with nothing
+      // behind it, which is the state this module exists to end.
+      for (const job of queue.splice(0)) void refuse(job, "stopped before a worker was started for it");
       return stopped;
+    },
+    stop(taskId) {
+      const queuedAt = queue.findIndex((job) => job.taskId === taskId);
+      if (queuedAt >= 0) {
+        const [job] = queue.splice(queuedAt, 1);
+        if (job !== undefined) void refuse(job, "stopped before a worker was started for it");
+        return true;
+      }
+      let found = false;
+      for (const entry of liveChildren.values()) {
+        if (entry.taskId !== taskId) continue;
+        stopping.add(taskId);
+        void stopTree(entry.child);
+        found = true;
+      }
+      return found;
+    },
+    work() {
+      const view = (taskId: string, state: "running" | "queued", startedAt: string, position?: number): WorkView => {
+        const task = getTask(deps.conductor.db, taskId);
+        return {
+          workId: taskId,
+          kind: "task",
+          title: (task?.goal ?? taskId).slice(0, 200),
+          state,
+          ...(task === undefined ? {} : { conversationId: task.conversationId }),
+          startedAt,
+          ...(position === undefined ? {} : { position }),
+        };
+      };
+      return [
+        ...[...active.entries()].map(([taskId, entry]) => view(taskId, "running", entry.startedAt)),
+        ...queue.map((job, index) => view(job.taskId, "queued", job.queuedAt, index + 1)),
+      ];
     },
     runningCount: () => running,
     queuedCount: () => queue.length,
+    close() {
+      closing = true;
+    },
+    killAllNow() {
+      for (const { child } of liveChildren.values()) {
+        if (child.pid !== undefined) signalTree(child.pid, "SIGKILL", child);
+      }
+    },
   };
 }

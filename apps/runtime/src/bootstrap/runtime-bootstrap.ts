@@ -17,6 +17,7 @@ import { createSecretBroker } from "../secret-broker.ts";
 import { type RequestSecretDeps } from "../request-secret.ts";
 import { sessionsDirectory } from "../session-store.ts";
 import { type NodeServices } from "../services.ts";
+import type { NodeWork } from "./work-bootstrap.ts";
 import { createTaskDispatcher } from "../task-dispatch.ts";
 import { buildViewCatalog } from "../view-catalog.ts";
 import { type FixtureGates } from "./fixtures.ts";
@@ -73,6 +74,8 @@ export interface RuntimeBootstrapDeps {
   modelTurn: ModelTurn | undefined;
   /** Filled here, so the model may show a surface from its first turn. */
   viewCatalog: ViewDescriptor[];
+  /** The node's work supervisor and journal (`work-bootstrap.ts`); absent in a caller that runs no supervisor. */
+  work?: NodeWork;
 }
 
 /**
@@ -97,6 +100,7 @@ export function wireRuntime(deps: RuntimeBootstrapDeps): void {
       interrupt: (conversationId) => modelTurn.interrupt(conversationId),
       steer: (conversationId, text) => modelTurn.steer(conversationId, text),
       runInBackground: (input) => modelTurn.runInBackground(input),
+      runningMs: (conversationId) => modelTurn.runningMs(conversationId),
     };
     // The same line, for the same reason: the adapter exists above this and the services below it.
     deps.services.extensions = modelTurn.extensions;
@@ -241,6 +245,7 @@ export function wireRuntime(deps: RuntimeBootstrapDeps): void {
       ownedRoots: () =>
         ownedResources([...deps.services.projects.roots(), deps.services.runtime.dataDir, process.cwd()]).roots,
       ownerPrincipalId: () => deps.services.runtime.identity.ownerPrincipalId,
+      ...(deps.work === undefined ? {} : { journal: deps.work.journal }),
       onSettled: ({ taskId, conversationId, outcome, message }) => {
         const label =
           outcome === "succeeded"
@@ -261,6 +266,8 @@ export function wireRuntime(deps: RuntimeBootstrapDeps): void {
       },
     });
     deps.services.taskDispatch = dispatcher;
+    // Task workers are listed and stopped with everything else, by task id.
+    deps.work?.addSource({ kind: "task", list: () => dispatcher.work(), cancel: (taskId) => dispatcher.stop(taskId) });
     deps.services.conductor.runTask = (input) => dispatcher.dispatch(input);
   }
 

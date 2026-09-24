@@ -371,7 +371,7 @@ Header mặc định chỉ nên có:
 
 Không hiển thị tool count, node ID hoặc Pi internals thường trực.
 
-Background task count chỉ xuất hiện khi >0.
+Background task count chỉ xuất hiện khi >0. Khi có việc đang chờ vì đã chạm giới hạn chạy cùng lúc, mark nói thêm số đang chờ ("2 đang chờ") thay vì giả vờ mọi việc đều đang chạy.
 
 Dấu hộp thư cũng vậy: chỉ xuất hiện khi có việc đang chờ user hoặc thông báo chưa đọc, và nói bằng chữ ("2 việc chờ
 bạn · 1 thông báo mới"), không bằng một chấm màu. Xem §6.7.
@@ -710,6 +710,11 @@ người dùng: không bao giờ là widget isolated, không có trong marketpla
 - **Tiến trình:** bảng "Tiến trình" liệt kê terminal khác (xem được), lệnh `run_command` và việc nền (chỉ
   trạng thái, vì không có stream phía sau), và phiên Pi trên máy (theo dõi live, chỉ đọc, đã redact secret,
   cập nhật theo từng entry Pi ghi). Escape đóng bảng và trả focus về nút mở.
+- **Dừng từng việc:** lệnh đang chạy và việc nền đang chạy hoặc đang chờ có nút "Dừng" riêng, đi qua cùng
+  đường dừng với tool `stop_work` của Clark, nên "dừng việc đọc báo cáo" bằng lời và bằng nút là một hành động.
+  Nút chuyển sang "Đang dừng…" và bị khoá trong lúc chờ; thất bại thì nói ngay cạnh việc đó. Trạng thái việc nền
+  là một trong đang chờ / đang chạy / xong / không xong / đã dừng / bị gián đoạn — "đã dừng" và "bị gián đoạn"
+  (node khởi động lại) là hai sự việc khác nhau và không gộp làm một.
 - **Trạng thái trung thực:** đang kết nối, mất kết nối (có nút kết nối lại), terminal đã kết thúc (nói exit
   code, bỏ nút đóng), terminal không còn trên node, node không có PTY. Thẻ trong lịch sử không có kết nối live
   là snapshot và nói rõ như vậy.
@@ -975,6 +980,11 @@ Mỗi option có 1–2 dòng mô tả cụ thể.
 - presets;
 - reset;
 - test policy bằng example action không thực thi.
+
+**Việc chạy nền**
+
+- segmented control 1 / 3 / 5 việc nền chạy cùng lúc (mặc định 3), lưu ngay khi chọn và áp dụng cho yêu cầu kế
+  tiếp; việc đang chạy không bị dừng khi hạ giới hạn. Lượt chính của hội thoại không bao giờ bị tính vào giới hạn.
 
 **Safety controls**
 

@@ -54,8 +54,16 @@ export interface TerminalOverview {
   available: boolean;
   reason?: string;
   terminals: TerminalInfoView[];
-  commands: { command: string; cwd: string; startedAt: string }[];
-  background: { sessionId: string; title: string; status: "running" | "done" | "failed"; startedAt: string; endedAt?: string }[];
+  /** `workId` is what a stop takes; absent from a node older than the stop route. */
+  commands: { workId?: string; command: string; cwd: string; startedAt: string }[];
+  background: {
+    /** Also the work id a stop takes. */
+    sessionId: string;
+    title: string;
+    status: "queued" | "running" | "done" | "failed" | "stopped" | "interrupted";
+    startedAt: string;
+    endedAt?: string;
+  }[];
   piSessions: PiSessionSummaryView[];
 }
 

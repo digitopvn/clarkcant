@@ -381,7 +381,10 @@ describe("background work reports into the inbox", () => {
     await vi.waitFor(async () => {
       expect((await readInboxOverHttp()).notices).toHaveLength(1);
     });
-    expect((await readInboxOverHttp()).notices[0]).toMatchObject({ severity: "error", body: "hết hạn mức model" });
+    // The body is what the conversation was told, so it carries the reason the run failed.
+    const [notice] = (await readInboxOverHttp()).notices;
+    expect(notice).toMatchObject({ severity: "error" });
+    expect(notice?.body).toContain("hết hạn mức model");
   });
 });
 

@@ -28,7 +28,7 @@ Người dùng thấy một dấu trên header **chỉ khi có gì đó** (đế
 - **Việc đang chờ là dữ liệu suy ra, không lưu.** Approval nằm ở bảng `approvals` + thẻ trong transcript;
   câu hỏi nằm trong transcript. Hộp thư đọc lại từ đó mỗi lần, nên không bao giờ có một hàng trạng thái
   nói khác timeline. Không thể "bỏ qua" một việc đang chờ — chỉ trả lời hoặc để hết hạn.
-- **Thông báo là bản ghi bền, có giới hạn.** Bảng mới `notifications` (migration 24; bảng `inbox` đã là
+- **Thông báo là bản ghi bền, có giới hạn.** Bảng mới `notifications` (migration 26; bảng `inbox` đã là
   bảng dedup của NodeLink nên không dùng tên đó). Mỗi producer gửi `dedupKey`; unique
   `(principal_id, dedup_key)` làm producer at-least-once (peer gửi lại, kiểm tra cập nhật lặp) trở nên
   idempotent. Giữ tối đa 200 thông báo, thông báo đã ẩn quá 30 ngày bị xoá — cắt tỉa khi ghi.
@@ -53,7 +53,7 @@ Người dùng thấy một dấu trên header **chỉ khi có gì đó** (đế
 ```
 producer (việc nền, task worker, …, sau này: update-check, NodeLink)
    └─ recordNotification(db, {dedupKey, sourceKind, category, severity, title, body, conversationId?, originNodeId?})
-        └─ notifications (migration 24, dedup + cắt tỉa)
+        └─ notifications (migration 26, dedup + cắt tỉa)
 
 GET /inbox ──► { waiting: suy ra từ approvals + transcript,  notices: notifications,  counts }
 GET /inbox/summary ──► { waiting, unread }         (poll 5 s bởi dấu trên header)

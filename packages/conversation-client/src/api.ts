@@ -1537,7 +1537,10 @@ export class GatewayClient {
    * The node answers 409 when it has no model to run a worker with, and that is a refusal to report rather than an
    * error to hide: the alternative is a caller showing work that will never happen.
    */
-  async startBackground(input: { conversationId: string; text: string }): Promise<{ sessionId: string }> {
+  async startBackground(input: {
+    conversationId: string;
+    text: string;
+  }): Promise<{ sessionId: string; state: "queued" | "running"; position?: number }> {
     const response = await this.#fetch(`${this.#baseUrl}/background-sessions`, {
       method: "POST",
       headers: { authorization: `Bearer ${this.#token}`, "content-type": "application/json" },
@@ -1551,8 +1554,12 @@ export class GatewayClient {
         typeof detail.message === "string" ? detail.message : "the background task did not start",
       );
     }
-    const body = (await response.json()) as { sessionId?: unknown };
-    return { sessionId: typeof body.sessionId === "string" ? body.sessionId : "" };
+    const body = (await response.json()) as { sessionId?: unknown; state?: unknown; position?: unknown };
+    return {
+      sessionId: typeof body.sessionId === "string" ? body.sessionId : "",
+      state: body.state === "queued" ? "queued" : "running",
+      ...(typeof body.position === "number" ? { position: body.position } : {}),
+    };
   }
 
   /**
@@ -1563,14 +1570,18 @@ export class GatewayClient {
    */
   async backgroundSessions(): Promise<{
     running: number;
+    /** Waiting for a place under the node's limit. */
+    queued: number;
     sessions: { sessionId: string; title: string; status: string }[];
   }> {
     const body = (await this.#call("GET", "/background-sessions")) as {
       running?: unknown;
+      queued?: unknown;
       sessions?: { sessionId?: unknown; title?: unknown; status?: unknown }[];
     };
     return {
       running: typeof body.running === "number" ? body.running : 0,
+      queued: typeof body.queued === "number" ? body.queued : 0,
       sessions: (Array.isArray(body.sessions) ? body.sessions : []).flatMap((entry) =>
         typeof entry?.sessionId === "string" && typeof entry.title === "string"
           ? [{ sessionId: entry.sessionId, title: entry.title, status: typeof entry.status === "string" ? entry.status : "running" }]
@@ -1602,5 +1613,13 @@ export class GatewayClient {
   /** Takes one notice out of the inbox. Waiting items cannot be dismissed: hiding a question is not answering it. */
   dismissNotice(noticeId: string): Promise<{ dismissed: true }> {
     return this.#call("POST", `/inbox/notices/${encodeURIComponent(noticeId)}/dismiss`);
+  }
+
+  /**
+   * Stop one piece of work by the id a listing showed: a background request, a command the model ran, or a task
+   * worker. The same stop the agent's `stop_work` reaches, so a button and a sentence end the same way.
+   */
+  cancelWork(workId: string): Promise<{ workId: string; outcome: "stopped" | "dequeued" | "already-ended" }> {
+    return this.#call("POST", `/work/${encodeURIComponent(workId)}/cancel`, {});
   }
 }

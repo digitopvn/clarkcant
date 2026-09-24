@@ -18,7 +18,7 @@ status: done
 
 1. `packages/contracts/src/inbox.ts`: `noticeSchema`, `waitingItemSchema` (union `command-approval`,
    `capability-approval`, `question`), `inboxResponseSchema`, `inboxSummarySchema`, `inboxReadRequestSchema`.
-2. Migration 24 `notifications` + index unique `(principal_id, dedup_key)` + index `(principal_id, created_at)`.
+2. Migration 26 `notifications` + index unique `(principal_id, dedup_key)` + index `(principal_id, created_at)`.
 3. `packages/storage/src/repositories/notifications.ts`: `recordNotification` (dedup, cắt độ dài, cắt tỉa),
    `listNotifications`, `markNotificationsRead`, `dismissNotification`, `countUnreadNotifications`.
 4. `apps/runtime/src/inbox.ts`: `waitingItems(services, now)` và `recordNodeNotification` (redact).

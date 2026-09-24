@@ -15,7 +15,7 @@ It is a host-owned secondary surface, not a sidebar or a session picker. A mark 
   - open questions from `pendingForConversation`.
 
   No status row can disagree with the timeline, and a waiting item cannot be "dismissed", only answered or left to expire.
-- **Notices are durable and bounded.** Migration 24 adds `notifications`. The name `inbox` already belongs to NodeLink's dedup table.
+- **Notices are durable and bounded.** Migration 26 adds `notifications`. The name `inbox` already belongs to NodeLink's dedup table.
   - Every producer sends a `dedupKey`; unique `(principal_id, dedup_key)` makes at-least-once producers idempotent. That covers a peer node redelivering, or a repeated update check.
   - `originNodeId` is carried so NodeLink delivery can land later without a schema change.
   - Titles and bodies are redacted and clipped before they are stored.

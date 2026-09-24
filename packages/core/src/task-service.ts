@@ -6,6 +6,7 @@ import {
   type Evidence,
   type Grant,
   type Instant,
+  type PeerEnvelope,
   type Principal,
   type ResourceRef,
   type TaskEvent,
@@ -14,6 +15,7 @@ import {
   checkGrant,
   dispositionOf,
   evidenceSchema,
+  peerEnvelopeSchema,
   reduceTask,
   taskStateSchema,
 } from "@clarkcant/contracts";
@@ -26,7 +28,9 @@ import {
   appendMessage,
   dispositionColumnFor,
   effectsForTask,
+  enqueueOutbox,
   getTask,
+  nextOutboundSequence,
   transaction,
   upsertEffect,
   upsertTask,
@@ -514,6 +518,7 @@ export function cancelTask(deps: TaskServiceDeps, taskId: string): CancelTaskRes
    */
   const nothingRunning = requested.task.activeRunId === undefined;
   if (!nothingRunning) {
+    notifyExecutingPeer(deps, requested.task);
     return { ok: true, task: requested.task, changed: true, confirmed: false };
   }
 
@@ -523,4 +528,53 @@ export function cancelTask(deps: TaskServiceDeps, taskId: string): CancelTaskRes
     return { ok: true, task: requested.task, changed: true, confirmed: false };
   }
   return { ok: true, task: confirmed.task, changed: true, confirmed: true };
+}
+
+/**
+ * Reach the peer actually holding this run, when it is not this node.
+ *
+ * `cancelTask` above can only record that a stop was requested; it has no way to observe what an
+ * executor elsewhere is doing with that record. When the executor is this node, the local dispatcher
+ * already reads `cancel_requested` off the same database and can act on it directly (no envelope is
+ * involved). When it is a peer, this is the only channel that reaches it: `cancel.request` is a peer
+ * message kind NodeLink already validates and dispatches end to end (packages/contracts/src/nodelink.ts,
+ * packages/node-link/src/index.ts), so this enqueues one rather than inventing a second protocol.
+ *
+ * Enqueued, not sent synchronously: the outbox already carries retry, backoff and dead-lettering for
+ * exactly this kind of best-effort delivery, and asking a peer to stop must not make the local
+ * cancellation depend on that peer being reachable right now. The task stays `cancel_requested` either
+ * way, which is the honest state until the executor's own `cancel.confirmed`-equivalent report arrives.
+ */
+function notifyExecutingPeer(deps: TaskServiceDeps, task: TaskRecord): void {
+  const peerNodeId = task.executionNodeId;
+  if (peerNodeId === undefined || peerNodeId === deps.nodeId) return;
+
+  const at = deps.now();
+  const messageId = deps.newId("nlmsg");
+  const envelope: PeerEnvelope = peerEnvelopeSchema.parse({
+    protocol: "agent.nodelink",
+    version: 1,
+    messageId,
+    // The first (and, ordinarily, only) message of this cancellation exchange, so it is its own
+    // correlation root rather than one borrowed from whatever exchange originally delegated the task.
+    correlationId: messageId,
+    senderNodeId: deps.nodeId,
+    recipientNodeId: peerNodeId,
+    kind: "cancel.request",
+    taskId: task.taskId,
+    ...(task.activeRunId === undefined ? {} : { runId: task.activeRunId }),
+    // Fencing: an executor holding a newer revision already knows more than this request does.
+    expectedTaskRevision: task.revision,
+    sourceSequence: nextOutboundSequence(deps.db, peerNodeId),
+    sentAt: at,
+    payload: { reason: "cancelled by the task's owner" },
+  });
+
+  enqueueOutbox(deps.db, {
+    messageId: envelope.messageId,
+    peerNodeId,
+    correlationId: envelope.correlationId,
+    document: envelope,
+    createdAt: at,
+  });
 }

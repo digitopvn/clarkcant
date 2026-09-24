@@ -10,6 +10,7 @@ import {
 import { type Database, recentEvents } from "@clarkcant/storage";
 
 import { projectPolicyPreference, undoPolicyPreference, writePolicyPreference } from "../autonomy-settings.ts";
+import { nodeWork } from "../work-supervisor.ts";
 import { type GatewayRequest, type GatewayResponse, fail, json, readJson } from "./http.ts";
 
 /**
@@ -155,6 +156,8 @@ export function handlePreferenceRoutes(deps: PreferenceRouteDeps): GatewayRespon
         outcome.message,
       );
     }
+    // A raised limit applies to what is already waiting, not only to the next request.
+    if (requested === "execution.backgroundLimit") nodeWork().refill();
     return json(200, { preference: outcome.preference });
   }
 

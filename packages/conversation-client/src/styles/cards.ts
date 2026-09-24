@@ -152,6 +152,7 @@ button.cc-badge:hover, .cc-badge[role="button"]:hover { color: var(--cc-text); b
 .cc-terminal-panel-main { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px var(--cc-space-sm); min-width: 0; }
 .cc-terminal-panel-main code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: var(--cc-text-mono-sm); overflow-wrap: anywhere; }
 .cc-terminal-panel-meta { font-size: var(--cc-text-meta); color: var(--cc-text-muted); overflow-wrap: anywhere; }
+.cc-terminal-panel-actions { display: flex; flex-direction: column; align-items: flex-end; gap: 2px; flex-shrink: 0; max-width: 45%; text-align: end; }
 
 /* xterm.js core */
 .xterm { cursor: text; position: relative; user-select: none; -webkit-user-select: none; }
