@@ -1175,6 +1175,28 @@ export const MIGRATIONS: readonly Migration[] = [
       `);
     },
   },
+  {
+    version: 25,
+    name: "outbox_backoff",
+    reversible: true,
+    up: (db) => {
+      db.exec(`
+        -- A peer that is unreachable must not be retried on every pass at the same rate a healthy one
+        -- is: next_attempt_at is when a failed message becomes eligible again, so a down peer's queue
+        -- is retried on a widening schedule instead of hammering it once a pass. Nullable because an
+        -- unattempted row (and every row from before this migration) is due immediately, the same as
+        -- today.
+        --
+        -- dead_lettered_at marks a message this node has given up retrying automatically: the attempt
+        -- count crossed the ceiling, so it is held for an operator to see rather than resent forever
+        -- for a peer or a message that will never succeed. last_error is the most recent reason, kept
+        -- so that "why is this stuck" does not require reproducing the failure.
+        ALTER TABLE outbox ADD COLUMN next_attempt_at TEXT;
+        ALTER TABLE outbox ADD COLUMN dead_lettered_at TEXT;
+        ALTER TABLE outbox ADD COLUMN last_error TEXT;
+      `);
+    },
+  },
 ];
 
 function readAll<T>(db: Database, sql: string): T[] {

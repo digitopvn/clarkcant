@@ -23,7 +23,6 @@ import {
 } from "@clarkcant/storage";
 import { readCredential } from "@clarkcant/storage";
 import type { ModelCatalogue } from "@clarkcant/pi-adapter";
-import type { Principal } from "@clarkcant/contracts";
 import { FAMILY_BY_DEFINITION, WIDGETS as CATALOG_WIDGETS } from "@clarkcant/data-canvas";
 import { QUICK_PLAY_RECIPES, SAMPLE_DATASET } from "@clarkcant/data-canvas/sample";
 import { CAPABILITIES as PROJECT_WORK_CAPABILITIES } from "@clarkcant/project-work";
