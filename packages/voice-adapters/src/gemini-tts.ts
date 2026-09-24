@@ -37,6 +37,9 @@ export const GEMINI_INTERACTIONS_ENDPOINT = "https://generativelanguage.googleap
 /** Input token limit the API documents for both 3.8 TTS models. */
 export const GEMINI_TTS_MAX_INPUT_TOKENS = 8192;
 
+/** Conservative upper bound on characters per token, so the local check never rejects text the API would accept. */
+const MAX_CHARS_PER_TOKEN = 4;
+
 const SUPPORTED_SAMPLE_RATES = [24000, 16000, 8000] as const;
 export type GeminiTtsSampleRate = (typeof SUPPORTED_SAMPLE_RATES)[number];
 
@@ -106,6 +109,10 @@ export class GeminiTtsClient {
     const text = request.text.trim();
     if (text === "") {
       throw new Error("cannot synthesise empty text");
+    }
+    // Every token is at least one character, so text longer than this can never fit the limit.
+    if (text.length > GEMINI_TTS_MAX_INPUT_TOKENS * MAX_CHARS_PER_TOKEN) {
+      throw new Error(`text exceeds the ${GEMINI_TTS_MAX_INPUT_TOKENS}-token input limit for Gemini TTS; split it into shorter requests`);
     }
     if (request.sampleRateHz !== undefined && !SUPPORTED_SAMPLE_RATES.includes(request.sampleRateHz)) {
       throw new Error(`unsupported sample rate ${request.sampleRateHz}hz; use 24000, 16000 or 8000`);

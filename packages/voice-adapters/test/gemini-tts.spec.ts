@@ -115,6 +115,14 @@ describe("GeminiTtsClient", () => {
     expect(calls).toHaveLength(0);
   });
 
+  it("rejects text that cannot fit the input token limit without making a request", async () => {
+    const { fetch, calls } = fetchReturning({});
+    const client = new GeminiTtsClient({ fetch });
+
+    await expect(client.synthesize("test-key", { text: "a".repeat(8192 * 4 + 1) })).rejects.toThrow(/input limit/);
+    expect(calls).toHaveLength(0);
+  });
+
   it("rejects an unsupported sample rate without making a request", async () => {
     const { fetch, calls } = fetchReturning({});
     const client = new GeminiTtsClient({ fetch });
