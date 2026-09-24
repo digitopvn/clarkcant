@@ -15,6 +15,17 @@ export interface ModelAliasState {
 }
 
 /**
+ * The hotkey as this machine's keyboard spells it.
+ *
+ * The handler accepts either modifier, so both spellings are true; showing the one printed on the person's own
+ * keyboard is what makes the hint usable. A Windows or Linux user reading "⌘]" has to translate a key they do not
+ * have. The platform string is a parameter so the choice is testable without a browser.
+ */
+export function modelSwitchShortcut(platform: string | undefined): string {
+  return /mac|iphone|ipad|ipod/i.test(platform ?? "") ? "⌘]" : "Ctrl+]";
+}
+
+/**
  * The active model alias, and the Cmd/Ctrl+] hotkey that cycles it.
  *
  * The hotkey lives on the window rather than on the composer, because a model switch is not

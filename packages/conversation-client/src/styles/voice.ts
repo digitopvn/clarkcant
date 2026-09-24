@@ -185,11 +185,25 @@ export const VOICE_CSS = `
  * Settings tabs. A tab that is selected says so with an underline and with aria-selected, so
  * the state does not depend on colour alone.
  */
-.cc-tabs { display: flex; gap: var(--cc-space-lg); border-bottom: 1px solid var(--cc-border); margin: 0 calc(var(--cc-space-lg) * -1); padding: 0 var(--cc-space-lg); }
+/*
+ * One line, always. A tab name that wraps reads as two tabs, and at phone width the strip used to squeeze each
+ * name into a column one word wide. When the names do not fit, the strip scrolls sideways, fades at its right
+ * edge, and the panel scrolls the selected tab into view, so the selection is never off-screen.
+ */
+.cc-tabs {
+  /* flex: none because a scroll container in the dialog's column may otherwise shrink to nothing when the panel
+     below it is long: its automatic minimum height is zero once overflow is not visible. */
+  display: flex; flex: none; flex-wrap: nowrap; gap: var(--cc-space-md);
+  border-bottom: 1px solid var(--cc-border); margin: 0 calc(var(--cc-space-lg) * -1); padding: 0 var(--cc-space-lg);
+  overflow-x: auto; overscroll-behavior-x: contain; scrollbar-width: none;
+  scroll-padding-inline: var(--cc-space-lg);
+}
+.cc-tabs::-webkit-scrollbar { display: none; }
 .cc-tab {
   appearance: none; background: none; border: none; cursor: pointer;
-  font: inherit; font-size: var(--cc-text-body-md); color: var(--cc-text-muted);
-  padding: var(--cc-space-sm) 0; border-bottom: 2px solid transparent;
+  flex: none; white-space: nowrap;
+  font: inherit; font-size: var(--cc-text-body-sm); line-height: var(--cc-leading-body-sm); color: var(--cc-text-muted);
+  padding: var(--cc-space-md) 0 var(--cc-space-sm); border-bottom: 2px solid transparent;
   transition: color var(--cc-motion-micro) var(--cc-motion-easing);
 }
 .cc-tab:hover { color: var(--cc-text); }

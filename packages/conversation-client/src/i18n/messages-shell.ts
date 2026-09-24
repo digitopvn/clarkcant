@@ -56,7 +56,7 @@ export const MESSAGES_SHELL_VI = {
   "shell.hero.needsModelDetail": "cần model",
   "shell.hero.noModelTitle": "Node này chưa có model",
   "shell.hero.noModelDesc":
-    "Nó vẫn trả lời được bằng recipe và capability đã cài. Muốn hỏi tự do thì cần chọn provider và model trước — mở Cài đặt, tab AI & Routing.",
+    "Nó vẫn trả lời được bằng recipe và capability đã cài. Muốn hỏi tự do thì cần chọn provider và model trước — mở Cài đặt, tab AI & Định tuyến.",
   "shell.hero.openSettings": "Mở Cài đặt",
   "shell.hero.orbLabel": "Đang chờ bạn nói điều muốn làm",
   "shell.hero.heading": "Bạn đang nghĩ gì?",
@@ -89,6 +89,7 @@ export const MESSAGES_SHELL_VI = {
   "shell.package.installFailed": "Không cài được gói này.",
   "shell.control.sessionChangeFailed": "Không đổi được phiên browser này.",
   "shell.model.nextGeneration": "Generation tiếp theo dùng {alias}.",
+  "shell.model.switchHint": "{shortcut} để đổi",
 
   "shell.intent.notDesktop":
     "Lệnh này cần cửa sổ desktop. Trình duyệt không điều khiển được cửa sổ của hệ điều hành.",
@@ -233,6 +234,7 @@ export const MESSAGES_SHELL_EN = {
   "shell.package.installFailed": "Could not install this package.",
   "shell.control.sessionChangeFailed": "Could not change this browser session.",
   "shell.model.nextGeneration": "The next generation uses {alias}.",
+  "shell.model.switchHint": "{shortcut} to switch",
 
   "shell.intent.notDesktop": "This command needs the desktop window. A browser cannot control the operating system's windows.",
   "shell.intent.notLibrary": "This build has no widget library to open, so nothing happened.",

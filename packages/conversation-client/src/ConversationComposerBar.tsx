@@ -4,6 +4,7 @@ import type { Timeline } from "./api.ts";
 import { formatFileSize, type AttachmentChip } from "./attachments.ts";
 import { useT } from "./i18n/locale-context.tsx";
 import { latestTurnMetrics, statuslineParts } from "./statusline.ts";
+import { modelSwitchShortcut } from "./use-model-alias.ts";
 
 export interface ConversationComposerBarProps {
   composerWrap: RefObject<HTMLDivElement | null>;
@@ -184,7 +185,12 @@ export function ConversationComposerBar({
         <div className="cc-model-switch" data-model-label={modelAlias}>
           <span className="cc-freshness">model: {modelAlias}</span>
           <span className="cc-freshness" data-model-note="true">
-            {modelNote === "" ? "⌘] để đổi" : modelNote}
+            {modelNote === ""
+              ? t("shell.model.switchHint").replace(
+                  "{shortcut}",
+                  modelSwitchShortcut(typeof navigator === "undefined" ? undefined : navigator.platform),
+                )
+              : modelNote}
           </span>
         </div>
       )}

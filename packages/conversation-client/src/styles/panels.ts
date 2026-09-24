@@ -495,5 +495,112 @@ button:focus-visible, textarea:focus-visible, input:focus-visible, [tabindex]:fo
   .cc-widget-detail[data-widget-lab-pane="inspector"] .cc-widget-detail-preview { display: none; }
   .cc-widget-detail { display: flex; flex-direction: column; gap: var(--cc-space-lg); }
 }
+/* ------------------------------------------------------------------ *
+ * Settings: layout polish
+ * ------------------------------------------------------------------ */
+
+/*
+ * A segmented control is one object with a choice inside it, so it gets a track and the choice is a filled
+ * segment. It used to be a row of loose pills with the focus ring standing in for "selected", which made a
+ * keyboard user unable to tell where focus was from what was chosen. The fill, the border and the weight carry
+ * the state together, so it does not rest on the accent colour alone; focus keeps its own outline.
+ */
+.cc-segmented {
+  gap: var(--cc-space-xxs); padding: var(--cc-space-xxs);
+  background: var(--cc-window); border: 1px solid var(--cc-border); border-radius: var(--cc-radius-button);
+}
+.cc-segmented > .cc-badge {
+  cursor: pointer; font: inherit; font-size: var(--cc-text-label); line-height: var(--cc-leading-label);
+  min-height: 28px; padding: var(--cc-space-xs) var(--cc-space-md);
+  background: transparent; border-color: transparent; border-radius: var(--cc-radius-badge);
+  color: var(--cc-text-muted);
+  transition: background-color var(--cc-motion-micro) var(--cc-motion-easing), color var(--cc-motion-micro) var(--cc-motion-easing), border-color var(--cc-motion-micro) var(--cc-motion-easing);
+}
+.cc-segmented > .cc-badge:hover { color: var(--cc-text); }
+.cc-segmented > .cc-badge[data-selected="true"] {
+  outline: none; font-weight: 600; color: var(--cc-text);
+  background: color-mix(in oklab, var(--cc-accent) 18%, var(--cc-elevated));
+  border-color: color-mix(in oklab, var(--cc-accent) 55%, transparent);
+}
+.cc-segmented > .cc-badge:focus-visible { outline: 2px solid var(--cc-focus); outline-offset: 2px; }
+
+/*
+ * Buttons inside a settings form start where the fields start. The chip row is centred for the hero's starting
+ * chips; in a form that left "Save" floating in the middle, detached from the fields it saves, and the chips were
+ * sized for two lines of text rather than one verb.
+ */
+.cc-tabpanel .cc-chip-row { justify-content: flex-start; }
+.cc-tabpanel .cc-chip-row > .cc-chip { padding: var(--cc-space-xs) var(--cc-space-lg); }
+.cc-tabpanel .cc-chip:disabled { opacity: 0.45; cursor: default; border-color: var(--cc-border); }
+
+/* A wide table scrolls inside its own box instead of widening the dialog. */
+.cc-table-scroll { overflow-x: auto; max-width: 100%; }
+.cc-model-pool { width: 100%; border-collapse: collapse; font-size: var(--cc-text-label); font-variant-numeric: tabular-nums; }
+.cc-model-pool th, .cc-model-pool td { text-align: left; padding: var(--cc-space-xs) var(--cc-space-sm); border-bottom: 1px solid var(--cc-border); white-space: nowrap; }
+.cc-model-pool th { color: var(--cc-text-muted); font-weight: 500; }
+
+/* The guarded categories are a list of checkboxes; they wrap as a group instead of pushing past the edge. */
+.cc-guard-classes { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: var(--cc-space-xs) var(--cc-space-md); }
+.cc-guard-classes label { display: inline-flex; align-items: center; gap: var(--cc-space-xs); cursor: pointer; font-size: var(--cc-text-label); color: var(--cc-text); }
+.cc-guard-classes input { accent-color: var(--cc-accent); margin: 0; }
+
+/* A definition list's value may be a path or an id; it wraps rather than pushing the column off the page. */
+.cc-fields { grid-template-columns: max-content minmax(0, 1fr); }
+.cc-fields dd { min-width: 0; overflow-wrap: anywhere; }
+
+/* In this layer rather than beside .cc-setup-card, because the voice layer's .cc-chip padding comes later and wins. */
+.cc-setup-card > .cc-chip { padding: var(--cc-space-xs) var(--cc-space-lg); }
+
+/*
+ * A free-text setting takes the width the row gives it and looks like the other prose fields, rather than the
+ * browser's default box at its intrinsic twenty columns.
+ */
+.cc-setting-control > textarea {
+  width: 100%; min-width: 16rem; min-height: 92px; resize: vertical; padding: var(--cc-space-sm);
+  background: var(--cc-card); color: var(--cc-text); border: 1px solid var(--cc-border);
+  border-radius: var(--cc-radius-badge); font: inherit; line-height: var(--cc-leading-body-sm);
+}
+
+/*
+ * Narrow windows stack a setting: label and description on top, the control under them at full width. Side by
+ * side at 375 px, the label column was squeezed to one word per line while the control ran off the edge.
+ */
+@media (max-width: 560px) {
+  .cc-setting-row { flex-direction: column; align-items: stretch; gap: var(--cc-space-sm); }
+  .cc-setting-control { flex: initial; flex-wrap: wrap; justify-content: flex-start; }
+  .cc-segmented-wrap, .cc-toggle-wrap, .cc-range { align-items: flex-start; }
+  .cc-segmented { justify-content: flex-start; }
+  .cc-segmented-wrap > .cc-panel-note, .cc-toggle-wrap > .cc-panel-note { text-align: left; max-width: none; }
+  .cc-range { min-width: 0; width: 100%; }
+  .cc-range > .cc-setting-desc { align-self: flex-start; }
+  .cc-guard-classes { justify-content: flex-start; }
+  .cc-setting-control > textarea { min-width: 0; }
+}
+
+/*
+ * The tab strip scrolls once the dialog is narrower than its 640 px, which happens below a viewport of 640 px
+ * plus the dialog's 16 px gutters, not only at the stacking breakpoint above. Its scrollbar is hidden, so the
+ * right edge fades to say there is more. The end padding and scroll padding are as wide as the fade, so the
+ * last tab, or the selected one scrolled into view, stops clear of it instead of sitting half-hidden.
+ */
+@media (max-width: 672px) {
+  .cc-tabs {
+    mask-image: linear-gradient(to right, #000 calc(100% - var(--cc-space-xl)), transparent);
+    padding-inline-end: var(--cc-space-xl);
+    scroll-padding-inline-end: var(--cc-space-xl);
+  }
+}
+
+/*
+ * Touch. A 28 px circle is a fine target for a mouse and a miss for a thumb, so on a coarse pointer the icon
+ * buttons and segments grow to the 44 px the accessibility section asks of primary touch controls. The visible
+ * shape grows with them, because an invisible hit area around a small glyph is a target nobody can aim at.
+ */
+@media (pointer: coarse) {
+  .cc-icon-btn { width: 44px; height: 44px; }
+  /* button.cc-chip, because an attachment chip is an <li> whose control is its remove button, not the chip. */
+  .cc-segmented > .cc-badge, .cc-tab, button.cc-chip { min-height: 44px; }
+  .cc-chip-remove { min-width: 44px; min-height: 44px; }
+}
 }
 `;
