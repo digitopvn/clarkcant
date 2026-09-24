@@ -1200,6 +1200,26 @@ export class GatewayClient {
   }
 
   /**
+   * Decide an approval a dispatched task raised.
+   *
+   * The digest the waiting item showed is sent back with the decision, the same binding `decideApproval` gives a
+   * command: an approval is bound to the exact operation it named, and a digest that no longer matches is refused
+   * rather than acted on. `redispatched` says whether the grant actually turned into a run just now — a task that
+   * no longer exists is left `false` rather than the call failing, since the decision itself still succeeded.
+   */
+  decideTaskApproval(
+    taskId: string,
+    approvalId: string,
+    decision: { decision: "granted" | "denied"; digest: string },
+  ): Promise<{ decision: "granted" | "denied"; taskId: string; redispatched: boolean; timeline: Timeline }> {
+    return this.#call(
+      "POST",
+      `/tasks/${encodeURIComponent(taskId)}/approvals/${encodeURIComponent(approvalId)}/decide`,
+      decision,
+    );
+  }
+
+  /**
    * Open an artifact.
    *
    * Resolves with facts about it and never with where its bytes live: the node's own data directory is not

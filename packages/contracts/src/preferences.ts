@@ -391,6 +391,105 @@ export const windowModeSchema = z.enum(["normal", "expanded", "compact", "orb"])
 export type WindowMode = z.infer<typeof windowModeSchema>;
 
 /**
+ * The groups an OS/web notification can belong to, in the product's own words.
+ *
+ * A closed list rather than the notice categories or waiting-item kinds directly: a person turns off
+ * "background results", not `category: "result"`, and the mapping from the wire vocabulary to these four
+ * is a client concern (`groupForNotice` in `@clarkcant/conversation-client`) precisely because it is a
+ * UX grouping, not a wire contract. `otherDevices` exists ahead of its own producer (§6.7 "Chưa ship"):
+ * the notice shape already carries `originNodeId` for a paired node, and a preference the write path
+ * refuses today would be a worse upgrade than a toggle that has nothing to control yet.
+ */
+export const inboxNotificationGroupSchema = z.enum(["waitingApprovals", "backgroundResults", "updates", "otherDevices"]);
+export type InboxNotificationGroup = z.infer<typeof inboxNotificationGroupSchema>;
+export const INBOX_NOTIFICATION_GROUPS = inboxNotificationGroupSchema.options;
+
+/** A clock reading as a person types it into a time field: zero-padded hours and minutes, local time. */
+export const timeOfDaySchema = z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/, "must be a 24-hour HH:MM time");
+
+/**
+ * What decides whether one poll raises an OS or a web notification.
+ *
+ * `os` and `web` are separate switches because they are separate consent stories: `os` is host-owned and
+ * Electron's own notification permission (an OS boundary this preference does not lift, only enables asking
+ * for) while `web` may only ever become `true` after `Notification.requestPermission()` itself answered
+ * `granted` — the write path accepts either value, but the settings surface is the one place that is allowed
+ * to set `web: true`, and only from that explicit toggle.
+ */
+export const inboxNotificationsPreferenceSchema = z.strictObject({
+  groups: z.strictObject({
+    waitingApprovals: z.boolean(),
+    backgroundResults: z.boolean(),
+    updates: z.boolean(),
+    otherDevices: z.boolean(),
+  }),
+  os: z.boolean(),
+  web: z.boolean(),
+  quietHours: z.strictObject({
+    enabled: z.boolean(),
+    start: timeOfDaySchema,
+    end: timeOfDaySchema,
+  }),
+});
+export type InboxNotificationsPreference = z.infer<typeof inboxNotificationsPreferenceSchema>;
+
+/**
+ * What a node with nothing stored uses: every group on, OS notifications on, web off until granted, and no
+ * quiet hours. OS defaults on because it is what closes the gap #171 reports — an approval expiring unseen
+ * while the window has no focus — and Electron's own permission prompt is the boundary that still gates it
+ * on the platforms that have one. `web` defaults off because turning it on is itself the consent action.
+ */
+export const DEFAULT_INBOX_NOTIFICATIONS_PREFERENCE: InboxNotificationsPreference = {
+  groups: { waitingApprovals: true, backgroundResults: true, updates: true, otherDevices: true },
+  os: true,
+  web: false,
+  quietHours: { enabled: false, start: "22:00", end: "07:00" },
+};
+
+/**
+ * Read a stored `inbox.notifications` value, one field at a time.
+ *
+ * `inboxNotificationsPreferenceSchema` is a `strictObject` with every group required, which is exactly right
+ * for the write path: a write cannot smuggle in an unregistered group or a quiet-hours field the schema does
+ * not know. It is exactly wrong for reading an old document once a new group is added, because `strictObject`
+ * fails the whole value when one key is missing — a document written before that group existed would not just
+ * lack a choice for it, `safeParse` would refuse the document entirely and every group the person actually
+ * chose would silently reset to the default alongside it. This reads the same way `parseExecutionPolicyConfig`
+ * reads the execution policy: a field that parses is kept, a field that does not (or is simply absent, which
+ * is the normal shape of an old document) falls back to that one field's own default, never the whole object's.
+ */
+export function parseInboxNotificationsPreference(value: unknown): InboxNotificationsPreference {
+  const source = typeof value === "object" && value !== null ? (value as Record<string, unknown>) : {};
+  const defaults = DEFAULT_INBOX_NOTIFICATIONS_PREFERENCE;
+
+  const groupsSource =
+    typeof source.groups === "object" && source.groups !== null ? (source.groups as Record<string, unknown>) : {};
+  const groups = { ...defaults.groups };
+  for (const group of INBOX_NOTIFICATION_GROUPS) {
+    const stored = groupsSource[group];
+    if (typeof stored === "boolean") groups[group] = stored;
+  }
+
+  const quietSource =
+    typeof source.quietHours === "object" && source.quietHours !== null
+      ? (source.quietHours as Record<string, unknown>)
+      : {};
+  const start = timeOfDaySchema.safeParse(quietSource.start);
+  const end = timeOfDaySchema.safeParse(quietSource.end);
+
+  return {
+    groups,
+    os: typeof source.os === "boolean" ? source.os : defaults.os,
+    web: typeof source.web === "boolean" ? source.web : defaults.web,
+    quietHours: {
+      enabled: typeof quietSource.enabled === "boolean" ? quietSource.enabled : defaults.quietHours.enabled,
+      start: start.success ? start.data : defaults.quietHours.start,
+      end: end.success ? end.data : defaults.quietHours.end,
+    },
+  };
+}
+
+/**
  * One registered preference.
  *
  * Loose generics on purpose: the registry holds heterogeneous values, and a caller that wants the
@@ -580,6 +679,13 @@ export const PREFERENCE_REGISTRY = {
     applies: "immediate",
     default: true,
     schema: z.boolean(),
+  },
+  "inbox.notifications": {
+    key: "inbox.notifications",
+    scope: "node",
+    applies: "immediate",
+    default: DEFAULT_INBOX_NOTIFICATIONS_PREFERENCE,
+    schema: inboxNotificationsPreferenceSchema,
   },
 } as const satisfies Record<string, PreferenceDefinition>;
 

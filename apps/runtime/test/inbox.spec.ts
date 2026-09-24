@@ -3,9 +3,24 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { type Instant, inboxResponseSchema, inboxSummarySchema } from "@clarkcant/contracts";
-import { requestApproval } from "@clarkcant/core";
-import { appendMessage, nextMessageSequence } from "@clarkcant/storage";
+import {
+  DEFAULT_EXECUTION_POLICY_CONFIG,
+  type CapabilityRef,
+  type Instant,
+  type Principal,
+  inboxResponseSchema,
+  inboxSummarySchema,
+} from "@clarkcant/contracts";
+import {
+  EXECUTION_POLICY_PREFERENCE_KEY,
+  advanceResolving,
+  applyTaskEvent,
+  createTask,
+  registerCapability,
+  requestApproval,
+  writeRegisteredPreference,
+} from "@clarkcant/core";
+import { appendMessage, getTask, nextMessageSequence, oneRow } from "@clarkcant/storage";
 
 import { handleRequest, type GatewayDeps, type GatewayRequest, type GatewayResponse } from "../src/gateway.ts";
 import { QUESTION_TTL_MS, answerQuestion, createQuestion } from "../src/interactions.ts";
@@ -15,6 +30,8 @@ import { createReadInboxTool } from "../src/read-inbox-tool.ts";
 import { interactionDepsFor } from "../src/routes/conversations.ts";
 import { commandDigest } from "../src/run-command.ts";
 import { bootNodeServices, type NodeServices } from "../src/services.ts";
+import { createTaskDispatcher } from "../src/task-dispatch.ts";
+import type { WorkerProcessResult } from "../src/worker-process.ts";
 
 /**
  * The inbox, over the wire.
@@ -137,6 +154,33 @@ function chatter(conversationId: string, count: number) {
   }
 }
 
+/**
+ * A task approval as the execution-policy gate in `task-dispatch.ts` raises it: a real task actually parked
+ * `waiting_approval` (the state `pendingTaskApprovals` requires before it offers one), and an approval bound to
+ * it directly by `taskId` rather than through a card, which task approvals never have.
+ */
+function raiseTaskApproval(conversationId: string) {
+  const principal: Principal = { principalId: "user_inbox_test", kind: "user", nodeId: services.runtime.identity.nodeId as never };
+  const taskDeps = { db: services.runtime.db, nodeId: services.runtime.identity.nodeId, now: () => now as Instant, newId: services.conductor.newId };
+  const task = createTask(taskDeps, { conversationId: conversationId as never, goal: "chạy lệnh git status", principal });
+  applyTaskEvent(taskDeps, task.taskId, "resolve.start");
+  advanceResolving(taskDeps, task.taskId, { kind: "ready", executionNodeId: services.runtime.identity.nodeId });
+  applyTaskEvent(taskDeps, task.taskId, "dispatch.acknowledged");
+  const parked = applyTaskEvent(taskDeps, task.taskId, "run.needs_approval");
+  if (!parked.ok) throw new Error(`test setup: could not park the task waiting for approval (${parked.message})`);
+  const approval = requestApproval(
+    { db: services.runtime.db, nodeId: services.runtime.identity.nodeId, now: () => now as never, newId: services.conductor.newId },
+    {
+      taskId: task.taskId,
+      operationDigest: `sha256:task-effect:${task.taskId}:demo.write@1`,
+      operationDescription: `Chạy lệnh trong ${dir}`,
+      effectCategory: "local-write",
+      ttlMs: 900_000,
+    },
+  );
+  return { task: parked.task, approval };
+}
+
 function askQuestion(conversationId: string) {
   const created = createQuestion(
     { ...interactionDepsFor(services, conversationId), now: () => now as Instant },
@@ -240,10 +284,174 @@ describe("what is waiting for the person", () => {
     expect((await readInboxOverHttp()).waiting).toEqual([]);
   });
 
-  it("does not offer an approval a dispatched task raised, even with a card, since it has no decide route yet", async () => {
+  it("offers an approval a dispatched task raised, without a card, pointing at its own conversation", async () => {
     const conversationId = await createConversation();
-    proposeCommand(conversationId, "git status", 900_000, now, "task_dispatched");
+    const { task, approval } = raiseTaskApproval(conversationId);
+
+    const inbox = await readInboxOverHttp();
+    expect(inbox.waiting).toHaveLength(1);
+    expect(inbox.waiting[0]).toMatchObject({
+      kind: "task-approval",
+      approvalId: approval.approvalId,
+      taskId: task.taskId,
+      conversationId,
+      description: approval.operationDescription,
+      operationDigest: approval.operationDigest,
+      effectCategory: "local-write",
+      expiresAt: approval.expiresAt,
+    });
+  });
+
+  it("decides a task approval through its own route, and it is gone from the inbox once decided", async () => {
+    const conversationId = await createConversation();
+    const { task, approval } = raiseTaskApproval(conversationId);
+    expect((await readInboxOverHttp()).waiting).toHaveLength(1);
+
+    const decided = await request("POST", `/tasks/${task.taskId}/approvals/${approval.approvalId}/decide`, {
+      decision: "denied",
+      digest: approval.operationDigest,
+    });
+    expect(decided.status).toBe(200);
+    expect((decided.body as { decision: string; redispatched: boolean }).decision).toBe("denied");
+    expect((decided.body as { redispatched: boolean }).redispatched).toBe(false);
     expect((await readInboxOverHttp()).waiting).toEqual([]);
+  });
+
+  it("grants a task approval over HTTP and actually re-dispatches the task, driven through a real dispatcher", async () => {
+    const conversationId = await createConversation();
+    const principal: Principal = { principalId: "user_inbox_test", kind: "user", nodeId: services.runtime.identity.nodeId as never };
+    const capabilityRef = "demo.write@1" as CapabilityRef;
+
+    registerCapability(
+      { db: services.runtime.db, nodeId: services.runtime.identity.nodeId },
+      {
+        ref: capabilityRef,
+        executionNodeId: services.runtime.identity.nodeId,
+        summary: "ghi một file demo",
+        resourceKinds: [],
+        effectCategory: "local-write",
+        supportsCancellation: false,
+        requiresConnection: false,
+        readiness: { installed: true, loaded: true, authenticated: true, authorized: true, healthy: true },
+        uiAffordances: [],
+      },
+    );
+    const preference = writeRegisteredPreference(
+      { db: services.runtime.db, now: () => now as Instant },
+      {
+        principalId: principal.principalId,
+        key: EXECUTION_POLICY_PREFERENCE_KEY,
+        value: { ...DEFAULT_EXECUTION_POLICY_CONFIG, mode: "ask" },
+        source: "user",
+      },
+    );
+    if (!preference.ok) throw new Error(preference.message);
+
+    const taskDeps = { db: services.runtime.db, nodeId: services.runtime.identity.nodeId, now: () => now as Instant, newId: services.conductor.newId };
+    const task = createTask(taskDeps, { conversationId: conversationId as never, goal: "ghi file demo", principal });
+    applyTaskEvent(taskDeps, task.taskId, "resolve.start");
+    advanceResolving(taskDeps, task.taskId, { kind: "ready", executionNodeId: services.runtime.identity.nodeId });
+    applyTaskEvent(taskDeps, task.taskId, "dispatch.acknowledged");
+
+    let workerCalled = false;
+    const fakeResult: WorkerProcessResult = {
+      adapter: "fake",
+      adapterVersion: "fake-1.0.0",
+      stopReason: "settled",
+      withheldCapabilities: [],
+      record: {
+        runId: "run_fake",
+        taskId: task.taskId,
+        taskRevision: task.revision,
+        executionNodeId: services.runtime.identity.nodeId,
+        leaseEpoch: 1,
+        startedAt: now as Instant,
+        endedAt: now as Instant,
+        evidence: [{ kind: "file-diff", summary: "đã ghi file", verdict: "verified", observedAt: now as Instant }],
+      },
+    };
+    // Wired onto the node's own services, exactly as `bootstrap/runtime-bootstrap.ts` wires the real dispatcher -
+    // this is what makes the HTTP route below the same code path production uses, not a stand-in for it.
+    services.taskDispatch = createTaskDispatcher({
+      conductor: services.conductor,
+      projectRoots: () => [],
+      ownedRoots: () => [],
+      ownerPrincipalId: () => principal.principalId,
+      onSettled: () => undefined,
+      runWorker: async () => {
+        workerCalled = true;
+        return fakeResult;
+      },
+    });
+
+    services.taskDispatch.dispatch({ taskId: task.taskId, capabilityRef, executionNodeId: services.runtime.identity.nodeId });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(workerCalled).toBe(false);
+    expect(getTask(services.runtime.db, task.taskId)?.state).toBe("waiting_approval");
+
+    const raised = oneRow<{ approval_id: string; operation_digest: string }>(
+      services.runtime.db,
+      "SELECT approval_id, operation_digest FROM approvals WHERE task_id = ? AND decision = 'pending'",
+      task.taskId,
+    );
+    if (raised === undefined) throw new Error("test setup: no pending approval was raised for this task");
+
+    const decided = await request("POST", `/tasks/${task.taskId}/approvals/${raised.approval_id}/decide`, {
+      decision: "granted",
+      digest: raised.operation_digest,
+    });
+    expect(decided.status).toBe(200);
+    expect((decided.body as { decision: string; redispatched: boolean }).decision).toBe("granted");
+    expect((decided.body as { redispatched: boolean }).redispatched).toBe(true);
+
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(workerCalled).toBe(true);
+    expect(getTask(services.runtime.db, task.taskId)?.state).toBe("succeeded");
+    expect((await readInboxOverHttp()).waiting).toEqual([]);
+  });
+
+  it("maps a wrong digest, an already-decided approval, an expired approval and a task no longer waiting each to their own 409", async () => {
+    const conversationId = await createConversation();
+
+    // Wrong digest: refused before anything is written.
+    const { task: taskA, approval: approvalA } = raiseTaskApproval(conversationId);
+    const wrongDigest = await request("POST", `/tasks/${taskA.taskId}/approvals/${approvalA.approvalId}/decide`, {
+      decision: "granted",
+      digest: "sha256:mot-thu-khac",
+    });
+    expect(wrongDigest.status).toBe(409);
+    expect((wrongDigest.body as { code: string }).code).toBe("APPROVAL_FORGED");
+
+    // Already decided: the second decision on the same approval finds nothing left `pending`.
+    const decidedOnce = await request("POST", `/tasks/${taskA.taskId}/approvals/${approvalA.approvalId}/decide`, {
+      decision: "denied",
+      digest: approvalA.operationDigest,
+    });
+    expect(decidedOnce.status).toBe(200);
+    // The task left `waiting_approval` the moment it was denied, so a second decision - even with the right
+    // digest - is refused for the task no longer waiting, before the approval's own already-decided state is
+    // ever reached.
+    const decidedTwice = await request("POST", `/tasks/${taskA.taskId}/approvals/${approvalA.approvalId}/decide`, {
+      decision: "granted",
+      digest: approvalA.operationDigest,
+    });
+    expect(decidedTwice.status).toBe(409);
+    expect((decidedTwice.body as { code: string }).code).toBe("TASK_NOT_WAITING");
+
+    // Expired: nobody decided before the approval's own deadline passed.
+    const { task: taskB, approval: approvalB } = raiseTaskApproval(conversationId);
+    now = new Date(new Date(approvalB.expiresAt).getTime() + 1000).toISOString();
+    const expired = await request("POST", `/tasks/${taskB.taskId}/approvals/${approvalB.approvalId}/decide`, {
+      decision: "granted",
+      digest: approvalB.operationDigest,
+    });
+    expect(expired.status).toBe(409);
+    expect((expired.body as { code: string }).code).toBe("APPROVAL_EXPIRED");
+    expect(getTask(services.runtime.db, taskB.taskId)?.state).toBe("failed");
   });
 
   it("finds what is open at the end of a conversation longer than a timeline page, and can decide it", async () => {
@@ -467,6 +675,20 @@ describe("the agent reads the inbox", () => {
     const after = await readInboxOverHttp();
     expect(after.unread).toBe(1);
     expect(after.waiting).toHaveLength(1);
+  });
+
+  it("reports a task approval as its own kind of line, in the plain words the gate raised it with", async () => {
+    const conversationId = await createConversation();
+    const { task, approval } = raiseTaskApproval(conversationId);
+
+    const tool = createReadInboxTool(() => readInbox(services, now as Instant));
+    const { text } = await tool.execute({});
+    expect(text).toContain(
+      `task approval for task ${task.taskId} (local-write): ${approval.operationDescription} (conversation ${conversationId}) (expires ${approval.expiresAt})`,
+    );
+    // Never the capability ref or the approval id - those stay in the structured fields the inbox panel reads,
+    // not in the sentence a model would repeat back to the person.
+    expect(text).not.toContain(approval.approvalId);
   });
 
   it("says plainly when there is nothing", async () => {

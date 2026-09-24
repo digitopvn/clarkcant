@@ -54,6 +54,9 @@ interface DesktopBridge {
   minimizeWindow?: () => Promise<unknown>;
   setFullScreen?: (value: boolean) => Promise<unknown>;
   onWindowStateChanged?: (callback: (payload: unknown) => void) => unknown;
+  notify?: (input: { title: string; body: string }) => Promise<unknown>;
+  /** Returns the unsubscribe: called once, it stops this callback from hearing any later click. */
+  onNotificationClicked?: (callback: () => void) => () => void;
 }
 
 /**

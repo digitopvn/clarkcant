@@ -76,7 +76,8 @@ có thể thay đổi.
 **Cố ý không có tool duyệt approval.** Approval là quyết định của con người về việc agent muốn làm; một MCP tool cho
 nó sẽ cho phép client AI tự duyệt hành động bị guard của chính nó. Approval chỉ nằm trên bề mặt của người dùng, và
 các relay tổng quát (frame `request` qua WebSocket, `clarkcant api`) cùng MCP từ chối mọi route ghi nhận quyết định
-của con người với `403 PERSON_ONLY` vì cùng lý do đó: duyệt hành động bị guard, quyết định capability của package,
+của con người với `403 PERSON_ONLY` vì cùng lý do đó: duyệt hành động bị guard (trên thẻ, hoặc do một task đang
+chạy raise ra), quyết định capability của package,
 xác nhận app intent, tin cậy một peer đã ghép cặp và cấp grant. Dừng, trả lời câu hỏi và đọc vẫn dùng được. Discovery
 document ghi điều này ở mục `personDecisions`.
 

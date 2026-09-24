@@ -60,4 +60,4 @@ Run `node tools/scan-secret-history.mjs` to check a fully fetched Git history; t
 
 “Package installed” does not mean “integration usable”. “Local-first” does not mean “data never leaves the machine”. “UI closed” does not mean “work on the VPS stopped”. “Signed/iframe/container” does not mean “absolutely safe”.
 
-Sources [R01–R30](research-and-decisions.md#nguồn-chính-thức) confirm the upstream primitives. The concrete architecture, limits, protocols and milestones are design decisions of this document set, not features already available in Pi.
+Sources [R01–R30](research-and-decisions.md#4-official-sources) confirm the upstream primitives. The concrete architecture, limits, protocols and milestones are design decisions of this document set, not features already available in Pi.

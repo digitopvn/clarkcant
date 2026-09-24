@@ -9,6 +9,7 @@ import {
   canOpenOtherConversation,
   decideFailureCategory,
   decideFailureMessageKey,
+  effectCategoryLabels,
   nextNoticeFocusTarget,
   noticeIdsToMarkRead,
   noticesMayBeCapped,
@@ -74,6 +75,7 @@ export function InboxPanel({
   switchGuard,
 }: InboxPanelProps): ReactElement | null {
   const t = useT();
+  const categoryLabels = effectCategoryLabels(t);
   const { locale } = useLocaleState();
   const [load, setLoad] = useState<Load>({ state: "loading" });
   const [busy, setBusy] = useState<Busy | undefined>(undefined);
@@ -210,6 +212,30 @@ export function InboxPanel({
                 .replace("{package}", item.packageId),
         }),
       )
+      .catch((cause: unknown) => settleDecideFailure(cause, key));
+  };
+
+  const decideTask = (item: Extract<WaitingItem, { kind: "task-approval" }>, decision: "granted" | "denied") => {
+    const key = waitingKey(item);
+    if (inFlight.current !== undefined) return;
+    inFlight.current = key;
+    setBusy({ key, decision });
+    setStatus(undefined);
+    void client
+      .decideTaskApproval(item.taskId, item.approvalId, { decision, digest: item.operationDigest })
+      .then((result) => {
+        if (item.conversationId !== undefined && item.conversationId === currentConversationId.current) onTimeline(result.timeline);
+        settle({
+          tone: "done",
+          text: t(
+            decision === "denied"
+              ? "inbox.task.decided.denied"
+              : result.redispatched
+                ? "inbox.task.decided.redispatched"
+                : "inbox.task.decided.grantedNotRun",
+          ),
+        });
+      })
       .catch((cause: unknown) => settleDecideFailure(cause, key));
   };
 
@@ -417,6 +443,39 @@ export function InboxPanel({
                                 </p>
                               )}
                               <div className="cc-card-actions">{openButton(item.conversationId)}</div>
+                            </>
+                          )}
+                          {item.kind === "task-approval" && (
+                            <>
+                              <span className="cc-card-title">
+                                {t("inbox.task.title").replace("{capability}", categoryLabels[item.effectCategory])}
+                              </span>
+                              <p style={{ margin: 0 }}>{item.description}</p>
+                              <p className="cc-freshness" style={{ margin: 0 }}>
+                                {t("inbox.task.note")}
+                                {left === undefined ? "" : ` · ${left}`}
+                              </p>
+                              <div className="cc-card-actions">
+                                <button
+                                  type="button"
+                                  className="cc-action"
+                                  data-inbox-approve={item.approvalId}
+                                  disabled={busy !== undefined}
+                                  onClick={() => decideTask(item, "granted")}
+                                >
+                                  {running ? t("inbox.task.running") : t("inbox.task.approve")}
+                                </button>
+                                <button
+                                  type="button"
+                                  className="cc-action"
+                                  data-inbox-deny={item.approvalId}
+                                  disabled={busy !== undefined}
+                                  onClick={() => decideTask(item, "denied")}
+                                >
+                                  {denying ? t("inbox.command.denying") : t("inbox.task.deny")}
+                                </button>
+                                {item.conversationId !== undefined && openButton(item.conversationId)}
+                              </div>
                             </>
                           )}
                         </div>

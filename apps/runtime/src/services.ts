@@ -35,6 +35,7 @@ import {
 
 import { loadLocalEmbedder } from "./embeddings-local.ts";
 import { type NodeModelInfo, type Runtime, type RuntimeOptions, bootRuntime } from "./node.ts";
+import type { TaskDispatcher } from "./task-dispatch.ts";
 import {
   type VectorIndexService,
   createVectorIndexService,
@@ -224,7 +225,15 @@ export interface NodeServices {
    * does. Absent on a fixture node, which reports that honestly rather than spawning a worker a
    * scripted journey never asked to see.
    */
-  taskDispatch?: { stopAll(): number; runningCount(): number; queuedCount(): number; close(): void; killAllNow(): void };
+  taskDispatch?: TaskDispatcher;
+  /**
+   * The periodic sweep that notices an approval or question left unanswered past its deadline.
+   *
+   * Assigned after boot, like `taskDispatch`: `wireRuntime` starts it once the services it reads and writes
+   * through both exist. Absent only in a test that builds `NodeServices` directly without going through
+   * `wireRuntime` — those tests exercise the sweep function itself rather than the timer around it.
+   */
+  expirySweep?: { stop(): void };
 }
 
 /**

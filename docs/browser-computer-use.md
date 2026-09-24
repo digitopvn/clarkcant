@@ -1,45 +1,47 @@
 # Browser Use & Computer Use — Decision and Driver Architecture
 
-**Ngày:** 16/09/2026. Browser Use là capability chung; project `browser-use` là một implementation có thể dùng. Không đồng nhất hai nghĩa.
+> English (default) · [Tiếng Việt](browser-computer-use.vi.md)
 
-## 1. Quyết định: core quản trị, packs thực thi
+**Date:** 16/09/2026. Browser Use is a general capability; the `browser-use` project is one implementation that may be used. Do not conflate the two meanings.
 
-**Đưa control contract, permissions, observation/action correlation, target leases và emergency stop vào core. Đưa browser/OS implementation, model adapters và binaries vào installed driver packs.**
+## 1. Decision: core governs, packs execute
 
-Browser pack được đề xuất sớm cho nhu cầu phù hợp, có thể bundled metadata nhưng binary cài theo nhu cầu. Computer pack optional, xin quyền nâng cao rõ ràng. Cả hai đều thuộc release scope, không phải “có thể nghiên cứu sau”.
+**Put the control contract, permissions, observation/action correlation, target leases and emergency stop in core. Put browser/OS implementations, model adapters and binaries in installed driver packs.**
+
+The browser pack is proposed early for suitable needs; its metadata may be bundled but the binary is installed on demand. The computer pack is optional and asks for elevated permissions explicitly. Both belong to the release scope, not "may be researched later".
 
 | Core | Driver pack |
 |---|---|
-| Capability schema và target identity | Playwright/browser engine/OS automation CLI |
+| Capability schema and target identity | Playwright/browser engine/OS automation CLI |
 | Per-node/profile/window/display resource lease | DOM/accessibility/screenshot implementation |
 | Consent, input/capture indicator, stop | Vendor vision/computer-action adapter |
-| Actions/effects ledger và evidence | Linux virtual desktop image, macOS helper integration |
+| Actions/effects ledger and evidence | Linux virtual desktop image, macOS helper integration |
 | Takeover, pause, audit, retention | Driver-specific setup/healthcheck |
 | Security/data egress/budget | Site/app knowledge recipes |
 
-Không để một browser extension tự mở root shell/full-disk access hoặc bypass node policy. Cũng không ép mọi người tải Chromium và virtual desktop dù chỉ dùng note/calendar API.
+Do not let a browser extension open a root shell/full-disk access on its own or bypass node policy. Also do not force everyone to download Chromium and a virtual desktop when they only use note/calendar APIs.
 
-## 2. Lựa chọn implementation
+## 2. Implementation choices
 
-| Candidate | Đánh giá cho sản phẩm | Quyết định |
+| Candidate | Assessment for the product | Decision |
 |---|---|---|
-| Playwright trực tiếp, TS | DOM/locator, browser contexts; giữ Pi làm planner, dễ typed adapter | **First-party browser driver mặc định**; pin browser/library pair |
-| Playwright MCP | Tái dùng tools/accessibility snapshots qua MCP; plugin interop tốt | Certified alternative path; không chạy thêm autonomous planner [R11] |
-| Browser Use | Agent-oriented browser stack, có SDK/CLI/hosted lựa chọn | Optional pack/backend, không bắt buộc Python/cloud hay agent loop thứ hai [R12] |
-| Native computer model tools | Có thể mạnh trên screenshot tasks nhưng vendor schema khác Pi tools | Adapter riêng khi đã test; không giả Pi hiểu nguyên mọi vendor protocol [R13–R14] |
-| Peekaboo macOS driver | Screenshot/accessibility/input automation phù hợp macOS | Candidate mặc định cho macOS pack, pin/version/TCC/signing spike [R15–R16] |
-| Linux virtual desktop + input adapter | Chạy GUI app trên VPS có display environment riêng | **First-party isolated runner profile**; adapter nhỏ, reuse existing engines [R14] |
+| Playwright directly, TS | DOM/locator, browser contexts; keeps Pi as the planner, easy typed adapter | **Default first-party browser driver**; pin the browser/library pair |
+| Playwright MCP | Reuses tools/accessibility snapshots over MCP; good plugin interop | Certified alternative path; does not run an extra autonomous planner [R11] |
+| Browser Use | Agent-oriented browser stack, with SDK/CLI/hosted options | Optional pack/backend; does not require Python/cloud or a second agent loop [R12] |
+| Native computer model tools | Can be strong on screenshot tasks but the vendor schema differs from Pi tools | Separate adapter once tested; do not pretend Pi understands every vendor protocol as-is [R13–R14] |
+| Peekaboo macOS driver | Screenshot/accessibility/input automation suited to macOS | Default candidate for the macOS pack, pin/version/TCC/signing spike [R15–R16] |
+| Linux virtual desktop + input adapter | Runs GUI apps on a VPS with its own display environment | **First-party isolated runner profile**; small adapter, reuse existing engines [R14] |
 
-Playwright MCP tuyên bố không là security boundary. Không xem browser context hoặc chạy headless là security sandbox [R11]. Browser process/container phải có own isolation policy. Chữ “API-first” ở đây là lựa chọn kỹ thuật, không promise mọi website có API.
+Playwright MCP states that it is not a security boundary. Do not treat a browser context or headless mode as a security sandbox [R11]. The browser process/container must have its own isolation policy. "API-first" here is a technical choice, not a promise that every website has an API.
 
 ## 3. Escalation policy
 
-1. Structured API/MCP capability đúng chức năng và có grant.
-2. Browser DOM/accessibility tools khi cần workflow web không có connector phù hợp.
-3. Screenshot/vision trong managed browser cho canvas/visual-only regions.
-4. Computer Use cho native app hoặc desktop-level interaction thật sự cần.
+1. A structured API/MCP capability with the right function and a grant.
+2. Browser DOM/accessibility tools when a web workflow has no suitable connector.
+3. Screenshot/vision in the managed browser for canvas/visual-only regions.
+4. Computer Use for native apps or desktop-level interaction that is genuinely needed.
 
-Mỗi bước mở thêm quyền/đích cần consent tương ứng. API 403, CAPTCHA, OAuth denied hoặc protected content không phải tín hiệu để tự chuyển sang computer driver lách hạn chế. Tác vụ không thể làm hợp lệ thì explain limitation và giữ user control.
+Each step that opens more permissions/targets needs the corresponding consent. An API 403, CAPTCHA, denied OAuth or protected content is not a signal to switch to the computer driver on its own to get around the restriction. When a task cannot be done legitimately, explain the limitation and keep the user in control.
 
 ## 4. Unified observe-act contract
 
@@ -72,54 +74,54 @@ interface AutomationAction {
 }
 ```
 
-Target/observation/lease do host cấp, không tự tin vào coordinates do model gửi mà không context. Typed commands gồm navigate/read/snapshot/click/fill/scroll/key/input/capture, nhưng sensitive effects vẫn đi qua policy.
+Target/observation/lease are issued by the host; coordinates sent by the model without context are not trusted on their own. Typed commands include navigate/read/snapshot/click/fill/scroll/key/input/capture, but sensitive effects still go through policy.
 
-Browser: prefer stable locator/element reference từ recent observation; locator not found thì observe lại, không random click fallback. Native: validate window/display/scale trước input; nếu target changed/observation expired thì refresh. OS không enforce được app-only containment phải nói rõ capture/input grant thực tế rộng hơn app selection.
+Browser: prefer a stable locator/element reference from a recent observation; if the locator is not found, observe again, no random click fallback. Native: validate window/display/scale before input; if the target changed/observation expired, refresh. Where the OS cannot enforce app-only containment, state clearly that the actual capture/input grant is wider than the app selection.
 
 ## 5. Managed browser profiles
 
-Mỗi profile gắn node, purpose, account/trust scope. Không tự attach user Chrome hoặc đọc hệ cookies cá nhân. Native profile import là future explicit workflow nếu làm, không mặc định.
+Each profile is bound to a node, purpose, and account/trust scope. Never attach to the user's Chrome or read the system's personal cookies on its own. Native profile import is a future explicit workflow if it is done at all, not a default.
 
-Download/upload cho phép theo approved roots; archive/file payload scan/type/size and execution boundaries. Screenshots, DOM snapshots, console logs có thể chứa secrets hoặc content nhạy cảm; default bounded retention/redaction. Agent nhìn webpage là input không tin cậy, không phải system instructions.
+Download/upload is allowed within approved roots; archive/file payload scan/type/size and execution boundaries. Screenshots, DOM snapshots and console logs can contain secrets or sensitive content; bounded retention/redaction by default. A webpage the agent sees is untrusted input, not system instructions.
 
-Login có **human takeover state**. User thao tác trong managed preview/browser; agent input dừng. Với secret entry/OAuth/2FA, suspend agent observations/capture theo flow, không ghi keystrokes hoặc đưa password vào model. Restore control sau user action rõ, không quan sát ngầm while waiting.
+Login has a **human takeover state**. The user operates in the managed preview/browser; agent input stops. For secret entry/OAuth/2FA, suspend agent observations/capture per the flow, do not record keystrokes or pass passwords to the model. Restore control after an explicit user action, with no covert observation while waiting.
 
-Browser preview không reuse main conversation WebContents. Link/redirect đi qua URL policy; raw CDP endpoint không đưa cho widget hoặc peer không có session grant. Embedded mini-app và browser automation target là hai security contexts khác nhau.
+The browser preview does not reuse the main conversation WebContents. Links/redirects go through URL policy; the raw CDP endpoint is not handed to a widget or a peer without a session grant. An embedded mini-app and a browser automation target are two different security contexts.
 
-## 6. Computer Use trên macOS
+## 6. Computer Use on macOS
 
-App phải dẫn user cấp Accessibility và capture-related permissions qua OS-supported flow. Không dùng computer tool tự bấm cấp quyền. Signing/update có thể ảnh hưởng TCC, phải test binary đúng distribution, không chỉ CLI trong terminal dev [R15–R16].
+The app must guide the user to grant Accessibility and capture-related permissions through the OS-supported flow. Never use the computer tool to click through permission grants itself. Signing/updates can affect TCC; test the binary from the actual distribution, not only the CLI in a dev terminal [R15–R16].
 
-Thiết kế:
+Design:
 
-- One foreground-input lease mặc định. Local human can stop/revoke independent of model/network.
-- Host indicator “Đang điều khiển máy này”, target app/window và nút stop rõ.
-- User input/window focus change mà driver detect được → pause/re-observe/takeover theo policy. Ghi detection coverage; không hứa phát hiện mọi human action.
-- Read-only capture permission khác input permission. Cho capture không tự cấp click/type.
-- Remote node chỉ điều khiển laptop khi explicit session grant và local policy cho; pairing không đủ.
-- Shell/test automation độc lập không bị pause chỉ vì user ngắt voice; stop scope có lựa chọn rõ.
+- One foreground-input lease by default. A local human can stop/revoke independently of the model/network.
+- Host indicator "Controlling this machine", the target app/window and a clear stop button.
+- User input/window focus changes that the driver can detect → pause/re-observe/takeover per policy. Record detection coverage; do not promise detection of every human action.
+- Read-only capture permission is different from input permission. Granting capture does not grant click/type.
+- A remote node controls the laptop only with an explicit session grant and when local policy allows it; pairing is not enough.
+- Independent shell/test automation is not paused just because the user interrupted voice; stop scope has clear options.
 
-## 7. Computer Use trên VPS
+## 7. Computer Use on a VPS
 
-Server headless không có “desktop đang mở sẵn”. Pack khởi virtual display + desktop/apps riêng trong container hoặc VM. User thao tác nhìn vào remote preview đúng session, không màn hình cá nhân trên laptop.
+A headless server has no "desktop already open". The pack starts a virtual display + its own desktop/apps in a container or VM. The user watches the remote preview of the correct session, not the personal screen on the laptop.
 
-No arbitrary host display mount; isolated clipboard; file transfer explicit. Preview input channel short-lived session-scoped authenticated; optional streaming optimization không expose VNC naked. Initial frame previews có thể dùng screenshots, live WebRTC channel thêm nếu cần và test; không đưa video frames vào event persistence.
+No arbitrary host display mount; isolated clipboard; explicit file transfer. The preview input channel is short-lived, session-scoped and authenticated; optional streaming optimization does not expose naked VNC. Initial frame previews can use screenshots, with a live WebRTC channel added if needed and tested; video frames are not put into event persistence.
 
-Linux runner không chạy native macOS apps. Muốn thao tác app macOS phải delegate tới Mac node đã pair. Driver capability discovery ghi platform/app availability, không model đoán.
+The Linux runner does not run native macOS apps. Operating a macOS app requires delegating to a paired Mac node. Driver capability discovery records platform/app availability; the model does not guess it.
 
-## 8. Effects và meaningful confirmation
+## 8. Effects and meaningful confirmation
 
-“Click” tự nó không luôn vô hại: có thể gửi email, submit form, xóa file hoặc đặt mua. Broker ghi target/action và yêu cầu user xác nhận với consequential operations trong flow hỗ trợ. Khi arbitrary website/script có effect khó phân loại, isolation hạn chế tài sản và human-review gate quan trọng hơn LLM risk classifier.
+A "click" on its own is not always harmless: it can send an email, submit a form, delete a file or place an order. The broker records the target/action and asks the user to confirm consequential operations in flows that support it. When an arbitrary website/script has effects that are hard to classify, isolation that limits assets and a human-review gate matter more than an LLM risk classifier.
 
-Observe sau action để verify outcome; screenshot không có toast success không đủ kết luận failed/success. Khi app API/DOM có receipt/state tốt hơn thì dùng. Timeout sau submit là unknown, không tự click submit lần nữa. Không hứa exactly-once trên một GUI không có operation IDs.
+Observe after an action to verify the outcome; a screenshot without a success toast is not enough to conclude failure/success. When the app API/DOM has a better receipt/state, use it. A timeout after submit is unknown; do not click submit again on its own. Do not promise exactly-once on a GUI that has no operation IDs.
 
-Computer Use giới hạn observation retention; audit có metadata+selected evidence theo consent. Agent không tự record toàn màn hình liên tục để “có đủ context”.
+Computer Use limits observation retention; audit keeps metadata+selected evidence according to consent. The agent does not continuously record the whole screen on its own to "have enough context".
 
-## 9. Security residuals cần nói thẳng
+## 9. Security residuals to state plainly
 
-Browser prompt injection có thể hướng model làm sai; core consent và isolation giảm rủi ro chứ không chứng minh an toàn tuyệt đối. Native OS control có quyền rộng, website/app visuals có thể giả prompts. Một sign-in click thành công không chứng minh OAuth đúng account.
+Browser prompt injection can steer the model wrong; core consent and isolation reduce risk but do not prove absolute safety. Native OS control has broad rights, and website/app visuals can fake prompts. A successful sign-in click does not prove OAuth used the right account.
 
-Docker rootless/container policies tăng containment nhưng host-kernel exploits là risk khác; hostile code cần stronger VM isolation khi threat model yêu cầu. Không mount broad secrets/tool sockets rồi gắn nhãn sandbox. Untrusted extension code trong Pi worker có thể đọc memory/context đã được cấp; sandbox không giữ bí mật dữ liệu đã chủ động giao cho nó.
+Docker rootless/container policies increase containment, but host-kernel exploits are a different risk; hostile code needs stronger VM isolation when the threat model requires it. Do not mount broad secrets/tool sockets and then label it a sandbox. Untrusted extension code in a Pi worker can read memory/context that has been granted; a sandbox does not keep secret the data that was deliberately handed to it.
 
 ## 10. Acceptance gates
 
@@ -131,4 +133,4 @@ Linux: fresh VPS optional runner install, display startup, isolated files/networ
 
 Cross-cutting: same policy/action/effect pipeline as API tools, install-and-resume once, no stolen focus during ordinary chat, pending tasks remain understandable when driver blocked.
 
-Nguồn và lý do lựa chọn: [R11–R16](research-and-decisions.md).
+Sources and rationale for the choices: [R11–R16](research-and-decisions.md).

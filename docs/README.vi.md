@@ -14,16 +14,16 @@ Tên “Agent” chỉ là tên làm việc, không khóa thương hiệu/domain
 
 Trước khi sửa UI/UX, đọc [DESIGN.md](../DESIGN.md) để giữ đúng định hướng tương tác. Quy trình làm việc cho agent nằm trong [AGENTS.md](../AGENTS.md); bằng chứng và giới hạn triển khai nằm trong [conformance-traceability.md](conformance-traceability.md).
 
-1. [Scope lock](scope-lock.md): mục tiêu, IN/OUT và các quyết định thay v1.
-2. [System architecture](system-architecture.md): stack, process, domain, contracts, security và dữ liệu.
-3. [Distributed runtime](distributed-runtime.md): cài VPS, pairing, remote delegation, disconnect/recovery.
-4. [Widgets & extensions](widgets-and-extensions.md): rich catalog, agent-defined actions, custom mini-apps, pin và lifecycle.
-5. [Widget developer standard](widget-development.md): authoring contract, SDK UX, conformance, package/publish flow và directory metadata.
-6. [Cài đặt](installation.vi.md): installer cross-platform, onboarding tương tác, Docker và VPS có HTTPS. [Integration & onboarding](integration-onboarding.md): research/install/auth/reload, Google Calendar, quick play và setup theo nhu cầu.
-7. [Browser & Computer Use](browser-computer-use.md): core/pack boundary, driver, node targeting và takeover.
-8. [Implementation plan](implementation-plan.md): dependencies, work packages, gates, acceptance scenarios.
-9. [Research & decisions](research-and-decisions.md): kết quả kiểm chứng upstream, lựa chọn/rejected alternatives, nguồn.
-10. [Jev selector](mini-app/jev-configuration.md): vận hành và privacy của lớp quyết định — cấu hình, phần gửi ra ngoài, telemetry, fallback.
+1. [Scope lock](scope-lock.vi.md): mục tiêu, IN/OUT và các quyết định thay v1.
+2. [System architecture](system-architecture.vi.md): stack, process, domain, contracts, security và dữ liệu.
+3. [Distributed runtime](distributed-runtime.vi.md): cài VPS, pairing, remote delegation, disconnect/recovery.
+4. [Widgets & extensions](widgets-and-extensions.vi.md): rich catalog, agent-defined actions, custom mini-apps, pin và lifecycle.
+5. [Widget developer standard](widget-development.vi.md): authoring contract, SDK UX, conformance, package/publish flow và directory metadata.
+6. [Cài đặt](installation.vi.md): installer cross-platform, onboarding tương tác, Docker và VPS có HTTPS. [Integration & onboarding](integration-onboarding.vi.md): research/install/auth/reload, Google Calendar, quick play và setup theo nhu cầu.
+7. [Browser & Computer Use](browser-computer-use.vi.md): core/pack boundary, driver, node targeting và takeover.
+8. [Implementation plan](implementation-plan.vi.md): dependencies, work packages, gates, acceptance scenarios.
+9. [Research & decisions](research-and-decisions.vi.md): kết quả kiểm chứng upstream, lựa chọn/rejected alternatives, nguồn.
+10. [Jev selector](mini-app/jev-configuration.vi.md): vận hành và privacy của lớp quyết định — cấu hình, phần gửi ra ngoài, telemetry, fallback.
 11. [ADR-001 — Gemini Live cho voice](research/adr-001-gemini-live-provider.md) và [P0.1 compatibility lock](research/compatibility-lock.md): quyết định thay thế blueprint, và lifecycle Pi SDK đã đo thật.
 12. [Giao diện mở](open-interfaces.vi.md) ([English](open-interfaces.md)): API, MCP, WebSocket, CLI cho ứng dụng bên thứ ba và công cụ AI.
 13. [Changelog](CHANGELOG.md): những ràng buộc cũ đã bị thay thế.
@@ -60,4 +60,4 @@ Chạy `node tools/scan-secret-history.mjs` để kiểm tra lịch sử Git đ�
 
 “Cài package xong” không đồng nghĩa “integration dùng được”. “Local-first” không đồng nghĩa “dữ liệu không rời máy”. “Đóng UI” không đồng nghĩa “dừng việc trên VPS”. “Có chữ ký/iframe/container” không đồng nghĩa “an toàn tuyệt đối”.
 
-Các nguồn [R01–R30](research-and-decisions.md#nguồn-chính-thức) xác nhận primitive upstream. Kiến trúc, giới hạn, protocol và milestone cụ thể là quyết định thiết kế của bộ tài liệu, không phải tính năng đã có sẵn trong Pi.
+Các nguồn [R01–R30](research-and-decisions.vi.md#4-nguồn-chính-thức) xác nhận primitive upstream. Kiến trúc, giới hạn, protocol và milestone cụ thể là quyết định thiết kế của bộ tài liệu, không phải tính năng đã có sẵn trong Pi.

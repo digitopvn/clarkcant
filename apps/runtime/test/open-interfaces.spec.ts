@@ -264,6 +264,8 @@ describe("WebSocket gateway", () => {
       "/app-intents/confirm",
       "/peers/node_x/confirm",
       "/grants",
+      // A running task's approval has no card, but deciding it is the same person's decision.
+      "/tasks/task_x/approvals/appr_x/decide",
       // The gateway drops empty segments, so a doubled slash reaches the same route and is refused the same way.
       "//conversations//conv_x/approvals/appr_x/decide/",
     ];
