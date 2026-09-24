@@ -1,4 +1,4 @@
-import type { Instant, NoticeCategory, NoticeSeverity, NoticeSourceKind } from "@clarkcant/contracts";
+import type { Instant, NoticeCategory, NoticeSeverity, NoticeSourceKind, RiskLane } from "@clarkcant/contracts";
 import { type Database, recordNotification } from "@clarkcant/storage";
 
 /**
@@ -93,3 +93,68 @@ const WORKER_OUTCOMES: Record<
   cancelled: { severity: "info", title: "Việc chạy nền đã được hủy" },
   uncertain: { severity: "warning", title: "Việc chạy nền chưa rõ kết quả" },
 };
+
+/**
+ * The risk lane's wording, in Vietnamese, for a notice body.
+ *
+ * The same four lanes and the same rule `packages/conversation-client/src/package-provenance.ts` uses for the
+ * marketplace list: a native Pi extension is trusted process-level code that runs beside the host, and an isolated
+ * widget is opaque-origin code with none of that — AGENTS.md names showing the two with the same wording as the
+ * one mistake this exists to prevent, so an update notice about a `trusted-native` package says so plainly rather
+ * than reusing the isolated-widget sentence for both.
+ */
+const LANE_LABEL: Record<RiskLane, string> = {
+  declarative: "chỉ dữ liệu",
+  "isolated-ui": "widget cách ly",
+  service: "service riêng tiến trình",
+  "trusted-native": "extension Pi gốc — chạy cùng tiến trình",
+};
+
+/**
+ * The notice that a directory-listed package or widget has a newer version than the one installed on this node.
+ *
+ * `dedupKey` names the exact artifact a repeated check would find again (`update:<source>:<packageId>@<version>`),
+ * so polling this every few hours never adds a second row for the same version — and a person who dismissed it does
+ * not see it come back until an actually newer version is published.
+ */
+export function packageUpdateNotice(input: {
+  packageId: string;
+  currentVersion: string;
+  newVersion: string;
+  sourceKind: "npm" | "git" | "local";
+  lane: RiskLane;
+  at: Instant;
+}): NodeNotice {
+  return {
+    sourceKind: "package",
+    category: "update",
+    severity: "info",
+    title: `Có bản cập nhật: ${input.packageId}`,
+    body: `${input.currentVersion} → ${input.newVersion} · nguồn ${input.sourceKind} · ${LANE_LABEL[input.lane]}`,
+    dedupKey: `update:${input.sourceKind}:${input.packageId}@${input.newVersion}`,
+    at: input.at,
+  };
+}
+
+/**
+ * The notice that a newer Pi SDK is published than the one `packages/pi-adapter` runs.
+ *
+ * The Pi SDK is host-owned, in-process code — the same `trusted-native` lane a native Pi extension runs in — so the
+ * body says that explicitly rather than leaving the reader to guess how trusted an SDK bump is.
+ */
+export function piUpdateNotice(input: {
+  packageName: string;
+  currentVersion: string;
+  newVersion: string;
+  at: Instant;
+}): NodeNotice {
+  return {
+    sourceKind: "pi",
+    category: "update",
+    severity: "info",
+    title: "Có bản cập nhật cho Pi SDK",
+    body: `${input.currentVersion} → ${input.newVersion} · ${LANE_LABEL["trusted-native"]}`,
+    dedupKey: `update:pi:${input.packageName}@${input.newVersion}`,
+    at: input.at,
+  };
+}

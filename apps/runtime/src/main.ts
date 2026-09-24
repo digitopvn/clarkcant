@@ -226,7 +226,7 @@ async function main(): Promise<void> {
     now: () => nowInstant(),
   });
 
-  wireRuntime({
+  const runtimeHandles = wireRuntime({
     services,
     dataDir: options.dataDir,
     wiring,
@@ -454,6 +454,7 @@ async function main(): Promise<void> {
     }, SHUTDOWN_GRACE_MS);
     hardStop.unref();
     leaseSweeper.stop();
+    runtimeHandles.stopUpdateChecks();
     void (async () => {
       try {
         const stopped = await performEmergencyStop({
