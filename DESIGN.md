@@ -373,6 +373,9 @@ Không hiển thị tool count, node ID hoặc Pi internals thường trực.
 
 Background task count chỉ xuất hiện khi >0. Khi có việc đang chờ vì đã chạm giới hạn chạy cùng lúc, mark nói thêm số đang chờ ("2 đang chờ") thay vì giả vờ mọi việc đều đang chạy.
 
+Dấu hộp thư cũng vậy: chỉ xuất hiện khi có việc đang chờ user hoặc thông báo chưa đọc, và nói bằng chữ ("2 việc chờ
+bạn · 1 thông báo mới"), không bằng một chấm màu. Xem §6.7.
+
 ### 6.2 Hero
 
 Giữ orb + prompt, nhưng suggestion chips nên là **dynamic recent intents** thay vì bốn câu cố định lâu dài:
@@ -439,6 +442,40 @@ Action reversible nên tạo ephemeral Undo affordance trong timeline/status:
 - file move khi underlying capability hỗ trợ rollback.
 
 Không hứa Undo cho irreversible external actions.
+
+### 6.7 Hộp thư
+
+Hộp thư trả lời hai câu: *cái gì đang chờ mình quyết định* và *việc chạy khi mình không nhìn đã ra sao*. Nó không
+phải một nơi điều hướng thứ hai. Mỗi mục trỏ về hội thoại của nó, và quyết định ở hộp thư hay trên thẻ là một.
+
+Đã ship:
+
+- **Dấu trên header** (§6.1), vắng mặt khi rỗng. Đang có việc chờ thì dấu mang cạnh cảnh báo; chỉ có thông báo mới thì
+  không. Poll như dấu việc nền, và đọc lại ngay sau một quyết định hoặc khi transcript đổi.
+- **Mở bằng click, bàn phím, lệnh gõ hoặc giọng nói** ("mở hộp thư", "xem thông báo", "open my inbox") qua cùng intent
+  `inbox.open`. Khi dấu vắng (không còn gì mới), lệnh vẫn mở được hộp thư để xem lại thông báo đã đọc.
+- **Modal host-owned** (§12: là bề mặt quyết định, không lồng modal; mở Settings thì đóng hộp thư). Escape đóng và trả
+  focus. Ghi rõ thời điểm node đọc hộp thư; không bao giờ ngụ ý là live.
+- **"Đang chờ bạn" trước, "Thông báo" sau.** Việc chờ gồm lệnh cần duyệt (hiện đúng dòng lệnh sẽ chạy, thời gian còn
+  lại), quyền gói mở rộng xin cấp, và câu hỏi Clark đang hỏi. Duyệt/Từ chối trong hộp thư đi qua đúng route của thẻ;
+  câu hỏi chỉ có "Mở hội thoại", vì câu trả lời thuộc về hội thoại đã hỏi.
+- **Việc chờ luôn được suy ra lúc đọc**, từ thẻ và bản ghi duyệt, nên hộp thư không thể nói một việc còn chờ sau khi
+  nó đã được quyết định trên thẻ, hoặc đã hết hạn.
+- **Clark trả lời được "có gì chờ tôi không?"** bằng tool chỉ đọc `read_inbox`, cùng dữ liệu với panel; tool không
+  đánh dấu đã đọc và không duyệt được gì, và có thể mở hộp thư cho user qua `inbox.open`.
+- **Thông báo** có nguồn (việc nền, worker, gói mở rộng, Pi, thiết bị khác, ClarkCant), mức độ, tuổi tương đối, và
+  nhãn "chưa đọc" bằng chữ bên cạnh chấm. Mở hộp thư đánh dấu đã đọc đúng những thông báo nó đã hiện. "Bỏ" xoá khỏi
+  danh sách; "Mở hội thoại" chuyển sang hội thoại liên quan mà không mở thêm phiên.
+
+Chưa ship (đích):
+
+- thông báo cập nhật cho Pi, gói mở rộng và widget;
+- thông báo và việc chờ từ một node ClarkCant khác (đã có `originNodeId` và khoá dedup để nhận lặp lại an toàn);
+- thông báo hệ điều hành khi cửa sổ không có focus, tuỳ chọn theo nhóm, giờ yên lặng;
+- duyệt các approval do task được điều phối tạo ra (chưa có route quyết định nên hộp thư chưa đưa ra nút).
+
+Không được: dùng hộp thư làm dashboard mặc định, đếm "0" thường trực, hay hiển thị một nút quyết định mà route thật
+chưa có.
 
 ---
 

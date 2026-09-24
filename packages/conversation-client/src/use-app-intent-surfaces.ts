@@ -15,6 +15,9 @@ export interface AppIntentSurfacesState {
   widgetLibrary: WidgetLibraryState;
   setWidgetLibrary: React.Dispatch<React.SetStateAction<WidgetLibraryState>>;
   openWidgetLibrary: (mode: "browse" | "develop") => void;
+  /** Whether the inbox is open over the conversation. */
+  inboxOpen: boolean;
+  setInboxOpen: (open: boolean) => void;
   intentNotice: string | undefined;
   /** Shows a notice outside the click/voice/typed-command path, e.g. a voice session that failed to open. */
   setIntentNotice: (message: string) => void;
@@ -76,12 +79,17 @@ export function useAppIntentSurfaces({
   const [uiCheckOpen, setUiCheckOpen] = useState(false);
   const [settingsTab, setSettingsTab] = useState<SettingsTab | undefined>(undefined);
   const [widgetLibrary, setWidgetLibrary] = useState<WidgetLibraryState>(CLOSED_LIBRARY);
+  const [inboxOpen, setInboxOpen] = useState(false);
   const [intentNotice, setIntentNotice] = useState<string | undefined>(undefined);
   const [pendingIntent, setPendingIntent] = useState<AppIntentDecision | undefined>(undefined);
   const [liveRefresh, setLiveRefresh] = useState(0);
   const bumpLiveRefresh = useCallback(() => setLiveRefresh((count) => count + 1), []);
 
   const openWidgetLibrary = useCallback((mode: "browse" | "develop"): void => {
+    // Modals do not nest (see openSettings/openInbox below and WidgetLibrarySurface's own note on the same rule):
+    // the library is a `role="dialog" aria-modal="true"` surface itself, so it closes the inbox rather than
+    // stacking a second dialog with its own Escape and Tab trap over the first.
+    setInboxOpen(false);
     setWidgetLibrary((current) => applyLibraryAction(current, { kind: "open", mode }));
   }, []);
 
@@ -96,9 +104,16 @@ export function useAppIntentSurfaces({
   const intentHost = useMemo<AppIntentHost>(() => {
     const desktop = hasDesktopChrome();
     return {
+      // Settings and the inbox are both modals, and modals do not nest: opening one closes the other.
       openSettings: (tab?: SettingsTab) => {
+        setInboxOpen(false);
         setSettingsTab(tab);
         setUiCheckOpen(true);
+      },
+      openInbox: () => {
+        setUiCheckOpen(false);
+        setWidgetLibrary(CLOSED_LIBRARY);
+        setInboxOpen(true);
       },
       goHome: restartSession,
       openFilePicker: () => attachmentInput.current?.click(),
@@ -108,6 +123,7 @@ export function useAppIntentSurfaces({
       showConversation: () => {
         setUiCheckOpen(false);
         setWidgetLibrary(CLOSED_LIBRARY);
+        setInboxOpen(false);
       },
       cycleModel: () => {
         void client.cycleModel().catch(() => setIntentNotice(t("intents.modelSwitchFailed")));
@@ -116,6 +132,9 @@ export function useAppIntentSurfaces({
         void client.selectModel(alias).catch(() => setIntentNotice(t("intents.modelSwitchFailed")));
       },
       openWidgetLibrary: (mode: "browse" | "develop", target?: { definitionId?: string; family?: string }) => {
+        // Same rule as the imperative `openWidgetLibrary` above, for the path a click, a typed command or voice
+        // reaches this through instead: opening the library while the inbox is open would stack two modals.
+        setInboxOpen(false);
         setWidgetLibrary((current) =>
           applyLibraryAction(current, { kind: "open", mode, ...(target === undefined ? {} : { target }) }),
         );
@@ -191,6 +210,8 @@ export function useAppIntentSurfaces({
     widgetLibrary,
     setWidgetLibrary,
     openWidgetLibrary,
+    inboxOpen,
+    setInboxOpen,
     intentNotice,
     setIntentNotice,
     runIntent,

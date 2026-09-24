@@ -50,8 +50,9 @@ describe("what is written down", () => {
     // 22: this branch's two migrations were renumbered when main took 18, and main's pairing migration then took
     // 21 rather than the 19 this branch already uses; migration 22 (backfilling `grantedCapabilities` onto a
     // pre-existing package generation) is the next one after that, and 23 records the lifecycle an uninstall
-    // replaced. The schema version is the count of migrations that have run.
-    expect(currentSchemaVersion(db)).toBe(25);
+    // replaced; 24 and 25 are main's work journal and outbox backoff, and 26 adds the inbox's notices. The schema
+    // version is the count of migrations that have run.
+    expect(currentSchemaVersion(db)).toBe(26);
   });
 
   it("reads back newest first, with the fields it was given", () => {

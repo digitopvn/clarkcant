@@ -310,6 +310,36 @@ Interaction Manager sở hữu `create()` / `answer()` / `cancel()` / `expire()`
 
 Ranh giới phải giữ: `ask_user_question` không dùng để hỏi secret. Câu trả lời đi vào conversation và model đọc được, nên host từ chối deterministic khi câu hỏi đòi secret và trỏ sang `request_secret`. Voice hiểu mọi dạng interaction đang pending, không chỉ thẻ duyệt: `answerFromUtterance` khớp lời nói với nhãn mà card đã đưa, rồi trả lời qua đúng một đường (`answerQuestionForNode`) mà một cú bấm cũng dùng.
 
+### 7.5.1 Hộp thư: việc chờ user và thông báo
+
+Hộp thư (`apps/runtime/src/inbox.ts`, `routes/inbox.ts`) gom hai thứ khác authority về một chỗ đọc:
+
+- **Việc chờ** — lệnh cần duyệt, quyền gói xin cấp, câu hỏi đang mở — **không được lưu**. Mỗi lần đọc suy ra lại từ
+  bảng `approvals`, thẻ trong `messages` và `pendingForConversation`, nên hộp thư không thể nói một việc còn chờ sau
+  khi nó đã được quyết định trên thẻ hoặc đã hết hạn. Hộp thư không có route quyết định riêng: nút Duyệt/Từ chối gọi
+  đúng `POST /conversations/:id/approvals/:aid/decide` và route quyền gói mà thẻ dùng. Approval không có thẻ, hoặc
+  thuộc một task được điều phối, chưa được đưa ra, vì chưa có route quyết định nào cho nó. Thẻ và câu hỏi được tìm
+  trong 2000 tin nhắn mới nhất (theo `rowid`, vì `created_at` không có index); route quyết định đọc cùng đầu đó của
+  hội thoại (`latestMessages`), nên một mục hộp thư đưa ra luôn là mục route tìm được. Thẻ cũ hơn cửa sổ đó không
+  được đưa ra, và approval của nó vẫn hết hạn theo TTL.
+- **Thông báo** — kết quả việc nền, dispatch của worker; về sau là cập nhật Pi/gói/widget và tin từ node khác — là
+  sự kiện đã xảy ra, **được lưu** trong bảng `notifications` (migration 26). Producer gọi `recordNodeNotice` /
+  `tryRecordNodeNotice` (`apps/runtime/src/notices.ts`); ghi thông báo không bao giờ làm hỏng việc đã sinh ra nó.
+  Ghi là idempotent theo `(principal, dedupKey)` — cùng một sự kiện gửi lại (retry, hoặc qua NodeLink) không thành
+  hai dòng — text được redact và cắt ngắn, và bảng tự dọn: mỗi principal giữ tối đa 200 thông báo **chưa bỏ** (cũ
+  nhất đi trước), còn thông báo đã bỏ chỉ bị xoá khi quá 30 ngày, nên việc bỏ không đẩy một thông báo chưa đọc ra
+  ngoài. Việc nền được điều phối khi xong ghi một thông báo mỗi task (`workerSettledNotice`, khoá `worker:<taskId>`).
+  `originNodeId` để dành cho thông báo đến từ node khác.
+
+Route: `GET /inbox`, `GET /inbox/summary` (hai số cho dấu trên header), `POST /inbox/read` (`noticeIds` hoặc tất cả),
+`POST /inbox/notices/:id/dismiss`. Contract ở `packages/contracts/src/inbox.ts`. UI ở DESIGN.md §6.7; mở bằng
+intent `inbox.open` (text, voice, `control_app`). Agent đọc cùng dữ liệu đó qua tool chỉ đọc `read_inbox`
+(`apps/runtime/src/read-inbox-tool.ts`): không đánh dấu đã đọc (người dùng chưa nhìn thấy) và không quyết định được gì
+(model không phải người dùng).
+
+Bảng `notifications` không phải `inbox` của NodeLink trong §10: cái sau là hàng đợi lệnh giữa các node, cái trước là
+những gì user được báo.
+
 ### 7.6 Model Registry: nhiều model profile, và đổi model là một generation mới
 
 `/model` hiện là một preference đơn (`key: "model"`, scope `node`). Đích là một registry của user: nhiều profile, mỗi profile có alias, provider, modelId, enabled, roles (foreground/background/coding/research/fast/long-context), priority và budget riêng. Catalogue không được copy — `provider/modelId` luôn validate lại với catalogue của Pi qua `packages/pi-adapter` (`validateProfileAgainstCatalogue`). Pool lưu trong preferences (`model-pool`), không thêm bảng.
@@ -382,7 +412,7 @@ Hai thứ cố ý **không** bền vững, và lý do là một phần của thi
 
 Khi một session mới được tạo cho hội thoại đã có mạch, lượt đầu được nhắc bằng brief của 12 message gần nhất, mỗi dòng cắt ngắn (`apps/runtime/src/model-turn.ts`). Đó là cách đặt model vào mạch đang làm, không phải chép lại hội thoại: một brief dài theo hội thoại thì không còn là brief.
 
-Nhóm bảng: principals/nodes/grants; conversations/messages; tasks/runs/delegations; commands/events/outbox/inbox; resources/leases; effects/approvals; packages/install_plans/generations; connections/auth_transactions; widget_instances/snapshots/pins/action_bindings; datasets/artifacts; preferences/onboarding_checkpoints/usage.
+Nhóm bảng: principals/nodes/grants; conversations/messages; tasks/runs/delegations; commands/events/outbox/inbox; notifications (§7.5.1); resources/leases; effects/approvals; packages/install_plans/generations; connections/auth_transactions; widget_instances/snapshots/pins/action_bindings; datasets/artifacts; preferences/onboarding_checkpoints/usage.
 
 Secrets lưu trong vault abstraction: macOS Keychain hoặc server secret store/encrypted-at-rest storage với key nằm ngoài DB backup. Metadata của secret — name, description, kind, backend, allowed_consumers, injection_policy — nằm trong DB; value nằm ở backend và chỉ được resolve ở boundary của một invocation, không đi vào context của model (§7.4). File permissions không thay encryption; container env cũng không là giải pháp tránh mọi leak. Bootstrap/recovery key và backup procedure phải có test; không tự sinh key rồi lưu cùng plaintext DB và gọi là bảo mật đầy đủ.
 

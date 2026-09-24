@@ -23,3 +23,4 @@ export * from "./local-images.ts";
 export * from "./attachments.ts";
 export * from "./memory.ts";
 export * from "./work-runs.ts";
+export * from "./notifications.ts";

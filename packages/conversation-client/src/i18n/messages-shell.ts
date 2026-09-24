@@ -99,6 +99,7 @@ export const MESSAGES_SHELL_VI = {
   "shell.intent.notVoice": "Bản dựng này không mở được phiên thoại, nên tôi chưa làm gì cả.",
   "shell.intent.notModelPool": "Bản dựng này không đổi được model, nên tôi chưa làm gì cả.",
   "shell.intent.notConversation": "Bản dựng này không quay lại được cuộc trò chuyện, nên tôi chưa làm gì cả.",
+  "shell.intent.notInbox": "Bản dựng này không có hộp thư để mở, nên tôi chưa làm gì cả.",
 
   "shell.onboarding.tagline": "Nói điều bạn muốn làm.",
   "shell.onboarding.start": "Bắt đầu",
@@ -245,6 +246,7 @@ export const MESSAGES_SHELL_EN = {
   "shell.intent.notVoice": "This build has no voice session to open, so nothing happened.",
   "shell.intent.notModelPool": "This build cannot change the model, so nothing happened.",
   "shell.intent.notConversation": "This build cannot return to the conversation, so nothing happened.",
+  "shell.intent.notInbox": "This build has no inbox to open, so nothing happened.",
 
   "shell.onboarding.tagline": "Say what you want to do.",
   "shell.onboarding.start": "Get started",

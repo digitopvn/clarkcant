@@ -35,6 +35,7 @@ export * from "./interactions.ts";
 export * from "./models.ts";
 
 export * from "./suggestions.ts";
+export * from "./inbox.ts";
 
 export * from "./memory.ts";
 export * from "./implementation-status.ts";

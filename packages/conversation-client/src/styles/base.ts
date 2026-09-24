@@ -260,5 +260,45 @@ body {
 .cc-dot { width: 6px; height: 6px; border-radius: var(--cc-radius-pill); background: var(--cc-success); }
 .cc-dot[data-state="offline"] { background: var(--cc-danger); }
 .cc-dot[data-state="connecting"] { background: var(--cc-warning); }
+.cc-dot[data-state="waiting"] { background: var(--cc-warning); }
+
+/*
+ * The inbox mark and the inbox panel.
+ *
+ * The mark is a pill-shaped button rather than a hover list like the background mark: it opens a surface with
+ * decisions in it, so it is a control, and a control is reached by Tab and Enter like any other. The warning edge is
+ * for "something is waiting on you", not for "something is new" — a result nobody has read is not an alarm.
+ */
+.cc-inbox-mark {
+  display: flex; align-items: center; gap: var(--cc-space-xs);
+  font: inherit; font-size: var(--cc-text-label); color: var(--cc-text);
+  background: transparent; border: 1px solid var(--cc-border); border-radius: var(--cc-radius-pill);
+  padding: 2px var(--cc-space-sm); min-height: 26px; cursor: pointer; white-space: nowrap;
+  transition-property: transform; transition-duration: var(--cc-motion-micro); transition-timing-function: var(--cc-motion-bounce);
+}
+.cc-inbox-mark[data-inbox-mark="waiting"] { border-color: color-mix(in oklab, var(--cc-warning) 55%, transparent); }
+.cc-inbox-mark:hover { background: var(--cc-elevated); }
+.cc-inbox-mark:active { transform: scale(0.97); }
+.cc-inbox-mark:focus-visible { outline: 2px solid var(--cc-focus); outline-offset: 2px; }
+.cc-inbox { display: flex; flex-direction: column; gap: var(--cc-space-md); }
+.cc-inbox-section { display: flex; flex-direction: column; gap: var(--cc-space-sm); }
+.cc-inbox-heading { margin: 0; font-size: var(--cc-text-label); font-weight: 600; color: var(--cc-text-muted); }
+.cc-inbox-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--cc-space-sm); }
+.cc-inbox-command {
+  margin: 0; padding: var(--cc-space-sm); overflow-x: auto; max-height: 160px;
+  background: var(--cc-code); border-radius: var(--cc-radius-button); font-size: var(--cc-text-body-sm);
+  white-space: pre-wrap; overflow-wrap: anywhere;
+}
+.cc-inbox-notice { padding: var(--cc-space-sm) 0; border-bottom: 1px solid var(--cc-border); display: flex; flex-direction: column; gap: var(--cc-space-xs); }
+.cc-inbox-notice:last-child { border-bottom: 0; }
+.cc-inbox-notice-head { display: flex; align-items: center; gap: var(--cc-space-sm); flex-wrap: wrap; }
+.cc-inbox-unread { display: inline-flex; align-items: center; gap: var(--cc-space-xs); font-size: var(--cc-text-label); color: var(--cc-text); font-weight: 600; }
+.cc-inbox-notice-title { margin: 0; overflow-wrap: anywhere; }
+.cc-inbox-notice[data-unread="true"] .cc-inbox-notice-title { font-weight: 600; }
+.cc-inbox-notice-body { margin: 0; color: var(--cc-text-muted); font-size: var(--cc-text-body-sm); overflow-wrap: anywhere; }
+@media (max-width: 520px) {
+  /* The count words go on a narrow header; the dot and the button stay, and the label keeps the count. */
+  .cc-inbox-mark > span:last-child { max-width: 9em; overflow: hidden; text-overflow: ellipsis; }
+}
 }
 `;

@@ -55,6 +55,7 @@ export const APP_INTENT_KINDS = [
   "widgets.show",
   "model.cycle",
   "model.select",
+  "inbox.open",
 ] as const;
 
 export const appIntentKindSchema = z.enum(APP_INTENT_KINDS);
@@ -236,6 +237,8 @@ function describeAppIntentVi(intent: AppIntent): string {
       // able to tell that the widget itself was not named.
       return "Tôi mở thư viện widget để bạn chọn nhé.";
     }
+    case "inbox.open":
+      return "Tôi mở hộp thư nhé.";
     default: {
       // Every kind above returns, so this is unreachable today. It exists so that adding a tenth kind
       // without a sentence is a loud failure in a test rather than `undefined` read aloud by a voice.
@@ -281,6 +284,8 @@ function describeAppIntentEn(intent: AppIntent): string {
       if (intent.family !== undefined) return `Opening the widget library on the ${intent.family} group.`;
       return "Opening the widget library for you to choose.";
     }
+    case "inbox.open":
+      return "Opening your inbox.";
     default: {
       const unreachable: never = intent.kind;
       throw new Error(`no read-back sentence for app intent ${String(unreachable)}`);

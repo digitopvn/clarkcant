@@ -6,6 +6,7 @@ import { SAMPLE_DATASET } from "@clarkcant/data-canvas/sample";
 import { credentialNames, messagesSince, readPreference } from "@clarkcant/storage";
 
 import { attachmentRefsForLastUserMessage } from "../attachments.ts";
+import { readInbox } from "../inbox.ts";
 import { type InteractionDeps } from "../interactions.ts";
 import { decideModelRoute } from "../jev-decider.ts";
 import { memoryBrief } from "../memory.ts";
@@ -267,6 +268,8 @@ export async function createNodeModelTurn(deps: ModelBootstrapDeps): Promise<Mod
         // Remembering is scoped to the turn's conversation the same way, and the id comes from the node's own
         // generator: the model supplies what to remember, never who it belongs to.
         memory: { conversationId: turn.conversationId, newId: deps.services().conductor.newId },
+        // "Anything waiting for me?" is answered from the same read the inbox panel makes, at the moment it is asked.
+        inbox: () => readInbox(deps.services(), instantSchema.parse(new Date().toISOString())),
         // The same action as the Settings buttons, so a spoken or typed "uninstall it" and a click are one path.
         packages: {
           packages: { runtime: deps.services().runtime, conductor: deps.services().conductor },

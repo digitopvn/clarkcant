@@ -11,6 +11,7 @@ import { createModelCatalogue, type ModelTurn, type ViewDescriptor } from "../mo
 import { type CommandToolDeps } from "../node-tools.ts";
 import { ownedResources } from "../preflight.ts";
 import { refreshProjectIndex } from "../project-finder.ts";
+import { tryRecordNodeNotice, workerSettledNotice } from "../notices.ts";
 import { appendHostReply } from "../routes/conversations.ts";
 import { createSecretBroker } from "../secret-broker.ts";
 import { type RequestSecretDeps } from "../request-secret.ts";
@@ -254,11 +255,14 @@ export function wireRuntime(deps: RuntimeBootstrapDeps): void {
               : outcome === "cancelled"
                 ? "Đã hủy"
                 : "Chưa rõ kết quả";
+        const at = new Date().toISOString() as Instant;
         appendHostReply(deps.services, {
           conversationId,
           text: `${label} (task ${taskId}): ${message}`,
-          at: new Date().toISOString() as Instant,
+          at,
         });
+        // The pointer for a person who is not looking at that conversation.
+        tryRecordNodeNotice(deps.services, workerSettledNotice({ taskId, conversationId, outcome, message, at }));
       },
     });
     deps.services.taskDispatch = dispatcher;

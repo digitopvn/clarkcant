@@ -92,6 +92,13 @@ describe("control_app", () => {
     });
   });
 
+  it("delivers inbox.open, so the agent can open the inbox the way a spoken command does", () => {
+    const delivered: ModelTurnEvent[] = [];
+    const result = decideControlApp(deps(() => (event) => delivered.push(event)), { kind: "inbox.open" });
+    expect(result.status).toBe("delivered");
+    expect(delivered[0]).toMatchObject({ type: "host-control", decision: { kind: "intent", intent: { kind: "inbox.open" } } });
+  });
+
   it("refuses a kind outside the control_app vocabulary, such as app.quit", () => {
     const result = decideControlApp(deps(() => () => {}), { kind: "app.quit" });
     expect(result).toEqual({ status: "refused", reason: "unsupported", say: expect.any(String) as unknown as string });

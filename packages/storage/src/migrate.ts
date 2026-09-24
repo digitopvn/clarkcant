@@ -1197,6 +1197,38 @@ export const MIGRATIONS: readonly Migration[] = [
       `);
     },
   },
+  {
+    version: 26,
+    name: "notifications",
+    reversible: true,
+    up: (db) => {
+      db.exec(`
+        -- The notices in the person's inbox: work that finished while they were elsewhere, and later updates
+        -- and messages from other nodes. Not called "inbox", which is already the NodeLink dedup table.
+        -- What is *waiting* for the person (approvals, questions) is not stored here: it is derived from the
+        -- approvals table and the transcript on every read, so it cannot disagree with either.
+        CREATE TABLE notifications (
+          notification_id   TEXT PRIMARY KEY,
+          principal_id      TEXT NOT NULL,
+          source_kind       TEXT NOT NULL,
+          category          TEXT NOT NULL,
+          severity          TEXT NOT NULL,
+          title             TEXT NOT NULL,
+          body              TEXT,
+          conversation_id   TEXT,
+          origin_node_id    TEXT,
+          -- Chosen by the producer, so a producer that delivers at least once (a peer resending, an update
+          -- check running again) writes one notice rather than one per attempt.
+          dedup_key         TEXT NOT NULL,
+          created_at        TEXT NOT NULL,
+          read_at           TEXT,
+          dismissed_at      TEXT
+        );
+        CREATE UNIQUE INDEX idx_notifications_dedup ON notifications(principal_id, dedup_key);
+        CREATE INDEX idx_notifications_recent ON notifications(principal_id, created_at);
+      `);
+    },
+  },
 ];
 
 function readAll<T>(db: Database, sql: string): T[] {
