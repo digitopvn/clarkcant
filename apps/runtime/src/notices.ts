@@ -114,8 +114,12 @@ const LANE_LABEL: Record<RiskLane, string> = {
  * The notice that a directory-listed package or widget has a newer version than the one installed on this node.
  *
  * `dedupKey` names the exact artifact a repeated check would find again (`update:<source>:<packageId>@<version>`),
- * so polling this every few hours never adds a second row for the same version — and a person who dismissed it does
- * not see it come back until an actually newer version is published.
+ * so polling this every few hours never adds a second row for the same version while its row is still there.
+ * That is not forever: `recordNotification` removes a dismissed notice once it is more than
+ * `DISMISSED_RETENTION_MS` (30 days) past dismissal, and separately caps the undismissed inbox at
+ * `MAX_NOTIFICATIONS`, oldest evicted first. Once this row is gone either way, the same version checking again
+ * writes a fresh notice — so a person who dismissed an update notice can see the very same version come back, not
+ * only a newer one, once that row has aged out or been evicted.
  */
 export function packageUpdateNotice(input: {
   packageId: string;
