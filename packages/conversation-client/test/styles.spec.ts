@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 
+import { themeStylesheet } from "@clarkcant/design-tokens";
+
 import { APP_CSS } from "../src/styles.ts";
 
 /**
@@ -71,5 +73,28 @@ describe("the stylesheet survives being embedded in TypeScript", () => {
       // The selector is disabled in the reduced-motion block rather than left to the blanket rule.
       expect(APP_CSS).toContain(`${selector} { animation: none !important;`);
     }
+  });
+});
+
+describe("every variable the stylesheet reads exists", () => {
+  /*
+   * Set inline by a component rather than by a sheet, so the stylesheet cannot see where they come from.
+   * Everything else must be a token or a rule-level declaration.
+   */
+  const RUNTIME = new Set(["--cc-chip-index", "--cc-enter-delay", "--cc-orb-dock"]);
+
+  it("reads no variable that nothing defines, unless it names a fallback", () => {
+    /*
+     * An undefined custom property is not an error in CSS: the declaration quietly becomes its initial value.
+     * The Widget Library read `--cc-surface` for its background, which no theme defines, so the dialog was
+     * transparent and the conversation showed through it; a dozen radii and gaps were zero for the same reason.
+     * Nothing about that shows up anywhere except on the screen, which is why it is asserted here.
+     */
+    const defined = new Set(
+      [...`${themeStylesheet()}\n${APP_CSS}`.matchAll(/(--cc-[a-z0-9-]+)\s*:/g)].map((match) => match[1]),
+    );
+    const unguarded = [...APP_CSS.matchAll(/var\((--cc-[a-z0-9-]+)\)/g)].map((match) => match[1] ?? "");
+    const missing = [...new Set(unguarded)].filter((name) => !defined.has(name) && !RUNTIME.has(name));
+    expect(missing).toEqual([]);
   });
 });

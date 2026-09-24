@@ -145,6 +145,14 @@ test("reduced motion collapses every animation's duration, none left spinning at
   await page.emulateMedia({ reducedMotion: "reduce" });
   await openApp(page);
 
+  // The OS preference has to reach the motion tokens themselves: the theme block sets them on
+  // `:root[data-cc-theme]`, and a reduced override that loses to it on specificity leaves every
+  // token-driven transition running at full length.
+  const micro = await page.evaluate(() =>
+    getComputedStyle(document.documentElement).getPropertyValue("--cc-motion-micro").trim(),
+  );
+  expect(micro).toBe("0ms");
+
   // Open voice, which is the one surface with a continuous, audio-driven animation (the orb scale and
   // the waveform bars) — exactly the shape DESIGN.md §3.4 warns can turn into an infinite zero-duration
   // spinner if reduced motion is implemented as "multiply the duration by zero" instead of removing it.

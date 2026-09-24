@@ -44,7 +44,7 @@ export const VOICE_CSS = `
   /* The composer's own spacing, so the bar sits exactly where the input it replaces sits. */
   margin: 0 auto var(--cc-space-lg);
   border: 1px solid color-mix(in oklab, var(--cc-accent) 34%, transparent);
-  border-radius: var(--cc-radius-lg);
+  border-radius: var(--cc-radius-response);
   background: var(--cc-card);
   /* Clipped: the bar is smaller than the screen it replaces, and a stray pixel outside the curve reads as a bug. */
   overflow: hidden;
@@ -245,10 +245,19 @@ export const VOICE_CSS = `
   padding: var(--cc-space-xs) var(--cc-space-md);
   background: var(--cc-elevated); color: var(--cc-text);
   border: 1px solid var(--cc-border); border-radius: var(--cc-radius-button);
+  min-height: 32px;
+  transition-property: transform; transition-duration: var(--cc-motion-micro); transition-timing-function: var(--cc-motion-bounce);
 }
 .cc-action:hover:not(:disabled) { border-color: var(--cc-accent); }
+.cc-action:active:not(:disabled) { transform: scale(0.97); }
 .cc-action:focus-visible { outline: 2px solid var(--cc-focus); outline-offset: 2px; }
 .cc-action:disabled { cursor: not-allowed; color: var(--cc-text-tertiary); }
+/*
+ * The one action a card is about. Filled, so "đang làm" looks different from the view controls beside it;
+ * disabled, it drops back to the plain outline so a filled button never means "cannot".
+ */
+.cc-action[data-emphasis="primary"]:not(:disabled) { background: var(--cc-accent); border-color: var(--cc-accent); color: var(--cc-on-accent); font-weight: 600; }
+.cc-action[data-emphasis="primary"]:hover:not(:disabled) { background: color-mix(in oklab, var(--cc-accent) 88%, var(--cc-text)); }
 
 /* Project roots the node has already approved. */
 .cc-root-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--cc-space-xs); }

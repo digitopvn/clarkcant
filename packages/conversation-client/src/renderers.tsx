@@ -1,13 +1,27 @@
 import {
   type ReactElement,
   type ReactNode,
+  useCallback,
+  useEffect,
   useMemo,
+  useRef,
   useState,
 } from "react";
 
 import { donutSlices, monthGrid } from "@clarkcant/contracts";
 
 import type { ResolvedDataset } from "./api.ts";
+import {
+  CHART_HEIGHT,
+  CHART_PAD,
+  type ChartGeometry,
+  chartGeometry,
+  type ChartPoint,
+  chartPoints,
+  formatTicks,
+  labelStride,
+  valueLabelShown,
+} from "./chart-layout.ts";
 import { vendorEmbedUrl } from "./media-embed.ts";
 import { useT } from "./i18n/locale-context.tsx";
 import type { MessageKey } from "./i18n/messages.ts";
@@ -71,6 +85,19 @@ export type CatalogRenderer = (props: RendererProps) => ReactElement | null;
  * Shared chrome
  * ------------------------------------------------------------------ */
 
+/**
+ * How loudly each freshness speaks.
+ *
+ * Sample and cached data carry the warning tone because they are the two cases a reader could mistake for
+ * live: a label in the same muted grey as the title bar is a label nobody reads.
+ */
+const FRESHNESS_TONE: Record<RendererDataset["freshness"], "ok" | "warn" | undefined> = {
+  live: "ok",
+  cached: "warn",
+  sample: "warn",
+  unknown: undefined,
+};
+
 const FRESHNESS_LABEL_KEY: Record<RendererDataset["freshness"], MessageKey> = {
   live: "widgets.freshness.live",
   cached: "widgets.freshness.cached",
@@ -88,7 +115,7 @@ function Freshness({ dataset }: { dataset: RendererDataset | undefined }): React
   const t = useT();
   if (!dataset) return null;
   return (
-    <span className="cc-freshness" data-freshness={dataset.freshness}>
+    <span className="cc-freshness cc-badge" data-freshness={dataset.freshness} data-tone={FRESHNESS_TONE[dataset.freshness]}>
       {t(FRESHNESS_LABEL_KEY[dataset.freshness])}
     </span>
   );
@@ -125,10 +152,6 @@ function Unavailable({ reason }: { reason: string }): ReactElement {
   );
 }
 
-function numeric(rows: Record<string, unknown>[], key: string): number[] {
-  return rows.map((row) => Number(row[key])).filter((value) => Number.isFinite(value));
-}
-
 function label(row: Record<string, unknown>, preferred: string[]): string {
   for (const key of preferred) {
     const value = row[key];
@@ -142,9 +165,58 @@ function label(row: Record<string, unknown>, preferred: string[]): string {
  * Charts
  * ------------------------------------------------------------------ */
 
+/**
+ * The width a chart is actually drawn at.
+ *
+ * The SVG's coordinate system is its measured width, so a label set at 11 is 11 CSS pixels at every size. A
+ * fixed 640-unit view box scaled into a 300-pixel card drew its axis labels at five pixels, which is decoration
+ * rather than text. The first frame uses the fallback; the observer corrects it before anyone can read it.
+ */
+function useMeasuredWidth(fallback: number): [(element: HTMLElement | null) => void, number] {
+  const [width, setWidth] = useState(fallback);
+  const observer = useRef<ResizeObserver | undefined>(undefined);
+  const ref = useCallback((element: HTMLElement | null) => {
+    observer.current?.disconnect();
+    observer.current = undefined;
+    if (element === null || typeof ResizeObserver === "undefined") return;
+    const next = new ResizeObserver((entries) => {
+      const measured = Math.round(entries[0]?.contentRect.width ?? 0);
+      if (measured > 0) setWidth(measured);
+    });
+    next.observe(element);
+    observer.current = next;
+  }, []);
+  useEffect(() => () => observer.current?.disconnect(), []);
+  return [ref, width];
+}
+
+function ChartGrid({ geometry }: { geometry: ChartGeometry }): ReactElement {
+  const labels = formatTicks(geometry.ticks);
+  return (
+    <g aria-hidden="true">
+      {geometry.ticks.map((tick, index) => (
+        <g key={tick}>
+          <line className="grid" x1={CHART_PAD.left} x2={geometry.width - CHART_PAD.right} y1={geometry.scaleY(tick)} y2={geometry.scaleY(tick)} />
+          <text className="label" x={CHART_PAD.left - 6} y={geometry.scaleY(tick)} textAnchor="end" dominantBaseline="middle">
+            {labels[index]}
+          </text>
+        </g>
+      ))}
+      <line className="axis" x1={CHART_PAD.left} y1={geometry.zero} x2={geometry.width - CHART_PAD.right} y2={geometry.zero} />
+    </g>
+  );
+}
+
+function chartSummary(points: ChartPoint[]): string {
+  return points.map((point) => `${point.label}: ${point.value}`).join(", ");
+}
+
+const CATEGORY_KEYS = ["week", "name", "label"];
+
 function LineChart({ props, dataset }: RendererProps): ReactElement {
   const t = useT();
   const title = String(props.title ?? t("widgets.lineChart.title"));
+  const [measure, width] = useMeasuredWidth(640);
   if (!dataset || dataset.rows.length === 0) {
     return (
       <Frame title={title} dataset={dataset} role="chart">
@@ -159,43 +231,52 @@ function LineChart({ props, dataset }: RendererProps): ReactElement {
       ? "runs"
       : Object.keys(dataset.rows[0] ?? {}).find((key) => typeof dataset.rows[0]?.[key] === "number") ?? "value";
 
-  const values = numeric(dataset.rows, seriesKey);
-  const max = Math.max(...values, 1);
-  const min = Math.min(...values, 0);
-  const width = 640;
-  const height = 180;
-  const padX = 28;
-  const padY = 16;
-  const step = values.length > 1 ? (width - padX * 2) / (values.length - 1) : 0;
-  const scaleY = (value: number): number =>
-    height - padY - ((value - min) / Math.max(max - min, 1)) * (height - padY * 2);
-
-  const path = values.map((value, index) => `${index === 0 ? "M" : "L"} ${padX + index * step} ${scaleY(value)}`).join(" ");
+  const points = chartPoints(dataset.rows, seriesKey, (row) => label(row, CATEGORY_KEYS));
+  const values = points.map((point) => point.value);
+  const geometry = chartGeometry(width, values);
+  // Inset from both edges, so the first value label clears the value axis and the last one the card edge.
+  const inset = Math.min(18, geometry.plotWidth / 4);
+  const step = values.length > 1 ? (geometry.plotWidth - inset * 2) / (values.length - 1) : 0;
+  const x = (index: number): number => CHART_PAD.left + (values.length > 1 ? inset + index * step : geometry.plotWidth / 2);
+  const stride = labelStride(values.length, geometry.plotWidth);
+  const line = values.map((value, index) => `${index === 0 ? "M" : "L"} ${x(index)} ${geometry.scaleY(value)}`).join(" ");
+  const area = values.length > 1 ? `${line} L ${x(values.length - 1)} ${geometry.zero} L ${x(0)} ${geometry.zero} Z` : "";
 
   return (
     <Frame title={title} dataset={dataset} role="chart">
       <>
-        <svg className="cc-chart" viewBox={`0 0 ${width} ${height}`} role="img" aria-label={`${title}: ${seriesKey}`}>
-          <line className="axis" x1={padX} y1={height - padY} x2={width - padX} y2={height - padY} />
-          <path className="series" d={path} />
-          {values.map((value, index) => (
-            <circle key={index} className="point" cx={padX + index * step} cy={scaleY(value)} r={3} />
-          ))}
-          {dataset.rows.map((row, index) => (
-            <text key={index} className="label" x={padX + index * step} y={height - 4} textAnchor="middle">
-              {label(row, ["week", "name", "label"])}
-            </text>
-          ))}
-          {values.map((value, index) => (
-            <text key={`v${index}`} className="label" x={padX + index * step} y={scaleY(value) - 8} textAnchor="middle">
-              {value}
-            </text>
-          ))}
-        </svg>
+        <div ref={measure} className="cc-chart-box">
+          <svg className="cc-chart" viewBox={`0 0 ${width} ${CHART_HEIGHT}`} role="img" aria-label={`${title}: ${seriesKey}`}>
+            <ChartGrid geometry={geometry} />
+            {area !== "" && <path className="area" d={area} />}
+            <path className="series" d={line} />
+            {points.map(({ label: rowLabel, value }, index) => {
+              const shown = valueLabelShown(index, points.length, stride);
+              return (
+                <g key={index} className="datum">
+                  <circle className="point" cx={x(index)} cy={geometry.scaleY(value)} r={3.5}>
+                    <title>{`${rowLabel}: ${value}`}</title>
+                  </circle>
+                  {shown && (
+                    <text className="value" x={x(index)} y={geometry.scaleY(value) - 9} textAnchor="middle">
+                      {value}
+                    </text>
+                  )}
+                  {index % stride === 0 && (
+                    <text className="label" x={x(index)} y={CHART_HEIGHT - 6} textAnchor="middle">
+                      {rowLabel}
+                    </text>
+                  )}
+                </g>
+              );
+            })}
+          </svg>
+        </div>
         {/* The text alternative stays in the DOM for screen readers and for the E2E check. */}
         <span className="cc-sr-only" data-chart-summary="true">
-          {values.map((value, index) => `${label(dataset.rows[index] ?? {}, ["week"])}: ${value}`).join(", ")}
+          {chartSummary(points)}
         </span>
+        <TextAlternative rows={dataset.rows} />
       </>
     </Frame>
   );
@@ -204,6 +285,7 @@ function LineChart({ props, dataset }: RendererProps): ReactElement {
 function BarChart({ props, dataset }: RendererProps): ReactElement {
   const t = useT();
   const title = String(props.title ?? t("widgets.barChart.title"));
+  const [measure, width] = useMeasuredWidth(640);
   if (!dataset || dataset.rows.length === 0) {
     return (
       <Frame title={title} dataset={dataset} role="chart">
@@ -214,43 +296,54 @@ function BarChart({ props, dataset }: RendererProps): ReactElement {
 
   const seriesKey =
     Object.keys(dataset.rows[0] ?? {}).find((key) => typeof dataset.rows[0]?.[key] === "number") ?? "value";
-  const values = numeric(dataset.rows, seriesKey);
-  const max = Math.max(...values, 1);
-  const width = 640;
-  const height = 180;
-  const padX = 28;
-  const padY = 16;
-  const slot = (width - padX * 2) / values.length;
-  const barWidth = Math.max(slot * 0.55, 6);
+  const points = chartPoints(dataset.rows, seriesKey, (row) => label(row, CATEGORY_KEYS));
+  const values = points.map((point) => point.value);
+  const geometry = chartGeometry(width, values);
+  const slot = geometry.plotWidth / Math.max(values.length, 1);
+  const barWidth = Math.min(Math.max(slot * 0.6, 6), 56);
+  const stride = labelStride(values.length, geometry.plotWidth);
+  const zero = geometry.zero;
 
   return (
     <Frame title={title} dataset={dataset} role="chart">
       <>
-        <svg className="cc-chart" viewBox={`0 0 ${width} ${height}`} role="img" aria-label={`${title}: ${seriesKey}`}>
-          <line className="axis" x1={padX} y1={height - padY} x2={width - padX} y2={height - padY} />
-          {values.map((value, index) => {
-            const barHeight = (value / max) * (height - padY * 2);
-            return (
-              <rect
-                key={index}
-                className="bar"
-                x={padX + index * slot + (slot - barWidth) / 2}
-                y={height - padY - barHeight}
-                width={barWidth}
-                height={barHeight}
-                rx={2}
-              />
-            );
-          })}
-          {dataset.rows.map((row, index) => (
-            <text key={index} className="label" x={padX + index * slot + slot / 2} y={height - 4} textAnchor="middle">
-              {label(row, ["week", "name", "label"])}
-            </text>
-          ))}
-        </svg>
+        <div ref={measure} className="cc-chart-box">
+          <svg className="cc-chart" viewBox={`0 0 ${width} ${CHART_HEIGHT}`} role="img" aria-label={`${title}: ${seriesKey}`}>
+            <ChartGrid geometry={geometry} />
+            {points.map(({ label: rowLabel, value }, index) => {
+              const y = geometry.scaleY(value);
+              const center = CHART_PAD.left + index * slot + slot / 2;
+              return (
+                <g key={index} className="datum">
+                  <rect
+                    className="bar"
+                    x={center - barWidth / 2}
+                    y={Math.min(y, zero)}
+                    width={barWidth}
+                    height={Math.abs(zero - y)}
+                    rx={3}
+                  >
+                    <title>{`${rowLabel}: ${value}`}</title>
+                  </rect>
+                  {index % stride === 0 && (
+                    <text className="value" x={center} y={Math.min(y, zero) - 6} textAnchor="middle">
+                      {value}
+                    </text>
+                  )}
+                  {index % stride === 0 && (
+                    <text className="label" x={center} y={CHART_HEIGHT - 6} textAnchor="middle">
+                      {rowLabel}
+                    </text>
+                  )}
+                </g>
+              );
+            })}
+          </svg>
+        </div>
         <span className="cc-sr-only" data-chart-summary="true">
-          {values.map((value, index) => `${label(dataset.rows[index] ?? {}, ["week"])}: ${value}`).join(", ")}
+          {chartSummary(points)}
         </span>
+        <TextAlternative rows={dataset.rows} />
       </>
     </Frame>
   );
@@ -275,15 +368,28 @@ function DataTable({ props, dataset, onAction }: RendererProps): ReactElement {
 
   const columns = dataset.rows[0] === undefined ? [] : Object.keys(dataset.rows[0]);
   const rows = dataset.rows;
+  // A column is numeric when it has a number and every present value is one; numbers align right so digits line up.
+  const numericColumns = new Set(
+    columns.filter(
+      (column) =>
+        rows.some((row) => typeof row[column] === "number") &&
+        rows.every((row) => row[column] === undefined || row[column] === null || typeof row[column] === "number"),
+    ),
+  );
 
   return (
     <Frame title={title} dataset={dataset} role="table">
+      {/*
+       * Scrolls on its own, sideways for wide data and down for long data, with the header held in place, so a
+       * table never pushes the conversation wider than the window. Focusable so the scroll is reachable by keyboard.
+       */}
+      <div className="cc-table-scroll" role="region" aria-label={title} tabIndex={0}>
       <table className="cc-table">
         <caption className="cc-sr-only">{title}</caption>
         <thead>
           <tr>
             {columns.map((column) => (
-              <th key={column} scope="col">
+              <th key={column} scope="col" data-numeric={numericColumns.has(column) ? "true" : undefined}>
                 {column}
               </th>
             ))}
@@ -293,6 +399,7 @@ function DataTable({ props, dataset, onAction }: RendererProps): ReactElement {
           {rows.map((row, index) => (
             <tr
               key={index}
+              data-selectable="true"
               aria-selected={selected === index}
               // Focusable and Enter/Space-activated so the same selection a pointer makes is reachable
               // from the keyboard; `role="button"` is not valid on `<tr>`, so the row keeps its table
@@ -311,12 +418,15 @@ function DataTable({ props, dataset, onAction }: RendererProps): ReactElement {
               }}
             >
               {columns.map((column) => (
-                <td key={column}>{String(row[column] ?? "")}</td>
+                <td key={column} data-numeric={numericColumns.has(column) ? "true" : undefined}>
+                  {String(row[column] ?? "")}
+                </td>
               ))}
             </tr>
           ))}
         </tbody>
       </table>
+      </div>
     </Frame>
   );
 }
@@ -347,12 +457,6 @@ function Note({ props, state, onStateChange, onAction }: RendererProps): ReactEl
   return (
     <Frame title={title} dataset={undefined} role="note">
       <>
-        <input
-          className="cc-note-input"
-          value={title}
-          readOnly
-          aria-label={t("widgets.note.titleAria")}
-        />
         <textarea
           className="cc-note-area"
           value={draft}
@@ -364,16 +468,17 @@ function Note({ props, state, onStateChange, onAction }: RendererProps): ReactEl
             setSaved(false);
           }}
         />
-        <div className="cc-note-meta" data-note-status={status}>
+        <div className="cc-note-meta" data-note-status={status} role="status">
           {status === "draft" && t("widgets.note.unsaved")}
           {status === "saved" && t("widgets.note.saved")}
           {status === "idle" && t("widgets.note.currentRevision").replace("{revision}", String(revision))}
           {status === "conflict" && t("widgets.note.conflict")}
         </div>
-        <div style={{ display: "flex", gap: "var(--cc-space-sm)" }}>
+        <div className="cc-card-actions">
           <button
-            className="cc-icon-btn"
-            style={{ width: "auto", padding: "0 var(--cc-space-md)" }}
+            type="button"
+            className="cc-action"
+            data-emphasis="primary"
             disabled={!dirty}
             onClick={() => {
               // A save reports the revision the user actually saw. If the server has moved
@@ -389,8 +494,11 @@ function Note({ props, state, onStateChange, onAction }: RendererProps): ReactEl
             {t("widgets.note.save")}
           </button>
           <button
-            className="cc-icon-btn"
-            style={{ width: "auto", padding: "0 var(--cc-space-md)" }}
+            type="button"
+            className="cc-action"
+            // Nothing to discard until there is a draft or a conflict; an enabled button that changes nothing
+            // is a control that looks usable before its action exists.
+            disabled={!dirty && !conflict}
             onClick={() => {
               // Explicit conflict resolution: fetch the newer body rather than guessing.
               setConflict(false);
@@ -417,6 +525,9 @@ function Note({ props, state, onStateChange, onAction }: RendererProps): ReactEl
  * wedges are drawn from the same rows, and the two cases a donut cannot express — a negative share
  * and a zero total — are stated in text rather than drawn as an empty ring.
  */
+/** Distinct wedge tones before they repeat; the stylesheet defines one rule per tone. */
+const DONUT_TONES = 6;
+
 function Donut({ props, dataset }: RendererProps): ReactElement {
   const t = useT();
   const title = String(props.title ?? t("widgets.donut.title"));
@@ -465,7 +576,9 @@ function Donut({ props, dataset }: RendererProps): ReactElement {
           >
             {result.slices.map((slice, index) => {
               const length = slice.share * circumference;
-              const dash = `${length} ${circumference - length}`;
+              // A hairline gap between wedges, so two neighbours in similar tones still read as two parts.
+              const gap = result.slices.length > 1 ? Math.min(2, length / 2) : 0;
+              const dash = `${length - gap} ${circumference - length + gap}`;
               const element = (
                 <circle
                   key={slice.label}
@@ -476,16 +589,22 @@ function Donut({ props, dataset }: RendererProps): ReactElement {
                   strokeDasharray={dash}
                   strokeDashoffset={-offset}
                   data-slice-index={index}
-                />
+                  data-slice-tone={index % DONUT_TONES}
+                >
+                  <title>{`${slice.label}: ${slice.value} (${Math.round(slice.share * 100)}%)`}</title>
+                </circle>
               );
               offset += length;
               return element;
             })}
           </svg>
           <ul className="cc-legend">
-            {result.slices.map((slice) => (
+            {result.slices.map((slice, index) => (
               <li key={slice.label}>
-                <span>{slice.label}</span>
+                <span className="cc-legend-name">
+                  <span className="cc-legend-swatch" data-slice-tone={index % DONUT_TONES} aria-hidden="true" />
+                  {slice.label}
+                </span>
                 <span data-donut-value={slice.label}>
                   {slice.value} ({Math.round(slice.share * 100)}%)
                 </span>
@@ -511,6 +630,8 @@ function TextAlternative({ rows }: { rows: Record<string, unknown>[] }): ReactEl
   return (
     <details className="cc-text-alt">
       <summary>{t("widgets.textAlternative.summary")}</summary>
+      {/* Scroll-contained like the data table, so a wide dataset cannot widen the conversation once expanded. */}
+      <div className="cc-table-scroll" role="region" aria-label={t("widgets.textAlternative.summary")} tabIndex={0}>
       <table className="cc-table">
         <thead>
           <tr>
@@ -531,6 +652,7 @@ function TextAlternative({ rows }: { rows: Record<string, unknown>[] }): ReactEl
           ))}
         </tbody>
       </table>
+      </div>
     </details>
   );
 }
@@ -804,6 +926,7 @@ function Carousel({ props, imageUrl }: RendererProps): ReactElement {
             <img src={url} alt={alt} loading="lazy" decoding="async" data-image-ref={ref} />
             <figcaption className="cc-freshness">{alt}</figcaption>
           </figure>
+          {refs.length > 1 && (
           <div className="cc-carousel-controls">
             <button
               type="button"
@@ -812,13 +935,14 @@ function Carousel({ props, imageUrl }: RendererProps): ReactElement {
             >
               ‹
             </button>
-            <span className="cc-freshness">
+            <span className="cc-freshness" aria-live="polite">
               {current + 1}/{refs.length}
             </span>
             <button type="button" aria-label={t("widgets.carousel.next")} onClick={() => setIndex((current + 1) % refs.length)}>
               ›
             </button>
           </div>
+          )}
         </div>
       )}
     </Frame>
@@ -963,8 +1087,8 @@ function CallToAction({ props, onAction }: RendererProps): ReactElement {
       </div>
       <button
         type="button"
-        className="cc-icon-btn"
-        style={{ width: "auto", padding: "0 var(--cc-space-md)" }}
+        className="cc-action"
+        data-emphasis="primary"
         disabled={!actionable}
         onClick={() => onAction?.("view.save", { actionId })}
       >

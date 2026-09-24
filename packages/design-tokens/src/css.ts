@@ -82,7 +82,12 @@ export function tokensToCss(theme: ThemeName): string {
     lines.push(`  ${value}: ${LAYOUT[name as keyof typeof LAYOUT]};`);
   }
 
-  return `:root[data-cc-theme="${theme}"] {\n${lines.join("\n")}\n}`;
+  /*
+   * The bare attribute selector as well as the root one, so a theme can be scoped to a subtree. The Widget Lab
+   * previews a widget in the other theme by setting the attribute on its preview frame; with only the root
+   * selector that attribute changed nothing, and the Lab's theme control was a control that did nothing.
+   */
+  return `:root[data-cc-theme="${theme}"],\n[data-cc-theme="${theme}"] {\n${lines.join("\n")}\n}`;
 }
 
 /**
@@ -93,12 +98,22 @@ export function tokensToCss(theme: ThemeName): string {
  * component that animates at 1ms is not the same as one that does not animate.
  */
 export function themeStylesheet(): string {
-  const media = `@media (prefers-reduced-motion: reduce) {\n  :root {\n${Object.entries(
+  /*
+   * The selectors repeat the theme block's, so the override matches its specificity and, coming later, wins. With
+   * `:root` alone (0,1,0) the theme block (0,2,0) kept the full durations, and a person who asked the OS for reduced
+   * motion still got every transition.
+   */
+  const media = `@media (prefers-reduced-motion: reduce) {\n  :root,\n  :root[data-cc-theme],\n  [data-cc-theme] {\n${Object.entries(
     MOTION_REDUCED,
   )
     .map(([name, value]) => `    --cc-motion-${name}: ${value};`)
     .join("\n")}\n  }\n}`;
-  return `${tokensToCss("dark")}\n\n${tokensToCss("light")}\n\n${media}`;
+  // The same reduced set, scoped to a subtree that asks for it, which is how the Widget Lab previews reduced motion
+  // without changing the person's own preference.
+  const scoped = `[data-cc-reduced-motion="true"] {\n${Object.entries(MOTION_REDUCED)
+    .map(([name, value]) => `  --cc-motion-${name}: ${value};`)
+    .join("\n")}\n}`;
+  return `${tokensToCss("dark")}\n\n${tokensToCss("light")}\n\n${media}\n\n${scoped}`;
 }
 
 function kebab(value: string): string {
