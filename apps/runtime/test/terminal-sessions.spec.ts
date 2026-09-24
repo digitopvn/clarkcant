@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
 
@@ -37,6 +37,22 @@ async function stopAndWait(target: TerminalRegistry): Promise<void> {
   const deadline = Date.now() + 5_000;
   while (target.list().some((info) => info.status === "running") && Date.now() < deadline) {
     await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+}
+
+/** Whether a process is still running. A zombie nobody has reaped yet has already exited. */
+function alive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+  } catch {
+    return false;
+  }
+  if (process.platform !== "linux") return true;
+  try {
+    const stat = readFileSync(`/proc/${String(pid)}/stat`, "utf8");
+    return stat.slice(stat.lastIndexOf(")") + 2, stat.lastIndexOf(")") + 3) !== "Z";
+  } catch {
+    return false;
   }
 }
 
@@ -105,6 +121,67 @@ describe.skipIf(process.platform === "win32")("a terminal on this node", () => {
     // A newline in a prefill would be an Enter; it is flattened, so nothing ran.
     expect(registry.commands(id).length).toBe(before);
     expect(registry.replay(id)).toContain("echo not-yet rm -rf /");
+  }, 30_000);
+
+  it("never types over a line the person is typing, and replaces its own prefill instead of appending", async () => {
+    const id = await openShell();
+    expect(registry.prefill(id, "echo first")).toEqual({ ok: true });
+    expect(registry.prefill(id, "echo second")).toEqual({ ok: true });
+    const ran = await registry.run(id, "echo third", { waitMs: 10_000 });
+    expect(ran.status === "finished" && ran.record.command).toBe("echo third");
+
+    registry.write(id, "echo half");
+    expect(registry.prefill(id, "echo agent").ok).toBe(false);
+    expect(await registry.run(id, "echo agent", { waitMs: 1_000 })).toEqual({ status: "typing" });
+    // Once the person sends their line, the prompt is theirs again to share.
+    registry.write(id, "\r");
+    await new Promise((resolve) => setTimeout(resolve, 1_000));
+    expect(registry.commands(id).at(-1)?.command).toBe("echo half");
+    const after = await registry.run(id, "echo agent", { waitMs: 10_000 });
+    expect(after.status === "finished" && after.record.output).toBe("agent");
+  }, 30_000);
+
+  it("does not take a marker printed by a command for the shell's own", async () => {
+    const id = await openShell();
+    // The command prints a finished-with-0 marker and a new prompt marker while it is still running.
+    const result = await registry.run(id, "printf '\\033]133;D;0\\007\\033]133;A\\007'; sleep 1; false", { waitMs: 10_000 });
+    expect(result.status).toBe("finished");
+    if (result.status !== "finished") return;
+    expect(result.record.exitCode).toBe(1);
+  }, 30_000);
+
+  it("follows the directory the shell is in, so a command is judged where it runs", async () => {
+    const id = await openShell();
+    mkdirSync(join(dir, "sub"));
+    await registry.run(id, "cd sub", { waitMs: 10_000 });
+    expect(registry.get(id)?.cwd).toBe(join(realpathSync(dir), "sub"));
+  }, 30_000);
+
+  it("strips control characters from what it types", async () => {
+    const id = await openShell();
+    const result = await registry.run(id, "echo a\tb\u0015", { waitMs: 10_000 });
+    expect(result.status === "finished" && result.record.output).toBe("ab");
+  }, 30_000);
+
+  it("closes the jobs a person left running in the background, not just the shell", async () => {
+    const id = await openShell();
+    const started = await registry.run(id, "sleep 60 & echo $!", { waitMs: 10_000 });
+    const pid = Number.parseInt(started.status === "finished" ? started.record.output.trim().split("\n").at(-1) ?? "" : "", 10);
+    expect(Number.isInteger(pid)).toBe(true);
+    expect(alive(pid)).toBe(true);
+    await stopAndWait(registry);
+    await new Promise((resolve) => setTimeout(resolve, 2_000));
+    expect(alive(pid)).toBe(false);
+  }, 30_000);
+
+  it.skipIf(process.platform !== "linux")("kills a job that ignores the hangup too", async () => {
+    const id = await openShell();
+    const started = await registry.run(id, "nohup sleep 60 >/dev/null 2>&1 & echo $!", { waitMs: 10_000 });
+    const pid = Number.parseInt(started.status === "finished" ? started.record.output.trim().split("\n").at(-1) ?? "" : "", 10);
+    expect(alive(pid)).toBe(true);
+    await stopAndWait(registry);
+    await new Promise((resolve) => setTimeout(resolve, 2_500));
+    expect(alive(pid)).toBe(false);
   }, 30_000);
 
   it("finds its shell integration when the node was started with a relative data directory", async () => {

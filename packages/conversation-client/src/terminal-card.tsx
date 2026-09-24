@@ -293,6 +293,10 @@ function LiveTerminal({
           case "output":
             term.write(frame.data);
             return;
+          case "replay":
+            term.reset();
+            term.write(frame.data);
+            return;
           case "command":
             setCommands((current) => mergeCommand(current, frame.record));
             setInfo((current) =>

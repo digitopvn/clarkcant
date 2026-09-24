@@ -29,7 +29,12 @@ afterEach(() => {
   rmSync(dir, { recursive: true, force: true });
 });
 
-function fakeRegistry(): { registry: TerminalRegistry; prefills: string[]; runs: string[] } {
+interface FakeOptions {
+  info?: Partial<TerminalInfo>;
+  runResult?: (command: string) => TerminalRunResult;
+}
+
+function fakeRegistry(fake: FakeOptions = {}): { registry: TerminalRegistry; prefills: string[]; runs: string[] } {
   const prefills: string[] = [];
   const runs: string[] = [];
   const info: TerminalInfo = {
@@ -46,6 +51,7 @@ function fakeRegistry(): { registry: TerminalRegistry; prefills: string[]; runs:
     cols: 80,
     rows: 24,
     driver: null,
+    ...fake.info,
   };
   const registry: TerminalRegistry = {
     availability: async () => ({ ok: true }),
@@ -62,6 +68,7 @@ function fakeRegistry(): { registry: TerminalRegistry; prefills: string[]; runs:
     },
     run: async (_id, command): Promise<TerminalRunResult> => {
       runs.push(command);
+      if (fake.runResult !== undefined) return fake.runResult(command);
       return {
         status: "finished",
         record: { id: "cmd_1", command, startedAt: info.startedAt, endedAt: info.startedAt, exitCode: 0, output: "ok", truncated: false },
@@ -77,8 +84,8 @@ function fakeRegistry(): { registry: TerminalRegistry; prefills: string[]; runs:
   return { registry, prefills, runs };
 }
 
-function tools(policy: Partial<ExecutionPolicyConfig> = {}) {
-  const fake = fakeRegistry();
+function tools(policy: Partial<ExecutionPolicyConfig> = {}, options: FakeOptions & { conversationId?: string } = {}) {
+  const fake = fakeRegistry(options);
   const inForce: ExecutionPolicyConfig = {
     ...DEFAULT_EXECUTION_POLICY_CONFIG,
     ...policy,
@@ -91,6 +98,7 @@ function tools(policy: Partial<ExecutionPolicyConfig> = {}) {
     newId: () => "run_1",
     terminals: fake.registry,
     newCardId: (prefix) => `${prefix}_1`,
+    ...(options.conversationId === undefined ? {} : { conversationId: options.conversationId }),
   });
   const byName = (name: string) => {
     const tool = list.find((candidate) => candidate.name === name);
@@ -141,6 +149,13 @@ describe("opening a terminal", () => {
     expect(runs).toEqual([]);
   });
 
+  it("opens no shell in a directory this node does not own, even with nothing to run", async () => {
+    const { open } = tools();
+    const answer = await open.execute({ cwd: "/" });
+    expect(answer.hostBlocks).toBeUndefined();
+    expect(answer.text).toContain("ngoài các thư mục");
+  });
+
   it("refuses a directory this node does not own", async () => {
     const { open, runs } = tools();
     const answer = await open.execute({ cwd: "/", command: "ls", run: true });
@@ -162,6 +177,60 @@ describe("running in an open terminal", () => {
     await run.execute({ terminalId: "term_1", command: "touch x" });
     expect(runs).toEqual([]);
     expect(prefills).toEqual(["touch x"]);
+  });
+
+  it("types nothing with a control character in it, since a tab or escape would change what runs", async () => {
+    const { run, runs, prefills } = tools();
+    for (const command of ["ls\tfoo", "echo \u001b[31m", "rm -rf x\u0015ls"]) {
+      const answer = await run.execute({ terminalId: "term_1", command });
+      expect(answer.text).toContain("ký tự điều khiển");
+    }
+    expect(runs).toEqual([]);
+    expect(prefills).toEqual([]);
+  });
+
+  it("says the person is typing instead of claiming it ran", async () => {
+    const { run } = tools({}, { runResult: () => ({ status: "typing" }) });
+    const answer = await run.execute({ terminalId: "term_1", command: "git status" });
+    expect(answer.text).toContain("đang gõ dở");
+  });
+
+  it("only prefills in a shell that cannot say where it is or when a command ends", async () => {
+    const { run, runs, prefills } = tools({}, { info: { integration: "none" } });
+    const answer = await run.execute({ terminalId: "term_1", command: "git status" });
+    expect(runs).toEqual([]);
+    expect(prefills).toEqual(["git status"]);
+    expect(answer.text).toContain("Đừng nói là đã chạy");
+  });
+
+  it("hands the model credential-shaped output redacted, and paths as they are", async () => {
+    const { run } = tools({}, {
+      runResult: (command) => ({
+        status: "finished",
+        record: {
+          id: "cmd_1",
+          command,
+          startedAt: "2026-09-24T00:00:00.000Z",
+          endedAt: "2026-09-24T00:00:00.000Z",
+          exitCode: 0,
+          output: `${work}/.env\nOPENAI_API_KEY=sk-live-abcdefghijklmnop`,
+          truncated: false,
+        },
+      }),
+    });
+    const answer = await run.execute({ terminalId: "term_1", command: "cat .env" });
+    expect(answer.text).toContain(`${work}/.env`);
+    expect(answer.text).not.toContain("sk-live-abcdefghijklmnop");
+    expect(answer.text).toContain("[redacted]");
+  });
+
+  it("does not reach into a terminal another conversation opened", async () => {
+    const { run, read, runs } = tools({}, { conversationId: "conv_a", info: { conversationId: "conv_b" } });
+    const ran = await run.execute({ terminalId: "term_1", command: "ls" });
+    expect(runs).toEqual([]);
+    expect(ran.text).toContain("Không có terminal");
+    expect((await read.execute({})).text).not.toContain("term_1");
+    expect((await read.execute({ terminalId: "term_1" })).text).toContain("trong hội thoại này");
   });
 
   it("says a terminal is missing rather than guessing another one", async () => {

@@ -1,6 +1,7 @@
 import { homedir } from "node:os";
 
-import { type MessageBlock, nowInstant } from "@clarkcant/contracts";
+import { nowInstant, terminalSessionCardSchema } from "@clarkcant/contracts";
+import { getConversation } from "@clarkcant/storage";
 
 import { nodeBackgroundSessions } from "../background-sessions.ts";
 import { listRunningCommands } from "../run-command.ts";
@@ -54,21 +55,27 @@ export async function handleTerminalRoutes(deps: TerminalRouteDeps): Promise<Gat
     if (!parsed.ok) return parsed.response;
     const body = parsed.value;
     const cwd = typeof body.cwd === "string" && body.cwd.trim() !== "" ? body.cwd.trim() : homedir();
+    const conversationId = typeof body.conversationId === "string" && body.conversationId !== "" ? body.conversationId : undefined;
+    // Checked before the shell starts: a card that cannot be written would leave a shell nobody can see or close.
+    if (conversationId !== undefined && getConversation(services.runtime.db, conversationId) === undefined) {
+      return fail(404, "CONVERSATION_NOT_FOUND", "Không có hội thoại này, nên không mở terminal cho nó.", { conversationId });
+    }
     const opened = await services.terminals.open({
       cwd,
       ...(typeof body.title === "string" && body.title.trim() !== "" ? { title: body.title.trim().slice(0, 300) } : {}),
-      ...(typeof body.conversationId === "string" ? { conversationId: body.conversationId } : {}),
+      ...(conversationId === undefined ? {} : { conversationId }),
       ...(typeof body.cols === "number" ? { cols: body.cols } : {}),
       ...(typeof body.rows === "number" ? { rows: body.rows } : {}),
     });
     if (!opened.ok) return fail(409, "TERMINAL_UNAVAILABLE", opened.reason);
-    const card = terminalCard(services.conductor.newId, opened.info, {});
-    if (typeof body.conversationId === "string" && body.conversationId !== "") {
-      appendHostReply(services, {
-        conversationId: body.conversationId,
-        at: nowInstant(),
-        blocks: [card as MessageBlock],
-      });
+    const card = terminalSessionCardSchema.parse(terminalCard(services.conductor.newId, opened.info, {}));
+    if (conversationId !== undefined) {
+      try {
+        appendHostReply(services, { conversationId, at: nowInstant(), blocks: [card] });
+      } catch (cause) {
+        services.terminals.kill(opened.info.terminalId);
+        throw cause;
+      }
     }
     const { driver: _driver, ...info } = opened.info;
     return json(201, { terminal: info, card });

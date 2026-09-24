@@ -20,11 +20,22 @@ import type { TerminalRegistry } from "./terminal-sessions.ts";
  * Client → node: `auth`, `attach { terminalId, cols, rows }`, `input { data }`, `resize { cols, rows }`, `take`,
  * `watch-session { ref }`, `detach`.
  *
- * Node → client: `ready`, `attached { info, replay, driver }`, `output`, `command`, `exit`, `driver { driver }`,
- * `size { cols, rows }`, `session-start { summary }`, `session-entries { entries, initial }`, `error { code, message }`.
+ * Node → client: `ready`, `attached { info, replay, driver }`, `output`, `replay { data }`, `command`, `exit`,
+ * `driver { driver }`, `size { cols, rows }`, `session-start { summary }`, `session-entries { entries, initial }`,
+ * `error { code, message }`.
+ *
+ * Output is batched per tick and never queued without bound: a program that prints faster than the browser reads
+ * would otherwise grow the node's send buffer until it ran out of memory. Past a high-water mark the socket stops
+ * sending output, and once the browser has caught up it gets the scrollback again (`replay`), which is the screen as
+ * it is now rather than every frame it missed.
  */
 
 const MAX_FRAME_BYTES = 64 * 1024;
+/** A socket still holding this much unsent is behind; output stops until it drains below the low mark. */
+const SEND_HIGH_WATER = 1_000_000;
+const SEND_LOW_WATER = 128_000;
+/** How long an opened socket has to authenticate before it is closed. */
+const AUTH_TIMEOUT_MS = 10_000;
 
 export interface TerminalGateway {
   close(): Promise<void>;
@@ -50,15 +61,52 @@ export function attachTerminalGateway(options: {
     let authenticated = false;
     let terminalId: string | undefined;
     let stop: (() => void) | undefined;
+    const authTimer = setTimeout(() => ws.close(4401, "unauthenticated"), AUTH_TIMEOUT_MS);
+    authTimer.unref();
 
     const send = (frame: Record<string, unknown>): void => {
       if (ws.readyState === ws.OPEN) ws.send(JSON.stringify(frame));
+    };
+
+    let pendingOutput = "";
+    let flushTimer: ReturnType<typeof setTimeout> | undefined;
+    let behind = false;
+    const flushOutput = (): void => {
+      flushTimer = undefined;
+      if (behind) {
+        if (ws.bufferedAmount > SEND_LOW_WATER) {
+          flushTimer = setTimeout(flushOutput, 100);
+          return;
+        }
+        behind = false;
+        pendingOutput = "";
+        if (terminalId !== undefined) send({ type: "replay", data: options.terminals.replay(terminalId) });
+        return;
+      }
+      const data = pendingOutput;
+      pendingOutput = "";
+      if (data !== "") send({ type: "output", data });
+    };
+    const queueOutput = (data: string): void => {
+      if (!behind && ws.bufferedAmount > SEND_HIGH_WATER) {
+        behind = true;
+        pendingOutput = "";
+      }
+      if (!behind) pendingOutput += data;
+      flushTimer ??= setTimeout(flushOutput, behind ? 100 : 0);
+    };
+    const resetOutput = (): void => {
+      clearTimeout(flushTimer);
+      flushTimer = undefined;
+      pendingOutput = "";
+      behind = false;
     };
     const error = (code: string, message: string): void => send({ type: "error", code, message });
 
     const detach = (): void => {
       stop?.();
       stop = undefined;
+      resetOutput();
       if (terminalId !== undefined) options.terminals.releaseDriver(terminalId, attachmentId);
       terminalId = undefined;
     };
@@ -83,6 +131,7 @@ export function attachTerminalGateway(options: {
           return;
         }
         authenticated = true;
+        clearTimeout(authTimer);
         send({ type: "ready" });
         return;
       }
@@ -98,6 +147,15 @@ export function attachTerminalGateway(options: {
           }
           terminalId = id;
           const unsubscribe = options.terminals.subscribe(id, (event) => {
+            if (event.type === "output") {
+              queueOutput(event.data);
+              return;
+            }
+            // Anything else follows the output before it, so what is batched goes first.
+            if (pendingOutput !== "" && !behind) {
+              clearTimeout(flushTimer);
+              flushOutput();
+            }
             if (event.type === "driver") send({ type: "driver", driver: event.driver === attachmentId });
             else if (event.type === "resize") send({ type: "size", cols: event.cols, rows: event.rows });
             else send(event);
@@ -170,8 +228,12 @@ export function attachTerminalGateway(options: {
       }
     });
 
-    ws.on("close", detach);
-    ws.on("error", detach);
+    const closed = (): void => {
+      clearTimeout(authTimer);
+      detach();
+    };
+    ws.on("close", closed);
+    ws.on("error", closed);
   }
 
   return {

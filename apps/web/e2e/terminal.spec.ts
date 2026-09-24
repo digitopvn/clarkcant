@@ -110,3 +110,16 @@ test("the card fits a narrow window without scrolling the page sideways", async 
   const overflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
   expect(overflow).toBeLessThanOrEqual(0);
 });
+
+test("a terminal asked for a conversation that does not exist is never opened", async ({ request }) => {
+  const headers = { authorization: `Bearer ${token()}` };
+  const running = async (): Promise<number> => {
+    const listed = (await (await request.get(`${GATEWAY}/terminals`, { headers })).json()) as { terminals: { status: string }[] };
+    return listed.terminals.filter((terminal) => terminal.status === "running").length;
+  };
+  const before = await running();
+  const response = await request.post(`${GATEWAY}/terminals`, { headers, data: { conversationId: "conv_does_not_exist" } });
+  expect(response.status()).toBe(404);
+  // No shell was started that no card could show or close.
+  expect(await running()).toBe(before);
+});

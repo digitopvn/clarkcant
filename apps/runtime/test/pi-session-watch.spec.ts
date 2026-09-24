@@ -56,6 +56,15 @@ describe("reading one transcript line", () => {
     expect(entry?.text).not.toContain("abcdefghijklmnopqrstuvwxyz0123456789");
   });
 
+  it("redacts a secret that straddles the length cut, rather than leaving its prefix", () => {
+    // 4 000 characters is where an entry is cut; the key starts just before it.
+    const text = `${"x ".repeat(1_996)}sk-ant-api03-abcdefghijklmnopqrstuvwxyz`;
+    const [entry] = parsePiSessionLine(
+      JSON.stringify({ type: "message", message: { role: "toolResult", toolName: "bash", content: [{ type: "text", text }] } }),
+    );
+    expect(entry?.text).not.toContain("sk-ant");
+  });
+
   it("yields nothing for a line it does not recognise", () => {
     expect(parsePiSessionLine("not json")).toEqual([]);
     expect(parsePiSessionLine(JSON.stringify({ type: "model_change" }))).toEqual([]);

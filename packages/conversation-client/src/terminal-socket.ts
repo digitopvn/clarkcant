@@ -63,6 +63,8 @@ export type TerminalServerFrame =
   | { type: "ready" }
   | { type: "attached"; info: TerminalInfoView; replay: string; driver: boolean; commands: TerminalCommandView[] }
   | { type: "output"; data: string }
+  /** The screen as it is now, after this card fell too far behind to be sent every byte it missed. */
+  | { type: "replay"; data: string }
   | { type: "command"; phase: "started" | "finished"; record: TerminalCommandView }
   | { type: "exit"; exitCode: number | null }
   | { type: "driver"; driver: boolean }

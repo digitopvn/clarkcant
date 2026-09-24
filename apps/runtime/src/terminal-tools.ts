@@ -1,10 +1,13 @@
+import { resolve } from "node:path";
+
 import { decideExecution, guardrailCovers, recordEffectExecution } from "@clarkcant/core";
-import { nowInstant } from "@clarkcant/contracts";
+import { SECRET_SHAPES, nowInstant } from "@clarkcant/contracts";
 import type { ToolDefinition } from "@clarkcant/pi-adapter";
 
 import { decideGuardrailForCommand, type CommandToolDeps } from "./node-tools.ts";
-import { preflightCommand, type CommandEnvelope } from "./preflight.ts";
+import { containingRoot, preflightCommand, type CommandEnvelope } from "./preflight.ts";
 import { commandDigest } from "./run-command.ts";
+import { stripControlCharacters } from "./terminal-output.ts";
 import type { TerminalCommandRecord, TerminalInfo, TerminalRegistry } from "./terminal-sessions.ts";
 
 /**
@@ -40,6 +43,22 @@ export function terminalCard(
 /** How much of a command's output the model is handed: the end, where the result is. */
 const OUTPUT_FOR_MODEL = 8_000;
 
+/** The credential shapes, not the broad ones: a path or a hash in a command's output is what the model is there to read. */
+const CREDENTIAL_SHAPES = SECRET_SHAPES.filter((shape) => ["jwt", "bearer", "prefixed-token", "named-secret"].includes(shape.label));
+
+/**
+ * Replace credential-shaped text before it reaches the model.
+ *
+ * A terminal holds whatever the person typed and printed too — an `export` of a key, a `cat` of a token file — and a
+ * person typing into their own shell did not mean to hand that to a model provider.
+ */
+export function redactCredentials(text: string): string {
+  let clean = text;
+  for (const shape of CREDENTIAL_SHAPES) clean = clean.replace(new RegExp(shape.pattern.source, shape.pattern.flags), "[redacted]");
+  return clean;
+}
+
+/** A command and what it printed, as the model is handed it. */
 export function describeRecord(record: TerminalCommandRecord): string {
   const output = record.output.length > OUTPUT_FOR_MODEL ? record.output.slice(-OUTPUT_FOR_MODEL) : record.output;
   const cut = record.truncated || record.output.length > OUTPUT_FOR_MODEL ? " (chỉ phần cuối)" : "";
@@ -49,7 +68,7 @@ export function describeRecord(record: TerminalCommandRecord): string {
       : record.exitCode === null
         ? "đã xong, shell không báo exit code"
         : `exit ${String(record.exitCode)}`;
-  return `$ ${record.command ?? "(không rõ lệnh)"} — ${status}\n\nOutput${cut}:\n${output === "" ? "(không in gì)" : output}`;
+  return redactCredentials(`$ ${record.command ?? "(không rõ lệnh)"} — ${status}\n\nOutput${cut}:\n${output === "" ? "(không in gì)" : output}`);
 }
 
 type Gate =
@@ -68,6 +87,10 @@ async function gateCommand(
   deps: CommandToolDeps,
   input: { command: string; cwd: string; why: string; conversationId?: string },
 ): Promise<Gate> {
+  // A tab completes and a ^U erases once typed into a line editor, so the line that ran would not be the line judged.
+  if (stripControlCharacters(input.command) !== input.command) {
+    return { kind: "refuse", text: "Lệnh có ký tự điều khiển (tab, escape…), nên không gõ vào terminal. Viết lại lệnh chỉ bằng ký tự thường." };
+  }
   const preflight = preflightCommand({
     command: input.command,
     cwd: input.cwd,
@@ -134,6 +157,10 @@ export function createTerminalTools(
     >;
   },
 ): ToolDefinition[] {
+  /** A terminal from another conversation is not this one's to type into or read. */
+  const visible = (info: TerminalInfo): boolean =>
+    info.conversationId === undefined || input.conversationId === undefined || info.conversationId === input.conversationId;
+
   const unavailable = async (): Promise<string | undefined> => {
     const availability = await input.terminals.availability();
     return availability.ok ? undefined : `Không mở được terminal trên node này: ${availability.reason}`;
@@ -164,7 +191,8 @@ export function createTerminalTools(
     execute: async (params: Record<string, unknown>) => {
       const reason = await unavailable();
       if (reason !== undefined) return { text: reason };
-      let cwd = typeof params.cwd === "string" && params.cwd.trim() !== "" ? params.cwd.trim() : undefined;
+      // A relative directory is read from where commands run by default, not from wherever the node was started.
+      let cwd = typeof params.cwd === "string" && params.cwd.trim() !== "" ? resolve(input.fallbackCwd(), params.cwd.trim()) : undefined;
       const where = typeof params.where === "string" ? params.where.trim() : "";
       if (cwd === undefined && where !== "" && input.resolveFolder !== undefined) {
         const found = await input.resolveFolder(where);
@@ -173,6 +201,9 @@ export function createTerminalTools(
           return { text: `${found.message}${options} Hỏi người dùng muốn mở ở đâu rồi gọi lại.` };
         }
         cwd = found.cwd;
+      }
+      if (cwd !== undefined && containingRoot(input.resources(), cwd) === undefined) {
+        return { text: `${cwd} nằm ngoài các thư mục node này quản lý, nên không mở terminal ở đó. Hỏi người dùng thư mục dự án cần mở.` };
       }
       cwd ??= input.fallbackCwd();
       const command = typeof params.command === "string" ? params.command.replace(/[\r\n]+/gu, " ").trim() : "";
@@ -219,8 +250,8 @@ export function createTerminalTools(
         };
       }
 
-      gate.record();
       const result = await input.terminals.run(info.terminalId, gate.envelope.command, { waitMs: 30_000 });
+      if (result.status === "finished" || result.status === "running") gate.record();
       const card = terminalCard(input.newCardId, info, { ran: gate.envelope.command });
       if (result.status === "finished") {
         input.audit?.({ summary: `terminal: ${gate.envelope.command}`, outcome: auditOutcome(result.record), ref: info.terminalId });
@@ -234,7 +265,9 @@ export function createTerminalTools(
           hostBlocks: [card],
         };
       }
-      return { text: `Đã mở terminal ${info.terminalId} nhưng không chạy được lệnh (terminal ${result.status === "busy" ? "đang bận" : "đã đóng"}).`, hostBlocks: [card] };
+      const failure =
+        result.status === "busy" ? "terminal đang bận" : result.status === "typing" ? "người dùng đang gõ trong terminal" : "terminal đã đóng";
+      return { text: `Đã mở terminal ${info.terminalId} nhưng không chạy được lệnh (${failure}). Không có gì được gõ.`, hostBlocks: [card] };
     },
   };
 
@@ -261,11 +294,13 @@ export function createTerminalTools(
     execute: async (params: Record<string, unknown>) => {
       const terminalId = typeof params.terminalId === "string" ? params.terminalId : "";
       const info = input.terminals.get(terminalId);
-      if (info === undefined || info.status !== "running") return { text: `Không có terminal ${terminalId} đang chạy. Gọi terminal_read để xem danh sách.` };
+      if (info === undefined || info.status !== "running" || !visible(info)) {
+        return { text: `Không có terminal ${terminalId} đang chạy trong hội thoại này. Gọi terminal_read để xem danh sách.` };
+      }
       const command = typeof params.command === "string" ? params.command.replace(/[\r\n]+/gu, " ").trim() : "";
       if (command === "") return { text: "Cần một lệnh để chạy." };
       if (info.running !== null) {
-        return { text: `Terminal ${terminalId} đang chạy \`${info.running.command ?? "một lệnh"}\`. Chờ nó xong (terminal_read) rồi chạy lệnh mới.` };
+        return { text: `Terminal ${terminalId} đang chạy \`${redactCredentials(info.running.command ?? "một lệnh")}\`. Chờ nó xong (terminal_read) rồi chạy lệnh mới.` };
       }
       const why = typeof params.why === "string" ? params.why.trim() : "";
       const gate = await gateCommand(input, { command, cwd: info.cwd, why });
@@ -273,17 +308,22 @@ export function createTerminalTools(
       if (gate.envelope.cwd !== info.cwd) {
         return { text: `Guardrail yêu cầu chạy trong ${gate.envelope.cwd}, khác thư mục của terminal này. Không có gì được gõ; dùng run_command hoặc mở terminal ở đó.` };
       }
-      if (gate.kind === "prefill") {
+      // A shell without markers cannot say where it is now or when a command ended, so the person runs it.
+      const unmarked = info.integration === "none";
+      if (gate.kind === "prefill" || unmarked) {
         const filled = input.terminals.prefill(terminalId, gate.envelope.command);
+        const reason = unmarked
+          ? "Shell trong terminal này không báo thư mục hiện tại và lúc lệnh kết thúc"
+          : "Chính sách thực thi của node yêu cầu người dùng xác nhận";
         return {
           text: filled.ok
-            ? `Chính sách thực thi của node yêu cầu người dùng xác nhận, nên \`${gate.envelope.command}\` chỉ được điền sẵn trong terminal ${terminalId}. Người dùng nhấn Enter để chạy. Đừng nói là đã chạy.`
+            ? `${reason}, nên \`${gate.envelope.command}\` chỉ được điền sẵn trong terminal ${terminalId}. Người dùng nhấn Enter để chạy. Đừng nói là đã chạy.`
             : `Không điền sẵn được: ${filled.reason}`,
         };
       }
-      gate.record();
       const waitSeconds = typeof params.waitSeconds === "number" ? Math.max(1, Math.min(120, params.waitSeconds)) : 30;
       const result = await input.terminals.run(terminalId, gate.envelope.command, { waitMs: waitSeconds * 1000 });
+      if (result.status === "finished" || result.status === "running") gate.record();
       if (result.status === "finished") {
         input.audit?.({ summary: `terminal: ${gate.envelope.command}`, outcome: auditOutcome(result.record), ref: terminalId });
         return { text: describeRecord(result.record) };
@@ -291,7 +331,10 @@ export function createTerminalTools(
       if (result.status === "running") {
         return { text: `Lệnh vẫn đang chạy sau ${String(waitSeconds)} giây; gọi terminal_read để xem tiếp.\n\n${describeRecord(result.record)}` };
       }
-      if (result.status === "busy") return { text: `Terminal đang chạy \`${result.running.command ?? "một lệnh"}\`. Không có gì được gõ.` };
+      if (result.status === "busy") return { text: `Terminal đang chạy \`${redactCredentials(result.running.command ?? "một lệnh")}\`. Không có gì được gõ.` };
+      if (result.status === "typing") {
+        return { text: "Người dùng đang gõ dở một dòng lệnh trong terminal này, nên không có gì được gõ. Hỏi người dùng hoặc chờ họ chạy xong dòng đó." };
+      }
       return { text: "Terminal đã đóng. Không có gì được gõ." };
     },
   };
@@ -312,19 +355,19 @@ export function createTerminalTools(
       const terminalId = typeof params.terminalId === "string" ? params.terminalId : "";
       if (terminalId === "") {
         const reason = await unavailable();
-        const list = input.terminals.list();
+        const list = input.terminals.list().filter(visible);
         if (list.length === 0) return { text: reason ?? "Chưa có terminal nào." };
         return {
           text: list
             .map(
               (info) =>
-                `${info.terminalId} — ${info.title} — ${info.cwd} — ${info.status === "exited" ? `đã kết thúc (exit ${String(info.exitCode)})` : info.running === null ? "ở prompt" : `đang chạy: ${info.running.command ?? "(không rõ lệnh)"}`}`,
+                `${info.terminalId} — ${info.title} — ${info.cwd} — ${info.status === "exited" ? `đã kết thúc (exit ${String(info.exitCode)})` : info.running === null ? "ở prompt" : `đang chạy: ${redactCredentials(info.running.command ?? "(không rõ lệnh)")}`}`,
             )
             .join("\n"),
         };
       }
       const info = input.terminals.get(terminalId);
-      if (info === undefined) return { text: `Không có terminal ${terminalId}.` };
+      if (info === undefined || !visible(info)) return { text: `Không có terminal ${terminalId} trong hội thoại này.` };
       const records = input.terminals.commands(terminalId).slice(-5);
       const header = `${info.terminalId} — ${info.cwd} — ${info.status === "exited" ? "đã kết thúc" : "đang chạy"}${info.integration === "none" ? " — shell này không báo điểm bắt đầu/kết thúc lệnh, nên exit code không có" : ""}`;
       if (records.length === 0) return { text: `${header}\nChưa có lệnh nào được chạy.` };

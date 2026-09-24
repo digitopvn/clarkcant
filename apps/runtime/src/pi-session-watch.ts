@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { closeSync, openSync, readSync, readdirSync, statSync, watch, type FSWatcher } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { StringDecoder } from "node:string_decoder";
 
 import { redactSecrets } from "@clarkcant/contracts";
 
@@ -53,6 +54,10 @@ const LIMITS = {
   initialEntries: 200,
   titleScanBytes: 64_000,
   pollMs: 1_000,
+  /** Most bytes read in one poll. A transcript that grew faster than this is followed from its newest part. */
+  pollBytes: 1_024_000,
+  /** A line longer than this is not a transcript entry anyone can read in a card; it is dropped. */
+  lineChars: 2_000_000,
 } as const;
 
 /** Where Pi keeps its own sessions: `PI_CODING_AGENT_DIR` when set, `~/.pi/agent` otherwise. */
@@ -101,7 +106,8 @@ export function parsePiSessionLine(line: string): PiSessionEntry[] {
   const at = typeof entry.timestamp === "string" ? entry.timestamp : null;
   const out: PiSessionEntry[] = [];
   const push = (value: PiSessionEntry): void => {
-    const text = redactSecrets(clip(value.text, LIMITS.entryChars));
+    // Redacted before it is cut: a cut through the middle of a secret leaves a prefix the pattern no longer matches.
+    const text = clip(redactSecrets(value.text), LIMITS.entryChars);
     if (text.trim() === "") return;
     out.push({ ...value, text });
   };
@@ -152,13 +158,14 @@ export function parsePiSessionLine(line: string): PiSessionEntry[] {
   return out;
 }
 
-function readRange(path: string, start: number, end: number): string {
+function readRange(path: string, start: number, end: number, decoder?: StringDecoder): string {
   if (end <= start) return "";
   const fd = openSync(path, "r");
   try {
     const buffer = Buffer.alloc(end - start);
     const read = readSync(fd, buffer, 0, buffer.length, start);
-    return buffer.subarray(0, read).toString("utf8");
+    const bytes = buffer.subarray(0, read);
+    return decoder === undefined ? bytes.toString("utf8") : decoder.write(bytes);
   } finally {
     closeSync(fd);
   }
@@ -196,7 +203,7 @@ function describeFile(path: string, source: "node" | "pi", now: number): PiSessi
   }
   return {
     ref: createHash("sha256").update(path).digest("hex").slice(0, 16),
-    title: redactSecrets(clip(title === "" ? "Phiên chưa có tin nhắn" : title, 120)),
+    title: clip(redactSecrets(title === "" ? "Phiên chưa có tin nhắn" : title), 120),
     cwd,
     source,
     updatedAt: stat.mtime.toISOString(),
@@ -267,9 +274,12 @@ export function createPiSessionWatcher(options: { roots: () => readonly PiSessio
       let offset = 0;
       let carry = "";
       let stopped = false;
+      // One decoder for the whole follow, so a character split across two reads is joined rather than mangled.
+      const decoder = new StringDecoder("utf8");
       const parseLines = (text: string): PiSessionEntry[] => {
         const lines = (carry + text).split("\n");
         carry = lines.pop() ?? "";
+        if (carry.length > LIMITS.lineChars) carry = "";
         return lines.flatMap((line) => (line.trim() === "" ? [] : parsePiSessionLine(line)));
       };
 
@@ -301,7 +311,15 @@ export function createPiSessionWatcher(options: { roots: () => readonly PiSessio
           return;
         }
         if (size === offset) return;
-        const text = readRange(known.path, offset, size);
+        let text: string;
+        if (size - offset > LIMITS.pollBytes) {
+          // Too much at once to be worth replaying: skip to the newest part, and to a whole line within it.
+          const skipped = decoder.end() + readRange(known.path, size - LIMITS.pollBytes, size, decoder);
+          text = skipped.slice(skipped.indexOf("\n") + 1);
+          carry = "";
+        } else {
+          text = readRange(known.path, offset, size, decoder);
+        }
         offset = size;
         const entries = parseLines(text);
         if (entries.length > 0) onEntries(entries, false);
