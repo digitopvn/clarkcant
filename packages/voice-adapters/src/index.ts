@@ -34,6 +34,19 @@ export {
   type LiveSocket,
   type LiveSocketFactory,
 } from "./gemini-live.ts";
+export {
+  DEFAULT_TTS_MODEL,
+  GEMINI_INTERACTIONS_ENDPOINT,
+  GEMINI_TTS_FLASH_LITE_MODEL,
+  GEMINI_TTS_FLASH_MODEL,
+  GEMINI_TTS_MAX_INPUT_TOKENS,
+  GeminiTtsClient,
+  type FetchLike,
+  type GeminiTtsOptions,
+  type GeminiTtsRequest,
+  type GeminiTtsResult,
+  type GeminiTtsSampleRate,
+} from "./gemini-tts.ts";
 
 
 export interface VoiceSessionState {
