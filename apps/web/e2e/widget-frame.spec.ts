@@ -84,3 +84,25 @@ test("an action the widget invokes reaches the host and comes back", async ({ pa
   await expect(document.locator("[data-widget-outcome-state='accepted']")).toBeVisible({ timeout: 20_000 });
   await expect(document.locator("[data-widget-outcome]")).toContainText("host đã nhận hành động");
 });
+
+test("state the widget saves is stored by the node and is there when the frame is opened again", async ({ page }) => {
+  await openFrame(page);
+
+  const document = page.frameLocator("[data-pin-live] [data-widget-frame] iframe");
+  await expect(document.locator("[data-widget-count]")).toHaveText("0", { timeout: 20_000 });
+  await document.locator("[data-widget-increment]").click();
+  // "đã lưu" is set from the promise the host settles once the node has committed the write — not before.
+  await expect(document.locator("[data-widget-saved-state='saved']")).toBeVisible({ timeout: 20_000 });
+  await document.locator("[data-widget-increment]").click();
+  await expect(document.locator("[data-widget-count]")).toHaveText("2");
+  await expect(document.locator("[data-widget-saved-state='saved']")).toBeVisible({ timeout: 20_000 });
+
+  // A fresh page has no memory of the frame: whatever it shows now came from the node.
+  await page.reload();
+  await expect(page.locator("text=Ready")).toBeVisible({ timeout: 15_000 });
+  const open = page.locator("[data-open-live]").last();
+  await expect(open).toBeVisible({ timeout: 20_000 });
+  await open.click();
+  const reopened = page.frameLocator("[data-pin-live] [data-widget-frame] iframe");
+  await expect(reopened.locator("[data-widget-count]")).toHaveText("2", { timeout: 20_000 });
+});

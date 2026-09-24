@@ -575,3 +575,52 @@ describe("R2: a replayed decision re-applies a missing grant, and a missing gene
     expect(afterDoc.grantedCapabilities).toContain(ref);
   });
 });
+
+describe("the pending capability questions Settings puts to the person", () => {
+  async function installAsking(): Promise<void> {
+    writeIndex([directoryEntry()]);
+    setDestructiveRule("ask");
+    const installed = await request({
+      method: "POST",
+      path: "/packages/install",
+      body: { packageId: PACKAGE_ID, version: VERSION, localDigest: DIGEST },
+    });
+    expect(installed.status).toBe(200);
+  }
+
+  it("lists each open question with the package it is for and the digest the answer must carry", async () => {
+    await installAsking();
+
+    const listed = await request({ method: "GET", path: "/packages/approvals" });
+
+    expect(listed.status).toBe(200);
+    const { approvals } = listed.body as { approvals: { approvalId: string; operationDigest: string }[] };
+    expect(approvals).toEqual([
+      expect.objectContaining({
+        ref: REQUESTED_CAPABILITY,
+        packageId: PACKAGE_ID,
+        version: VERSION,
+        operationDigest: `${DIGEST}:${REQUESTED_CAPABILITY}`,
+      }),
+    ]);
+
+    // Answered with exactly what was listed, the question is gone and the grant is on the running generation.
+    const approval = approvals[0]!;
+    const decided = await request({
+      method: "POST",
+      path: `/packages/approvals/${approval.approvalId}/decision`,
+      body: { decision: "granted", digest: approval.operationDigest },
+    });
+    expect(decided.status).toBe(200);
+    expect(((await request({ method: "GET", path: "/packages/approvals" })).body as { approvals: unknown[] }).approvals).toEqual([]);
+  });
+
+  it("does not offer a question whose package is no longer installed, since a grant would have nowhere to land", async () => {
+    await installAsking();
+
+    const uninstalled = await request({ method: "POST", path: `/packages/${encodeURIComponent(PACKAGE_ID)}/uninstall` });
+    expect(uninstalled.status).toBe(200);
+
+    expect(((await request({ method: "GET", path: "/packages/approvals" })).body as { approvals: unknown[] }).approvals).toEqual([]);
+  });
+});

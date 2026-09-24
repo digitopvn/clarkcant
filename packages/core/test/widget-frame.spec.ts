@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import type { DirectoryEntry } from "@clarkcant/contracts";
 
-import { brokeredCapabilities, findIsolatedFrame } from "../src/widget-frame.ts";
+import { brokeredCapabilities, findIsolatedFrame, readyCapabilities } from "../src/widget-frame.ts";
 
 /**
  * Finding the frame document for a widget.
@@ -218,5 +218,25 @@ describe("what a frame is actually brokered", () => {
 
   it("brokers nothing a package never asked for, even if it was granted for another reason", () => {
     expect(brokeredCapabilities([], ["a@1"])).toEqual([]);
+  });
+});
+
+describe("brokering only what can run now", () => {
+  const preflight = (ref: string) =>
+    ref === "mail.send@1"
+      ? { ready: false as const, code: "CAPABILITY_NOT_AUTHENTICATED", message: "mail.send@1 needs a connection before it can run" }
+      : { ready: true as const };
+
+  it("holds back a granted capability that is not ready, and says why", () => {
+    expect(readyCapabilities(["calendar.read@1", "mail.send@1"], preflight)).toEqual({
+      ready: ["calendar.read@1"],
+      unavailable: [
+        { ref: "mail.send@1", code: "CAPABILITY_NOT_AUTHENTICATED", message: "mail.send@1 needs a connection before it can run" },
+      ],
+    });
+  });
+
+  it("brokers everything granted when everything is ready", () => {
+    expect(readyCapabilities(["calendar.read@1"], preflight)).toEqual({ ready: ["calendar.read@1"], unavailable: [] });
   });
 });

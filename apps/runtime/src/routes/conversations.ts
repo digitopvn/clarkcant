@@ -5,15 +5,18 @@ import {
   type AppIntentDecision,
   type AppIntentResolution,
   type AttachmentRef,
+  type DirectoryEntry,
   type Instant,
   type MessageBlock,
   type MessageRecord,
   type Principal,
+  capabilityRefSchema,
   commandEnvelopeSchema,
   nowInstant,
   surfaceCompositionSpecSchema,
 } from "@clarkcant/contracts";
 import {
+  activePackageVersions,
   brokeredCapabilities,
   claimLiveOwner,
   decideApproval,
@@ -22,17 +25,22 @@ import {
   getActionBinding,
   getInstance,
   handleUserMessage,
+  invocationPreflight,
   liveOwnerOf,
   liveStateOf,
+  applyWidgetStatePatch,
   mintFrameGrant,
   pinInstance,
+  prepareFrameState,
   readDirectoryIndex,
   readSnapshotForDisplay,
+  readyCapabilities,
   releaseLiveOwner,
   sweepExpiredLiveOwners,
   unpinInstance,
 } from "@clarkcant/core";
 import {
+  type Database,
   appendAuditEvent,
   appendMessage,
   createConversation,
@@ -105,6 +113,55 @@ export interface RawCommandRouteDeps {
   at: () => string;
 }
 
+/** The HTTP status each refused state write answers with. */
+const STATE_REFUSAL_STATUS = {
+  INSTANCE_UNKNOWN: 404,
+  NOT_AUTHORIZED: 403,
+  INSTANCE_OFFLINE: 410,
+  STATE_READ_ONLY: 409,
+  STATE_REVISION_STALE: 409,
+  STATE_SCHEMA_INVALID: 422,
+  STATE_TOO_LARGE: 413,
+} as const;
+
+/**
+ * Find the package code a frame-rendered widget runs, by its definition id.
+ *
+ * Shared by the live route and the state route so both hold the widget to the same definition: the one the frame
+ * the user is looking at was mounted from.
+ */
+function locateIsolatedFrame(runtime: { dataDir: string; db: Database; identity: { nodeId: string } }, widgetId: string) {
+  const index = readDirectoryIndex(directoryIndexPath(process.env));
+  /*
+   * The version this node is running comes first. A directory lists every version it knows, and after a rollback the
+   * newest listing is not what is installed: the frame must load the code of the active generation, or rolling back
+   * would change the label and not the widget.
+   */
+  const node = { db: runtime.db, nodeId: runtime.identity.nodeId };
+  const active = activePackageVersions(node);
+  const activePackages = new Set([...active].map((key) => key.slice(0, key.lastIndexOf("@"))));
+  // A local install is recorded under its path, not the manifest id the directory lists it by.
+  const idsOf = (entry: DirectoryEntry): string[] =>
+    entry.source.kind === "local" ? [entry.packageId, entry.source.path] : [entry.packageId];
+  const isActive = (entry: DirectoryEntry) => idsOf(entry).some((id) => active.has(`${id}@${entry.version}`));
+  const otherVersionActive = (entry: DirectoryEntry) =>
+    !isActive(entry) && idsOf(entry).some((id) => activePackages.has(id));
+  const entries = index.kind === "configured" ? index.entries : [];
+  return findIsolatedFrame({
+    /*
+     * While a version of a package is active, only that version's code runs: after a rollback a definition that exists
+     * only in the newer version has no code here, rather than the retired version's. With no version active (never
+     * installed, or uninstalled) the listing is still what describes the widget, and an offline instance is shown from
+     * it as text.
+     */
+    directory: [...entries.filter(isActive), ...entries.filter((entry) => !isActive(entry) && !otherVersionActive(entry))],
+    widgetId,
+    // A git/npm entry this node has fetched is served from its cache path exactly like a local package (H1); the
+    // cache root here must match the one the install route fetched into.
+    cacheRoot: join(runtime.dataDir, "package-cache"),
+  });
+}
+
 /**
  * Resolve what a live composed surface shows right now.
  *
@@ -135,14 +192,7 @@ function resolveLiveWidget(
    * and that is what this returns instead. The check comes first because it is what decides which of the two shapes
    * this route answers with, and a client that had to guess would be a client that guessed wrong once.
    */
-  const index = readDirectoryIndex(directoryIndexPath(process.env));
-  const isolated = findIsolatedFrame({
-    directory: index.kind === "configured" ? index.entries : [],
-    widgetId: instance.definitionRef.id,
-    // A git/npm entry this node has fetched is served from its cache path exactly like a local package (H1); the
-    // cache root here must match the one the install route fetched into.
-    cacheRoot: join(runtime.dataDir, "package-cache"),
-  });
+  const isolated = locateIsolatedFrame(runtime, instance.definitionRef.id);
   if (isolated.ok) {
     /*
      * What the frame is actually brokered is the *granted* set, not the requested one.
@@ -163,12 +213,53 @@ function resolveLiveWidget(
       isolated.packageId,
     );
     const grantedForFrame = brokeredCapabilities(isolated.requestedCapabilities, generation?.grantedCapabilities);
+    // Granted is permission; the registry says whether each one can run now. A granted capability still missing its
+    // connection is held back and named, rather than handed to a frame that would find out on first use.
+    const capabilities = readyCapabilities(grantedForFrame, (ref) => {
+      const parsed = capabilityRefSchema.safeParse(ref);
+      if (!parsed.success) return { ready: false, code: "CAPABILITY_MISSING", message: `${ref} is not a capability reference` };
+      return invocationPreflight({ db: runtime.db, nodeId: runtime.identity.nodeId }, parsed.data);
+    });
+    /*
+     * The durable state the frame starts from, migrated here — on the node, once, before any code of this version
+     * reads it. State that could not be migrated, or that a newer version wrote, is still returned so the widget can
+     * show it; `readOnly` and `stateStatus` are what stop anyone writing over it.
+     */
+    const frameState = prepareFrameState(services.conductor, { instanceId, definition: isolated.definition });
+
+    /*
+     * An instance whose package was uninstalled has no code to run. It still has a text alternative and the state it
+     * kept, and those are what come back: no frame to mount, no binding to invoke, and a status that says why, so the
+     * conversation shows what the widget last said instead of an empty box or a frame that fails to load.
+     */
+    if (frameState.status.kind === "offline") {
+      return json(200, {
+        kind: "isolated-frame",
+        instanceId,
+        revision: instance.revision,
+        readOnly: true,
+        stateRevision: frameState.stateRevision,
+        stateVersion: frameState.stateVersion,
+        state: frameState.state,
+        stateStatus: frameState.status,
+        ephemeralStateKeys: [],
+        frame: null,
+        textFallback: isolated.definition.textFallback,
+        bindings: [],
+        props: instance.props,
+      });
+    }
 
     return json(200, {
       kind: "isolated-frame",
       instanceId,
       revision: instance.revision,
-      readOnly: false,
+      readOnly: frameState.status.kind !== "writable",
+      stateRevision: frameState.stateRevision,
+      stateVersion: frameState.stateVersion,
+      state: frameState.state,
+      stateStatus: frameState.status,
+      ephemeralStateKeys: isolated.definition.ephemeralStateKeys ?? [],
       frame: {
         /*
          * Relative to this node, served from the package path so the widget's own relative imports resolve, and
@@ -184,7 +275,8 @@ function resolveLiveWidget(
           expiresAtMs: Date.parse(nowInstant()) + 5 * 60 * 1000,
         })}/${isolated.entryPath}`,
         isolation: isolated.isolation,
-        grantedCapabilities: grantedForFrame,
+        grantedCapabilities: capabilities.ready,
+        unavailableCapabilities: capabilities.unavailable,
         allowedOrigins: isolated.allowedOrigins,
       },
       /*
@@ -924,6 +1016,57 @@ export async function handleConversationRoutes(deps: ConversationRouteDeps): Pro
     if (result.ok) return json(result.status, result.body);
     return fail(result.status, result.code, result.message, {
       ...(result.currentRevision === undefined ? {} : { currentRevision: result.currentRevision }),
+    });
+  }
+
+  // /conversations/:id/widgets/:instanceId/state
+  if (
+    segments.length === 5 &&
+    segments[2] === "widgets" &&
+    segments[4] === "state" &&
+    request.method === "POST"
+  ) {
+    const parsed = readJson(request);
+    if (!parsed.ok) return parsed.response;
+    const instanceId = segments[3] ?? "";
+    const expectedRevision = parsed.value.expectedRevision;
+    const patch = parsed.value.patch;
+    if (typeof expectedRevision !== "number" || !Number.isInteger(expectedRevision) || expectedRevision < 0) {
+      return fail(400, "INVALID_SCHEMA", "a state write must carry the state revision it was planned at");
+    }
+    if (typeof patch !== "object" || patch === null || Array.isArray(patch)) {
+      return fail(400, "INVALID_SCHEMA", "a state write must carry a patch object");
+    }
+
+    const instance = getInstance(services.conductor, instanceId);
+    if (instance === undefined) return fail(404, "RESOURCE_NOT_FOUND", "that instance is not on this node");
+    /*
+     * Only a frame writes its own state this way. A built-in or composed surface changes state through a bound view
+     * action, validated operation by operation; letting it write a raw patch here would be a second, weaker path
+     * around those operations.
+     */
+    const isolated = locateIsolatedFrame(runtime, instance.definitionRef.id);
+    if (!isolated.ok) {
+      return fail(
+        isolated.code === "NOT_AN_ISOLATED_APP" ? 409 : 404,
+        isolated.code,
+        isolated.code === "NOT_AN_ISOLATED_APP"
+          ? "this widget changes its state through its bound actions, not by writing it directly"
+          : isolated.message,
+      );
+    }
+
+    const outcome = applyWidgetStatePatch(services.conductor, {
+      instanceId,
+      principalId: runtime.identity.ownerPrincipalId,
+      definition: isolated.definition,
+      expectedRevision,
+      patch: patch as Record<string, unknown>,
+    });
+    if (outcome.ok) return json(200, { stateRevision: outcome.stateRevision, state: outcome.state });
+    return fail(STATE_REFUSAL_STATUS[outcome.code], outcome.code, outcome.message, {
+      ...(outcome.stateRevision === undefined ? {} : { stateRevision: outcome.stateRevision }),
+      ...(outcome.state === undefined ? {} : { state: outcome.state }),
     });
   }
 

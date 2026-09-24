@@ -57,6 +57,10 @@ export interface IsolatedFrameLiveResponse {
   instanceId: string;
   revision: number;
   readOnly: boolean;
+  /**
+   * The code to mount, or null when the widget's package was uninstalled: then `textFallback` and the kept `state` are
+   * what there is to show, and `stateStatus` says why.
+   */
   frame: {
     /** Relative to the node, and served from the package path so the widget's own imports resolve. */
     url: string;
@@ -67,8 +71,12 @@ export interface IsolatedFrameLiveResponse {
      * wrote about itself, never an authority.
      */
     grantedCapabilities: readonly string[];
+    /** Granted capabilities held back because they cannot run yet, each with the reason the node gave. */
+    unavailableCapabilities?: readonly { ref: string; code: string; message: string }[];
     allowedOrigins: readonly string[];
-  };
+  } | null;
+  /** Present when `frame` is null: the widget's own text alternative, from its definition. */
+  textFallback?: string;
   /**
    * The bindings the frame may invoke, with the digest to send back.
    *
@@ -82,7 +90,26 @@ export interface IsolatedFrameLiveResponse {
   }[];
   /** What the widget was created with, sent to it in the init message and nowhere else. */
   props: Record<string, unknown>;
+  /**
+   * The durable state the frame starts from, and its own revision.
+   *
+   * The state revision counts state writes and nothing else; `revision` above counts the instance's own changes and
+   * is what an action is checked against. The two are different numbers on purpose.
+   */
+  stateRevision: number;
+  stateVersion: number;
+  state: Record<string, unknown>;
+  /** Why the state can or cannot be written. Anything but `writable` also sets `readOnly`. */
+  stateStatus: FrameStateStatus;
+  /** Keys the widget keeps as view state: never sent to the node, never stored. */
+  ephemeralStateKeys: readonly string[];
 }
+
+export type FrameStateStatus =
+  | { kind: "writable" }
+  | { kind: "offline"; reason: string }
+  | { kind: "migration-failed"; fromVersion: number; toVersion: number; reason: string }
+  | { kind: "newer-than-definition"; storedVersion: number; definitionVersion: number };
 
 export interface LiveWidgetResponse {
   kind: "composition";
@@ -388,6 +415,42 @@ export interface InstalledPackageView {
    * of the build input the lock covers, so `artifact-only` is never read as "the dependencies are pinned".
    */
   lock?: { ref: string; digest: string; coverage: string };
+  /** The version a rollback would make active again; absent when no other version was ever active here. */
+  previousVersion?: string;
+}
+
+/** A package that was uninstalled here and can be restored without fetching anything. */
+export interface RestorablePackageView {
+  packageId: string;
+  version: string;
+  digest: string;
+  uninstalledAt: string;
+}
+
+/** What uninstalling, restoring or rolling back a package did. */
+export interface PackageChangeResponse {
+  action: "uninstall" | "restore" | "rollback";
+  packageId: string;
+  activeVersion?: string;
+  previousVersion?: string;
+  instancesOffline: number;
+  instancesRestored: number;
+  statesKept: number;
+  /** The package carries trusted native code, which only reaches Pi when Pi restarts. */
+  restartNeeded: boolean;
+}
+
+/** A capability an install asked the person about, still unanswered. Decided only through host-owned Settings. */
+export interface PendingCapabilityApprovalView {
+  approvalId: string;
+  ref: string;
+  packageId: string;
+  version: string;
+  /** Sent back with the decision, so the answer applies to exactly what was shown. */
+  operationDigest: string;
+  description: string;
+  requestedAt: string;
+  expiresAt: string;
 }
 
 /**
@@ -436,12 +499,18 @@ export interface ArtifactView {
 export class GatewayError extends Error {
   readonly status: number;
   readonly code: string;
+  /**
+   * The rest of the refusal body, when the node sent more than a code and a message — a stale state write, for
+   * one, carries the state the node holds, which is what lets the caller show it instead of guessing.
+   */
+  readonly details: Record<string, unknown>;
 
-  constructor(status: number, code: string, message: string) {
+  constructor(status: number, code: string, message: string, details: Record<string, unknown> = {}) {
     super(`${code}: ${message}`);
     this.name = "GatewayError";
     this.status = status;
     this.code = code;
+    this.details = details;
   }
 }
 
@@ -528,7 +597,12 @@ export class GatewayClient {
 
     if (!response.ok) {
       const record = parsed as { code?: string; message?: string };
-      throw new GatewayError(response.status, record.code ?? "UNKNOWN", record.message ?? "the request failed");
+      throw new GatewayError(
+        response.status,
+        record.code ?? "UNKNOWN",
+        record.message ?? "the request failed",
+        typeof parsed === "object" && parsed !== null && !Array.isArray(parsed) ? (parsed as Record<string, unknown>) : {},
+      );
     }
     return parsed as T;
   }
@@ -1136,6 +1210,21 @@ export class GatewayClient {
   }
 
   /**
+   * Write a frame's durable state.
+   *
+   * Resolves only once the node has committed the write. A refusal — stale, read-only, refused by the widget's schema
+   * — is thrown as a `GatewayError` whose `details` carry the state the node holds, so the widget can be shown what was
+   * saved rather than left believing its own write.
+   */
+  saveWidgetState(
+    conversationId: string,
+    instanceId: string,
+    write: { expectedRevision: number; patch: Record<string, unknown> },
+  ): Promise<{ stateRevision: number; state: Record<string, unknown> }> {
+    return this.#call("POST", `/conversations/${conversationId}/widgets/${instanceId}/state`, write);
+  }
+
+  /**
    * Ask a task to stop.
    *
    * Resolves with what the node actually did, not with what was asked for. Cancellation is two steps so the
@@ -1191,8 +1280,32 @@ export class GatewayClient {
     return `${this.#baseUrl}${path.startsWith("/") ? path : `/${path}`}`;
   }
 
-  packages(): Promise<{ packages: InstalledPackageView[] }> {
+  packages(): Promise<{ packages: InstalledPackageView[]; restorable?: RestorablePackageView[] }> {
     return this.#call("GET", "/packages");
+  }
+
+  /**
+   * Uninstall, restore or roll back a package. None of the three deletes a widget's data, and each is undone by another.
+   *
+   * The id is percent-encoded because a package installed from disk is recorded under its path.
+   */
+  changePackage(packageId: string, action: PackageChangeResponse["action"]): Promise<PackageChangeResponse> {
+    return this.#call("POST", `/packages/${encodeURIComponent(packageId)}/${action}`);
+  }
+
+  capabilityApprovals(): Promise<{ approvals: PendingCapabilityApprovalView[] }> {
+    return this.#call("GET", "/packages/approvals");
+  }
+
+  /** Answer one capability question with the digest it was shown under; a changed operation is refused, not granted. */
+  decideCapabilityApproval(
+    approval: Pick<PendingCapabilityApprovalView, "approvalId" | "operationDigest">,
+    decision: "granted" | "denied",
+  ): Promise<{ decision: "granted" | "denied"; ref: string; alreadyDecided: boolean }> {
+    return this.#call("POST", `/packages/approvals/${encodeURIComponent(approval.approvalId)}/decision`, {
+      decision,
+      digest: approval.operationDigest,
+    });
   }
 
   /**

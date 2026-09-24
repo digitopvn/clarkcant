@@ -9,7 +9,12 @@ import { type ReactElement, useEffect, useRef, useState } from "react";
  * importing the root threw before anything rendered. The browser lane wants the frame session and nothing else, and
  * this subpath is that boundary made explicit rather than a bundle happening to remove the rest.
  */
-import { createFrameSession, type FrameActionOutcome, type FrameSession } from "@clarkcant/widget-host/session";
+import {
+  createFrameSession,
+  type FrameActionOutcome,
+  type FrameSession,
+  type FrameStateOutcome,
+} from "@clarkcant/widget-host/session";
 
 import { useT } from "./i18n/locale-context.tsx";
 
@@ -34,7 +39,17 @@ export interface WidgetFrameProps {
   title: string;
   /** The document's declared type, used for the monospace-ish width a widget preview wants. */
   props: Record<string, unknown>;
+  /** The durable state the node holds for this instance, already migrated to what this widget version expects. */
   state?: Record<string, unknown>;
+  /** The state's own revision — separate from `revision`, which is the instance's and what actions are checked against. */
+  stateRevision?: number;
+  /** Keys the widget keeps as view state: kept in the frame, never sent to the node. */
+  ephemeralStateKeys?: readonly string[];
+  /**
+   * Commit a state write on the node. Resolves with what the node answered; the widget is told its write succeeded
+   * only when this says so.
+   */
+  persistState?: (write: { expectedRevision: number; patch: Record<string, unknown> }) => Promise<FrameStateOutcome>;
   /** Capabilities the host will broker for this frame. Empty unless something granted them. */
   brokeredCapabilities: readonly string[];
   /** Origins the document may reach. Enforced by its policy; declared here because the protocol says so. */
@@ -95,6 +110,15 @@ export function WidgetFrame(input: WidgetFrameProps): ReactElement {
       nonce: nonce.current,
       props: latest.current.props,
       ...(latest.current.state === undefined ? {} : { state: latest.current.state }),
+      ...(latest.current.stateRevision === undefined ? {} : { stateRevision: latest.current.stateRevision }),
+      ...(latest.current.ephemeralStateKeys === undefined ? {} : { ephemeralStateKeys: latest.current.ephemeralStateKeys }),
+      ...(latest.current.persistState === undefined
+        ? {}
+        : {
+            persistState: (write: { expectedRevision: number; patch: Record<string, unknown> }) =>
+              latest.current.persistState?.(write) ??
+              Promise.resolve<FrameStateOutcome>({ ok: false, code: "STATE_NOT_SAVED", message: "the host stopped saving state" }),
+          }),
       brokeredCapabilities: latest.current.brokeredCapabilities,
       allowedOrigins: latest.current.allowedOrigins,
       knownActionBindings: latest.current.knownActionBindings,
@@ -123,6 +147,9 @@ export function WidgetFrame(input: WidgetFrameProps): ReactElement {
         if (accepted.kind === "ready") setStatus("ready");
         return;
       }
+      // A write that lost a race is a conflict, not misbehaviour: the session already answered the widget with the
+      // committed state, and it is the widget's to show. Marking the whole frame refused would say it broke.
+      if (accepted.code === "STALE_REVISION") return;
       /*
        * Shown, not swallowed. A refusal is the difference between a widget that is quiet and a widget whose
        * messages are being dropped, and only one of those is worth a person's time.

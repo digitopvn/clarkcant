@@ -44,6 +44,7 @@ import { commandDigest, runGuardedCommand, type CommandOutcome } from "./run-com
 import type { ProjectFinderDeps } from "./project-finder.ts";
 import { createFindProjectTool } from "./project-finder.ts";
 import { createFindRuntimeTool } from "./runtime-candidates.ts";
+import { createManagePackageTool, type ManagePackageToolDeps } from "./manage-package-tool.ts";
 import { createTerminalTools } from "./terminal-tools.ts";
 import type { TerminalRegistry } from "./terminal-sessions.ts";
 import { rememberMemory, type MemoryDeps } from "./memory.ts";
@@ -152,6 +153,12 @@ export function createNodeTools(input: {
    */
   appControl?: ControlAppDeps;
   /**
+   * Uninstalling, restoring and rolling back packages, when this turn belongs to a node that holds them.
+   *
+   * Absent means `manage_package` is not registered. Present, it calls the same action the Settings buttons call.
+   */
+  packages?: ManagePackageToolDeps;
+  /**
    * The node's terminals, when a turn may open or type into one.
    *
    * Registered only with `command`: typing into a shell is running a command, so it is gated by the same policy
@@ -217,6 +224,7 @@ export function createNodeTools(input: {
           }),
         ]),
     ...(input.appControl === undefined ? [] : [createControlAppTool(input.appControl)]),
+    ...(input.packages === undefined ? [] : [createManagePackageTool(input.packages)]),
   ];
 }
 

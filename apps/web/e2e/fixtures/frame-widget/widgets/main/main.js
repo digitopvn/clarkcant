@@ -50,12 +50,47 @@ function draw() {
       });
   });
 
+  /*
+   * Durable state: a count the node stores. The write resolves only when the node has committed it, so "đã lưu" is
+   * the node's word, not the widget's hope — and a reopened frame starts from what was stored.
+   */
+  const count = document.createElement("p");
+  count.setAttribute("data-widget-count", "true");
+  const showCount = (state) => {
+    count.textContent = String(typeof state.count === "number" ? state.count : 0);
+  };
+  showCount(api.state.get());
+  api.state.subscribe((state) => showCount(state));
+
+  const increment = document.createElement("button");
+  increment.type = "button";
+  increment.textContent = "Tăng đếm";
+  increment.setAttribute("data-widget-increment", "true");
+  const saved = document.createElement("p");
+  saved.setAttribute("data-widget-saved", "true");
+  increment.addEventListener("click", () => {
+    const current = api.state.get();
+    const next = (typeof current.count === "number" ? current.count : 0) + 1;
+    saved.textContent = "đang lưu…";
+    saved.removeAttribute("data-widget-saved-state");
+    void api.state
+      .update(api.state.revision(), { count: next })
+      .then(() => {
+        saved.textContent = "đã lưu";
+        saved.setAttribute("data-widget-saved-state", "saved");
+      })
+      .catch((error) => {
+        saved.textContent = String(error && error.message ? error.message : error);
+        saved.setAttribute("data-widget-saved-state", "refused");
+      });
+  });
+
   api.lifecycle.onMount(() => {
     root.setAttribute("data-widget-mounted", "true");
   });
   api.semantic.publish(String(props.title ?? "widget"), []);
 
-  root.append(title, button, outcome);
+  root.append(title, button, outcome, count, increment, saved);
   root.setAttribute("data-widget-ready", "true");
 }
 

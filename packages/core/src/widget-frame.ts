@@ -1,4 +1,4 @@
-import type { DirectoryEntry, IsolationClass } from "@clarkcant/contracts";
+import type { DirectoryEntry, IsolationClass, WidgetDefinition } from "@clarkcant/contracts";
 
 import { resolveLocalSource } from "./package-fetch.ts";
 import { readPackage } from "./widget-package.ts";
@@ -35,6 +35,11 @@ export type IsolatedFrameLookup =
       requestedCapabilities: readonly string[];
       /** Origins the document may reach, from the package's own declaration and enforced by its policy. */
       allowedOrigins: readonly string[];
+      /**
+       * The definition as this package version declares it — what the node holds the widget's state to: its schema,
+       * its `stateVersion`, the keys it says are view state and the migrations that carry older state forward.
+       */
+      definition: WidgetDefinition;
     }
   | {
       ok: false;
@@ -56,6 +61,38 @@ export function brokeredCapabilities(
 ): readonly string[] {
   const grantedSet = new Set(granted ?? []);
   return requested.filter((ref) => grantedSet.has(ref));
+}
+
+/** A brokered capability the frame is not given yet, and why — so the widget and the person can be told which. */
+export interface UnavailableCapability {
+  ref: string;
+  code: string;
+  message: string;
+}
+
+/** Whether a capability can run now; the runtime answers it from the capability registry. */
+export type CapabilityPreflight = (ref: string) => { ready: true } | { ready: false; code: string; message: string };
+
+/**
+ * Narrow what a frame is brokered to what can actually run now.
+ *
+ * A grant is permission, not readiness: a capability the person approved can still be missing a connection or a
+ * loaded extension. Handing the frame such a capability tells it something works that will fail on first use, so
+ * it is held back and reported with the reason instead — and it is brokered again, with no new approval, on the
+ * next mount after the prerequisite is met.
+ */
+export function readyCapabilities(
+  brokered: readonly string[],
+  preflight: CapabilityPreflight,
+): { ready: readonly string[]; unavailable: readonly UnavailableCapability[] } {
+  const ready: string[] = [];
+  const unavailable: UnavailableCapability[] = [];
+  for (const ref of brokered) {
+    const checked = preflight(ref);
+    if (checked.ready) ready.push(ref);
+    else unavailable.push({ ref, code: checked.code, message: checked.message });
+  }
+  return { ready, unavailable };
 }
 
 export function findIsolatedFrame(input: {
@@ -124,6 +161,7 @@ export function findIsolatedFrame(input: {
       isolation: declaration.isolation,
       requestedCapabilities: pkg.manifest.requestedCapabilities,
       allowedOrigins: pkg.manifest.permissions.networkOrigins,
+      definition: facet.definition,
     };
   }
 

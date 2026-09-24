@@ -64,7 +64,17 @@ export function createWidgetRuntime(deps: RuntimeDeps): WidgetRuntime {
   let nonce: string | undefined;
   let props: Record<string, unknown> = {};
   let state: Record<string, unknown> = {};
+  /** The instance revision: what an action is checked against. */
   let revision = 0;
+  /** The state revision: what a state write is checked against. A different counter, moved by a different thing. */
+  let stateRevision = 0;
+  /**
+   * The one state write the host has not answered yet.
+   *
+   * One at a time, because the answer decides the revision the next write must name: a second write sent before the
+   * first was committed would be planned against a revision that was about to move, and refused for it.
+   */
+  let pendingWrite: { resolve: () => void; reject: (error: Error) => void } | undefined;
   let brokered = new Set<string>();
 
   const mountHandlers = new Set<() => void>();
@@ -72,6 +82,7 @@ export function createWidgetRuntime(deps: RuntimeDeps): WidgetRuntime {
   const resumeHandlers = new Set<() => void>();
   const disposeHandlers = new Set<() => void>();
   const propsHandlers = new Set<(props: Record<string, unknown>) => void>();
+  const stateHandlers = new Set<(state: Record<string, unknown>, revision: number) => void>();
   const actionWaiters = new Map<string, { resolve: (value: void) => void; reject: (error: Error) => void }>();
 
   const send = (message: unknown): void => {
@@ -101,6 +112,7 @@ export function createWidgetRuntime(deps: RuntimeDeps): WidgetRuntime {
      * revision; this is the frame being told rather than guessing.
      */
     if (message.revision !== undefined) revision = message.revision;
+    if (message.stateRevision !== undefined) stateRevision = message.stateRevision;
     brokered = new Set(message.brokeredCapabilities);
     status = "ready";
     send({ kind: "ready", nonce });
@@ -162,12 +174,20 @@ export function createWidgetRuntime(deps: RuntimeDeps): WidgetRuntime {
       return;
     }
     if (message.kind === "state") {
+      // Committed state replaces the local copy, including after a refusal: what the host holds is what is true.
       state = message.state;
-      revision = message.revision;
+      stateRevision = message.revision;
+      const waiter = pendingWrite;
+      pendingWrite = undefined;
+      if (waiter !== undefined) {
+        if (message.refused === undefined) waiter.resolve();
+        else waiter.reject(new Error(`${message.refused.code}: ${message.refused.message}`));
+      }
       if (status === "suspended") {
         status = "ready";
         for (const handler of resumeHandlers) handler();
       }
+      for (const handler of stateHandlers) handler(state, stateRevision);
       return;
     }
     if (message.kind === "suspend") {
@@ -184,6 +204,8 @@ export function createWidgetRuntime(deps: RuntimeDeps): WidgetRuntime {
         waiter.reject(new Error("widget runtime: the host disposed the frame before the action answered"));
       }
       actionWaiters.clear();
+      pendingWrite?.reject(new Error("widget runtime: the host disposed the frame before the write was committed"));
+      pendingWrite = undefined;
       deps.endpoint.removeEventListener("message", handleMessage);
       return;
     }
@@ -212,19 +234,34 @@ export function createWidgetRuntime(deps: RuntimeDeps): WidgetRuntime {
     },
     state: {
       get: () => state,
+      revision: () => stateRevision,
       update: (expectedRevision, patch) => {
         requireReady("cập nhật state");
-        if (expectedRevision !== revision) {
+        if (expectedRevision !== stateRevision) {
           return Promise.reject(
             new Error(
-              `widget runtime: revision ${String(expectedRevision)} đã cũ, frame đang ở ${String(revision)}`,
+              `widget runtime: revision ${String(expectedRevision)} đã cũ, state đang ở ${String(stateRevision)}`,
             ),
           );
         }
-        revision += 1;
+        if (pendingWrite !== undefined) {
+          return Promise.reject(
+            new Error("widget runtime: lần ghi state trước chưa được host xác nhận; chờ nó xong rồi ghi tiếp"),
+          );
+        }
+        /*
+         * Shown locally at once, confirmed by the host later. The promise resolves only when the host has committed
+         * the write, so a widget that says "đã lưu" on resolve is saying something true; a refusal replaces this
+         * optimistic copy with the committed one and rejects with the host's reason.
+         */
         state = { ...state, ...patch };
-        send({ kind: "state.update", nonce: speakingNonce(), expectedRevision, patch });
-        return Promise.resolve();
+        return new Promise<void>((resolve, reject) => {
+          pendingWrite = { resolve, reject };
+          send({ kind: "state.update", nonce: speakingNonce(), expectedRevision, patch });
+        });
+      },
+      subscribe: (handler) => {
+        stateHandlers.add(handler);
       },
     },
     events: {

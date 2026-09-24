@@ -1,7 +1,14 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
-import { isHostOwnedBlock, type MessageBlock } from "@clarkcant/contracts";
+import {
+  applyStateMigrationOps,
+  isHostOwnedBlock,
+  stateMigrationGaps,
+  validateStateAgainstSchema,
+  type MessageBlock,
+  type WidgetDefinition,
+} from "@clarkcant/contracts";
 import { validateProps } from "@clarkcant/widget-host";
 import { FORBIDDEN_API_SURFACE, acceptBridgeMessage, createWidgetRuntime, type MessageEndpoint } from "@clarkcant/widget-sdk";
 import { createFrameSession } from "@clarkcant/widget-host";
@@ -311,17 +318,13 @@ export function runConformance(root: string, options: { frames?: FrameFacts } = 
   );
 
   const stateVersion = definition.stateVersion ?? 0;
-  const migrationFixture = join(root, "fixtures", `state-v${String(stateVersion - 1)}.json`);
+  const migration = proveStateMigration(root, definition);
   add(
     "lifecycle.stateMigration",
     "lifecycle",
-    "a state migration is declared where one is needed",
-    stateVersion === 0 || existsSync(migrationFixture) ? "pass" : "fail",
-    stateVersion === 0
-      ? "stateVersion is 0, so there is nothing to migrate"
-      : existsSync(migrationFixture)
-        ? `fixtures/state-v${String(stateVersion - 1)}.json is present`
-        : `stateVersion is ${String(stateVersion)} but fixtures/state-v${String(stateVersion - 1)}.json is missing`,
+    "the declared state migration carries the previous version's fixture to a valid current state",
+    migration.ok ? "pass" : "fail",
+    stateVersion === 0 ? "stateVersion is 0, so there is nothing to migrate" : migration.detail,
   );
 
   /* ------------------------------------------------------------- interaction */
@@ -557,4 +560,59 @@ function finish(root: string, checks: ConformanceCheck[]): ConformanceReport {
   const summary: Record<CheckStatus, number> = { pass: 0, fail: 0, "requires-dev-host": 0 };
   for (const check of checks) summary[check.status] += 1;
   return { root, checks, ok: summary.fail === 0, summary };
+}
+
+/**
+ * Run the definition's own migration on the previous version's fixture, the way the node will.
+ *
+ * The node migrates stored state with exactly these operations and refuses a result that does not match the schema,
+ * so a package that reached a user with a migration that fails here would open read-only for every person who had
+ * used the previous version. Checking that the fixture file exists would not have caught any of that.
+ */
+function proveStateMigration(
+  root: string,
+  definition: Pick<WidgetDefinition, "stateVersion" | "stateMigrations" | "stateSchema">,
+): { ok: boolean; detail: string } {
+  const stateVersion = definition.stateVersion ?? 0;
+  if (stateVersion === 0) return { ok: true, detail: "" };
+
+  const gaps = stateMigrationGaps(definition);
+  if (gaps.length > 0) return { ok: false, detail: gaps.join("; ") };
+  const previous = stateVersion - 1;
+  const step = (definition.stateMigrations ?? []).find((candidate) => candidate.from === previous);
+  if (step === undefined) {
+    return {
+      ok: false,
+      detail: `stateVersion is ${String(stateVersion)} but no stateMigrations step starts at ${String(previous)}`,
+    };
+  }
+
+  const fixturePath = join(root, "fixtures", `state-v${String(previous)}.json`);
+  if (!existsSync(fixturePath)) {
+    return { ok: false, detail: `fixtures/state-v${String(previous)}.json is missing, so the migration cannot be run` };
+  }
+  let fixture: unknown;
+  try {
+    fixture = JSON.parse(readFileSync(fixturePath, "utf8"));
+  } catch {
+    return { ok: false, detail: `fixtures/state-v${String(previous)}.json is not JSON` };
+  }
+  if (typeof fixture !== "object" || fixture === null || Array.isArray(fixture)) {
+    return { ok: false, detail: `fixtures/state-v${String(previous)}.json is not a state object` };
+  }
+
+  let migrated: Record<string, unknown>;
+  try {
+    migrated = applyStateMigrationOps(fixture as Record<string, unknown>, step.ops);
+  } catch (cause) {
+    return { ok: false, detail: `the migration ${String(previous)} -> ${String(stateVersion)} failed: ${cause instanceof Error ? cause.message : String(cause)}` };
+  }
+  const validation = validateStateAgainstSchema(definition.stateSchema, migrated);
+  if (!validation.ok) {
+    return { ok: false, detail: `the migrated fixture does not match stateSchema: ${validation.problems.join("; ")}` };
+  }
+  return {
+    ok: true,
+    detail: `fixtures/state-v${String(previous)}.json migrates to a state stateSchema accepts (${String(step.ops.length)} ${step.ops.length === 1 ? "operation" : "operations"})`,
+  };
 }

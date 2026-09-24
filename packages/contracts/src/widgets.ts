@@ -50,6 +50,38 @@ export const widgetFixtureSchema = z.strictObject({
 });
 export type WidgetFixture = z.infer<typeof widgetFixtureSchema>;
 
+const stateKeySchema = z.string().min(1).max(120);
+
+/**
+ * One operation of a declarative state migration.
+ *
+ * A closed set on purpose. The host runs a migration inside the transaction that holds the user's data, so what a
+ * step may do is fixed here rather than supplied as code: a widget that could ship a migration function would be a
+ * widget running its own code against state nobody has validated yet.
+ */
+export const stateMigrationOpSchema = z.discriminatedUnion("op", [
+  z.strictObject({ op: z.literal("rename"), from: stateKeySchema, to: stateKeySchema }),
+  /** Sets `key` only when it is absent, so a step never overwrites a value the user already has. */
+  z.strictObject({ op: z.literal("default"), key: stateKeySchema, value: z.unknown() }),
+  z.strictObject({ op: z.literal("remove"), key: stateKeySchema }),
+  /** Replaces a string value by the entry named for it; a value with no entry is left as it is. */
+  z.strictObject({
+    op: z.literal("map"),
+    key: stateKeySchema,
+    values: z.record(z.string().max(200), z.unknown()),
+  }),
+]);
+export type StateMigrationOp = z.infer<typeof stateMigrationOpSchema>;
+
+export const stateMigrationStepSchema = z
+  .strictObject({
+    from: z.int().nonnegative(),
+    to: z.int().positive(),
+    ops: z.array(stateMigrationOpSchema).min(1).max(32),
+  })
+  .refine((step) => step.to === step.from + 1, { message: "a migration step moves exactly one stateVersion" });
+export type StateMigrationStep = z.infer<typeof stateMigrationStepSchema>;
+
 export const widgetDefinitionSchema = z.strictObject({
   id: z.string().min(1).max(160),
   version: z.string().min(1).max(80),
@@ -59,6 +91,16 @@ export const widgetDefinitionSchema = z.strictObject({
   eventSchemas: z.record(z.string(), z.record(z.string(), z.unknown())),
   stateSchema: z.record(z.string(), z.unknown()).optional(),
   stateVersion: z.int().nonnegative().optional(),
+  /**
+   * Keys that are view state — a filter, a zoom level, a selection — rather than the user's data.
+   *
+   * The host never persists them: a write carrying one is applied in the frame and dropped before it reaches the
+   * node. Every key not listed here is durable, which is the safe default — a widget that forgot to declare a key
+   * loses nothing, where the opposite default would lose data for the same mistake.
+   */
+  ephemeralStateKeys: z.array(stateKeySchema).max(64).optional(),
+  /** Declarative, host-run steps from each older `stateVersion` to the next. */
+  stateMigrations: z.array(stateMigrationStepSchema).max(64).optional(),
   /** One sentence the conductor and voice layer use to choose this widget. */
   semanticDescription: z.string().min(1).max(400),
   requestedCapabilities: z.array(capabilityRefSchema).max(64),

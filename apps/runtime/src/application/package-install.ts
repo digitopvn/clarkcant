@@ -46,7 +46,7 @@ import {
   resolveLocalSource,
   type CoordinationDeps,
 } from "@clarkcant/core";
-import { type Database, oneRow, parseJson, toJson, transaction } from "@clarkcant/storage";
+import { type Database, allRows, oneRow, parseJson, toJson, transaction } from "@clarkcant/storage";
 
 /**
  * Installing a package a directory listed.
@@ -809,6 +809,61 @@ function applyCapabilityGrant(
     category: effectCategory,
     operationDigest,
     description: `grant ${ref} to ${updated.packageId}@${updated.version}`,
+  });
+}
+
+/** A capability a package asked for at install that the policy put to the person, still waiting for an answer. */
+export interface PendingCapabilityApproval {
+  approvalId: string;
+  ref: CapabilityRef;
+  packageId: string;
+  version: string;
+  /** What the decision must be sent back with: the exact operation the person is shown. */
+  operationDigest: string;
+  description: string;
+  requestedAt: string;
+  expiresAt: string;
+}
+
+/**
+ * `GET /packages/approvals`: every unanswered install-capability approval that can still be answered.
+ *
+ * Only approvals whose package is active here: granting one for a package that was since uninstalled has nowhere
+ * to land (`NO_GENERATION_FOR_APPROVAL`), and a button that can only fail is not a control. Expired ones are left
+ * out for the same reason; the next install of the package asks again.
+ */
+export function listPendingCapabilityApprovals(deps: PackageInstallDeps): PendingCapabilityApproval[] {
+  const { runtime } = deps;
+  const rows = allRows<{
+    approval_id: string;
+    operation_digest: string;
+    operation_description: string;
+    requested_at: string;
+    expires_at: string;
+  }>(
+    runtime.db,
+    `SELECT approval_id, operation_digest, operation_description, requested_at, expires_at FROM approvals
+      WHERE task_id IS NULL AND decision = 'pending' AND expires_at > ?
+      ORDER BY requested_at, approval_id`,
+    nowInstant(),
+  );
+  return rows.flatMap((row) => {
+    const parsed = parseCapabilityOperationDigest(row.operation_digest);
+    if (parsed === undefined) return [];
+    const generation = findGenerationByDigest(runtime.db, runtime.identity.nodeId, parsed.digest);
+    if (generation === undefined) return [];
+    return [
+      {
+        approvalId: row.approval_id,
+        ref: parsed.ref,
+        packageId: generation.packageId,
+        version: generation.version,
+        operationDigest: row.operation_digest,
+        description: row.operation_description,
+        requestedAt: row.requested_at,
+        expiresAt: row.expires_at,
+      },
+    ];
   });
 }
 
