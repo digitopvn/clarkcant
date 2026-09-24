@@ -55,7 +55,7 @@ export interface CommandOutcome {
  * Kept here rather than on the command's caller because a stop has to reach a child process nobody is holding a
  * reference to: the promise is what the caller awaits, and killing it needs the process, not the promise.
  */
-const liveCommands = new Set<ChildProcess>();
+const liveCommands = new Map<ChildProcess, RunningCommand>();
 const stoppedByRequest = new Set<ChildProcess>();
 
 /**
@@ -65,7 +65,7 @@ const stoppedByRequest = new Set<ChildProcess>();
  * that is not listening, and a well-behaved shutdown is what a deadline is for.
  */
 export function stopRunningCommands(): number {
-  const running = [...liveCommands];
+  const running = [...liveCommands.keys()];
   for (const child of running) {
     stoppedByRequest.add(child);
     killTree(child);
@@ -76,6 +76,24 @@ export function stopRunningCommands(): number {
 /** How many commands are running right now, for a status line or a test. */
 export function runningCommandCount(): number {
   return liveCommands.size;
+}
+
+/** One command this process is running, as the process view shows it: what, where and since when. */
+export interface RunningCommand {
+  command: string;
+  cwd: string;
+  startedAt: string;
+  pid?: number;
+}
+
+/**
+ * What is running right now, oldest first.
+ *
+ * A copy, and only the facts a person already saw in the command's card: no environment, because a secret injected
+ * into one child's environment must not reappear in a list.
+ */
+export function listRunningCommands(): RunningCommand[] {
+  return [...liveCommands.values()].map((entry) => ({ ...entry }));
 }
 
 export interface RunCommandOptions {
@@ -166,7 +184,12 @@ export async function runCommand(
     child.stdout?.on("data", (chunk: Buffer) => collect(chunk, "stdout"));
     child.stderr?.on("data", (chunk: Buffer) => collect(chunk, "stderr"));
     // Registered before anything can finish, so a stop issued while the command is starting still reaches it.
-    liveCommands.add(child);
+    liveCommands.set(child, {
+      command: input.command,
+      cwd: input.cwd,
+      startedAt: new Date(startedAt).toISOString(),
+      ...(child.pid === undefined ? {} : { pid: child.pid }),
+    });
 
     const finish = (exitCode: number | null): void => {
       if (settled) return;

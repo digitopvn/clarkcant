@@ -356,6 +356,9 @@ export function textOfBlock(block: MessageBlock): string {
     case "browser-session-card":
     case "computer-session-card":
       return `${block.label} — ${block.driver === "user" ? "bạn" : "agent"} đang điều khiển`;
+    case "terminal-session-card":
+      // Where the shell runs and what was put on its prompt: the output itself lives in the terminal, not the card.
+      return `Terminal ${block.title} — ${block.cwd}${block.ran !== undefined ? ` — đã chạy: ${block.ran}` : block.prefill !== undefined ? ` — điền sẵn: ${block.prefill}` : ""}`;
     case "marketplace-results":
       /*
        * Names the directory the results came from. A reader who cannot see the card still has to know these are

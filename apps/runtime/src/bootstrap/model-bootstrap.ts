@@ -254,6 +254,12 @@ export async function createNodeModelTurn(deps: ModelBootstrapDeps): Promise<Mod
         }),
         /* The card's id has to outlive the turn, so it comes from the node's own id generator. */
         questions: { newId: deps.services().conductor.newId },
+        // Terminals opened from this turn belong to its conversation; the card id comes from the node like a question's.
+        terminals: {
+          registry: deps.services().terminals,
+          newId: deps.services().conductor.newId,
+          conversationId: turn.conversationId,
+        },
         // Always passed: an unconfigured directory is something the tool reports, not a reason to hide it.
         directory: { indexPath: directoryIndexPath(deps.env), newId: deps.services().conductor.newId },
         // Remembering is scoped to the turn's conversation the same way, and the id comes from the node's own

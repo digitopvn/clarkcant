@@ -29,6 +29,14 @@ import {
   type VoiceSessionEvents,
   startVoiceSession,
 } from "./voice-session.ts";
+import {
+  type TerminalCommandView,
+  type TerminalConnection,
+  type TerminalOverview,
+  type TerminalServerFrame,
+  connectTerminalSocket,
+  terminalSocketUrl,
+} from "./terminal-socket.ts";
 
 export interface GatewayClientOptions {
   baseUrl: string;
@@ -468,6 +476,30 @@ export class GatewayClient {
     >,
   ): Promise<VoiceSession> {
     return startVoiceSession({ ...options, nodeBaseUrl: this.#baseUrl, token: this.#token });
+  }
+
+  /**
+   * The live terminal channel. Like the voice socket, the token goes in the first frame and is never handed to the
+   * card that draws the terminal.
+   */
+  openTerminalSocket(handlers: {
+    onFrame: (frame: TerminalServerFrame) => void;
+    onClose: (reason: string) => void;
+  }): TerminalConnection {
+    return connectTerminalSocket({ url: terminalSocketUrl(this.#baseUrl), token: this.#token, ...handlers });
+  }
+
+  /** Everything running on the node: terminals, `run_command` processes, background work and Pi sessions. */
+  terminals(): Promise<TerminalOverview> {
+    return this.#call("GET", "/terminals");
+  }
+
+  killTerminal(terminalId: string): Promise<{ terminalId: string; stopping: true }> {
+    return this.#call("POST", `/terminals/${encodeURIComponent(terminalId)}/kill`, {});
+  }
+
+  terminalCommands(terminalId: string): Promise<{ terminalId: string; commands: TerminalCommandView[] }> {
+    return this.#call("GET", `/terminals/${encodeURIComponent(terminalId)}/commands`);
   }
 
   async #call<T>(method: string, path: string, body?: unknown): Promise<T> {

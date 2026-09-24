@@ -40,6 +40,9 @@ allowBuilds:
   # are deliberately left unlisted — they ship prebuilt, and their install
   # scripts are publisher build concerns rather than ours.
   electron: true
+  # Required for the terminal surface: installs the prebuilt pseudo-terminal binding the runtime spawns shells through.
+  # Optional dependency — a node where it cannot load reports the terminal as unavailable instead of failing.
+  node-pty: true
   '@google/genai': set this to true or false
   protobufjs: set this to true or false
 

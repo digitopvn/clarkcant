@@ -11,6 +11,7 @@ import { handlePublicRoutes } from "./routes/public.ts";
 import { handleNodeRoutes } from "./routes/node.ts";
 import { handleVoiceRoutes } from "./routes/voice.ts";
 import { handleControlRoutes } from "./routes/control.ts";
+import { handleTerminalRoutes } from "./routes/terminals.ts";
 import { handleCredentialRoutes } from "./routes/credentials.ts";
 import { handleRecordReadRoutes } from "./routes/record-read.ts";
 import { handleMiniAppDataRoutes } from "./routes/mini-app-data.ts";
@@ -175,6 +176,9 @@ export async function handleRequest(deps: GatewayDeps, request: GatewayRequest):
 
   const controlResponse = await handleControlRoutes({ services, request, segments, at });
   if (controlResponse !== undefined) return controlResponse;
+
+  const terminalResponse = await handleTerminalRoutes({ services, request, segments });
+  if (terminalResponse !== undefined) return terminalResponse;
 
   const preferenceResponse = handlePreferenceRoutes({ services, request, segments, at });
   if (preferenceResponse !== undefined) return preferenceResponse;
