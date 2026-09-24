@@ -470,11 +470,16 @@ phải một nơi điều hướng thứ hai. Mỗi mục trỏ về hội tho�
   so version đã cài với directory index và với npm registry (lỗi mạng không tạo thông báo lỗi). Nội dung nói version
   hiện tại → mới và risk lane, cùng cách gọi tên với marketplace. Chưa có nút "Cập nhật": route cập nhật thật đi qua
   lifecycle cài/rollback chưa nối tới thông báo này, nên hộp thư chỉ nói có bản mới chứ chưa cho bấm.
+- **Thông báo ngoài ứng dụng khi cửa sổ không có focus hoặc ở chế độ thu nhỏ/orb** (#171): trên desktop là OS
+  notification qua Electron `Notification`, host-owned, chỉ tiêu đề/nội dung đã redact — không bao giờ có dòng
+  lệnh hay secret; click thì focus cửa sổ và mở hộp thư qua cùng intent `inbox.open`. Trên trình duyệt là Web
+  Notification API, chỉ bật sau khi người dùng bấm nút trong Settings → Control và trình duyệt tự cấp quyền. Tuỳ
+  chọn theo nhóm (việc chờ duyệt, kết quả việc nền, cập nhật, thiết bị khác) và giờ yên lặng, lưu ngay không cần
+  nút Save. Một việc chờ sắp hết hạn (còn ≤ 1 phút) được nhắc đúng một lần, không lặp lại.
 
 Chưa ship (đích):
 
 - thông báo và việc chờ từ một node ClarkCant khác (đã có `originNodeId` và khoá dedup để nhận lặp lại an toàn);
-- thông báo hệ điều hành khi cửa sổ không có focus, tuỳ chọn theo nhóm, giờ yên lặng;
 - duyệt các approval do task được điều phối tạo ra (chưa có route quyết định nên hộp thư chưa đưa ra nút).
 
 Không được: dùng hộp thư làm dashboard mặc định, đếm "0" thường trực, hay hiển thị một nút quyết định mà route thật
