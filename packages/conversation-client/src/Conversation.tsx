@@ -480,6 +480,7 @@ export function Conversation({
         onTimeline={applyTimeline}
         {...(onOpenConversation === undefined ? {} : { onOpenConversation })}
         onChanged={() => setInboxTick((tick) => tick + 1)}
+        switchGuard={{ busy, voiceOpen, draftNonEmpty: draft.trim() !== "", hasAttachments: chips.length > 0 }}
       />
 
       {/* The Widget Library, beside the conversation rather than in place of it. */}

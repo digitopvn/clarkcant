@@ -86,6 +86,10 @@ export function useAppIntentSurfaces({
   const bumpLiveRefresh = useCallback(() => setLiveRefresh((count) => count + 1), []);
 
   const openWidgetLibrary = useCallback((mode: "browse" | "develop"): void => {
+    // Modals do not nest (see openSettings/openInbox below and WidgetLibrarySurface's own note on the same rule):
+    // the library is a `role="dialog" aria-modal="true"` surface itself, so it closes the inbox rather than
+    // stacking a second dialog with its own Escape and Tab trap over the first.
+    setInboxOpen(false);
     setWidgetLibrary((current) => applyLibraryAction(current, { kind: "open", mode }));
   }, []);
 
@@ -128,6 +132,9 @@ export function useAppIntentSurfaces({
         void client.selectModel(alias).catch(() => setIntentNotice(t("intents.modelSwitchFailed")));
       },
       openWidgetLibrary: (mode: "browse" | "develop", target?: { definitionId?: string; family?: string }) => {
+        // Same rule as the imperative `openWidgetLibrary` above, for the path a click, a typed command or voice
+        // reaches this through instead: opening the library while the inbox is open would stack two modals.
+        setInboxOpen(false);
         setWidgetLibrary((current) =>
           applyLibraryAction(current, { kind: "open", mode, ...(target === undefined ? {} : { target }) }),
         );

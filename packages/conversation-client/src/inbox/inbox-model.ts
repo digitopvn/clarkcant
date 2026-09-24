@@ -2,6 +2,9 @@ import type { InboxSummary, Notice, NoticeSeverity, NoticeSourceKind, WaitingIte
 
 import type { MessageKey } from "../i18n/messages.ts";
 
+/** The server's own cap on how many notices one `GET /inbox` returns (`apps/runtime/src/inbox.ts`'s `limit`). */
+export const NOTICE_LIST_LIMIT = 50;
+
 /**
  * The decisions behind the inbox surface, apart from React so the node-only suite can hold them.
  *
@@ -109,4 +112,101 @@ export function timeLeft(expiresAt: string | undefined, readAt: string, t: (key:
   if (!Number.isFinite(left)) return undefined;
   if (left <= 60_000) return t("inbox.expires.soon");
   return t("inbox.expires.minutes").replace("{count}", String(Math.floor(left / 60_000)));
+}
+
+/**
+ * Whether the notices list looks like the server's cap rather than a coincidentally round number under it.
+ *
+ * The response carries no total count (S: `InboxResponse` has `waiting`/`notices`/`unread`/`readAt` and nothing
+ * else), so this cannot say for certain that more exist — only that the list is exactly as long as the server would
+ * ever return, which is the one case a truthful "showing the newest N" line is worth drawing.
+ */
+export function noticesMayBeCapped(notices: readonly Notice[], limit: number = NOTICE_LIST_LIMIT): boolean {
+  return notices.length >= limit;
+}
+
+/** The gateway's own error code, when `cause` carries one — the only part of a refusal the client should trust as fact. */
+function gatewayErrorCode(cause: unknown): string | undefined {
+  if (typeof cause !== "object" || cause === null) return undefined;
+  const code = (cause as { code?: unknown }).code;
+  return typeof code === "string" ? code : undefined;
+}
+
+/**
+ * A reason fit for a person to read, or `undefined` when the cause is not something to show as-is.
+ *
+ * `GatewayError.message` is `"${code}: ${message}"`; the code belongs in a log, not in a sentence a person reads,
+ * so it is stripped. A schema failure (`ZodError`) stringifies to the whole list of issues — the caller falls back
+ * to a fixed sentence and logs the original for whoever reads the console.
+ */
+export function sanitizeReason(cause: unknown): string | undefined {
+  if (!(cause instanceof Error)) return undefined;
+  if (cause.name === "ZodError") return undefined;
+  const code = gatewayErrorCode(cause);
+  const prefix = code === undefined ? undefined : `${code}: `;
+  if (prefix !== undefined && cause.message.startsWith(prefix)) return cause.message.slice(prefix.length);
+  return cause.message;
+}
+
+/**
+ * Why a decide call failed, from the one fact the client can trust: the gateway's own error code.
+ *
+ * `expired` and `alreadyDecided` are certain — `decideApproval` (`packages/core/src/coordination.ts`) returns
+ * those codes before writing anything, or (for `alreadyDecided`) because somebody else's decision already landed.
+ * Every other code is `ambiguous` on purpose: a granted decision can fail *after* being recorded (the payload is
+ * missing, the run itself refuses), and the client cannot tell a not-yet-recorded refusal from a recorded one that
+ * could not run by the code alone. Resolving "ambiguous" is `decideFailureMessageKey`'s job, once a fresh read says
+ * whether the item is still waiting.
+ */
+export type DecideFailureCategory = "expired" | "alreadyDecided" | "ambiguous";
+
+export function decideFailureCategory(cause: unknown): DecideFailureCategory {
+  const code = gatewayErrorCode(cause);
+  if (code === "APPROVAL_EXPIRED") return "expired";
+  if (code === "APPROVAL_ALREADY_DECIDED") return "alreadyDecided";
+  return "ambiguous";
+}
+
+/**
+ * The message key for a decide failure, once "ambiguous" has been resolved by re-reading the inbox.
+ *
+ * `stillWaitingAfterRead` is `undefined` when the re-read itself could not be trusted (it failed, or never ran):
+ * the safe default there is the same sentence a not-yet-recorded refusal gets, because that is what the surface
+ * already showed before this failure and nothing has disproved it.
+ */
+export function decideFailureMessageKey(category: DecideFailureCategory, stillWaitingAfterRead: boolean | undefined): MessageKey {
+  if (category === "expired") return "inbox.decideFailed.expired";
+  if (category === "alreadyDecided") return "inbox.decideFailed.alreadyDecided";
+  if (stillWaitingAfterRead === false) return "inbox.decideFailed.notRun";
+  return "inbox.decideFailed.stillWaiting";
+}
+
+/**
+ * Where focus goes after a notice is dismissed and the list is re-read: the notice that took its place, the one
+ * before it if the dismissed notice was last, or `undefined` when none are left — the caller falls back to a
+ * stable landmark (the section heading) rather than `<body>`.
+ */
+export function nextNoticeFocusTarget(noticeIdsBeforeDismiss: readonly string[], dismissedId: string): string | undefined {
+  const index = noticeIdsBeforeDismiss.indexOf(dismissedId);
+  if (index === -1) return undefined;
+  const remaining = noticeIdsBeforeDismiss.filter((id) => id !== dismissedId);
+  return remaining.length === 0 ? undefined : remaining[Math.min(index, remaining.length - 1)];
+}
+
+/**
+ * Whether "Open conversation" for a conversation other than the one on screen is safe to offer.
+ *
+ * Only asked about *another* conversation: opening the one already on screen is just closing the panel, and never
+ * discards anything. Switching away from this one, through the host's `key`-remount, does — a running turn's
+ * stream, an open voice session, an unsent draft or an attachment all disappear silently, so the button is
+ * disabled rather than pretending the switch is free (AGENTS.md: disable with a visible reason instead of a
+ * control that looks usable before it safely is).
+ */
+export function canOpenOtherConversation(state: {
+  busy: boolean;
+  voiceOpen: boolean;
+  draftNonEmpty: boolean;
+  hasAttachments: boolean;
+}): boolean {
+  return !state.busy && !state.voiceOpen && !state.draftNonEmpty && !state.hasAttachments;
 }

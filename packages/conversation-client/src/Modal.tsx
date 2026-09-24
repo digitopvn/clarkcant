@@ -37,6 +37,22 @@ export interface ModalProps {
 const FOCUSABLE =
   'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
 
+/**
+ * Where focus goes when the dialog closes.
+ *
+ * The element that opened it, when it is still on the page, is the ordinary case. It is not always: the header
+ * mark that opens the inbox is itself absent once nothing is left in it, so the button that opened this dialog can
+ * already be gone from the DOM by the time it closes, and a conversation switch remounts the whole tree the opener
+ * lived in. `opener.current.focus()` on a detached element does nothing, and the page is left with focus on
+ * `<body>` — a keyboard user has to find their place again from scratch. The composer input is the fallback: it is
+ * present whenever a conversation is on screen at all, which is true of every surface a modal opens over.
+ */
+function returnFocusTarget(opener: Element | null): HTMLElement | null {
+  if (opener instanceof HTMLElement && opener.isConnected) return opener;
+  if (typeof document === "undefined") return null;
+  return document.querySelector<HTMLElement>('[data-composer="true"]');
+}
+
 export function Modal({ open, onClose, title, description, children, actions, width }: ModalProps): ReactElement | null {
   const t = useT();
   const dialog = useRef<HTMLDivElement>(null);
@@ -108,7 +124,7 @@ export function Modal({ open, onClose, title, description, children, actions, wi
 
     return () => {
       document.body.style.overflow = previousOverflow;
-      if (opener.current instanceof HTMLElement) opener.current.focus();
+      returnFocusTarget(opener.current)?.focus();
     };
   }, [open]);
 
