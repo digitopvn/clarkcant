@@ -1,6 +1,6 @@
 ---
 title: Hộp thư — phần backend còn thiếu và lỗi có từ trước
-status: in-progress
+status: in-review
 created: 2026-09-24
 branch: claude/sleepy-mccarthy-ys493l
 issues: [169, 170, 171, 172, 173, 174]
@@ -55,3 +55,17 @@ cố định nên không chạy song song được).
 - #171: e2e tắt một nhóm thì không có thông báo OS cho nhóm đó; thông báo không chứa secret.
 - #169: test cho dedup, offline và risk lane.
 - `pnpm verify` và `pnpm test:e2e` xanh trên cây đã hợp nhất.
+
+## Kết quả
+
+| Issue | Trạng thái | Ghi chú |
+|---|---|---|
+| #173 | xong | từ chối để lại bản ghi thẻ đọc được; unit + e2e |
+| #174 | xong ở #175 | |
+| #172 | một phần | route quyết định approval của task (duyệt thì task chạy lại ngay), hiện trong hộp thư; producer approval/câu hỏi hết hạn. **Chặn:** effect `unknown` (chưa có nơi ghi effect ledger ở production) và kết nối OAuth hết hạn (bảng `connections` chưa có nơi ghi) — ghi trong DESIGN §6.7 "Chưa ship" |
+| #171 | xong | thông báo OS (Electron) và Web Notification, tuỳ chọn theo nhóm, giờ yên lặng; e2e trình duyệt. Chưa kiểm tra tay hành vi click trên Electron có GUI |
+| #169 | xong, có giới hạn | gói nguồn `git` không bump version thì không phát hiện được |
+| #170 | chặn | cần NodeLink pairing (#5) |
+
+Trong lúc hợp nhất: dòng approval của task trong panel được viết trên bản panel trước review fix của #175, nên
+đã được sửa để dùng chung khoá in-flight, dạng `Busy` và đường đọc lại khi lỗi mơ hồ với các dòng khác.
