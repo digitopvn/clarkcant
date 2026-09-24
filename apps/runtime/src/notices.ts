@@ -56,3 +56,40 @@ export function tryRecordNodeNotice(services: NoticeServices, notice: NodeNotice
     );
   }
 }
+
+/**
+ * The notice a dispatched task leaves when it settles.
+ *
+ * A cancellation was the person's own doing, so it is information rather than something that went wrong;
+ * "uncertain" is a warning because the task may or may not have had its effect, and that is worth a look. The task id
+ * is the dedup key and never the title: it is an internal handle, and the title is what a person reads first.
+ */
+export function workerSettledNotice(input: {
+  taskId: string;
+  conversationId: string;
+  outcome: "succeeded" | "failed" | "cancelled" | "uncertain";
+  message: string;
+  at: Instant;
+}): NodeNotice {
+  const { severity, title } = WORKER_OUTCOMES[input.outcome];
+  return {
+    sourceKind: "worker",
+    category: "result",
+    severity,
+    title,
+    body: input.message,
+    conversationId: input.conversationId,
+    dedupKey: `worker:${input.taskId}`,
+    at: input.at,
+  };
+}
+
+const WORKER_OUTCOMES: Record<
+  "succeeded" | "failed" | "cancelled" | "uncertain",
+  { severity: NoticeSeverity; title: string }
+> = {
+  succeeded: { severity: "success", title: "Việc chạy nền đã xong" },
+  failed: { severity: "error", title: "Việc chạy nền không xong" },
+  cancelled: { severity: "info", title: "Việc chạy nền đã được hủy" },
+  uncertain: { severity: "warning", title: "Việc chạy nền chưa rõ kết quả" },
+};

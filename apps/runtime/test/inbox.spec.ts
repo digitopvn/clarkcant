@@ -8,9 +8,9 @@ import { requestApproval } from "@clarkcant/core";
 import { appendMessage, nextMessageSequence } from "@clarkcant/storage";
 
 import { handleRequest, type GatewayDeps, type GatewayRequest, type GatewayResponse } from "../src/gateway.ts";
-import { createQuestion } from "../src/interactions.ts";
+import { QUESTION_TTL_MS, answerQuestion, createQuestion } from "../src/interactions.ts";
 import { readInbox } from "../src/inbox.ts";
-import { recordNodeNotice } from "../src/notices.ts";
+import { recordNodeNotice, tryRecordNodeNotice, workerSettledNotice } from "../src/notices.ts";
 import { createReadInboxTool } from "../src/read-inbox-tool.ts";
 import { interactionDepsFor } from "../src/routes/conversations.ts";
 import { commandDigest } from "../src/run-command.ts";
@@ -76,7 +76,7 @@ async function readInboxOverHttp() {
 }
 
 /** The card a model turn would have produced, written the way the node writes a message. */
-function proposeCommand(conversationId: string, command: string, ttlMs = 900_000, messageAt = now) {
+function proposeCommand(conversationId: string, command: string, ttlMs = 900_000, messageAt = now, taskId?: string) {
   const approval = requestApproval(
     {
       db: services.runtime.db,
@@ -85,6 +85,7 @@ function proposeCommand(conversationId: string, command: string, ttlMs = 900_000
       newId: services.conductor.newId,
     },
     {
+      ...(taskId === undefined ? {} : { taskId }),
       operationDigest: commandDigest(command, dir),
       operationDescription: `Chạy lệnh trong ${dir}`,
       effectCategory: "local-write",
@@ -117,8 +118,43 @@ function proposeCommand(conversationId: string, command: string, ttlMs = 900_000
   return approval;
 }
 
+/** Plain messages, so a conversation is longer than the page a reader's timeline shows. */
+function chatter(conversationId: string, count: number) {
+  for (let index = 0; index < count; index += 1) {
+    appendMessage(
+      services.runtime.db,
+      {
+        messageId: services.conductor.newId("msg"),
+        conversationId,
+        role: index % 2 === 0 ? "user" : "assistant",
+        blocks: [{ type: "text", format: "plain", content: `tin nhắn ${index}`, streaming: false }],
+        authorNodeId: services.runtime.identity.nodeId,
+        createdAt: now,
+        delivery: "accepted",
+      } as never,
+      nextMessageSequence(services.runtime.db, conversationId),
+    );
+  }
+}
+
+function askQuestion(conversationId: string) {
+  const created = createQuestion(
+    { ...interactionDepsFor(services, conversationId), now: () => now as Instant },
+    {
+      question: "Chọn môi trường triển khai.",
+      kind: "single-choice",
+      options: [
+        { id: "staging", label: "Staging" },
+        { id: "production", label: "Production" },
+      ],
+    },
+  );
+  if (!created.ok) throw new Error("the question was not created");
+  return created;
+}
+
 describe("what is waiting for the person", () => {
-  it("lists a command approval from another conversation, with the command it would run", async () => {
+  it("lists a command approval with the conversation it belongs to and the command it would run", async () => {
     const conversationId = await createConversation();
     const approval = proposeCommand(conversationId, "git status");
 
@@ -180,25 +216,74 @@ describe("what is waiting for the person", () => {
 
   it("lists a question the agent is waiting on, and drops it once it expires", async () => {
     const conversationId = await createConversation();
-    const created = createQuestion(
-      { ...interactionDepsFor(services, conversationId), now: () => now as Instant },
-      {
-        question: "Chọn môi trường triển khai.",
-        kind: "single-choice",
-        options: [
-          { id: "staging", label: "Staging" },
-          { id: "production", label: "Production" },
-        ],
-      },
-    );
-    expect(created.ok).toBe(true);
+    askQuestion(conversationId);
 
     const inbox = await readInboxOverHttp();
     expect(inbox.waiting).toHaveLength(1);
     expect(inbox.waiting[0]).toMatchObject({ kind: "question", conversationId, prompt: "Chọn môi trường triển khai." });
 
-    now = new Date(Date.parse(AT) + 16 * 60_000).toISOString();
+    now = new Date(Date.parse(AT) + QUESTION_TTL_MS + 60_000).toISOString();
     expect((await readInboxOverHttp()).waiting).toEqual([]);
+  });
+
+  it("drops a question once it is answered", async () => {
+    const conversationId = await createConversation();
+    const created = askQuestion(conversationId);
+    expect((await readInboxOverHttp()).waiting).toHaveLength(1);
+
+    const answered = answerQuestion(
+      { ...interactionDepsFor(services, conversationId), now: () => now as Instant },
+      created.interaction.questionId,
+      { optionIds: ["staging"] },
+    );
+    expect(answered.ok).toBe(true);
+    expect((await readInboxOverHttp()).waiting).toEqual([]);
+  });
+
+  it("does not offer an approval a dispatched task raised, even with a card, since it has no decide route yet", async () => {
+    const conversationId = await createConversation();
+    proposeCommand(conversationId, "git status", 900_000, now, "task_dispatched");
+    expect((await readInboxOverHttp()).waiting).toEqual([]);
+  });
+
+  it("finds what is open at the end of a conversation longer than a timeline page, and can decide it", async () => {
+    // A reader's timeline is the first 200 messages. What is still open sits at the other end, so the inbox and the
+    // routes that answer it must read from the end - or the inbox offers a card the decide route cannot find, and
+    // the grant is spent on an operation that never runs.
+    const conversationId = await createConversation();
+    chatter(conversationId, 210);
+    askQuestion(conversationId);
+    const command = `node -e "process.stdout.write('chay-duoc')"`;
+    const approval = proposeCommand(conversationId, command);
+
+    const inbox = await readInboxOverHttp();
+    expect(inbox.waiting.map((item) => item.kind).sort()).toEqual(["command-approval", "question"]);
+
+    const decided = await request("POST", `/conversations/${conversationId}/approvals/${approval.approvalId}/decide`, {
+      decision: "granted",
+      digest: approval.operationDigest,
+    });
+    expect(decided.status).toBe(200);
+    expect(JSON.stringify(decided.body)).toContain("chay-duoc");
+  });
+
+  it("leaves the approval undecided when its operation cannot be found, rather than spending it", async () => {
+    const conversationId = await createConversation();
+    const approval = requestApproval(
+      { db: services.runtime.db, nodeId: services.runtime.identity.nodeId, now: () => now as never, newId: services.conductor.newId },
+      { operationDigest: "sha256:khong-co-card", operationDescription: "Không có card", effectCategory: "local-write", ttlMs: 900_000 },
+    );
+
+    const decided = await request("POST", `/conversations/${conversationId}/approvals/${approval.approvalId}/decide`, {
+      decision: "granted",
+      digest: approval.operationDigest,
+    });
+    expect(decided.status).toBe(409);
+    expect((decided.body as { code: string }).code).toBe("APPROVAL_PAYLOAD_MISSING");
+    const row = services.runtime.db.prepare("SELECT decision FROM approvals WHERE approval_id = ?").get(approval.approvalId) as {
+      decision: string;
+    };
+    expect(row.decision).toBe("pending");
   });
 });
 
@@ -255,7 +340,7 @@ describe("notices", () => {
 });
 
 describe("background work reports into the inbox", () => {
-  it("leaves one notice pointing at its conversation when the worker finishes", async () => {
+  it("leaves one notice pointing at its conversation when a background run finishes", async () => {
     const conversationId = await createConversation();
     services.turnControl = {
       running: () => [],
@@ -300,6 +385,58 @@ describe("background work reports into the inbox", () => {
   });
 });
 
+describe("a dispatched task reports into the inbox", () => {
+  it("maps each way a task settles to a severity a person reads the right way", () => {
+    const settle = (outcome: "succeeded" | "failed" | "cancelled" | "uncertain") =>
+      workerSettledNotice({ taskId: "task_7", conversationId: "conv_7", outcome, message: "xong phần việc", at: AT as Instant });
+    expect(settle("succeeded").severity).toBe("success");
+    expect(settle("failed").severity).toBe("error");
+    // The effect may or may not have happened, which is worth a look.
+    expect(settle("uncertain").severity).toBe("warning");
+    // The person cancelled it; nothing went wrong.
+    expect(settle("cancelled").severity).toBe("info");
+    for (const outcome of ["succeeded", "failed", "cancelled", "uncertain"] as const) {
+      const notice = settle(outcome);
+      expect(notice).toMatchObject({ sourceKind: "worker", conversationId: "conv_7", dedupKey: "worker:task_7", body: "xong phần việc" });
+      // The task id is a handle for the node, not something to read.
+      expect(notice.title).not.toContain("task_7");
+    }
+  });
+
+  it("records a settled task once, however often it is reported", async () => {
+    const notice = workerSettledNotice({ taskId: "task_8", conversationId: "conv_8", outcome: "failed", message: "lỗi", at: AT as Instant });
+    expect(recordNodeNotice(services, notice).created).toBe(true);
+    expect(recordNodeNotice(services, notice).created).toBe(false);
+    expect((await readInboxOverHttp()).notices).toHaveLength(1);
+  });
+
+  it("does not fail the producer when the inbox cannot be written", () => {
+    const broken = {
+      runtime: {
+        db: {
+          prepare: () => {
+            throw new Error("database is locked");
+          },
+        } as never,
+        identity: { ownerPrincipalId: "owner" },
+      },
+      conductor: { newId: (prefix: string) => `${prefix}_1` },
+    };
+    const stderr = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    try {
+      expect(() =>
+        tryRecordNodeNotice(
+          broken,
+          workerSettledNotice({ taskId: "task_9", conversationId: "conv_9", outcome: "succeeded", message: "ok", at: AT as Instant }),
+        ),
+      ).not.toThrow();
+      expect(String(stderr.mock.calls[0]?.[0])).toContain("could not record a worker notice");
+    } finally {
+      stderr.mockRestore();
+    }
+  });
+});
+
 describe("the agent reads the inbox", () => {
   it("reports what the panel would show, and changes nothing", async () => {
     const conversationId = await createConversation();
@@ -339,6 +476,10 @@ describe("the agent reads the inbox", () => {
     const { text } = await createReadInboxTool(() => {
       throw new Error("database is locked");
     }).execute({});
-    expect(text).toBe("Could not read the inbox: database is locked. Nothing was changed.");
+    expect(text).toContain("Could not read the inbox");
+    expect(text).toContain("Nothing was changed");
+    expect(text).not.toContain("Nothing is waiting");
+    // The cause is a storage detail the agent would only repeat to the person, and it can carry a path.
+    expect(text).not.toContain("database is locked");
   });
 });
