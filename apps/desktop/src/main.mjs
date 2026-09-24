@@ -16,7 +16,7 @@
  * shape and its refusals from inside the renderer.
  */
 
-import { app, BrowserWindow, dialog, ipcMain, screen, shell, session } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, Notification, screen, shell, session } from "electron";
 import { randomUUID } from "node:crypto";
 
 import { startSmokeNode } from "./smoke-node.mjs";
@@ -127,6 +127,7 @@ const EXPECTED_BRIDGE_METHODS = Object.freeze([
   "focusWindow",
   "getSession",
   "notify",
+  "onNotificationClicked",
   "onWidgetReattached",
   "openExternal",
   "pickDirectory",
@@ -279,6 +280,20 @@ function registerHandlers() {
     const title = typeof input?.title === "string" ? input.title.slice(0, 120) : "";
     const body = typeof input?.body === "string" ? input.body.slice(0, 500) : "";
     if (title.length === 0) return { ok: false, refused: "a notification needs a title" };
+    if (!Notification.isSupported()) return { ok: false, refused: "this OS does not support notifications" };
+    // Host-owned: only the redacted title and body the renderer already bounded ever reach the OS. Clicking it
+    // restores and focuses the window the same way `desktop:focusWindow` does, then tells every renderer so the
+    // one that is actually showing the conversation can open the inbox through its own `inbox.open` intent.
+    const notification = new Notification({ title, body });
+    notification.on("click", () => {
+      const window = BrowserWindow.getAllWindows()[0];
+      if (window !== undefined) {
+        if (window.isMinimized()) window.restore();
+        window.focus();
+      }
+      for (const win of BrowserWindow.getAllWindows()) win.webContents.send("desktop:notificationClicked");
+    });
+    notification.show();
     return { ok: true, shown: { title, body } };
   });
 

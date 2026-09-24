@@ -21,6 +21,15 @@ const bridge = {
   notify(input) {
     return ipcRenderer.invoke("desktop:notify", input);
   },
+  /**
+   * Told when the person clicks an OS notification the shell showed, so the renderer that is actually
+   * displaying the conversation can open the inbox through its own `inbox.open` intent.
+   *
+   * A named subscription rather than a generic `on(channel)`, for the same reason `onWidgetReattached` is one.
+   */
+  onNotificationClicked(callback) {
+    ipcRenderer.on("desktop:notificationClicked", () => callback());
+  },
   /** Opens the OS directory dialog. Answers with the chosen path, or `canceled` when dismissed. */
   pickDirectory(input) {
     return ipcRenderer.invoke("desktop:pickDirectory", input);
