@@ -142,13 +142,13 @@ test("disabling a group silences its notification, the other group's still shows
   const { conversationId } = (await created.json()) as { conversationId: string };
   const started = await page.request.post(`${GATEWAY}/background-sessions`, {
     headers,
-    data: { conversationId, text: "tóm tắt nhật ký hôm nay cho thông báo" },
+    data: { conversationId, text: "dọn thư mục tải về cho thông báo" },
   });
   expect(started.ok()).toBe(true);
 
   // The poll that delivers this runs on the same 5-second cadence as the header mark; two cycles is generous.
   await expect
-    .poll(async () => (await shownNotifications(page)).some((entry) => entry.title.includes("tóm tắt nhật ký hôm nay")), {
+    .poll(async () => (await shownNotifications(page)).some((entry) => entry.title.includes("dọn thư mục tải về")), {
       timeout: 20_000,
     })
     .toBe(true);
