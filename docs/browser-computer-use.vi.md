@@ -1,5 +1,7 @@
 # Browser Use & Computer Use — Decision and Driver Architecture
 
+> [English](browser-computer-use.md) (mặc định) · Tiếng Việt
+
 **Ngày:** 16/09/2026. Browser Use là capability chung; project `browser-use` là một implementation có thể dùng. Không đồng nhất hai nghĩa.
 
 ## 1. Quyết định: core quản trị, packs thực thi

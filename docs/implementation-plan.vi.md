@@ -1,5 +1,7 @@
 # Implementation Plan v2 — Desktop + Headless Runtime Foundation
 
+> [English](implementation-plan.md) (mặc định) · Tiếng Việt
+
 **Ngày:** 16/09/2026 · **Release mục tiêu:** v0.2 foundation beta.
 **Đây là kế hoạch**, chưa có app, provider smoke, signing, VPS deployment hoặc benchmark nào được xác nhận trong bộ tài liệu.
 

@@ -1,5 +1,7 @@
 # Scope Lock v2 — Conversation-first, runtime-anywhere
 
+> [English](scope-lock.md) (mặc định) · Tiếng Việt
+
 **Ngày:** 16/09/2026 · **Release mục tiêu:** v0.2 foundation beta. “v2” là phiên bản blueprint, không phải phiên bản phần mềm đã phát hành.
 
 ## 1. North star

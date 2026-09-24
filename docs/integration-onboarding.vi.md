@@ -1,5 +1,7 @@
 # Conversational Integrations, Installation & Onboarding
 
+> [English](integration-onboarding.md) (mặc định) · Tiếng Việt
+
 **Baseline:** v2, 16/09/2026. Goal: người dùng giao việc; hệ thống xử lý capability discovery, setup và lifecycle ở phía sau, với consent đúng lúc.
 
 ## 1. Không bắt user phân biệt API, MCP và Pi extension

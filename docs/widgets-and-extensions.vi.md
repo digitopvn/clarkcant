@@ -1,5 +1,7 @@
 # Widgets, Mini-apps, Pins & Extension SDK v2
 
+> [English](widgets-and-extensions.md) (mặc định) · Tiếng Việt
+
 **Ngày:** 16/09/2026. Đây là contract đề xuất của app, không phải upstream Pi/MCP wire schema.
 
 ## 1. Định nghĩa lại widget

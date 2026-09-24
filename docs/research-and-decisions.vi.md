@@ -1,5 +1,7 @@
 # Research & Architecture Decisions
 
+> [English](research-and-decisions.md) (mặc định) · Tiếng Việt
+
 **Kiểm chứng:** 16/09/2026, tài liệu upstream chính thức. **Chưa thực hiện:** chạy codebase, cài các packages vào sản phẩm, live OAuth/voice/desktop-driver benchmarks hoặc certify vendor integrations. URL `latest`/branch `main` có thể thay đổi; P0 phải pin exact versions/commits đã chạy thử.
 
 ## 1. Kết quả nghiên cứu ảnh hưởng trực tiếp tới scope

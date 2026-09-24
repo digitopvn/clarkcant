@@ -1,5 +1,7 @@
 # Distributed Runtime & Deployment
 
+> [English](distributed-runtime.md) (mặc định) · Tiếng Việt
+
 **Baseline:** blueprint v2, 16/09/2026. NodeLink là protocol đề xuất cho các installation của app. Không tuyên bố Pi hoặc A2A đã cung cấp mọi semantics này.
 
 ## 1. Mô hình cộng tác: nodes tự chủ, conversation thống nhất

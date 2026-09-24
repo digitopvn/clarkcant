@@ -1,5 +1,7 @@
 # ClarkCant Widget Developer Standard
 
+> [English](widget-development.md) (mặc định) · Tiếng Việt
+
 > Trạng thái: canonical authoring target cho widget ecosystem.
 > Cập nhật: 2026-09-19.
 > Áp dụng cho built-in catalog, declarative compositions, isolated widgets và MCP Apps.
