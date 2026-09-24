@@ -56,6 +56,11 @@ describe("the generated stylesheet", () => {
     }
   });
 
+  it("gives the reduced-motion override the same selectors as the theme blocks, so it is not outranked", () => {
+    const media = CSS.split("@media (prefers-reduced-motion: reduce) {")[1] ?? "";
+    expect(media).toMatch(/^\s*:root,\s*:root\[data-cc-theme\],\s*\[data-cc-theme\] \{/);
+  });
+
   it("carries both themes, so switching one for the other needs no reload", () => {
     expect(CSS).toContain('[data-cc-theme="dark"]');
     expect(CSS).toContain('[data-cc-theme="light"]');

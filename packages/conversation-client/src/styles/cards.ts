@@ -88,7 +88,7 @@ button.cc-badge:hover, .cc-badge[role="button"]:hover { color: var(--cc-text); b
 .cc-chart .datum:hover .bar { fill: color-mix(in oklab, var(--cc-accent) 80%, var(--cc-text)); }
 
 /* Note */
-.cc-note-input, .cc-note-area {
+.cc-note-area {
   width: 100%; background: var(--cc-elevated); color: var(--cc-text);
   border: 1px solid var(--cc-border); border-radius: var(--cc-radius-badge);
   padding: var(--cc-space-sm); font: inherit;
@@ -96,8 +96,8 @@ button.cc-badge:hover, .cc-badge[role="button"]:hover { color: var(--cc-text); b
 .cc-note-area { min-height: 120px; resize: vertical; line-height: var(--cc-leading-body-md); }
 .cc-note-area:focus-visible { outline: 2px solid var(--cc-focus); outline-offset: 1px; }
 .cc-note-meta[data-note-status="draft"] { color: var(--cc-warning); }
-.cc-note-meta[data-note-status="saved"] { color: var(--cc-success); }
 .cc-note-meta[data-note-status="conflict"] { color: var(--cc-danger); }
+/* "saved" stays muted: the save is optimistic until the host confirms it, so it is not shown as a success. */
 .cc-note-meta { font-size: var(--cc-text-label); color: var(--cc-text-muted); }
 
 /* Pin shelf */

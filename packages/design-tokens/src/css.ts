@@ -98,7 +98,12 @@ export function tokensToCss(theme: ThemeName): string {
  * component that animates at 1ms is not the same as one that does not animate.
  */
 export function themeStylesheet(): string {
-  const media = `@media (prefers-reduced-motion: reduce) {\n  :root {\n${Object.entries(
+  /*
+   * The selectors repeat the theme block's, so the override matches its specificity and, coming later, wins. With
+   * `:root` alone (0,1,0) the theme block (0,2,0) kept the full durations, and a person who asked the OS for reduced
+   * motion still got every transition.
+   */
+  const media = `@media (prefers-reduced-motion: reduce) {\n  :root,\n  :root[data-cc-theme],\n  [data-cc-theme] {\n${Object.entries(
     MOTION_REDUCED,
   )
     .map(([name, value]) => `    --cc-motion-${name}: ${value};`)

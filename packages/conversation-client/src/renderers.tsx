@@ -11,7 +11,17 @@ import {
 import { donutSlices, monthGrid } from "@clarkcant/contracts";
 
 import type { ResolvedDataset } from "./api.ts";
-import { formatTick, labelStride, niceTicks } from "./chart-layout.ts";
+import {
+  CHART_HEIGHT,
+  CHART_PAD,
+  type ChartGeometry,
+  chartGeometry,
+  type ChartPoint,
+  chartPoints,
+  formatTicks,
+  labelStride,
+  valueLabelShown,
+} from "./chart-layout.ts";
 import { vendorEmbedUrl } from "./media-embed.ts";
 import { useT } from "./i18n/locale-context.tsx";
 import type { MessageKey } from "./i18n/messages.ts";
@@ -142,10 +152,6 @@ function Unavailable({ reason }: { reason: string }): ReactElement {
   );
 }
 
-function numeric(rows: Record<string, unknown>[], key: string): number[] {
-  return rows.map((row) => Number(row[key])).filter((value) => Number.isFinite(value));
-}
-
 function label(row: Record<string, unknown>, preferred: string[]): string {
   for (const key of preferred) {
     const value = row[key];
@@ -184,58 +190,28 @@ function useMeasuredWidth(fallback: number): [(element: HTMLElement | null) => v
   return [ref, width];
 }
 
-const CHART_HEIGHT = 180;
-/** Room for the value axis on the left and the category labels underneath. */
-const CHART_PAD = { left: 36, right: 12, top: 18, bottom: 24 } as const;
-
-interface ChartGeometry {
-  width: number;
-  plotWidth: number;
-  plotHeight: number;
-  ticks: number[];
-  top: number;
-  scaleY: (value: number) => number;
-}
-
-function chartGeometry(width: number, values: number[]): ChartGeometry {
-  const max = Math.max(...values, 0);
-  const min = Math.min(...values, 0);
-  // Gridlines are drawn from zero up; a series with negative values keeps a plain baseline instead of a
-  // scale that would put its lowest point outside the plot.
-  const ticks = min < 0 ? [] : niceTicks(max);
-  const top = ticks.at(-1) ?? Math.max(max, 1);
-  const bottom = min < 0 ? min : 0;
-  const plotHeight = CHART_HEIGHT - CHART_PAD.top - CHART_PAD.bottom;
-  return {
-    width,
-    plotWidth: Math.max(width - CHART_PAD.left - CHART_PAD.right, 1),
-    plotHeight,
-    ticks,
-    top,
-    scaleY: (value) => CHART_PAD.top + plotHeight - ((value - bottom) / Math.max(top - bottom, 1e-9)) * plotHeight,
-  };
-}
-
 function ChartGrid({ geometry }: { geometry: ChartGeometry }): ReactElement {
-  const baseline = CHART_PAD.top + geometry.plotHeight;
+  const labels = formatTicks(geometry.ticks);
   return (
     <g aria-hidden="true">
-      {geometry.ticks.map((tick) => (
+      {geometry.ticks.map((tick, index) => (
         <g key={tick}>
           <line className="grid" x1={CHART_PAD.left} x2={geometry.width - CHART_PAD.right} y1={geometry.scaleY(tick)} y2={geometry.scaleY(tick)} />
           <text className="label" x={CHART_PAD.left - 6} y={geometry.scaleY(tick)} textAnchor="end" dominantBaseline="middle">
-            {formatTick(tick)}
+            {labels[index]}
           </text>
         </g>
       ))}
-      <line className="axis" x1={CHART_PAD.left} y1={baseline} x2={geometry.width - CHART_PAD.right} y2={baseline} />
+      <line className="axis" x1={CHART_PAD.left} y1={geometry.zero} x2={geometry.width - CHART_PAD.right} y2={geometry.zero} />
     </g>
   );
 }
 
-function chartSummary(rows: Record<string, unknown>[], values: number[]): string {
-  return values.map((value, index) => `${label(rows[index] ?? {}, ["week"])}: ${value}`).join(", ");
+function chartSummary(points: ChartPoint[]): string {
+  return points.map((point) => `${point.label}: ${point.value}`).join(", ");
 }
+
+const CATEGORY_KEYS = ["week", "name", "label"];
 
 function LineChart({ props, dataset }: RendererProps): ReactElement {
   const t = useT();
@@ -255,17 +231,16 @@ function LineChart({ props, dataset }: RendererProps): ReactElement {
       ? "runs"
       : Object.keys(dataset.rows[0] ?? {}).find((key) => typeof dataset.rows[0]?.[key] === "number") ?? "value";
 
-  const values = numeric(dataset.rows, seriesKey);
+  const points = chartPoints(dataset.rows, seriesKey, (row) => label(row, CATEGORY_KEYS));
+  const values = points.map((point) => point.value);
   const geometry = chartGeometry(width, values);
   // Inset from both edges, so the first value label clears the value axis and the last one the card edge.
   const inset = Math.min(18, geometry.plotWidth / 4);
   const step = values.length > 1 ? (geometry.plotWidth - inset * 2) / (values.length - 1) : 0;
   const x = (index: number): number => CHART_PAD.left + (values.length > 1 ? inset + index * step : geometry.plotWidth / 2);
   const stride = labelStride(values.length, geometry.plotWidth);
-  const baseline = CHART_PAD.top + geometry.plotHeight;
-
   const line = values.map((value, index) => `${index === 0 ? "M" : "L"} ${x(index)} ${geometry.scaleY(value)}`).join(" ");
-  const area = values.length > 1 ? `${line} L ${x(values.length - 1)} ${baseline} L ${x(0)} ${baseline} Z` : "";
+  const area = values.length > 1 ? `${line} L ${x(values.length - 1)} ${geometry.zero} L ${x(0)} ${geometry.zero} Z` : "";
 
   return (
     <Frame title={title} dataset={dataset} role="chart">
@@ -275,9 +250,8 @@ function LineChart({ props, dataset }: RendererProps): ReactElement {
             <ChartGrid geometry={geometry} />
             {area !== "" && <path className="area" d={area} />}
             <path className="series" d={line} />
-            {values.map((value, index) => {
-              const rowLabel = label(dataset.rows[index] ?? {}, ["week", "name", "label"]);
-              const shown = index % stride === 0 || index === values.length - 1;
+            {points.map(({ label: rowLabel, value }, index) => {
+              const shown = valueLabelShown(index, points.length, stride);
               return (
                 <g key={index} className="datum">
                   <circle className="point" cx={x(index)} cy={geometry.scaleY(value)} r={3.5}>
@@ -300,7 +274,7 @@ function LineChart({ props, dataset }: RendererProps): ReactElement {
         </div>
         {/* The text alternative stays in the DOM for screen readers and for the E2E check. */}
         <span className="cc-sr-only" data-chart-summary="true">
-          {chartSummary(dataset.rows, values)}
+          {chartSummary(points)}
         </span>
         <TextAlternative rows={dataset.rows} />
       </>
@@ -322,12 +296,13 @@ function BarChart({ props, dataset }: RendererProps): ReactElement {
 
   const seriesKey =
     Object.keys(dataset.rows[0] ?? {}).find((key) => typeof dataset.rows[0]?.[key] === "number") ?? "value";
-  const values = numeric(dataset.rows, seriesKey);
+  const points = chartPoints(dataset.rows, seriesKey, (row) => label(row, CATEGORY_KEYS));
+  const values = points.map((point) => point.value);
   const geometry = chartGeometry(width, values);
   const slot = geometry.plotWidth / Math.max(values.length, 1);
   const barWidth = Math.min(Math.max(slot * 0.6, 6), 56);
   const stride = labelStride(values.length, geometry.plotWidth);
-  const zero = geometry.scaleY(0);
+  const zero = geometry.zero;
 
   return (
     <Frame title={title} dataset={dataset} role="chart">
@@ -335,8 +310,7 @@ function BarChart({ props, dataset }: RendererProps): ReactElement {
         <div ref={measure} className="cc-chart-box">
           <svg className="cc-chart" viewBox={`0 0 ${width} ${CHART_HEIGHT}`} role="img" aria-label={`${title}: ${seriesKey}`}>
             <ChartGrid geometry={geometry} />
-            {values.map((value, index) => {
-              const rowLabel = label(dataset.rows[index] ?? {}, ["week", "name", "label"]);
+            {points.map(({ label: rowLabel, value }, index) => {
               const y = geometry.scaleY(value);
               const center = CHART_PAD.left + index * slot + slot / 2;
               return (
@@ -367,7 +341,7 @@ function BarChart({ props, dataset }: RendererProps): ReactElement {
           </svg>
         </div>
         <span className="cc-sr-only" data-chart-summary="true">
-          {chartSummary(dataset.rows, values)}
+          {chartSummary(points)}
         </span>
         <TextAlternative rows={dataset.rows} />
       </>
@@ -394,9 +368,13 @@ function DataTable({ props, dataset, onAction }: RendererProps): ReactElement {
 
   const columns = dataset.rows[0] === undefined ? [] : Object.keys(dataset.rows[0]);
   const rows = dataset.rows;
-  // A column is numeric when every present value is a number; numbers align right so digits line up.
+  // A column is numeric when it has a number and every present value is one; numbers align right so digits line up.
   const numericColumns = new Set(
-    columns.filter((column) => rows.every((row) => row[column] === undefined || row[column] === null || typeof row[column] === "number")),
+    columns.filter(
+      (column) =>
+        rows.some((row) => typeof row[column] === "number") &&
+        rows.every((row) => row[column] === undefined || row[column] === null || typeof row[column] === "number"),
+    ),
   );
 
   return (
@@ -652,6 +630,8 @@ function TextAlternative({ rows }: { rows: Record<string, unknown>[] }): ReactEl
   return (
     <details className="cc-text-alt">
       <summary>{t("widgets.textAlternative.summary")}</summary>
+      {/* Scroll-contained like the data table, so a wide dataset cannot widen the conversation once expanded. */}
+      <div className="cc-table-scroll" role="region" aria-label={t("widgets.textAlternative.summary")} tabIndex={0}>
       <table className="cc-table">
         <thead>
           <tr>
@@ -672,6 +652,7 @@ function TextAlternative({ rows }: { rows: Record<string, unknown>[] }): ReactEl
           ))}
         </tbody>
       </table>
+      </div>
     </details>
   );
 }
