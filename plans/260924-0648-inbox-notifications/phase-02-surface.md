@@ -1,6 +1,6 @@
 ---
 phase: 2
-title: Giao diện — dấu header, popover, lệnh mở, mở hội thoại khác
+title: Giao diện — dấu header, modal, lệnh mở, mở hội thoại khác
 status: done
 ---
 

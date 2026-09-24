@@ -1,6 +1,6 @@
 ---
 title: Hộp thư — thông báo và việc đang chờ người dùng
-status: in-progress
+status: done
 created: 2026-09-24
 branch: claude/sleepy-mccarthy-ys493l
 ---
@@ -22,7 +22,7 @@ Người dùng thấy một dấu trên header **chỉ khi có gì đó** (đế
 
 ## Ràng buộc
 
-- Mô hình tinh thần vẫn là **một hội thoại, một Clark**. Hộp thư là surface phụ (popover), không phải
+- Mô hình tinh thần vẫn là **một hội thoại, một Clark**. Hộp thư là surface phụ (modal host-owned — là bề mặt quyết định, và modal không lồng nhau), không phải
   sidebar, dashboard hay trình chọn phiên. Mở hội thoại khác từ một mục là *con trỏ tới nơi việc xảy ra*,
   không phải danh sách hội thoại.
 - **Việc đang chờ là dữ liệu suy ra, không lưu.** Approval nằm ở bảng `approvals` + thẻ trong transcript;
@@ -36,9 +36,9 @@ Người dùng thấy một dấu trên header **chỉ khi có gì đó** (đế
   gửi kèm digest đã hiển thị). Duyệt quyền gói đi đúng route Settings dùng. Không có đường duyệt thứ hai.
   Digest được mang theo nhưng không hiển thị.
 - Tiêu đề/nội dung thông báo được redact và cắt độ dài trước khi lưu; không bao giờ chứa secret.
-- Không tuyên bố dữ liệu là live: popover ghi rõ thời điểm đọc; poll 5 giây như dấu việc nền.
+- Không tuyên bố dữ liệu là live: hộp thư ghi rõ thời điểm đọc; poll 5 giây như dấu việc nền.
 - Chưa đọc được đánh dấu bằng chấm **và** chữ, không chỉ bằng màu.
-- Motion dùng token/helper chung (`popover`), Escape đóng và trả focus, reduced-motion vẫn dùng được.
+- Motion dùng token chung (chỉ transform), Escape đóng và trả focus, reduced-motion vẫn dùng được.
 
 ## Không làm (tạo follow-up issue)
 
@@ -68,22 +68,23 @@ POST /inbox/notices/:id/dismiss                     (ẩn một thông báo)
 | Suy ra việc chờ | `apps/runtime/src/inbox.ts` — gom approval lệnh, quyền gói, câu hỏi |
 | HTTP | `apps/runtime/src/routes/inbox.ts` |
 | Producer | `routes/conversations.ts` (`startBackgroundWork`), `bootstrap/runtime-bootstrap.ts` (`onSettled`) |
-| Tool agent | `read_inbox` trong `apps/runtime/src/node-tools.ts`; `inbox.open` trong `control_app` |
+| Tool agent | `read_inbox` trong `apps/runtime/src/read-inbox-tool.ts` (đăng ký ở `node-tools.ts`); `inbox.open` trong `control_app` |
 | App intent | `inbox.open` ở contracts/core/client, cụm "mở hộp thư", "open inbox" |
-| UI | `packages/conversation-client/src/inbox/*` — dấu header + popover; `apps/web/src/App.tsx` mở hội thoại khác |
+| UI | `packages/conversation-client/src/inbox/*` — dấu header + modal; `apps/web/src/App.tsx` mở hội thoại khác |
 
 ### Việc đang chờ được suy ra thế nào
 
 - **Quyền gói**: `listPendingCapabilityApprovals` (đã lọc gói còn active và chưa hết hạn).
 - **Lệnh**: hàng `approvals` `pending`, chưa hết hạn, không có `task_id`, không phải digest quyền gói.
-  Hội thoại của nó tìm bằng thẻ `approval-card` mang `approvalId` đó trong các tin nhắn tạo sau
-  `requested_at` sớm nhất — thẻ là nơi payload sống, nên approval không có thẻ thì không duyệt được và bị bỏ.
+  Hội thoại của nó tìm bằng thẻ `approval-card` mang `approvalId` đó trong 2000 tin nhắn mới nhất (theo `rowid`;
+  tin chứa thẻ được đóng dấu *trước* `requested_at`, nên không thể quét từ mốc đó) — thẻ là nơi payload sống,
+  nên approval không có thẻ thì không duyệt được và bị bỏ.
 - **Câu hỏi**: `pendingForConversation` cho các hội thoại có `question-card` trong cửa sổ `QUESTION_TTL_MS`.
 
 ## Phases
 
 1. [Backend: contract, bảng, suy ra việc chờ, route, producer, tool](phase-01-backend.md)
-2. [Giao diện: dấu header, popover, lệnh mở, mở hội thoại khác](phase-02-surface.md)
+2. [Giao diện: dấu header, modal, lệnh mở, mở hội thoại khác](phase-02-surface.md)
 3. [Tài liệu, kiểm chứng, PR và follow-up](phase-03-docs-verify.md)
 
 ## Tiêu chí chấp nhận
@@ -93,6 +94,6 @@ POST /inbox/notices/:id/dismiss                     (ẩn một thông báo)
 - Lệnh chờ duyệt ở hội thoại A hiện trong hộp thư khi đang mở hội thoại B; Duyệt/Từ chối từ hộp thư cho kết
   quả giống bấm thẻ; mục biến mất khi đã quyết định ở bất cứ đâu.
 - Dấu header vắng mặt khi không có gì; xuất hiện với số đếm khi có.
-- "mở hộp thư" / "open inbox" mở popover; "mở thư viện ảnh", "tắt thông báo lỗi" không bị coi là lệnh sai.
-- Escape đóng popover và trả focus về nút; bàn phím đi hết được; màn hình hẹp không tràn.
+- "mở hộp thư" / "open inbox" mở hộp thư; "mở thư viện ảnh", "tắt thông báo lỗi" không bị coi là lệnh sai.
+- Escape đóng hộp thư và trả focus về nút; bàn phím đi hết được; màn hình hẹp không tràn.
 - `pnpm verify` và e2e hộp thư qua.
