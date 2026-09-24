@@ -35,6 +35,8 @@ interface CliOptions {
   allowPublicBind: boolean;
   /** When set, the node listens on a Unix socket instead of a port. */
   socket: string | undefined;
+  /** When false, `./.env` is not read, so the node sees only the environment it was started with. */
+  readEnvFile: boolean;
 }
 
 function parseArgs(argv: string[]): CliOptions {
@@ -49,6 +51,7 @@ function parseArgs(argv: string[]): CliOptions {
     label: get("label") ?? "local runtime",
     allowPublicBind: argv.includes("--allow-public-bind"),
     socket: get("socket"),
+    readEnvFile: !argv.includes("--no-env-file"),
   };
 }
 
@@ -74,9 +77,15 @@ async function main(): Promise<void> {
   // variable already present in the environment wins, so a deployment that sets the real
   // secret does not have it replaced by a file in the checkout. Only the names taken are
   // reported; no value is ever written to a log.
-  const envFile = applyEnvFile(join(process.cwd(), ".env"), process.env, (path) => readFileSync(path, "utf8"));
-  if (envFile.loaded.length > 0) {
-    process.stderr.write(`read ${envFile.loaded.length} variable(s) from .env: ${envFile.loaded.join(", ")}\n`);
+  //
+  // `--no-env-file` skips the file entirely. A harness that starts the node from the checkout (the browser suite) needs
+  // the node to see exactly the environment it was handed: the file fills variables that are unset *or blank*, so a
+  // harness that blanks a provider key would otherwise have it filled back in from a developer's local `.env`.
+  if (options.readEnvFile) {
+    const envFile = applyEnvFile(join(process.cwd(), ".env"), process.env, (path) => readFileSync(path, "utf8"));
+    if (envFile.loaded.length > 0) {
+      process.stderr.write(`read ${envFile.loaded.length} variable(s) from .env: ${envFile.loaded.join(", ")}\n`);
+    }
   }
 
   // Filled after the node boots. The catalog is built from widget dependencies that only exist
