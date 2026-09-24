@@ -77,9 +77,17 @@ test("refusing runs nothing and says so", async ({ page }) => {
   await openApp(page);
   await propose(page);
 
-  await page.locator('[data-host-card="approval"]').first().locator("[data-deny]").click();
+  const card = page.locator('[data-host-card="approval"]').first();
+  await card.locator("[data-deny]").click();
 
-  await expect(page.locator("text=Đã từ chối")).toBeVisible({ timeout: 20_000 });
+  const refusal = page.locator('[data-tool-name="decide_approval"]').first();
+  await expect(refusal).toBeVisible({ timeout: 20_000 });
+  await expect(refusal).toContainText("Đã từ chối");
   // Nothing ran, so there is no receipt to find.
   await expect(page.locator('[data-tool-name="run_command"]')).toHaveCount(0);
+
+  // The card says which way it went and stops offering either button, as it does after an approval.
+  await expect(card.locator("[data-approve]")).toHaveCount(0);
+  await expect(card.locator("[data-deny]")).toHaveCount(0);
+  await expect(card.locator('[data-approval-decision="denied"]')).toHaveText("đã từ chối");
 });

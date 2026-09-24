@@ -1371,9 +1371,23 @@ export async function decideApprovalForNode(
   if (!decided.ok) return { ok: false, code: decided.code, message: decided.message };
 
   if (input.decision === "denied") {
+    // A record rather than a sentence, because the card reads its decision from the transcript: a refusal written
+    // only as text left the card offering Approve and Deny again after it had been denied.
+    const refused = "Đã từ chối chạy lệnh đó. Không có gì được chạy.";
     appendHostReply(services, {
       conversationId: input.conversationId,
-      text: "Đã từ chối chạy lệnh đó. Không có gì được chạy.",
+      blocks: [
+        {
+          type: "tool-activity",
+          toolCallId: `deny-${input.approvalId}`,
+          name: "decide_approval",
+          label: refused,
+          status: "done",
+          args: { approvalId: input.approvalId, decision: "denied" },
+          startedAt: input.at,
+          endedAt: input.at,
+        },
+      ],
       at: input.at,
     });
     return { ok: true };

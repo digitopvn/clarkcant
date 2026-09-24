@@ -432,6 +432,8 @@ export interface BlockActions {
    * here instead of inviting a second press that the node would refuse.
    */
   decidedApprovals?: readonly string[];
+  /** The decided approvals whose record says they were refused, so the card can say which way it went. */
+  deniedApprovals?: readonly string[];
   /**
    * Post an answer to a question card.
    *
@@ -757,6 +759,7 @@ export function ApprovalCardBlock({
   const payload = typeof block.payload === "string" ? block.payload : undefined;
   const deciding = actions?.decidingApprovalId === approvalId && approvalId !== "";
   const decided = approvalId !== "" && actions?.decidedApprovals?.includes(approvalId) === true;
+  const denied = decided && actions?.deniedApprovals?.includes(approvalId) === true;
   const canDecide = decision === "pending" && !decided && approvalId !== "" && actions?.onApprovalDecide !== undefined;
 
   return (
@@ -805,8 +808,8 @@ export function ApprovalCardBlock({
             </button>
           </div>
         ) : (
-          <span className="cc-badge" data-approval-decision={decided ? "answered" : decision}>
-            {decided ? t("blocks.approval.decided") : decision}
+          <span className="cc-badge" data-approval-decision={denied ? "denied" : decided ? "answered" : decision}>
+            {denied ? t("blocks.approval.denied") : decided ? t("blocks.approval.decided") : decision}
           </span>
         )}
       </div>

@@ -729,8 +729,13 @@ describe("a command runs only when the user approves the one that was displayed"
 
     expect(response.status).toBe(200);
     const blocks = blocksOf(response);
-    expect(blocks.some((block) => block.type === "tool-activity")).toBe(false);
-    expect(JSON.stringify(blocks)).toContain("Đã từ chối");
+    // Nothing ran, so there is no command receipt and no exit status to show.
+    expect(blocks.some((block) => block.type === "tool-activity" && block.name === "run_command")).toBe(false);
+    expect(blocks.some((block) => block.type === "evidence")).toBe(false);
+    // The refusal is a record carrying the approval id, which is what lets the card stop offering its buttons.
+    const refusal = blocks.find((block) => block.type === "tool-activity" && block.name === "decide_approval");
+    expect(refusal?.args).toEqual({ approvalId: approval.approvalId, decision: "denied" });
+    expect(String(refusal?.label)).toContain("Đã từ chối");
   });
 });
 
