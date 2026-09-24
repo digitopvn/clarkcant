@@ -20,8 +20,13 @@
     },
     {
       "path": "README.md",
-      "bytes": 7689,
-      "sha256": "1674a4f4e92ed4c935edf41ac1da3fea6d164ca97f6eb8af176e53ddf127f0ba"
+      "bytes": 7178,
+      "sha256": "fed90a8498a03110525a1a2b9c6525903fb7f5e61ed2e9a2195734fe23be1298"
+    },
+    {
+      "path": "README.vi.md",
+      "bytes": 7750,
+      "sha256": "0a3b40b1a8eab139f74b2739bffe0ac45ebb5a5c310e54b128f1cdc824fb3435"
     },
     {
       "path": "browser-computer-use.md",
@@ -75,8 +80,13 @@
     },
     {
       "path": "platform-smoke.md",
-      "bytes": 3641,
-      "sha256": "ab28bd80c30fe9d73430a457d4c7b3b0922dac7c9757891b60f0189b742de379"
+      "bytes": 3347,
+      "sha256": "dd87f82a2302470853b399367f677affd83d944221f07d2ef76b136d6940720a"
+    },
+    {
+      "path": "platform-smoke.vi.md",
+      "bytes": 3707,
+      "sha256": "6b6be2a86c0a357502c2cea4a15c812274e7a40581f05b30dee41b02372abce0"
     },
     {
       "path": "research-and-decisions.md",

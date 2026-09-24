@@ -26,7 +26,7 @@ Test: `apps/runtime/test/open-interfaces.spec.ts`, `apps/cli/test/cli.spec.ts`.
 ## Kết nối
 
 - URL mặc định `http://127.0.0.1:8765`. Node chỉ bind loopback trừ khi chạy với `--allow-public-bind`, và khi đó phải
-  có TLS phía trước (xem [cài đặt](installation.md)).
+  có TLS phía trước (xem [cài đặt](installation.vi.md)).
 - Mọi route trừ `/health`, `/.well-known/clarkcant.json` và `/openapi.json` đều cần `Authorization: Bearer <token>`.
   Token là `localToken` trong `<data-dir>/identity.json` (mặc định `~/.clarkcant`, Docker `/data/identity.json`).
   Thiếu token và sai token nhận cùng một `401 UNAUTHENTICATED`.
