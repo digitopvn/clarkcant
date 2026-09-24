@@ -75,7 +75,8 @@ part of the stable description and may change.
 **No approval tool, on purpose.** An approval is the person's decision about something an agent wants to do; an MCP
 tool for it would let an AI client approve its own guarded action. Approvals stay on the person's own surfaces, and
 the generic relays (a WebSocket `request` frame, `clarkcant api`) and MCP refuse every route that records a person's
-decision with `403 PERSON_ONLY` for the same reason: approving a guarded action, deciding a package capability,
+decision with `403 PERSON_ONLY` for the same reason: approving a guarded action (on a card, or one a running task
+raised), deciding a package capability,
 confirming an app intent, trusting a paired peer and issuing a grant. Stop, answering a question and reading stay
 available. The discovery document lists this under `personDecisions`.
 
