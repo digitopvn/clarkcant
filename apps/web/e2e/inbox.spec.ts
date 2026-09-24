@@ -72,13 +72,22 @@ async function drainWaiting(page: Page): Promise<void> {
   }
 }
 
+/** How many items the node says are waiting, read as the header mark reads them. */
+async function waitingCount(page: Page): Promise<number> {
+  const response = await page.request.get(`${GATEWAY}/inbox/summary`, { headers: { authorization: `Bearer ${token()}` } });
+  return ((await response.json()) as { waiting: number }).waiting;
+}
+
 test("a pending approval raises the mark, and denying it from the inbox answers in its conversation", async ({ page }) => {
   await openApp(page);
+  const before = await waitingCount(page);
   const approvalId = await propose(page);
 
-  // The mark says something is waiting, and it is the one way to the inbox by pointer.
+  // The mark says something is waiting, and it is the one way to the inbox by pointer. It counts this approval, not
+  // whatever an earlier spec left behind.
   const mark = page.locator("[data-inbox-mark]");
   await expect(mark).toHaveAttribute("data-inbox-mark", "waiting", { timeout: 10_000 });
+  await expect.poll(async () => Number((await mark.getAttribute("data-inbox-waiting")) ?? "0"), { timeout: 10_000 }).toBe(before + 1);
   await mark.click();
 
   const dialog = page.getByRole("dialog");
@@ -145,6 +154,8 @@ test("a typed command opens the same inbox, and Escape hands focus back", async 
 
   await page.keyboard.press("Escape");
   await expect(dialog).toHaveCount(0);
+  // Opened by typing, closing hands focus back to where the typing was.
+  await expect.poll(() => page.evaluate(() => document.activeElement?.hasAttribute("data-composer") ?? false)).toBe(true);
 
   // Opened from the mark by keyboard, closing returns focus to the mark rather than dropping it on the page.
   const mark = page.locator("[data-inbox-mark]");
@@ -175,6 +186,9 @@ test("the inbox fits a narrow window and works with reduced motion", async ({ pa
   const dialog = page.getByRole("dialog");
   const deny = dialog.locator(`[data-inbox-deny="${approvalId}"]`);
   await expect(deny).toBeVisible({ timeout: 10_000 });
+  // Open, the panel does not push the page sideways either.
+  const openOverflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
+  expect(openOverflow).toBeLessThanOrEqual(0);
   const box = await deny.boundingBox();
   expect(box).not.toBeNull();
   expect((box?.x ?? 0) + (box?.width ?? 0)).toBeLessThanOrEqual(390);
@@ -199,7 +213,19 @@ test("background work that finishes leaves a notice, and the notice leads back t
   });
   expect(started.ok()).toBe(true);
 
-  // The work ends while nobody is looking at it; the header is where that becomes visible.
+  // The work ends while nobody is looking at it; the node has the notice before the header is asked about it.
+  await expect
+    .poll(
+      async () => {
+        const inbox = (await (await page.request.get(`${GATEWAY}/inbox`, { headers })).json()) as {
+          notices: Array<{ conversationId?: string }>;
+        };
+        return inbox.notices.some((notice) => notice.conversationId === conversationId);
+      },
+      { timeout: 20_000 },
+    )
+    .toBe(true);
+  // And the header is where that becomes visible.
   const mark = page.locator("[data-inbox-mark]");
   await expect.poll(async () => Number((await mark.getAttribute("data-inbox-unread")) ?? "0"), { timeout: 20_000 }).toBeGreaterThan(0);
   await mark.click();
@@ -224,6 +250,49 @@ test("background work that finishes leaves a notice, and the notice leads back t
   // Reopened, the notice has been read — the panel marked what it showed — and dismissing it removes it.
   const again = page.getByRole("dialog").locator("[data-inbox-notice]").filter({ hasText: "tóm tắt nhật ký hôm nay" });
   await expect(again).toHaveAttribute("data-unread", "false", { timeout: 10_000 });
+  // The panel marked everything it showed, so nothing is new any more and the mark stops saying so.
+  await expect
+    .poll(async () => ((await (await page.request.get(`${GATEWAY}/inbox/summary`, { headers })).json()) as { unread: number }).unread)
+    .toBe(0);
+  await expect.poll(async () => (await page.locator("[data-inbox-mark]").count()) === 0 || (await page.locator("[data-inbox-mark]").getAttribute("data-inbox-unread")) === "0").toBe(true);
   await again.locator("[data-inbox-dismiss]").click();
   await expect(again).toHaveCount(0, { timeout: 10_000 });
+});
+
+test("an approval from another conversation is decided from the inbox without leaving the one on screen", async ({ page }) => {
+  await openApp(page);
+  await drainWaiting(page);
+  const headers = { authorization: `Bearer ${token()}` };
+  const approvalId = await propose(page);
+  const asking = await page.evaluate(() => window.sessionStorage.getItem("cc_conversation"));
+  expect(asking).not.toBeNull();
+
+  // Move to a different conversation, the way reopening the tab on another one would.
+  const created = await page.request.post(`${GATEWAY}/conversations`, { headers, data: { title: "Hội thoại khác" } });
+  expect(created.ok()).toBe(true);
+  const { conversationId: other } = (await created.json()) as { conversationId: string };
+  await page.evaluate((id) => window.sessionStorage.setItem("cc_conversation", id), other);
+  await openApp(page);
+  await expect(page.locator('[data-host-card="approval"]')).toHaveCount(0);
+
+  // The other conversation's approval is in the inbox, with a way back to where it was asked.
+  await page.locator("[data-inbox-mark]").click();
+  const dialog = page.getByRole("dialog");
+  const item = dialog.locator('[data-inbox-waiting-item="command-approval"]').filter({
+    has: page.locator(`[data-inbox-approve="${approvalId}"]`),
+  });
+  await expect(item).toBeVisible({ timeout: 10_000 });
+  await expect(item.locator(`[data-inbox-open-conversation="${asking}"]`)).toBeVisible();
+
+  await item.locator(`[data-inbox-approve="${approvalId}"]`).click();
+  await expect(dialog.locator('[data-inbox-status="done"]')).toContainText("Đã duyệt", { timeout: 30_000 });
+  await page.keyboard.press("Escape");
+
+  // Nothing ran here: the receipt belongs to the conversation that asked.
+  await expect(page.locator('[data-tool-name="run_command"]')).toHaveCount(0);
+  await page.evaluate((id) => window.sessionStorage.setItem("cc_conversation", id ?? ""), asking);
+  await openApp(page);
+  await expect(page.locator('[data-tool-name="run_command"]').first()).toContainText("fixture ran", { timeout: 30_000 });
+  const card = page.locator(`[data-host-card="approval"][data-approval-id="${approvalId}"]`);
+  await expect(card.locator("[data-approve]")).toHaveCount(0);
 });
