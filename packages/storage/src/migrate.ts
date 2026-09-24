@@ -1124,6 +1124,25 @@ export const MIGRATIONS: readonly Migration[] = [
       }
     },
   },
+  {
+    version: 23,
+    name: "package_uninstall_lifecycles",
+    reversible: true,
+    up: (db) => {
+      db.exec(`
+        -- The lifecycle each widget instance had when an uninstall took it offline, so Restore returns
+        -- exactly those instances to exactly those lifecycles. Kept beside the instance rather than in
+        -- its document, which is a strict contract shape that is also served to clients.
+        CREATE TABLE package_uninstall_lifecycles (
+          instance_id       TEXT PRIMARY KEY,
+          package_id        TEXT NOT NULL,
+          lifecycle_before  TEXT NOT NULL,
+          recorded_at       TEXT NOT NULL
+        );
+        CREATE INDEX idx_package_uninstall_lifecycles_package ON package_uninstall_lifecycles(package_id);
+      `);
+    },
+  },
 ];
 
 function readAll<T>(db: Database, sql: string): T[] {

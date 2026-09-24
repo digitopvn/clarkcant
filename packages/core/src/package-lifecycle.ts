@@ -75,28 +75,67 @@ function placeholders(count: number): string {
   return Array.from({ length: count }, () => "?").join(", ");
 }
 
-/** Move every instance of these definitions from one lifecycle to another, keeping the document in step. */
-function moveInstances(
-  deps: InstallDeps,
-  widgetIds: readonly string[],
-  from: (lifecycle: string) => boolean,
-  to: "offline" | "ready",
-): number {
-  if (widgetIds.length === 0) return 0;
-  const rows = allRows<{ instance_id: string; lifecycle: string; document: string }>(
+/**
+ * Instances of these definitions on this node.
+ *
+ * Matched on the definition id rather than `package_digest`: an instance records the digest of the definition it was
+ * created from, which is not the digest of any package generation, so the id is what ties it to the package.
+ */
+function instancesOf(deps: InstallDeps, widgetIds: readonly string[]): { instance_id: string; lifecycle: string; document: string }[] {
+  if (widgetIds.length === 0) return [];
+  return allRows<{ instance_id: string; lifecycle: string; document: string }>(
     deps.db,
     `SELECT instance_id, lifecycle, document FROM widget_instances
       WHERE owner_node_id = ? AND definition_id IN (${placeholders(widgetIds.length)})`,
     deps.nodeId,
     ...widgetIds,
   );
+}
+
+function writeLifecycle(deps: InstallDeps, row: { instance_id: string; document: string }, lifecycle: string): void {
+  const document = parseJson<Record<string, unknown>>(row.document, "widget_instances.document");
+  deps.db
+    .prepare("UPDATE widget_instances SET lifecycle = ?, document = ?, updated_at = ? WHERE instance_id = ?")
+    .run(lifecycle, toJson({ ...document, lifecycle }), deps.now(), row.instance_id);
+}
+
+/** Take the package's widgets offline, remembering the lifecycle each one had, and count those that moved. */
+function takeOffline(deps: InstallDeps, packageId: string, widgetIds: readonly string[]): number {
   let moved = 0;
-  for (const row of rows) {
-    if (!from(row.lifecycle)) continue;
-    const document = parseJson<Record<string, unknown>>(row.document, "widget_instances.document");
+  for (const row of instancesOf(deps, widgetIds)) {
+    if (row.lifecycle === "offline") continue;
     deps.db
-      .prepare("UPDATE widget_instances SET lifecycle = ?, document = ?, updated_at = ? WHERE instance_id = ?")
-      .run(to, toJson({ ...document, lifecycle: to }), deps.now(), row.instance_id);
+      .prepare(
+        `INSERT INTO package_uninstall_lifecycles (instance_id, package_id, lifecycle_before, recorded_at) VALUES (?, ?, ?, ?)
+         ON CONFLICT(instance_id) DO UPDATE SET package_id = excluded.package_id,
+           lifecycle_before = excluded.lifecycle_before, recorded_at = excluded.recorded_at`,
+      )
+      .run(row.instance_id, packageId, row.lifecycle, deps.now());
+    writeLifecycle(deps, row, "offline");
+    moved += 1;
+  }
+  return moved;
+}
+
+/**
+ * Bring back the widgets this package's uninstall took offline, each to the lifecycle it had then.
+ *
+ * An instance that was already offline, or was taken offline some other way, has no record and stays as it is:
+ * Restore undoes the uninstall, not every reason a widget might be offline.
+ */
+function bringBack(deps: InstallDeps, packageId: string, widgetIds: readonly string[]): number {
+  let moved = 0;
+  for (const row of instancesOf(deps, widgetIds)) {
+    const record = oneRow<{ lifecycle_before: string }>(
+      deps.db,
+      "SELECT lifecycle_before FROM package_uninstall_lifecycles WHERE instance_id = ? AND package_id = ?",
+      row.instance_id,
+      packageId,
+    );
+    if (record === undefined) continue;
+    deps.db.prepare("DELETE FROM package_uninstall_lifecycles WHERE instance_id = ?").run(row.instance_id);
+    if (row.lifecycle !== "offline") continue;
+    writeLifecycle(deps, row, record.lifecycle_before);
     moved += 1;
   }
   return moved;
@@ -132,7 +171,7 @@ export function uninstallPackage(
     deps.db
       .prepare("UPDATE package_generations SET superseded_at = ? WHERE generation_id = ?")
       .run(deps.now(), current.generation_id);
-    const offline = moveInstances(deps, input.widgetIds, (lifecycle) => lifecycle !== "offline", "offline");
+    const offline = takeOffline(deps, input.packageId, input.widgetIds);
     return {
       ok: true as const,
       packageId: input.packageId,
@@ -181,7 +220,7 @@ export function restorePackage(
       };
     }
     deps.db.prepare("UPDATE package_generations SET superseded_at = NULL WHERE generation_id = ?").run(target.generation_id);
-    const restored = moveInstances(deps, input.widgetIds, (lifecycle) => lifecycle === "offline", "ready");
+    const restored = bringBack(deps, input.packageId, input.widgetIds);
     return {
       ok: true as const,
       packageId: input.packageId,

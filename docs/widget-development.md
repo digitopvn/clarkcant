@@ -458,7 +458,8 @@ Validate manifest, build immutable artifact, generate digest + metadata.
 Publish package source/artifact rồi submit directory metadata. Directory không phải nơi duy nhất package có thể chạy: local/git source vẫn là first-class development path.
 
 Trước khi ghi entry, publish so các definition với lần chuẩn bị trước (`dist/published-definitions.json`) và
-từ chối version vi phạm quy tắc ở §20.
+từ chối version vi phạm quy tắc ở §20. File này là mốc so sánh nên cần được commit cùng source; nếu đã có
+`dist/directory-entry.json` mà thiếu file này (clone mới, dọn `dist`), publish cảnh báo rằng version chưa được kiểm tra.
 
 ---
 

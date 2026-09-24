@@ -5,6 +5,7 @@ import {
   type AppIntentDecision,
   type AppIntentResolution,
   type AttachmentRef,
+  type DirectoryEntry,
   type Instant,
   type MessageBlock,
   type MessageRecord,
@@ -136,13 +137,24 @@ function locateIsolatedFrame(runtime: { dataDir: string; db: Database; identity:
    * newest listing is not what is installed: the frame must load the code of the active generation, or rolling back
    * would change the label and not the widget.
    */
-  const active = activePackageVersions({ db: runtime.db, nodeId: runtime.identity.nodeId });
+  const node = { db: runtime.db, nodeId: runtime.identity.nodeId };
+  const active = activePackageVersions(node);
+  const activePackages = new Set([...active].map((key) => key.slice(0, key.lastIndexOf("@"))));
+  // A local install is recorded under its path, not the manifest id the directory lists it by.
+  const idsOf = (entry: DirectoryEntry): string[] =>
+    entry.source.kind === "local" ? [entry.packageId, entry.source.path] : [entry.packageId];
+  const isActive = (entry: DirectoryEntry) => idsOf(entry).some((id) => active.has(`${id}@${entry.version}`));
+  const otherVersionActive = (entry: DirectoryEntry) =>
+    !isActive(entry) && idsOf(entry).some((id) => activePackages.has(id));
   const entries = index.kind === "configured" ? index.entries : [];
   return findIsolatedFrame({
-    directory: [
-      ...entries.filter((entry) => active.has(`${entry.packageId}@${entry.version}`)),
-      ...entries.filter((entry) => !active.has(`${entry.packageId}@${entry.version}`)),
-    ],
+    /*
+     * While a version of a package is active, only that version's code runs: after a rollback a definition that exists
+     * only in the newer version has no code here, rather than the retired version's. With no version active (never
+     * installed, or uninstalled) the listing is still what describes the widget, and an offline instance is shown from
+     * it as text.
+     */
+    directory: [...entries.filter(isActive), ...entries.filter((entry) => !isActive(entry) && !otherVersionActive(entry))],
     widgetId,
     // A git/npm entry this node has fetched is served from its cache path exactly like a local package (H1); the
     // cache root here must match the one the install route fetched into.

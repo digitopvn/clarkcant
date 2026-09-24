@@ -164,6 +164,24 @@ describe("restoring an uninstalled package", () => {
     expect(listRestorablePackages(deps)).toEqual([]);
   });
 
+  it("puts each instance back in the lifecycle it had, and leaves alone one that was already offline", () => {
+    const deps = makeDeps();
+    install(deps, "1.0.0");
+    const waiting = createInstance(deps, { definition: DEF, packageDigest: "sha256:1.0.0", ownerPrincipalId: OWNER as never, props: {} });
+    const alreadyOffline = createInstance(deps, { definition: DEF, packageDigest: "sha256:1.0.0", ownerPrincipalId: OWNER as never, props: {} });
+    deps.db.prepare("UPDATE widget_instances SET lifecycle = 'needs_auth' WHERE instance_id = ?").run(waiting.instanceId);
+    deps.db.prepare("UPDATE widget_instances SET lifecycle = 'offline' WHERE instance_id = ?").run(alreadyOffline.instanceId);
+
+    expect(uninstallPackage(deps, { packageId: PACKAGE, widgetIds: [WIDGET] })).toMatchObject({ instancesOffline: 1 });
+    expect(lifecycleOf(deps, waiting.instanceId)).toBe("offline");
+
+    const outcome = restorePackage(deps, { packageId: PACKAGE, widgetIds: [WIDGET], available: always });
+
+    expect(outcome).toMatchObject({ ok: true, instancesRestored: 1 });
+    expect(lifecycleOf(deps, waiting.instanceId)).toBe("needs_auth");
+    expect(lifecycleOf(deps, alreadyOffline.instanceId)).toBe("offline");
+  });
+
   it("restores the version that was uninstalled, not an older one", () => {
     const deps = makeDeps();
     install(deps, "1.0.0");

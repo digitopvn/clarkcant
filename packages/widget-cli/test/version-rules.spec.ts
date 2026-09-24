@@ -62,6 +62,14 @@ describe("version rules", () => {
     expect(problems.some((problem) => problem.includes("no migration step from stateVersion 1"))).toBe(true);
   });
 
+  it("refuses a raised stateVersion whose chain skips the published one, even with the schema unchanged", () => {
+    const problems = check({
+      stateVersion: 3,
+      stateMigrations: [...(base.stateMigrations ?? []), { from: 2, to: 3, ops: [{ op: "remove", key: "old" }] }],
+    });
+    expect(problems).toEqual([expect.stringContaining("no migration step from stateVersion 1")]);
+  });
+
   it("allows a changed stateSchema carried forward by a new migration step", () => {
     expect(
       check({

@@ -431,6 +431,12 @@ function publish(root: string): number {
       for (const violation of violations) process.stderr.write("  " + violation + "\n");
       return 1;
     }
+  } else if (existsSync(entryPath)) {
+    // An entry was prepared before but its definitions are gone (a fresh clone, a cleaned dist): say the rules were
+    // not applied rather than let a pass here read as "this version keeps its promises".
+    process.stderr.write(
+      "warning: " + definitionsPath + " is missing, so this version was not checked against the last one; keep that file under version control.\n",
+    );
   }
   mkdirSync(join(root, "dist"), { recursive: true });
   writeFileSync(entryPath, JSON.stringify(parsed.data, null, 2));

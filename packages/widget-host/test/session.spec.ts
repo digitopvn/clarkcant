@@ -240,6 +240,26 @@ describe("what the host does with an accepted message", () => {
     expect(posted.at(-1)).toMatchObject({ kind: "state", revision: 5, state: { body: "mới", zoom: 2 } });
   });
 
+  it("keeps a write of view-state keys alone in the frame, without a round trip or a new revision", () => {
+    const persisted: unknown[] = [];
+    const { session, posted } = makeSession({
+      state: { body: "cũ", zoom: 1 },
+      stateRevision: 4,
+      ephemeralStateKeys: ["zoom"],
+      persistState: async (input) => {
+        persisted.push(input);
+        return { ok: true, stateRevision: 5, state: {} };
+      },
+    });
+    session.init();
+
+    const result = session.accept(fromFrame({ kind: "state.update", expectedRevision: 4, patch: { zoom: 3 } }));
+
+    expect(result).toMatchObject({ ok: true, detail: "view-only" });
+    expect(persisted).toEqual([]);
+    expect(posted.at(-1)).toMatchObject({ kind: "state", revision: 4, state: { body: "cũ", zoom: 3 } });
+  });
+
   it("answers a refused write with the committed state and the node's reason", async () => {
     const { session, posted } = makeSession({
       state: { body: "cũ" },

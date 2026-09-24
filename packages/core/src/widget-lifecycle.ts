@@ -328,8 +328,12 @@ export function migrateInstanceState(
       steps += 1;
     }
 
+    // The revision moves with the shape: a frame that read the old shape planned its write against the old
+    // revision, so it is refused as stale instead of writing old keys over the migrated document.
     deps.db
-      .prepare("UPDATE widget_state SET document = ?, state_version = ?, updated_at = ? WHERE instance_id = ?")
+      .prepare(
+        "UPDATE widget_state SET document = ?, state_version = ?, state_revision = state_revision + 1, updated_at = ? WHERE instance_id = ?",
+      )
       .run(toJson(current), version, deps.now(), input.instanceId);
     return { ok: true, fromVersion, toVersion: version, steps };
   });

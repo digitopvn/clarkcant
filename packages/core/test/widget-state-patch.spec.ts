@@ -207,12 +207,24 @@ describe("mounting a frame on older state", () => {
     const view = prepareFrameState(deps, { instanceId, definition: DEF });
 
     expect(view).toEqual({
-      stateRevision: 1,
+      stateRevision: 2,
       stateVersion: 2,
       state: { items: ["a", "b"], sort: "oldest" },
       status: { kind: "writable" },
     });
-    expect(write(deps, instanceId, 1, { items: ["a"] })).toMatchObject({ ok: true, stateRevision: 2 });
+    expect(write(deps, instanceId, 2, { items: ["a"] })).toMatchObject({ ok: true, stateRevision: 3 });
+  });
+
+  it("refuses a write from a frame that read the state before it was migrated", () => {
+    const deps = makeDeps();
+    const { instanceId } = makeInstance(deps);
+    initialiseState(deps, { instanceId, body: { todos: ["a"] }, stateVersion: 1 });
+
+    // Another surface mounts the new version and migrates; the old frame still holds revision 1 and the old shape.
+    prepareFrameState(deps, { instanceId, definition: DEF });
+
+    expect(write(deps, instanceId, 1, { todos: ["b"] })).toMatchObject({ ok: false, code: "STATE_REVISION_STALE" });
+    expect(readInstanceState(deps, instanceId)?.body).toEqual({ items: ["a"] });
   });
 
   it("leaves the state untouched and read-only when a migration step fails", () => {

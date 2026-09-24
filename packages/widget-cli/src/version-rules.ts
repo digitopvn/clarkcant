@@ -89,15 +89,16 @@ export function versionRuleViolations(previous: PublishedDefinitions, next: Publ
     if (after.stateVersion < before.stateVersion) {
       problems.push(`${id}: stateVersion went from ${String(before.stateVersion)} down to ${String(after.stateVersion)}; there is no migration down`);
     }
-    if (!same(before.stateSchema, after.stateSchema)) {
-      if (after.stateVersion <= before.stateVersion) {
-        problems.push(`${id}: stateSchema changed but stateVersion is still ${String(after.stateVersion)}; raise it and add a migration step`);
-      } else {
-        const froms = new Set(after.stateMigrations.map((step) => (step as { from?: unknown }).from));
-        for (let version = before.stateVersion; version < after.stateVersion; version += 1) {
-          if (!froms.has(version)) {
-            problems.push(`${id}: no migration step from stateVersion ${String(version)}, so state stored by ${before.version} could not be carried forward`);
-          }
+    if (!same(before.stateSchema, after.stateSchema) && after.stateVersion <= before.stateVersion) {
+      problems.push(`${id}: stateSchema changed but stateVersion is still ${String(after.stateVersion)}; raise it and add a migration step`);
+    }
+    // Checked from the published version whenever it rises, schema change or not: conformance only sees the chain
+    // from its lowest step, and state stored at a version below that step would open read-only for everyone.
+    if (after.stateVersion > before.stateVersion) {
+      const froms = new Set(after.stateMigrations.map((step) => (step as { from?: unknown }).from));
+      for (let version = before.stateVersion; version < after.stateVersion; version += 1) {
+        if (!froms.has(version)) {
+          problems.push(`${id}: no migration step from stateVersion ${String(version)}, so state stored by ${before.version} could not be carried forward`);
         }
       }
     }

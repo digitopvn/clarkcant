@@ -525,14 +525,25 @@ export function PinnedLiveSurface({
             {frameStateNotice(live.stateStatus, t)}
           </p>
         )}
-        {/* A capability that was granted but cannot run yet is named, so a missing feature reads as "not connected" and not as a broken widget. */}
+        {/*
+          A capability that was granted but cannot run yet is said plainly, so a missing feature reads as "not
+          connected" and not as a broken widget. Which capability, and the node's reason, sit behind a disclosure:
+          capability refs are not default-surface vocabulary.
+        */}
         {frame !== null && (frame.unavailableCapabilities?.length ?? 0) > 0 && (
-          <p className="cc-freshness" data-live-notice="true" data-unavailable-capabilities="true" role="status">
-            {t("shell.live.capabilitiesUnavailable").replace(
-              "{capabilities}",
-              (frame.unavailableCapabilities ?? []).map((entry) => entry.ref).join(", "),
-            )}
-          </p>
+          <div className="cc-freshness" data-live-notice="true" data-unavailable-capabilities="true" role="status">
+            <p style={{ margin: 0 }}>{t("shell.live.capabilitiesUnavailable")}</p>
+            <details>
+              <summary>{t("shell.live.capabilitiesUnavailableDetails")}</summary>
+              <ul style={{ margin: 0 }}>
+                {(frame.unavailableCapabilities ?? []).map((entry) => (
+                  <li key={entry.ref}>
+                    <code>{entry.ref}</code>: {entry.message}
+                  </li>
+                ))}
+              </ul>
+            </details>
+          </div>
         )}
         {/*
           No frame means the package is gone: what the widget said about itself is what is left to show, and it is
@@ -732,13 +743,6 @@ export function toSurfaceViewFromLive(live: LiveWidgetResponse, readOnly: boolea
 }
 
 /**
- * The digest a binding was compiled with, as the server last reported it.
- *
- * The client cannot recompile a binding, so it echoes what it was told. A binding whose digest has
- * changed since is refused as stale, which is the intended outcome: the alternative is applying a
- * click to an action that was replaced underneath the user.
- */
-/**
  * What a frame whose state cannot be written says about it: what happened, that the data is kept, and what the
  * person can do. Never the internal status name.
  */
@@ -759,6 +763,13 @@ function frameStateNotice(status: FrameStateStatus, t: (key: MessageKey) => stri
   }
 }
 
+/**
+ * The digest a binding was compiled with, as the server last reported it.
+ *
+ * The client cannot recompile a binding, so it echoes what it was told. A binding whose digest has
+ * changed since is refused as stale, which is the intended outcome: the alternative is applying a
+ * click to an action that was replaced underneath the user.
+ */
 function digestForBinding(live: LiveWidgetResponse, actionBindingId: string): string {
   return live.bindings.find((binding) => binding.actionBindingId === actionBindingId)?.bindingDigest ?? "";
 }

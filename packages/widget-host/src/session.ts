@@ -214,6 +214,18 @@ export function createFrameSession(input: FrameSessionInput): FrameSession {
           return { ok: true, kind: "state.update", detail: String(stateRevision) };
         }
 
+        const patchKeys = Object.keys(message.patch);
+        if (patchKeys.length > 0 && patchKeys.every((key) => ephemeral.has(key))) {
+          /*
+           * Only view state: nothing the node keeps changes, so nothing is sent and the revision stays. Sending it would
+           * advance the stored revision for a no-op and refuse another surface's write as stale for nothing.
+           */
+          state = { ...state, ...message.patch };
+          input.post({ kind: "state", nonce: input.nonce, state, revision: stateRevision });
+          transcript.push({ kind: "state.update", detail: "view-only" });
+          return { ok: true, kind: "state.update", detail: "view-only" };
+        }
+
         writeInFlight = true;
         const answer = (outcome: FrameStateOutcome): void => {
           writeInFlight = false;
