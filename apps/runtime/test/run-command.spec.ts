@@ -13,8 +13,10 @@ import {
   COMMAND_LIMITS,
   commandDigest,
   runApprovedCommand,
+  listRunningCommands,
   runCommand,
   receiptForModel,
+  stopCommand,
 } from "../src/run-command.ts";
 import { ownedResources } from "../src/preflight.ts";
 
@@ -271,6 +273,39 @@ describe("running a real command", () => {
     );
     expect(outcome.timedOut).toBe(true);
     expect(outcome.durationMs).toBeLessThan(4_000);
+  });
+
+  it("does not hand the command the node's own keys", async () => {
+    process.env["TYPESAFE_API_KEY"] = "node-provider-key-for-test";
+    process.env["GH_TOKEN"] = "loaded-from-dotenv-for-test";
+    try {
+      const outcome = await runCommand({
+        command: `node -e "process.stdout.write(JSON.stringify([process.env.TYPESAFE_API_KEY ?? null, process.env.GH_TOKEN ?? null, typeof process.env.PATH]))"`,
+        cwd: process.cwd(),
+      });
+      expect(JSON.parse(outcome.stdout)).toEqual([null, null, "string"]);
+    } finally {
+      delete process.env["TYPESAFE_API_KEY"];
+      delete process.env["GH_TOKEN"];
+    }
+  });
+
+  it("stops one running command by its work id and reports it as stopped, not timed out", async () => {
+    const running = runCommand({ command: `node -e "setTimeout(() => {}, 30000)"`, cwd: process.cwd() });
+    let workId: string | undefined;
+    for (let attempt = 0; attempt < 50 && workId === undefined; attempt += 1) {
+      workId = listRunningCommands()[0]?.workId;
+      if (workId === undefined) await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+    expect(workId).toBeDefined();
+
+    expect(stopCommand(workId as string)).toBe(true);
+    const outcome = await running;
+
+    expect(outcome.stopped).toBe(true);
+    expect(outcome.timedOut).toBe(false);
+    expect(outcome.durationMs).toBeLessThan(10_000);
+    expect(listRunningCommands()).toEqual([]);
   });
 
   it("caps the output and says that it did", async () => {

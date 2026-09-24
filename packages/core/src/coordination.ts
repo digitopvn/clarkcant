@@ -192,6 +192,26 @@ export function mayActUnderLease(
   return { allowed: true };
 }
 
+/**
+ * Reclaim every lease that has expired but nobody has asked for since.
+ *
+ * `acquireLease` already reclaims a stale lease lazily, the moment a new
+ * caller contends for the same resource, but a resource nobody has requested
+ * since its holder died keeps reporting as live to anything that reads the
+ * `leases` table directly — a UI panel, or a caller of `mayActUnderLease`
+ * that never itself calls `acquireLease`. Sweeping periodically is what keeps
+ * "live" honest even absent new contention. This issues the identical
+ * release write the lazy reclaim in `acquireLease` uses, so a swept lease and
+ * a lazily-reclaimed one are indistinguishable in the ledger afterward.
+ */
+export function sweepExpiredLeases(deps: CoordinationDeps): number {
+  const at = deps.now();
+  const result = deps.db
+    .prepare("UPDATE leases SET released_at = ? WHERE released_at IS NULL AND expires_at <= ?")
+    .run(at, at);
+  return Number(result.changes);
+}
+
 /* ------------------------------------------------------------------ *
  * Idempotent invocations
  * ------------------------------------------------------------------ */

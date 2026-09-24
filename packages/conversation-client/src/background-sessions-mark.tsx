@@ -5,6 +5,7 @@ import { useT } from "./i18n/locale-context.tsx";
 
 interface BackgroundState {
   running: number;
+  queued: number;
   sessions: { sessionId: string; title: string; status: string }[];
 }
 
@@ -35,7 +36,7 @@ export function BackgroundSessionsMark({
   refreshKey?: number;
 }): ReactElement | null {
   const t = useT();
-  const [state, setState] = useState<BackgroundState>({ running: 0, sessions: [] });
+  const [state, setState] = useState<BackgroundState>({ running: 0, queued: 0, sessions: [] });
 
   useEffect(() => {
     let cancelled = false;
@@ -60,18 +61,30 @@ export function BackgroundSessionsMark({
 
   // Nothing running, nothing to say. A finished session is not drawn: its outcome is in the conversation, and a mark
   // that stayed after the work ended would be a permanent line about something that is over.
-  if (state.running === 0) return null;
-  const running = state.sessions.filter((session) => session.status === "running");
+  // Waiting work counts as something to say: a request that is queued behind the node's limit has been accepted and
+  // will run, and a person who sent it should see that it is there rather than wonder whether it was lost.
+  if (state.running === 0 && state.queued === 0) return null;
+  const open = state.sessions.filter((session) => session.status === "running" || session.status === "queued");
 
   return (
     <div className="cc-bg-mark" data-background-sessions={String(state.running)} tabIndex={0}>
       <span className="cc-dot" data-state="ready" aria-hidden="true" />
-      <span data-background-count="true">{t("shell.background.runningCount").replace("{count}", String(state.running))}</span>
+      <span data-background-count="true">
+        {t("shell.background.runningCount").replace("{count}", String(state.running))}
+        {state.queued === 0 ? null : (
+          <span data-background-queued={String(state.queued)}>
+            {" · "}
+            {t("shell.background.queuedCount").replace("{count}", String(state.queued))}
+          </span>
+        )}
+      </span>
       <ul className="cc-bg-list" data-background-list="true">
-        {running.map((session) => (
-          <li key={session.sessionId}>
+        {open.map((session) => (
+          <li key={session.sessionId} data-background-status={session.status}>
             <span data-background-title="true">{session.title}</span>
-            <span className="cc-freshness">{t("shell.background.runningSuffix")}</span>
+            <span className="cc-freshness">
+              {t(session.status === "queued" ? "shell.background.queuedSuffix" : "shell.background.runningSuffix")}
+            </span>
           </li>
         ))}
       </ul>

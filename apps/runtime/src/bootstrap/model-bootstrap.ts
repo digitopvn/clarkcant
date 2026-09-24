@@ -228,6 +228,8 @@ export async function createNodeModelTurn(deps: ModelBootstrapDeps): Promise<Mod
         // Reading an attached file is scoped to the conversation this turn belongs to, which is the
         // only thing the tool needs to check beyond the principal.
         attachments: { dataDir: deps.dataDir, conversationId: turn.conversationId },
+        // "What are you still doing" and "stop that" are asked in the conversation, so they are answered from it.
+        work: { conversationId: turn.conversationId },
         // And the same conversation is what a question is recorded against, which is why this is built from
         // the turn rather than once for the node.
         ...(interactions === undefined ? {} : { interactions }),
