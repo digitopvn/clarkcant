@@ -74,7 +74,7 @@ async function readInbox() {
 }
 
 /** The card a model turn would have produced, written the way the node writes a message. */
-function proposeCommand(conversationId: string, command: string, ttlMs = 900_000) {
+function proposeCommand(conversationId: string, command: string, ttlMs = 900_000, messageAt = now) {
   const approval = requestApproval(
     {
       db: services.runtime.db,
@@ -108,7 +108,7 @@ function proposeCommand(conversationId: string, command: string, ttlMs = 900_000
       },
     ],
     authorNodeId: services.runtime.identity.nodeId,
-    createdAt: now,
+    createdAt: messageAt,
     delivery: "accepted" as const,
   };
   appendMessage(services.runtime.db, message as never, nextMessageSequence(services.runtime.db, conversationId));
@@ -133,6 +133,18 @@ describe("what is waiting for the person", () => {
 
     const summary = inboxSummarySchema.parse((await request("GET", "/inbox/summary")).body);
     expect(summary).toEqual({ waiting: 1, unread: 0 });
+  });
+
+  it("finds the card although its turn stamped the message before the approval was requested", async () => {
+    // A real turn writes its message with the turn's time and raises the approval a moment later, so the card is
+    // older than the row it carries. Looking for it only from the approval's own time onward misses it.
+    const conversationId = await createConversation();
+    const approval = proposeCommand(conversationId, "git status", 900_000, "2026-09-24T06:59:59.990Z");
+
+    const inbox = await readInbox();
+    expect(inbox.waiting.map((item) => (item.kind === "command-approval" ? item.approvalId : ""))).toEqual([
+      approval.approvalId,
+    ]);
   });
 
   it("drops the approval once it is decided on its card, through the one decide route", async () => {

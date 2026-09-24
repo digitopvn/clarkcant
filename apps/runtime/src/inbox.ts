@@ -29,17 +29,30 @@ import type { NodeServices } from "./services.ts";
  * shows. The alternative — a status row updated from every decision path — is a second copy of the truth, and the
  * copy is what drifts.
  *
- * ## Why the scan is bounded by time, not by count
+ * ## Why the scans are bounded
  *
  * Every waiting thing has a deadline. A command approval expires with its row; a question with its card
- * (`QUESTION_TTL_MS`). So the only messages that can hold something still open are the ones written after the
- * oldest deadline that has not passed, and the scan reads exactly those. A node with years of history reads the
- * last quarter of an hour.
+ * (`QUESTION_TTL_MS`). So only recent messages can hold something still open, and neither scan reads history: a
+ * node with years of it still reads a few minutes' worth.
+ *
+ * The command-approval scan is bounded by the newest messages rather than by the approval's time, because the two
+ * clocks are not the same event. A card's message is stamped when its turn wrote it, which is before the approval row
+ * it carries is requested — a millisecond before in a fast turn, longer in a slow one. A window starting at the
+ * approval's `requested_at` therefore misses the very card it is looking for.
  */
 export type InboxServices = Pick<NodeServices, "runtime" | "conductor" | "search">;
 
-/** The cap on how many messages the scan reads. Far above a quarter hour of real traffic; a guard, not a limit. */
+/** The cap on how many messages a scan reads. Far above a quarter hour of real traffic; a guard, not a limit. */
 const SCAN_LIMIT = 500;
+
+/**
+ * How many of the newest messages the command-approval scan reads, newest first by insertion order.
+ *
+ * An approval still in time was raised minutes ago, so its card is among the latest messages the node wrote unless
+ * thousands were written since; that is the one case where an open approval is left to its card and not repeated
+ * here. `rowid` order is the table's own b-tree, so the bound costs what it says whatever the history's size.
+ */
+const RECENT_MESSAGES = 2000;
 
 interface ApprovalRow {
   approval_id: string;
@@ -67,15 +80,14 @@ function pendingCommandApprovals(services: InboxServices, now: Instant): Waiting
   );
   if (rows.length === 0) return [];
   const byId = new Map(rows.map((row) => [row.approval_id, row]));
-  const oldest = rows[0]?.requested_at ?? now;
 
   const messages = allRows<{ conversation_id: string; document: string }>(
     services.runtime.db,
-    `SELECT conversation_id, document FROM messages
-      WHERE created_at >= ? AND document LIKE '%"approval-card"%'
-      ORDER BY created_at DESC LIMIT ?`,
-    oldest,
-    SCAN_LIMIT,
+    `SELECT conversation_id, document FROM
+      (SELECT rowid, conversation_id, document FROM messages ORDER BY rowid DESC LIMIT ?)
+      WHERE document LIKE '%"approval-card"%'
+      ORDER BY rowid DESC`,
+    RECENT_MESSAGES,
   );
 
   const items: WaitingItem[] = [];
