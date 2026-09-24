@@ -18,6 +18,7 @@
     "test:watch": "vitest",
     "verify": "pnpm run invariants && pnpm run typecheck && pnpm run lint && pnpm run test",
     "invariants": "node tools/check-invariants.mjs",
+    "onboard": "node tools/setup.mjs",
     "probe:pi": "node packages/pi-adapter/src/probe-cli.ts",
     "probe:runtime": "node apps/runtime/src/probe-cli.ts",
     "start:runtime": "node apps/runtime/src/main.ts",

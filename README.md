@@ -146,6 +146,18 @@ to" in `docs/mini-app/jev-configuration.md`.
 
 ## Getting started
 
+The quickest path is the installer. It checks the machine, clones the repository and runs the
+interactive onboarding (model, key, data directory, local or Docker):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/digitopvn/clarkcant/main/tools/install.sh | sh   # macOS / Linux
+irm https://raw.githubusercontent.com/digitopvn/clarkcant/main/tools/install.ps1 | iex          # Windows PowerShell
+node tools/setup.mjs                                                                          # from a checkout
+```
+
+[`docs/installation.md`](docs/installation.md) covers every platform, Docker, a VPS with HTTPS,
+non-interactive setup and troubleshooting. By hand:
+
 ```bash
 corepack enable
 pnpm install
