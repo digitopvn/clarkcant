@@ -58,16 +58,34 @@ button.cc-badge:hover, .cc-badge[role="button"]:hover { color: var(--cc-text); b
 .cc-table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
 .cc-table th, .cc-table td { text-align: left; padding: var(--cc-space-xs) var(--cc-space-sm); border-bottom: 1px solid var(--cc-border); }
 .cc-table th { color: var(--cc-text-muted); font-weight: 500; font-size: var(--cc-text-label); }
-.cc-table tr[aria-selected="true"] td { background: var(--cc-elevated); }
-.cc-table tbody tr:hover td { background: var(--cc-elevated); cursor: pointer; }
+.cc-table [data-numeric="true"] { text-align: right; }
+.cc-table tr[aria-selected="true"] td { background: color-mix(in oklab, var(--cc-accent) 12%, var(--cc-card)); }
+.cc-table tr[aria-selected="true"] td:first-child { box-shadow: inset 2px 0 0 var(--cc-accent); }
+/* Only a row that does something on click says so; the table alternative under a chart is read-only. */
+.cc-table tbody tr[data-selectable="true"]:hover td { background: var(--cc-elevated); cursor: pointer; }
+.cc-table tbody tr[data-selectable="true"]:focus-visible { outline: 2px solid var(--cc-focus); outline-offset: -2px; }
+.cc-table tbody tr:last-child td { border-bottom: none; }
+.cc-table-scroll { overflow: auto; max-height: 360px; border-radius: var(--cc-radius-badge); }
+.cc-table-scroll:focus-visible { outline: 2px solid var(--cc-focus); outline-offset: 2px; }
+.cc-table-scroll thead th { position: sticky; top: 0; background: var(--cc-card); z-index: 1; }
 
 /* Charts */
-.cc-chart { width: 100%; height: 180px; display: block; }
+/*
+ * The SVG is drawn at its measured width, so these sizes are real pixels at every card width.
+ * Gridlines stay quieter than the axis, and the axis quieter than the data.
+ */
+.cc-chart-box { width: 100%; min-width: 0; }
+.cc-chart { width: 100%; height: 180px; display: block; overflow: visible; }
 .cc-chart .axis { stroke: var(--cc-border); }
-.cc-chart .label { fill: var(--cc-text-muted); font-size: 10px; }
-.cc-chart .series { fill: none; stroke: var(--cc-accent); stroke-width: 2; }
-.cc-chart .point { fill: var(--cc-accent); }
+.cc-chart .grid { stroke: var(--cc-border); stroke-dasharray: 2 4; opacity: 0.7; }
+.cc-chart .label { fill: var(--cc-text-muted); font-size: 11px; font-variant-numeric: tabular-nums; }
+.cc-chart .value { fill: var(--cc-text); font-size: 11px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.cc-chart .series { fill: none; stroke: var(--cc-accent); stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
+.cc-chart .area { fill: var(--cc-accent); opacity: 0.1; stroke: none; }
+.cc-chart .point { fill: var(--cc-card); stroke: var(--cc-accent); stroke-width: 2; }
 .cc-chart .bar { fill: var(--cc-accent); }
+.cc-chart .datum:hover .point { fill: var(--cc-accent); }
+.cc-chart .datum:hover .bar { fill: color-mix(in oklab, var(--cc-accent) 80%, var(--cc-text)); }
 
 /* Note */
 .cc-note-input, .cc-note-area {
@@ -75,8 +93,11 @@ button.cc-badge:hover, .cc-badge[role="button"]:hover { color: var(--cc-text); b
   border: 1px solid var(--cc-border); border-radius: var(--cc-radius-badge);
   padding: var(--cc-space-sm); font: inherit;
 }
-.cc-note-input { font-weight: 600; }
-.cc-note-area { min-height: 120px; resize: vertical; }
+.cc-note-area { min-height: 120px; resize: vertical; line-height: var(--cc-leading-body-md); }
+.cc-note-area:focus-visible { outline: 2px solid var(--cc-focus); outline-offset: 1px; }
+.cc-note-meta[data-note-status="draft"] { color: var(--cc-warning); }
+.cc-note-meta[data-note-status="saved"] { color: var(--cc-success); }
+.cc-note-meta[data-note-status="conflict"] { color: var(--cc-danger); }
 .cc-note-meta { font-size: var(--cc-text-label); color: var(--cc-text-muted); }
 
 /* Pin shelf */

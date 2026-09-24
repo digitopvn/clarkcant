@@ -47,6 +47,15 @@ describe("the generated stylesheet", () => {
     }
   });
 
+  it("lets a subtree take the other theme and reduced motion, which is how the Widget Lab previews them", () => {
+    // With only a `:root` selector the attribute on a preview frame changed nothing it contained.
+    expect(CSS).toMatch(/,\n\[data-cc-theme="dark"\] \{/);
+    expect(CSS).toMatch(/,\n\[data-cc-theme="light"\] \{/);
+    for (const [name, value] of Object.entries(MOTION_REDUCED)) {
+      expect(CSS.split('[data-cc-reduced-motion="true"] {')[1], name).toContain(`--cc-motion-${name}: ${value};`);
+    }
+  });
+
   it("carries both themes, so switching one for the other needs no reload", () => {
     expect(CSS).toContain('[data-cc-theme="dark"]');
     expect(CSS).toContain('[data-cc-theme="light"]');

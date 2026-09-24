@@ -39,7 +39,7 @@ export const COMPOSER_CSS = `
 .cc-chip {
   display: inline-flex; align-items: center; gap: var(--cc-space-xs);
   padding: 2px var(--cc-space-xs); border-radius: var(--cc-radius-pill);
-  background: var(--cc-surface-raised); border: 1px solid var(--cc-border);
+  background: var(--cc-elevated); border: 1px solid var(--cc-border);
   font-size: var(--cc-text-label); color: var(--cc-text);
   max-width: 100%;
 }
@@ -69,11 +69,11 @@ export const COMPOSER_CSS = `
 .cc-attachment {
   display: flex; align-items: center; gap: var(--cc-space-sm);
   margin: var(--cc-space-xs) 0; padding: var(--cc-space-xs) var(--cc-space-sm);
-  border: 1px solid var(--cc-border); border-radius: var(--cc-radius-md);
-  background: var(--cc-surface-raised); max-width: 100%;
+  border: 1px solid var(--cc-border); border-radius: var(--cc-radius-card);
+  background: var(--cc-elevated); max-width: 100%;
 }
 figure.cc-attachment { display: block; }
-.cc-attachment img { display: block; max-width: 100%; max-height: 320px; border-radius: var(--cc-radius-sm); }
+.cc-attachment img { display: block; max-width: 100%; max-height: 320px; border-radius: var(--cc-radius-button); }
 figure.cc-attachment figcaption { margin-top: var(--cc-space-xs); color: var(--cc-text-muted); font-size: var(--cc-text-label); }
 .cc-attachment-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .cc-attachment-size, .cc-attachment-missing { color: var(--cc-text-muted); font-size: var(--cc-text-label); }
