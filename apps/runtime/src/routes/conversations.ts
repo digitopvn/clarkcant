@@ -521,7 +521,7 @@ export function startBackgroundWork(
       nodeBackgroundSessions.finish({ sessionId, status: "done", at: at() });
       if (said !== "") appendHostReply(services, { conversationId, text: said, at: at() });
       // The result is the message above; the notice is the pointer to it, for a person who is not looking at this
-      // conversation. Keyed by the session so a retry of this closure cannot write a second one.
+      // conversation. Keyed by the session, so this run has one notice whichever branch below writes it.
       tryRecordNodeNotice(services, {
         sourceKind: "background",
         category: "result",

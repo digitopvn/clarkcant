@@ -79,7 +79,8 @@ POST /inbox/notices/:id/dismiss                     (ẩn một thông báo)
   Hội thoại của nó tìm bằng thẻ `approval-card` mang `approvalId` đó trong 2000 tin nhắn mới nhất (theo `rowid`;
   tin chứa thẻ được đóng dấu *trước* `requested_at`, nên không thể quét từ mốc đó) — thẻ là nơi payload sống,
   nên approval không có thẻ thì không duyệt được và bị bỏ.
-- **Câu hỏi**: `pendingForConversation` cho các hội thoại có `question-card` trong cửa sổ `QUESTION_TTL_MS`.
+- **Câu hỏi**: `pendingForConversation` cho các hội thoại có `question-card` trong cùng 2000 tin nhắn mới nhất và
+  trong cửa sổ `QUESTION_TTL_MS`.
 
 ## Phases
 

@@ -308,13 +308,18 @@ Hộp thư (`apps/runtime/src/inbox.ts`, `routes/inbox.ts`) gom hai thứ khác 
 - **Việc chờ** — lệnh cần duyệt, quyền gói xin cấp, câu hỏi đang mở — **không được lưu**. Mỗi lần đọc suy ra lại từ
   bảng `approvals`, thẻ trong `messages` và `pendingForConversation`, nên hộp thư không thể nói một việc còn chờ sau
   khi nó đã được quyết định trên thẻ hoặc đã hết hạn. Hộp thư không có route quyết định riêng: nút Duyệt/Từ chối gọi
-  đúng `POST /conversations/:id/approvals/:aid/decide` và route quyền gói mà thẻ dùng. Approval không có thẻ (vd. do
-  task được điều phối tạo) chưa được đưa ra, vì chưa có route quyết định nào cho nó.
+  đúng `POST /conversations/:id/approvals/:aid/decide` và route quyền gói mà thẻ dùng. Approval không có thẻ, hoặc
+  thuộc một task được điều phối, chưa được đưa ra, vì chưa có route quyết định nào cho nó. Thẻ và câu hỏi được tìm
+  trong 2000 tin nhắn mới nhất (theo `rowid`, vì `created_at` không có index); route quyết định đọc cùng đầu đó của
+  hội thoại (`latestMessages`), nên một mục hộp thư đưa ra luôn là mục route tìm được. Thẻ cũ hơn cửa sổ đó không
+  được đưa ra, và approval của nó vẫn hết hạn theo TTL.
 - **Thông báo** — kết quả việc nền, dispatch của worker; về sau là cập nhật Pi/gói/widget và tin từ node khác — là
   sự kiện đã xảy ra, **được lưu** trong bảng `notifications` (migration 24). Producer gọi `recordNodeNotice` /
   `tryRecordNodeNotice` (`apps/runtime/src/notices.ts`); ghi thông báo không bao giờ làm hỏng việc đã sinh ra nó.
   Ghi là idempotent theo `(principal, dedupKey)` — cùng một sự kiện gửi lại (retry, hoặc qua NodeLink) không thành
-  hai dòng — text được redact và cắt ngắn, và bảng tự dọn (tối đa 200 dòng, thông báo đã bỏ quá 30 ngày thì xoá).
+  hai dòng — text được redact và cắt ngắn, và bảng tự dọn: mỗi principal giữ tối đa 200 thông báo **chưa bỏ** (cũ
+  nhất đi trước), còn thông báo đã bỏ chỉ bị xoá khi quá 30 ngày, nên việc bỏ không đẩy một thông báo chưa đọc ra
+  ngoài. Việc nền được điều phối khi xong ghi một thông báo mỗi task (`workerSettledNotice`, khoá `worker:<taskId>`).
   `originNodeId` để dành cho thông báo đến từ node khác.
 
 Route: `GET /inbox`, `GET /inbox/summary` (hai số cho dấu trên header), `POST /inbox/read` (`noticeIds` hoặc tất cả),
