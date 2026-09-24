@@ -160,7 +160,7 @@ export function ExperienceSettings({
       <section className="cc-panel-section">
         <h3>{t("settings.experience.appearance.heading")}</h3>
         <SettingsRow label={t("settings.experience.theme.label")} description={t("settings.experience.theme.description")}>
-          <div className="cc-panel-row">
+          <div className="cc-segmented" role="group" aria-label={t("settings.experience.theme.label")}>
             {THEME_CHOICES.map((choice) => (
               <button
                 key={choice}
@@ -247,7 +247,7 @@ export function ExperienceSettings({
           label={t("settings.experience.orb.style.label")}
           description={t("settings.experience.orb.style.description")}
         >
-          <div className="cc-panel-row">
+          <div className="cc-segmented" role="group" aria-label={t("settings.experience.orb.style.label")}>
             {ORB_PRESETS.map((preset) => (
               <button
                 key={preset.value}

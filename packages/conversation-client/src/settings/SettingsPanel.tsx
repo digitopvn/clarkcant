@@ -203,6 +203,17 @@ export function SettingsPanel({
     setTab(openAt ?? "experience");
   }, [open, openAt]);
 
+  /*
+   * Keep the selected tab in view.
+   *
+   * On a narrow window the strip scrolls sideways rather than wrapping, so a tab chosen from the keyboard (or opened
+   * at by `openAt`) can sit past the edge. Scrolling it in is what keeps the selection visible without a scrollbar.
+   */
+  useEffect(() => {
+    if (!open) return;
+    document.getElementById(`cc-tab-${tab}`)?.scrollIntoView({ block: "nearest", inline: "nearest" });
+  }, [open, tab]);
+
   const orbChanged = useCallback(() => {
     onOrbChange?.();
   }, [onOrbChange]);
@@ -226,8 +237,9 @@ export function SettingsPanel({
       onClose={onClose}
       title={t("settings.title")}
       description={t("settings.description")}
-      // Narrower than a decision dialog: see the note on the prop. 560 is the design's number.
-      width="560px"
+      // Narrower than a decision dialog: see the note on the prop. 640 rather than 560 so the seven tab names fit
+      // on one line in both languages; at 560 they wrapped to two lines each, which read as fourteen tabs.
+      width="640px"
     >
       <div className="cc-tabs" role="tablist" aria-label={t("settings.tabs.group")}>
         {TABS.map((entry) => (

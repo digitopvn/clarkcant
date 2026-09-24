@@ -167,6 +167,10 @@ figure.cc-attachment figcaption { margin-top: var(--cc-space-xs); color: var(--c
   font-variant-numeric: tabular-nums; letter-spacing: 0.01em;
 }
 .cc-statusline-part { white-space: nowrap; }
+/* The model line is two facts - which model, and how to change it - so they get the statusline's gap rather than
+   running together as one word. */
+.cc-model-switch { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--cc-space-sm); }
+.cc-model-switch [data-model-note="true"] { color: var(--cc-text-tertiary); }
 
 /*
  * Task cards.

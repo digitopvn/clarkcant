@@ -254,56 +254,60 @@ function ModelPoolSection({ client }: { client: GatewayClient }): ReactElement {
           {t("settings.modelPool.empty")}
         </p>
       ) : (
-        <table className="cc-model-pool" data-model-pool-table="true">
-          <thead>
-            <tr>
-              <th>{t("settings.modelPool.table.alias")}</th>
-              <th>{t("settings.modelPool.table.model")}</th>
-              <th>{t("settings.modelPool.table.roles")}</th>
-              <th>{t("settings.modelPool.table.priority")}</th>
-              <th>{t("settings.modelPool.table.enabled")}</th>
-            </tr>
-          </thead>
-          <tbody>
-            {pool.profiles.map((profile) => {
-              const check = checked.find((entry) => entry.alias === profile.alias);
-              return (
-                <tr key={profile.alias} data-model-profile={profile.alias} data-current={current === profile.alias}>
-                  <td>
-                    {profile.alias}
-                    {current === profile.alias && <span className="cc-badge">{t("settings.modelPool.current")}</span>}
-                  </td>
-                  <td>
-                    {profile.provider}/{profile.modelId}
-                    {check !== undefined && !check.ok && (
-                      <span className="cc-freshness" data-model-unavailable="true">
-                        {check.message}
-                      </span>
-                    )}
-                  </td>
-                  <td>{profile.roles.join(", ")}</td>
-                  <td>
-                    <input
-                      type="number"
-                      min={0}
-                      value={profile.priority}
-                      data-model-priority={profile.alias}
-                      onChange={(event) => edit(profile.alias, { priority: Number(event.target.value) })}
-                    />
-                  </td>
-                  <td>
-                    <input
-                      type="checkbox"
-                      checked={profile.enabled}
-                      data-model-enabled={profile.alias}
-                      onChange={(event) => edit(profile.alias, { enabled: event.target.checked })}
-                    />
-                  </td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
+        // Scrolls on its own rather than widening the dialog: five columns do not fit a phone, and a table that
+        // pushes the panel sideways takes every other setting with it.
+        <div className="cc-table-scroll" role="region" aria-label={t("settings.modelPool.heading")} tabIndex={0}>
+          <table className="cc-model-pool" data-model-pool-table="true">
+            <thead>
+              <tr>
+                <th>{t("settings.modelPool.table.alias")}</th>
+                <th>{t("settings.modelPool.table.model")}</th>
+                <th>{t("settings.modelPool.table.roles")}</th>
+                <th>{t("settings.modelPool.table.priority")}</th>
+                <th>{t("settings.modelPool.table.enabled")}</th>
+              </tr>
+            </thead>
+            <tbody>
+              {pool.profiles.map((profile) => {
+                const check = checked.find((entry) => entry.alias === profile.alias);
+                return (
+                  <tr key={profile.alias} data-model-profile={profile.alias} data-current={current === profile.alias}>
+                    <td>
+                      {profile.alias}
+                      {current === profile.alias && <span className="cc-badge">{t("settings.modelPool.current")}</span>}
+                    </td>
+                    <td>
+                      {profile.provider}/{profile.modelId}
+                      {check !== undefined && !check.ok && (
+                        <span className="cc-freshness" data-model-unavailable="true">
+                          {check.message}
+                        </span>
+                      )}
+                    </td>
+                    <td>{profile.roles.join(", ")}</td>
+                    <td>
+                      <input
+                        type="number"
+                        min={0}
+                        value={profile.priority}
+                        data-model-priority={profile.alias}
+                        onChange={(event) => edit(profile.alias, { priority: Number(event.target.value) })}
+                      />
+                    </td>
+                    <td>
+                      <input
+                        type="checkbox"
+                        checked={profile.enabled}
+                        data-model-enabled={profile.alias}
+                        onChange={(event) => edit(profile.alias, { enabled: event.target.checked })}
+                      />
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
       )}
 
       <div className="cc-panel-row">
