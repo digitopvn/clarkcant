@@ -1,0 +1,30 @@
+{
+  "name": "@clarkcant/cli",
+  "version": "0.2.0",
+  "private": true,
+  "description": "The clarkcant command: ask Clark, read conversations and bridge MCP over stdio, all through a node's open gateway.",
+  "license": "Apache-2.0",
+  "type": "module",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "bin": {
+    "clarkcant": "./src/main.ts"
+  },
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "clarkcant": {
+    "phase": "P1",
+    "status": "implemented",
+    "blueprint": "docs/open-interfaces.md"
+  },
+  "scripts": {
+    "typecheck": "tsc -p ../../tsconfig.json"
+  },
+  "dependencies": {
+    "@clarkcant/contracts": "workspace:*"
+  },
+  "devDependencies": {
+    "@clarkcant/runtime": "workspace:*"
+  }
+}

@@ -883,3 +883,53 @@ export function degradeUnrenderableBlocks(
     return block;
   });
 }
+
+/**
+ * A message as plain text, for a client that cannot render widgets: an MCP tool result, a terminal, a screen reader.
+ *
+ * Every rich block already carries the words a reader needs — a text alternative, a label, a prompt — so this picks
+ * those rather than inventing a summary. Reasoning is left out for the reason it is collapsed in the UI: it is not
+ * what the agent said. A question keeps its id and option ids, because a caller that cannot click has to name them
+ * to answer it. A block kind this function does not know by name still shows its type and whichever of its
+ * readable fields it has, so a new kind degrades to something honest rather than disappearing.
+ */
+export function messageBlocksAsText(blocks: readonly MessageBlock[]): string {
+  const lines: string[] = [];
+  for (const block of blocks) {
+    switch (block.type) {
+      case "text":
+        lines.push(block.content);
+        break;
+      case "reasoning":
+        break;
+      case "tool-activity":
+        lines.push(`[tool ${block.name}: ${block.label} — ${block.status}]`);
+        break;
+      case "surface":
+        lines.push(block.snapshot.textAlternative);
+        break;
+      case "widget-ref":
+        lines.push(block.textAlternative);
+        break;
+      case "attachment":
+        lines.push(`[attachment ${block.attachment.filename}]`);
+        break;
+      case "approval-card":
+        lines.push(`[approval ${block.approvalId}] ${block.operationDescription}`);
+        break;
+      case "question-card": {
+        lines.push(`[question ${block.questionId} — ${block.status}] ${block.prompt}`);
+        for (const option of block.options) lines.push(`  - ${option.id}: ${option.label}`);
+        break;
+      }
+      default: {
+        const readable = block as unknown as Record<string, unknown>;
+        const words = ["title", "summary", "label", "message", "textAlternative", "description"]
+          .map((key) => readable[key])
+          .find((value): value is string => typeof value === "string" && value.trim() !== "");
+        lines.push(words === undefined ? `[${block.type}]` : `[${block.type}] ${words}`);
+      }
+    }
+  }
+  return lines.join("\n").trim();
+}

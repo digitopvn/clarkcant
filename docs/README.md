@@ -23,7 +23,8 @@ Trước khi sửa UI/UX, đọc [DESIGN.md](../DESIGN.md) để giữ đúng đ
 9. [Research & decisions](research-and-decisions.md): kết quả kiểm chứng upstream, lựa chọn/rejected alternatives, nguồn.
 10. [Jev selector](mini-app/jev-configuration.md): vận hành và privacy của lớp quyết định — cấu hình, phần gửi ra ngoài, telemetry, fallback.
 11. [ADR-001 — Gemini Live cho voice](research/adr-001-gemini-live-provider.md) và [P0.1 compatibility lock](research/compatibility-lock.md): quyết định thay thế blueprint, và lifecycle Pi SDK đã đo thật.
-12. [Changelog](CHANGELOG.md): những ràng buộc cũ đã bị thay thế.
+12. [Giao diện mở](open-interfaces.vi.md) ([English](open-interfaces.md)): API, MCP, WebSocket, CLI cho ứng dụng bên thứ ba và công cụ AI.
+13. [Changelog](CHANGELOG.md): những ràng buộc cũ đã bị thay thế.
 
 Các JSON trong [examples](examples/) chỉ minh họa **contract riêng của app**, không phải wire protocol chính thức của Pi/MCP/A2A, cũng không phải cấu hình chạy được trước khi app được implement.
 

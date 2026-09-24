@@ -218,6 +218,14 @@ function writeResult(response: ServerResponse, result: GatewayResponse, warn: (l
     return;
   }
 
+  // An acknowledgement with nothing to say is sent without a body, rather than as the JSON text `null`: MCP's
+  // transport answers a notification with a bare 202, and a client may treat any body there as a malformed reply.
+  if (result.body === null && (result.status === 202 || result.status === 204)) {
+    response.writeHead(result.status, headers);
+    response.end();
+    return;
+  }
+
   headers["content-type"] = "application/json";
   response.writeHead(result.status, headers);
   response.end(`${JSON.stringify(result.body)}\n`);
@@ -234,7 +242,8 @@ function baseHeaders(): Record<string, string> {
     // token-authenticated rather than cookie-authenticated, so a wildcard origin here grants nothing
     // a caller does not already need the token for.
     "access-control-allow-origin": "*",
-    "access-control-allow-headers": "authorization, content-type",
+    // The two MCP headers as well, so a browser-hosted MCP client's preflight is not refused before it starts.
+    "access-control-allow-headers": "authorization, content-type, mcp-protocol-version, mcp-session-id",
     /*
      * Every method the gateway routes.
      *

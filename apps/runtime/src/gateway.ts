@@ -23,6 +23,7 @@ import { handlePreferenceRoutes } from "./routes/preferences.ts";
 import { handlePackageRoutes } from "./routes/packages.ts";
 import { handleInboxRoutes } from "./routes/inbox.ts";
 import { handleInteractionRoutes } from "./routes/interactions.ts";
+import { handleMcpRoute } from "./routes/mcp.ts";
 import { handleConversationRoutes, handleRawCommand } from "./routes/conversations.ts";
 
 /*
@@ -149,6 +150,15 @@ export async function handleRequest(deps: GatewayDeps, request: GatewayRequest):
     // attacker which half to work on.
     return fail(401, "UNAUTHENTICATED", "a valid bearer token is required for every command");
   }
+
+  /*
+   * The node as an MCP server, for any MCP client.
+   *
+   * After the token check and handed this function back as its only way to act: every tool is a request to a route
+   * below, carrying the caller's own credential, so MCP is another way in to the same routes rather than beside them.
+   */
+  const mcpResponse = await handleMcpRoute({ request, dispatch: (inner) => handleRequest(deps, inner) });
+  if (mcpResponse !== undefined) return mcpResponse;
 
   const segments = request.path.split("/").filter((segment) => segment.length > 0);
 
