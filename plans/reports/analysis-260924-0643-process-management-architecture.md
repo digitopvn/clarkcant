@@ -175,6 +175,18 @@ Ba quyết định D1, D2, D3 được triển khai đúng như trên. Tài li�
   - `budget.maxDelegationDepth` **chưa thực thi**: chưa có trường nào ghi độ sâu uỷ quyền của chính một task (độ sâu hiện có là của grant, một record khác).
   - `setInterval` không đăng ký vào supervisor: ba interval hiện có đã gắn với vòng đời của object sở hữu chúng và được dọn khi object đó đóng. M7 (MCP stdio, build) không đổi vì runtime không dùng MCP stdio và build đã có timeout 120 giây.
 
+### Sau review bằng subagent
+
+Review tìm ra ba lỗi mức cao, mỗi lỗi làm hỏng một cam kết của chính thay đổi này, và đã sửa cả ba kèm test:
+
+- Shutdown đóng row journal của việc nền là `interrupted`, nên lần boot sau không thấy gì để báo. Giờ row được giữ mở; test drain rồi recover chứng minh cả việc đang chạy lẫn việc đang chờ đều được báo.
+- `stopTree` bỏ qua khi shell đã thoát trong khi `sleep &` còn giữ pipe, nên lệnh bị dừng không dừng thật. Giờ group vẫn nhận SIGTERM rồi SIGKILL; test dùng một tiến trình cháu bỏ qua SIGTERM.
+- Worker bị giết bằng tín hiệu làm `runWorkerProcess` reject, và nhánh `catch` chỉ gửi một câu báo, task vẫn `running`. Giờ nhánh đó đi qua `refuse` như mọi lần từ chối khác; fake worker trong test reject khi bị kill như worker thật.
+
+Các mục mức trung bình và thấp đã sửa gồm: chặn pid ≤ 1, recovery chỉ giết group mà pid ghi lại là leader, sau khi child thoát chỉ gửi tín hiệu tới group, listener `error` cho `taskkill`, nâng giới hạn thì hàng chờ chạy ngay, không nhận việc mới khi node đang tắt, SIGKILL đồng bộ khi thoát cứng, hàng chờ đầy không còn ngắt lượt chính, recovery chịu lỗi từng row, đọc giới hạn có fallback, báo khi bỏ việc khỏi hàng chờ, deadline dưới một phút nói bằng giây, và bỏ `cancelConversation` cùng `ModelTurn.stopBackground` vì không có ai gọi.
+
+Còn để lại: race khi thu hồi session đúng lúc một lượt đang bàn giao, và nhãn "Không xong" cho task do người dùng dừng (cần một outcome `cancelled` đi qua `runDispatchedTask`).
+
 ## Nguồn tham khảo
 
 1. Erlang/OTP — Supervisor Behaviour (supervision tree, shutdown strategy): https://www.erlang.org/doc/system/sup_princ.html

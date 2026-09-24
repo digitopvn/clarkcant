@@ -23,6 +23,7 @@ import { attachNodeWork } from "./bootstrap/work-bootstrap.ts";
 import { startLeaseSweeper } from "./lease-sweeper.ts";
 import { performEmergencyStop } from "./application/emergency-stop.ts";
 import { STOP_GRACE_MS } from "./process-tree.ts";
+import { killRunningCommandsNow, refuseNewCommands } from "./run-command.ts";
 import { attachNodeVoice } from "./bootstrap/voice-bootstrap.ts";
 import { attachTerminalGateway } from "./terminal-gateway.ts";
 import { bootRuntime } from "./node.ts";
@@ -421,15 +422,25 @@ async function main(): Promise<void> {
    */
   const SHUTDOWN_GRACE_MS = 5_000;
   let closing = false;
+  // An exit before a stop's grace has run out would skip its SIGKILL, since no timer fires after exit: taken now.
+  const killChildrenNow = (): void => {
+    killRunningCommandsNow();
+    services.taskDispatch?.killAllNow();
+  };
   const shutdown = (signal: string): void => {
     if (closing) {
       process.stderr.write(`received ${signal} again; exiting now\n`);
+      killChildrenNow();
       process.exit(1);
     }
     closing = true;
     process.stderr.write(`received ${signal}; closing the node\n`);
+    // Nothing new starts in a node that is closing: it would outlive the process that has to stop it.
+    refuseNewCommands();
+    services.taskDispatch?.close();
     const hardStop = setTimeout(() => {
       process.stderr.write(`the node did not close within ${String(SHUTDOWN_GRACE_MS)} ms; exiting anyway\n`);
+      killChildrenNow();
       process.exit(1);
     }, SHUTDOWN_GRACE_MS);
     hardStop.unref();

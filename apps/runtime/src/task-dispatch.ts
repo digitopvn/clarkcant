@@ -15,7 +15,7 @@ import {
 import { getTask } from "@clarkcant/storage";
 
 import { containingRoot, ownedResources } from "./preflight.ts";
-import { stopTree } from "./process-tree.ts";
+import { signalTree, stopTree } from "./process-tree.ts";
 import { runWorkerProcess, type WorkerProcessResult } from "./worker-process.ts";
 import type { WorkView } from "./work-supervisor.ts";
 
@@ -95,6 +95,10 @@ export interface TaskDispatcher {
   work(): WorkView[];
   runningCount(): number;
   queuedCount(): number;
+  /** Refuse every dispatch from now on. Called once, when the node starts to close. */
+  close(): void;
+  /** SIGKILL every worker's group now, without the grace: for a node that exits before the grace runs out. */
+  killAllNow(): void;
 }
 
 interface QueuedRun {
@@ -143,6 +147,7 @@ export function createTaskDispatcher(deps: TaskDispatcherDeps): TaskDispatcher {
 
   const queue: (QueuedRun & { queuedAt: string })[] = [];
   const liveChildren = new Map<string, { taskId: string; child: ChildProcess }>();
+  let closing = false;
   /** Tasks whose worker is running, by task id, with when it started — what `work()` lists. */
   const active = new Map<string, { startedAt: string }>();
   /** Tasks a person stopped, so the report says "stopped" rather than a worker failure nobody caused. */
@@ -389,17 +394,21 @@ export function createTaskDispatcher(deps: TaskDispatcherDeps): TaskDispatcher {
       journal((j) => j.taskEnded(job.taskId, outcome.outcome === "succeeded" ? "done" : "failed"));
       settle(job, outcome.outcome, outcome.message);
     } catch (cause) {
+      // A worker ended by a signal — a person's stop, the wall-clock budget, a crash — rejects rather than returning,
+      // so this is the path most stops actually take. It settles the task through the state machine like every
+      // other refusal: a message alone would leave the task `running` until the next boot called it uncertain.
       const stopped = stopping.has(job.taskId);
       journal((j) => j.taskEnded(job.taskId, wallClockExceeded ? "failed" : stopped ? "stopped" : "failed"));
-      settle(
-        job,
-        "failed",
-        wallClockExceeded
-          ? wallClockRefusal()
-          : stopped
-            ? "stopped on request before the worker finished; nothing it did was verified"
-            : `the worker could not run: ${cause instanceof Error ? cause.message : String(cause)}`,
-      );
+      const refusal = wallClockExceeded
+        ? wallClockRefusal()
+        : stopped
+          ? "stopped on request before the worker finished; nothing it did was verified"
+          : `the worker could not run: ${cause instanceof Error ? cause.message : String(cause)}`;
+      try {
+        await refuse(job, refusal);
+      } catch {
+        settle(job, "failed", refusal);
+      }
     } finally {
       if (wallClockTimer !== undefined) clearTimeout(wallClockTimer);
       liveChildren.delete(runId);
@@ -420,6 +429,10 @@ export function createTaskDispatcher(deps: TaskDispatcherDeps): TaskDispatcher {
   return {
     dispatch(input) {
       const job = { taskId: input.taskId, capabilityRef: input.capabilityRef, executionNodeId: input.executionNodeId };
+      if (closing) {
+        void refuse(job, "this node is shutting down; the task was not run and can be retried once the node is back");
+        return;
+      }
       if (running >= maxConcurrent && queue.length >= maxQueued) {
         void refuse(
           job,
@@ -477,5 +490,13 @@ export function createTaskDispatcher(deps: TaskDispatcherDeps): TaskDispatcher {
     },
     runningCount: () => running,
     queuedCount: () => queue.length,
+    close() {
+      closing = true;
+    },
+    killAllNow() {
+      for (const { child } of liveChildren.values()) {
+        if (child.pid !== undefined) signalTree(child.pid, "SIGKILL", child);
+      }
+    },
   };
 }

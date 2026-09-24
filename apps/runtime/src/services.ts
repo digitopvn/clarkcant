@@ -224,7 +224,7 @@ export interface NodeServices {
    * does. Absent on a fixture node, which reports that honestly rather than spawning a worker a
    * scripted journey never asked to see.
    */
-  taskDispatch?: { stopAll(): number; runningCount(): number; queuedCount(): number };
+  taskDispatch?: { stopAll(): number; runningCount(): number; queuedCount(): number; close(): void; killAllNow(): void };
 }
 
 /**

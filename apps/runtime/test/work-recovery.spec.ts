@@ -10,6 +10,7 @@ import { getTask, getWorkRun, recordWorkRun, type WorkRunRecord } from "@clarkca
 
 import { bootRuntime, type Runtime } from "../src/node.ts";
 import { createWorkJournal } from "../src/work-journal.ts";
+import { createWorkSupervisor } from "../src/work-supervisor.ts";
 import { RERUN_WINDOW_MS, WORK_RUN_RETENTION_MS, recoverUnfinishedWork, type WorkRecoveryDeps } from "../src/work-recovery.ts";
 
 /**
@@ -206,6 +207,25 @@ describe("tasks this node was executing", () => {
     expect(getTask(node.db, taskId)?.state).toBe("uncertain");
     expect(said.some((text) => text.includes("chưa rõ kết quả"))).toBe(true);
     expect(reruns).toEqual([]);
+  });
+});
+
+describe("a shutdown followed by a boot", () => {
+  it("reports background work the shutdown interrupted, rather than losing it", async () => {
+    const node = boot();
+    const journal = createWorkJournal({ db: node.db, nodeId: node.identity.nodeId, now: () => AT, nodeBootId: OLD_BOOT });
+    const supervisor = createWorkSupervisor({ now: () => AT, backgroundLimit: () => 1, journal });
+    const held = (signal: AbortSignal): Promise<void> =>
+      new Promise((_resolve, reject) => signal.addEventListener("abort", () => reject(signal.reason as Error)));
+    supervisor.submitBackground({ conversationId: CONVERSATION_ID, title: "running one", requestText: "a", run: held });
+    supervisor.submitBackground({ conversationId: CONVERSATION_ID, title: "queued one", requestText: "b", run: held });
+
+    await supervisor.drain(200);
+    const { report, said } = recover(node, { policyMode: () => "guarded" });
+
+    expect(report.interrupted).toBe(2);
+    expect(said.some((text) => text.includes("running one") && text.includes("đang chạy"))).toBe(true);
+    expect(said.some((text) => text.includes("queued one") && text.includes("đang chờ"))).toBe(true);
   });
 });
 

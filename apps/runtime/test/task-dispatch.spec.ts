@@ -218,18 +218,25 @@ describe("dispatching a task runs a worker", () => {
   it("kills a running worker on stop, and reports how many it stopped", async () => {
     node = testNode();
     const task = dispatchedTask(node.conductor, node.runtime.identity.nodeId);
+    const settled: { outcome: string; message: string }[] = [];
     let killed = false;
-    let release: (() => void) | undefined;
+    let fail: ((cause: Error) => void) | undefined;
 
     const dispatcher = createTaskDispatcher({
       conductor: node.conductor,
       projectRoots: () => [],
       ownedRoots: () => [],
-      onSettled: () => undefined,
+      onSettled: (input) => settled.push({ outcome: input.outcome, message: input.message }),
+      // A killed worker process rejects, as `runWorkerProcess` does for a child that exits on a signal.
       runWorker: async (options) => {
-        options.onChild?.({ kill: () => { killed = true; release?.(); } } as never);
-        await new Promise<void>((resolve) => {
-          release = resolve;
+        options.onChild?.({
+          kill: () => {
+            killed = true;
+            fail?.(new Error("the worker exited on SIGKILL"));
+          },
+        } as never);
+        await new Promise<void>((_resolve, reject) => {
+          fail = reject;
         });
         return fakeWorkerResult([]);
       },
@@ -241,6 +248,10 @@ describe("dispatching a task runs a worker", () => {
     const stopped = dispatcher.stopAll();
     expect(stopped).toBe(1);
     expect(killed).toBe(true);
+    await waitUntil(() => settled.length > 0, 2_000);
+    expect(settled[0]?.message).toContain("stopped on request");
+    // Settled through the state machine, not left `running` for the next boot to call uncertain.
+    expect(getTask(node.conductor.db, task.taskId)?.state).toBe("failed");
   });
 
   it("kills a worker and fails the task when its wall-clock budget is exhausted", async () => {
@@ -248,7 +259,7 @@ describe("dispatching a task runs a worker", () => {
     const task = dispatchedTask(node.conductor, node.runtime.identity.nodeId, { maxWallClockMs: 50, maxDelegationDepth: 4 });
     const settled: { outcome: string; message: string }[] = [];
     let killed = false;
-    let release: (() => void) | undefined;
+    let release: ((cause: Error) => void) | undefined;
 
     const dispatcher = createTaskDispatcher({
       conductor: node.conductor,
@@ -256,16 +267,17 @@ describe("dispatching a task runs a worker", () => {
       ownedRoots: () => [],
       onSettled: (input) => settled.push({ outcome: input.outcome, message: input.message }),
       // A worker that never settles on its own — the shape the wall-clock timer exists to bound. It
-      // only ends when killed, exactly as a real worker process only ends when its child actually exits.
+      // only ends when killed, and then rejects, exactly as a real worker process does when its child
+      // exits on a signal.
       runWorker: async (options) => {
         options.onChild?.({
           kill: () => {
             killed = true;
-            release?.();
+            release?.(new Error("the worker exited on SIGKILL"));
           },
         } as never);
-        await new Promise<void>((resolve) => {
-          release = resolve;
+        await new Promise<void>((_resolve, reject) => {
+          release = reject;
         });
         return fakeWorkerResult([]);
       },

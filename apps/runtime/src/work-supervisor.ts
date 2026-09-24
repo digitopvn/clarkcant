@@ -102,11 +102,13 @@ export interface BackgroundSubmission {
    * the part that knows what the work said.
    */
   run: (signal: AbortSignal, workId: string) => Promise<void>;
+  /** Told when a person takes the request out of the queue before it started, since `run` is then never called. */
+  onDequeued?: () => void;
 }
 
 export type SubmitOutcome =
   | { accepted: true; workId: string; state: "running" | "queued"; position?: number }
-  | { accepted: false; reason: "queue-full"; message: string; running: readonly WorkView[] };
+  | { accepted: false; reason: "queue-full" | "closing"; message: string; running: readonly WorkView[] };
 
 export type CancelOutcome = "stopped" | "dequeued" | "already-ended" | "unknown";
 
@@ -115,8 +117,6 @@ export interface WorkSupervisor {
   submitBackground(input: BackgroundSubmission): SubmitOutcome;
   /** Stop one piece of work, of any kind, by the id a listing showed. */
   cancel(workId: string): CancelOutcome;
-  /** Stop everything a conversation started, answering how many were stopped. */
-  cancelConversation(conversationId: string): number;
   /** Stop every background run and empty the queue, answering how many there were. */
   cancelBackground(reason?: "stopped" | "shutdown"): number;
   /** Everything, newest first; finished background entries are kept for a while (see `background-sessions.ts`). */
@@ -126,6 +126,8 @@ export interface WorkSupervisor {
   addSource(source: WorkSource): () => void;
   /** How many background runs may run at once. */
   backgroundLimit(): number;
+  /** Start queued runs that now have a place, after the limit was raised. */
+  refill(): void;
   /** Stop the background lane and wait, at most `timeoutMs`, for its runs to settle. */
   drain(timeoutMs: number): Promise<void>;
 }
@@ -171,12 +173,21 @@ export function createWorkSupervisor(
 ): WorkSupervisor {
   const now = options.now ?? ((): Instant => new Date().toISOString() as Instant);
   const store = options.store ?? createBackgroundSessions({ now });
-  const readLimit = (): number => normalizeBackgroundLimit(options.backgroundLimit?.() ?? DEFAULT_BACKGROUND_LIMIT);
+  const readLimit = (): number => {
+    try {
+      return normalizeBackgroundLimit(options.backgroundLimit?.() ?? DEFAULT_BACKGROUND_LIMIT);
+    } catch {
+      // A preference that cannot be read is not a reason to refuse work; the default is what a new node runs with.
+      return DEFAULT_BACKGROUND_LIMIT;
+    }
+  };
   const queueLimit = options.queueLimit ?? BACKGROUND_QUEUE_LIMIT;
   const deadlineMs = options.deadlineMs ?? DEFAULT_BACKGROUND_DEADLINE_MS;
   const sources: WorkSource[] = [];
   const running = new Map<string, OpenRun>();
   const queue: OpenRun[] = [];
+  /** Set once the node starts shutting down: nothing new is admitted into a lane that is being drained. */
+  let closing = false;
 
   const journal = (write: (journal: WorkJournal) => void): void => {
     if (options.journal === undefined) return;
@@ -189,6 +200,9 @@ export function createWorkSupervisor(
 
   const settle = (workId: string, status: FinishedStatus): void => {
     store.finish({ sessionId: workId, status, at: now() });
+    // A run the shutdown interrupted keeps its open row: that open row is how the next boot finds it and says so in
+    // the conversation (`work-recovery.ts`). Closing it here would make the restart silent.
+    if (status === "interrupted") return;
     journal((j) => j.moved(workId, status, now()));
   };
 
@@ -199,7 +213,7 @@ export function createWorkSupervisor(
     const { signal } = open.controller;
     const timer = setTimeout(() => {
       open.controller.abort(
-        new WorkAbort("deadline", `việc nền chạy quá ${Math.round(deadlineMs / 60_000)} phút nên đã bị dừng`),
+        new WorkAbort("deadline", `việc nền chạy quá ${describeDuration(deadlineMs)} nên đã bị dừng`),
       );
     }, deadlineMs);
     timer.unref?.();
@@ -220,7 +234,7 @@ export function createWorkSupervisor(
   };
 
   const pump = (): void => {
-    while (running.size < readLimit()) {
+    while (!closing && running.size < readLimit()) {
       const next = queue.shift();
       if (next === undefined) return;
       start(next);
@@ -249,6 +263,13 @@ export function createWorkSupervisor(
       if (dequeued !== undefined) {
         dequeued.controller.abort(new WorkAbort(reason, "đã dừng trước khi bắt đầu"));
         settle(workId, reason === "shutdown" ? "interrupted" : "stopped");
+        if (reason === "stopped") {
+          try {
+            dequeued.submission.onDequeued?.();
+          } catch {
+            // The dequeue happened; only its line in the conversation was lost.
+          }
+        }
       }
       return "dequeued";
     }
@@ -272,6 +293,16 @@ export function createWorkSupervisor(
     submitBackground(input) {
       const workId = input.workId ?? `bg-${randomBytes(6).toString("hex")}`;
       const title = input.title.trim() === "" ? "Việc nền" : input.title.trim().slice(0, 200);
+      if (closing) {
+        return {
+          accepted: false,
+          reason: "closing",
+          message: "Node đang tắt nên việc này chưa được bắt đầu. Nhắn lại sau khi node chạy lại.",
+          running: [],
+        };
+      }
+      // A limit raised since the last admission frees places for what is already waiting, ahead of this request.
+      pump();
       const hasPlace = running.size < readLimit() && queue.length === 0;
       if (!hasPlace && queue.length >= queueLimit) {
         const busy = views(store.list().filter((entry) => entry.status === "running"));
@@ -318,23 +349,6 @@ export function createWorkSupervisor(
       return "unknown";
     },
 
-    cancelConversation(conversationId) {
-      let stopped = 0;
-      for (const open of [...queue, ...running.values()]) {
-        if (open.submission.conversationId === conversationId && cancelOpen(open.workId, "stopped") !== undefined) {
-          stopped += 1;
-        }
-      }
-      for (const source of sources) {
-        for (const view of source.list()) {
-          if (view.conversationId !== conversationId) continue;
-          if (view.state !== "running" && view.state !== "queued") continue;
-          if (source.cancel(view.workId)) stopped += 1;
-        }
-      }
-      return stopped;
-    },
-
     cancelBackground,
 
     list(filter = {}) {
@@ -359,7 +373,10 @@ export function createWorkSupervisor(
 
     backgroundLimit: readLimit,
 
+    refill: pump,
+
     async drain(timeoutMs) {
+      closing = true;
       const settling = [...running.values()].flatMap((open) => (open.settled === undefined ? [] : [open.settled]));
       cancelBackground("shutdown");
       let timer: NodeJS.Timeout | undefined;
@@ -373,6 +390,12 @@ export function createWorkSupervisor(
       if (timer !== undefined) clearTimeout(timer);
     },
   };
+}
+
+/** A duration as the conversation says it: seconds under a minute, so a short deadline never reads "0 phút". */
+export function describeDuration(ms: number): string {
+  if (ms < 60_000) return `${String(Math.max(1, Math.round(ms / 1_000)))} giây`;
+  return `${String(Math.round(ms / 60_000))} phút`;
 }
 
 function statusFor(reason: unknown): FinishedStatus {

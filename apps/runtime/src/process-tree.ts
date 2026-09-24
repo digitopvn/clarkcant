@@ -22,13 +22,29 @@ import { readFileSync } from "node:fs";
 /** How long a process gets between SIGTERM and SIGKILL. Long enough to flush a file, short enough that a stop is a stop. */
 export const STOP_GRACE_MS = 1_500;
 
-/** Send one signal to a process group, falling back to the process itself when the group cannot be reached. */
-export function signalTree(pid: number, signal: NodeJS.Signals, fallback?: ChildProcess): boolean {
+/**
+ * Send one signal to a process group, falling back to the process itself when the group cannot be reached.
+ *
+ * `groupOnly` is for a child that has already exited: its pid may now belong to an unrelated process, but its group
+ * cannot be taken over while a member of it is alive, so after an exit only the group is signalled and there is no
+ * fallback to the bare pid, and no `taskkill` on Windows, where there is no group to reach.
+ */
+export function signalTree(
+  pid: number,
+  signal: NodeJS.Signals,
+  fallback?: ChildProcess,
+  groupOnly: boolean = false,
+): boolean {
+  // pid 0 is this process's own group and -1 is every process the user can signal: never a child's.
+  if (!Number.isInteger(pid) || pid <= 1) return false;
   if (process.platform === "win32") {
+    if (groupOnly) return false;
     // Windows has no process groups and no gentle signal: `taskkill /T /F` is the whole tree, forcefully, which is
     // what both steps of a stop come to there.
     try {
-      spawn("taskkill", ["/pid", String(pid), "/T", "/F"], { windowsHide: true });
+      const killer = spawn("taskkill", ["/pid", String(pid), "/T", "/F"], { windowsHide: true });
+      // A missing taskkill is reported on the handle, not thrown; unheard, it would crash the node.
+      killer.on("error", () => undefined);
       return true;
     } catch {
       return signalOne(pid, signal, fallback);
@@ -38,7 +54,7 @@ export function signalTree(pid: number, signal: NodeJS.Signals, fallback?: Child
     process.kill(-pid, signal);
     return true;
   } catch {
-    return signalOne(pid, signal, fallback);
+    return groupOnly ? false : signalOne(pid, signal, fallback);
   }
 }
 
@@ -60,7 +76,6 @@ function signalOne(pid: number, signal: NodeJS.Signals, fallback?: ChildProcess)
  */
 export function stopTree(child: ChildProcess, graceMs: number = STOP_GRACE_MS): Promise<void> {
   const pid = child.pid;
-  if ((child.exitCode ?? null) !== null || (child.signalCode ?? null) !== null) return Promise.resolve();
   if (pid === undefined) {
     // No pid means no group to reach; the handle's own kill is all there is, and it is harmless on a child that never
     // started.
@@ -71,14 +86,35 @@ export function stopTree(child: ChildProcess, graceMs: number = STOP_GRACE_MS): 
     }
     return Promise.resolve();
   }
+  if ((child.exitCode ?? null) !== null || (child.signalCode ?? null) !== null) {
+    // The shell has gone but `sleep 60 &` it started may still hold the output pipes, which is why the caller is still
+    // waiting. The group outlives the shell; it gets the same two steps, without ever touching the bare pid.
+    return new Promise<void>((resolve) => {
+      if (!signalTree(pid, "SIGTERM", undefined, true)) {
+        resolve();
+        return;
+      }
+      const timer = setTimeout(() => {
+        signalTree(pid, "SIGKILL", undefined, true);
+        resolve();
+      }, graceMs);
+      timer.unref?.();
+    });
+  }
   return new Promise<void>((resolve) => {
     let done = false;
     const finish = (): void => {
       if (done) return;
       done = true;
       clearTimeout(timer);
-      child.off("exit", finish);
+      child.off("exit", onExit);
       resolve();
+    };
+    const onExit = (): void => {
+      // The shell has gone, but a grandchild in its group may not have; the group is killed regardless, which costs
+      // nothing when the group is already empty.
+      signalTree(pid, "SIGKILL", undefined, true);
+      finish();
     };
     const timer = setTimeout(() => {
       signalTree(pid, "SIGKILL", child);
@@ -86,12 +122,7 @@ export function stopTree(child: ChildProcess, graceMs: number = STOP_GRACE_MS): 
     }, graceMs);
     // Unref'd so a stop that is still waiting out its grace does not by itself keep a finished process alive.
     timer.unref?.();
-    child.once("exit", () => {
-      // The shell has gone, but a grandchild in its group may not have; the group is killed regardless, which costs
-      // nothing when the group is already empty.
-      signalTree(pid, "SIGKILL");
-      finish();
-    });
+    child.once("exit", onExit);
     if (!signalTree(pid, "SIGTERM", child)) finish();
   });
 }

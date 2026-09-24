@@ -5,7 +5,7 @@ import type { Instant, MessageBlock } from "@clarkcant/contracts";
 
 import { commandEnvironment } from "./child-env.ts";
 import { preflightCommand, type CommandEnvelope, type OwnedResources } from "./preflight.ts";
-import { STOP_GRACE_MS, readProcStartTime, stopTree } from "./process-tree.ts";
+import { STOP_GRACE_MS, readProcStartTime, signalTree, stopTree } from "./process-tree.ts";
 
 /**
  * Running one command, in the directory it was asked for, once a person has approved it.
@@ -59,6 +59,25 @@ export interface CommandOutcome {
  */
 const liveCommands = new Map<ChildProcess, RunningCommand>();
 const stoppedByRequest = new Set<ChildProcess>();
+/** Set once the node starts shutting down: a command started now would outlive the process that has to stop it. */
+let refusingCommands = false;
+
+/** Refuse every command from now on. Called once, when the node starts to close. */
+export function refuseNewCommands(): void {
+  refusingCommands = true;
+}
+
+/**
+ * SIGKILL every running command's group now, without the grace.
+ *
+ * For the moment the node exits before a stop's grace has run out: a timer is not going to fire in a process that has
+ * exited, so the second step of the stop is taken synchronously instead of being lost.
+ */
+export function killRunningCommandsNow(): void {
+  for (const child of liveCommands.keys()) {
+    if (child.pid !== undefined) signalTree(child.pid, "SIGKILL", child);
+  }
+}
 
 /**
  * Kill everything running, and say how many there were.
@@ -171,6 +190,15 @@ export async function runCommand(
   const timeoutMs = options.timeoutMs ?? COMMAND_LIMITS.timeoutMs;
   const maxOutputBytes = options.maxOutputBytes ?? COMMAND_LIMITS.maxOutputBytes;
   const startedAt = Date.now();
+  if (refusingCommands) {
+    return {
+      exitCode: null,
+      stdout: "",
+      stderr: "node đang tắt nên lệnh không được chạy; không có gì được thực hiện",
+      durationMs: 0,
+      timedOut: false,
+    };
+  }
 
   return new Promise<CommandOutcome>((resolve) => {
     const child = (options.spawnImpl ?? spawn)(input.command, {

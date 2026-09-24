@@ -510,6 +510,13 @@ export function startBackgroundWork(
     conversationId,
     title,
     requestText: text,
+    onDequeued: () => {
+      appendHostReply(services, {
+        conversationId,
+        text: `Đã bỏ việc nền “${title}” khỏi hàng chờ trước khi nó bắt đầu; không có gì được chạy.`,
+        at: at(),
+      });
+    },
     run: async (signal, workId) => {
       try {
         const said = await control.runInBackground({ workId, conversationId, principal, text, signal });
@@ -702,8 +709,13 @@ export async function handleConversationRoutes(deps: ConversationRouteDeps): Pro
       }
       if (action === "background") {
         const started = startBackgroundWork(services, principal, () => at() as never, conversationId, text);
-        // No worker to run it in, or no place for one: the message is what the person asked for, so it becomes the
-        // turn instead. The main turn never counts against the background limit, so the conversation still answers.
+        if ("refusal" in started && started.busy === true) {
+          // Every place and the whole queue are taken. Ending the turn that is answering would not free one, so the
+          // turn is left alone and the refusal is said where the request was made, naming what is running.
+          const said = appendHostReply(services, { conversationId, text: started.refusal, at: at() as never });
+          return json(202, { accepted: true, resolution: "background-refused", messageIds: [said.messageId] });
+        }
+        // No worker to run it in: the message is what the person asked for, so it becomes the turn instead.
         if ("refusal" in started) {
           control.interrupt(conversationId);
         } else {

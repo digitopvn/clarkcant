@@ -123,14 +123,6 @@ export interface ModelTurn {
    */
   runInBackground: (input: BackgroundRunInput) => Promise<string>;
 
-  /**
-   * Stops one background worker by the work id it was started under, answering whether it was running.
-   *
-   * Keyed by work rather than by conversation: one conversation can have several requests running behind it, and a
-   * stop for one of them must not reach the others.
-   */
-  stopBackground: (workId: string) => Promise<boolean>;
-
   /** How long the conversation's current turn has been running, or undefined when none is. */
   runningMs: (conversationId: string) => number | undefined;
 
@@ -949,15 +941,6 @@ export async function createModelTurn(options: {
      * The other half of the emergency stop. Aborted *and* disposed, in that order, because an abort that leaves the
      * session registered would let a later turn reach a worker the person has already stopped.
      */
-    stopBackground: async (workId: string): Promise<boolean> => {
-      const sessionId = backgroundSessions.get(workId);
-      if (sessionId === undefined) return false;
-      backgroundSessions.delete(workId);
-      await adapter.abort(sessionId, "người dùng đã dừng việc nền này").catch(() => undefined);
-      void adapter.dispose(sessionId).catch(() => undefined);
-      return true;
-    },
-
     stopBackgroundSessions: async (): Promise<number> => {
       const started = [...backgroundSessions.entries()];
       for (const [workId, sessionId] of started) {

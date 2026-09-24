@@ -86,48 +86,65 @@ export function recoverUnfinishedWork(deps: WorkRecoveryDeps): WorkRecoveryRepor
   };
 
   for (const run of unfinishedWorkRuns(deps.db, deps.nodeId, deps.nodeBootId)) {
-    const reaped = reapLeftover(run, deps.machineBootId, sameProcess, signalGroup);
-    if (reaped) report.reaped += 1;
-    setWorkRunState(deps.db, run.workId, "interrupted", at);
-    report.interrupted += 1;
-    if (run.conversationId === undefined) continue;
-    const conversationId = run.conversationId;
-
-    if (run.kind === "background") {
-      const eligible =
-        mode === "autonomous" &&
-        !run.effectful &&
-        run.attempt < MAX_RERUNS &&
-        run.requestText !== undefined &&
-        Date.parse(at) - Date.parse(run.startedAt) < RERUN_WINDOW_MS;
-      if (eligible && deps.rerun({ ...run, conversationId, requestText: run.requestText as string })) {
-        report.rerun += 1;
+    // One row that cannot be read back or reported must not stop the rest, nor the task pass after it.
+    try {
+      const reaped = reapLeftover(run, deps.machineBootId, sameProcess, signalGroup);
+      if (reaped) report.reaped += 1;
+      if (run.kind === "background") {
+        // Closed first: a re-run reuses the work id and opens the row again under this boot.
+        setWorkRunState(deps.db, run.workId, "interrupted", at);
+        report.interrupted += 1;
+        if (run.conversationId !== undefined && recoverBackground(deps, run, run.conversationId, mode, at)) report.rerun += 1;
+        continue;
+      }
+      // Said before the row is closed: a boot that fails between the two says it again rather than never.
+      if (run.kind === "command" && run.conversationId !== undefined) {
         deps.report(
-          conversationId,
-          `Node vừa khởi động lại khi việc nền “${run.title}” đang chạy. Việc này chỉ đọc, không thay đổi gì bên ngoài, nên tui đang chạy lại nó một lần; kết quả sẽ báo ở đây.`,
-        );
-      } else {
-        deps.report(
-          conversationId,
-          `Node đã khởi động lại khi việc nền “${run.title}” đang chạy, nên việc đó chưa xong và chưa có kết quả. Nhắn lại nếu bạn vẫn cần, tui sẽ chạy lại.`,
+          run.conversationId,
+          `Lệnh “${run.title}” đang chạy thì node khởi động lại${reaped ? "; tiến trình còn sót của nó đã được dừng" : ""}. Kết quả của lệnh chưa được kiểm chứng — hãy kiểm tra trạng thái trước khi chạy lại, vì lệnh có thể đã làm một phần việc.`,
         );
       }
-      continue;
+      // A task's report comes from the task pass below, which is where its state actually changes.
+      setWorkRunState(deps.db, run.workId, "interrupted", at);
+      report.interrupted += 1;
+    } catch {
+      // Left open; the next boot tries again.
     }
-
-    if (run.kind === "command") {
-      deps.report(
-        conversationId,
-        `Lệnh “${run.title}” đang chạy thì node khởi động lại${reaped ? "; tiến trình còn sót của nó đã được dừng" : ""}. Kết quả của lệnh chưa được kiểm chứng — hãy kiểm tra trạng thái trước khi chạy lại, vì lệnh có thể đã làm một phần việc.`,
-      );
-    }
-    // A task's report comes from the task pass below, which is where its state actually changes.
   }
 
   report.uncertainTasks = interruptTasks(deps, at);
   report.unsettledEffects = unsettledEffects(deps.db, deps.nodeId).length;
   report.pruned = pruneWorkRuns(deps.db, new Date(Date.parse(at) - WORK_RUN_RETENTION_MS).toISOString() as Instant);
   return report;
+}
+
+/** Re-run one interrupted background request when that is safe, or say it did not finish. Answers whether it re-ran. */
+function recoverBackground(
+  deps: WorkRecoveryDeps,
+  run: WorkRunRecord,
+  conversationId: string,
+  mode: ReturnType<WorkRecoveryDeps["policyMode"]>,
+  at: Instant,
+): boolean {
+  const where = run.state === "queued" ? "đang chờ đến lượt" : "đang chạy";
+  const eligible =
+    mode === "autonomous" &&
+    !run.effectful &&
+    run.attempt < MAX_RERUNS &&
+    run.requestText !== undefined &&
+    Date.parse(at) - Date.parse(run.startedAt) < RERUN_WINDOW_MS;
+  if (eligible && deps.rerun({ ...run, conversationId, requestText: run.requestText as string })) {
+    deps.report(
+      conversationId,
+      `Node vừa khởi động lại khi việc nền “${run.title}” ${where}. Việc này chỉ đọc, không thay đổi gì bên ngoài, nên tui đang chạy lại nó một lần; kết quả sẽ báo ở đây.`,
+    );
+    return true;
+  }
+  deps.report(
+    conversationId,
+    `Node đã khởi động lại khi việc nền “${run.title}” ${where}, nên việc đó chưa xong và chưa có kết quả. Nhắn lại nếu bạn vẫn cần, tui sẽ chạy lại.`,
+  );
+  return false;
 }
 
 /** Stop a leftover process group, but only one proven to be the process that was recorded. */
@@ -138,6 +155,8 @@ function reapLeftover(
   signalGroup: (pgid: number) => void,
 ): boolean {
   if (run.pid === undefined || run.pgid === undefined || run.procStartTime === undefined) return false;
+  // Only a group the recorded process led: its start time proves the leader, not some other group's id.
+  if (run.pgid !== run.pid) return false;
   if (machineBootId === undefined || run.machineBootId !== machineBootId) return false;
   if (!sameProcess(run.pid, run.procStartTime)) return false;
   try {
@@ -166,13 +185,26 @@ function interruptTasks(deps: WorkRecoveryDeps, at: Instant): number {
   let moved = 0;
   for (const row of rows) {
     const event = row.state === "dispatched" ? "dispatch.timed_out" : "effect.unknown";
-    const applied = applyTaskEvent(coordination, row.task_id, event);
-    if (!applied.ok) continue;
+    try {
+      const applied = applyTaskEvent(coordination, row.task_id, event);
+      if (!applied.ok) continue;
+    } catch {
+      continue;
+    }
     moved += 1;
-    deps.report(
+    reportSafely(deps,
       row.conversation_id,
       `Task “${row.goal.slice(0, 120)}” đang chạy thì node khởi động lại, nên kết quả của nó chưa rõ. Tui đã ghi task là “chưa rõ kết quả” và sẽ không tự chạy lại; hãy kiểm tra hoặc yêu cầu đối chiếu trước khi chạy tiếp.`,
     );
   }
   return moved;
+}
+
+/** The task has already moved; a report that fails must not undo that or stop the next task. */
+function reportSafely(deps: WorkRecoveryDeps, conversationId: string, text: string): void {
+  try {
+    deps.report(conversationId, text);
+  } catch {
+    // The task's state says it; the conversation line is the part that was lost.
+  }
 }
