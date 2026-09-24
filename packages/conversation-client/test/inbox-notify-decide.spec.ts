@@ -141,6 +141,29 @@ describe("decideInboxNotifications", () => {
     ]);
   });
 
+  it("titles a task approval with the capability it asks for, the same words the panel shows", () => {
+    const item: WaitingItem = {
+      kind: "task-approval",
+      approvalId: "a1",
+      taskId: "t1",
+      description: "gửi email báo cáo",
+      operationDigest: "sha256:x",
+      effectCategory: "external-write",
+      requestedAt: NOW,
+      expiresAt: "2026-09-24T07:15:00.000Z" as Instant,
+    };
+    const result = decideInboxNotifications(baseInput({ waiting: [item] }));
+    expect(result.candidates).toEqual([
+      {
+        id: "task-approval:a1",
+        group: "waitingApprovals",
+        title: t("inbox.task.title").replace("{capability}", "external-write"),
+        body: "gửi email báo cáo",
+        reason: "new",
+      },
+    ]);
+  });
+
   it("never includes the raw command field in a waiting item's notification", () => {
     const result = decideInboxNotifications(baseInput({ waiting: [commandApproval("w1", { command: "rm -rf /secret" })] }));
     expect(JSON.stringify(result.candidates)).not.toContain("rm -rf");

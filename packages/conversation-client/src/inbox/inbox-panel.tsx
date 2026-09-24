@@ -214,12 +214,15 @@ export function InboxPanel({
   };
 
   const decideTask = (item: Extract<WaitingItem, { kind: "task-approval" }>, decision: "granted" | "denied") => {
-    setBusy(waitingKey(item));
+    const key = waitingKey(item);
+    if (inFlight.current !== undefined) return;
+    inFlight.current = key;
+    setBusy({ key, decision });
     setStatus(undefined);
     void client
       .decideTaskApproval(item.taskId, item.approvalId, { decision, digest: item.operationDigest })
       .then((result) => {
-        if (item.conversationId !== undefined && item.conversationId === conversationId) onTimeline(result.timeline);
+        if (item.conversationId !== undefined && item.conversationId === currentConversationId.current) onTimeline(result.timeline);
         settle({
           tone: "done",
           text: t(
@@ -231,7 +234,7 @@ export function InboxPanel({
           ),
         });
       })
-      .catch((cause: unknown) => settle({ tone: "failed", text: t("inbox.decideFailed").replace("{reason}", reasonOf(cause)) }));
+      .catch((cause: unknown) => settleDecideFailure(cause, key));
   };
 
   const dismiss = (notice: Notice) => {
@@ -458,7 +461,7 @@ export function InboxPanel({
                                   disabled={busy !== undefined}
                                   onClick={() => decideTask(item, "granted")}
                                 >
-                                  {deciding ? t("inbox.task.running") : t("inbox.task.approve")}
+                                  {running ? t("inbox.task.running") : t("inbox.task.approve")}
                                 </button>
                                 <button
                                   type="button"
@@ -467,7 +470,7 @@ export function InboxPanel({
                                   disabled={busy !== undefined}
                                   onClick={() => decideTask(item, "denied")}
                                 >
-                                  {t("inbox.task.deny")}
+                                  {denying ? t("inbox.command.denying") : t("inbox.task.deny")}
                                 </button>
                                 {item.conversationId !== undefined && openButton(item.conversationId)}
                               </div>

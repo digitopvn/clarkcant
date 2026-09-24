@@ -40,7 +40,7 @@ export function groupForNotice(notice: Notice): InboxNotificationGroup {
   return "backgroundResults";
 }
 
-/** Every waiting item is something the person must decide or answer, so all three kinds share one group. */
+/** Every waiting item is something the person must decide or answer, so every kind shares one group. */
 const WAITING_GROUP: InboxNotificationGroup = "waitingApprovals";
 
 /** A clock reading such as `"22:00"` into minutes since local midnight. */
@@ -78,6 +78,8 @@ function waitingTitle(item: WaitingItem, t: (key: MessageKey) => string): string
       return t("inbox.command.title");
     case "capability-approval":
       return t("inbox.capability.title").replace("{package}", item.packageId).replace("{capability}", item.ref);
+    case "task-approval":
+      return t("inbox.task.title").replace("{capability}", item.effectCategory);
     case "question":
       return t("inbox.question.title");
   }
