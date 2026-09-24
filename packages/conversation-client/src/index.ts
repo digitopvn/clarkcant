@@ -65,6 +65,7 @@ export {
   TextBlock,
   renderBlock,
 } from "./blocks.tsx";
+export { TerminalCardBlock } from "./terminal-card.tsx";
 export { Conversation, type ConversationProps } from "./Conversation.tsx";
 export { desktopBridge, requestWindowMode, sessionFromBridge } from "./desktop-compact.ts";
 export type {

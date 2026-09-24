@@ -59,6 +59,8 @@ import {
 } from "./jev-decider.ts";
 import type { RuntimeCandidate } from "./runtime-candidates.ts";
 import type { SessionSearchDeps } from "./session-search.ts";
+import { createTerminalRegistry, type TerminalRegistry } from "./terminal-sessions.ts";
+import { createPiSessionWatcher, defaultPiSessionRoots, type PiSessionWatcher } from "./pi-session-watch.ts";
 import {
   type SessionStoreDeps,
   ensureSessionsDirectory,
@@ -98,6 +100,14 @@ export interface NodeServices {
    * and two nodes in one process cannot answer for each other's sessions.
    */
   controlSessions: ControlSessionRegistry;
+  /**
+   * The shells opened in the conversation, and the Pi transcripts a terminal card can follow.
+   *
+   * On the services for the same reason as the control sessions: a terminal lives and dies with the node that
+   * spawned it, and two nodes in one process must not answer for each other's shells.
+   */
+  terminals: TerminalRegistry;
+  piSessions: PiSessionWatcher;
   conductor: ConductorDeps;
   /**
    * Control of the turn that is running for a conversation, when one is.
@@ -564,6 +574,8 @@ export function bootNodeServices(options: RuntimeOptions): NodeServices {
   return {
     runtime,
     controlSessions: createControlSessionRegistry(),
+    terminals: createTerminalRegistry({ dataDir: runtime.dataDir }),
+    piSessions: createPiSessionWatcher({ roots: () => defaultPiSessionRoots(runtime.dataDir) }),
     conductor,
     model: options.model ?? null,
     jev: jevRuntime,

@@ -8,6 +8,7 @@ import { useAttachmentUrls } from "./use-attachment-urls.ts";
 import { useObjectUrls } from "./use-object-urls.ts";
 import type { GatewayClient } from "./api.ts";
 import { useT } from "./i18n/locale-context.tsx";
+import { TerminalCardBlock } from "./terminal-card.tsx";
 import { MESSAGES_VI, type MessageKey } from "./i18n/messages.ts";
 
 /**
@@ -513,6 +514,13 @@ export interface BlockActions {
   /** End a browser session. */
   onControlStop?: (input: { sessionId: string }) => void;
   controlSession?: Readonly<Record<string, ControlSessionActionState>>;
+  /**
+   * What a terminal card chose to send: a selection, a command's result or the screen, as the user's own message.
+   *
+   * The same route a typed reply takes, so the agent reads it as something the person said rather than through a
+   * side channel. Absent in a snapshot, which is also what keeps a snapshot from attaching to a live shell.
+   */
+  onTerminalShare?: (input: { text: string }) => void;
 }
 
 /**
@@ -1608,6 +1616,10 @@ export function renderBlock(
           t={t}
           {...(actions === undefined ? {} : { actions })}
         />
+      );
+    case "terminal-session-card":
+      return (
+        <TerminalCardBlock key={index} block={block} client={client} t={t} {...(actions === undefined ? {} : { actions })} />
       );
     case "marketplace-results":
       // Forwarded, for the reason the task card's control taught: a component tested by calling it directly passes

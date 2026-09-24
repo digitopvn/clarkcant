@@ -32,16 +32,17 @@
     "@clarkcant/project-work": "workspace:*",
     "@clarkcant/storage": "workspace:*",
     "@clarkcant/voice-adapters": "workspace:*",
+    "@clarkcant/widget-catalog": "workspace:*",
     "@clarkcant/widget-host": "workspace:*",
     "ws": "8.21.3",
-    "zod": "4.6.5",
-    "@clarkcant/widget-catalog": "workspace:*"
+    "zod": "4.6.5"
   },
   "devDependencies": {
     "@types/ws": "8.18.1"
   },
   "optionalDependencies": {
     "@huggingface/transformers": "4.3.0",
+    "node-pty": "1.2.0-beta.15",
     "sqlite-vec": "0.1.9"
   }
 }

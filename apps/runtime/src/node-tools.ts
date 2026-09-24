@@ -44,6 +44,8 @@ import { commandDigest, runGuardedCommand, type CommandOutcome } from "./run-com
 import type { ProjectFinderDeps } from "./project-finder.ts";
 import { createFindProjectTool } from "./project-finder.ts";
 import { createFindRuntimeTool } from "./runtime-candidates.ts";
+import { createTerminalTools } from "./terminal-tools.ts";
+import type { TerminalRegistry } from "./terminal-sessions.ts";
 import { rememberMemory, type MemoryDeps } from "./memory.ts";
 import type { SessionSearchDeps } from "./session-search.ts";
 import { createSearchHistoryTool } from "./session-search.ts";
@@ -149,6 +151,13 @@ export function createNodeTools(input: {
    * action could reach a screen that this call has no way to reach.
    */
   appControl?: ControlAppDeps;
+  /**
+   * The node's terminals, when a turn may open or type into one.
+   *
+   * Registered only with `command`: typing into a shell is running a command, so it is gated by the same policy
+   * deps, and a node that cannot run commands cannot type them either.
+   */
+  terminals?: { registry: TerminalRegistry; newId: (prefix: string) => string; conversationId?: string };
 }): ToolDefinition[] {
   const roots = input.roots ?? machineRoots;
   return [
@@ -168,6 +177,16 @@ export function createNodeTools(input: {
             ...(input.resolveFolder === undefined ? {} : { resolveFolder: input.resolveFolder }),
           }),
         ]),
+    ...(input.command === undefined || input.terminals === undefined
+      ? []
+      : createTerminalTools({
+          ...input.command,
+          ...(input.effectAudit === undefined ? {} : { effectAudit: input.effectAudit }),
+          ...(input.resolveFolder === undefined ? {} : { resolveFolder: input.resolveFolder }),
+          terminals: input.terminals.registry,
+          newCardId: input.terminals.newId,
+          ...(input.terminals.conversationId === undefined ? {} : { conversationId: input.terminals.conversationId }),
+        })),
     createFindRuntimeTool({
       db: input.search.db,
       nodeId: input.search.nodeId,

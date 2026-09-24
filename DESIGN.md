@@ -648,6 +648,41 @@ Không embed privileged browser origin.
 - ui.player@1
 - ui.call@1
 
+#### Terminal (host-owned, đã ship)
+
+Thẻ `terminal-session-card` là shell thật (PTY) trong hội thoại, thuộc lane 1 vì shell có toàn quyền của
+người dùng: không bao giờ là widget isolated, không có trong marketplace, chỉ host tạo.
+
+- **Mở:** qua hội thoại ("mở terminal ở thư mục X") hoặc voice; không có nút "terminal mới" cố định.
+- **Agent chạy lệnh** đi qua cùng preflight + execution policy + guardrail như `run_command`. Khi policy nói
+  *ask*, lệnh được **điền sẵn nhưng không chạy**: người dùng nhấn Enter trên đúng dòng lệnh họ thấy chính là
+  xác nhận. Người dùng tự gõ là hành động của chính họ, không qua policy.
+- **Agent không gõ đè lên người dùng:** khi người dùng đã gõ dở trên dòng lệnh, agent không điền sẵn cũng
+  không chạy, và nói lý do; dòng agent tự điền sẵn trước đó thì được thay thế chứ không nối thêm. Lệnh có ký
+  tự điều khiển (tab, escape…) bị từ chối, vì dòng thực sự chạy sẽ khác dòng đã được xét. Lệnh được xét theo
+  thư mục shell đang đứng (prompt báo lại), không phải thư mục lúc mở; shell không có tích hợp OSC 133 thì agent
+  chỉ điền sẵn. Output gửi cho model đã che các chuỗi dạng credential, và agent chỉ thấy terminal của hội thoại
+  mình.
+- **Một người điều khiển:** một terminal có tối đa một driver; thẻ khác ở chế độ quan sát và có nút
+  "Điều khiển ở đây" chuyển lease (không nhân bản).
+- **Bàn phím:** mọi phím, kể cả Escape, thuộc về shell để TUI (vim, htop, pi…) dùng được; **F6** đưa focus ra
+  khỏi terminal tới nút gửi. Gợi ý F6 luôn hiện dưới màn hình.
+- **Gửi về phiên chính:** một nút, nhãn nói rõ sẽ gửi gì — vùng chọn, rồi kết quả lệnh cuối đã xong (kèm
+  exit code), rồi màn hình. Lệnh đang chạy không bao giờ được gửi như một kết quả. Nội dung đi như tin nhắn
+  của người dùng, output được fence.
+- **Tiến trình:** bảng "Tiến trình" liệt kê terminal khác (xem được), lệnh `run_command` và việc nền (chỉ
+  trạng thái, vì không có stream phía sau), và phiên Pi trên máy (theo dõi live, chỉ đọc, đã redact secret,
+  cập nhật theo từng entry Pi ghi). Escape đóng bảng và trả focus về nút mở.
+- **Trạng thái trung thực:** đang kết nối, mất kết nối (có nút kết nối lại), terminal đã kết thúc (nói exit
+  code, bỏ nút đóng), terminal không còn trên node, node không có PTY. Thẻ trong lịch sử không có kết nối live
+  là snapshot và nói rõ như vậy.
+- **Ngoại lệ có chủ đích với "lịch sử inline là snapshot":** thẻ terminal trong lịch sử vẫn nối live tới
+  terminal khi terminal đó còn chạy trên node, vì terminal là một tiến trình đang sống chứ không phải kết quả
+  của một lượt. Lease driver vẫn là một, nên việc này không tạo effect owner thứ hai; khi terminal không còn,
+  thẻ nói rõ điều đó thay vì hiện màn hình cũ như thể đang live.
+- Emergency stop và nút đóng gửi hangup cho shell (shell chuyển tiếp cho các job của nó), rồi giết cả session
+  của terminal, gồm các job nền người dùng để lại.
+
 ### 9.3 Improve widgets hiện tại
 
 **Charts**
