@@ -297,6 +297,32 @@ export function createTaskDispatcher(deps: TaskDispatcherDeps): TaskDispatcher {
       }
     }
 
+    /*
+     * The wall-clock budget.
+     *
+     * `task.budget.maxWallClockMs` is a ceiling on this run, not on the queue wait before it, so the
+     * timer is armed here rather than at admission. It does the same thing a person's `stop(taskId)`
+     * does — `stopTree` on the live child — because that is the only way this dispatcher ever ends a
+     * worker; the two are told apart at settle time by `wallClockExceeded` instead of `stopping`, so
+     * the report says "the budget ran out" and never "you stopped this" for a thing nobody asked for.
+     * Unref'd so an armed timer never keeps this process alive past the run it bounds, and cleared on
+     * every settle path below so a run that finishes first does not leave a dangling timer that later
+     * kills a since-reused `runId`.
+     */
+    const maxWallClockMs = task.budget?.maxWallClockMs;
+    let wallClockExceeded = false;
+    const wallClockTimer =
+      maxWallClockMs === undefined
+        ? undefined
+        : setTimeout(() => {
+            wallClockExceeded = true;
+            const live = liveChildren.get(runId);
+            if (live !== undefined) void stopTree(live.child);
+          }, maxWallClockMs);
+    wallClockTimer?.unref();
+    const wallClockRefusal = (): string =>
+      `the wall-clock budget of ${String(maxWallClockMs)} ms was exhausted before the worker finished; nothing it did was verified; raise the task's budget or re-run it`;
+
     try {
       const result = await runWorker({
         nodeId: job.executionNodeId,
@@ -323,9 +349,27 @@ export function createTaskDispatcher(deps: TaskDispatcherDeps): TaskDispatcher {
         },
       });
 
+      if (wallClockExceeded) {
+        journal((j) => j.taskEnded(job.taskId, "failed"));
+        await refuse(job, wallClockRefusal());
+        return;
+      }
+
       if (stopping.has(job.taskId)) {
         journal((j) => j.taskEnded(job.taskId, "stopped"));
         const refusal = "stopped on request before the worker finished; nothing it did was verified";
+        await refuse(job, refusal);
+        return;
+      }
+
+      // Post-hoc token enforcement: the tokens are already spent by the time the worker's usage comes
+      // back, so this is not a prevention, only an honest refusal to accept work that ran over budget —
+      // reported as what it is rather than folded into a generic failure.
+      const maxTokens = task.budget?.maxTokens;
+      const tokensUsed = result.usage?.tokens;
+      if (maxTokens !== undefined && tokensUsed !== undefined && tokensUsed > maxTokens) {
+        journal((j) => j.taskEnded(job.taskId, "failed"));
+        const refusal = `the token budget of ${String(maxTokens)} was exceeded (the worker used ${String(tokensUsed)}); the run already happened but is not accepted, and can be retried with a higher budget`;
         await refuse(job, refusal);
         return;
       }
@@ -346,15 +390,18 @@ export function createTaskDispatcher(deps: TaskDispatcherDeps): TaskDispatcher {
       settle(job, outcome.outcome, outcome.message);
     } catch (cause) {
       const stopped = stopping.has(job.taskId);
-      journal((j) => j.taskEnded(job.taskId, stopped ? "stopped" : "failed"));
+      journal((j) => j.taskEnded(job.taskId, wallClockExceeded ? "failed" : stopped ? "stopped" : "failed"));
       settle(
         job,
         "failed",
-        stopped
-          ? "stopped on request before the worker finished; nothing it did was verified"
-          : `the worker could not run: ${cause instanceof Error ? cause.message : String(cause)}`,
+        wallClockExceeded
+          ? wallClockRefusal()
+          : stopped
+            ? "stopped on request before the worker finished; nothing it did was verified"
+            : `the worker could not run: ${cause instanceof Error ? cause.message : String(cause)}`,
       );
     } finally {
+      if (wallClockTimer !== undefined) clearTimeout(wallClockTimer);
       liveChildren.delete(runId);
       releaseLease({ db: deps.conductor.db, nodeId: deps.conductor.nodeId, now: at, newId: deps.conductor.newId }, lease.lease.leaseId);
     }

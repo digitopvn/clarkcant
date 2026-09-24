@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { handleRequest, type GatewayDeps, type GatewayRequest } from "../src/gateway.ts";
 import { bootNodeServices, type NodeServices } from "../src/services.ts";
+import { configureNodeWork, createWorkSupervisor, nodeWork, type WorkSupervisor } from "../src/work-supervisor.ts";
 
 /**
  * Asking for background work directly.
@@ -56,5 +57,69 @@ describe("a background request", () => {
     const response = await post({ conversationId: "c1", text: "làm việc này" });
     expect(response.status).toBe(409);
     expect(String(response.body.message)).toContain("việc nền");
+  });
+});
+
+describe("what is running, and stopping one piece of it", () => {
+  let previous: WorkSupervisor;
+
+  beforeEach(() => {
+    previous = nodeWork();
+    configureNodeWork(createWorkSupervisor({ backgroundLimit: () => 1 }));
+  });
+
+  afterEach(() => {
+    configureNodeWork(previous);
+  });
+
+  async function call(method: string, path: string, query: Record<string, string> = {}) {
+    const request: GatewayRequest = {
+      method,
+      path,
+      query,
+      headers: { authorization: `Bearer ${services.runtime.identity.localToken}`, "content-type": "application/json" },
+      body: method === "POST" ? "{}" : "",
+    };
+    const response = await handleRequest(deps, request);
+    return { status: response.status, body: response.body as Record<string, unknown> };
+  }
+
+  function held(conversationId: string): string {
+    const started = nodeWork().submitBackground({
+      conversationId,
+      title: `work in ${conversationId}`,
+      requestText: "x",
+      run: (signal) => new Promise((_resolve, reject) => signal.addEventListener("abort", () => reject(signal.reason as Error))),
+    });
+    if (!started.accepted) throw new Error("should be admitted");
+    return started.workId;
+  }
+
+  it("counts running and waiting work, with the limit it was admitted under", async () => {
+    held("c1");
+    held("c1");
+    const response = await call("GET", "/background-sessions");
+    expect(response.status).toBe(200);
+    expect(response.body).toMatchObject({ running: 1, queued: 1, limit: 1 });
+  });
+
+  it("lists work per conversation without a pid or a path", async () => {
+    const mine = held("c1");
+    held("c2");
+
+    const response = await call("GET", "/work", { conversationId: "c1" });
+    const work = response.body.work as { workId: string }[];
+    expect(work.map((entry) => entry.workId)).toEqual([mine]);
+    expect(JSON.stringify(response.body)).not.toMatch(/"pid"|"cwd"/);
+  });
+
+  it("stops one piece of work by id and says what happened, and 404s an id it does not hold", async () => {
+    const workId = held("c1");
+
+    const stopped = await call("POST", `/work/${workId}/cancel`);
+    expect(stopped).toMatchObject({ status: 200, body: { workId, outcome: "stopped" } });
+
+    const unknown = await call("POST", "/work/nope/cancel");
+    expect(unknown.status).toBe(404);
   });
 });

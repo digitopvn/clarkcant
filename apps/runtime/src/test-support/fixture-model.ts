@@ -879,9 +879,12 @@ export function applyScriptedTurnControl(services: Pick<NodeServices, "turnContr
     interrupt: () => false,
     steer: async () => false,
     runInBackground: async (input) => {
-      // Honours the stop like a real worker does, so a browser test can stop it and see the stop reported.
+      // Honours the stop like a real worker does, so a browser test can stop it and see the stop reported. A request
+      // that asks for "việc nền dài" stays open for a minute, which is long enough for a browser to find and press its
+      // stop; every other request finishes in a moment.
+      const holdMs = input.text.includes("việc nền dài") ? 60_000 : 1_500;
       await new Promise<void>((resolve, reject) => {
-        const timer = setTimeout(resolve, 1_500);
+        const timer = setTimeout(resolve, holdMs);
         input.signal?.addEventListener(
           "abort",
           () => {

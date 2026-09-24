@@ -137,7 +137,7 @@ Các nguyên tắc cho Work Supervisor:
 - E2E (`apps/web/e2e`): hỏi "đang chạy gì?" và nhận câu trả lời đúng, nói "dừng việc X" thì chỉ việc X dừng. Cần theo UI definition of done trong AGENTS.md.
 - Cập nhật `docs/system-architecture.md` §7.3/§7.4/§10 (đoạn "danh sách background session sống trong bộ nhớ" sẽ đổi) và `docs/conformance-traceability.md` khi có test thật.
 
-## Đề xuất cho ba quyết định (chờ duyệt)
+## Đề xuất cho ba quyết định (đã duyệt 2026-09-24)
 
 **D1. Môi trường của terminal.** Lọc theo **nguồn gốc của biến**, không theo người mở terminal.
 
@@ -161,6 +161,18 @@ Các nguyên tắc cho Work Supervisor:
 - Task worker (OS process, tốn CPU/RAM): giữ mặc định 2 như hiện nay (`task-dispatch.ts:89`). Build cô lập tính chung quota này.
 - Lượt trả lời chính của hội thoại **không bao giờ** tính vào quota, để phiên chính luôn phản hồi được.
 - Khi quota đầy thì **xếp hàng có biên** (khoảng 10 việc) với trạng thái "đang chờ" hiển thị rõ, không từ chối. Khi hàng đợi cũng đầy thì mới trả lời rõ trong hội thoại rằng node đang bận và những việc gì đang chạy.
+
+## Trạng thái triển khai (2026-09-24)
+
+Ba quyết định D1, D2, D3 được triển khai đúng như trên. Tài liệu kiến trúc cập nhật ở `docs/system-architecture.md` §7.3 (đoạn "Quản lý tiến trình"), §7.4 và mục Leases.
+
+- **P0: xong.** Shutdown đi qua emergency stop, rồi `drain` supervisor, rồi mới đóng session và DB, có trần 5 giây. Việc nền khoá theo `workId`. Env lọc theo nguồn gốc (`child-env.ts`). `uncaughtException` được giữ không-fatal như trước, vì đổi nó thành shutdown là thay đổi hành vi nằm ngoài phạm vi này.
+- **P1: xong.** `work-supervisor.ts`, bảng `work_runs` (migration 24), phục hồi khi boot (`work-recovery.ts`), giới hạn 3 việc nền với hàng chờ 10 và deadline 20 phút, tool `list_work` / `stop_work`, route `POST /work/:id/cancel`, dừng hai bậc theo process group. UI gồm segmented control 1/3/5 trong Settings → Control, số việc đang chờ trên mark, và nút dừng từng việc trong panel tiến trình.
+- **P2: xong, trừ hai điểm có lý do.**
+  - Đã làm: thu hồi Main Pi session rảnh, `runningMs` thật, trạng thái `stopped`, bộ quét lease định kỳ, budget `maxWallClockMs` và `maxTokens` của task. Outbox backoff, dead-letter và cancel truyền sang peer đang được hoàn thiện ở commit tiếp theo.
+  - `mayActUnderLease` trước bước `prepared → submitted` **chưa nối**: hiện không có code nào thực hiện bước chuyển đó (`advanceEffect` không có call site), và `EffectRecord` không mang epoch. Nối vào đây nghĩa là phải tự đặt ra chỗ chuyển trạng thái và schema, nên để lại cho phase xây bước submit.
+  - `budget.maxDelegationDepth` **chưa thực thi**: chưa có trường nào ghi độ sâu uỷ quyền của chính một task (độ sâu hiện có là của grant, một record khác).
+  - `setInterval` không đăng ký vào supervisor: ba interval hiện có đã gắn với vòng đời của object sở hữu chúng và được dọn khi object đó đóng. M7 (MCP stdio, build) không đổi vì runtime không dùng MCP stdio và build đã có timeout 120 giây.
 
 ## Nguồn tham khảo
 

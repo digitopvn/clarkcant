@@ -606,7 +606,8 @@ function LiveTerminal({
  * Everything running on the node, refreshed while the panel is open.
  *
  * A `run_command` process and a background task are listed with their status only: neither has a stream this node
- * keeps, and a "view" button beside them would be a control with nothing behind it.
+ * keeps, and a "view" button beside them would be a control with nothing behind it. Each has a stop, though, because
+ * that one is real: it reaches the same supervisor the agent's `stop_work` does.
  */
 function ProcessPanel({
   id,
@@ -629,6 +630,7 @@ function ProcessPanel({
 }): ReactElement {
   const [overview, setOverview] = useState<TerminalOverview | undefined>(undefined);
   const [error, setError] = useState<string | undefined>(undefined);
+  const [reloadKey, setReloadKey] = useState(0);
   const headingRef = useRef<HTMLHeadingElement | null>(null);
 
   useEffect(() => {
@@ -651,7 +653,8 @@ function ProcessPanel({
       stopped = true;
       clearInterval(timer);
     };
-  }, [client]);
+  }, [client, reloadKey]);
+  const reload = (): void => setReloadKey((key) => key + 1);
 
   useEffect(() => {
     headingRef.current?.focus();
@@ -721,6 +724,9 @@ function ProcessPanel({
                   </span>
                   <span className="cc-terminal-panel-meta">{t("blocks.terminal.panelNoStream")}</span>
                 </span>
+                {command.workId === undefined ? null : (
+                  <WorkStopButton client={client} workId={command.workId} t={t} onStopped={reload} />
+                )}
               </li>
             ))}
           </PanelSection>
@@ -729,10 +735,14 @@ function ProcessPanel({
               <li key={task.sessionId}>
                 <span className="cc-terminal-panel-main">
                   <strong>{task.title}</strong>
-                  <span className="cc-terminal-panel-meta">
-                    {task.status} · {t("blocks.terminal.panelSince").replace("{at}", timeOf(task.startedAt))}
+                  <span className="cc-terminal-panel-meta" data-panel-background-status={task.status}>
+                    {t(BACKGROUND_STATUS_KEY[task.status])} ·{" "}
+                    {t("blocks.terminal.panelSince").replace("{at}", timeOf(task.startedAt))}
                   </span>
                 </span>
+                {task.status === "running" || task.status === "queued" ? (
+                  <WorkStopButton client={client} workId={task.sessionId} t={t} onStopped={reload} />
+                ) : null}
               </li>
             ))}
           </PanelSection>
@@ -761,6 +771,64 @@ function ProcessPanel({
         </>
       )}
     </div>
+  );
+}
+
+const BACKGROUND_STATUS_KEY: Record<TerminalOverview["background"][number]["status"], MessageKey> = {
+  queued: "blocks.terminal.bgStatus.queued",
+  running: "blocks.terminal.bgStatus.running",
+  done: "blocks.terminal.bgStatus.done",
+  failed: "blocks.terminal.bgStatus.failed",
+  stopped: "blocks.terminal.bgStatus.stopped",
+  interrupted: "blocks.terminal.bgStatus.interrupted",
+};
+
+/**
+ * Stop one piece of work from the panel.
+ *
+ * Disabled while the stop is in flight so a double click is one stop, and a failure is said beside the button rather
+ * than swallowed: a stop that silently did nothing is the worst kind of control.
+ */
+function WorkStopButton({
+  client,
+  workId,
+  t,
+  onStopped,
+}: {
+  client: GatewayClient;
+  workId: string;
+  t: (key: MessageKey) => string;
+  onStopped: () => void;
+}): ReactElement {
+  const [state, setState] = useState<"idle" | "stopping" | "failed">("idle");
+  const stop = (): void => {
+    setState("stopping");
+    client
+      .cancelWork(workId)
+      .then(() => {
+        setState("idle");
+        onStopped();
+      })
+      .catch(() => setState("failed"));
+  };
+  return (
+    <span className="cc-terminal-panel-actions">
+      <button
+        type="button"
+        className="cc-chip"
+        data-panel-stop={workId}
+        disabled={state === "stopping"}
+        aria-busy={state === "stopping"}
+        onClick={stop}
+      >
+        {state === "stopping" ? t("blocks.terminal.panelStopping") : t("blocks.terminal.panelStop")}
+      </button>
+      {state === "failed" ? (
+        <span className="cc-freshness" role="status" data-panel-stop-failed={workId}>
+          {t("blocks.terminal.panelStopFailed")}
+        </span>
+      ) : null}
+    </span>
   );
 }
 

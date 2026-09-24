@@ -11,6 +11,7 @@ import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
+import { nowInstant } from "@clarkcant/contracts";
 import { applyEnvFile } from "@clarkcant/pi-adapter";
 
 import { createNodeServer } from "./server.ts";
@@ -19,6 +20,7 @@ import { fixtureGatesFromEnv, loadFixtureComposition } from "./bootstrap/fixture
 import { createNodeModelTurn } from "./bootstrap/model-bootstrap.ts";
 import { createRuntimeWiring, wireRuntime } from "./bootstrap/runtime-bootstrap.ts";
 import { attachNodeWork } from "./bootstrap/work-bootstrap.ts";
+import { startLeaseSweeper } from "./lease-sweeper.ts";
 import { performEmergencyStop } from "./application/emergency-stop.ts";
 import { STOP_GRACE_MS } from "./process-tree.ts";
 import { attachNodeVoice } from "./bootstrap/voice-bootstrap.ts";
@@ -207,6 +209,12 @@ async function main(): Promise<void> {
    * command is journaled and the first shell already has the node's keys withheld.
    */
   const work = attachNodeWork({ services, env: process.env, envLoaded: envFile.loaded });
+  // An expired lease is released on a timer, so a resource nobody contends for does not read as held forever.
+  const leaseSweeper = startLeaseSweeper({
+    db: services.runtime.db,
+    nodeId: services.runtime.identity.nodeId,
+    now: () => nowInstant(),
+  });
 
   wireRuntime({
     services,
@@ -425,6 +433,7 @@ async function main(): Promise<void> {
       process.exit(1);
     }, SHUTDOWN_GRACE_MS);
     hardStop.unref();
+    leaseSweeper.stop();
     void (async () => {
       try {
         const stopped = await performEmergencyStop({

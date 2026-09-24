@@ -262,6 +262,12 @@ export function createWorkSupervisor(
     return undefined;
   };
 
+  const cancelBackground = (reason: "stopped" | "shutdown" = "stopped"): number => {
+    const open = [...queue, ...running.values()];
+    for (const entry of open) cancelOpen(entry.workId, reason);
+    return open.length;
+  };
+
   return {
     submitBackground(input) {
       const workId = input.workId ?? `bg-${randomBytes(6).toString("hex")}`;
@@ -329,11 +335,7 @@ export function createWorkSupervisor(
       return stopped;
     },
 
-    cancelBackground(reason = "stopped") {
-      const open = [...queue, ...running.values()];
-      for (const entry of open) cancelOpen(entry.workId, reason);
-      return open.length;
-    },
+    cancelBackground,
 
     list(filter = {}) {
       const all = [...views(store.list()), ...sources.flatMap((source) => source.list())];
@@ -359,7 +361,7 @@ export function createWorkSupervisor(
 
     async drain(timeoutMs) {
       const settling = [...running.values()].flatMap((open) => (open.settled === undefined ? [] : [open.settled]));
-      this.cancelBackground("shutdown");
+      cancelBackground("shutdown");
       let timer: NodeJS.Timeout | undefined;
       await Promise.race([
         Promise.allSettled(settling),

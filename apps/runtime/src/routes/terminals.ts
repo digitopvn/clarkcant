@@ -37,7 +37,7 @@ export async function handleTerminalRoutes(deps: TerminalRouteDeps): Promise<Gat
       available: availability.ok,
       ...(availability.ok ? {} : { reason: availability.reason }),
       terminals: services.terminals.list().map(({ driver: _driver, ...info }) => info),
-      commands: listRunningCommands().map(({ command, cwd, startedAt }) => ({ command, cwd, startedAt })),
+      commands: listRunningCommands().map(({ workId, command, cwd, startedAt }) => ({ workId, command, cwd, startedAt })),
       background: nodeWork().background().sessions,
       piSessions: services.piSessions.list(),
     });

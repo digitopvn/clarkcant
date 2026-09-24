@@ -68,8 +68,13 @@ function testNode(): TestNode {
 }
 
 /** A task already in `dispatched`, exactly as `handleUserMessage` leaves it before calling `runTask`. */
-function dispatchedTask(conductor: ConductorDeps, executionNodeId: string): TaskRecord {
-  const task = createTask(conductor, { conversationId: CONVERSATION_ID, goal: "read the report", principal: PRINCIPAL });
+function dispatchedTask(conductor: ConductorDeps, executionNodeId: string, budget?: TaskRecord["budget"]): TaskRecord {
+  const task = createTask(conductor, {
+    conversationId: CONVERSATION_ID,
+    goal: "read the report",
+    principal: PRINCIPAL,
+    ...(budget === undefined ? {} : { budget }),
+  });
   applyTaskEvent(conductor, task.taskId, "resolve.start");
   advanceResolving(conductor, task.taskId, { kind: "ready", executionNodeId });
   applyTaskEvent(conductor, task.taskId, "dispatch.acknowledged");
@@ -78,7 +83,10 @@ function dispatchedTask(conductor: ConductorDeps, executionNodeId: string): Task
   return dispatched;
 }
 
-function fakeWorkerResult(evidence: WorkerProcessResult["record"]["evidence"]): WorkerProcessResult {
+function fakeWorkerResult(
+  evidence: WorkerProcessResult["record"]["evidence"],
+  usage: WorkerProcessResult["usage"] = { turns: 1 },
+): WorkerProcessResult {
   return {
     adapter: "fake",
     adapterVersion: "fake-1.0.0",
@@ -94,6 +102,7 @@ function fakeWorkerResult(evidence: WorkerProcessResult["record"]["evidence"]): 
       endedAt: AT,
       evidence,
     },
+    usage,
   };
 }
 
@@ -232,6 +241,72 @@ describe("dispatching a task runs a worker", () => {
     const stopped = dispatcher.stopAll();
     expect(stopped).toBe(1);
     expect(killed).toBe(true);
+  });
+
+  it("kills a worker and fails the task when its wall-clock budget is exhausted", async () => {
+    node = testNode();
+    const task = dispatchedTask(node.conductor, node.runtime.identity.nodeId, { maxWallClockMs: 50, maxDelegationDepth: 4 });
+    const settled: { outcome: string; message: string }[] = [];
+    let killed = false;
+    let release: (() => void) | undefined;
+
+    const dispatcher = createTaskDispatcher({
+      conductor: node.conductor,
+      projectRoots: () => [],
+      ownedRoots: () => [],
+      onSettled: (input) => settled.push({ outcome: input.outcome, message: input.message }),
+      // A worker that never settles on its own — the shape the wall-clock timer exists to bound. It
+      // only ends when killed, exactly as a real worker process only ends when its child actually exits.
+      runWorker: async (options) => {
+        options.onChild?.({
+          kill: () => {
+            killed = true;
+            release?.();
+          },
+        } as never);
+        await new Promise<void>((resolve) => {
+          release = resolve;
+        });
+        return fakeWorkerResult([]);
+      },
+    });
+
+    dispatcher.dispatch({ taskId: task.taskId, capabilityRef: "project.file.read@1", executionNodeId: node.runtime.identity.nodeId });
+    await waitUntil(() => settled.length > 0, 2_000);
+
+    expect(killed).toBe(true);
+    expect(settled[0]?.outcome).toBe("failed");
+    expect(settled[0]?.message).toContain("wall-clock budget");
+    expect(settled[0]?.message).toContain("50");
+    const after = getTask(node.conductor.db, task.taskId);
+    expect(after?.state).toBe("failed");
+  });
+
+  it("refuses to accept a run whose usage exceeded the task's token budget, even with verified evidence", async () => {
+    node = testNode();
+    const task = dispatchedTask(node.conductor, node.runtime.identity.nodeId, { maxTokens: 100, maxDelegationDepth: 4 });
+    const settled: { outcome: string; message: string }[] = [];
+
+    const dispatcher = createTaskDispatcher({
+      conductor: node.conductor,
+      projectRoots: () => [],
+      ownedRoots: () => [],
+      onSettled: (input) => settled.push({ outcome: input.outcome, message: input.message }),
+      runWorker: async () =>
+        fakeWorkerResult(
+          [{ kind: "file-diff", summary: "applied the change", verdict: "verified", observedAt: AT }],
+          { turns: 3, tokens: 150 },
+        ),
+    });
+
+    dispatcher.dispatch({ taskId: task.taskId, capabilityRef: "project.file.read@1", executionNodeId: node.runtime.identity.nodeId });
+    await vi_flush();
+
+    expect(settled[0]?.outcome).toBe("failed");
+    expect(settled[0]?.message).toContain("token budget");
+    expect(settled[0]?.message).toContain("150");
+    const after = getTask(node.conductor.db, task.taskId);
+    expect(after?.state).toBe("failed");
   });
 });
 

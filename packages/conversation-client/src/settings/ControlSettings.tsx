@@ -327,6 +327,11 @@ function readRules(value: unknown): ExecutionRule[] {
   return rules;
 }
 
+/** The stored limit as one of the choices offered, falling back to the node's default for anything else. */
+function readBackgroundLimit(value: unknown): "1" | "3" | "5" {
+  return value === 1 || value === 5 ? (String(value) as "1" | "5") : "3";
+}
+
 export function ControlSettings({
   prefs,
   client,
@@ -380,6 +385,30 @@ export function ControlSettings({
           );
         })}
         <InlineStatus status={prefs.status} forKey="execution.rules" />
+      </section>
+
+      {/*
+        How much background work runs at once. Read by the node at every admission, so a choice here applies to the
+        next request without a restart; work already running is never stopped by lowering it.
+      */}
+      <section className="cc-panel-section" data-background-limit="true">
+        <h3>{t("settings.control.background.heading")}</h3>
+        <p className="cc-panel-note">{t("settings.control.background.intro")}</p>
+        <SettingsRow label={t("settings.control.background.label")}>
+          <SegmentedControl
+            name="background-limit"
+            label={t("settings.control.background.heading")}
+            options={[
+              { value: "1", label: "1", note: t("settings.control.background.one.note") },
+              { value: "3", label: "3", note: t("settings.control.background.three.note") },
+              { value: "5", label: "5", note: t("settings.control.background.five.note") },
+            ]}
+            value={readBackgroundLimit(prefs.preference("execution.backgroundLimit")?.value)}
+            pending={prefs.pending === "execution.backgroundLimit"}
+            onChange={(value) => prefs.write("execution.backgroundLimit", Number(value))}
+          />
+        </SettingsRow>
+        <InlineStatus status={prefs.status} forKey="execution.backgroundLimit" />
       </section>
 
       <section className="cc-panel-section" data-recent-effects="true">

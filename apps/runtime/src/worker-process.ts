@@ -76,6 +76,15 @@ export interface WorkerProcessResult {
   stopReason: string;
   withheldCapabilities: string[];
   record: RunRecord;
+  /**
+   * What the worker's own session spent, as `apps/worker` already tracks it (its own token budget
+   * enforcement reads the same numbers). Optional because a caller that fakes a result — this
+   * interface predates usage reporting, and other fakes in this repository still construct one
+   * without it — has nothing to report; `tokens` is itself absent rather than zero when the adapter
+   * never reports usage at all, so a caller enforcing a token budget can tell "spent nothing" apart
+   * from "this adapter does not say".
+   */
+  usage?: { turns: number; tokens?: number };
 }
 
 /** The worker in this repository, resolved from this file rather than from the working directory. */
@@ -179,6 +188,7 @@ export async function runWorkerProcess(options: WorkerProcessOptions): Promise<W
       stopReason: parsed.stopReason,
       withheldCapabilities: parsed.withheldCapabilities,
       record: parsed.record,
+      usage: parsed.usage,
     };
   } finally {
     rmSync(directory, { recursive: true, force: true });
@@ -191,6 +201,7 @@ interface WorkerOutput {
   stopReason: string;
   withheldCapabilities: string[];
   record: RunRecord;
+  usage: { turns: number; tokens?: number };
 }
 
 /**
@@ -225,7 +236,20 @@ function parseWorkerOutput(stdout: string): WorkerOutput {
       ? output.withheldCapabilities.filter((one): one is string => typeof one === "string")
       : [],
     record: output.record as RunRecord,
+    usage: parseUsage(output.usage),
   };
+}
+
+/**
+ * `usage` the same way every other field here is read: a caller-supplied ceiling has something to
+ * compare against only when the number is real, so a malformed or absent field falls back to "no
+ * turns, no token count" rather than throwing partway through an otherwise-readable record.
+ */
+function parseUsage(value: unknown): { turns: number; tokens?: number } {
+  if (value === null || typeof value !== "object") return { turns: 0 };
+  const usage = value as { turns?: unknown; tokens?: unknown };
+  const turns = typeof usage.turns === "number" ? usage.turns : 0;
+  return typeof usage.tokens === "number" ? { turns, tokens: usage.tokens } : { turns };
 }
 
 export const WORKER_PROCESS_STATUS = "implemented-process-dispatch";
