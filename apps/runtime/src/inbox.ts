@@ -1,4 +1,5 @@
 import {
+  type EffectCategory,
   type InboxResponse,
   type InboxSummary,
   type Instant,
@@ -8,6 +9,7 @@ import {
 import {
   allRows,
   countUnreadNotifications,
+  getTask,
   listNotifications,
   parseJson,
 } from "@clarkcant/storage";
@@ -67,7 +69,8 @@ interface ApprovalRow {
  * Found through their card rather than through the row alone: the card is where the operation's payload lives, and
  * `decideApprovalForNode` refuses an approval whose card it cannot find. A row with no card would be a button that
  * can only fail, so it is not offered. A capability approval from an install has no card and is read below instead;
- * an approval a dispatched task raised (`task_id` set) has no decision route yet and is not offered at all.
+ * an approval a dispatched task raised (`task_id` set) is read by `pendingTaskApprovals` below, through its own
+ * decide route rather than through a card — a worker process never wrote one.
  */
 function pendingCommandApprovals(services: InboxServices, now: Instant): WaitingItem[] {
   const rows = allRows<ApprovalRow>(
@@ -127,6 +130,50 @@ function commandOf(payload: unknown): string | undefined {
   }
 }
 
+interface TaskApprovalRow {
+  approval_id: string;
+  task_id: string;
+  operation_digest: string;
+  operation_description: string;
+  effect_category: string;
+  requested_at: string;
+  expires_at: string;
+}
+
+/**
+ * Approvals a dispatched task raised through the execution-policy gate (`task-dispatch.ts`), still undecided and
+ * still in time.
+ *
+ * Unlike a command approval, there is no card: the worker process that needed the capability has no way to write
+ * one, and the approval exists only as its row in `approvals`. Decided through `POST
+ * /tasks/:taskId/approvals/:approvalId/decide`, which re-checks the digest itself rather than a card's payload.
+ * `conversationId` is read from the task the approval belongs to and left off when the task no longer exists —
+ * the approval is still decidable, it just has nowhere left to point.
+ */
+function pendingTaskApprovals(services: InboxServices, now: Instant): WaitingItem[] {
+  const rows = allRows<TaskApprovalRow>(
+    services.runtime.db,
+    `SELECT approval_id, task_id, operation_digest, operation_description, effect_category, requested_at, expires_at
+       FROM approvals WHERE task_id IS NOT NULL AND decision = 'pending' AND expires_at > ?
+       ORDER BY requested_at`,
+    now,
+  );
+  return rows.map((row) => {
+    const task = getTask(services.runtime.db, row.task_id);
+    return {
+      kind: "task-approval",
+      approvalId: row.approval_id,
+      taskId: row.task_id,
+      ...(task === undefined ? {} : { conversationId: task.conversationId }),
+      description: row.operation_description,
+      operationDigest: row.operation_digest,
+      effectCategory: row.effect_category as EffectCategory,
+      requestedAt: row.requested_at as Instant,
+      expiresAt: row.expires_at as Instant,
+    };
+  });
+}
+
 /** Questions the agent is waiting on, in conversations that asked one recently enough for it to still be open. */
 function pendingQuestions(services: InboxServices, now: Instant): WaitingItem[] {
   const since = new Date(Date.parse(now) - QUESTION_TTL_MS).toISOString();
@@ -176,6 +223,7 @@ export function waitingItems(services: InboxServices, now: Instant): WaitingItem
   return [
     ...pendingCommandApprovals(services, now),
     ...pendingCapabilityApprovals(services, now),
+    ...pendingTaskApprovals(services, now),
     ...pendingQuestions(services, now),
   ].sort((a, b) => a.requestedAt.localeCompare(b.requestedAt));
 }

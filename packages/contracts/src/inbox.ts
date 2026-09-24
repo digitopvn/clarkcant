@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-import { instantSchema } from "./primitives.ts";
+import { effectCategorySchema, instantSchema } from "./primitives.ts";
 
 /**
  * The inbox: what is waiting for the person, and what happened while they were somewhere else.
@@ -100,6 +100,18 @@ export const waitingItemSchema = z.discriminatedUnion("kind", [
     prompt: z.string(),
     requestedAt: instantSchema,
     expiresAt: instantSchema.optional(),
+  }),
+  z.strictObject({
+    kind: z.literal("task-approval"),
+    approvalId: z.string().min(1),
+    taskId: z.string().min(1),
+    /** Absent when the task itself is gone by the time the inbox is read; the approval can still be decided. */
+    conversationId: z.string().min(1).optional(),
+    description: z.string(),
+    operationDigest: z.string().min(1),
+    effectCategory: effectCategorySchema,
+    requestedAt: instantSchema,
+    expiresAt: instantSchema,
   }),
 ]);
 export type WaitingItem = z.infer<typeof waitingItemSchema>;

@@ -3,8 +3,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { type Instant, inboxResponseSchema, inboxSummarySchema } from "@clarkcant/contracts";
-import { requestApproval } from "@clarkcant/core";
+import { type Instant, type Principal, inboxResponseSchema, inboxSummarySchema } from "@clarkcant/contracts";
+import { createTask, requestApproval } from "@clarkcant/core";
 import { appendMessage, nextMessageSequence } from "@clarkcant/storage";
 
 import { handleRequest, type GatewayDeps, type GatewayRequest, type GatewayResponse } from "../src/gateway.ts";
@@ -137,6 +137,29 @@ function chatter(conversationId: string, count: number) {
   }
 }
 
+/**
+ * A task approval as the execution-policy gate in `task-dispatch.ts` raises it: a real task, and an approval
+ * bound to it directly by `taskId` rather than through a card, which task approvals never have.
+ */
+function raiseTaskApproval(conversationId: string) {
+  const principal: Principal = { principalId: "user_inbox_test", kind: "user", nodeId: services.runtime.identity.nodeId as never };
+  const task = createTask(
+    { db: services.runtime.db, nodeId: services.runtime.identity.nodeId, now: () => now as Instant, newId: services.conductor.newId },
+    { conversationId: conversationId as never, goal: "chạy lệnh git status", principal },
+  );
+  const approval = requestApproval(
+    { db: services.runtime.db, nodeId: services.runtime.identity.nodeId, now: () => now as never, newId: services.conductor.newId },
+    {
+      taskId: task.taskId,
+      operationDigest: `sha256:task-effect:${task.taskId}:demo.write@1`,
+      operationDescription: `Chạy lệnh trong ${dir}`,
+      effectCategory: "local-write",
+      ttlMs: 900_000,
+    },
+  );
+  return { task, approval };
+}
+
 function askQuestion(conversationId: string) {
   const created = createQuestion(
     { ...interactionDepsFor(services, conversationId), now: () => now as Instant },
@@ -240,9 +263,36 @@ describe("what is waiting for the person", () => {
     expect((await readInboxOverHttp()).waiting).toEqual([]);
   });
 
-  it("does not offer an approval a dispatched task raised, even with a card, since it has no decide route yet", async () => {
+  it("offers an approval a dispatched task raised, without a card, pointing at its own conversation", async () => {
     const conversationId = await createConversation();
-    proposeCommand(conversationId, "git status", 900_000, now, "task_dispatched");
+    const { task, approval } = raiseTaskApproval(conversationId);
+
+    const inbox = await readInboxOverHttp();
+    expect(inbox.waiting).toHaveLength(1);
+    expect(inbox.waiting[0]).toMatchObject({
+      kind: "task-approval",
+      approvalId: approval.approvalId,
+      taskId: task.taskId,
+      conversationId,
+      description: approval.operationDescription,
+      operationDigest: approval.operationDigest,
+      effectCategory: "local-write",
+      expiresAt: approval.expiresAt,
+    });
+  });
+
+  it("decides a task approval through its own route, and it is gone from the inbox once decided", async () => {
+    const conversationId = await createConversation();
+    const { task, approval } = raiseTaskApproval(conversationId);
+    expect((await readInboxOverHttp()).waiting).toHaveLength(1);
+
+    const decided = await request("POST", `/tasks/${task.taskId}/approvals/${approval.approvalId}/decide`, {
+      decision: "denied",
+      digest: approval.operationDigest,
+    });
+    expect(decided.status).toBe(200);
+    expect((decided.body as { decision: string; redispatched: boolean }).decision).toBe("denied");
+    expect((decided.body as { redispatched: boolean }).redispatched).toBe(false);
     expect((await readInboxOverHttp()).waiting).toEqual([]);
   });
 

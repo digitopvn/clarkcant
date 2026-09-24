@@ -213,6 +213,27 @@ export function InboxPanel({
       .catch((cause: unknown) => settleDecideFailure(cause, key));
   };
 
+  const decideTask = (item: Extract<WaitingItem, { kind: "task-approval" }>, decision: "granted" | "denied") => {
+    setBusy(waitingKey(item));
+    setStatus(undefined);
+    void client
+      .decideTaskApproval(item.taskId, item.approvalId, { decision, digest: item.operationDigest })
+      .then((result) => {
+        if (item.conversationId !== undefined && item.conversationId === conversationId) onTimeline(result.timeline);
+        settle({
+          tone: "done",
+          text: t(
+            decision === "denied"
+              ? "inbox.task.decided.denied"
+              : result.redispatched
+                ? "inbox.task.decided.redispatched"
+                : "inbox.task.decided.grantedNotRun",
+          ),
+        });
+      })
+      .catch((cause: unknown) => settle({ tone: "failed", text: t("inbox.decideFailed").replace("{reason}", reasonOf(cause)) }));
+  };
+
   const dismiss = (notice: Notice) => {
     const key = `notice:${notice.noticeId}`;
     if (inFlight.current !== undefined) return;
@@ -417,6 +438,39 @@ export function InboxPanel({
                                 </p>
                               )}
                               <div className="cc-card-actions">{openButton(item.conversationId)}</div>
+                            </>
+                          )}
+                          {item.kind === "task-approval" && (
+                            <>
+                              <span className="cc-card-title">
+                                {t("inbox.task.title").replace("{capability}", item.effectCategory)}
+                              </span>
+                              <p style={{ margin: 0 }}>{item.description}</p>
+                              <p className="cc-freshness" style={{ margin: 0 }}>
+                                {t("inbox.task.note")}
+                                {left === undefined ? "" : ` · ${left}`}
+                              </p>
+                              <div className="cc-card-actions">
+                                <button
+                                  type="button"
+                                  className="cc-action"
+                                  data-inbox-approve={item.approvalId}
+                                  disabled={busy !== undefined}
+                                  onClick={() => decideTask(item, "granted")}
+                                >
+                                  {deciding ? t("inbox.task.running") : t("inbox.task.approve")}
+                                </button>
+                                <button
+                                  type="button"
+                                  className="cc-action"
+                                  data-inbox-deny={item.approvalId}
+                                  disabled={busy !== undefined}
+                                  onClick={() => decideTask(item, "denied")}
+                                >
+                                  {t("inbox.task.deny")}
+                                </button>
+                                {item.conversationId !== undefined && openButton(item.conversationId)}
+                              </div>
                             </>
                           )}
                         </div>
