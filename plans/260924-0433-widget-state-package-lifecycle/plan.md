@@ -1,6 +1,6 @@
 ---
 title: State bền cho widget bên thứ ba và vòng đời package (gỡ, khôi phục, quay về)
-status: in-progress
+status: done
 ---
 
 # State bền cho widget bên thứ ba và vòng đời package
@@ -60,7 +60,7 @@ flowchart LR
 | [phase-02](phase-02-declarative-state-migration.md) | Migration khai báo do host chạy, conformance chạy thật | xong |
 | [phase-03](phase-03-package-uninstall-restore-rollback.md) | Gỡ / khôi phục / quay về: route, Settings, tool manage_package | xong |
 | [phase-04](phase-04-capability-approvals-ui.md) | UI duyệt capability đang chờ, grant ∩ preflight | xong |
-| [phase-05](phase-05-publish-version-rules-and-ship.md) | Publish áp quy tắc §20, docs, verify, PR | chờ |
+| [phase-05](phase-05-publish-version-rules-and-ship.md) | Publish áp quy tắc §20, docs, verify, PR | xong |
 
 ## Ma trận test tổng
 
@@ -73,5 +73,5 @@ flowchart LR
 | Migration khai báo chạy/hỏng/không đủ bước | `packages/core/test/widget-state-migration.spec.ts` |
 | Conformance chạy migration trên fixture | `packages/widget-cli/test/conformance.spec.ts` |
 | Gỡ giữ state, instance offline; khôi phục; quay về | `packages/core/test/package-uninstall.spec.ts`, `apps/runtime/test/package-lifecycle-route.spec.ts` |
-| Settings: gỡ/khôi phục/quay về, approval đang chờ | `apps/web/e2e/package-lifecycle.spec.ts` |
-| Publish từ chối đổi stateSchema/definition không bump major | `packages/widget-cli/test/conformance.spec.ts` |
+| Settings: gỡ/khôi phục/quay về, approval đang chờ | `apps/web/e2e/package-lifecycle.spec.ts`, `apps/web/e2e/capability-approvals.spec.ts` |
+| Publish từ chối đổi stateSchema/definition không bump major | `packages/widget-cli/test/version-rules.spec.ts` |

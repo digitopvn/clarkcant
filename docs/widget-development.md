@@ -130,6 +130,10 @@ Mỗi widget definition phải khai báo:
 - props JSON Schema;
 - event schemas;
 - state schema + stateVersion nếu có durable state;
+- `ephemeralStateKeys` — các key chỉ là view state (filter, zoom, lựa chọn): host bỏ chúng trước khi ghi xuống
+  node. Key không khai báo là state bền; quên khai báo thì không mất dữ liệu;
+- `stateMigrations` — các bước khai báo `{from, to, ops}` (op: `rename`, `default`, `remove`, `map`) từ mỗi
+  `stateVersion` cũ lên bản kế tiếp, do host chạy;
 - semanticDescription;
 - requested capabilities;
 - compact/expanded support và minimum height;
@@ -378,7 +382,17 @@ State có:
 - optimistic revision;
 - deterministic migration.
 
+State bền của widget cách ly nằm trong SQLite của node, không nằm trong frame. Widget ghi bằng
+`state.update(expectedStateRevision, patch)`; host bỏ `ephemeralStateKeys`, kiểm `stateSchema` và kích thước,
+kiểm revision lạc quan, và chỉ báo thành công khi node đã commit. Xung đột trả `STALE` và widget giữ bản nháp.
+Revision của state khác revision của instance; không dùng lẫn.
+
 Upgrade không được silently drop draft.
+
+Migration là khai báo và do host chạy: khi mở một instance có `stateVersion` cũ hơn definition, host chạy các
+bước `stateMigrations` trong một transaction rồi kiểm kết quả theo `stateSchema`. Code của widget không bao giờ
+chạm vào state chưa qua kiểm tra. Không có migrate xuống: state mới hơn definition (sau khi quay về bản trước)
+mở ở chế độ chỉ đọc kèm lý do.
 
 Nếu migration fail:
 
@@ -386,7 +400,10 @@ Nếu migration fail:
 - disable mutation;
 - đưa recovery choice.
 
-Uninstall presentation facet không tự xóa domain data của user.
+Uninstall presentation facet không tự xóa domain data của user. Gỡ package chỉ thôi kích hoạt generation đang
+chạy: instance chuyển offline với text fallback, state và snapshot được giữ. **Khôi phục** kích hoạt lại đúng
+generation vừa gỡ; **Quay về** kích hoạt generation bị thay gần nhất. Cả ba đi qua cùng một action từ
+Settings, chat và voice.
 
 ---
 
@@ -439,6 +456,9 @@ Validate manifest, build immutable artifact, generate digest + metadata.
 ### publish
 
 Publish package source/artifact rồi submit directory metadata. Directory không phải nơi duy nhất package có thể chạy: local/git source vẫn là first-class development path.
+
+Trước khi ghi entry, publish so các definition với lần chuẩn bị trước (`dist/published-definitions.json`) và
+từ chối version vi phạm quy tắc ở §20.
 
 ---
 
@@ -569,6 +589,17 @@ Action target/account/tool generation change → binding mới.
 
 Snapshot cũ phải tiếp tục render fallback/text ngay cả khi current package đã đổi.
 
+`clark widget publish` áp các quy tắc sau, so với definition của lần chuẩn bị trước, và từ chối kèm tên từng vi
+phạm:
+
+- `stateSchema` đổi ⇒ `stateVersion` phải tăng và có bước migration từ mọi `stateVersion` đã phát hành trở lên.
+  So sánh theo nội dung, thứ tự key không tính;
+- `stateVersion` không bao giờ giảm;
+- bước migration đã phát hành là lịch sử: không sửa, không xoá, chỉ thêm — một node có thể đã migrate bằng nó;
+- đổi `ephemeralStateKeys`, đổi `effectCategories` hoặc xin thêm `requestedCapabilities` ⇒ tăng major của
+  definition (hoặc id mới). Bỏ bớt capability thì không cần;
+- một definition biến mất khỏi package ⇒ tăng major của package, vì instance đang tồn tại gọi tên nó.
+
 ---
 
 ## 21. Review checklist
@@ -626,10 +657,14 @@ Mục này nói rõ phần nào của tài liệu đã có code, để không ai
   thật), dark/light/system, reduced motion, offline, read-only, semantic inspector, action log, capability
   simulator, và accessibility audit. Frame dùng đúng sandbox của host (`allow-scripts`, không
   `allow-same-origin`), và server từ chối mọi path nằm ngoài package.
+- State bền của widget cách ly, migration khai báo do host chạy, và `ephemeralStateKeys` (§15).
+- Gỡ / khôi phục / quay về package từ Settings và qua `manage_package` trong hội thoại; dữ liệu được giữ.
+- Câu hỏi capability đang chờ được trả lời trong Settings (do host sở hữu; model không duyệt được). Frame chỉ
+  nhận capability đã cấp **và** sẵn sàng; phần còn lại được nói ra kèm lý do.
 
 **Chưa có:**
 
-- `clark widget publish` — **đã có, ở mức "prepare"**: nó validate, pack, rồi ghi `dist/directory-entry.json`
+- `clark widget publish` — **đã có, ở mức "prepare"**, và áp quy tắc version ở §20: nó validate, pack, rồi ghi `dist/directory-entry.json`
   với đủ field mà §18 yêu cầu và digest của artifact đã pack (đọc từ `dist/artifact.json`, không tính lại —
   hai lần tính cùng một thứ là cách một listing nói tới artifact không ai tạo được). Nó **không** nộp thay
   người dùng: nộp cần account directory, và một lệnh trông như đã nộp rồi là control có action không tồn tại.

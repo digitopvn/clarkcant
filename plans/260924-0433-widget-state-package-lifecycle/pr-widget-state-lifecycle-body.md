@@ -12,17 +12,25 @@ Third-party widgets now have a real lifecycle on the node: their durable state i
   - Rollback reactivates the most recently replaced other version. There is no down-migration: newer state opens read-only.
   - Execution policy applies: `deny` refuses; `ask` sends a spoken/typed request to the Settings control, whose click is the confirmation.
   - Native Pi packages report that the change takes effect after Pi restarts, rather than claiming it already has.
+- **Pending capability questions in Settings.** `GET /packages/approvals` lists only questions that can still be answered (unexpired, and the digest's generation is still active). Settings → Extensions & Widgets shows each with its package and version, and answers it with exactly the digest the row showed. `manage_package` in chat and voice says what is waiting and where to answer it, but cannot approve: the model is not the person.
+- **Only ready capabilities are brokered.** A frame gets requested ∩ granted ∩ `invocationPreflight`-ready. The rest come back as `unavailableCapabilities` with a reason, and the surface says so. They are brokered on the next mount once ready, with no new approval.
+- **Publish enforces the versioning rules.** `clark widget publish` compares definitions with the ones it prepared last time (`dist/published-definitions.json`) and refuses, naming each problem:
+  - a changed `stateSchema` without a higher `stateVersion` and migration steps from the published one;
+  - a lower `stateVersion`;
+  - an edited or removed published migration step;
+  - changed `ephemeralStateKeys` or `effectCategories`, or an added capability, without a major definition version;
+  - a removed definition without a major package version.
 - **Offline widgets stay readable.** The live route returns `frame: null` with the text alternative and stored state for an offline instance, and serves the active version when the directory lists several.
 
 ## Verification
 
-- `pnpm exec vitest run apps/runtime/test packages/core/test`: all pass except `session-preview-real`, which launches a real browser and fails before this change too in an environment without a matching one.
-- `apps/web/e2e/package-lifecycle.spec.ts`, `installed-packages`, `package-install`, `widget-frame`: pass.
-- `pnpm invariants`, both typechecks, lint on changed files: pass.
+- `pnpm verify` (invariants, both typechecks, lint, 2594 unit tests): pass.
+- `apps/web/e2e/package-lifecycle.spec.ts`, `capability-approvals.spec.ts`, `installed-packages`, `package-install`, `widget-frame`: pass.
+- `packages/widget-cli/test/detach-real-browser.e2e.spec.ts` needs a local Chromium; it passes with one.
 
-## Not in this PR yet
+## Not in this PR
 
-Pending capability approvals UI with preflight-filtered brokering, and publish-time version rules, follow on this branch. A remote registry and MCP Apps are out of scope.
+A remote registry, MCP Apps, deleting widget data, down-migrations, and detaching isolated frames are out of scope. A granted widget capability is still not registered as a task executor, on purpose: the grant lets the frame ask the host, and it does not run anything.
 
 🤖 Generated with [Claude Code](https://claude.com/claude-code)
 

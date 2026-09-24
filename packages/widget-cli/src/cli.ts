@@ -9,6 +9,7 @@ import { directoryEntrySchema, riskLaneFor, type DirectoryEntry } from "@clarkca
 import { runConformance, type ConformanceReport } from "./conformance.ts";
 import type { FrameFacts } from "./dev-shell.ts";
 import { startDevHost } from "./dev-host.ts";
+import { publishedDefinitions, versionRuleViolations, type PublishedDefinitions } from "./version-rules.ts";
 import { readPackage } from "@clarkcant/core";
 
 /**
@@ -412,8 +413,28 @@ function publish(root: string): number {
       return 1;
     }
   }
+
+  // What this version promises about stored state and bindings, held against what the last prepared version promised.
+  const definitionsPath = join(root, "dist", "published-definitions.json");
+  const nextDefinitions = publishedDefinitions(entry.version, pkg.facets.map((facet) => facet.definition));
+  if (existsSync(definitionsPath)) {
+    let previousDefinitions: PublishedDefinitions;
+    try {
+      previousDefinitions = JSON.parse(readFileSync(definitionsPath, "utf8")) as PublishedDefinitions;
+    } catch {
+      process.stderr.write(definitionsPath + " exists but is not readable JSON; refusing to overwrite it.");
+      return 1;
+    }
+    const violations = versionRuleViolations(previousDefinitions, nextDefinitions);
+    if (violations.length > 0) {
+      process.stderr.write("Refusing to publish " + entry.packageId + "@" + entry.version + ":\n");
+      for (const violation of violations) process.stderr.write("  " + violation + "\n");
+      return 1;
+    }
+  }
   mkdirSync(join(root, "dist"), { recursive: true });
   writeFileSync(entryPath, JSON.stringify(parsed.data, null, 2));
+  writeFileSync(definitionsPath, JSON.stringify(nextDefinitions, null, 2));
   process.stdout.write("prepared the directory entry for " + entry.packageId + "@" + entry.version);
   process.stdout.write("  risk lane: " + entry.riskTier);
   process.stdout.write("  digest: " + digest);
