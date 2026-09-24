@@ -322,9 +322,19 @@ Hộp thư (`apps/runtime/src/inbox.ts`, `routes/inbox.ts`) gom hai thứ khác 
   viết được thẻ — nên có route riêng, `POST /tasks/:taskId/approvals/:approvalId/decide`
   (`decideTaskApprovalForNode`): duyệt không chỉ ghi quyết định, nó đưa task từ `waiting_approval` (task state
   machine, §9) trở lại `dispatched` rồi chạy lại capability đó ngay, lần này được `approvalAuthorizes` cho qua chứ
-  không hỏi lại; từ chối chỉ ghi quyết định, task đứng yên. Gate không fail task khi hỏi — trước đây từng fail nó,
-  cắt luôn khả năng resume vì `failed` là terminal — nó park task vào `waiting_approval` bằng hai event mới
-  (`run.needs_approval`, `run.approval_granted`) đúng cách `resolve.need_approval` đã park task trước khi dispatch.
+  không hỏi lại; từ chối (`run.approval_denied`) hoặc hết hạn không ai quyết định (`run.approval_expired`, áp ở lúc
+  quyết định muộn hoặc ở quét hết hạn) đưa task sang `failed` — không còn đường resume nào, nên để nó park mãi là nói
+  sai. Gate không fail task khi hỏi — trước đây từng fail nó, cắt luôn khả năng resume vì `failed` là terminal — nó
+  park task vào `waiting_approval` bằng `run.needs_approval` đúng cách `resolve.need_approval` đã park task trước khi
+  dispatch, và chỉ tạo approval khi park thật sự thành công. Policy luôn được hỏi trước: một grant đã lưu chỉ cho
+  phép bỏ qua *câu hỏi lại* khi policy nói `ask`, không bao giờ vượt qua `deny` hay `prohibition`. Approval vừa
+  được duyệt đi kèm lượt re-dispatch nó mở khoá (`authorizedByApprovalId`), nên độ trễ hàng đợi không biến grant
+  thành một câu hỏi mới; `dispatch()` trả về việc node có nhận job hay không, nên route không nói "đang chạy lại"
+  khi node đã từ chối. Route kiểm tra task còn `waiting_approval` **trước** khi ghi quyết định (`TASK_NOT_WAITING`,
+  `TASK_NOT_FOUND`), hộp thư chỉ đưa ra approval mà task của nó còn chờ, và huỷ một task đang chờ duyệt thì rút
+  luôn approval đó. Route của thẻ (`/conversations/:id/approvals/:aid/decide`) từ chối approval thuộc một task
+  (`APPROVAL_FORGED`) và đòi thẻ nằm trong đúng hội thoại cho cả duyệt lẫn từ chối. Mô tả approval và câu park là
+  tiếng Việt đọc được từ `summary` của capability, không bao giờ chứa capability ref, approval id hay digest.
   Thẻ và câu hỏi được tìm trong 2000 tin nhắn mới nhất (theo `rowid`, vì `created_at` không có index); route quyết
   định đọc cùng đầu đó của hội thoại (`latestMessages`), nên một mục hộp thư đưa ra luôn là mục route tìm được. Thẻ
   cũ hơn cửa sổ đó không được đưa ra, và approval của nó vẫn hết hạn theo TTL.
@@ -341,16 +351,26 @@ Hộp thư (`apps/runtime/src/inbox.ts`, `routes/inbox.ts`) gom hai thứ khác 
     chờ trong im lặng — đúng thiết kế cho danh sách, nhưng người không nhìn vào lúc đó sẽ không bao giờ biết. `apps/runtime/src/expiry-notices.ts` quét định kỳ (interval
     unref, khởi động trong `wireRuntime`, dừng khi node đóng) những approval còn `pending` đã qua `expires_at` và câu
     hỏi còn `waiting` đã qua hạn (tái dùng `expireQuestions` đã có, tự idempotent), ghi đúng một thông báo mỗi cái
-    (`dedupKey: expired:<id>`) trỏ về hội thoại của nó. Capability approval (install gói, không task, không thẻ) không
+    (`dedupKey: expired:<id>`) trỏ về hội thoại của nó. Câu hỏi chỉ được xét trong cửa sổ tin nhắn gần của lượt quét,
+    nên một thẻ cũ hàng tuần không bị đóng hay báo lần đầu quét chạy qua; thông báo được ghi *trước* khi đóng câu hỏi,
+    nên một lần ghi đóng lỗi không làm mất thông báo. Approval của task hết hạn còn đưa task sang `failed`
+    (`run.approval_expired`). Capability approval (install gói, không task, không thẻ) không
     có hội thoại để trỏ về nên không được quét — cùng lý do nó không được offer như việc chờ khi chưa hết hạn.
   - **Kiểm tra cập nhật** (`apps/runtime/src/update-checks.ts`) là một job định kỳ, khởi động từ
     `bootstrap/runtime-bootstrap.ts` bằng timer `unref()` (không giữ tiến trình sống), dừng lại khi node đóng. So
     version gói/widget đã cài (`listInstalledPackages`, `packages/core`) với directory index hiện có
     (`readDirectoryIndex`, cùng resolver dùng khi cài — không viết resolver thứ hai), và so version SDK Pi
-    (`sdkVersion()`, `packages/pi-adapter`) với npm registry qua `fetch` có timeout. Lỗi mạng hoặc registry không
+    (`sdkVersion()`, `packages/pi-adapter`) với npm registry qua `fetch` có timeout. Directory thường liệt kê nhiều
+    version của cùng một gói: mọi entry của gói đó được lọc qua đúng preflight mà installer chạy (`entryFitsHost`
+    cho host API/platform, cộng digest không rỗng), rồi version cao nhất còn lại thắng — không bao giờ báo một bản
+    mà lệnh cài sẽ từ chối. So version là semver chặt: một phía không parse được thì không coi là mới hơn, prerelease
+    so theo từng identifier, và một bản cài stable không bao giờ được mời lên prerelease; version npm trả về cũng
+    phải qua `semverSchema`. `stop()` huỷ cả fetch đang bay (`AbortController`), nên một lượt bị dừng giữa chừng
+    kết thúc im lặng như khi offline chứ không ghi thông báo sau khi node đã đóng. Lỗi mạng hoặc registry không
     trả lời **không tạo thông báo lỗi** — im lặng và thử lại ở lượt sau — vì một node offline là trạng thái bình
     thường, không phải sự cố. `dedupKey` là `update:<npm|git|local>:<packageId>@<newVersion>` (gói/widget) hoặc
-    `update:pi:<tên gói>@<newVersion>` (Pi SDK), nên lượt kiểm tra sau không tạo dòng thứ hai cho cùng version; một
+    `update:pi:<tên gói>@<newVersion>` (Pi SDK), nên lượt kiểm tra sau không tạo dòng thứ hai cho cùng version
+    khi dòng cũ còn đó (một thông báo đã bỏ bị dọn sau 30 ngày, và lúc đó cùng version có thể được báo lại); một
     version mới hơn nữa thì có dòng riêng. Nội dung nói rõ version hiện tại → mới và risk lane
     (`trusted-native`/`isolated-ui`/`service`/`declarative`, cùng cách gọi tên với marketplace — AGENTS.md coi việc
     lẫn lộn hai cách gọi là lỗi cần tránh). Hộp thư chưa vẽ nút "Cập nhật": route cập nhật thật đi qua lifecycle
@@ -364,6 +384,19 @@ Route: `GET /inbox`, `GET /inbox/summary` (hai số cho dấu trên header), `PO
 intent `inbox.open` (text, voice, `control_app`). Agent đọc cùng dữ liệu đó qua tool chỉ đọc `read_inbox`
 (`apps/runtime/src/read-inbox-tool.ts`): không đánh dấu đã đọc (người dùng chưa nhìn thấy) và không quyết định được gì
 (model không phải người dùng).
+
+**Thông báo ngoài ứng dụng** là việc của client, không phải node. `use-inbox-notifications.ts` poll `GET /inbox`
+và preference `inbox.notifications` (`packages/contracts/src/preferences.ts`; giá trị lưu thiếu trường được trộn
+lên mặc định), còn quyết định *có báo hay không* nằm trong module thuần `inbox-notify-decide.ts`: chỉ khi tab ẩn,
+cửa sổ mất focus hoặc đang ở orb/compact; theo nhóm và giờ yên lặng; lượt poll đầu chỉ ghi nhớ, không báo dồn. Nội
+dung chỉ gồm tiêu đề/nội dung đã redact và bị giới hạn độ dài — không bao giờ có dòng lệnh, capability ref hay mã
+nội bộ. Trên desktop, renderer gọi `desktop:notify`; main process giữ tham chiếu tới từng `Notification` còn trên
+màn hình, và khi click thì khôi phục cửa sổ shell khỏi orb/compact, focus nó rồi gửi `desktop:notificationClicked`
+**chỉ tới cửa sổ shell** (không bao giờ tới cửa sổ widget tách rời); preload trả về hàm huỷ đăng ký listener đó.
+Trên trình duyệt, Web Notification API chỉ được dùng khi người dùng đã bấm bật trong Settings → Control và trình
+duyệt cấp quyền; mỗi thông báo mang `tag` là id của mục nên nhiều tab không chồng bản sao. Lượt poll vẫn đọc `GET /inbox` khi
+chưa kênh nào giao được, để tập id đã thấy luôn theo kịp: bật thông báo giữa chừng không báo dồn, cũng không nuốt
+mục vừa tới. Nhóm "thiết bị khác" còn tắt kèm lý do cho đến khi có NodeLink pairing.
 
 Bảng `notifications` không phải `inbox` của NodeLink trong §10: cái sau là hàng đợi lệnh giữa các node, cái trước là
 những gì user được báo.

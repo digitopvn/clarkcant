@@ -459,7 +459,8 @@ phải một nơi điều hướng thứ hai. Mỗi mục trỏ về hội tho�
 - **"Đang chờ bạn" trước, "Thông báo" sau.** Việc chờ gồm lệnh cần duyệt (hiện đúng dòng lệnh sẽ chạy, thời gian còn
   lại), quyền gói mở rộng xin cấp, approval một task đang chạy xin (không có thẻ — worker không viết được thẻ, nhưng
   vẫn Duyệt/Từ chối được qua route riêng của nó), và câu hỏi Clark đang hỏi. Duyệt một approval của task chạy lại
-  ngay task đó với quyền vừa cấp, không hỏi lại lần hai. Duyệt/Từ chối trong hộp thư đi qua đúng route của thẻ (hoặc
+  ngay task đó với quyền vừa cấp, không hỏi lại lần hai; từ chối, hoặc để hết hạn, thì việc dừng hẳn và hội thoại
+  được báo như vậy — không để một việc treo "đang chờ" mãi. Mô tả việc chờ là câu đọc được, không có mã nội bộ. Duyệt/Từ chối trong hộp thư đi qua đúng route của thẻ (hoặc
   route riêng khi không có thẻ); câu hỏi chỉ có "Mở hội thoại", vì câu trả lời thuộc về hội thoại đã hỏi.
 - **Việc chờ luôn được suy ra lúc đọc**, từ thẻ và bản ghi duyệt, nên hộp thư không thể nói một việc còn chờ sau khi
   nó đã được quyết định trên thẻ, hoặc đã hết hạn.
@@ -474,10 +475,13 @@ phải một nơi điều hướng thứ hai. Mỗi mục trỏ về hội tho�
   lifecycle cài/rollback chưa nối tới thông báo này, nên hộp thư chỉ nói có bản mới chứ chưa cho bấm.
 - **Thông báo ngoài ứng dụng khi cửa sổ không có focus hoặc ở chế độ thu nhỏ/orb** (#171): trên desktop là OS
   notification qua Electron `Notification`, host-owned, chỉ tiêu đề/nội dung đã redact — không bao giờ có dòng
-  lệnh hay secret; click thì focus cửa sổ và mở hộp thư qua cùng intent `inbox.open`. Trên trình duyệt là Web
-  Notification API, chỉ bật sau khi người dùng bấm nút trong Settings → Control và trình duyệt tự cấp quyền. Tuỳ
-  chọn theo nhóm (việc chờ duyệt, kết quả việc nền, cập nhật, thiết bị khác) và giờ yên lặng, lưu ngay không cần
-  nút Save. Một việc chờ sắp hết hạn (còn ≤ 1 phút) được nhắc đúng một lần, không lặp lại.
+  lệnh hay secret; click thì đưa cửa sổ về kích thước thường nếu đang là orb/compact, focus nó và mở hộp thư qua
+  cùng intent `inbox.open`. Trên trình duyệt là Web Notification API, chỉ bật sau khi người dùng bấm nút trong
+  Settings → Control và trình duyệt tự cấp quyền; công tắc phản ánh quyền thật của trình duyệt, nói rõ khi bị từ
+  chối hoặc bị bỏ qua, và bị ẩn trên desktop. Tuỳ chọn theo nhóm (việc chờ duyệt, kết quả việc nền, cập nhật) và
+  giờ yên lặng, lưu ngay không cần nút Save; không có công tắc nào hiện trước khi giá trị đã lưu được đọc xong.
+  Nhóm "thiết bị khác" hiện nhưng bị tắt kèm lý do "chưa có thiết bị nào được ghép nối" cho tới khi có ghép nối
+  node. Một việc chờ sắp hết hạn (còn ≤ 1 phút) được nhắc đúng một lần, với tiêu đề nói rõ còn dưới 1 phút.
 - **Approval hoặc câu hỏi hết hạn mà không ai trả lời được báo, không im lặng rơi khỏi danh sách.** Một quét định kỳ
   ở node ghi đúng một thông báo mỗi việc hết hạn, trỏ về đúng hội thoại của nó; approval xin quyền gói (không thuộc
   hội thoại nào) không có gì để trỏ về nên không được báo theo đường này.
