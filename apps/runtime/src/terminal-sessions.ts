@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import { randomBytes, randomUUID } from "node:crypto";
 import { mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
 import { basename, isAbsolute, join, resolve } from "node:path";
@@ -307,7 +308,8 @@ export function shellLaunch(
  * the hangup the shell passes on to its jobs is what reaches them.
  */
 function sessionMembers(sessionId: number): number[] {
-  if (process.platform !== "linux") return [];
+  if (process.platform === "win32") return [];
+  if (process.platform !== "linux") return sessionMembersByPgrep(sessionId);
   let names: string[];
   try {
     names = readdirSync("/proc");
@@ -328,6 +330,51 @@ function sessionMembers(sessionId: number): number[] {
     }
   }
   return members;
+}
+
+/** The same list where there is no `/proc` (macOS, the BSDs): `pgrep -s` asks the kernel by session id. */
+function sessionMembersByPgrep(sessionId: number): number[] {
+  try {
+    const out = execFileSync("pgrep", ["-s", String(sessionId)], { encoding: "utf8", timeout: 2_000, stdio: ["ignore", "pipe", "ignore"] });
+    return out
+      .split("\n")
+      .map((line) => Number.parseInt(line.trim(), 10))
+      .filter((pid) => Number.isInteger(pid) && pid > 0);
+  } catch {
+    // Exit status 1 is "no match"; a machine without pgrep has only the hangup the shell passes on.
+    return [];
+  }
+}
+
+/**
+ * Every process descended from `root`, from one `ps` listing.
+ *
+ * Taken before the hangup, while the shell is still their ancestor: once it exits its jobs are reparented and nothing
+ * but the session id ties them to the terminal. Used where `/proc` is missing, beside `pgrep -s`, since not every
+ * `pgrep` can match by session.
+ */
+function descendants(root: number): number[] {
+  let out: string;
+  try {
+    out = execFileSync("ps", ["-A", "-o", "pid=,ppid="], { encoding: "utf8", timeout: 2_000, stdio: ["ignore", "pipe", "ignore"] });
+  } catch {
+    return [];
+  }
+  const children = new Map<number, number[]>();
+  for (const line of out.split("\n")) {
+    const [pid, ppid] = line.trim().split(/\s+/u).map((value) => Number.parseInt(value, 10));
+    if (pid === undefined || ppid === undefined || !Number.isInteger(pid) || !Number.isInteger(ppid)) continue;
+    children.set(ppid, [...(children.get(ppid) ?? []), pid]);
+  }
+  const found: number[] = [];
+  const queue = [...(children.get(root) ?? [])];
+  while (queue.length > 0) {
+    const pid = queue.shift() as number;
+    if (found.includes(pid)) continue;
+    found.push(pid);
+    queue.push(...(children.get(pid) ?? []));
+  }
+  return found;
 }
 
 /** Keys a person sends that leave nothing on the prompt line: Enter, interrupt, clear screen, end of input. */
@@ -472,7 +519,7 @@ export function createTerminalRegistry(options: {
     });
 
   /** Send a signal to the shell and, where the platform lets it be found, everything else in its session. */
-  const signalSession = (terminal: Terminal, signal: "SIGHUP" | "SIGKILL"): void => {
+  const signalSession = (terminal: Terminal, signal: "SIGHUP" | "SIGKILL", known: readonly number[] = []): void => {
     if (platform === "win32") {
       try {
         terminal.pty.kill();
@@ -481,7 +528,7 @@ export function createTerminalRegistry(options: {
       }
       return;
     }
-    for (const pid of sessionMembers(terminal.pty.pid)) {
+    for (const pid of new Set([...sessionMembers(terminal.pty.pid), ...known])) {
       try {
         process.kill(pid, signal);
       } catch {
@@ -502,9 +549,10 @@ export function createTerminalRegistry(options: {
    * whatever ignored it — a `nohup` job, a shell that traps the hangup — a kill of the whole session.
    */
   const close = (terminal: Terminal): void => {
-    signalSession(terminal, "SIGHUP");
+    const family = platform === "win32" || process.platform === "linux" ? [] : descendants(terminal.pty.pid);
+    signalSession(terminal, "SIGHUP", family);
     clearTimeout(terminal.killTimer);
-    const timer = setTimeout(() => signalSession(terminal, "SIGKILL"), 1_500);
+    const timer = setTimeout(() => signalSession(terminal, "SIGKILL", family), 1_500);
     timer.unref();
     terminal.killTimer = timer;
   };

@@ -154,7 +154,8 @@ describe.skipIf(process.platform === "win32")("a terminal on this node", () => {
     const id = await openShell();
     mkdirSync(join(dir, "sub"));
     await registry.run(id, "cd sub", { waitMs: 10_000 });
-    expect(registry.get(id)?.cwd).toBe(join(realpathSync(dir), "sub"));
+    // The shell reports its logical path (macOS's /var rather than /private/var), so both sides are resolved.
+    expect(realpathSync(registry.get(id)?.cwd ?? "")).toBe(join(realpathSync(dir), "sub"));
   }, 30_000);
 
   it("strips control characters from what it types", async () => {
@@ -174,7 +175,7 @@ describe.skipIf(process.platform === "win32")("a terminal on this node", () => {
     expect(alive(pid)).toBe(false);
   }, 30_000);
 
-  it.skipIf(process.platform !== "linux")("kills a job that ignores the hangup too", async () => {
+  it("kills a job that ignores the hangup too", async () => {
     const id = await openShell();
     const started = await registry.run(id, "nohup sleep 60 >/dev/null 2>&1 & echo $!", { waitMs: 10_000 });
     const pid = Number.parseInt(started.status === "finished" ? started.record.output.trim().split("\n").at(-1) ?? "" : "", 10);
