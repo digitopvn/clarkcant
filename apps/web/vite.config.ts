@@ -68,8 +68,13 @@ export default defineConfig({
      *
      * Returning `false` means "never inline"; returning `undefined` keeps Vite's default for every
      * other asset, so nothing else about the build changes.
+     *
+     * Fonts are never inlined either, for the same kind of reason: the policy has no `font-src`, so it
+     * falls back to `default-src 'self'` and refuses a `data:` font. The smallest subsets of the UI
+     * face - Vietnamese among them - are under Vite's inline limit, so they were the ones refused, and
+     * the diacritics were drawn in a fallback face while the console said why.
      */
     assetsInlineLimit: (filePath: string): boolean | undefined =>
-      filePath.endsWith("voice-capture-worklet.js") ? false : undefined,
+      filePath.endsWith("voice-capture-worklet.js") || /\.woff2?$/.test(filePath) ? false : undefined,
   },
 });
