@@ -147,8 +147,12 @@ interface TaskApprovalRow {
  * Unlike a command approval, there is no card: the worker process that needed the capability has no way to write
  * one, and the approval exists only as its row in `approvals`. Decided through `POST
  * /tasks/:taskId/approvals/:approvalId/decide`, which re-checks the digest itself rather than a card's payload.
- * `conversationId` is read from the task the approval belongs to and left off when the task no longer exists —
- * the approval is still decidable, it just has nowhere left to point.
+ *
+ * Also read back against the task itself, not only the approval row: `decideTaskApprovalForNode` refuses a
+ * decision once the task has left `waiting_approval` (cancelled, already resumed, already settled by expiry), so
+ * an approval whose task moved on is not decidable even while its row still reads `pending` - the row alone is
+ * a stale echo, not something to offer. A task that no longer exists is left out entirely rather than shown with
+ * nowhere to point.
  */
 function pendingTaskApprovals(services: InboxServices, now: Instant): WaitingItem[] {
   const rows = allRows<TaskApprovalRow>(
@@ -158,20 +162,23 @@ function pendingTaskApprovals(services: InboxServices, now: Instant): WaitingIte
        ORDER BY requested_at`,
     now,
   );
-  return rows.map((row) => {
+  const items: WaitingItem[] = [];
+  for (const row of rows) {
     const task = getTask(services.runtime.db, row.task_id);
-    return {
+    if (task === undefined || task.state !== "waiting_approval") continue;
+    items.push({
       kind: "task-approval",
       approvalId: row.approval_id,
       taskId: row.task_id,
-      ...(task === undefined ? {} : { conversationId: task.conversationId }),
+      conversationId: task.conversationId,
       description: row.operation_description,
       operationDigest: row.operation_digest,
       effectCategory: row.effect_category as EffectCategory,
       requestedAt: row.requested_at as Instant,
       expiresAt: row.expires_at as Instant,
-    };
-  });
+    });
+  }
+  return items;
 }
 
 /** Questions the agent is waiting on, in conversations that asked one recently enough for it to still be open. */

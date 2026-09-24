@@ -198,18 +198,30 @@ export async function handleControlRoutes(deps: ControlRouteDeps): Promise<Gatew
         coordination: { db: runtime.db, nodeId: runtime.identity.nodeId, now: () => at, newId: services.conductor.newId },
         ...(services.taskDispatch === undefined
           ? {}
-          : { dispatch: (input) => services.taskDispatch?.dispatch(input) }),
+          : { dispatch: (input) => services.taskDispatch?.dispatch(input) ?? false }),
       },
       { taskId, approvalId, decision, decidingPrincipal: owner, seenOperationDigest: digest },
     );
-    if (!decided.ok) return fail(409, decided.code, decided.message);
+    if (!decided.ok) {
+      // The approval's own deadline passed before this decision landed. Nobody decided anything, but the
+      // task was already settled by that expiry (`decideTaskApprovalForNode`'s own `run.approval_expired`);
+      // the conversation gets to hear that honestly rather than staying silent because the HTTP call failed.
+      if (decided.code === "APPROVAL_EXPIRED" && decided.conversationId !== undefined) {
+        appendHostReply(services, {
+          conversationId: decided.conversationId,
+          at,
+          text: "Yêu cầu duyệt đã hết hạn trước khi được quyết định, nên việc này đã dừng và không chạy gì. Bạn có thể yêu cầu lại.",
+        });
+      }
+      return fail(decided.code === "TASK_NOT_FOUND" ? 404 : 409, decided.code, decided.message);
+    }
 
     const text =
       decision === "denied"
-        ? `Đã từ chối. Task ${taskId} không chạy gì.`
+        ? "Đã từ chối. Việc này đã dừng và không chạy gì."
         : decided.redispatched
-          ? `Đã duyệt. Task ${taskId} đang được chạy lại với quyền vừa cấp.`
-          : `Đã duyệt, nhưng chưa có nơi để chạy lại task ${taskId} (task không còn hoặc chưa được gán nơi chạy), nên chưa có gì được chạy.`;
+          ? "Đã duyệt. Việc này đang được chạy lại với quyền vừa cấp."
+          : "Đã duyệt, nhưng node chưa nhận chạy lại việc này (đang tắt, hàng đợi đã đầy, hoặc việc chưa được gán nơi chạy), nên chưa có gì được chạy. Bạn có thể yêu cầu lại.";
     appendHostReply(services, { conversationId: decided.conversationId, at, text });
 
     return json(200, {

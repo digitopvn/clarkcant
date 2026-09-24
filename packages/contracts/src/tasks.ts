@@ -75,6 +75,8 @@ export const taskEventSchema = z.enum([
   "dispatch.timed_out",
   "run.needs_approval",
   "run.approval_granted",
+  "run.approval_denied",
+  "run.approval_expired",
   "run.verifying",
   "verify.passed",
   "verify.failed",
@@ -124,6 +126,10 @@ const TRANSITIONS: Record<TaskState, Partial<Record<TaskEvent, TaskState>>> = {
     // The execution-policy gate parked a run already dispatched; it resumes where it left off, on the same
     // execution node, rather than being resolved a second time.
     "run.approval_granted": "dispatched",
+    // A person refused the operation the task was parked for, or nobody decided before its deadline passed.
+    // Either way there is no path left to resume on: the task is terminal rather than parked forever.
+    "run.approval_denied": "failed",
+    "run.approval_expired": "failed",
   },
   dispatched: {
     "dispatch.acknowledged": "running",

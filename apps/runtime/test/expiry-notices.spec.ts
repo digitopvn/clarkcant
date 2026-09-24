@@ -4,11 +4,11 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { type Instant, type Principal } from "@clarkcant/contracts";
-import { createTask, requestApproval } from "@clarkcant/core";
+import { createTask, decideApproval, requestApproval } from "@clarkcant/core";
 import { appendMessage, nextMessageSequence } from "@clarkcant/storage";
 
 import { sweepExpired } from "../src/expiry-notices.ts";
-import { QUESTION_TTL_MS, createQuestion } from "../src/interactions.ts";
+import { QUESTION_TTL_MS, answerQuestion, createQuestion } from "../src/interactions.ts";
 import { readInbox } from "../src/inbox.ts";
 import { interactionDepsFor } from "../src/routes/conversations.ts";
 import { commandDigest } from "../src/run-command.ts";
@@ -155,7 +155,77 @@ describe("noticing what expired unanswered", () => {
       body: "Chọn môi trường triển khai.",
     });
     expect(readInbox(services, past).waiting).toEqual([]);
-    void created;
+
+    // Closed the same way answering would: exactly one `tool-activity` record of the expiry, however many times
+    // the sweep ran over it - the dedup key on the notice makes a repeat safe, and `expireQuestions` is itself
+    // idempotent, so two sweeps must not double-close the same question.
+    const blocks = interactionDepsFor(services, conversationId).blocks();
+    const expiredRecords = blocks.filter(
+      (block) =>
+        block.type === "tool-activity" &&
+        block.name === "ask_user_question" &&
+        block.args.questionId === created.interaction.questionId &&
+        block.args.decision === "expired",
+    );
+    expect(expiredRecords).toHaveLength(1);
+  });
+
+  it("does not notice a question that was answered before its deadline", async () => {
+    const conversationId = await createConversation();
+    const created = askQuestion(conversationId);
+    const answered = answerQuestion(
+      { ...interactionDepsFor(services, conversationId), now: () => AT },
+      created.interaction.questionId,
+      { optionIds: ["staging"] },
+    );
+    expect(answered.ok).toBe(true);
+    const past = laterBy(QUESTION_TTL_MS + 60_000);
+
+    sweepExpired(services, past);
+
+    expect(readInbox(services, past).notices).toEqual([]);
+  });
+
+  it("does not notice a command approval that was decided before its deadline", async () => {
+    const conversationId = await createConversation();
+    const approval = proposeCommand(conversationId, "git status", 60_000);
+    const decided = decideApproval(
+      { db: services.runtime.db, nodeId: services.runtime.identity.nodeId, now: () => AT, newId: services.conductor.newId },
+      {
+        approvalId: approval.approvalId,
+        decision: "granted",
+        decidingPrincipal: PRINCIPAL,
+        seenOperationDigest: approval.operationDigest,
+      },
+    );
+    expect(decided.ok).toBe(true);
+    const past = laterBy(120_000);
+
+    sweepExpired(services, past);
+
+    expect(readInbox(services, past).notices).toEqual([]);
+  });
+
+  it("leaves a card weeks outside the sweep's own recency window neither closed nor reported", async () => {
+    const conversationId = await createConversation();
+    const created = askQuestion(conversationId);
+    // Weeks past its own deadline, and weeks past the sweep's own scan window - the case a quiet conversation
+    // nobody has touched since is left exactly as it was, rather than surfacing a stale "expired" the first time
+    // a sweep happens to run past it.
+    const weeksLater = laterBy(30 * 24 * 60 * 60_000);
+
+    sweepExpired(services, weeksLater);
+
+    expect(readInbox(services, weeksLater).notices).toEqual([]);
+    const blocks = interactionDepsFor(services, conversationId).blocks();
+    const expiredRecords = blocks.filter(
+      (block) =>
+        block.type === "tool-activity" &&
+        block.name === "ask_user_question" &&
+        block.args.questionId === created.interaction.questionId &&
+        block.args.decision === "expired",
+    );
+    expect(expiredRecords).toEqual([]);
   });
 
   it("does not notice anything still inside its deadline", async () => {

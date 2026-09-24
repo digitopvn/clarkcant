@@ -176,19 +176,21 @@ describe("deciding an approval a dispatched task raised", () => {
     // Nothing settled: an approval request is not a failure, and `onSettled` must stay free for the real
     // outcome this run eventually has once the approval is decided.
     expect(settled).toEqual([]);
-    expect(waiting).toEqual([
-      {
-        taskId: task.taskId,
-        conversationId: CONVERSATION_ID,
-        approvalId: expect.any(String),
-        message: expect.stringContaining("needs approval"),
-      },
-    ]);
+    expect(waiting).toHaveLength(1);
+    expect(waiting[0]).toMatchObject({ taskId: task.taskId, conversationId: CONVERSATION_ID, approvalId: expect.any(String) });
+    // Plain Vietnamese, built from the capability's own summary - never the capability ref, the approval id or a
+    // digest. Those stay in the structured `taskId`/`approvalId` fields above, not in the sentence.
+    expect(waiting[0]?.message).toBe(
+      "Cần được duyệt trước khi thực hiện: ghi một file demo. Việc chưa chạy; " +
+        "nếu được duyệt việc sẽ tiếp tục, nếu bị từ chối hoặc hết hạn thì việc sẽ dừng hẳn.",
+    );
+    expect(waiting[0]?.message).not.toContain(CAPABILITY_REF);
+    expect(waiting[0]?.message).not.toContain(task.taskId);
     expect(getTask(node.conductor.db, task.taskId)?.state).toBe("waiting_approval");
     expect(pendingApprovalFor(node, task.taskId)).toBeDefined();
   });
 
-  it("runs nothing when the approval is denied, and consumes it so it cannot be decided twice", async () => {
+  it("runs nothing when the approval is denied, settles the task as failed rather than leaving it parked, and refuses a repeat decision", async () => {
     node = testNode();
     const task = dispatchedTask(node.conductor, node.runtime.identity.nodeId);
     const settled: { outcome: string; message: string }[] = [];
@@ -222,6 +224,14 @@ describe("deciding an approval a dispatched task raised", () => {
     expect(decided).toEqual({ ok: true, conversationId: CONVERSATION_ID, redispatched: false });
     expect(workerCalled).toBe(false);
 
+    // A denial leaves no path back to a run: the task is terminal (`failed`), not stranded in
+    // `waiting_approval` forever with an approval that was already spent.
+    expect(getTask(node.conductor.db, task.taskId)?.state).toBe("failed");
+    const decidedRow = oneRow<{ decision: string }>(node.runtime.db, "SELECT decision FROM approvals WHERE approval_id = ?", raised.approval_id);
+    expect(decidedRow?.decision).toBe("denied");
+
+    // The task has already left `waiting_approval`, so a second decision (even a grant) is refused before
+    // it is ever compared against the approval row, rather than reaching `APPROVAL_ALREADY_DECIDED`.
     const again = decideTaskApprovalForNode(
       { coordination: { db: node.runtime.db, nodeId: node.runtime.identity.nodeId, now: () => AT, newId: node.conductor.newId } },
       {
@@ -232,7 +242,7 @@ describe("deciding an approval a dispatched task raised", () => {
         seenOperationDigest: raised.operation_digest,
       },
     );
-    expect(again).toMatchObject({ ok: false, code: "APPROVAL_ALREADY_DECIDED" });
+    expect(again).toMatchObject({ ok: false, code: "TASK_NOT_WAITING" });
   });
 
   it("refuses a decision whose digest does not match what was raised, without deciding anything", async () => {
@@ -346,5 +356,126 @@ describe("deciding an approval a dispatched task raised", () => {
     // Nothing to re-decide: the approval this dispatch was authorized by is spent, its own decision recorded.
     const row = oneRow<{ decision: string }>(node.runtime.db, "SELECT decision FROM approvals WHERE approval_id = ?", raised.approval_id);
     expect(row?.decision).toBe("granted");
+  });
+
+  it("never lets a stored grant override a node-wide prohibition", async () => {
+    node = testNode();
+    const task = dispatchedTask(node.conductor, node.runtime.identity.nodeId);
+    const operationDigest = `sha256:task-effect:${task.taskId}:${CAPABILITY_REF}`;
+
+    // A grant already on record for this exact task and operation, as if a prior dispatch of the same task had
+    // already been decided - inserted directly rather than through `decideTaskApprovalForNode`, so this proves
+    // the gate's own ordering rather than depending on another code path to have produced the row.
+    node.runtime.db
+      .prepare(
+        `INSERT INTO approvals
+           (approval_id, task_id, operation_digest, operation_description, effect_category, decider, decision, requested_at, expires_at, decided_at)
+         VALUES (?, ?, ?, ?, ?, 'user', 'granted', ?, ?, ?)`,
+      )
+      .run("appr_stored_grant", task.taskId, operationDigest, "ghi một file demo", "local-write", AT, "2026-09-22T09:30:00.000Z", AT);
+
+    // The user tightens their policy to refuse every effect on this node after the grant was recorded - exactly
+    // the case a stored grant must never survive.
+    const tightened = writeRegisteredPreference(
+      { db: node.runtime.db, now: () => AT },
+      {
+        principalId: PRINCIPAL.principalId,
+        key: EXECUTION_POLICY_PREFERENCE_KEY,
+        value: { ...DEFAULT_EXECUTION_POLICY_CONFIG, mode: "ask", prohibition: "all" },
+        source: "user",
+      },
+    );
+    if (!tightened.ok) throw new Error(tightened.message);
+
+    const settled: { outcome: string; message: string }[] = [];
+    const waiting: unknown[] = [];
+    let workerCalled = false;
+    const dispatcher = createTaskDispatcher({
+      conductor: node.conductor,
+      projectRoots: () => [],
+      ownedRoots: () => [],
+      ownerPrincipalId: () => PRINCIPAL.principalId,
+      onSettled: (input) => settled.push({ outcome: input.outcome, message: input.message }),
+      onWaitingApproval: (input) => waiting.push(input),
+      runWorker: async () => {
+        workerCalled = true;
+        return fakeWorkerResult([{ kind: "file-diff", summary: "đã ghi file", verdict: "verified", observedAt: AT }]);
+      },
+    });
+
+    dispatcher.dispatch({ taskId: task.taskId, capabilityRef: CAPABILITY_REF, executionNodeId: node.runtime.identity.nodeId });
+    await vi_flush();
+
+    // The prohibition wins over the stored grant: the worker never ran, the task was never parked waiting for
+    // another approval (there is nothing left to ask - the node refuses this outright), and it did not settle
+    // as if it had succeeded.
+    expect(workerCalled).toBe(false);
+    expect(waiting).toEqual([]);
+    expect(settled).toHaveLength(1);
+    expect(settled[0]?.outcome).not.toBe("succeeded");
+    expect(settled[0]?.message).toContain("refuses every effect");
+    expect(getTask(node.conductor.db, task.taskId)?.state).not.toBe("waiting_approval");
+  });
+
+  it("accepts the approval that authorized a queued re-dispatch without re-checking that approval's own deadline", async () => {
+    node = testNode();
+    const task = dispatchedTask(node.conductor, node.runtime.identity.nodeId);
+    let currentTime: Instant = AT;
+    const settled: { outcome: string; message: string }[] = [];
+    let workerCalls = 0;
+
+    const dispatcher = createTaskDispatcher({
+      conductor: node.conductor,
+      projectRoots: () => [],
+      ownedRoots: () => [],
+      ownerPrincipalId: () => PRINCIPAL.principalId,
+      at: () => currentTime,
+      onSettled: (input) => settled.push({ outcome: input.outcome, message: input.message }),
+      runWorker: async () => {
+        workerCalls += 1;
+        return fakeWorkerResult([{ kind: "file-diff", summary: "đã ghi file", verdict: "verified", observedAt: AT }]);
+      },
+    });
+
+    dispatcher.dispatch({ taskId: task.taskId, capabilityRef: CAPABILITY_REF, executionNodeId: node.runtime.identity.nodeId });
+    await vi_flush();
+    expect(getTask(node.conductor.db, task.taskId)?.state).toBe("waiting_approval");
+
+    const raised = pendingApprovalFor(node, task.taskId);
+    const approvalRow = oneRow<{ expires_at: string }>(
+      node.runtime.db,
+      "SELECT expires_at FROM approvals WHERE approval_id = ?",
+      raised.approval_id,
+    );
+    if (approvalRow === undefined) throw new Error("test setup: approval row disappeared");
+
+    // The decision itself lands comfortably within the approval's own deadline.
+    const decided = decideTaskApprovalForNode(
+      {
+        coordination: { db: node.runtime.db, nodeId: node.runtime.identity.nodeId, now: () => AT, newId: node.conductor.newId },
+        dispatch: (input) => {
+          // A queue backlog is what would let real time pass between the decision and the gate re-running for
+          // the re-dispatch it authorized; simulated here by moving the dispatcher's own clock past the
+          // approval's deadline right before the queued job's gate re-checks it.
+          currentTime = new Date(new Date(approvalRow.expires_at).getTime() + 1000).toISOString() as Instant;
+          return dispatcher.dispatch(input);
+        },
+      },
+      {
+        taskId: task.taskId,
+        approvalId: raised.approval_id,
+        decision: "granted",
+        decidingPrincipal: PRINCIPAL,
+        seenOperationDigest: raised.operation_digest,
+      },
+    );
+    expect(decided).toEqual({ ok: true, conversationId: CONVERSATION_ID, redispatched: true });
+
+    await vi_flush();
+    // The carried approval authorized this one re-dispatch regardless of its own deadline having since passed,
+    // so the worker ran rather than the gate parking the task waiting for a second approval.
+    expect(workerCalls).toBe(1);
+    expect(settled).toEqual([{ outcome: "succeeded", message: "đã ghi file" }]);
+    expect(getTask(node.conductor.db, task.taskId)?.state).toBe("succeeded");
   });
 });

@@ -1,4 +1,5 @@
-import { type Instant, type MessageRecord } from "@clarkcant/contracts";
+import { type Instant, type MessageBlock, type MessageRecord } from "@clarkcant/contracts";
+import { applyTaskEvent } from "@clarkcant/core";
 import { allRows, getTask, parseJson } from "@clarkcant/storage";
 
 import { QUESTION_TTL_MS, expireQuestions, interactionFromBlock } from "./interactions.ts";
@@ -50,6 +51,12 @@ interface ExpiredApprovalRow {
  * same way the inbox finds it for the still-open case. A capability approval (an install's `ask`, `task_id` and
  * card both absent) has no conversation to point at, so it is left out — the same reason the inbox never offers
  * one without a card: a pointer to nowhere is not a notice, it is noise.
+ *
+ * A task approval also settles the task it belongs to, when that task is still `waiting_approval`: nobody
+ * decided in time, so `run.approval_expired` is the honest terminal outcome rather than leaving the task parked
+ * on a deadline that has already passed. Applied unconditionally and ignored when it fails - a task that moved on
+ * some other way (cancelled, already resumed) has already left `waiting_approval`, and this sweep only reports
+ * what nobody answered, it does not re-litigate a task that answered for itself in the meantime.
  */
 function sweepExpiredApprovals(services: ExpiryNoticeServices, now: Instant): void {
   const since = new Date(Date.parse(now) - EXPIRY_SCAN_WINDOW_MS).toISOString();
@@ -69,6 +76,13 @@ function sweepExpiredApprovals(services: ExpiryNoticeServices, now: Instant): vo
   );
 
   for (const row of rows) {
+    if (row.task_id !== null) {
+      applyTaskEvent(
+        { db: services.runtime.db, nodeId: services.runtime.identity.nodeId, now: () => now, newId: services.conductor.newId },
+        row.task_id,
+        "run.approval_expired",
+      );
+    }
     const conversationId =
       row.task_id === null ? cardConversations.get(row.approval_id) : getTask(services.runtime.db, row.task_id)?.conversationId;
     if (conversationId === undefined) continue;
@@ -112,12 +126,49 @@ function findCardConversations(services: ExpiryNoticeServices, approvalIds: stri
 }
 
 /**
+ * The question ids a window of blocks shows as still waiting and past their own deadline.
+ *
+ * Mirrors the small detection `expireQuestions` (interactions.ts) does internally, kept separate here because
+ * that function closes what it finds in the same call - there is no way to ask it "what would you close"
+ * without it also writing the close. Recomputing it against the *windowed* set of blocks below, rather than
+ * calling it and filtering the result, is what keeps a card outside the window from ever being read at all:
+ * `expireQuestions` given only these blocks can only close a question this sweep actually looked at.
+ */
+function expiredCandidates(blocks: readonly MessageBlock[], now: Instant): string[] {
+  const answered = new Set<string>();
+  for (const block of blocks) {
+    if (block.type !== "tool-activity" || block.name !== "ask_user_question") continue;
+    const id = block.args.questionId;
+    if (typeof id === "string" && id !== "") answered.add(id);
+  }
+  const expired: string[] = [];
+  const seen = new Set<string>();
+  for (const block of blocks) {
+    if (block.type !== "question-card" || seen.has(block.questionId)) continue;
+    seen.add(block.questionId);
+    if (answered.has(block.questionId)) continue;
+    if (block.expiresAt !== undefined && block.expiresAt <= now) expired.push(block.questionId);
+  }
+  return expired;
+}
+
+/**
  * Questions still waiting whose deadline has passed, each closed (via `expireQuestions`) and reported once.
  *
  * Closing is not a side effect this sweep invents: a question left `waiting` past its `expiresAt` already reads
  * as closed everywhere else (`isWaiting` says so), and `expireQuestions` is the existing, idempotent way to make
  * the transcript agree by recording that nobody answered. This sweep is what makes that fact reach the person
  * instead of sitting silent in the conversation nobody is looking at.
+ *
+ * Two things this does that a direct call to `expireQuestions` would not:
+ *
+ *  - it only ever looks at blocks from messages inside the sweep's own window (`since` below), so a question
+ *    card from weeks ago - well outside `RECENT_MESSAGES` worth of *recent* activity in an otherwise quiet
+ *    conversation - is neither closed nor reported the first time this sweep happens to run past it;
+ *  - it records the notice before writing the close. The dedup key (`expired:<id>`) makes recording it twice
+ *    safe, so if the close write then fails, the next tick finds the same still-open, still-expired card and
+ *    tries again - closing first would instead make the card "answered" for `expireQuestions`'s own purposes,
+ *    and a notice that failed to write after that is gone for good.
  */
 function sweepExpiredQuestions(services: ExpiryNoticeServices, now: Instant): void {
   const since = new Date(Date.parse(now) - QUESTION_TTL_MS - EXPIRY_SCAN_WINDOW_MS).toISOString();
@@ -125,17 +176,24 @@ function sweepExpiredQuestions(services: ExpiryNoticeServices, now: Instant): vo
     services.runtime.db,
     `SELECT conversation_id, created_at, document FROM
       (SELECT rowid, conversation_id, created_at, document FROM messages ORDER BY rowid DESC LIMIT ?)
-      WHERE created_at >= ? AND document LIKE '%"question-card"%'`,
+      WHERE created_at >= ?`,
     RECENT_MESSAGES,
     since,
   );
 
   // The prompt has to be read from the card itself, before expiry closes it: `expireQuestions` reports only
-  // which ids it closed, not what they asked.
+  // which ids it closed, not what they asked. Every block in the window is kept, not only `question-card`
+  // ones, because `expireQuestions` also needs the answer/cancel records to know a question is not actually
+  // still open - both have to come from the same bounded window, or a windowed card could be reported
+  // expired when it was in fact answered just outside it.
   const promptById = new Map<string, string>();
   const conversationByQuestionId = new Map<string, string>();
+  const blocksByConversation = new Map<string, MessageBlock[]>();
   for (const message of messages) {
     const record = parseJson<MessageRecord>(message.document, "messages.document");
+    const list = blocksByConversation.get(message.conversation_id);
+    if (list === undefined) blocksByConversation.set(message.conversation_id, [...record.blocks]);
+    else list.push(...record.blocks);
     for (const block of record.blocks) {
       const interaction = interactionFromBlock(block, message.conversation_id);
       if (interaction === undefined || promptById.has(interaction.questionId)) continue;
@@ -145,8 +203,8 @@ function sweepExpiredQuestions(services: ExpiryNoticeServices, now: Instant): vo
   }
 
   for (const conversationId of new Set(conversationByQuestionId.values())) {
-    const deps = { ...interactionDepsFor(services, conversationId), now: () => now };
-    for (const questionId of expireQuestions(deps)) {
+    const windowedBlocks = blocksByConversation.get(conversationId) ?? [];
+    for (const questionId of expiredCandidates(windowedBlocks, now)) {
       const prompt = promptById.get(questionId);
       tryRecordNodeNotice(services, {
         sourceKind: "system",
@@ -159,6 +217,10 @@ function sweepExpiredQuestions(services: ExpiryNoticeServices, now: Instant): vo
         at: now,
       });
     }
+    // `expireQuestions` is handed exactly this window's blocks, so it can only close what this sweep already
+    // looked at and already recorded a notice for above - never a card outside the window.
+    const deps = { ...interactionDepsFor(services, conversationId), now: () => now, blocks: () => windowedBlocks };
+    expireQuestions(deps);
   }
 }
 

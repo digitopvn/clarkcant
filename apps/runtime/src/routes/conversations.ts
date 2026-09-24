@@ -1351,14 +1351,33 @@ export async function decideApprovalForNode(
     now: () => input.at as never,
     newId: services.conductor.newId,
   };
+  // A task approval has no card - the worker that needed the capability never wrote one - and is decided through
+  // its own route (`POST /tasks/:taskId/approvals/:approvalId/decide`), which re-checks the digest against the
+  // task itself. `decideApproval`'s row lookup is not scoped by conversation or kind, so without this check a
+  // request aimed at this route could still decide a task's approval by id alone.
+  const owningTask = oneRow<{ task_id: string | null }>(
+    services.runtime.db,
+    `SELECT task_id FROM approvals WHERE approval_id = ?`,
+    input.approvalId,
+  );
+  if (owningTask?.task_id !== null && owningTask?.task_id !== undefined) {
+    return {
+      ok: false,
+      code: "APPROVAL_FORGED",
+      message: `approval ${input.approvalId} belongs to a task; decide it through POST /tasks/${owningTask.task_id}/approvals/${input.approvalId}/decide`,
+    };
+  }
+
   // The payload lives with the card that displayed it, so the operation approved and the operation run are
   // the same record rather than two copies that can drift. It is found before the decision is written: a grant
-  // recorded for an operation that then cannot be found would consume the approval and run nothing.
+  // recorded for an operation that then cannot be found would consume the approval and run nothing. The same
+  // requirement holds for a denial - without it, any approvalId could be denied through this route regardless of
+  // whether its card was ever shown in this conversation, or in any conversation at all.
   const card = blocksOfConversation(services, input.conversationId).find(
     (block) => block.type === "approval-card" && block.approvalId === input.approvalId,
   );
   const payload = card !== undefined && typeof card.payload === "string" ? card.payload : undefined;
-  if (input.decision === "granted" && payload === undefined) {
+  if (payload === undefined) {
     return { ok: false, code: "APPROVAL_PAYLOAD_MISSING", message: "the approved operation is not in this conversation" };
   }
 
@@ -1393,10 +1412,6 @@ export async function decideApprovalForNode(
     return { ok: true };
   }
 
-  // Unreachable - a grant without a payload returned before the decision - but it keeps the type honest.
-  if (payload === undefined) {
-    return { ok: false, code: "APPROVAL_PAYLOAD_MISSING", message: "the approved operation is not in this conversation" };
-  }
   const ran = await runApprovedCommand({
     payload,
     expectedDigest: decided.approval.operationDigest,

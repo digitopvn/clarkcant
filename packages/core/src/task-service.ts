@@ -506,9 +506,22 @@ export type CancelTaskResult =
   | { ok: false; code: "ILLEGAL_TRANSITION"; message: string; confirmed: false };
 
 export function cancelTask(deps: TaskServiceDeps, taskId: string): CancelTaskResult {
+  const before = getTask(deps.db, taskId);
   const requested = applyTaskEvent(deps, taskId, "cancel.requested");
   if (!requested.ok) return { ok: false, code: requested.code, message: requested.message, confirmed: false };
   if (!requested.changed) return { ok: true, task: requested.task, changed: false, confirmed: false };
+
+  /*
+   * A task parked on an execution-policy approval is leaving `waiting_approval` here, through cancellation
+   * rather than through a decision on the approval itself. That approval must not stay `pending`: a decision
+   * on it after this point is already refused (`decideTaskApprovalForNode` requires the task to still be
+   * `waiting_approval`), but a row nobody can ever act on again is not the same as a row that says so - it
+   * would still sit in `approvals` looking decidable, and the expiry sweep would eventually report it as
+   * "expired" for a task that was cancelled, not left waiting.
+   */
+  if (before?.state === "waiting_approval") {
+    retirePendingTaskApprovals(deps, taskId);
+  }
 
   /*
    * A run id is what says a process is holding this task. `executionNodeId` alone does not: it only
@@ -528,6 +541,19 @@ export function cancelTask(deps: TaskServiceDeps, taskId: string): CancelTaskRes
     return { ok: true, task: requested.task, changed: true, confirmed: false };
   }
   return { ok: true, task: confirmed.task, changed: true, confirmed: true };
+}
+
+/**
+ * Mark every still-pending approval this task raised as no longer decidable.
+ *
+ * Written directly rather than through `decideApproval` - there is no deciding user here, only the task
+ * itself leaving the state that approval existed for. `denied` rather than `expired`: a person's cancel is
+ * a real decision that the operation will not happen, not a deadline nobody got to in time.
+ */
+function retirePendingTaskApprovals(deps: TaskServiceDeps, taskId: string): void {
+  deps.db
+    .prepare(`UPDATE approvals SET decision = 'denied', decided_at = ? WHERE task_id = ? AND decision = 'pending'`)
+    .run(deps.now(), taskId);
 }
 
 /**
