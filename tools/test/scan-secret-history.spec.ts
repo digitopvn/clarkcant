@@ -9,7 +9,7 @@ import { scanCredentialChunk, scanSecretHistory } from "../scan-secret-history.m
 const directories: string[] = [];
 const script = fileURLToPath(new URL("../scan-secret-history.mjs", import.meta.url));
 afterEach(() => {
-  for (const directory of directories.splice(0)) rmSync(directory, { recursive: true, force: true });
+  for (const directory of directories.splice(0)) rmSync(directory, { recursive: true, force: true, maxRetries: 3 });
 });
 function directory() {
   const path = mkdtempSync(join(tmpdir(), "clarkcant-secret-scan-"));
@@ -23,6 +23,10 @@ function repository() {
   git("config", "user.name", "Test Fixture");
   git("config", "user.email", "fixture@example.invalid");
   git("config", "commit.gpgsign", "false");
+  // A commit or merge can start git's detached auto-maintenance, which may still be writing .git/objects when
+  // afterEach deletes the fixture; the fixture has too few objects to need it anyway.
+  git("config", "maintenance.auto", "false");
+  git("config", "gc.auto", "0");
   const commit = () => { git("add", "-A"); git("commit", "-m", "fixture"); };
   writeFileSync(join(cwd, "clean.txt"), "no credentials\n");
   commit();
