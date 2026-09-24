@@ -314,22 +314,35 @@ Ranh giới phải giữ: `ask_user_question` không dùng để hỏi secret. C
 
 Hộp thư (`apps/runtime/src/inbox.ts`, `routes/inbox.ts`) gom hai thứ khác authority về một chỗ đọc:
 
-- **Việc chờ** — lệnh cần duyệt, quyền gói xin cấp, câu hỏi đang mở — **không được lưu**. Mỗi lần đọc suy ra lại từ
-  bảng `approvals`, thẻ trong `messages` và `pendingForConversation`, nên hộp thư không thể nói một việc còn chờ sau
-  khi nó đã được quyết định trên thẻ hoặc đã hết hạn. Hộp thư không có route quyết định riêng: nút Duyệt/Từ chối gọi
-  đúng `POST /conversations/:id/approvals/:aid/decide` và route quyền gói mà thẻ dùng. Approval không có thẻ, hoặc
-  thuộc một task được điều phối, chưa được đưa ra, vì chưa có route quyết định nào cho nó. Thẻ và câu hỏi được tìm
-  trong 2000 tin nhắn mới nhất (theo `rowid`, vì `created_at` không có index); route quyết định đọc cùng đầu đó của
-  hội thoại (`latestMessages`), nên một mục hộp thư đưa ra luôn là mục route tìm được. Thẻ cũ hơn cửa sổ đó không
-  được đưa ra, và approval của nó vẫn hết hạn theo TTL.
-- **Thông báo** — kết quả việc nền, dispatch của worker, cập nhật Pi/gói/widget; về sau là tin từ node khác — là
-  sự kiện đã xảy ra, **được lưu** trong bảng `notifications` (migration 26). Producer gọi `recordNodeNotice` /
-  `tryRecordNodeNotice` (`apps/runtime/src/notices.ts`); ghi thông báo không bao giờ làm hỏng việc đã sinh ra nó.
+- **Việc chờ** — lệnh cần duyệt, quyền gói xin cấp, approval một task đang chạy raise ra, câu hỏi đang mở — **không
+  được lưu**. Mỗi lần đọc suy ra lại từ bảng `approvals`, thẻ trong `messages` và `pendingForConversation`, nên hộp
+  thư không thể nói một việc còn chờ sau khi nó đã được quyết định hoặc đã hết hạn. Lệnh/quyền gói có thẻ quyết định
+  qua `POST /conversations/:id/approvals/:aid/decide` và route quyền gói mà thẻ dùng. Approval một task đang chạy
+  raise ra qua execution-policy gate (`apps/runtime/src/task-dispatch.ts`, §7.4) không có thẻ — worker process không
+  viết được thẻ — nên có route riêng, `POST /tasks/:taskId/approvals/:approvalId/decide`
+  (`decideTaskApprovalForNode`): duyệt không chỉ ghi quyết định, nó đưa task từ `waiting_approval` (task state
+  machine, §9) trở lại `dispatched` rồi chạy lại capability đó ngay, lần này được `approvalAuthorizes` cho qua chứ
+  không hỏi lại; từ chối chỉ ghi quyết định, task đứng yên. Gate không fail task khi hỏi — trước đây từng fail nó,
+  cắt luôn khả năng resume vì `failed` là terminal — nó park task vào `waiting_approval` bằng hai event mới
+  (`run.needs_approval`, `run.approval_granted`) đúng cách `resolve.need_approval` đã park task trước khi dispatch.
+  Thẻ và câu hỏi được tìm trong 2000 tin nhắn mới nhất (theo `rowid`, vì `created_at` không có index); route quyết
+  định đọc cùng đầu đó của hội thoại (`latestMessages`), nên một mục hộp thư đưa ra luôn là mục route tìm được. Thẻ
+  cũ hơn cửa sổ đó không được đưa ra, và approval của nó vẫn hết hạn theo TTL.
+- **Thông báo** — kết quả việc nền, dispatch của worker, approval/câu hỏi hết hạn không ai trả lời, cập nhật
+  Pi/gói/widget; về sau là tin từ node khác — là sự kiện đã xảy ra, **được lưu** trong bảng `notifications`
+  (migration 26). Producer gọi `recordNodeNotice` / `tryRecordNodeNotice` (`apps/runtime/src/notices.ts`); ghi thông
+  báo không bao giờ làm hỏng việc đã sinh ra nó.
   Ghi là idempotent theo `(principal, dedupKey)` — cùng một sự kiện gửi lại (retry, hoặc qua NodeLink) không thành
   hai dòng — text được redact và cắt ngắn, và bảng tự dọn: mỗi principal giữ tối đa 200 thông báo **chưa bỏ** (cũ
   nhất đi trước), còn thông báo đã bỏ chỉ bị xoá khi quá 30 ngày, nên việc bỏ không đẩy một thông báo chưa đọc ra
   ngoài. Việc nền được điều phối khi xong ghi một thông báo mỗi task (`workerSettledNotice`, khoá `worker:<taskId>`).
   `originNodeId` để dành cho thông báo đến từ node khác.
+  - **Approval/câu hỏi hết hạn.** Một approval/câu hỏi hết hạn mà không ai quyết định thì rơi khỏi danh sách việc
+    chờ trong im lặng — đúng thiết kế cho danh sách, nhưng người không nhìn vào lúc đó sẽ không bao giờ biết. `apps/runtime/src/expiry-notices.ts` quét định kỳ (interval
+    unref, khởi động trong `wireRuntime`, dừng khi node đóng) những approval còn `pending` đã qua `expires_at` và câu
+    hỏi còn `waiting` đã qua hạn (tái dùng `expireQuestions` đã có, tự idempotent), ghi đúng một thông báo mỗi cái
+    (`dedupKey: expired:<id>`) trỏ về hội thoại của nó. Capability approval (install gói, không task, không thẻ) không
+    có hội thoại để trỏ về nên không được quét — cùng lý do nó không được offer như việc chờ khi chưa hết hạn.
   - **Kiểm tra cập nhật** (`apps/runtime/src/update-checks.ts`) là một job định kỳ, khởi động từ
     `bootstrap/runtime-bootstrap.ts` bằng timer `unref()` (không giữ tiến trình sống), dừng lại khi node đóng. So
     version gói/widget đã cài (`listInstalledPackages`, `packages/core`) với directory index hiện có
@@ -387,6 +400,8 @@ stateDiagram-v2
   waiting_approval --> queued: consent valid
   resolving --> dispatched
   dispatched --> running: executor accepts
+  running --> waiting_approval: execution policy asks
+  waiting_approval --> dispatched: consent valid, same run
   dispatched --> uncertain: acknowledgement missing
   running --> verifying
   verifying --> succeeded: evidence sufficient
