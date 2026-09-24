@@ -237,6 +237,26 @@ export const MESSAGES_SETTINGS_VI = {
   "settings.control.effects.intro": "Ở mức tự chủ, việc chạy mà không có thẻ duyệt vẫn để lại dấu vết ở đây. Đây là chỗ kiểm tra lại.",
   "settings.control.effects.none": "Chưa có việc nào chạy mà không hỏi.",
 
+  // InboxNotificationSettings
+  "settings.control.notifications.heading": "Thông báo hộp thư",
+  "settings.control.notifications.intro":
+    "Khi cửa sổ không có focus hoặc đang ở chế độ thu nhỏ, Clark có thể báo cho bạn qua thông báo của hệ điều hành hoặc trình duyệt.",
+  "settings.control.notifications.group.waitingApprovals": "Việc chờ duyệt",
+  "settings.control.notifications.group.backgroundResults": "Kết quả việc chạy nền",
+  "settings.control.notifications.group.updates": "Cập nhật",
+  "settings.control.notifications.group.otherDevices": "Thiết bị khác",
+  "settings.control.notifications.os.label": "Thông báo hệ điều hành",
+  "settings.control.notifications.os.description": "Hiện thông báo của hệ điều hành khi cửa sổ không có focus.",
+  "settings.control.notifications.os.needsDesktop": "Chỉ có trên ứng dụng desktop.",
+  "settings.control.notifications.web.label": "Thông báo trình duyệt",
+  "settings.control.notifications.web.description": "Cần trình duyệt cấp quyền; chỉ hỏi khi bạn bật nút này.",
+  "settings.control.notifications.web.unsupported": "Trình duyệt này không hỗ trợ thông báo.",
+  "settings.control.notifications.web.denied": "Trình duyệt đã từ chối quyền thông báo.",
+  "settings.control.notifications.quietHours.label": "Giờ yên lặng",
+  "settings.control.notifications.quietHours.description": "Không có thông báo nào trong khoảng giờ này.",
+  "settings.control.notifications.quietHours.start": "Bắt đầu",
+  "settings.control.notifications.quietHours.end": "Kết thúc",
+
   // DevicesVoiceSettings
   "settings.devices.heading": "Thiết bị",
   "settings.devices.unblockedBy": "chạy node thứ hai trên máy khác rồi ghép nối",
@@ -562,6 +582,25 @@ export const MESSAGES_SETTINGS_EN = {
   "settings.control.effects.heading": "Effects run without asking",
   "settings.control.effects.intro": "At Autonomous, work that runs without an approval card still leaves a trace here. This is where to check it.",
   "settings.control.effects.none": "Nothing has run without asking yet.",
+
+  "settings.control.notifications.heading": "Inbox notifications",
+  "settings.control.notifications.intro":
+    "When the window has no focus or is collapsed, Clark can let you know through an OS or browser notification.",
+  "settings.control.notifications.group.waitingApprovals": "Waiting approvals",
+  "settings.control.notifications.group.backgroundResults": "Background results",
+  "settings.control.notifications.group.updates": "Updates",
+  "settings.control.notifications.group.otherDevices": "Other devices",
+  "settings.control.notifications.os.label": "OS notifications",
+  "settings.control.notifications.os.description": "Show an OS notification when the window has no focus.",
+  "settings.control.notifications.os.needsDesktop": "Only available in the desktop app.",
+  "settings.control.notifications.web.label": "Browser notifications",
+  "settings.control.notifications.web.description": "Needs the browser's permission; only asked when you turn this on.",
+  "settings.control.notifications.web.unsupported": "This browser does not support notifications.",
+  "settings.control.notifications.web.denied": "The browser denied notification permission.",
+  "settings.control.notifications.quietHours.label": "Quiet hours",
+  "settings.control.notifications.quietHours.description": "No notifications during this window.",
+  "settings.control.notifications.quietHours.start": "Start",
+  "settings.control.notifications.quietHours.end": "End",
 
   "settings.devices.heading": "Devices",
   "settings.devices.unblockedBy": "run a second node on another machine, then pair",

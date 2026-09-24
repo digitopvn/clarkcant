@@ -1,8 +1,11 @@
 import { useEffect, useState, type ReactElement } from "react";
 
-import type { EffectCategory, ExecutionRule } from "@clarkcant/contracts";
+import type { EffectCategory, ExecutionRule, InboxNotificationGroup, InboxNotificationsPreference } from "@clarkcant/contracts";
 import {
+  DEFAULT_INBOX_NOTIFICATIONS_PREFERENCE,
   GUARD_CLASSES,
+  INBOX_NOTIFICATION_GROUPS,
+  inboxNotificationsPreferenceSchema,
   type AutonomySettings,
   type ExecutionPolicy,
   type GuardClass,
@@ -11,6 +14,7 @@ import {
 import { InlineStatus, SegmentedControl, SettingsRow, ToggleSwitch } from "./controls/primitives.tsx";
 import type { PreferencesHandle } from "./controls/use-preferences.ts";
 import type { GatewayClient } from "../api.ts";
+import { hasDesktopChrome } from "../desktop-compact.ts";
 import { useT } from "../i18n/locale-context.tsx";
 import type { MessageKey } from "../i18n/messages.ts";
 
@@ -332,6 +336,178 @@ function readBackgroundLimit(value: unknown): "1" | "3" | "5" {
   return value === 1 || value === 5 ? (String(value) as "1" | "5") : "3";
 }
 
+const INBOX_NOTIFICATIONS_KEY = "inbox.notifications";
+
+/** The current preference, read defensively: an unreadable or not-yet-answered value falls back to the default. */
+function readInboxNotifications(prefs: PreferencesHandle): InboxNotificationsPreference {
+  const parsed = inboxNotificationsPreferenceSchema.safeParse(prefs.preference(INBOX_NOTIFICATIONS_KEY)?.value);
+  return parsed.success ? parsed.data : DEFAULT_INBOX_NOTIFICATIONS_PREFERENCE;
+}
+
+function groupLabelKey(group: InboxNotificationGroup): MessageKey {
+  switch (group) {
+    case "waitingApprovals":
+      return "settings.control.notifications.group.waitingApprovals";
+    case "backgroundResults":
+      return "settings.control.notifications.group.backgroundResults";
+    case "updates":
+      return "settings.control.notifications.group.updates";
+    case "otherDevices":
+      return "settings.control.notifications.group.otherDevices";
+  }
+}
+
+/** The global `Notification` constructor, or nothing when the platform has none — never read at module load. */
+function webNotificationApi(): typeof Notification | undefined {
+  const candidate = (globalThis as { Notification?: unknown }).Notification;
+  return typeof candidate === "function" ? (candidate as typeof Notification) : undefined;
+}
+
+/**
+ * Per-group toggles, the OS/web channel switches and quiet hours for #171.
+ *
+ * The browser's notification permission is a hard consent boundary this control does not lift: `web` only
+ * ever becomes `true` here, from the explicit act of turning this toggle on, and only after
+ * `Notification.requestPermission()` itself answers `granted` — never from the background poll that later
+ * delivers a notification, and never assumed from a previous session.
+ */
+function InboxNotificationSettings({ prefs }: { prefs: PreferencesHandle }): ReactElement {
+  const t = useT();
+  const value = readInboxNotifications(prefs);
+  const pending = prefs.pending === INBOX_NOTIFICATIONS_KEY;
+  const desktop = hasDesktopChrome();
+  const [webRefusal, setWebRefusal] = useState<"unsupported" | "denied" | undefined>(undefined);
+  const [startDraft, setStartDraft] = useState<string | undefined>(undefined);
+  const [endDraft, setEndDraft] = useState<string | undefined>(undefined);
+
+  const write = (patch: Partial<InboxNotificationsPreference>): void => {
+    prefs.write(INBOX_NOTIFICATIONS_KEY, { ...value, ...patch });
+  };
+
+  const toggleWeb = (next: boolean): void => {
+    setWebRefusal(undefined);
+    if (!next) {
+      write({ web: false });
+      return;
+    }
+    const api = webNotificationApi();
+    if (api === undefined) {
+      setWebRefusal("unsupported");
+      return;
+    }
+    void api.requestPermission().then((permission) => {
+      if (permission === "granted") {
+        write({ web: true });
+      } else {
+        setWebRefusal("denied");
+      }
+    });
+  };
+
+  const commitQuietTime = (field: "start" | "end", draft: string | undefined): void => {
+    if (draft === undefined || draft.length === 0 || draft === value.quietHours[field]) return;
+    write({ quietHours: { ...value.quietHours, [field]: draft } });
+  };
+
+  return (
+    <section className="cc-panel-section" data-inbox-notifications="true">
+      <h3>{t("settings.control.notifications.heading")}</h3>
+      <p className="cc-panel-note">{t("settings.control.notifications.intro")}</p>
+
+      {INBOX_NOTIFICATION_GROUPS.map((group) => (
+        <SettingsRow key={group} label={t(groupLabelKey(group))}>
+          <ToggleSwitch
+            name={`inbox-notify-group-${group}`}
+            label={t(groupLabelKey(group))}
+            checked={value.groups[group]}
+            pending={pending}
+            onChange={(next) => write({ groups: { ...value.groups, [group]: next } })}
+          />
+        </SettingsRow>
+      ))}
+
+      <SettingsRow
+        label={t("settings.control.notifications.os.label")}
+        description={t("settings.control.notifications.os.description")}
+      >
+        <ToggleSwitch
+          name="inbox-notify-os"
+          label={t("settings.control.notifications.os.label")}
+          checked={value.os}
+          pending={pending}
+          onChange={(next) => write({ os: next })}
+          {...(desktop ? {} : { disabledReason: t("settings.control.notifications.os.needsDesktop") })}
+        />
+      </SettingsRow>
+
+      <SettingsRow
+        label={t("settings.control.notifications.web.label")}
+        description={t("settings.control.notifications.web.description")}
+      >
+        <ToggleSwitch
+          name="inbox-notify-web"
+          label={t("settings.control.notifications.web.label")}
+          checked={value.web}
+          pending={pending}
+          onChange={toggleWeb}
+        />
+      </SettingsRow>
+      {webRefusal === undefined ? null : (
+        <p className="cc-panel-note" data-inbox-notify-web-refusal={webRefusal}>
+          {t(
+            webRefusal === "unsupported"
+              ? "settings.control.notifications.web.unsupported"
+              : "settings.control.notifications.web.denied",
+          )}
+        </p>
+      )}
+
+      <SettingsRow
+        label={t("settings.control.notifications.quietHours.label")}
+        description={t("settings.control.notifications.quietHours.description")}
+      >
+        <ToggleSwitch
+          name="inbox-notify-quiet"
+          label={t("settings.control.notifications.quietHours.label")}
+          checked={value.quietHours.enabled}
+          pending={pending}
+          onChange={(next) => write({ quietHours: { ...value.quietHours, enabled: next } })}
+        />
+      </SettingsRow>
+      {!value.quietHours.enabled ? null : (
+        <div className="cc-panel-row" data-inbox-notify-quiet-hours="true">
+          <label className="cc-credential-field">
+            <span>{t("settings.control.notifications.quietHours.start")}</span>
+            <input
+              type="time"
+              value={startDraft ?? value.quietHours.start}
+              onChange={(event) => setStartDraft(event.target.value)}
+              onBlur={() => {
+                commitQuietTime("start", startDraft);
+                setStartDraft(undefined);
+              }}
+            />
+          </label>
+          <label className="cc-credential-field">
+            <span>{t("settings.control.notifications.quietHours.end")}</span>
+            <input
+              type="time"
+              value={endDraft ?? value.quietHours.end}
+              onChange={(event) => setEndDraft(event.target.value)}
+              onBlur={() => {
+                commitQuietTime("end", endDraft);
+                setEndDraft(undefined);
+              }}
+            />
+          </label>
+        </div>
+      )}
+
+      <InlineStatus status={prefs.status} forKey={INBOX_NOTIFICATIONS_KEY} />
+    </section>
+  );
+}
+
 export function ControlSettings({
   prefs,
   client,
@@ -434,6 +610,8 @@ export function ControlSettings({
           </ul>
         )}
       </section>
+
+      <InboxNotificationSettings prefs={prefs} />
     </>
   );
 }
