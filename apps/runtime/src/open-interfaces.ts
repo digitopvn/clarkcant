@@ -1,3 +1,5 @@
+import { PERSON_ONLY_REFUSAL } from "@clarkcant/contracts";
+
 /**
  * The node's open interfaces, described in the formats other tools already read.
  *
@@ -34,6 +36,11 @@ export function discoveryDocument(): Record<string, unknown> {
       mcp: { endpoint: MCP_PATH, transport: "streamable-http", protocolVersions: MCP_PROTOCOL_VERSIONS },
       websocket: { endpoint: API_SOCKET_PATH, protocol: API_SOCKET_PROTOCOL, auth: "first frame { type: 'auth', token }" },
       cli: { command: "clarkcant", package: "@clarkcant/cli", mcpStdio: "clarkcant mcp" },
+    },
+    // Told up front so a tool does not try: approvals, grants and trust are made by the person in the app.
+    personDecisions: {
+      refusedOn: ["websocket", "mcp", "cli api"],
+      refusal: { status: 403, code: PERSON_ONLY_REFUSAL.code },
     },
   };
 }

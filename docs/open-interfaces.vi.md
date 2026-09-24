@@ -75,8 +75,10 @@ có thể thay đổi.
 
 **Cố ý không có tool duyệt approval.** Approval là quyết định của con người về việc agent muốn làm; một MCP tool cho
 nó sẽ cho phép client AI tự duyệt hành động bị guard của chính nó. Approval chỉ nằm trên bề mặt của người dùng, và
-các relay tổng quát (frame `request` qua WebSocket, `clarkcant api`) từ chối các route quyết định approval với
-`403 PERSON_ONLY` vì cùng lý do đó.
+các relay tổng quát (frame `request` qua WebSocket, `clarkcant api`) cùng MCP từ chối mọi route ghi nhận quyết định
+của con người với `403 PERSON_ONLY` vì cùng lý do đó: duyệt hành động bị guard, quyết định capability của package,
+xác nhận app intent, tin cậy một peer đã ghép cặp và cấp grant. Dừng, trả lời câu hỏi và đọc vẫn dùng được. Discovery
+document ghi điều này ở mục `personDecisions`.
 
 Cấu hình client — HTTP:
 
@@ -104,8 +106,9 @@ socket `/voice` và `/terminal`:
 ← { "type": "response", "id": "1", "status": 200, "body": null }
 ```
 
-- Gửi được mọi route REST, trừ route quyết định approval, dưới dạng frame `request`; câu trả lời là status và body
+- Gửi được mọi route REST, trừ quyết định của con người, dưới dạng frame `request`; câu trả lời là status và body
   của chính gateway.
+- `id` được trả lại đúng như khi gửi, dù là chuỗi hay số.
 - Tham số query đặt trong object `query` của frame, không đặt trong `path`.
 - Tối đa 16 request chạy đồng thời trên một socket, phân biệt bằng `id`.
 - Request bị từ chối (`INVALID_FRAME`, `TOO_MANY_REQUESTS`) nhận một frame `error` mang `id` của nó thay cho
@@ -124,12 +127,15 @@ socket `/voice` và `/terminal`:
 | `clarkcant status` | nhãn node, URL, model |
 | `clarkcant conversations` / `new [title]` / `read <id>` | hội thoại |
 | `clarkcant stop` | dừng khẩn cấp |
-| `clarkcant api <METHOD> <path> [jsonBody]` | gọi route bất kỳ, trừ route quyết định approval |
+| `clarkcant api <METHOD> <path> [jsonBody]` | gọi route bất kỳ, trừ quyết định của con người |
 | `clarkcant mcp` | MCP qua stdio |
 | `clarkcant discover` | discovery document |
 
 Kết nối: `--url` / `CLARKCANT_URL`, `--token` / `CLARKCANT_TOKEN`, nếu không thì đọc `identity.json` trong
-`--data-dir` / `CLARKCANT_DATA_DIR` (mặc định `~/.clarkcant`). `--json` in JSON thô.
+`--data-dir` / `CLARKCANT_DATA_DIR` (mặc định `~/.clarkcant`). File identity chỉ được đọc cho node trên chính máy
+này (`localhost`, `127.x`, `::1`); `--url` trỏ tới máy khác cần `--token` hoặc `CLARKCANT_TOKEN`, nên token cục bộ không
+bao giờ bị gửi sang host khác. `clarkcant mcp` chuyển tiếp từng dòng ngay khi nhận, nên `ping` vẫn được trả lời trong
+lúc một lệnh gọi dài đang chạy. `--json` in JSON thô.
 
 ## Thay đổi một bề mặt
 

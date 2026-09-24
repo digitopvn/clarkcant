@@ -1,4 +1,4 @@
-import { type MessageBlock, messageBlocksAsText } from "@clarkcant/contracts";
+import { isPersonOnlyRoute, type MessageBlock, messageBlocksAsText, PERSON_ONLY_REFUSAL } from "@clarkcant/contracts";
 
 import { MCP_PATH, MCP_PROTOCOL_VERSIONS } from "../open-interfaces.ts";
 import { type GatewayRequest, type GatewayResponse, json } from "./http.ts";
@@ -216,14 +216,17 @@ async function answerOne(deps: McpRouteDeps, message: unknown): Promise<unknown>
 
 async function callTool(deps: McpRouteDeps, name: string, args: Record<string, unknown>): Promise<ToolResult> {
   const call = (method: string, path: string, body?: unknown, query: Record<string, string> = {}): Promise<GatewayResponse> =>
-    deps.dispatch({
-      method,
-      path,
-      query,
-      // The caller's own credential, so the route checks it exactly as it would over HTTP.
-      headers: { authorization: deps.request.headers.authorization },
-      body: body === undefined ? "" : JSON.stringify(body),
-    });
+    // No tool names a person-only route today; this keeps a future tool from becoming one.
+    isPersonOnlyRoute(method, path)
+      ? Promise.resolve({ status: 403, body: PERSON_ONLY_REFUSAL })
+      : deps.dispatch({
+          method,
+          path,
+          query,
+          // The caller's own credential, so the route checks it exactly as it would over HTTP.
+          headers: { authorization: deps.request.headers.authorization },
+          body: body === undefined ? "" : JSON.stringify(body),
+        });
 
   switch (name) {
     case "ask_clark": {

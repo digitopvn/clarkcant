@@ -55,7 +55,7 @@ export function attachApiSocket(options: { server: Server; services: NodeService
     const send = (frame: Record<string, unknown>): void => {
       if (ws.readyState === ws.OPEN) ws.send(JSON.stringify(frame));
     };
-    const error = (code: string, message: string, id?: string): void =>
+    const error = (code: string, message: string, id?: string | number): void =>
       send({ type: "error", ...(id === undefined ? {} : { id }), code, message });
 
     ws.on("message", (data: RawData) => {
@@ -98,7 +98,8 @@ export function attachApiSocket(options: { server: Server; services: NodeService
         return;
       }
 
-      const id = typeof frame.id === "string" || typeof frame.id === "number" ? String(frame.id) : undefined;
+      // Echoed exactly as sent, so a client matching `response.id === 7` finds its answer.
+      const id = typeof frame.id === "string" || typeof frame.id === "number" ? frame.id : undefined;
       if (id === undefined) {
         error("INVALID_FRAME", "a request needs an id to answer it by");
         return;
@@ -145,7 +146,7 @@ export function attachApiSocket(options: { server: Server; services: NodeService
     ws.on("error", () => clearTimeout(authTimer));
   }
 
-  async function run(request: GatewayRequest, id: string, send: (frame: Record<string, unknown>) => void): Promise<void> {
+  async function run(request: GatewayRequest, id: string | number, send: (frame: Record<string, unknown>) => void): Promise<void> {
     try {
       const result = await handleRequest({ services: options.services }, request);
       if (result.binary !== undefined) {

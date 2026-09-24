@@ -71,6 +71,14 @@ describe("discovery", () => {
     expect(JSON.stringify(document)).not.toContain(token());
   });
 
+  it("tells a tool up front that a person's decisions are refused on the machine surfaces", async () => {
+    const discovery = (await (await fetch(`${base}/.well-known/clarkcant.json`)).json()) as Record<string, unknown>;
+    expect(discovery.personDecisions).toEqual({
+      refusedOn: ["websocket", "mcp", "cli api"],
+      refusal: { status: 403, code: "PERSON_ONLY" },
+    });
+  });
+
   it("serves an OpenAPI 3.1 document naming the stable routes", async () => {
     const response = await fetch(`${base}/openapi.json`);
     expect(response.status).toBe(200);
@@ -245,6 +253,36 @@ describe("WebSocket gateway", () => {
     expect(await client.next()).toMatchObject({ type: "response", id: "d", status: 403, body: { code: "PERSON_ONLY" } });
     client.send({ type: "request", id: "p", method: "POST", path: "/packages/approvals/appr_y/decision", body: {} });
     expect(await client.next()).toMatchObject({ type: "response", id: "p", status: 403, body: { code: "PERSON_ONLY" } });
+    client.close();
+  });
+
+  it("does not relay a grant, an app-intent confirmation or a peer's trust either, under any spelling", async () => {
+    const client = await openSocket();
+    client.send({ type: "auth", token: token() });
+    await client.next();
+    const decisions = [
+      "/app-intents/confirm",
+      "/peers/node_x/confirm",
+      "/grants",
+      // The gateway drops empty segments, so a doubled slash reaches the same route and is refused the same way.
+      "//conversations//conv_x/approvals/appr_x/decide/",
+    ];
+    for (const [index, path] of decisions.entries()) {
+      client.send({ type: "request", id: index, method: "POST", path, body: {} });
+      expect(await client.next()).toMatchObject({ type: "response", id: index, status: 403, body: { code: "PERSON_ONLY" } });
+    }
+    // Stop stays reachable: refusing decisions must not take away the way to end work.
+    client.send({ type: "request", id: 99, method: "POST", path: "/stop" });
+    expect(await client.next()).toMatchObject({ type: "response", id: 99, status: 200 });
+    client.close();
+  });
+
+  it("echoes a numeric id as a number", async () => {
+    const client = await openSocket();
+    client.send({ type: "auth", token: token() });
+    await client.next();
+    client.send({ type: "request", id: 7, method: "GET", path: "/node" });
+    expect((await client.next()).id).toBe(7);
     client.close();
   });
 

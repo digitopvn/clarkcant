@@ -74,8 +74,10 @@ part of the stable description and may change.
 
 **No approval tool, on purpose.** An approval is the person's decision about something an agent wants to do; an MCP
 tool for it would let an AI client approve its own guarded action. Approvals stay on the person's own surfaces, and
-the generic relays (a WebSocket `request` frame, `clarkcant api`) refuse the approval-decision routes with
-`403 PERSON_ONLY` for the same reason.
+the generic relays (a WebSocket `request` frame, `clarkcant api`) and MCP refuse every route that records a person's
+decision with `403 PERSON_ONLY` for the same reason: approving a guarded action, deciding a package capability,
+confirming an app intent, trusting a paired peer and issuing a grant. Stop, answering a question and reading stay
+available. The discovery document lists this under `personDecisions`.
 
 Client configuration — HTTP:
 
@@ -103,8 +105,9 @@ stdio, for clients that launch a process (the bridge reads the token from `~/.cl
 ← { "type": "response", "id": "1", "status": 200, "body": null }
 ```
 
-- Any REST route except an approval decision can be sent as a `request` frame; the answer is the gateway's own status
+- Any REST route except a person's decision can be sent as a `request` frame; the answer is the gateway's own status
   and body.
+- `id` is echoed exactly as sent, string or number.
 - Query parameters go in a `query` object on the frame, not in `path`.
 - Up to 16 requests may run at once per socket, told apart by `id`.
 - A refused request (`INVALID_FRAME`, `TOO_MANY_REQUESTS`) gets an `error` frame carrying its `id` instead of a
@@ -123,12 +126,15 @@ from a checkout with `node apps/cli/src/main.ts` or `pnpm clarkcant`.
 | `clarkcant status` | node label, URL, model |
 | `clarkcant conversations` / `new [title]` / `read <id>` | conversations |
 | `clarkcant stop` | emergency stop |
-| `clarkcant api <METHOD> <path> [jsonBody]` | any route except an approval decision |
+| `clarkcant api <METHOD> <path> [jsonBody]` | any route except a person's decision |
 | `clarkcant mcp` | MCP over stdio |
 | `clarkcant discover` | the discovery document |
 
 Connection: `--url` / `CLARKCANT_URL`, `--token` / `CLARKCANT_TOKEN`, else `identity.json` in `--data-dir` /
-`CLARKCANT_DATA_DIR` (default `~/.clarkcant`). `--json` prints raw JSON.
+`CLARKCANT_DATA_DIR` (default `~/.clarkcant`). The identity file is only read for a node on this machine
+(`localhost`, `127.x`, `::1`); a remote `--url` needs `--token` or `CLARKCANT_TOKEN`, so the local token is never sent
+to another host. `clarkcant mcp` forwards each line as it arrives, so a `ping` is answered while a long call runs.
+`--json` prints raw JSON.
 
 ## Changing a surface
 
