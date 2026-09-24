@@ -44,19 +44,21 @@ It is a host-owned secondary surface, not a sidebar or a session picker. A mark 
   - a dedup key longer than the stored limit is cut once, so lookup and insert agree;
   - `read_inbox` redacts commands and prompts and no longer passes storage errors to the model;
   - the `composer.attach` opener "mo hop" caught "mở hộp thư email của tôi" (the fix for #174, pulled in because the inbox phrases made it reachable).
+  - in the panel: focus returns to the composer when the mark that opened it is gone; a second click on a decision or dismiss is ignored until the first settles; only the pressed button shows progress; a failed decision says whether the approval is still waiting instead of passing a raw error through; opening the widget library closes the inbox first; a late decision result no longer reaches another conversation; focus moves to the next notice after a dismiss; "Open conversation" is disabled with a reason while a turn, voice, draft or attachment would be lost; capability details sit behind a disclosure.
+- **Merged with `main`'s work supervisor.** The background-work notices now live inside the supervisor's run, keyed by work id, and their body is the reply the conversation receives. The notices migration is 26, after `main`'s 24 and 25.
 - **Docs.** DESIGN.md gains §6.7 "Hộp thư" (shipped, target, forbidden) and the header-mark note in §6.1. `docs/system-architecture.md` gains §7.5.1. The manifest is refreshed.
 
 ## Verification
 
 Both runs are on this branch with `main` merged in.
 
-- `pnpm verify`: pass. That covers invariants, both typechecks, lint, and 2735 unit tests, 7 of them opt-in live-provider tests that were skipped.
+- `pnpm verify`: pass. That covers invariants, both typechecks, lint, and 2840 unit tests, 7 of them opt-in live-provider tests that were skipped.
   - `apps/runtime/test/inbox.spec.ts` covers derivation across conversations, the routes, `read_inbox`, answered and expired questions, task approvals not being offered, a conversation longer than a timeline page (found and decided), a missing payload, and the worker notices. It includes the regression for the card stamped before its approval.
   - `packages/storage/test/notifications.spec.ts` covers dedup (including an over-long key), the cap and the 30-day rule, redaction and owner isolation.
   - `apps/runtime/test/package-install-capability-approval.spec.ts` covers a capability request appearing in `/inbox` and leaving once answered; `node-tools.spec.ts` covers `read_inbox` registration.
   - `packages/core` covers the `inbox.open` phrases.
   - `packages/conversation-client/test/inbox-model.spec.ts` covers the mark and panel decisions.
-- `pnpm test:e2e`: 159 passed, 3 skipped, 0 failed. The skips are the opt-in live voice provider checks and the orb canvas check.
+- `pnpm test:e2e`: 162 passed, 3 skipped, 0 failed. The skips are the opt-in live voice provider checks and the orb canvas check.
   - `apps/web/e2e/inbox.spec.ts` covers:
     - deny and approve from the inbox, through the card's route;
     - opening by click, keyboard and "mở hộp thư", with focus returned on Escape;
