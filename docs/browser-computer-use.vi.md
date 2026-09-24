@@ -133,4 +133,4 @@ Linux: fresh VPS optional runner install, display startup, isolated files/networ
 
 Cross-cutting: same policy/action/effect pipeline as API tools, install-and-resume once, no stolen focus during ordinary chat, pending tasks remain understandable when driver blocked.
 
-Nguồn và lý do lựa chọn: [R11–R16](research-and-decisions.md).
+Nguồn và lý do lựa chọn: [R11–R16](research-and-decisions.vi.md).

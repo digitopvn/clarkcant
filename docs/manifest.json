@@ -20,23 +20,33 @@
     },
     {
       "path": "README.md",
-      "bytes": 7178,
-      "sha256": "fed90a8498a03110525a1a2b9c6525903fb7f5e61ed2e9a2195734fe23be1298"
+      "bytes": 7175,
+      "sha256": "e6ba587d759043b5b01e7bf5f5764d1066c8b9bdc436c0aa83eb6267fd566a08"
     },
     {
       "path": "README.vi.md",
-      "bytes": 7750,
-      "sha256": "0a3b40b1a8eab139f74b2739bffe0ac45ebb5a5c310e54b128f1cdc824fb3435"
+      "bytes": 7785,
+      "sha256": "ef9757ebd868b01b910b0897c11764e34e971948dac3961462c598622455c41b"
     },
     {
       "path": "browser-computer-use.md",
-      "bytes": 10510,
-      "sha256": "fd7cd604513a29f525c75e22fefe201297c3e0a00cec2f423a32e4a43063a67a"
+      "bytes": 10721,
+      "sha256": "ffce10457454f52c1d4f010a42733229ba488bd8027a8cd327a65bc275c39b3b"
+    },
+    {
+      "path": "browser-computer-use.vi.md",
+      "bytes": 10585,
+      "sha256": "d9531d17df357b7d344ee180549ad817176cd3e25df120ee4243ac929c1a57b4"
     },
     {
       "path": "distributed-runtime.md",
-      "bytes": 15450,
-      "sha256": "606cb70dfd2bac096db923035c7815b7f604d6c8eacfd3540c55c5e03ea8c89c"
+      "bytes": 15429,
+      "sha256": "74087a6121f3b934ff60d70d782b15b62fc5588b9122b5270fcba47844208ec7"
+    },
+    {
+      "path": "distributed-runtime.vi.md",
+      "bytes": 15524,
+      "sha256": "034211dd357dc4e617dc2a01ec6207a994eb3e5bf0c9dd72902fee6d5d3e2d19"
     },
     {
       "path": "examples/README.md",
@@ -70,13 +80,23 @@
     },
     {
       "path": "implementation-plan.md",
-      "bytes": 25407,
-      "sha256": "a1807c622cd7a18b8474b486e6e5ab79a1ff67c235feb547a086dcd183a1d626"
+      "bytes": 25482,
+      "sha256": "09b202573010503cab8cf2b6704ca89eec6302af21c470dc10dbaef939ae6da3"
+    },
+    {
+      "path": "implementation-plan.vi.md",
+      "bytes": 25481,
+      "sha256": "4252501b5ee1b23af4256f68c5ed2e4e5628b41576aa9f88568c1c4975da7ea5"
     },
     {
       "path": "integration-onboarding.md",
-      "bytes": 19697,
-      "sha256": "3d1b844e23ed173c48248f4843fb109bb44072d79154a426e7e2297637ae4997"
+      "bytes": 20082,
+      "sha256": "97a0232a2632caba567752fa57bd11d69ae74aed10212c7d8fee86b58ad41c1a"
+    },
+    {
+      "path": "integration-onboarding.vi.md",
+      "bytes": 19771,
+      "sha256": "afd25aa23c0feae1071c59f791bad633ad117b66de9ea922947194e164462322"
     },
     {
       "path": "platform-smoke.md",
@@ -90,33 +110,63 @@
     },
     {
       "path": "research-and-decisions.md",
-      "bytes": 18544,
-      "sha256": "bfe74b8707631b575d3194d089e7899f328ea300bc3c241ee73f63623d8c0ec9"
+      "bytes": 18598,
+      "sha256": "79d4b8025a0b561b6589351b84d3338868dd943ae05c11519c23aa3b23a8f894"
+    },
+    {
+      "path": "research-and-decisions.vi.md",
+      "bytes": 18618,
+      "sha256": "ede17d1c28248168c80559f18e7875519e0471a87db690fc87b3489dd51250e1"
     },
     {
       "path": "scope-lock.md",
-      "bytes": 10434,
-      "sha256": "6654a3acb2d2a25b55f74d33e4e6cbe039f6c824754ace9faba0998775ae54c2"
+      "bytes": 10178,
+      "sha256": "161e6db5cef6b9a93685aa6869ff9c0e27ba4f18d762442fb9ceacc8701113bc"
+    },
+    {
+      "path": "scope-lock.vi.md",
+      "bytes": 10496,
+      "sha256": "029113a6c7f518fc8d5dc4f85bd2aa64585dfcfc14fdf430e893654cdbdccfdd"
     },
     {
       "path": "system-architecture.md",
-      "bytes": 59211,
-      "sha256": "b2447fddc6153900d1cc4a20733a4f2fab6396bcf4bf3d1327d904fd957efe0e"
+      "bytes": 57395,
+      "sha256": "045288dae4efa2109dfd8a290d27dabbf2ad742e24e7c1a481c56f1ced6936a3"
+    },
+    {
+      "path": "system-architecture.vi.md",
+      "bytes": 59303,
+      "sha256": "04c5f8fc55c492a5088df0ddcd7a40fc527b729d85380e98826d7ee9ae187e44"
     },
     {
       "path": "widget-development.md",
-      "bytes": 40313,
-      "sha256": "06e949b4cc544d5bfb0f0518d6a24690f1f9919494435431377b642a385fe351"
+      "bytes": 39025,
+      "sha256": "d912b53b96b90aa6a65278b4fa0833dadcb8ffbe1d8e3e8623e4ca2c181682be"
+    },
+    {
+      "path": "widget-development.vi.md",
+      "bytes": 40383,
+      "sha256": "c14546b5a6297dea08cef3af5670cc941492504fed316f3ab6a6c3ab27c4a14f"
     },
     {
       "path": "widgets-and-extensions.md",
-      "bytes": 28852,
-      "sha256": "85b0fec740180fdccf0b4d144abc4d72f09f9bae8c114d0bc611b3ecbddfc531"
+      "bytes": 28796,
+      "sha256": "36871605b99665e317d143369f92b13b5cf905835dbd9a0041985c1eb205df95"
+    },
+    {
+      "path": "widgets-and-extensions.vi.md",
+      "bytes": 28929,
+      "sha256": "8ad3132fb53164527fd0cad446e24667a7a4b5559260ac5adbd4a66ddcf9ace0"
     },
     {
       "path": "mini-app/jev-configuration.md",
-      "bytes": 13391,
-      "sha256": "c811c4fd7344455ba34a1ee0e358d7fab25d6ebb90fefb4390445a93329e3aed"
+      "bytes": 13457,
+      "sha256": "801277f2159a5d7fe46a74c40d44d7b3fc040ba037dcc94b75c734f04b5f8b14"
+    },
+    {
+      "path": "mini-app/jev-configuration.vi.md",
+      "bytes": 13460,
+      "sha256": "0ec9b8d1ca3a4b03b5307fc92bfc73051122e4958079aa31b121d1c42fc46348"
     },
     {
       "path": "voice-live-provider.md",

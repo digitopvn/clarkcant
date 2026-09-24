@@ -163,4 +163,4 @@ Không cho subagent tự broadcast cả mạng tìm việc. Worker yêu cầu ca
 
 Clean macOS + hai Linux VPS/namespaces độc lập chạy J4. Thử một real network topology với TLS/private networking; local mock không đủ chứng minh NAT/reachability. Đo reconnect, duplicate delivery, revoked grants, unknown effects, dependency/version mismatch và node restart.
 
-Nguồn cho protocol/tool separation và connectivity: [R06–R10, R28](research-and-decisions.md). Những semantics ownership/delivery/policy ở đây là lựa chọn thiết kế của app.
+Nguồn cho protocol/tool separation và connectivity: [R06–R10, R28](research-and-decisions.vi.md). Những semantics ownership/delivery/policy ở đây là lựa chọn thiết kế của app.

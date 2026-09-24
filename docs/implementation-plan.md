@@ -1,19 +1,19 @@
 # Implementation Plan v2 — Desktop + Headless Runtime Foundation
 
-> [English](implementation-plan.md) (mặc định) · Tiếng Việt
+> English (default) · [Tiếng Việt](implementation-plan.vi.md)
 
-**Ngày:** 16/09/2026 · **Release mục tiêu:** v0.2 foundation beta.
-**Đây là kế hoạch**, chưa có app, provider smoke, signing, VPS deployment hoặc benchmark nào được xác nhận trong bộ tài liệu.
+**Date:** 16/09/2026 · **Target release:** v0.2 foundation beta.
+**This is a plan**; no app, provider smoke, signing, VPS deployment or benchmark has been confirmed in this document set.
 
-## 1. Nguyên tắc triển khai
+## 1. Implementation principles
 
-Đọc [scope-lock.md](scope-lock.vi.md) trước. Không áp dụng các cấm đoán v1 như không VPS, không custom widgets hoặc không auto-install. Giữ những invariants về authority, permissions, secrets, task/session và effect reconciliation.
+Read [scope-lock.md](scope-lock.md) first. Do not apply the v1 prohibitions such as no VPS, no custom widgets or no auto-install. Keep the invariants on authority, permissions, secrets, task/session and effect reconciliation.
 
-Ưu tiên vertical slices chạy thật. Spike những rủi ro đắt tiền ngay đầu: Pi lifecycle, cross-node delivery, custom UI isolation, OAuth deployment, browser/macOS driver permissions và voice. Không dựng tất cả màn hình trước rồi ghép daemon sau.
+Prioritize vertical slices that actually run. Spike the expensive risks at the very start: Pi lifecycle, cross-node delivery, custom UI isolation, OAuth deployment, browser/macOS driver permissions and voice. Do not build every screen first and wire up the daemon afterwards.
 
-Không fork Pi, không viết lại browser/OS engine, không phát minh crypto/NAT, không microservice hóa từng module. Đặt contracts có schema, fake adapters/test fixtures và live-provider gates tách nhau. Không tự động gọi SaaS thật trong mọi PR.
+Do not fork Pi, do not rewrite a browser/OS engine, do not invent crypto/NAT, do not turn each module into a microservice. Keep schema-backed contracts, fake adapters/test fixtures and live-provider gates separate. Do not automatically call real SaaS in every PR.
 
-## 2. Milestones và dependencies
+## 2. Milestones and dependencies
 
 ```mermaid
 flowchart LR
@@ -36,53 +36,53 @@ flowchart LR
   P9 --> P10
 ```
 
-P4/P5/P6 có thể song song sau shared contracts. Một schema owner/review path cho interface chung; không để nhiều coding agents thay contracts bất tương thích. Security/recovery tests bắt đầu từ P1, không dồn hết P10.
+P4/P5/P6 can run in parallel after the shared contracts. One schema owner/review path for shared interfaces; do not let several coding agents change contracts incompatibly. Security/recovery tests start in P1, not all piled into P10.
 
-| Phase | Demo cần có trước khi qua gate |
+| Phase | Demo required before passing the gate |
 |---|---|
-| P0 | Lifecycle + node retry + iframe action + auth + automation + voice spikes có evidence |
-| P1 | Runtime boot trên Mac/Linux, desktop/web attach, state survive restart |
+| P0 | Lifecycle + node retry + iframe action + auth + automation + voice spikes with evidence |
+| P1 | Runtime boots on Mac/Linux, desktop/web attach, state survives restart |
 | P2 | Text → Pi task → evidence → result surface → action round-trip |
-| P3 | Approval/resource isolation/unknown effects đúng, không giả sandbox |
-| P4 | Desktop/home + hai VPS làm bounded subtasks, disconnect/retry không chạy trùng |
-| P5 | Tự tìm gói thiếu → consent → install/test → activate → resume task đúng một lần |
+| P3 | Approval/resource isolation/unknown effects correct, no fake sandbox |
+| P4 | Desktop/home + two VPSes do bounded subtasks, disconnect/retry does not run twice |
+| P5 | Finds the missing package itself → consent → install/test → activate → resume the task exactly once |
 | P6 | Agent-defined actions, custom note app, pin/restore, no duplicate media |
-| P7 | Guided/quick-play + Google Calendar thật + auth failure recovery |
-| P8 | Browser task + macOS native task + Linux virtual desktop có takeover/stop |
-| P9 | Live voice trong khi task/mini-app đang chạy, interruption đúng semantics |
+| P7 | Guided/quick-play + real Google Calendar + auth failure recovery |
+| P8 | Browser task + macOS native task + Linux virtual desktop with takeover/stop |
+| P9 | Live voice while a task/mini-app is running, interruption with correct semantics |
 | P10 | Signed desktop, clean VPS setup, backup/upgrade/failure/security report |
 
 ## 3. P0 — Compatibility and risk spikes
 
-Deliverables: `docs/research/compatibility-lock.md`, dependency/license inventory, tested versions/platforms/providers, redacted event fixtures, gate log và short ADRs. Versions **pin theo môi trường thực**, không dùng tên model/API method từ trí nhớ.
+Deliverables: `docs/research/compatibility-lock.md`, dependency/license inventory, tested versions/platforms/providers, redacted event fixtures, gate log and short ADRs. Versions are **pinned against the real environment**, not taken as model names/API methods from memory.
 
-### P0.1 Pi, packs và Chord
+### P0.1 Pi, packs and Chord
 
 Test SDK custom ResourceLoader, app-owned sessions, custom tool registration, active tools, subscribe/abort/steer, command-context resource reload, rebind and successor session. Test failed extension initialization, shutdown/dispose, no duplicate listeners, default discovery disabled.
 
-Thử Chord facets phía sau `FacetHost` để xác nhận bundle/replace/dispose; ghi decision adopt/reject based actual complexity/compatibility. Chord không là bắt buộc; app contracts giữ nguyên. Native code isolation phải test riêng, không lấy `node:vm` làm proof.
+Try Chord facets behind `FacetHost` to confirm bundle/replace/dispose; record an adopt/reject decision based on actual complexity/compatibility. Chord is not mandatory; the app contracts stay the same. Native code isolation must be tested separately; `node:vm` is not taken as proof.
 
-### P0.2 Platform, packaging và transport
+### P0.2 Platform, packaging and transport
 
-Electron+helper trên Mac, Node native SQLite/runtime trên Linux x64 và arm64 nếu platform claim có arm64. Nonroot OCI và optional native bundle. Two runtimes send duplicate commands over TLS, kill before/after ack. Test socket/web auth boundaries. Không cần complete product UI.
+Electron+helper on Mac, Node native SQLite/runtime on Linux x64 and arm64 if the platform claim includes arm64. Nonroot OCI and optional native bundle. Two runtimes send duplicate commands over TLS, kill before/after ack. Test socket/web auth boundaries. No complete product UI needed.
 
 ### P0.3 Widget/mini-app/pin
 
-Một catalog chart/form và một isolated note widget; MCP App fixture nhận props/call host tool; attempted host storage/secret read fail. Pin/move preserving state; same player fixture not start twice. Camera/mic permissions feature-detect trên browser/Electron, no pretend fallback.
+One catalog chart/form and one isolated note widget; MCP App fixture receives props/calls a host tool; attempted host storage/secret read fails. Pin/move preserving state; same player fixture does not start twice. Camera/mic permissions feature-detected on browser/Electron, no pretend fallback.
 
 ### P0.4 Auth
 
-Google OAuth desktop system browser flow và server registered HTTPS callback path, real app identity/account được cho phép. Denied/partial/expired handling. Xác minh credential custody, supported registration scopes và redirect constraints. Nếu thiếu client credentials/verification, mark blocked; do not fake connected.
+Google OAuth desktop system browser flow and server registered HTTPS callback path, with a real app identity/account that is permitted. Denied/partial/expired handling. Verify credential custody, supported registration scopes and redirect constraints. If client credentials/verification are missing, mark blocked; do not fake connected.
 
 ### P0.5 Browser/computer
 
-Playwright DOM/screenshot on macOS/Linux; install binary on-demand test; Peekaboo candidate native driver via signed/packaged launch context; Linux virtual display. Deny OS permissions, revoked permission, emergency stop, target change. Không thay native desktop proof bằng browser screenshot.
+Playwright DOM/screenshot on macOS/Linux; on-demand binary install test; Peekaboo candidate native driver via signed/packaged launch context; Linux virtual display. Deny OS permissions, revoked permission, emergency stop, target change. Do not substitute a browser screenshot for native desktop proof.
 
 ### P0.6 Voice
 
-Gemini Live real account với backend fake long task (provider đổi khỏi GPT-Live theo [ADR-001](../docs/research/adr-001-gemini-live-provider.md)); actual events, barge-in, correction, mute/end, reconnect. Giữ permanent key ngoài renderer, test voice does not restart when worker replaced. Live access unavailable là blocker/ADR change, không âm thầm đổi thành STT+TTS rồi giữ tên live conversation.
+Gemini Live on a real account with a backend fake long task (provider changed away from GPT-Live per [ADR-001](../docs/research/adr-001-gemini-live-provider.md)); actual events, barge-in, correction, mute/end, reconnect. Keep the permanent key out of the renderer, test that voice does not restart when the worker is replaced. Live access unavailable is a blocker/ADR change, not a silent switch to STT+TTS while keeping the live conversation name.
 
-**P0 gate:** each required risk has pass/blocked/fail + reproducible evidence. Stop production commitment to exact dependency until its spike passes; scope change phải ADR, không quietly remove requirement.
+**P0 gate:** each required risk has pass/blocked/fail + reproducible evidence. Stop production commitment to an exact dependency until its spike passes; a scope change needs an ADR, do not quietly remove a requirement.
 
 ## 4. P1 — Portable runtime/client foundation
 
@@ -101,7 +101,7 @@ Gate: text command durable, renderer/client restart recovers, node DB has one wr
 
 Conductor with bounded tools; app-owned Pi worker session; task/run IDs/revisions; project metadata registry; simple read-only file question then controlled fixture code task; result with artifact/evidence; one button agent defines to inspect artifact or ask a follow-up.
 
-User can ask “đến đâu rồi?” without new worker. Success only after verifier. Evidence unavailable means unknown/failed/not-verified, not polished success card. Timeline virtualization/streaming, accessibility and latency instrumentation start here.
+User can ask “how far along is it?” without a new worker. Success only after verifier. Evidence unavailable means unknown/failed/not-verified, not polished success card. Timeline virtualization/streaming, accessibility and latency instrumentation start here.
 
 Gate: fake-provider E2E + real certified text-provider smoke. Restart Pi/renderer preserves authoritative task; no context leak from arbitrary project-local extension discovery.
 
@@ -278,7 +278,7 @@ Security suite: auth origin/sender, SSRF/redirect, tokens audience, package supp
 | T61 | Virtual desktop access without session auth | Reject stream/input |
 | T62 | Quick play without provider credentials | Clearly sample; no fake AI/account data |
 | T63 | Guided onboarding skipped/restarted | Resume relevant state, no forced reinstall |
-| T64 | “Nói ngắn thôi” during voice | Audio changes; job not cancelled |
+| T64 | “Nói ngắn thôi” (“keep it short”) during voice | Audio changes; job not cancelled |
 | T65 | Speech correction mid-sentence | One intended task/revision, not two effects |
 | T66 | Voice and click edit same widget | Same semantic action state |
 | T67 | Call/music/assistant compete for mic | Explicit media focus, no hidden capture |
@@ -288,31 +288,31 @@ Security suite: auth origin/sender, SSRF/redirect, tokens audience, package supp
 | T71 | Credentials copied between nodes implicitly | Prohibited; connection owner preserved |
 | T72 | Real vendor SDK unavailable/policy blocked | Functional fallback or unsupported, not fixture passed as integration |
 
-Các tests không chứng minh an toàn tuyệt đối; chúng là release acceptance và regression boundaries có thể kiểm chứng.
+These tests do not prove absolute safety; they are verifiable release acceptance and regression boundaries.
 
-## 16. Quality targets — chưa phải số đo
+## 16. Quality targets — not yet measurements
 
 | Metric | Initial target / condition |
 |---|---|
-| Local durable command ack | p95 ≤200 ms trên benchmark fixture machine |
-| Warm chat reopen | p95 ≤1 s cho snapshot metadata, visible messages virtualized |
-| Cold start composer usable | p95 ≤5 s, không chờ mọi provider probe |
-| Local filter/view response | p95 ≤150 ms với bounded dataset |
+| Local durable command ack | p95 ≤200 ms on the benchmark fixture machine |
+| Warm chat reopen | p95 ≤1 s for snapshot metadata, visible messages virtualized |
+| Cold start composer usable | p95 ≤5 s, without waiting for every provider probe |
+| Local filter/view response | p95 ≤150 ms with a bounded dataset |
 | Ordinary widget render usable | p95 ≤500 ms excluding external media/maps network |
-| Native/remote stop | Local stop path không phụ thuộc model/network; đo detection→suppression riêng |
-| Voice barge-in | Target local playback stop ≤150 ms sau detected onset; không gộp detection latency |
-| Voice reply | p50 ≤1 s/p95 ≤2 s ở test network profile; measured contentful audio, không sound cue |
-| Reconnect | Target ready ≤3 s sau transport stable cho bounded backlog; không promise across partitions |
-| Duplicate/wrong-target/forged approval | 0 trong conformance/negative fixture suite |
+| Native/remote stop | Local stop path does not depend on model/network; measure detection→suppression separately |
+| Voice barge-in | Target local playback stop ≤150 ms after detected onset; detection latency not included |
+| Voice reply | p50 ≤1 s/p95 ≤2 s on the test network profile; measured contentful audio, not a sound cue |
+| Reconnect | Target ready ≤3 s after transport stable for a bounded backlog; no promise across partitions |
+| Duplicate/wrong-target/forged approval | 0 in the conformance/negative fixture suite |
 
-Ghi hardware, provider, account/model, RTT/loss và dataset, không công bố con số như đảm bảo trên mọi VPS. Correctness/consent gates cao hơn latency đẹp.
+Record hardware, provider, account/model, RTT/loss and dataset; do not publish the numbers as guarantees on every VPS. Correctness/consent gates rank above good-looking latency.
 
-## 17. CI và bàn giao
+## 17. CI and handoff
 
 Unit/property: state transitions, permissions intersection, action binding, lease epochs, transforms, config precedence. Contract: Pi/current model events, MCP tools/auth/apps, NodeLink, widget/facet SDK. Integration: DB fault points, fake external effects, socket/WSS reconnect, package generations. E2E: J1–J6. Live: explicit budget/account/consent only.
 
-PR impact mapping: shared contracts chạy all consumers; policy/storage chạy recovery/security; UI SDK chạy sandbox/widget suite; driver thay đổi chạy platform lane. Full integration/release suite không được skip chỉ vì patch ít dòng ở shared schema.
+PR impact mapping: shared contracts run all consumers; policy/storage run recovery/security; UI SDK runs the sandbox/widget suite; driver changes run the platform lane. The full integration/release suite must not be skipped just because a shared-schema patch is only a few lines.
 
-Coding-agent handoff: bắt đầu P0, ghi evidence thật, không tự cài provider/extension vào tài khoản production khi chỉ được giao viết code. Một work package một patch reviewable. Mỗi PR ghi scope IDs, changed contracts, migrations, tests/results, remaining blockers. Không khai completed bằng screenshot/demo mock hoặc lệnh chưa chạy.
+Coding-agent handoff: start at P0, record real evidence, do not install providers/extensions into production accounts on your own when only assigned to write code. One work package, one reviewable patch. Each PR records scope IDs, changed contracts, migrations, tests/results, remaining blockers. Do not claim completion with a screenshot/mock demo or a command that has not been run.
 
-Deliverable release: exact artifacts, license/SBOM, signatures, reproducible install/restore guide, supported capability/platform matrix, known limitations và gate log. Nếu không có credentials/signing/hardware, ghi blocked chính xác; không bịa pass.
+Release deliverable: exact artifacts, license/SBOM, signatures, reproducible install/restore guide, supported capability/platform matrix, known limitations and gate log. If credentials/signing/hardware are missing, record blocked precisely; do not invent a pass.
