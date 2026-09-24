@@ -1,7 +1,7 @@
 ---
 phase: 3
 title: Tài liệu, kiểm chứng, PR và follow-up
-status: pending
+status: done
 ---
 
 # Phase 3 — Tài liệu, kiểm chứng, PR

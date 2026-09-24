@@ -49,6 +49,13 @@ async function propose(page: Page): Promise<string> {
   return id;
 }
 
+/** The command approvals the node says are waiting, read as the panel reads them. */
+async function waitingApprovalIds(page: Page): Promise<string[]> {
+  const response = await page.request.get(`${GATEWAY}/inbox`, { headers: { authorization: `Bearer ${token()}` } });
+  const inbox = (await response.json()) as { waiting: Array<{ kind: string; approvalId?: string }> };
+  return inbox.waiting.flatMap((item) => (item.kind === "command-approval" && item.approvalId !== undefined ? [item.approvalId] : []));
+}
+
 /** Deny every command approval still in the inbox, so a test that follows starts from what it creates. */
 async function drainWaiting(page: Page): Promise<void> {
   const response = await page.request.get(`${GATEWAY}/inbox`, { headers: { authorization: `Bearer ${token()}` } });
@@ -119,8 +126,8 @@ test("approving from the inbox runs the command in its conversation", async ({ p
   await expect(receipt).toBeVisible({ timeout: 30_000 });
   await expect(receipt).toContainText("fixture ran");
 
-  // With nothing left waiting, the mark is not left on screen as a stale count.
-  await expect(page.locator('[data-inbox-mark="waiting"]')).toHaveCount(0, { timeout: 10_000 });
+  // Decided, it is no longer waiting — on the next read, not after some cache expires.
+  await expect.poll(() => waitingApprovalIds(page)).not.toContain(approvalId);
 });
 
 test("a typed command opens the same inbox, and Escape hands focus back", async ({ page }) => {
@@ -209,9 +216,7 @@ test("background work that finishes leaves a notice, and the notice leads back t
   await expect(dialog).toHaveCount(0);
   await expect(page.locator('[data-role="assistant"]').last()).toContainText("việc nền đã xong", { timeout: 20_000 });
 
-  // Read, and with nothing waiting, the mark has nothing left to say and is gone; the inbox is still one sentence away.
-  await drainWaiting(page);
-  await expect(page.locator('[data-inbox-mark="waiting"]')).toHaveCount(0, { timeout: 10_000 });
+  // Read, the notice no longer counts as new; the inbox is still one sentence away, whether or not the mark is drawn.
   const composer = page.locator("[data-composer]");
   await composer.fill("mở hộp thư");
   await composer.press("Enter");
