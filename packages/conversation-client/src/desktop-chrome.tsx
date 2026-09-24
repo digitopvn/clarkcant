@@ -1,6 +1,14 @@
-import { type ReactElement, useCallback, useMemo, useState } from "react";
+import { type ReactElement, useCallback, useEffect, useMemo, useState } from "react";
 
-import { hasDesktopChrome, requestWindowMode, type WindowModeAnswer } from "./desktop-compact.ts";
+import {
+  hasDesktopChrome,
+  hasWindowControls,
+  requestFullScreen,
+  requestMinimize,
+  requestWindowMode,
+  subscribeWindowState,
+  type WindowModeAnswer,
+} from "./desktop-compact.ts";
 import { useT } from "./i18n/locale-context.tsx";
 
 /**
@@ -16,16 +24,41 @@ import { useT } from "./i18n/locale-context.tsx";
 export function DesktopChrome(): ReactElement | null {
   const t = useT();
   const desktop = useMemo(() => hasDesktopChrome(), []);
+  const controls = useMemo(() => hasWindowControls(), []);
   const [answer, setAnswer] = useState<WindowModeAnswer | undefined>(undefined);
+  // Full screen as the window last reported it, whether the button or the OS changed it.
+  const [fullScreen, setFullScreen] = useState(false);
+  const [stateRefusal, setStateRefusal] = useState<string | undefined>(undefined);
 
   const ask = useCallback((action: Parameters<typeof requestWindowMode>[0]) => {
-    void requestWindowMode(action).then((next) => setAnswer(next));
+    void requestWindowMode(action).then((next) => {
+      setAnswer(next);
+      // Leaving the voice bar or entering it takes the window out of full screen in the shell.
+      if (next.ok && action.type !== "set-always-on-top") setFullScreen(false);
+    });
   }, []);
+
+  const minimize = useCallback(() => {
+    void requestMinimize().then((next) => setStateRefusal(next.ok ? undefined : next.refused));
+  }, []);
+
+  const toggleFullScreen = useCallback((value: boolean) => {
+    void requestFullScreen(value).then((next) => {
+      if (next.ok) setFullScreen(next.fullScreen);
+      setStateRefusal(next.ok ? undefined : next.refused);
+    });
+  }, []);
+
+  useEffect(() => {
+    if (!controls) return undefined;
+    return subscribeWindowState((state) => setFullScreen(state.fullScreen));
+  }, [controls]);
 
   if (!desktop) return null;
 
   const mode = answer?.ok === true ? answer.mode : "normal";
   const pinned = answer?.ok === true && answer.alwaysOnTop;
+  const problem = answer?.ok === false ? answer.refused : stateRefusal;
 
   return (
     <div className="cc-desktop-chrome" data-desktop-chrome="true">
@@ -64,12 +97,43 @@ export function DesktopChrome(): ReactElement | null {
         >
           ⚲
         </button>
+        {/* Only when the shell has both verbs: a button an older shell cannot honour would be a fake control. */}
+        {controls && (
+          <>
+            <button
+              type="button"
+              className="cc-desktop-button"
+              data-desktop-minimize="true"
+              aria-label={t("shell.desktop.minimizeAria")}
+              title={t("shell.desktop.minimizeTitle")}
+              onClick={minimize}
+            >
+              −
+            </button>
+            <button
+              type="button"
+              className="cc-desktop-button"
+              data-desktop-fullscreen="true"
+              data-fullscreen={fullScreen ? "true" : "false"}
+              aria-pressed={fullScreen}
+              aria-label={t(fullScreen ? "shell.desktop.exitFullScreenAria" : "shell.desktop.fullScreenAria")}
+              title={t(fullScreen ? "shell.desktop.exitFullScreenTitle" : "shell.desktop.fullScreenTitle")}
+              onClick={() => toggleFullScreen(!fullScreen)}
+            >
+              {fullScreen ? "⤡" : "⤢"}
+            </button>
+          </>
+        )}
       </div>
       {/* What the shell last said, so a refusal is visible rather than silent. */}
-      <span className="cc-desktop-mode" data-desktop-mode={mode}>
-        {mode === "compact" ? t("shell.desktop.modeCompact") : t("shell.desktop.modeFull")}
+      <span className="cc-desktop-mode" data-desktop-mode={fullScreen ? "fullscreen" : mode}>
+        {fullScreen
+          ? t("shell.desktop.modeFullScreen")
+          : mode === "compact"
+            ? t("shell.desktop.modeCompact")
+            : t("shell.desktop.modeFull")}
       </span>
-      {answer?.ok === false && <span className="cc-desktop-problem">{answer.refused}</span>}
+      {problem !== undefined && <span className="cc-desktop-problem">{problem}</span>}
     </div>
   );
 }

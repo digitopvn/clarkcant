@@ -35,6 +35,12 @@ export const IPC_CHANNELS = Object.freeze([
   "desktop:restoreWindow",
   "desktop:focusWindow",
   /*
+   * The title-bar verbs a frameless window has to draw for itself: send it to the dock or taskbar, and take the
+   * whole screen or give it back. One channel each, for the same reason as the modes above.
+   */
+  "desktop:minimizeWindow",
+  "desktop:setFullScreen",
+  /*
    * The detached widget window's channels.
    *
    * On the allowlist, and still not reachable by the shell: `reviewIpcCall` decides which *document* may use which

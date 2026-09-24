@@ -156,6 +156,17 @@ describe("IPC is answered only for the shell document (sender validation)", () =
     expect(reviewIpcCall(shellFrame, "desktop:notRegistered", SHELL_URL).allowed).toBe(false);
   });
 
+  it("a detached window cannot minimize or take over the screen of the conversation window", () => {
+    const DETACHED_URL = "file:///Applications/clarkcant/detached.html";
+    const detached = { senderFrame: { url: DETACHED_URL, parent: null } };
+    for (const channel of ["desktop:minimizeWindow", "desktop:setFullScreen"]) {
+      expect(reviewIpcCall(sender(SHELL_URL), channel, SHELL_URL, DETACHED_URL).allowed).toBe(true);
+      expect(reviewIpcCall(detached, channel, SHELL_URL, DETACHED_URL).allowed).toBe(false);
+      // A widget iframe inside the shell is not the shell either.
+      expect(reviewIpcCall(sender(SHELL_URL, frame(SHELL_URL)), channel, SHELL_URL).allowed).toBe(false);
+    }
+  });
+
   it("allowlists exactly the channels the bridge uses", () => {
     /*
      * Written out rather than derived from the preload bridge on purpose: the point is that adding a channel
@@ -172,6 +183,7 @@ describe("IPC is answered only for the shell document (sender validation)", () =
       "desktop:focusWindow",
       "desktop:getSession",
       "desktop:getStatus",
+      "desktop:minimizeWindow",
       "desktop:notify",
       "desktop:openExternal",
       "desktop:pickDirectory",
@@ -179,6 +191,7 @@ describe("IPC is answered only for the shell document (sender validation)", () =
       "desktop:resizeWindowPreset",
       "desktop:restoreWindow",
       "desktop:setCompactMode",
+      "desktop:setFullScreen",
       "desktop:setKeepRunning",
       "desktop:setWindowMode",
       "detached:bootstrap",
