@@ -256,7 +256,7 @@ function ModelPoolSection({ client }: { client: GatewayClient }): ReactElement {
       ) : (
         // Scrolls on its own rather than widening the dialog: five columns do not fit a phone, and a table that
         // pushes the panel sideways takes every other setting with it.
-        <div className="cc-table-scroll">
+        <div className="cc-table-scroll" role="region" aria-label={t("settings.modelPool.heading")} tabIndex={0}>
           <table className="cc-model-pool" data-model-pool-table="true">
             <thead>
               <tr>

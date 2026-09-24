@@ -204,16 +204,17 @@ describe("a node with records", () => {
 
 /** An unfinished task in a conversation, with only the fields the suggestion reads. */
 function task(taskId: string, conversationId: string, goal: string, at = NOW): void {
-  upsertTask(db, {
+  const record: Parameters<typeof upsertTask>[1] = {
     taskId,
     conversationId,
     homeNodeId: NODE,
     state: "queued",
     revision: 1,
     goal,
-    createdAt: at,
-    updatedAt: at,
-  } as never);
+    createdAt: at as never,
+    updatedAt: at as never,
+  };
+  upsertTask(db, record);
 }
 
 describe("continuing unfinished work", () => {
@@ -235,5 +236,14 @@ describe("continuing unfinished work", () => {
   it("keeps a goal that is nothing but the prefix rather than offering an empty chip", () => {
     expect(withoutContinuePrefix("Tiếp tục việc:")).toBe("Tiếp tục việc:");
     expect(withoutContinuePrefix("  làm tiếp  ")).toBe("làm tiếp");
+  });
+
+  it("settles when the offer's text comes back as the next goal, even for a goal that is only the prefix", () => {
+    for (const start of ["viết báo cáo", "Tiếp tục việc:"]) {
+      const label = withoutContinuePrefix(start);
+      const next = withoutContinuePrefix(`Tiếp tục việc: ${label}`);
+      expect(next).toBe(label);
+      expect(withoutContinuePrefix(`Tiếp tục việc: ${next}`)).toBe(label);
+    }
   });
 });

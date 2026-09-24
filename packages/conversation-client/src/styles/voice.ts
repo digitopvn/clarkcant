@@ -187,8 +187,8 @@ export const VOICE_CSS = `
  */
 /*
  * One line, always. A tab name that wraps reads as two tabs, and at phone width the strip used to squeeze each
- * name into a column one word wide. When the names do not fit, the strip scrolls sideways, fades at the edge that
- * has more, and the panel scrolls the selected tab into view, so the selection is never off-screen.
+ * name into a column one word wide. When the names do not fit, the strip scrolls sideways, fades at its right
+ * edge, and the panel scrolls the selected tab into view, so the selection is never off-screen.
  */
 .cc-tabs {
   /* flex: none because a scroll container in the dialog's column may otherwise shrink to nothing when the panel

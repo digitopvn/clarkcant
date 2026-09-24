@@ -42,7 +42,7 @@ export const TIMELINE_CSS = `
   display: flex; align-items: center; justify-content: space-between; gap: var(--cc-space-lg);
   width: 100%; max-width: 40rem; padding: var(--cc-space-md) var(--cc-space-lg); text-align: left;
 }
-.cc-setup-card > .cc-chip { flex: none; padding: var(--cc-space-xs) var(--cc-space-lg); }
+.cc-setup-card > .cc-chip { flex: none; }
 @media (max-width: 560px) {
   .cc-setup-card { flex-direction: column; align-items: stretch; gap: var(--cc-space-sm); }
   .cc-setup-card > .cc-chip { align-self: flex-start; }

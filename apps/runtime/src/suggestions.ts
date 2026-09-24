@@ -71,11 +71,17 @@ function recencyLabel(at: string, now: string): string {
 /** What a "continue this" offer puts in front of the task's goal. */
 const CONTINUE_PREFIX = "Tiếp tục việc: ";
 
-/** A goal without any number of continue prefixes in front of it; the goal itself if that would leave nothing. */
+/**
+ * A goal without any number of continue prefixes in front of it.
+ *
+ * A goal that is nothing but prefixes comes back as one bare prefix, not as itself, so feeding the offer's text
+ * back in as the next goal settles instead of growing by a prefix each round trip.
+ */
 export function withoutContinuePrefix(goal: string): string {
+  const bare = CONTINUE_PREFIX.trim();
   let rest = goal.trim();
-  while (rest.startsWith(CONTINUE_PREFIX.trim())) rest = rest.slice(CONTINUE_PREFIX.trim().length).trim();
-  return rest === "" ? goal.trim() : rest;
+  while (rest.startsWith(bare)) rest = rest.slice(bare.length).trim();
+  return rest === "" ? bare : rest;
 }
 
 export function buildSuggestions(deps: SuggestionDeps): Suggestion[] {

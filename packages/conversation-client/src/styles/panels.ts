@@ -541,6 +541,9 @@ button:focus-visible, textarea:focus-visible, input:focus-visible, [tabindex]:fo
 .cc-fields { grid-template-columns: max-content minmax(0, 1fr); }
 .cc-fields dd { min-width: 0; overflow-wrap: anywhere; }
 
+/* In this layer rather than beside .cc-setup-card, because the voice layer's .cc-chip padding comes later and wins. */
+.cc-setup-card > .cc-chip { padding: var(--cc-space-xs) var(--cc-space-lg); }
+
 /*
  * A free-text setting takes the width the row gives it and looks like the other prose fields, rather than the
  * browser's default box at its intrinsic twenty columns.
@@ -565,13 +568,19 @@ button:focus-visible, textarea:focus-visible, input:focus-visible, [tabindex]:fo
   .cc-range > .cc-setting-desc { align-self: flex-start; }
   .cc-guard-classes { justify-content: flex-start; }
   .cc-setting-control > textarea { min-width: 0; }
-  /*
-   * The strip scrolls here, so the edge fades to say there is more of it. The end padding is as wide as the
-   * fade, so the last tab can scroll clear of it instead of staying half-hidden.
-   */
+}
+
+/*
+ * The tab strip scrolls once the dialog is narrower than its 640 px, which happens below a viewport of 640 px
+ * plus the dialog's 16 px gutters, not only at the stacking breakpoint above. Its scrollbar is hidden, so the
+ * right edge fades to say there is more. The end padding and scroll padding are as wide as the fade, so the
+ * last tab, or the selected one scrolled into view, stops clear of it instead of sitting half-hidden.
+ */
+@media (max-width: 672px) {
   .cc-tabs {
     mask-image: linear-gradient(to right, #000 calc(100% - var(--cc-space-xl)), transparent);
     padding-inline-end: var(--cc-space-xl);
+    scroll-padding-inline-end: var(--cc-space-xl);
   }
 }
 
@@ -582,7 +591,9 @@ button:focus-visible, textarea:focus-visible, input:focus-visible, [tabindex]:fo
  */
 @media (pointer: coarse) {
   .cc-icon-btn { width: 44px; height: 44px; }
-  .cc-segmented > .cc-badge, .cc-tab, .cc-chip { min-height: 44px; }
+  /* button.cc-chip, because an attachment chip is an <li> whose control is its remove button, not the chip. */
+  .cc-segmented > .cc-badge, .cc-tab, button.cc-chip { min-height: 44px; }
+  .cc-chip-remove { min-width: 44px; min-height: 44px; }
 }
 }
 `;
