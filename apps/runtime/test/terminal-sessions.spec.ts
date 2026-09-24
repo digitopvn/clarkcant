@@ -25,10 +25,20 @@ beforeEach(() => {
   });
 });
 
-afterEach(() => {
-  registry.stopAll();
-  rmSync(dir, { recursive: true, force: true });
+afterEach(async () => {
+  await stopAndWait(registry);
+  // A killed shell's children can still be letting go of the directory for a moment on macOS.
+  rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
 });
+
+/** Kill every shell and wait until each has exited, so nothing is still writing into the directory being removed. */
+async function stopAndWait(target: TerminalRegistry): Promise<void> {
+  target.stopAll();
+  const deadline = Date.now() + 5_000;
+  while (target.list().some((info) => info.status === "running") && Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+}
 
 async function openShell(): Promise<string> {
   const availability = await registry.availability();
@@ -115,7 +125,7 @@ describe.skipIf(process.platform === "win32")("a terminal on this node", () => {
       const result = await relativeRegistry.run(opened.info.terminalId, "true", { waitMs: 10_000 });
       expect(result.status === "finished" && result.record.exitCode).toBe(0);
     } finally {
-      relativeRegistry.stopAll();
+      await stopAndWait(relativeRegistry);
     }
   }, 30_000);
 

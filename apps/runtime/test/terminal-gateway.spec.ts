@@ -40,11 +40,21 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
-  registry.stopAll();
+  await stopAndWait(registry);
   await gateway.close();
   await new Promise<void>((resolve) => server.close(() => resolve()));
-  rmSync(dir, { recursive: true, force: true });
+  // A killed shell's children can still be letting go of the directory for a moment on macOS.
+  rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
 });
+
+/** Kill every shell and wait until each has exited, so nothing is still writing into the directory being removed. */
+async function stopAndWait(target: TerminalRegistry): Promise<void> {
+  target.stopAll();
+  const deadline = Date.now() + 5_000;
+  while (target.list().some((info) => info.status === "running") && Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+}
 
 interface Client {
   socket: WebSocket;
