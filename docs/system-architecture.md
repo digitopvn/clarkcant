@@ -322,7 +322,7 @@ Hộp thư (`apps/runtime/src/inbox.ts`, `routes/inbox.ts`) gom hai thứ khác 
   trong 2000 tin nhắn mới nhất (theo `rowid`, vì `created_at` không có index); route quyết định đọc cùng đầu đó của
   hội thoại (`latestMessages`), nên một mục hộp thư đưa ra luôn là mục route tìm được. Thẻ cũ hơn cửa sổ đó không
   được đưa ra, và approval của nó vẫn hết hạn theo TTL.
-- **Thông báo** — kết quả việc nền, dispatch của worker; về sau là cập nhật Pi/gói/widget và tin từ node khác — là
+- **Thông báo** — kết quả việc nền, dispatch của worker, cập nhật Pi/gói/widget; về sau là tin từ node khác — là
   sự kiện đã xảy ra, **được lưu** trong bảng `notifications` (migration 26). Producer gọi `recordNodeNotice` /
   `tryRecordNodeNotice` (`apps/runtime/src/notices.ts`); ghi thông báo không bao giờ làm hỏng việc đã sinh ra nó.
   Ghi là idempotent theo `(principal, dedupKey)` — cùng một sự kiện gửi lại (retry, hoặc qua NodeLink) không thành
@@ -330,6 +330,21 @@ Hộp thư (`apps/runtime/src/inbox.ts`, `routes/inbox.ts`) gom hai thứ khác 
   nhất đi trước), còn thông báo đã bỏ chỉ bị xoá khi quá 30 ngày, nên việc bỏ không đẩy một thông báo chưa đọc ra
   ngoài. Việc nền được điều phối khi xong ghi một thông báo mỗi task (`workerSettledNotice`, khoá `worker:<taskId>`).
   `originNodeId` để dành cho thông báo đến từ node khác.
+  - **Kiểm tra cập nhật** (`apps/runtime/src/update-checks.ts`) là một job định kỳ, khởi động từ
+    `bootstrap/runtime-bootstrap.ts` bằng timer `unref()` (không giữ tiến trình sống), dừng lại khi node đóng. So
+    version gói/widget đã cài (`listInstalledPackages`, `packages/core`) với directory index hiện có
+    (`readDirectoryIndex`, cùng resolver dùng khi cài — không viết resolver thứ hai), và so version SDK Pi
+    (`sdkVersion()`, `packages/pi-adapter`) với npm registry qua `fetch` có timeout. Lỗi mạng hoặc registry không
+    trả lời **không tạo thông báo lỗi** — im lặng và thử lại ở lượt sau — vì một node offline là trạng thái bình
+    thường, không phải sự cố. `dedupKey` là `update:<npm|git|local>:<packageId>@<newVersion>` (gói/widget) hoặc
+    `update:pi:<tên gói>@<newVersion>` (Pi SDK), nên lượt kiểm tra sau không tạo dòng thứ hai cho cùng version; một
+    version mới hơn nữa thì có dòng riêng. Nội dung nói rõ version hiện tại → mới và risk lane
+    (`trusted-native`/`isolated-ui`/`service`/`declarative`, cùng cách gọi tên với marketplace — AGENTS.md coi việc
+    lẫn lộn hai cách gọi là lỗi cần tránh). Hộp thư chưa vẽ nút "Cập nhật": route cập nhật thật đi qua lifecycle
+    cài/rollback chưa nối tới thông báo này.
+  - Gói nguồn `git` chỉ so trên `version` field mà directory entry khai báo, không phát hiện được một commit mới mà
+    publisher không tự bump version — không có cách nào biết bản mới hơn của một git ref ngoài việc clone và xem,
+    và module này không giả vờ làm được điều đó.
 
 Route: `GET /inbox`, `GET /inbox/summary` (hai số cho dấu trên header), `POST /inbox/read` (`noticeIds` hoặc tất cả),
 `POST /inbox/notices/:id/dismiss`. Contract ở `packages/contracts/src/inbox.ts`. UI ở DESIGN.md §6.7; mở bằng

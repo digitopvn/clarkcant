@@ -466,10 +466,13 @@ phải một nơi điều hướng thứ hai. Mỗi mục trỏ về hội tho�
 - **Thông báo** có nguồn (việc nền, worker, gói mở rộng, Pi, thiết bị khác, ClarkCant), mức độ, tuổi tương đối, và
   nhãn "chưa đọc" bằng chữ bên cạnh chấm. Mở hộp thư đánh dấu đã đọc đúng những thông báo nó đã hiện. "Bỏ" xoá khỏi
   danh sách; "Mở hội thoại" chuyển sang hội thoại liên quan mà không mở thêm phiên.
+- **Thông báo cập nhật cho Pi SDK, gói đã cài và widget** (`apps/runtime/src/update-checks.ts`), từ một job định kỳ
+  so version đã cài với directory index và với npm registry (lỗi mạng không tạo thông báo lỗi). Nội dung nói version
+  hiện tại → mới và risk lane, cùng cách gọi tên với marketplace. Chưa có nút "Cập nhật": route cập nhật thật đi qua
+  lifecycle cài/rollback chưa nối tới thông báo này, nên hộp thư chỉ nói có bản mới chứ chưa cho bấm.
 
 Chưa ship (đích):
 
-- thông báo cập nhật cho Pi, gói mở rộng và widget;
 - thông báo và việc chờ từ một node ClarkCant khác (đã có `originNodeId` và khoá dedup để nhận lặp lại an toàn);
 - thông báo hệ điều hành khi cửa sổ không có focus, tuỳ chọn theo nhóm, giờ yên lặng;
 - duyệt các approval do task được điều phối tạo ra (chưa có route quyết định nên hộp thư chưa đưa ra nút).
