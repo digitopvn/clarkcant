@@ -27,6 +27,17 @@ export interface ModelAliasState {
  * own body, which renders before `Conversation`'s `<LocaleProvider>` — a child of its return, not
  * an ancestor of it — is mounted, so reading the context internally would throw.
  */
+/**
+ * The hotkey as this machine's keyboard spells it.
+ *
+ * The handler accepts either modifier, so both spellings are true; showing the one printed on the person's own
+ * keyboard is what makes the hint usable. A Windows or Linux user reading "⌘]" has to translate a key they do not
+ * have. The platform string is a parameter so the choice is testable without a browser.
+ */
+export function modelSwitchShortcut(platform: string | undefined): string {
+  return /mac|iphone|ipad|ipod/i.test(platform ?? "") ? "⌘]" : "Ctrl+]";
+}
+
 export function useModelAlias(client: GatewayClient, t: (key: MessageKey) => string): ModelAliasState {
   const [modelAlias, setModelAlias] = useState<string | undefined>(undefined);
   const [modelNote, setModelNote] = useState<string>("");

@@ -34,6 +34,20 @@ export const TIMELINE_CSS = `
   padding: var(--cc-space-lg) var(--cc-space-lg) var(--cc-space-xl); text-align: center;
 }
 /*
+ * The "no model yet" notice above the hero heading. A card with room inside it: the text on the left, where it
+ * is read, and the one action beside it. Without its own padding the sentence ran into the border and the button
+ * hung under it at an arbitrary indent.
+ */
+.cc-setup-card {
+  display: flex; align-items: center; justify-content: space-between; gap: var(--cc-space-lg);
+  width: 100%; max-width: 40rem; padding: var(--cc-space-md) var(--cc-space-lg); text-align: left;
+}
+.cc-setup-card > .cc-chip { flex: none; padding: var(--cc-space-xs) var(--cc-space-lg); }
+@media (max-width: 560px) {
+  .cc-setup-card { flex-direction: column; align-items: stretch; gap: var(--cc-space-sm); }
+  .cc-setup-card > .cc-chip { align-self: flex-start; }
+}
+/*
  * Leaving.
  *
  * The hero stays mounted for a moment after the first message, out of the flow: it has to be able to
