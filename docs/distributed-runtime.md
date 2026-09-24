@@ -1,90 +1,92 @@
 # Distributed Runtime & Deployment
 
-**Baseline:** blueprint v2, 16/09/2026. NodeLink là protocol đề xuất cho các installation của app. Không tuyên bố Pi hoặc A2A đã cung cấp mọi semantics này.
+> English (default) · [Tiếng Việt](distributed-runtime.vi.md)
 
-## 1. Mô hình cộng tác: nodes tự chủ, conversation thống nhất
+**Baseline:** blueprint v2, 16/09/2026. NodeLink is the proposed protocol between installations of the app. This does not claim that Pi or A2A already provide all of these semantics.
 
-Chọn **federation có kiểm soát**, không distributed shared-memory và không swarm tự trò chuyện vô hạn. Mỗi node chạy độc lập. Một conversation có home node giữ ordered user timeline; node khác được giao task có scope và trả events/artifacts.
+## 1. Collaboration model: autonomous nodes, one unified conversation
 
-Ví dụ:
+Choose **controlled federation**, not distributed shared memory and not a swarm that talks to itself without end. Each node runs independently. A conversation has a home node that keeps the ordered user timeline; other nodes are given scoped tasks and return events/artifacts.
+
+Example:
 
 ```text
 Desktop conversation client
-    -> Home runtime trên VPS A
-         -> Desktop node: đọc file đã được cho phép
-         -> VPS A: tổng hợp dữ liệu và giữ timeline
-         -> VPS B: build/test trong workspace tại B
+    -> Home runtime on VPS A
+         -> Desktop node: read files that have been permitted
+         -> VPS A: aggregate data and keep the timeline
+         -> VPS B: build/test in the workspace on B
 ```
 
-Hoặc desktop local là home, VPS A/B là executors. Không cần user chọn topology mỗi prompt; onboarding/explicit request đặt home, router chọn executor theo permissions/locality. User vẫn có thể hỏi “đang chạy ở máy nào?” hoặc “đừng gửi source ra khỏi laptop”.
+Or the local desktop is home and VPS A/B are executors. The user does not need to choose a topology on every prompt; onboarding/an explicit request sets the home, and the router picks the executor by permissions/locality. The user can still ask "which machine is this running on?" or "don't send source off the laptop".
 
-Scope đầu: same owner, nhiều machines. Không có implicit trust transitive: A pair B và B pair C không tự cho A quyền C. Không tự forward raw user prompts/secrets tới toàn mạng để hỏi ai nhận việc.
+Initial scope: same owner, several machines. There is no implicit transitive trust: A pairing B and B pairing C does not give A rights on C. Raw user prompts/secrets are never forwarded to the whole network to ask who will take the job.
 
-## 2. Giao thức nào dùng cho việc gì?
+## 2. Which protocol is used for what?
 
-| Protocol | Vai trò trong app | Không thay thế |
+| Protocol | Role in the app | Does not replace |
 |---|---|---|
-| App command/event API | Client ↔ runtime, state/surface/actions | OAuth vendor hay OS isolation |
+| App command/event API | Client ↔ runtime, state/surface/actions | Vendor OAuth or OS isolation |
 | Native NodeLink | Node ↔ node delegation, grants, correlated events, artifacts | Shared filesystem/multi-master database |
-| MCP | Gọi tools/resources từ service có sẵn | Quản lý toàn bộ conversation/runtime |
-| MCP Apps | UI resource + host bridge cho tool apps [R06–R08] | Pin lifecycle và data ownership riêng của app |
-| A2A | Adapter tới agent ngoài ecosystem, roadmap [R10] | App-specific UI/state replay/permissions/installation |
-| Tailscale/private network | Một lựa chọn reachability và encrypted network [R28] | App identity/grants hoặc approval của user |
+| MCP | Calling tools/resources from existing services | Managing the whole conversation/runtime |
+| MCP Apps | UI resource + host bridge for tool apps [R06–R08] | The app's own pin lifecycle and data ownership |
+| A2A | Adapter to agents outside the ecosystem, roadmap [R10] | App-specific UI/state replay/permissions/installation |
+| Tailscale/private network | One reachability and encrypted-network option [R28] | App identity/grants or user approval |
 
-Không tự implement đầy đủ tất cả chuẩn ở milestone đầu. MCP/MCP Apps nằm trong baseline; external A2A adapter giữ extension seam nhưng chưa bắt buộc certified release.
+Do not implement every standard in full in the first milestone. MCP/MCP Apps are in the baseline; the external A2A adapter keeps an extension seam but is not required for a certified release.
 
 ## 3. Deployment profiles
 
 ### 3.1 Local desktop
 
-App bundle chứa runtime và UI. Socket local private + authenticated handshake. Không public port, không account cloud bắt buộc. Node pairing chỉ bật khi người dùng yêu cầu kết nối máy.
+The app bundle contains the runtime and the UI. Private local socket + authenticated handshake. No public port, no mandatory cloud account. Node pairing is enabled only when the user asks to connect a machine.
 
 ### 3.2 Headless server
 
-OCI core image non-root, data volume persistent, loopback/private bind default. TLS ingress và application auth phải được kiểm tra trước remote use. Người dùng mở web chat hoặc attach bằng desktop client; server không cần monitor/GPU/browser engine cho text/runtime.
+Non-root OCI core image, persistent data volume, loopback/private bind by default. TLS ingress and application auth must be checked before remote use. The user opens web chat or attaches with the desktop client; the server needs no monitor/GPU/browser engine for text/runtime.
 
-Native alternative: signed/checksummed release bundle, unprivileged service account, systemd unit với hardening được test. Config/secrets không nhét vào world-readable flags hoặc shell history. Không bắt user cài Node/Pi globals; launcher sử dụng runtime bundled.
+Native alternative: signed/checksummed release bundle, unprivileged service account, systemd unit with tested hardening. Config/secrets are not put into world-readable flags or shell history. The user is not made to install Node/Pi globals; the launcher uses the bundled runtime.
 
 ### 3.3 Browser worker
 
-Browser driver/binary thêm khi cần; version engine ghép với Playwright đã pin. Managed profiles nằm ở encrypted/restricted volume phù hợp; không share profile directory giữa hai browser processes. CDP chỉ private và authenticated qua broker, không expose raw port.
+The browser driver/binary is added when needed; the engine version is matched to the pinned Playwright. Managed profiles live on a suitable encrypted/restricted volume; a profile directory is never shared between two browser processes. CDP is private only and authenticated through the broker; the raw port is never exposed.
 
 ### 3.4 Virtual desktop worker
 
-Optional Linux image có desktop/display server và input/screenshot adapter. Không phải một flag “headless=false” trên server không display. Preview/human takeover qua authenticated short-lived transport. Default không mount host home, host display hoặc Docker socket; restrict egress/CPU/memory/PIDs. Container không được coi tương đương VM trước host-kernel adversary.
+Optional Linux image with a desktop/display server and an input/screenshot adapter. It is not a "headless=false" flag on a server with no display. Preview/human takeover goes over an authenticated short-lived transport. By default it does not mount the host home, host display or Docker socket; egress/CPU/memory/PIDs are restricted. A container is not treated as equivalent to a VM against a host-kernel adversary.
 
-## 4. Bootstrap và pairing
+## 4. Bootstrap and pairing
 
-Cài binary/image là một bước bootstrap ngoài model khi chưa có app. Mục tiêu: installer hoặc command mẫu ngắn do release thực cung cấp, sau đó toàn bộ setup qua chat. Không yêu cầu user học terminal vận hành hằng ngày.
+Installing the binary/image is a bootstrap step outside the model while no app exists yet. Goal: an installer or a short sample command provided by the actual release, then all setup through chat. The user is not required to learn the terminal for day-to-day operation.
 
 Pairing flow:
 
-1. Node đích tạo device identity và một invite single-use, expiry ngắn; chưa mở quyền tài nguyên.
-2. Người dùng đưa endpoint/invite vào chat hoặc scan QR trên một client trusted. Secrets của invite không được lưu nguyên văn vào transcript dài hạn.
-3. Client hiển thị host fingerprint/node name và network reachability. TLS/mTLS hoặc signed app handshake xác minh key; endpoint DNS không đủ để tin node.
-4. Owner xác nhận cặp nodes và grants ban đầu: ví dụ chỉ `projects.read`, `build.run` trên workspace cụ thể, không host filesystem/root shell.
-5. Receiver policy kiểm tra own limits; lưu trust relationship + bounded delegation permissions.
-6. Probe, capability negotiation và status card thật. “Paired” khác “có thể chạy Browser Use” hoặc “đã có credentials”.
+1. The target node creates a device identity and a single-use, short-expiry invite; no resource rights are opened yet.
+2. The user puts the endpoint/invite into chat or scans a QR code on a trusted client. Invite secrets are not stored verbatim in the long-term transcript.
+3. The client shows the host fingerprint/node name and network reachability. TLS/mTLS or a signed app handshake verifies the key; a DNS endpoint is not enough to trust a node.
+4. The owner confirms the node pair and the initial grants: for example only `projects.read`, `build.run` on a specific workspace, no host filesystem/root shell.
+5. Receiver policy checks its own limits; stores the trust relationship + bounded delegation permissions.
+6. Probe, capability negotiation and a real status card. "Paired" is different from "can run Browser Use" or "already has credentials".
 
-Invite/QR không phải OAuth access token lâu dài. Replay invite bị reject; key rotation cần authenticated transition; lost device/revoke làm mất quyền từ lần gọi tiếp theo và ngừng nhận delegation mới. Already submitted effects có thể cần reconciliation.
+An invite/QR is not a long-lived OAuth access token. A replayed invite is rejected; key rotation needs an authenticated transition; a lost device/revoke removes rights from the next call and stops accepting new delegations. Already submitted effects may need reconciliation.
 
-**Trạng thái đã ship (2026-09-20).** Pairing đã chạy thật giữa hai node sống: hai node, hai cổng, hai database, HTTP thật giữa chúng. Device key là Ed25519 sinh tại chỗ, lưu trong `identity.json` với quyền chỉ chủ sở hữu đọc được; fingerprint là sha256 của public key in thành từng nhóm bốn ký tự để một người đọc được thành tiếng. Invite là single-use và hết hạn sau 10 phút; claim ghi peer ở trạng thái **pending**, và pending bị từ chối envelope chứ không được xếp hàng đợi. Chỉ khi một người xác nhận ở **cả hai** phía thì kênh mới mở.
+**Shipped state (2026-09-20).** Pairing runs for real between two live nodes: two nodes, two ports, two databases, real HTTP between them. The device key is Ed25519 generated in place and stored in `identity.json` readable only by the owner; the fingerprint is the sha256 of the public key printed in groups of four characters so a person can read it aloud. The invite is single-use and expires after 10 minutes; a claim records the peer in the **pending** state, and a pending peer has its envelopes rejected rather than queued. The channel opens only when a person confirms on **both** sides.
 
-Token mà mỗi node trình cho peer được **suy ra** bằng `HMAC(localToken, peerNodeId)`. Nghĩa là không có credential nào đi qua dây trong lúc pairing (hai bên chỉ trao nhau sha256), và chỉ có sha256 nằm trong database — nên một bản sao database không replay được ở peer. Transport là HTTP tới gateway của chính peer đó (`/peers/messages`), có outbox bền (ghi ý định trước khi gửi) và dedup theo message id ở phía nhận.
+The token each node presents to its peer is **derived** as `HMAC(localToken, peerNodeId)`. This means no credential crosses the wire during pairing (the two sides only exchange sha256 values), and only the sha256 sits in the database — so a copy of the database cannot be replayed at the peer. The transport is HTTP to the peer's own gateway (`/peers/messages`), with a durable outbox (intent is written before sending) and dedup by message id on the receiving side.
 
-**Chưa có.** `NodeLinkTransport` trong `packages/node-link` vẫn là stub cho một transport dạng socket: chưa có TLS/mTLS, chưa có WebSocket, chưa có keepalive hay reconnect cursor. Bước 3 nói TLS/mTLS hoặc signed app handshake để xác minh key — hiện tại việc xác minh key là **so fingerprint**, và kênh là HTTP, nên một node chỉ reachable qua plain HTTP mới pair được hôm nay. Bước 4 (grants ban đầu) và bước 6 (probe, capability negotiation, status card) vẫn thuộc P4. Đường delegation thì đã nối: owner viết một grant (`POST /grants`), grant đó đi sang peer bằng envelope `pair.confirm`, và từ đó một envelope `delegate` nêu đúng grant ấy được nhận còn nêu một delegation lạ bị từ chối bằng `DELEGATION_UNKNOWN`. Chính sách nhận của bên nhận là **phép giao** của các grant còn sống từ sender đó — theo đúng luật của contract rằng grant chỉ bị thu hẹp chứ không được mở rộng bằng cách giữ thêm grant khác; một grant không đặt `maxArtifactBytes` thì cho **không** byte nào. Artifact hiện mới được **xét**, chưa truyền byte. Gap sequence được báo bằng `SEQUENCE_GAP` và cursor của peer chỉ tiến liền mạch, nên message đến muộn vẫn xử lý được thay vì bị coi là regression.
+**Not yet.** `NodeLinkTransport` in `packages/node-link` is still a stub for a socket-style transport: no TLS/mTLS yet, no WebSocket, no keepalive or reconnect cursor. Step 3 says TLS/mTLS or a signed app handshake verifies the key — today key verification is **fingerprint comparison**, and the channel is HTTP, so only a node reachable over plain HTTP can pair today. Step 4 (initial grants) and step 6 (probe, capability negotiation, status card) still belong to P4. The delegation path is wired: the owner writes a grant (`POST /grants`), that grant travels to the peer in the `pair.confirm` envelope, and from then on a `delegate` envelope naming exactly that grant is accepted while one naming an unknown delegation is rejected with `DELEGATION_UNKNOWN`. The receiver's accept policy is the **intersection** of the live grants from that sender — following the contract rule that a grant is only narrowed, never widened by holding another grant; a grant that does not set `maxArtifactBytes` allows **zero** bytes. Artifacts are currently only **evaluated**; no bytes are transferred yet. A sequence gap is reported with `SEQUENCE_GAP` and a peer's cursor only advances contiguously, so a late message is still processed instead of being treated as a regression.
 
-Nếu cả hai node không reachable, app giải thích cần private-network adapter hoặc một reachable gateway. Chọn Tailscale adapter hoặc TLS endpoint của operator; **không hứa kết nối xuyên mọi firewall khi không có hạ tầng hỗ trợ**. Không build bespoke relay/NAT traversal trong foundation beta. Public client/browser qua Tailscale vẫn cần network access và HTTPS cấu hình phù hợp.
+If neither node is reachable, the app explains that a private-network adapter or a reachable gateway is needed. Choose the Tailscale adapter or an operator TLS endpoint; **do not promise connectivity through every firewall when no supporting infrastructure exists**. Do not build a bespoke relay/NAT traversal in the foundation beta. A public client/browser over Tailscale still needs network access and properly configured HTTPS.
 
-## 5. Trust và delegation grants
+## 5. Trust and delegation grants
 
-Một grant tối thiểu có owner, senderNodeId, receiverNodeId, permitted capability IDs, resource refs, expiry, budget, allowed data classes và delegation depth. Receiver dùng phép giao với policy local; sender không nâng quyền receiver bằng prompt.
+A minimal grant has owner, senderNodeId, receiverNodeId, permitted capability IDs, resource refs, expiry, budget, allowed data classes and delegation depth. The receiver intersects it with local policy; the sender cannot raise the receiver's rights through a prompt.
 
-Principal của invocation gồm verified peer identity và delegated origin user; không tin trường identity tự khai trong JSON. Pack không được tự mint grant hoặc dùng credentials của một connection ngoài scope.
+The principal of an invocation consists of the verified peer identity and the delegated origin user; self-declared identity fields in JSON are not trusted. A pack must not mint grants itself or use the credentials of a connection outside its scope.
 
-Delegation chuyển task brief/context cần thiết. Không copy toàn bộ Pi session nếu chỉ cần một build command. Artifact transfer là request riêng có source/destination, MIME/size/digest, classification và user grant. Workspace remote phải đã tồn tại hoặc được clone/create bằng task rõ ràng.
+Delegation carries the task brief/context that is needed. Do not copy the whole Pi session if only a build command is needed. Artifact transfer is a separate request with source/destination, MIME/size/digest, classification and user grant. A remote workspace must already exist or be cloned/created by an explicit task.
 
-## 6. NodeLink envelope đề xuất
+## 6. Proposed NodeLink envelope
 
 ```typescript
 // Internal app schema proposal, validate with discriminated unions in code.
@@ -107,58 +109,58 @@ interface PeerEnvelope {
 }
 ```
 
-Headers/signatures/auth channel bind actual sender. `senderNodeId` alone không là identity proof. Resource reference là `(nodeId, opaqueResourceId, resourceVersion)`; không remote `file://` hay local absolute path do model tự ghép.
+Headers/signatures/auth channel bind the actual sender. `senderNodeId` alone is not proof of identity. A resource reference is `(nodeId, opaqueResourceId, resourceVersion)`; no remote `file://` or local absolute path assembled by the model.
 
-Transport mặc định HTTPS request/response cho commands và WSS cho events. Keepalive/backpressure/rate/size limits, reconnect with cursor. Không dùng một connection mở vô hạn làm nguồn truth; data durable ở DB.
+The default transport is HTTPS request/response for commands and WSS for events. Keepalive/backpressure/rate/size limits, reconnect with cursor. An indefinitely open connection is never the source of truth; durable data lives in the DB.
 
 ## 7. Delivery semantics
 
-**At-least-once delivery + durable dedup**, không tuyên bố exactly-once external effects. Sender ghi intent/outbox trước send. Receiver transaction ghi inbox dedup và accepted task, rồi mới ack. Worker start đi từ receiver outbox.
+**At-least-once delivery + durable dedup**; exactly-once external effects are not claimed. The sender writes intent/outbox before sending. The receiver transaction writes the inbox dedup and the accepted task, and only then acks. Worker start goes from the receiver outbox.
 
-Nếu sender mất ack, resend cùng command/delegation ID. Receiver trả accepted/outcome đã biết, không tạo run mới. Event sourceSequence tăng đơn điệu theo node/stream; home dedup và project chúng vào timeline của mình. Không có một “global order” được tạo bằng đồng hồ wall clock giữa các máy.
+If the sender loses the ack, it resends the same command/delegation ID. The receiver returns the known accepted/outcome and does not create a new run. Event sourceSequence increases monotonically per node/stream; the home dedups and projects them into its own timeline. There is no "global order" created from wall-clock time across machines.
 
-Mỗi peer event giữ provenance gốc; home summary không được làm mất trạng thái unknown/waiting_approval. Worker token deltas có thể coalesce/transient; approvals/effects/result commits durable.
+Every peer event keeps its original provenance; a home summary must not lose the unknown/waiting_approval state. Worker token deltas may be coalesced/transient; approvals/effects/result commits are durable.
 
 ## 8. Failure matrix
 
-| Tình huống | Hành vi đúng |
+| Situation | Correct behavior |
 |---|---|
-| Desktop client đóng, home ở VPS | Home/jobs tiếp tục; reconnect replay |
-| Home desktop ngủ, worker ở VPS | Worker tiếp tục trong grant/budget đã cấp; không giả home đang online; cần input thì chờ |
-| Peer mất mạng trước accepted | Sender pending, retry cùng ID; không tạo job ở node khác |
-| Mất mạng sau external effect | Receiver reconcile; home hiển thị unknown, không repeat effect |
-| Home restart | Load snapshot/outbox/inbox, reconcile peers trước new risky dispatch |
-| Executor restart | Recover task/effect ledger; process cũ/status cần verify, không chỉ nhìn JSONL |
-| Two nodes cùng remote Git repo | Local worktree locks không đủ; push dựa expected remote ref / conflict handling, không force tự động |
-| Key revoke khi task đang chạy | Chặn new commands/delegations; cancel/reconcile theo scope đã cấp, báo rõ effects đã ra ngoài |
-| Package version mismatch | Negotiate capability version hoặc unavailable; không đổi schema âm thầm |
-| No supported auth/OS driver | Task waiting setup hoặc chuyển phương án sau consent; không giả ready |
+| Desktop client closed, home on VPS | Home/jobs continue; reconnect replays |
+| Home desktop asleep, worker on VPS | Worker continues within the granted grant/budget; does not pretend home is online; waits when input is needed |
+| Peer loses network before accepted | Sender stays pending, retries with the same ID; no job is created on another node |
+| Network lost after an external effect | Receiver reconciles; home shows unknown, does not repeat the effect |
+| Home restart | Load snapshot/outbox/inbox, reconcile peers before any new risky dispatch |
+| Executor restart | Recover task/effect ledger; old process/status must be verified, not just read from JSONL |
+| Two nodes on the same remote Git repo | Local worktree locks are not enough; push relies on expected remote ref / conflict handling, no automatic force |
+| Key revoked while a task is running | Block new commands/delegations; cancel/reconcile according to the granted scope, report clearly which effects already went out |
+| Package version mismatch | Negotiate capability version or unavailable; never change the schema silently |
+| No supported auth/OS driver | Task waits for setup or switches approach after consent; never pretends to be ready |
 
-**Không automatic home failover trong v0.2.** Chuyển home là explicit export/migration/drain gate tương lai. Không để hai nodes cùng append authoritative timeline do network partition. “Mượt” không có nghĩa giấu mất sự cố.
+**No automatic home failover in v0.2.** Moving home is a future explicit export/migration/drain gate. Never let two nodes both append to the authoritative timeline because of a network partition. "Smooth" does not mean hiding a failure.
 
-## 9. Cross-node approvals và input
+## 9. Cross-node approvals and input
 
-Executor phát `input.request`/`approval.request` đã ràng buộc exact operation, account/node/resource/digest và expiry. Home render **host-owned** card; user decision được authenticated và trả đúng request. Executor revalidates request còn hiện hành trước thực thi.
+The executor emits `input.request`/`approval.request` bound to the exact operation, account/node/resource/digest and expiry. The home renders a **host-owned** card; the user decision is authenticated and returned to the exact request. The executor revalidates that the request is still current before executing.
 
-Pairing consent không đồng nghĩa approve tất cả deployments/chuyển tiền/gửi tin. Widget có thể đề xuất invocation, nhưng không tự phát grant mới. Secrets cần ở node nào thì secure auth channel kết thúc ở vault node đó; home model chỉ nhận connectionRef/status.
+Pairing consent does not mean approving all deployments/money transfers/message sends. A widget can propose an invocation but cannot issue a new grant itself. When a node needs secrets, the secure auth channel terminates at that node's vault; the home model only receives connectionRef/status.
 
-## 10. Budgets và tránh agent chatter
+## 10. Budgets and avoiding agent chatter
 
-Default executor pool 2 workers mỗi node, config theo máy; conductor slot riêng. Global conversation budget, per-task depth/hops cap (đề xuất depth 2, nodes đã approve), timeout và token limits. Numeric defaults là targets cần đo, không benchmark.
+Default executor pool of 2 workers per node, configurable per machine; a separate conductor slot. Global conversation budget, per-task depth/hops cap (proposed depth 2, approved nodes), timeout and token limits. Numeric defaults are targets to be measured, not benchmarks.
 
-Không cho subagent tự broadcast cả mạng tìm việc. Worker yêu cầu capability qua scheduler; scheduler chọn người thực thi. Progress polling deterministic, không tạo LLM ping-pong. Cross-node plans có bounded subtasks và tiêu chí complete rõ.
+A subagent may not broadcast to the whole network looking for work. A worker requests a capability through the scheduler; the scheduler chooses the executor. Progress polling is deterministic and does not create LLM ping-pong. Cross-node plans have bounded subtasks and clear completion criteria.
 
 ## 11. Ops, backup, upgrade
 
-- Quotas separate sessions/artifacts/browser profiles/images; disk full cần stop safe không corrupt success state.
-- DB consistent backup + content manifest; key backup có chính sách riêng. Không live copy WAL files bằng script tùy tiện rồi gọi là backup hợp lệ.
-- Upgrade drain affected runs, verify protocol compatibility, snapshot DB, migrate transactionally khi phù hợp, boot healthcheck. Rollback package activation khác rollback irreversible DB migration; migration failure cần restore tested path.
-- Peer reconnect theo negotiated version window; incompatible node giữ read/status nếu supported, không tiếp nhận new effects.
-- Logs có trace task/run/peer/connection/widget nhưng redact secret/token/content mặc định.
-- Server uninstall không xóa project/remote account dữ liệu; token revoke và runtime-data removal là các lựa chọn riêng.
+- Separate quotas for sessions/artifacts/browser profiles/images; a full disk must stop safely without corrupting success state.
+- Consistent DB backup + content manifest; key backup has its own policy. Live-copying WAL files with an ad-hoc script and calling it a valid backup is not acceptable.
+- Upgrade drains affected runs, verifies protocol compatibility, snapshots the DB, migrates transactionally where appropriate, boots a healthcheck. Rolling back package activation is different from rolling back an irreversible DB migration; a migration failure needs a tested restore path.
+- Peers reconnect within the negotiated version window; an incompatible node keeps read/status if supported and does not accept new effects.
+- Logs carry task/run/peer/connection/widget traces but redact secrets/tokens/content by default.
+- Server uninstall does not delete project/remote account data; token revoke and runtime-data removal are separate choices.
 
-## 12. Release proof bắt buộc
+## 12. Required release proof
 
-Clean macOS + hai Linux VPS/namespaces độc lập chạy J4. Thử một real network topology với TLS/private networking; local mock không đủ chứng minh NAT/reachability. Đo reconnect, duplicate delivery, revoked grants, unknown effects, dependency/version mismatch và node restart.
+Clean macOS + two independent Linux VPS/namespaces run J4. Try one real network topology with TLS/private networking; a local mock is not enough to prove NAT/reachability. Measure reconnect, duplicate delivery, revoked grants, unknown effects, dependency/version mismatch and node restart.
 
-Nguồn cho protocol/tool separation và connectivity: [R06–R10, R28](research-and-decisions.md). Những semantics ownership/delivery/policy ở đây là lựa chọn thiết kế của app.
+Sources for protocol/tool separation and connectivity: [R06–R10, R28](research-and-decisions.md). The ownership/delivery/policy semantics here are design choices of the app.

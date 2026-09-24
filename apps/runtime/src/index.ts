@@ -11,3 +11,16 @@
 
 export { bootRuntime, runtimeDescription, LOCAL_SOCKET_STATUS, type NodeIdentity, type Runtime, type RuntimeOptions } from "./node.ts";
 export { handleRequest, type GatewayDeps, type GatewayRequest, type GatewayResponse } from "./gateway.ts";
+export { createNodeServer, type NodeServerOptions } from "./server.ts";
+export { bootNodeServices, type NodeServices } from "./services.ts";
+export { attachApiSocket, sseParser, type ApiSocket } from "./api-socket.ts";
+export {
+  API_SOCKET_PATH,
+  API_SOCKET_PROTOCOL,
+  DISCOVERY_PATH,
+  MCP_PATH,
+  MCP_PROTOCOL_VERSIONS,
+  OPENAPI_PATH,
+  discoveryDocument,
+  openApiDocument,
+} from "./open-interfaces.ts";

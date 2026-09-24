@@ -3,15 +3,17 @@ import { join, resolve, sep } from "node:path";
 
 import { protocolRangeSchema } from "@clarkcant/contracts";
 
+import { DISCOVERY_PATH, OPENAPI_PATH, discoveryDocument, openApiDocument } from "../open-interfaces.ts";
 import { type GatewayRequest, type GatewayResponse, fail, json } from "./http.ts";
 
 /**
  * The routes that answer before the token check.
  *
- * There are three, and each one is unauthenticated for a reason the route states where it is written:
+ * There are four, and each one is unauthenticated for a reason the route states where it is written:
  * the CORS preflight (a browser sends it without credentials by definition), the readiness probe (an
  * open probe must not become a way to enumerate nodes), and the node's own web build (public code a
- * browser fetches to load the app, and a sandboxed frame cannot present a token anyway).
+ * browser fetches to load the app, and a sandboxed frame cannot present a token anyway), and the descriptions of the
+ * node's open interfaces (they describe routes, not this node, and a client reads them before it holds a token).
  *
  * `undefined` means "not one of mine", which is how the dispatch keeps the order these branches had
  * when they lived in the gateway.
@@ -52,6 +54,19 @@ export function handlePublicRoutes(deps: PublicRouteDeps): GatewayResponse | und
       negotiatedProtocol: protocolRangeSchema.parse({ name: "agent.nodelink", min: 1, max: 2 }),
       checkedAt: deps.at(),
     });
+  }
+
+  /*
+   * How a third-party app or AI tool finds its way in: the discovery document and the OpenAPI description.
+   *
+   * Static documents about routes, with no node identity in them, so answering them without a token tells a caller
+   * nothing a published README would not.
+   */
+  if (request.method === "GET" && request.path === DISCOVERY_PATH) {
+    return json(200, discoveryDocument());
+  }
+  if (request.method === "GET" && request.path === OPENAPI_PATH) {
+    return json(200, openApiDocument());
   }
 
   /*

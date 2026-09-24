@@ -226,6 +226,29 @@ reporting complete, verify:
 
 Update DESIGN.md in the same change when intentionally changing a UX invariant.
 
+## Open interfaces
+
+ClarkCant is built on open standards so a third-party app or any AI tool can work
+with the node the same way the person's own client does: REST (OpenAPI 3.1), SSE,
+MCP (Streamable HTTP and stdio), a JSON WebSocket and a CLI. The contract and the
+client configuration live in docs/open-interfaces.md.
+
+- Every capability is a gateway route first (`apps/runtime/src/gateway.ts`). MCP
+  tools, WebSocket frames and CLI commands reach it by dispatching a request to
+  that route; never add a second business-logic stack behind one surface.
+- One bearer token and one refusal shape (`{ code, message }`) on every surface.
+  A surface that cannot carry the token in a header authenticates in its first
+  frame; it never falls back to a weaker check.
+- Only /health, /.well-known/clarkcant.json and /openapi.json are unauthenticated,
+  and they reveal neither the node identity nor any token.
+- An approval is the person's decision: never expose approve/deny as an MCP tool
+  or any other machine surface an AI client could use to approve its own action.
+  Stop, answer-a-question and read stay available.
+- Prefer an existing standard over a bespoke protocol, and version any wire
+  format you do define (`clarkcant.ws.v1`).
+- Changing a surface changes `apps/runtime/src/open-interfaces.ts` (discovery and
+  OpenAPI), its tests and docs/open-interfaces.md in both languages in the same PR.
+
 ## Tooling
 
 - pnpm 12 via Corepack, Node 22.19+ (24 in CI too). Never npm/yarn.
@@ -252,6 +275,7 @@ Update DESIGN.md in the same change when intentionally changing a UX invariant.
     pnpm exec playwright install --with-deps chromium
     pnpm verify:full
     node apps/runtime/src/main.ts --data-dir ./.data --label dev
+    pnpm clarkcant status        # the CLI against a running node
 
 pnpm verify is the definition of done for non-journey code. Run a focused test
 first. Run pnpm verify:full before reporting a UI/journey change complete.
@@ -320,7 +344,28 @@ không coi checker là bằng chứng cho những điều nó không kiểm tra:
   wrong and the command still exits 0. Write a body file, pass the file, then read
   the artifact back.
 
+## Documentation
+
+- Internal docs (this repository) and official docs (the website,
+  `digitopvn/clarkcant-web`) are maintained in two languages: English is the
+  default (`name.md`, `/docs/...`), Vietnamese is the pair (`name.vi.md`,
+  `/vi/docs/...`). A change to one language changes the other in the same PR.
+  An existing Vietnamese-only doc gains its English pair when it is next edited.
+  A Vietnamese doc links to the `.vi.md` sibling of a doc that has one.
+- Exception: `docs/conformance-traceability.md` is English-only and has no
+  `.vi.md` pair. It is the one ledger of T-/V-id status that `pnpm invariants`
+  checks against `packages/contracts/src/implementation-status.ts`; a translated
+  copy would be a second, unchecked statement of the same status.
+- Whenever a change makes the official docs stale or incomplete (a new or changed
+  surface, command, setup step or user-visible behavior), open an issue on
+  `digitopvn/clarkcant-web` labelled `ai-handle`, naming what changed and linking
+  the PR. Do this even when you also edit the website yourself, so the change is
+  tracked.
+- Docs describe shipped behavior as shipped and target behavior as target; never
+  document a surface before its route exists.
+
 ## Language
 
-Docs and plans are written in Vietnamese with full diacritics; code, commit
-messages, identifiers and protocol/schema names are English.
+Docs are bilingual as above: English by default, Vietnamese with full diacritics.
+Plans may stay Vietnamese-only. Code, commit messages, identifiers and
+protocol/schema names are English.

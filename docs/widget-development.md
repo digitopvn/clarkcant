@@ -1,22 +1,24 @@
 # ClarkCant Widget Developer Standard
 
-> Trạng thái: canonical authoring target cho widget ecosystem.
-> Cập nhật: 2026-09-19.
-> Áp dụng cho built-in catalog, declarative compositions, isolated widgets và MCP Apps.
+> English (default) · [Tiếng Việt](widget-development.vi.md)
 
-## 1. Mục tiêu
+> Status: canonical authoring target for the widget ecosystem.
+> Updated: 2026-09-19.
+> Applies to the built-in catalog, declarative compositions, isolated widgets and MCP Apps.
 
-Một người mới phải có thể đi từ ý tưởng tới widget chạy local bằng một template, test được mọi trạng thái quan trọng, rồi publish lên directory mà không cần hiểu runtime internals của ClarkCant.
+## 1. Goals
 
-Developer mental model chỉ gồm:
+A newcomer must be able to go from an idea to a widget running locally with a template, test every important state, and then publish to the directory without having to understand ClarkCant's runtime internals.
 
-1. **Definition** — widget này là gì, props/state/events/capabilities nào.
-2. **View** — UI hiển thị thế nào.
-3. **Actions** — local state hay effect qua host.
-4. **Semantic view** — Clark/voice hiểu widget đang có gì và làm được gì.
-5. **Package** — cách preview, test, version và publish.
+The developer mental model consists only of:
 
-Host chịu trách nhiệm identity, secrets, action authorization, live ownership, sandbox, pin/detach, lifecycle và provenance.
+1. **Definition** — what this widget is, which props/state/events/capabilities it has.
+2. **View** — how the UI is displayed.
+3. **Actions** — local state or an effect through the host.
+4. **Semantic view** — what Clark/voice understands the widget currently holds and can do.
+5. **Package** — how to preview, test, version and publish.
+
+The host is responsible for identity, secrets, action authorization, live ownership, sandbox, pin/detach, lifecycle and provenance.
 
 ---
 
@@ -24,21 +26,21 @@ Host chịu trách nhiệm identity, secrets, action authorization, live ownersh
 
 ### Built-in catalog
 
-Trusted code ship cùng client. Dùng khi component là primitive chung của sản phẩm.
+Trusted code shipped with the client. Use it when the component is a shared product primitive.
 
 ### Declarative composition
 
-Không executable payload. Ghép built-ins bằng spec. Đây là lựa chọn mặc định khi UI có thể biểu đạt bằng catalog hiện có.
+No executable payload. Combines built-ins through a spec. This is the default choice when the UI can be expressed with the existing catalog.
 
 ### Isolated widget
 
-Executable third-party/user UI. Chạy trong isolated origin/frame, chỉ giao tiếp qua Widget SDK.
+Executable third-party/user UI. Runs in an isolated origin/frame and communicates only through the Widget SDK.
 
 ### MCP App
 
-Dùng adapter MCP Apps khi package đã tồn tại trong ecosystem đó; vẫn phải tuân host isolation, lifecycle và action semantics của ClarkCant.
+Use the MCP Apps adapter when the package already exists in that ecosystem; it must still follow ClarkCant's host isolation, lifecycle and action semantics.
 
-Không chuyển một isolated widget thành native Pi extension chỉ để lấy quyền dễ hơn.
+Do not turn an isolated widget into a native Pi extension just to get permissions more easily.
 
 ---
 
@@ -66,7 +68,7 @@ Target convention:
       test/
         widget.spec.ts
 
-Một package có thể có nhiều facets:
+A package can have several facets:
 
 - widgets;
 - compositions;
@@ -75,7 +77,7 @@ Một package có thể có nhiều facets:
 - recipes;
 - themes.
 
-UI facet phải update/activate độc lập khỏi Pi worker khi không có facet Pi thay đổi.
+A UI facet must update/activate independently of the Pi worker when no Pi facet has changed.
 
 ---
 
@@ -115,58 +117,58 @@ Target root manifest:
       }
     }
 
-Manifest là request metadata, không tự cấp quyền.
+The manifest is request metadata; it does not grant permissions by itself.
 
-Version, source artifact và digest mà host cài phải immutable trong một generation.
+The version, source artifact and digest the host installs must be immutable within a generation.
 
 ---
 
 ## 5. Widget definition
 
-Mỗi widget definition phải khai báo:
+Every widget definition must declare:
 
 - stable id + semantic version;
 - renderer lane;
 - props JSON Schema;
 - event schemas;
-- state schema + stateVersion nếu có durable state;
-- `ephemeralStateKeys` — các key chỉ là view state (filter, zoom, lựa chọn): host bỏ chúng trước khi ghi xuống
-  node. Key không khai báo là state bền; quên khai báo thì không mất dữ liệu;
-- `stateMigrations` — các bước khai báo `{from, to, ops}` (op: `rename`, `default`, `remove`, `map`) từ mỗi
-  `stateVersion` cũ lên bản kế tiếp, do host chạy;
+- state schema + stateVersion if it has durable state;
+- `ephemeralStateKeys` — keys that are only view state (filter, zoom, selection): the host drops them before writing to
+  the node. Undeclared keys are durable state; forgetting to declare one does not lose data;
+- `stateMigrations` — declared `{from, to, ops}` steps (ops: `rename`, `default`, `remove`, `map`) from each
+  older `stateVersion` to the next one, run by the host;
 - semanticDescription;
 - requested capabilities;
-- compact/expanded support và minimum height;
+- compact/expanded support and minimum height;
 - text fallback;
 - effect categories;
 - dataset refs;
-- entry artifact cho executable UI.
+- entry artifact for executable UI.
 
-Không dùng props như một kênh truyền code, callback, HTML tùy ý, secret hoặc arbitrary URL.
+Do not use props as a channel for code, callbacks, arbitrary HTML, secrets or arbitrary URLs.
 
 ---
 
 ## 6. Sizing contract
 
-Mỗi widget phải test ít nhất:
+Every widget must test at least:
 
 - narrow: 320 px;
-- conversation: khoảng 720–840 px;
+- conversation: about 720–840 px;
 - compact pin;
 - expanded;
-- detached host window nếu support.
+- detached host window if supported.
 
-Không assume viewport height.
+Do not assume the viewport height.
 
-Không bắt parent page scroll ngang. Horizontal scrolling chỉ được dùng bên trong vùng dữ liệu mà reflow sẽ làm mất ý nghĩa, ví dụ table/diff.
+Do not force the parent page to scroll horizontally. Horizontal scrolling may only be used inside a data region where reflow would destroy meaning, for example a table/diff.
 
-Widget resize gửi **request** qua host, không tự resize Electron window.
+A widget resize sends a **request** through the host; it does not resize the Electron window itself.
 
 ---
 
 ## 7. Required UI states
 
-Mọi widget phải có explicit fixtures cho:
+Every widget must have explicit fixtures for:
 
 - loading;
 - empty;
@@ -181,19 +183,19 @@ Mọi widget phải có explicit fixtures cho:
 - compact;
 - expanded.
 
-Không dùng blank frame làm loading hoặc error.
+Do not use a blank frame as loading or error.
 
-Không giữ stale rows dưới nhãn live khi refresh fail.
+Do not keep stale rows under a live label when a refresh fails.
 
 ---
 
 ## 8. Actions
 
-Phân biệt cứng:
+A hard distinction:
 
 ### Local view action
 
-Không external side effect:
+No external side effect:
 
 - select;
 - filter;
@@ -203,11 +205,11 @@ Không external side effect:
 - tab;
 - playhead.
 
-Đi qua local state/state.update.
+Goes through local state/state.update.
 
 ### Effect action
 
-Có thể thay đổi host/external state:
+Can change host/external state:
 
 - capability invoke;
 - agent intent;
@@ -215,9 +217,9 @@ Có thể thay đổi host/external state:
 - install/connect;
 - write.
 
-Đi qua host action binding. Widget không gọi tool bằng tên tự bịa.
+Goes through a host action binding. A widget does not call a tool by a name it made up.
 
-Mọi effect invocation cần:
+Every effect invocation needs:
 
 - actionBindingId;
 - expected revision;
@@ -226,22 +228,22 @@ Mọi effect invocation cần:
 - pending/settled UI;
 - double-click dedup.
 
-Label phải mô tả operation thật. Không dùng “Continue” cho destructive effect.
+The label must describe the real operation. Do not use “Continue” for a destructive effect.
 
 ---
 
-## 9. Semantic contract cho voice
+## 9. Semantic contract for voice
 
-Widget phải publish semantic view khi state actionable thay đổi:
+A widget must publish a semantic view when its actionable state changes:
 
 - summary;
 - selected IDs;
 - available actions;
 - concise text representation.
 
-Voice và click phải gọi cùng action binding/state path.
+Voice and click must call the same action binding/state path.
 
-Không publish raw DOM, hidden text, full dataset hoặc secret chỉ để voice “hiểu màn hình”.
+Do not publish raw DOM, hidden text, the full dataset or secrets just so voice can “understand the screen”.
 
 Example:
 
@@ -284,7 +286,7 @@ Author-facing target:
     lifecycle.onResume()
     lifecycle.onDispose()
 
-Không expose:
+Do not expose:
 
 - readAllSecrets;
 - shell;
@@ -301,38 +303,38 @@ Không expose:
 
 ## 11. Pin / detach lifecycle
 
-Pin và detach trỏ tới **cùng logical instance**.
+Pin and detach point to the **same logical instance**.
 
-Một instance chỉ có một live effect owner.
+An instance has only one live effect owner.
 
-Các surface còn lại:
+The remaining surfaces are:
 
-- historical inline snapshot; hoặc
-- read-only preview.
+- a historical inline snapshot; or
+- a read-only preview.
 
-Detach không reset state/subscription/media.
+Detach does not reset state/subscriptions/media.
 
-Close detached window chỉ chuyển presentation ownership; không xóa instance.
+Closing a detached window only moves presentation ownership; it does not delete the instance.
 
-Audio/call/player không được duplicate playback khi chuyển surface.
+Audio/call/player must not duplicate playback when moving between surfaces.
 
 ---
 
 ## 12. Motion
 
-Widget dùng host design tokens thay vì tự tạo motion language xung đột.
+Widgets use host design tokens instead of creating a conflicting motion language of their own.
 
 Rules:
 
-- press feedback dưới 100 ms;
-- transition targeted properties, không transition: all;
-- mild bounce chỉ ở settle/end-state;
-- prefers-reduced-motion phải có static equivalent;
+- press feedback under 100 ms;
+- transition targeted properties, not transition: all;
+- mild bounce only on settle/end-state;
+- prefers-reduced-motion must have a static equivalent;
 - no infinite decorative animation offscreen;
-- hover không phải cách duy nhất để thấy action;
-- widget không được làm Orb/global chrome đổi hiệu ứng nếu user chưa cấp theme/personalization scope.
+- hover is not the only way to see an action;
+- a widget must not make the Orb/global chrome change effects unless the user has granted a theme/personalization scope.
 
-Executable widget không được inject global CSS.
+Executable widgets must not inject global CSS.
 
 ---
 
@@ -343,67 +345,67 @@ Release gate:
 - semantic HTML;
 - keyboard-only path;
 - visible focus;
-- 40–44 px target cho primary touch actions;
-- state không chỉ bằng màu;
-- text alternative cho rich visual;
-- aria-live bounded, không stream token spam;
-- focus restore khi close sub-surface;
-- chart/table selection usable không cần pointer;
+- 40–44 px targets for primary touch actions;
+- state not conveyed by color alone;
+- text alternative for rich visuals;
+- bounded aria-live, no token-stream spam;
+- focus restore when a sub-surface closes;
+- chart/table selection usable without a pointer;
 - reduced motion;
-- contrast theo host tokens.
+- contrast per host tokens.
 
 ---
 
 ## 14. Data & network
 
-Dataset lớn đi qua opaque refs.
+Large datasets go through opaque refs.
 
-Không đưa:
+Do not put:
 
-- file:// path;
-- DB query;
-- bearer token;
-- host cookie;
-- long-lived secret
+- file:// paths;
+- DB queries;
+- bearer tokens;
+- host cookies;
+- long-lived secrets
 
-vào props/state/history.
+into props/state/history.
 
-Executable widget chỉ connect tới origins trong installed manifest/CSP.
+An executable widget only connects to origins in the installed manifest/CSP.
 
-Nếu auth SDK cần browser token, host broker cấp token ngắn hạn/scoped nếu provider thực sự hỗ trợ; token không persist trong widget state.
+If an auth SDK needs a browser token, the host broker issues a short-lived/scoped token if the provider actually supports it; the token is not persisted in widget state.
 
 ---
 
 ## 15. State & migration
 
-State có:
+State has:
 
 - stateVersion;
 - optimistic revision;
 - deterministic migration.
 
-State bền của widget cách ly nằm trong SQLite của node, không nằm trong frame. Widget ghi bằng
-`state.update(expectedStateRevision, patch)`; host bỏ `ephemeralStateKeys`, kiểm `stateSchema` và kích thước,
-kiểm revision lạc quan, và chỉ báo thành công khi node đã commit. Xung đột trả `STALE` và widget giữ bản nháp.
-Revision của state khác revision của instance; không dùng lẫn.
+The durable state of an isolated widget lives in the node's SQLite, not in the frame. The widget writes with
+`state.update(expectedStateRevision, patch)`; the host drops `ephemeralStateKeys`, checks `stateSchema` and size,
+checks the optimistic revision, and only reports success once the node has committed. A conflict returns `STALE` and the widget keeps its draft.
+The state revision is different from the instance revision; do not mix them up.
 
-Upgrade không được silently drop draft.
+An upgrade must not silently drop a draft.
 
-Migration là khai báo và do host chạy: khi mở một instance có `stateVersion` cũ hơn definition, host chạy các
-bước `stateMigrations` trong một transaction rồi kiểm kết quả theo `stateSchema`. Code của widget không bao giờ
-chạm vào state chưa qua kiểm tra. Không có migrate xuống: state mới hơn definition (sau khi quay về bản trước)
-mở ở chế độ chỉ đọc kèm lý do.
+Migration is declarative and run by the host: when opening an instance whose `stateVersion` is older than the definition, the host runs the
+`stateMigrations` steps in one transaction and then checks the result against `stateSchema`. Widget code never
+touches state that has not been checked. There is no downward migration: state newer than the definition (after rolling back to a previous version)
+opens in read-only mode with a reason.
 
-Nếu migration fail:
+If a migration fails:
 
-- giữ snapshot;
+- keep the snapshot;
 - disable mutation;
-- đưa recovery choice.
+- offer a recovery choice.
 
-Uninstall presentation facet không tự xóa domain data của user. Gỡ package chỉ thôi kích hoạt generation đang
-chạy: instance chuyển offline với text fallback, state và snapshot được giữ. **Khôi phục** kích hoạt lại đúng
-generation vừa gỡ; **Quay về** kích hoạt generation bị thay gần nhất. Cả ba đi qua cùng một action từ
-Settings, chat và voice.
+Uninstalling a presentation facet does not automatically delete the user's domain data. Removing a package only deactivates the running
+generation: instances go offline with a text fallback, and state and snapshots are kept. **Restore** reactivates exactly the
+generation that was just removed; **Roll back** activates the most recently replaced generation. All three go through the same action from
+Settings, chat and voice.
 
 ---
 
@@ -428,7 +430,7 @@ Templates:
 
 ### dev
 
-Local isolated host có:
+A local isolated host with:
 
 - hot reload;
 - fixtures;
@@ -442,35 +444,35 @@ Local isolated host có:
 - capability simulator;
 - accessibility checks.
 
-`clark widget dev [dir] [--port N] [--builtin <id>]`: không có `[dir]` thì lấy thư mục hiện tại, và
-`--builtin <id>` xem một widget của catalog trong **cùng** host đó thay vì một package trên đĩa — chi tiết ở 23.5.
+`clark widget dev [dir] [--port N] [--builtin <id>]`: without `[dir]` it uses the current directory, and
+`--builtin <id>` views a catalog widget in the **same** host instead of a package on disk — details in 23.5.
 
 ### test
 
-Chạy conformance suite.
+Runs the conformance suite.
 
 ### pack
 
-Validate manifest, build immutable artifact, generate digest + metadata.
+Validates the manifest, builds an immutable artifact, generates digest + metadata.
 
 ### publish
 
-Publish package source/artifact rồi submit directory metadata. Directory không phải nơi duy nhất package có thể chạy: local/git source vẫn là first-class development path.
+Publishes the package source/artifact and then submits directory metadata. The directory is not the only place a package can run: a local/git source is still a first-class development path.
 
-Trước khi ghi entry, publish so các definition với lần chuẩn bị trước (`dist/published-definitions.json`) và
-từ chối version vi phạm quy tắc ở §20. File này là mốc so sánh nên cần được commit cùng source; nếu đã có
-`dist/directory-entry.json` mà thiếu file này (clone mới, dọn `dist`), publish cảnh báo rằng version chưa được kiểm tra.
+Before writing the entry, publish compares the definitions with the previous preparation (`dist/published-definitions.json`) and
+refuses a version that violates the rules in §20. This file is the comparison baseline, so it should be committed with the source; if
+`dist/directory-entry.json` exists but this file is missing (fresh clone, cleaned `dist`), publish warns that the version has not been checked.
 
 ---
 
 ## 17. Conformance suite
 
-Widget không publish-ready nếu thiếu các test sau:
+A widget is not publish-ready if any of the following tests are missing:
 
 ### Schema
 
 - malformed props reject;
-- additional props reject khi schema cấm;
+- additional props reject when the schema forbids them;
 - state version valid;
 - unknown event/action reject.
 
@@ -499,7 +501,7 @@ Widget không publish-ready nếu thiếu các test sau:
 - stale revision refused;
 - voice/click parity;
 - pin/unpin;
-- detach/attach nếu supported.
+- detach/attach if supported.
 
 ### Rendering
 
@@ -518,7 +520,7 @@ Widget không publish-ready nếu thiếu các test sau:
 
 ## 18. Directory metadata
 
-Directory entry cần:
+A directory entry needs:
 
 - package id;
 - current version;
@@ -531,11 +533,11 @@ Directory entry cần:
 - widget/facet types;
 - supported platforms;
 
-Giá trị `platforms` lấy từ **một** vocabulary dùng chung cho cả package lẫn host: `darwin-arm64`, `darwin-x64`,
-`linux-x64`, `linux-arm64`, `win32-x64`, `win32-arm64`, `web`. Tên theo dạng `<node platform>-<arch>`, nên Windows
-là `win32-*` chứ không phải `windows-*`. Host tự khai bằng `platformForHost(process.platform, process.arch)`; host
-nào vocabulary không mô tả được thì hàm trả `undefined`, và lời từ chối nêu tên platform của **cả hai** bên — thay
-vì đoán `web` rồi đưa một package native cho thứ không chạy được.
+`platforms` values come from **one** vocabulary shared by both packages and hosts: `darwin-arm64`, `darwin-x64`,
+`linux-x64`, `linux-arm64`, `win32-x64`, `win32-arm64`, `web`. Names follow the `<node platform>-<arch>` form, so Windows
+is `win32-*`, not `windows-*`. A host declares itself with `platformForHost(process.platform, process.arch)`; for a host
+the vocabulary cannot describe, the function returns `undefined`, and the refusal names the platform of **both** sides — instead
+of guessing `web` and handing a native package to something that cannot run it.
 - host API compatibility;
 - requested permissions summary;
 - risk tier;
@@ -543,9 +545,9 @@ vì đoán `web` rồi đưa một package native cho thứ không chạy đư�
 - release date;
 - changelog link.
 
-Các tín hiệu như downloads/reviews có thể thêm sau; không dùng popularity thay security/trust facts.
+Signals such as downloads/reviews may be added later; do not use popularity in place of security/trust facts.
 
-Pi package catalog là tham khảo tốt về discovery: package có manifest resources và preview image/video, được chia sẻ qua npm/git và index trong catalog. ClarkCant nên giữ ergonomics đó nhưng executable widget mặc định isolated thay vì full-process trust.
+The Pi package catalog is a good reference for discovery: packages have manifest resources and a preview image/video, are shared via npm/git and indexed in the catalog. ClarkCant should keep those ergonomics, but executable widgets default to isolation instead of full-process trust.
 
 ---
 
@@ -567,7 +569,7 @@ Developer:
       ↓
     searchable
 
-Directory validation không claim “safe”. Nó xác minh:
+Directory validation does not claim “safe”. It verifies:
 
 - manifest;
 - schema;
@@ -584,317 +586,317 @@ Directory validation không claim “safe”. Nó xác minh:
 
 Definition breaking change → new definition major/id version.
 
-Package patch/minor không được thay semantic meaning của action binding đã persisted.
+A package patch/minor must not change the semantic meaning of a persisted action binding.
 
-Action target/account/tool generation change → binding mới.
+Action target/account/tool generation change → new binding.
 
-Snapshot cũ phải tiếp tục render fallback/text ngay cả khi current package đã đổi.
+Old snapshots must keep rendering fallback/text even when the current package has changed.
 
-`clark widget publish` áp các quy tắc sau, so với definition của lần chuẩn bị trước, và từ chối kèm tên từng vi
-phạm:
+`clark widget publish` applies the following rules, compared against the definitions of the previous preparation, and refuses with the name of each
+violation:
 
-- `stateSchema` đổi ⇒ `stateVersion` phải tăng và có bước migration từ mọi `stateVersion` đã phát hành trở lên.
-  So sánh theo nội dung, thứ tự key không tính;
-- `stateVersion` không bao giờ giảm;
-- bước migration đã phát hành là lịch sử: không sửa, không xoá, chỉ thêm — một node có thể đã migrate bằng nó;
-- đổi `ephemeralStateKeys`, đổi `effectCategories` hoặc xin thêm `requestedCapabilities` ⇒ tăng major của
-  definition (hoặc id mới). Bỏ bớt capability thì không cần;
-- một definition biến mất khỏi package ⇒ tăng major của package, vì instance đang tồn tại gọi tên nó.
+- `stateSchema` changed ⇒ `stateVersion` must increase and there must be a migration step from every released `stateVersion` upward.
+  The comparison is by content; key order does not count;
+- `stateVersion` never decreases;
+- a released migration step is history: do not edit it, do not delete it, only add — a node may already have migrated with it;
+- changing `ephemeralStateKeys`, changing `effectCategories` or requesting additional `requestedCapabilities` ⇒ bump the definition's
+  major (or a new id). Dropping a capability does not require this;
+- a definition disappearing from the package ⇒ bump the package major, because existing instances refer to it by name.
 
 ---
 
 ## 21. Review checklist
 
-Trước merge/publish:
+Before merge/publish:
 
-1. Widget có thật sự cần executable code hay composition đủ?
-2. Có loading/empty/error/read-only fixture?
-3. Keyboard dùng được?
-4. Reduced motion dùng được?
-5. Text fallback hữu ích?
-6. Semantic view đủ cho voice mà không dump dữ liệu?
-7. Local/effect action có tách rõ?
-8. Action có dedup/revision guard?
-9. Pin/detach có giữ một live owner?
-10. Secrets/path không lọt props/state/log?
-11. Network origins có bounded?
-12. State migration có test?
-13. 320 px không vỡ?
-14. Uninstall/update không làm mất user data?
-15. Package detail nói thật risk/trust lane?
+1. Does the widget really need executable code, or is a composition enough?
+2. Is there a loading/empty/error/read-only fixture?
+3. Is it usable by keyboard?
+4. Is it usable with reduced motion?
+5. Is the text fallback useful?
+6. Is the semantic view enough for voice without dumping data?
+7. Are local and effect actions clearly separated?
+8. Do actions have a dedup/revision guard?
+9. Does pin/detach keep one live owner?
+10. Do secrets/paths stay out of props/state/logs?
+11. Are network origins bounded?
+12. Is the state migration tested?
+13. Does it hold up at 320 px?
+14. Does uninstall/update avoid losing user data?
+15. Does the package detail tell the truth about the risk/trust lane?
 
-Nếu câu 1 cho thấy composition đủ thì ưu tiên composition.
+If question 1 shows a composition is enough, prefer the composition.
 
 ---
 
 ## 22. Source of truth
 
-- Contract runtime: packages/contracts/src/widgets.ts.
+- Runtime contract: packages/contracts/src/widgets.ts.
 - Bridge/author API: packages/widget-sdk.
 - Host registry/isolation: packages/widget-host.
-- Built-in descriptors: packs/data-canvas và các pack catalog sau này.
+- Built-in descriptors: packs/data-canvas and future catalog packs.
 - Built-in React renderers: packages/conversation-client.
 - Product UX: DESIGN.md.
-- Standard này định nghĩa developer experience/release gate mục tiêu; implementation status phải được ghi trung thực trong code/conformance.
+- This standard defines the target developer experience/release gate; implementation status must be recorded truthfully in code/conformance.
 
 ---
 
-## 19. Trạng thái triển khai
+## 19. Implementation status
 
-Mục này nói rõ phần nào của tài liệu đã có code, để không ai đọc §16–§17 như thể mọi thứ đã chạy.
+This section states which parts of the document already have code, so that nobody reads §16–§17 as if everything already runs.
 
-**Đã có và có test:**
+**Implemented and tested:**
 
-- `clark widget init` — scaffold `blank`, `form`, `dashboard` theo layout ở §3, và package do nó tạo phải
-  qua chính bộ conformance của nó (một template fail lần chạy đầu là template dạy sai).
-- `clark widget test` — bộ conformance ở §17. Các check chạy được bằng Node thì chạy thật: schema, bridge
-  security (nonce giả, sai source window, message không có trong codec), lifecycle, dedup, stale revision,
-  pin, state migration, text fallback, effect action. Các check cần frame đã render (keyboard, touch size,
-  narrow/compact/expanded, reduced motion, voice/click parity) được báo `requires-dev-host` — **không** được
-  báo pass chỉ vì có fixture.
-- `clark widget pack` — validate manifest, tính digest trên danh tính + nội dung, và từ chối pack lại một
-  version đã pack với digest khác (một version đổi byte là một package khác mang cùng số).
-- `clark widget dev` — dev host ở §16: hot reload qua SSE, fixtures, viewport switcher (320px là lựa chọn
-  thật), dark/light/system, reduced motion, offline, read-only, semantic inspector, action log, capability
-  simulator, và accessibility audit. Frame dùng đúng sandbox của host (`allow-scripts`, không
-  `allow-same-origin`), và server từ chối mọi path nằm ngoài package.
-- State bền của widget cách ly, migration khai báo do host chạy, và `ephemeralStateKeys` (§15).
-- Gỡ / khôi phục / quay về package từ Settings và qua `manage_package` trong hội thoại; dữ liệu được giữ.
-- Câu hỏi capability đang chờ được trả lời trong Settings (do host sở hữu; model không duyệt được). Frame chỉ
-  nhận capability đã cấp **và** sẵn sàng; phần còn lại được nói ra kèm lý do.
+- `clark widget init` — scaffolds `blank`, `form`, `dashboard` following the layout in §3, and the package it creates must
+  pass its own conformance suite (a template that fails on its first run teaches the wrong thing).
+- `clark widget test` — the conformance suite in §17. Checks that can run in Node run for real: schema, bridge
+  security (forged nonce, wrong source window, a message not in the codec), lifecycle, dedup, stale revision,
+  pin, state migration, text fallback, effect action. Checks that need a rendered frame (keyboard, touch size,
+  narrow/compact/expanded, reduced motion, voice/click parity) are reported as `requires-dev-host` — they are **not**
+  reported as passing just because a fixture exists.
+- `clark widget pack` — validates the manifest, computes the digest over identity + content, and refuses to re-pack a
+  version that was already packed with a different digest (a version whose bytes changed is a different package carrying the same number).
+- `clark widget dev` — the dev host in §16: hot reload via SSE, fixtures, viewport switcher (320px is a real
+  option), dark/light/system, reduced motion, offline, read-only, semantic inspector, action log, capability
+  simulator, and accessibility audit. The frame uses the host's actual sandbox (`allow-scripts`, no
+  `allow-same-origin`), and the server refuses any path outside the package.
+- Durable state for isolated widgets, declarative host-run migrations, and `ephemeralStateKeys` (§15).
+- Remove / restore / roll back a package from Settings and via `manage_package` in the conversation; data is kept.
+- Pending capability questions are answered in Settings (host-owned; the model cannot approve them). The frame only
+  receives capabilities that are granted **and** ready; the rest are stated with a reason.
 
-**Chưa có:**
+**Not yet implemented:**
 
-- `clark widget publish` — **đã có, ở mức "prepare"**, và áp quy tắc version ở §20: nó validate, pack, rồi ghi `dist/directory-entry.json`
-  với đủ field mà §18 yêu cầu và digest của artifact đã pack (đọc từ `dist/artifact.json`, không tính lại —
-  hai lần tính cùng một thứ là cách một listing nói tới artifact không ai tạo được). Nó **không** nộp thay
-  người dùng: nộp cần account directory, và một lệnh trông như đã nộp rồi là control có action không tồn tại.
-  Đường local/git/npm vẫn là first-class nên không cần account để chạy widget của mình.
-- **Directory search** — đã có ở mức đọc một index: `CC_DIRECTORY_INDEX` trỏ tới một file JSON các entry theo
-  §18, và `search_directory` trả về card `marketplace-results` hiển thị **source, version, digest và risk lane**,
-  kèm tên directory mà kết quả đến từ đó. Chưa cấu hình index là một *trạng thái* được nói ra, khác với "không
-  tìm thấy gì". Card **không có nút install**: cài đặt đi qua đúng install path nơi digest được kiểm và consent
-  được ghi; một nút ở đây sẽ là entry point thứ hai để cài, và là chỗ duy nhất một listing có thể biến thành
-  authorization. Không có registry từ xa — search chỉ đọc thứ tồn tại trên máy hoặc ở URL người dùng chỉ định.
-- Script trong trang của dev host: nó thu thập fact và chuyển action, còn mọi quyết định nằm ở hàm đã test —
-  nhưng bản thân script cần browser để chạy, và điều đó được nói ra thay vì ngụ ý rằng cả dev host đã được phủ.
-- Detach/attach: cửa sổ host tách rời của desktop **đã có thật** (`apps/desktop/src/main.mjs` mở nó qua
-  `detachedWindowOptions`, `apps/web/src/App.tsx` phục vụ `?detached=1`), và được
-  `apps/desktop/test/detached-window.spec.ts` cùng `apps/web/e2e/detach.spec.ts` phủ — **không phải** bởi
-  check `detach` của bộ conformance: harness chỉ chạy trên dev host trong trình duyệt, mà dev host không có
-  cửa sổ tách rời nào để điều khiển. Nửa sở hữu (`detached` trên live-owner claim) đã có.
-- Runtime cho MCP Apps: đường isolated-app đã có; MCP Apps chưa được chứng minh trên cùng đường đó.
+- `clark widget publish` — **implemented, at the "prepare" level**, and applies the version rules in §20: it validates, packs, then writes `dist/directory-entry.json`
+  with every field §18 requires and the digest of the packed artifact (read from `dist/artifact.json`, not recomputed —
+  computing the same thing twice is how a listing ends up referring to an artifact nobody can produce). It does **not** submit on the
+  user's behalf: submitting needs a directory account, and a command that looks like it has already submitted is a control whose action does not exist.
+  The local/git/npm path is still first-class, so no account is needed to run your own widget.
+- **Directory search** — implemented at the level of reading an index: `CC_DIRECTORY_INDEX` points to a JSON file of entries per
+  §18, and `search_directory` returns a `marketplace-results` card showing **source, version, digest and risk lane**,
+  along with the name of the directory the results came from. An unconfigured index is a *state* that is stated, distinct from "nothing
+  found". The card **has no install button**: installation goes through the one install path where the digest is checked and consent
+  is recorded; a button here would be a second entry point for installing, and the only place a listing could turn into
+  authorization. There is no remote registry — search only reads what exists on the machine or at a URL the user specifies.
+- The dev host's in-page script: it collects facts and forwards actions, while every decision lives in a tested function —
+  but the script itself needs a browser to run, and that is stated instead of implying that the whole dev host is covered.
+- Detach/attach: the desktop's detached host window **really exists** (`apps/desktop/src/main.mjs` opens it via
+  `detachedWindowOptions`, `apps/web/src/App.tsx` serves `?detached=1`), and it is covered by
+  `apps/desktop/test/detached-window.spec.ts` together with `apps/web/e2e/detach.spec.ts` — **not** by the
+  conformance suite's `detach` check: the harness only runs on the in-browser dev host, and the dev host has no
+  detached window to drive. The ownership half (`detached` on the live-owner claim) is implemented.
+- Runtime for MCP Apps: the isolated-app path is implemented; MCP Apps have not yet been proven on that same path.
 
 ---
 
-## 23. Widget Library và Widget Lab
+## 23. Widget Library and Widget Lab
 
-Mục này mô tả hai surface đã có code: thư viện để **xem** catalog, và Lab để **phát triển** widget. Cả hai
-dùng chung một surface, khác nhau ở chế độ.
+This section describes two surfaces that already have code: the library for **viewing** the catalog, and the Lab for **developing** widgets. Both
+share one surface and differ by mode.
 
-### 23.1 Một catalog chuẩn
+### 23.1 One canonical catalog
 
-`packages/widget-catalog` là lớp discovery duy nhất: `CATALOG_DEFINITIONS` = `WIDGETS` của `packs/data-canvas`
-cộng `NOTE`. Note **không** nằm trong `WIDGETS` vì danh sách đó là từ vựng view mà model được phép gọi
-(`apps/runtime/src/services.ts`), nên thêm vào đó là thay đổi bề mặt model chứ không phải refactor metadata.
-Note được export từ barrel của pack, **không** từ `sample.ts`: `sample.ts` import `@clarkcant/core`, và đi qua
-nó sẽ kéo `packages/storage` (`node:sqlite`, `node:crypto`) vào bundle browser — đúng thứ invariant
-`browser-entries-avoid-node-builtins` bắt được.
+`packages/widget-catalog` is the only discovery layer: `CATALOG_DEFINITIONS` = `WIDGETS` from `packs/data-canvas`
+plus `NOTE`. Note is **not** in `WIDGETS` because that list is the view vocabulary the model is allowed to call
+(`apps/runtime/src/services.ts`), so adding to it is a change to the model surface, not a metadata refactor.
+Note is exported from the pack's barrel, **not** from `sample.ts`: `sample.ts` imports `@clarkcant/core`, and going through
+it would pull `packages/storage` (`node:sqlite`, `node:crypto`) into the browser bundle — exactly what the invariant
+`browser-entries-avoid-node-builtins` catches.
 
-Metadata hiển thị (tên, mô tả, family, tag) nằm trong `widget-catalog`, và test khẳng định không entry nào rơi
-về id thô, cũng không entry metadata nào trỏ tới definition không tồn tại.
+Display metadata (name, description, family, tags) lives in `widget-catalog`, and tests assert that no entry falls
+back to a raw id, and that no metadata entry points to a definition that does not exist.
 
-### 23.2 Hợp đồng fixture
+### 23.2 Fixture contract
 
-`widgetFixtureSchema` trong `packages/contracts/src/widgets.ts` là hợp đồng dùng chung: `strictObject` với
-`{id, label, props, state?, dataset?, mode?}`. Strict nghĩa là một fixture mang thêm khoá lạ — ví dụ một effect
-binding — sẽ fail thay vì được render như thể vô hại. Đó là cách "fixture là data, không phải code" trở thành
-điều kiểm được.
+`widgetFixtureSchema` in `packages/contracts/src/widgets.ts` is the shared contract: a `strictObject` with
+`{id, label, props, state?, dataset?, mode?}`. Strict means a fixture carrying an unknown extra key — for example an effect
+binding — fails instead of being rendered as if it were harmless. That is how "a fixture is data, not code" becomes
+something that can be checked.
 
-Hai artifact khác nhau, không phải hai bản sao của một thứ:
+Two different artifacts, not two copies of one thing:
 
-- **fixture của catalog** — `WidgetFixture`, có `dataset` và `mode`, do `widget-catalog` cung cấp;
-- **`fixtures/*.json` của một package** — props trần; `readPackage` đọc chúng và `conformance.ts` kiểm bằng
-  props schema của chính widget đó.
+- **a catalog fixture** — `WidgetFixture`, with `dataset` and `mode`, provided by `widget-catalog`;
+- **a package's `fixtures/*.json`** — bare props; `readPackage` reads them and `conformance.ts` checks them against
+  that widget's own props schema.
 
-Một fixture của package có thể mang thêm dữ liệu: file `fixtures/<name>.dataset.json` đi kèm
-`fixtures/<name>.json`. Node đọc cặp này thành **một** `WidgetFixture` — props từ file thứ nhất, `dataset` từ
-file thứ hai — và validate dataset bằng đúng `fixtureDatasetSchema` mà catalog dùng. Dataset sai schema thì bị
-nêu tên trong `problems` và **không** được gắn vào fixture, chứ không được render như thể hợp lệ.
+A package fixture can carry extra data: a `fixtures/<name>.dataset.json` file alongside
+`fixtures/<name>.json`. The node reads this pair as **one** `WidgetFixture` — props from the first file, `dataset` from
+the second — and validates the dataset with the same `fixtureDatasetSchema` the catalog uses. A dataset that fails the schema is
+named in `problems` and is **not** attached to the fixture, rather than being rendered as if it were valid.
 
-Vì sao cần file riêng thay vì nhét dataset vào props: renderer đọc dataset từ **fixture**, không từ props
-(`WidgetPreview.tsx`), nên một widget có dữ liệu sẽ mãi vẽ đường "chưa có dữ liệu" nếu dataset chỉ nằm trong
+Why a separate file instead of putting the dataset in props: the renderer reads the dataset from the **fixture**, not from props
+(`WidgetPreview.tsx`), so a widget with data would forever draw the "no data yet" path if the dataset only lived in
 props.
 
-### 23.3 Xem trước bằng renderer thật
+### 23.3 Preview with the real renderer
 
-Preview gọi `resolveRenderer` trong `packages/conversation-client/src/renderers.tsx` — cùng renderer mà hội
-thoại dùng. Không có renderer thứ hai, không ảnh chụp, không mock: một preview bằng ảnh sẽ không nói được gì
-về widget đang chạy. Definition không có renderer thì hiện `data-widget-preview-missing` kèm lý do, chứ không
-im lặng.
+The preview calls `resolveRenderer` in `packages/conversation-client/src/renderers.tsx` — the same renderer the
+conversation uses. There is no second renderer, no screenshot, no mock: a preview made of images would say nothing
+about the running widget. A definition without a renderer shows `data-widget-preview-missing` with a reason, rather than staying
+silent.
 
-Widget media (`canvas.youtube@1`, `video`, `image`, `carousel`, `gallery`) chỉ mount ở detail view; ở lưới
-chúng chỉ có text alternative. Nhờ vậy duyệt catalog không gọi bên thứ ba.
+Media widgets (`canvas.youtube@1`, `video`, `image`, `carousel`, `gallery`) only mount in the detail view; in the grid
+they only have a text alternative. As a result, browsing the catalog does not call third parties.
 
 ### 23.4 Widget Lab
 
-Lab là **cùng surface** ở `mode="develop"`, mở từ Settings → Developer. Nó thêm:
+The Lab is the **same surface** in `mode="develop"`, opened from Settings → Developer. It adds:
 
-- props form dựng từ props schema, nên control phản ánh đúng schema chứ không phải danh sách viết tay;
-- inspector 8 panel, đúng theo `inspectorPanels` trong `widget-lab.ts`: props, state, events, actions,
-  semantic, sizing, capabilities, fallback. Tên trong tài liệu là **id** của panel, không phải nhãn hiển thị
-  (`Props`, `State`, …), để người đọc đối chiếu được với code;
-- fixture, viewport, theme và reduced motion áp trong **phạm vi preview** (`data-cc-theme`,
-  `data-cc-reduced-motion` trên frame), nên xem widget ở dark mode không đổi tuỳ chọn của người dùng;
-- màn hẹp thì pane tiến (preview ↔ inspector) thay vì hai cột.
+- a props form built from the props schema, so the controls reflect the schema exactly rather than a hand-written list;
+- an 8-panel inspector, exactly as in `inspectorPanels` in `widget-lab.ts`: props, state, events, actions,
+  semantic, sizing, capabilities, fallback. The names in this document are panel **ids**, not display labels
+  (`Props`, `State`, …), so readers can match them against the code;
+- fixture, viewport, theme and reduced motion apply within the **preview scope** (`data-cc-theme`,
+  `data-cc-reduced-motion` on the frame), so viewing a widget in dark mode does not change the user's preferences;
+- on a narrow screen the panes advance (preview ↔ inspector) instead of showing two columns.
 
-### 23.5 Hội tụ với dev host
+### 23.5 Convergence with the dev host
 
-`clark widget dev` và Lab dùng chung **ngữ nghĩa preview**: từ vựng theme (`PREVIEW_THEMES`) và ba luật chuyển
-`fixture`/`theme`/`reduced-motion` (dev shell uỷ quyền cho `applyPreviewAction`). Test
-`packages/widget-cli/test/dev-shell-convergence.spec.ts` so sánh trực tiếp hai cài đặt, nên lệch nhau sẽ fail ở
-đó chứ không phải chờ ai đó mở hai cửa sổ rồi so bằng mắt.
+`clark widget dev` and the Lab share the same **preview semantics**: the theme vocabulary (`PREVIEW_THEMES`) and the three transition rules for
+`fixture`/`theme`/`reduced-motion` (the dev shell delegates to `applyPreviewAction`). The test
+`packages/widget-cli/test/dev-shell-convergence.spec.ts` compares the two implementations directly, so divergence fails
+there rather than waiting for someone to open two windows and compare by eye.
 
-Khác có chủ ý: dev host dùng bộ viewport riêng (tới 1024px) vì nó xem một package độc lập, còn Lab xem ở bề
-rộng hội thoại.
+A deliberate difference: the dev host uses its own set of viewports (up to 1024px) because it views a standalone package, while the Lab views at
+conversation width.
 
-`clark widget dev --builtin <definitionId>` chạy **cùng** shell đó cho một widget của catalog: cùng khung sandbox,
-cùng state machine, cùng bộ điều khiển. Khác duy nhất là nguồn — không đọc package nào trên đĩa, và frame được
-Vite phục vụ từ `packages/widget-cli/src/catalog-runtime.tsx`, entry mount `WidgetPreview`, tức **chính**
-`resolveRenderer` mà hội thoại và thư viện dùng. Nhờ vậy preview không thể lệch khỏi thứ người dùng sẽ thấy, và
-không có bước build nào để quên cũng như không có artifact nào phải commit. Id mà catalog không có thì bị từ chối
-**ngay lúc khởi động và kèm tên**, chứ không phải trong browser. Frame được sinh theo từng request nên nó mang
-đúng fixture mà shell đang hiện: đổi control fixture là đổi thứ được vẽ, không chỉ đổi thứ shell nói.
+`clark widget dev --builtin <definitionId>` runs the **same** shell for a catalog widget: the same sandbox frame,
+the same state machine, the same controls. The only difference is the source — no package on disk is read, and the frame is
+served by Vite from `packages/widget-cli/src/catalog-runtime.tsx`, an entry that mounts `WidgetPreview`, i.e. the **very same**
+`resolveRenderer` the conversation and the library use. As a result the preview cannot drift from what the user will see, and
+there is no build step to forget and no artifact to commit. An id the catalog does not have is refused
+**at startup and by name**, not in the browser. The frame is generated per request, so it carries
+exactly the fixture the shell is showing: changing the fixture control changes what is drawn, not just what the shell says.
 
-Một khác biệt đã biết: chế độ này **không** tự reload khi source đổi. Chế độ package theo dõi thư mục package và
-báo qua `/dev/events`; frame của catalog chưa nối vào cơ chế đó, nên phải **refresh thủ công**.
+A known difference: this mode does **not** reload automatically when the source changes. Package mode watches the package directory and
+reports via `/dev/events`; the catalog frame is not yet wired into that mechanism, so it has to be **refreshed manually**.
 
-Vì entry đó là code browser do một CLI Node phát đi, nó nằm trong danh sách entry của invariant
-`browser-entries-avoid-node-builtins` (115 module, 3 entry), và `tsconfig.web.json` phủ
-`packages/widget-cli/src/**/*.tsx`. Dòng config đó là bắt buộc: config Node chỉ include `**/*.ts` và không đặt
-`jsx`, nên nếu thiếu nó thì file **âm thầm** không được typecheck ở đâu cả.
+Because that entry is browser code emitted by a Node CLI, it is in the entry list of the invariant
+`browser-entries-avoid-node-builtins` (115 modules, 3 entries), and `tsconfig.web.json` covers
+`packages/widget-cli/src/**/*.tsx`. That config line is required: the Node config only includes `**/*.ts` and does not set
+`jsx`, so without it the file is **silently** typechecked nowhere.
 
-### 23.6 Provenance của package đã cài
+### 23.6 Provenance of installed packages
 
-Thư viện liệt kê package đã cài như **provenance**, trên danh sách riêng: `packageId@version`, source tier,
-digest (rút gọn, bản đầy đủ ở `title`) và trust lane; wording của lane nằm một chỗ trong
-`packages/conversation-client/src/package-provenance.ts` để extension Pi gốc và widget cách ly không bao giờ
-đọc giống nhau. Ba trạng thái được tách: đang đọc, không đọc được (có nút thử lại), và chưa cài gì. Widget mà
-package khai báo là card thật, ở mục 23.8.
+The library lists installed packages as **provenance**, in a separate list: `packageId@version`, source tier,
+digest (shortened, the full one in `title`) and trust lane; the lane wording lives in one place in
+`packages/conversation-client/src/package-provenance.ts` so that a native Pi extension and an isolated widget never
+read the same. Three states are kept apart: reading, unreadable (with a retry button), and nothing installed yet. Widgets that a
+package declares are real cards, in section 23.8.
 
-### 23.7 Đường vào
+### 23.7 Entry points
 
-Nút trong Settings, câu lệnh gõ và voice đều đi qua **một** app-intent path: `widgets.open` (mở thư viện) và
-`widgets.show` (hiện một widget, có target). Matcher chỉ nhận target khi câu có dạng mệnh lệnh, và một câu nhắc
-widget không resolve được target sẽ mở thư viện thay vì đoán — đây là hành động chỉ xem, không bao giờ đoán
-một effect.
+The button in Settings, a typed command and voice all go through **one** app-intent path: `widgets.open` (opens the library) and
+`widgets.show` (shows one widget, with a target). The matcher only accepts a target when the sentence is in imperative form, and a sentence mentioning
+a widget whose target cannot be resolved opens the library instead of guessing — this is a view-only action, it never guesses
+an effect.
 
-### 23.8 Widget do package khai báo
+### 23.8 Package-declared widgets
 
-Một package có thể khai báo widget, và widget đó trở thành card thật trong thư viện. Đường đọc:
+A package can declare widgets, and such a widget becomes a real card in the library. The read path:
 
-1. client gọi `GET /packages/widgets` **khi mở** thư viện, không phải khi mount — thư viện không ai mở thì
-   không hỏi node câu nào;
-2. node tìm package trong directory index (`CC_DIRECTORY_INDEX`) rồi đọc định nghĩa từ đĩa
-   (`installedWidgets` trong `packages/core/src/installed-widgets.ts`);
-3. card chỉ được tạo nếu **client** có renderer cho definition id đó (`resolveRenderer`). Cổng nằm ở client vì
-   renderer nằm ở client; một ý kiến thứ hai ở node sẽ lệch khỏi ý kiến này.
+1. the client calls `GET /packages/widgets` **when the library is opened**, not on mount — a library nobody opens
+   asks the node nothing;
+2. the node looks up the package in the directory index (`CC_DIRECTORY_INDEX`) and reads the definitions from disk
+   (`installedWidgets` in `packages/core/src/installed-widgets.ts`);
+3. a card is only created if the **client** has a renderer for that definition id (`resolveRenderer`). The gate is on the client because
+   the renderer is on the client; a second opinion on the node would drift from this one.
 
-**Card id được namespace.** Mọi definition id mà renderer hiện có vẽ được đều đã là entry của catalog, nên một
-package dùng chính definition id làm danh tính card sẽ không bao giờ hiện được: entry của catalog thắng id đó
-mọi lần. Vì vậy card id là `<packageId>/<definitionId>` — một sự thật về nguồn gốc, không phải một cái tên đẹp
-hơn. Việc vẽ vẫn resolve từ `definition.id`, nên vẫn đúng **một** renderer cho mỗi id, và card của catalog cho
-cùng definition vẫn hiện bên cạnh (nhãn `Built-in` so với `Local development package`).
+**Card ids are namespaced.** Every definition id the current renderers can draw is already a catalog entry, so a
+package that used the definition id itself as the card identity would never be shown: the catalog entry wins that id
+every time. So the card id is `<packageId>/<definitionId>` — a fact about origin, not a nicer
+name. Drawing still resolves from `definition.id`, so there is still exactly **one** renderer per id, and the catalog card for
+the same definition still appears next to it (labelled `Built-in` versus `Local development package`).
 
-**Giới hạn, và nó được nói ra.** Chỉ package **local** và **có trong directory index** mới đọc được: generation
-trong DB không mang đường dẫn, và artifact của nguồn git/npm không nằm trên máy này. Nguồn khác nhận
-`NOT_LOCAL`/`NOT_IN_DIRECTORY` và được **nêu tên** trong mục "Gói đã cài: phần chưa xem được" — một danh sách
-ngắn hơn sẽ nói "package này không khai báo widget nào" trong khi sự thật là node không đọc được nó.
+**The limitation, and it is stated.** Only packages that are **local** and **in the directory index** can be read: a generation
+in the DB carries no path, and the artifact of a git/npm source is not on this machine. Other sources get
+`NOT_LOCAL`/`NOT_IN_DIRECTORY` and are **named** in the section "Installed packages: not shown" — a shorter
+list would say "this package declares no widgets" when the truth is that the node could not read it.
 
-Danh tính của một package local là **danh tính của directory entry**, không phải đường dẫn. Một lần cài từ đĩa
-từng ghi `packageId` là chính đường dẫn đó, mà đường dẫn là nơi byte nằm chứ không phải tên của package — nên
-cùng một package có hai tên: listing nói `com.example.chart-widget` còn row đã cài nói
-`apps/web/e2e/fixtures/chart-widget`. Nhánh local của `resolvePackageSource` nay lấy tên từ entry khớp **theo
-đường dẫn** trong directory index. Một đường dẫn **không** được liệt kê vẫn cài được như trước và giữ đường dẫn
-làm tên, vì nó không có tên nào tốt hơn. `digest` vẫn là hash của chính byte trên đĩa do caller tính, **không**
-phải digest đã publish: hai thứ đó mô tả hai chuyện khác nhau.
+The identity of a local package is the **identity of its directory entry**, not its path. An install from disk
+used to record `packageId` as that path itself, but a path is where the bytes live, not the package's name — so
+the same package had two names: the listing said `com.example.chart-widget` while the installed row said
+`apps/web/e2e/fixtures/chart-widget`. The local branch of `resolvePackageSource` now takes the name from the entry that matches **by
+path** in the directory index. A path that is **not** listed can still be installed as before and keeps the path
+as its name, because it has no better name. `digest` is still the hash of the bytes on disk as computed by the caller, **not**
+the published digest: the two describe two different things.
 
-Các row `package_generations` **đã** ghi đường dẫn từ trước vẫn còn trong DB, nên route `/packages/widgets` vẫn
-giữ fallback tìm entry theo `source.path`. Nếu xoá nó, những row cũ đó sẽ báo `NOT_IN_DIRECTORY` vĩnh viễn.
+`package_generations` rows that **already** recorded a path are still in the DB, so the `/packages/widgets` route still
+keeps the fallback that looks up the entry by `source.path`. If it were removed, those old rows would report `NOT_IN_DIRECTORY` forever.
 
-**Nguồn git/npm giờ được fetch thật, không chỉ tin digest listing.** `packages/core/src/package-fetch.ts` là
-nơi làm việc đó: `fetchGitArtifact` clone nông đúng một commit đã pin (`git fetch --depth 1 -- <url> <sha40>`,
-refuse ref không phải commit id đầy đủ) vào một thư mục cache node sở hữu; `fetchNpmArtifact` đọc packument,
-tải tarball đúng version, kiểm `dist.integrity`/`dist.shasum` với chính byte tải về, rồi giải nén. Digest ghi
-vào plan là `digestOfDirectory` tính trên byte đã fetch — không phải digest publisher tự khai — và một mismatch
-bị refuse (`DIGEST_MISMATCH`) trước khi plan được đề xuất. `installPackage`
-(`apps/runtime/src/application/package-install.ts`) gọi fetch này rồi đổi `source` của entry thành `local` trỏ
-vào thư mục cache, nên phần còn lại của install (plan, consent, generation) là **đúng một** đường đi — không có
-installer thứ hai cho package từ xa.
+**git/npm sources are now actually fetched, not just trusted by listing digest.** `packages/core/src/package-fetch.ts` is
+where that happens: `fetchGitArtifact` shallow-clones exactly one pinned commit (`git fetch --depth 1 -- <url> <sha40>`,
+refusing any ref that is not a full commit id) into a cache directory owned by the node; `fetchNpmArtifact` reads the packument,
+downloads the tarball for exactly that version, checks `dist.integrity`/`dist.shasum` against the downloaded bytes themselves, then extracts it. The digest recorded
+in the plan is `digestOfDirectory` computed over the fetched bytes — not the digest the publisher declared — and a mismatch
+is refused (`DIGEST_MISMATCH`) before the plan is proposed. `installPackage`
+(`apps/runtime/src/application/package-install.ts`) calls this fetch and then changes the entry's `source` to `local` pointing
+at the cache directory, so the rest of the install (plan, consent, generation) is **exactly one** path — there is no
+second installer for remote packages.
 
-Directory index bị coi là **untrusted input**: `url`, `ref`, `name`, `version` trong một entry git/npm có thể
-đến từ bất kỳ nguồn nào phục vụ index đó, nên `fetchGitArtifact` chặn từng lớp trước khi spawn `git`. Một url bắt
-đầu bằng `-` bị refuse ngay (chống argument injection kiểu `--upload-pack=...`); scheme phải là `https://`, hoặc
-một bare path/`file://` khi caller bật `allowLocalPaths` tường minh (chỉ test, hoặc một flow "cài từ path local"
-sau này — install route production không bật cờ này trừ khi biến môi trường `CC_ALLOW_LOCAL_GIT_SOURCES=1` được
-set, việc chỉ test harness làm). Mọi lệnh `git` chạy với `--` trước url/ref, `-c protocol.allow=never` cộng allow
-tường minh cho đúng scheme đang dùng, `core.hooksPath=/dev/null`, LFS smudge tắt, và timeout (chuyển từ
-`spawnSync` sang `spawn` bất đồng bộ để một remote treo không còn chặn cả event loop của node).
+The directory index is treated as **untrusted input**: `url`, `ref`, `name`, `version` in a git/npm entry can
+come from any source that serves that index, so `fetchGitArtifact` blocks each layer before spawning `git`. A url that starts
+with `-` is refused immediately (against argument injection such as `--upload-pack=...`); the scheme must be `https://`, or
+a bare path/`file://` when the caller explicitly enables `allowLocalPaths` (tests only, or a future "install from local path" flow
+— the production install route does not enable this flag unless the environment variable `CC_ALLOW_LOCAL_GIT_SOURCES=1` is
+set, which only the test harness does). Every `git` command runs with `--` before the url/ref, `-c protocol.allow=never` plus an explicit
+allow for exactly the scheme in use, `core.hooksPath=/dev/null`, LFS smudge disabled, and a timeout (switched from
+`spawnSync` to asynchronous `spawn` so a hanging remote no longer blocks the node's entire event loop).
 
-Cache được đánh địa chỉ theo nội dung: đường dẫn cache của một nguồn git là hàm thuần của `url`+`ref`
-(`cachedGitPath`), của npm là hàm thuần của `name`+`version` (`cachedNpmPath`) — không cần một bảng ánh xạ nào
-được lưu riêng. Điều này giải quyết hai việc cùng lúc: fetch lại đúng `url`+`ref` là cache hit (không refetch,
-không bao giờ `rmSync` một artifact có thể đang sống), và bất kỳ nơi nào khác giữ cùng entry — route serve file,
-`findIsolatedFrame` — tính lại đúng path đó để phục vụ package git/npm đã fetch giống hệt package local
+The cache is content-addressed: the cache path of a git source is a pure function of `url`+`ref`
+(`cachedGitPath`), and of an npm source a pure function of `name`+`version` (`cachedNpmPath`) — no mapping table needs
+to be stored separately. This solves two things at once: refetching the same `url`+`ref` is a cache hit (no refetch,
+never an `rmSync` of an artifact that may be live), and any other place holding the same entry — the file-serving route,
+`findIsolatedFrame` — recomputes exactly that path to serve a fetched git/npm package the same way as a local package
 (`resolveLocalSource`).
 
-`digestOfDirectory` dùng `lstatSync`, không phải `statSync`: một symlink hay hard link trong artifact bị refuse
-theo tên (`ARTIFACT_SYMLINK_ESCAPE`) chứ không bị theo dõi (follow) hay bỏ qua âm thầm, và hàm không bao giờ throw
-`ELOOP` ra ngoài — vì `lstatSync` không follow thành phần cuối của path nên một symlink tự trỏ vào chính nó không
-gây loop khi duyệt. `.git` chỉ bị loại ở cấp gốc của artifact, không phải mọi nơi trong cây, nên một package hợp
-lệ có thư mục `.git` lồng bên trong (một checkout vendor hoá) vẫn được hash đầy đủ.
+`digestOfDirectory` uses `lstatSync`, not `statSync`: a symlink or hard link in the artifact is refused
+by name (`ARTIFACT_SYMLINK_ESCAPE`) rather than being followed or silently skipped, and the function never throws
+`ELOOP` outward — because `lstatSync` does not follow the last component of the path, a symlink pointing at itself does not
+cause a loop during traversal. `.git` is only excluded at the root of the artifact, not everywhere in the tree, so a valid
+package with a nested `.git` directory (a vendored checkout) is still hashed in full.
 
-`fetchNpmArtifact` không còn shell ra `tar`: nó tự đọc format ustar (gzip + tar) và kiểm typeflag của từng entry
-trước khi ghi byte nào xuống đĩa — chỉ file thường và thư mục được chấp nhận; symlink, hard link, thiết bị, hay
-một tên entry chứa `..`/đường dẫn tuyệt đối đều bị refuse theo tên (`NPM_TARBALL_UNSAFE_ENTRY`). Tarball có cap
-kích thước (`content-length` bị từ chối trước khi tải nếu vượt cap, byte thực tải về cũng được kiểm lại),
-`gunzipSync` có `maxOutputLength` để chặn gzip bomb, và mọi fetch (packument lẫn tarball) đều có timeout qua
+`fetchNpmArtifact` no longer shells out to `tar`: it reads the ustar format (gzip + tar) itself and checks the typeflag of each entry
+before writing any byte to disk — only regular files and directories are accepted; symlinks, hard links, devices, or
+an entry name containing `..`/an absolute path are all refused by name (`NPM_TARBALL_UNSAFE_ENTRY`). The tarball has a
+size cap (`content-length` is rejected before download if it exceeds the cap, and the bytes actually downloaded are checked again),
+`gunzipSync` has `maxOutputLength` to block gzip bombs, and every fetch (packument and tarball) has a timeout via
 `AbortSignal.timeout`.
 
-**`grantedCapabilities` giờ được suy ra, không còn luôn rỗng — và được suy ra từ manifest đã fetch, không phải
-từ request body.** `deriveGrantedCapabilities` (`packages/core/src/install-consent.ts`) hỏi execution policy y
-hệt policy đang gác mọi effect khác trên node, theo từng capability, ở category rủi ro mà lane mạnh nhất của
-package quy định (`declarative`/`isolated-ui` → `local-write`, `service`/`trusted-native` → `destructive`). Cái
-được xem là "đã request" là `manifest.requestedCapabilities` đọc từ chính artifact vừa fetch-và-verify-digest
-(`readPackage(resolvedEntry.source.path)`), **không phải** field `requestedCapabilityRefs` trong HTTP request
-body — một client gửi request có thể viết bất kỳ gì vào body của chính nó, nên tin nó làm authority sẽ biến một
-body giả mạo thành chính tập capability được cấp. Risk tier dùng để quyết định cũng được tính từ facet
-isolations của entry (`riskLaneFor(entry.isolations)`), hoà cùng `entry.riskTier` mà directory tự khai — theo
-nguyên tắc claim chỉ có thể **nâng** tier tính được lên, không bao giờ hạ nó xuống.
+**`grantedCapabilities` is now derived, no longer always empty — and it is derived from the fetched manifest, not
+from the request body.** `deriveGrantedCapabilities` (`packages/core/src/install-consent.ts`) asks exactly the
+same execution policy that guards every other effect on the node, per capability, at the risk category set by the package's strongest
+lane (`declarative`/`isolated-ui` → `local-write`, `service`/`trusted-native` → `destructive`). What
+counts as "requested" is `manifest.requestedCapabilities` read from the very artifact that was just fetched and digest-verified
+(`readPackage(resolvedEntry.source.path)`), **not** the `requestedCapabilityRefs` field in the HTTP request
+body — a client sending a request can write anything into its own body, so trusting it as authority would turn a
+forged body into the very set of capabilities that gets granted. The risk tier used for the decision is also computed from the entry's facet
+isolations (`riskLaneFor(entry.isolations)`), combined with the `entry.riskTier` the directory declares itself — on the
+principle that a claim can only **raise** the computed tier, never lower it.
 
-Không có dialog riêng: một capability mà policy sẽ hỏi thì đi qua đúng approval path hiện có (`requestApproval`,
-với category rủi ro đúng như quyết định của `deriveGrantedCapabilities`) và được trả về trong response cài đặt
-dưới `pendingCapabilities` (kèm `approvalId` để action tiếp); một capability policy refuse thì trả về trong
-`deniedCapabilities`. Không capability nào trong hai nhóm này tự động thành granted. Granted set được ghi vào
-`PackageGeneration.grantedCapabilities`, và widget frame chỉ được broker đúng **giao của requested và granted**
-(`brokeredCapabilities`, `widget-frame.ts`) — không còn gửi thẳng `requestedCapabilities` của manifest cho frame
-như trước.
+There is no separate dialog: a capability the policy would ask about goes through the existing approval path (`requestApproval`,
+with exactly the risk category decided by `deriveGrantedCapabilities`) and is returned in the install response
+under `pendingCapabilities` (with an `approvalId` for the follow-up action); a capability the policy refuses is returned in
+`deniedCapabilities`. No capability in either group automatically becomes granted. The granted set is recorded in
+`PackageGeneration.grantedCapabilities`, and the widget frame is brokered exactly the **intersection of requested and granted**
+(`brokeredCapabilities`, `widget-frame.ts`) — it no longer passes the manifest's `requestedCapabilities` straight to the frame
+as before.
 
-Một generation được kích hoạt trước khi `grantedCapabilities` tồn tại trên schema không có key này trong
-document lưu trữ. Migration 22 (`packages/storage/src/migrate.ts`, `backfill_generation_granted_capabilities`)
-backfill mỗi row như vậy bằng `requestedCapabilityRefs` của chính install plan nó đã resolve qua — cách trung
-thực nhất để trả lời "generation này thực sự được consent cho gì" dưới semantics cũ, thay vì chạy lại policy hôm
-nay lên một install của ngày hôm qua. Một generation không còn plan khớp (đã bị superseded và dọn, hoặc chưa
-từng có) được backfill về `[]` thay vì đoán — một grant rỗng phục vụ thiếu còn hơn cấp thừa.
+A generation activated before `grantedCapabilities` existed on the schema has no such key in its
+stored document. Migration 22 (`packages/storage/src/migrate.ts`, `backfill_generation_granted_capabilities`)
+backfills each such row with the `requestedCapabilityRefs` of the very install plan it was resolved through — the most
+honest way to answer "what was this generation actually consented for" under the old semantics, instead of re-running today's
+policy on yesterday's install. A generation that no longer has a matching plan (superseded and cleaned up, or never
+had one) is backfilled to `[]` rather than guessed — an empty grant that under-serves is better than one that over-grants.
 
-**Một package chỉ *liệt kê* trong directory, chưa từng được cài, không có file nào để serve.**
-`GET /packages/:packageId/:version/files/*` (`apps/runtime/src/routes/packages.ts`) đòi một generation đang
-active trên chính node này, khớp cả `version` lẫn `digest` với entry directory đang serve, trước khi đọc bất kỳ
-byte nào — không còn coi "có trong directory index" là đủ để serve như trước. Một entry được liệt kê nhưng chưa
-từng qua `POST /packages/install` (hoặc đã cài rồi bị superseded bởi một digest khác) trả `409 NOT_INSTALLED`
-thay vì phục vụ byte từ một nguồn node chưa từng xác minh xong install cho nó. Đây là quyết định sản phẩm được
-giữ nguyên chứ không phải một khiếm khuyết cần sửa: một package "biết tên" nhưng chưa cài không nên trông giống
-một package sẵn sàng dùng. Không có flow dev thực nào phụ thuộc hành vi cũ ("liệt kê là đủ") — `widget-cli dev`
-dùng dev host riêng của nó, không đi qua route này. Một dev DB cũ thấy generation của mình biến mất khỏi route
-này sau khi nâng cấp nên chạy lại `POST /packages/install` cho package đó, hoặc `node
-tools/check-invariants.mjs --fix-manifest` nếu chỉ cần đồng bộ lại `docs/manifest.json` sau khi sửa file này.
+**A package that is only *listed* in the directory, never installed, has no files to serve.**
+`GET /packages/:packageId/:version/files/*` (`apps/runtime/src/routes/packages.ts`) requires a generation that is
+active on this very node, matching both `version` and `digest` with the directory entry being served, before reading any
+byte — it no longer treats "is in the directory index" as enough to serve, as it did before. An entry that is listed but has never
+gone through `POST /packages/install` (or was installed and then superseded by a different digest) returns `409 NOT_INSTALLED`
+instead of serving bytes from a source for which the node never finished verifying an install. This is a product decision that is
+kept as is, not a defect to fix: a package that is "known by name" but not installed should not look like
+a package that is ready to use. No real dev flow depends on the old behavior ("listed is enough") — `widget-cli dev`
+uses its own dev host and does not go through this route. An old dev DB that sees its generation disappear from this
+route after upgrading should re-run `POST /packages/install` for that package, or `node
+tools/check-invariants.mjs --fix-manifest` if it only needs to resync `docs/manifest.json` after editing this file.
