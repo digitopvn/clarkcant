@@ -14,6 +14,7 @@ import { attachedPrompt, explainPrompt } from "./selection.ts";
 import { SelectionToolbar } from "./selection-toolbar.tsx";
 import { DesktopChrome } from "./desktop-chrome.tsx";
 import { ConversationHeader } from "./ConversationHeader.tsx";
+import { InboxPanel } from "./inbox/inbox-panel.tsx";
 import { ConversationHeroEmptyState } from "./ConversationHeroEmptyState.tsx";
 import { ConversationComposerBar } from "./ConversationComposerBar.tsx";
 import { ConversationPinSurfaces } from "./ConversationPinSurfaces.tsx";
@@ -99,6 +100,13 @@ export interface ConversationProps {
    * offers the control that fixes it, which is the difference between a setup step and a dead end.
    */
   needsModel?: boolean;
+  /**
+   * Opens another conversation, from the inbox.
+   *
+   * The host owns which conversation is on screen, the way it owns remembering it, so switching is its job. Absent,
+   * the inbox does not offer to open other conversations rather than offering a button that does nothing.
+   */
+  onOpenConversation?: (conversationId: string) => void;
 }
 
 /**
@@ -118,6 +126,7 @@ export function Conversation({
   orbProfile,
   onOrbChange,
   needsModel,
+  onOpenConversation,
 }: ConversationProps): ReactElement {
   const modality = useInputModalityState();
   const { policyMode, refresh: refreshPolicyMode } = usePolicyModeState(client);
@@ -157,6 +166,8 @@ export function Conversation({
    * waiting for the next tick.
    */
   const [backgroundTick, setBackgroundTick] = useState(0);
+  /** The same, for the inbox mark: bumped when the inbox panel changed something the mark counts. */
+  const [inboxTick, setInboxTick] = useState(0);
   const [draft, setDraft] = useState("");
 
   /**
@@ -320,10 +331,13 @@ export function Conversation({
         client={client}
         connection={connection}
         backgroundTick={backgroundTick}
+        // A new message may be an approval card or a question, which is what the mark counts first.
+        inboxRefreshKey={`${inboxTick}:${blocks.length}`}
         shell={shell}
         orbProfile={orbProfile}
         onHome={() => appIntents.clickIntent("nav.home")}
         onOpenSettings={() => appIntents.clickIntent("settings.open")}
+        onOpenInbox={() => appIntents.clickIntent("inbox.open")}
       />
 
       {/* Focusable as a fallback target: when the control that opened the live view is gone from the
@@ -456,6 +470,17 @@ export function Conversation({
         {...(onOrbChange === undefined ? {} : { onOrbChange })}
         onPolicyChange={refreshPolicyMode}
         onOpenWidgetLibrary={appIntents.openWidgetLibrary}
+      />
+
+      <InboxPanel
+        open={appIntents.inboxOpen}
+        onClose={() => appIntents.setInboxOpen(false)}
+        client={client}
+        conversationId={conversationId}
+        onTimeline={applyTimeline}
+        {...(onOpenConversation === undefined ? {} : { onOpenConversation })}
+        onChanged={() => setInboxTick((tick) => tick + 1)}
+        switchGuard={{ busy, voiceOpen, draftNonEmpty: draft.trim() !== "", hasAttachments: chips.length > 0 }}
       />
 
       {/* The Widget Library, beside the conversation rather than in place of it. */}

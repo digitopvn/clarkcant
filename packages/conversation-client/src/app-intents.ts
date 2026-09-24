@@ -69,6 +69,11 @@ export interface AppIntentHost {
    * and a caller that reported success anyway would be lying about what changed.
    */
   cycleModel?(): void;
+  /**
+   * Opens the inbox over the conversation: what is waiting for the person, and the notices from work that ran
+   * while nobody was looking. Optional: a host with no node behind it has no inbox to open.
+   */
+  openInbox?(): void;
   /** Selects a configured model-pool profile by its alias. See `cycleModel` for why this is optional. */
   selectModel?(alias: string): void;
   /**
@@ -120,6 +125,8 @@ function missingCapabilitySay(intent: AppIntent): string {
       return catalog["shell.intent.notModelPool"];
     case "nav.conversation":
       return catalog["shell.intent.notConversation"];
+    case "inbox.open":
+      return catalog["shell.intent.notInbox"];
     default:
       return catalog["shell.intent.notDesktop"];
   }
@@ -179,6 +186,9 @@ export function runAppIntent(decision: AppIntentDecision, host: AppIntentHost): 
     case "nav.conversation":
       host.showConversation?.();
       return { ran: true, say: readBack };
+    case "inbox.open":
+      host.openInbox?.();
+      return { ran: true, say: readBack };
     case "model.cycle":
       host.cycleModel?.();
       return { ran: true, say: readBack };
@@ -233,6 +243,8 @@ function hostHasCapability(host: AppIntentHost, intent: AppIntent): boolean {
       return host.openVoice !== undefined;
     case "nav.conversation":
       return host.showConversation !== undefined;
+    case "inbox.open":
+      return host.openInbox !== undefined;
     case "model.cycle":
       return host.cycleModel !== undefined;
     case "model.select":

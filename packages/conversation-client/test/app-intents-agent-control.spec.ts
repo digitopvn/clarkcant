@@ -47,6 +47,17 @@ describe("the new app-control kinds, through the one executor", () => {
     expect(shown).toBe(1);
   });
 
+  it("runs inbox.open through host.openInbox, and refuses it honestly on a host with no inbox", () => {
+    let opened = 0;
+    const run = runAppIntent(decisionFor({ kind: "inbox.open" }), baseHost({ openInbox: () => (opened += 1) }));
+    expect(run).toEqual({ ran: true, say: "said" });
+    expect(opened).toBe(1);
+
+    const refused = runAppIntent(decisionFor({ kind: "inbox.open" }), baseHost());
+    expect(refused.ran).toBe(false);
+    expect(refused.say).not.toBe("said");
+  });
+
   it("runs model.cycle through host.cycleModel", () => {
     let cycled = 0;
     const host = baseHost({ cycleModel: () => (cycled += 1) });

@@ -47,6 +47,7 @@ import {
   findBundleForSnapshot,
   findCompositionByInstance,
   getConversation,
+  latestMessages,
   listConversations,
   nextMessageSequence,
   oneRow,
@@ -63,6 +64,7 @@ import { decideTurnAction, decisionTimeoutMsFromEnv, searchDecisionBudget } from
 import { type OwnedResources, ownedResources } from "../preflight.ts";
 import { markProjectUsed, projectContext, resolveProject } from "../project-finder.ts";
 import { initialPrompt } from "../project-session.ts";
+import { tryRecordNodeNotice } from "../notices.ts";
 import { receiptForModel, runApprovedCommand } from "../run-command.ts";
 import { type NodeServices, buildTimeline } from "../services.ts";
 import { indexMessages, textOfMessage } from "../session-search.ts";
@@ -378,14 +380,26 @@ function blocksOfConversation(
   services: Pick<NodeServices, "runtime">,
   conversationId: string,
 ): Record<string, unknown>[] {
-  const timeline = buildTimeline(services, { conversationId, afterSequence: 0 });
   const blocks: Record<string, unknown>[] = [];
-  // SAFETY: the timeline type describes a message's blocks as unparsed JSON. The node wrote them, and
-  // every route that renders a block validates the ones claiming host ownership before drawing it.
-  const messages = timeline.messages as unknown as { blocks?: Record<string, unknown>[] }[];
+  // The newest messages, read straight from storage. A timeline is the page a reader sees - the first 200 messages
+  // with snapshots and metadata attached - and a card still waiting for a decision sits at the other end of a long
+  // conversation, where that page never reached: its approval was then consumed and its payload not found.
+  // SAFETY: a stored message's blocks are the node's own writes, and every route that renders a block validates
+  // the ones claiming host ownership before drawing it.
+  const messages = latestMessages(services.runtime.db, conversationId, OPEN_ITEM_MESSAGES) as unknown as {
+    blocks?: Record<string, unknown>[];
+  }[];
   for (const message of messages) blocks.push(...(message.blocks ?? []));
   return blocks;
 }
+
+/**
+ * How far back in one conversation a card still waiting for an answer is looked for.
+ *
+ * The same window the inbox scans across the whole node, so any card the inbox offers is one this conversation's
+ * decide and answer routes can find: node-wide newest messages are a superset of one conversation's newest.
+ */
+const OPEN_ITEM_MESSAGES = 2000;
 
 /**
  * The interaction manager for one conversation.
@@ -522,9 +536,35 @@ export function startBackgroundWork(
         const said = await control.runInBackground({ workId, conversationId, principal, text, signal });
         signal.throwIfAborted();
         if (said !== "") appendHostReply(services, { conversationId, text: said, at: at() });
+        // The result is the message above; the notice is the pointer to it, for a person who is not looking at this
+        // conversation. Keyed by the work, so this run has one notice whichever branch writes it.
+        tryRecordNodeNotice(services, {
+          sourceKind: "background",
+          category: "result",
+          severity: "success",
+          title: `Việc nền đã xong: ${title}`,
+          ...(said === "" ? {} : { body: said }),
+          conversationId,
+          dedupKey: `background:${workId}`,
+          at: at(),
+        });
       } catch (cause) {
         const reply = backgroundEndingReply(signal, cause, title);
-        if (reply !== undefined) appendHostReply(services, { conversationId, text: reply, at: at() });
+        if (reply !== undefined) {
+          appendHostReply(services, { conversationId, text: reply, at: at() });
+          // A stop the person asked for is information, not a failure; a shutdown is reported by the next boot.
+          const stopped = signal.aborted && signal.reason instanceof WorkAbort && signal.reason.cause_ === "stopped";
+          tryRecordNodeNotice(services, {
+            sourceKind: "background",
+            category: "result",
+            severity: stopped ? "info" : "error",
+            title: stopped ? `Việc nền đã dừng: ${title}` : `Việc nền không xong: ${title}`,
+            body: reply,
+            conversationId,
+            dedupKey: `background:${workId}`,
+            at: at(),
+          });
+        }
         throw cause;
       }
     },
@@ -1311,6 +1351,17 @@ export async function decideApprovalForNode(
     now: () => input.at as never,
     newId: services.conductor.newId,
   };
+  // The payload lives with the card that displayed it, so the operation approved and the operation run are
+  // the same record rather than two copies that can drift. It is found before the decision is written: a grant
+  // recorded for an operation that then cannot be found would consume the approval and run nothing.
+  const card = blocksOfConversation(services, input.conversationId).find(
+    (block) => block.type === "approval-card" && block.approvalId === input.approvalId,
+  );
+  const payload = card !== undefined && typeof card.payload === "string" ? card.payload : undefined;
+  if (input.decision === "granted" && payload === undefined) {
+    return { ok: false, code: "APPROVAL_PAYLOAD_MISSING", message: "the approved operation is not in this conversation" };
+  }
+
   const decided = decideApproval(coordination, {
     approvalId: input.approvalId as never,
     decision: input.decision,
@@ -1328,16 +1379,10 @@ export async function decideApprovalForNode(
     return { ok: true };
   }
 
-  // The payload lives with the card that displayed it, so the operation approved and the operation run are
-  // the same record rather than two copies that can drift.
-  const card = blocksOfConversation(services, input.conversationId).find(
-    (block) => block.type === "approval-card" && block.approvalId === input.approvalId,
-  );
-  const payload = card !== undefined && typeof card.payload === "string" ? card.payload : undefined;
+  // Unreachable - a grant without a payload returned before the decision - but it keeps the type honest.
   if (payload === undefined) {
     return { ok: false, code: "APPROVAL_PAYLOAD_MISSING", message: "the approved operation is not in this conversation" };
   }
-
   const ran = await runApprovedCommand({
     payload,
     expectedDigest: decided.approval.operationDigest,
