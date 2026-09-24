@@ -1,60 +1,63 @@
 # Agent — Conversation Platform Blueprint v2
 
-**Ngày:** 16/09/2026 · **Trạng thái:** blueprint thiết kế. Repo này đã có bootstrap implementation: hành vi thật do code trong `apps/` và `packages/` sở hữu, trạng thái verify nằm ở [conformance-traceability.md](conformance-traceability.md) và `README.md` ở gốc repo.
+> English (default) · [Tiếng Việt](README.vi.md)
 
-## Quyết định sản phẩm
+**Date:** 16/09/2026 · **Status:** design blueprint. This repo already has a bootstrap implementation: real behavior is owned by the code in `apps/` and `packages/`, and verification status lives in [conformance-traceability.md](conformance-traceability.md) and the `README.md` at the repo root.
 
-**Conversation là giao diện duy nhất người dùng cần học.** Desktop và web là các client của một runtime cài độc lập trên máy cá nhân hoặc VPS. Các runtime đã được ghép nối có thể giao việc, trao đổi dữ liệu được cấp quyền và trả kết quả vào cùng hội thoại. Widgets là vùng tương tác trong hội thoại, có thể pin; extensions giúp mở rộng khả năng qua chính hội thoại.
+## Product decision
 
-Tên “Agent” chỉ là tên làm việc, không khóa thương hiệu/domain/npm scope.
+**The conversation is the only interface the user needs to learn.** Desktop and web are clients of a runtime installed independently on a personal machine or a VPS. Paired runtimes can hand off work, exchange data they have been granted access to, and return results into the same conversation. Widgets are interactive areas inside the conversation and can be pinned; extensions extend capabilities through the conversation itself.
 
-## Đọc theo thứ tự
+The name “Agent” is only a working name; it does not lock in a brand, domain or npm scope.
 
-Trước khi sửa UI/UX, đọc [DESIGN.md](../DESIGN.md) để giữ đúng định hướng tương tác. Quy trình làm việc cho agent nằm trong [AGENTS.md](../AGENTS.md); bằng chứng và giới hạn triển khai nằm trong [conformance-traceability.md](conformance-traceability.md).
+## Reading order
 
-1. [Scope lock](scope-lock.md): mục tiêu, IN/OUT và các quyết định thay v1.
-2. [System architecture](system-architecture.md): stack, process, domain, contracts, security và dữ liệu.
-3. [Distributed runtime](distributed-runtime.md): cài VPS, pairing, remote delegation, disconnect/recovery.
-4. [Widgets & extensions](widgets-and-extensions.md): rich catalog, agent-defined actions, custom mini-apps, pin và lifecycle.
-5. [Widget developer standard](widget-development.md): authoring contract, SDK UX, conformance, package/publish flow và directory metadata.
-6. [Cài đặt](installation.md): installer cross-platform, onboarding tương tác, Docker và VPS có HTTPS. [Integration & onboarding](integration-onboarding.md): research/install/auth/reload, Google Calendar, quick play và setup theo nhu cầu.
-7. [Browser & Computer Use](browser-computer-use.md): core/pack boundary, driver, node targeting và takeover.
+Before changing UI/UX, read [DESIGN.md](../DESIGN.md) to stay true to the interaction direction. The working process for agents lives in [AGENTS.md](../AGENTS.md); evidence and implementation limits live in [conformance-traceability.md](conformance-traceability.md).
+
+1. [Scope lock](scope-lock.md): goals, IN/OUT and the decisions that replace v1.
+2. [System architecture](system-architecture.md): stack, process, domain, contracts, security and data.
+3. [Distributed runtime](distributed-runtime.md): VPS install, pairing, remote delegation, disconnect/recovery.
+4. [Widgets & extensions](widgets-and-extensions.md): rich catalog, agent-defined actions, custom mini-apps, pin and lifecycle.
+5. [Widget developer standard](widget-development.md): authoring contract, SDK UX, conformance, package/publish flow and directory metadata.
+6. [Installation](installation.md): cross-platform installer, interactive onboarding, Docker and VPS with HTTPS. [Integration & onboarding](integration-onboarding.md): research/install/auth/reload, Google Calendar, quick play and needs-based setup.
+7. [Browser & Computer Use](browser-computer-use.md): core/pack boundary, driver, node targeting and takeover.
 8. [Implementation plan](implementation-plan.md): dependencies, work packages, gates, acceptance scenarios.
-9. [Research & decisions](research-and-decisions.md): kết quả kiểm chứng upstream, lựa chọn/rejected alternatives, nguồn.
-10. [Jev selector](mini-app/jev-configuration.md): vận hành và privacy của lớp quyết định — cấu hình, phần gửi ra ngoài, telemetry, fallback.
-11. [ADR-001 — Gemini Live cho voice](research/adr-001-gemini-live-provider.md) và [P0.1 compatibility lock](research/compatibility-lock.md): quyết định thay thế blueprint, và lifecycle Pi SDK đã đo thật.
-12. [Changelog](CHANGELOG.md): những ràng buộc cũ đã bị thay thế.
+9. [Research & decisions](research-and-decisions.md): upstream verification results, choices/rejected alternatives, sources.
+10. [Jev selector](mini-app/jev-configuration.md): operation and privacy of the decision layer — configuration, what is sent out, telemetry, fallback.
+11. [ADR-001 — Gemini Live for voice](research/adr-001-gemini-live-provider.md) and [P0.1 compatibility lock](research/compatibility-lock.md): the decision that replaces the blueprint, and the Pi SDK lifecycle as actually measured.
+12. [Open interfaces](open-interfaces.md) ([Tiếng Việt](open-interfaces.vi.md)): API, MCP, WebSocket, CLI for third-party applications and AI tools.
+13. [Changelog](CHANGELOG.md): old constraints that have been replaced.
 
-Các JSON trong [examples](examples/) chỉ minh họa **contract riêng của app**, không phải wire protocol chính thức của Pi/MCP/A2A, cũng không phải cấu hình chạy được trước khi app được implement.
+The JSON files in [examples](examples/) only illustrate **the app's own contracts**; they are not the official wire protocol of Pi/MCP/A2A, nor runnable configuration before the app is implemented.
 
-## Ưu tiên tài liệu
+## Document precedence
 
-Yêu cầu người dùng mới nhất → scope-lock → system-architecture → tài liệu chuyên đề → implementation-plan. Bộ v2 **thay thế**, không cộng chồng lên scope v1. Ảnh UI cũ là tham khảo thị giác; không khóa topology, navigation hoặc lời hứa bảo mật.
+Latest user request → scope-lock → system-architecture → topic documents → implementation-plan. The v2 set **replaces** the v1 scope rather than stacking on top of it. Old UI screenshots are visual reference; they do not lock topology, navigation or security promises.
 
-[DESIGN.md](../DESIGN.md) sở hữu định hướng UI/UX; [system-architecture.png](system-architecture.png) là sơ đồ kiến trúc hiện hành khi khác với phần mô tả. Đây là các nguồn thiết kế, không phải bằng chứng tính năng đã phát hành. Đặc biệt, Autonomous là policy mục tiêu; đường thực thi command hiện tại vẫn dùng approval, xem [model-turn.ts](../apps/runtime/src/model-turn.ts) và [gateway.ts](../apps/runtime/src/gateway.ts).
+[DESIGN.md](../DESIGN.md) owns the UI/UX direction; [system-architecture.png](system-architecture.png) is the current architecture diagram when it differs from the prose. These are design sources, not evidence that a feature has shipped. In particular, Autonomous is the target policy; the current command execution path still uses approval, see [model-turn.ts](../apps/runtime/src/model-turn.ts) and [gateway.ts](../apps/runtime/src/gateway.ts).
 
-## Scope phát hành
+## Release scope
 
-- Desktop client đầu: macOS Apple Silicon; shared web client cho node server.
-- Runtime headless: Linux VPS; OCI image trước, gói Node runtime đi kèm + service installer sau trong cùng release gate.
-- Các node cùng owner ghép nối, trao đổi task/message/artifact/status; không cần đồng bộ DB đa chủ.
-- Rich widgets dựng sẵn + custom sandboxed mini-app/MCP Apps; pin trong không gian hội thoại.
-- Install/setup/auth/reload qua chat với consent và rollback có giới hạn rõ.
-- Browser Use và Computer Use là capability quan trọng, driver đóng gói extension; quyền và vòng đời nằm trong core.
-- Voice dùng chung task/action model; mobile native và marketplace thương mại chưa nằm trong release này.
+- First desktop client: macOS Apple Silicon; shared web client for server nodes.
+- Headless runtime: Linux VPS; OCI image first, bundled Node runtime package + service installer later within the same release gate.
+- Nodes of the same owner pair and exchange task/message/artifact/status; no multi-master DB sync is needed.
+- Built-in rich widgets + custom sandboxed mini-apps/MCP Apps; pinned within the conversation space.
+- Install/setup/auth/reload through chat with consent and rollback, with clearly stated limits.
+- Browser Use and Computer Use are key capabilities, with drivers packaged as extensions; permissions and lifecycle live in core.
+- Voice shares the task/action model; native mobile and a commercial marketplace are not part of this release.
 
-## Kiểm tra CI theo phạm vi thay đổi
+## Change-scoped CI checks
 
-Workflow [CI](../.github/workflows/ci.yml) giữ các gate verify, secret scan, browser E2E và desktop smoke. [Bộ phân loại](../tools/ci-test-scope.mjs) chỉ rút gọn các bước của job verify khi toàn bộ diff thuộc danh sách văn xuôi được phép hoặc `docs/manifest.json`; invariants vẫn chạy. Những gate còn lại không bị bộ phân loại này bỏ qua. Diff có code, đường dẫn chưa biết, thiếu base hoặc lỗi phân loại vẫn chạy đầy đủ.
+The [CI](../.github/workflows/ci.yml) workflow keeps the verify, secret scan, browser E2E and desktop smoke gates. The [classifier](../tools/ci-test-scope.mjs) only trims the steps of the verify job when the entire diff belongs to the allowed prose list or `docs/manifest.json`; invariants still run. The remaining gates are not skipped by this classifier. A diff with code, an unknown path, a missing base or a classification error still runs in full.
 
-Các thay đổi có code vẫn chạy toàn bộ Vitest trên cả hai phiên bản Node; không chọn test theo package vì nhiều ràng buộc an toàn đi xuyên package. Lệnh kiểm tra hành trình và yêu cầu hoàn tất thay đổi UI nằm trong [AGENTS.md](../AGENTS.md); CI đã có browser E2E và desktop smoke, nhưng fixture không chứng minh provider thật hoạt động. Kết quả BLOCKED phải được đọc cùng điều kiện còn thiếu.
+Changes that include code still run the full Vitest suite on both Node versions; tests are not selected per package because many safety constraints cut across packages. The journey check commands and the completion requirements for UI changes are in [AGENTS.md](../AGENTS.md); CI already has browser E2E and desktop smoke, but fixtures do not prove that a real provider works. A BLOCKED result must be read together with the missing condition.
 
-Các suite live chỉ chạy khi bật opt-in. Khi đã bật mà thiếu credential/model hoặc không nhận được bằng chứng từ provider, smoke/calibration thất bại với lý do `BLOCKED`, không chuyển sang PASS nhờ fallback. [Live smoke](../apps/runtime/test/jev-live.spec.ts) và [calibration](../apps/runtime/test/jev-calibration-live.spec.ts) sở hữu điều kiện thực thi; một HTTP lỗi chung không chứng minh từ chối đúng model.
+Live suites only run when opted in. Once enabled, if a credential/model is missing or no evidence is received from the provider, the smoke/calibration fails with reason `BLOCKED`; it does not turn into PASS through a fallback. [Live smoke](../apps/runtime/test/jev-live.spec.ts) and [calibration](../apps/runtime/test/jev-calibration-live.spec.ts) own the execution conditions; a generic HTTP error does not prove a correct model rejection.
 
-Chạy `node tools/scan-secret-history.mjs` để kiểm tra lịch sử Git đã tải đầy đủ; [script quét](../tools/scan-secret-history.mjs) sở hữu các mẫu nhận diện và giới hạn đầu ra. Phạm vi gồm các phiên bản tệp còn truy cập được trong lịch sử, kể cả tài liệu và tệp đã xóa; đây là kiểm tra theo mẫu, không chứng minh mọi loại bí mật đều được phát hiện. Clone nông hoặc kho Git không đọc được làm kiểm tra thất bại. Kết quả chỉ nêu mã đối tượng và loại mẫu, không in giá trị bí mật.
+Run `node tools/scan-secret-history.mjs` to check a fully fetched Git history; the [scan script](../tools/scan-secret-history.mjs) owns the detection patterns and output limits. The scope covers file versions still reachable in history, including documents and deleted files; this is a pattern-based check and does not prove that every kind of secret is detected. A shallow clone or an unreadable Git repository makes the check fail. Results only state the object ID and pattern type, never the secret value.
 
-## Bốn câu không được quảng cáo sai
+## Four statements that must not be advertised falsely
 
-“Cài package xong” không đồng nghĩa “integration dùng được”. “Local-first” không đồng nghĩa “dữ liệu không rời máy”. “Đóng UI” không đồng nghĩa “dừng việc trên VPS”. “Có chữ ký/iframe/container” không đồng nghĩa “an toàn tuyệt đối”.
+“Package installed” does not mean “integration usable”. “Local-first” does not mean “data never leaves the machine”. “UI closed” does not mean “work on the VPS stopped”. “Signed/iframe/container” does not mean “absolutely safe”.
 
-Các nguồn [R01–R30](research-and-decisions.md#nguồn-chính-thức) xác nhận primitive upstream. Kiến trúc, giới hạn, protocol và milestone cụ thể là quyết định thiết kế của bộ tài liệu, không phải tính năng đã có sẵn trong Pi.
+Sources [R01–R30](research-and-decisions.md#nguồn-chính-thức) confirm the upstream primitives. The concrete architecture, limits, protocols and milestones are design decisions of this document set, not features already available in Pi.

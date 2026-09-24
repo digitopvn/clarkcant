@@ -1,65 +1,68 @@
-# Smoke chỉ chạy được trên macOS
+# Smoke that can only run on macOS
 
-Tài liệu này tồn tại vì ba thứ trong dự án **không kiểm được trên máy Windows đã dùng để phát triển**, và cách xử lý
-đúng là nói ra chứ không phải im lặng bỏ qua. Không có mục nào ở đây được ghi là "đã pass".
+> English (default) · [Tiếng Việt](platform-smoke.vi.md)
 
-**Điều kiện còn thiếu: một máy macOS có màn hình thật (và một người ngồi trước nó để trả lời hộp thoại của hệ
-điều hành).** Không có runner macOS trong repo này.
+This document exists because three things in the project **cannot be checked on the Windows machine used for
+development**, and the right way to handle that is to say so rather than silently skip them. Nothing here is recorded
+as "passed".
 
-## Ba thứ không kiểm được ở nơi khác
+**Missing condition: a macOS machine with a real display (and a person sitting in front of it to answer the operating
+system's dialogs).** There is no macOS runner in this repo.
 
-1. **TCC (quyền riêng tư của macOS).** Quyền ghi màn hình và micro do hệ điều hành sở hữu, và hộp thoại xin quyền
-   chỉ xuất hiện trên macOS. Trên Windows, node báo `needs-permission` — đúng, nhưng đó là *cùng một trạng thái* được
-   tạo bởi một hệ điều hành khác, nên nó không chứng minh được đường macOS.
-2. **Window bounds trên macOS.** `electron . --smoke-test` đọc `getBounds()` và `getMinimumSize()` từ cửa sổ thật.
-   Windows có tracking floor riêng của nó; macOS (NSWindow) có cái khác, nên con số 20×50 trong
-   `COMPACT_MIN_SIZE` chỉ được xác nhận trên Windows cho tới khi có người chạy trên macOS.
-3. **Wake-word detector local.** Bản ship hiện tại **không có** detector nào, và toggle trong Settings không dùng
-   được kèm lý do (phase 8). Nếu một ngày có detector dùng AVFoundation/on-device thì nó cũng chỉ chạy được trên
-   macOS, nên đây là chỗ phải kiểm lại — hiện tại không có gì để kiểm, và đó là lý do nó nằm trong danh sách này chứ
-   không phải trong một test bị skip.
+## Three things that cannot be checked elsewhere
 
-## Lệnh cho người vận hành macOS
+1. **TCC (macOS privacy permissions).** Screen recording and microphone permissions are owned by the operating system,
+   and the permission prompt only appears on macOS. On Windows, the node reports `needs-permission` — correct, but
+   that is *the same state* produced by a different operating system, so it does not prove the macOS path.
+2. **Window bounds on macOS.** `electron . --smoke-test` reads `getBounds()` and `getMinimumSize()` from the real
+   window. Windows has its own tracking floor; macOS (NSWindow) has a different one, so the 20×50 figure in
+   `COMPACT_MIN_SIZE` is only confirmed on Windows until someone runs it on macOS.
+3. **Local wake-word detector.** The current shipped build **has no** detector, and the toggle in Settings is disabled
+   with a reason (phase 8). If one day there is a detector using AVFoundation/on-device, it too would only run on
+   macOS, so this is the place to check again — right now there is nothing to check, and that is why it is on this
+   list rather than in a skipped test.
+
+## Commands for the macOS operator
 
 ```bash
-# 1. Cài đặt
+# 1. Install
 corepack enable
 pnpm install
 
-# 2. Smoke của desktop shell — mong đợi: exit 0 và JSON có "failed": []
+# 2. Desktop shell smoke — expected: exit 0 and JSON with "failed": []
 pnpm --filter @clarkcant/app-desktop run smoke
 
-# 3. Node chạy thật, để nhìn cửa sổ
+# 3. A real running node, to look at the window
 node apps/runtime/src/main.ts --data-dir ./.data --label macos-smoke
 
-# 4. Bộ e2e đầy đủ (cần port trống)
+# 4. The full e2e suite (needs free ports)
 pnpm test:e2e
 
-# 5. Toàn bộ cổng kiểm tra
+# 5. All verification gates
 pnpm verify:full
 ```
 
-Hai chỗ cần bàn tay người, vì chúng là hộp thoại của hệ điều hành:
+Two steps need a human hand, because they are operating system dialogs:
 
 ```bash
-# 6. Phiên desktop: mở một phiên điều khiển màn hình, rồi bật quyền cho ClarkCant
-#    System Settings → Privacy & Security → Screen Recording → ClarkCant → bật
-#    Sau đó chạy lại (2) và xác nhận phiên chuyển từ "needs-permission" sang "available".
-#    Card phải nói rõ quyền thuộc hệ điều hành, và node không tự cấp được.
+# 6. Desktop session: open a screen-control session, then grant permission to ClarkCant
+#    System Settings → Privacy & Security → Screen Recording → ClarkCant → on
+#    Then re-run (2) and confirm the session moves from "needs-permission" to "available".
+#    The card must state that the permission belongs to the operating system, and that the node cannot grant it itself.
 
-# 7. Voice: bật micro cho ClarkCant
-#    System Settings → Privacy & Security → Microphone → ClarkCant → bật
-#    Rồi chạy: pnpm exec playwright test apps/web/e2e/voice.spec.ts
+# 7. Voice: enable the microphone for ClarkCant
+#    System Settings → Privacy & Security → Microphone → ClarkCant → on
+#    Then run: pnpm exec playwright test apps/web/e2e/voice.spec.ts
 ```
 
-## Khi có kết quả
+## When there are results
 
-Ghi lại vào PR hoặc vào mục này: phiên bản macOS, phiên bản Electron, output JSON của smoke, và bounds mà
-`getMinimumSize()` trả về. Nếu `COMPACT_MIN_SIZE` sai trên macOS thì đó là một finding, và sửa nó là việc của một
-change riêng — không phải chỉnh con số cho vừa máy.
+Record in the PR or in this section: the macOS version, the Electron version, the smoke's JSON output, and the bounds
+that `getMinimumSize()` returns. If `COMPACT_MIN_SIZE` is wrong on macOS, that is a finding, and fixing it is the job
+of a separate change — not adjusting the number to fit the machine.
 
-## Vì sao không có test bị skip
+## Why there is no skipped test
 
-Một test `skip` trên máy này sẽ khiến bộ kiểm tra nói "xanh" trong khi thứ nó định kiểm chưa từng chạy. Thứ đúng
-là: không có test nào tồn tại cho ba mục trên, và tài liệu này nói rõ điều kiện còn thiếu cùng cách chạy chúng ở
-nơi chạy được.
+A `skip` test on this machine would make the test suite say "green" while the thing it was meant to check has never
+run. The right thing is: no test exists for the three items above, and this document states the missing condition and
+how to run them where they can run.

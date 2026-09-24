@@ -79,6 +79,11 @@ These are exercised by tests in this repository, not described in prose:
   `apps/runtime/src/worker-process.ts`)
 - **Verifiable backups.** SQLite `VACUUM INTO`, integrity and foreign-key checks, row-count
   comparison, and a refusal to restore a backup taken by a newer schema.
+- **Open interfaces.** Third-party apps and AI tools reach the same gateway, under the same
+  token, over REST (OpenAPI 3.1 at `/openapi.json`), SSE streaming, MCP (`POST /mcp`, and
+  stdio through `clarkcant mcp`), a JSON WebSocket (`/ws`) and the `clarkcant` CLI. There is
+  deliberately no approval tool on MCP. ([`docs/open-interfaces.md`](docs/open-interfaces.md),
+  `apps/runtime/test/open-interfaces.spec.ts`, `apps/cli`)
 
 ## Autonomy
 
@@ -114,8 +119,8 @@ Stated plainly, because a bootstrap that hides this is worse than useless:
 
 - The **desktop shell** beyond the surface its typed IPC bridge exposes: the browser suite
   proves the client's branch when a directory dialog is present, not an Electron build.
-- Live **OAuth**, **Google Calendar**, the **MCP streamable-HTTP transport** (stdio is built
-  and tested), and the **macOS/Linux native drivers**. Their contracts, state machines and
+- Live **OAuth**, **Google Calendar**, the **MCP streamable-HTTP client transport** for connecting
+  to external MCP servers (stdio is built and tested; the node's own `/mcp` endpoint is above), and the **macOS/Linux native drivers**. Their contracts, state machines and
   refusals are implemented and tested; those transports are not.
 - **A real artifact download for a `git`/`npm` install source.** `/packages/install` resolves,
   locks and activates a `local` package end to end (bytes already on disk; see
@@ -169,9 +174,16 @@ The node prints its identity on startup. Commands require the bearer token in
 `./.data/identity.json`.
 
 ```bash
-# Health is the only unauthenticated route; everything else needs the token.
+# /health, /openapi.json and /.well-known/clarkcant.json are unauthenticated; everything else needs the token.
 curl -s -H "authorization: Bearer $(node -e 'console.log(require("./.data/identity.json").localToken)')" \
   http://127.0.0.1:8765/health
+```
+
+Or use the CLI, which finds the token in the data dir:
+
+```bash
+pnpm clarkcant status --data-dir ./.data
+pnpm clarkcant ask "what can you do?" --data-dir ./.data
 ```
 
 Run the P0.1 SDK lifecycle probe:
@@ -185,7 +197,7 @@ node packages/pi-adapter/src/probe-cli.ts --write    # refresh docs/research/com
 ## Layout
 
 ```text
-apps/        runtime (headless node), web, desktop, worker
+apps/        runtime (headless node), web, desktop, worker, cli
 packages/    contracts, storage, core, pi-adapter, node-link, capability-host,
              integration-sdk, widget-sdk, widget-host, mcp-adapters, host-adapters,
              execution-supervisor, voice-adapters, conversation-client, design-tokens

@@ -26,6 +26,7 @@ import { STOP_GRACE_MS } from "./process-tree.ts";
 import { killRunningCommandsNow, refuseNewCommands } from "./run-command.ts";
 import { attachNodeVoice } from "./bootstrap/voice-bootstrap.ts";
 import { attachTerminalGateway } from "./terminal-gateway.ts";
+import { attachApiSocket } from "./api-socket.ts";
 import { bootRuntime } from "./node.ts";
 import { detectContainerEngine } from "./container-engine.ts";
 import { listenOnUnixSocket, prepareSocketPath } from "./unix-socket.ts";
@@ -289,6 +290,9 @@ async function main(): Promise<void> {
     piSessions: services.piSessions,
   });
 
+  // The gateway over one WebSocket for third-party apps and AI tools, on the same server and behind the same token.
+  const apiSocket = attachApiSocket({ server, services });
+
   /**
    * A port that is already taken, reported plainly.
    *
@@ -475,6 +479,7 @@ async function main(): Promise<void> {
         await modelTurn?.dispose();
         await voice.close();
         await terminalGateway.close();
+        await apiSocket.close();
       } catch (cause) {
         process.stderr.write(`while closing: ${cause instanceof Error ? cause.message : String(cause)}\n`);
       }
