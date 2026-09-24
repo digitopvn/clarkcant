@@ -15,6 +15,9 @@ export interface AppIntentSurfacesState {
   widgetLibrary: WidgetLibraryState;
   setWidgetLibrary: React.Dispatch<React.SetStateAction<WidgetLibraryState>>;
   openWidgetLibrary: (mode: "browse" | "develop") => void;
+  /** Whether the inbox is open over the conversation. */
+  inboxOpen: boolean;
+  setInboxOpen: (open: boolean) => void;
   intentNotice: string | undefined;
   /** Shows a notice outside the click/voice/typed-command path, e.g. a voice session that failed to open. */
   setIntentNotice: (message: string) => void;
@@ -76,6 +79,7 @@ export function useAppIntentSurfaces({
   const [uiCheckOpen, setUiCheckOpen] = useState(false);
   const [settingsTab, setSettingsTab] = useState<SettingsTab | undefined>(undefined);
   const [widgetLibrary, setWidgetLibrary] = useState<WidgetLibraryState>(CLOSED_LIBRARY);
+  const [inboxOpen, setInboxOpen] = useState(false);
   const [intentNotice, setIntentNotice] = useState<string | undefined>(undefined);
   const [pendingIntent, setPendingIntent] = useState<AppIntentDecision | undefined>(undefined);
   const [liveRefresh, setLiveRefresh] = useState(0);
@@ -96,9 +100,16 @@ export function useAppIntentSurfaces({
   const intentHost = useMemo<AppIntentHost>(() => {
     const desktop = hasDesktopChrome();
     return {
+      // Settings and the inbox are both modals, and modals do not nest: opening one closes the other.
       openSettings: (tab?: SettingsTab) => {
+        setInboxOpen(false);
         setSettingsTab(tab);
         setUiCheckOpen(true);
+      },
+      openInbox: () => {
+        setUiCheckOpen(false);
+        setWidgetLibrary(CLOSED_LIBRARY);
+        setInboxOpen(true);
       },
       goHome: restartSession,
       openFilePicker: () => attachmentInput.current?.click(),
@@ -108,6 +119,7 @@ export function useAppIntentSurfaces({
       showConversation: () => {
         setUiCheckOpen(false);
         setWidgetLibrary(CLOSED_LIBRARY);
+        setInboxOpen(false);
       },
       cycleModel: () => {
         void client.cycleModel().catch(() => setIntentNotice(t("intents.modelSwitchFailed")));
@@ -191,6 +203,8 @@ export function useAppIntentSurfaces({
     widgetLibrary,
     setWidgetLibrary,
     openWidgetLibrary,
+    inboxOpen,
+    setInboxOpen,
     intentNotice,
     setIntentNotice,
     runIntent,

@@ -3,6 +3,7 @@ import type { ReactElement, RefObject } from "react";
 import type { GatewayClient } from "./api.ts";
 import { Orb } from "./Orb.tsx";
 import { BackgroundSessionsMark } from "./background-sessions-mark.tsx";
+import { InboxMark } from "./inbox/inbox-mark.tsx";
 import { useT } from "./i18n/locale-context.tsx";
 import type { ResolvedOrbProfile } from "./orb-profile.ts";
 import type { ConnectionState } from "./use-connection-status.ts";
@@ -11,15 +12,18 @@ export interface ConversationHeaderProps {
   client: GatewayClient;
   connection: ConnectionState;
   backgroundTick: number;
+  /** Changes when something may have changed the inbox, so its mark reads again now. */
+  inboxRefreshKey: string;
   shell: RefObject<HTMLDivElement | null>;
   orbProfile: ResolvedOrbProfile | undefined;
   onHome: () => void;
   onOpenSettings: () => void;
+  onOpenInbox: () => void;
 }
 
 /**
- * The header: the way back to the start screen, the connection status, the background-work mark
- * and the one settings affordance.
+ * The header: the way back to the start screen, the connection status, the background-work mark,
+ * the inbox mark and the one settings affordance.
  *
  * The logo is a button rather than a decorated div so it can be reached and announced: a click
  * target only a mouse can find is half a control. The status dot reports the gateway, not the
@@ -29,10 +33,12 @@ export function ConversationHeader({
   client,
   connection,
   backgroundTick,
+  inboxRefreshKey,
   shell,
   orbProfile,
   onHome,
   onOpenSettings,
+  onOpenInbox,
 }: ConversationHeaderProps): ReactElement {
   const t = useT();
   return (
@@ -57,6 +63,8 @@ export function ConversationHeader({
             permanent line of noise, and the count only matters when it is not zero. `backgroundTick` is what makes it
             appear at once for work that may already be over by the next poll. */}
         <BackgroundSessionsMark client={client} refreshKey={backgroundTick} />
+        {/* What is waiting for the person and what is new, drawn only while either is not zero. */}
+        <InboxMark client={client} refreshKey={inboxRefreshKey} onOpen={onOpenInbox} />
         {/*
           The gear is the only settings affordance, which is why it is here rather than in a
           menu: a setting that is two clicks deep is a setting nobody checks. It opens a panel

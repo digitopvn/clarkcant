@@ -10,12 +10,16 @@ import type { AutonomySettings, ModelPool, WidgetDefinition, WidgetFixture } fro
 
 import {
   appIntentDecisionSchema,
+  inboxResponseSchema,
+  inboxSummarySchema,
   memoryListSchema,
   suggestionsResponseSchema,
   type AppIntentDecision,
   type AppIntentKind,
   type AppIntentResolution,
   type ConfirmationDecision,
+  type InboxResponse,
+  type InboxSummary,
   type MemoryRecord,
   type RegisteredPreference,
   type SettingsTab,
@@ -1573,5 +1577,30 @@ export class GatewayClient {
           : [],
       ),
     };
+  }
+
+  /**
+   * What is waiting for the person, and the notices from work that finished while nobody was looking.
+   *
+   * Parsed against the contract rather than cast: the inbox puts approve buttons on screen, and a button built from a
+   * field that was not there is a button that sends the wrong digest.
+   */
+  async inbox(): Promise<InboxResponse> {
+    return inboxResponseSchema.parse(await this.#call("GET", "/inbox"));
+  }
+
+  /** The two counts the header mark polls, without the lists behind them. */
+  async inboxSummary(): Promise<InboxSummary> {
+    return inboxSummarySchema.parse(await this.#call("GET", "/inbox/summary"));
+  }
+
+  /** Marks the notices that were on screen as read; with no ids, every notice. */
+  markInboxRead(noticeIds?: readonly string[]): Promise<{ marked: number }> {
+    return this.#call("POST", "/inbox/read", noticeIds === undefined ? {} : { noticeIds });
+  }
+
+  /** Takes one notice out of the inbox. Waiting items cannot be dismissed: hiding a question is not answering it. */
+  dismissNotice(noticeId: string): Promise<{ dismissed: true }> {
+    return this.#call("POST", `/inbox/notices/${encodeURIComponent(noticeId)}/dismiss`);
   }
 }

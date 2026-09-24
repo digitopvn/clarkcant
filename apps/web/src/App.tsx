@@ -137,6 +137,14 @@ export function App(): ReactElement {
   const heroOrbRef = useRef<HTMLDivElement>(null);
   /** Where the orb is drawn, once that space has been measured. */
   const [orbPlacement, setOrbPlacement] = useState<{ x: number; y: number; scale: number } | undefined>(undefined);
+  /**
+   * Which mounting of the conversation is on screen.
+   *
+   * Opening another conversation from the inbox changes the remembered id and bumps this, so the conversation is
+   * mounted afresh on the new record instead of each of its hooks having to learn that its conversation changed
+   * under it. It is the same thing a reload does, without the reload.
+   */
+  const [conversationKey, setConversationKey] = useState(0);
 
 
   /*
@@ -308,6 +316,7 @@ export function App(): ReactElement {
 
   return (
     <Conversation
+      key={conversationKey}
       client={client}
       // Spread rather than passing undefined: with exactOptionalPropertyTypes an optional
       // prop may be absent, but may not be explicitly undefined.
@@ -316,6 +325,10 @@ export function App(): ReactElement {
       // Remembering the conversation and forgetting it belong in the same place. Without this the
       // start screen would appear and the next reload would pull the old conversation back.
       onSessionReset={() => window.sessionStorage.removeItem("cc_conversation")}
+      onOpenConversation={(conversationId) => {
+        window.sessionStorage.setItem("cc_conversation", conversationId);
+        setConversationKey((key) => key + 1);
+      }}
       {...(orbProfile === undefined ? {} : { orbProfile })}
       /*
        * What the node still needs, so the conversation can offer it where a turn actually needs it. The
