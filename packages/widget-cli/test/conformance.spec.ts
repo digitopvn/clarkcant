@@ -301,6 +301,77 @@ describe("what the suite refuses", () => {
   });
 });
 
+describe("the state migration check runs the migration", () => {
+  /** Raise the package's stateVersion to 1 with the given migration and previous-version fixture. */
+  function bumpState(
+    root: string,
+    input: { stateSchema: Record<string, unknown>; migrations?: unknown[]; fixture?: unknown },
+  ): void {
+    const definitionPath = join(root, "widgets", "main", "widget.json");
+    const definition = JSON.parse(readFileSync(definitionPath, "utf8")) as Record<string, unknown>;
+    definition["stateVersion"] = 1;
+    definition["stateSchema"] = input.stateSchema;
+    if (input.migrations !== undefined) definition["stateMigrations"] = input.migrations;
+    writeFileSync(definitionPath, JSON.stringify(definition));
+    if (input.fixture !== undefined) writeFileSync(join(root, "fixtures", "state-v0.json"), JSON.stringify(input.fixture));
+  }
+
+  const SCHEMA = {
+    type: "object",
+    properties: { notes: { type: "array", items: { type: "string" } } },
+    additionalProperties: false,
+  };
+
+  it("passes when the previous version's fixture migrates to a state the schema accepts", async () => {
+    const root = await tempPackage();
+    bumpState(root, {
+      stateSchema: SCHEMA,
+      migrations: [{ from: 0, to: 1, ops: [{ op: "rename", from: "items", to: "notes" }] }],
+      fixture: { items: ["a"] },
+    });
+
+    const check = runConformance(root).checks.find((c) => c.id === "lifecycle.stateMigration");
+
+    expect(check?.status).toBe("pass");
+    expect(check?.detail).toContain("state-v0.json migrates");
+  });
+
+  it("fails when the migrated fixture does not match the schema, even though the fixture file exists", async () => {
+    const root = await tempPackage();
+    // The migration forgets the rename, so the old key survives and the schema refuses it.
+    bumpState(root, {
+      stateSchema: SCHEMA,
+      migrations: [{ from: 0, to: 1, ops: [{ op: "default", key: "notes", value: [] }] }],
+      fixture: { items: ["a"] },
+    });
+
+    const check = runConformance(root).checks.find((c) => c.id === "lifecycle.stateMigration");
+
+    expect(check?.status).toBe("fail");
+    expect(check?.detail).toContain("state.items: not a declared property");
+  });
+
+  it("fails when stateVersion was raised without a migration step", async () => {
+    const root = await tempPackage();
+    bumpState(root, { stateSchema: SCHEMA, fixture: { notes: [] } });
+
+    const check = runConformance(root).checks.find((c) => c.id === "lifecycle.stateMigration");
+
+    expect(check?.status).toBe("fail");
+    expect(check?.detail).toContain("no stateMigrations step starts at 0");
+  });
+
+  it("fails when the previous version's fixture is missing, so the migration cannot be run", async () => {
+    const root = await tempPackage();
+    bumpState(root, { stateSchema: SCHEMA, migrations: [{ from: 0, to: 1, ops: [{ op: "remove", key: "x" }] }] });
+
+    const check = runConformance(root).checks.find((c) => c.id === "lifecycle.stateMigration");
+
+    expect(check?.status).toBe("fail");
+    expect(check?.detail).toContain("state-v0.json is missing");
+  });
+});
+
 describe("clark widget pack", () => {
   it("writes an artifact with a digest, and records what was not verified", async () => {
     const root = await tempPackage();

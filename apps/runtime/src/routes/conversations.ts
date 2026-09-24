@@ -24,8 +24,10 @@ import {
   handleUserMessage,
   liveOwnerOf,
   liveStateOf,
+  applyWidgetStatePatch,
   mintFrameGrant,
   pinInstance,
+  prepareFrameState,
   readDirectoryIndex,
   readSnapshotForDisplay,
   releaseLiveOwner,
@@ -105,6 +107,34 @@ export interface RawCommandRouteDeps {
   at: () => string;
 }
 
+/** The HTTP status each refused state write answers with. */
+const STATE_REFUSAL_STATUS = {
+  INSTANCE_UNKNOWN: 404,
+  NOT_AUTHORIZED: 403,
+  INSTANCE_OFFLINE: 410,
+  STATE_READ_ONLY: 409,
+  STATE_REVISION_STALE: 409,
+  STATE_SCHEMA_INVALID: 422,
+  STATE_TOO_LARGE: 413,
+} as const;
+
+/**
+ * Find the package code a frame-rendered widget runs, by its definition id.
+ *
+ * Shared by the live route and the state route so both hold the widget to the same definition: the one the frame
+ * the user is looking at was mounted from.
+ */
+function locateIsolatedFrame(dataDir: string, widgetId: string) {
+  const index = readDirectoryIndex(directoryIndexPath(process.env));
+  return findIsolatedFrame({
+    directory: index.kind === "configured" ? index.entries : [],
+    widgetId,
+    // A git/npm entry this node has fetched is served from its cache path exactly like a local package (H1); the
+    // cache root here must match the one the install route fetched into.
+    cacheRoot: join(dataDir, "package-cache"),
+  });
+}
+
 /**
  * Resolve what a live composed surface shows right now.
  *
@@ -135,14 +165,7 @@ function resolveLiveWidget(
    * and that is what this returns instead. The check comes first because it is what decides which of the two shapes
    * this route answers with, and a client that had to guess would be a client that guessed wrong once.
    */
-  const index = readDirectoryIndex(directoryIndexPath(process.env));
-  const isolated = findIsolatedFrame({
-    directory: index.kind === "configured" ? index.entries : [],
-    widgetId: instance.definitionRef.id,
-    // A git/npm entry this node has fetched is served from its cache path exactly like a local package (H1); the
-    // cache root here must match the one the install route fetched into.
-    cacheRoot: join(runtime.dataDir, "package-cache"),
-  });
+  const isolated = locateIsolatedFrame(runtime.dataDir, instance.definitionRef.id);
   if (isolated.ok) {
     /*
      * What the frame is actually brokered is the *granted* set, not the requested one.
@@ -163,12 +186,23 @@ function resolveLiveWidget(
       isolated.packageId,
     );
     const grantedForFrame = brokeredCapabilities(isolated.requestedCapabilities, generation?.grantedCapabilities);
+    /*
+     * The durable state the frame starts from, migrated here — on the node, once, before any code of this version
+     * reads it. State that could not be migrated, or that a newer version wrote, is still returned so the widget can
+     * show it; `readOnly` and `stateStatus` are what stop anyone writing over it.
+     */
+    const frameState = prepareFrameState(services.conductor, { instanceId, definition: isolated.definition });
 
     return json(200, {
       kind: "isolated-frame",
       instanceId,
       revision: instance.revision,
-      readOnly: false,
+      readOnly: frameState.status.kind !== "writable",
+      stateRevision: frameState.stateRevision,
+      stateVersion: frameState.stateVersion,
+      state: frameState.state,
+      stateStatus: frameState.status,
+      ephemeralStateKeys: isolated.definition.ephemeralStateKeys ?? [],
       frame: {
         /*
          * Relative to this node, served from the package path so the widget's own relative imports resolve, and
@@ -924,6 +958,57 @@ export async function handleConversationRoutes(deps: ConversationRouteDeps): Pro
     if (result.ok) return json(result.status, result.body);
     return fail(result.status, result.code, result.message, {
       ...(result.currentRevision === undefined ? {} : { currentRevision: result.currentRevision }),
+    });
+  }
+
+  // /conversations/:id/widgets/:instanceId/state
+  if (
+    segments.length === 5 &&
+    segments[2] === "widgets" &&
+    segments[4] === "state" &&
+    request.method === "POST"
+  ) {
+    const parsed = readJson(request);
+    if (!parsed.ok) return parsed.response;
+    const instanceId = segments[3] ?? "";
+    const expectedRevision = parsed.value.expectedRevision;
+    const patch = parsed.value.patch;
+    if (typeof expectedRevision !== "number" || !Number.isInteger(expectedRevision) || expectedRevision < 0) {
+      return fail(400, "INVALID_SCHEMA", "a state write must carry the state revision it was planned at");
+    }
+    if (typeof patch !== "object" || patch === null || Array.isArray(patch)) {
+      return fail(400, "INVALID_SCHEMA", "a state write must carry a patch object");
+    }
+
+    const instance = getInstance(services.conductor, instanceId);
+    if (instance === undefined) return fail(404, "RESOURCE_NOT_FOUND", "that instance is not on this node");
+    /*
+     * Only a frame writes its own state this way. A built-in or composed surface changes state through a bound view
+     * action, validated operation by operation; letting it write a raw patch here would be a second, weaker path
+     * around those operations.
+     */
+    const isolated = locateIsolatedFrame(runtime.dataDir, instance.definitionRef.id);
+    if (!isolated.ok) {
+      return fail(
+        isolated.code === "NOT_AN_ISOLATED_APP" ? 409 : 404,
+        isolated.code,
+        isolated.code === "NOT_AN_ISOLATED_APP"
+          ? "this widget changes its state through its bound actions, not by writing it directly"
+          : isolated.message,
+      );
+    }
+
+    const outcome = applyWidgetStatePatch(services.conductor, {
+      instanceId,
+      principalId: runtime.identity.ownerPrincipalId,
+      definition: isolated.definition,
+      expectedRevision,
+      patch: patch as Record<string, unknown>,
+    });
+    if (outcome.ok) return json(200, { stateRevision: outcome.stateRevision, state: outcome.state });
+    return fail(STATE_REFUSAL_STATUS[outcome.code], outcome.code, outcome.message, {
+      ...(outcome.stateRevision === undefined ? {} : { stateRevision: outcome.stateRevision }),
+      ...(outcome.state === undefined ? {} : { state: outcome.state }),
     });
   }
 

@@ -33,6 +33,14 @@ export const hostToWidgetSchema = z.discriminatedUnion("kind", [
      * it, and a runtime that receives it speaks the revision it was shown instead of inventing one.
      */
     revision: z.number().int().nonnegative().optional(),
+    /**
+     * The revision of the widget's *state*, which is a different counter from the instance revision above.
+     *
+     * An instance moves when an action changes what the user sees; state moves when the widget writes it. Using one
+     * number for both refused the first state write of any frame whose instance had moved, and sent the next action
+     * with a revision that was really the state's. Optional for the same reason as `revision`.
+     */
+    stateRevision: z.number().int().nonnegative().optional(),
     /** Capabilities the host is willing to broker, and no others. */
     brokeredCapabilities: z.array(z.string().min(1).max(160)).max(64),
     /** Origins this frame may reach. Enforced by CSP, declared here for the SDK. */
@@ -47,7 +55,17 @@ export const hostToWidgetSchema = z.discriminatedUnion("kind", [
     kind: z.literal("state"),
     nonce: z.string().min(16).max(200),
     state: z.record(z.string(), z.unknown()),
+    /** The state revision the host now holds, not the instance revision. */
     revision: z.int().nonnegative(),
+    /**
+     * Why the host answered a write with this state rather than the widget's own, when it did.
+     *
+     * Present only on a refusal: the state here is what is committed, and the widget's unsaved change is still its
+     * own to keep or retry — the host does not throw it away by answering.
+     */
+    refused: z
+      .strictObject({ code: z.string().min(1).max(60), message: z.string().min(1).max(600) })
+      .optional(),
   }),
   z.strictObject({
     kind: z.literal("action-result"),
@@ -70,7 +88,7 @@ export const widgetToHostSchema = z.discriminatedUnion("kind", [
   z.strictObject({
     kind: z.literal("state.update"),
     nonce: z.string().min(16).max(200),
-    /** Optimistic-concurrency guard: the host refuses a stale write. */
+    /** Optimistic-concurrency guard on the *state* revision: the host refuses a stale write. */
     expectedRevision: z.int().nonnegative(),
     patch: z.record(z.string(), z.unknown()),
   }),
@@ -164,7 +182,18 @@ export interface WidgetAuthorApi {
     /** Called whenever the host sends new props, so a widget can re-render without polling. */
     subscribe(handler: (props: Record<string, unknown>) => void): void;
   };
-  state: { get(): Record<string, unknown>; update(expectedRevision: number, patch: Record<string, unknown>): Promise<void> };
+  state: {
+    get(): Record<string, unknown>;
+    /** The state revision to pass as `expectedRevision` on the next write. */
+    revision(): number;
+    /**
+     * Resolves once the host has committed the write, and rejects with the host's reason when it refused — a stale
+     * revision, a value outside the declared schema, a state too large, or a widget that is read-only right now.
+     */
+    update(expectedRevision: number, patch: Record<string, unknown>): Promise<void>;
+    /** Called whenever the host sends committed state, including the answer to a refused write. */
+    subscribe(handler: (state: Record<string, unknown>, revision: number) => void): void;
+  };
   events: { emit(name: string, payload: Record<string, unknown>): void };
   actions: { invoke(actionBindingId: string, input: Record<string, unknown>, invocationId: string): Promise<void> };
   capabilities: { request(capabilityRef: string, justification: string): Promise<void> };

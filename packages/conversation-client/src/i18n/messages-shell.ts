@@ -39,6 +39,12 @@ export const MESSAGES_SHELL_VI = {
   "shell.live.actionRefusedGeneric": "Máy chủ từ chối hành động này.",
   "shell.live.actionDuplicate": "Thao tác này đã được thực hiện trước đó.",
   "shell.live.revisionMismatch": "Bản hiển thị đã cũ so với máy chủ. Đã tải lại; thao tác chưa được áp dụng.",
+  "shell.live.stateOffline":
+    "Package chạy widget này không còn được cài. Dữ liệu của widget vẫn được giữ nguyên nhưng chỉ xem được — khôi phục package trong Cài đặt → Tiện ích để chỉnh tiếp.",
+  "shell.live.stateMigrationFailed":
+    "Không chuyển được dữ liệu widget từ phiên bản state {from} lên {to}. Dữ liệu cũ vẫn được giữ nguyên và chỉ xem được — có thể quay về bản package trước trong Cài đặt → Tiện ích.",
+  "shell.live.stateNewer":
+    "Dữ liệu của widget được lưu bởi một bản mới hơn (state {stored}); bản đang cài chỉ hiểu tới {current}. Dữ liệu được giữ nguyên và chỉ xem được — cập nhật package để chỉnh tiếp.",
 
   "shell.hero.suggestion1Label": "Làm gì đó",
   "shell.hero.suggestion2Label": "Sửa một lỗi",
@@ -175,6 +181,12 @@ export const MESSAGES_SHELL_EN = {
   "shell.live.actionRefusedGeneric": "The server refused this action.",
   "shell.live.actionDuplicate": "This action already ran once.",
   "shell.live.revisionMismatch": "The view was stale against the server. Reloaded; the action was not applied.",
+  "shell.live.stateOffline":
+    "The package that runs this widget is no longer installed. The widget's data is kept but read-only — restore the package in Settings → Extensions to edit it again.",
+  "shell.live.stateMigrationFailed":
+    "The widget's data could not be migrated from state version {from} to {to}. The old data is kept and read-only — you can roll back to the previous package version in Settings → Extensions.",
+  "shell.live.stateNewer":
+    "The widget's data was saved by a newer version (state {stored}); the installed one understands up to {current}. The data is kept and read-only — update the package to edit it again.",
 
   "shell.hero.suggestion1Label": "Do something",
   "shell.hero.suggestion2Label": "Fix a bug",

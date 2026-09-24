@@ -152,8 +152,53 @@ describe("what the runtime sends", () => {
     await expect(api.state.update(7, { tab: "x" })).rejects.toThrow(/cũ/);
     expect(bus.sent).toHaveLength(0);
 
-    await api.state.update(0, { tab: "x" });
+    const written = api.state.update(0, { tab: "x" });
     expect(bus.sent[0]).toMatchObject({ kind: "state.update", expectedRevision: 0, nonce: NONCE });
+    bus.deliver({ kind: "state", nonce: NONCE, state: { tab: "x" }, revision: 1 });
+    await written;
+    expect(api.state.revision()).toBe(1);
+  });
+
+  it("keeps the state revision apart from the instance revision", async () => {
+    const bus = channel();
+    const runtime = createWidgetRuntime({ endpoint: bus.endpoint });
+    // An instance that has moved three times, whose state has been written once.
+    bus.deliver(initMessage({ revision: 3, stateRevision: 1, state: { tab: "a" } }));
+    const api = runtime.api();
+    bus.sent.length = 0;
+
+    // The first write names the state revision it was shown, and is sent rather than refused as stale.
+    const written = api.state.update(1, { tab: "b" });
+    expect(bus.sent[0]).toMatchObject({ kind: "state.update", expectedRevision: 1 });
+    bus.deliver({ kind: "state", nonce: NONCE, state: { tab: "b" }, revision: 2 });
+    await written;
+
+    // An action still carries the instance revision, untouched by the state write.
+    void api.actions.invoke("act_1", {}, "inv_1");
+    expect(bus.sent.at(-1)).toMatchObject({ kind: "action.invoke", expectedRevision: 3 });
+  });
+
+  it("resolves a write only once the host commits it, and rejects with the host's reason", async () => {
+    const { api, bus } = ready();
+    const seen: number[] = [];
+    api.state.subscribe((_state, revision) => seen.push(revision));
+
+    const written = api.state.update(0, { body: "nháp" });
+    // One write in flight at a time: the answer decides the revision the next write names.
+    await expect(api.state.update(0, { body: "khác" })).rejects.toThrow(/chưa được host xác nhận/);
+
+    bus.deliver({
+      kind: "state",
+      nonce: NONCE,
+      state: { body: "đã lưu" },
+      revision: 4,
+      refused: { code: "STATE_REVISION_STALE", message: "another surface saved first" },
+    });
+    await expect(written).rejects.toThrow(/STATE_REVISION_STALE/);
+    // The committed value replaces the optimistic one, and the widget is told the revision to plan against.
+    expect(api.state.get()).toEqual({ body: "đã lưu" });
+    expect(api.state.revision()).toBe(4);
+    expect(seen).toEqual([4]);
   });
 
   it("emits events and publishes a semantic summary", () => {

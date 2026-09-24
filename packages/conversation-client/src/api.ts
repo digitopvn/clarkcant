@@ -74,7 +74,26 @@ export interface IsolatedFrameLiveResponse {
   }[];
   /** What the widget was created with, sent to it in the init message and nowhere else. */
   props: Record<string, unknown>;
+  /**
+   * The durable state the frame starts from, and its own revision.
+   *
+   * The state revision counts state writes and nothing else; `revision` above counts the instance's own changes and
+   * is what an action is checked against. The two are different numbers on purpose.
+   */
+  stateRevision: number;
+  stateVersion: number;
+  state: Record<string, unknown>;
+  /** Why the state can or cannot be written. Anything but `writable` also sets `readOnly`. */
+  stateStatus: FrameStateStatus;
+  /** Keys the widget keeps as view state: never sent to the node, never stored. */
+  ephemeralStateKeys: readonly string[];
 }
+
+export type FrameStateStatus =
+  | { kind: "writable" }
+  | { kind: "offline"; reason: string }
+  | { kind: "migration-failed"; fromVersion: number; toVersion: number; reason: string }
+  | { kind: "newer-than-definition"; storedVersion: number; definitionVersion: number };
 
 export interface LiveWidgetResponse {
   kind: "composition";
@@ -428,12 +447,18 @@ export interface ArtifactView {
 export class GatewayError extends Error {
   readonly status: number;
   readonly code: string;
+  /**
+   * The rest of the refusal body, when the node sent more than a code and a message — a stale state write, for
+   * one, carries the state the node holds, which is what lets the caller show it instead of guessing.
+   */
+  readonly details: Record<string, unknown>;
 
-  constructor(status: number, code: string, message: string) {
+  constructor(status: number, code: string, message: string, details: Record<string, unknown> = {}) {
     super(`${code}: ${message}`);
     this.name = "GatewayError";
     this.status = status;
     this.code = code;
+    this.details = details;
   }
 }
 
@@ -496,7 +521,12 @@ export class GatewayClient {
 
     if (!response.ok) {
       const record = parsed as { code?: string; message?: string };
-      throw new GatewayError(response.status, record.code ?? "UNKNOWN", record.message ?? "the request failed");
+      throw new GatewayError(
+        response.status,
+        record.code ?? "UNKNOWN",
+        record.message ?? "the request failed",
+        typeof parsed === "object" && parsed !== null && !Array.isArray(parsed) ? (parsed as Record<string, unknown>) : {},
+      );
     }
     return parsed as T;
   }
@@ -1101,6 +1131,21 @@ export class GatewayClient {
       instanceId,
       ...invocation,
     });
+  }
+
+  /**
+   * Write a frame's durable state.
+   *
+   * Resolves only once the node has committed the write. A refusal — stale, read-only, refused by the widget's schema
+   * — is thrown as a `GatewayError` whose `details` carry the state the node holds, so the widget can be shown what was
+   * saved rather than left believing its own write.
+   */
+  saveWidgetState(
+    conversationId: string,
+    instanceId: string,
+    write: { expectedRevision: number; patch: Record<string, unknown> },
+  ): Promise<{ stateRevision: number; state: Record<string, unknown> }> {
+    return this.#call("POST", `/conversations/${conversationId}/widgets/${instanceId}/state`, write);
   }
 
   /**

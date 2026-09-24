@@ -9,7 +9,14 @@
 
 import { type ReactElement, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-import type { GatewayClient, IsolatedFrameLiveResponse, LiveWidgetResponse, Timeline } from "./api.ts";
+import {
+  type FrameStateStatus,
+  type GatewayClient,
+  GatewayError,
+  type IsolatedFrameLiveResponse,
+  type LiveWidgetResponse,
+  type Timeline,
+} from "./api.ts";
 import { useT } from "./i18n/locale-context.tsx";
 import { readStoredLocale } from "./i18n/locale.ts";
 import { CATALOGS, type MessageKey } from "./i18n/messages.ts";
@@ -512,11 +519,45 @@ export function PinnedLiveSurface({
         aria-label={displayMode === "expanded" ? t("shell.live.expandedAria").replace("{title}", title ?? instanceId) : undefined}
       >
         {head}
+        {live.stateStatus.kind !== "writable" && (
+          <p className="cc-freshness" data-live-notice="true" data-state-status={live.stateStatus.kind} role="status">
+            {frameStateNotice(live.stateStatus, t)}
+          </p>
+        )}
         <WidgetFrame
           instanceId={live.instanceId}
           url={client.nodeUrl(live.frame.url)}
           title={title ?? instanceId}
           props={live.props}
+          state={live.state}
+          stateRevision={live.stateRevision}
+          ephemeralStateKeys={live.ephemeralStateKeys}
+          /*
+           * Every durable write goes to the node and is answered from there: the widget is told its state was saved
+           * only when the node committed it, and a refusal comes back with what the node holds. A read-only frame is
+           * wired the same way on purpose — the node is what refuses, so there is one answer to "may this be written".
+           */
+          persistState={async (write) => {
+            try {
+              const saved = await client.saveWidgetState(conversationId, instanceId, write);
+              return { ok: true, stateRevision: saved.stateRevision, state: saved.state };
+            } catch (cause) {
+              if (cause instanceof GatewayError) {
+                const committed = cause.details["state"];
+                const revision = cause.details["stateRevision"];
+                return {
+                  ok: false,
+                  code: cause.code,
+                  message: typeof cause.details["message"] === "string" ? cause.details["message"] : cause.message,
+                  ...(typeof revision === "number" ? { stateRevision: revision } : {}),
+                  ...(typeof committed === "object" && committed !== null && !Array.isArray(committed)
+                    ? { state: committed as Record<string, unknown> }
+                    : {}),
+                };
+              }
+              return { ok: false, code: "STATE_NOT_SAVED", message: cause instanceof Error ? cause.message : String(cause) };
+            }
+          }}
           brokeredCapabilities={live.frame.grantedCapabilities}
           allowedOrigins={live.frame.allowedOrigins}
           knownActionBindings={live.bindings.map((entry) => entry.actionBindingId)}
@@ -677,6 +718,27 @@ export function toSurfaceViewFromLive(live: LiveWidgetResponse, readOnly: boolea
  * changed since is refused as stale, which is the intended outcome: the alternative is applying a
  * click to an action that was replaced underneath the user.
  */
+/**
+ * What a frame whose state cannot be written says about it: what happened, that the data is kept, and what the
+ * person can do. Never the internal status name.
+ */
+function frameStateNotice(status: FrameStateStatus, t: (key: MessageKey) => string): string {
+  switch (status.kind) {
+    case "offline":
+      return t("shell.live.stateOffline");
+    case "migration-failed":
+      return t("shell.live.stateMigrationFailed")
+        .replace("{from}", String(status.fromVersion))
+        .replace("{to}", String(status.toVersion));
+    case "newer-than-definition":
+      return t("shell.live.stateNewer")
+        .replace("{stored}", String(status.storedVersion))
+        .replace("{current}", String(status.definitionVersion));
+    case "writable":
+      return "";
+  }
+}
+
 function digestForBinding(live: LiveWidgetResponse, actionBindingId: string): string {
   return live.bindings.find((binding) => binding.actionBindingId === actionBindingId)?.bindingDigest ?? "";
 }

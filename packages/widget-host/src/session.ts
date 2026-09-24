@@ -45,6 +45,18 @@ export type FrameAcceptance =
   | { ok: true; kind: WidgetToHostMessage["kind"]; detail?: string }
   | { ok: false; code: FrameRefusal; message: string };
 
+/** What the node answered a state write with. */
+export type FrameStateOutcome =
+  | { ok: true; stateRevision: number; state: Record<string, unknown> }
+  | {
+      ok: false;
+      code: string;
+      message: string;
+      /** The committed state and its revision, when the node could say — what the widget should plan against next. */
+      stateRevision?: number;
+      state?: Record<string, unknown>;
+    };
+
 export interface FrameActionOutcome {
   status: "accepted" | "refused" | "failed" | "uncertain";
   message: string;
@@ -64,6 +76,22 @@ export interface FrameSessionInput {
    * that looks fine and a widget that cannot act.
    */
   revision: number;
+  /** The state revision the node holds for `state`. A different counter from `revision`; 0 when never written. */
+  stateRevision?: number;
+  /**
+   * Keys the definition declares as view state. They stay in the frame's own copy and are never handed to
+   * `persistState`'s answer to overwrite, because the node never stored them.
+   */
+  ephemeralStateKeys?: readonly string[];
+  /**
+   * Where a state write is made durable.
+   *
+   * Given, a write is answered only after the node has committed it: the frame is told the new state and revision
+   * then, and on a refusal it is told the committed state instead, with the reason — its own change is not thrown
+   * away by the host, it is simply not what was saved. Absent (the dev host, the conformance harness), a write is
+   * applied to this session's copy, which is all those hosts have.
+   */
+  persistState?: (input: { expectedRevision: number; patch: Record<string, unknown> }) => Promise<FrameStateOutcome>;
   /** Capabilities the host is willing to broker for this frame, and no others. */
   brokeredCapabilities: readonly string[];
   /** Origins this frame may reach, enforced by CSP and stated here for the init message. */
@@ -101,6 +129,10 @@ export interface FrameSession {
   refused(): readonly FrameRefusal[];
 }
 
+function pickEphemeral(patch: Record<string, unknown>, keys: ReadonlySet<string>): Record<string, unknown> {
+  return Object.fromEntries(Object.entries(patch).filter(([key]) => keys.has(key)));
+}
+
 export function createFrameSession(input: FrameSessionInput): FrameSession {
   const maxMessageBytes = input.maxMessageBytes ?? 64 * 1024;
   const maxMessages = input.maxMessages ?? 200;
@@ -115,7 +147,12 @@ export function createFrameSession(input: FrameSessionInput): FrameSession {
    */
   const invocations = new Map<string, "pending" | FrameActionOutcome>();
   let state = input.state ?? {};
-  let revision = 0;
+  let stateRevision = input.stateRevision ?? 0;
+  let writeInFlight = false;
+  const ephemeral = new Set(input.ephemeralStateKeys ?? []);
+  /** The frame's view-state keys, which the node's answer has no copy of. */
+  const viewState = (): Record<string, unknown> =>
+    Object.fromEntries(Object.entries(state).filter(([key]) => ephemeral.has(key)));
   let messages = 0;
   let status: "awaiting-init" | "ready" | "suspended" | "disposed" = "awaiting-init";
 
@@ -134,6 +171,7 @@ export function createFrameSession(input: FrameSessionInput): FrameSession {
       props: input.props,
       state,
       revision: input.revision,
+      stateRevision,
       brokeredCapabilities: [...input.brokeredCapabilities],
       allowedOrigins: [...input.allowedOrigins],
     };
@@ -149,18 +187,67 @@ export function createFrameSession(input: FrameSessionInput): FrameSession {
         return { ok: true, kind: "ready" };
 
       case "state.update": {
-        if (message.expectedRevision !== revision) {
-          // Refused rather than merged: an accepted stale write is two frames editing in arrival order.
-          return refuse(
-            "STALE_REVISION",
-            `write planned at revision ${String(message.expectedRevision)}; frame is at ${String(revision)}`,
-          );
+        if (writeInFlight || message.expectedRevision !== stateRevision) {
+          /*
+           * Refused rather than merged: an accepted stale write is two frames editing in arrival order. The frame is
+           * answered with the committed state as well as refused here, because a widget waiting on its write would
+           * otherwise wait for an answer that is never coming.
+           */
+          const reason = writeInFlight
+            ? "an earlier write has not been committed yet"
+            : `write planned at revision ${String(message.expectedRevision)}; state is at ${String(stateRevision)}`;
+          input.post({
+            kind: "state",
+            nonce: input.nonce,
+            state,
+            revision: stateRevision,
+            refused: { code: "STATE_REVISION_STALE", message: reason },
+          });
+          return refuse("STALE_REVISION", reason);
         }
-        state = { ...state, ...message.patch };
-        revision += 1;
-        input.post({ kind: "state", nonce: input.nonce, state, revision });
-        transcript.push({ kind: "state.update", detail: String(revision) });
-        return { ok: true, kind: "state.update", detail: String(revision) };
+
+        if (input.persistState === undefined) {
+          state = { ...state, ...message.patch };
+          stateRevision += 1;
+          input.post({ kind: "state", nonce: input.nonce, state, revision: stateRevision });
+          transcript.push({ kind: "state.update", detail: String(stateRevision) });
+          return { ok: true, kind: "state.update", detail: String(stateRevision) };
+        }
+
+        writeInFlight = true;
+        const answer = (outcome: FrameStateOutcome): void => {
+          writeInFlight = false;
+          if (status === "disposed") return;
+          if (outcome.ok) {
+            // The node's copy is the truth for durable keys; view-state keys are the frame's own and stay.
+            state = { ...outcome.state, ...viewState(), ...pickEphemeral(message.patch, ephemeral) };
+            stateRevision = outcome.stateRevision;
+            input.post({ kind: "state", nonce: input.nonce, state, revision: stateRevision });
+            transcript.push({ kind: "state.update", detail: String(stateRevision) });
+            return;
+          }
+          if (outcome.state !== undefined) state = { ...outcome.state, ...viewState() };
+          if (outcome.stateRevision !== undefined) stateRevision = outcome.stateRevision;
+          input.post({
+            kind: "state",
+            nonce: input.nonce,
+            state,
+            revision: stateRevision,
+            refused: { code: outcome.code.slice(0, 60), message: outcome.message.slice(0, 600) },
+          });
+          transcript.push({ kind: "state.refused", detail: outcome.code });
+        };
+        void input
+          .persistState({ expectedRevision: message.expectedRevision, patch: message.patch })
+          .then(answer)
+          .catch((error: unknown) => {
+            answer({
+              ok: false,
+              code: "STATE_NOT_SAVED",
+              message: error instanceof Error ? error.message : "the state could not be saved",
+            });
+          });
+        return { ok: true, kind: "state.update", detail: "pending" };
       }
 
       case "event":

@@ -194,6 +194,78 @@ describe("what the host does with an accepted message", () => {
     expect(echo).toMatchObject({ kind: "state", revision: 1, state: { tab: "costs" } });
   });
 
+  it("names the state revision at init apart from the instance revision, and accepts a write against it", () => {
+    const { session, posted } = makeSession({ revision: 5, stateRevision: 2, state: { tab: "a" } });
+
+    const init = session.init();
+    expect(init).toMatchObject({ revision: 5, stateRevision: 2 });
+
+    // Planned against the state revision the frame was shown — not the instance revision, which is a different count.
+    const result = session.accept(fromFrame({ kind: "state.update", expectedRevision: 2, patch: { tab: "b" } }));
+    expect(result.ok).toBe(true);
+    expect(posted.at(-1)).toMatchObject({ kind: "state", revision: 3, state: { tab: "b" } });
+  });
+
+  it("answers a write only after the node commits it, keeping view-state keys the node never stored", async () => {
+    const persisted: { expectedRevision: number; patch: Record<string, unknown> }[] = [];
+    let commit: (value: { ok: true; stateRevision: number; state: Record<string, unknown> }) => void = () => undefined;
+    const { session, posted } = makeSession({
+      state: { body: "cũ", zoom: 1 },
+      stateRevision: 4,
+      ephemeralStateKeys: ["zoom"],
+      persistState: (input) => {
+        persisted.push(input);
+        return new Promise((resolve) => {
+          commit = resolve;
+        });
+      },
+    });
+    session.init();
+    posted.length = 0;
+
+    const result = session.accept(fromFrame({ kind: "state.update", expectedRevision: 4, patch: { body: "mới", zoom: 2 } }));
+    expect(result).toMatchObject({ ok: true, detail: "pending" });
+    // Nothing is echoed yet: an echo before the commit would be the host saying "saved" about something that is not.
+    expect(posted).toEqual([]);
+    expect(persisted).toEqual([{ expectedRevision: 4, patch: { body: "mới", zoom: 2 } }]);
+
+    // A second write while the first is in flight is refused and answered, not queued behind a revision about to move.
+    const second = session.accept(fromFrame({ kind: "state.update", expectedRevision: 4, patch: { body: "khác" } }));
+    expect(second.ok).toBe(false);
+    expect(posted.at(-1)).toMatchObject({ kind: "state", refused: { code: "STATE_REVISION_STALE" } });
+
+    commit({ ok: true, stateRevision: 5, state: { body: "mới" } });
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(posted.at(-1)).toMatchObject({ kind: "state", revision: 5, state: { body: "mới", zoom: 2 } });
+  });
+
+  it("answers a refused write with the committed state and the node's reason", async () => {
+    const { session, posted } = makeSession({
+      state: { body: "cũ" },
+      stateRevision: 1,
+      persistState: async () => ({
+        ok: false,
+        code: "STATE_REVISION_STALE",
+        message: "another surface saved first",
+        stateRevision: 3,
+        state: { body: "từ nơi khác" },
+      }),
+    });
+    session.init();
+
+    session.accept(fromFrame({ kind: "state.update", expectedRevision: 1, patch: { body: "của tôi" } }));
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(posted.at(-1)).toMatchObject({
+      kind: "state",
+      revision: 3,
+      state: { body: "từ nơi khác" },
+      refused: { code: "STATE_REVISION_STALE", message: "another surface saved first" },
+    });
+  });
+
   it("runs an accepted action once and answers it", async () => {
     const { session, posted, ran } = makeSession();
     session.init();

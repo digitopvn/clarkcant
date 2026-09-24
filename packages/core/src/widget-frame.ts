@@ -1,4 +1,4 @@
-import type { DirectoryEntry, IsolationClass } from "@clarkcant/contracts";
+import type { DirectoryEntry, IsolationClass, WidgetDefinition } from "@clarkcant/contracts";
 
 import { resolveLocalSource } from "./package-fetch.ts";
 import { readPackage } from "./widget-package.ts";
@@ -35,6 +35,11 @@ export type IsolatedFrameLookup =
       requestedCapabilities: readonly string[];
       /** Origins the document may reach, from the package's own declaration and enforced by its policy. */
       allowedOrigins: readonly string[];
+      /**
+       * The definition as this package version declares it — what the node holds the widget's state to: its schema,
+       * its `stateVersion`, the keys it says are view state and the migrations that carry older state forward.
+       */
+      definition: WidgetDefinition;
     }
   | {
       ok: false;
@@ -124,6 +129,7 @@ export function findIsolatedFrame(input: {
       isolation: declaration.isolation,
       requestedCapabilities: pkg.manifest.requestedCapabilities,
       allowedOrigins: pkg.manifest.permissions.networkOrigins,
+      definition: facet.definition,
     };
   }
 
