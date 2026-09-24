@@ -20,8 +20,8 @@
     },
     {
       "path": "README.md",
-      "bytes": 7426,
-      "sha256": "f9f97b9cd6ec869ab2ce8013eeb6282ce7d92e551cab66d2df77613ae7c42e34"
+      "bytes": 7535,
+      "sha256": "4b5af5d3f0d756e189a8a3765d242f736923d6108cda75c90abacc138e5e2b4d"
     },
     {
       "path": "browser-computer-use.md",
@@ -90,8 +90,8 @@
     },
     {
       "path": "system-architecture.md",
-      "bytes": 49323,
-      "sha256": "6631dcae44a17db58c0e1419481de45b2a7f0a66b0a80e53ef9140c75ecbab0f"
+      "bytes": 56141,
+      "sha256": "f1535e1bba12c4f446ee8e5e9bb0549c028ee88ba3842b2893749d048b25dae5"
     },
     {
       "path": "widget-development.md",

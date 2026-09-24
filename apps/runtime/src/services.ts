@@ -23,7 +23,6 @@ import {
 } from "@clarkcant/storage";
 import { readCredential } from "@clarkcant/storage";
 import type { ModelCatalogue } from "@clarkcant/pi-adapter";
-import type { Principal } from "@clarkcant/contracts";
 import { FAMILY_BY_DEFINITION, WIDGETS as CATALOG_WIDGETS } from "@clarkcant/data-canvas";
 import { QUICK_PLAY_RECIPES, SAMPLE_DATASET } from "@clarkcant/data-canvas/sample";
 import { CAPABILITIES as PROJECT_WORK_CAPABILITIES } from "@clarkcant/project-work";
@@ -59,6 +58,7 @@ import {
 } from "./jev-decider.ts";
 import type { RuntimeCandidate } from "./runtime-candidates.ts";
 import type { SessionSearchDeps } from "./session-search.ts";
+import type { BackgroundRunInput } from "./model-turn.ts";
 import { createTerminalRegistry, type TerminalRegistry } from "./terminal-sessions.ts";
 import { createPiSessionWatcher, defaultPiSessionRoots, type PiSessionWatcher } from "./pi-session-watch.ts";
 import {
@@ -166,8 +166,10 @@ export interface NodeServices {
     running(): string[];
     interrupt(conversationId: string): boolean;
     steer(conversationId: string, text: string): Promise<boolean>;
-    /** Runs one request in a worker of its own, answering with what it said. */
-    runInBackground(input: { conversationId: string; principal: Principal; text: string }): Promise<string>;
+    /** Runs one request in a worker of its own, answering with what it said. Honours `input.signal`. */
+    runInBackground(input: BackgroundRunInput): Promise<string>;
+    /** How long the conversation's running turn has gone on, when the control can tell. */
+    runningMs?(conversationId: string): number | undefined;
   };
   /**
    * Load the project-work pack by running one worker session, and write what the run demonstrated.
@@ -222,7 +224,7 @@ export interface NodeServices {
    * does. Absent on a fixture node, which reports that honestly rather than spawning a worker a
    * scripted journey never asked to see.
    */
-  taskDispatch?: { stopAll(): number; runningCount(): number; queuedCount(): number };
+  taskDispatch?: { stopAll(): number; runningCount(): number; queuedCount(): number; close(): void; killAllNow(): void };
 }
 
 /**

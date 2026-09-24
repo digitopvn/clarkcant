@@ -116,6 +116,15 @@ export default defineConfig({
               CC_VOICE_FIXTURE: "1",
               CC_MODEL_FIXTURE: "1",
               CC_SESSION_FIXTURE: "1",
+              /*
+               * Every variable `apps/runtime/src/readiness.ts` counts as a configured credential, blanked. Playwright
+               * starts this node with the developer's shell environment underneath `env`, so a provider key exported
+               * locally made the node report a credential CI's node does not have, and the credentials specs failed
+               * on one machine and passed on the other. A blank value is what readiness treats as not configured.
+               */
+              GEMINI_API_KEY: "",
+              TYPESAFE_API_KEY: "",
+              OPENROUTER_API_KEY: "",
             }),
         // Pass through the live-provider test flag if set, so the test endpoint is available.
         ...(process.env.CC_LIVE_PROVIDER_TEST === "1" ? { CC_LIVE_PROVIDER_TEST: "1" } : {}),

@@ -76,6 +76,8 @@ export const MESSAGES_SHELL_VI = {
 
   "shell.background.runningCount": "{count} việc nền đang chạy",
   "shell.background.runningSuffix": " — đang chạy",
+  "shell.background.queuedCount": "{count} đang chờ",
+  "shell.background.queuedSuffix": " — đang chờ",
 
   "shell.attachment.tooMany": "một tin nhắn chỉ mang được {max} tệp",
 
@@ -221,6 +223,8 @@ export const MESSAGES_SHELL_EN = {
 
   "shell.background.runningCount": "{count} background tasks running",
   "shell.background.runningSuffix": " — running",
+  "shell.background.queuedCount": "{count} waiting",
+  "shell.background.queuedSuffix": " — waiting",
 
   "shell.attachment.tooMany": "one message can only carry {max} files",
 

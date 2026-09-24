@@ -1,6 +1,6 @@
 import { type Instant, type PeerEnvelope, peerEnvelopeSchema } from "@clarkcant/contracts";
 import { recordAcknowledgement, recordTransmissionAttempt, sendEnvelope } from "@clarkcant/node-link";
-import { type Database, type PeerRecord, pendingOutbox } from "@clarkcant/storage";
+import { type Database, type PeerRecord, markOutboxFailed, pendingOutbox } from "@clarkcant/storage";
 
 import type { NodeIdentity } from "./node.ts";
 import { outboundPeerToken } from "./peers.ts";
@@ -43,6 +43,14 @@ export interface DeliveryOutcome {
   acknowledged: number;
   /** Messages that were not delivered, each with the reason, so a silent retry loop is impossible. */
   refused: { messageId: string; reason: string }[];
+  /**
+   * Messages a failed delivery just gave up retrying automatically, this pass.
+   *
+   * Optional and populated only when at least one happened: a caller that never dead-letters anything
+   * (every existing caller, until a peer actually goes dark for long enough) sees exactly the shape it
+   * saw before this field existed.
+   */
+  deadLettered?: { messageId: string; peerNodeId: string }[];
 }
 
 /**
@@ -86,16 +94,29 @@ export function peerArtifactUrl(endpoint: string, digest: string): string {
   return new URL(`/peers/artifacts/${encodeURIComponent(digest)}`, peerOrigin(endpoint)).toString();
 }
 
+/**
+ * Strip anything a failure reason might carry that should never sit in a durable `last_error` column:
+ * a bearer token from an authorization header, or credentials embedded in a URL. `fetch`'s own thrown
+ * messages can echo the request it was given, and this is the one place every one of those messages
+ * passes through before it is stored.
+ */
+function sanitizeDeliveryError(reason: string): string {
+  return reason
+    .replace(/Bearer\s+\S+/gi, "Bearer [redacted]")
+    .replace(/:\/\/[^\s/]+:[^\s/@]+@/g, "://[redacted]@");
+}
+
 /** One pass over the outbox: attempt what is pending, record what the peer acknowledged. */
 export async function deliverPending(
   deps: PeerTransportDeps,
   options: { only?: string } = {},
 ): Promise<DeliveryOutcome> {
   const outcome: DeliveryOutcome = { attempted: 0, acknowledged: 0, refused: [] };
+  const deadLettered: { messageId: string; peerNodeId: string }[] = [];
   const send = deps.fetchImpl ?? fetch;
 
   const queued: PeerEnvelope[] = [];
-  for (const document of pendingOutbox(deps.db)) {
+  for (const document of pendingOutbox(deps.db, undefined, deps.now())) {
     const parsed = peerEnvelopeSchema.safeParse(document);
     if (!parsed.success) {
       // A row this build cannot read is not sent: sending it would be guessing at what it says, and
@@ -131,19 +152,27 @@ export async function deliverPending(
         redirect: "error",
       });
       if (!response.ok) {
-        outcome.refused.push({ messageId: envelope.messageId, reason: `the peer answered ${response.status}` });
+        const reason = `the peer answered ${response.status}`;
+        outcome.refused.push({ messageId: envelope.messageId, reason });
+        const failure = markOutboxFailed(deps.db, envelope.messageId, deps.now(), sanitizeDeliveryError(reason));
+        if (failure.status === "dead-lettered") {
+          deadLettered.push({ messageId: envelope.messageId, peerNodeId: envelope.recipientNodeId });
+        }
         continue;
       }
       recordAcknowledgement(deps, envelope.messageId);
       outcome.acknowledged += 1;
     } catch (cause) {
-      outcome.refused.push({
-        messageId: envelope.messageId,
-        reason: cause instanceof Error ? cause.message : "delivery failed",
-      });
+      const reason = cause instanceof Error ? cause.message : "delivery failed";
+      outcome.refused.push({ messageId: envelope.messageId, reason });
+      const failure = markOutboxFailed(deps.db, envelope.messageId, deps.now(), sanitizeDeliveryError(reason));
+      if (failure.status === "dead-lettered") {
+        deadLettered.push({ messageId: envelope.messageId, peerNodeId: envelope.recipientNodeId });
+      }
     }
   }
 
+  if (deadLettered.length > 0) outcome.deadLettered = deadLettered;
   return outcome;
 }
 

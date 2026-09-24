@@ -2,7 +2,7 @@
   "name": "@clarkcant/voice-adapters",
   "version": "0.2.0",
   "private": true,
-  "description": "Provider-neutral voice event model plus GPT-Live adapter seam. Transcript correlation, barge-in and correction semantics are real; live audio requires a provider account.",
+  "description": "Provider-neutral voice event model plus Gemini Live adapter seam and a Gemini 3.8 Flash/Flash-Lite TTS client. Transcript correlation, barge-in and correction semantics are real; live audio and TTS both require a provider account.",
   "license": "Apache-2.0",
   "type": "module",
   "main": "./src/index.ts",

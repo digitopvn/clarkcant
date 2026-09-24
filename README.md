@@ -69,7 +69,8 @@ These are exercised by tests in this repository, not described in prose:
 - **Task dispatch.** Once the conductor picks a capability for a task, a worker actually runs
   it: a bounded pool of worker processes (queued beyond the pool), a lease per capability with
   fencing so two runs of the same capability cannot collide, confinement of the worker's roots
-  to what the node owns, a deadline and an output ceiling on the child process, and an
+  to what the node owns, a deadline, the task's wall-clock and token budgets, an output
+  ceiling on the child process, and an
   execution-supervisor environment allowlist so the child never inherits a provider key or an
   SSH agent socket. The run's evidence settles the task through the same state machine every
   other path uses — success only through verification — and the outcome reaches the
@@ -98,6 +99,14 @@ or ask a clarifying question — and it can only narrow, never widen.
   change becomes a new generation at the next turn boundary, because Pi resolves a model when a session is created.
 - **Stop and audit.** `POST /stop` kills running commands, interrupts turns and stops background workers. Every
   effect is written to an append-only trail by name and outcome, never by value.
+- **One supervisor for running work.** Background requests, `run_command` processes, task workers and terminals are
+  listed and stopped through one work supervisor — from the process panel, by asking Clark (`list_work` /
+  `stop_work`), by `POST /stop`, or by shutdown. Background requests run at most 3 at a time (1/3/5 in Settings)
+  with a queue of 10; every child runs in its own process group, so a stop reaches its grandchildren. A command the
+  model runs inherits only an allowlist plus the secret the broker granted it, so a token exported in the node's
+  environment (for example `GH_TOKEN`) is no longer visible to `run_command`; a terminal keeps the person's own
+  environment minus what the node itself loaded. After a restart, each unfinished piece of work is reported once
+  in its conversation. (`apps/runtime/src/work-supervisor.ts`, `work-recovery.ts`, `child-env.ts`)
 
 ## What does not work yet
 
@@ -136,6 +145,18 @@ required to install, boot, or pass the test suite — see "Turning semantic sear
 to" in `docs/mini-app/jev-configuration.md`.
 
 ## Getting started
+
+The quickest path is the installer. It checks the machine, clones the repository and runs the
+interactive onboarding (model, key, data directory, local or Docker):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/digitopvn/clarkcant/main/tools/install.sh | sh   # macOS / Linux
+irm https://raw.githubusercontent.com/digitopvn/clarkcant/main/tools/install.ps1 | iex          # Windows PowerShell
+node tools/setup.mjs                                                                          # from a checkout
+```
+
+[`docs/installation.md`](docs/installation.md) covers every platform, Docker, a VPS with HTTPS,
+non-interactive setup and troubleshooting. By hand:
 
 ```bash
 corepack enable

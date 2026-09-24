@@ -80,6 +80,26 @@ export interface ViewRequest {
 
 export const SHOW_VIEW_TOOL = "show_view";
 
+export interface BackgroundRunInput {
+  conversationId: string;
+  principal: Principal;
+  text: string;
+  /** The supervisor's id for this run, which a stop names. A fresh one is made when absent. */
+  workId?: string;
+  /** Aborted when the run is stopped, overruns its deadline or the node shuts down; the reason says which. */
+  signal?: AbortSignal;
+}
+
+/**
+ * How long a conversation's session is kept once nobody is using it, and how many are kept at all.
+ *
+ * A session is a provider connection and a context window held in memory. Keeping one per conversation for as long as
+ * the process lives is a leak that grows with every conversation a person ever opened; dropping an idle one costs a
+ * recap on the next message, which is what a fresh session already does after a failure.
+ */
+export const TURN_IDLE_MS = 30 * 60_000;
+export const MAX_IDLE_TURNS = 16;
+
 export interface ModelTurn {
   /** What the node is configured to run on, recorded on the card for each reply. */
   selection: ModelSelection;
@@ -101,7 +121,10 @@ export interface ModelTurn {
    * nothing here touches `turns` or the in-flight marker, so a background request cannot make the conversation look
    * busy or steal the turn that is running.
    */
-  runInBackground: (input: { conversationId: string; principal: Principal; text: string }) => Promise<string>;
+  runInBackground: (input: BackgroundRunInput) => Promise<string>;
+
+  /** How long the conversation's current turn has been running, or undefined when none is. */
+  runningMs: (conversationId: string) => number | undefined;
 
   /**
    * Stops every background worker this process started, answering how many there were.
@@ -179,6 +202,10 @@ interface Turn {
    * describes - which is exactly what a first attempt at this did.
    */
   inFlight: boolean;
+  /** When the running turn started, so the mid-turn decider can weigh how long the work has gone on. */
+  startedAtMs: number | undefined;
+  /** When this session last answered or was created, which is what idle eviction orders by. */
+  lastUsedAtMs: number;
 }
 
 function isTextDelta(event: WorkerEvent): event is WorkerEvent & { type: "text-delta"; delta: string } {
@@ -590,12 +617,33 @@ export async function createModelTurn(options: {
   const availability = await adapter.availability();
   const turns = new Map<string, Turn>();
   /**
-   * Background workers this process started, by conversation.
+   * Background workers this process started, by the work id the supervisor gave them.
    *
    * Held so a stop can reach a worker nobody is awaiting: a background request returns as soon as it is accepted, so
    * the only reference to that session is the one kept here.
    */
   const backgroundSessions = new Map<string, string>();
+
+  /*
+   * Drop sessions nobody is using: every idle one past the idle limit, then the least recently used past the count.
+   *
+   * Only turns that are not in flight — a session is never taken out from under a running turn. Called when a new
+   * session is about to be created, which is the moment the set grows.
+   */
+  const evictIdleTurns = (nowMs: number): void => {
+    const idle = [...turns.values()]
+      .filter((turn) => !turn.inFlight)
+      .sort((left, right) => left.lastUsedAtMs - right.lastUsedAtMs);
+    let excess = idle.length - MAX_IDLE_TURNS;
+    for (const turn of idle) {
+      if (nowMs - turn.lastUsedAtMs < TURN_IDLE_MS && excess <= 0) break;
+      excess -= 1;
+      turns.delete(turn.conversationId);
+      generationModels.delete(turn.conversationId);
+      turn.unsubscribe();
+      void adapter.dispose(turn.sessionId).catch(() => undefined);
+    }
+  };
   /**
    * Which model each conversation's current generation runs.
    *
@@ -715,6 +763,8 @@ export async function createModelTurn(options: {
       conversationId,
       fresh: true,
       inFlight: false,
+      startedAtMs: undefined,
+      lastUsedAtMs: Date.now(),
     };
     // The view tool is only registered when there is a catalog; the extra tools stand on their own
     // and are registered whatever the catalog says.
@@ -789,6 +839,7 @@ export async function createModelTurn(options: {
       return existing;
     }
 
+    evictIdleTurns(Date.now());
     const handle = await adapter.createWorkerSession(briefFor(chosen));
 
     turn.sessionId = handle.sessionId;
@@ -836,7 +887,15 @@ export async function createModelTurn(options: {
       return true;
     },
 
-    runInBackground: async (input: { conversationId: string; principal: Principal; text: string }): Promise<string> => {
+    runningMs: (conversationId: string): number | undefined => {
+      const turn = turns.get(conversationId);
+      return turn?.inFlight === true && turn.startedAtMs !== undefined ? Date.now() - turn.startedAtMs : undefined;
+    },
+
+    runInBackground: async (input: BackgroundRunInput): Promise<string> => {
+      const signal = input.signal;
+      const workId = input.workId ?? `bg-${input.conversationId}-${String(Date.now())}`;
+      signal?.throwIfAborted();
       const routed = options.backgroundModel === undefined ? undefined : await options.backgroundModel();
       const handle = await adapter.createWorkerSession({
         goal: input.text.slice(0, 2000),
@@ -848,16 +907,28 @@ export async function createModelTurn(options: {
         // which is exactly why the model for it is a decision rather than a setting.
         ...(routed === undefined ? {} : { model: routed }),
       });
-      backgroundSessions.set(input.conversationId, handle.sessionId);
+      backgroundSessions.set(workId, handle.sessionId);
       let said = "";
       const unsubscribe = adapter.subscribe(handle.sessionId, (event) => {
         if (event.type === "text-delta") said += event.delta;
       });
+      // The supervisor's stop, deadline and shutdown all arrive as this signal; the worker is aborted with the reason's
+      // own words so the adapter's record says why.
+      const onAbort = (): void => {
+        const reason = signal?.reason instanceof Error ? signal.reason.message : "việc nền đã bị dừng";
+        void adapter.abort(handle.sessionId, reason).catch(() => undefined);
+      };
+      signal?.addEventListener("abort", onAbort, { once: true });
       try {
+        // Created before the signal could be observed, so an abort that landed during creation is honoured here.
+        signal?.throwIfAborted();
         await adapter.prompt(handle.sessionId, input.text);
+        // A prompt that settles quietly after an abort is still a stopped run, not a result to report.
+        signal?.throwIfAborted();
       } finally {
+        signal?.removeEventListener("abort", onAbort);
         unsubscribe();
-        backgroundSessions.delete(input.conversationId);
+        backgroundSessions.delete(workId);
         // Disposed whatever happened: a worker nobody will ask again is a provider connection held open for nothing.
         void adapter.dispose(handle.sessionId).catch(() => undefined);
       }
@@ -872,8 +943,8 @@ export async function createModelTurn(options: {
      */
     stopBackgroundSessions: async (): Promise<number> => {
       const started = [...backgroundSessions.entries()];
-      for (const [conversationId, sessionId] of started) {
-        backgroundSessions.delete(conversationId);
+      for (const [workId, sessionId] of started) {
+        backgroundSessions.delete(workId);
         await adapter.abort(sessionId, "người dùng đã dừng công việc đang chạy").catch(() => undefined);
         void adapter.dispose(sessionId).catch(() => undefined);
       }
@@ -912,6 +983,7 @@ export async function createModelTurn(options: {
       // Set before the prompt rather than after it, so a message arriving while the first tokens are being written
       // already sees a turn in flight.
       turn.inFlight = true;
+      turn.startedAtMs = startedAt;
       // Cleared before the prompt rather than after, so a turn that throws still leaves the
       // buffer empty for the next one instead of prepending the previous reply to it.
       turn.pending.length = 0;
@@ -977,6 +1049,8 @@ export async function createModelTurn(options: {
         // Cleared here, in the one path that every outcome goes through: success, failure and cancellation all leave
         // `answer` through this block, and a stale marker would make the next message think a turn was still running.
         turn.inFlight = false;
+        turn.startedAtMs = undefined;
+        turn.lastUsedAtMs = Date.now();
       }
 
       // Trailing prose after the last view, and reasoning that never got closed by a later block.
@@ -1008,12 +1082,25 @@ export async function createModelTurn(options: {
       };
     },
 
+    /*
+     * Every session this process holds, foreground and background.
+     *
+     * A running turn is aborted before its session is disposed, so a provider stream in flight is cancelled rather
+     * than left writing into a session that no longer exists; the background workers go the same way, because a
+     * shutdown that disposed only the conversations would leave the workers nobody is awaiting.
+     */
     async dispose(): Promise<void> {
       for (const turn of turns.values()) {
         turn.unsubscribe();
+        if (turn.inFlight) turn.abort.abort();
         await adapter.dispose(turn.sessionId).catch(() => undefined);
       }
       turns.clear();
+      for (const [workId, sessionId] of [...backgroundSessions.entries()]) {
+        backgroundSessions.delete(workId);
+        await adapter.abort(sessionId, "node đang tắt").catch(() => undefined);
+        await adapter.dispose(sessionId).catch(() => undefined);
+      }
     },
   };
 }

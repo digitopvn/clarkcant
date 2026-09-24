@@ -1143,6 +1143,60 @@ export const MIGRATIONS: readonly Migration[] = [
       `);
     },
   },
+  {
+    version: 24,
+    name: "work_runs",
+    reversible: true,
+    up: (db) => {
+      db.exec(`
+        -- The work a node started on the person's behalf, written while it runs so the next boot can tell what an
+        -- earlier process left unfinished: a background request whose result never arrived, or a command whose
+        -- process group may still be alive. A process's pid is only acted on when the start time the kernel reports
+        -- for it now matches the one recorded here, on the same machine boot.
+        CREATE TABLE work_runs (
+          work_id           TEXT PRIMARY KEY,
+          node_id           TEXT NOT NULL,
+          kind              TEXT NOT NULL,
+          conversation_id   TEXT,
+          title             TEXT NOT NULL,
+          request_text      TEXT,
+          pid               INTEGER,
+          pgid              INTEGER,
+          proc_start_time   TEXT,
+          machine_boot_id   TEXT,
+          node_boot_id      TEXT NOT NULL,
+          state             TEXT NOT NULL,
+          effectful         INTEGER NOT NULL DEFAULT 0,
+          attempt           INTEGER NOT NULL DEFAULT 0,
+          started_at        TEXT NOT NULL,
+          ended_at          TEXT
+        );
+        CREATE INDEX idx_work_runs_open ON work_runs(node_id, state);
+      `);
+    },
+  },
+  {
+    version: 25,
+    name: "outbox_backoff",
+    reversible: true,
+    up: (db) => {
+      db.exec(`
+        -- A peer that is unreachable must not be retried on every pass at the same rate a healthy one
+        -- is: next_attempt_at is when a failed message becomes eligible again, so a down peer's queue
+        -- is retried on a widening schedule instead of hammering it once a pass. Nullable because an
+        -- unattempted row (and every row from before this migration) is due immediately, the same as
+        -- today.
+        --
+        -- dead_lettered_at marks a message this node has given up retrying automatically: the attempt
+        -- count crossed the ceiling, so it is held for an operator to see rather than resent forever
+        -- for a peer or a message that will never succeed. last_error is the most recent reason, kept
+        -- so that "why is this stuck" does not require reproducing the failure.
+        ALTER TABLE outbox ADD COLUMN next_attempt_at TEXT;
+        ALTER TABLE outbox ADD COLUMN dead_lettered_at TEXT;
+        ALTER TABLE outbox ADD COLUMN last_error TEXT;
+      `);
+    },
+  },
 ];
 
 function readAll<T>(db: Database, sql: string): T[] {

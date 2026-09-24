@@ -377,6 +377,15 @@ export const voiceWakePreferenceSchema = z.strictObject({
 });
 export type VoiceWakePreference = z.infer<typeof voiceWakePreferenceSchema>;
 
+/**
+ * How many background requests one node runs at once.
+ *
+ * Three choices rather than a number field: the useful question is "one at a time, a few, or more", and a free
+ * number invites a value the machine cannot carry. The main conversation turn is never counted against it.
+ */
+export const backgroundLimitSchema = z.union([z.literal(1), z.literal(3), z.literal(5)]);
+export type BackgroundLimit = z.infer<typeof backgroundLimitSchema>;
+
 /** The window presentations this application has. */
 export const windowModeSchema = z.enum(["normal", "expanded", "compact", "orb"]);
 export type WindowMode = z.infer<typeof windowModeSchema>;
@@ -505,6 +514,14 @@ export const PREFERENCE_REGISTRY = {
     applies: "immediate",
     default: DEFAULT_EXECUTION_POLICY_CONFIG,
     schema: executionPolicyConfigSchema,
+  },
+  "execution.backgroundLimit": {
+    key: "execution.backgroundLimit",
+    // Per node: how much work runs at once is a fact about the machine running it, not about the account.
+    scope: "node",
+    applies: "immediate",
+    default: 3,
+    schema: backgroundLimitSchema,
   },
   "ai.modelFavorites": {
     key: "ai.modelFavorites",

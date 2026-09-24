@@ -50,6 +50,7 @@ import type { TerminalRegistry } from "./terminal-sessions.ts";
 import { rememberMemory, type MemoryDeps } from "./memory.ts";
 import type { SessionSearchDeps } from "./session-search.ts";
 import { createSearchHistoryTool } from "./session-search.ts";
+import { createWorkTools } from "./work-tools.ts";
 
 /**
  * The tools a turn may call beyond the view and composition surface.
@@ -165,6 +166,12 @@ export function createNodeTools(input: {
    * deps, and a node that cannot run commands cannot type them either.
    */
   terminals?: { registry: TerminalRegistry; newId: (prefix: string) => string; conversationId?: string };
+  /**
+   * What is running and how to stop it (`work-tools.ts`), scoped first to this conversation.
+   *
+   * Absent means neither tool is registered; the node's supervisor is the list both read.
+   */
+  work?: { conversationId?: string };
 }): ToolDefinition[] {
   const roots = input.roots ?? machineRoots;
   return [
@@ -225,6 +232,7 @@ export function createNodeTools(input: {
         ]),
     ...(input.appControl === undefined ? [] : [createControlAppTool(input.appControl)]),
     ...(input.packages === undefined ? [] : [createManagePackageTool(input.packages)]),
+    ...(input.work === undefined ? [] : createWorkTools(input.work)),
   ];
 }
 
@@ -993,6 +1001,7 @@ export function createRunCommandTool(
         ...(reason === "" ? {} : { reason }),
         ...(why === "" ? {} : { why }),
         ...(env === undefined ? {} : { env }),
+        ...(effectAudit?.conversationId === undefined ? {} : { conversationId: effectAudit.conversationId }),
         ...(input.now === undefined ? {} : { now: input.now }),
         ...(input.run === undefined ? {} : { run: input.run }),
       });
