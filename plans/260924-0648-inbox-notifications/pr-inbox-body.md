@@ -59,7 +59,7 @@ Both runs are on this branch with `main` merged in.
 
 ## Not in this PR
 
-These need backend work that does not exist yet. Each has an issue:
+Each of these has its own issue. #169–#172 need backend work that does not exist yet; #173 and #174 are pre-existing bugs found along the way.
 
 - #169: update checks for Pi, npm/git packages and widgets. There is no upstream version source yet.
 - #170: notices and cross-node approvals over NodeLink.
