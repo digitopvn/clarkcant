@@ -1,0 +1,43 @@
+# One ClarkCant node in Docker, reachable on this machine only.
+#
+#   node tools/setup.mjs --mode docker     # writes .env, builds the image
+#   docker compose up -d
+#   docker compose exec clarkcant cat /data/identity.json   # the bearer token
+#
+# The port is published on 127.0.0.1 and nowhere else: the node inside the container binds 0.0.0.0 with
+# --allow-public-bind only because a container's own loopback is unreachable from the host, and the
+# published address is what keeps it private. For a server reachable from the internet, add the TLS
+# overlay: docker compose -f docker-compose.yml -f docker/compose.public.yml up -d
+name: clarkcant
+
+services:
+  clarkcant:
+    build: .
+    image: clarkcant:local
+    restart: unless-stopped
+    # Provider keys and model choice. Read at run time, never baked into the image.
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      CLARKCANT_DATA_DIR: /data
+      # The image's own web build. A host path written to .env by local onboarding must not replace it.
+      CC_WEB_DIST: /app/apps/web/dist
+    command:
+      - --data-dir
+      - /data
+      - --host
+      - 0.0.0.0
+      - --allow-public-bind
+      - --port
+      - "8765"
+      - --label
+      - ${CLARKCANT_LABEL:-docker node}
+    ports:
+      - "127.0.0.1:${CLARKCANT_PORT:-8765}:8765"
+    # Identity, database, blobs and transcripts. Losing this volume is losing the node's identity.
+    volumes:
+      - clarkcant-data:/data
+
+volumes:
+  clarkcant-data:
