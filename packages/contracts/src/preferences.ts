@@ -405,7 +405,7 @@ export type InboxNotificationGroup = z.infer<typeof inboxNotificationGroupSchema
 export const INBOX_NOTIFICATION_GROUPS = inboxNotificationGroupSchema.options;
 
 /** A clock reading as a person types it into a time field: zero-padded hours and minutes, local time. */
-const timeOfDaySchema = z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/, "must be a 24-hour HH:MM time");
+export const timeOfDaySchema = z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/, "must be a 24-hour HH:MM time");
 
 /**
  * What decides whether one poll raises an OS or a web notification.
@@ -445,6 +445,49 @@ export const DEFAULT_INBOX_NOTIFICATIONS_PREFERENCE: InboxNotificationsPreferenc
   web: false,
   quietHours: { enabled: false, start: "22:00", end: "07:00" },
 };
+
+/**
+ * Read a stored `inbox.notifications` value, one field at a time.
+ *
+ * `inboxNotificationsPreferenceSchema` is a `strictObject` with every group required, which is exactly right
+ * for the write path: a write cannot smuggle in an unregistered group or a quiet-hours field the schema does
+ * not know. It is exactly wrong for reading an old document once a new group is added, because `strictObject`
+ * fails the whole value when one key is missing — a document written before that group existed would not just
+ * lack a choice for it, `safeParse` would refuse the document entirely and every group the person actually
+ * chose would silently reset to the default alongside it. This reads the same way `parseExecutionPolicyConfig`
+ * reads the execution policy: a field that parses is kept, a field that does not (or is simply absent, which
+ * is the normal shape of an old document) falls back to that one field's own default, never the whole object's.
+ */
+export function parseInboxNotificationsPreference(value: unknown): InboxNotificationsPreference {
+  const source = typeof value === "object" && value !== null ? (value as Record<string, unknown>) : {};
+  const defaults = DEFAULT_INBOX_NOTIFICATIONS_PREFERENCE;
+
+  const groupsSource =
+    typeof source.groups === "object" && source.groups !== null ? (source.groups as Record<string, unknown>) : {};
+  const groups = { ...defaults.groups };
+  for (const group of INBOX_NOTIFICATION_GROUPS) {
+    const stored = groupsSource[group];
+    if (typeof stored === "boolean") groups[group] = stored;
+  }
+
+  const quietSource =
+    typeof source.quietHours === "object" && source.quietHours !== null
+      ? (source.quietHours as Record<string, unknown>)
+      : {};
+  const start = timeOfDaySchema.safeParse(quietSource.start);
+  const end = timeOfDaySchema.safeParse(quietSource.end);
+
+  return {
+    groups,
+    os: typeof source.os === "boolean" ? source.os : defaults.os,
+    web: typeof source.web === "boolean" ? source.web : defaults.web,
+    quietHours: {
+      enabled: typeof quietSource.enabled === "boolean" ? quietSource.enabled : defaults.quietHours.enabled,
+      start: start.success ? start.data : defaults.quietHours.start,
+      end: end.success ? end.data : defaults.quietHours.end,
+    },
+  };
+}
 
 /**
  * One registered preference.
