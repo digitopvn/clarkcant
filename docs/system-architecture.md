@@ -403,7 +403,10 @@ first poll only remembers, it does not notify a backlog. The content is only a r
 never a command line, capability ref or internal id. On desktop the renderer calls `desktop:notify`; the main process
 keeps a reference to each `Notification` still on screen, and on click restores the shell window from orb/compact,
 focuses it and sends `desktop:notificationClicked` **only to the shell window** (never to a detached widget window);
-preload returns a function that unsubscribes that listener. In the browser, the Web Notification API is used only
+preload returns a function that unsubscribes that listener (as does `onWidgetReattached`). When `desktop:notify`
+refuses (`reason`: `unsupported`, `no-window`) or fails, the renderer records the latest outcome
+(`desktop-notify-status.ts`, the kind of failure only, no content) and Settings → Control shows an inline status
+beside the OS notification toggle until a notification is shown again. In the browser, the Web Notification API is used only
 once the user has turned it on in Settings → Control and the browser granted permission; each notification carries
 the item's id as its `tag`, so several tabs do not stack copies. The poll still reads `GET /inbox` when no channel
 can deliver, so the set of seen ids stays current: turning notifications on midway neither floods a backlog nor

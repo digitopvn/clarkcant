@@ -394,7 +394,10 @@ cửa sổ mất focus hoặc đang ở orb/compact; theo nhóm và giờ yên l
 dung chỉ gồm tiêu đề/nội dung đã redact và bị giới hạn độ dài — không bao giờ có dòng lệnh, capability ref hay mã
 nội bộ. Trên desktop, renderer gọi `desktop:notify`; main process giữ tham chiếu tới từng `Notification` còn trên
 màn hình, và khi click thì khôi phục cửa sổ shell khỏi orb/compact, focus nó rồi gửi `desktop:notificationClicked`
-**chỉ tới cửa sổ shell** (không bao giờ tới cửa sổ widget tách rời); preload trả về hàm huỷ đăng ký listener đó.
+**chỉ tới cửa sổ shell** (không bao giờ tới cửa sổ widget tách rời); preload trả về hàm huỷ đăng ký listener đó
+(`onWidgetReattached` cũng vậy). Khi `desktop:notify` từ chối (`reason`: `unsupported`, `no-window`) hoặc lỗi,
+renderer ghi lại kết quả gần nhất (`desktop-notify-status.ts`, chỉ loại lỗi, không có nội dung) và Settings → Control
+hiện trạng thái inline cạnh công tắc thông báo hệ điều hành cho tới khi một thông báo hiện được.
 Trên trình duyệt, Web Notification API chỉ được dùng khi người dùng đã bấm bật trong Settings → Control và trình
 duyệt cấp quyền; mỗi thông báo mang `tag` là id của mục nên nhiều tab không chồng bản sao. Lượt poll vẫn đọc `GET /inbox` khi
 chưa kênh nào giao được, để tập id đã thấy luôn theo kịp: bật thông báo giữa chừng không báo dồn, cũng không nuốt

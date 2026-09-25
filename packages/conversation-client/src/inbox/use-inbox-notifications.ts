@@ -6,6 +6,7 @@ import type { GatewayClient } from "../api.ts";
 import { desktopBridge, hasDesktopChrome } from "../desktop-compact.ts";
 import type { WindowModeAttribute } from "../input-modality.ts";
 import type { MessageKey } from "../i18n/messages.ts";
+import { classifyDesktopNotifyResult, recordDesktopNotifyStatus } from "./desktop-notify-status.ts";
 import { decideInboxNotifications, type InboxNotifyCandidate } from "./inbox-notify-decide.ts";
 import { waitingKey } from "./inbox-model.ts";
 
@@ -104,9 +105,11 @@ export function useInboxNotifications({ client, t, windowMode, onOpenInbox }: Us
         if (!preference.os) return;
         const bridge = desktopBridge();
         if (bridge?.notify === undefined) return;
-        bridge.notify({ title: candidate.title, body: candidate.body ?? "" }).catch(() => {
-          // Best-effort: a refused OS notification is not an app-level error worth surfacing.
-        });
+        // Not an app-level error, but kept so Settings can say why an OS toggle that is on shows nothing.
+        bridge.notify({ title: candidate.title, body: candidate.body ?? "" }).then(
+          (answer) => recordDesktopNotifyStatus(classifyDesktopNotifyResult(answer)),
+          () => recordDesktopNotifyStatus({ kind: "failed" }),
+        );
         return;
       }
 

@@ -287,3 +287,69 @@ test("no notification appears while the window is focused, since the in-app mark
 
   await drainWaiting(page);
 });
+
+/**
+ * Opens Settings → Control from the keyboard. With a desktop bridge present the window's drag region covers the
+ * header, so a pointer click there lands on the chrome, as it would in the real shell.
+ */
+async function openControlByKeyboard(page: Page): Promise<void> {
+  await page.locator('[data-settings="true"]').focus();
+  await page.keyboard.press("Enter");
+  await page.locator("#cc-tab-control").click();
+}
+
+test("a desktop notification the OS refused is reported beside the OS toggle, and clears once one is shown", async ({
+  page,
+}) => {
+  // A stand-in desktop bridge: enough for the client to treat this window as desktop chrome, with a `notify`
+  // that answers the way the main process does when the OS has no notification support.
+  await page.addInitScript(() => {
+    const scope = window as unknown as { __ccNotifyAnswer: unknown; clarkcant: unknown };
+    scope.__ccNotifyAnswer = { ok: false, reason: "unsupported", refused: "this OS does not support notifications" };
+    scope.clarkcant = {
+      setCompactMode: () => Promise.resolve({ ok: true }),
+      notify: () => Promise.resolve(scope.__ccNotifyAnswer),
+      onNotificationClicked: () => () => undefined,
+    };
+    document.hasFocus = () => false;
+  });
+  await openApp(page);
+  await drainWaiting(page);
+
+  await openControlByKeyboard(page);
+  const panel = page.locator("#cc-tabpanel-control");
+  await expect(panel).toBeVisible();
+  const osToggle = panel.locator('[data-toggle="inbox-notify-os"] input[type="checkbox"]');
+  if (!(await osToggle.isChecked())) {
+    await panel.locator('[data-toggle="inbox-notify-os"]').click();
+    await expect(osToggle).toBeChecked({ timeout: 10_000 });
+  }
+  const group = panel.locator('[data-toggle="inbox-notify-group-waitingApprovals"] input[type="checkbox"]');
+  if (!(await group.isChecked())) {
+    await panel.locator('[data-toggle="inbox-notify-group-waitingApprovals"]').click();
+    await expect(group).toBeChecked({ timeout: 10_000 });
+  }
+  const status = panel.locator('[data-inbox-notify-os-status="unsupported"]');
+  await expect(status).toHaveCount(0);
+
+  await page.keyboard.press("Escape");
+  await propose(page);
+
+  // Settings is reopened while the poll delivers, so the status arrives in the surface the person is looking at.
+  await openControlByKeyboard(page);
+  await expect(status).toBeVisible({ timeout: 20_000 });
+  await expect(status).toContainText(/inbox|hộp thư/i);
+
+  // A notification that is shown again clears the status: it reports the latest attempt, not a stale one.
+  await page.evaluate(() => {
+    (window as unknown as { __ccNotifyAnswer: unknown }).__ccNotifyAnswer = { ok: true };
+  });
+  await page.keyboard.press("Escape");
+  await drainWaiting(page);
+  await propose(page);
+  await openControlByKeyboard(page);
+  await expect(panel.locator("[data-inbox-notify-os-status]")).toHaveCount(0, { timeout: 20_000 });
+
+  await page.keyboard.press("Escape");
+  await drainWaiting(page);
+});

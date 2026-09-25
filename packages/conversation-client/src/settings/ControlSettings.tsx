@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactElement } from "react";
+import { useEffect, useState, useSyncExternalStore, type ReactElement } from "react";
 
 import type { EffectCategory, ExecutionRule, InboxNotificationGroup, InboxNotificationsPreference } from "@clarkcant/contracts";
 import {
@@ -15,6 +15,11 @@ import { InlineStatus, SegmentedControl, SettingsRow, ToggleSwitch } from "./con
 import type { PreferencesHandle } from "./controls/use-preferences.ts";
 import type { GatewayClient } from "../api.ts";
 import { hasDesktopChrome } from "../desktop-compact.ts";
+import {
+  desktopNotifyStatus,
+  desktopNotifyStatusMessageKey,
+  subscribeDesktopNotifyStatus,
+} from "../inbox/desktop-notify-status.ts";
 import { effectCategoryLabels } from "../inbox/inbox-model.ts";
 import { useT } from "../i18n/locale-context.tsx";
 import type { MessageKey } from "../i18n/messages.ts";
@@ -410,6 +415,8 @@ function InboxNotificationSettingsReady({ prefs, value }: { prefs: PreferencesHa
   // an already-stale `value`, silently discarding whatever the first write was about to confirm.
   const pendingReason = pending ? t("settings.control.notifications.pending") : undefined;
   const desktop = hasDesktopChrome();
+  const osStatus = useSyncExternalStore(subscribeDesktopNotifyStatus, desktopNotifyStatus, desktopNotifyStatus);
+  const osStatusKey = desktop && value.os ? desktopNotifyStatusMessageKey(osStatus) : undefined;
   const NotificationApi = webNotificationApi();
   const webGranted = NotificationApi !== undefined && NotificationApi.permission === "granted";
   const webSupported = NotificationApi !== undefined;
@@ -522,6 +529,11 @@ function InboxNotificationSettingsReady({ prefs, value }: { prefs: PreferencesHa
               : { disabledReason: pendingReason })}
         />
       </SettingsRow>
+      {osStatusKey === undefined ? null : (
+        <p className="cc-panel-note" data-inbox-notify-os-status={osStatus.kind} role="status">
+          {t(osStatusKey)}
+        </p>
+      )}
 
       <SettingsRow
         label={t("settings.control.notifications.web.label")}
