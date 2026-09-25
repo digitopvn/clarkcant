@@ -1,6 +1,15 @@
 import { describe, expect, it } from "vitest";
 
-import { desktopBridge, hasDesktopChrome, requestWindowMode, sessionFromBridge } from "../src/desktop-compact.ts";
+import {
+  desktopBridge,
+  hasDesktopChrome,
+  hasWindowControls,
+  requestFullScreen,
+  requestMinimize,
+  requestWindowMode,
+  sessionFromBridge,
+  subscribeWindowState,
+} from "../src/desktop-compact.ts";
 
 /**
  * The client's half of the desktop shell.
@@ -102,5 +111,83 @@ describe("the session the shell hands over", () => {
 
   it("a browser without a bridge has no session to hand over", async () => {
     expect(await sessionFromBridge({})).toBeUndefined();
+  });
+});
+
+describe("minimize and full screen", () => {
+  it("draws the buttons only when the shell has both verbs", () => {
+    expect(hasWindowControls({})).toBe(false);
+    // A shell that resizes but predates these verbs keeps its chrome and gets no buttons it cannot honour.
+    expect(hasWindowControls(scopeWith({ setCompactMode: async () => ({ ok: true }) }))).toBe(false);
+    expect(hasWindowControls(scopeWith({ minimizeWindow: async () => ({ ok: true }) }))).toBe(false);
+    expect(
+      hasWindowControls(
+        scopeWith({ minimizeWindow: async () => ({ ok: true }), setFullScreen: async () => ({ ok: true }) }),
+      ),
+    ).toBe(true);
+  });
+
+  it("a browser is refused instead of pretending the window went anywhere", async () => {
+    expect((await requestMinimize({})).ok).toBe(false);
+    expect((await requestFullScreen(true, {})).ok).toBe(false);
+  });
+
+  it("full screen is what the window reports, not what was asked", async () => {
+    const asked: unknown[] = [];
+    const scope = scopeWith({
+      setFullScreen: async (value: unknown) => {
+        asked.push(value);
+        // The window manager declined: the window is still not full screen.
+        return { ok: true, fullScreen: false, minimized: false };
+      },
+    });
+    const answer = await requestFullScreen(true, scope);
+    expect(asked).toEqual([true]);
+    expect(answer).toEqual({ ok: true, fullScreen: false, minimized: false });
+  });
+
+  it("a refusal, a throw or a malformed answer each come back as a refusal", async () => {
+    const refused = await requestMinimize(
+      scopeWith({ minimizeWindow: async () => ({ ok: false, refused: "this window cannot be minimized" }) }),
+    );
+    expect(refused).toEqual({ ok: false, refused: "this window cannot be minimized" });
+
+    const threw = await requestMinimize(
+      scopeWith({
+        minimizeWindow: async () => {
+          throw new Error("gone");
+        },
+      }),
+    );
+    expect(threw.ok).toBe(false);
+
+    const malformed = await requestFullScreen(true, scopeWith({ setFullScreen: async () => ({ ok: true, fullScreen: "yes" }) }));
+    expect(malformed.ok).toBe(false);
+  });
+
+  it("hears changes the OS made, drops junk, and unsubscribes", () => {
+    let push: ((payload: unknown) => void) | undefined;
+    let unsubscribed = false;
+    const scope = scopeWith({
+      onWindowStateChanged: (callback: (payload: unknown) => void) => {
+        push = callback;
+        return () => {
+          unsubscribed = true;
+        };
+      },
+    });
+    const seen: unknown[] = [];
+    const stop = subscribeWindowState((state) => seen.push(state), scope);
+    push?.({ ok: true, fullScreen: true, minimized: false });
+    push?.({ ok: true, fullScreen: "maybe" });
+    push?.(null);
+    expect(seen).toEqual([{ fullScreen: true, minimized: false }]);
+    stop();
+    expect(unsubscribed).toBe(true);
+  });
+
+  it("subscribing without a shell, or to one that hands back no unsubscribe, is harmless", () => {
+    expect(() => subscribeWindowState(() => {}, {})()).not.toThrow();
+    expect(() => subscribeWindowState(() => {}, scopeWith({ onWindowStateChanged: () => undefined }))()).not.toThrow();
   });
 });

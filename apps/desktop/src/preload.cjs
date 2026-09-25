@@ -107,6 +107,24 @@ const bridge = {
   restoreWindow() {
     return ipcRenderer.invoke("desktop:restoreWindow");
   },
+  /** Send the window to the dock or taskbar. Answers with what the window reports afterwards. */
+  minimizeWindow() {
+    return ipcRenderer.invoke("desktop:minimizeWindow");
+  },
+  /** Take the whole screen (`true`) or give it back (`false`). Answers once the window has settled. */
+  setFullScreen(value) {
+    return ipcRenderer.invoke("desktop:setFullScreen", value);
+  },
+  /**
+   * Told whenever the window enters or leaves full screen, or is minimized or restored, including by the OS.
+   *
+   * Answers with an unsubscribe function, so a component that mounts twice does not leave a listener behind.
+   */
+  onWindowStateChanged(callback) {
+    const listener = (_event, payload) => callback(payload);
+    ipcRenderer.on("desktop:windowStateChanged", listener);
+    return () => ipcRenderer.removeListener("desktop:windowStateChanged", listener);
+  },
   /** Bring the window forward, for a request that came from voice or from another surface. */
   focusWindow() {
     return ipcRenderer.invoke("desktop:focusWindow");

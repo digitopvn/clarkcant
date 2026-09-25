@@ -377,7 +377,7 @@ button:focus-visible, textarea:focus-visible, input:focus-visible, [tabindex]:fo
   .cc-desktop-controls { display: flex; align-items: center; gap: 2px; -webkit-app-region: no-drag; }
   .cc-desktop-button { -webkit-app-region: no-drag; background: transparent; color: inherit; border: 1px solid var(--cc-line, rgba(255, 255, 255, 0.16)); border-radius: 6px; width: 26px; height: 22px; line-height: 1; font-size: 12px; cursor: pointer; }
   .cc-desktop-button:hover { border-color: var(--cc-accent, #7aa2f7); }
-  .cc-desktop-button[data-pinned="true"] { border-color: var(--cc-accent, #7aa2f7); }
+  .cc-desktop-button[data-pinned="true"], .cc-desktop-button[data-fullscreen="true"] { border-color: var(--cc-accent, #7aa2f7); }
   .cc-desktop-mode { -webkit-app-region: no-drag; font-size: 11px; opacity: 0.72; padding-right: 6px; }
   .cc-desktop-problem { -webkit-app-region: no-drag; font-size: 11px; padding-right: 6px; opacity: 0.9; }
 

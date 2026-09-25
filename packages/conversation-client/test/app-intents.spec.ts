@@ -20,6 +20,7 @@ interface Recorded {
   expand: number;
   minimise: number;
   minimal: boolean[];
+  fullScreen: boolean[];
   quit: number;
 }
 
@@ -32,6 +33,7 @@ function recordingHost(withDesktop = false): { host: AppIntentHost; calls: Recor
     expand: 0,
     minimise: 0,
     minimal: [],
+    fullScreen: [],
     quit: 0,
   };
   const host: AppIntentHost = {
@@ -57,6 +59,9 @@ function recordingHost(withDesktop = false): { host: AppIntentHost; calls: Recor
           },
           setMinimal: (compact: boolean) => {
             calls.minimal.push(compact);
+          },
+          setFullScreen: (value: boolean) => {
+            calls.fullScreen.push(value);
           },
           quit: () => {
             calls.quit += 1;
@@ -104,7 +109,10 @@ describe("carrying out an intent", () => {
     runAppIntent(executable({ kind: "intent", intent: { kind: "window.minimal" }, readBack: "thu" }), host);
     runAppIntent(executable({ kind: "intent", intent: { kind: "window.expand" }, readBack: "mở" }), host);
     runAppIntent(executable({ kind: "intent", intent: { kind: "window.minimise" }, readBack: "nhỏ" }), host);
+    runAppIntent(executable({ kind: "intent", intent: { kind: "window.fullscreen" }, readBack: "to" }), host);
+    runAppIntent(executable({ kind: "intent", intent: { kind: "window.windowed" }, readBack: "thoát" }), host);
 
+    expect(calls.fullScreen).toEqual([true, false]);
     expect(calls.minimal).toEqual([true]);
     expect(calls.expand).toBe(1);
     expect(calls.minimise).toBe(1);
@@ -113,14 +121,21 @@ describe("carrying out an intent", () => {
   it("says a window command needs the desktop app rather than appearing to work", () => {
     const { host, calls } = recordingHost();
 
-    for (const kind of ["window.expand", "window.minimise", "window.minimal", "app.quit"] as const) {
+    for (const kind of [
+      "window.expand",
+      "window.minimise",
+      "window.minimal",
+      "window.fullscreen",
+      "window.windowed",
+      "app.quit",
+    ] as const) {
       const run = runAppIntent(executable({ kind: "intent", intent: { kind }, readBack: "ok" }), host);
       expect(run.ran, kind).toBe(false);
       expect(run.say, kind).toBe(NOT_DESKTOP_SAY);
     }
 
     // Nothing was attempted, so nothing can have half-happened.
-    expect(calls).toMatchObject({ expand: 0, minimise: 0, minimal: [], quit: 0 });
+    expect(calls).toMatchObject({ expand: 0, minimise: 0, minimal: [], fullScreen: [], quit: 0 });
   });
 });
 

@@ -73,6 +73,16 @@ const DOCUMENTED: readonly { kind: AppIntentKind; vietnamese: readonly string[];
     english: "minimal bar",
   },
   {
+    kind: "window.fullscreen",
+    vietnamese: ["phóng to toàn màn hình", "mở toàn màn hình", "phóng to cửa sổ ra toàn màn hình"],
+    english: "go full screen",
+  },
+  {
+    kind: "window.windowed",
+    vietnamese: ["thoát toàn màn hình", "thoát chế độ toàn màn hình"],
+    english: "exit full screen",
+  },
+  {
     kind: "settings.open",
     vietnamese: ["mở cài đặt", "mở settings", "mở phần cài đặt"],
     english: "open settings",

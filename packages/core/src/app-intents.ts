@@ -115,6 +115,8 @@ const APP_NOUNS: readonly string[] = [
   "phien thoai",
   "thanh voice",
   "man hinh",
+  "full screen",
+  "fullscreen",
   "trang chu",
   "widget",
 ];
@@ -178,6 +180,16 @@ const PHRASES: readonly { phrase: string; kind: AppIntentKind; wholeSentence?: t
   { phrase: "minimal bar", kind: "window.minimal" },
   { phrase: "shrink to the voice bar", kind: "window.minimal" },
   { phrase: "collapse to the voice bar", kind: "window.minimal" },
+  // The whole screen, and back. "thoat toan man hinh" is longer than "toan man hinh", so leaving wins.
+  { phrase: "toan man hinh", kind: "window.fullscreen" },
+  // Longer than "phong to cua so", which would otherwise take "phóng to cửa sổ ra toàn màn hình" to expand.
+  { phrase: "ra toan man hinh", kind: "window.fullscreen" },
+  { phrase: "full screen", kind: "window.fullscreen" },
+  { phrase: "fullscreen", kind: "window.fullscreen" },
+  { phrase: "thoat toan man hinh", kind: "window.windowed" },
+  { phrase: "thoat che do toan man hinh", kind: "window.windowed" },
+  { phrase: "exit full screen", kind: "window.windowed" },
+  { phrase: "exit fullscreen", kind: "window.windowed" },
 
   // Settings, navigation, files.
   { phrase: "mo phan cai dat", kind: "settings.open" },

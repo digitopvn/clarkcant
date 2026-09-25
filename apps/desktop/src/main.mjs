@@ -126,6 +126,7 @@ const EXPECTED_BRIDGE_METHODS = Object.freeze([
   "detachWidget",
   "focusWindow",
   "getSession",
+  "minimizeWindow",
   "notify",
   "onNotificationClicked",
   "onWidgetReattached",
@@ -134,7 +135,9 @@ const EXPECTED_BRIDGE_METHODS = Object.freeze([
   "requestCredential",
   "resizeWindowPreset",
   "restoreWindow",
+  "onWindowStateChanged",
   "setCompactMode",
+  "setFullScreen",
   "setKeepRunningOnWindowClose",
   "setWindowMode",
   "status",
@@ -195,6 +198,40 @@ function describeWindow(window, mode) {
     alwaysOnTop: window.isAlwaysOnTop(),
     focused: window.isFocused(),
   };
+}
+
+/**
+ * Whether the window is full screen or minimized, read off the window.
+ *
+ * Pushed to the renderer on every change as well as answered to a request, because the operating system can
+ * change either one without asking the client: a keyboard shortcut, a click on the dock, a display going away.
+ */
+function windowState(window) {
+  return { ok: true, fullScreen: window.isFullScreen(), minimized: window.isMinimized() };
+}
+
+/**
+ * Enter or leave full screen and wait until the window says it has.
+ *
+ * On macOS the change is an animated move into its own Space, and `isFullScreen()` read straight after the call
+ * still answers the old value. Waiting for the window's own event is what lets the answer be what happened
+ * rather than what was asked. The wait is bounded, so a window manager that never sends the event costs a
+ * moment rather than a hung request, and the answer is then whatever the window reports.
+ */
+async function applyFullScreen(window, value) {
+  if (window.isFullScreen() === value) return;
+  const settled = new Promise((resolve) => {
+    const event = value ? "enter-full-screen" : "leave-full-screen";
+    const timer = setTimeout(done, 1500);
+    function done() {
+      clearTimeout(timer);
+      window.removeListener(event, done);
+      resolve();
+    }
+    window.once(event, done);
+  });
+  window.setFullScreen(value);
+  await settled;
 }
 
 /**
@@ -378,6 +415,8 @@ function registerHandlers() {
     if (!["enter-compact", "expand", "set-always-on-top"].includes(action?.type)) {
       return { ok: false, refused: "that is not a window mode this build knows" };
     }
+    // A full-screen window ignores new bounds, so the voice bar would never appear. Leave full screen first.
+    if (action.type !== "set-always-on-top") await applyFullScreen(window, false);
 
     // Learned from the window the first time rather than assumed, so a window somebody already moved is
     // remembered where it actually is.
@@ -477,6 +516,42 @@ function registerHandlers() {
     if (window.isMinimized()) window.restore();
     window.focus();
     return { ok: true, focused: window.isFocused(), bounds: window.getBounds() };
+  });
+
+  /*
+   * Send the window to the dock or taskbar.
+   *
+   * The answer reads the window back rather than assuming, and there is no matching "unminimize" verb: a
+   * minimized window cannot be clicked, so bringing it back belongs to the OS, to `desktop:focusWindow` or to
+   * the host shortcut.
+   */
+  handle("desktop:minimizeWindow", async () => {
+    const window = BrowserWindow.getAllWindows()[0];
+    if (window === undefined) return { ok: false, refused: "there is no window to minimize" };
+    if (!window.isMinimizable()) return { ok: false, refused: "this window cannot be minimized" };
+    window.minimize();
+    return windowState(window);
+  });
+
+  /*
+   * Take the whole screen, or give it back.
+   *
+   * A boolean rather than a toggle, so two clicks that cross in flight both end where the person meant instead
+   * of cancelling each other out. Leaving full screen puts the window back where it was, which Electron keeps
+   * track of for us; entering it from the voice bar grows the conversation first, because a full-screen voice
+   * bar is a very large empty strip.
+   */
+  handle("desktop:setFullScreen", async (value) => {
+    if (typeof value !== "boolean") return { ok: false, refused: "full screen must be true or false" };
+    const window = BrowserWindow.getAllWindows()[0];
+    if (window === undefined) return { ok: false, refused: "there is no window to resize" };
+    if (!window.isFullScreenable()) return { ok: false, refused: "this window cannot go full screen" };
+    if (value && windowMode !== undefined && windowMode.mode !== "normal") {
+      windowMode = nextWindowMode({ ...windowMode, workArea: workAreaFor(window) }, { type: "expand" });
+      window.setBounds(windowMode.bounds);
+    }
+    await applyFullScreen(window, value);
+    return windowState(window);
   });
 
   handle("desktop:getStatus", async () => ({
@@ -712,6 +787,13 @@ async function createShellWindow({ show = true, url } = {}) {
     if (show) window.show();
   });
 
+  // The chrome shows what the window is, and the OS can change that without the client asking.
+  for (const event of ["enter-full-screen", "leave-full-screen", "minimize", "restore"]) {
+    window.on(event, () => {
+      if (!window.webContents.isDestroyed()) window.webContents.send("desktop:windowStateChanged", windowState(window));
+    });
+  }
+
   // A window somebody dragged is the window they expect back, so a resize while expanded is remembered as the
   // size to return to. A resize during compact is the bar being moved, and remembering that as the normal size
   // would make expanding do nothing at all.
@@ -720,6 +802,8 @@ async function createShellWindow({ show = true, url } = {}) {
       windowMode = initialWindowMode({ bounds: window.getBounds(), workArea: workAreaFor(window) });
     }
     if (windowMode.mode === "compact") return;
+    // Full screen is borrowed space, not a size the person chose; leaving it must not return to the whole screen.
+    if (window.isFullScreen()) return;
     const bounds = window.getBounds();
     windowMode = { ...windowMode, bounds, normalBounds: bounds };
   });
@@ -759,6 +843,7 @@ async function runSmokeTest() {
       pinned: await call("setCompactMode", { type: "set-always-on-top", value: true }),
       expanded: await call("setCompactMode", { type: "expand" }),
       refusedUnknownMode: await call("setCompactMode", { type: "become-a-toast" }),
+      refusedNonBooleanFullScreen: await call("setFullScreen", "yes"),
     };
   })()`;
 
@@ -834,6 +919,7 @@ async function runSmokeTest() {
       observed.pinned?.ok === true && observed.pinned.alwaysOnTop === true && pinnedNow === true,
     ],
     ["a window mode this build does not know is refused", observed.refusedUnknownMode?.ok === false],
+    ["a full-screen request that is not a boolean is refused", observed.refusedNonBooleanFullScreen?.ok === false],
   ];
 
   /*

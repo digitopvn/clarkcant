@@ -30,6 +30,11 @@ export type WindowModeAnswer =
   | { ok: true; mode: WindowMode; bounds: WindowBounds; alwaysOnTop: boolean }
   | { ok: false; refused: string };
 
+/** Whether the window has the whole screen and whether it is in the dock, as the shell reported them. */
+export type WindowStateAnswer =
+  | { ok: true; fullScreen: boolean; minimized: boolean }
+  | { ok: false; refused: string };
+
 /** The node this window belongs to, handed over by the shell rather than read from the URL. */
 export interface SessionHandover {
   baseUrl: string;
@@ -46,6 +51,9 @@ export interface SessionHandover {
 interface DesktopBridge {
   getSession?: () => Promise<unknown>;
   setCompactMode?: (input: WindowModeAction) => Promise<unknown>;
+  minimizeWindow?: () => Promise<unknown>;
+  setFullScreen?: (value: boolean) => Promise<unknown>;
+  onWindowStateChanged?: (callback: (payload: unknown) => void) => unknown;
   notify?: (input: { title: string; body: string }) => Promise<unknown>;
   /** Returns the unsubscribe: called once, it stops this callback from hearing any later click. */
   onNotificationClicked?: (callback: () => void) => () => void;
@@ -115,6 +123,84 @@ export async function requestWindowMode(
   }
 
   return readModeAnswer(answer);
+}
+
+/**
+ * Whether this shell can minimize and go full screen.
+ *
+ * Asked separately from `hasDesktopChrome` because an older shell resizes but has neither verb, and a button
+ * for a verb the shell does not have would look usable and do nothing.
+ */
+export function hasWindowControls(scope: unknown = globalThis): boolean {
+  const bridge = desktopBridge(scope);
+  return bridge?.minimizeWindow !== undefined && bridge.setFullScreen !== undefined;
+}
+
+/** Send the window to the dock or taskbar, and answer with what the window says it is afterwards. */
+export async function requestMinimize(scope: unknown = globalThis): Promise<WindowStateAnswer> {
+  const bridge = desktopBridge(scope);
+  if (bridge?.minimizeWindow === undefined) {
+    return { ok: false, refused: "this window has no desktop shell to minimize" };
+  }
+  try {
+    return readWindowState(await bridge.minimizeWindow());
+  } catch {
+    return { ok: false, refused: "the desktop shell did not answer" };
+  }
+}
+
+/** Take the whole screen or give it back, and answer with what the window says it is afterwards. */
+export async function requestFullScreen(value: boolean, scope: unknown = globalThis): Promise<WindowStateAnswer> {
+  const bridge = desktopBridge(scope);
+  if (bridge?.setFullScreen === undefined) {
+    return { ok: false, refused: "this window has no desktop shell to make full screen" };
+  }
+  try {
+    return readWindowState(await bridge.setFullScreen(value));
+  } catch {
+    return { ok: false, refused: "the desktop shell did not answer" };
+  }
+}
+
+/**
+ * Hear about full screen and minimize changes the OS made on its own, such as a keyboard shortcut.
+ *
+ * Answers with an unsubscribe function, which does nothing when the shell cannot push or did not hand one back.
+ * A payload that does not describe a window is dropped rather than passed on as a refusal: nobody asked, so
+ * there is nobody to refuse.
+ */
+export function subscribeWindowState(
+  callback: (state: { fullScreen: boolean; minimized: boolean }) => void,
+  scope: unknown = globalThis,
+): () => void {
+  const bridge = desktopBridge(scope);
+  if (bridge?.onWindowStateChanged === undefined) return () => {};
+  let unsubscribe: unknown;
+  try {
+    unsubscribe = bridge.onWindowStateChanged((payload) => {
+      const state = readWindowState(payload);
+      if (state.ok) callback({ fullScreen: state.fullScreen, minimized: state.minimized });
+    });
+  } catch {
+    return () => {};
+  }
+  return typeof unsubscribe === "function" ? () => void unsubscribe() : () => {};
+}
+
+/** The full screen and minimized flags out of an untrusted answer. Both must be real booleans. */
+function readWindowState(answer: unknown): WindowStateAnswer {
+  if (typeof answer !== "object" || answer === null) return { ok: false, refused: "the shell said nothing" };
+  const envelope = answer as { ok?: unknown; refused?: unknown; fullScreen?: unknown; minimized?: unknown };
+  if (envelope.ok !== true) {
+    return {
+      ok: false,
+      refused: typeof envelope.refused === "string" ? envelope.refused : "the shell refused without saying why",
+    };
+  }
+  if (typeof envelope.fullScreen !== "boolean" || typeof envelope.minimized !== "boolean") {
+    return { ok: false, refused: "the shell's answer did not describe a window" };
+  }
+  return { ok: true, fullScreen: envelope.fullScreen, minimized: envelope.minimized };
 }
 
 /** The session out of an untrusted answer, or nothing. */

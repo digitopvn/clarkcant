@@ -45,6 +45,8 @@ export const APP_INTENT_KINDS = [
   "window.expand",
   "window.minimise",
   "window.minimal",
+  "window.fullscreen",
+  "window.windowed",
   "settings.open",
   "settings.tab",
   "nav.home",
@@ -217,6 +219,10 @@ function describeAppIntentVi(intent: AppIntent): string {
       return "Tôi thu nhỏ cửa sổ xuống thanh tác vụ nhé.";
     case "window.minimal":
       return "Tôi thu cửa sổ về thanh voice nhé.";
+    case "window.fullscreen":
+      return "Tôi phóng to cửa sổ ra toàn màn hình nhé.";
+    case "window.windowed":
+      return "Tôi thoát toàn màn hình, trả cửa sổ về kích thước cũ nhé.";
     case "settings.open":
       return "Tôi mở Settings nhé.";
     case "settings.tab":
@@ -267,6 +273,10 @@ function describeAppIntentEn(intent: AppIntent): string {
       return "Minimising the window to the taskbar.";
     case "window.minimal":
       return "Shrinking the window to the voice bar.";
+    case "window.fullscreen":
+      return "Making the window full screen.";
+    case "window.windowed":
+      return "Leaving full screen and restoring the previous window size.";
     case "settings.open":
       return "Opening Settings.";
     case "settings.tab":
