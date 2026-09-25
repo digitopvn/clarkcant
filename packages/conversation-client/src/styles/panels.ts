@@ -372,14 +372,25 @@ button:focus-visible, textarea:focus-visible, input:focus-visible, [tabindex]:fo
    * A frameless window is dragged by its document, so the strip is the drag handle - and the controls opt out
    * of it, because a button inside a drag region cannot be clicked. In a browser none of this renders at all.
    */
-  .cc-desktop-chrome { position: fixed; top: 0; left: 0; right: 0; height: 34px; display: flex; align-items: center; gap: 6px; z-index: 30; }
+  .cc-desktop-chrome { position: fixed; top: 0; left: 0; right: 0; height: var(--cc-desktop-chrome-height, 34px); display: flex; align-items: center; gap: 6px; padding-right: 8px; z-index: 30; background: var(--cc-canvas); }
+  /* The strip owns the top of the window; the shell starts below it instead of drawing its header underneath. */
+  :root[data-window-chrome="true"] { --cc-desktop-chrome-height: 34px; }
+  :root[data-window-chrome="true"] .cc-shell { padding-top: var(--cc-desktop-chrome-height); }
   .cc-desktop-drag { flex: 1 1 auto; height: 100%; -webkit-app-region: drag; }
   .cc-desktop-controls { display: flex; align-items: center; gap: 2px; -webkit-app-region: no-drag; }
-  .cc-desktop-button { -webkit-app-region: no-drag; background: transparent; color: inherit; border: 1px solid var(--cc-line, rgba(255, 255, 255, 0.16)); border-radius: 6px; width: 26px; height: 22px; line-height: 1; font-size: 12px; cursor: pointer; }
-  .cc-desktop-button:hover { border-color: var(--cc-accent, #7aa2f7); }
-  .cc-desktop-button[data-pinned="true"], .cc-desktop-button[data-fullscreen="true"] { border-color: var(--cc-accent, #7aa2f7); }
+  .cc-desktop-button {
+    -webkit-app-region: no-drag; display: inline-flex; align-items: center; justify-content: center;
+    width: 28px; height: 24px; padding: 0; border: 0; border-radius: 6px;
+    background: transparent; color: var(--cc-text-muted); cursor: pointer;
+    transition: background-color var(--cc-motion-micro) var(--cc-motion-easing), color var(--cc-motion-micro) var(--cc-motion-easing);
+  }
+  .cc-desktop-button:hover { background: var(--cc-card); color: var(--cc-text); }
+  /* Close is the one control that ends something, so it is the one that turns red, as it does in every title bar. */
+  .cc-desktop-button[data-desktop-close="true"]:hover { background: var(--cc-danger); color: var(--cc-on-accent); }
+  .cc-desktop-button[data-pinned="true"], .cc-desktop-button[data-fullscreen="true"] { color: var(--cc-accent); background: var(--cc-card); }
+  .cc-desktop-separator { width: 1px; height: 14px; margin: 0 4px; background: var(--cc-border); }
   .cc-desktop-mode { -webkit-app-region: no-drag; font-size: 11px; opacity: 0.72; padding-right: 6px; }
-  .cc-desktop-problem { -webkit-app-region: no-drag; font-size: 11px; padding-right: 6px; opacity: 0.9; }
+  .cc-desktop-problem { -webkit-app-region: no-drag; font-size: 11px; padding-right: 6px; opacity: 0.9; max-width: 40ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
   /*
    * The compact surface: what the window shows when it has shrunk to the voice bar.

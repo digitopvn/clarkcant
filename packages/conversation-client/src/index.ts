@@ -68,6 +68,8 @@ export {
 export { TerminalCardBlock } from "./terminal-card.tsx";
 export { Conversation, type ConversationProps } from "./Conversation.tsx";
 export { desktopBridge, requestWindowMode, sessionFromBridge } from "./desktop-compact.ts";
+export { DesktopChrome } from "./desktop-chrome.tsx";
+export { DotGrid } from "./dot-grid.tsx";
 export type {
   SessionHandover,
   WindowBounds,
@@ -190,10 +192,23 @@ export {
 export function installStyles(theme: "dark" | "light" = "dark"): void {
   if (typeof document === "undefined") return;
   if (!installed) {
-    const style = document.createElement("style");
-    style.dataset.clarkcant = "styles";
-    style.textContent = `${themeStylesheet()}\n${APP_CSS}`;
-    document.head.append(style);
+    const css = `${themeStylesheet()}\n${APP_CSS}`;
+    /*
+     * A constructed sheet rather than a `<style>` element: the desktop shell's policy has no `'unsafe-inline'` in
+     * `style-src`, which blocks a script-made `<style>` and left the window with no stylesheet at all. `style-src`
+     * does not govern an adopted sheet, so the same policy stands and the styles still apply. The element stays
+     * as the fallback for an engine without constructable sheets.
+     */
+    if (typeof CSSStyleSheet === "function" && "adoptedStyleSheets" in document) {
+      const sheet = new CSSStyleSheet();
+      sheet.replaceSync(css);
+      document.adoptedStyleSheets = [...document.adoptedStyleSheets, sheet];
+    } else {
+      const style = document.createElement("style");
+      style.dataset.clarkcant = "styles";
+      style.textContent = css;
+      document.head.append(style);
+    }
     installed = true;
   }
   document.documentElement.dataset.ccTheme = theme;

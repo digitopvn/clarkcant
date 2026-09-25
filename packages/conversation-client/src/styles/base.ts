@@ -28,7 +28,31 @@ body {
   -webkit-font-smoothing: antialiased;
 }
 
-.cc-shell { display: flex; flex-direction: column; height: 100vh; position: relative; overflow: hidden; }
+.cc-shell { display: flex; flex-direction: column; height: 100vh; position: relative; overflow: hidden; isolation: isolate; }
+
+/*
+ * The dotted field behind everything in the shell. The shell isolates its own stacking so the field can sit at -1:
+ * under every child, including the ones that are not positioned, and still above the page's background.
+ *
+ * The lit layer is the same grid in a brighter colour, masked to a circle at the pointer. The dots stay exactly
+ * where they are; only which of them are bright changes, so nothing on screen moves with the mouse.
+ */
+.cc-dot-grid, .cc-dot-grid::after {
+  position: absolute; inset: 0; pointer-events: none;
+  background-image: radial-gradient(circle, var(--cc-grid-dot) 1px, transparent 1.6px);
+  background-size: 22px 22px;
+  background-position: center;
+}
+.cc-dot-grid { z-index: -1; --cc-grid-dot: color-mix(in srgb, var(--cc-text-tertiary) 14%, transparent); }
+.cc-dot-grid::after {
+  content: "";
+  --cc-grid-dot: color-mix(in srgb, var(--cc-accent) 55%, transparent);
+  mask-image: radial-gradient(circle 190px at var(--cc-grid-x, -999px) var(--cc-grid-y, -999px), #000 0%, rgba(0, 0, 0, 0.45) 45%, transparent 100%);
+  -webkit-mask-image: radial-gradient(circle 190px at var(--cc-grid-x, -999px) var(--cc-grid-y, -999px), #000 0%, rgba(0, 0, 0, 0.45) 45%, transparent 100%);
+  opacity: 0;
+  transition: opacity var(--cc-motion-normal) var(--cc-motion-easing);
+}
+.cc-dot-grid[data-lit="true"]::after { opacity: 1; }
 
 /*
  * Everything between the header and the foot of the window.

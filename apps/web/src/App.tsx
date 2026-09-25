@@ -2,6 +2,8 @@ import { type ReactElement, useEffect, useLayoutEffect, useMemo, useRef, useStat
 
 import {
   Conversation,
+  DesktopChrome,
+  DotGrid,
   DetachedWidgetSurface,
   type DetachedBridge,
   GatewayClient,
@@ -231,6 +233,9 @@ export function App(): ReactElement {
 
     return (
       <div className="cc-shell" data-view="hero" data-onboarding="true" ref={shellRef}>
+        {/* A frameless desktop window can only be dragged by this strip; it renders nothing in a browser. */}
+        <DesktopChrome />
+        <DotGrid />
         {/*
           The same orb the app opens with, drawn before anything is chosen. The first screen is where somebody decides
           whether this thing is worth their afternoon, and it was the one place the product's own face was missing.
@@ -285,6 +290,8 @@ export function App(): ReactElement {
       // `data-view="hero"` is what tells the layout to centre the group rather than stack it from the
       // top, and `.cc-body` is the region that does the centring.
       <div className="cc-shell" data-view="hero">
+        <DesktopChrome />
+        <DotGrid />
         <header className="cc-header">
           <div className="cc-brand">
             <span className="cc-orb" aria-hidden="true" />

@@ -125,6 +125,10 @@ const bridge = {
     ipcRenderer.on("desktop:windowStateChanged", listener);
     return () => ipcRenderer.removeListener("desktop:windowStateChanged", listener);
   },
+  /** Close the window, as the title bar's close button would. */
+  closeWindow() {
+    return ipcRenderer.invoke("desktop:closeWindow");
+  },
   /** Bring the window forward, for a request that came from voice or from another surface. */
   focusWindow() {
     return ipcRenderer.invoke("desktop:focusWindow");

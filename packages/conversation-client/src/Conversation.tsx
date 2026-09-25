@@ -13,6 +13,7 @@ import { applyLibraryAction } from "./widget-library/widget-library-state.ts";
 import { attachedPrompt, explainPrompt } from "./selection.ts";
 import { SelectionToolbar } from "./selection-toolbar.tsx";
 import { DesktopChrome } from "./desktop-chrome.tsx";
+import { DotGrid } from "./dot-grid.tsx";
 import { ConversationHeader } from "./ConversationHeader.tsx";
 import { InboxPanel } from "./inbox/inbox-panel.tsx";
 import { useInboxNotifications } from "./inbox/use-inbox-notifications.ts";
@@ -426,6 +427,7 @@ export function Conversation({
         browser, so this is one line rather than a branch around the whole conversation.
       */}
       <DesktopChrome />
+      <DotGrid />
 
       {/*
         The one orb. It is not two elements that swap places with a transition between them: it is a
