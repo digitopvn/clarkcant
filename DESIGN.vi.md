@@ -714,6 +714,9 @@ Thẻ `terminal-session-card` là shell thật (PTY) trong hội thoại, thuộ
 người dùng: không bao giờ là widget isolated, không có trong marketplace, chỉ host tạo.
 
 - **Mở:** qua hội thoại ("mở terminal ở thư mục X") hoặc voice; không có nút "terminal mới" cố định.
+- **Trong Widget Library:** Terminal nằm ở mục "Thẻ của hệ thống", tách khỏi danh mục built-in. Mục này chỉ có mô tả,
+  một hình minh họa tĩnh ghi rõ là minh họa và câu gợi ý cách mở qua hội thoại. Không có preview live, không có
+  nút mở, vì thẻ host-owned gắn với trạng thái thật và chỉ được tạo từ hội thoại.
 - **Agent chạy lệnh** đi qua cùng preflight + execution policy + guardrail như `run_command`. Khi policy nói
   *ask*, lệnh được **điền sẵn nhưng không chạy**: người dùng nhấn Enter trên đúng dòng lệnh họ thấy chính là
   xác nhận. Người dùng tự gõ là hành động của chính họ, không qua policy.

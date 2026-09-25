@@ -14,6 +14,8 @@ import type { GatewayClient } from "../api.ts";
 import { useT } from "../i18n/locale-context.tsx";
 import { builtInLabel } from "../package-provenance.ts";
 import { resolveRenderer } from "../renderers.tsx";
+import { HOST_CARD_ENTRIES, visibleHostCards } from "./host-card-entries.ts";
+import { HostCardShowcase } from "./HostCardShowcase.tsx";
 import { InstalledProvenance } from "./InstalledProvenance.tsx";
 import { installedCatalogEntries, type InstalledEntriesRead } from "./installed-entries.ts";
 import { WidgetFixtureControls } from "./WidgetFixtureControls.tsx";
@@ -279,6 +281,11 @@ export function WidgetLibrarySurface({
                   onSelect={(cardId) => onAction({ kind: "select", cardId })}
                 />
               </section>
+              {/*
+                Host-owned cards are described here, never previewed: they are bound to live host state, and they
+                are created from the conversation rather than from this surface.
+              */}
+              <HostCardShowcase entries={visibleHostCards(HOST_CARD_ENTRIES, state, t)} />
               {/*
                 What could not be shown, and why. A shorter list would say "this package declares no widgets" when
                 the truth is that this node cannot read it, or that nothing here can draw it.

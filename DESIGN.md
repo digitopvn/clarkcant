@@ -727,6 +727,10 @@ the user's full authority: it's never an isolated widget, never in the marketpla
 
 - **Open:** through the conversation ("open a terminal in folder X") or voice; there's no permanent "new terminal"
   button.
+- **In the Widget Library:** Terminal sits under "System cards", apart from the built-in catalog. The entry has only a
+  description, a static illustration labelled as an illustration and a hint for opening it through the conversation.
+  There is no live preview and no open button, because a host-owned card is tied to real state and is created only from
+  the conversation.
 - **The agent running a command** goes through the same preflight + execution policy + guardrail as `run_command`.
   When policy says *ask*, the command is **prefilled but not run**: the user pressing Enter on the exact line they
   see is itself the confirmation. The user typing it themselves is their own action, not subject to policy.

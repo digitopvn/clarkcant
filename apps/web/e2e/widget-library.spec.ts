@@ -80,6 +80,27 @@ test("the library opens from Extensions and the conversation stays mounted", asy
   await expect(page.locator("[data-composer='true']")).toHaveCount(1);
 });
 
+test("the terminal is listed as a host card, described and never opened from the library", async ({ page }) => {
+  await openLibraryFromExtensions(page);
+  const host = page.locator("[data-widget-provenance='host']");
+  const terminal = host.locator("[data-host-card-entry='terminal-session-card']");
+  await expect(terminal).toBeVisible();
+
+  // It is an illustration that says so, not a shell: no xterm is mounted and nothing in the item is a control.
+  await expect(terminal.locator("[data-host-card-illustration]")).toHaveAttribute("aria-hidden", "true");
+  await expect(terminal.locator("figcaption")).not.toBeEmpty();
+  await expect(page.locator(".xterm")).toHaveCount(0);
+  await expect(terminal.locator("button, a, input")).toHaveCount(0);
+  // It is not a catalog card either, so no preview path can try to draw it.
+  await expect(page.locator("[data-widget-card='terminal-session-card']")).toHaveCount(0);
+
+  // Search finds it without tone marks, and a query it does not match hides it.
+  await page.locator("[data-widget-library-search='true']").fill("dong lenh");
+  await expect(terminal).toBeVisible();
+  await page.locator("[data-widget-library-search='true']").fill("donut");
+  await expect(host).toHaveCount(0);
+});
+
 test("every catalog card previews through the production renderer", async ({ page }) => {
   await openLibraryFromExtensions(page);
 
