@@ -276,6 +276,7 @@ client configuration live in docs/open-interfaces.md.
     pnpm verify:full
     node apps/runtime/src/main.ts --data-dir ./.data --label dev
     pnpm clarkcant status        # the CLI against a running node
+    pnpm dev:desktop --data-dir <dir> [--env-file <path>]   # node + vite + electron, renderer hot reload
 
 pnpm verify is the definition of done for non-journey code. Run a focused test
 first. Run pnpm verify:full before reporting a UI/journey change complete.

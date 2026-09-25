@@ -36,10 +36,11 @@ export const IPC_CHANNELS = Object.freeze([
   "desktop:focusWindow",
   /*
    * The title-bar verbs a frameless window has to draw for itself: send it to the dock or taskbar, and take the
-   * whole screen or give it back. One channel each, for the same reason as the modes above.
+   * whole screen or give it back, and close it. One channel each, for the same reason as the modes above.
    */
   "desktop:minimizeWindow",
   "desktop:setFullScreen",
+  "desktop:closeWindow",
   /*
    * The detached widget window's channels.
    *
@@ -108,16 +109,22 @@ export function normalizeExternalUrl(raw) {
  * node is what makes this necessary - the shell document is local, but the client it loads lives on the node
  * and speaks to it over http and a websocket on the same origin, and `connect-src 'self'` on a local document
  * names neither.
+ *
+ * `devOrigin` is the one input that loosens the policy rather than widening it: a Vite dev server delivers the
+ * React Refresh preamble as an inline script and every stylesheet as an injected `<style>`, so the dev policy
+ * carries `'unsafe-inline'` for both. It is only ever passed after `reviewDevServerUrl` accepted the URL, which is
+ * what keeps that loosening to an unpackaged app talking to a loopback server.
  */
 export function contentSecurityPolicy(input = {}) {
   const app = originOf(input.appOrigin);
   const node = originOf(input.nodeOrigin);
   const dev = originOf(input.devOrigin);
+  const inline = dev === undefined ? undefined : "'unsafe-inline'";
 
   return [
     "default-src 'none'",
-    `script-src ${sources(["'self'", app, dev])}`,
-    `style-src ${sources(["'self'", app, dev])}`,
+    `script-src ${sources(["'self'", app, dev, inline])}`,
+    `style-src ${sources(["'self'", app, dev, inline])}`,
     // `blob:` because an attachment preview is an object URL the renderer itself created, not a file it may read.
     "img-src 'self' data: blob:",
     "font-src 'self'",
@@ -127,6 +134,32 @@ export function contentSecurityPolicy(input = {}) {
     "base-uri 'none'",
     "object-src 'none'",
   ].join("; ");
+}
+
+/** The hosts a dev server may be on: this machine and nothing else. */
+const LOOPBACK_HOSTS = new Set(["127.0.0.1", "localhost", "[::1]"]);
+
+/**
+ * Whether a renderer URL may be treated as a dev server, which is what earns it the dev policy.
+ *
+ * Refused in a packaged app outright: a shipped build has no dev server, so a flag asking for one is either a
+ * mistake or somebody trying to relax the policy. Refused for anything but plain http on loopback, because
+ * `'unsafe-inline'` on a document served from another machine would hand that machine script execution in a
+ * window holding the node's token.
+ */
+export function reviewDevServerUrl(value, { packaged }) {
+  if (packaged) return { ok: false, reason: "a packaged app does not run against a dev server" };
+  let url;
+  try {
+    url = new URL(value);
+  } catch {
+    return { ok: false, reason: "the dev server address is not a URL" };
+  }
+  if (url.protocol !== "http:") return { ok: false, reason: `a dev server on ${url.protocol} is not allowed` };
+  if (!LOOPBACK_HOSTS.has(url.hostname)) {
+    return { ok: false, reason: `a dev server must be on this machine, not ${url.hostname}` };
+  }
+  return { ok: true, origin: url.origin };
 }
 
 /**

@@ -100,6 +100,15 @@ pnpm dev:web    # mở http://127.0.0.1:5173/?gateway=http://127.0.0.1:8765
 Bearer token nằm trong `./.data/identity.json` (trường `localToken`). Node mặc định chỉ bind
 loopback và từ chối bind địa chỉ công khai nếu thiếu `--allow-public-bind`.
 
+Khi làm việc với desktop shell, một lệnh khởi động cùng lúc node, Vite dev server và Electron, và
+cửa sổ tự tải lại khi renderer thay đổi:
+
+```sh
+pnpm dev:desktop --data-dir ./.data [--env-file <path>]
+```
+
+Dừng bằng Ctrl+C; lệnh dừng cả ba.
+
 ## Chạy bằng Docker
 
 Template: [`docker-compose.yml`](../docker-compose.yml),

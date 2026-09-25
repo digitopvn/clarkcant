@@ -10,6 +10,7 @@
  *   electron .                      normal window
  *   electron . --smoke-test         headless self-check, prints JSON, exits 0 or 1
  *   electron . --renderer-url <u>   load a different shell document
+ *   electron . --renderer-url <u> --dev   <u> is a loopback Vite dev server; see `tools/dev-desktop.mjs`
  *
  * `--smoke-test` exists so the security posture is verified by running it rather than by
  * reading it. It creates a real window with a real preload bridge and asserts the bridge's
@@ -30,6 +31,7 @@ import {
   IPC_CHANNELS,
   normalizeExternalUrl,
   reviewCredentialRequest,
+  reviewDevServerUrl,
   reviewIpcCall,
 } from "./security.mjs";
 import {
@@ -48,6 +50,11 @@ import {
 } from "./window-mode.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
+/*
+ * The app's icon, set at runtime because nothing packages this app yet: without it an unpackaged run shows Electron's
+ * own icon in the Dock and the task bar, which reads as some other app.
+ */
+const appIcon = join(here, "../assets/icon.png");
 
 /**
  * The detached widget window, if one is open.
@@ -75,6 +82,22 @@ const dataDirFlag = argv.indexOf("--data-dir");
 const dataDir = dataDirFlag >= 0 ? argv[dataDirFlag + 1] : undefined;
 const nodeUrlFlag = argv.indexOf("--node-url");
 const nodeUrl = nodeUrlFlag >= 0 ? argv[nodeUrlFlag + 1] : undefined;
+/**
+ * The renderer is a Vite dev server, so the window gets the dev policy that lets hot reload run.
+ *
+ * Asked for explicitly rather than guessed from the URL, and reviewed before the window exists: a refused dev server
+ * ends the run with the reason instead of opening a window whose every script the policy blocks.
+ */
+const devMode = argv.includes("--dev");
+let devOrigin;
+if (devMode) {
+  const review = reviewDevServerUrl(rendererUrl, { packaged: app.isPackaged });
+  if (!review.ok) {
+    process.stderr.write(`--dev refused: ${review.reason}\n`);
+    process.exit(1);
+  }
+  devOrigin = review.origin;
+}
 /**
  * Whether this window is showing the client rather than the bundled posture document.
  *
@@ -123,6 +146,7 @@ let keepRunningOnWindowClose = true;
  */
 const EXPECTED_BRIDGE_METHODS = Object.freeze([
   "attachWidget",
+  "closeWindow",
   "detachWidget",
   "focusWindow",
   "getSession",
@@ -249,6 +273,8 @@ function handle(channel, handler) {
     // channels they may use are not interchangeable.
     const review = reviewIpcCall(event, channel, shellDocumentUrl, detached?.url);
     if (!review.allowed) {
+      // In development a refused bridge call is the usual reason a window shows "not connected", so say which.
+      if (devMode) process.stderr.write(`ipc ${channel} refused: ${review.reason}\n`);
       return { ok: false, refused: review.reason };
     }
     return await handler(...args);
@@ -336,7 +362,13 @@ function registerHandlers() {
     return { ok: true, opened: checked.url };
   });
 
-  handle("desktop:getSession", async () => readNodeSession());
+  // The client reads the handover under `session` (`sessionFromBridge` in conversation-client); the flat shape is
+  // this file's own, for the relay. Handing the flat one over made every window read "no token" with a token on disk.
+  handle("desktop:getSession", async () => {
+    const session = readNodeSession();
+    if (!session.ok) return session;
+    return { ok: true, session: { baseUrl: session.baseUrl, token: session.token } };
+  });
 
   handle("desktop:notify", async (input) => {
     const title = typeof input?.title === "string" ? input.title.slice(0, 120) : "";
@@ -519,6 +551,20 @@ function registerHandlers() {
   });
 
   /*
+   * Close the window, as the title bar's close button would. Whether the app then quits is the existing
+   * `window-all-closed` policy's decision, not this button's: closing a window stops the window, not the work.
+   * Closed on the next tick so the renderer gets its answer before its document goes away.
+   */
+  handle("desktop:closeWindow", async () => {
+    const window = BrowserWindow.getAllWindows()[0];
+    if (window === undefined) return { ok: false, refused: "there is no window to close" };
+    setTimeout(() => {
+      if (!window.isDestroyed()) window.close();
+    });
+    return { ok: true };
+  });
+
+  /*
    * Send the window to the dock or taskbar.
    *
    * The answer reads the window back rather than assuming, and there is no matching "unminimize" verb: a
@@ -564,6 +610,16 @@ function registerHandlers() {
     nodeIntegration: false,
     sandboxed: true,
     keepRunningOnWindowClose,
+    // Read off the window, so a renderer that reloaded learns what the window is rather than assuming the default:
+    // the chrome's pin toggle assumed "not pinned" after a reload, and pressing it pinned a window that already was.
+    window:
+      shellWindow === undefined || shellWindow.isDestroyed()
+        ? null
+        : {
+            mode: windowMode?.mode ?? "normal",
+            alwaysOnTop: shellWindow.isAlwaysOnTop(),
+            fullScreen: shellWindow.isFullScreen(),
+          },
     channels: [...IPC_CHANNELS],
   }));
 
@@ -732,7 +788,7 @@ function applyContentSecurityPolicy() {
       responseHeaders: {
         ...details.responseHeaders,
         "Content-Security-Policy": [
-          contentSecurityPolicy({ appOrigin: rendererUrl, nodeOrigin: nodeUrl }),
+          contentSecurityPolicy({ appOrigin: rendererUrl, nodeOrigin: nodeUrl, devOrigin }),
         ],
       },
     });
@@ -757,6 +813,8 @@ async function createShellWindow({ show = true, url } = {}) {
     minWidth: COMPACT_MIN_SIZE.width,
     minHeight: COMPACT_MIN_SIZE.height,
     frame: !loadingClient,
+    // Windows and Linux take the task bar icon from the window; macOS takes it from the Dock, set once at startup.
+    icon: appIcon,
     webPreferences: createWindowOptions(join(here, "preload.cjs")),
   });
 
@@ -781,11 +839,13 @@ async function createShellWindow({ show = true, url } = {}) {
   // Recorded before the load resolves, so a call arriving with the first paint is reviewed against the document
   // this window actually loaded rather than against the previous one.
   shellDocumentUrl = document;
-  await window.loadURL(document);
-
+  // Listening before the load, not after it: `ready-to-show` fires on first paint, which for a document served over
+  // http comes before `loadURL` resolves. A listener attached after the await never hears it, and the window stays
+  // hidden with only a dock icon to show it exists.
   window.once("ready-to-show", () => {
     if (show) window.show();
   });
+  await window.loadURL(document);
 
   // The chrome shows what the window is, and the OS can change that without the client asking.
   for (const event of ["enter-full-screen", "leave-full-screen", "minimize", "restore"]) {
@@ -801,7 +861,9 @@ async function createShellWindow({ show = true, url } = {}) {
     if (windowMode === undefined) {
       windowMode = initialWindowMode({ bounds: window.getBounds(), workArea: workAreaFor(window) });
     }
-    if (windowMode.mode === "compact") return;
+    // Only a normal window's size is the one to return to: the bar and an expanded window are sizes the shell
+    // chose, and remembering either would make restoring leave the window where it is.
+    if (windowMode.mode !== "normal") return;
     // Full screen is borrowed space, not a size the person chose; leaving it must not return to the whole screen.
     if (window.isFullScreen()) return;
     const bounds = window.getBounds();
@@ -1054,6 +1116,7 @@ async function runSmokeTest() {
 }
 
 app.whenReady().then(async () => {
+  if (process.platform === "darwin") app.dock?.setIcon(appIcon);
   applyContentSecurityPolicy();
   registerHandlers();
 
