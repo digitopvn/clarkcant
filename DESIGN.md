@@ -1,359 +1,362 @@
 # ClarkCant Design System & UX Operating Model
 
-> Trạng thái: canonical design direction cho UI/UX.
-> Cập nhật: 2026-09-19.
-> Phạm vi: web, desktop, conversation client, voice, host-owned cards, built-in widgets, custom widgets và marketplace.
+> English (default) · [Tiếng Việt](DESIGN.vi.md)
+
+> Status: canonical design direction for UI/UX.
+> Updated: 2026-09-19.
+> Scope: web, desktop, conversation client, voice, host-owned cards, built-in widgets, custom widgets and marketplace.
 
 ## 0. North Star
 
-ClarkCant phải cảm thấy **đơn giản hơn hệ thống đang chạy bên dưới**.
+ClarkCant must feel **simpler than the system running underneath it**.
 
-Người dùng chỉ cần học hai thứ:
+The user only needs to learn two things:
 
-1. **Một khung hội thoại duy nhất** — nơi giao việc, xem kết quả, thao tác widget, thay đổi cài đặt, quản lý integrations và điều khiển app.
-2. **Một voice agent duy nhất** — cùng Clark, cùng context, cùng actions, không phải một sản phẩm khác.
+1. **One conversation frame** — where you hand off work, see results, operate widgets, change settings, manage integrations and control the app.
+2. **One voice agent** — the same Clark, same context, same actions, not a separate product.
 
-Pi session, Jev routing/decision, memory, node topology, tool registry, capability host, worker, package generation và policy engine là hạ tầng. Chúng không được biến thành navigation model mà user phải học.
+Pi sessions, Jev routing/decisions, memory, node topology, tool registry, capability host, workers, package generations and the policy engine are infrastructure. They must not turn into a navigation model the user has to learn.
 
-Luật sản phẩm quan trọng nhất:
+The most important product rule:
 
-> **Don't make me think. Đừng bắt user hiểu kiến trúc để hoàn thành công việc.**
+> **Don't make me think. Don't make the user understand the architecture to get work done.**
 
-Nếu một tác vụ có thể được diễn đạt bằng chat hoặc voice thì user không nên phải tìm đúng tab, đúng tool hoặc đúng node trước.
+If a task can be expressed in chat or voice, the user should not have to find the right tab, the right tool or the right node first.
 
 ---
 
-## 1. Design principles bắt buộc
+## 1. Mandatory design principles
 
 ### 1.1 Conversation is the app
 
-- Không thêm sidebar cố định chỉ để chứa navigation.
-- Không thêm session picker vào main UI.
-- Không biến widgets thành một dashboard song song.
-- Settings là surface phụ, mở trên conversation và đóng lại về đúng vị trí cũ.
-- Marketplace có thể có browser surface, nhưng phải mở từ chat/settings và không trở thành home screen thứ hai.
-- Mọi action quan trọng phải có đường chat và voice tương đương.
+- Do not add a fixed sidebar just to hold navigation.
+- Do not add a session picker to the main UI.
+- Do not turn widgets into a parallel dashboard.
+- Settings is a secondary surface, opened over the conversation and closed back to where it was.
+- The marketplace may have a browser surface, but it must open from chat/settings and must not become a second home screen.
+- Every important action must have an equivalent chat and voice path.
 
 ### 1.2 Progressive disclosure
 
-Default UI chỉ hiển thị điều cần cho bước hiện tại. Chi tiết kỹ thuật chỉ xuất hiện khi:
+The default UI only shows what's needed for the current step. Technical detail only appears when:
 
-- user hỏi;
-- có lỗi cần hành động;
-- user mở Settings/Advanced;
-- hoặc widget cần provenance/freshness để không gây hiểu nhầm.
+- the user asks;
+- there is an error requiring action;
+- the user opens Settings/Advanced;
+- or a widget needs provenance/freshness so it doesn't mislead.
 
-Không đưa node ID, digest, package generation, action binding, token budget hoặc provider internals lên main surface nếu user không cần chúng.
+Do not put node IDs, digests, package generations, action bindings, token budgets or provider internals on the main surface if the user doesn't need them.
 
 ### 1.3 User-owned autonomy
 
-Default execution policy là **Autonomous**.
+The default execution policy is **Autonomous**.
 
-Clark thực thi tác vụ user đã yêu cầu mà không hỏi lại từng tool call hoặc từng side effect. User chịu trách nhiệm về policy họ chọn và có thể đổi mode bất cứ lúc nào.
+Clark executes the task the user requested without asking back for every tool call or every side effect. The user is responsible for the policy they choose and can change mode at any time.
 
-| Mode | Hành vi |
+| Mode | Behavior |
 | --- | --- |
-| Autonomous | Default. Không hỏi lại với tác vụ user đã giao. Jev + policy rules tự quyết route/guardrail. Hiển thị activity, hỗ trợ Stop/Undo khi có thể. |
-| Guarded | Tự chạy thao tác low-risk; hỏi trước các hành động irreversible, external-public, destructive hoặc sensitive theo policy. |
-| Ask every time | Hỏi trước mọi action effectful; local view actions không hỏi. |
+| Autonomous | Default. No re-confirmation for a task the user already assigned. Jev + policy rules decide route/guardrail on their own. Shows activity, supports Stop/Undo where possible. |
+| Guarded | Runs low-risk operations automatically; asks before irreversible, external-public, destructive or sensitive actions per policy. |
+| Ask every time | Asks before every effectful action; local view actions do not ask. |
 
-Các ranh giới hệ điều hành/provider không thể giả lập là “đã cho phép”: OAuth consent, macOS TCC, browser microphone/camera permissions, vendor confirmation và OS secure dialogs vẫn phải đi qua UI do platform sở hữu.
+OS/provider boundaries that cannot be simulated as "already granted" — OAuth consent, macOS TCC, browser microphone/camera permissions, vendor confirmation and OS secure dialogs — must still go through platform-owned UI.
 
-**Không được dùng security làm lý do để thêm confirmation trùng lặp sau khi user đã biểu đạt intent rõ ràng.** Thay vào đó dùng:
+**Security must not be used as a reason to add a duplicate confirmation after the user has already expressed clear intent.** Use instead:
 
 - policy mode;
 - visible activity;
 - provenance;
 - bounded execution;
 - Stop;
-- Undo/rollback khi có thể;
+- Undo/rollback where possible;
 - audit log;
 - Jev configurable instructions.
 
 ### 1.4 Honest UI
 
-- Không có nút trông usable nhưng không có handler.
-- Không claim live cho snapshot/cached/sample.
-- Không claim success nếu chỉ biết process đã dừng.
-- Không ẩn blocked reason trong tooltip.
-- Không render approval/credential chrome từ untrusted widget.
-- Không fake progress phần trăm nếu backend không có dữ liệu đó.
+- No button that looks usable but has no handler.
+- No claiming "live" for a snapshot/cached/sample value.
+- No claiming success if all we know is that the process stopped.
+- No hiding a blocked reason inside a tooltip.
+- No rendering approval/credential chrome from an untrusted widget.
+- No faking a percentage progress if the backend has no such data.
 
 ### 1.5 Motion is feedback, not decoration
 
-Mọi thay đổi trạng thái nhìn thấy nên transition mượt, nhưng animation phải giải thích quan hệ nhân-quả:
+Every visible state change should transition smoothly, but the animation must explain cause and effect:
 
-- bấm → phản hồi ngay;
-- element được tạo → xuất hiện từ nơi hợp lý;
-- element biến mất → thu về/nhạt đi;
-- panel mở → liên tục với control đã mở nó;
-- agent đổi state → ambient UI đổi nhẹ;
-- voice nghe/nói → waveform/orb phản ánh audio thật.
+- press → immediate feedback;
+- element created → appears from a sensible place;
+- element removed → shrinks/fades away;
+- panel opens → continuous with the control that opened it;
+- agent state changes → ambient UI shifts slightly;
+- voice listening/speaking → waveform/orb reflects real audio.
 
-Không chạy animation chỉ để màn hình “sống động”.
+Don't run animation just to make the screen "feel alive."
 
 ### 1.6 Input modality aware
 
-UI phản hồi khác nhau theo cách tương tác:
+The UI responds differently depending on the interaction mode:
 
-- **Pointer:** hover, proximity, pointer-following glow nhẹ.
-- **Keyboard:** focus ring rõ, shortcut hint, không phụ thuộc hover.
-- **Touch:** không có hover-only affordance; press state lớn và rõ.
-- **Voice:** focused element/widget có semantic context để Clark thao tác thay user.
-- **Agent activity:** ambient state phản ánh thinking/tool/answering/error nhưng không lấn át nội dung.
+- **Pointer:** hover, proximity, subtle pointer-following glow.
+- **Keyboard:** clear focus ring, shortcut hints, not dependent on hover.
+- **Touch:** no hover-only affordance; large, clear press state.
+- **Voice:** the focused element/widget has semantic context so Clark can act on it for the user.
+- **Agent activity:** ambient state reflects thinking/tool/answering/error without overpowering content.
 
 ### 1.7 Orb is the signature
 
-**Orb là nhận diện thị giác bắt buộc của ClarkCant và không được loại bỏ khỏi sản phẩm.**
+**The Orb is ClarkCant's mandatory visual identity and must not be removed from the product.**
 
-Orb phải xuất hiện ở các điểm nhận diện chính: onboarding, hero, header/avatar, voice mode và minimal/orb window mode. Một redesign không được thay Orb bằng logo tĩnh, spinner hoặc avatar khác như default.
+The Orb must appear at the key identity points: onboarding, hero, header/avatar, voice mode and minimal/orb window mode. A redesign must not replace the Orb with a static logo, a spinner or another avatar as the default.
 
-User được cá nhân hoá **cách Orb thể hiện**, không xoá semantic identity của nó:
+Users may personalize **how the Orb presents itself**, but not strip its semantic identity:
 
 - palette / gradient / glow;
 - exposure, chromatic fringe, sheen;
 - idle animation speed;
 - pointer response strength;
-- spring preset hoặc bounded stiffness/damping;
+- spring preset or bounded stiffness/damping;
 - agent-state reactions;
 - reduced-effects preset.
 
-Personalization phải đi qua typed preferences và bounded ranges/presets. Không cho arbitrary shader source, arbitrary GLSL, CSS injection hoặc unbounded physics values từ Settings/widget/theme package.
+Personalization must go through typed preferences and bounded ranges/presets. No arbitrary shader source, arbitrary GLSL, CSS injection or unbounded physics values from Settings/widget/theme packages.
 
-Các preset built-in tối thiểu:
+Minimum built-in presets:
 
 - Clark — default signature;
-- Calm — ít glow/chromatic, damping cao hơn;
-- Jelly — spring mềm và overshoot rõ hơn nhưng vẫn bounded;
-- Glass — sheen/exposure rõ hơn, motion thấp;
-- Custom — chỉnh advanced values trong range an toàn.
+- Calm — less glow/chromatic fringe, higher damping;
+- Jelly — softer spring with more pronounced but still bounded overshoot;
+- Glass — more sheen/exposure, low motion;
+- Custom — adjust advanced values within a safe range.
 
-prefers-reduced-motion luôn thắng preference animation: Orb vẫn hiện nhưng đứng yên hoặc chỉ phản hồi trạng thái không chuyển động.
+prefers-reduced-motion always wins over the animation preference: the Orb still appears but stays still, or only reacts to state without motion.
 
 ---
 
 ## 2. Application shape
 
-### 2.1 Các trạng thái cửa sổ desktop
+### 2.1 Desktop window states
 
-Desktop host cần hỗ trợ bốn presentation modes, tất cả điều khiển được bằng click, keyboard, chat và voice:
+The desktop host needs to support four presentation modes, all controllable by click, keyboard, chat and voice:
 
-1. normal — conversation đầy đủ.
-2. expanded — conversation rộng/cao hơn cho task nhiều nội dung.
-3. compact — thanh nhỏ cho composer/voice status/pinned widget controls.
-4. orb — minimal icon/orb luôn sẵn sàng gọi Clark.
+1. normal — full conversation.
+2. expanded — wider/taller conversation for content-heavy tasks.
+3. compact — a small bar for composer/voice status/pinned widget controls.
+4. orb — a minimal icon/orb always ready to summon Clark.
 
-Ví dụ lệnh tự nhiên:
+Example natural-language commands:
 
-- “thu nhỏ cửa sổ lại”
-- “phóng to Clark”
-- “chỉ để icon thôi”
-- “mở lại cửa sổ”
-- “ghim cái lịch này”
-- “tách biểu đồ ra cửa sổ riêng”
+- "shrink the window"
+- "make Clark bigger"
+- "just show the icon"
+- "reopen the window"
+- "pin this calendar"
+- "pop the chart out into its own window"
 
-Desktop bridge nên expose host-owned commands có schema rõ: window.setMode, window.resizePreset, window.restore, window.focus, widget.detach, widget.attach.
+The desktop bridge should expose host-owned commands with a clear schema: window.setMode, window.resizePreset, window.restore, window.focus, widget.detach, widget.attach.
 
-Không cho widget tự gọi generic Electron IPC.
+Widgets must not call generic Electron IPC themselves.
 
 ### 2.2 Pin vs detach
 
-- **Pin:** giữ widget trong không gian conversation; là presentation preference.
-- **Detach:** đưa cùng logical widget instance sang host-owned floating window.
-- **Inline snapshot:** lịch sử bất biến.
-- **Một live owner:** inline/pin/detached không được tạo nhiều effect owners cho cùng instance.
-- Detach không tạo session mới.
-- Close detached window không xóa widget state.
-- Voice có thể focus widget đang pin/detach bằng semantic ID và label.
+- **Pin:** keeps the widget inside the conversation space; it's a presentation preference.
+- **Detach:** moves the same logical widget instance into a host-owned floating window.
+- **Inline snapshot:** an immutable history.
+- **One live owner:** inline/pin/detached must not create multiple effect owners for the same instance.
+- Detach does not create a new session.
+- Closing a detached window does not delete widget state.
+- Voice can focus a pinned/detached widget by semantic ID and label.
 
-**Đã ship (phase 7 + 12).** Cửa sổ detached nhận **chỉ** widget host bootstrap và instance ref — không token,
-không gateway URL, không conversation id — và điều đó được làm đúng bằng cách *dựng* payload chứ không phải lọc bớt:
-`detachedBootstrap` đặt tên từng field nó đọc, nên không có đường nào cho một credential đi kèm. Hệ quả là cửa sổ
-**không tự invoke action được**: intent đi qua host (`detached:intent`), host thực hiện bằng token của chính nó và tự
-resolve binding digest từ composition nó đã đưa — nên cửa sổ không thể đưa một digest mà node sẽ chấp nhận cho binding
-khác.
+**Shipped (phase 7 + 12).** The detached window receives **only** the widget host bootstrap and instance ref — no
+token, no gateway URL, no conversation id — and that's achieved correctly by *constructing* the payload rather than
+filtering it down: `detachedBootstrap` names every field it reads, so there's no path for a credential to tag along.
+The consequence is that the window **cannot invoke an action itself**: intent goes through the host (`detached:intent`),
+the host performs it with its own token and resolves the binding digest itself from the composition it handed out — so
+the window can't hand back a digest that the node would accept for a different binding.
 
-Lease **chuyển** chứ không nhân bản: shell release trước, host claim surface `detached`, và khi cửa sổ đóng thì host
-release rồi shell claim lại — nên không có thời điểm nào có hai owner. Đóng cửa sổ cũng chính là đường reattach, kể cả
-khi người dùng chỉ bấm nút đóng của hệ điều hành.
+The lease **moves** rather than duplicates: the shell releases first, the host claims the `detached` surface, and when
+the window closes the host releases and the shell claims it back — so there is never a moment with two owners. Closing
+the window is itself the reattach path, even when the user just presses the OS close button.
 
 ### 2.3 Wake phrase
 
-Target UX: local wake phrase **“Hey Clark”** mở voice mode.
+Target UX: local wake phrase **"Hey Clark"** opens voice mode.
 
-Yêu cầu:
+Requirements:
 
-- wake-word detection chạy local nếu platform/provider cho phép;
-- indicator rõ khi wake listener đang bật;
-- toggle trong Settings;
-- command voice “tắt voice”, “dừng nghe”, “về chat” phải kết thúc mode;
-- local mute/end là host action, không phụ thuộc model;
-- không gửi ambient audio tới remote provider chỉ để phát hiện wake phrase;
-- wake listener không đồng nghĩa active transcription.
+- wake-word detection runs locally where the platform/provider allows;
+- a clear indicator when the wake listener is on;
+- toggle in Settings;
+- the voice commands "turn off voice", "stop listening", "back to chat" must end the mode;
+- local mute/end is a host action, not dependent on the model;
+- do not send ambient audio to a remote provider just to detect the wake phrase;
+- a wake listener does not mean active transcription.
 
 ---
 
 ## 3. Motion & micro-interaction system
 
-### Shared motion helpers (đã ship)
+### Shared motion helpers (shipped)
 
-Bốn chuyển động của giao diện — `press`, `release`, `panel`, `popover` — nằm trong
-`packages/design-tokens/src/motion.ts` và là **cách duy nhất** để làm chuyển động. Ba quy tắc được mã hoá ở đó
-thay vì giao cho từng component:
+The four interface motions — `press`, `release`, `panel`, `popover` — live in
+`packages/design-tokens/src/motion.ts` and are the **only** way to build motion. Three rules are encoded there
+instead of being left to each component:
 
-- chỉ animate `transform` và `opacity` — hai thuộc tính không buộc browser layout lại; không có `font-size`,
-  `color` hay kích thước nào trong tập, nên helper không thể bị trỏ vào chữ;
-- bounce nhẹ chỉ dùng cho `press`, `release`, `panel`. `popover` không bounce, vì overshoot làm nội dung đáp
-  xuống ở chỗ khác với chỗ nó dừng lại;
-- reduced motion lấy từ bộ token `reduced`, không phải nhân với 0 — nhân với 0 vẫn để lại một transition bắn
-  event, và một animation vô hạn duration 0 là bug chứ không phải bản reduced-motion.
+- animate only `transform` and `opacity` — the two properties that don't force the browser to relayout; there's no
+  `font-size`, `color` or size in the set, so the helper can never be pointed at text;
+- mild bounce is only used for `press`, `release`, `panel`. `popover` doesn't bounce, because overshoot makes content
+  land somewhere other than where it settles;
+- reduced motion pulls from the `reduced` token set, not a multiply-by-zero — multiplying by zero still leaves a
+  transition that fires an event, and an infinite animation with duration 0 is a bug, not a reduced-motion
+  implementation.
 
-Các token hiện có micro, normal, panel, orb, enter, exit, glow và bounce là nền tảng tốt. Tiếp tục dùng token thay vì hard-code duration.
+The existing tokens micro, normal, panel, orb, enter, exit, glow and bounce are a good foundation. Keep using tokens instead of hard-coding a duration.
 
 ### 3.1 Motion grammar
 
 | Event | Motion |
 | --- | --- |
-| Hover | 120–180 ms, đổi border/background/opacity nhẹ |
-| Press | scale 0.98–0.985 trong 70–100 ms |
-| Release | spring/bounce nhẹ về 1.0 |
+| Hover | 120–180 ms, subtle border/background/opacity change |
+| Press | scale 0.98–0.985 over 70–100 ms |
+| Release | mild spring/bounce back to 1.0 |
 | Chip/card enter | fade + translateY 4–8 px, 180–280 ms |
 | Panel/modal | opacity + scale 0.985→1, 220–280 ms |
-| Popover/menu | transform-origin từ trigger |
-| Hero transition | existing staged exit; giữ continuous orb motion |
-| Widget pin | morph/fly từ inline card tới pin shelf |
-| Widget detach | card nâng nhẹ rồi host window xuất hiện cùng geometry |
-| Success | một pulse rất nhỏ, không confetti mặc định |
-| Error | shake ngang 2–4 px một lần; không loop |
-| Agent thinking | ambient orb breathing chậm |
-| Tool running | deterministic progress affordance; không spinner nếu có trạng thái cụ thể |
-| Voice listening | orb/waveform theo RMS input |
-| Voice speaking | orb/waveform theo playback level |
+| Popover/menu | transform-origin from the trigger |
+| Hero transition | existing staged exit; keep continuous orb motion |
+| Widget pin | morph/fly from inline card to pin shelf |
+| Widget detach | card lifts slightly then the host window appears with the same geometry |
+| Success | one very small pulse, no confetti by default |
+| Error | horizontal shake 2–4 px once; no loop |
+| Agent thinking | ambient orb breathing, slow |
+| Tool running | deterministic progress affordance; no spinner if a concrete state exists |
+| Voice listening | orb/waveform follows RMS input |
+| Voice speaking | orb/waveform follows playback level |
 
 ### 3.2 Bounce
 
-Bounce phải tinh tế:
+Bounce must be subtle:
 
-- chỉ dùng ở end-state của press/release, pin/drop, modal settle;
-- overshoot nhỏ;
-- không bounce body text;
-- không bounce khi reduced motion;
-- không chain bounce nhiều element cùng lúc.
+- only at the end-state of press/release, pin/drop, modal settle;
+- small overshoot;
+- never bounce body text;
+- never bounce with reduced motion;
+- never chain bounces on multiple elements at once.
 
 ### 3.3 Global transition rule
 
-Không dùng transition: all.
+Do not use transition: all.
 
-Mỗi component chỉ transition các property có chủ đích: opacity, transform, background-color, border-color, box-shadow, filter.
+Each component should only transition the properties it intends: opacity, transform, background-color, border-color, box-shadow, filter.
 
-Không animate layout property width/height/top/left mỗi frame nếu có thể dùng transform/FLIP.
+Do not animate layout properties width/height/top/left every frame if transform/FLIP can be used instead.
 
 ### 3.4 Reduced motion
 
-prefers-reduced-motion là hard requirement:
+prefers-reduced-motion is a hard requirement:
 
-- duration về 0 hoặc gần 0 theo token;
-- không giữ infinite spinner với duration 0;
-- feedback trạng thái vẫn phải tồn tại bằng icon/text/color/shape.
+- duration drops to 0 or near-0 per token;
+- never keep an infinite spinner with duration 0;
+- state feedback must still exist via icon/text/color/shape.
 
 ---
 
-## 4. Ambient behavior theo input và agent state
+## 4. Ambient behavior by input and agent state
 
-Root conversation surface nên có state machine hiển thị bằng data attributes thay vì component tự đoán:
+The root conversation surface should have a state machine expressed via data attributes instead of components guessing:
 
     data-input-modality = pointer | keyboard | touch | voice
     data-agent-state    = idle | listening | thinking | tooling | responding | success | error
     data-window-mode    = normal | expanded | compact | orb
     data-policy-mode    = autonomous | guarded | ask
 
-Trên chính canvas của Orb, hai attribute nữa công bố **profile đã resolve** chứ không phải preference thô:
+On the Orb's own canvas, three more attributes publish the **resolved profile** rather than the raw preference:
 
     data-orb          = gl | fallback
     data-orb-profile  = clark | calm | jelly | glass | custom
     data-orb-motion   = full | reduced
 
-`data-orb-motion` là giá trị **sau khi** reduced-motion đã thắng, nên một surface đọc được sự thật đã resolve
-thay vì phải suy lại từ preference và có thể suy sai. Việc resolve (clamp, preset, reduced-motion) nằm ở một
-hàm thuần trong `orb-profile.ts`; renderer chỉ nhận giá trị đã bounded.
+`data-orb-motion` is the value **after** reduced-motion has already won, so a surface reads the resolved truth
+instead of having to re-derive it from the preference and potentially get it wrong. The resolution (clamp, preset,
+reduced-motion) lives in one pure function in `orb-profile.ts`; the renderer only receives an already-bounded value.
 
 ### 4.1 Pointer
 
-- Orb flare theo pointer proximity.
-- Card hover nâng tối đa 1–2 px hoặc đổi border, không dùng shadow lớn.
-- Icon button chỉ hiện tooltip sau delay; label quan trọng phải visible hoặc accessible name rõ.
+- The Orb flares based on pointer proximity.
+- Card hover lifts at most 1–2 px or changes border, no large shadows.
+- Icon buttons only show a tooltip after a delay; important labels must be visible or have a clear accessible name.
 
 ### 4.2 Keyboard
 
-- Keyboard navigation không kích hoạt hover-only decoration.
-- Focus ring dùng token riêng, không dùng accent làm tín hiệu duy nhất.
-- Esc đóng surface gần nhất và restore focus.
+- Keyboard navigation does not trigger hover-only decoration.
+- Focus ring uses a dedicated token, not accent color as the only signal.
+- Esc closes the nearest surface and restores focus.
 - Cmd/Ctrl+K: focus composer / command intent.
-- Cmd/Ctrl+.: cycle model trong favorites.
+- Cmd/Ctrl+.: cycle model in favorites.
 - Cmd/Ctrl+Shift+V: toggle voice.
-- Shortcuts phải configurable và không capture khi đang nhập text nếu gây xung đột.
+- Shortcuts must be configurable and must not capture while typing text if that would conflict.
 
 ### 4.3 Agent state
 
-Background của app chỉ thay đổi rất nhẹ:
+The app background only changes very subtly:
 
 - idle: neutral;
-- thinking: ambient gradient/orb movement tăng nhẹ;
-- tooling: một directional trace/ring nhẹ;
-- responding: trở lại neutral khi token bắt đầu;
-- success: một soft settle;
-- error: accent danger rất nhỏ gần status/orb, không flash toàn màn hình.
+- thinking: ambient gradient/orb movement increases slightly;
+- tooling: a subtle directional trace/ring;
+- responding: back to neutral once tokens start streaming;
+- success: a soft settle;
+- error: a very small danger accent near the status/orb, no full-screen flash.
 
-Nội dung luôn có contrast ưu tiên cao hơn ambient effect.
+Content always takes contrast priority over the ambient effect.
 
 ---
 
 ## 5. Onboarding redesign
 
-Mục tiêu: user vào app và làm được việc trong vài giây.
+Goal: the user is in the app and getting things done within seconds.
 
-### 5.1 Không dùng wizard dài
+### 5.1 No long wizard
 
-Onboarding mới nên có tối đa hai khoảnh khắc.
+The new onboarding should have at most two moments.
 
 **A. Welcome**
 - ClarkCant + orb.
-- Một câu: “Nói điều bạn muốn làm.”
-- CTA Bắt đầu.
-- Secondary text nhỏ: “Clark mặc định tự thực thi việc bạn giao. Có thể đổi trong Settings.”
+- One sentence: "Say what you want to do."
+- CTA Get started.
+- Small secondary text: "Clark executes what you ask by default. You can change this in Settings."
 
 **B. First useful action**
-- vào thẳng conversation;
-- nếu model chưa có, sample/local capabilities vẫn dùng được;
-- khi user cần model thật, inline setup card xuất hiện đúng lúc;
-- khi user mở voice lần đầu, inline/host setup voice xuất hiện đúng lúc;
-- khi cần secret, host-owned credential prompt xuất hiện đúng lúc.
+- go straight into the conversation;
+- if no model is configured yet, sample/local capabilities still work;
+- when the user needs a real model, an inline setup card appears at the right time;
+- when the user opens voice for the first time, inline/host voice setup appears at the right time;
+- when a secret is needed, a host-owned credential prompt appears at the right time.
 
-Không hỏi provider/model/TypeSafe key trước khi user biết vì sao họ cần chúng.
+Do not ask about provider/model/TypeSafe key before the user knows why they need them.
 
 ### 5.2 Model setup
 
-Provider + model là một control nhóm:
+Provider + model is one control group:
 
 - searchable combobox;
-- recent/favorite models ở đầu;
-- current model có check;
-- context window/cost/speed chỉ hiện secondary;
-- lưu ngay sau selection, không cần nút Save nếu mutation reversible;
-- toast/status “Đã chuyển sang …”;
-- conversation command “đổi sang Claude/Gemini/…” làm cùng action.
+- recent/favorite models at the top;
+- current model has a checkmark;
+- context window/cost/speed only shown as secondary;
+- saved immediately after selection, no Save button needed if the mutation is reversible;
+- toast/status "Switched to …";
+- the conversation command "switch to Claude/Gemini/…" does the same action.
 
 ### 5.3 Policy setup
 
-Không block onboarding bằng permission questionnaire.
+Do not block onboarding with a permission questionnaire.
 
-Default Autonomous, với one-line disclosure có link Đổi chế độ.
+Default Autonomous, with a one-line disclosure linking to Change mode.
 
-Nếu build phân phối cần explicit legal acknowledgement, chỉ hỏi một lần bằng copy ngắn, không hỏi theo từng tool.
+If a distributed build needs explicit legal acknowledgement, ask once with short copy, not per tool.
 
 ### 5.4 Resume
 
-Onboarding/setup checkpoint phải resumable. Đóng app giữa OAuth/key setup không làm user quay lại từ đầu.
+Onboarding/setup checkpoints must be resumable. Closing the app mid-OAuth/key setup must not send the user back to the start.
 
 ---
 
@@ -361,225 +364,238 @@ Onboarding/setup checkpoint phải resumable. Đóng app giữa OAuth/key setup 
 
 ### 6.1 Header
 
-Header mặc định chỉ nên có:
+The default header should only have:
 
-- Clark mark/name — click về fresh session;
-- current model pill nhỏ — click mở quick model switcher;
-- connection/activity indicator chỉ nổi bật khi cần;
+- Clark mark/name — click returns to a fresh session;
+- current model pill, small — click opens the quick model switcher;
+- connection/activity indicator, only prominent when needed;
 - settings icon;
-- window-mode control chỉ ở desktop khi discoverability cần.
+- window-mode control, desktop only, when discoverability requires it.
 
-Không hiển thị tool count, node ID hoặc Pi internals thường trực.
+Do not show tool count, node ID or Pi internals persistently.
 
-Background task count chỉ xuất hiện khi >0. Khi có việc đang chờ vì đã chạm giới hạn chạy cùng lúc, mark nói thêm số đang chờ ("2 đang chờ") thay vì giả vờ mọi việc đều đang chạy.
+The background task count only appears when >0. When work is waiting because a concurrency limit was hit, the mark states the number waiting ("2 waiting") instead of pretending everything is running.
 
-Dấu hộp thư cũng vậy: chỉ xuất hiện khi có việc đang chờ user hoặc thông báo chưa đọc, và nói bằng chữ ("2 việc chờ
-bạn · 1 thông báo mới"), không bằng một chấm màu. Xem §6.7.
+Same for the inbox mark: it only appears when there's something waiting on the user or an unread notification, and it says so in words ("2 waiting on you · 1 new notification"), not with a colored dot. See §6.7.
 
 ### 6.2 Hero
 
-Giữ orb + prompt, nhưng suggestion chips nên là **dynamic recent intents** thay vì bốn câu cố định lâu dài:
+Keep orb + prompt, but the suggestion chips should be **dynamic recent intents** rather than four permanently fixed sentences:
 
 - recent work;
 - contextual project suggestions;
-- sample actions khi chưa có history.
+- sample actions when there's no history yet.
 
-Mỗi chip phải cho biết nếu là demo/sample.
+Each chip must indicate if it's a demo/sample.
 
-Hero biến mất khi user bắt đầu làm việc, nhưng logo/home cho phép về lại.
+The hero disappears once the user starts working, but the logo/home lets them return to it.
 
 ### 6.3 Composer
 
-Composer là control quan trọng nhất.
+The composer is the most important control.
 
-Bắt buộc:
+Required:
 
 - multiline auto-grow;
 - attachment button;
 - paste/drag-drop;
 - mic/voice button;
-- send/stop cùng vị trí;
+- send/stop in the same location;
 - file chip states;
-- status/error gần field liên quan;
-- typewriter placeholder chỉ khi empty/idle;
-- command autocomplete khi user gõ slash là optional enhancement, không phải navigation chính.
+- status/error near the relevant field;
+- typewriter placeholder only when empty/idle;
+- slash-command autocomplete is an optional enhancement, not the primary navigation.
 
-Khi turn đang chạy:
+While a turn is running:
 
-- send button morph thành Stop;
-- user vẫn được phép gõ turn kế tiếp;
-- nếu gửi giữa task, Jev quyết định steer/interrupt/background theo instruction;
-- UI nói ngắn gọn kết quả quyết định khi nó có tác động lớn.
+- the send button morphs into Stop;
+- the user is still allowed to type the next turn;
+- if sent mid-task, Jev decides steer/interrupt/background per instruction;
+- the UI briefly states the decision outcome when it has significant impact.
 
 ### 6.4 Selection actions
 
-Text selection toolbar nên có:
+The text selection toolbar should have:
 
 - Ask about this
 - Explain
 - Continue from here
 - Run in background
 
-Toolbar xuất hiện cạnh selection, keyboard accessible, mất đi khi selection mất.
+The toolbar appears next to the selection, is keyboard accessible, and disappears when the selection is lost.
 
 ### 6.5 Streaming
 
-Giữ chronology:
+Preserve chronology:
 
     text → reasoning → tool → text
 
-Tool activity mặc định compact. Expand khi user muốn xem arguments/result.
+Tool activity is compact by default. Expand when the user wants to see arguments/result.
 
-Thinking state kết thúc ngay khi content/tool event đầu tiên xuất hiện.
+The thinking state ends as soon as the first content/tool event appears.
 
 ### 6.6 Undo
 
-Action reversible nên tạo ephemeral Undo affordance trong timeline/status:
+A reversible action should create an ephemeral Undo affordance in the timeline/status:
 
 - unpin/pin;
 - theme/model switch;
 - local note edit;
-- file move khi underlying capability hỗ trợ rollback.
+- file move when the underlying capability supports rollback.
 
-Không hứa Undo cho irreversible external actions.
+Do not promise Undo for irreversible external actions.
 
-### 6.7 Hộp thư
+### 6.7 Inbox
 
-Hộp thư trả lời hai câu: *cái gì đang chờ mình quyết định* và *việc chạy khi mình không nhìn đã ra sao*. Nó không
-phải một nơi điều hướng thứ hai. Mỗi mục trỏ về hội thoại của nó, và quyết định ở hộp thư hay trên thẻ là một.
+The inbox answers two questions: *what's waiting for my decision* and *how did work running while I wasn't looking
+turn out*. It is not a second navigation surface. Every item points to its own conversation, and a decision made in
+the inbox or on the card is one and the same.
 
-Đã ship:
+Shipped:
 
-- **Dấu trên header** (§6.1), vắng mặt khi rỗng. Đang có việc chờ thì dấu mang cạnh cảnh báo; chỉ có thông báo mới thì
-  không. Poll như dấu việc nền, và đọc lại ngay sau một quyết định hoặc khi transcript đổi.
-- **Mở bằng click, bàn phím, lệnh gõ hoặc giọng nói** ("mở hộp thư", "xem thông báo", "open my inbox") qua cùng intent
-  `inbox.open`. Khi dấu vắng (không còn gì mới), lệnh vẫn mở được hộp thư để xem lại thông báo đã đọc.
-- **Modal host-owned** (§12: là bề mặt quyết định, không lồng modal; mở Settings thì đóng hộp thư). Escape đóng và trả
-  focus. Ghi rõ thời điểm node đọc hộp thư; không bao giờ ngụ ý là live.
-- **"Đang chờ bạn" trước, "Thông báo" sau.** Việc chờ gồm lệnh cần duyệt (hiện đúng dòng lệnh sẽ chạy, thời gian còn
-  lại), quyền gói mở rộng xin cấp, approval một task đang chạy xin (không có thẻ — worker không viết được thẻ, nhưng
-  vẫn Duyệt/Từ chối được qua route riêng của nó), và câu hỏi Clark đang hỏi. Duyệt một approval của task chạy lại
-  ngay task đó với quyền vừa cấp, không hỏi lại lần hai; từ chối, hoặc để hết hạn, thì việc dừng hẳn và hội thoại
-  được báo như vậy — không để một việc treo "đang chờ" mãi. Mô tả việc chờ là câu đọc được, không có mã nội bộ. Duyệt/Từ chối trong hộp thư đi qua đúng route của thẻ (hoặc
-  route riêng khi không có thẻ); câu hỏi chỉ có "Mở hội thoại", vì câu trả lời thuộc về hội thoại đã hỏi.
-- **Việc chờ luôn được suy ra lúc đọc**, từ thẻ và bản ghi duyệt, nên hộp thư không thể nói một việc còn chờ sau khi
-  nó đã được quyết định trên thẻ, hoặc đã hết hạn.
-- **Clark trả lời được "có gì chờ tôi không?"** bằng tool chỉ đọc `read_inbox`, cùng dữ liệu với panel; tool không
-  đánh dấu đã đọc và không duyệt được gì, và có thể mở hộp thư cho user qua `inbox.open`.
-- **Thông báo** có nguồn (việc nền, worker, gói mở rộng, Pi, thiết bị khác, ClarkCant), mức độ, tuổi tương đối, và
-  nhãn "chưa đọc" bằng chữ bên cạnh chấm. Mở hộp thư đánh dấu đã đọc đúng những thông báo nó đã hiện. "Bỏ" xoá khỏi
-  danh sách; "Mở hội thoại" chuyển sang hội thoại liên quan mà không mở thêm phiên.
-- **Thông báo cập nhật cho Pi SDK, gói đã cài và widget** (`apps/runtime/src/update-checks.ts`), từ một job định kỳ
-  so version đã cài với directory index và với npm registry (lỗi mạng không tạo thông báo lỗi). Nội dung nói version
-  hiện tại → mới và risk lane, cùng cách gọi tên với marketplace. Chưa có nút "Cập nhật": route cập nhật thật đi qua
-  lifecycle cài/rollback chưa nối tới thông báo này, nên hộp thư chỉ nói có bản mới chứ chưa cho bấm.
-- **Thông báo ngoài ứng dụng khi cửa sổ không có focus hoặc ở chế độ thu nhỏ/orb** (#171): trên desktop là OS
-  notification qua Electron `Notification`, host-owned, chỉ tiêu đề/nội dung đã redact — không bao giờ có dòng
-  lệnh hay secret; click thì đưa cửa sổ về kích thước thường nếu đang là orb/compact, focus nó và mở hộp thư qua
-  cùng intent `inbox.open`. Trên trình duyệt là Web Notification API, chỉ bật sau khi người dùng bấm nút trong
-  Settings → Control và trình duyệt tự cấp quyền; công tắc phản ánh quyền thật của trình duyệt, nói rõ khi bị từ
-  chối hoặc bị bỏ qua, và bị ẩn trên desktop. Tuỳ chọn theo nhóm (việc chờ duyệt, kết quả việc nền, cập nhật) và
-  giờ yên lặng, lưu ngay không cần nút Save; không có công tắc nào hiện trước khi giá trị đã lưu được đọc xong.
-  Nhóm "thiết bị khác" hiện nhưng bị tắt kèm lý do "chưa có thiết bị nào được ghép nối" cho tới khi có ghép nối
-  node. Một việc chờ sắp hết hạn (còn ≤ 1 phút) được nhắc đúng một lần, với tiêu đề nói rõ còn dưới 1 phút.
-- **Approval hoặc câu hỏi hết hạn mà không ai trả lời được báo, không im lặng rơi khỏi danh sách.** Một quét định kỳ
-  ở node ghi đúng một thông báo mỗi việc hết hạn, trỏ về đúng hội thoại của nó; approval xin quyền gói (không thuộc
-  hội thoại nào) không có gì để trỏ về nên không được báo theo đường này.
+- **A mark on the header** (§6.1), absent when empty. When something is waiting, the mark carries a warning edge;
+  when there's only a new notification, it doesn't. Polled like the background-task mark, and re-read right after a
+  decision or when the transcript changes.
+- **Opened by click, keyboard, typed command or voice** ("open the inbox", "show notifications", "open my inbox") via
+  the same `inbox.open` intent. When the mark is absent (nothing new), the command still opens the inbox to review
+  already-read notifications.
+- **Host-owned modal** (§12: it's a decision surface, no nested modals; opening Settings closes the inbox). Escape
+  closes it and returns focus. Clearly states when the node read the inbox; never implies it's live.
+- **"Waiting on you" first, "Notifications" second.** Waiting items include commands needing approval (showing the
+  exact command line that will run, remaining time), permission requests from extension packages, an approval a running task
+  is requesting (no card — the worker can't write a card, but it can still be Approved/Denied through its own route),
+  and a question Clark is asking. Approving a running task's approval re-runs that task with the newly granted
+  permission, without asking a second time; denying, or letting it expire, stops the work outright and the conversation
+  reports it as such — no item is left hanging "waiting" forever. Waiting items are described in readable sentences, no
+  internal codes. Approve/Deny in the inbox goes through the card's own route (or a dedicated route when there's no
+  card); a question only offers "Open conversation", because the answer belongs to the conversation that asked it.
+- **Waiting items are always derived at read time**, from cards and the approval record, so the inbox can never say an
+  item is still waiting after it's already been decided on the card, or after it expired.
+- **Clark can answer "is there anything waiting for me?"** via the read-only tool `read_inbox`, using the same data as
+  the panel; the tool doesn't mark anything read and can't approve anything, and it can open the inbox for the user via
+  `inbox.open`.
+- **Notifications** have a source (background task, worker, extension package, Pi, another device, ClarkCant), a
+  severity, a relative age, and an "unread" label in words next to the dot. Opening the inbox marks read exactly the
+  notifications it displayed. "Dismiss" removes it from the list; "Open conversation" switches to the related
+  conversation without opening an extra session.
+- **Update notifications for the Pi SDK, installed packages and widgets** (`apps/runtime/src/update-checks.ts`), from a
+  periodic job comparing the installed version against the directory index and the npm registry (a network error does
+  not create an error notification). Content states current version → new version and risk lane, using the same
+  naming as the marketplace. There's no "Update" button yet: the real update route through the install/rollback
+  lifecycle isn't wired to this notification yet, so the inbox only says a new version exists but can't be clicked.
+- **Out-of-app notifications when the window is unfocused or in minimized/orb mode** (#171): on desktop this is an OS
+  notification via Electron `Notification`, host-owned, with only redacted title/body — never a command line or a
+  secret; clicking restores the window from orb/compact to normal size, focuses it and opens the inbox via the same
+  `inbox.open` intent. On the browser it's the Web Notification API, only enabled after the user presses the button in
+  Settings → Control and the browser grants its own permission; the toggle reflects the browser's actual permission,
+  states clearly when it's been denied or dismissed, and is hidden on desktop. On desktop, when the latest notification
+  could not be handed to the OS, an inline status beside the OS toggle says why and that the item is still in the
+  inbox, until the OS accepts a notification again. Per-group options (approvals waiting,
+  background results, updates) plus quiet hours, saved immediately without a Save button; no toggle appears before its
+  saved value has finished loading. The "other devices" group appears but is disabled with the reason "no device paired
+  yet" until a node pairing exists. A waiting item about to expire (≤ 1 minute left) is nudged exactly once, with a
+  title clearly stating under 1 minute remains.
+- **An approval or question that expires unanswered is reported, not silently dropped from the list.** A periodic scan
+  on the node writes exactly one notification per expired item, pointing back to its own conversation; a package
+  permission approval (which belongs to no conversation) has nothing to point back to, so it isn't reported through
+  this path.
 
-Chưa ship (đích):
+Not shipped (target):
 
-- thông báo và việc chờ từ một node ClarkCant khác (đã có `originNodeId` và khoá dedup để nhận lặp lại an toàn);
-- thông báo khi một effect được ghi nhận ở trạng thái "unknown" cần đối soát: chưa có đường tạo dữ liệu này ở
-  production (effect ledger, §9 system-architecture.md, chưa có nơi ghi hàng thật);
-- thông báo khi một kết nối OAuth hết hạn hoặc bị thu hồi: bảng `connections` chưa có nơi ghi hàng thật ở production.
+- notifications and waiting items from another ClarkCant node (already has `originNodeId` and a dedup key so repeated
+  receipt is safe);
+- notification when an effect is recorded in an "unknown" state needing reconciliation: there's no production path
+  that creates this data yet (effect ledger, §9 system-architecture.md, no place writes real rows yet);
+- notification when an OAuth connection expires or is revoked: the `connections` table has no place writing real rows
+  in production yet.
 
-Không được: dùng hộp thư làm dashboard mặc định, đếm "0" thường trực, hay hiển thị một nút quyết định mà route thật
-chưa có.
+Not allowed: using the inbox as a default dashboard, a persistent "0" count, or showing a decision button whose real
+route doesn't exist yet.
 
 ---
 
 ## 7. Voice agent UX
 
-Voice là cùng Clark, không phải tab Settings hoặc app con.
+Voice is the same Clark, not a Settings tab or a sub-app.
 
 ### 7.1 Entry
 
-- mic button trong composer;
+- mic button in the composer;
 - Hey Clark;
 - configurable shortcut;
-- chat command “bật voice”.
+- chat command "turn on voice".
 
 ### 7.2 Surface
 
-Voice surface có 3 mức:
+The voice surface has 3 levels:
 
 1. **Expanded:** orb, live state, transcript, waveform, controls.
-2. **Compact voice bar:** trạng thái + mute + end + expand.
-3. **Orb mode:** chỉ visual listening/speaking indicator; transcript mở khi user yêu cầu.
+2. **Compact voice bar:** status + mute + end + expand.
+3. **Orb mode:** just a visual listening/speaking indicator; transcript opens when the user asks.
 
-### 7.3 Voice commands điều khiển app
+### 7.3 App-control voice commands
 
-Voice phải có semantic commands cho:
+Voice must have semantic commands for:
 
-- mở/đóng Settings;
-- đổi model/provider;
-- đổi policy mode;
-- resize/minimize/restore window;
-- pin/unpin/detach/focus widget;
-- scroll/focus conversation;
+- open/close Settings;
+- switch model/provider;
+- change policy mode;
+- resize/minimize/restore the window;
+- pin/unpin/detach/focus a widget;
+- scroll/focus the conversation;
 - mute/end voice;
-- mở marketplace và cài widget;
-- hỏi user question / trả lời panel đang mở.
+- open the marketplace and install a widget;
+- ask the user a question / answer an open panel.
 
-Không implement bằng raw voice strings ở frontend. Voice transcript đi qua cùng intent/action layer với text.
+Do not implement this with raw voice strings in the frontend. Voice transcript goes through the same intent/action layer as text.
 
 ### 7.4 Voice + widgets
 
-Widget đang focus publish semantic summary:
+The focused widget publishes a semantic summary:
 
 - title;
 - selected item;
 - available local actions;
 - available effect actions.
 
-Clark có thể nói “chọn ngày mai trên lịch” và gọi local view action, hoặc “tạo event ngày mai” và gọi server effect action.
+Clark can say "select tomorrow on the calendar" and call a local view action, or "create an event tomorrow" and call a server effect action.
 
 ---
 
 ## 8. Widget UI architecture
 
-### 8.1 Bốn trust lanes
+### 8.1 Four trust lanes
 
 1. **Host-owned UI**  
-   Approval/policy/credential/device/OS/trust indicators. Không cho third party giả.
+   Approval/policy/credential/device/OS/trust indicators. Third parties cannot impersonate this.
 
 2. **Built-in catalog**  
    Trusted React components, JSON props + datasets.
 
 3. **Declarative compositions**  
-   Không executable payload. Ghép built-ins + bound actions.
+   No executable payload. Compose built-ins + bound actions.
 
 4. **Custom isolated widgets / MCP Apps**  
    Iframe/origin sandbox, typed bridge, CSP, bounded capabilities.
 
-Tất cả lane dùng chung instance/state/action model ở host.
+All lanes share the same instance/state/action model at the host.
 
 ### 8.2 Widget chrome
 
-Widget chrome tối giản:
+Widget chrome stays minimal:
 
 - title;
-- freshness/provenance khi cần;
+- freshness/provenance when needed;
 - overflow menu;
-- pin/detach action khi hợp lệ;
+- pin/detach action when valid;
 - loading/error/missing states;
 - optional compact action row.
 
-Không lặp title nếu widget nằm trong card đã có title.
+Don't repeat the title if the widget is already inside a card that has one.
 
 ### 8.3 Interaction states
 
-Mọi widget phải định nghĩa:
+Every widget must define:
 
 - loading;
 - empty;
@@ -593,7 +609,7 @@ Mọi widget phải định nghĩa:
 
 ### 8.4 Local vs effect actions
 
-Local view actions không cần hỏi:
+Local view actions don't need to ask:
 
 - filter;
 - sort;
@@ -603,28 +619,28 @@ Local view actions không cần hỏi:
 - tab;
 - expand/collapse.
 
-Effect actions đi qua host:
+Effect actions go through the host:
 
 - invoke tool;
 - agent intent;
 - workflow;
 - external mutation.
 
-UI phải nhìn khác nhau đủ để user hiểu “đang xem” vs “đang làm”.
+The UI must look different enough for the user to tell "viewing" apart from "doing."
 
 ---
 
-## 9. Default widget catalog: audit và đề xuất
+## 9. Default widget catalog: audit and proposal
 
-Hiện repo đã có: overview/layout, metrics, filter, line/bar/donut, table, calendar, image, carousel, gallery, YouTube/video, CTA và note fixture.
+The repo currently has: overview/layout, metrics, filter, line/bar/donut, table, calendar, image, carousel, gallery, YouTube/video, CTA and a note fixture.
 
-Đây là nền tốt nhưng chưa đủ cho “làm mọi thứ trong conversation”.
+This is a good foundation but not enough for "do everything inside the conversation."
 
-### 9.1 P0 — phải bổ sung
+### 9.1 P0 — must add
 
 #### ui.question@1
 
-Panel Q&A / ask-user:
+Q&A / ask-user panel:
 
 - single choice;
 - multi choice;
@@ -634,28 +650,28 @@ Panel Q&A / ask-user:
 - confirm;
 - optional freeform other;
 - keyboard first;
-- voice agent đọc câu hỏi và submit câu trả lời bằng cùng action schema;
-- support nhiều câu hỏi trong một panel khi hợp lý, nhưng không biến thành form dài.
+- the voice agent reads the question aloud and submits the answer through the same action schema;
+- support multiple questions in one panel when sensible, but don't turn it into a long form.
 
 #### ui.form@1
 
 Schema-driven form:
 
 - text/password/number/select/search-select/date/time/toggle;
-- field validation inline;
+- inline field validation;
 - draft preservation;
-- submit effect rõ;
-- secret fields route host credential flow nếu marked sensitive.
+- clear submit effect;
+- secret fields route through the host credential flow when marked sensitive.
 
 #### ui.task@1
 
-Một card hợp nhất progress + steps + current operation + Stop.
+One card unifying progress + steps + current operation + Stop.
 
-Không duplicate task progress/summary thành nhiều component rời nếu một component có thể morph theo lifecycle.
+Don't duplicate task progress/summary into multiple separate components if one component can morph across the lifecycle.
 
 #### ui.artifact@1
 
-Preview/download/open cho:
+Preview/download/open for:
 
 - text;
 - image;
@@ -663,16 +679,16 @@ Preview/download/open cho:
 - code;
 - generated file.
 
-Có provenance + version.
+Includes provenance + version.
 
 #### ui.diff@1
 
-Nâng cấp code diff:
+Upgraded code diff:
 
 - collapse unchanged;
 - file navigator;
 - copy hunk;
-- optional apply/revert khi capability có;
+- optional apply/revert where a capability exists;
 - keyboard navigation.
 
 #### ui.browser@1 / ui.computer@1
@@ -685,7 +701,7 @@ Host-mediated screenshot/live preview:
 - status;
 - current action cue.
 
-Không embed privileged browser origin.
+Do not embed a privileged browser origin.
 
 ### 9.2 P1 — high value
 
@@ -704,50 +720,53 @@ Không embed privileged browser origin.
 - ui.player@1
 - ui.call@1
 
-#### Terminal (host-owned, đã ship)
+#### Terminal (host-owned, shipped)
 
-Thẻ `terminal-session-card` là shell thật (PTY) trong hội thoại, thuộc lane 1 vì shell có toàn quyền của
-người dùng: không bao giờ là widget isolated, không có trong marketplace, chỉ host tạo.
+The `terminal-session-card` is a real shell (PTY) inside the conversation, belonging to lane 1 because a shell has
+the user's full authority: it's never an isolated widget, never in the marketplace, and only the host creates it.
 
-- **Mở:** qua hội thoại ("mở terminal ở thư mục X") hoặc voice; không có nút "terminal mới" cố định.
-- **Trong Widget Library:** Terminal nằm ở mục "Thẻ của hệ thống", tách khỏi danh mục built-in. Mục này chỉ có mô tả,
-  một hình minh họa tĩnh ghi rõ là minh họa và câu gợi ý cách mở qua hội thoại. Không có preview live, không có
-  nút mở, vì thẻ host-owned gắn với trạng thái thật và chỉ được tạo từ hội thoại.
-- **Agent chạy lệnh** đi qua cùng preflight + execution policy + guardrail như `run_command`. Khi policy nói
-  *ask*, lệnh được **điền sẵn nhưng không chạy**: người dùng nhấn Enter trên đúng dòng lệnh họ thấy chính là
-  xác nhận. Người dùng tự gõ là hành động của chính họ, không qua policy.
-- **Agent không gõ đè lên người dùng:** khi người dùng đã gõ dở trên dòng lệnh, agent không điền sẵn cũng
-  không chạy, và nói lý do; dòng agent tự điền sẵn trước đó thì được thay thế chứ không nối thêm. Lệnh có ký
-  tự điều khiển (tab, escape…) bị từ chối, vì dòng thực sự chạy sẽ khác dòng đã được xét. Lệnh được xét theo
-  thư mục shell đang đứng (prompt báo lại), không phải thư mục lúc mở; shell không có tích hợp OSC 133 thì agent
-  chỉ điền sẵn. Output gửi cho model đã che các chuỗi dạng credential, và agent chỉ thấy terminal của hội thoại
-  mình.
-- **Một người điều khiển:** một terminal có tối đa một driver; thẻ khác ở chế độ quan sát và có nút
-  "Điều khiển ở đây" chuyển lease (không nhân bản).
-- **Bàn phím:** mọi phím, kể cả Escape, thuộc về shell để TUI (vim, htop, pi…) dùng được; **F6** đưa focus ra
-  khỏi terminal tới nút gửi. Gợi ý F6 luôn hiện dưới màn hình.
-- **Gửi về phiên chính:** một nút, nhãn nói rõ sẽ gửi gì — vùng chọn, rồi kết quả lệnh cuối đã xong (kèm
-  exit code), rồi màn hình. Lệnh đang chạy không bao giờ được gửi như một kết quả. Nội dung đi như tin nhắn
-  của người dùng, output được fence.
-- **Tiến trình:** bảng "Tiến trình" liệt kê terminal khác (xem được), lệnh `run_command` và việc nền (chỉ
-  trạng thái, vì không có stream phía sau), và phiên Pi trên máy (theo dõi live, chỉ đọc, đã redact secret,
-  cập nhật theo từng entry Pi ghi). Escape đóng bảng và trả focus về nút mở.
-- **Dừng từng việc:** lệnh đang chạy và việc nền đang chạy hoặc đang chờ có nút "Dừng" riêng, đi qua cùng
-  đường dừng với tool `stop_work` của Clark, nên "dừng việc đọc báo cáo" bằng lời và bằng nút là một hành động.
-  Nút chuyển sang "Đang dừng…" và bị khoá trong lúc chờ; thất bại thì nói ngay cạnh việc đó. Trạng thái việc nền
-  là một trong đang chờ / đang chạy / xong / không xong / đã dừng / bị gián đoạn — "đã dừng" và "bị gián đoạn"
-  (node khởi động lại) là hai sự việc khác nhau và không gộp làm một.
-- **Trạng thái trung thực:** đang kết nối, mất kết nối (có nút kết nối lại), terminal đã kết thúc (nói exit
-  code, bỏ nút đóng), terminal không còn trên node, node không có PTY. Thẻ trong lịch sử không có kết nối live
-  là snapshot và nói rõ như vậy.
-- **Ngoại lệ có chủ đích với "lịch sử inline là snapshot":** thẻ terminal trong lịch sử vẫn nối live tới
-  terminal khi terminal đó còn chạy trên node, vì terminal là một tiến trình đang sống chứ không phải kết quả
-  của một lượt. Lease driver vẫn là một, nên việc này không tạo effect owner thứ hai; khi terminal không còn,
-  thẻ nói rõ điều đó thay vì hiện màn hình cũ như thể đang live.
-- Emergency stop và nút đóng gửi hangup cho shell (shell chuyển tiếp cho các job của nó), rồi giết cả session
-  của terminal, gồm các job nền người dùng để lại.
+- **Open:** through the conversation ("open a terminal in folder X") or voice; there's no permanent "new terminal"
+  button.
+- **In the Widget Library:** Terminal sits under "System cards", apart from the built-in catalog. The entry has only a
+  description, a static illustration labelled as an illustration and a hint for opening it through the conversation.
+  There is no live preview and no open button, because a host-owned card is tied to real state and is created only from
+  the conversation.
+- **The agent running a command** goes through the same preflight + execution policy + guardrail as `run_command`.
+  When policy says *ask*, the command is **prefilled but not run**: the user pressing Enter on the exact line they
+  see is itself the confirmation. The user typing it themselves is their own action, not subject to policy.
+- **The agent does not type over the user:** when the user has already typed something on the command line, the
+  agent neither prefills nor runs, and states why; a line the agent had prefilled earlier is replaced, not appended
+  to. A command with control characters (tab, escape…) is rejected, because the line that actually runs would differ
+  from the line that was reviewed. The command is evaluated against the directory the shell is currently in (as
+  reported by the prompt), not the directory at open time; a shell without OSC 133 integration means the agent only
+  ever prefills. Output sent to the model has credential-like strings redacted, and the agent only sees the terminal
+  belonging to its own conversation.
+- **One driver:** a terminal has at most one driver at a time; other cards are in observer mode with a "Drive here"
+  button that transfers the lease (never duplicates it).
+- **Keyboard:** every key, including Escape, belongs to the shell so TUIs (vim, htop, pi…) work; **F6** moves focus
+  out of the terminal to the send button. The F6 hint is always shown at the bottom of the screen.
+- **Send to main session:** one button, its label stating exactly what will be sent — the selection, else the last
+  finished command's result (with exit code), else the screen. A still-running command is never sent as a result.
+  Content goes in as a user message, output is fenced.
+- **Progress panel:** a "Progress" panel lists other terminals (view-only), `run_command` invocations and background
+  work (status only, since there's no stream behind it), and Pi sessions on the machine (followed live, read-only,
+  redacted, updated per entry Pi writes). Escape closes the panel and returns focus to the button that opened it.
+- **Stopping individual items:** a running command and a running or waiting background task each have their own
+  "Stop" button, going through the same stop path as Clark's `stop_work` tool, so "stop reading that report" by
+  voice and by button is one action. The button switches to "Stopping…" and locks while waiting; a failure is stated
+  right next to that item. A background task's status is one of waiting / running / done / failed / stopped /
+  interrupted — "stopped" and "interrupted" (node restarted) are two different events and are not merged into one.
+- **Honest state:** connecting, disconnected (with a reconnect button), the terminal has ended (states the exit
+  code, drops the close button), the terminal no longer exists on the node, the node has no PTY. A card in history
+  with no live connection is a snapshot and states so.
+- **A deliberate exception to "inline history is a snapshot":** a terminal card in history still connects live to
+  the terminal while that terminal is still running on the node, because a terminal is a living process, not the
+  result of one turn. The driver lease is still a single one, so this doesn't create a second effect owner; once the
+  terminal no longer exists, the card states that clearly instead of showing the old screen as if it were live.
+- Emergency stop and the close button send a hangup to the shell (the shell forwards it to its own jobs), then kill
+  the whole terminal session, including background jobs the user left running.
 
-### 9.3 Improve widgets hiện tại
+### 9.3 Improve existing widgets
 
 **Charts**
 - hover/focus datum;
@@ -755,7 +774,7 @@ người dùng: không bao giờ là widget isolated, không có trong marketpla
 - selected point state;
 - accessible summary;
 - responsive labels;
-- tránh SVG text collision.
+- avoid SVG text collision.
 
 **Table**
 - sticky header;
@@ -763,70 +782,70 @@ người dùng: không bao giờ là widget isolated, không có trong marketpla
 - column visibility;
 - horizontal scroll affordance;
 - row selection;
-- virtualization khi lớn.
+- virtualization when large.
 
 **Calendar**
 - month/week/agenda;
 - keyboard date navigation;
 - event pills;
-- timezone visible khi khác local;
+- timezone visible when different from local;
 - selected date persists as local view state.
 
 **Media**
 - unified media controls;
 - one active playback owner;
 - poster/error/offline states;
-- keyboard media shortcuts khi widget focused.
+- keyboard media shortcuts when the widget is focused.
 
 **CTA**
-- dùng button hierarchy đúng;
+- use correct button hierarchy;
 - pending state;
 - success/error;
-- action label mô tả operation, không dùng generic Continue.
+- action label describes the operation, not a generic Continue.
 
 **Note/editor**
 - autosave status;
 - conflict state;
 - checklist;
-- markdown/rich text vừa đủ;
-- không cố clone Notion.
+- just enough markdown/rich text;
+- don't try to clone Notion.
 
 ---
 
 ## 10. Widget Marketplace
 
-### 10.1 Bài học từ Pi
+### 10.1 Lessons from Pi
 
-Pi giữ core nhỏ và mở rộng bằng package có nhiều resource facets: extension, skill, prompt, theme. Package có thể đến từ npm, git hoặc local path; catalog có thể index packages nhưng install mechanism vẫn đơn giản và portable.
+Pi keeps a small core and extends via packages with multiple resource facets: extension, skill, prompt, theme. Packages can come from npm, git or a local path; a catalog can index packages while the install mechanism stays simple and portable.
 
-Nguồn tham khảo:
+References:
 
 - https://pi.dev/docs/latest/extensions
 - https://pi.dev/docs/latest/packages
 - https://pi.dev/packages
 
-ClarkCant nên học **package ergonomics** đó, nhưng không copy trust model của native Pi extension. Pi extension có full process permissions; Clark widget executable mặc định phải isolated.
+ClarkCant should learn from that **package ergonomics**, but not copy native Pi extension's trust model. A Pi extension has full process permissions; an executable ClarkCant widget must default to isolated.
 
-### 10.2 Marketplace không cần backend khổng lồ ở V1
+### 10.2 The marketplace doesn't need a huge backend at V1
 
-V1 có thể dùng:
+V1 can use:
 
-- npm package hoặc git repo làm distribution;
-- manifest chuẩn clarkcant;
-- catalog index đọc metadata;
+- an npm package or git repo as distribution;
+- a standard clarkcant manifest;
+- a catalog index reading metadata;
 - screenshots/video preview;
 - version/digest;
 - compatibility;
 - facets;
 - capability declarations;
 - source/repository/license;
-- install count/rating có thể deferred.
+- install count/rating can be deferred.
 
-Không cần payment/review social network ngay.
+No payment/review social network needed yet.
 
 ### 10.3 Package facets
 
-Một package có thể chứa:
+A package can contain:
 
     {
       "clarkcant": {
@@ -839,19 +858,19 @@ Một package có thể chứa:
       }
     }
 
-Các facet activation độc lập. UI-only update không restart Pi.
+Facet activation is independent. A UI-only update doesn't restart Pi.
 
 ### 10.4 Marketplace UX
 
-User có thể nói:
+The user can say:
 
-- “tìm widget theo dõi giá”
-- “cài widget calendar đẹp hơn”
-- “có widget nào cho Home Assistant không?”
+- "find a price-tracking widget"
+- "install a nicer calendar widget"
+- "is there a widget for Home Assistant?"
 
-Clark trả ui.marketplace-results@1.
+Clark returns ui.marketplace-results@1.
 
-Mỗi item:
+Each item:
 
 - preview;
 - name + one-line value proposition;
@@ -861,20 +880,20 @@ Mỗi item:
 - capability/risk chips;
 - install/update button;
 - View source;
-- Try nếu package hỗ trợ ephemeral preview.
+- Try if the package supports an ephemeral preview.
 
-Trong Autonomous, explicit user intent “cài X” là đủ để install. Không hỏi confirmation lần hai. Jev/policy vẫn có thể chặn theo user-configured rule hoặc hard platform boundary.
+In Autonomous mode, explicit user intent "install X" is enough to install. No second confirmation. Jev/policy can still block per a user-configured rule or a hard platform boundary.
 
 ### 10.5 Risk levels
 
-Marketplace hiển thị risk, không biến mọi install thành modal:
+The marketplace shows risk without turning every install into a modal:
 
 - **UI-only:** isolated, no network → low.
 - **UI + declared network:** isolated, scoped origins → medium.
 - **Tool/service:** separate executor, filesystem/network capabilities → elevated.
 - **Native Pi extension:** trusted code with process-level access → high/trusted mode.
 
-Autonomous mode có thể thực thi theo user policy; visual activity/audit bắt buộc.
+Autonomous mode can execute per user policy; visual activity/audit is mandatory.
 
 ### 10.6 Developer experience
 
@@ -886,7 +905,7 @@ Target CLI:
     clark widget pack
     clark widget publish
 
-Template gồm:
+Template includes:
 
 - manifest;
 - schema;
@@ -896,7 +915,7 @@ Template gồm:
 - example data;
 - icon/preview image.
 
-clark widget dev chạy isolated preview host có hot reload.
+clark widget dev runs an isolated preview host with hot reload.
 
 Publish gate:
 
@@ -913,25 +932,25 @@ Publish gate:
 
 ### 10.7 Personalization
 
-Widget instances có:
+Widget instances have:
 
 - size preference;
 - compact/expanded;
 - pin position;
-- theme token overrides giới hạn;
+- limited theme token overrides;
 - saved filters/view state;
 - default actions;
 - voice aliases.
 
-Package không được tự thay global app theme hoặc global shortcuts nếu chưa có user preference rõ.
+A package must not change the global app theme or global shortcuts on its own without a clear user preference.
 
 ---
 
 ## 11. Settings redesign
 
-Settings vẫn là modal/surface trên conversation. Không biến thành admin console.
+Settings remains a modal/surface over the conversation. It doesn't turn into an admin console.
 
-Sáu nhóm, đặt tên theo việc user muốn làm chứ không theo bộ phận của hệ thống:
+Six groups, named for what the user wants to do, not for the parts of the system:
 
 1. Experience
 2. AI & Routing
@@ -940,16 +959,16 @@ Sáu nhóm, đặt tên theo việc user muốn làm chứ không theo bộ ph�
 5. Devices & Voice
 6. Developer / Advanced
 
-Credential **không** có tab riêng: mỗi khoá nằm ở domain giải thích nó (Gemini ở Devices & Voice,
-TypeSafe ở AI & Routing), theo mục 11.6.
+Credentials **don't** get their own tab: each key lives in the domain that explains it (Gemini in Devices & Voice,
+TypeSafe in AI & Routing), per section 11.6.
 
-Một control chỉ xuất hiện khi behavior đứng sau nó đã tồn tại. Preference đã khai báo trong registry mà
-chưa có ai đọc (density, background routing, voice picker) thì **không** có control, và lý do được nói ở
-chỗ user sẽ tìm — im lặng bỏ qua còn tệ hơn, vì user sẽ tưởng app hỏng.
+A control only appears once the behavior behind it exists. A preference already declared in the registry that
+nothing reads yet (density, background routing, voice picker) gets **no** control, and the reason is stated where the
+user would look for it — silently skipping it is worse, because the user would think the app is broken.
 
 ### 11.1 Experience
 
-Dùng segmented controls, toggles và swatches:
+Use segmented controls, toggles and swatches:
 
 - Appearance: System / Light / Dark.
 - Language: Tiếng Việt / English — segmented control, applies immediately (no save button), sets
@@ -964,29 +983,29 @@ Dùng segmented controls, toggles và swatches:
 - Density: Comfortable / Compact.
 - Window behavior: remember size, start mode.
 - Wake phrase: on/off + local-listening status.
-- Keyboard shortcuts: mở subpanel.
+- Keyboard shortcuts: opens a subpanel.
 
-Không hiển thị contrast debugging cho consumer; đưa vào Developer section.
+Don't show contrast debugging to consumers; put it in the Developer section.
 
 ### 11.2 AI & Routing
 
-- Current model as searchable picker.
+- Current model as a searchable picker.
 - Favorites/recent models.
-- Shortcut order cho model cycling.
+- Shortcut order for model cycling.
 - Automatic routing by Jev toggle.
 - Main session model preference.
 - Background-session routing preference: Auto / Same model / Cheap / Fast / Quality.
-- Jev model/adapter settings trong Advanced.
-- Context/memory strategy chỉ dùng user-friendly terms.
-- **Personal instructions:** textarea/editor cho system instructions của user, mặc định là append vào product/system prompt; có Enable, Reset, character/token estimate và preview phần sẽ được inject.
-- Personal instructions là preference của ClarkCant, không sửa trực tiếp file SYSTEM.md của Pi.
-- Product/security/tool instructions có precedence cao hơn personal instructions; UI không được gọi chúng là cách “bypass guardrails”.
+- Jev model/adapter settings in Advanced.
+- Context/memory strategy uses user-friendly terms only.
+- **Personal instructions:** a textarea/editor for the user's system instructions, appended to the product/system prompt by default; has Enable, Reset, character/token estimate and a preview of the injected section.
+- Personal instructions are a ClarkCant preference, not a direct edit of Pi's SYSTEM.md file.
+- Product/security/tool instructions have higher precedence than personal instructions; the UI must not call them a way to "bypass guardrails."
 
-Provider/model switch nên autosave sau selection. Personal instructions áp dụng từ turn/session boundary gần nhất mà Pi hỗ trợ; UI phải nói rõ nếu cần mở session kế tiếp thay vì giả hot-swap.
+Provider/model switch should autosave after selection. Personal instructions apply from the nearest turn/session boundary Pi supports; the UI must clearly state if the next session needs to open rather than pretend it's a hot-swap.
 
 ### 11.3 Control
 
-Đây là tab quan trọng mới.
+This is an important new tab.
 
 **Execution policy**
 
@@ -994,19 +1013,20 @@ Provider/model switch nên autosave sau selection. Personal instructions áp d�
 - Guarded
 - Ask every time
 
-Mỗi option có 1–2 dòng mô tả cụ thể.
+Each option has a 1–2 line concrete description.
 
 **Jev guardrails**
 
 - editable instruction text;
 - presets;
 - reset;
-- test policy bằng example action không thực thi.
+- test the policy with an example action that doesn't execute.
 
-**Việc chạy nền**
+**Background work**
 
-- segmented control 1 / 3 / 5 việc nền chạy cùng lúc (mặc định 3), lưu ngay khi chọn và áp dụng cho yêu cầu kế
-  tiếp; việc đang chạy không bị dừng khi hạ giới hạn. Lượt chính của hội thoại không bao giờ bị tính vào giới hạn.
+- segmented control 1 / 3 / 5 concurrent background tasks (default 3), saved immediately on selection and applied to
+  the next request; running work is not stopped when the limit is lowered. The conversation's main turn is never
+  counted against the limit.
 
 **Safety controls**
 
@@ -1015,11 +1035,11 @@ Mỗi option có 1–2 dòng mô tả cụ thể.
 - undoable recent actions;
 - per-capability overrides.
 
-Không dùng checkbox matrix 50 permissions làm default view. Per-capability rules nằm Advanced.
+Don't use a 50-permission checkbox matrix as the default view. Per-capability rules live in Advanced.
 
 ### 11.4 Extensions & Widgets
 
-Gộp những thứ hiện nằm rải ở Tools/Pi extensions:
+Consolidates what's currently scattered across Tools/Pi extensions:
 
 - Marketplace button/search.
 - Installed packages.
@@ -1031,14 +1051,14 @@ Gộp những thứ hiện nằm rải ở Tools/Pi extensions:
 - Capability status.
 - per-package details.
 
-Tool references kỹ thuật nằm trong expandable details, không phải list chính.
+Technical tool references live in expandable details, not the main list.
 
 ### 11.5 Devices & Voice
 
 - microphone status/test;
 - voice provider status;
-- **voice picker khi provider hỗ trợ**; client lấy options/capability từ provider adapter, không giữ một danh sách provider-specific ở component;
-- preview voice bằng một câu ngắn, chỉ mở provider session khi cần và không ghi transcript preview vào conversation;
+- **voice picker when the provider supports it**; the client gets options/capability from the provider adapter, not a provider-specific list kept in the component;
+- preview voice with a short sentence, only opening a provider session when needed and never writing the preview transcript into the conversation;
 - wake phrase;
 - input/output device;
 - paired nodes/devices;
@@ -1046,13 +1066,13 @@ Tool references kỹ thuật nằm trong expandable details, không phải list 
 - voice credential status;
 - device pairing.
 
-Gemini Live hiện hỗ trợ chọn preset voice bằng speechConfig.voiceConfig.prebuiltVoiceConfig.voiceName; implementation phải giữ contract provider-neutral để provider khác có thể không hỗ trợ voice selection.
+Gemini Live currently supports choosing a preset voice via speechConfig.voiceConfig.prebuiltVoiceConfig.voiceName; the implementation must keep the contract provider-neutral since another provider may not support voice selection.
 
-Secret value không hiển thị lại.
+Secret values are never displayed back.
 
 ### 11.6 Credentials
 
-Không cần top-level tab riêng nếu credentials ít. Credential rows xuất hiện đúng domain và có một Manage credentials subpanel để xem danh sách names/status.
+No dedicated top-level tab needed while credentials are few. Credential rows appear in the right domain, plus one Manage credentials subpanel to view the list of names/status.
 
 Host-owned credential UI:
 
@@ -1062,14 +1082,14 @@ Host-owned credential UI:
 - Replace;
 - Remove.
 
-Không render stored value.
+Never renders the stored value.
 
 ### 11.7 Developer / Advanced
 
-Ẩn sau disclosure:
+Hidden behind disclosure:
 
 - node ID;
-- Pi settings raw view;
+- raw Pi settings view;
 - capability refs;
 - package digests;
 - token/time ceilings;
@@ -1082,53 +1102,53 @@ Không render stored value.
 
 ### Buttons
 
-- Primary chỉ một trên mỗi local decision area.
-- Icon-only cần accessible label.
-- Press state ngay lập tức.
-- Destructive cần danger semantics, nhưng Autonomous không đồng nghĩa mọi destructive action phải hỏi.
+- Only one primary per local decision area.
+- Icon-only needs an accessible label.
+- Immediate press state.
+- Destructive needs danger semantics, but Autonomous doesn't mean every destructive action must ask.
 
 ### Toggles
 
-Dùng cho immediate boolean preference. Không dùng toggle cho action một lần.
+Used for an immediate boolean preference. Not for a one-time action.
 
 ### Segmented control
 
-Dùng cho 2–4 mutually exclusive modes: theme, policy, window mode, density.
+Used for 2–4 mutually exclusive modes: theme, policy, window mode, density.
 
 ### Search select
 
-Dùng provider/model/package danh sách dài.
+Used for long provider/model/package lists.
 
 ### Command palette
 
-Chỉ là accelerator; không phải route bắt buộc.
+Just an accelerator; not a mandatory route.
 
 ### Toast
 
-Chỉ cho reversible/lightweight success. Error cần ở gần object gây lỗi hoặc trong timeline.
+Only for reversible/lightweight success. Errors need to be near the object that caused them or in the timeline.
 
 ### Modal
 
-Dùng cho focused configuration/decision. Không nest modal. Settings là modal; package details có thể là inner view trong cùng surface thay vì modal mới.
+Used for focused configuration/decision. No nested modals. Settings is a modal; package details can be an inner view within the same surface instead of a new modal.
 
 ### Context menu
 
-Dùng cho secondary widget operations: pin, detach, duplicate view, remove, package details.
+Used for secondary widget operations: pin, detach, duplicate view, remove, package details.
 
 ### Tooltip
 
-Chỉ giải thích icon/shortcut. Không chứa thông tin user buộc phải biết để ra quyết định.
+Only explains an icon/shortcut. Must not contain information the user needs to make a decision.
 
 ---
 
 ## 13. Memory UX
 
-Memory không được trở thành một database admin user phải chăm sóc.
+Memory must not become a database admin console the user has to maintain.
 
-Trong conversation:
+In conversation:
 
-- Clark có thể nói ngắn gọn khi một remembered preference materially ảnh hưởng hành vi.
-- User có thể nói “đừng nhớ cái này”, “đổi preference X”.
+- Clark can briefly mention when a remembered preference materially affects behavior.
+- The user can say "don't remember this," "change preference X."
 
 Settings:
 
@@ -1138,7 +1158,7 @@ Settings:
 - review recent memory-derived preferences;
 - clear/manage route.
 
-Không show embeddings/vector internals.
+Don't show embeddings/vector internals.
 
 ---
 
@@ -1146,55 +1166,55 @@ Không show embeddings/vector internals.
 
 Error hierarchy:
 
-1. recover silently nếu deterministic;
-2. inline retry nếu user action thất bại;
-3. conversation message nếu task bị ảnh hưởng;
-4. modal chỉ khi host/device/security boundary đòi focus.
+1. recover silently if deterministic;
+2. inline retry if a user action failed;
+3. conversation message if a task was affected;
+4. modal only when a host/device/security boundary demands focus.
 
-Copy phải nói:
+The copy must state:
 
-- cái gì không làm được;
-- cái gì vẫn an toàn/đã giữ;
-- user có thể làm gì tiếp.
+- what could not be done;
+- what remains safe/preserved;
+- what the user can do next.
 
-Không dùng generic “Something went wrong” nếu backend có bounded reason.
+Don't use a generic "Something went wrong" if the backend has a bounded reason.
 
 ---
 
 ## 15. Accessibility
 
-- Minimum target nên hướng tới 40–44 px cho primary touch controls; token 24 px chỉ dùng dense desktop affordance có spacing đủ.
+- Minimum target should aim for 40–44 px for primary touch controls; the 24 px token is only for dense desktop affordances with enough spacing.
 - Focus visible.
 - Full keyboard path.
-- Text alternatives cho charts/images/complex widgets.
-- State không chỉ bằng màu.
+- Text alternatives for charts/images/complex widgets.
+- State never communicated by color alone.
 - Voice transcript accessible.
-- Live regions không spam token-by-token screen reader.
+- Live regions don't spam screen readers token-by-token.
 - Reduced motion.
-- Contrast tests tiếp tục là release gate.
+- Contrast tests remain a release gate.
 
 ---
 
 ## 16. Performance
 
-UX mượt yêu cầu:
+A smooth UX requires:
 
-- composer interaction không bị block bởi widget;
+- composer interaction not blocked by widgets;
 - heavy widgets lazy mount;
-- offscreen widget suspend;
-- charts downsample có disclosure;
+- offscreen widgets suspend;
+- charts downsample with disclosure;
 - image/video lazy load;
-- animation dùng transform/opacity;
+- animation uses transform/opacity;
 - bounded ResizeObserver work;
 - no global rerender per pointer move;
-- detached widget không duplicate subscriptions nếu không phải owner.
+- a detached widget doesn't duplicate subscriptions if it isn't the owner.
 
-Target cảm nhận:
+Perceived targets:
 
-- press feedback dưới 100 ms;
-- local view action immediate;
-- panel open frame đầu không blank;
-- streaming token không làm scroll jank.
+- press feedback under 100 ms;
+- local view action is immediate;
+- first frame of a panel open isn't blank;
+- streaming tokens don't cause scroll jank.
 
 ---
 
@@ -1237,34 +1257,34 @@ Target cảm nhận:
 
 ## 18. Design review checklist
 
-Một UI change không complete nếu câu trả lời cho bất kỳ câu nào sau đây là “không”:
+A UI change is not complete if the answer to any of the following is "no":
 
-1. User có thể hoàn thành bằng chat hoặc voice không?
-2. Main conversation vẫn là surface chính không?
-3. Có tránh thêm navigation concept mới không cần thiết không?
-4. Control có phản hồi press/focus/loading/error rõ không?
-5. Transition có mượt và có lý do không?
-6. Reduced motion có đường tương đương không?
-7. Keyboard có làm được mọi thao tác quan trọng không?
-8. Widget có loading/empty/error/read-only states không?
-9. Freshness/provenance có trung thực không?
-10. Action local và external effect có bị nhập nhằng không?
-11. Autonomous mode có tránh confirmation lặp lại không?
-12. Guarded/Ask mode có vẫn enforce được không?
-13. Có Stop/Undo/recovery hợp lý không?
-14. Voice có thể thao tác surface này bằng semantic action không?
-15. Feature có tránh lộ Pi/Jev/node internals không cần thiết không?
-16. Có tránh thêm button/tab/card chỉ vì dễ code thay vì tốt cho UX không?
+1. Can the user accomplish it via chat or voice?
+2. Is the main conversation still the primary surface?
+3. Does it avoid adding an unnecessary new navigation concept?
+4. Does the control give clear press/focus/loading/error feedback?
+5. Is the transition smooth and purposeful?
+6. Does reduced motion have an equivalent path?
+7. Can the keyboard do everything important?
+8. Does the widget have loading/empty/error/read-only states?
+9. Is freshness/provenance honest?
+10. Are local actions and external effects clearly distinguished?
+11. Does Autonomous mode avoid repeated confirmation?
+12. Does Guarded/Ask mode still enforce properly?
+13. Is there reasonable Stop/Undo/recovery?
+14. Can voice operate this surface via a semantic action?
+15. Does the feature avoid exposing Pi/Jev/node internals unnecessarily?
+16. Does it avoid adding a button/tab/card just because it's easier to code rather than better for UX?
 
-Nếu câu 15 hoặc 16 là “không”, thiết kế lại trước khi merge.
+If question 15 or 16 is "no," redesign before merging.
 
 ---
 
 ## 19. Source-of-truth rule
 
-- DESIGN.md định nghĩa product interaction, visual behavior và UX invariants.
-- AGENTS.md định nghĩa quy tắc agent phải tuân thủ khi sửa repo.
-- Code + tests định nghĩa behavior đã thực sự implement.
-- Architecture docs định nghĩa trust/state/runtime boundaries.
+- DESIGN.md defines product interaction, visual behavior and UX invariants.
+- AGENTS.md defines the rules agents must follow when editing the repo.
+- Code + tests define behavior actually implemented.
+- Architecture docs define trust/state/runtime boundaries.
 
-Nếu DESIGN.md mô tả target chưa implement, code không được claim feature đã có. Nếu code intentionally thay đổi UX direction, cập nhật DESIGN.md trong cùng change.
+If DESIGN.md describes a target that isn't implemented yet, code must not claim the feature already exists. If code intentionally changes UX direction, update DESIGN.md in the same change.

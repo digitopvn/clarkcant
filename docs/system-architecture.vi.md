@@ -382,7 +382,7 @@ Hộp thư (`apps/runtime/src/inbox.ts`, `routes/inbox.ts`) gom hai thứ khác 
     và module này không giả vờ làm được điều đó.
 
 Route: `GET /inbox`, `GET /inbox/summary` (hai số cho dấu trên header), `POST /inbox/read` (`noticeIds` hoặc tất cả),
-`POST /inbox/notices/:id/dismiss`. Contract ở `packages/contracts/src/inbox.ts`. UI ở DESIGN.md §6.7; mở bằng
+`POST /inbox/notices/:id/dismiss`. Contract ở `packages/contracts/src/inbox.ts`. UI ở DESIGN.vi.md §6.7; mở bằng
 intent `inbox.open` (text, voice, `control_app`). Agent đọc cùng dữ liệu đó qua tool chỉ đọc `read_inbox`
 (`apps/runtime/src/read-inbox-tool.ts`): không đánh dấu đã đọc (người dùng chưa nhìn thấy) và không quyết định được gì
 (model không phải người dùng).
@@ -394,7 +394,10 @@ cửa sổ mất focus hoặc đang ở orb/compact; theo nhóm và giờ yên l
 dung chỉ gồm tiêu đề/nội dung đã redact và bị giới hạn độ dài — không bao giờ có dòng lệnh, capability ref hay mã
 nội bộ. Trên desktop, renderer gọi `desktop:notify`; main process giữ tham chiếu tới từng `Notification` còn trên
 màn hình, và khi click thì khôi phục cửa sổ shell khỏi orb/compact, focus nó rồi gửi `desktop:notificationClicked`
-**chỉ tới cửa sổ shell** (không bao giờ tới cửa sổ widget tách rời); preload trả về hàm huỷ đăng ký listener đó.
+**chỉ tới cửa sổ shell** (không bao giờ tới cửa sổ widget tách rời); preload trả về hàm huỷ đăng ký listener đó
+(`onWidgetReattached` cũng vậy). Khi `desktop:notify` từ chối (`reason`: `unsupported`, `no-window`) hoặc lỗi,
+renderer ghi lại kết quả gần nhất (`desktop-notify-status.ts`, chỉ loại lỗi, không có nội dung) và Settings → Control
+hiện trạng thái inline cạnh công tắc thông báo hệ điều hành cho tới khi hệ điều hành nhận lại một thông báo.
 Trên trình duyệt, Web Notification API chỉ được dùng khi người dùng đã bấm bật trong Settings → Control và trình
 duyệt cấp quyền; mỗi thông báo mang `tag` là id của mục nên nhiều tab không chồng bản sao. Lượt poll vẫn đọc `GET /inbox` khi
 chưa kênh nào giao được, để tập id đã thấy luôn theo kịp: bật thông báo giữa chừng không báo dồn, cũng không nuốt

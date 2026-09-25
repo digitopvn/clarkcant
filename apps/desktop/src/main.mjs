@@ -341,10 +341,10 @@ function registerHandlers() {
   handle("desktop:notify", async (input) => {
     const title = typeof input?.title === "string" ? input.title.slice(0, 120) : "";
     const body = typeof input?.body === "string" ? input.body.slice(0, 500) : "";
-    if (title.length === 0) return { ok: false, refused: "a notification needs a title" };
-    if (!Notification.isSupported()) return { ok: false, refused: "this OS does not support notifications" };
+    if (title.length === 0) return { ok: false, reason: "invalid", refused: "a notification needs a title" };
+    if (!Notification.isSupported()) return { ok: false, reason: "unsupported", refused: "this OS does not support notifications" };
     if (shellWindow === undefined || shellWindow.isDestroyed()) {
-      return { ok: false, refused: "there is no shell window left to open the inbox in" };
+      return { ok: false, reason: "no-window", refused: "there is no shell window left to open the inbox in" };
     }
     // Host-owned: only the redacted title and body the renderer already bounded ever reach the OS. Clicking it
     // restores the window from orb/compact if it was collapsed, focuses it the same way `desktop:focusWindow`
