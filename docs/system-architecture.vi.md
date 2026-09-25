@@ -397,7 +397,7 @@ màn hình, và khi click thì khôi phục cửa sổ shell khỏi orb/compact,
 **chỉ tới cửa sổ shell** (không bao giờ tới cửa sổ widget tách rời); preload trả về hàm huỷ đăng ký listener đó
 (`onWidgetReattached` cũng vậy). Khi `desktop:notify` từ chối (`reason`: `unsupported`, `no-window`) hoặc lỗi,
 renderer ghi lại kết quả gần nhất (`desktop-notify-status.ts`, chỉ loại lỗi, không có nội dung) và Settings → Control
-hiện trạng thái inline cạnh công tắc thông báo hệ điều hành cho tới khi một thông báo hiện được.
+hiện trạng thái inline cạnh công tắc thông báo hệ điều hành cho tới khi hệ điều hành nhận lại một thông báo.
 Trên trình duyệt, Web Notification API chỉ được dùng khi người dùng đã bấm bật trong Settings → Control và trình
 duyệt cấp quyền; mỗi thông báo mang `tag` là id của mục nên nhiều tab không chồng bản sao. Lượt poll vẫn đọc `GET /inbox` khi
 chưa kênh nào giao được, để tập id đã thấy luôn theo kịp: bật thông báo giữa chừng không báo dồn, cũng không nuốt

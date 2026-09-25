@@ -289,26 +289,39 @@ test("no notification appears while the window is focused, since the in-app mark
 });
 
 /**
- * Opens Settings → Control from the keyboard. With a desktop bridge present the window's drag region covers the
- * header, so a pointer click there lands on the chrome, as it would in the real shell.
+ * Opens Settings → Control. The Settings button is reached from the keyboard: with a desktop bridge present the
+ * window's drag region covers the header, so a pointer click there lands on the chrome, as it would in the real shell.
  */
-async function openControlByKeyboard(page: Page): Promise<void> {
+async function openControlSettings(page: Page): Promise<void> {
   await page.locator('[data-settings="true"]').focus();
   await page.keyboard.press("Enter");
   await page.locator("#cc-tab-control").click();
 }
 
-test("a desktop notification the OS refused is reported beside the OS toggle, and clears once one is shown", async ({
+async function closeSettings(page: Page): Promise<void> {
+  await page.keyboard.press("Escape");
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+}
+
+async function notifyCalls(page: Page): Promise<number> {
+  return page.evaluate(() => (window as unknown as { __ccNotifyCalls: number }).__ccNotifyCalls);
+}
+
+test("a desktop notification the OS refused is reported beside the OS toggle, and clears once the OS accepts one again", async ({
   page,
 }) => {
   // A stand-in desktop bridge: enough for the client to treat this window as desktop chrome, with a `notify`
   // that answers the way the main process does when the OS has no notification support.
   await page.addInitScript(() => {
-    const scope = window as unknown as { __ccNotifyAnswer: unknown; clarkcant: unknown };
+    const scope = window as unknown as { __ccNotifyAnswer: unknown; __ccNotifyCalls: number; clarkcant: unknown };
     scope.__ccNotifyAnswer = { ok: false, reason: "unsupported", refused: "this OS does not support notifications" };
+    scope.__ccNotifyCalls = 0;
     scope.clarkcant = {
       setCompactMode: () => Promise.resolve({ ok: true }),
-      notify: () => Promise.resolve(scope.__ccNotifyAnswer),
+      notify: () => {
+        scope.__ccNotifyCalls += 1;
+        return Promise.resolve(scope.__ccNotifyAnswer);
+      },
       onNotificationClicked: () => () => undefined,
     };
     document.hasFocus = () => false;
@@ -316,7 +329,7 @@ test("a desktop notification the OS refused is reported beside the OS toggle, an
   await openApp(page);
   await drainWaiting(page);
 
-  await openControlByKeyboard(page);
+  await openControlSettings(page);
   const panel = page.locator("#cc-tabpanel-control");
   await expect(panel).toBeVisible();
   const osToggle = panel.locator('[data-toggle="inbox-notify-os"] input[type="checkbox"]');
@@ -329,27 +342,33 @@ test("a desktop notification the OS refused is reported beside the OS toggle, an
     await panel.locator('[data-toggle="inbox-notify-group-waitingApprovals"]').click();
     await expect(group).toBeChecked({ timeout: 10_000 });
   }
+  // Both toggles read back as checked, so the saved preferences have loaded and the status row can render.
+  await expect(osToggle).toBeChecked();
   const status = panel.locator('[data-inbox-notify-os-status="unsupported"]');
   await expect(status).toHaveCount(0);
 
-  await page.keyboard.press("Escape");
+  await closeSettings(page);
   await propose(page);
 
   // Settings is reopened while the poll delivers, so the status arrives in the surface the person is looking at.
-  await openControlByKeyboard(page);
+  await openControlSettings(page);
   await expect(status).toBeVisible({ timeout: 20_000 });
   await expect(status).toContainText(/inbox|hộp thư/i);
 
-  // A notification that is shown again clears the status: it reports the latest attempt, not a stale one.
+  // A notification the OS accepts clears the status: it reports the latest attempt, not a stale one.
   await page.evaluate(() => {
     (window as unknown as { __ccNotifyAnswer: unknown }).__ccNotifyAnswer = { ok: true };
   });
-  await page.keyboard.press("Escape");
+  await closeSettings(page);
+  const callsBefore = await notifyCalls(page);
   await drainWaiting(page);
   await propose(page);
-  await openControlByKeyboard(page);
-  await expect(panel.locator("[data-inbox-notify-os-status]")).toHaveCount(0, { timeout: 20_000 });
+  // The accepted notification must actually have been attempted, or a missing status would prove nothing.
+  await expect.poll(() => notifyCalls(page), { timeout: 20_000 }).toBeGreaterThan(callsBefore);
+  await openControlSettings(page);
+  await expect(osToggle).toBeChecked();
+  await expect(panel.locator("[data-inbox-notify-os-status]")).toHaveCount(0);
 
-  await page.keyboard.press("Escape");
+  await closeSettings(page);
   await drainWaiting(page);
 });

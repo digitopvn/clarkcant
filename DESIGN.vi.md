@@ -480,9 +480,9 @@ phải một nơi điều hướng thứ hai. Mỗi mục trỏ về hội tho�
   lệnh hay secret; click thì đưa cửa sổ về kích thước thường nếu đang là orb/compact, focus nó và mở hộp thư qua
   cùng intent `inbox.open`. Trên trình duyệt là Web Notification API, chỉ bật sau khi người dùng bấm nút trong
   Settings → Control và trình duyệt tự cấp quyền; công tắc phản ánh quyền thật của trình duyệt, nói rõ khi bị từ
-  chối hoặc bị bỏ qua, và bị ẩn trên desktop. Trên desktop, khi hệ điều hành từ chối hoặc lỗi ở thông báo gần nhất,
+  chối hoặc bị bỏ qua, và bị ẩn trên desktop. Trên desktop, khi thông báo gần nhất không chuyển được cho hệ điều hành,
   một trạng thái inline cạnh công tắc thông báo hệ điều hành nói rõ lý do và rằng mục vẫn nằm trong hộp thư, cho tới
-  khi một thông báo hiện được. Tuỳ chọn theo nhóm (việc chờ duyệt, kết quả việc nền, cập nhật) và
+  khi hệ điều hành nhận lại một thông báo. Tuỳ chọn theo nhóm (việc chờ duyệt, kết quả việc nền, cập nhật) và
   giờ yên lặng, lưu ngay không cần nút Save; không có công tắc nào hiện trước khi giá trị đã lưu được đọc xong.
   Nhóm "thiết bị khác" hiện nhưng bị tắt kèm lý do "chưa có thiết bị nào được ghép nối" cho tới khi có ghép nối
   node. Một việc chờ sắp hết hạn (còn ≤ 1 phút) được nhắc đúng một lần, với tiêu đề nói rõ còn dưới 1 phút.

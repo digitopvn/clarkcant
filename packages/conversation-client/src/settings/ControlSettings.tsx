@@ -18,6 +18,7 @@ import { hasDesktopChrome } from "../desktop-compact.ts";
 import {
   desktopNotifyStatus,
   desktopNotifyStatusMessageKey,
+  recordDesktopNotifyStatus,
   subscribeDesktopNotifyStatus,
 } from "../inbox/desktop-notify-status.ts";
 import { effectCategoryLabels } from "../inbox/inbox-model.ts";
@@ -521,7 +522,11 @@ function InboxNotificationSettingsReady({ prefs, value }: { prefs: PreferencesHa
           label={t("settings.control.notifications.os.label")}
           checked={value.os}
           pending={pending}
-          onChange={(next) => write({ os: next })}
+          onChange={(next) => {
+            // An outcome from before the toggle was last off says nothing about the next attempt.
+            if (next) recordDesktopNotifyStatus({ kind: "none" });
+            write({ os: next });
+          }}
           {...(!desktop
             ? { disabledReason: t("settings.control.notifications.os.needsDesktop") }
             : pendingReason === undefined

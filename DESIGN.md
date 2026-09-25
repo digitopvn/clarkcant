@@ -488,9 +488,9 @@ Shipped:
   secret; clicking restores the window from orb/compact to normal size, focuses it and opens the inbox via the same
   `inbox.open` intent. On the browser it's the Web Notification API, only enabled after the user presses the button in
   Settings → Control and the browser grants its own permission; the toggle reflects the browser's actual permission,
-  states clearly when it's been denied or dismissed, and is hidden on desktop. On desktop, when the OS refuses or
-  fails the latest notification, an inline status beside the OS toggle says why and that the item is still in the
-  inbox, until a notification is shown again. Per-group options (approvals waiting,
+  states clearly when it's been denied or dismissed, and is hidden on desktop. On desktop, when the latest notification
+  could not be handed to the OS, an inline status beside the OS toggle says why and that the item is still in the
+  inbox, until the OS accepts a notification again. Per-group options (approvals waiting,
   background results, updates) plus quiet hours, saved immediately without a Save button; no toggle appears before its
   saved value has finished loading. The "other devices" group appears but is disabled with the reason "no device paired
   yet" until a node pairing exists. A waiting item about to expire (≤ 1 minute left) is nudged exactly once, with a

@@ -406,7 +406,7 @@ focuses it and sends `desktop:notificationClicked` **only to the shell window** 
 preload returns a function that unsubscribes that listener (as does `onWidgetReattached`). When `desktop:notify`
 refuses (`reason`: `unsupported`, `no-window`) or fails, the renderer records the latest outcome
 (`desktop-notify-status.ts`, the kind of failure only, no content) and Settings → Control shows an inline status
-beside the OS notification toggle until a notification is shown again. In the browser, the Web Notification API is used only
+beside the OS notification toggle until the OS accepts a notification again. In the browser, the Web Notification API is used only
 once the user has turned it on in Settings → Control and the browser granted permission; each notification carries
 the item's id as its `tag`, so several tabs do not stack copies. The poll still reads `GET /inbox` when no channel
 can deliver, so the set of seen ids stays current: turning notifications on midway neither floods a backlog nor
