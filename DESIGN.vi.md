@@ -269,7 +269,7 @@ Root conversation surface nên có state machine hiển thị bằng data attrib
     data-window-mode    = normal | expanded | compact | orb
     data-policy-mode    = autonomous | guarded | ask
 
-Trên chính canvas của Orb, hai attribute nữa công bố **profile đã resolve** chứ không phải preference thô:
+Trên chính canvas của Orb, ba attribute nữa công bố **profile đã resolve** chứ không phải preference thô:
 
     data-orb          = gl | fallback
     data-orb-profile  = clark | calm | jelly | glass | custom
@@ -953,13 +953,13 @@ chỗ user sẽ tìm — im lặng bỏ qua còn tệ hơn, vì user sẽ tưở
 Dùng segmented controls, toggles và swatches:
 
 - Appearance: System / Light / Dark.
-- Language: Tiếng Việt / English — segmented control, applies immediately (no save button), sets
-  `<html lang>`, and persists across reload and devices through the preference registry
-  (`experience.language`). Default is Vietnamese; there is no "follow system" option, because no
-  cross-platform signal for "UI language" is reliable enough not to silently switch a Vietnamese
-  speaker's product language away from Vietnamese. Only default chrome (composer, timeline chrome,
-  settings, error copy, voice controls, marketplace headings) is translated; agent output is never
-  translated.
+- Ngôn ngữ: Tiếng Việt / English — segmented control, áp dụng ngay (không có nút lưu), đặt
+  `<html lang>`, và được giữ qua reload và giữa các thiết bị nhờ preference registry
+  (`experience.language`). Mặc định là tiếng Việt; không có tuỳ chọn "theo hệ thống", vì không có
+  tín hiệu "ngôn ngữ UI" đa nền tảng nào đủ tin cậy để khỏi âm thầm đổi ngôn ngữ sản phẩm của người
+  nói tiếng Việt sang ngôn ngữ khác. Chỉ chrome mặc định (composer, chrome của timeline, settings,
+  thông báo lỗi, điều khiển giọng nói, tiêu đề marketplace) được dịch; output của agent không bao giờ
+  bị dịch.
 - Accent.
 - Motion: Full / Reduced / Follow system.
 - Density: Comfortable / Compact.
@@ -1249,7 +1249,7 @@ Một UI change không complete nếu câu trả lời cho bất kỳ câu nào 
 7. Keyboard có làm được mọi thao tác quan trọng không?
 8. Widget có loading/empty/error/read-only states không?
 9. Freshness/provenance có trung thực không?
-10. Action local và external effect có bị nhập nhằng không?
+10. Action local và external effect có được phân biệt rõ không?
 11. Autonomous mode có tránh confirmation lặp lại không?
 12. Guarded/Ask mode có vẫn enforce được không?
 13. Có Stop/Undo/recovery hợp lý không?

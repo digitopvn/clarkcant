@@ -110,7 +110,7 @@ The UI responds differently depending on the interaction mode:
 
 The Orb must appear at the key identity points: onboarding, hero, header/avatar, voice mode and minimal/orb window mode. A redesign must not replace the Orb with a static logo, a spinner or another avatar as the default.
 
-Users are personalized on **how the Orb presents itself**, not on stripping its semantic identity:
+Users may personalize **how the Orb presents itself**, but not strip its semantic identity:
 
 - palette / gradient / glow;
 - exposure, chromatic fringe, sheen;
@@ -208,7 +208,7 @@ instead of being left to each component:
 - mild bounce is only used for `press`, `release`, `panel`. `popover` doesn't bounce, because overshoot makes content
   land somewhere other than where it settles;
 - reduced motion pulls from the `reduced` token set, not a multiply-by-zero — multiplying by zero still leaves a
-  transition that fires an event, and an infinite-duration animation at duration 0 is a bug, not a reduced-motion
+  transition that fires an event, and an infinite animation with duration 0 is a bug, not a reduced-motion
   implementation.
 
 The existing tokens micro, normal, panel, orb, enter, exit, glow and bounce are a good foundation. Keep using tokens instead of hard-coding a duration.
@@ -270,7 +270,7 @@ The root conversation surface should have a state machine expressed via data att
     data-window-mode    = normal | expanded | compact | orb
     data-policy-mode    = autonomous | guarded | ask
 
-On the Orb's own canvas, two more attributes publish the **resolved profile** rather than the raw preference:
+On the Orb's own canvas, three more attributes publish the **resolved profile** rather than the raw preference:
 
     data-orb          = gl | fallback
     data-orb-profile  = clark | calm | jelly | glass | custom
@@ -462,7 +462,7 @@ Shipped:
 - **Host-owned modal** (§12: it's a decision surface, no nested modals; opening Settings closes the inbox). Escape
   closes it and returns focus. Clearly states when the node read the inbox; never implies it's live.
 - **"Waiting on you" first, "Notifications" second.** Waiting items include commands needing approval (showing the
-  exact command line that will run, remaining time), package permission expansion requests, an approval a running task
+  exact command line that will run, remaining time), permission requests from extension packages, an approval a running task
   is requesting (no card — the worker can't write a card, but it can still be Approved/Denied through its own route),
   and a question Clark is asking. Approving a running task's approval re-runs that task with the newly granted
   permission, without asking a second time; denying, or letting it expire, stops the work outright and the conversation
@@ -490,7 +490,7 @@ Shipped:
   Settings → Control and the browser grants its own permission; the toggle reflects the browser's actual permission,
   states clearly when it's been denied or dismissed, and is hidden on desktop. On desktop, when the OS refuses or
   fails the latest notification, an inline status beside the OS toggle says why and that the item is still in the
-  inbox, until a notification is shown again. Options are grouped (approvals waiting,
+  inbox, until a notification is shown again. Per-group options (approvals waiting,
   background results, updates) plus quiet hours, saved immediately without a Save button; no toggle appears before its
   saved value has finished loading. The "other devices" group appears but is disabled with the reason "no device paired
   yet" until a node pairing exists. A waiting item about to expire (≤ 1 minute left) is nudged exactly once, with a
@@ -566,16 +566,16 @@ Clark can say "select tomorrow on the calendar" and call a local view action, or
 
 ### 8.1 Four trust lanes
 
-1. **Host-owned UI**
+1. **Host-owned UI**  
    Approval/policy/credential/device/OS/trust indicators. Third parties cannot impersonate this.
 
-2. **Built-in catalog**
+2. **Built-in catalog**  
    Trusted React components, JSON props + datasets.
 
-3. **Declarative compositions**
+3. **Declarative compositions**  
    No executable payload. Compose built-ins + bound actions.
 
-4. **Custom isolated widgets / MCP Apps**
+4. **Custom isolated widgets / MCP Apps**  
    Iframe/origin sandbox, typed bridge, CSP, bounded capabilities.
 
 All lanes share the same instance/state/action model at the host.
@@ -744,7 +744,7 @@ the user's full authority: it's never an isolated widget, never in the marketpla
 - **Send to main session:** one button, its label stating exactly what will be sent — the selection, else the last
   finished command's result (with exit code), else the screen. A still-running command is never sent as a result.
   Content goes in as a user message, output is fenced.
-- **Progress panel:** a "Progress" table lists other terminals (view-only), `run_command` invocations and background
+- **Progress panel:** a "Progress" panel lists other terminals (view-only), `run_command` invocations and background
   work (status only, since there's no stream behind it), and Pi sessions on the machine (followed live, read-only,
   redacted, updated per entry Pi writes). Escape closes the panel and returns focus to the button that opened it.
 - **Stopping individual items:** a running command and a running or waiting background task each have their own
@@ -946,7 +946,7 @@ A package must not change the global app theme or global shortcuts on its own wi
 
 Settings remains a modal/surface over the conversation. It doesn't turn into an admin console.
 
-Six groups, named for what the user wants to do, not for the system's internal departments:
+Six groups, named for what the user wants to do, not for the parts of the system:
 
 1. Experience
 2. AI & Routing
@@ -1264,7 +1264,7 @@ A UI change is not complete if the answer to any of the following is "no":
 7. Can the keyboard do everything important?
 8. Does the widget have loading/empty/error/read-only states?
 9. Is freshness/provenance honest?
-10. Is there no ambiguity between local action and external effect?
+10. Are local actions and external effects clearly distinguished?
 11. Does Autonomous mode avoid repeated confirmation?
 12. Does Guarded/Ask mode still enforce properly?
 13. Is there reasonable Stop/Undo/recovery?
