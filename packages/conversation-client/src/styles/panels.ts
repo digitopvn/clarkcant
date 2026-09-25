@@ -435,6 +435,18 @@ button:focus-visible, textarea:focus-visible, input:focus-visible, [tabindex]:fo
 .cc-library-notes { margin-top: var(--cc-space-lg); padding-top: var(--cc-space-lg); border-top: 1px solid var(--cc-border); }
 .cc-library-notes h3 { margin: 0 0 var(--cc-space-sm); font-weight: 600; }
 .cc-library-notes ul { margin: 0; padding-left: var(--cc-space-lg); color: var(--cc-text-muted); }
+/* Host-owned cards: described, not previewed. Separated by a rule like the installed list, and the item is an
+   article rather than a button because there is nothing to open from here. */
+.cc-library-host { margin-top: var(--cc-space-lg); padding-top: var(--cc-space-lg); border-top: 1px solid var(--cc-border); }
+.cc-library-host h3 { margin: 0 0 var(--cc-space-xs); font-weight: 600; }
+.cc-library-host-intro { margin: 0 0 var(--cc-space-md); color: var(--cc-text-muted); }
+.cc-host-card-item { display: flex; flex-direction: column; gap: var(--cc-space-sm); padding: var(--cc-space-md); border: 1px dashed var(--cc-border); border-radius: var(--cc-radius-card); }
+.cc-host-card-figure { margin: 0; display: flex; flex-direction: column; gap: var(--cc-space-xxs); }
+.cc-host-card-terminal { margin: 0; min-height: 96px; padding: var(--cc-space-sm); border-radius: var(--cc-radius-button); background: var(--cc-code); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: var(--cc-text-mono-sm); line-height: 1.5; white-space: pre-wrap; overflow: hidden; }
+.cc-host-card-terminal-prompt, .cc-host-card-caption { color: var(--cc-text-muted); }
+.cc-host-card-terminal-ok { color: var(--cc-success); }
+.cc-host-card-caption { font-size: var(--cc-text-label); font-style: italic; }
+.cc-host-card-open { color: inherit; }
 .cc-widget-grid { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--cc-space-md); grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); }
 .cc-widget-card { margin: 0; }
 .cc-widget-card-btn { display: flex; flex-direction: column; gap: var(--cc-space-sm); width: 100%; text-align: left; cursor: pointer; font: inherit; color: inherit; padding: var(--cc-space-md); border: 1px solid var(--cc-border); border-radius: var(--cc-radius-card); background: transparent; }
