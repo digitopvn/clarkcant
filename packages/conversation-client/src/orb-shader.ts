@@ -222,7 +222,11 @@ void main() {
   // The flare carries its own opacity outside the shell, or a premultiplied colour added where
   // alpha is zero is invisible: the light would be computed every frame and never drawn.
   float flareAlpha = clamp(dot(flare, vec3(0.3333)) * 1.8, 0.0, 0.85) * outside;
-  float alpha = clamp(inside + glowMask * 0.9 + flareAlpha, 0.0, 1.0);
+  // Whatever is drawn outside the shell is gone before the canvas ends. Without this the pool under a pointer
+  // is cut off by the canvas's own boundary, which on a light page shows as a grey disc with a hard round edge.
+  // Measured in the undeformed space and against the nearer side of the canvas, so it holds for any aspect.
+  float canvasFade = 1.0 - smoothstep(R, 0.97 * min(aspect, 1.0), length(raw));
+  float alpha = clamp(inside + (glowMask * 0.9 + flareAlpha) * canvasFade, 0.0, 1.0);
 
   gl_FragColor = vec4(col * alpha, alpha);
 }
