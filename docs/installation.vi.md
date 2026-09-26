@@ -100,6 +100,21 @@ pnpm dev:web    # mở http://127.0.0.1:5173/?gateway=http://127.0.0.1:8765
 Bearer token nằm trong `./.data/identity.json` (trường `localToken`). Node mặc định chỉ bind
 loopback và từ chối bind địa chỉ công khai nếu thiếu `--allow-public-bind`.
 
+### Cửa sổ desktop
+
+Cửa sổ desktop nạp client **đã build**: content security policy của nó chặn script inline mà Vite
+dev server chèn vào, nên `pnpm dev:web` không chạy được trong cửa sổ này. Khi node ở trên đang chạy
+trên cổng 8765 và `CC_WEB_DIST` trỏ tới `apps/web/dist`:
+
+```sh
+pnpm build          # build lại sau mỗi thay đổi ở client
+pnpm preview:web    # phục vụ apps/web/dist tại http://127.0.0.1:4173
+pnpm dev:desktop    # mở cửa sổ, đọc token từ ./.data/identity.json
+```
+
+Truyền flag khởi chạy theo dạng `--name=value`. Electron thoát ngay khi một đối số URL đứng trước
+một switch khác, nên `--renderer-url http://… --data-dir …` không bao giờ mở được cửa sổ.
+
 ## Chạy bằng Docker
 
 Template: [`docker-compose.yml`](../docker-compose.yml),

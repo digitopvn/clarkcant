@@ -32,6 +32,7 @@ import {
   reviewCredentialRequest,
   reviewIpcCall,
 } from "./security.mjs";
+import { readFlag } from "./launch-flags.mjs";
 import {
   detachedBootstrap,
   detachedWindowOptions,
@@ -62,26 +63,23 @@ let shellWindow;
 
 const argv = process.argv.slice(2);
 const smokeTest = argv.includes("--smoke-test");
-const rendererUrlFlag = argv.indexOf("--renderer-url");
+const rendererUrlFlag = readFlag(argv, "renderer-url");
 const rendererUrl =
-  rendererUrlFlag >= 0 && argv[rendererUrlFlag + 1] !== undefined
-    ? argv[rendererUrlFlag + 1]
-    : // `pathToFileURL` rather than string interpolation: `file://` plus a Windows path gives
-      // `file://D:\...`, which is not the URL the sender frame reports and made every IPC call look
-      // like it came from somewhere else. The review then refused all of them, which is a working
-      // security check fed a wrong expectation.
-      pathToFileURL(join(here, "shell.html")).href;
-const dataDirFlag = argv.indexOf("--data-dir");
-const dataDir = dataDirFlag >= 0 ? argv[dataDirFlag + 1] : undefined;
-const nodeUrlFlag = argv.indexOf("--node-url");
-const nodeUrl = nodeUrlFlag >= 0 ? argv[nodeUrlFlag + 1] : undefined;
+  rendererUrlFlag ??
+  // `pathToFileURL` rather than string interpolation: `file://` plus a Windows path gives
+  // `file://D:\...`, which is not the URL the sender frame reports and made every IPC call look
+  // like it came from somewhere else. The review then refused all of them, which is a working
+  // security check fed a wrong expectation.
+  pathToFileURL(join(here, "shell.html")).href;
+const dataDir = readFlag(argv, "data-dir");
+const nodeUrl = readFlag(argv, "node-url");
 /**
  * Whether this window is showing the client rather than the bundled posture document.
  *
  * It decides the frame: the client draws its own chrome - a drag strip and its own buttons - so an OS frame
  * on top of it would be a second title bar. The posture document has no chrome of its own and keeps its frame.
  */
-const loadingClient = rendererUrlFlag >= 0;
+const loadingClient = rendererUrlFlag !== undefined;
 
 /**
  * The document the IPC review compares a call against.
@@ -96,10 +94,12 @@ let shellDocumentUrl = rendererUrl;
 /**
  * The origin `readNodeSession` treats as the node.
  *
- * In production the window is served by the node it talks to, which is why this starts as the renderer's URL. The
- * smoke test points it at its stand-in so the handoff is exercised end to end rather than only down its refusal path.
+ * `--node-url` when it is given, because the client is then served from somewhere other than the node and the
+ * renderer's own origin would send every relayed call to the wrong server. Without it the window is taken to be
+ * served by the node it talks to. The smoke test points it at its stand-in so the handoff is exercised end to end
+ * rather than only down its refusal path.
  */
-let nodeOriginUrl = rendererUrl;
+let nodeOriginUrl = nodeUrl ?? rendererUrl;
 
 /**
  * The token the host uses when the smoke test has stood a node in for the real one.
@@ -336,7 +336,13 @@ function registerHandlers() {
     return { ok: true, opened: checked.url };
   });
 
-  handle("desktop:getSession", async () => readNodeSession());
+  // The client reads `{ ok, session: { baseUrl, token } }`; handing it the flat internal shape made it discard the
+  // token as malformed, so the window came up with no session at all.
+  handle("desktop:getSession", async () => {
+    const session = readNodeSession();
+    if (!session.ok) return session;
+    return { ok: true, session: { baseUrl: session.baseUrl, token: session.token } };
+  });
 
   handle("desktop:notify", async (input) => {
     const title = typeof input?.title === "string" ? input.title.slice(0, 120) : "";

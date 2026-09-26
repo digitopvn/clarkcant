@@ -49,9 +49,11 @@ function readToken(): string {
   return window.sessionStorage.getItem("cc_token") ?? "";
 }
 
-function readGateway(): string {
-  const params = new URLSearchParams(window.location.search);
-  return params.get("gateway") ?? "http://127.0.0.1:8765";
+const DEFAULT_GATEWAY = "http://127.0.0.1:8765";
+
+/** The gateway the page was pointed at explicitly, if any. An explicit choice wins over the desktop shell's. */
+function readGatewayParam(): string | undefined {
+  return new URLSearchParams(window.location.search).get("gateway") ?? undefined;
 }
 
 export function App(): ReactElement {
@@ -85,7 +87,8 @@ export function App(): ReactElement {
    * leaves the URL and session storage exactly as they were.
    */
   const [token, setToken] = useState(readToken);
-  const baseUrl = readGateway();
+  // The shell names the node its token belongs to; a token sent to any other node would be refused.
+  const [baseUrl, setBaseUrl] = useState(() => readGatewayParam() ?? DEFAULT_GATEWAY);
   const { t } = useLocale();
 
   useEffect(() => {
@@ -93,6 +96,7 @@ export function App(): ReactElement {
     void sessionFromBridge().then((session) => {
       if (cancelled || session === undefined) return;
       window.sessionStorage.setItem("cc_token", session.token);
+      if (readGatewayParam() === undefined) setBaseUrl(session.baseUrl);
       setToken(session.token);
     });
     return () => {

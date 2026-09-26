@@ -104,6 +104,21 @@ pnpm dev:web    # opens http://127.0.0.1:5173/?gateway=http://127.0.0.1:8765
 The bearer token is in `./.data/identity.json` (the `localToken` field). By default the node binds
 only to loopback and refuses to bind a public address without `--allow-public-bind`.
 
+### Desktop window
+
+The desktop window loads the **built** client: its content security policy refuses the inline
+script the Vite dev server injects, so `pnpm dev:web` does not work inside it. With the node above
+running on 8765 and `CC_WEB_DIST` pointing at `apps/web/dist`:
+
+```sh
+pnpm build          # rebuild after every client change
+pnpm preview:web    # serves apps/web/dist on http://127.0.0.1:4173
+pnpm dev:desktop    # the window, reading the token from ./.data/identity.json
+```
+
+Pass launch flags as `--name=value`. Electron exits at startup when a URL argument is followed by
+another switch, so `--renderer-url http://… --data-dir …` never opens a window.
+
 ## Running with Docker
 
 Templates: [`docker-compose.yml`](../docker-compose.yml),
