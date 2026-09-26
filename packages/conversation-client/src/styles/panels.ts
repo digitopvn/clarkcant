@@ -373,6 +373,8 @@ button:focus-visible, textarea:focus-visible, input:focus-visible, [tabindex]:fo
    * of it, because a button inside a drag region cannot be clicked. In a browser none of this renders at all.
    */
   .cc-desktop-chrome { position: fixed; top: 0; left: 0; right: 0; height: 34px; display: flex; align-items: center; gap: 6px; z-index: 30; }
+  /* The strip is fixed, so the shell makes room for it; otherwise its controls sit on the header's status and settings. */
+  .cc-shell:has(.cc-desktop-chrome) { padding-top: 34px; }
   .cc-desktop-drag { flex: 1 1 auto; height: 100%; -webkit-app-region: drag; }
   .cc-desktop-controls { display: flex; align-items: center; gap: 2px; -webkit-app-region: no-drag; }
   .cc-desktop-button { -webkit-app-region: no-drag; background: transparent; color: inherit; border: 1px solid var(--cc-line, rgba(255, 255, 255, 0.16)); border-radius: 6px; width: 26px; height: 22px; line-height: 1; font-size: 12px; cursor: pointer; }

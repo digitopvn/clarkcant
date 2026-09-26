@@ -190,10 +190,22 @@ export {
 export function installStyles(theme: "dark" | "light" = "dark"): void {
   if (typeof document === "undefined") return;
   if (!installed) {
-    const style = document.createElement("style");
-    style.dataset.clarkcant = "styles";
-    style.textContent = `${themeStylesheet()}\n${APP_CSS}`;
-    document.head.append(style);
+    const css = `${themeStylesheet()}\n${APP_CSS}`;
+    /*
+     * A constructed sheet rather than a `<style>` element wherever the browser has one. The desktop shell's policy
+     * has no 'unsafe-inline' for styles, so an injected element is refused there and the window renders with none of
+     * the app's layout; a constructed sheet is not inline markup and the policy does not apply to it.
+     */
+    if (typeof CSSStyleSheet === "function" && "adoptedStyleSheets" in document) {
+      const sheet = new CSSStyleSheet();
+      sheet.replaceSync(css);
+      document.adoptedStyleSheets = [...document.adoptedStyleSheets, sheet];
+    } else {
+      const style = document.createElement("style");
+      style.dataset.clarkcant = "styles";
+      style.textContent = css;
+      document.head.append(style);
+    }
     installed = true;
   }
   document.documentElement.dataset.ccTheme = theme;
