@@ -81,7 +81,16 @@ function parseCssColor(value: string): readonly number[] | undefined {
 function readCanvasColor(): readonly number[] | undefined {
   if (typeof getComputedStyle !== "function") return undefined;
   const raw = getComputedStyle(document.documentElement).getPropertyValue("--cc-canvas").trim();
-  return raw === "" ? undefined : parseCssColor(raw);
+  const color = raw === "" ? undefined : parseCssColor(raw);
+  /*
+   * Only a dark page lends the orb its colour. The shader builds the glass body on this colour and adds the band
+   * on top, so a light page turns the body white and the band, added to white, clips to white as well: the orb
+   * becomes a blank disc. The body stays the orb's own dark glass there instead; the canvas is composited, so
+   * nothing around the ball shows as a box either way.
+   */
+  if (color === undefined) return undefined;
+  const [r = 0, g = 0, b = 0] = color;
+  return 0.2126 * r + 0.7152 * g + 0.0722 * b < 0.5 ? color : undefined;
 }
 
 export function Orb({ size, className, label, pointerTarget, profile, ...options }: OrbProps): ReactElement {
