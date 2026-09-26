@@ -15,6 +15,9 @@ export const TIMELINE_CSS = `
      so the transcript is never drawn over the orb's light. */
   position: relative; z-index: 0;
 }
+/* On the start screen the scroller is only as tall as the hero, so the body can centre the hero and the composer as one
+   group. Kept in this layer, after the rule above: from an earlier layer it lost to it and the composer sat at the foot. */
+.cc-shell[data-view="hero"] .cc-scroll { flex: 0 0 auto; overflow: visible; }
 .cc-timeline {
   max-width: var(--cc-conversation-max-width); margin: 0 auto;
   padding: var(--cc-space-xl) var(--cc-space-lg) var(--cc-space-lg);
@@ -79,9 +82,9 @@ export const TIMELINE_CSS = `
  * orb itself lives in the layer behind the composer, because one element that moves between two
  * places cannot also be a layout child of both.
  */
-/* The ball is drawn at 0.54 of the canvas, so a 197 pixel anchor reserves the space a 148 pixel ball
-   occupied before the canvas grew. */
-.cc-hero-orb { width: 197px; height: 197px; flex: none; visibility: hidden; }
+/* The anchor is the canvas the orb is scaled to, and the ball is drawn at 0.54 of it: 394 pixels reserve a 213 pixel
+   ball. Capped by the window's height so the heading, the suggestions and the composer still fit under it. */
+.cc-hero-orb { width: min(394px, 40vh); height: min(394px, 40vh); flex: none; visibility: hidden; }
 .cc-empty-orb {
   border-radius: var(--cc-radius-pill);
   display: block;

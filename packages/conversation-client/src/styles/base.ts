@@ -40,7 +40,6 @@ body {
  */
 .cc-body { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 .cc-shell[data-view="hero"] .cc-body { justify-content: center; }
-.cc-shell[data-view="hero"] .cc-scroll { flex: 0 0 auto; overflow: visible; }
 
 /*
  * The first-run screen can be taller than the window - this machine's catalogue alone lists a provider with more models
