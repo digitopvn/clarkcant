@@ -14,7 +14,7 @@ import {
   type ToolDefinition,
   type WorkerBrief,
 } from "../src/index.ts";
-import { toSdkTool } from "../src/real.ts";
+import { lastAssistantFailure, toSdkTool } from "../src/real.ts";
 
 describe("a tool result that carries an image", () => {
   type CapturedConfig = {
@@ -205,7 +205,7 @@ describe("SDK event mapping", () => {
  * measured from the run or from the session's creation. That cannot be asserted against a real provider
  * without spending minutes of wall clock, and the assertion would then be about the provider.
  */
-function stubSdk(options: { idleDelayMs?: number } = {}) {
+function stubSdk(options: { idleDelayMs?: number; messages?: unknown[] } = {}) {
   const prompts: string[] = [];
   /**
    * The options each session was created with, which is where the tool allowlist travels.
@@ -244,7 +244,7 @@ function stubSdk(options: { idleDelayMs?: number } = {}) {
     },
     dispose: finishIdle,
     agent: {
-      state: { tools: [] as { name: string }[] },
+      state: { tools: [] as { name: string }[], messages: options.messages ?? [] },
       waitForIdle: () =>
         new Promise<void>((resolve) => {
           release = resolve;
@@ -597,3 +597,36 @@ describe("a brief confined to its approved project roots", () => {
   });
 });
 
+describe("a provider failure is not a silent turn", () => {
+  it("rejects with the provider's reason when the run ended on an error", async () => {
+    // The SDK settles the run and leaves the failure on the last assistant message; a turn that ignored it
+    // reached the user as "the model produced no text" while the provider had said why it refused.
+    const adapter = adapterWith(
+      stubSdk({
+        messages: [
+          { role: "user", content: "hi" },
+          { role: "assistant", content: [], stopReason: "error", errorMessage: "402 Insufficient Balance" },
+        ],
+      }),
+    );
+    const handle = await adapter.createWorkerSession({ goal: "g", projectRoots: [], allowedCapabilityRefs: [] });
+    await expect(adapter.prompt(handle.sessionId, "hi")).rejects.toThrow(/402 Insufficient Balance/);
+  });
+
+  it("settles normally when the last assistant message stopped cleanly or was aborted", () => {
+    expect(lastAssistantFailure([{ role: "assistant", stopReason: "stop" }])).toBeUndefined();
+    expect(lastAssistantFailure([{ role: "assistant", stopReason: "aborted", errorMessage: "stopped" }])).toBeUndefined();
+    // Only the latest assistant message speaks for this run; an earlier failure was already reported.
+    expect(
+      lastAssistantFailure([
+        { role: "assistant", stopReason: "error", errorMessage: "old" },
+        { role: "assistant", stopReason: "stop" },
+      ]),
+    ).toBeUndefined();
+    expect(lastAssistantFailure(undefined)).toBeUndefined();
+  });
+
+  it("says a reason was missing rather than inventing one", () => {
+    expect(lastAssistantFailure([{ role: "assistant", stopReason: "error" }])).toMatch(/gave no reason/);
+  });
+});

@@ -688,6 +688,15 @@ export class RealPiAdapter implements PiAdapter {
       );
     }
 
+    /*
+     * The SDK records a provider failure (a 402 for an empty balance, a 401 for a revoked key) as the run's last
+     * assistant message with `stopReason: "error"` rather than throwing, so the run settles as if it had succeeded.
+     * Left unread, the turn reaches the caller with no text and the provider's own reason is lost; the user is
+     * told the model said nothing when it actually refused.
+     */
+    const failure = lastAssistantFailure(entry.session.agent.state.messages);
+    if (failure !== undefined) throw new Error(failure);
+
     // The boundary this note used to deny is enforced where the act happens, not here: the adapter binds the
     // four `clarkcant_*` tools to the brief's approved roots and leaves the SDK's own read/grep/find/ls out of
     // the allowlist for any session that declares one. Proven by `packages/pi-adapter/test/scoped-fs.spec.ts`
@@ -768,6 +777,28 @@ export function mapPiEvent(sessionId: string, raw: SdkEvent): WorkerEvent | unde
     default:
       return undefined;
   }
+}
+
+/**
+ * The provider's reason when a run ended on an error, or `undefined` when it did not.
+ *
+ * Read from the last assistant message because that is where the SDK puts it: a failed provider call settles the
+ * run normally and leaves `stopReason: "error"` with `errorMessage` behind. An aborted run is not a failure here;
+ * Stop and the wall-clock budget report themselves.
+ */
+export function lastAssistantFailure(messages: readonly unknown[] | undefined): string | undefined {
+  if (messages === undefined) return undefined;
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index];
+    if (typeof message !== "object" || message === null) continue;
+    const { role, stopReason, errorMessage } = message as { role?: unknown; stopReason?: unknown; errorMessage?: unknown };
+    if (role !== "assistant") continue;
+    if (stopReason !== "error") return undefined;
+    return typeof errorMessage === "string" && errorMessage.trim() !== ""
+      ? `the model provider refused the request: ${errorMessage.trim()}`
+      : "the model provider ended the request with an error and gave no reason";
+  }
+  return undefined;
 }
 
 /**
