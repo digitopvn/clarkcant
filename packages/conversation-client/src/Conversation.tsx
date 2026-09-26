@@ -226,6 +226,7 @@ export function Conversation({
     setDatasets,
     setSnapshots,
     setPendingIntent: (decision) => appIntents.setPendingIntent(decision),
+    clearDraft: () => setDraft(""),
     onSendFailed: (originalText) => setDraft(originalText),
   });
 

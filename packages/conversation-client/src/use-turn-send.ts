@@ -43,6 +43,13 @@ export interface TurnSendDeps {
   setDatasets: (datasets: Record<string, ResolvedDataset>) => void;
   setSnapshots: (snapshots: Record<string, SnapshotPresentationResponse>) => void;
   setPendingIntent: (decision: AppIntentDecision | undefined) => void;
+  /**
+   * Empties the composer draft once a send is accepted, and on a restart.
+   *
+   * A draft that outlives its send is one Enter away from sending the same message again, and in
+   * Autonomous mode that repeats whatever the message asked for.
+   */
+  clearDraft: () => void;
   /** A failed send restores the user's text to the composer draft, so nothing typed is lost. */
   onSendFailed: (originalText: string) => void;
 }
@@ -72,6 +79,7 @@ export function useTurnSend({
   setDatasets,
   setSnapshots,
   setPendingIntent,
+  clearDraft,
   onSendFailed,
 }: TurnSendDeps): TurnSendState {
   const [busy, setBusy] = useState(false);
@@ -128,6 +136,9 @@ export function useTurnSend({
 
       setBusy(true);
       setError(undefined);
+      // Cleared here, after the guard above: a send refused for being empty or for arriving while
+      // another turn is busy keeps its text. A send that fails later gets it back from `onSendFailed`.
+      clearDraft();
       // Drawn from here rather than from the node's answer: the user's own message is not in
       // doubt, and waiting for the round trip to show it makes the interface feel slower than it
       // is.
@@ -199,6 +210,7 @@ export function useTurnSend({
       beginHeroExit,
       busy,
       chips,
+      clearDraft,
       client,
       conversationId,
       dispatchChips,
@@ -218,6 +230,7 @@ export function useTurnSend({
     setTimeline(undefined);
     setDatasets({});
     setSnapshots({});
+    clearDraft();
     setError(undefined);
     setBusy(false);
     // Back to the start screen, with the orb returning to the middle: the phase is the same fact as
@@ -225,7 +238,7 @@ export function useTurnSend({
     setPendingUser(undefined);
     setLive([]);
     onSessionReset?.();
-  }, [onSessionReset, resetHero, setConversationId, setDatasets, setSnapshots, setTimeline]);
+  }, [clearDraft, onSessionReset, resetHero, setConversationId, setDatasets, setSnapshots, setTimeline]);
 
   return { busy, error, setError, pendingUser, live, send, restartSession, scroller };
 }
