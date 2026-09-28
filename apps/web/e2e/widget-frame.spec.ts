@@ -85,6 +85,88 @@ test("an action the widget invokes reaches the host and comes back", async ({ pa
   await expect(document.locator("[data-widget-outcome]")).toContainText("host đã nhận hành động");
 });
 
+/*
+ * One load, one handshake. Counted on both sides of the bridge by listeners installed before any page script runs:
+ * the frame counts `init` messages that came from its parent (not the bootstrap's own replay of a buffered one), and
+ * the page counts `ready` messages that came from this frame. A second init is what the widget runtime refuses as
+ * DUPLICATE_INIT, so that rejection is counted too and must stay at zero.
+ */
+test("one frame load hands the widget exactly one init and gets exactly one ready back", async ({ page }) => {
+  await page.addInitScript(() => {
+    const probe = window as unknown as { __ccInits: number; __ccDuplicateInits: number; __ccReadySources: unknown[] };
+    probe.__ccInits = 0;
+    probe.__ccDuplicateInits = 0;
+    probe.__ccReadySources = [];
+    window.addEventListener("message", (event: MessageEvent) => {
+      const data = event.data as { kind?: unknown } | null;
+      if (data === null || typeof data !== "object") return;
+      if (window !== window.parent && event.source === window.parent && data.kind === "init") probe.__ccInits += 1;
+      if (window === window.parent && data.kind === "ready") probe.__ccReadySources.push(event.source);
+    });
+    window.addEventListener("clarkcant:rejected", (event) => {
+      if ((event as CustomEvent<{ code?: unknown }>).detail.code === "DUPLICATE_INIT") probe.__ccDuplicateInits += 1;
+    });
+  });
+  await openFrame(page);
+  const element = page.locator("[data-pin-live] [data-widget-frame] iframe");
+  await expect(page.locator("[data-pin-live] [data-widget-frame]")).toHaveAttribute("data-frame-status", "ready", {
+    timeout: 20_000,
+  });
+  // Long enough for a second, late init to have arrived if anything were going to send one.
+  await page.waitForTimeout(1_000);
+
+  const frame = await (await element.elementHandle())?.contentFrame();
+  expect(frame).toBeTruthy();
+  const inFrame = await frame?.evaluate(() => {
+    const probe = window as unknown as { __ccInits: number; __ccDuplicateInits: number };
+    return { inits: probe.__ccInits, duplicates: probe.__ccDuplicateInits };
+  });
+  expect(inFrame).toEqual({ inits: 1, duplicates: 0 });
+
+  const readies = await page.evaluate(() => {
+    const probe = window as unknown as { __ccReadySources: unknown[] };
+    const iframe = document.querySelector<HTMLIFrameElement>("[data-pin-live] [data-widget-frame] iframe");
+    return probe.__ccReadySources.filter((source) => source === iframe?.contentWindow).length;
+  });
+  expect(readies).toBe(1);
+});
+
+test("an action binding the host never accepted is refused, and nothing is performed", async ({ page }) => {
+  await openFrame(page);
+  const surface = page.locator("[data-pin-live] [data-widget-frame]");
+  await expect(surface).toHaveAttribute("data-frame-status", "ready", { timeout: 20_000 });
+
+  const frame = await (await page.locator("[data-pin-live] [data-widget-frame] iframe").elementHandle())?.contentFrame();
+  expect(frame).toBeTruthy();
+  // Through the widget's own SDK, the way package code would try it. Not awaited: a refused invocation never settles.
+  await frame?.evaluate(() => {
+    const runtime = (window as unknown as {
+      clarkcantWidget: { api: () => { actions: { invoke: (id: string, input: object, invocationId: string) => Promise<void> } } };
+    }).clarkcantWidget;
+    void runtime.api().actions.invoke("act_never_accepted", {}, "inv_e2e_unknown_binding").catch(() => undefined);
+  });
+
+  await expect(surface).toHaveAttribute("data-frame-status", "refused", { timeout: 10_000 });
+  await expect(surface).toContainText("act_never_accepted");
+  const document = page.frameLocator("[data-pin-live] [data-widget-frame] iframe");
+  await expect(document.locator("[data-widget-outcome-state='accepted']")).toHaveCount(0);
+});
+
+test("the widget document is served under a policy that only this app may frame and nothing may widen", async ({ page }) => {
+  // The only document the node serves to this page is the widget's: the page itself comes from the app's own server.
+  const served = page.waitForResponse(
+    (response) =>
+      response.request().resourceType() === "document" && response.url().startsWith(`http://127.0.0.1:${String(NODE_PORT)}/`),
+  );
+  await openFrame(page);
+  const policy = (await served).headers()["content-security-policy"] ?? "";
+
+  expect(policy).toContain(`frame-ancestors 'self' ${new URL(page.url()).origin};`);
+  expect(policy).toContain("connect-src 'none'");
+  expect(policy).toContain("sandbox allow-scripts");
+  expect(policy).not.toContain("*");
+});
+
 test("state the widget saves is stored by the node and is there when the frame is opened again", async ({ page }) => {
   await openFrame(page);
 

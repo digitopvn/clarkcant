@@ -22,6 +22,7 @@ import {
   invokeWidgetAction,
   widgetActionTarget,
 } from "../gateway.ts";
+import { carryOutSpokenStop } from "../application/stop-turn.ts";
 import { pendingForConversation } from "../interactions.ts";
 import { availableCredentials } from "../readiness.ts";
 import { indexMessages, textOfMessage } from "../session-search.ts";
@@ -323,11 +324,12 @@ export function attachNodeVoice(deps: NodeVoiceDeps): NodeVoice {
     resolveAppIntent: ({ text, conversationId }) => {
       const intentDeps = appIntentDepsFor(deps.services);
       const principalId = deps.services.runtime.identity.ownerPrincipalId;
-      return decideAppIntent(
+      const decision = decideAppIntent(
         intentDeps,
         { principalId, request: { text, source: "voice" }, conversationId },
         (intent) => mintConfirmation(intentDeps, { principalId, intent, source: "voice" }),
       );
+      return carryOutSpokenStop(deps.services, decision, conversationId);
     },
     /**
      * Turn a spoken confirmation into permission, once.

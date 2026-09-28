@@ -143,6 +143,24 @@ export function openApiDocument(): Record<string, unknown> {
           responses: { "200": { description: "Event stream", content: { "text/event-stream": { schema: { type: "string" } } } }, ...refusals },
         },
       },
+      "/conversations/{conversationId}/stop": {
+        post: {
+          summary: "Stop the reply this conversation is writing",
+          description:
+            "Aborts the provider for this conversation's running turn. What was already written is kept and labelled " +
+            "as stopped; nothing written after the stop reaches it. Answers { stopped: false } when no reply was " +
+            "running. A stop is recorded in the audit log with where it came from.",
+          parameters: [conversationId],
+          requestBody: {
+            content: {
+              "application/json": {
+                schema: { type: "object", properties: { source: { type: "string", enum: ["chat", "voice"] } } },
+              },
+            },
+          },
+          responses: { "200": ok("Answered: { stopped }"), ...refusals },
+        },
+      },
       "/conversations/{conversationId}/timeline": {
         get: {
           summary: "Read a conversation",

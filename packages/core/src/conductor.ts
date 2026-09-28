@@ -217,6 +217,11 @@ export interface ModelTurnReply {
   elapsedMs: number;
   /** What the provider reported about the turn, when it reported anything. */
   metrics?: TurnMetrics;
+  /**
+   * Present when a person stopped the turn. The segments are what it had said by then, possibly nothing, and the
+   * record says it was stopped on request rather than that it finished or failed.
+   */
+  stopped?: true;
 }
 
 /**
@@ -776,36 +781,51 @@ async function runModelTurn(
       // read and it is not the answer — the interface then leads with provenance and buries the text.
       // The renderer draws it as one muted line that expands (see `SystemCardBlock`).
       ...modelSegmentsToBlocks(reply),
-      {
-        type: "system-card",
-        owner: "host",
-        cardId: deps.newId("card"),
-        subject: "connection",
-        title: "Trả lời bằng model",
-        status: "done",
-        detail:
-          "Câu trả lời này do model sinh ra. Không capability nào trên máy này được dùng, và không dữ liệu thật nào của bạn được đọc.",
-        fields: [
-          { label: "Provider", value: reply.provider },
-          {
-            label: "Model",
-            // The effort belongs with the model, because it is part of which model answered: the same model
-            // at a different effort is a different answer to the same question.
-            value: reply.metrics?.thinkingLevel === undefined ? reply.model : `${reply.model} · ${reply.metrics.thinkingLevel}`,
-          },
-          { label: "Thời gian", value: `${reply.elapsedMs} ms` },
-          ...turnMetricFields(reply.metrics),
-        ],
-        // The typed copy, for the statusline: the rows above are written to be read, these to be drawn.
-        ...(reply.metrics === undefined ? {} : { metrics: reply.metrics }),
-        cancellable: false,
-        updatedAt: input.at,
-      },
+      modelReplyCard(deps, reply, input.at),
     ],
     { at: input.at, messageId },
   );
 
   return { messages: [message], taskId: undefined, resolution: "model" };
+}
+
+/**
+ * The card that records which model answered a turn, or that a person stopped it.
+ *
+ * Exported so every path that ends a model turn labels it the same way: a stopped reply reads as stopped wherever it
+ * was produced, rather than as a finished answer on one path and a stopped one on another.
+ */
+export function modelReplyCard(deps: Pick<ConductorDeps, "newId">, reply: ModelTurnReply, at: Instant): MessageBlock {
+  return {
+    type: "system-card",
+    owner: "host",
+    cardId: deps.newId("card"),
+    subject: "connection",
+    // A stopped turn says so on the one line that is always visible, so the partial reply above it is not read
+    // as the whole answer.
+    title: reply.stopped === true ? "Đã dừng theo yêu cầu" : "Trả lời bằng model",
+    status: "done",
+    detail:
+      reply.stopped === true
+        ? "Bạn đã dừng lượt trả lời này. Phần ở trên là những gì model đã viết trước khi dừng; sau đó không có thêm chữ hay công cụ nào chạy."
+        : "Câu trả lời này do model sinh ra. Không capability nào trên máy này được dùng, và không dữ liệu thật nào của bạn được đọc.",
+    fields: [
+      ...(reply.stopped === true ? [{ label: "Kết thúc", value: "dừng theo yêu cầu" }] : []),
+      { label: "Provider", value: reply.provider },
+      {
+        label: "Model",
+        // The effort belongs with the model, because it is part of which model answered: the same model
+        // at a different effort is a different answer to the same question.
+        value: reply.metrics?.thinkingLevel === undefined ? reply.model : `${reply.model} · ${reply.metrics.thinkingLevel}`,
+      },
+      { label: "Thời gian", value: `${reply.elapsedMs} ms` },
+      ...turnMetricFields(reply.metrics),
+    ],
+    // The typed copy, for the statusline: the rows above are written to be read, these to be drawn.
+    ...(reply.metrics === undefined ? {} : { metrics: reply.metrics }),
+    cancellable: false,
+    updatedAt: at,
+  };
 }
 
 /**

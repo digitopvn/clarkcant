@@ -209,6 +209,7 @@ export function Conversation({
     pendingUser,
     live,
     send,
+    stop,
     restartSession,
     scroller,
   } = useTurnSend({
@@ -260,6 +261,8 @@ export function Conversation({
     // typed command, or the main agent's `control_app` - ensures a conversation exists first exactly as
     // clicking the button does.
     openVoice: () => void openVoice(),
+    // "Dừng lại", typed or said, reaches the same call as the Stop button.
+    stopTurn: () => void stop(),
   });
 
   /**
@@ -415,6 +418,12 @@ export function Conversation({
           placeholder={placeholder}
           busy={busy}
           onSubmit={() => void send(draft)}
+          onStop={() => {
+            void stop();
+            // Back to where the next message is written: the Stop button turns back into Send, which is disabled
+            // on an empty draft and would otherwise leave focus on a control that does nothing.
+            composerInput.current?.focus();
+          }}
           onOpenVoice={() => void openVoice()}
           modelAlias={modelAlias}
           modelNote={modelNote}

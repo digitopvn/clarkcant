@@ -125,8 +125,13 @@ export interface RealPiAdapterOptions {
    */
   model?: { provider: string; id: string; thinkingLevel?: "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max" };
   /**
-   * Built-in tool allowlist. Defaults to a read-only set: a worker that can write
-   * must be granted that explicitly, not by omission.
+   * Built-in tool allowlist. Defaults to none at all.
+   *
+   * The SDK's own tools resolve paths against `cwd` themselves, so no project root can bound them. A session
+   * reaches the filesystem through the scoped tools bound to its brief's roots, and a session without roots
+   * reaches nothing — the packed-worker probe is one. An adapter that really wants the SDK's tools names them
+   * here (the SDK probe CLI passes `READ_ONLY_TOOLS`), so an unconfined read is a choice somebody made rather
+   * than what happens when nobody chose.
    */
   builtinTools?: readonly string[];
   /**
@@ -452,12 +457,12 @@ export class RealPiAdapter implements PiAdapter {
     /*
      * A session bound to roots gets no built-in tool at all.
      *
-     * `builtinTools` is the adapter's allowlist for an ordinary session and defaults to the read-only set, but
+     * `builtinTools` is the adapter's allowlist for an ordinary session and is empty unless the adapter opts in, but
      * the SDK's own `read`, `grep`, `find` and `ls` resolve paths themselves — they cannot be told about an
      * approved root, so such a session must not have them. The scoped tools in `customTools` are the whole
      * filesystem surface it has, and they re-check containment in `scoped-fs.ts` before they touch anything.
      */
-    const builtinTools = scopedToRoots ? [] : [...(this.#options.builtinTools ?? READ_ONLY_TOOLS)];
+    const builtinTools = scopedToRoots ? [] : [...(this.#options.builtinTools ?? [])];
 
     const { session } = await sdk.createAgentSession({
       cwd: this.#options.cwd,

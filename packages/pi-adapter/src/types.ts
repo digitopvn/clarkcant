@@ -26,14 +26,14 @@ export interface WorkerBrief {
    * stops the session by name rather than being dropped, and a caller's own tool under one of those four
    * names does not replace the binding, because only the adapter's is built from this list.
    *
-   * An empty list carries no boundary at all. Such a session runs whatever `builtinTools` the adapter was
-   * constructed with — the SDK's read-only set by default — and those resolve a path against the adapter's
-   * `cwd` themselves, so nothing above describes them. One lane lives there today:
-   * `apps/runtime/src/pack-load.ts` probes the packed worker with `projectRoots: []` on purpose — the probe's
-   * goal is only to prove the pack runs on this node, and it grants no capability that touches project files —
-   * so an unconfined session there is a scoped, named trade-off rather than an oversight. A packed worker
-   * dispatched with a *non-empty* `projectRoots` (a real task, once the runtime dispatches one) gets the same
-   * boundary the project-session lane gets, through this same `scopedToRoots` check in `real.ts`.
+   * An empty list grants no filesystem access. Such a session runs only the `builtinTools` its adapter was
+   * constructed with, and that allowlist is empty unless the constructor names tools on purpose: the SDK's own
+   * `read`/`grep`/`find`/`ls` resolve a path against the adapter's `cwd` themselves, so nothing above could
+   * bound them. `apps/runtime/src/pack-load.ts` probes the packed worker with `projectRoots: []` on purpose — the
+   * probe only proves the pack runs on this node — and that probe therefore has no filesystem tool at all
+   * (`packages/pi-adapter/test/pi-adapter.spec.ts`). A packed worker dispatched with a *non-empty*
+   * `projectRoots` gets the same boundary the project-session lane gets, through the `scopedToRoots` check in
+   * `real.ts`.
    *
    * `apps/worker/src/tools.ts`'s own custom tools (`read_project_file`, `list_project_files`) do not go through
    * this field at all — they are registered by `apps/worker/src/index.ts`'s `runWorker`, outside the adapter —

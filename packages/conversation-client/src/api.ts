@@ -657,6 +657,16 @@ export class GatewayClient {
   }
 
   /**
+   * Stop the reply a conversation is writing, and learn whether one was running.
+   *
+   * Only this conversation's turn: what it had written stays, labelled as stopped, and the stream that is carrying it
+   * ends with its `done` as any reply does. `false` is the quiet answer for a reply that had already finished.
+   */
+  stopTurn(conversationId: string, source: "chat" | "voice" = "chat"): Promise<{ stopped: boolean }> {
+    return this.#call("POST", `/conversations/${encodeURIComponent(conversationId)}/stop`, { source });
+  }
+
+  /**
    * Send a message and read the reply while it is being written.
    *
    * The same request as `sendMessage`, against the route that reports it as it happens. `done`

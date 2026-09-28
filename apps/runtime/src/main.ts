@@ -12,6 +12,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 
 import { nowInstant } from "@clarkcant/contracts";
+import { resolveFrameAncestors } from "@clarkcant/core";
 import { applyEnvFile } from "@clarkcant/pi-adapter";
 
 import { createNodeServer } from "./server.ts";
@@ -93,6 +94,14 @@ async function main(): Promise<void> {
     : { loaded: [] as string[] };
   if (envFile.loaded.length > 0) {
     process.stderr.write(`read ${envFile.loaded.length} variable(s) from .env: ${envFile.loaded.join(", ")}\n`);
+  }
+
+  // Checked once here, after `.env` is read, so a malformed value stops the node with the reason instead of every
+  // widget frame failing later without one.
+  const frameAncestors = resolveFrameAncestors(process.env["CC_APP_ORIGIN"]);
+  if (!frameAncestors.ok) {
+    process.stderr.write(`${frameAncestors.message}\n`);
+    process.exit(2);
   }
 
   // Filled after the node boots. The catalog is built from widget dependencies that only exist

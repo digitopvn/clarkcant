@@ -6,12 +6,13 @@ import {
   captureSnapshot,
   createInstance,
   createTask,
+  modelReplyCard,
   requestApproval,
   saveActionBinding,
   setPreference,
 } from "@clarkcant/core";
 import { GALLERY, YOUTUBE } from "@clarkcant/data-canvas";
-import { FakePiAdapter } from "@clarkcant/pi-adapter";
+import { FakePiAdapter, type WorkerEvent } from "@clarkcant/pi-adapter";
 import { listLocalImages, upsertArtifact } from "@clarkcant/storage";
 import { definitionDigest } from "@clarkcant/widget-host";
 import { join } from "node:path";
@@ -21,6 +22,7 @@ import { attachmentRefsForLastUserMessage } from "../attachments.ts";
 import { blobsDir, readBlob } from "../blobs.ts";
 import { composeMiniApp } from "../compose-mini-app.ts";
 import { type InteractionDeps } from "../interactions.ts";
+import { type ModelTurn, createModelTurn } from "../model-turn.ts";
 import { writeCurrentAlias, writeModelPool } from "../model-registry.ts";
 import { createNodeTools, createRememberTool, decideControlApp, type CommandToolDeps } from "../node-tools.ts";
 import { extractPdfText } from "../pdf-text.ts";
@@ -73,6 +75,70 @@ export interface FixtureModelDeps {
 
 /** The shape the conductor asks for, so a fixture that stopped matching the seam would not compile. */
 export type FixtureCompose = NonNullable<ConductorDeps["composeFromIntent"]>;
+
+/** How many pieces the long reply is written in, and how long each takes: about a minute, far longer than a stop. */
+const LONG_REPLY_PIECES = 400;
+const LONG_REPLY_PIECE_MS = 150;
+
+/**
+ * A provider that writes slowly and stops when it is told to.
+ *
+ * The Stop journey needs a reply in flight to stop, and a fixture node has no provider to write one. This is the one
+ * part that is scripted: the turn around it is the production model turn, so the stop the browser presses travels
+ * the real route, the real `interrupt`, and ends with the real partial reply and label.
+ */
+class SlowReplyAdapter extends FakePiAdapter {
+  readonly #listeners = new Map<string, Set<(event: WorkerEvent) => void>>();
+  readonly #stopped = new Set<string>();
+
+  override subscribe(sessionId: string, listener: (event: WorkerEvent) => void): () => void {
+    const listeners = this.#listeners.get(sessionId) ?? new Set();
+    listeners.add(listener);
+    this.#listeners.set(sessionId, listeners);
+    const release = super.subscribe(sessionId, listener);
+    return () => {
+      listeners.delete(listener);
+      release();
+    };
+  }
+
+  /** Stops writing. Unlike the plain fake it says nothing more, which is what a provider that honours an abort does. */
+  override async abort(sessionId: string): Promise<void> {
+    this.#stopped.add(sessionId);
+  }
+
+  override async prompt(sessionId: string): Promise<void> {
+    this.#stopped.delete(sessionId);
+    for (let piece = 1; piece <= LONG_REPLY_PIECES && !this.#stopped.has(sessionId); piece += 1) {
+      for (const listener of this.#listeners.get(sessionId) ?? []) {
+        listener({ type: "text-delta", sessionId, delta: `Đoạn ${String(piece)}. ` });
+      }
+      await new Promise((resolve) => setTimeout(resolve, LONG_REPLY_PIECE_MS));
+    }
+  }
+}
+
+/**
+ * The model turn behind the long reply, built on first use.
+ *
+ * Shared by the composer that starts a reply and the turn control that stops it, which is why it lives at module
+ * level: the two are built by different seams, and a stop that reached a different turn would stop nothing.
+ */
+let longReplyTurn: Promise<ModelTurn | undefined> | undefined;
+/** The same turn once built, for the turn control, which is asked synchronously. */
+let longReplyBuilt: ModelTurn | undefined;
+
+function longReplyModelTurn(): Promise<ModelTurn | undefined> {
+  longReplyTurn ??= createModelTurn({
+    env: { CC_MODEL_PROVIDER: "fake", CC_MODEL_ID: "fake-model" },
+    cwd: process.cwd(),
+    adapter: new SlowReplyAdapter(),
+  }).then((turn) => {
+    longReplyBuilt = turn;
+    return turn;
+  });
+  return longReplyTurn;
+}
 
 /**
  * The scripted composer.
@@ -134,6 +200,30 @@ export function createModelComposer(deps: FixtureModelDeps): FixtureCompose {
      * buttons and a receipt — needs a way to be reached without a provider account, and a fixture that
      * cannot produce the card would leave the client wiring tested by nothing at all.
      */
+    /*
+     * A long reply, written slowly by the production model turn - the browser half of stopping one.
+     *
+     * The reply the stop leaves behind is the model turn's own: its partial text, and the same card every stopped
+     * turn ends with, so what the journey asserts is what a person with a provider would see.
+     */
+    if (/viết một câu trả lời thật dài|write a very long reply/i.test(input.text)) {
+      const turn = await longReplyModelTurn();
+      if (turn === undefined) return undefined;
+      const reply = await turn.answer({
+        conversationId: input.conversationId as never,
+        principal: {
+          principalId: input.principal.principalId as never,
+          kind: "user",
+          nodeId: deps.services().runtime.identity.nodeId as never,
+        },
+        text: input.text,
+        messageId: input.messageId,
+        onEvent: (event) => input.emit?.(event),
+      });
+      const at = instantSchema.parse(new Date().toISOString());
+      return { text: reply.text, block: modelReplyCard(deps.services().conductor, reply, at) };
+    }
+
     /*
      * A secret the node does not have, asked for through the real tool.
      *
@@ -875,8 +965,10 @@ export function createModelComposer(deps: FixtureModelDeps): FixtureCompose {
 export function applyScriptedTurnControl(services: Pick<NodeServices, "turnControl">): void {
   if (services.turnControl !== undefined) return;
   services.turnControl = {
-    running: () => [],
-    interrupt: () => false,
+    // The long reply is the one turn a fixture node runs, so it is the one a stop can reach.
+    running: () => longReplyBuilt?.running() ?? [],
+    interrupt: (conversationId) => longReplyBuilt?.interrupt(conversationId) ?? false,
+    runningMs: (conversationId) => longReplyBuilt?.runningMs(conversationId),
     steer: async () => false,
     runInBackground: async (input) => {
       // Honours the stop like a real worker does, so a browser test can stop it and see the stop reported. A request
