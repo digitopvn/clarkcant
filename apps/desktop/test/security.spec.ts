@@ -6,6 +6,7 @@ import {
   IPC_CHANNELS,
   normalizeExternalUrl,
   reviewCredentialRequest,
+  reviewDevServerUrl,
   reviewIpcCall,
 } from "../src/security.mjs";
 
@@ -77,6 +78,46 @@ describe("the content security policy leaves no execution primitive", () => {
     expect(policy).toContain("frame-ancestors 'none'");
     expect(policy).toContain("object-src 'none'");
     expect(policy).toContain("base-uri 'none'");
+  });
+});
+
+describe("the dev policy is the only one that allows inline code", () => {
+  it("keeps inline code out when the app and node are served normally", () => {
+    const policy = contentSecurityPolicy({ appOrigin: "http://127.0.0.1:4173/", nodeOrigin: "http://127.0.0.1:8765" });
+    expect(policy).not.toContain("unsafe-inline");
+    expect(policy).not.toContain("unsafe-eval");
+  });
+
+  it("allows inline script and style, and the hot-reload socket, for a dev server", () => {
+    const policy = contentSecurityPolicy({
+      appOrigin: "http://127.0.0.1:5173/?gateway=x",
+      nodeOrigin: "http://127.0.0.1:8765",
+      devOrigin: "http://127.0.0.1:5173",
+    });
+    expect(policy).toContain("script-src 'self' http://127.0.0.1:5173 'unsafe-inline'");
+    expect(policy).toContain("style-src 'self' http://127.0.0.1:5173 'unsafe-inline'");
+    expect(policy).toContain("ws://127.0.0.1:5173");
+    expect(policy).not.toContain("unsafe-eval");
+  });
+});
+
+describe("a dev server is accepted only on loopback in an unpackaged app", () => {
+  it("accepts loopback http", () => {
+    for (const candidate of ["http://127.0.0.1:5173/", "http://localhost:5173/?gateway=x", "http://[::1]:5173"]) {
+      expect(reviewDevServerUrl(candidate, { packaged: false }).ok, candidate).toBe(true);
+    }
+  });
+
+  it("refuses any address off this machine or not plain http", () => {
+    for (const candidate of ["http://192.168.1.2:5173/", "http://dev.example.com/", "https://127.0.0.1:5173/", "file:///x", "nope"]) {
+      expect(reviewDevServerUrl(candidate, { packaged: false }).ok, candidate).toBe(false);
+    }
+  });
+
+  it("refuses every dev server in a packaged app", () => {
+    const result = reviewDevServerUrl("http://127.0.0.1:5173/", { packaged: true });
+    expect(result.ok).toBe(false);
+    expect(result.ok === false && result.reason).toContain("packaged");
   });
 });
 
@@ -179,6 +220,7 @@ describe("IPC is answered only for the shell document (sender validation)", () =
      */
     expect([...IPC_CHANNELS].sort()).toEqual([
       "desktop:attachWidget",
+      "desktop:closeWindow",
       "desktop:detachWidget",
       "desktop:focusWindow",
       "desktop:getSession",

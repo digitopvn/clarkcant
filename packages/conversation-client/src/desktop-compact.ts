@@ -17,7 +17,7 @@ export interface WindowBounds {
   height: number;
 }
 
-export type WindowMode = "normal" | "compact";
+export type WindowMode = "normal" | "compact" | "expanded";
 
 /** What the client may ask the window to become. */
 export type WindowModeAction =
@@ -57,6 +57,15 @@ interface DesktopBridge {
   notify?: (input: { title: string; body: string }) => Promise<unknown>;
   /** Returns the unsubscribe: called once, it stops this callback from hearing any later click. */
   onNotificationClicked?: (callback: () => void) => () => void;
+  status?: () => Promise<unknown>;
+  closeWindow?: () => Promise<unknown>;
+}
+
+/** What the window is right now, as the shell read it off the window. */
+export interface ShellWindowState {
+  mode: WindowMode;
+  alwaysOnTop: boolean;
+  fullScreen: boolean;
 }
 
 /**
@@ -203,6 +212,52 @@ function readWindowState(answer: unknown): WindowStateAnswer {
   return { ok: true, fullScreen: envelope.fullScreen, minimized: envelope.minimized };
 }
 
+/**
+ * The window's current state, or nothing when there is no shell to ask or it did not say.
+ *
+ * Asked once when the chrome mounts. Without it the chrome starts from "normal, not pinned", which is only true of
+ * a window that was just created: after a reload the window keeps whatever it had, and a toggle computed from the
+ * wrong starting point flips it the wrong way.
+ */
+export async function readShellWindow(scope: unknown = globalThis): Promise<ShellWindowState | undefined> {
+  const bridge = desktopBridge(scope);
+  if (bridge?.status === undefined) return undefined;
+  let answer: unknown;
+  try {
+    answer = await bridge.status();
+  } catch {
+    return undefined;
+  }
+  if (typeof answer !== "object" || answer === null) return undefined;
+  const window = (answer as { window?: unknown }).window;
+  if (typeof window !== "object" || window === null) return undefined;
+  const { mode, alwaysOnTop, fullScreen } = window as { mode?: unknown; alwaysOnTop?: unknown; fullScreen?: unknown };
+  if (typeof mode !== "string") return undefined;
+  // `orb` has no control of its own in the chrome, so it reads as a window to be restored like any other.
+  const known = mode === "compact" || mode === "expanded" ? mode : "normal";
+  return { mode: known, alwaysOnTop: alwaysOnTop === true, fullScreen: fullScreen === true };
+}
+
+/** Whether this shell can close its window from the chrome. An older shell cannot, and gets no close button. */
+export function hasCloseControl(scope: unknown = globalThis): boolean {
+  return desktopBridge(scope)?.closeWindow !== undefined;
+}
+
+/** Close the window, as the title bar's close button would. Refused, with the reason, where there is no shell. */
+export async function requestClose(scope: unknown = globalThis): Promise<{ ok: true } | { ok: false; refused: string }> {
+  const bridge = desktopBridge(scope);
+  if (bridge?.closeWindow === undefined) return { ok: false, refused: "this window has no desktop shell to close" };
+  let answer: unknown;
+  try {
+    answer = await bridge.closeWindow();
+  } catch {
+    return { ok: false, refused: "the desktop shell did not answer" };
+  }
+  const envelope = (typeof answer === "object" && answer !== null ? answer : {}) as { ok?: unknown; refused?: unknown };
+  if (envelope.ok === true) return { ok: true };
+  return { ok: false, refused: typeof envelope.refused === "string" ? envelope.refused : "the shell refused without saying why" };
+}
+
 /** The session out of an untrusted answer, or nothing. */
 function readSession(answer: unknown): SessionHandover | undefined {
   if (typeof answer !== "object" || answer === null) return undefined;
@@ -233,7 +288,8 @@ function readModeAnswer(answer: unknown): WindowModeAnswer {
     };
   }
 
-  const mode = envelope.mode === "compact" || envelope.mode === "normal" ? envelope.mode : undefined;
+  const mode =
+    envelope.mode === "compact" || envelope.mode === "normal" || envelope.mode === "expanded" ? envelope.mode : undefined;
   const bounds = readBounds(envelope.bounds);
   if (mode === undefined || bounds === undefined) {
     return { ok: false, refused: "the shell's answer did not describe a window" };
