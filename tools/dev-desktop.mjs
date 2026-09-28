@@ -19,6 +19,8 @@ import { dirname, join, resolve } from "node:path";
 import { argv, env, exit, execPath } from "node:process";
 import { fileURLToPath } from "node:url";
 
+import { shellLaunchArgs } from "../apps/desktop/src/launch-args.mjs";
+
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const HOST = "127.0.0.1";
 
@@ -153,13 +155,16 @@ try {
 
 // The package's default export is the path of the Electron binary this checkout installed.
 const electron = createRequire(join(ROOT, "apps/desktop/package.json"))("electron");
-start("electron shell", electron, [
-  join(ROOT, "apps/desktop"),
-  "--dev",
-  "--renderer-url",
-  `${webUrl}/?gateway=${encodeURIComponent(nodeUrl)}`,
-  "--node-url",
-  nodeUrl,
-  "--data-dir",
-  dataDir,
-]);
+start(
+  "electron shell",
+  electron,
+  shellLaunchArgs(join(ROOT, "apps/desktop"), [
+    "--dev",
+    "--renderer-url",
+    `${webUrl}/?gateway=${encodeURIComponent(nodeUrl)}`,
+    "--node-url",
+    nodeUrl,
+    "--data-dir",
+    dataDir,
+  ]),
+);
