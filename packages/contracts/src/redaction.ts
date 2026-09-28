@@ -19,7 +19,12 @@ export const SECRET_SHAPES: readonly { label: string; pattern: RegExp }[] = [
     label: "named-secret",
     pattern: /(?:access_token|refresh_token|client_secret|api[_-]?key|password)"?\s*[:=]\s*"?[^"\s,}]{6,}/gi,
   },
-  { label: "base64", pattern: /\b[A-Za-z0-9+/]{32,}={0,2}\b/g },
+  // `/` is a base64 character and a path separator. A run that starts a token may carry it, but a run
+  // that continues a path or URL (right after `/`, `.`, `-`, `_` or `~`) is judged one segment at a
+  // time: a token inside a path is a segment, while `var/folders/f9/<id>/T/app` joined by its
+  // separators is only a long path. A path segment of 32+ characters is still redacted by the next shape.
+  { label: "base64", pattern: /(?<![A-Za-z0-9+/._~-])\b[A-Za-z0-9+/]{32,}={0,2}\b/g },
+  { label: "base64-segment", pattern: /\b[A-Za-z0-9+]{32,}={0,2}\b/g },
   { label: "hex", pattern: /\b[A-Fa-f0-9]{32,}\b/g },
   {
     label: "home-path",
