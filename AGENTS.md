@@ -1,451 +1,284 @@
 # AGENTS.md
 
-Process rules for agents working in this repository. Product intent and
-architecture live in README.md and docs/README.md. UI/UX direction and interaction
-invariants live in DESIGN.md. Do not restate those documents here except for the
-hard rules an implementation agent must follow.
+Hard rules for agents working in this repository.
 
-When docs/system-architecture.md and docs/system-architecture.png disagree, the
-PNG is current and the prose is the thing to fix.
+This file is ClarkCant's operating constitution: product philosophy, mandatory
+workflow, and repository-wide invariants. Keep it small. Detailed architecture,
+UX, domain behavior, and runbooks belong in their dedicated docs and should be
+loaded only when relevant.
 
-## Product philosophy and decision guardrails
+Primary sources:
 
-Treat the following as architecture constraints, not aspirational branding. New
-features, refactors and integrations should preserve them unless the user
-explicitly decides to change the product philosophy.
+- Product intent and architecture: `README.md`, `docs/README.md`,
+  `docs/system-architecture.md`
+- UI/UX and interaction invariants: `DESIGN.md`
+- Review policy: `REVIEW.md`
+- Widget developer UX: `docs/widget-development.md`
+- Widgets/extensions architecture: `docs/widgets-and-extensions.md`
+- Open interfaces: `docs/open-interfaces.md`
+- Distributed runtime: `docs/distributed-runtime.md`
+- Browser/computer use: `docs/browser-computer-use.md`
+- Installation/platform behavior: `docs/installation.md`,
+  `docs/platform-smoke.md`
+- Conformance status: `docs/conformance-traceability.md`
 
-### Open by default, community-extensible
+`CLAUDE.md` includes this file and must remain aligned with it.
 
-Keep ClarkCant open at every practical extension seam. A person should be able to
-build private extensions for their own setup without forking the product, and the
-same extension model should support publishing reusable work to the marketplace
-for the wider community.
+If `docs/system-architecture.md` and `docs/system-architecture.png` disagree,
+the PNG is current and the prose must be fixed.
 
-- Prefer stable, documented, versioned contracts over internal-only hooks.
-- Keep extension points composable across UI, tools, skills, themes, recipes and
-  other package facets rather than creating one-off privileged paths.
-- Do not require marketplace publication for local/private use. Local, git,
-  package-registry and self-hosted workflows should remain first-class where the
-  capability makes sense.
-- Keep the trusted core small. Grant extensions only the capabilities they need,
-  with isolation and explicit trust lanes instead of closing the ecosystem.
-- When a built-in feature could reasonably be generalized into a reusable
-  extension primitive, prefer the primitive plus a built-in implementation.
+## Product philosophy
 
-### Cross-platform is a baseline
+Treat these as architecture constraints, not branding.
 
-Design new architecture and features for macOS, Windows and Linux-based systems,
-including Omarchy OS, from the start.
+### Open by default
 
-- Keep portable business logic above platform adapters.
-- Isolate OS-specific behavior behind typed capabilities or adapters rather than
-  spreading shell, filesystem, process, windowing or permission assumptions
-  through product code.
-- Do not make one platform the silent reference implementation. If a capability
-  cannot be equivalent everywhere, define the degraded/unsupported behavior
-  explicitly and keep the rest of the product usable.
-- Packaging, updates, background execution, shortcuts, voice/device integration
-  and filesystem/process features must account for platform differences in their
-  design, tests and docs.
+ClarkCant should remain extensible by its users and community.
+
+A person should be able to build private extensions for their own setup without
+forking ClarkCant, and use the same extension model to publish reusable work to
+the marketplace.
+
+Prefer:
+
+- stable, documented, versioned contracts over internal-only hooks;
+- reusable extension primitives over one-off privileged integrations;
+- composable UI/tool/skill/theme/recipe/package facets;
+- local, git, registry, and self-hosted usage in addition to marketplace
+  distribution;
+- a small trusted core with explicit capability and isolation boundaries.
+
+When a built-in feature can reasonably become a reusable extension primitive,
+prefer the primitive plus a built-in implementation.
+
+### Cross-platform by default
+
+Architecture and features must account for macOS, Windows, and Linux-based
+systems, especially Omarchy OS.
+
+Keep portable logic above platform adapters. Isolate OS-specific filesystem,
+shell, process, windowing, permission, packaging, update, shortcut, voice, and
+device behavior behind typed capabilities or adapters.
+
+Do not silently treat one OS as the reference platform. If parity is impossible,
+define explicit degraded or unsupported behavior while keeping the rest of the
+product usable.
 
 ### Radical simplicity outside, autonomy inside
 
-The external product should remain "insanely simple": one Clark, one
-conversation, with implementation complexity hidden behind the product boundary.
+The user-facing mental model is intentionally tiny:
+
+1. one Clark;
+2. one conversation.
+
+Pi sessions, workers, Jev, memory, models, routing, nodes, package generations,
+and tools are implementation details unless progressive disclosure genuinely
+helps the user.
+
 UX and useful autonomy outrank exposing technical machinery.
 
 Autonomous execution is the default direction. Jev/policy is the escalation
-decision layer: ask the user only when a real boundary requires a human decision,
+decision layer. Ask the user only when a meaningful human decision is required,
 such as detected material risk, destructive or difficult-to-reverse effects,
-configured policy, or unavoidable OS/OAuth/vendor consent.
+configured policy, or unavoidable OS/OAuth/browser/vendor consent.
 
-- Do not add confirmation steps merely because an action is technical or
-  effectful.
-- Preserve Stop, audit/provenance, recovery and rollback/Undo where the underlying
-  operation supports them; autonomy must remain observable and recoverable.
-- Permission/trust decisions should be able to become flexible policy: scoped to
-  the current session, remembered permanently when appropriate, or learned from
-  repeated habits through memory rather than repeatedly interrupting the user.
-- Prefer designs that let Clark run useful sessions autonomously for long periods:
-  resumable work, durable state, clear checkpoints, bounded retries, safe
-  recovery and escalation only when needed.
-- Never use autonomy as a reason to bypass hard external consent boundaries,
-  security isolation, credential boundaries or an explicit user policy.
+Do not add confirmation merely because an action is technical or effectful.
+
+Preserve Stop, audit/provenance, recovery, and Undo/rollback where supported.
+Permission/trust decisions should support flexible memory: session-scoped,
+durable preference, or learned repeated behavior where appropriate.
+
+Prefer architecture that supports long-running autonomous work through durable
+state, resumability, checkpoints, bounded retries, and safe recovery.
+
+Autonomy never overrides hard security boundaries, isolation, credentials,
+external consent, or explicit user policy.
 
 ### Philosophy-change gate
 
-Before implementing a feature or architectural decision that could materially
-change these constraints, or that appears to conflict with them, surface the
-conflict to the user immediately instead of silently normalizing the exception.
-Ask the user to choose among the relevant paths:
-
-1. intentionally update the canonical product philosophy in AGENTS.md (and
-   therefore CLAUDE.md, which includes it);
-2. reject/stop the requested change because it violates the current philosophy;
-3. adopt an alternative approach that satisfies the same user goal while
-   preserving the philosophy.
-
-Propose the best philosophy-compatible alternative when one exists. Do not create
-a permanent architectural exception first and ask for alignment afterward.
-
-## Product and UX priority
-
-**UX is a product invariant, not final-pass polish.** Before changing a visible
-flow, read DESIGN.md and the relevant journey docs.
-
-The user-facing mental model is deliberately tiny:
-
-1. one conversation;
-2. one Clark voice agent.
-
-Pi sessions, Jev, workers, memory, node topology, package generations, tools and
-routing are implementation details. Do not turn them into navigation concepts the
-user must learn.
-
-Hard UI rules:
-
-- **The animated Orb is ClarkCant's signature and must not be removed or replaced as the default identity.** It may be personalized only through bounded, typed palette/effect/physics preferences defined by DESIGN.md; reduced-motion still wins.
-- Conversation remains the primary application surface. Do not add a permanent
-  sidebar, session picker or dashboard as the default navigation model.
-- Settings, marketplace, widget details and diagnostics are secondary surfaces;
-  opening them must preserve conversation state and restore focus on close.
-- Any important action should be reachable through conversation, and when the
-  voice action model supports it, through voice as well.
-- Prefer progressive disclosure. Do not put node IDs, digests, capability refs,
-  Pi internals or model-routing internals in the default UI.
-- Do not add a control that looks usable before its real action exists. Disable it
-  with a visible reason or omit it.
-- Never present cached, sample, historical or uncertain data as live/current.
-- Never invent progress, evidence, success or permission state.
-- Error copy must say what failed, what was preserved and what the user can do.
-- Do not make the user repeat an intent merely because the implementation has
-  several tool calls underneath it.
-
-### Execution-policy UX
-
-The target product policy in DESIGN.md is:
-
-- Autonomous — default; execute explicit user intent without per-action approval.
-- Guarded — ask only where configured/risk policy requires it.
-- Ask every time — confirm effectful actions.
-
-This direction does **not** permit bypassing OS, OAuth, browser, vendor or other
-hard external consent boundaries. It also does not turn untrusted widget code
-into privileged code.
-
-When implementing or changing execution policy:
-
-- keep Stop, audit/provenance and recovery paths;
-- add Undo/rollback where the underlying action genuinely supports it;
-- keep host-owned trust/credential/OS consent UI outside untrusted widgets;
-- route configurable guardrails through Jev/policy rather than sprinkling ad-hoc
-  confirmation dialogs throughout components;
-- update architecture/conformance docs and tests when behavior changes. DESIGN.md
-  may describe target behavior before code implements it; never claim target
-  behavior is already shipped merely because it is documented.
-
-## Motion and interaction
-
-Everything visible should transition deliberately, but motion exists to explain
-state change rather than decorate the screen.
-
-- Use design-token motion durations/easings. Do not hard-code a new duration when
-  an existing token expresses the interaction.
-- Use the shared motion helpers (`press`/`release`/`panel`/`popover` in
-  `packages/design-tokens/src/motion.ts`) instead of writing a transition by hand. They
-  animate only `transform` and `opacity`, so a hand-written transition is the only way to
-  animate a layout property or put the mild bounce on body text.
-- Use the mild bounce token for press/release, pin/drop and panel settle. Never
-  bounce body text or run several competing springs.
-- Do not use CSS transition: all.
-- Prefer opacity and transform animations over repeatedly animating layout
-  dimensions/positions.
-- Pointer, keyboard, touch and voice must remain independently usable. Hover may
-  enhance; it may not reveal the only affordance.
-- Keyboard focus must be visible and must not depend on the accent color alone.
-- Escape closes the nearest dismissible surface and restores focus.
-- Respect prefers-reduced-motion. A zero-duration infinite spinner is a bug, not a
-  reduced-motion implementation.
-- Agent/voice ambient effects must remain subtle enough that text readability is
-  always dominant.
-
-If adding a root-level interaction state, prefer explicit state/data attributes
-for input modality, agent state, policy mode or window mode instead of components
-guessing from unrelated DOM state.
-
-## Conversation surface
-
-- Preserve chronological streaming: text, reasoning and tool activity appear in
-  the order the turn produced them.
-- Thinking indication ends when the first meaningful text/tool/reasoning event
-  arrives.
-- Do not auto-scroll a reader who deliberately scrolled up.
-- Composer interaction must stay responsive while widgets or turns are busy.
-- Attachments need visible checking/failed/retry/remove states beside the file.
-- Prefer a send/stop control in the same physical location during an active turn.
-- Dynamic/recent suggestions are preferable to growing a permanent menu.
-- A background task count belongs in chrome only while non-zero.
-
-## Voice
-
-Voice is another interaction mode for the same Clark, not a separate product.
-
-- Entry belongs in the conversation composer and may also come from a host
-  shortcut or wake phrase.
-- Local mute/end controls must not depend on a remote model.
-- Voice actions should reach the same typed action/intent path as text; do not
-  implement a second business-logic stack by matching arbitrary transcript
-  strings in the renderer.
-- Focused widgets should publish semantic state/actions so voice can manipulate
-  them without screen-coordinate guessing.
-- Compact voice bar and orb/minimal window modes must preserve session ownership;
-  collapsing UI does not silently stop or duplicate a voice session.
-- A future “Hey Clark” wake listener must be distinguishable from active remote
-  transcription and should remain local where the platform allows.
-
-## Widgets
-
-There are four trust lanes and agents must not blur them:
-
-1. host-owned UI — credentials, trust, policy, device/OS consent;
-2. built-in catalog — trusted client components from declarative props/data;
-3. declarative compositions — no executable payload;
-4. custom isolated widgets/MCP Apps — sandboxed bridge and bounded capabilities.
-
-Rules:
-
-- One logical widget instance has at most one live effect owner.
-- A detached widget window receives only the widget bootstrap and its instance reference: no
-  token, no gateway URL, no conversation id. It therefore holds no credential, so its actions are
-  **relayed through the host** rather than invoked by the window, and the live-owner lease *moves*
-  with it (the shell releases before the host claims) so there is never a second owner. Closing the
-  window, by any means, releases the lease and hands the instance back.
-- Inline history remains an immutable/read-only snapshot.
-- Pin and detach are presentation changes; they do not create a new session.
-- Local view state such as filter/select/zoom may remain interactive in a
-  read-only snapshot. Effect actions must not.
-- Every widget has loading, empty, partial/unavailable, error and read-only paths.
-- Every rich visual needs a useful text alternative.
-- Widgets do not get generic Electron IPC, raw secrets, privileged host cookies or
-  arbitrary tool execution by name.
-- Third-party code cannot render authoritative approval/credential/trust chrome.
-- Use schema-validated action bindings and expected revisions; double-click
-  effects must deduplicate.
-- New default widgets should follow the priorities in DESIGN.md, especially
-  question/form/task/artifact/diff and browser/computer surfaces.
-
-### Widget marketplace
-
-Before changing Widget SDK, authoring templates, package metadata, conformance or publish flows, read `docs/widget-development.md`; it is the canonical developer-UX target.
-
-Follow Pi's successful package ergonomics — small core, package facets, npm/git/
-local sources, easy install/update — without copying Pi native extension trust
-into the widget renderer.
-
-- UI-only executable widgets default to isolation.
-- Packages may have independent UI/tool/skill/theme/recipe facets.
-- UI-only updates must not require restarting Pi.
-- Marketplace UI must show source, version, compatibility and capability/risk
-  information without making package metadata the main interaction.
-- Installed packages are listed with their **source, version, digest and risk lane**, and
-  the lanes are labelled apart: a native Pi extension is trusted process-level code that runs
-  beside the host, while an isolated widget is opaque-origin code with no Node, filesystem or
-  host cookies. Showing them with the same wording is the one mistake that list exists to
-  prevent.
-- An explicit “install X” request is already user intent in Autonomous mode; do
-  not insert a redundant confirmation unless configured policy or a hard external
-  boundary requires it.
-- Native Pi extensions are trusted process-level code and must be labeled/handled
-  differently from isolated widgets.
-- Developer templates must include conformance fixtures, accessibility, text
-  fallback, state migration and action-dedup tests.
-
-## Settings
-
-Settings is a secondary modal/surface, not an admin dashboard.
-
-Prefer the structure in DESIGN.md:
-
-- Experience
-- AI & Routing
-- Control
-- Extensions & Widgets
-- Devices & Voice
-- Developer/Advanced as progressive disclosure
-
-Use the right control:
-
-- segmented control for a small exclusive mode set;
-- toggle for an immediate boolean preference;
-- search-select for long provider/model/package lists;
-- button for one-time actions;
-- inline status for mutation outcome.
-
-Do not use a save button for a reversible single preference if selection can be
-safely persisted immediately.
-
-Stored secret values are never rendered back to the browser. Show name, purpose,
-connection status and replace/remove actions only.
-
-## UI definition of done
-
-For any visible journey change, run the normal checks plus browser E2E. Before
-reporting complete, verify:
-
-- main conversation still works at narrow and normal desktop widths;
-- keyboard-only path works;
-- focus returns after modal/live/detached surfaces close;
-- reduced motion path works;
-- loading/empty/error/blocked states are visible and truthful;
-- no control is fake;
-- no snapshot claims to be live;
-- no secret is echoed;
-- voice/text reach the same action semantics where applicable;
-- motion does not introduce scroll/layout jank;
-- the change does not add a new navigation concept without a strong reason.
-
-Update DESIGN.md in the same change when intentionally changing a UX invariant.
-
-## Open interfaces
-
-ClarkCant is built on open standards so a third-party app or any AI tool can work
-with the node the same way the person's own client does: REST (OpenAPI 3.1), SSE,
-MCP (Streamable HTTP and stdio), a JSON WebSocket and a CLI. The contract and the
-client configuration live in docs/open-interfaces.md.
-
-- Every capability is a gateway route first (`apps/runtime/src/gateway.ts`). MCP
-  tools, WebSocket frames and CLI commands reach it by dispatching a request to
-  that route; never add a second business-logic stack behind one surface.
-- One bearer token and one refusal shape (`{ code, message }`) on every surface.
-  A surface that cannot carry the token in a header authenticates in its first
-  frame; it never falls back to a weaker check.
-- Only /health, /.well-known/clarkcant.json and /openapi.json are unauthenticated,
-  and they reveal neither the node identity nor any token.
-- An approval is the person's decision: never expose approve/deny as an MCP tool
-  or any other machine surface an AI client could use to approve its own action.
-  Stop, answer-a-question and read stay available.
-- Prefer an existing standard over a bespoke protocol, and version any wire
-  format you do define (`clarkcant.ws.v1`).
-- Changing a surface changes `apps/runtime/src/open-interfaces.ts` (discovery and
-  OpenAPI), its tests and docs/open-interfaces.md in both languages in the same PR.
-
-## Tooling
-
-- pnpm 12 via Corepack, Node 22.19+ (24 in CI too). Never npm/yarn.
-- Dependencies are exact-pinned (saveExact, checked by pnpm invariants).
-  pnpm-workspace.yaml refuses releases younger than 24h and blocks lifecycle
-  scripts unless listed in allowBuilds; a fresh package failing to install is
-  that policy, not a network error.
-- Node runs .ts directly by stripping types: no enum, namespace (including
-  `declare global`, which is one), or constructor parameter properties (ESLint
-  and pnpm invariants both fail on them).
-- Workspace packages resolve to src/index.ts, never dist/; don't add build steps
-  to make imports work.
-- A new `.tsx` under `packages/*/src` outside `conversation-client` and `apps/web`
-  is in neither tsconfig's include: it is typechecked by nothing, and no error
-  says so at typecheck time. Add its path to `tsconfig.web.json`, and keep the
-  decisions in a `.ts` file so the Node config checks the logic. `pnpm invariants`
-  fails when a `.tsx` is in no typecheck include.
-
-## Commands
-
-    pnpm verify
-    pnpm exec vitest run packages/core/test/core.spec.ts
-    pnpm test:e2e
-    pnpm exec playwright install --with-deps chromium
-    pnpm verify:full
-    node apps/runtime/src/main.ts --data-dir ./.data --label dev
-    pnpm clarkcant status        # the CLI against a running node
-
-pnpm verify is the definition of done for non-journey code. Run a focused test
-first. Run pnpm verify:full before reporting a UI/journey change complete.
-
-Never point e2e at a running dev node: `playwright.config.ts` uses its own data
-dir and ports so it cannot read the wrong identity file. Free ports 8876 and
-4273 before a run: a server left over from an interrupted run answers
-Playwright's startup health check, so the run's own server fails to bind
-(`--strictPort`) and every test after that fails on a refused connection, which
-reads like a regression and is not one.
-
-A verification result describes the tree it ran on: if files changed while it ran,
-or the branch was rebased after it, re-run it before reporting. Decide whether two
-concurrent changes overlap with `git diff --name-only`, not from memory.
-
-## Tests
-
-- Unit tests live at packages/*/test/**/*.spec.ts (also apps/*, packs/*,
-  examples/*). Single-level globs on purpose; a nested glob runs every suite
-  twice.
-- Vitest environment is node, no DOM. React rendering and accessibility
-  assertions go in apps/web/e2e/*.spec.ts, not in .spec.tsx.
-- Fixture providers (for example CC_VOICE_FIXTURE=1) prove the wiring, not the
-  provider. Live-provider checks are opt-in and recorded as such.
-- Fix the cause, never the assertion. A blocked test is reported BLOCKED with the
-  missing condition named, not skipped silently.
-
-## Repository invariants
-
-Chạy `pnpm invariants` để kiểm tra các ràng buộc tự động trong
-`tools/check-invariants.mjs`. Các yêu cầu dưới đây còn bao gồm quy tắc review;
-không coi checker là bằng chứng cho những điều nó không kiểm tra:
-
-- Editing any file listed in docs/manifest.json requires updating that entry's
-  bytes and sha256. The check names the stale entry. `node
-  tools/check-invariants.mjs --fix-manifest` rewrites bytes+sha256 for every
-  listed file in place.
-- Every workspace package.json declares clarkcant.phase, clarkcant.status,
-  clarkcant.blueprint. A stub file must say so with the marker the check expects.
-- docs/conformance-traceability.md never upgrades a T-id or V-id status without
-  the named test existing. “Schema exists” is not PASS.
-- No credentials in tracked files. .env is gitignored; TYPESAFE_API_KEY and
-  provider keys come from the environment. Never reference another repo's .env
-  path in code, docs, or plans.
-
-## Files not to touch
-
-- Applied migrations in packages/storage/src/migrate.ts: add a new one, never
-  edit. Back up with VACUUM INTO before running a migration against a DB with
-  data.
-- plans/reports/evidence/*.png are regenerated by the e2e suite and gitignored.
-  Do not git add -f them.
-- packages/pi-adapter is the only package that may import the Pi SDK.
-
-## Git
-
-- Conventional commits, English, lowercase sentence after the colon, scopes are
-  package names: fix(conversation-client): the orb no longer ...
-- No AI attribution.
-- Plans and docs may commit straight to main. Code changes go through a branch
-  and a PR.
-- Plan directories follow plans/{date}-{issue}-{slug}/; run ak plan validate
-  plans/<dir> after editing a plan.
-- Never pass markdown, backticks or `$` through a double-quoted shell argument
-  (`gh pr comment --body "..."`): the shell substitutes them, the artifact is
-  wrong and the command still exits 0. Write a body file, pass the file, then read
-  the artifact back.
-
-## Documentation
-
-- Internal docs (this repository) and official docs (the website,
-  `digitopvn/clarkcant-web`) are maintained in two languages: English is the
-  default (`name.md`, `/docs/...`), Vietnamese is the pair (`name.vi.md`,
-  `/vi/docs/...`). A change to one language changes the other in the same PR.
-  An existing Vietnamese-only doc gains its English pair when it is next edited.
-  A Vietnamese doc links to the `.vi.md` sibling of a doc that has one.
-- Exception: `docs/conformance-traceability.md` is English-only and has no
-  `.vi.md` pair. It is the one ledger of T-/V-id status that `pnpm invariants`
-  checks against `packages/contracts/src/implementation-status.ts`; a translated
-  copy would be a second, unchecked statement of the same status.
-- Whenever a change makes the official docs stale or incomplete (a new or changed
-  surface, command, setup step or user-visible behavior), open an issue on
-  `digitopvn/clarkcant-web` labelled `ai-handle`, naming what changed and linking
-  the PR. Do this even when you also edit the website yourself, so the change is
-  tracked.
-- Docs describe shipped behavior as shipped and target behavior as target; never
-  document a surface before its route exists.
-
-## Language
-
-Docs are bilingual as above: English by default, Vietnamese with full diacritics.
-Plans may stay Vietnamese-only. Code, commit messages, identifiers and
-protocol/schema names are English.
+If a requested feature or architectural decision materially conflicts with these
+principles, do not silently create an exception.
+
+Surface the conflict immediately and ask the user to choose among the relevant
+paths:
+
+1. intentionally update the product philosophy;
+2. reject or stop the conflicting work;
+3. adopt a philosophy-compatible alternative.
+
+Propose the best compatible alternative when one exists.
+
+## Mandatory workflow
+
+### Before brainstorming, planning, or implementation
+
+For any non-trivial feature or bug fix:
+
+1. Re-read the relevant product philosophy and domain docs.
+2. Search related GitHub issues, PRs, plans, and recent relevant work.
+3. Identify duplicates, dependencies, blockers, and adjacent work.
+4. Determine the safest implementation order.
+5. Reference related issues explicitly.
+6. Comment on affected issues when new findings, blockers, dependencies, or
+   changed assumptions would help future work.
+
+Do not design or implement tracked work in isolation when existing work already
+constrains it. Make dependency order explicit. Avoid duplicate issues; create one
+when durable coordination is needed and no suitable issue exists.
+
+### While working
+
+Solve the user's intent end-to-end rather than exposing internal multi-step
+complexity.
+
+When new information changes architectural assumptions, reassess related issues
+and blockers, update durable tracking where useful, and revisit the product
+philosophy before committing to the new direction.
+
+Never invent progress, evidence, permission, live state, or success.
+
+### Before completion or permanent stop
+
+Before declaring work complete, or before stopping because the task cannot
+continue, decide whether the change makes official ClarkCant documentation stale.
+
+For user-visible behavior, APIs, setup, commands, extension surfaces, or
+architecture that belongs in official docs:
+
+1. update `digitopvn/clarkcant-web` proactively;
+2. preserve its English/Vietnamese documentation expectations;
+3. create the appropriate branch and PR;
+4. verify it;
+5. merge it when repository policy and checks permit.
+
+Do not leave documentation follow-up to the user when it can be completed
+autonomously.
+
+If updating or merging official docs is genuinely blocked, create an issue in
+`digitopvn/clarkcant-web` before finishing. Add `ai-handle` plus relevant
+labels, link the implementation issue/PR, and state exactly what remains.
+
+A task that requires official documentation is not fully closed until the docs
+change is landed or this fallback tracking issue exists.
+
+## Progressive disclosure
+
+Load detailed guidance only when the task touches that domain:
+
+- Visible UI, interaction, motion, settings, conversation, voice:
+  read `DESIGN.md`.
+- Widgets, marketplace, package facets, trust lanes:
+  read `docs/widget-development.md` and `docs/widgets-and-extensions.md`.
+- REST/SSE/MCP/WebSocket/CLI or public contracts:
+  read `docs/open-interfaces.md`.
+- Multi-node, presence, handoff, synchronization:
+  read `docs/distributed-runtime.md`.
+- Browser/computer control:
+  read `docs/browser-computer-use.md`.
+- Installation, packaging, updates, platform smoke:
+  read `docs/installation.md` and `docs/platform-smoke.md`.
+- Creating or reviewing a PR:
+  read `REVIEW.md`.
+- Changing claimed implementation/conformance status:
+  read `docs/conformance-traceability.md`.
+
+Do not preload every linked document for every task.
+
+## Product and UX invariants
+
+Before changing a visible flow, read `DESIGN.md`.
+
+- Conversation remains the primary surface; do not make dashboards, permanent
+  sidebars, session pickers, or runtime topology the default mental model.
+- Settings, marketplace, widget details, and diagnostics are secondary surfaces
+  and must preserve conversation state.
+- Important actions should be reachable through conversation and, where
+  supported, voice.
+- The animated Orb is ClarkCant's signature default identity. Do not remove it.
+  Personalization may change bounded palette/effects/physics; reduced motion wins.
+- Prefer progressive disclosure for technical details.
+- Never ship fake controls, fake progress, invented permission/success state, or
+  stale/sample data presented as live.
+- Errors should explain what failed, what was preserved, and what happens next.
+- Voice is another interaction mode for the same Clark. Text and voice should
+  converge on the same typed action semantics.
+- Pointer, keyboard, touch, and voice must remain independently usable; visible
+  focus and reduced-motion behavior are required.
+
+## Trust and architecture invariants
+
+- Jev/policy owns configurable escalation decisions; do not scatter ad-hoc
+  confirmation policy across features.
+- Untrusted widgets/extensions do not receive raw secrets, generic Electron IPC,
+  privileged host cookies, arbitrary host tool execution, or authoritative
+  host-owned approval UI.
+- Keep host-owned privileged UI, trusted built-ins, declarative compositions, and
+  isolated executable widgets as distinct trust lanes.
+- An AI client, widget, or remote machine surface must never approve its own
+  privileged action.
+- Prefer one canonical business-logic/capability path. Voice, CLI, MCP,
+  WebSocket, widgets, and UI should dispatch to shared typed capabilities rather
+  than create parallel implementations.
+- Prefer existing standards over bespoke protocols; version new wire formats.
+
+## Engineering invariants
+
+- Use pnpm via Corepack. Never npm or yarn.
+- Dependencies are exact-pinned and subject to repository supply-chain policy.
+- Supported Node versions are defined by repository tooling/CI; currently Node
+  22.19+ with Node 24 also exercised in CI.
+- Node executes TypeScript via type stripping. Do not introduce enums,
+  namespaces (including `declare global`), or constructor parameter properties.
+- Workspace packages resolve to source, not `dist`; do not add unnecessary build
+  steps for internal imports.
+- New `.tsx` files must belong to a typechecked config; follow the existing
+  `tsconfig.json` / `tsconfig.web.json` split.
+- Only `packages/pi-adapter` may import the Pi SDK.
+- Never commit credentials.
+- Applied storage migrations are immutable: add a migration; never edit one.
+  Back up data before applying risky migrations.
+- Do not force-add generated evidence under `plans/reports/evidence/`.
+
+## Verification
+
+Run focused tests first when practical.
+
+- Non-journey code: `pnpm verify` is the normal definition of done.
+- UI/user journeys: run relevant browser E2E and `pnpm verify:full`.
+- Repository constraints: run `pnpm invariants` when they may be affected.
+
+A verification result only describes the exact tree it ran against. Re-run
+relevant checks after rebasing or changing files.
+
+Fix causes, not assertions. Do not silently skip blocked verification; name the
+missing condition.
+
+Do not treat an invariant checker as evidence for things it does not verify.
+
+## Git, issues, and collaboration
+
+- Use conventional commits in English with no AI attribution.
+- Code changes go through a branch and PR. Plans/docs may follow repository
+  policy unless the user explicitly requests a branch/PR.
+- Plan directories follow `plans/{date}-{issue}-{slug}/`; validate edited plans
+  with the repository plan validator.
+- Use GitHub issues as durable coordination state, not merely tickets to close.
+  Record blockers, dependency order, and changed assumptions when they matter
+  beyond the current session.
+- Avoid shell interpolation bugs when sending Markdown through CLI commands.
+  Prefer body files for complex content and read important created artifacts back
+  after mutation.
+
+## Documentation and language
+
+Internal and official documentation are bilingual unless explicitly exempted:
+English is canonical/default and Vietnamese is the paired translation with full
+diacritics.
+
+`docs/conformance-traceability.md` remains English-only because it is the
+canonical checked status ledger.
+
+Do not document target behavior as already shipped.
+
+Use English for code, identifiers, commit messages, and protocol/schema names.
+Plans may remain Vietnamese-only when appropriate.
