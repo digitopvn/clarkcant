@@ -210,6 +210,18 @@ function fence(text: string): string {
   return `${marks}\n${text}\n${marks}`;
 }
 
+/**
+ * A code span around a directory or command, because the message is read as Markdown: plain, `D:\app\.data` would
+ * lose the `\` before each `.` and `_tmp_` in a command would turn italic. Inside a span nothing is an escape.
+ */
+function inlineCode(text: string): string {
+  const longest = Math.max(0, ...[...text.matchAll(/`+/gu)].map((match) => match[0].length));
+  const marks = "`".repeat(longest + 1);
+  // A span whose text starts or ends with a backtick needs a space between it and the marks, which Markdown strips.
+  const pad = text.startsWith("`") || text.endsWith("`") ? " " : "";
+  return `${marks}${pad}${text}${pad}${marks}`;
+}
+
 function clipTail(text: string): { text: string; cut: boolean } {
   return text.length <= MAX_SHARE_CHARS ? { text, cut: false } : { text: text.slice(-MAX_SHARE_CHARS), cut: true };
 }
@@ -226,14 +238,14 @@ export function formatShare(choice: ShareChoice, context: { title: string; cwd: 
     const body = clipTail(record.output === "" ? "(không in gì)" : record.output);
     const status = record.exitCode === null ? "shell không báo exit code" : `exit ${String(record.exitCode)}`;
     return (
-      `Kết quả lệnh trong terminal ${context.title} (${context.cwd}):\n` +
-      `$ ${record.command ?? "(không rõ lệnh)"} — ${status}${record.truncated || body.cut ? " — chỉ phần cuối" : ""}\n` +
+      `Kết quả lệnh trong terminal ${context.title} (${inlineCode(context.cwd)}):\n` +
+      `$ ${record.command === null ? "(không rõ lệnh)" : inlineCode(record.command)} — ${status}${record.truncated || body.cut ? " — chỉ phần cuối" : ""}\n` +
       fence(body.text)
     );
   }
   const body = clipTail(choice.text.replace(/\s+$/u, ""));
   const what = choice.kind === "selection" ? "Đoạn tôi chọn trong terminal" : "Màn hình terminal";
-  return `${what} ${context.title} (${context.cwd})${body.cut ? " — chỉ phần cuối" : ""}:\n${fence(body.text)}`;
+  return `${what} ${context.title} (${inlineCode(context.cwd)})${body.cut ? " — chỉ phần cuối" : ""}:\n${fence(body.text)}`;
 }
 
 const ANSI = {

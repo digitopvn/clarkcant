@@ -50,9 +50,18 @@ describe("what the share button sends", () => {
       { kind: "command", record: finished({ output: "text ``` inside" }) },
       { title: "app", cwd: "/work/app" },
     );
-    expect(message).toContain("/work/app");
-    expect(message).toContain("$ pnpm test — exit 1");
+    expect(message).toContain("(`/work/app`)");
+    expect(message).toContain("$ `pnpm test` — exit 1");
     expect(message).toContain("````\ntext ``` inside\n````");
+  });
+
+  it("keeps a Windows directory and a command's own Markdown characters intact inside code spans", () => {
+    const message = formatShare(
+      { kind: "command", record: finished({ command: "rm _tmp_ `x`" }) },
+      { title: "app", cwd: "D:\\work\\.claude\\app" },
+    );
+    expect(message).toContain("(`D:\\work\\.claude\\app`)");
+    expect(message).toContain("$ `` rm _tmp_ `x` `` — exit 1");
   });
 
   it("says when only the end was kept", () => {

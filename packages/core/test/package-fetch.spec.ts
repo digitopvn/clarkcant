@@ -1006,4 +1006,25 @@ describe("digestOfDirectory", () => {
       expect(a.digest).not.toBe(c.digest);
     }
   });
+
+  it("hashes nested paths with / separators, so a directory published from one OS verifies on another", () => {
+    const tree = join(dir, "tree-nested");
+    mkdirSync(join(tree, "widgets", "main"), { recursive: true });
+    writeFileSync(join(tree, "clarkcant.json"), "{}");
+    writeFileSync(join(tree, "widgets", "main", "index.html"), "<p>hi</p>");
+    writeFileSync(join(tree, "widgets-extra.txt"), "x");
+
+    // Computed by hand the way a POSIX publisher does: `/` separators, sorted in that form.
+    const expected = createHash("sha256");
+    for (const [rel, text] of [
+      ["clarkcant.json", "{}"],
+      ["widgets-extra.txt", "x"],
+      ["widgets/main/index.html", "<p>hi</p>"],
+    ] as const) {
+      expected.update(rel).update("\0").update(String(Buffer.byteLength(text))).update("\0").update(text);
+    }
+
+    const digest = digestOfDirectory(tree);
+    expect(digest).toEqual({ ok: true, digest: `sha256:${expected.digest("hex")}` });
+  });
 });
