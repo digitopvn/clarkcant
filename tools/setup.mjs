@@ -383,6 +383,9 @@ async function main() {
       updates.CLARKCANT_DATA_DIR = dataDir;
       // Where the node finds the widget runtime it serves to widget frames; Docker sets its own.
       updates.CC_WEB_DIST = join(ROOT, "apps", "web", "dist");
+      // The interface runs on the web dev server (`pnpm dev:web`), not on the node, so widget frames need that
+      // origin named to be allowed to embed them. A value already chosen is kept.
+      updates.CC_APP_ORIGIN = current.CC_APP_ORIGIN ?? "http://127.0.0.1:5173";
     }
     if (mode === "docker-public") {
       const domain = flags.domain ?? (await ask.text("  Public domain that points at this server (for HTTPS)", current.CLARKCANT_DOMAIN ?? ""));

@@ -4,6 +4,7 @@ import {
   type InstallState,
   type IsolationClass,
   type PackageManifest,
+  networkOriginProblem,
   requiredRefreshScope,
 } from "@clarkcant/contracts";
 
@@ -78,7 +79,10 @@ export function validateManifest(manifest: PackageManifest): { ok: true } | { ok
   for (const origin of manifest.permissions.networkOrigins) {
     if (origin === "*" || origin === "https://*") {
       problems.push("a wildcard network origin would make egress policy meaningless");
+      continue;
     }
+    const problem = networkOriginProblem(origin);
+    if (problem !== undefined) problems.push(`network origin ${JSON.stringify(origin)} ${problem}`);
   }
   return problems.length === 0 ? { ok: true } : { ok: false, problems };
 }

@@ -66,6 +66,17 @@ describe("what the host advertises at init", () => {
     // Posted rather than returned only, since the frame is a different process holding a different object.
     expect(posted[0]?.kind).toBe("init");
   });
+
+  it("posts exactly one init for one call, so a caller that only calls it cannot make the frame see two", () => {
+    const { session, posted } = makeSession();
+
+    const returned = session.init();
+
+    // A second init is what the widget runtime refuses as DUPLICATE_INIT; the frame component relies on this count.
+    expect(posted.filter((message) => message.kind === "init")).toHaveLength(1);
+    expect(posted).toHaveLength(1);
+    expect(posted[0]).toEqual(returned);
+  });
 });
 
 describe("what the host refuses", () => {

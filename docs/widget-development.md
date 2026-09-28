@@ -372,6 +372,20 @@ into props/state/history.
 
 An executable widget only connects to origins in the installed manifest/CSP.
 
+Each entry in `permissions.networkOrigins` must be exactly one origin in canonical form,
+`scheme://host[:port]`: `https` or `wss`, with `http`/`ws` allowed only for `localhost`,
+`127.0.0.1` and `[::1]`. Wildcards, paths, queries, credentials, whitespace, `;` or `,`, and
+non-canonical forms (`https://API.example.com`, `https://example.com:443`) are refused when the
+manifest is read, because the value becomes the widget document's `connect-src` verbatim. An
+empty list means `connect-src 'none'`.
+
+The widget document is served with `sandbox allow-scripts` in its CSP as well as on the frame,
+so it stays on an opaque origin even when opened directly. Only the node that serves it may frame
+it (`frame-ancestors 'self'`), plus the interface's origin when that is somewhere else:
+`CC_APP_ORIGIN` names it (for example `http://127.0.0.1:5173` for `pnpm dev:web`; local setup
+writes this). The node checks `CC_APP_ORIGIN` at startup and refuses to start when it is not a
+bare `http(s)` origin. The request's `Host` header is never used.
+
 If an auth SDK needs a browser token, the host broker issues a short-lived/scoped token if the provider actually supports it; the token is not persisted in widget state.
 
 ---

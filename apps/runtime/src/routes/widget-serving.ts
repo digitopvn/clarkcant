@@ -5,7 +5,7 @@ import {
   readDirectoryIndex,
   readPackage,
   readPackageFile,
-  resolveAppOrigin,
+  resolveFrameAncestors,
   widgetDocument,
   widgetDocumentPolicy,
 } from "@clarkcant/core";
@@ -55,12 +55,10 @@ export function handleWidgetServingRoutes(deps: WidgetServingRouteDeps): Gateway
     );
   }
   if (file.contentType.startsWith("text/html")) {
-    const appOriginOutcome = resolveAppOrigin({
-      configured: process.env["CC_APP_ORIGIN"],
-      hostHeader: request.headers["host"],
-    });
-    if (!appOriginOutcome.ok) {
-      return fail(500, appOriginOutcome.code, appOriginOutcome.message);
+    // Checked at startup too; this refuses to serve if the variable was changed to something invalid since.
+    const frameAncestors = resolveFrameAncestors(process.env["CC_APP_ORIGIN"]);
+    if (!frameAncestors.ok) {
+      return fail(500, frameAncestors.code, frameAncestors.message);
     }
     const nonce = randomUUID().replaceAll("-", "");
     // Same rule as the bearer-authenticated package route: `connect-src` reflects what this package's own
@@ -70,7 +68,6 @@ export function handleWidgetServingRoutes(deps: WidgetServingRouteDeps): Gateway
       entry.source.kind === "local" ? (readPackage(entry.source.path).manifest.permissions?.networkOrigins ?? []) : [];
     const document = widgetDocument({
       html: file.bytes.toString("utf8"),
-      appOrigin: appOriginOutcome.origin,
       nonce,
       allowedOrigins,
     });
@@ -81,7 +78,7 @@ export function handleWidgetServingRoutes(deps: WidgetServingRouteDeps): Gateway
         bytes: Buffer.from(document, "utf8"),
         contentType: file.contentType,
         headers: {
-          "content-security-policy": widgetDocumentPolicy({ appOrigin: appOriginOutcome.origin, nonce, allowedOrigins }),
+          "content-security-policy": widgetDocumentPolicy({ frameAncestors: frameAncestors.sources, nonce, allowedOrigins }),
         },
       },
     };

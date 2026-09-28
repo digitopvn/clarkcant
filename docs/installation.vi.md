@@ -100,6 +100,11 @@ pnpm dev:web    # mở http://127.0.0.1:5173/?gateway=http://127.0.0.1:8765
 Bearer token nằm trong `./.data/identity.json` (trường `localToken`). Node mặc định chỉ bind
 loopback và từ chối bind địa chỉ công khai nếu thiếu `--allow-public-bind`.
 
+Widget mở trong các frame do node phục vụ, và chỉ node mới được nhúng chúng, trừ khi
+`CC_APP_ORIGIN` khai báo origin của giao diện. Bước setup local ghi `CC_APP_ORIGIN=http://127.0.0.1:5173`
+cho `pnpm dev:web`; hãy tự đặt giá trị này nếu giao diện chạy ở nơi khác. Node từ chối khởi động
+khi giá trị không phải một origin `http(s)` trần.
+
 Khi làm việc với desktop shell, một lệnh khởi động cùng lúc node, Vite dev server và Electron, và
 cửa sổ tự tải lại khi renderer thay đổi:
 

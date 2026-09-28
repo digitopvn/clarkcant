@@ -11,16 +11,11 @@
  * fails open on everything nobody thought of.
  */
 
+import { networkOriginProblem } from "@clarkcant/contracts";
+
 export interface WidgetDocumentInput {
   /** The author's entry file, as it is on disk. */
   html: string;
-  /**
-   * Where the app — and therefore the runtime bundle — is served from.
-   *
-   * Also the only origin allowed to frame this document. A widget document is not a page to be embedded anywhere;
-   * it is one surface of one conversation.
-   */
-  appOrigin: string;
   /**
    * Per response, so the injected script is the only inline script this document may run.
    *
@@ -45,72 +40,57 @@ export interface WidgetDocumentInput {
   runtimeUrl?: string;
 }
 
-export type AppOriginOutcome =
-  | { ok: true; origin: string }
-  | { ok: false; code: "CC_APP_ORIGIN_INVALID" | "HOST_HEADER_INVALID"; message: string };
+export type FrameAncestorsOutcome =
+  | { ok: true; sources: string }
+  | { ok: false; code: "CC_APP_ORIGIN_INVALID"; message: string };
 
 /**
- * Where `frame-ancestors` in a widget document's policy points.
+ * Who may frame a widget document: the value of `frame-ancestors`.
  *
- * `CC_APP_ORIGIN`, when set, must be exactly an origin — scheme, host, optional port, nothing else. `new
- * URL(value).origin` both parses and normalises it, so a value with a path, query, credentials, or trailing
- * slash (all of which round-trip through `URL` without becoming equal to the input) is rejected rather than
- * silently truncated into the directive.
+ * Always `'self'`, the node that serves the document, because the default topology is a node that serves its own
+ * interface — directly, or behind a proxy that keeps one origin. `'self'` is resolved by the browser from the URL
+ * the document was fetched from, so it needs no knowledge of how the node is reached and trusts nothing a client
+ * sent. The previous fallback built this directive from the request's `Host` header, which is client-controlled
+ * input deciding who may frame the document.
  *
- * Without the variable set, the previous behaviour trusted the request's own `Host` header unchecked: a header a
- * client controls, fed straight into a CSP directive that says who may frame this document. A request naming a
- * `Host` with a scheme, a path, or characters `URL` cannot parse as a bare `host[:port]` is refused rather than
- * served with a directive built from whatever arrived — refusing to serve is the fail-closed choice for a value
- * this function cannot make sense of.
+ * `CC_APP_ORIGIN` adds the one other origin, for an interface served from somewhere else (the Vite dev server, a
+ * desktop shell loading a dev renderer). It must be exactly an origin — scheme, host, optional port, nothing else.
+ * `new URL(value).origin` both parses and normalises it, so a value with a path, query, credentials, or trailing
+ * slash (all of which round-trip through `URL` without becoming equal to the input) is refused rather than
+ * silently truncated into the directive. The node checks it once at startup, so a bad value stops the node
+ * instead of surfacing as a widget that never loads.
  */
-export function resolveAppOrigin(input: {
-  configured: string | undefined;
-  /** Node's HTTP headers type allows a header to repeat; only the first value is ever meaningful for `Host`. */
-  hostHeader: string | string[] | undefined;
-}): AppOriginOutcome {
-  if (input.configured !== undefined && input.configured !== "") {
-    try {
-      const url = new URL(input.configured);
-      if (url.origin !== input.configured || (url.protocol !== "http:" && url.protocol !== "https:")) {
-        throw new Error("not a bare http(s) origin");
-      }
-      return { ok: true, origin: url.origin };
-    } catch {
-      return {
-        ok: false,
-        code: "CC_APP_ORIGIN_INVALID",
-        message: `CC_APP_ORIGIN must be a bare http(s) origin (scheme://host[:port], no path); got ${JSON.stringify(input.configured)}`,
-      };
-    }
-  }
-
-  const host = Array.isArray(input.hostHeader) ? input.hostHeader[0] : input.hostHeader;
-  // No `Host` at all is not attacker input — there is nothing to have injected — so it falls back to a fixed,
-  // known-safe local origin rather than being refused. Refusing only starts once a `Host` value actually arrived
-  // and turned out not to be a bare `host[:port]`.
-  if (host === undefined || host === "") {
-    return { ok: true, origin: "http://127.0.0.1" };
-  }
+export function resolveFrameAncestors(configured: string | undefined): FrameAncestorsOutcome {
+  if (configured === undefined || configured === "") return { ok: true, sources: "'self'" };
   try {
-    // A bare `host[:port]` has no scheme of its own, so it is parsed as the host component of a URL rather than
-    // as a URL itself; anything that does not survive that round-trip (a scheme, a path, whitespace, control
-    // characters) is not a value this function will turn into a CSP directive.
-    const probe = new URL(`http://${host}`);
-    if (probe.host !== host || probe.pathname !== "/" || probe.search !== "" || probe.username !== "" || probe.password !== "") {
-      throw new Error("not a bare host[:port]");
+    const url = new URL(configured);
+    if (url.origin !== configured || (url.protocol !== "http:" && url.protocol !== "https:")) {
+      throw new Error("not a bare http(s) origin");
     }
-    return { ok: true, origin: `http://${host}` };
+    return { ok: true, sources: `'self' ${url.origin}` };
   } catch {
     return {
       ok: false,
-      code: "HOST_HEADER_INVALID",
-      message: `the request's Host header is not a bare host[:port] and CC_APP_ORIGIN is not configured; got ${JSON.stringify(host)}`,
+      code: "CC_APP_ORIGIN_INVALID",
+      message: `CC_APP_ORIGIN must be a bare http(s) origin (scheme://host[:port], no path); got ${JSON.stringify(configured)}`,
     };
   }
 }
 
 /** The policy for a widget document. Returned rather than written as a header so a test can read it. */
-export function widgetDocumentPolicy(input: { appOrigin: string; nonce: string; allowedOrigins?: readonly string[] }): string {
+export function widgetDocumentPolicy(input: {
+  /** `frame-ancestors` sources, from `resolveFrameAncestors`. */
+  frameAncestors: string;
+  nonce: string;
+  allowedOrigins?: readonly string[];
+}): string {
+  /*
+   * The manifest schema already refuses a malformed origin; this is the second check, at the place the value turns
+   * into policy. A package recorded before the schema tightened, or any caller that skipped the schema, still cannot
+   * put a wildcard or a directive into `connect-src`: an origin that does not pass is dropped, which narrows the
+   * policy rather than failing the document.
+   */
+  const reachable = (input.allowedOrigins ?? []).filter((origin) => networkOriginProblem(origin) === undefined);
   return [
     "default-src 'none'",
     // The bundle comes from the app; the widget's own module and styles come from the node that is serving this
@@ -130,10 +110,16 @@ export function widgetDocumentPolicy(input: { appOrigin: string; nonce: string; 
      * so a widget that reaches the network directly is either redundant or trying to leave, and both are better
      * refused than allowed and forgotten.
      */
-    `connect-src ${(input.allowedOrigins ?? []).length === 0 ? "'none'" : (input.allowedOrigins ?? []).join(" ")}`,
-    `frame-ancestors ${input.appOrigin}`,
+    `connect-src ${reachable.length === 0 ? "'none'" : reachable.join(" ")}`,
+    `frame-ancestors ${input.frameAncestors}`,
     "base-uri 'none'",
     "form-action 'none'",
+    /*
+     * The same sandbox the frame element sets, carried by the document itself. The attribute only applies when the
+     * document is framed; opened directly in a tab, package code would otherwise run at the node's origin, which is
+     * the origin of the interface and its storage. With the directive it runs on an opaque origin either way.
+     */
+    "sandbox allow-scripts",
   ].join("; ");
 }
 

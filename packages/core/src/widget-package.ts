@@ -1,7 +1,13 @@
 import { readFileSync, readdirSync, existsSync } from "node:fs";
 import { join } from "node:path";
 
-import { fixtureDatasetSchema, widgetDefinitionSchema, type FixtureDataset, type WidgetDefinition } from "@clarkcant/contracts";
+import {
+  fixtureDatasetSchema,
+  networkOriginSchema,
+  widgetDefinitionSchema,
+  type FixtureDataset,
+  type WidgetDefinition,
+} from "@clarkcant/contracts";
 import { z } from "zod";
 
 /**
@@ -37,7 +43,7 @@ export const manifestSchema = z.strictObject({
     .min(1),
   requestedCapabilities: z.array(z.string().min(1).max(160)).max(64),
   permissions: z.strictObject({
-    networkOrigins: z.array(z.string().min(1).max(300)).max(64),
+    networkOrigins: z.array(networkOriginSchema).max(64),
     filesystem: z.array(z.string().min(1).max(300)).max(64),
     microphone: z.boolean(),
     camera: z.boolean(),

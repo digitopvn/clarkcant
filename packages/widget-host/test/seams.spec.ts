@@ -363,6 +363,28 @@ describe("capability host (T24)", () => {
     expect(result.ok === false && result.problems.length).toBeGreaterThanOrEqual(2);
   });
 
+  it("rejects a network origin that would inject a directive into the widget's policy", () => {
+    const result = validateManifest({
+      id: "p",
+      version: "1.0.0",
+      hostApi: { min: 1, max: 1 },
+      facets: [{ kind: "ui", entry: "widgets/main/index.html", isolation: "isolated-ui" }],
+      requestedCapabilities: [],
+      permissions: {
+        networkOrigins: ["https://api.example.com", "https://x.example; report-uri https://evil.example"],
+        filesystem: [],
+        microphone: false,
+        camera: false,
+        lifecycleScripts: [],
+      },
+      platforms: ["darwin-arm64"],
+    } as never);
+    expect(result.ok).toBe(false);
+    expect(result.ok === false && result.problems).toEqual([
+      expect.stringContaining("https://x.example; report-uri https://evil.example"),
+    ]);
+  });
+
   it("distinguishes repair from install from connect", () => {
     expect(decideRequirementAction({ installed: false, loaded: false, authenticated: false, healthy: false })).toBe("install");
     expect(decideRequirementAction({ installed: true, loaded: false, authenticated: false, healthy: false })).toBe("repair");
