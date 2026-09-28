@@ -10,6 +10,7 @@ import {
   type Principal,
   inboxResponseSchema,
   inboxSummarySchema,
+  redactSecrets,
 } from "@clarkcant/contracts";
 import {
   EXECUTION_POLICY_PREFERENCE_KEY,
@@ -683,8 +684,10 @@ describe("the agent reads the inbox", () => {
 
     const tool = createReadInboxTool(() => readInbox(services, now as Instant));
     const { text } = await tool.execute({});
+    // The description names the temp directory, which on Windows sits under C:\Users\<name> and is redacted like any
+    // home path, so the line is compared with what the tool actually shows rather than with the raw description.
     expect(text).toContain(
-      `task approval for task ${task.taskId} (local-write): ${approval.operationDescription} (conversation ${conversationId}) (expires ${approval.expiresAt})`,
+      `task approval for task ${task.taskId} (local-write): ${redactSecrets(approval.operationDescription)} (conversation ${conversationId}) (expires ${approval.expiresAt})`,
     );
     // Never the capability ref or the approval id - those stay in the structured fields the inbox panel reads,
     // not in the sentence a model would repeat back to the person.
