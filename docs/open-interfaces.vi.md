@@ -90,8 +90,10 @@ các relay tổng quát (frame `request` qua WebSocket, `clarkcant api`) cùng M
 của con người với `403 PERSON_ONLY` vì cùng lý do đó: duyệt hành động bị guard (trên thẻ, hoặc do một task đang
 chạy raise ra), quyết định capability của package,
 xác nhận app intent, báo cáo trang đã làm gì với một hành động agent yêu cầu, tin cậy một peer đã ghép cặp và cấp
-grant. Dừng, trả lời câu hỏi và đọc vẫn dùng được. Discovery
-document ghi điều này ở mục `personDecisions`.
+grant. Xuất một bảng ra file CSV
+(`POST /conversations/{id}/widgets/{instanceId}/export`) cũng bị các relay đó từ chối: file được viết cho người đang
+xem bảng, không trao cho một client máy. Dừng, trả lời câu hỏi và đọc vẫn dùng được. Discovery document ghi điều này
+ở mục `personDecisions`.
 
 Cấu hình client — HTTP:
 

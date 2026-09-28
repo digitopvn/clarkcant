@@ -89,7 +89,9 @@ the generic relays (a WebSocket `request` frame, `clarkcant api`) and MCP refuse
 decision with `403 PERSON_ONLY` for the same reason: approving a guarded action (on a card, or one a running task
 raised), deciding a package capability,
 confirming an app intent, reporting what the page did with an action the agent asked for, trusting a paired peer and
-issuing a grant. Stop, answering a question and reading stay
+issuing a grant. Exporting a table as a CSV file
+(`POST /conversations/{id}/widgets/{instanceId}/export`) is refused on the same relays too: the file is written for
+the person who is looking at the table, not handed to a machine client. Stop, answering a question and reading stay
 available. The discovery document lists this under `personDecisions`.
 
 Client configuration — HTTP:

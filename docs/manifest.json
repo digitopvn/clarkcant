@@ -150,13 +150,13 @@
     },
     {
       "path": "widgets-and-extensions.md",
-      "bytes": 30111,
-      "sha256": "2283c9e4d2951b4f064021fccc22255b520d65cc93e285d236ea4ec379f55e8b"
+      "bytes": 32324,
+      "sha256": "009f578f3c7424dff2fce374fe00c2c6b85aea3966b37961d10774ad00de7afe"
     },
     {
       "path": "widgets-and-extensions.vi.md",
-      "bytes": 30389,
-      "sha256": "48f88f24c536ca0d26f10cc6fb87c3212a7604282271c93cf0634a64c603431d"
+      "bytes": 32862,
+      "sha256": "0c8901161b90a2c3db595aeca0688efbb3fe659193deea686354d157b3b17ab5"
     },
     {
       "path": "mini-app/jev-configuration.md",
