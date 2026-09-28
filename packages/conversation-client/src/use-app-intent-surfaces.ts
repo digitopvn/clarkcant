@@ -14,6 +14,14 @@ import type { AppIntentDecision, AppIntentKind, SettingsTab } from "@clarkcant/c
 import { CLOSED_LIBRARY, applyLibraryAction, type WidgetLibraryState } from "./widget-library/widget-library-state.ts";
 import type { MessageKey } from "./i18n/messages.ts";
 
+/** The kinds whose outcome the model note beside the composer already shows, success or failure. */
+const MODEL_SWITCH_KINDS: ReadonlySet<AppIntentKind> = new Set<AppIntentKind>(["model.cycle", "model.select"]);
+
+/** The node's own reason when it gave one, the generic sentence otherwise. */
+function modelSwitchFailure(t: (key: MessageKey) => string, cause: unknown): string {
+  return cause instanceof Error && cause.message !== "" ? cause.message : t("intents.modelSwitchFailed");
+}
+
 export interface AppIntentSurfacesState {
   uiCheckOpen: boolean;
   setUiCheckOpen: (open: boolean) => void;
@@ -60,11 +68,18 @@ export interface AppIntentSurfacesDeps {
    * Starts voice mode the same way the voice button does, ensuring a conversation exists first.
    *
    * Optional so a caller that has not wired voice at all (a fixture, a narrower embed) still gets a
-   * working host: `runAppIntent` reports the limitation honestly rather than throwing.
+   * working host: `runAppIntent` reports the limitation honestly rather than throwing. Rejects with the
+   * reason when voice could not open.
    */
-  openVoice?: () => void;
+  openVoice?: () => Promise<void>;
   /** Stops the reply being written, the same call the Stop button makes. */
   stopTurn?: () => void;
+  /**
+   * The model switches the hotkey makes (`useModelAlias`), so an intent that switches the model updates
+   * the alias and note on screen exactly as the hotkey does.
+   */
+  cycleModel: () => Promise<string>;
+  selectModel: (alias: string) => Promise<string>;
 }
 
 /**
@@ -83,6 +98,8 @@ export function useAppIntentSurfaces({
   setVoiceOpen,
   openVoice,
   stopTurn,
+  cycleModel,
+  selectModel,
   t,
 }: AppIntentSurfacesDeps): AppIntentSurfacesState {
   const [uiCheckOpen, setUiCheckOpen] = useState(false);
@@ -136,11 +153,20 @@ export function useAppIntentSurfaces({
         setWidgetLibrary(CLOSED_LIBRARY);
         setInboxOpen(false);
       },
-      cycleModel: () => {
-        void client.cycleModel().catch(() => setIntentNotice(t("intents.modelSwitchFailed")));
+      // Awaited, so "switched" is reported only once the pool has switched; a refusal becomes the run's reason.
+      cycleModel: async () => {
+        try {
+          return await cycleModel();
+        } catch (cause) {
+          throw new Error(modelSwitchFailure(t, cause), { cause });
+        }
       },
-      selectModel: (alias: string) => {
-        void client.selectModel(alias).catch(() => setIntentNotice(t("intents.modelSwitchFailed")));
+      selectModel: async (alias: string) => {
+        try {
+          return await selectModel(alias);
+        } catch (cause) {
+          throw new Error(modelSwitchFailure(t, cause), { cause });
+        }
       },
       openWidgetLibrary: (mode: "browse" | "develop", target?: { definitionId?: string; family?: string }) => {
         // Same rule as the imperative `openWidgetLibrary` above, for the path a click, a typed command or voice
@@ -182,16 +208,25 @@ export function useAppIntentSurfaces({
           }
         : {}),
     };
-  }, [attachmentInput, restartSession, setVoiceOpen, openVoice, stopTurn, client, t]);
+  }, [attachmentInput, restartSession, setVoiceOpen, openVoice, stopTurn, cycleModel, selectModel, t]);
 
   const runIntent = useCallback(
     (decision: AppIntentDecision): void => {
-      const run = runAppIntent(decision, intentHost);
-      // Only a failure is announced: a command that worked is already visible as the panel that
-      // just opened, or read back out loud by the voice surface.
-      if (!run.ran) setIntentNotice(run.say);
+      void runAppIntent(decision, intentHost).then((run) => {
+        // Only a failure is announced: a command that worked is already visible as the panel that
+        // just opened, or read back out loud by the voice surface. A model switch that failed already
+        // says why in the note beside the model label - near the thing it is about - so it is not said twice.
+        if (!run.ran && !(decision.kind === "intent" && MODEL_SWITCH_KINDS.has(decision.intent.kind))) {
+          setIntentNotice(run.say);
+        }
+        // An action the agent asked for is reported back, run or not: the agent's tool is waiting to
+        // tell the model whether the screen changed, and "sent" is not an answer it may give as "done".
+        if (decision.kind === "intent" && decision.controlId !== undefined) {
+          client.reportHostControl(decision.controlId, run).catch(() => undefined);
+        }
+      });
     },
-    [intentHost],
+    [client, intentHost],
   );
 
   const clickIntent = useCallback(

@@ -33,6 +33,16 @@ import { readStoredLocale } from "./i18n/locale.ts";
 import { CATALOGS } from "./i18n/messages.ts";
 
 /**
+ * What one host method did.
+ *
+ * Nothing, for the ordinary case where the read-back already says it. A sentence, when the host knows better than
+ * the read-back what happened - a model switch says which profile it landed on. A promise of either, for the work
+ * that has to ask the node first. A method that could not do it throws, and the error's message is the reason
+ * given: the executor never reports as done something that failed on the way.
+ */
+export type HostEffect = void | string | Promise<void | string>;
+
+/**
  * What a page can be asked to do.
  *
  * Everything but the window commands is ordinary interface state and is always present. The window commands are
@@ -40,17 +50,17 @@ import { CATALOGS } from "./i18n/messages.ts";
  * `not-desktop` answer truthful instead of a lie about failing.
  */
 export interface AppIntentHost {
-  openSettings(tab?: SettingsTab): void;
-  goHome(): void;
-  openFilePicker(): void;
-  endVoice(): void;
+  openSettings(tab?: SettingsTab): HostEffect;
+  goHome(): HostEffect;
+  openFilePicker(): HostEffect;
+  endVoice(): HostEffect;
   /**
    * Starts voice mode, ensuring a conversation exists first.
    *
    * Optional for the same reason the widget library is: a host that has not wired a voice surface
    * should be refused with a sentence, not reported as having opened one.
    */
-  openVoice?(): void;
+  openVoice?(): HostEffect;
   /**
    * Closes Settings and the widget library and returns to the conversation already open, without
    * resetting or leaving it.
@@ -61,38 +71,38 @@ export interface AppIntentHost {
    * alongside the other new members for the same reason: a host built before this existed should not
    * silently gain a method it never implemented.
    */
-  showConversation?(): void;
+  showConversation?(): HostEffect;
   /**
    * Moves the configured model pool to the next enabled profile, applying to a new generation.
    *
    * Optional: a host with no model pool (e.g. a fixture with no node behind it) cannot promise this,
    * and a caller that reported success anyway would be lying about what changed.
    */
-  cycleModel?(): void;
+  cycleModel?(): HostEffect;
   /**
    * Opens the inbox over the conversation: what is waiting for the person, and the notices from work that ran
    * while nobody was looking. Optional: a host with no node behind it has no inbox to open.
    */
-  openInbox?(): void;
+  openInbox?(): HostEffect;
   /**
    * Stops the reply this conversation is writing, keeping what it has already written. Optional: a host with no
    * node behind it has no turn to stop.
    */
-  stopTurn?(): void;
+  stopTurn?(): HostEffect;
   /** Selects a configured model-pool profile by its alias. See `cycleModel` for why this is optional. */
-  selectModel?(alias: string): void;
+  selectModel?(alias: string): HostEffect;
   /**
    * Opens the widget library.
    *
    * Optional for the same reason the window methods are: a host that cannot show the library should
    * be refused with a sentence that names the limitation rather than reported as having done it.
    */
-  openWidgetLibrary?(mode: "browse" | "develop", target?: { definitionId?: string; family?: string }): void;
-  expandWindow?(): void;
-  minimiseWindow?(): void;
-  setFullScreen?(value: boolean): void;
-  setMinimal?(compact: boolean): void;
-  quit?(): void;
+  openWidgetLibrary?(mode: "browse" | "develop", target?: { definitionId?: string; family?: string }): HostEffect;
+  expandWindow?(): HostEffect;
+  minimiseWindow?(): HostEffect;
+  setFullScreen?(value: boolean): HostEffect;
+  setMinimal?(compact: boolean): HostEffect;
+  quit?(): HostEffect;
 }
 
 export interface AppIntentRun {
@@ -158,7 +168,14 @@ export function describeMissingCapability(intent: AppIntent): string {
   return missingCapabilitySay(intent);
 }
 
-export function runAppIntent(decision: AppIntentDecision, host: AppIntentHost): AppIntentRun {
+/**
+ * Carry out a decision, and say what became of it.
+ *
+ * Asynchronous because some intents are the node's to finish - a model switch is only done when the pool says so
+ * - and "done" has to mean done: the agent's `control_app` reports this answer back to the model, so an executor
+ * that resolved before the work did would let the model tell the person something that is not true yet.
+ */
+export async function runAppIntent(decision: AppIntentDecision, host: AppIntentHost): Promise<AppIntentRun> {
   if (decision.kind !== "intent") {
     // A question is answered by saying it; a refusal is answered by saying it. Neither is permission, and this
     // function cannot grant any.
@@ -172,69 +189,57 @@ export function runAppIntent(decision: AppIntentDecision, host: AppIntentHost): 
     return { ran: false, say: missingCapabilitySay(intent) };
   }
 
+  try {
+    const said = await carryOut(intent, host);
+    return { ran: true, say: typeof said === "string" && said !== "" ? said : readBack };
+  } catch (cause) {
+    return { ran: false, say: cause instanceof Error && cause.message !== "" ? cause.message : String(cause) };
+  }
+}
+
+function carryOut(intent: AppIntent, host: AppIntentHost): HostEffect {
   switch (intent.kind) {
     case "settings.open":
-      host.openSettings();
-      return { ran: true, say: readBack };
+      return host.openSettings();
     case "settings.tab":
-      host.openSettings(intent.tab);
-      return { ran: true, say: readBack };
+      return host.openSettings(intent.tab);
     case "nav.home":
-      host.goHome();
-      return { ran: true, say: readBack };
+      return host.goHome();
     case "composer.attach":
-      host.openFilePicker();
-      return { ran: true, say: readBack };
+      return host.openFilePicker();
     case "voice.end":
-      host.endVoice();
-      return { ran: true, say: readBack };
+      return host.endVoice();
     case "voice.open":
-      host.openVoice?.();
-      return { ran: true, say: readBack };
+      return host.openVoice?.();
     case "nav.conversation":
-      host.showConversation?.();
-      return { ran: true, say: readBack };
+      return host.showConversation?.();
     case "inbox.open":
-      host.openInbox?.();
-      return { ran: true, say: readBack };
+      return host.openInbox?.();
     case "turn.stop":
-      host.stopTurn?.();
-      return { ran: true, say: readBack };
+      return host.stopTurn?.();
     case "model.cycle":
-      host.cycleModel?.();
-      return { ran: true, say: readBack };
+      return host.cycleModel?.();
     case "model.select":
-      host.selectModel?.(intent.modelAlias ?? "");
-      return { ran: true, say: readBack };
+      return host.selectModel?.(intent.modelAlias ?? "");
     case "window.expand":
-      host.expandWindow?.();
-      return { ran: true, say: readBack };
+      return host.expandWindow?.();
     case "window.minimise":
-      host.minimiseWindow?.();
-      return { ran: true, say: readBack };
+      return host.minimiseWindow?.();
     case "window.minimal":
-      host.setMinimal?.(true);
-      return { ran: true, say: readBack };
+      return host.setMinimal?.(true);
     case "window.fullscreen":
-      host.setFullScreen?.(true);
-      return { ran: true, say: readBack };
+      return host.setFullScreen?.(true);
     case "window.windowed":
-      host.setFullScreen?.(false);
-      return { ran: true, say: readBack };
+      return host.setFullScreen?.(false);
     case "app.quit":
-      host.quit?.();
-      return { ran: true, say: readBack };
+      return host.quit?.();
     case "widgets.open":
-      host.openWidgetLibrary?.("browse");
-      return { ran: true, say: readBack };
-    case "widgets.show": {
-      const target = {
+      return host.openWidgetLibrary?.("browse");
+    case "widgets.show":
+      return host.openWidgetLibrary?.("browse", {
         ...(intent.definitionId === undefined ? {} : { definitionId: intent.definitionId }),
         ...(intent.family === undefined ? {} : { family: intent.family }),
-      };
-      host.openWidgetLibrary?.("browse", target);
-      return { ran: true, say: readBack };
-    }
+      });
     default: {
       // Every kind above returns. This keeps a tenth kind from being silently ignored by the executor.
       const unreachable: never = intent.kind;

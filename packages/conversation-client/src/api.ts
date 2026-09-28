@@ -468,6 +468,8 @@ export class GatewayError extends Error {
    * one, carries the state the node holds, which is what lets the caller show it instead of guessing.
    */
   readonly details: Record<string, unknown>;
+  /** The node's sentence without the code in front of it, for a line a person reads rather than a log. */
+  readonly reason: string;
 
   constructor(status: number, code: string, message: string, details: Record<string, unknown> = {}) {
     super(`${code}: ${message}`);
@@ -475,6 +477,7 @@ export class GatewayError extends Error {
     this.status = status;
     this.code = code;
     this.details = details;
+    this.reason = message;
   }
 }
 
@@ -1519,6 +1522,21 @@ export class GatewayClient {
     }
     const body = (await response.json()) as { decision?: unknown };
     return (body.decision ?? { kind: "refused", say: "Nothing was carried out." }) as AppIntentDecision;
+  }
+
+  /**
+   * Tell the node what this page did with an action the agent asked for.
+   *
+   * The agent's `control_app` is waiting on this answer to tell the model whether the screen changed, so it is sent
+   * for every agent-issued decision, run or not. A node that stopped waiting answers 404, which is not this page's
+   * problem to surface: the model was already told the action was unconfirmed.
+   */
+  async reportHostControl(controlId: string, report: { ran: boolean; say: string }): Promise<void> {
+    await this.#fetch(`${this.#baseUrl}/app-intents/host-control/${encodeURIComponent(controlId)}`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${this.#token}`, "content-type": "application/json" },
+      body: JSON.stringify({ ran: report.ran, say: report.say.slice(0, 2000) }),
+    });
   }
 
   /**

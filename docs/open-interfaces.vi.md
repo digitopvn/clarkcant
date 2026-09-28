@@ -55,6 +55,15 @@ curl -N -X POST localhost:8765/conversations/$ID/messages/stream \
   -H "authorization: Bearer $TOKEN" -H 'content-type: application/json' -d '{"text":"xin chào"}'
 ```
 
+Event `host-control` là agent yêu cầu trang thay đổi một thứ gì đó (mở Settings ở một tab, đổi model, mở chế độ
+giọng nói). Khi do agent yêu cầu, decision của event mang một `controlId`, và trang trả lời bằng
+`POST /app-intents/host-control/{controlId}` `{ ran, say }` sau khi đã thực hiện xong hoặc không thực hiện được.
+Agent nhận đúng câu trả lời của trang, nên chỉ nói app đã thay đổi khi trang báo là đã làm; nếu không có câu trả lời
+trong vài giây, agent được báo là hành động chưa được xác nhận. Mỗi `controlId` chỉ được trả lời một lần (lần thứ hai
+nhận `404 HOST_CONTROL_NOT_EXPECTED`), và route `/messages` thường không bao giờ chờ câu trả lời. Bản ghi audit của
+một hành động agent yêu cầu khi đang trả lời một câu nói có `source: "voice-agent"`, khác với lệnh do chính người dùng
+nói (`source: "voice"`).
+
 Các route khác (settings, packages, widgets, peers…) vẫn gọi được với cùng token nhưng chưa thuộc mô tả ổn định và
 có thể thay đổi.
 
@@ -80,7 +89,8 @@ nó sẽ cho phép client AI tự duyệt hành động bị guard của chính 
 các relay tổng quát (frame `request` qua WebSocket, `clarkcant api`) cùng MCP từ chối mọi route ghi nhận quyết định
 của con người với `403 PERSON_ONLY` vì cùng lý do đó: duyệt hành động bị guard (trên thẻ, hoặc do một task đang
 chạy raise ra), quyết định capability của package,
-xác nhận app intent, tin cậy một peer đã ghép cặp và cấp grant. Dừng, trả lời câu hỏi và đọc vẫn dùng được. Discovery
+xác nhận app intent, báo cáo trang đã làm gì với một hành động agent yêu cầu, tin cậy một peer đã ghép cặp và cấp
+grant. Dừng, trả lời câu hỏi và đọc vẫn dùng được. Discovery
 document ghi điều này ở mục `personDecisions`.
 
 Cấu hình client — HTTP:

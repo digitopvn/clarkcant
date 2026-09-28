@@ -379,3 +379,32 @@ describe("the read-back follows the stored UI language", () => {
     expect(decision.readBack).toBe("I understand you want to quit the app. Do you confirm?");
   });
 });
+
+describe("the page's report on an agent-issued action", () => {
+  const decision = (controlId: string) => ({
+    kind: "intent" as const,
+    intent: { kind: "settings.open" as const },
+    requiresConfirmation: false as const,
+    readBack: "Tôi mở Settings nhé.",
+    controlId,
+  });
+
+  it("settles the action the agent's tool is waiting on, once", async () => {
+    services.hostControl.expect(decision("ctl-1"));
+    const waiting = services.hostControl.wait("ctl-1");
+    const reported = await request("POST", "/app-intents/host-control/ctl-1", { ran: true, say: "Tôi mở Settings nhé." });
+    expect(reported.status).toBe(200);
+    expect(await waiting).toEqual({ ran: true, say: "Tôi mở Settings nhé." });
+
+    const again = await request("POST", "/app-intents/host-control/ctl-1", { ran: true, say: "" });
+    expect(again.status).toBe(404);
+    expect(json(again).code).toBe("HOST_CONTROL_NOT_EXPECTED");
+  });
+
+  it("refuses a report for an action nobody issued, and a malformed one", async () => {
+    expect((await request("POST", "/app-intents/host-control/never-issued", { ran: true, say: "" })).status).toBe(404);
+    services.hostControl.expect(decision("ctl-2"));
+    expect((await request("POST", "/app-intents/host-control/ctl-2", { ran: "yes" })).status).toBe(400);
+    expect((await request("POST", "/app-intents/host-control/bad%20id", { ran: true, say: "" })).status).toBe(400);
+  });
+});

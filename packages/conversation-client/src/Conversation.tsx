@@ -135,7 +135,7 @@ export function Conversation({
   const connection = useConnectionStatus(client);
   const { themeChoice, resolvedTheme, applyThemeChoice } = useTheme();
   const localeState = useLocale();
-  const { modelAlias, modelNote } = useModelAlias(client, localeState.t);
+  const { modelAlias, modelNote, cycleModel, selectModel } = useModelAlias(client, localeState.t);
   const dynamicSuggestions = useDynamicSuggestions(client);
 
   const {
@@ -259,10 +259,16 @@ export function Conversation({
     setVoiceOpen,
     // Reuses the same path the voice button already takes, so a `voice.open` intent - from a click, a
     // typed command, or the main agent's `control_app` - ensures a conversation exists first exactly as
-    // clicking the button does.
-    openVoice: () => void openVoice(),
+    // clicking the button does. A surface that could not open is a failed run, not a done one.
+    openVoice: async () => {
+      const failed = await openVoice();
+      if (failed !== undefined) throw new Error(failed);
+    },
     // "Dừng lại", typed or said, reaches the same call as the Stop button.
     stopTurn: () => void stop(),
+    // The hotkey's own switches, so the alias and note on screen follow an agent's switch too.
+    cycleModel,
+    selectModel,
   });
 
   /**

@@ -24,7 +24,7 @@ import { composeMiniApp } from "../compose-mini-app.ts";
 import { type InteractionDeps } from "../interactions.ts";
 import { type ModelTurn, createModelTurn } from "../model-turn.ts";
 import { writeCurrentAlias, writeModelPool } from "../model-registry.ts";
-import { createNodeTools, createRememberTool, decideControlApp, type CommandToolDeps } from "../node-tools.ts";
+import { controlApp, createNodeTools, createRememberTool, type CommandToolDeps } from "../node-tools.ts";
 import { extractPdfText } from "../pdf-text.ts";
 import { type ProjectFinderDeps } from "../project-finder.ts";
 import { createRequestSecretTool, type RequestSecretDeps } from "../request-secret.ts";
@@ -68,7 +68,7 @@ export interface FixtureModelWiring {
 
 export interface FixtureModelDeps {
   /** The node this fixture stands in for, read when a turn asks rather than when the composer is built. */
-  services: () => Pick<NodeServices, "runtime" | "conductor" | "controlSessions" | "terminals">;
+  services: () => Pick<NodeServices, "runtime" | "conductor" | "controlSessions" | "terminals" | "hostControl">;
   dataDir: string;
   wiring: FixtureModelWiring;
 }
@@ -138,6 +138,32 @@ function longReplyModelTurn(): Promise<ModelTurn | undefined> {
     return turn;
   });
   return longReplyTurn;
+}
+
+/**
+ * The `control_app` call a scripted sentence stands for, if it is one.
+ *
+ * Two spellings: the original "go home" sentences the voice journey says, and `agent control_app <kind> [arg]`,
+ * where the argument is the tab of `settings.tab` or the alias of `model.select`, so one fixture line covers every
+ * kind the tool offers without a sentence per kind. Several calls separated by `;` are made one after another in
+ * the same turn, the way a model may call the tool twice before it answers - which is how a journey reaches an
+ * action, such as `nav.conversation`, that only means something while a panel covers the composer.
+ */
+export function controlAppFixtureCalls(text: string): Record<string, unknown>[] | undefined {
+  if (/nhờ agent xử lý giúp tôi việc quay về màn hình bắt đầu|go home through the agent/i.test(text)) {
+    return [{ kind: "nav.home" }];
+  }
+  const match = /^agent control_app (.+)$/i.exec(text.trim());
+  if (match === null) return undefined;
+  const calls: Record<string, unknown>[] = [];
+  for (const part of (match[1] ?? "").split(";")) {
+    const call = /^([a-z.]+)(?: ([\w-]+))?$/i.exec(part.trim());
+    if (call === null) return undefined;
+    const [, kind = "", arg] = call;
+    if (arg === undefined) calls.push({ kind });
+    else calls.push(kind === "model.select" ? { kind, modelAlias: arg } : { kind, tab: arg });
+  }
+  return calls;
 }
 
 /**
@@ -286,27 +312,36 @@ export function createModelComposer(deps: FixtureModelDeps): FixtureCompose {
      * The app-control tool, called the way a model turn calls it - the browser half of issue #129's voice
      * criterion.
      *
-     * `decideControlApp` is the same function `control_app` executes with in production: same validation,
-     * same audit call, same `host-control` event. What is scripted is only the decision to call it, which a
-     * live model made through a tool call this fixture cannot produce without a provider account. Calling
-     * the same function a model turn would have called is what keeps this a browser proof of `runAppIntent`
-     * reaching the page, rather than a proof of the fixture's own wiring.
+     * `controlApp` is the same function `control_app` executes with in production: same validation, same
+     * audit call, same `host-control` event, and the same wait for the page's report. What is scripted is
+     * only the decision to call it, which a live model made through a tool call this fixture cannot produce
+     * without a provider account. Calling the same function a model turn would have called is what keeps
+     * this a browser proof of `runAppIntent` reaching the page and reporting back, rather than a proof of the
+     * fixture's own wiring. The reply is the tool's own answer, so a journey can read what the model was told.
      */
-    if (/nhờ agent xử lý giúp tôi việc quay về màn hình bắt đầu|go home through the agent/i.test(input.text)) {
-      const outcome = decideControlApp(
-        {
-          db: deps.services().runtime.db,
-          nodeId: deps.services().runtime.identity.nodeId,
-          now: () => instantSchema.parse(new Date().toISOString()),
-          newId: deps.services().conductor.newId,
-          principalId: input.principal.principalId,
-          conversationId: input.conversationId as never,
-          onEvent: () => input.emit,
-          channel: () => input.channel ?? "chat",
-        },
-        { kind: "nav.home" },
-      );
-      return { text: outcome.say, block: { type: "text", format: "plain", content: outcome.say, streaming: false } };
+    const controlCalls = controlAppFixtureCalls(input.text);
+    if (controlCalls !== undefined) {
+      const answers: string[] = [];
+      // One at a time, as a model's turn would: each call waits for the page's report before the next is made.
+      for (const controlCall of controlCalls) {
+        const outcome = await controlApp(
+          {
+            db: deps.services().runtime.db,
+            nodeId: deps.services().runtime.identity.nodeId,
+            now: () => instantSchema.parse(new Date().toISOString()),
+            newId: deps.services().conductor.newId,
+            principalId: input.principal.principalId,
+            conversationId: input.conversationId as never,
+            onEvent: () => input.emit,
+            channel: () => input.channel ?? "chat",
+            hostControl: deps.services().hostControl,
+          },
+          controlCall,
+        );
+        answers.push(outcome.say);
+      }
+      const reply = answers.join("\n");
+      return { text: reply, block: { type: "text", format: "plain", content: reply, streaming: false } };
     }
 
     /*

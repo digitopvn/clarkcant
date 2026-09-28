@@ -292,6 +292,9 @@ describe("WebSocket gateway", () => {
     await client.next();
     const decisions = [
       "/app-intents/confirm",
+      // The screen's report on an agent's app-control action: a machine surface forging it could tell the
+      // model the screen changed when it did not.
+      "/app-intents/host-control/ctl_x",
       "/peers/node_x/confirm",
       "/grants",
       // A running task's approval has no card, but deciding it is the same person's decision.

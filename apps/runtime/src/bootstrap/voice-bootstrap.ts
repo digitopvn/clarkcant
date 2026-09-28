@@ -194,7 +194,11 @@ export function attachNodeVoice(deps: NodeVoiceDeps): NodeVoice {
           : {
               emit: (event) => {
                 forwardText?.(event);
-                if (event.type === "host-control") onAppIntent?.(event.decision);
+                if (event.type === "host-control" && onAppIntent !== undefined) {
+                  // The voice surface reports what it did, like the typed stream's page does.
+                  deps.services.hostControl.expect(event.decision);
+                  onAppIntent(event.decision);
+                }
               },
             }),
       });

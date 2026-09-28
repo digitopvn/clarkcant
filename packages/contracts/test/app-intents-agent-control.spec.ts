@@ -50,6 +50,11 @@ describe("agent-control app intent contract", () => {
 
   it("accepts \"agent\" as a source, distinct from chat, click and voice", () => {
     expect(appIntentSourceSchema.safeParse("agent").success).toBe(true);
-    expect(new Set(appIntentSourceSchema.options)).toEqual(new Set(["chat", "click", "voice", "agent"]));
+    expect(new Set(appIntentSourceSchema.options)).toEqual(new Set(["chat", "click", "voice", "agent", "voice-agent"]));
+  });
+
+  it("accepts \"voice-agent\", so the model answering a spoken sentence is never audited as the person who spoke", () => {
+    expect(appIntentSourceSchema.safeParse("voice-agent").success).toBe(true);
+    expect(appIntentSourceSchema.safeParse("voice-agent").data).not.toBe("voice");
   });
 });

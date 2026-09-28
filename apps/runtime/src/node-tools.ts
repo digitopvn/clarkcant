@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 
 import {
@@ -53,6 +54,7 @@ import { rememberMemory, type MemoryDeps } from "./memory.ts";
 import type { SessionSearchDeps } from "./session-search.ts";
 import { createSearchHistoryTool } from "./session-search.ts";
 import { createWorkTools } from "./work-tools.ts";
+import type { HostControlAcks } from "./host-control-acks.ts";
 
 /**
  * The tools a turn may call beyond the view and composition surface.
@@ -267,10 +269,23 @@ const CONTROL_APP_KINDS = [
   "inbox.open",
 ] as const;
 
-/** What a node answers a `control_app` call with — always an honest account, never a claim of success it did not verify. */
+/**
+ * What `decideControlApp` did with a call: handed a decision to the turn's live transport under `controlId`,
+ * or refused it before anything left the node.
+ */
 export type ControlAppResult =
-  | { status: "delivered"; say: string }
+  | { status: "delivered"; controlId: string; say: string }
   | { status: "refused"; reason: "unsupported" | "no-active-surface"; say: string };
+
+/**
+ * What a node answers a `control_app` call with — always an honest account, never a claim of success it did
+ * not verify. `done` and `failed` are the page's own report; `unconfirmed` is the truth when there was none.
+ */
+export type ControlAppOutcome =
+  | { status: "done"; say: string }
+  | { status: "failed"; say: string }
+  | { status: "unconfirmed"; reason: "deferred" | "timeout"; say: string }
+  | Extract<ControlAppResult, { status: "refused" }>;
 
 export interface ControlAppDeps {
   db: Database;
@@ -285,27 +300,37 @@ export interface ControlAppDeps {
    * Which surface the message this call belongs to came in on, read at call time for the same reason
    * `onEvent` is a getter: the tool list is built once per session, and a session answers both typed
    * and spoken messages over its life. Drives the audit record's `source` — `"agent"` for a message
-   * from the composer, `"voice"` for one the voice session's own conductor call answered — so a click,
-   * a deterministic spoken command, and a model's own decision never collapse into one indistinguishable
-   * record.
+   * from the composer, `"voice-agent"` for one the voice session's own conductor call answered — so a
+   * click, a person's spoken command, and a model's own decision never collapse into one
+   * indistinguishable record.
    */
   channel: () => "voice" | "chat";
+  /**
+   * Where the page reports what its executor did. Absent, every delivered action is `unconfirmed`: a
+   * node that cannot hear back must not guess.
+   */
+  hostControl?: HostControlAcks;
 }
 
 const NO_ACTIVE_HOST_SURFACE_SAY =
   "Không có màn hình nào đang mở phiên trò chuyện này để tôi thực hiện lệnh, nên tôi chưa làm gì cả.";
+
+const DEFERRED_SAY =
+  "Lệnh đã được gửi kèm câu trả lời này; màn hình sẽ thực hiện khi nhận được, nên tôi chưa xác nhận được là nó đã chạy.";
+
+const TIMEOUT_SAY = "Lệnh đã được gửi tới màn hình nhưng tôi chưa nhận được xác nhận là nó đã chạy.";
 
 /**
  * Let the agent do what a click or a spoken command already can, through the one shared app-intent
  * executor.
  *
  * This tool never claims success on its own: it validates the request against the same contract the
- * typed and spoken paths use, records who asked with `source: "agent"` or `"voice"` (see `channel`) so
- * the audit can tell a person's click from a model's own decision — and, among those, whether the
+ * typed and spoken paths use, records who asked with `source: "agent"` or `"voice-agent"` (see `channel`)
+ * so the audit can tell a person's click from a model's own decision — and, among those, whether the
  * decision was made answering the composer or a spoken sentence — and then delivers an ephemeral
  * `host-control` event to whichever foreground stream is watching this turn. Whether the screen
- * actually changed is answered by the client's one executor (`runAppIntent`), not guessed here — this
- * call only reports that the event was delivered or, honestly, that there was nowhere to deliver it.
+ * actually changed is answered by the client's one executor (`runAppIntent`), which reports back under
+ * the decision's `controlId`; the model is told that report, or honestly that there was none.
  */
 export function createControlAppTool(deps: ControlAppDeps): ToolDefinition {
   return {
@@ -317,8 +342,8 @@ export function createControlAppTool(deps: ControlAppDeps): ToolDefinition {
       "work), return to the current conversation, go to the home screen, start or end voice mode, or switch the configured model (cycle to the next one, or select a specific alias). " +
       "This is not a scripting surface — it accepts only these fixed kinds, never a URL, selector or " +
       "arbitrary command. Only call it when the user's own request implies the app itself should change, " +
-      "not merely to narrate what you are about to say. The result tells you whether the request reached " +
-      "a screen; it does not by itself prove the screen changed.",
+      "not merely to narrate what you are about to say. The result is the screen's own report: done, " +
+      "failed with its reason, or not confirmed — only say the app changed when it reports done.",
     parameters: {
       type: "object",
       additionalProperties: false,
@@ -341,10 +366,27 @@ export function createControlAppTool(deps: ControlAppDeps): ToolDefinition {
     },
     promptSnippet: "control_app — open Settings or the inbox, navigate, or switch voice/model state for the user",
     execute: async (params: Record<string, unknown>): Promise<{ text: string }> => {
-      const outcome = decideControlApp(deps, params);
+      const outcome = await controlApp(deps, params);
       return { text: outcome.say };
     },
   };
+}
+
+/**
+ * `control_app` end to end: decide, deliver, then wait for the page's report.
+ *
+ * Waiting holds the model's turn for at most `HOST_CONTROL_TIMEOUT_MS`, and only when a live screen was
+ * sent the action. That is the price of the model being able to say "Settings is open" and have it be
+ * true: without the report it could only say it asked.
+ */
+export async function controlApp(deps: ControlAppDeps, params: Record<string, unknown>): Promise<ControlAppOutcome> {
+  const delivered = decideControlApp(deps, params);
+  if (delivered.status === "refused") return delivered;
+  const report = deps.hostControl === undefined ? "deferred" : await deps.hostControl.wait(delivered.controlId);
+  if (report === "deferred") return { status: "unconfirmed", reason: "deferred", say: DEFERRED_SAY };
+  if (report === "timeout") return { status: "unconfirmed", reason: "timeout", say: TIMEOUT_SAY };
+  if (report.ran) return { status: "done", say: `Màn hình đã thực hiện xong: ${report.say || delivered.say}` };
+  return { status: "failed", say: `Màn hình không thực hiện được lệnh: ${report.say}` };
 }
 
 /**
@@ -389,18 +431,21 @@ export function decideControlApp(deps: ControlAppDeps, params: Record<string, un
     return { status: "refused", reason: "no-active-surface", say: NO_ACTIVE_HOST_SURFACE_SAY };
   }
 
-  const decision: AppIntentDecision = { kind: "intent", intent, requiresConfirmation: false, readBack };
+  // Random rather than `newId`: the id is what a report is accepted under, so it should not be guessable
+  // from the ids around it.
+  const controlId = randomUUID();
+  const decision: AppIntentDecision = { kind: "intent", intent, requiresConfirmation: false, readBack, controlId };
   onEvent({ type: "host-control", decision });
   recordAppIntentEvent(
     { db: deps.db, nodeId: deps.nodeId, now: deps.now, newId: deps.newId },
     {
       intent,
-      source: deps.channel() === "voice" ? "voice" : "agent",
+      source: deps.channel() === "voice" ? "voice-agent" : "agent",
       confirmed: false,
       ...(deps.conversationId === undefined ? {} : { conversationId: deps.conversationId }),
     },
   );
-  return { status: "delivered", say: readBack };
+  return { status: "delivered", controlId, say: readBack };
 }
 
 /**
