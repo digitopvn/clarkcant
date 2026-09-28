@@ -2,8 +2,11 @@ import { describe, expect, it } from "vitest";
 
 import {
   desktopBridge,
+  hasCloseControl,
   hasDesktopChrome,
   hasWindowControls,
+  readShellWindow,
+  requestClose,
   requestFullScreen,
   requestMinimize,
   requestWindowMode,
@@ -189,5 +192,42 @@ describe("minimize and full screen", () => {
   it("subscribing without a shell, or to one that hands back no unsubscribe, is harmless", () => {
     expect(() => subscribeWindowState(() => {}, {})()).not.toThrow();
     expect(() => subscribeWindowState(() => {}, scopeWith({ onWindowStateChanged: () => undefined }))()).not.toThrow();
+  });
+});
+
+describe("the window strip's pin, mode and close", () => {
+  it("reads the pin and full screen from the window rather than assuming them off", async () => {
+    const scope = scopeWith({
+      status: async () => ({ ok: true, window: { mode: "expanded", alwaysOnTop: true, fullScreen: true } }),
+    });
+    expect(await readShellWindow(scope)).toEqual({ mode: "expanded", alwaysOnTop: true, fullScreen: true });
+  });
+
+  it("a mode the strip has no control for reads as a normal window", async () => {
+    const scope = scopeWith({ status: async () => ({ ok: true, window: { mode: "orb", alwaysOnTop: false } }) });
+    expect(await readShellWindow(scope)).toEqual({ mode: "normal", alwaysOnTop: false, fullScreen: false });
+  });
+
+  it("a shell that does not describe its window leaves the strip on its defaults", async () => {
+    expect(await readShellWindow(scopeWith({ status: async () => ({ ok: true }) }))).toBeUndefined();
+    expect(await readShellWindow({})).toBeUndefined();
+  });
+
+  it("close reports what the shell said, and a shell without the verb gets no button", async () => {
+    const refusing = scopeWith({ closeWindow: async () => ({ ok: false, refused: "there is no window to close" }) });
+    expect(hasCloseControl(refusing)).toBe(true);
+    expect(await requestClose(refusing)).toEqual({ ok: false, refused: "there is no window to close" });
+    expect(await requestClose(scopeWith({ closeWindow: async () => ({ ok: true }) }))).toEqual({ ok: true });
+    expect(hasCloseControl(scopeWith({}))).toBe(false);
+    expect((await requestClose({})).ok).toBe(false);
+  });
+
+  it("a shell that throws is reported as not answering rather than as closed", async () => {
+    const scope = scopeWith({
+      closeWindow: async () => {
+        throw new Error("gone");
+      },
+    });
+    expect(await requestClose(scope)).toEqual({ ok: false, refused: "the desktop shell did not answer" });
   });
 });

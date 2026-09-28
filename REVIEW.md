@@ -168,6 +168,23 @@ Before merge:
 5. confirm documentation closure;
 6. merge using repository policy.
 
+Repository policy lives in the `main: required CI` ruleset on `main`, not in this
+file:
+
+- every `verify` job in `.github/workflows/ci.yml` (Linux, macOS, Windows),
+  `secret scan`, `e2e (browser suite)` and `desktop smoke (xvfb)` must pass;
+- force-push and deletion of `main` are blocked;
+- repository admins may bypass, for direct docs/plans commits; do not use the
+  bypass to merge a PR whose required checks are red or still running.
+
+Prefer squash auto-merge (`gh pr merge --auto --squash`): GitHub merges only once
+the required checks pass. Merged branches are deleted automatically, which
+retargets a stacked PR onto `main`; rebase it with
+`git rebase --onto main <old-base>` before it merges.
+
+When a job is added to or renamed in the CI matrix, update the ruleset's required
+checks in the same change, or it stops gating merges.
+
 After merge, do not leave promised follow-up work untracked.
 
 ## Review comments

@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" role="img" aria-label="ClarkCant">
+  <!--
+    The app icon: the favicon's accent mark on the window's own dark canvas, on the macOS icon grid (an 824px tile
+    centred in 1024, so the Dock gives it the same margin as every other app). Still a plain mark, not a second Orb:
+    the Orb animates in the app, and an icon cannot.
+    `icon.png` is rendered from this file: rsvg-convert -w 1024 -h 1024 icon.svg -o icon.png
+  -->
+  <defs>
+    <linearGradient id="tile" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#1A2030" />
+      <stop offset="1" stop-color="#0D1117" />
+    </linearGradient>
+    <radialGradient id="accent" cx="34%" cy="28%" r="78%">
+      <stop offset="0" stop-color="#B8AEDC" />
+      <stop offset="1" stop-color="#6B5FA8" />
+    </radialGradient>
+    <radialGradient id="glow" cx="50%" cy="50%" r="50%">
+      <stop offset="0.55" stop-color="#8B7FC8" stop-opacity="0.45" />
+      <stop offset="1" stop-color="#8B7FC8" stop-opacity="0" />
+    </radialGradient>
+  </defs>
+  <rect x="100" y="100" width="824" height="824" rx="185" fill="url(#tile)" />
+  <rect x="100.5" y="100.5" width="823" height="823" rx="184.5" fill="none" stroke="#FFFFFF" stroke-opacity="0.08" />
+  <circle cx="512" cy="512" r="330" fill="url(#glow)" />
+  <circle cx="512" cy="512" r="236" fill="url(#accent)" />
+</svg>

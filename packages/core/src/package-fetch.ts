@@ -166,11 +166,14 @@ export function digestOfDirectory(
 
   const walked = walk(root, true);
   if (!walked.ok) return { ok: false, code: "ARTIFACT_SYMLINK_ESCAPE", message: walked.message };
-  files.sort();
+  // The relative path is hashed with `/` separators and sorted in that form, so a package has one digest on every
+  // OS: hashing `widgets\main\index.html` on Windows would never match the digest a directory published from POSIX.
+  const entries = files
+    .map((file) => ({ file, rel: relative(root, file).split(sep).join("/") }))
+    .sort((a, b) => (a.rel < b.rel ? -1 : a.rel > b.rel ? 1 : 0));
 
   const hash = createHash("sha256");
-  for (const file of files) {
-    const rel = relative(root, file);
+  for (const { file, rel } of entries) {
     const bytes = readFileSync(file);
     hash.update(rel);
     hash.update("\0");
