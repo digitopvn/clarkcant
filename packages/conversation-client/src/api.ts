@@ -6,7 +6,15 @@
  * principal, because the gateway derives the caller from the channel rather than the body.
  */
 
-import type { AutonomySettings, ModelPool, SseEvent, WidgetDefinition, WidgetFixture } from "@clarkcant/contracts";
+import type {
+  AutonomySettings,
+  ModelPool,
+  SseEvent,
+  TableFilterValue,
+  TableSort,
+  WidgetDefinition,
+  WidgetFixture,
+} from "@clarkcant/contracts";
 
 import {
   appIntentDecisionSchema,
@@ -458,6 +466,39 @@ export interface ArtifactView {
   createdAt: string;
   expiresAt: string | null;
   expired: boolean;
+}
+
+/** The view a table export writes. The node re-applies it to the instance's own dataset. */
+export interface TableExportRequest {
+  sort?: TableSort;
+  query?: string;
+  filters?: Record<string, TableFilterValue>;
+  /** Column keys, in order; a key the table does not show is ignored by the node. */
+  columns?: string[];
+}
+
+/**
+ * The file name a `Content-Disposition` header offers, preferring the RFC 5987 UTF-8 form.
+ *
+ * Anything that could name a directory is removed: the name only labels a download, and a browser
+ * would sanitize it anyway, but this client should not depend on that.
+ */
+export function attachmentFilename(header: string | null): string | undefined {
+  if (header === null) return undefined;
+  let name: string | undefined;
+  const extended = /filename\*\s*=\s*UTF-8''([^;]+)/i.exec(header)?.[1];
+  if (extended !== undefined) {
+    try {
+      name = decodeURIComponent(extended.trim());
+    } catch {
+      name = undefined;
+    }
+  }
+  name ??= /filename\s*=\s*"([^"]*)"/i.exec(header)?.[1] ?? /filename\s*=\s*([^;\s]+)/i.exec(header)?.[1];
+  const cleaned = name === undefined
+    ? undefined
+    : [...name].filter((char) => char !== "/" && char !== "\\" && char.charCodeAt(0) >= 0x20).join("").trim();
+  return cleaned === undefined || cleaned === "" || /^\.+$/.test(cleaned) ? undefined : cleaned;
 }
 
 export class GatewayError extends Error {
@@ -1366,6 +1407,44 @@ export class GatewayClient {
     }
     const blob = await response.blob();
     return URL.createObjectURL(blob);
+  }
+
+  /**
+   * Ask the node for a CSV of a table instance's current view.
+   *
+   * Only the view travels: the node reads the instance's own dataset and writes the rows itself, so a
+   * page cannot hand it rows to put in a file. The bytes come back through the authenticated client
+   * because a download link cannot carry the bearer token; the caller turns the blob into a download.
+   */
+  async exportTable(
+    conversationId: string,
+    instanceId: string,
+    view: TableExportRequest,
+  ): Promise<{ blob: Blob; filename: string }> {
+    const response = await this.#fetch(
+      `${this.#baseUrl}/conversations/${encodeURIComponent(conversationId)}/widgets/${encodeURIComponent(instanceId)}/export`,
+      {
+        method: "POST",
+        headers: { authorization: `Bearer ${this.#token}`, "content-type": "application/json" },
+        body: JSON.stringify(view),
+      },
+    );
+    if (!response.ok) {
+      let code = "EXPORT_FAILED";
+      let message = "the table could not be exported";
+      try {
+        const parsed = (await response.json()) as { code?: unknown; message?: unknown };
+        if (typeof parsed.code === "string") code = parsed.code;
+        if (typeof parsed.message === "string") message = parsed.message;
+      } catch {
+        // A refusal without a JSON body keeps the generic code and message above.
+      }
+      throw new GatewayError(response.status, code, message);
+    }
+    return {
+      blob: await response.blob(),
+      filename: attachmentFilename(response.headers.get("content-disposition")) ?? "table.csv",
+    };
   }
 
   /**

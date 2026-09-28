@@ -3,12 +3,20 @@ import {
   type ReactNode,
   useCallback,
   useEffect,
+  useId,
   useMemo,
   useRef,
   useState,
 } from "react";
 
-import { donutSlices, monthGrid } from "@clarkcant/contracts";
+import {
+  donutSlices,
+  monthGrid,
+  normalizeTableSelectedIds,
+  normalizeTableSelection,
+  tableView,
+  type TableTotalFn,
+} from "@clarkcant/contracts";
 
 import type { ResolvedDataset } from "./api.ts";
 import {
@@ -23,7 +31,20 @@ import {
   valueLabelShown,
 } from "./chart-layout.ts";
 import { vendorEmbedUrl } from "./media-embed.ts";
-import { useT } from "./i18n/locale-context.tsx";
+import { useLocale, useT } from "./i18n/locale-context.tsx";
+import {
+  formatTableTotal,
+  nextTableSort,
+  pageSelectionState,
+  readTableViewState,
+  tableAriaSort,
+  tableCellFormatter,
+  tableExportRequest,
+  tablePageLabel,
+  type TableViewState,
+  togglePageSelection,
+  toggleTableSelection,
+} from "./table-model.ts";
 import type { MessageKey } from "./i18n/messages.ts";
 
 /**
@@ -77,6 +98,13 @@ export interface RendererProps {
    * component must not know how a node is addressed.
    */
   imageUrl?: ((imageRef: string) => string | undefined) | undefined;
+  /**
+   * Whether the host answers `export.requested` with a file.
+   *
+   * A live conversation instance does; a composed section and a preview do not, and a table then
+   * shows its export disabled with the reason instead of a button that silently does nothing.
+   */
+  canExport?: boolean | undefined;
 }
 
 export type CatalogRenderer = (props: RendererProps) => ReactElement | null;
@@ -353,10 +381,68 @@ function BarChart({ props, dataset }: RendererProps): ReactElement {
  * Table
  * ------------------------------------------------------------------ */
 
-function DataTable({ props, dataset, onAction }: RendererProps): ReactElement {
+const NO_ROWS: Record<string, unknown>[] = [];
+
+const TOTAL_LABEL_KEY: Record<TableTotalFn, MessageKey> = {
+  sum: "widgets.table.total.sum",
+  avg: "widgets.table.total.avg",
+  min: "widgets.table.total.min",
+  max: "widgets.table.total.max",
+  count: "widgets.table.total.count",
+};
+
+const SORT_ICON = { ascending: "▲", descending: "▼", none: "↕" } as const;
+
+/**
+ * A table over a dataset: sortable, searchable, paged, selectable, with totals and a CSV export.
+ *
+ * The view (sort, search, filters, page) comes from `tableView`, the same function the node runs
+ * for an export, so the file holds exactly the rows on screen in the same order. Only one page of
+ * rows is ever in the DOM, whatever the dataset's size.
+ *
+ * The view is held here, so a table works in a preview with no host at all; a host that passes
+ * `state` and `onStateChange` also remembers it, and a view it sets from outside is adopted. Events
+ * carry ids and view parameters only: `row.select` sends row ids, never row contents, and
+ * `export.requested` asks the host for a file rather than building one in the page.
+ */
+function DataTable({ props, dataset, state, onAction, onStateChange, canExport }: RendererProps): ReactElement {
   const t = useT();
-  const title = String(props.title ?? t("widgets.table.title"));
-  const [selected, setSelected] = useState<number | undefined>(undefined);
+  const locale = useLocale();
+  const title = typeof props.title === "string" && props.title.trim() !== "" ? props.title : t("widgets.table.title");
+  const rows = dataset?.rows ?? NO_ROWS;
+  const selection = normalizeTableSelection(props.selection);
+  const searchable = props.searchable === true;
+  const yes = t("widgets.table.yes");
+  const no = t("widgets.table.no");
+  const exportReasonId = useId();
+
+  const externalKey = JSON.stringify(readTableViewState(state));
+  const [view, setView] = useState<TableViewState>(() => readTableViewState(state));
+  const adoptedKey = useRef(externalKey);
+  useEffect(() => {
+    if (adoptedKey.current === externalKey) return;
+    adoptedKey.current = externalKey;
+    setView(JSON.parse(externalKey) as TableViewState);
+  }, [externalKey]);
+
+  const computed = useMemo(
+    () =>
+      tableView(rows, {
+        columns: props.columns,
+        rowIdField: props.rowIdField,
+        pageSize: props.pageSize,
+        totals: props.totals,
+        sort: view.sort,
+        query: view.query,
+        filters: view.filters,
+        page: view.page,
+      }),
+    [rows, props.columns, props.rowIdField, props.pageSize, props.totals, view.sort, view.query, view.filters, view.page],
+  );
+  const formatters = useMemo(
+    () => new Map(computed.columns.map((column) => [column.key, tableCellFormatter(column, locale, { yes, no })])),
+    [computed.columns, locale, yes, no],
+  );
 
   if (!dataset || dataset.rows.length === 0) {
     return (
@@ -366,67 +452,240 @@ function DataTable({ props, dataset, onAction }: RendererProps): ReactElement {
     );
   }
 
-  const columns = dataset.rows[0] === undefined ? [] : Object.keys(dataset.rows[0]);
-  const rows = dataset.rows;
-  // A column is numeric when it has a number and every present value is one; numbers align right so digits line up.
-  const numericColumns = new Set(
-    columns.filter(
-      (column) =>
-        rows.some((row) => typeof row[column] === "number") &&
-        rows.every((row) => row[column] === undefined || row[column] === null || typeof row[column] === "number"),
-    ),
-  );
+  const selectedIds = normalizeTableSelectedIds(view.selectedIds, selection);
+  const multi = selection === "multi";
+  const single = selection === "single";
+  const pageIds = computed.pageRows.map((entry) => entry.id);
+  const pageState = pageSelectionState(selectedIds, pageIds);
+  const firstRowNumber = (computed.page - 1) * computed.pageSize + 1;
+  const columnCount = computed.columns.length + (multi ? 1 : 0);
+  const format = (key: string, value: unknown): string => formatters.get(key)?.(value) ?? "";
+
+  const update = (patch: Partial<TableViewState>): void => {
+    setView((current) => ({ ...current, ...patch }));
+    onStateChange?.({ ...patch });
+  };
+  // Selection is view state: it commits nothing and calls no model; the event names rows by id only.
+  const select = (next: string[]): void => {
+    update({ selectedIds: next });
+    onAction?.("row.select", { rowIds: next });
+  };
+
+  const exportStatus = state?.exportStatus;
+  const exporting = exportStatus === "pending";
+  const exportReason =
+    onAction === undefined
+      ? t("widgets.table.exportViewOnly")
+      : canExport === true
+        ? undefined
+        : t("widgets.table.exportUnavailable");
 
   return (
     <Frame title={title} dataset={dataset} role="table">
-      {/*
-       * Scrolls on its own, sideways for wide data and down for long data, with the header held in place, so a
-       * table never pushes the conversation wider than the window. Focusable so the scroll is reachable by keyboard.
-       */}
-      <div className="cc-table-scroll" role="region" aria-label={title} tabIndex={0}>
-      <table className="cc-table">
-        <caption className="cc-sr-only">{title}</caption>
-        <thead>
-          <tr>
-            {columns.map((column) => (
-              <th key={column} scope="col" data-numeric={numericColumns.has(column) ? "true" : undefined}>
-                {column}
-              </th>
-            ))}
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map((row, index) => (
-            <tr
-              key={index}
-              data-selectable="true"
-              aria-selected={selected === index}
-              // Focusable and Enter/Space-activated so the same selection a pointer makes is reachable
-              // from the keyboard; `role="button"` is not valid on `<tr>`, so the row keeps its table
-              // semantics and gets its interactivity from tabIndex and the key handler alone.
-              tabIndex={0}
-              // Selection is a view action: it commits nothing and calls no model.
-              onClick={() => {
-                setSelected(index);
-                onAction?.("row.select", { index, row });
-              }}
-              onKeyDown={(event) => {
-                if (event.key !== "Enter" && event.key !== " ") return;
-                event.preventDefault();
-                setSelected(index);
-                onAction?.("row.select", { index, row });
-              }}
+      <>
+        <div className="cc-table-toolbar">
+          {searchable && (
+            <label className="cc-table-search">
+              <span className="cc-sr-only">{t("widgets.table.searchLabel")}</span>
+              <input
+                type="search"
+                data-table-search="true"
+                value={view.query}
+                maxLength={200}
+                placeholder={t("widgets.table.searchPlaceholder")}
+                onChange={(event) => update({ query: event.currentTarget.value, page: 1 })}
+              />
+            </label>
+          )}
+          {/* The live region stays mounted while multi-select is on, so a screen reader hears every change,
+              including the selection being cleared; it is simply empty when nothing is selected. */}
+          {multi && (
+            <span className="cc-table-selected" role="status" data-table-selected-count={selectedIds.length}>
+              {selectedIds.length > 0
+                ? t("widgets.table.selectedCount").replace("{count}", new Intl.NumberFormat(locale).format(selectedIds.length))
+                : ""}
+            </span>
+          )}
+          <button
+            type="button"
+            className="cc-action cc-table-export"
+            data-table-export="true"
+            disabled={exportReason !== undefined || exporting}
+            aria-describedby={exportReason === undefined ? undefined : exportReasonId}
+            onClick={() => onAction?.("export.requested", { ...tableExportRequest(computed) })}
+          >
+            {exporting ? t("widgets.table.exporting") : t("widgets.table.export")}
+          </button>
+        </div>
+        {exportReason !== undefined && (
+          <p id={exportReasonId} className="cc-freshness cc-table-note" data-table-export-reason="true">
+            {exportReason}
+          </p>
+        )}
+        {exportStatus === "failed" && (
+          <p className="cc-table-note" data-table-export-error="true" role="alert">
+            {t("widgets.table.exportFailed")}
+          </p>
+        )}
+        {exportStatus === "done" && (
+          <p className="cc-freshness cc-table-note" data-table-export-done="true" role="status">
+            {t("widgets.table.exported")}
+          </p>
+        )}
+        {/*
+         * Scrolls on its own, sideways for wide data and down for a long page, with the header held in place, so a
+         * table never pushes the conversation wider than the window. Focusable so the scroll is reachable by keyboard.
+         */}
+        <div className="cc-table-scroll" role="region" aria-label={title} tabIndex={0}>
+          <table className="cc-table">
+            <caption className="cc-sr-only">{title}</caption>
+            <thead>
+              <tr>
+                {multi && (
+                  <th scope="col" className="cc-table-check-cell">
+                    <label className="cc-table-check">
+                      <input
+                        type="checkbox"
+                        data-table-select-page="true"
+                        aria-label={t("widgets.table.selectPage")}
+                        checked={pageState === "all"}
+                        disabled={pageIds.length === 0}
+                        ref={(element) => {
+                          if (element !== null) element.indeterminate = pageState === "some";
+                        }}
+                        onChange={() => select(togglePageSelection(selectedIds, pageIds))}
+                      />
+                    </label>
+                  </th>
+                )}
+                {computed.columns.map((column) => {
+                  const sorted = tableAriaSort(computed.sort, column.key);
+                  return (
+                    <th key={column.key} scope="col" aria-sort={sorted} data-align={column.align}>
+                      {/* A real button, so click, Enter and Space all sort and the focus ring is the browser's own. */}
+                      <button
+                        type="button"
+                        className="cc-table-sort"
+                        data-sort-column={column.key}
+                        onClick={() => update({ sort: nextTableSort(computed.sort, column.key), page: 1 })}
+                      >
+                        <span>{column.label}</span>
+                        <span className="cc-table-sort-icon" data-sorted={sorted} aria-hidden="true">
+                          {SORT_ICON[sorted]}
+                        </span>
+                      </button>
+                    </th>
+                  );
+                })}
+              </tr>
+            </thead>
+            <tbody>
+              {computed.pageRows.length === 0 && (
+                <tr>
+                  <td colSpan={columnCount} className="cc-table-empty" data-table-no-matches="true">
+                    {t("widgets.table.noMatches")}
+                  </td>
+                </tr>
+              )}
+              {computed.pageRows.map((entry, position) => {
+                const isSelected = selectedIds.includes(entry.id);
+                const toggle = (): void => select(toggleTableSelection(selectedIds, entry.id, selection));
+                const firstColumn = computed.columns[0];
+                const rowName =
+                  (firstColumn === undefined ? "" : format(firstColumn.key, entry.row[firstColumn.key])) ||
+                  String(firstRowNumber + position);
+                return (
+                  <tr
+                    key={entry.id}
+                    data-row-id={entry.id}
+                    data-selectable={single ? "true" : undefined}
+                    aria-selected={selection === "none" ? undefined : isSelected}
+                    // Single-select rows are focusable and Enter/Space-activated, so the selection a pointer makes is
+                    // reachable from the keyboard; `role="button"` is not valid on `<tr>`, so the row keeps its table
+                    // semantics. Multi-select uses a real checkbox per row instead.
+                    tabIndex={single ? 0 : undefined}
+                    onClick={single ? toggle : undefined}
+                    onKeyDown={
+                      single
+                        ? (event) => {
+                            if (event.key !== "Enter" && event.key !== " ") return;
+                            event.preventDefault();
+                            toggle();
+                          }
+                        : undefined
+                    }
+                  >
+                    {multi && (
+                      <td className="cc-table-check-cell">
+                        <label className="cc-table-check">
+                          <input
+                            type="checkbox"
+                            data-table-select-row={entry.id}
+                            aria-label={t("widgets.table.selectRow").replace("{row}", rowName)}
+                            checked={isSelected}
+                            onChange={toggle}
+                          />
+                        </label>
+                      </td>
+                    )}
+                    {computed.columns.map((column) => (
+                      <td key={column.key} data-align={column.align} data-type={column.type}>
+                        {format(column.key, entry.row[column.key])}
+                      </td>
+                    ))}
+                  </tr>
+                );
+              })}
+            </tbody>
+            {computed.totals.length > 0 && (
+              <tfoot>
+                <tr data-table-totals="true">
+                  {multi && <td className="cc-table-check-cell" />}
+                  {computed.columns.map((column) => (
+                    <td key={column.key} data-align={column.align} data-type={column.type}>
+                      {computed.totals
+                        .filter((total) => total.column === column.key)
+                        .map((total) => (
+                          <span key={total.fn} className="cc-table-total" data-total-fn={total.fn}>
+                            <span className="cc-table-total-fn">{t(TOTAL_LABEL_KEY[total.fn])}</span>{" "}
+                            {formatTableTotal(total, column, locale, { yes, no })}
+                          </span>
+                        ))}
+                    </td>
+                  ))}
+                </tr>
+              </tfoot>
+            )}
+          </table>
+        </div>
+        <nav className="cc-table-pager" aria-label={t("widgets.table.pagination")}>
+          {computed.pageCount > 1 && (
+            <button
+              type="button"
+              className="cc-action"
+              data-table-page="previous"
+              disabled={computed.page <= 1}
+              onClick={() => update({ page: computed.page - 1 })}
             >
-              {columns.map((column) => (
-                <td key={column} data-numeric={numericColumns.has(column) ? "true" : undefined}>
-                  {String(row[column] ?? "")}
-                </td>
-              ))}
-            </tr>
-          ))}
-        </tbody>
-      </table>
-      </div>
+              {t("widgets.table.previousPage")}
+            </button>
+          )}
+          <span className="cc-table-page-status" data-table-page-status="true" aria-live="polite">
+            {tablePageLabel(t("widgets.table.pageStatus"), computed, locale)}
+          </span>
+          {computed.pageCount > 1 && (
+            <button
+              type="button"
+              className="cc-action"
+              data-table-page="next"
+              disabled={computed.page >= computed.pageCount}
+              onClick={() => update({ page: computed.page + 1 })}
+            >
+              {t("widgets.table.nextPage")}
+            </button>
+          )}
+        </nav>
+      </>
     </Frame>
   );
 }

@@ -31,6 +31,24 @@ function emptyUsageDataset(): FixtureDataset {
   return { datasetId: "fixture_usage_empty", source: "sample", columns: USAGE_COLUMNS, rows: [] };
 }
 
+/** Thirteen weeks, so a five-row page has pages to move between. Deterministic: no clock, no randomness. */
+const QUARTER_ROWS: Record<string, unknown>[] = Array.from({ length: 13 }, (_, index) => {
+  const runs = 120 + ((index * 37) % 60);
+  const failures = 2 + ((index * 5) % 9);
+  const day = 6 + index * 7;
+  const endsOn = new Date(Date.UTC(2026, 6, day)).toISOString().slice(0, 10);
+  return { week: `W${28 + index}`, runs, failureRate: Math.round((failures / runs) * 10_000) / 10_000, endsOn };
+});
+
+function quarterDataset(): FixtureDataset {
+  return {
+    datasetId: "fixture_usage_quarter",
+    source: "sample",
+    columns: ["week", "runs", "failureRate", "endsOn"],
+    rows: QUARTER_ROWS,
+  };
+}
+
 const CALENDAR_ROWS: Record<string, unknown>[] = [
   { date: "2026-09-08", title: "Kiểm thử hồi quy", allDay: true },
   { date: "2026-09-11", title: "Rà soát catalog", allDay: false },
@@ -123,6 +141,33 @@ export const FIXTURES: Record<string, readonly WidgetFixture[]> = {
       label: "Chỉ đọc",
       props: { title: "Bảng đã chốt", datasetRef: "fixture_usage", pageSize: 5 },
       dataset: usageDataset("cached"),
+      mode: "read-only",
+    },
+    {
+      // Every optional part of the contract at once: declared columns with types and formats, search, multi-select,
+      // totals and more rows than one page, starting sorted.
+      id: "table.full",
+      label: "Đủ tính năng",
+      props: {
+        title: "Số lần chạy theo tuần",
+        datasetRef: "fixture_usage_quarter",
+        pageSize: 5,
+        searchable: true,
+        selection: "multi",
+        rowIdField: "week",
+        columns: [
+          { key: "week", label: "Tuần" },
+          { key: "runs", label: "Số lần chạy", type: "number", format: { unit: "lần" } },
+          { key: "failureRate", label: "Tỷ lệ lỗi", type: "number", format: { style: "percent", decimals: 1 } },
+          { key: "endsOn", label: "Kết thúc", type: "date" },
+        ],
+        totals: [
+          { column: "runs", fn: "sum" },
+          { column: "failureRate", fn: "avg" },
+        ],
+      },
+      state: { sort: { column: "runs", direction: "desc" } },
+      dataset: quarterDataset(),
       mode: "read-only",
     },
   ],
