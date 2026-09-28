@@ -193,14 +193,6 @@ function workAreaFor(window) {
 }
 
 /**
- * Bring a collapsed window back to its normal size and place, before it is focused and handed a notification's
- * click — the same "expand" transform `desktop:restoreWindow` already performs, reused here rather than
- * duplicated so the two paths cannot drift apart.
- *
- * Only `compact` and `orb` count as collapsed: `expanded` is still the conversation, just given more room, so a
- * click there is left alone the way clicking any other visible window would be.
- */
-/**
  * The window showing the conversation, or `undefined` when there is none left.
  *
  * The window channels act on this window by name rather than on `getAllWindows()[0]`: Electron does not promise
@@ -211,6 +203,14 @@ function liveShellWindow() {
   return shellWindow === undefined || shellWindow.isDestroyed() ? undefined : shellWindow;
 }
 
+/**
+ * Bring a collapsed window back to its normal size and place, before it is focused and handed a notification's
+ * click — the same "expand" transform `desktop:restoreWindow` already performs, reused here rather than
+ * duplicated so the two paths cannot drift apart.
+ *
+ * Only `compact` and `orb` count as collapsed: `expanded` is still the conversation, just given more room, so a
+ * click there is left alone the way clicking any other visible window would be.
+ */
 function restoreToNormalIfCollapsed(window) {
   if (windowMode === undefined || (windowMode.mode !== "compact" && windowMode.mode !== "orb")) return;
   windowMode = nextWindowMode({ ...windowMode, workArea: workAreaFor(window) }, { type: "expand" });
