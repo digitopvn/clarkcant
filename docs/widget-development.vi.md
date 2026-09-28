@@ -372,6 +372,20 @@ vào props/state/history.
 
 Executable widget chỉ connect tới origins trong installed manifest/CSP.
 
+Mỗi mục trong `permissions.networkOrigins` phải là đúng một origin ở dạng chuẩn,
+`scheme://host[:port]`: `https` hoặc `wss`; `http`/`ws` chỉ được phép với `localhost`,
+`127.0.0.1` và `[::1]`. Wildcard, path, query, thông tin đăng nhập, khoảng trắng, `;` hoặc `,`,
+và dạng không chuẩn (`https://API.example.com`, `https://example.com:443`) bị từ chối ngay khi
+đọc manifest, vì giá trị này được đưa nguyên văn vào `connect-src` của tài liệu widget. Danh
+sách rỗng nghĩa là `connect-src 'none'`.
+
+Tài liệu widget được phục vụ với `sandbox allow-scripts` trong CSP, ngoài thuộc tính sandbox
+trên frame, nên nó vẫn ở origin mờ (opaque) kể cả khi được mở trực tiếp. Chỉ node phục vụ nó mới
+được nhúng nó (`frame-ancestors 'self'`), cộng thêm origin của giao diện khi giao diện chạy ở nơi
+khác: `CC_APP_ORIGIN` khai báo origin đó (ví dụ `http://127.0.0.1:5173` cho `pnpm dev:web`;
+bước setup local tự ghi giá trị này). Node kiểm tra `CC_APP_ORIGIN` lúc khởi động và từ chối chạy
+nếu nó không phải một origin `http(s)` trần. Header `Host` của request không bao giờ được dùng.
+
 Nếu auth SDK cần browser token, host broker cấp token ngắn hạn/scoped nếu provider thực sự hỗ trợ; token không persist trong widget state.
 
 ---

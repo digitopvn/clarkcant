@@ -49,12 +49,12 @@ function entry(overrides: Record<string, unknown> = {}): Record<string, unknown>
   };
 }
 
-async function get(path: string): Promise<GatewayResponse> {
+async function get(path: string, headers: Record<string, string> = {}): Promise<GatewayResponse> {
   const request: GatewayRequest = {
     method: "GET",
     path,
     query: {},
-    headers: { authorization: `Bearer ${services.runtime.identity.localToken}` },
+    headers: { authorization: `Bearer ${services.runtime.identity.localToken}`, ...headers },
     body: "",
   };
   return handleRequest(deps, request);
@@ -260,11 +260,33 @@ describe("the policy the widget entry is served under", () => {
       "default-src 'none'",
       "base-uri 'none'",
       "form-action 'none'",
-      `frame-ancestors ${APP_ORIGIN}`,
+      `frame-ancestors 'self' ${APP_ORIGIN};`,
       // The package declared no origins, so none are reachable: a widget's data arrives over the bridge.
       "connect-src 'none'",
+      "sandbox allow-scripts",
     ]) {
       expect(policy).toContain(directive);
     }
+  });
+
+  it("lets only the node itself frame the document when no app origin is configured, whatever Host says", async () => {
+    delete process.env["CC_APP_ORIGIN"];
+    expect((await install()).status).toBe(200);
+    const response = await get("/packages/com.example.widget/1.0.0/files/widgets/main/index.html", {
+      host: "attacker.example:8765",
+    });
+    const policy = response.binary?.headers?.["content-security-policy"] ?? "";
+
+    expect(policy).toContain("frame-ancestors 'self';");
+    expect(policy).not.toContain("attacker.example");
+  });
+
+  it("refuses to serve the document when the configured app origin is not a bare origin", async () => {
+    process.env["CC_APP_ORIGIN"] = "https://app.example.test/; script-src *";
+    expect((await install()).status).toBe(200);
+    const response = await get("/packages/com.example.widget/1.0.0/files/widgets/main/index.html");
+
+    expect(response.status).toBe(500);
+    expect(response.binary).toBeUndefined();
   });
 });

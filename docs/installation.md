@@ -104,6 +104,11 @@ pnpm dev:web    # opens http://127.0.0.1:5173/?gateway=http://127.0.0.1:8765
 The bearer token is in `./.data/identity.json` (the `localToken` field). By default the node binds
 only to loopback and refuses to bind a public address without `--allow-public-bind`.
 
+Widgets open in frames the node serves, and only the node itself may embed them unless
+`CC_APP_ORIGIN` names the interface's origin. Local setup writes `CC_APP_ORIGIN=http://127.0.0.1:5173`
+for `pnpm dev:web`; set it yourself if the interface runs anywhere else. The node refuses to start
+when the value is not a bare `http(s)` origin.
+
 To work on the desktop shell, one command starts the node, the Vite dev server and Electron
 together, and the window reloads when the renderer changes:
 

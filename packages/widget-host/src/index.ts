@@ -6,6 +6,7 @@ import {
   definitionCatalogKey,
   degradeUnrenderableBlocks,
   isHostOwnedBlock,
+  networkOriginProblem,
 } from "@clarkcant/contracts";
 import { createHash } from "node:crypto";
 import { z } from "zod";
@@ -182,7 +183,9 @@ export function buildSandboxPolicy(input: {
   if (input.microphone) permissions.push("microphone");
   if (input.camera) permissions.push("camera");
 
-  const connect = input.networkOrigins.length > 0 ? `connect-src ${input.networkOrigins.join(" ")};` : "connect-src 'none';";
+  // Only exact origins become policy: anything else could widen or rewrite the directive, so it is dropped.
+  const reachable = input.networkOrigins.filter((origin) => networkOriginProblem(origin) === undefined);
+  const connect = reachable.length > 0 ? `connect-src ${reachable.join(" ")};` : "connect-src 'none';";
 
   const csp = [
     "default-src 'none'",
