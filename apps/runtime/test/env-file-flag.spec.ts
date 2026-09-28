@@ -57,7 +57,8 @@ async function runNodeIn(cwd: string, args: string[]): Promise<string> {
 
 async function setup(): Promise<{ cwd: string; args: string[] }> {
   const cwd = mkdtempSync(join(tmpdir(), "cc-envfile-"));
-  cleanups.push(() => rmSync(cwd, { recursive: true, force: true }));
+  // Windows can hold the node's working directory for a moment after `close`, which fails the first removal with EPERM.
+  cleanups.push(() => rmSync(cwd, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 }));
   writeFileSync(join(cwd, ".env"), `${PROBE}=from-file\n`);
   const { port } = await holdPort();
   return { cwd, args: ["--data-dir", join(cwd, "data"), "--port", String(port), "--label", "env-file-flag"] };
