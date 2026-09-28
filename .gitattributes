@@ -1,0 +1,3 @@
+# Check text files out with LF on every platform. The docs manifest pins byte sizes and sha256 of the
+# committed (LF) bytes, and a Windows checkout with core.autocrlf would otherwise rewrite them to CRLF.
+* text=auto eol=lf
