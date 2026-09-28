@@ -15,6 +15,11 @@ import { createTerminalRegistry, type TerminalRegistry } from "../src/terminal-s
  * The live terminal socket: authenticated in its first frame, and one driver per terminal.
  */
 const TOKEN = "test-local-token-0123456789";
+/**
+ * The driver test types into a real `/bin/bash` and waits for the command marks only the bash integration emits.
+ * Windows has neither: the node runs PowerShell there with no integration, so the test is skipped by name on win32.
+ */
+const POSIX = process.platform !== "win32";
 let dir: string;
 let server: Server;
 let gateway: TerminalGateway;
@@ -123,8 +128,7 @@ describe("the terminal socket", () => {
     client.socket.close();
   });
 
-  // The registry here is configured as Linux running /bin/bash, which a Windows runner does not have.
-  it.skipIf(process.platform === "win32")("gives one card the keyboard and lets the other watch until it takes over", async () => {
+  it.skipIf(!POSIX)("gives one card the keyboard and lets the other watch until it takes over", async () => {
     const opened = await registry.open({ cwd: dir });
     if (!opened.ok) throw new Error(opened.reason);
     const id = opened.info.terminalId;
