@@ -58,6 +58,7 @@ export const APP_INTENT_KINDS = [
   "model.cycle",
   "model.select",
   "inbox.open",
+  "turn.stop",
 ] as const;
 
 export const appIntentKindSchema = z.enum(APP_INTENT_KINDS);
@@ -245,6 +246,8 @@ function describeAppIntentVi(intent: AppIntent): string {
     }
     case "inbox.open":
       return "Tôi mở hộp thư nhé.";
+    case "turn.stop":
+      return "Tôi dừng câu trả lời đang chạy nhé; phần đã viết vẫn được giữ lại.";
     default: {
       // Every kind above returns, so this is unreachable today. It exists so that adding a tenth kind
       // without a sentence is a loud failure in a test rather than `undefined` read aloud by a voice.
@@ -296,6 +299,8 @@ function describeAppIntentEn(intent: AppIntent): string {
     }
     case "inbox.open":
       return "Opening your inbox.";
+    case "turn.stop":
+      return "Stopping the reply in progress; what it already wrote is kept.";
     default: {
       const unreachable: never = intent.kind;
       throw new Error(`no read-back sentence for app intent ${String(unreachable)}`);

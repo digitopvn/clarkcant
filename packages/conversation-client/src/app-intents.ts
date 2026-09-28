@@ -74,6 +74,11 @@ export interface AppIntentHost {
    * while nobody was looking. Optional: a host with no node behind it has no inbox to open.
    */
   openInbox?(): void;
+  /**
+   * Stops the reply this conversation is writing, keeping what it has already written. Optional: a host with no
+   * node behind it has no turn to stop.
+   */
+  stopTurn?(): void;
   /** Selects a configured model-pool profile by its alias. See `cycleModel` for why this is optional. */
   selectModel?(alias: string): void;
   /**
@@ -128,6 +133,8 @@ function missingCapabilitySay(intent: AppIntent): string {
       return catalog["shell.intent.notConversation"];
     case "inbox.open":
       return catalog["shell.intent.notInbox"];
+    case "turn.stop":
+      return catalog["shell.intent.notTurn"];
     default:
       return catalog["shell.intent.notDesktop"];
   }
@@ -189,6 +196,9 @@ export function runAppIntent(decision: AppIntentDecision, host: AppIntentHost): 
       return { ran: true, say: readBack };
     case "inbox.open":
       host.openInbox?.();
+      return { ran: true, say: readBack };
+    case "turn.stop":
+      host.stopTurn?.();
       return { ran: true, say: readBack };
     case "model.cycle":
       host.cycleModel?.();
@@ -255,6 +265,8 @@ function hostHasCapability(host: AppIntentHost, intent: AppIntent): boolean {
       return host.showConversation !== undefined;
     case "inbox.open":
       return host.openInbox !== undefined;
+    case "turn.stop":
+      return host.stopTurn !== undefined;
     case "model.cycle":
       return host.cycleModel !== undefined;
     case "model.select":

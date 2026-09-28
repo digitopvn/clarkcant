@@ -408,7 +408,10 @@ Required:
 
 While a turn is running:
 
-- the send button morphs into Stop;
+- the send button morphs into Stop; Stop, Escape in the composer, and "dừng lại"/"stop" typed or spoken all reach the
+  same per-conversation stop (`POST /conversations/{id}/stop`). It stops only this conversation's reply: what was
+  already written stays, marked "stopped on request" rather than as an error, nothing arrives after it, and the stop is
+  audited with where it came from. Stopping when nothing is running is a quiet no-op;
 - the user is still allowed to type the next turn;
 - if sent mid-task, Jev decides steer/interrupt/background per instruction;
 - the UI briefly states the decision outcome when it has significant impact.

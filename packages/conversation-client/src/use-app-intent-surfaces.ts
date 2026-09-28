@@ -63,6 +63,8 @@ export interface AppIntentSurfacesDeps {
    * working host: `runAppIntent` reports the limitation honestly rather than throwing.
    */
   openVoice?: () => void;
+  /** Stops the reply being written, the same call the Stop button makes. */
+  stopTurn?: () => void;
 }
 
 /**
@@ -80,6 +82,7 @@ export function useAppIntentSurfaces({
   attachmentInput,
   setVoiceOpen,
   openVoice,
+  stopTurn,
   t,
 }: AppIntentSurfacesDeps): AppIntentSurfacesState {
   const [uiCheckOpen, setUiCheckOpen] = useState(false);
@@ -148,6 +151,7 @@ export function useAppIntentSurfaces({
         );
       },
       ...(openVoice === undefined ? {} : { openVoice }),
+      ...(stopTurn === undefined ? {} : { stopTurn }),
       ...(desktop
         ? {
             expandWindow: () => {
@@ -178,7 +182,7 @@ export function useAppIntentSurfaces({
           }
         : {}),
     };
-  }, [attachmentInput, restartSession, setVoiceOpen, openVoice, client, t]);
+  }, [attachmentInput, restartSession, setVoiceOpen, openVoice, stopTurn, client, t]);
 
   const runIntent = useCallback(
     (decision: AppIntentDecision): void => {

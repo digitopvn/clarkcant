@@ -408,7 +408,10 @@ Bắt buộc:
 
 Khi turn đang chạy:
 
-- send button morph thành Stop;
+- send button morph thành Stop; nút Stop, phím Escape trong composer, và câu "dừng lại"/"stop" gõ hoặc nói đều đi tới
+  cùng một thao tác dừng theo cuộc trò chuyện (`POST /conversations/{id}/stop`). Nó chỉ dừng câu trả lời của cuộc trò
+  chuyện này: phần đã viết được giữ lại, gắn nhãn "đã dừng theo yêu cầu" chứ không phải lỗi, không có gì đến thêm sau
+  đó, và lần dừng được ghi audit kèm nguồn. Dừng khi không có gì đang chạy là no-op im lặng;
 - user vẫn được phép gõ turn kế tiếp;
 - nếu gửi giữa task, Jev quyết định steer/interrupt/background theo instruction;
 - UI nói ngắn gọn kết quả quyết định khi nó có tác động lớn.

@@ -16,6 +16,14 @@ export interface TurnSendState {
   live: LiveSegment[];
   send: (text: string, options?: { demo?: boolean }) => Promise<void>;
   /**
+   * Stops the reply being written, answering whether one was running.
+   *
+   * The send that is waiting on it is not abandoned: the node ends the stream with its own record, the partial reply
+   * labelled as stopped, and that is what replaces the live text. Cancelling the request here instead would drop the
+   * record and leave the reader guessing what the node kept.
+   */
+  stop: () => Promise<boolean>;
+  /**
    * Back to the start screen, with a new session.
    *
    * Deliberately not a delete: the conversation stays in the node's history, because that is a
@@ -132,7 +140,24 @@ export function useTurnSend({
   const send = useCallback(
     async (text: string, options: { demo?: boolean } = {}) => {
       const trimmed = text.trim();
-      if (trimmed === "" || busy) return;
+      if (trimmed === "") return;
+      if (busy) {
+        /*
+         * A command typed while a reply is being written, "dừng lại" above all.
+         *
+         * The node decides whether the sentence is a command, the same way it does for a click or a spoken one, and
+         * the answer is carried out by the one executor. Anything that is not a command keeps its text in the
+         * composer as before: a second turn cannot start until this one ends.
+         */
+        if (conversationId === undefined) return;
+        const decision = await client
+          .sendAppIntent({ text: trimmed, source: "chat", conversationId })
+          .catch(() => undefined);
+        if (decision === undefined || decision.kind === "none") return;
+        clearDraft();
+        setPendingIntent(decision);
+        return;
+      }
 
       setBusy(true);
       setError(undefined);
@@ -240,5 +265,16 @@ export function useTurnSend({
     onSessionReset?.();
   }, [clearDraft, onSessionReset, resetHero, setConversationId, setDatasets, setSnapshots, setTimeline]);
 
-  return { busy, error, setError, pendingUser, live, send, restartSession, scroller };
+  const stop = useCallback(async (): Promise<boolean> => {
+    // Nothing to stop before the conversation exists or once the reply has ended: a quiet no-op, not an error.
+    if (!busy || conversationId === undefined) return false;
+    try {
+      return (await client.stopTurn(conversationId)).stopped;
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause));
+      return false;
+    }
+  }, [busy, client, conversationId]);
+
+  return { busy, error, setError, pendingUser, live, send, stop, restartSession, scroller };
 }

@@ -123,7 +123,14 @@ describe("MCP endpoint", () => {
     const listed = await mcp({ jsonrpc: "2.0", id: 3, method: "tools/list" });
     const names = (listed.body as { result: { tools: { name: string }[] } }).result.tools.map((tool) => tool.name);
     expect(names).toEqual(
-      expect.arrayContaining(["ask_clark", "list_conversations", "read_conversation", "answer_question", "stop_all_work"]),
+      expect.arrayContaining([
+        "ask_clark",
+        "list_conversations",
+        "read_conversation",
+        "answer_question",
+        "stop_reply",
+        "stop_all_work",
+      ]),
     );
     expect(names.some((name) => name.includes("approv"))).toBe(false);
   });
@@ -159,6 +166,29 @@ describe("MCP endpoint", () => {
     });
     const text = (read.body as { result: { content: { text: string }[] } }).result.content[0]?.text ?? "";
     expect(text).toContain("hello Clark");
+  });
+
+  it("stops one conversation's reply through the same route as the Stop button, and says when there was none", async () => {
+    const asked = await mcp({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "ask_clark", arguments: { text: "hi" } } });
+    const conversationId = (asked.body as { result: { structuredContent: { conversationId: string } } }).result
+      .structuredContent.conversationId;
+
+    // The reply above has already ended, so the honest answer is that nothing was stopped.
+    const stopped = await mcp({
+      jsonrpc: "2.0",
+      id: 2,
+      method: "tools/call",
+      params: { name: "stop_reply", arguments: { conversationId } },
+    });
+    expect(stopped.body).toMatchObject({ result: { structuredContent: { stopped: false } } });
+
+    const missing = await mcp({
+      jsonrpc: "2.0",
+      id: 3,
+      method: "tools/call",
+      params: { name: "stop_reply", arguments: { conversationId: "conv_missing" } },
+    });
+    expect(missing.body).toMatchObject({ result: { isError: true } });
   });
 
   it("passes a route's refusal back as a tool error in the route's own words", async () => {

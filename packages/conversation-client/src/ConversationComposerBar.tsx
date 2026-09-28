@@ -20,6 +20,8 @@ export interface ConversationComposerBarProps {
   placeholder: string;
   busy: boolean;
   onSubmit: () => void;
+  /** Stops the reply being written. While a reply is being written, Send becomes Stop in the same place. */
+  onStop: () => void;
   onOpenVoice: () => void;
   modelAlias: string | undefined;
   modelNote: string;
@@ -48,6 +50,7 @@ export function ConversationComposerBar({
   placeholder,
   busy,
   onSubmit,
+  onStop,
   onOpenVoice,
   modelAlias,
   modelNote,
@@ -71,6 +74,14 @@ export function ConversationComposerBar({
         event.preventDefault();
         setDragging(false);
         void addFiles([...event.dataTransfer.files]);
+      }}
+      onKeyDown={(event) => {
+        // Escape stops a reply from anywhere in the composer, the button included. Only while one is being written,
+        // so an idle Escape is left to whatever else listens for it.
+        if (event.key === "Escape" && busy) {
+          event.preventDefault();
+          onStop();
+        }
       }}
       onPaste={(event) => {
         const pasted = [...event.clipboardData.files];
@@ -163,15 +174,28 @@ export function ConversationComposerBar({
           >
             ◉
           </button>
-          <button
-            type="submit"
-            className="cc-icon-btn"
-            aria-label={t("composer.send")}
-            disabled={busy || draft.trim() === ""}
-            data-send="true"
-          >
-            ↑
-          </button>
+          {busy ? (
+            <button
+              type="button"
+              className="cc-icon-btn"
+              aria-label={t("composer.stop")}
+              title={t("composer.stop")}
+              data-stop="true"
+              onClick={onStop}
+            >
+              ■
+            </button>
+          ) : (
+            <button
+              type="submit"
+              className="cc-icon-btn"
+              aria-label={t("composer.send")}
+              disabled={draft.trim() === ""}
+              data-send="true"
+            >
+              ↑
+            </button>
+          )}
         </form>
       </div>
       {/*
