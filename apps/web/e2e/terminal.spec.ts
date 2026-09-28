@@ -63,7 +63,11 @@ test("a command typed into the terminal runs, and its result goes back to the co
 
   const sent = page.locator("[data-bubble='user']").last();
   await expect(sent).toContainText("cc-e2e-42", { timeout: 10_000 });
-  await expect(sent).toContainText("exit 0");
+  // The directory arrives exactly as the shell has it; a Windows path once lost the `\` before each `.` on the way.
+  await expect(sent).toContainText(DATA_DIR);
+  // Only the bash integration marks where a command ends, so only there is an exit code known. Windows runs PowerShell
+  // without that integration, and the message says so instead of inventing one.
+  await expect(sent).toContainText(process.platform === "win32" ? "shell không báo exit code" : "exit 0");
 });
 
 test("the keyboard can leave the terminal, and the process panel closes back to its button", async ({ page }) => {
