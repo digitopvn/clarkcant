@@ -9,17 +9,24 @@
  * check has run.
  */
 import { readFileSync, readdirSync, existsSync, statSync, writeFileSync } from "node:fs";
-import { join, relative as relativePath, sep } from "node:path";
+import path, { join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 export const repoRoot = fileURLToPath(new URL("../..", import.meta.url));
 
 /**
- * A repo-relative path with `/` separators on every platform. The checks compare these against
- * allow-lists and tsconfig globs written with `/`; a Windows `\` path would match none of them.
+ * `path` relative to `root`, always with `/` separators.
+ *
+ * The checks match these paths against `/`-based patterns (`/src/`, allow-lists, tsconfig `include` globs), so a
+ * Windows `\` path would slip past every one of them and a check could pass or fail for the wrong reason. The path
+ * API is a parameter so a test can hand in `path.win32` on any OS.
  */
-export function relative(path) {
-  return relativePath(repoRoot, path).split(sep).join("/");
+export function repoRelativePath(root, target, pathApi = path) {
+  return pathApi.relative(root, target).split(pathApi.sep).join("/");
+}
+
+export function relative(target) {
+  return repoRelativePath(repoRoot, target);
 }
 
 export const REGISTRY_PATH = "packages/contracts/src/implementation-status.ts";
