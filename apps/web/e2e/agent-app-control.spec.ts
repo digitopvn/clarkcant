@@ -1,7 +1,7 @@
 import { mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type APIRequestContext, type Page } from "@playwright/test";
 
 /**
  * `control_app` answers with what the screen did, not with what it asked for.
@@ -51,6 +51,14 @@ async function openApp(page: Page): Promise<void> {
 async function startConversation(page: Page): Promise<void> {
   await page.locator("[data-suggestion]").first().click();
   await expect(page.locator('[data-role="user"]')).toHaveCount(1, { timeout: 15_000 });
+}
+
+async function scriptVoice(request: APIRequestContext, words: string): Promise<void> {
+  const response = await request.post(`${GATEWAY}/voice-fixture/words`, {
+    headers: { authorization: `Bearer ${token()}` },
+    data: { words },
+  });
+  expect(response.status()).toBe(200);
 }
 
 /** Type a sentence the fixture model answers by calling `control_app`, and wait for that reply. */
@@ -136,4 +144,56 @@ test("the agent opens voice mode and is told so only once the session is listeni
   await askAgent(page, "agent control_app voice.open", DONE);
   await expect(page.locator('[data-voice-state="listening"]')).toBeVisible({ timeout: 15_000 });
   await page.screenshot({ path: join(EVIDENCE, "agent-app-control-03-voice-open.png"), fullPage: false });
+});
+
+test("the agent returns to the conversation from Settings without leaving it, unlike going home", async ({ page }) => {
+  await openApp(page);
+  await startConversation(page);
+  // Watched from before the send, because Settings is open only between the two calls of one turn.
+  await page.evaluate(() => {
+    const seen = window as unknown as { sawSettings?: boolean };
+    new MutationObserver(() => {
+      if (document.querySelector('[role="tablist"]') !== null) seen.sawSettings = true;
+    }).observe(document.body, { childList: true, subtree: true });
+  });
+
+  await page.locator('[data-composer="true"]').fill("agent control_app settings.open; nav.conversation");
+  await page.locator('[data-send="true"]').click();
+  // Both calls answered done, each only after the page said so.
+  await expect(page.getByText(DONE)).toHaveCount(2, { timeout: 20_000 });
+
+  expect(await page.evaluate(() => (window as unknown as { sawSettings?: boolean }).sawSettings)).toBe(true);
+  // Settings closed, and the conversation is the same one: both messages still there, no start screen.
+  await expect(page.locator('[role="tablist"]')).toHaveCount(0);
+  await expect(page.locator('[data-role="user"]')).toHaveCount(2);
+  await expect(page.locator("[data-suggestion]")).toHaveCount(0);
+});
+
+test("the agent cycles the model the way the hotkey does, and the label says where it moved", async ({ page }) => {
+  await openApp(page);
+  await startConversation(page);
+  const label = page.locator("[data-model-label]").first();
+  await expect(label).toHaveAttribute("data-model-label", /.+/, { timeout: 15_000 });
+  const before = await label.getAttribute("data-model-label");
+
+  await askAgent(page, "agent control_app model.cycle", DONE);
+  await expect(label).not.toHaveAttribute("data-model-label", before ?? "");
+  const after = await label.getAttribute("data-model-label");
+  await expect(page.locator(".cc-model-switch [data-model-note]")).toContainText(after ?? "");
+});
+
+test("the voice agent ends voice mode through the same contract, and the page confirms it", async ({ page, request }) => {
+  await openApp(page);
+  await startConversation(page);
+
+  await scriptVoice(request, "agent control_app voice.end");
+  await page.locator('[data-voice-open="true"]').click();
+  await expect(page.locator(".cc-voice")).toBeVisible({ timeout: 15_000 });
+
+  // The spoken sentence is not an app command the registry knows, so it reached the voice agent's own turn, whose
+  // control_app call closed the overlay through the same executor the end button uses.
+  await expect(page.locator(".cc-voice")).toBeHidden({ timeout: 20_000 });
+  await expect(page.locator('[data-composer="true"]')).toBeVisible();
+  // And the voice agent was told the screen did it, not merely that it was asked.
+  await expect(page.getByText(DONE).first()).toBeAttached({ timeout: 20_000 });
 });
