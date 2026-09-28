@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { type Instant, type Principal } from "@clarkcant/contracts";
+import { type Instant, type Principal, redactSecrets } from "@clarkcant/contracts";
 import { createTask, decideApproval, requestApproval } from "@clarkcant/core";
 import { appendMessage, nextMessageSequence } from "@clarkcant/storage";
 
@@ -122,8 +122,8 @@ describe("noticing what expired unanswered", () => {
     const notices = readInbox(services, past).notices;
     const matching = notices.filter((notice) => notice.title.includes("hết hạn"));
     expect(matching).toHaveLength(1);
-    expect(matching[0]).toMatchObject({ conversationId, severity: "warning", body: expect.stringContaining(dir) });
-    void approval;
+    // The body is stored redacted, and a temp dir under a home directory (Windows' default) is redacted with it.
+    expect(matching[0]).toMatchObject({ conversationId, severity: "warning", body: redactSecrets(approval.operationDescription) });
   });
 
   it("records one notice for a task approval nobody decided, pointing at the task's conversation", async () => {
