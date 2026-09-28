@@ -9,8 +9,11 @@
  * Run modes:
  *   electron .                      normal window
  *   electron . --smoke-test         headless self-check, prints JSON, exits 0 or 1
- *   electron . --renderer-url <u>   load a different shell document
- *   electron . --renderer-url <u> --dev   <u> is a loopback Vite dev server; see `tools/dev-desktop.mjs`
+ *   electron . -- --renderer-url <u>   load a different shell document
+ *   electron . -- --renderer-url <u> --dev   <u> is a loopback Vite dev server; see `tools/dev-desktop.mjs`
+ *
+ * The `--` is required on Windows once a flag follows a URL: see `launch-args.mjs`. Flags are read by name, so it
+ * changes nothing here.
  *
  * `--smoke-test` exists so the security posture is verified by running it rather than by
  * reading it. It creates a real window with a real preload bridge and asserts the bridge's
