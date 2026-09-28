@@ -173,7 +173,7 @@ interface ShellDetachBridge {
     title?: string;
     live: unknown;
   }): Promise<{ ok: boolean; refused?: string }>;
-  onWidgetReattached?(callback: (payload: { instanceRef?: string }) => void): void;
+  onWidgetReattached?(callback: (payload: { instanceRef?: string }) => void): (() => void) | void;
 }
 
 function shellDetachBridge(): ShellDetachBridge | undefined {
@@ -412,7 +412,8 @@ export function PinnedLiveSurface({
   useEffect(() => {
     const bridge = shellDetachBridge();
     if (bridge?.onWidgetReattached === undefined) return;
-    bridge.onWidgetReattached(() => {
+    // A shell older than the unsubscribe returns nothing; there is nothing to remove then.
+    const unsubscribe = bridge.onWidgetReattached(() => {
       void client
         .claimLiveOwner(conversationId, instanceId, {
           ownerToken: ownerToken.current,
@@ -428,6 +429,7 @@ export function PinnedLiveSurface({
           setOwnership("elsewhere");
         });
     });
+    return typeof unsubscribe === "function" ? unsubscribe : undefined;
   }, [client, conversationId, instanceId, load]);
 
   const detachAvailable = shellDetachBridge() !== undefined;

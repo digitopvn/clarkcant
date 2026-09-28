@@ -78,7 +78,11 @@ const bridge = {
    * channel the main process can push, which is the same mistake as a generic `invoke`.
    */
   onWidgetReattached(callback) {
-    ipcRenderer.on("desktop:widgetReattached", (_event, payload) => callback(payload));
+    // Returns the unsubscribe: the pinned surface that listens remounts, and a listener never removed would keep
+    // re-claiming the lease for a surface that is gone.
+    const listener = (_event, payload) => callback(payload);
+    ipcRenderer.on("desktop:widgetReattached", listener);
+    return () => ipcRenderer.removeListener("desktop:widgetReattached", listener);
   },
   /**
    * Shrink the window to the voice bar, grow it back, or pin it above other windows.

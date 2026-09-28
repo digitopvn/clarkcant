@@ -636,7 +636,7 @@ Nếu câu 1 cho thấy composition đủ thì ưu tiên composition.
 - Host registry/isolation: packages/widget-host.
 - Built-in descriptors: packs/data-canvas và các pack catalog sau này.
 - Built-in React renderers: packages/conversation-client.
-- Product UX: DESIGN.md.
+- Product UX: DESIGN.vi.md.
 - Standard này định nghĩa developer experience/release gate mục tiêu; implementation status phải được ghi trung thực trong code/conformance.
 
 ---

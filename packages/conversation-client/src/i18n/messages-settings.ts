@@ -250,6 +250,12 @@ export const MESSAGES_SETTINGS_VI = {
   "settings.control.notifications.os.label": "Thông báo hệ điều hành",
   "settings.control.notifications.os.description": "Hiện thông báo của hệ điều hành khi cửa sổ không có focus.",
   "settings.control.notifications.os.needsDesktop": "Chỉ có trên ứng dụng desktop.",
+  "settings.control.notifications.os.status.unsupported":
+    "Thông báo gần nhất không hiện được: hệ điều hành này không hỗ trợ thông báo. Mục vẫn nằm trong hộp thư; hãy mở hộp thư để xem.",
+  "settings.control.notifications.os.status.noWindow":
+    "Thông báo gần nhất không hiện được vì không còn cửa sổ chính để mở hộp thư. Mục vẫn nằm trong hộp thư; mở lại cửa sổ ClarkCant để xem.",
+  "settings.control.notifications.os.status.failed":
+    "ClarkCant không chuyển được thông báo gần nhất cho hệ điều hành. Mục vẫn nằm trong hộp thư; hãy mở hộp thư để xem.",
   "settings.control.notifications.web.label": "Thông báo trình duyệt",
   "settings.control.notifications.web.description": "Cần trình duyệt cấp quyền; chỉ hỏi khi bạn bật nút này.",
   "settings.control.notifications.web.unavailableOnDesktop": "Ứng dụng desktop dùng thông báo hệ điều hành ở trên, không dùng thông báo trình duyệt.",
@@ -604,6 +610,12 @@ export const MESSAGES_SETTINGS_EN = {
   "settings.control.notifications.os.label": "OS notifications",
   "settings.control.notifications.os.description": "Show an OS notification when the window has no focus.",
   "settings.control.notifications.os.needsDesktop": "Only available in the desktop app.",
+  "settings.control.notifications.os.status.unsupported":
+    "The last notification could not be shown: this OS does not support notifications. The item is still in your inbox; open it there.",
+  "settings.control.notifications.os.status.noWindow":
+    "The last notification could not be shown because no main window was left to open the inbox in. The item is still in your inbox; reopen the ClarkCant window to see it.",
+  "settings.control.notifications.os.status.failed":
+    "ClarkCant could not hand the last notification to the OS. The item is still in your inbox; open it there.",
   "settings.control.notifications.web.label": "Browser notifications",
   "settings.control.notifications.web.description": "Needs the browser's permission; only asked when you turn this on.",
   "settings.control.notifications.web.unavailableOnDesktop": "The desktop app uses the OS notifications above, not browser notifications.",

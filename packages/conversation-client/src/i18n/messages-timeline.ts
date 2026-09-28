@@ -339,6 +339,15 @@ export const MESSAGES_TIMELINE_VI = {
   "widgets.library.status": "Trạng thái",
   "widgets.library.textFallback": "Phương án chữ",
 
+  // widget-library/HostCardShowcase.tsx
+  "widgets.hostCards.title": "Thẻ của hệ thống",
+  "widgets.hostCards.intro": "Các thẻ này gắn với trạng thái thật trên máy nên không xem trước được ở đây. Chúng được mở từ hội thoại.",
+  "widgets.hostCards.illustration": "Hình minh họa, không phải terminal đang chạy.",
+  "widgets.hostCards.source": "Hệ thống (host-owned)",
+  "widgets.hostCards.terminal.name": "Terminal",
+  "widgets.hostCards.terminal.description": "Shell thật tại một thư mục làm việc: chạy lệnh, dùng TUI như vim hay htop, gửi kết quả lệnh về hội thoại và theo dõi tiến trình nền cùng các phiên Pi khác.",
+  "widgets.hostCards.terminal.openHint": "Cách mở: nói với Clark “Mở terminal ở thư mục dự án”.",
+
   // widget-library/WidgetPropsForm.tsx
   "widgets.propsForm.jsonUnreadable": "JSON không đọc được: {message}",
   "widgets.propsForm.jsonMustBeObject": "JSON phải là một object.",
@@ -746,6 +755,14 @@ export const MESSAGES_TIMELINE_EN = {
   "widgets.library.source": "Source",
   "widgets.library.status": "Status",
   "widgets.library.textFallback": "Text fallback",
+
+  "widgets.hostCards.title": "System cards",
+  "widgets.hostCards.intro": "These cards are bound to live state on this machine, so they cannot be previewed here. They open from the conversation.",
+  "widgets.hostCards.illustration": "Illustration, not a running terminal.",
+  "widgets.hostCards.source": "System (host-owned)",
+  "widgets.hostCards.terminal.name": "Terminal",
+  "widgets.hostCards.terminal.description": "A real shell in a working directory: run commands, use TUIs such as vim or htop, send a command's result back to the conversation, and watch background processes and other Pi sessions.",
+  "widgets.hostCards.terminal.openHint": "To open one, tell Clark \"Open a terminal in the project folder\".",
 
   "widgets.propsForm.jsonUnreadable": "Could not read the JSON: {message}",
   "widgets.propsForm.jsonMustBeObject": "The JSON must be an object.",
