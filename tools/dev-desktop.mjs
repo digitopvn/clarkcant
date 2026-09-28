@@ -108,7 +108,7 @@ for (const [port, label] of [
 ]) {
   if (await portTaken(port)) {
     process.stderr.write(
-      `Port ${port} is already in use. Stop whatever holds it (lsof -nP -iTCP:${port} -sTCP:LISTEN) or pass ${label} <other>.\n`,
+      `Port ${port} is already in use. Stop whatever holds it (${process.platform === "win32" ? `netstat -ano | findstr :${port}` : `lsof -nP -iTCP:${port} -sTCP:LISTEN`}) or pass ${label} <other>.\n`,
     );
     exit(1);
   }

@@ -554,10 +554,13 @@ function registerHandlers() {
    * Close the window, as the title bar's close button would. Whether the app then quits is the existing
    * `window-all-closed` policy's decision, not this button's: closing a window stops the window, not the work.
    * Closed on the next tick so the renderer gets its answer before its document goes away.
+   *
+   * Only the shell document may call this, so the window it closes is the shell window, never
+   * `getAllWindows()[0]`, which could be a detached widget window while the conversation stays open.
    */
   handle("desktop:closeWindow", async () => {
-    const window = BrowserWindow.getAllWindows()[0];
-    if (window === undefined) return { ok: false, refused: "there is no window to close" };
+    const window = shellWindow;
+    if (window === undefined || window.isDestroyed()) return { ok: false, refused: "there is no window to close" };
     setTimeout(() => {
       if (!window.isDestroyed()) window.close();
     });
