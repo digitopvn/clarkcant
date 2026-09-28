@@ -55,6 +55,7 @@ import {
 
 import { type AppIntentDeps, decideAppIntent, mintConfirmation } from "../app-intents.ts";
 import { activeGenerationWithResolvedGrants } from "../application/package-install.ts";
+import { NOTHING_TO_STOP_SAY, type StopTurnSource, stopTurnOnNode } from "../application/stop-turn.ts";
 import { invokeWidgetAction } from "../application/widget-actions.ts";
 import { resolveAttachmentRefs } from "../attachments.ts";
 import { type InteractionDeps, answerQuestion, cancelQuestion } from "../interactions.ts";
@@ -638,6 +639,25 @@ function typedAppIntent(
     (intent: AppIntent) => mintConfirmation(intentDeps, { principalId, intent, source: "chat" }),
   );
 }
+/**
+ * The sentence a typed command is answered with.
+ *
+ * A stop is carried out here, where the node knows whether anything was running, so the answer is what happened
+ * rather than what was asked: "dừng lại" typed when the reply has already finished says there was nothing to stop.
+ */
+function answerTypedIntent(
+  services: Pick<NodeServices, "runtime" | "conductor" | "turnControl">,
+  conversationId: string,
+  asked: Exclude<AppIntentResolution, { kind: "none" }>,
+): string {
+  if (asked.kind === "refused") return asked.say;
+  if (asked.kind === "intent" && asked.intent.kind === "turn.stop") {
+    const { stopped } = stopTurnOnNode(services, { conversationId, source: "chat" });
+    if (!stopped) return NOTHING_TO_STOP_SAY;
+  }
+  return asked.readBack;
+}
+
 export async function handleConversationRoutes(deps: ConversationRouteDeps): Promise<GatewayResponse> {
   const { request, segments, at } = deps;
   const { services } = deps;
@@ -694,6 +714,21 @@ export async function handleConversationRoutes(deps: ConversationRouteDeps): Pro
     );
   }
 
+  /*
+   * /conversations/:id/stop
+   *
+   * Stops the reply this conversation is writing and answers whether there was one. Only this conversation's turn:
+   * the node-wide emergency stop is `POST /stop`. What the turn had written stays in the conversation, labelled as
+   * stopped. `source` says how the person asked, for the audit row; anything else is recorded as the API.
+   */
+  if (segments.length === 3 && segments[2] === "stop" && request.method === "POST") {
+    const parsed = readJson(request);
+    if (!parsed.ok) return parsed.response;
+    const source: StopTurnSource =
+      parsed.value.source === "chat" || parsed.value.source === "voice" ? parsed.value.source : "api";
+    return json(200, stopTurnOnNode(services, { conversationId, source }));
+  }
+
   // /conversations/:id/messages
   if (segments.length === 3 && segments[2] === "messages" && request.method === "POST") {
     const parsed = readJson(request);
@@ -713,7 +748,7 @@ export async function handleConversationRoutes(deps: ConversationRouteDeps): Pro
      */
     const asked = typedAppIntent(services, conversationId, text, at);
     if (asked.kind !== "none") {
-      const said = asked.kind === "refused" ? asked.say : asked.readBack;
+      const said = answerTypedIntent(services, conversationId, asked);
       const appended = appendHostReply(services, { conversationId, text: said, at: at() as never });
       return json(200, { accepted: true, messageId: appended.messageId, appIntent: asked });
     }
@@ -844,7 +879,7 @@ export async function handleConversationRoutes(deps: ConversationRouteDeps): Pro
      */
     const askedIntent = typedAppIntent(services, conversationId, text, at);
     if (askedIntent.kind !== "none") {
-      const said = askedIntent.kind === "refused" ? askedIntent.say : askedIntent.readBack;
+      const said = answerTypedIntent(services, conversationId, askedIntent);
       const appended = appendHostReply(services, { conversationId, text: said, at: at() as never });
       return {
         status: 200,

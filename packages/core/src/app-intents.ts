@@ -250,6 +250,20 @@ const PHRASES: readonly { phrase: string; kind: AppIntentKind; wholeSentence?: t
   { phrase: "dong hop thu", kind: "nav.conversation", wholeSentence: true },
   { phrase: "close the inbox", kind: "nav.conversation", wholeSentence: true },
   { phrase: "close inbox", kind: "nav.conversation", wholeSentence: true },
+
+  // Stopping the reply that is being written. Whole-sentence only: "dừng lại" and "stop" open far too many
+  // requests for work ("dừng lại ở bước build rồi sửa lỗi", "stop the nginx container") to be claimed as openers,
+  // and a noun would make those command-shaped and then refused. Said on its own, it means this conversation's turn.
+  // Never the bare word: without tone marks "dừng" is also "đúng", the most common one-word answer there is.
+  { phrase: "dung lai", kind: "turn.stop", wholeSentence: true },
+  { phrase: "ngung lai", kind: "turn.stop", wholeSentence: true },
+  { phrase: "dung tra loi", kind: "turn.stop", wholeSentence: true },
+  { phrase: "dung viet", kind: "turn.stop", wholeSentence: true },
+  { phrase: "stop", kind: "turn.stop", wholeSentence: true },
+  { phrase: "stop it", kind: "turn.stop", wholeSentence: true },
+  { phrase: "stop now", kind: "turn.stop", wholeSentence: true },
+  { phrase: "stop generating", kind: "turn.stop", wholeSentence: true },
+  { phrase: "stop writing", kind: "turn.stop", wholeSentence: true },
 ];
 
 /**

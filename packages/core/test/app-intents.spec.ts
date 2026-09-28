@@ -126,6 +126,12 @@ const DOCUMENTED: readonly { kind: AppIntentKind; vietnamese: readonly string[];
     vietnamese: ["mở hộp thư", "Mở hộp thư giúp tôi.", "xem thông báo", "mo hop thu", "mở hộp thư của tôi"],
     english: "open my inbox",
   },
+  {
+    // Whole-sentence too: "dừng lại ở bước build" is work for the agent, not a stop.
+    kind: "turn.stop",
+    vietnamese: ["dừng lại", "Dừng lại!", "ngừng lại", "dừng trả lời", "dừng viết đi", "dung lai"],
+    english: "stop generating",
+  },
 ];
 
 describe("every documented way of asking maps to one intent", () => {
@@ -268,6 +274,18 @@ describe("a work request is not an app intent", () => {
     expect(normaliseIntentText(sentence)).toBe("thu do la paris.");
     expect(isAppCommandShaped(sentence)).toBe(false);
     expect(resolveAppIntent({ text: sentence, mintConfirmationToken: mint }).kind).toBe("none");
+  });
+
+  it("does not stop a reply on a yes, or on an instruction that only starts with a stop", () => {
+    // Without tone marks "dừng" and "đúng" are one spelling, and "đúng" is the commonest one-word answer there is: a
+    // stop that fired on it would cut off the reply the person had just agreed with.
+    for (const answer of ["đúng", "Đúng rồi", "dung"]) {
+      expect(matchAppIntent(answer)?.kind, answer).not.toBe("intent");
+    }
+    for (const request of ["dừng lại ở bước build rồi chạy test", "stop the dev server on port 3000"]) {
+      const match = matchAppIntent(request);
+      expect(match?.kind === "intent" && match.intent.kind, request).not.toBe("turn.stop");
+    }
   });
 
   it("leaves a request about an email inbox or an error message to the agent", () => {

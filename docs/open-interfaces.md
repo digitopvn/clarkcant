@@ -41,6 +41,7 @@ The stable surface is the one `/openapi.json` describes:
 | GET / POST | `/conversations` | `{ title? }` |
 | POST | `/conversations/{id}/messages` | `{ text, attachmentIds? }` — waits for the answer |
 | POST | `/conversations/{id}/messages/stream` | same, answered as SSE: `delta`, `reasoning`, `tool-start`, `tool-end`, `host-control`, `error`, `done` |
+| POST | `/conversations/{id}/stop` | `{ source? }` — stops the reply being written; keeps what was written, labelled as stopped; answers `{ stopped }` |
 | GET | `/conversations/{id}/timeline?after=N` | – |
 | POST | `/conversations/{id}/questions/{questionId}/answer` | `{ text?, optionIds?, confirmed? }` |
 | POST | `/conversations/{id}/questions/{questionId}/cancel` | – |
@@ -69,6 +70,7 @@ part of the stable description and may change.
 | `create_conversation` | `title?` | `POST /conversations` |
 | `read_conversation` | `conversationId`, `after?` | `GET /conversations/{id}/timeline` |
 | `answer_question` | `conversationId`, `questionId`, `text?`, `optionIds?`, `confirmed?` | `POST …/questions/{questionId}/answer` |
+| `stop_reply` | `conversationId` | `POST /conversations/{id}/stop` |
 | `stop_all_work` | – | `POST /stop` |
 | `node_status` | – | `GET /node` |
 

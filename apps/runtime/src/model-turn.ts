@@ -204,6 +204,18 @@ interface Turn {
   inFlight: boolean;
   /** When the running turn started, so the mid-turn decider can weigh how long the work has gone on. */
   startedAtMs: number | undefined;
+  /**
+   * Whether a person stopped the running turn.
+   *
+   * Checked by the listener and by every tool call, so a token or a tool call already on its way when the stop
+   * arrived is dropped rather than shown after it; and read by `answer`, so what the turn had already said is kept as
+   * a stopped reply rather than reported as a failure.
+   */
+  stopped: boolean;
+  /** Ends the running answer the moment a stop arrives, for a provider that is slow to notice its own abort. */
+  settleStop: (() => void) | undefined;
+  /** The provider-side abort a stop started, so the session is disposed only once the provider has let go of it. */
+  stopping: Promise<void> | undefined;
   /** When this session last answered or was created, which is what idle eviction orders by. */
   lastUsedAtMs: number;
 }
@@ -323,6 +335,8 @@ function withActivity(turn: Turn, tool: ToolDefinition): ToolDefinition {
   return {
     ...tool,
     execute: async (params: Record<string, unknown>): Promise<{ text: string }> => {
+      // A call the model issued before it heard the stop is not run: stopping means nothing else happens.
+      if (turn.stopped) return { text: "Người dùng đã dừng lượt này; công cụ không được chạy." };
       turn.toolSequence += 1;
       const toolCallId = `${tool.name}-${turn.toolSequence}`;
       const startedAt = new Date().toISOString() as Instant;
@@ -764,6 +778,9 @@ export async function createModelTurn(options: {
       fresh: true,
       inFlight: false,
       startedAtMs: undefined,
+      stopped: false,
+      settleStop: undefined,
+      stopping: undefined,
       lastUsedAtMs: Date.now(),
     };
     // The view tool is only registered when there is a catalog; the extra tools stand on their own
@@ -805,6 +822,8 @@ export async function createModelTurn(options: {
      */
     const listen = (target: Turn, sessionId: string): (() => void) =>
       adapter.subscribe(sessionId, (event) => {
+        // After a stop nothing more is taken in: the reply is what had been said when the person stopped it.
+        if (target.stopped) return;
         if (isTextDelta(event)) {
           // Both, and in this order: the buffer is what the stored message is built from, and the
           // callback is what the reader sees now. Dropping the buffer to stream would lose the text a
@@ -865,12 +884,21 @@ export async function createModelTurn(options: {
      * Stops the running turn for a conversation, answering whether there was one.
      *
      * The turn's own controller rather than a new one, because the point is to stop the work that is happening, and
-     * the paths that watch for cancellation already watch this one.
+     * the paths that watch for cancellation already watch this one. The provider is aborted too: a stop that only
+     * cancelled the builds would leave the model generating, and paying for, an answer nobody will see.
+     *
+     * The session is let go of here rather than reused, the same way a failed turn's is: a message sent to stop this
+     * one arrives immediately, and a session whose previous run is still winding down is not one to prompt again. The
+     * next message opens a fresh session that is told what the conversation already holds, the stopped reply included.
      */
     interrupt: (conversationId: string): boolean => {
       const turn = turns.get(conversationId);
       if (turn === undefined || !turn.inFlight) return false;
+      turn.stopped = true;
       turn.abort.abort();
+      turns.delete(conversationId);
+      turn.stopping = adapter.abort(turn.sessionId, "người dùng đã dừng lượt này").catch(() => undefined);
+      turn.settleStop?.();
       return true;
     },
 
@@ -994,6 +1022,11 @@ export async function createModelTurn(options: {
       turn.channel = input.channel ?? "chat";
       turn.toolSequence = 0;
       turn.abort = new AbortController();
+      turn.stopped = false;
+      turn.stopping = undefined;
+      const stopRequested = new Promise<void>((resolve) => {
+        turn.settleStop = resolve;
+      });
 
       // The adapter stops a turn that overruns its brief, but this is the layer holding an open
       // HTTP request, so it does not delegate the guarantee: without a deadline here a provider
@@ -1012,18 +1045,20 @@ export async function createModelTurn(options: {
         }, budget.maxWallClockMs);
       });
 
+      const prompted = adapter.prompt(
+        turn.sessionId,
+        promptForTurn({
+          text: input.text,
+          ...(note === undefined ? {} : { note }),
+          ...(brief === "" ? {} : { brief }),
+        }),
+      );
+      // A stop settles the race before the provider does, and whatever the provider says afterwards is already
+      // answered; left unobserved, its rejection would surface as an unhandled one.
+      prompted.catch(() => undefined);
+
       try {
-        await Promise.race([
-          adapter.prompt(
-            turn.sessionId,
-            promptForTurn({
-              text: input.text,
-              ...(note === undefined ? {} : { note }),
-              ...(brief === "" ? {} : { brief }),
-            }),
-          ),
-          deadline,
-        ]);
+        await Promise.race([prompted, deadline, stopRequested]);
       } catch (cause) {
         /*
          * A failed turn takes its session with it.
@@ -1036,13 +1071,20 @@ export async function createModelTurn(options: {
          *
          * Disposed rather than kept for a retry, because there is no retry that could work: the session
          * is the thing that is broken.
+         *
+         * A provider that answers its own abort with an error is not a failure when a person asked for the stop: the
+         * turn ends the way a stopped turn does, below.
          */
-        turns.delete(input.conversationId);
-        turn.unsubscribe();
-        void adapter.dispose(turn.sessionId).catch(() => undefined);
-        throw cause;
+        if (!turn.stopped) {
+          // Only this turn's entry: a stop may already have handed the conversation to the next message's session.
+          if (turns.get(input.conversationId) === turn) turns.delete(input.conversationId);
+          turn.unsubscribe();
+          void adapter.dispose(turn.sessionId).catch(() => undefined);
+          throw cause;
+        }
       } finally {
         if (timer !== undefined) clearTimeout(timer);
+        turn.settleStop = undefined;
         // Detached before the segments are read, so an event arriving after the race resolved cannot
         // be delivered to a reader that has already been told the answer is complete.
         turn.onEvent = undefined;
@@ -1063,6 +1105,16 @@ export async function createModelTurn(options: {
         .map((segment) => segment.text)
         .join("\n")
         .trim();
+
+      if (turn.stopped) {
+        // Read before the session goes: the tokens a stopped turn spent are still worth reporting.
+        const metrics = turnMetrics({ adapter, sessionId: turn.sessionId, elapsedMs, model: selection.id });
+        turn.unsubscribe();
+        const sessionId = turn.sessionId;
+        void (turn.stopping ?? Promise.resolve()).then(() => adapter.dispose(sessionId)).catch(() => undefined);
+        // Stopped with nothing said yet is still an answer: the person asked for the stop, so it is not a failure.
+        return { text, segments, provider: selection.provider, model: selection.id, elapsedMs, metrics, stopped: true };
+      }
 
       if (segments.length === 0) {
         // A settled run that produced nothing at all is not a reply. Saying so is better than

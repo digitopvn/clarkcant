@@ -139,6 +139,34 @@ describe("carrying out an intent", () => {
   });
 });
 
+describe("stopping the reply being written", () => {
+  it("reaches the same stop the button makes", () => {
+    let stops = 0;
+    const host: AppIntentHost = {
+      ...recordingHost().host,
+      stopTurn: () => {
+        stops += 1;
+      },
+    };
+
+    const run = runAppIntent(executable({ kind: "intent", intent: { kind: "turn.stop" }, readBack: "dừng" }), host);
+
+    expect(run).toEqual({ ran: true, say: "dừng" });
+    expect(stops).toBe(1);
+  });
+
+  it("says a host that cannot stop a reply did nothing, rather than reading back a stop", () => {
+    const run = runAppIntent(
+      executable({ kind: "intent", intent: { kind: "turn.stop" }, readBack: "dừng" }),
+      recordingHost().host,
+    );
+
+    expect(run.ran).toBe(false);
+    expect(run.say).not.toBe("dừng");
+    expect(run.say).not.toBe(NOT_DESKTOP_SAY);
+  });
+});
+
 describe("what the executor will not do", () => {
   it("does not act on a question, even for an intent it could otherwise run", () => {
     const { host, calls } = recordingHost(true);

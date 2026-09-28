@@ -46,7 +46,8 @@ const SERVER_INFO = { name: "clarkcant", title: "ClarkCant", version: "1.0.0" };
 const INSTRUCTIONS =
   "ClarkCant is one conversational agent, Clark. Use ask_clark for anything you would ask a person-facing assistant " +
   "on this machine; pass the conversationId it returns to continue the same conversation. When Clark asks a " +
-  "question, answer it with answer_question. stop_all_work is an emergency stop.";
+  "question, answer it with answer_question. stop_reply stops the reply one conversation is writing; stop_all_work " +
+  "is an emergency stop for everything on the node.";
 
 const objectSchema = (properties: Record<string, unknown>, required: string[] = []): Record<string, unknown> => ({
   type: "object",
@@ -108,6 +109,14 @@ const TOOLS = [
       },
       ["conversationId", "questionId"],
     ),
+  },
+  {
+    name: "stop_reply",
+    title: "Stop a reply",
+    description:
+      "Stops the reply Clark is writing in one conversation. What was already written is kept, labelled as stopped. " +
+      "Answers stopped: false when no reply was running.",
+    inputSchema: objectSchema({ conversationId: { type: "string" } }, ["conversationId"]),
   },
   {
     name: "stop_all_work",
@@ -302,6 +311,10 @@ async function callTool(deps: McpRouteDeps, name: string, args: Record<string, u
       if (answered.status >= 400) return refused(answered);
       return { content: [{ type: "text", text: "Answered. Clark continues in a new turn; read the conversation for the reply." }] };
     }
+    case "stop_reply":
+      if (typeof args.conversationId !== "string") return toolError("conversationId is required");
+      // No source: the route records a stop it was not told the origin of as "api", which is what this is.
+      return fromResponse(await call("POST", `/conversations/${encodeURIComponent(args.conversationId)}/stop`, {}));
     case "stop_all_work":
       return fromResponse(await call("POST", "/stop"));
     case "node_status":
