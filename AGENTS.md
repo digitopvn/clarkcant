@@ -8,6 +8,86 @@ hard rules an implementation agent must follow.
 When docs/system-architecture.md and docs/system-architecture.png disagree, the
 PNG is current and the prose is the thing to fix.
 
+## Product philosophy and decision guardrails
+
+Treat the following as architecture constraints, not aspirational branding. New
+features, refactors and integrations should preserve them unless the user
+explicitly decides to change the product philosophy.
+
+### Open by default, community-extensible
+
+Keep ClarkCant open at every practical extension seam. A person should be able to
+build private extensions for their own setup without forking the product, and the
+same extension model should support publishing reusable work to the marketplace
+for the wider community.
+
+- Prefer stable, documented, versioned contracts over internal-only hooks.
+- Keep extension points composable across UI, tools, skills, themes, recipes and
+  other package facets rather than creating one-off privileged paths.
+- Do not require marketplace publication for local/private use. Local, git,
+  package-registry and self-hosted workflows should remain first-class where the
+  capability makes sense.
+- Keep the trusted core small. Grant extensions only the capabilities they need,
+  with isolation and explicit trust lanes instead of closing the ecosystem.
+- When a built-in feature could reasonably be generalized into a reusable
+  extension primitive, prefer the primitive plus a built-in implementation.
+
+### Cross-platform is a baseline
+
+Design new architecture and features for macOS, Windows and Linux-based systems,
+including Omarchy OS, from the start.
+
+- Keep portable business logic above platform adapters.
+- Isolate OS-specific behavior behind typed capabilities or adapters rather than
+  spreading shell, filesystem, process, windowing or permission assumptions
+  through product code.
+- Do not make one platform the silent reference implementation. If a capability
+  cannot be equivalent everywhere, define the degraded/unsupported behavior
+  explicitly and keep the rest of the product usable.
+- Packaging, updates, background execution, shortcuts, voice/device integration
+  and filesystem/process features must account for platform differences in their
+  design, tests and docs.
+
+### Radical simplicity outside, autonomy inside
+
+The external product should remain "insanely simple": one Clark, one
+conversation, with implementation complexity hidden behind the product boundary.
+UX and useful autonomy outrank exposing technical machinery.
+
+Autonomous execution is the default direction. Jev/policy is the escalation
+decision layer: ask the user only when a real boundary requires a human decision,
+such as detected material risk, destructive or difficult-to-reverse effects,
+configured policy, or unavoidable OS/OAuth/vendor consent.
+
+- Do not add confirmation steps merely because an action is technical or
+  effectful.
+- Preserve Stop, audit/provenance, recovery and rollback/Undo where the underlying
+  operation supports them; autonomy must remain observable and recoverable.
+- Permission/trust decisions should be able to become flexible policy: scoped to
+  the current session, remembered permanently when appropriate, or learned from
+  repeated habits through memory rather than repeatedly interrupting the user.
+- Prefer designs that let Clark run useful sessions autonomously for long periods:
+  resumable work, durable state, clear checkpoints, bounded retries, safe
+  recovery and escalation only when needed.
+- Never use autonomy as a reason to bypass hard external consent boundaries,
+  security isolation, credential boundaries or an explicit user policy.
+
+### Philosophy-change gate
+
+Before implementing a feature or architectural decision that could materially
+change these constraints, or that appears to conflict with them, surface the
+conflict to the user immediately instead of silently normalizing the exception.
+Ask the user to choose among the relevant paths:
+
+1. intentionally update the canonical product philosophy in AGENTS.md (and
+   therefore CLAUDE.md, which includes it);
+2. reject/stop the requested change because it violates the current philosophy;
+3. adopt an alternative approach that satisfies the same user goal while
+   preserving the philosophy.
+
+Propose the best philosophy-compatible alternative when one exists. Do not create
+a permanent architectural exception first and ask for alignment afterward.
+
 ## Product and UX priority
 
 **UX is a product invariant, not final-pass polish.** Before changing a visible
