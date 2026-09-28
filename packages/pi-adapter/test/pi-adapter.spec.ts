@@ -504,8 +504,6 @@ describe("a brief confined to its approved project roots", () => {
 
     const created = sdk.sessions[0];
     expect(created?.tools).toEqual([...SCOPED_FS_TOOL_NAMES]);
-    // The adapter's own default is the read-only built-in set, so a built-in being absent here is this
-    // adapter's doing rather than the default's.
     expect(created?.tools).not.toContain("read");
     expect(created?.customTools?.map((custom) => custom.name)).toEqual([...SCOPED_FS_TOOL_NAMES]);
   });
@@ -594,6 +592,29 @@ describe("a brief confined to its approved project roots", () => {
     await expect(adapter.registerTool(handle.sessionId, scoped("something_else"))).rejects.toThrow(
       /confined to its approved project roots/,
     );
+  });
+  it("gives a session without roots no filesystem tool unless the adapter was built to allow one", async () => {
+    const sdk = stubSdk();
+    const adapter = adapterWith(sdk);
+
+    // The packed-worker probe's brief: no roots, no tools. Nothing it runs may reach the adapter's working
+    // directory through the SDK's own `read`, `grep`, `find` or `ls`.
+    await adapter.createWorkerSession({ goal: "prove the pack runs", projectRoots: [], allowedCapabilityRefs: [] });
+
+    expect(sdk.sessions[0]?.tools).toEqual([]);
+  });
+
+  it("still runs the built-in read-only tools for an adapter that opts in by name", async () => {
+    const sdk = stubSdk();
+    const adapter = new RealPiAdapter({
+      cwd: process.cwd(),
+      builtinTools: READ_ONLY_TOOLS,
+      sdk: sdk.module as unknown as NonNullable<RealPiAdapterOptions["sdk"]>,
+    });
+
+    await adapter.createWorkerSession({ goal: "probe the SDK", projectRoots: [], allowedCapabilityRefs: [] });
+
+    expect(sdk.sessions[0]?.tools).toEqual([...READ_ONLY_TOOLS]);
   });
 });
 
