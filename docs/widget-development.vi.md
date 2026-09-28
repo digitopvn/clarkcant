@@ -854,7 +854,9 @@ không bao giờ `rmSync` một artifact có thể đang sống), và bất kỳ
 theo tên (`ARTIFACT_SYMLINK_ESCAPE`) chứ không bị theo dõi (follow) hay bỏ qua âm thầm, và hàm không bao giờ throw
 `ELOOP` ra ngoài — vì `lstatSync` không follow thành phần cuối của path nên một symlink tự trỏ vào chính nó không
 gây loop khi duyệt. `.git` chỉ bị loại ở cấp gốc của artifact, không phải mọi nơi trong cây, nên một package hợp
-lệ có thư mục `.git` lồng bên trong (một checkout vendor hoá) vẫn được hash đầy đủ.
+lệ có thư mục `.git` lồng bên trong (một checkout vendor hoá) vẫn được hash đầy đủ. Path tương đối của mỗi file được
+hash và sắp xếp với dấu phân cách `/` trên mọi hệ điều hành, nên một package có cùng một digest trên Windows, macOS và
+Linux: digest mà directory publish từ máy POSIX vẫn khớp khi cài trên Windows.
 
 `fetchNpmArtifact` không còn shell ra `tar`: nó tự đọc format ustar (gzip + tar) và kiểm typeflag của từng entry
 trước khi ghi byte nào xuống đĩa — chỉ file thường và thư mục được chấp nhận; symlink, hard link, thiết bị, hay

@@ -854,7 +854,9 @@ never an `rmSync` of an artifact that may be live), and any other place holding 
 by name (`ARTIFACT_SYMLINK_ESCAPE`) rather than being followed or silently skipped, and the function never throws
 `ELOOP` outward — because `lstatSync` does not follow the last component of the path, a symlink pointing at itself does not
 cause a loop during traversal. `.git` is only excluded at the root of the artifact, not everywhere in the tree, so a valid
-package with a nested `.git` directory (a vendored checkout) is still hashed in full.
+package with a nested `.git` directory (a vendored checkout) is still hashed in full. Each file's relative path is
+hashed and sorted with `/` separators on every OS, so a package has one digest on Windows, macOS and Linux: a digest a
+directory published from a POSIX machine still matches when the package is installed on Windows.
 
 `fetchNpmArtifact` no longer shells out to `tar`: it reads the ustar format (gzip + tar) itself and checks the typeflag of each entry
 before writing any byte to disk — only regular files and directories are accepted; symlinks, hard links, devices, or

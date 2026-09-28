@@ -79,9 +79,14 @@ export const TIMELINE_CSS = `
  * orb itself lives in the layer behind the composer, because one element that moves between two
  * places cannot also be a layout child of both.
  */
-/* The ball is drawn at 0.54 of the canvas, so a 197 pixel anchor reserves the space a 148 pixel ball
-   occupied before the canvas grew. */
-.cc-hero-orb { width: 197px; height: 197px; flex: none; visibility: hidden; }
+/*
+ * The anchor is what the canvas is scaled to, so doubling it from 197 pixels doubles the start screen's orb. A short window gives the orb less rather than pushing the suggestions and the input
+ * under the fold, and never less than the original size.
+ */
+.cc-hero-orb {
+  --cc-hero-orb-size: min(394px, max(197px, calc(100vh - 420px)));
+  width: var(--cc-hero-orb-size); height: var(--cc-hero-orb-size); flex: none; visibility: hidden;
+}
 .cc-empty-orb {
   border-radius: var(--cc-radius-pill);
   display: block;
