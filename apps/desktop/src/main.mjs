@@ -176,6 +176,17 @@ function workAreaFor(window) {
  * Only `compact` and `orb` count as collapsed: `expanded` is still the conversation, just given more room, so a
  * click there is left alone the way clicking any other visible window would be.
  */
+/**
+ * The window showing the conversation, or `undefined` when there is none left.
+ *
+ * The window channels act on this window by name rather than on `getAllWindows()[0]`: Electron does not promise
+ * that order, so with a detached widget window open the first entry could be that window instead. Only the shell
+ * document may call these channels, so the window it lives in is the only one they should ever move.
+ */
+function liveShellWindow() {
+  return shellWindow === undefined || shellWindow.isDestroyed() ? undefined : shellWindow;
+}
+
 function restoreToNormalIfCollapsed(window) {
   if (windowMode === undefined || (windowMode.mode !== "compact" && windowMode.mode !== "orb")) return;
   windowMode = nextWindowMode({ ...windowMode, workArea: workAreaFor(window) }, { type: "expand" });
@@ -373,7 +384,7 @@ function registerHandlers() {
     // owning process controls, not something a script in the renderer can name. Only the path the
     // user actually selected is returned, and it is returned as data the renderer may send back as
     // the answer to the node's own question.
-    const window = BrowserWindow.getAllWindows()[0];
+    const window = liveShellWindow();
     if (window === undefined) return { ok: false, refused: "no window is available for the picker" };
     const title = typeof input?.title === "string" && input.title.trim() !== "" ? input.title.slice(0, 120) : "Choose a directory";
     const outcome = await dialog.showOpenDialog(window, { title, properties: ["openDirectory"] });
@@ -386,7 +397,7 @@ function registerHandlers() {
     if (!review.allowed) return { ok: false, refused: review.reason };
     // Secret entry happens in a host-owned window. The value is never returned to the
     // renderer and never crosses the bridge; only the fact that something was stored does.
-    const window = BrowserWindow.getAllWindows()[0];
+    const window = liveShellWindow();
     if (window === undefined) return { ok: false, refused: "no window is available for the prompt" };
     const outcome = await dialog.showMessageBox(window, {
       type: "info",
@@ -410,7 +421,7 @@ function registerHandlers() {
   });
 
   handle("desktop:setCompactMode", async (action) => {
-    const window = BrowserWindow.getAllWindows()[0];
+    const window = liveShellWindow();
     if (window === undefined) return { ok: false, refused: "there is no window to resize" };
     if (!["enter-compact", "expand", "set-always-on-top"].includes(action?.type)) {
       return { ok: false, refused: "that is not a window mode this build knows" };
@@ -447,7 +458,7 @@ function registerHandlers() {
    * position and a shell that echoed its own request could not tell that difference.
    */
   handle("desktop:setWindowMode", async (mode) => {
-    const window = BrowserWindow.getAllWindows()[0];
+    const window = liveShellWindow();
     if (window === undefined) return { ok: false, refused: "there is no window to resize" };
     const action = actionForMode(mode);
     if (action === undefined) {
@@ -471,7 +482,7 @@ function registerHandlers() {
    * change it into the voice bar.
    */
   handle("desktop:resizeWindowPreset", async (name) => {
-    const window = BrowserWindow.getAllWindows()[0];
+    const window = liveShellWindow();
     if (window === undefined) return { ok: false, refused: "there is no window to resize" };
     const preset = WINDOW_MODE_PRESETS[String(name)];
     if (preset === undefined) {
@@ -494,7 +505,7 @@ function registerHandlers() {
    * was does not also lose the window's own position.
    */
   handle("desktop:restoreWindow", async () => {
-    const window = BrowserWindow.getAllWindows()[0];
+    const window = liveShellWindow();
     if (window === undefined) return { ok: false, refused: "there is no window to restore" };
     if (windowMode === undefined) {
       return { ok: false, refused: "this window has not been moved by the shell yet, so there is nothing to restore" };
@@ -511,7 +522,7 @@ function registerHandlers() {
    * is what has to make it the one being looked at.
    */
   handle("desktop:focusWindow", async () => {
-    const window = BrowserWindow.getAllWindows()[0];
+    const window = liveShellWindow();
     if (window === undefined) return { ok: false, refused: "there is no window to focus" };
     if (window.isMinimized()) window.restore();
     window.focus();
@@ -526,7 +537,7 @@ function registerHandlers() {
    * the host shortcut.
    */
   handle("desktop:minimizeWindow", async () => {
-    const window = BrowserWindow.getAllWindows()[0];
+    const window = liveShellWindow();
     if (window === undefined) return { ok: false, refused: "there is no window to minimize" };
     if (!window.isMinimizable()) return { ok: false, refused: "this window cannot be minimized" };
     window.minimize();
@@ -543,7 +554,7 @@ function registerHandlers() {
    */
   handle("desktop:setFullScreen", async (value) => {
     if (typeof value !== "boolean") return { ok: false, refused: "full screen must be true or false" };
-    const window = BrowserWindow.getAllWindows()[0];
+    const window = liveShellWindow();
     if (window === undefined) return { ok: false, refused: "there is no window to resize" };
     if (!window.isFullScreenable()) return { ok: false, refused: "this window cannot go full screen" };
     if (value && windowMode !== undefined && windowMode.mode !== "normal") {
