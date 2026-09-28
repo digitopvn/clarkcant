@@ -7,6 +7,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { runCli } from "../src/cli.ts";
 import { runConformance } from "../src/conformance.ts";
 import type { FrameFacts } from "../src/dev-shell.ts";
+import { packageManifestSchema } from "@clarkcant/contracts";
 import { readPackage } from "@clarkcant/core";
 
 /**
@@ -62,6 +63,14 @@ describe("clark widget init", () => {
     // the wrong lesson about what the suite is for.
     expect(result.checks.filter((check) => check.status === "fail").map((check) => check.id)).toEqual([]);
     expect(result.ok).toBe(true);
+  });
+
+  it("writes the canonical manifest, not the widget-only format it still reads", async () => {
+    const root = await tempPackage();
+    const manifest: unknown = JSON.parse(readFileSync(join(root, "clarkcant.json"), "utf8"));
+
+    expect(packageManifestSchema.safeParse(manifest).success).toBe(true);
+    expect(manifest).toMatchObject({ schemaVersion: 2, facets: [{ kind: "ui", isolation: "isolated-ui" }] });
   });
 
   it("refuses an unknown template instead of quietly scaffolding blank", async () => {
@@ -455,6 +464,30 @@ describe("clark widget publish", () => {
     for (const field of ["version", "displayName", "description", "publisher", "platforms", "hostApi", "permissionsSummary", "preview"]) {
       expect(entry[field], field).toBeDefined();
     }
+  });
+
+  it("lists every facet the package declares, with the lane of its least isolated one", async () => {
+    const root = await tempPackage();
+    const manifest = JSON.parse(readFileSync(join(root, "clarkcant.json"), "utf8")) as { id: string; facets: unknown[] };
+    manifest.facets.push({
+      kind: "tools",
+      id: `${manifest.id}.service`,
+      entry: "service/server.mjs",
+      isolation: "service",
+      protocol: "mcp-stdio",
+      capabilities: [{ tool: "list", ref: `${manifest.id}.items.list@1`, summary: "List items", effectCategory: "read" }],
+    });
+    writeFileSync(join(root, "clarkcant.json"), JSON.stringify(manifest, null, 2));
+
+    expect(await runCli(["widget", "publish", root])).toBe(0);
+
+    const entry = JSON.parse(readFileSync(join(root, "dist", "directory-entry.json"), "utf8")) as Record<string, unknown>;
+    expect(entry["facets"]).toEqual(["ui", "tools"]);
+    expect(entry["isolations"]).toEqual([
+      { facetKind: "ui", isolation: "isolated-ui" },
+      { facetKind: "tools", isolation: "service" },
+    ]);
+    expect(entry["riskTier"]).toBe("service");
   });
 
   it("refuses to publish a package that fails conformance", async () => {

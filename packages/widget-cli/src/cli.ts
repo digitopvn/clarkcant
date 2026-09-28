@@ -4,7 +4,13 @@ import { join, relative } from "node:path";
 import { pathToFileURL } from "node:url";
 
 import { definitionDigest } from "@clarkcant/widget-host";
-import { directoryEntrySchema, riskLaneFor, type DirectoryEntry } from "@clarkcant/contracts";
+import {
+  PACKAGE_MANIFEST_SCHEMA_VERSION,
+  directoryEntrySchema,
+  riskLaneFor,
+  type DirectoryEntry,
+  type PackageManifest,
+} from "@clarkcant/contracts";
 
 import { runConformance, type ConformanceReport } from "./conformance.ts";
 import type { FrameFacts } from "./dev-shell.ts";
@@ -123,14 +129,17 @@ function definitionFor(id: string, template: Template): Record<string, unknown> 
 }
 
 function init(root: string, template: Template): void {
-  const id = `com.example.${root.split(/[\\/]/).pop() ?? "widget"}`;
+  // Lower-case letters, digits and hyphens, starting with a letter: the shape a capability name's segments take, so a
+  // service facet added later can name its capabilities under this id.
+  const slug = (root.split(/[\\/]/).pop() ?? "").toLowerCase().replace(/[^a-z0-9-]+/g, "-").replace(/^[^a-z]+/, "");
+  const id = `com.example.${slug === "" ? "widget" : slug}`;
   mkdirSync(join(root, "widgets", "main"), { recursive: true });
   mkdirSync(join(root, "fixtures"), { recursive: true });
   mkdirSync(join(root, "previews"), { recursive: true });
   mkdirSync(join(root, "test"), { recursive: true });
 
   const manifest = {
-    schemaVersion: 1,
+    schemaVersion: PACKAGE_MANIFEST_SCHEMA_VERSION,
     id,
     version: "0.1.0",
     displayName: "My Widget",
@@ -138,7 +147,7 @@ function init(root: string, template: Template): void {
     hostApi: { min: 1, max: 1 },
     facets: [
       {
-        kind: "widget",
+        kind: "ui",
         id: `${id}.main@1`,
         entry: "widgets/main/index.html",
         definition: "widgets/main/widget.json",
@@ -152,6 +161,7 @@ function init(root: string, template: Template): void {
     // not declare it would scaffold a package unable to say where it runs.
     platforms: ["darwin-arm64", "linux-x64", "win32-x64"],
     publisher: { id: "example", sourceUrl: "https://github.com/example/my-widget", license: "MIT" },
+    dependencies: [],
   };
   const definition = { ...definitionFor(`${id}.main@1`, template), id: `${id}.main@1` };
 
@@ -298,25 +308,9 @@ function pack(root: string): number {
 
 /* --------------------------------------------------------------- publish */
 
-/** Facet kinds as the directory names them: the manifest says `widget`, the contract says `ui`. */
-const DIRECTORY_FACETS: Record<string, "ui" | "tools" | "skills" | "prompts" | "themes" | "setup" | "driver" | "voice"> = {
-  widget: "ui",
-  composition: "ui",
-  tools: "tools",
-  services: "tools",
-  skills: "skills",
-  recipes: "prompts",
-  themes: "themes",
-};
-
-function requestedSummary(permissions: {
-  networkOrigins: readonly string[];
-  filesystem: readonly string[];
-  microphone: boolean;
-  camera: boolean;
-}): string[] {
+function requestedSummary(permissions: PackageManifest["permissions"]): string[] {
   const out = permissions.networkOrigins.map((origin) => "network: " + origin);
-  for (const path of permissions.filesystem) out.push("filesystem: " + path);
+  for (const { path, access } of permissions.filesystem) out.push(`filesystem (${access}): ${path}`);
   if (permissions.microphone) out.push("microphone");
   if (permissions.camera) out.push("camera");
   return out;
@@ -359,6 +353,12 @@ function publish(root: string): number {
   }
 
   const pkg = readPackage(root);
+  const publisher = pkg.manifest.publisher;
+  if (publisher === undefined) {
+    // Optional for a private package, required for a listing: a directory names who a package comes from.
+    process.stderr.write("clarkcant.json declares no publisher, and a directory entry has to say who a package comes from.");
+    return 1;
+  }
   const entry: DirectoryEntry = {
     packageId: pkg.manifest.id,
     version: pkg.manifest.version,
@@ -367,17 +367,16 @@ function publish(root: string): number {
     // The package's own directory. A submission would name the published source (a git ref or an npm version);
     // preparing from a checkout can only honestly say where it is now.
     source: { kind: "local", path: root },
-    publisher: pkg.manifest.publisher,
+    // The signature is verified against the artifact, never listed as though the listing vouched for it.
+    publisher: { id: publisher.id, sourceUrl: publisher.sourceUrl, license: publisher.license },
     // Empty rather than absent: a package without preview media is listed, not hidden.
     preview: {},
-    facets: [...new Set(pkg.manifest.facets.map((facet) => DIRECTORY_FACETS[facet.kind] ?? "ui"))],
+    // The manifest and the directory share one facet vocabulary, so what a listing advertises is what the package holds.
+    facets: [...new Set(pkg.manifest.facets.map((facet) => facet.kind))],
     // From the manifest, one entry per facet: the install supervisor plans isolation per facet, and this is the
     // only place that knows the answer without guessing it back out of the strongest lane.
-    isolations: pkg.manifest.facets.map((facet) => ({
-      facetKind: DIRECTORY_FACETS[facet.kind] ?? "ui",
-      isolation: facet.isolation,
-    })),
-    platforms: pkg.manifest.platforms as DirectoryEntry["platforms"],
+    isolations: pkg.manifest.facets.map((facet) => ({ facetKind: facet.kind, isolation: facet.isolation })),
+    platforms: pkg.manifest.platforms,
     hostApi: pkg.manifest.hostApi,
     permissionsSummary: requestedSummary(pkg.manifest.permissions),
     // From the isolation the facets declare, never from what the publisher says about their own package.
@@ -526,4 +525,4 @@ export { applyShellAction, auditFrame, initialState, renderShell } from "./dev-s
 if (process.argv[1] !== undefined && import.meta.url === pathToFileURL(process.argv[1]).href) {
   process.exitCode = await runCli(process.argv.slice(2));
 }
-export { readPackage, manifestSchema } from "@clarkcant/core";
+export { readPackage, parseManifest, widgetManifestV1Schema } from "@clarkcant/core";

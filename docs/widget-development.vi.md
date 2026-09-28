@@ -83,10 +83,11 @@ UI facet phải update/activate độc lập khỏi Pi worker khi không có fac
 
 ## 4. Package manifest
 
-Target root manifest:
+Mỗi package có một manifest gốc duy nhất là `clarkcant.json`, dùng chung cho mọi facet của package. Hợp đồng là
+`packageManifestSchema` trong `packages/contracts/src/install.ts`, và `clark widget init` sinh ra đúng dạng này:
 
     {
-      "schemaVersion": 1,
+      "schemaVersion": 2,
       "id": "com.example.calendar",
       "version": "1.2.0",
       "displayName": "Calendar Plus",
@@ -94,17 +95,32 @@ Target root manifest:
       "hostApi": { "min": 1, "max": 1 },
       "facets": [
         {
-          "kind": "widget",
+          "kind": "ui",
           "id": "com.example.calendar.week@1",
           "entry": "widgets/main/index.html",
           "definition": "widgets/main/widget.json",
           "isolation": "isolated-ui"
+        },
+        {
+          "kind": "tools",
+          "id": "com.example.calendar.service",
+          "entry": "service/server.mjs",
+          "isolation": "service",
+          "protocol": "mcp-stdio",
+          "capabilities": [
+            {
+              "tool": "list_events",
+              "ref": "com.example.calendar.events.list@1",
+              "summary": "List the events in a date range",
+              "effectCategory": "read"
+            }
+          ]
         }
       ],
       "requestedCapabilities": [],
       "permissions": {
         "networkOrigins": [],
-        "filesystem": [],
+        "filesystem": [{ "path": "cache", "access": "write" }],
         "microphone": false,
         "camera": false,
         "lifecycleScripts": []
@@ -114,9 +130,45 @@ Target root manifest:
         "id": "example",
         "sourceUrl": "https://github.com/example/calendar-plus",
         "license": "MIT"
-      }
+      },
+      "dependencies": []
     }
 
+
+Mỗi loại facet chỉ chạy trong đúng một lane, và schema từ chối mọi cách ghép khác:
+
+| `kind` | `isolation` | Ý nghĩa |
+|---|---|---|
+| `ui` | `isolated-ui` | Widget vẽ trong frame riêng. `id` phải trùng với id nằm trong `definition`. |
+| `tools` | `service` | Một process riêng, nói MCP qua stdio và khai báo mọi capability nó cung cấp. |
+| `skills`, `prompts`, `themes`, `setup` | `declarative` | Dữ liệu mà host đọc, không bao giờ chạy. |
+| `driver`, `voice` | `service` hoặc `trusted-native` | Có trong bộ từ vựng để listing hiển thị được lane. Hiện chưa host nào chạy loại này từ package. |
+
+Reader cũng từ chối manifest khi:
+
+- hai facet trùng `id`;
+- `entry` hoặc `definition` của facet nằm ngoài package (`..`, đường dẫn tuyệt đối, ký tự ổ đĩa) hoặc là URL;
+- `ref` của một capability trong facet `tools` không nằm dưới package id (`<package id>.<name>@<major>`), hoặc một
+  tool hay capability bị khai báo hai lần.
+
+Facet `tools` khai báo capability ngay trong manifest, nhờ vậy màn hình đồng ý hiển thị được chúng trước khi bất kỳ
+đoạn code nào của package chạy. Hiện tại manifest đã được kiểm tra và hiển thị trong listing, kể cả risk lane
+`service` của facet. Host chưa khởi chạy service facet: việc đó thuộc
+[#221](https://github.com/digitopvn/clarkcant/issues/221).
+
+`publisher` là tuỳ chọn trong manifest. `clark widget publish` thì bắt buộc phải có, vì một directory entry phải
+cho biết package đến từ ai. `dependencies` mặc định là `[]`.
+
+**Phiên bản 1.** Trước phiên bản 2, `clark widget init` sinh ra manifest chỉ dành cho widget, với
+`"schemaVersion": 1`. Manifest này dùng facet `"kind": "widget"`, còn `filesystem` là danh sách đường dẫn.
+ClarkCant vẫn đọc định dạng này, nhưng chỉ trong bộ nhớ:
+
+- facet `widget` trở thành facet `ui`;
+- mỗi đường dẫn filesystem trở thành `{ "path": …, "access": "read" }`.
+
+File không bao giờ bị ghi lại, vì consent gắn với digest của các byte trong package. Reader cũng không sửa gì. Nếu một
+giá trị của phiên bản 1 không hợp lệ trong manifest chuẩn (version không theo semver, hoặc platform không tồn tại),
+reader sẽ báo lỗi.
 Manifest là request metadata, không tự cấp quyền.
 
 Version, source artifact và digest mà host cài phải immutable trong một generation.

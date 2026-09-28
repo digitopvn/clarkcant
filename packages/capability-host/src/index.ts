@@ -4,6 +4,7 @@ import {
   type InstallState,
   type IsolationClass,
   type PackageManifest,
+  manifestProblems,
   networkOriginProblem,
   requiredRefreshScope,
 } from "@clarkcant/contracts";
@@ -58,7 +59,8 @@ export function rankCandidates(
  * Everything a manifest asks for is a request; nothing here grants it.
  */
 export function validateManifest(manifest: PackageManifest): { ok: true } | { ok: false; problems: string[] } {
-  const problems: string[] = [];
+  // Duplicate ids, entries outside the package, and capabilities named outside it: the rules the contract owns.
+  const problems = manifestProblems(manifest);
   const facetKeys = manifest.facets.map((facet) => `${facet.kind}:${facet.entry}`);
   if (new Set(facetKeys).size !== facetKeys.length) {
     problems.push("two facets declare the same kind and entry");
@@ -68,12 +70,6 @@ export function validateManifest(manifest: PackageManifest): { ok: true } | { ok
       problems.push(
         `facet ${facet.entry} is trusted-native and also declares lifecycle scripts; both are unnecessary risk and must be justified separately`,
       );
-    }
-    if (facet.entry.includes("..")) {
-      problems.push(`facet entry ${facet.entry} escapes the package root`);
-    }
-    if (/^[a-z]+:\/\//.test(facet.entry)) {
-      problems.push(`facet entry ${facet.entry} is a remote URL; entries must be installed artifacts`);
     }
   }
   for (const origin of manifest.permissions.networkOrigins) {

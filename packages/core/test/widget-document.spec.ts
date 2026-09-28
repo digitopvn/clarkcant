@@ -89,10 +89,21 @@ describe("the network origins a package may declare", () => {
 
   it("refuses a manifest that declares one, with the reason", () => {
     const manifest = {
+      schemaVersion: 2,
       id: "com.example.widget",
       version: "1.0.0",
+      displayName: "Widget",
+      description: "A widget.",
       hostApi: { min: 1, max: 1 },
-      facets: [{ kind: "ui", entry: "widgets/main/index.html", isolation: "isolated-ui" }],
+      facets: [
+        {
+          kind: "ui",
+          id: "com.example.widget.main@1",
+          entry: "widgets/main/index.html",
+          definition: "widgets/main/widget.json",
+          isolation: "isolated-ui",
+        },
+      ],
       requestedCapabilities: [],
       permissions: {
         networkOrigins: ["https://x.example; report-uri https://evil.example"],

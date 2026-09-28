@@ -83,10 +83,11 @@ A UI facet must update/activate independently of the Pi worker when no Pi facet 
 
 ## 4. Package manifest
 
-Target root manifest:
+A package has one root manifest, `clarkcant.json`, for every facet it carries. The contract is
+`packageManifestSchema` in `packages/contracts/src/install.ts`, and `clark widget init` writes it:
 
     {
-      "schemaVersion": 1,
+      "schemaVersion": 2,
       "id": "com.example.calendar",
       "version": "1.2.0",
       "displayName": "Calendar Plus",
@@ -94,17 +95,32 @@ Target root manifest:
       "hostApi": { "min": 1, "max": 1 },
       "facets": [
         {
-          "kind": "widget",
+          "kind": "ui",
           "id": "com.example.calendar.week@1",
           "entry": "widgets/main/index.html",
           "definition": "widgets/main/widget.json",
           "isolation": "isolated-ui"
+        },
+        {
+          "kind": "tools",
+          "id": "com.example.calendar.service",
+          "entry": "service/server.mjs",
+          "isolation": "service",
+          "protocol": "mcp-stdio",
+          "capabilities": [
+            {
+              "tool": "list_events",
+              "ref": "com.example.calendar.events.list@1",
+              "summary": "List the events in a date range",
+              "effectCategory": "read"
+            }
+          ]
         }
       ],
       "requestedCapabilities": [],
       "permissions": {
         "networkOrigins": [],
-        "filesystem": [],
+        "filesystem": [{ "path": "cache", "access": "write" }],
         "microphone": false,
         "camera": false,
         "lifecycleScripts": []
@@ -114,15 +130,48 @@ Target root manifest:
         "id": "example",
         "sourceUrl": "https://github.com/example/calendar-plus",
         "license": "MIT"
-      }
+      },
+      "dependencies": []
     }
+
+Each facet kind runs in exactly one lane, and the schema refuses any other pairing:
+
+| `kind` | `isolation` | What it is |
+|---|---|---|
+| `ui` | `isolated-ui` | A widget drawn in its own frame. `id` must equal the id inside `definition`. |
+| `tools` | `service` | A separate process that speaks MCP over stdio and declares every capability it provides. |
+| `skills`, `prompts`, `themes`, `setup` | `declarative` | Data a host reads and never runs. |
+| `driver`, `voice` | `service` or `trusted-native` | Part of the vocabulary, so a listing can show the lane. No host runs one from a package yet. |
+
+The reader also refuses a manifest when:
+
+- two facets share an `id`;
+- a facet's `entry` or `definition` is outside the package (`..`, an absolute path, a drive letter) or is a URL;
+- a `tools` capability `ref` is not named under the package id (`<package id>.<name>@<major>`), or a tool or
+  capability is declared twice.
+
+A `tools` facet declares its capabilities in the manifest, so consent can show them before any of the package's code
+runs. The manifest is validated and listed today, including the facet's `service` risk lane. The host does not start
+service facets yet: that is [#221](https://github.com/digitopvn/clarkcant/issues/221).
+
+`publisher` is optional in the manifest. `clark widget publish` requires it, because a directory entry has to say who
+a package comes from. `dependencies` defaults to `[]`.
+
+**Version 1.** Before version 2, `clark widget init` wrote a widget-only manifest with `"schemaVersion": 1`. It used
+`"kind": "widget"` facets, and `filesystem` was a list of paths. ClarkCant still reads that format, but only in memory:
+
+- a `widget` facet becomes a `ui` facet;
+- each filesystem path becomes `{ "path": …, "access": "read" }`.
+
+The file is never rewritten, because consent is bound to the digest of the package's bytes. Nothing is repaired either.
+If a version 1 value is not valid in the canonical manifest (a version that is not semver, or an unknown platform),
+the reader reports it.
 
 The manifest is request metadata; it does not grant permissions by itself.
 
 The version, source artifact and digest the host installs must be immutable within a generation.
 
 ---
-
 ## 5. Widget definition
 
 Every widget definition must declare:

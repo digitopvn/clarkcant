@@ -442,13 +442,11 @@ export async function installPackage(
    * succeed. Values that do not parse as a `CapabilityRef` are dropped rather than trusted — the manifest is
    * package-authored content, not a schema-checked boundary.
    */
-  const manifestRequestedCapabilities: readonly CapabilityRef[] =
-    resolvedEntry.source.kind === "local"
-      ? (readPackage(resolvedEntry.source.path).manifest.requestedCapabilities ?? [])
-          .map((ref) => capabilityRefSchema.safeParse(ref))
-          .filter((parsed): parsed is { success: true; data: CapabilityRef } => parsed.success)
-          .map((parsed) => parsed.data)
-      : [];
+  const fetchedManifest = resolvedEntry.source.kind === "local" ? readPackage(resolvedEntry.source.path).manifest : undefined;
+  const manifestRequestedCapabilities: readonly CapabilityRef[] = (fetchedManifest?.requestedCapabilities ?? [])
+    .map((ref) => capabilityRefSchema.safeParse(ref))
+    .filter((parsed): parsed is { success: true; data: CapabilityRef } => parsed.success)
+    .map((parsed) => parsed.data);
 
   /*
    * The risk tier the granted-set decision is made in, computed from the package's own facet isolations rather
@@ -457,7 +455,13 @@ export async function installPackage(
    * lower it — a directory that under-claimed a native facet as `declarative` cannot use that claim to grant
    * capabilities at a weaker risk category than the facets it actually isolates.
    */
-  const computedRiskTier = riskLaneFor([...entry.isolations.map((facet) => facet.isolation), entry.riskTier]);
+  const computedRiskTier = riskLaneFor([
+    ...entry.isolations.map((facet) => facet.isolation),
+    entry.riskTier,
+    // The facets the digest-verified artifact itself declares, so a listing that left a service facet out cannot
+    // lower the lane its capabilities are granted in.
+    ...(fetchedManifest?.facets ?? []).map((facet) => facet.isolation),
+  ]);
 
   /*
    * The granted set, derived from the manifest's request rather than trusted from the request body (issue #93,
