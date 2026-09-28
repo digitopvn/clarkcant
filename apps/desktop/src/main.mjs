@@ -591,7 +591,8 @@ function registerHandlers() {
       // A second detached window would be a second owner, which is the thing detaching must not create.
       return { ok: false, refused: "a widget is already detached" };
     }
-    if (shellWindow === undefined) {
+    const conversationWindow = liveShellWindow();
+    if (conversationWindow === undefined) {
       return { ok: false, refused: "there is no conversation window to detach from" };
     }
     const conversationId = typeof input?.conversationId === "string" ? input.conversationId : "";
@@ -619,7 +620,7 @@ function registerHandlers() {
     }
     address.searchParams.set("detached", "1");
     const url = address.toString();
-    const bounds = shellWindow.getBounds();
+    const bounds = conversationWindow.getBounds();
     const window = new BrowserWindow({
       ...detachedWindowOptions(join(here, "detached-preload.cjs"), bounds, screen.getDisplayMatching(bounds).workArea),
       backgroundColor: "#0d1117",
