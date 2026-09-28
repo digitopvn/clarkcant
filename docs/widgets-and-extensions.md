@@ -307,19 +307,44 @@ The release proves a custom editor and one conformance media fixture; it does no
 
 ```json
 {
+  "schemaVersion": 2,
   "id": "example.calendar-pack",
   "version": "0.2.0",
-  "hostApi": ">=1 <2",
-  "facets": {
-    "tools": { "entry": "dist/connector.js", "isolation": "service" },
-    "ui": [{ "id": "example.calendar.week", "entry": "dist/widget/index.html" }],
-    "skills": ["skills/calendar.md"],
-    "setup": "setup/calendar.json"
-  },
-  "requestedCapabilities": ["connection.calendar.read", "widget.state.write"],
+  "displayName": "Calendar pack",
+  "description": "A week view with a calendar connector behind it.",
+  "hostApi": { "min": 1, "max": 1 },
+  "facets": [
+    {
+      "kind": "tools",
+      "id": "example.calendar-pack.connector",
+      "entry": "dist/connector.mjs",
+      "isolation": "service",
+      "protocol": "mcp-stdio",
+      "capabilities": [
+        {
+          "tool": "list_events",
+          "ref": "example.calendar-pack.events.list@1",
+          "summary": "List events in a date range",
+          "effectCategory": "read"
+        }
+      ]
+    },
+    {
+      "kind": "ui",
+      "id": "example.calendar-pack.week@1",
+      "entry": "dist/widget/index.html",
+      "definition": "dist/widget/widget.json",
+      "isolation": "isolated-ui"
+    },
+    { "kind": "skills", "id": "example.calendar-pack.skills", "entry": "skills/", "isolation": "declarative" },
+    { "kind": "setup", "id": "example.calendar-pack.setup", "entry": "setup/calendar.json", "isolation": "declarative" }
+  ],
+  "requestedCapabilities": ["widget.state.write@1"],
+  "permissions": { "networkOrigins": [], "filesystem": [], "microphone": false, "camera": false, "lifecycleScripts": [] },
   "platforms": ["linux-x64", "linux-arm64", "darwin-arm64"]
 }
 ```
+The shape is `packageManifestSchema` (`packages/contracts/src/install.ts`); [widget development §4](widget-development.md#4-package-manifest) lists the lane each facet kind runs in and the rules the reader enforces. A service facet's capabilities are declared in the manifest, so consent can show them before any code runs. The host validates and lists them today, but does not yet start the service ([#221](https://github.com/digitopvn/clarkcant/issues/221)).
 
 The manifest is the package's proposal metadata; it does not grant the capabilities it declares. The install record adds resolved versions/digests, transitive dependencies, target node, auth/data recipients and approved grants. Fields have a strict schema, and no arbitrary lifecycle script auto-runs.
 

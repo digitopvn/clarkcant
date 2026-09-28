@@ -41,14 +41,95 @@ export const isolationClassSchema = z.enum([
 ]);
 export type IsolationClass = z.infer<typeof isolationClassSchema>;
 
-export const facetDeclarationSchema = z.strictObject({
-  kind: facetKindSchema,
-  entry: z.string().min(1).max(300),
-  isolation: isolationClassSchema,
-  /** Only meaningful for `ui` facets. */
-  widgetId: z.string().min(1).max(160).optional(),
-  renderer: z.enum(["catalog", "isolated-app", "mcp-app"]).optional(),
+/* ------------------------------------------------------------------ *
+ * Facets
+ * ------------------------------------------------------------------ */
+
+const facetIdSchema = z.string().min(1).max(160);
+/** A path inside the package. Escapes and remote URLs are refused by `manifestProblems`, not by the shape. */
+const packagePathSchema = z.string().min(1).max(300);
+
+/**
+ * A widget the package draws in its own isolated frame.
+ *
+ * `id` is the widget definition's id, and `definition` is the file that holds it: two places saying the same thing,
+ * which the reader checks agree, because an instance names the id and the frame is served from the entry.
+ */
+export const uiFacetSchema = z.strictObject({
+  kind: z.literal("ui"),
+  id: facetIdSchema,
+  entry: packagePathSchema,
+  definition: packagePathSchema,
+  isolation: z.literal("isolated-ui"),
 });
+
+/**
+ * One capability a service facet says it provides.
+ *
+ * Declared in the manifest rather than discovered from the running service, because consent has to show what a
+ * package will be able to do *before* any of its code runs. The service is held to this list when it starts: a tool
+ * it advertises that is not declared here is not registered, and a declared one it does not advertise is not ready.
+ */
+export const serviceCapabilityDeclarationSchema = z.strictObject({
+  /** The name the service answers to on its own protocol. */
+  tool: z.string().regex(/^[A-Za-z][A-Za-z0-9_.-]{0,63}$/, { error: "must be a tool name of letters, digits, _ . or -" }),
+  /** The capability it becomes. Must live under the package's own id, which `manifestProblems` checks. */
+  ref: capabilityRefSchema,
+  summary: z.string().min(1).max(400),
+  effectCategory: effectCategorySchema,
+});
+export type ServiceCapabilityDeclaration = z.infer<typeof serviceCapabilityDeclarationSchema>;
+
+/**
+ * Code the package runs as a separate process, reached only through the host.
+ *
+ * The protocol is named rather than assumed so a later transport is a new literal, not a reinterpretation of an old
+ * manifest. Today there is one: the Model Context Protocol over the process's standard streams, which opens no port,
+ * so nothing on the machine — a widget frame included — can reach the service except through its host.
+ */
+export const toolsFacetSchema = z.strictObject({
+  kind: z.literal("tools"),
+  id: facetIdSchema,
+  entry: packagePathSchema,
+  isolation: z.literal("service"),
+  protocol: z.literal("mcp-stdio"),
+  capabilities: z.array(serviceCapabilityDeclarationSchema).min(1).max(64),
+});
+export type ToolsFacet = z.infer<typeof toolsFacetSchema>;
+
+/**
+ * A data-only facet: text or configuration a host reads, never runs.
+ *
+ * Skills and prompts reach the agent as resources, a theme reaches the renderer as tokens, and setup is a declarative
+ * flow description. None of them has an executable payload, which is what `declarative` means.
+ */
+export const declarativeFacetSchema = z.strictObject({
+  kind: z.enum(["skills", "prompts", "themes", "setup"]),
+  id: facetIdSchema,
+  entry: packagePathSchema,
+  isolation: z.literal("declarative"),
+});
+
+/**
+ * Drivers and voice engines.
+ *
+ * Part of the vocabulary so a manifest can describe them and a listing can show their lane, but no host runs one from
+ * a package yet: the reader reports such a facet as declared-but-not-run rather than dropping it or pretending.
+ */
+export const nativeFacetSchema = z.strictObject({
+  kind: z.enum(["driver", "voice"]),
+  id: facetIdSchema,
+  entry: packagePathSchema,
+  isolation: z.enum(["service", "trusted-native"]),
+});
+
+export const facetDeclarationSchema = z.discriminatedUnion("kind", [
+  uiFacetSchema,
+  toolsFacetSchema,
+  declarativeFacetSchema,
+  nativeFacetSchema,
+]);
+export type FacetDeclaration = z.infer<typeof facetDeclarationSchema>;
 
 /**
  * Why a declared network origin is not one a package may reach, or `undefined` when it is.
@@ -90,9 +171,27 @@ export const networkOriginSchema = z
     error: (issue) => `network origin ${JSON.stringify(issue.input)} ${networkOriginProblem(String(issue.input)) ?? "is invalid"}`,
   });
 
+/**
+ * The version of the manifest format this file describes.
+ *
+ * `1` was the widget-only manifest `clark widget` scaffolded before a package could carry anything but widgets. It is
+ * still read — a package installed under it keeps working — but only by `normalizeWidgetManifestV1` in core, which
+ * presents it in this shape. Nothing writes `1` any more.
+ */
+export const PACKAGE_MANIFEST_SCHEMA_VERSION = 2;
+
+/**
+ * The one manifest a ClarkCant package has, at its root as `clarkcant.json`.
+ *
+ * One identity, one version, one digest for the whole package, while each facet keeps its own execution lane and
+ * lifecycle: a UI facet updates without touching a service, a skill reloads without restarting a worker.
+ */
 export const packageManifestSchema = z.strictObject({
+  schemaVersion: z.literal(PACKAGE_MANIFEST_SCHEMA_VERSION),
   id: z.string().min(1).max(160),
   version: semverSchema,
+  displayName: z.string().min(1).max(200),
+  description: z.string().min(1).max(600),
   /** Host API range the package was built against. */
   hostApi: z
     .strictObject({ min: z.int().nonnegative(), max: z.int().nonnegative() })
@@ -138,9 +237,58 @@ export const packageManifestSchema = z.strictObject({
         version: semverSchema,
       }),
     )
-    .max(256),
+    .max(256)
+    .default([]),
 });
 export type PackageManifest = z.infer<typeof packageManifestSchema>;
+
+/**
+ * What the shape cannot say about a manifest: rules that relate one field to another.
+ *
+ * Kept apart from the schema so a reader can report every problem at once, with the field named, rather than stop at
+ * the first refinement that failed. Empty means the manifest is coherent; it still grants nothing.
+ */
+export function manifestProblems(manifest: PackageManifest): string[] {
+  const problems: string[] = [];
+
+  const ids = manifest.facets.map((facet) => facet.id);
+  for (const id of new Set(ids)) {
+    if (ids.filter((candidate) => candidate === id).length > 1) problems.push(`facets: id "${id}" is declared twice`);
+  }
+
+  for (const facet of manifest.facets) {
+    const paths = facet.kind === "ui" ? [facet.entry, facet.definition] : [facet.entry];
+    for (const path of paths) {
+      // A drive letter is checked before the URL shape, which `C:` also matches.
+      if (/^[a-z]:/i.test(path) || path.startsWith("/") || path.startsWith("\\") || path.split(/[\\/]/).includes("..")) {
+        problems.push(`facet ${facet.id}: ${path} escapes the package root`);
+      } else if (/^[a-z][a-z0-9+.-]*:/i.test(path)) {
+        problems.push(`facet ${facet.id}: ${path} is a URL; a facet's files must be inside the package`);
+      }
+    }
+  }
+
+  const refs = new Set<string>();
+  for (const facet of manifest.facets) {
+    if (facet.kind !== "tools") continue;
+    const tools = new Set<string>();
+    for (const capability of facet.capabilities) {
+      /*
+       * A package names capabilities in its own namespace only. Without this, a package could declare
+       * `google.calendar.events.delete@1` and sit in the registry under a name users and policies already trust.
+       */
+      if (!capability.ref.startsWith(`${manifest.id}.`)) {
+        problems.push(`facet ${facet.id}: capability ${capability.ref} must be named under the package id, as ${manifest.id}.<name>@<n>`);
+      }
+      if (refs.has(capability.ref)) problems.push(`facet ${facet.id}: capability ${capability.ref} is declared twice`);
+      refs.add(capability.ref);
+      if (tools.has(capability.tool)) problems.push(`facet ${facet.id}: tool ${capability.tool} is declared twice`);
+      tools.add(capability.tool);
+    }
+  }
+
+  return problems;
+}
 
 /* ------------------------------------------------------------------ *
  * Install plan

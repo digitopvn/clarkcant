@@ -307,19 +307,44 @@ Release chứng minh custom editor và một conformance media fixture, không c
 
 ```json
 {
+  "schemaVersion": 2,
   "id": "example.calendar-pack",
   "version": "0.2.0",
-  "hostApi": ">=1 <2",
-  "facets": {
-    "tools": { "entry": "dist/connector.js", "isolation": "service" },
-    "ui": [{ "id": "example.calendar.week", "entry": "dist/widget/index.html" }],
-    "skills": ["skills/calendar.md"],
-    "setup": "setup/calendar.json"
-  },
-  "requestedCapabilities": ["connection.calendar.read", "widget.state.write"],
+  "displayName": "Calendar pack",
+  "description": "A week view with a calendar connector behind it.",
+  "hostApi": { "min": 1, "max": 1 },
+  "facets": [
+    {
+      "kind": "tools",
+      "id": "example.calendar-pack.connector",
+      "entry": "dist/connector.mjs",
+      "isolation": "service",
+      "protocol": "mcp-stdio",
+      "capabilities": [
+        {
+          "tool": "list_events",
+          "ref": "example.calendar-pack.events.list@1",
+          "summary": "List events in a date range",
+          "effectCategory": "read"
+        }
+      ]
+    },
+    {
+      "kind": "ui",
+      "id": "example.calendar-pack.week@1",
+      "entry": "dist/widget/index.html",
+      "definition": "dist/widget/widget.json",
+      "isolation": "isolated-ui"
+    },
+    { "kind": "skills", "id": "example.calendar-pack.skills", "entry": "skills/", "isolation": "declarative" },
+    { "kind": "setup", "id": "example.calendar-pack.setup", "entry": "setup/calendar.json", "isolation": "declarative" }
+  ],
+  "requestedCapabilities": ["widget.state.write@1"],
+  "permissions": { "networkOrigins": [], "filesystem": [], "microphone": false, "camera": false, "lifecycleScripts": [] },
   "platforms": ["linux-x64", "linux-arm64", "darwin-arm64"]
 }
 ```
+Dạng của manifest là `packageManifestSchema` (`packages/contracts/src/install.ts`). [Widget development §4](widget-development.vi.md#4-package-manifest) liệt kê lane mà mỗi loại facet chạy trong đó và các quy tắc reader áp dụng. Capability của service facet được khai báo ngay trong manifest, nhờ vậy màn hình đồng ý hiển thị được chúng trước khi bất kỳ đoạn code nào chạy. Hiện tại host đã kiểm tra và hiển thị chúng trong listing, nhưng chưa khởi chạy service ([#221](https://github.com/digitopvn/clarkcant/issues/221)).
 
 Manifest là proposal metadata của package; không tự cấp các capabilities kê khai. Install record bổ sung resolved versions/digests, transitive dependencies, target node, auth/data recipients và approved grants. Fields có schema strict, no arbitrary lifecycle script auto-run.
 

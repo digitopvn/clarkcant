@@ -351,10 +351,11 @@ describe("capability host (T24)", () => {
 
   it("rejects a manifest that asks for a wildcard origin or a remote facet entry", () => {
     const result = validateManifest({
+      schemaVersion: 2,
       id: "p",
       version: "1.0.0",
       hostApi: { min: 1, max: 1 },
-      facets: [{ kind: "ui", entry: "https://cdn.example.invalid/widget.js", isolation: "isolated-ui" }],
+      facets: [{ kind: "ui", id: "p.main@1", entry: "https://cdn.example.invalid/widget.js", definition: "widget.json", isolation: "isolated-ui" }],
       requestedCapabilities: [],
       permissions: { networkOrigins: ["*"], filesystem: [], microphone: false, camera: false, lifecycleScripts: [] },
       platforms: ["darwin-arm64"],
@@ -365,10 +366,11 @@ describe("capability host (T24)", () => {
 
   it("rejects a network origin that would inject a directive into the widget's policy", () => {
     const result = validateManifest({
+      schemaVersion: 2,
       id: "p",
       version: "1.0.0",
       hostApi: { min: 1, max: 1 },
-      facets: [{ kind: "ui", entry: "widgets/main/index.html", isolation: "isolated-ui" }],
+      facets: [{ kind: "ui", id: "p.main@1", entry: "widgets/main/index.html", definition: "widgets/main/widget.json", isolation: "isolated-ui" }],
       requestedCapabilities: [],
       permissions: {
         networkOrigins: ["https://api.example.com", "https://x.example; report-uri https://evil.example"],
