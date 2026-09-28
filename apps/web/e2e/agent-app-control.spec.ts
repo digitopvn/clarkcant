@@ -180,6 +180,11 @@ test("the agent cycles the model the way the hotkey does, and the label says whe
   await expect(label).not.toHaveAttribute("data-model-label", before ?? "");
   const after = await label.getAttribute("data-model-label");
   await expect(page.locator(".cc-model-switch [data-model-note]")).toContainText(after ?? "");
+
+  // The profile is the node's, not this page's, so it is put back: a suite that reads the starting profile later
+  // (the hotkey test) must not find the one this test moved to.
+  await askAgent(page, `agent control_app model.select ${before ?? ""}`, DONE);
+  await expect(label).toHaveAttribute("data-model-label", before ?? "", { timeout: 15_000 });
 });
 
 test("the voice agent ends voice mode through the same contract, and the page confirms it", async ({ page, request }) => {
