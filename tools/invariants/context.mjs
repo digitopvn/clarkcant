@@ -9,13 +9,17 @@
  * check has run.
  */
 import { readFileSync, readdirSync, existsSync, statSync, writeFileSync } from "node:fs";
-import { join, relative as relativePath } from "node:path";
+import { join, relative as relativePath, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 export const repoRoot = fileURLToPath(new URL("../..", import.meta.url));
 
+/**
+ * A repo-relative path with `/` separators on every platform. The checks compare these against
+ * allow-lists and tsconfig globs written with `/`; a Windows `\` path would match none of them.
+ */
 export function relative(path) {
-  return relativePath(repoRoot, path);
+  return relativePath(repoRoot, path).split(sep).join("/");
 }
 
 export const REGISTRY_PATH = "packages/contracts/src/implementation-status.ts";

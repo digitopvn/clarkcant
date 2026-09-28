@@ -123,7 +123,8 @@ describe("the terminal socket", () => {
     client.socket.close();
   });
 
-  it("gives one card the keyboard and lets the other watch until it takes over", async () => {
+  // The registry here is configured as Linux running /bin/bash, which a Windows runner does not have.
+  it.skipIf(process.platform === "win32")("gives one card the keyboard and lets the other watch until it takes over", async () => {
     const opened = await registry.open({ cwd: dir });
     if (!opened.ok) throw new Error(opened.reason);
     const id = opened.info.terminalId;
