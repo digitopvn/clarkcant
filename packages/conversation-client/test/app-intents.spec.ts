@@ -77,24 +77,24 @@ function executable(decision: Omit<AppIntentDecision & { kind: "intent" }, "requ
 }
 
 describe("carrying out an intent", () => {
-  it("sends every kind that needs no window to the host method that means it", () => {
+  it("sends every kind that needs no window to the host method that means it", async () => {
     const { host, calls } = recordingHost();
 
-    expect(runAppIntent(executable({ kind: "intent", intent: { kind: "settings.open" }, readBack: "mở" }), host).ran).toBe(true);
-    expect(runAppIntent(executable({ kind: "intent", intent: { kind: "nav.home" }, readBack: "về" }), host).ran).toBe(true);
-    expect(runAppIntent(executable({ kind: "intent", intent: { kind: "composer.attach" }, readBack: "tệp" }), host).ran).toBe(
+    expect((await runAppIntent(executable({ kind: "intent", intent: { kind: "settings.open" }, readBack: "mở" }), host)).ran).toBe(true);
+    expect((await runAppIntent(executable({ kind: "intent", intent: { kind: "nav.home" }, readBack: "về" }), host)).ran).toBe(true);
+    expect((await runAppIntent(executable({ kind: "intent", intent: { kind: "composer.attach" }, readBack: "tệp" }), host)).ran).toBe(
       true,
     );
-    expect(runAppIntent(executable({ kind: "intent", intent: { kind: "voice.end" }, readBack: "kết" }), host).ran).toBe(true);
+    expect((await runAppIntent(executable({ kind: "intent", intent: { kind: "voice.end" }, readBack: "kết" }), host)).ran).toBe(true);
 
     expect(calls).toMatchObject({ settings: [undefined], home: 1, picker: 1, endVoice: 1 });
   });
 
-  it("carries the tab, so opening Settings and changing tab are one host call", () => {
+  it("carries the tab, so opening Settings and changing tab are one host call", async () => {
     const { host, calls } = recordingHost();
 
-    runAppIntent(executable({ kind: "intent", intent: { kind: "settings.open" }, readBack: "mở" }), host);
-    runAppIntent(
+    await runAppIntent(executable({ kind: "intent", intent: { kind: "settings.open" }, readBack: "mở" }), host);
+    await runAppIntent(
       executable({ kind: "intent", intent: { kind: "settings.tab", tab: "extensions" }, readBack: "tab" }),
       host,
     );
@@ -103,14 +103,14 @@ describe("carrying out an intent", () => {
     expect(calls.settings).toEqual([undefined, "extensions"]);
   });
 
-  it("runs the window commands when the host has them", () => {
+  it("runs the window commands when the host has them", async () => {
     const { host, calls } = recordingHost(true);
 
-    runAppIntent(executable({ kind: "intent", intent: { kind: "window.minimal" }, readBack: "thu" }), host);
-    runAppIntent(executable({ kind: "intent", intent: { kind: "window.expand" }, readBack: "mở" }), host);
-    runAppIntent(executable({ kind: "intent", intent: { kind: "window.minimise" }, readBack: "nhỏ" }), host);
-    runAppIntent(executable({ kind: "intent", intent: { kind: "window.fullscreen" }, readBack: "to" }), host);
-    runAppIntent(executable({ kind: "intent", intent: { kind: "window.windowed" }, readBack: "thoát" }), host);
+    await runAppIntent(executable({ kind: "intent", intent: { kind: "window.minimal" }, readBack: "thu" }), host);
+    await runAppIntent(executable({ kind: "intent", intent: { kind: "window.expand" }, readBack: "mở" }), host);
+    await runAppIntent(executable({ kind: "intent", intent: { kind: "window.minimise" }, readBack: "nhỏ" }), host);
+    await runAppIntent(executable({ kind: "intent", intent: { kind: "window.fullscreen" }, readBack: "to" }), host);
+    await runAppIntent(executable({ kind: "intent", intent: { kind: "window.windowed" }, readBack: "thoát" }), host);
 
     expect(calls.fullScreen).toEqual([true, false]);
     expect(calls.minimal).toEqual([true]);
@@ -118,7 +118,7 @@ describe("carrying out an intent", () => {
     expect(calls.minimise).toBe(1);
   });
 
-  it("says a window command needs the desktop app rather than appearing to work", () => {
+  it("says a window command needs the desktop app rather than appearing to work", async () => {
     const { host, calls } = recordingHost();
 
     for (const kind of [
@@ -129,7 +129,7 @@ describe("carrying out an intent", () => {
       "window.windowed",
       "app.quit",
     ] as const) {
-      const run = runAppIntent(executable({ kind: "intent", intent: { kind }, readBack: "ok" }), host);
+      const run = await runAppIntent(executable({ kind: "intent", intent: { kind }, readBack: "ok" }), host);
       expect(run.ran, kind).toBe(false);
       expect(run.say, kind).toBe(NOT_DESKTOP_SAY);
     }
@@ -140,7 +140,7 @@ describe("carrying out an intent", () => {
 });
 
 describe("stopping the reply being written", () => {
-  it("reaches the same stop the button makes", () => {
+  it("reaches the same stop the button makes", async () => {
     let stops = 0;
     const host: AppIntentHost = {
       ...recordingHost().host,
@@ -149,14 +149,14 @@ describe("stopping the reply being written", () => {
       },
     };
 
-    const run = runAppIntent(executable({ kind: "intent", intent: { kind: "turn.stop" }, readBack: "dừng" }), host);
+    const run = await runAppIntent(executable({ kind: "intent", intent: { kind: "turn.stop" }, readBack: "dừng" }), host);
 
     expect(run).toEqual({ ran: true, say: "dừng" });
     expect(stops).toBe(1);
   });
 
-  it("says a host that cannot stop a reply did nothing, rather than reading back a stop", () => {
-    const run = runAppIntent(
+  it("says a host that cannot stop a reply did nothing, rather than reading back a stop", async () => {
+    const run = await runAppIntent(
       executable({ kind: "intent", intent: { kind: "turn.stop" }, readBack: "dừng" }),
       recordingHost().host,
     );
@@ -168,10 +168,10 @@ describe("stopping the reply being written", () => {
 });
 
 describe("what the executor will not do", () => {
-  it("does not act on a question, even for an intent it could otherwise run", () => {
+  it("does not act on a question, even for an intent it could otherwise run", async () => {
     const { host, calls } = recordingHost(true);
 
-    const run = runAppIntent(
+    const run = await runAppIntent(
       {
         kind: "needs-confirmation",
         intent: { kind: "app.quit" },
@@ -188,19 +188,19 @@ describe("what the executor will not do", () => {
     expect(calls.quit).toBe(0);
   });
 
-  it("passes a refusal back as the sentence to say, and does nothing", () => {
+  it("passes a refusal back as the sentence to say, and does nothing", async () => {
     const { host, calls } = recordingHost();
 
-    const run = runAppIntent({ kind: "refused", say: "Tôi chưa hiểu câu lệnh đó." }, host);
+    const run = await runAppIntent({ kind: "refused", say: "Tôi chưa hiểu câu lệnh đó." }, host);
 
     expect(run.ran).toBe(false);
     expect(run.say).toBe("Tôi chưa hiểu câu lệnh đó.");
     expect(calls).toMatchObject({ settings: [], home: 0, picker: 0, endVoice: 0 });
   });
 
-  it("uses the read-back it was given, so a node can word it differently", () => {
+  it("uses the read-back it was given, so a node can word it differently", async () => {
     const { host } = recordingHost();
-    const run = runAppIntent(
+    const run = await runAppIntent(
       executable({ kind: "intent", intent: { kind: "settings.open" }, readBack: "Mở phần cài đặt nhé." }),
       host,
     );

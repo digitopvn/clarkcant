@@ -54,6 +54,15 @@ curl -N -X POST localhost:8765/conversations/$ID/messages/stream \
   -H "authorization: Bearer $TOKEN" -H 'content-type: application/json' -d '{"text":"hello"}'
 ```
 
+A `host-control` event is the agent asking the page to change something (open Settings on a tab, switch the model,
+open voice mode). When the agent asked for it, the event's decision carries a `controlId`, and the page answers with
+`POST /app-intents/host-control/{controlId}` `{ ran, say }` once it has carried the action out or failed to. The agent
+is told the page's own answer, so it says the app changed only when the page reported it did; with no answer within
+a few seconds it is told the action is unconfirmed. Each `controlId` is answered once (a second answer gets
+`404 HOST_CONTROL_NOT_EXPECTED`), and the plain `/messages` route never waits for one. The audit record of an action
+the agent asked for while answering a spoken sentence has `source: "voice-agent"`, distinct from a person's own spoken
+command (`source: "voice"`).
+
 Other routes exist (settings, packages, widgets, peers…) and are reachable with the same token, but they are not yet
 part of the stable description and may change.
 
@@ -79,7 +88,8 @@ tool for it would let an AI client approve its own guarded action. Approvals sta
 the generic relays (a WebSocket `request` frame, `clarkcant api`) and MCP refuse every route that records a person's
 decision with `403 PERSON_ONLY` for the same reason: approving a guarded action (on a card, or one a running task
 raised), deciding a package capability,
-confirming an app intent, trusting a paired peer and issuing a grant. Stop, answering a question and reading stay
+confirming an app intent, reporting what the page did with an action the agent asked for, trusting a paired peer and
+issuing a grant. Stop, answering a question and reading stay
 available. The discovery document lists this under `personDecisions`.
 
 Client configuration — HTTP:

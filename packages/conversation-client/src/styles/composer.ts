@@ -173,6 +173,19 @@ figure.cc-attachment figcaption { margin-top: var(--cc-space-xs); color: var(--c
 .cc-model-switch [data-model-note="true"] { color: var(--cc-text-tertiary); }
 
 /*
+ * What a command could not do. A short-lived line near the top of the conversation, above an open panel, rather
+ * than loose text at the page's edge: it has to be readable when Settings is open and when nothing is.
+ */
+.cc-intent-notice {
+  position: fixed; top: calc(var(--cc-desktop-chrome-height, 0px) + 56px); left: 50%; transform: translateX(-50%);
+  z-index: 75; margin: 0; max-width: min(560px, calc(100vw - 32px));
+  padding: var(--cc-space-xs) var(--cc-space-md);
+  background: var(--cc-elevated); border: 1px solid var(--cc-border); border-radius: var(--cc-radius-card);
+  box-shadow: var(--cc-shadow-soft, 0 12px 32px rgb(0 0 0 / 35%));
+  color: var(--cc-text); font-size: var(--cc-text-label); line-height: 1.45;
+}
+
+/*
  * Task cards.
  *
  * The step marker is a glyph and a status attribute, not a coloured dot: the state has to

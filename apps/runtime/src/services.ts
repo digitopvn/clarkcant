@@ -61,6 +61,7 @@ import type { RuntimeCandidate } from "./runtime-candidates.ts";
 import type { SessionSearchDeps } from "./session-search.ts";
 import type { BackgroundRunInput } from "./model-turn.ts";
 import { createTerminalRegistry, type TerminalRegistry } from "./terminal-sessions.ts";
+import { createHostControlAcks, type HostControlAcks } from "./host-control-acks.ts";
 import { createPiSessionWatcher, defaultPiSessionRoots, type PiSessionWatcher } from "./pi-session-watch.ts";
 import {
   type SessionStoreDeps,
@@ -108,6 +109,12 @@ export interface NodeServices {
    * spawned it, and two nodes in one process must not answer for each other's shells.
    */
   terminals: TerminalRegistry;
+  /**
+   * The page's reports on agent-issued app-control actions, so `control_app` answers with what the screen did.
+   *
+   * On the services for the same reason as the control sessions: a report belongs to this node's screens and turns.
+   */
+  hostControl: HostControlAcks;
   piSessions: PiSessionWatcher;
   conductor: ConductorDeps;
   /**
@@ -586,6 +593,7 @@ export function bootNodeServices(options: RuntimeOptions): NodeServices {
     runtime,
     controlSessions: createControlSessionRegistry(),
     terminals: createTerminalRegistry({ dataDir: runtime.dataDir }),
+    hostControl: createHostControlAcks(),
     piSessions: createPiSessionWatcher({ roots: () => defaultPiSessionRoots(runtime.dataDir) }),
     conductor,
     model: options.model ?? null,

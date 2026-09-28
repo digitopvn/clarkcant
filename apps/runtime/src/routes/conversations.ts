@@ -96,7 +96,7 @@ import { type GatewayRequest, type GatewayResponse, fail, json, readJson } from 
  */
 export type ConversationServices = Pick<
   NodeServices,
-  "runtime" | "conductor" | "search" | "jev" | "projects" | "projectSessions" | "turnControl"
+  "runtime" | "conductor" | "search" | "jev" | "projects" | "projectSessions" | "turnControl" | "hostControl"
 >;
 
 /** What the conversation routes need. */
@@ -819,6 +819,8 @@ export async function handleConversationRoutes(deps: ConversationRouteDeps): Pro
     // A `control_app` call this turn makes is otherwise silent on this route: there is no stream to carry
     // it, so it is collected here and reported in the response instead, for a caller of the plain HTTP
     // route to run through the same `runAppIntent` executor the streaming and voice routes already reach.
+    // Never `expect`ed: nothing can run it before this turn ends, so the tool says it is unconfirmed at
+    // once rather than waiting on a report this very request is holding back.
     const hostControlDecisions: AppIntentDecision[] = [];
     const outcome = await handleUserMessage(services.conductor, {
       conversationId: conversationId as never,
@@ -1536,7 +1538,7 @@ function sse(event: string, payload: unknown): string {
  * long since been written.
  */
 async function streamUserMessage(
-  services: Pick<NodeServices, "runtime" | "conductor" | "search">,
+  services: Pick<NodeServices, "runtime" | "conductor" | "search" | "hostControl">,
   input: {
     conversationId: string;
     principal: Principal;
@@ -1568,6 +1570,9 @@ async function streamUserMessage(
           // An agent-issued app-control action, delivered as its own frame rather than folded into a
           // tool-end result: the client's one executor (`runAppIntent`) reads a decision, and the
           // `control_app` tool's own text result stays a report to the model, not a second copy of it.
+          // Expected before it is sent: this stream is a live screen that reports what it did, and the
+          // tool is waiting to hear it.
+          services.hostControl.expect(event.decision);
           send(sse("host-control", { decision: event.decision }));
         }
       },

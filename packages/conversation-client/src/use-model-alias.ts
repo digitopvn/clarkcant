@@ -1,6 +1,6 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 
-import type { GatewayClient } from "./api.ts";
+import { GatewayError, type GatewayClient } from "./api.ts";
 import type { MessageKey } from "./i18n/messages.ts";
 
 export interface ModelAliasState {
@@ -12,6 +12,15 @@ export interface ModelAliasState {
    */
   modelAlias: string | undefined;
   modelNote: string;
+  /**
+   * Moves to the next profile the way the hotkey does, updating the alias and note, and answers with the note.
+   *
+   * The one way a model switch is made from this page, so an agent's `model.cycle` and the hotkey cannot leave the
+   * alias on screen disagreeing with the pool. Rejects with the node's reason when it refused.
+   */
+  cycleModel: () => Promise<string>;
+  /** The same for one configured alias. */
+  selectModel: (alias: string) => Promise<string>;
 }
 
 /**
@@ -49,21 +58,41 @@ export function useModelAlias(client: GatewayClient, t: (key: MessageKey) => str
       .catch(() => undefined);
   }, [client]);
 
+  const applySwitch = useCallback(
+    async (switched: Promise<{ alias: string }>): Promise<string> => {
+      try {
+        const answer = await switched;
+        const note = t("shell.model.nextGeneration").replace("{alias}", answer.alias);
+        setModelAlias(answer.alias);
+        setModelNote(note);
+        return note;
+      } catch (cause) {
+        // The node's own sentence, without its error code: this note is read by a person, and the agent is told it too.
+        const reason =
+          cause instanceof GatewayError && cause.reason !== ""
+            ? cause.reason
+            : cause instanceof Error
+              ? cause.message
+              : String(cause);
+        setModelNote(reason);
+        throw new Error(reason, { cause });
+      }
+    },
+    [t],
+  );
+  const cycleModel = useCallback(() => applySwitch(client.cycleModel()), [applySwitch, client]);
+  const selectModel = useCallback((alias: string) => applySwitch(client.selectModel(alias)), [applySwitch, client]);
+
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent): void => {
       if (event.key !== "]" || !(event.metaKey || event.ctrlKey)) return;
       event.preventDefault();
-      void client
-        .cycleModel()
-        .then((answer) => {
-          setModelAlias(answer.alias);
-          setModelNote(t("shell.model.nextGeneration").replace("{alias}", answer.alias));
-        })
-        .catch((cause: unknown) => setModelNote(cause instanceof Error ? cause.message : String(cause)));
+      // The note already says what went wrong; there is no one else to tell.
+      cycleModel().catch(() => undefined);
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [client, t]);
+  }, [cycleModel]);
 
-  return { modelAlias, modelNote };
+  return { modelAlias, modelNote, cycleModel, selectModel };
 }

@@ -6,7 +6,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import type { ModelTurnEvent } from "@clarkcant/core";
 
-import { decideControlApp, type ControlAppDeps } from "../src/node-tools.ts";
+import { controlApp, decideControlApp, type ControlAppDeps } from "../src/node-tools.ts";
 import { bootNodeServices, type NodeServices } from "../src/services.ts";
 
 /**
@@ -20,6 +20,7 @@ import { bootNodeServices, type NodeServices } from "../src/services.ts";
 
 let dir: string;
 let services: NodeServices;
+let idCount = 0;
 
 beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), "clarkcant-control-app-"));
@@ -39,7 +40,7 @@ function deps(
     db: services.runtime.db,
     nodeId: services.runtime.identity.nodeId,
     now: () => "2026-09-23T00:00:00.000Z" as never,
-    newId: (prefix: string) => `${prefix}_test`,
+    newId: (prefix: string) => `${prefix}_test${(idCount += 1)}`,
     principalId: services.runtime.identity.ownerPrincipalId,
     conversationId: "conv_test" as never,
     onEvent,
@@ -115,14 +116,92 @@ describe("control_app", () => {
     expect(document.kind).toBe("voice.open");
   });
 
-  it("audits a delivered request answering a spoken turn with source: voice", () => {
+  it("audits a delivered request answering a spoken turn with source: voice-agent, not a person's voice", () => {
     decideControlApp(deps(() => () => {}, "voice"), { kind: "nav.home" });
     const events = services.runtime.db
       .prepare("SELECT document FROM events WHERE kind = 'app.intent' ORDER BY rowid DESC LIMIT 1")
       .all() as { document: string }[];
     expect(events).toHaveLength(1);
     const document = JSON.parse(events[0]!.document) as { source: string; kind: string };
-    expect(document.source).toBe("voice");
+    // "voice" is what a person's own spoken command is audited as; the model answering one is not that person.
+    expect(document.source).toBe("voice-agent");
     expect(document.kind).toBe("nav.home");
+  });
+
+  it("gives every delivered decision its own unguessable control id", () => {
+    const delivered: ModelTurnEvent[] = [];
+    const first = decideControlApp(deps(() => (event) => delivered.push(event)), { kind: "settings.open" });
+    const second = decideControlApp(deps(() => (event) => delivered.push(event)), { kind: "settings.open" });
+    if (first.status !== "delivered" || second.status !== "delivered") throw new Error("expected both delivered");
+    expect(first.controlId).toMatch(/^[0-9a-f-]{36}$/);
+    expect(second.controlId).not.toBe(first.controlId);
+    expect(delivered.map((event) => (event.type === "host-control" && event.decision.kind === "intent" ? event.decision.controlId : undefined))).toEqual([
+      first.controlId,
+      second.controlId,
+    ]);
+  });
+});
+
+describe("control_app answers with what the screen did", () => {
+  /** A live transport: it expects a report for what it forwards, the way the stream route and voice do. */
+  function live(sent: ModelTurnEvent[]): () => (event: ModelTurnEvent) => void {
+    return () => (event) => {
+      if (event.type === "host-control") services.hostControl.expect(event.decision);
+      sent.push(event);
+    };
+  }
+
+  function controlIdOf(event: ModelTurnEvent | undefined): string {
+    if (event?.type !== "host-control" || event.decision.kind !== "intent" || event.decision.controlId === undefined) {
+      throw new Error("expected an agent-issued host-control event");
+    }
+    return event.decision.controlId;
+  }
+
+  it("is done only once the page reports it ran", async () => {
+    const sent: ModelTurnEvent[] = [];
+    const answer = controlApp({ ...deps(live(sent)), hostControl: services.hostControl }, { kind: "settings.tab", tab: "ai" });
+    await Promise.resolve();
+    expect(services.hostControl.settle(controlIdOf(sent[0]), { ran: true, say: "Tôi mở Settings ở tab AI & Routing nhé." })).toBe(true);
+    expect(await answer).toEqual({ status: "done", say: expect.stringContaining("AI & Routing") as unknown as string });
+  });
+
+  it("is failed, with the page's reason, when the page could not do it", async () => {
+    const sent: ModelTurnEvent[] = [];
+    const answer = controlApp({ ...deps(live(sent)), hostControl: services.hostControl }, { kind: "model.select", modelAlias: "fast" });
+    await Promise.resolve();
+    services.hostControl.settle(controlIdOf(sent[0]), { ran: false, say: "Không có profile nào tên fast." });
+    const outcome = await answer;
+    expect(outcome.status).toBe("failed");
+    expect(outcome.say).toContain("Không có profile nào tên fast.");
+  });
+
+  it("is unconfirmed at once when no live screen was sent it, rather than stalling the turn", async () => {
+    // The plain HTTP message route: it collects the decision for its response and never expects a report.
+    const started = Date.now();
+    const outcome = await controlApp({ ...deps(() => () => {}), hostControl: services.hostControl }, { kind: "nav.home" });
+    expect(outcome).toMatchObject({ status: "unconfirmed", reason: "deferred" });
+    expect(Date.now() - started).toBeLessThan(1_000);
+  });
+
+  it("is unconfirmed, not done, when the screen never answers", async () => {
+    const sent: ModelTurnEvent[] = [];
+    const delivered = decideControlApp(deps(live(sent)), { kind: "voice.open" });
+    if (delivered.status !== "delivered") throw new Error("expected delivered");
+    expect(await services.hostControl.wait(delivered.controlId, 20)).toBe("timeout");
+    // A report after the tool gave up is not held for anyone.
+    expect(services.hostControl.settle(delivered.controlId, { ran: true, say: "late" })).toBe(false);
+  });
+
+  it("accepts one report per action, and none for an action nobody is waiting on", async () => {
+    const sent: ModelTurnEvent[] = [];
+    const answer = controlApp({ ...deps(live(sent)), hostControl: services.hostControl }, { kind: "nav.conversation" });
+    await Promise.resolve();
+    const controlId = controlIdOf(sent[0]);
+    expect(services.hostControl.settle(controlId, { ran: true, say: "" })).toBe(true);
+    expect(services.hostControl.settle(controlId, { ran: false, say: "second" })).toBe(false);
+    expect(services.hostControl.settle("never-issued", { ran: true, say: "" })).toBe(false);
+    // An empty sentence from the page falls back to the read-back rather than telling the model nothing.
+    expect((await answer).say).toContain("quay lại cuộc trò chuyện");
   });
 });

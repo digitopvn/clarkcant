@@ -30,8 +30,11 @@ export interface VoiceSessionState {
    * The node answers a spoken sentence inside the conversation the agent works in, so a session
    * opened before any conversation exists has nowhere to put what was said. So the conversation is
    * made first, which is also what the first attachment does.
+   *
+   * Resolves to the reason it could not open (already shown through `onOpenFailed`), or `undefined`
+   * once the surface is open, so an app intent can report which of the two happened.
    */
-  openVoice: () => Promise<void>;
+  openVoice: () => Promise<string | undefined>;
   /**
    * The same conversation read as `refreshTimeline`, throttled to run while a spoken turn is still
    * live.
@@ -87,21 +90,23 @@ export function useVoiceSession({
     [],
   );
 
-  const openVoice = useCallback(async (): Promise<void> => {
+  const openVoice = useCallback(async (): Promise<string | undefined> => {
     if (conversationId !== undefined) {
       setVoiceOpen(true);
-      return;
+      return undefined;
     }
     try {
       const target = (await client.createConversation("Conversation")).conversationId;
       onConversationCreated(target);
       setVoiceOpen(true);
+      return undefined;
     } catch (cause) {
       // Said where the person is looking, and the microphone stays off: a session that cannot
       // answer is worse than an honest refusal.
-      onOpenFailed(
-        cause instanceof Error ? t("voice.openFailed").replace("{message}", cause.message) : t("voice.openFailedGeneric"),
-      );
+      const reason =
+        cause instanceof Error ? t("voice.openFailed").replace("{message}", cause.message) : t("voice.openFailedGeneric");
+      onOpenFailed(reason);
+      return reason;
     }
   }, [client, conversationId, onConversationCreated, onOpenFailed, t]);
 

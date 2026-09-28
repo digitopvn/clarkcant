@@ -84,13 +84,14 @@ export type SettingsTab = z.infer<typeof settingsTabSchema>;
  * application does something surprising.
  */
 /**
- * `"agent"` marks a request the main or voice model made through a tool call rather than one a
- * person typed, clicked or said. Kept in the same enum as the others rather than a separate
- * `origin` field, because every caller of this schema already switches on `source` and a second
- * field would let the two disagree - an "agent" request whose `source` still said "chat" would be
- * audited as if a person had asked for it.
+ * `"agent"` marks a request the main model made through a tool call, and `"voice-agent"` one the
+ * model answering a spoken sentence made, rather than one a person typed (`"chat"`), clicked or said
+ * (`"voice"`). Kept in the same enum as the others rather than a separate `origin` field, because
+ * every caller of this schema already switches on `source` and a second field would let the two
+ * disagree - an "agent" request whose `source` still said "chat" would be audited as if a person had
+ * asked for it. The five values are the five answers the audit has to be able to give.
  */
-export const appIntentSourceSchema = z.enum(["chat", "click", "voice", "agent"]);
+export const appIntentSourceSchema = z.enum(["chat", "click", "voice", "agent", "voice-agent"]);
 export type AppIntentSource = z.infer<typeof appIntentSourceSchema>;
 
 /** A configured model-pool profile alias, as `@clarkcant/core`'s model pool names it. */
@@ -325,12 +326,25 @@ export function describeAppIntent(intent: AppIntent, locale: AppIntentLocale = "
  * `intent` is the only member that may be acted on, and the client's executor accepts nothing else -
  * so the gate is in the type, not in a comment telling callers to be careful.
  */
+/** Names one agent-issued app-control action, so the page that ran it can say what happened to it. */
+export const hostControlIdSchema = z
+  .string()
+  .min(1)
+  .max(128)
+  .regex(/^[A-Za-z0-9_-]+$/, { error: "must be a host-control id" });
+
 export const appIntentDecisionSchema = z.discriminatedUnion("kind", [
   z.strictObject({
     kind: z.literal("intent"),
     intent: appIntentSchema,
     requiresConfirmation: z.literal(false),
     readBack: z.string(),
+    /**
+     * Present only on a decision the agent issued through `control_app`. The page reports what its
+     * executor did under this id (`POST /app-intents/host-control/:controlId`), which is what lets the
+     * tool tell the model "done" or "failed" instead of "sent".
+     */
+    controlId: hostControlIdSchema.optional(),
   }),
   z.strictObject({
     kind: z.literal("needs-confirmation"),
@@ -392,6 +406,17 @@ export const appIntentConfirmRequestSchema = z.strictObject({
   conversationId: z.string().min(1).max(128).optional(),
 });
 export type AppIntentConfirmRequest = z.infer<typeof appIntentConfirmRequestSchema>;
+
+/**
+ * The request body for `POST /app-intents/host-control/:controlId`: what the page's one executor
+ * (`runAppIntent`) did with an agent-issued decision. `say` is the read-back when it ran and the
+ * reason when it did not, the same sentence the page shows.
+ */
+export const hostControlReportSchema = z.strictObject({
+  ran: z.boolean(),
+  say: z.string().max(2000),
+});
+export type HostControlReport = z.infer<typeof hostControlReportSchema>;
 
 /** The audit document appended for every intent that was acted on. */
 export const appIntentEventDocumentSchema = z.strictObject({

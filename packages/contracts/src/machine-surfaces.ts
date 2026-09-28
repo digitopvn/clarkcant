@@ -23,8 +23,9 @@ export function isPersonOnlyRoute(method: string, path: string): boolean {
       // POST /app-intents/confirm
       return first === "app-intents" && second === "confirm";
     case 3:
-      // POST /peers/:id/confirm
-      return first === "peers" && third === "confirm";
+      // POST /peers/:id/confirm, and POST /app-intents/host-control/:controlId: the screen's own report of
+      // what it did with an agent's app-control action, which a machine surface must not be able to forge.
+      return (first === "peers" && third === "confirm") || (first === "app-intents" && second === "host-control");
     case 4:
       // POST /packages/approvals/:id/decision
       return first === "packages" && second === "approvals" && fourth === "decision";

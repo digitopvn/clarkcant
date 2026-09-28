@@ -24,7 +24,7 @@ import { composeMiniApp } from "../compose-mini-app.ts";
 import { type InteractionDeps } from "../interactions.ts";
 import { type ModelTurn, createModelTurn } from "../model-turn.ts";
 import { writeCurrentAlias, writeModelPool } from "../model-registry.ts";
-import { createNodeTools, createRememberTool, decideControlApp, type CommandToolDeps } from "../node-tools.ts";
+import { controlApp, createNodeTools, createRememberTool, type CommandToolDeps } from "../node-tools.ts";
 import { extractPdfText } from "../pdf-text.ts";
 import { type ProjectFinderDeps } from "../project-finder.ts";
 import { createRequestSecretTool, type RequestSecretDeps } from "../request-secret.ts";
@@ -68,7 +68,7 @@ export interface FixtureModelWiring {
 
 export interface FixtureModelDeps {
   /** The node this fixture stands in for, read when a turn asks rather than when the composer is built. */
-  services: () => Pick<NodeServices, "runtime" | "conductor" | "controlSessions" | "terminals">;
+  services: () => Pick<NodeServices, "runtime" | "conductor" | "controlSessions" | "terminals" | "hostControl">;
   dataDir: string;
   wiring: FixtureModelWiring;
 }
@@ -138,6 +138,24 @@ function longReplyModelTurn(): Promise<ModelTurn | undefined> {
     return turn;
   });
   return longReplyTurn;
+}
+
+/**
+ * The `control_app` call a scripted sentence stands for, if it is one.
+ *
+ * Two spellings: the original "go home" sentences the voice journey says, and `agent control_app <kind> [arg]`,
+ * where the argument is the tab of `settings.tab` or the alias of `model.select`, so one fixture line covers every
+ * kind the tool offers without a sentence per kind.
+ */
+export function controlAppFixtureCall(text: string): Record<string, unknown> | undefined {
+  if (/nhờ agent xử lý giúp tôi việc quay về màn hình bắt đầu|go home through the agent/i.test(text)) {
+    return { kind: "nav.home" };
+  }
+  const match = /^agent control_app ([a-z.]+)(?: ([\w-]+))?\s*$/i.exec(text.trim());
+  if (match === null) return undefined;
+  const [, kind = "", arg] = match;
+  if (arg === undefined) return { kind };
+  return kind === "model.select" ? { kind, modelAlias: arg } : { kind, tab: arg };
 }
 
 /**
@@ -286,14 +304,16 @@ export function createModelComposer(deps: FixtureModelDeps): FixtureCompose {
      * The app-control tool, called the way a model turn calls it - the browser half of issue #129's voice
      * criterion.
      *
-     * `decideControlApp` is the same function `control_app` executes with in production: same validation,
-     * same audit call, same `host-control` event. What is scripted is only the decision to call it, which a
-     * live model made through a tool call this fixture cannot produce without a provider account. Calling
-     * the same function a model turn would have called is what keeps this a browser proof of `runAppIntent`
-     * reaching the page, rather than a proof of the fixture's own wiring.
+     * `controlApp` is the same function `control_app` executes with in production: same validation, same
+     * audit call, same `host-control` event, and the same wait for the page's report. What is scripted is
+     * only the decision to call it, which a live model made through a tool call this fixture cannot produce
+     * without a provider account. Calling the same function a model turn would have called is what keeps
+     * this a browser proof of `runAppIntent` reaching the page and reporting back, rather than a proof of the
+     * fixture's own wiring. The reply is the tool's own answer, so a journey can read what the model was told.
      */
-    if (/nhờ agent xử lý giúp tôi việc quay về màn hình bắt đầu|go home through the agent/i.test(input.text)) {
-      const outcome = decideControlApp(
+    const controlCall = controlAppFixtureCall(input.text);
+    if (controlCall !== undefined) {
+      const outcome = await controlApp(
         {
           db: deps.services().runtime.db,
           nodeId: deps.services().runtime.identity.nodeId,
@@ -303,8 +323,9 @@ export function createModelComposer(deps: FixtureModelDeps): FixtureCompose {
           conversationId: input.conversationId as never,
           onEvent: () => input.emit,
           channel: () => input.channel ?? "chat",
+          hostControl: deps.services().hostControl,
         },
-        { kind: "nav.home" },
+        controlCall,
       );
       return { text: outcome.say, block: { type: "text", format: "plain", content: outcome.say, streaming: false } };
     }
