@@ -122,14 +122,8 @@ describe("noticing what expired unanswered", () => {
     const notices = readInbox(services, past).notices;
     const matching = notices.filter((notice) => notice.title.includes("hết hạn"));
     expect(matching).toHaveLength(1);
-    // A notice body is redacted before it is stored, and on Windows the temp directory sits under C:\Users\<name>,
-    // which is redacted like any home path — so the body is compared with the redacted description.
-    expect(matching[0]).toMatchObject({
-      conversationId,
-      severity: "warning",
-      body: expect.stringContaining(redactSecrets(`Chạy lệnh trong ${dir}`)),
-    });
-    void approval;
+    // The body is stored redacted, and a temp dir under a home directory (Windows' default) is redacted with it.
+    expect(matching[0]).toMatchObject({ conversationId, severity: "warning", body: redactSecrets(approval.operationDescription) });
   });
 
   it("records one notice for a task approval nobody decided, pointing at the task's conversation", async () => {
