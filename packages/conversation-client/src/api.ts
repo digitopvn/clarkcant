@@ -8,6 +8,7 @@
 
 import type {
   AutonomySettings,
+  LayoutNode,
   ModelPool,
   SseEvent,
   TableFilterValue,
@@ -298,6 +299,8 @@ export interface CompositionResponse {
     initialState: { period: "week" | "month"; selectedDate?: string; timezone: string };
     actions: { actionBindingId: string; sectionId: string; label: string; kind: string; effectCategory: string }[];
     provenance: { createdAt: string };
+    /** Present when the surface was arranged as a tree; its leaves name sections by id. */
+    layout?: LayoutNode;
   };
   bundleRef: string | null;
   tombstone: { reason: string; at: string } | null;

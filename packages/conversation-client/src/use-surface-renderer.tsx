@@ -58,6 +58,7 @@ function toSurfaceViewFromSnapshot(captured: SnapshotPresentationResponse, revis
     stale: captured.snapshot.stale === true,
     tombstone: captured.tombstone,
     availability,
+    ...(spec?.layout === undefined ? {} : { layout: spec.layout }),
     // A snapshot is history: it never acts, whatever it recorded when it was taken.
     readOnly: true,
   };

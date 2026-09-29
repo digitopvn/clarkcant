@@ -768,6 +768,7 @@ export function toSurfaceViewFromLive(live: LiveWidgetResponse, readOnly: boolea
   return {
     compositionId: live.compositionId,
     instanceId: live.spec.instanceId,
+    ...(live.spec.layout === undefined ? {} : { layout: live.spec.layout }),
     catalogDigest: live.spec.catalogDigest,
     initialState: {
       period: live.period,

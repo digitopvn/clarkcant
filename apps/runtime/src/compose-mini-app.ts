@@ -4,9 +4,12 @@ import {
   type CompositionSlot,
   type CompositionSourceRevision,
   type Instant,
+  type LayoutNode,
   type MessageBlock,
   type Principal,
   type WidgetDefinition,
+  LAYOUT_COMPOSITION_SCHEMA_VERSION,
+  SURFACE_COMPOSITION_SCHEMA_VERSION,
   compileActionBinding,
 } from "@clarkcant/contracts";
 import { type WidgetDeps, captureCompositeSurface } from "@clarkcant/core";
@@ -198,7 +201,11 @@ export function compileTemplate(input: CompileInput): CompileResult {
       continue;
     }
 
-    const props = buildProps(entry.definition, slot, input, rows);
+    const props = leafProps(
+      slot,
+      { ...(input.template.fixed.find((region) => region.slot === slot)?.props ?? {}), ...(input.propsBySlot?.[slot] ?? {}) },
+      input,
+    );
     const validation = validateProps(entry.definition, props);
     if (!validation.ok) {
       problems.push(`props for "${definitionId}" do not fit its schema: ${validation.problems.join(", ")}`);
@@ -224,22 +231,26 @@ export function compileTemplate(input: CompileInput): CompileResult {
   return problems.length === 0 ? { ok: true, sections } : { ok: false, problems };
 }
 
-function buildProps(
-  definition: WidgetDefinition,
+/**
+ * A leaf's props: what the caller asked for, with the host's own keys on top.
+ *
+ * The data a region reads, the period and timezone it shows and the action a save button performs are
+ * the host's to set, so they overwrite whatever the caller put there. A title is the caller's, and the
+ * host names a chart only when nobody else did.
+ */
+export function leafProps(
   slot: CompositionSlot,
-  input: CompileInput,
-  rows: Record<string, unknown>[] | undefined,
+  requested: Record<string, unknown>,
+  input: Pick<CompileInput, "initialState" | "imageRef">,
 ): Record<string, unknown> {
-  const base: Record<string, unknown> = {};
-  const fixedProps = input.template.fixed.find((region) => region.slot === slot)?.props ?? {};
-  Object.assign(base, definition.textFallback === "" ? {} : {}, fixedProps, input.propsBySlot?.[slot] ?? {});
+  const base: Record<string, unknown> = { ...requested };
 
   if (slot === "metrics") {
     base.datasetRef = `inline:metrics:${input.initialState.period}`;
   }
   if (slot === "trend" || slot === "table") {
     base.datasetRef = `inline:${slot}:${input.initialState.period}`;
-    base.title = titleForSlot(slot);
+    if (typeof base.title !== "string" || base.title.trim() === "") base.title = titleForSlot(slot);
   }
   if (slot === "filter") {
     base.period = input.initialState.period;
@@ -257,7 +268,6 @@ function buildProps(
   if (slot === "cta") {
     base.actionId = "view.save";
   }
-  void rows;
   return base;
 }
 
@@ -279,7 +289,7 @@ function localMonth(timezone: string): string {
  * Written from the rows rather than from the definition's generic fallback, because a summary of
  * what was there is more useful than "a chart is displayed as text".
  */
-function describeSection(
+export function describeSection(
   definition: WidgetDefinition,
   slot: CompositionSlot,
   rows: Record<string, unknown>[] | undefined,
@@ -373,66 +383,28 @@ export const DEFAULT_TEMPLATE_ID = "overview";
  * then is anything written.
  */
 export async function composeMiniApp(deps: ComposeDeps, input: ComposeInput): Promise<ComposeOutcome> {
-  const registry = deps.registry;
-  const overview = registry.get("canvas.overview@1")?.definition;
+  const overview = deps.registry.get("canvas.overview@1")?.definition;
   if (overview === undefined) {
     return { ok: false, code: "COMPILE_FAILED", message: "this node's catalog has no composed-surface container" };
   }
-
-  // A replayed turn is the same operation. The key is the message and the tool call that produced
-  // it, not a hash of the intent: two identical requests from a user are two operations.
-  const existing = findCompositionByMessage(deps.db, input.messageId, input.principalId);
-  if (existing !== undefined) {
-    const snapshot = listSnapshotsForMessage(deps.db, input.messageId)[0];
-    const bundle = findBundleForMessage(deps.db, input.messageId, input.principalId);
-    if (snapshot !== undefined) {
-      return {
-        ok: true,
-        block: { type: "surface", definitionRef: { id: overview.id, version: overview.version }, snapshot },
-        instanceId: existing.instanceId,
-        snapshotId: snapshot.snapshotId,
-        bundleId: bundle?.bundleId ?? "",
-        compositionId: existing.compositionId,
-        templateId: existing.templateId,
-        selectorMode: existing.provenance.selector.mode === "jev" ? "jev" : existing.provenance.selector.mode === "explicit" ? "explicit" : "fallback",
-        ...(existing.provenance.selector.fallbackReason === undefined
-          ? {}
-          : { selectorReason: existing.provenance.selector.fallbackReason }),
-      };
-    }
-  }
-
-  const dataDeps: MiniAppDataDeps = {
-    db: deps.db,
-    nodeId: deps.nodeId,
-    dataDir: deps.dataDir,
-    now: deps.now,
-    newId: deps.newId,
-  };
+  const replayed = replayComposition(deps, input, overview);
+  if (replayed !== undefined) return replayed;
 
   const template = await chooseTemplate(deps, input);
   if (!template.ok) return template;
 
   const timezone = deps.timezone();
   const period = input.period ?? "week";
-  const published = publishMiniAppData(dataDeps, { principalId: input.principalId, period, timezone });
+  const published = publishMiniAppData(dataDepsOf(deps), { principalId: input.principalId, period, timezone });
 
   const chosen = await chooseLeaves(deps, input, template.template, template.mode !== "jev");
   if (!chosen.ok) return chosen;
 
-  const rowsBySlot: Partial<Record<CompositionSlot, Record<string, unknown>[]>> = {
-    metrics: published.metrics.rows,
-    trend: published.metrics.trendRows,
-    table: published.metrics.trendRows,
-    calendar: published.calendarRows,
-    image: published.imageRefs.map((image) => ({ ...image })),
-  };
-
   const compiled = compileTemplate({
     template: template.template,
     chosen: chosen.chosen,
-    registry,
-    rowsBySlot,
+    registry: deps.registry,
+    rowsBySlot: rowsBySlotOf(published),
     initialState: { period, timezone },
     ...(published.imageRefs[0] === undefined ? {} : { imageRef: published.imageRefs[0] }),
   });
@@ -440,21 +412,128 @@ export async function composeMiniApp(deps: ComposeDeps, input: ComposeInput): Pr
     return { ok: false, code: "COMPILE_FAILED", message: "the template did not compile", problems: compiled.problems };
   }
 
+  return persistComposition(deps, input, overview, {
+    templateId: template.template.templateId,
+    templateVersion: template.template.templateVersion,
+    sections: compiled.sections,
+    period,
+    timezone,
+    selector: {
+      mode: template.mode,
+      ...(template.model === undefined ? {} : { model: template.model }),
+      ...(template.confidence === undefined ? {} : { confidence: template.confidence }),
+      ...(template.margin === undefined ? {} : { margin: template.margin }),
+      ...(template.reason === undefined ? {} : { reason: template.reason }),
+    },
+    title: titleForTemplate(template.template.templateId),
+    textAlternative: textAlternativeFor(template.template.templateId, published),
+  });
+}
+
+/**
+ * The surface a message already has, when a turn is replayed.
+ *
+ * A replayed turn is the same operation. The key is the message and the tool call that produced it, not a
+ * hash of the intent: two identical requests from a user are two operations.
+ */
+export function replayComposition(
+  deps: ComposeDeps,
+  input: Pick<ComposeInput, "messageId" | "principalId">,
+  overview: WidgetDefinition,
+): ComposeOutcome | undefined {
+  const existing = findCompositionByMessage(deps.db, input.messageId, input.principalId);
+  if (existing === undefined) return undefined;
+  const snapshot = listSnapshotsForMessage(deps.db, input.messageId)[0];
+  if (snapshot === undefined) return undefined;
+  const bundle = findBundleForMessage(deps.db, input.messageId, input.principalId);
+  return {
+    ok: true,
+    block: { type: "surface", definitionRef: { id: overview.id, version: overview.version }, snapshot },
+    instanceId: existing.instanceId,
+    snapshotId: snapshot.snapshotId,
+    bundleId: bundle?.bundleId ?? "",
+    compositionId: existing.compositionId,
+    templateId: existing.templateId,
+    selectorMode: existing.provenance.selector.mode === "jev" ? "jev" : existing.provenance.selector.mode === "explicit" ? "explicit" : "fallback",
+    ...(existing.provenance.selector.fallbackReason === undefined
+      ? {}
+      : { selectorReason: existing.provenance.selector.fallbackReason }),
+  };
+}
+
+export function dataDepsOf(deps: ComposeDeps): MiniAppDataDeps {
+  return { db: deps.db, nodeId: deps.nodeId, dataDir: deps.dataDir, now: deps.now, newId: deps.newId };
+}
+
+/** The rows each kind of region reads, from one read of the node's records. */
+export function rowsBySlotOf(published: PublishedMiniAppData): Partial<Record<CompositionSlot, Record<string, unknown>[]>> {
+  return {
+    metrics: published.metrics.rows,
+    trend: published.metrics.trendRows,
+    table: published.metrics.trendRows,
+    calendar: published.calendarRows,
+    image: published.imageRefs.map((image) => ({ ...image })),
+  };
+}
+
+export interface PersistRequest {
+  templateId: string;
+  templateVersion: string;
+  sections: CompiledSection[];
+  /** Present for a composed tree; its leaves name `sections` by id. */
+  layout?: LayoutNode;
+  period: "week" | "month";
+  timezone: string;
+  selector: { mode: "explicit" | "jev" | "fallback"; model?: string; confidence?: number; margin?: number; reason?: string };
+  title: string;
+  textAlternative: string;
+}
+
+/**
+ * Check a compiled surface against the catalog that will draw it, then store it.
+ *
+ * One tail for a template and a tree alike: the same bindings, the same coverage check against the
+ * catalog, the same cancellation point and the same single write. A second copy would be a second
+ * opinion about what may be stored.
+ */
+export function persistComposition(
+  deps: ComposeDeps,
+  input: Pick<ComposeInput, "conversationId" | "messageId" | "principalId" | "signal">,
+  overview: WidgetDefinition,
+  request: PersistRequest,
+): ComposeOutcome {
+  const registry = deps.registry;
+  const instanceId = deps.newId("winst");
+  const bindings = compileBindings(deps, request.sections, instanceId);
+  const compositionId = deps.newId("comp");
+  const provenance = {
+    createdAt: deps.now(),
+    templateId: request.templateId,
+    templateVersion: request.templateVersion,
+    selector: {
+      mode: request.selector.mode,
+      ...(request.selector.model === undefined ? {} : { model: request.selector.model }),
+      policyVersion: deps.jev?.deps.config.policyVersion ?? "1",
+      ...(request.selector.confidence === undefined ? {} : { confidence: request.selector.confidence }),
+      ...(request.selector.margin === undefined ? {} : { margin: request.selector.margin }),
+      ...(request.selector.reason === undefined ? {} : { fallbackReason: request.selector.reason }),
+    },
+    sourceRevisions,
+  };
+  const initialState = { period: request.period, timezone: request.timezone };
+
   // Checked again after compilation, against the catalog that will draw it, because the compiler
   // pinning a digest and the catalog holding it are two claims that have to agree.
-  const instanceId = deps.newId("winst");
-  const bindings = compileBindings(deps, compiled.sections, instanceId);
-  const compositionId = deps.newId("comp");
   const coverage = checkCompositionCoverage(
     {
-      schemaVersion: 1,
+      schemaVersion: request.layout === undefined ? SURFACE_COMPOSITION_SCHEMA_VERSION : LAYOUT_COMPOSITION_SCHEMA_VERSION,
       compositionId,
       instanceId,
-      templateId: template.template.templateId,
-      templateVersion: template.template.templateVersion,
+      templateId: request.templateId,
+      templateVersion: request.templateVersion,
       catalogDigest: catalogDigestOf(registry),
-      sections: compiled.sections.map(({ rows: _rows, ...section }) => section),
-      initialState: { period, timezone },
+      sections: request.sections.map(({ rows: _rows, ...section }) => section),
+      initialState,
       actions: bindings.map(({ binding, sectionId }) => ({
         actionBindingId: binding.actionBindingId,
         sectionId,
@@ -462,20 +541,11 @@ export async function composeMiniApp(deps: ComposeDeps, input: ComposeInput): Pr
         kind: "view" as const,
         effectCategory: binding.effectCategory,
       })),
-      provenance: {
-        createdAt: deps.now(),
-        templateId: template.template.templateId,
-        templateVersion: template.template.templateVersion,
-        selector: {
-          mode: template.mode,
-          policyVersion: deps.jev?.deps.config.policyVersion ?? "1",
-          ...(template.reason === undefined ? {} : { fallbackReason: template.reason }),
-        },
-        sourceRevisions,
-      },
+      provenance,
+      ...(request.layout === undefined ? {} : { layout: request.layout }),
     },
     registry,
-    { allowedDataRefs: new Set(compiled.sections.flatMap((section) => section.dataRefs)) },
+    { allowedDataRefs: new Set(request.sections.flatMap((section) => section.dataRefs)) },
   );
   if (!coverage.ok) {
     return { ok: false, code: "COMPILE_FAILED", message: "the spec does not fit the catalog", problems: coverage.problems };
@@ -496,32 +566,20 @@ export async function composeMiniApp(deps: ComposeDeps, input: ComposeInput): Pr
     definition: overview,
     packageDigest: overviewDigest(registry),
     catalogDigest: catalogDigestOf(registry),
-    templateId: template.template.templateId,
-    templateVersion: template.template.templateVersion,
-    sections: compiled.sections,
+    templateId: request.templateId,
+    templateVersion: request.templateVersion,
+    sections: request.sections,
+    ...(request.layout === undefined ? {} : { layout: request.layout }),
     props: {
       compositionId,
-      templateId: template.template.templateId,
-      period,
-      title: titleForTemplate(template.template.templateId),
+      templateId: request.templateId,
+      period: request.period,
+      title: request.title,
     },
-    initialState: { period, timezone },
-    provenance: {
-      createdAt: deps.now(),
-      templateId: template.template.templateId,
-      templateVersion: template.template.templateVersion,
-      selector: {
-        mode: template.mode,
-        ...(template.model === undefined ? {} : { model: template.model }),
-        policyVersion: deps.jev?.deps.config.policyVersion ?? "1",
-        ...(template.confidence === undefined ? {} : { confidence: template.confidence }),
-        ...(template.margin === undefined ? {} : { margin: template.margin }),
-        ...(template.reason === undefined ? {} : { fallbackReason: template.reason }),
-      },
-      sourceRevisions,
-    },
-    textAlternative: textAlternativeFor(template.template.templateId, published),
-    dataRefs: compiled.sections.flatMap((section) => section.dataRefs),
+    initialState,
+    provenance,
+    textAlternative: request.textAlternative,
+    dataRefs: request.sections.flatMap((section) => section.dataRefs),
     bindings,
   } satisfies Parameters<typeof captureCompositeSurface>[1]);
 
@@ -540,12 +598,11 @@ export async function composeMiniApp(deps: ComposeDeps, input: ComposeInput): Pr
     snapshotId: captured.snapshot.snapshotId,
     bundleId: captured.bundle.bundleId,
     compositionId: captured.composition.compositionId,
-    templateId: template.template.templateId,
-    selectorMode: template.mode,
-    ...(template.reason === undefined ? {} : { selectorReason: template.reason }),
+    templateId: request.templateId,
+    selectorMode: request.selector.mode,
+    ...(request.selector.reason === undefined ? {} : { selectorReason: request.selector.reason }),
   };
 }
-
 const sourceRevisions: CompositionSourceRevision[] = [
   { ref: "tasks", revision: "node-local" },
   { ref: "calendar_events", revision: "node-local" },
@@ -735,9 +792,7 @@ function compileBindings(
   const bindings: { binding: ActionBinding; sectionId: string }[] = [];
   const knownCapabilities = new Set<string>();
 
-  const add = (sectionSlot: CompositionSlot, operation: string, label: string): void => {
-    const section = sections.find((candidate) => candidate.slot === sectionSlot);
-    if (section === undefined) return;
+  const add = (section: CompiledSection, operation: string, label: string): void => {
     const compiled = compileActionBinding({
       bindingId: deps.newId("act"),
       instance: {
@@ -763,9 +818,16 @@ function compileBindings(
     if (compiled.ok) bindings.push({ binding: compiled.binding, sectionId: section.sectionId });
   };
 
-  add("filter", "period.change", "Đổi khoảng thời gian");
-  add("calendar", "date.select", "Chọn ngày");
-  add("cta", "view.save", "Lưu bản xem");
+  // Every section of a kind gets its own binding: a tree may hold two filters, and each of them acts.
+  const OPERATIONS: Partial<Record<CompositionSlot, { operation: string; label: string }>> = {
+    filter: { operation: "period.change", label: "Đổi khoảng thời gian" },
+    calendar: { operation: "date.select", label: "Chọn ngày" },
+    cta: { operation: "view.save", label: "Lưu bản xem" },
+  };
+  for (const section of sections) {
+    const bound = OPERATIONS[section.slot];
+    if (bound !== undefined) add(section, bound.operation, bound.label);
+  }
   return bindings;
 }
 

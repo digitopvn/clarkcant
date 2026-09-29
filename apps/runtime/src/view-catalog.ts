@@ -16,6 +16,10 @@
 import {
   type WidgetInstance,
   type WidgetSnapshot,
+  MAX_COMPOSITION_SECTIONS,
+  MAX_GRID_COLUMNS,
+  MAX_LAYOUT_DEPTH,
+  MAX_LAYOUT_NODES,
 } from "@clarkcant/contracts";
 import {
   type WidgetDeps,
@@ -25,7 +29,8 @@ import {
 } from "@clarkcant/core";
 import { ACTION, ACTION_ICONS, CTA, OVERVIEW, WIDGETS as CATALOG_WIDGETS } from "@clarkcant/data-canvas";
 import { type ActionBindingDeps, compileWidgetAction } from "./application/action-bindings.ts";
-import { COMPOSITION_TEMPLATES, type ComposeDeps, composeMiniApp } from "./compose-mini-app.ts";
+import { COMPOSITION_TEMPLATES, type ComposeDeps, type ComposeInput, composeMiniApp } from "./compose-mini-app.ts";
+import { composeLayout, layoutLeafWidgets } from "./compose-layout.ts";
 import { definitionDigest } from "@clarkcant/widget-host";
 
 import type { ViewDescriptor } from "./model-turn.ts";
@@ -105,21 +110,34 @@ export function buildViewCatalog(
       label: overview.semanticDescription,
       notes:
         `For the composed overview, pass props.templateId as one of: ${COMPOSITION_TEMPLATES.map((template) => template.templateId).join(", ")}, ` +
-        `and props.period as "week" or "month". Naming a template is what skips the selector.`,
+        `and props.period as "week" or "month". Naming a template is what skips the selector. ` +
+        `To arrange it yourself, pass props.layout instead of a template: a tree of ` +
+        `{"kind":"widget","widget":"<one of ${layoutLeafWidgets(compose.registry).join(", ")}>","props":{...},"label":"..."}, ` +
+        `{"kind":"divider"}, and containers {"kind":"stack"|"row"|"grid"|"card"|"tabs"|"split"|"collapsible","label":"...","children":[...]} ` +
+        `(grid takes "columns" 1-${String(MAX_GRID_COLUMNS)}; collapsible needs a label and takes "open"; each tab needs a label; a split has two children). ` +
+        `At most ${String(MAX_LAYOUT_DEPTH)} levels, ${String(MAX_LAYOUT_NODES)} nodes and ${String(MAX_COMPOSITION_SECTIONS)} widgets; ` +
+        `the node fills each widget with its own data. props.title names the surface.`,
       build: async (request) => {
         const templateId = request.props.templateId;
         const period = request.props.period;
-        const outcome = await composeMiniApp(compose, {
+        const common: ComposeInput = {
           conversationId: request.conversationId,
           messageId: request.messageId,
           principalId: request.principal.principalId,
           // The caption is the model's own sentence about what it is showing, and it is the only
           // free text the selector is offered. The user's raw message is not sent.
           intent: request.caption,
-          ...(typeof templateId === "string" ? { explicitTemplateId: templateId } : {}),
           ...(period === "week" || period === "month" ? { period } : {}),
           ...(request.signal === undefined ? {} : { signal: request.signal }),
-        });
+        };
+        const outcome =
+          request.props.layout === undefined
+            ? await composeMiniApp(compose, { ...common, ...(typeof templateId === "string" ? { explicitTemplateId: templateId } : {}) })
+            : composeLayout(compose, {
+                ...common,
+                layout: request.props.layout,
+                ...(typeof request.props.title === "string" ? { title: request.props.title } : {}),
+              });
 
         if (!outcome.ok) {
           // Thrown rather than returned so the tool handler turns it into a refusal the model reads
