@@ -71,10 +71,21 @@ export type WorkerBriefEnvelope = z.infer<typeof workerBriefEnvelopeSchema>;
  * Requiring `proves` is deliberate: a tool whose success demonstrates nothing cannot produce
  * evidence, so registering it would only produce activity that looks like progress.
  */
-export interface WorkerTool extends ToolDefinition {
+export interface WorkerTool extends Omit<ToolDefinition, "execute"> {
   capabilityRef: string;
   proves: Evidence["kind"];
+  /** What the tool did, plus, for a tool that wrote a file, which file and the digest of what it wrote. */
+  execute: (params: Record<string, unknown>) => Promise<Awaited<ReturnType<ToolDefinition["execute"]>> & { wrote?: WrittenFile }>;
 }
+
+/** A file a tool wrote during the run: its resolved path, and the SHA-256 (hex) of the bytes it wrote. */
+export interface WrittenFile {
+  path: string;
+  sha256: string;
+}
+
+/** The most written files one run reports; the rest are left out rather than flooding the host. */
+export const MAX_OUTPUTS = 64;
 
 export interface WorkerDeps {
   adapter: PiAdapter;
@@ -107,6 +118,11 @@ export interface WorkerRunResult {
   withheldCapabilities: string[];
   /** Session a later run should resume from, when the adapter offers one. */
   sessionFile: string | undefined;
+  /**
+   * The files this run wrote, each once with the digest of its last write, in the order first written. A host that
+   * hands them on checks the digest against the file first, so one changed since is not passed off as this run's.
+   */
+  outputs: WrittenFile[];
 }
 
 export const WORKER_STATUS = "implemented-run-loop";
@@ -175,6 +191,8 @@ export async function runWorker(
   // Rule 2: evidence is captured where the tool result exists, so the digest is of real output.
   const observed: Evidence[] = [];
   const failures: Evidence[] = [];
+  // Keyed by path, so a file written twice is reported once with what it holds now.
+  const outputs = new Map<string, string>();
 
   const recordFailure = (toolName: string, ref: string, message: string): void => {
     failures.push({
@@ -195,7 +213,10 @@ export async function runWorker(
       execute: async (params: Record<string, unknown>) => {
         const ref = `worker:${handle.sessionId}:${tool.name}`;
         try {
-          const result = await tool.execute(params);
+          const { wrote, ...result } = await tool.execute(params);
+          if (wrote !== undefined && (outputs.has(wrote.path) || outputs.size < MAX_OUTPUTS)) {
+            outputs.set(wrote.path, wrote.sha256);
+          }
           observed.push({
             kind: tool.proves,
             ref,
@@ -341,5 +362,6 @@ export async function runWorker(
     // here meant every run started from nothing, which is also why there was no transcript to
     // search.
     sessionFile: handle.sessionFile,
+    outputs: [...outputs].map(([path, sha256]) => ({ path, sha256 })),
   };
 }

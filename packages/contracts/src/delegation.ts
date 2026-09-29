@@ -44,6 +44,30 @@ export const delegationBriefSchema = z.strictObject({
 });
 export type DelegationBrief = z.infer<typeof delegationBriefSchema>;
 
+/** The most files one handed-over task's result offers back. */
+export const DELEGATED_ARTIFACTS_MAX = 8;
+/** The largest file a handed-over task offers back, in bytes. */
+export const DELEGATED_ARTIFACT_MAX_BYTES = 4 * 1024 * 1024;
+/** The most bytes of files one handed-over task offers back, together. */
+export const DELEGATED_ARTIFACTS_MAX_TOTAL_BYTES = 16 * 1024 * 1024;
+
+/** The shape of a digest the offering node computed over a file's bytes. */
+export const artifactDigestSchema = z.string().regex(/^sha256:[0-9a-f]{64}$/);
+
+/**
+ * A file a handed-over task wrote, as its result names it: the same id, digest and size the `artifact.offer` for it
+ * carries, and the name it has in the folder it was written in. Each is also offered in its own `artifact.offer`,
+ * queued before the result, so the node that handed the task over has decided about every one by the time it reads this.
+ */
+export const delegatedArtifactSchema = z.strictObject({
+  artifactId: z.string().min(1).max(128),
+  digest: artifactDigestSchema,
+  name: z.string().min(1).max(200),
+  sizeBytes: z.int().nonnegative().max(DELEGATED_ARTIFACT_MAX_BYTES),
+  mimeType: z.string().min(1).max(200),
+});
+export type DelegatedArtifact = z.infer<typeof delegatedArtifactSchema>;
+
 /** A `result` envelope's payload: the outcome, and what the receiver says it saw. */
 export const delegationResultSchema = z.strictObject({
   outcome: z.enum(["succeeded", "failed", "uncertain", "cancelled"]),
@@ -52,6 +76,11 @@ export const delegationResultSchema = z.strictObject({
     message: z.string().min(1).max(1000),
     /** Whether the task ever ran on the receiver, which is the difference between a refusal and a failure. */
     ran: z.boolean(),
+    /**
+     * The files the run wrote and offered back, only to a node that advertises `artifacts`. Absent when there were
+     * none, and from an older build.
+     */
+    artifacts: z.array(delegatedArtifactSchema).max(DELEGATED_ARTIFACTS_MAX).optional(),
   }),
 });
 export type DelegationResult = z.infer<typeof delegationResultSchema>;

@@ -1,4 +1,4 @@
-import type { Instant } from "@clarkcant/contracts";
+import type { Instant, MessageBlock } from "@clarkcant/contracts";
 
 import { reportDelegatedOutcome, reportDelegatedStatus } from "./delegation.ts";
 import { unknownEffectsNotice } from "./effect-notices.ts";
@@ -8,6 +8,12 @@ import type { NodeServices } from "./services.ts";
 import type { TaskDispatcherDeps } from "./task-dispatch.ts";
 
 /**
+ * A settled task, as either path reports it: a run here says what its worker wrote, and a task handed to a peer says
+ * what came back with the peer's answer.
+ */
+type TaskSettledReport = Parameters<TaskDispatcherDeps["onSettled"]>[0] & { blocks?: readonly MessageBlock[] };
+
+/**
  * How a dispatched task is reported, where the person asked for it.
  *
  * In the task's own conversation, in plain words, and in the inbox for a person who is not looking at it. Its own
@@ -15,7 +21,7 @@ import type { TaskDispatcherDeps } from "./task-dispatch.ts";
  */
 export function taskDispatchReports(
   services: NodeServices,
-): Pick<TaskDispatcherDeps, "onSettled" | "onWorktreeKept" | "onWaitingApproval"> {
+): Pick<TaskDispatcherDeps, "onWorktreeKept" | "onWaitingApproval"> & { onSettled: (input: TaskSettledReport) => void } {
   return {
     onWorktreeKept: ({ taskId, conversationId, path, branch }) => {
       appendHostReply(services, {
@@ -24,7 +30,7 @@ export function taskDispatchReports(
         at: new Date().toISOString() as Instant,
       });
     },
-    onSettled: ({ taskId, conversationId, outcome, message }) => {
+    onSettled: ({ taskId, conversationId, outcome, message, outputs, blocks }: TaskSettledReport) => {
       const label =
         outcome === "succeeded"
           ? "Xong"
@@ -34,9 +40,13 @@ export function taskDispatchReports(
               ? "Đã hủy"
               : "Chưa rõ kết quả";
       const at = new Date().toISOString() as Instant;
+      const text = `${label} (task ${taskId}): ${message}`;
+      // What came back with it — the files a peer sent — shown right after the words that say it.
       appendHostReply(services, {
         conversationId,
-        text: `${label} (task ${taskId}): ${message}`,
+        ...(blocks === undefined || blocks.length === 0
+          ? { text }
+          : { blocks: [{ type: "text", format: "plain", content: text, streaming: false }, ...blocks] }),
         at,
       });
       // The pointer for a person who is not looking at that conversation. A task with an effect whose outcome is unknown
@@ -51,7 +61,9 @@ export function taskDispatchReports(
       tryRecordNodeNotice(services, effectNotice ?? workerSettledNotice({ taskId, conversationId, outcome, message, at }));
       // A task a peer handed over is answered there too, which is how its own task settles.
       const { runtime, conductor } = services;
-      if (reportDelegatedOutcome({ db: runtime.db, identity: runtime.identity, now: () => at, newId: conductor.newId }, { taskId, outcome, message })) {
+      // The files its worker wrote go back with the answer, read now, before the task's worktree is taken away.
+      const files = outputs === undefined || outputs.length === 0 ? {} : { files: { dataDir: runtime.dataDir, outputs } };
+      if (reportDelegatedOutcome({ db: runtime.db, identity: runtime.identity, now: () => at, newId: conductor.newId }, { taskId, outcome, message, ...files })) {
         services.peerDelivery?.kick();
       }
     },

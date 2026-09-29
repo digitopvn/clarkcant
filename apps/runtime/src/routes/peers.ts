@@ -9,7 +9,7 @@ import {
   PEER_FEATURES,
   readPeerFeatures,
 } from "@clarkcant/contracts";
-import { type Database, type JsonValue, activeGrants, getGrant, grantIdsFrom, upsertGrant } from "@clarkcant/storage";
+import { type Database, type JsonValue, activeGrants, getGrant, grantIdsFrom, offeredToPeer, upsertGrant } from "@clarkcant/storage";
 import { type PeerGatewayDeps, receiveEnvelope } from "@clarkcant/node-link";
 
 import { extensionForMimeType, fetchArtifactFromPeer } from "../artifact-transfer.ts";
@@ -77,6 +77,13 @@ export interface DelegationHandlers {
   cancel: (envelope: PeerEnvelope) => unknown;
   /** The peer's word on a task this node handed it, while it is still open there. */
   status: (envelope: PeerEnvelope) => unknown;
+  /** A file the peer's run of a task this node handed it wrote, offered back: decided against this node's own grant. */
+  offer: (envelope: PeerEnvelope) => unknown;
+  /**
+   * Fetch the bytes of such a file once its offer was acknowledged, when it was accepted and has not arrived yet. Called
+   * for every delivery of the offer, a replay included; a file already fetched or refused is left alone.
+   */
+  collect: (envelope: PeerEnvelope) => void;
 }
 
 /**
@@ -210,6 +217,12 @@ function peerHandler(
     }
 
     if (envelope.kind === "artifact.offer") {
+      // A file a task this node handed over brought back: decided against the grant this node's owner wrote for that
+      // task, never against one the peer gave.
+      if (envelope.taskId !== undefined) {
+        if (delegation === undefined) return { accepted: false, reason: "this node handed no work to peers" };
+        return delegation.offer(envelope);
+      }
       // The payload wraps the offer in an `artifact` field and repeats the digest, size and
       // classification at the envelope level; the offer itself is what the acceptance check reads.
       const parsed = artifactOfferSchema.safeParse(envelope.payload["artifact"]);
@@ -266,13 +279,16 @@ function acceptancePolicy(
  * `knownDelegationIds` is every grant that sender gave, which is what makes a delegate envelope naming an unknown
  * delegation a refusal rather than a guess; one under a grant no longer live is answered by the hand-over handler.
  */
-/** The artifact an accepted offer named, or nothing when this envelope is not one this node took. */
+/**
+ * The artifact an accepted offer named, or nothing when this envelope is not one this node took. An offer for a task
+ * is not one of these: its bytes are fetched by the hand-over's own intake.
+ */
 function acceptedArtifactOffer(
   raw: unknown,
   recorded: unknown,
 ): { digest: string; mimeType: string; sizeBytes: number } | undefined {
   const envelope = peerEnvelopeSchema.safeParse(raw);
-  if (!envelope.success || envelope.data.kind !== "artifact.offer") return undefined;
+  if (!envelope.success || envelope.data.kind !== "artifact.offer" || envelope.data.taskId !== undefined) return undefined;
   if ((recorded as { accepted?: boolean } | null)?.accepted !== true) return undefined;
   const offer = artifactOfferSchema.safeParse(envelope.data.payload["artifact"]);
   return offer.success
@@ -431,7 +447,10 @@ export function handlePeerUplinkRoutes(input: PeerUplinkDeps): GatewayResponse |
     // What this node takes and what it calls itself. A kind this node has no handler for is not advertised.
     const advertised = {
       features: PEER_FEATURES.filter(
-        (feature) => (feature !== "notice" || input.notice !== undefined) && (feature !== "skip" || input.skip !== undefined),
+        (feature) =>
+          (feature !== "notice" || input.notice !== undefined) &&
+          (feature !== "skip" || input.skip !== undefined) &&
+          (feature !== "artifacts" || input.delegation !== undefined),
       ),
       label: pairing.identity.label,
     };
@@ -486,6 +505,10 @@ export function handlePeerUplinkRoutes(input: PeerUplinkDeps): GatewayResponse |
      */
     const intake = acceptedArtifactOffer(parsed.value, recorded);
     if (intake !== undefined) scheduleArtifactIntake({ runtime, pairing, peerNodeId: peer.peerNodeId, intake });
+    const taskOffer = peerEnvelopeSchema.safeParse(parsed.value);
+    if (taskOffer.success && taskOffer.data.kind === "artifact.offer" && taskOffer.data.taskId !== undefined) {
+      input.delegation?.collect(taskOffer.data);
+    }
 
     return json(200, {
       status: outcome.status,
@@ -528,10 +551,11 @@ export function handlePeerUplinkRoutes(input: PeerUplinkDeps): GatewayResponse |
       return fail(401, "UNAUTHENTICATED", "a confirmed peer token is required to fetch an artifact");
     }
     const digest = decodeURIComponent(request.path.slice("/peers/artifacts/".length));
-    const blobPath = blobPathForDigest({ dataDir: runtime.dataDir, digest });
+    // Only a file this node offered that peer: holding the bytes is not a reason to hand them to any node that names them.
+    const blobPath = offeredToPeer(pairing.db, peer.peerNodeId, digest) ? blobPathForDigest({ dataDir: runtime.dataDir, digest }) : undefined;
     if (blobPath === undefined) {
-      // A digest this node does not hold and one that was never a digest are the same answer: a peer
-      // does not get to learn what this machine has by asking.
+      // A digest this node does not hold, one it holds but never offered that peer, and one that was never a digest are
+      // the same answer: a peer does not get to learn what this machine has by asking.
       return fail(404, "ARTIFACT_NOT_FOUND", "this node holds no artifact with that digest");
     }
     const blob = readBlob({ dataDir: runtime.dataDir, blobPath });

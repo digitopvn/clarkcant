@@ -9,6 +9,7 @@ import type {
   PersistentIntent,
   TaskResource,
 } from "@clarkcant/contracts";
+import { DELEGATED_ARTIFACTS_MAX_TOTAL_BYTES } from "@clarkcant/contracts";
 import {
   type AutomationChange,
   automationCapabilityFor,
@@ -261,6 +262,19 @@ function readMaxMinutes(value: unknown, handedOver: boolean): { ok: true; ms?: n
   return { ok: true, ms: value * 60_000 };
 }
 
+/**
+ * How many bytes of files one run on another node may bring back, which only a task another node runs carries. Absent
+ * brings none back: the node that runs it offers what it wrote, and this node takes nothing it was not told to.
+ */
+function readMaxArtifactBytes(value: unknown, handedOver: boolean): { ok: true; bytes?: number } | { ok: false; text: string } {
+  if (value === undefined) return { ok: true };
+  if (!handedOver) return { ok: false, text: "maxArtifactBytes is for a task another node runs (executor)" };
+  if (typeof value !== "number" || !Number.isInteger(value) || value < 0 || value > DELEGATED_ARTIFACTS_MAX_TOTAL_BYTES) {
+    return { ok: false, text: `maxArtifactBytes is a whole number of bytes from 0 to ${String(DELEGATED_ARTIFACTS_MAX_TOTAL_BYTES)}` };
+  }
+  return { ok: true, bytes: value };
+}
+
 function confirmedPeer(db: Database, peerNodeId: string): boolean {
   const peer = getPeer(db, peerNodeId);
   return peer !== undefined && peer.trustedAt !== null && peer.revokedAt === null;
@@ -410,7 +424,7 @@ export function createAutomationTools(deps: AutomationToolDeps): ToolDefinition[
    */
   const handOver = (
     action: Extract<IntentAction, { kind: "task" }> & { executor: string },
-    maxWallClockMs: number | undefined,
+    limits: { maxWallClockMs?: number | undefined; maxArtifactBytes?: number | undefined },
   ): { ok: true; grantId: string; send: () => boolean } | { ok: false; text: string } => {
     if (deps.principalId !== owner) return { ok: false, text: "only this node's owner can hand work to another node" };
     if (fingerprint === undefined) return { ok: false, text: "this node cannot hand work to another node from here" };
@@ -425,7 +439,8 @@ export function createAutomationTools(deps: AutomationToolDeps): ToolDefinition[
       resources: action.resources,
       allowedCategories: action.allowedCategories,
       expiresAt: grantExpiry(),
-      ...(maxWallClockMs === undefined ? {} : { maxWallClockMs }),
+      ...(limits.maxWallClockMs === undefined ? {} : { maxWallClockMs: limits.maxWallClockMs }),
+      ...(limits.maxArtifactBytes === undefined ? {} : { maxArtifactBytes: limits.maxArtifactBytes }),
     });
     if (!built.ok) return { ok: false, text: `that cannot be handed over: ${built.message}` };
     return {
@@ -488,6 +503,14 @@ export function createAutomationTools(deps: AutomationToolDeps): ToolDefinition[
             maximum: MAX_MINUTES_PER_RUN,
             description: "With executor: the longest one run may take on that node, when the user gives a limit.",
           },
+          maxArtifactBytes: {
+            type: "integer",
+            minimum: 0,
+            maximum: DELEGATED_ARTIFACTS_MAX_TOTAL_BYTES,
+            description:
+              "With executor: how many bytes of the files one run writes there may come back here, when the user wants " +
+              "them back. Omit and nothing comes back; the files stay on that node.",
+          },
           allowedEffects: {
             type: "array",
             items: { type: "string", enum: [...GIVABLE_EFFECTS] },
@@ -522,7 +545,12 @@ export function createAutomationTools(deps: AutomationToolDeps): ToolDefinition[
         const task = action.action.kind === "task" ? action.action : undefined;
         const minutes = readMaxMinutes(params.maxMinutesPerRun, task?.executor !== undefined);
         if (!minutes.ok) return { text: minutes.text };
-        const handed = task?.executor === undefined ? undefined : handOver({ ...task, executor: task.executor }, minutes.ms);
+        const fileBytes = readMaxArtifactBytes(params.maxArtifactBytes, task?.executor !== undefined);
+        if (!fileBytes.ok) return { text: fileBytes.text };
+        const handed =
+          task?.executor === undefined
+            ? undefined
+            : handOver({ ...task, executor: task.executor }, { maxWallClockMs: minutes.ms, maxArtifactBytes: fileBytes.bytes });
         if (handed !== undefined && !handed.ok) return { text: handed.text };
         const remembered = rememberSelfLogins(deps, params.githubSelfLogins);
         if (!remembered.ok) return { text: remembered.text };
@@ -552,7 +580,11 @@ export function createAutomationTools(deps: AutomationToolDeps): ToolDefinition[
           task?.executor === undefined
             ? ""
             : `\nIt runs on ${task.executor}, which runs it only within what its owner allows this node; until they allow ` +
-              `${describePlaces(task.resources)} there, each run is refused on that node and said here.${ready}`;
+              `${describePlaces(task.resources)} there, each run is refused on that node and said here.${ready}\n` +
+              (fileBytes.bytes === undefined || fileBytes.bytes === 0
+                ? "Files a run writes there stay there; set maxArtifactBytes to bring them back here."
+                : `Files a run writes there come back here, up to ${String(fileBytes.bytes)} bytes per run, once that ` +
+                  "node's owner also lets its files come back here; until then they stay there, and each run says so.");
         const setUp = `Set up. It reports in this conversation.${there}\n${describe(created.intent, [])}`;
         if (created.intent.when.topic.startsWith("github.")) return { text: `${setUp}\n${githubSetup(deps, created.intent)}` };
         const webhookSource = webhookSourceOfTopic(created.intent.when.topic);
@@ -623,8 +655,9 @@ export function createAutomationTools(deps: AutomationToolDeps): ToolDefinition[
         // resumed, a new one is written, with the same limits, since a withdrawn grant is never live again.
         const handedTask = current?.do.kind === "task" && current.do.executor !== undefined ? { ...current.do, executor: current.do.executor } : undefined;
         const resuming = handedTask !== undefined && change.state === "active" && current?.state === "paused";
+        const limits = handedTask?.grantId === undefined ? undefined : getGrant(deps.db, handedTask.grantId)?.budget;
         const regranted = resuming
-          ? handOver(handedTask, handedTask.grantId === undefined ? undefined : getGrant(deps.db, handedTask.grantId)?.budget?.maxWallClockMs)
+          ? handOver(handedTask, { maxWallClockMs: limits?.maxWallClockMs, maxArtifactBytes: limits?.maxArtifactBytes })
           : undefined;
         if (regranted !== undefined && !regranted.ok) return { text: `Not resumed: ${regranted.text}` };
         if (regranted !== undefined) change.do = { ...(change.do ?? handedTask), grantId: regranted.grantId } as IntentAction;
@@ -707,6 +740,14 @@ export function createAutomationTools(deps: AutomationToolDeps): ToolDefinition[
             items: { type: "string", enum: [...GIVABLE_EFFECTS] },
             description: "Only what the user said that node's work may do here without asking.",
           },
+          maxArtifactBytes: {
+            type: "integer",
+            minimum: 0,
+            maximum: DELEGATED_ARTIFACTS_MAX_TOTAL_BYTES,
+            description:
+              "How many bytes of the files one of that node's runs writes here may go back to it, when the user says " +
+              "they may. Omit and none go back; the files stay on this node.",
+          },
           stop: { type: "boolean", description: "Withdraw what that node was allowed. Tasks it hands over are refused after." },
         },
       },
@@ -729,7 +770,10 @@ export function createAutomationTools(deps: AutomationToolDeps): ToolDefinition[
         }
         const effects = readEffects(params);
         if (!effects.ok) return { text: effects.text };
-        // Written as a grant from that node to this one, so it intersects with that node's own grant field by field.
+        const fileBytes = readMaxArtifactBytes(params.maxArtifactBytes, true);
+        if (!fileBytes.ok) return { text: fileBytes.text };
+        // Written as a grant from that node to this one, so it intersects with that node's own grant field by field. Its
+        // byte budget is how much of what a run writes here this node's owner lets go back; none unless they said so.
         const built = taskGrant({
           grantId: deps.newId("alw"),
           ownerPrincipalId: owner,
@@ -738,14 +782,19 @@ export function createAutomationTools(deps: AutomationToolDeps): ToolDefinition[
           resources: resources.resources,
           allowedCategories: effects.allowedCategories,
           expiresAt: grantExpiry(),
+          ...(fileBytes.bytes === undefined ? {} : { maxArtifactBytes: fileBytes.bytes }),
         });
         if (!built.ok) return { text: `Not allowed: ${built.message}` };
         putPeerAllowance(deps.db, { peerNodeId: peer, ownerPrincipalId: owner, conversationId: deps.conversationId, grant: built.grant, at: deps.now() });
+        const files =
+          fileBytes.bytes === undefined || fileBytes.bytes === 0
+            ? " Files its runs write here stay here."
+            : ` Files a run writes here go back to it when it asks, up to ${String(fileBytes.bytes)} bytes per run.`;
         return {
           text:
             `${peer} may now run the tasks it hands over here, in ${describePlaces(resources.resources)}, and may ` +
             `${effects.allowedCategories.join(", ") || "only read"} without asking. Anything outside that is refused, a ` +
-            "risky effect outside it waits for the user, and that work reports in this conversation.",
+            `risky effect outside it waits for the user, and that work reports in this conversation.${files}`,
         };
       },
     },

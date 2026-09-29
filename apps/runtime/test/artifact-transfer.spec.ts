@@ -5,6 +5,8 @@ import { join } from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
 
+import { insertTaskArtifact } from "@clarkcant/storage";
+
 import { extensionForMimeType, fetchArtifactFromPeer } from "../src/artifact-transfer.ts";
 import { blobPathForDigest, digestPrefix, readBlob, writeBlob } from "../src/blobs.ts";
 import { createNodeServer } from "../src/server.ts";
@@ -155,6 +157,30 @@ describe("fetching an artifact from a peer", () => {
     expect(result.ok ? "" : result.code).toBe("TOO_LARGE");
   });
 
+  it("stops reading a body that runs on past the ceiling, rather than holding it whole to refuse it", async () => {
+    const to = tempDir();
+    let pulls = 0;
+    // No declared length, and no end: only reading a bounded amount of it lets this finish.
+    const endless = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        pulls += 1;
+        controller.enqueue(new Uint8Array(1024));
+      },
+    });
+    const result = await fetchArtifactFromPeer({
+      dataDir: to,
+      endpoint: "http://127.0.0.1:9",
+      token: "t",
+      digest: `sha256:${"e".repeat(64)}`,
+      extension: "txt",
+      maxBytes: 4096,
+      fetchImpl: async () => new Response(endless),
+    });
+
+    expect(result.ok ? "" : result.code).toBe("TOO_LARGE");
+    expect(pulls).toBeLessThan(16);
+  });
+
   it("refuses a declared length above the ceiling without reading the body", async () => {
     const to = tempDir();
     let bodyReads = 0;
@@ -269,22 +295,45 @@ describe("a node serving the bytes it holds", () => {
     confirmPeer(deps, peer.services.runtime.identity.nodeId);
   }
 
-  it("serves a stored blob to a confirmed peer, and refuses everyone else", async () => {
+  /** What the holder writes when it offers `digest` to `peer`: the only thing that lets that peer fetch it. */
+  function offerTo(holder: NodeServices, peer: NodeServices, digest: string): void {
+    insertTaskArtifact(holder.runtime.db, {
+      taskId: "task_offered",
+      direction: "offered",
+      peerArtifactId: `art_${digest.slice(7, 15)}`,
+      peerNodeId: peer.runtime.identity.nodeId,
+      name: "picture.png",
+      digest,
+      sizeBytes: PNG.byteLength,
+      mimeType: "image/png",
+      state: "offered",
+      at: new Date().toISOString() as never,
+    });
+  }
+
+  it("serves a blob it offered a confirmed peer to that peer, and refuses everyone else", async () => {
     const holder = await startNode("artifact holder");
     const fetcher = await startNode("artifact fetcher");
+    const other = await startNode("another peer");
     const stored = writeBlob({ dataDir: holder.services.runtime.dataDir, bytes: PNG, extension: "png" });
     pairWith(holder.services, fetcher);
+    pairWith(holder.services, other);
+    const tokenOf = (peer: { services: NodeServices }): string =>
+      outboundPeerToken(peer.services.runtime.identity.localToken, holder.services.runtime.identity.nodeId);
+    const get = (token?: string) =>
+      fetch(`${holder.base}/peers/artifacts/${stored.digest}`, token === undefined ? {} : { headers: { authorization: `Bearer ${token}` } });
 
     // Without a token at all: refused, and told nothing about whether the digest exists.
-    const anonymous = await fetch(`${holder.base}/peers/artifacts/${stored.digest}`);
-    expect(anonymous.status).toBe(401);
+    expect((await get()).status).toBe(401);
+    // Held here but offered to nobody: a confirmed peer that names it hears what it would for a digest never held.
+    expect((await get(tokenOf(fetcher))).status).toBe(404);
 
-    const token = outboundPeerToken(fetcher.services.runtime.identity.localToken, holder.services.runtime.identity.nodeId);
-    const authorized = await fetch(`${holder.base}/peers/artifacts/${stored.digest}`, {
-      headers: { authorization: `Bearer ${token}` },
-    });
+    offerTo(holder.services, fetcher.services, stored.digest);
+    const authorized = await get(tokenOf(fetcher));
     expect(authorized.status).toBe(200);
     expect(new Uint8Array(await authorized.arrayBuffer())).toEqual(PNG);
+    // Offered to one peer is not offered to another.
+    expect((await get(tokenOf(other))).status).toBe(404);
   });
 
   it("answers a digest it does not hold the same way it answers one that was never a digest", async () => {
@@ -307,6 +356,7 @@ describe("a node serving the bytes it holds", () => {
     const fetcher = await startNode("artifact fetcher");
     const stored = writeBlob({ dataDir: holder.services.runtime.dataDir, bytes: PNG, extension: "png" });
     pairWith(holder.services, fetcher);
+    offerTo(holder.services, fetcher.services, stored.digest);
 
     // The receiving side is the real transfer: it pulls over HTTP from the offering node, hashes what
     // arrives, and stores it only because the digest matches.

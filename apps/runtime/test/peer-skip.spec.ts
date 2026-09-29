@@ -332,7 +332,7 @@ describe("a message given up on, to a peer that takes skips", () => {
     expect(await answer.json()).toMatchObject({
       status: "stale",
       response: { status: "stale", outcome: { accepted: false, code: "SKIP_STALE" } },
-      features: ["notice", "skip", "capabilities"],
+      features: ["notice", "skip", "capabilities", "artifacts"],
     });
     expect(received(b, "skip")).toEqual([]);
     expect(peerAudit(b)).toEqual([]);

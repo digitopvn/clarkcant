@@ -170,6 +170,7 @@ async function main(): Promise<number> {
         usage: result.usage,
         withheldCapabilities: result.withheldCapabilities,
         record: result.record,
+        outputs: result.outputs,
       },
       null,
       2,

@@ -127,8 +127,13 @@ function skipListsInOrder(skip: PeerSkip): boolean {
  * `capabilities`: the node answers `GET /peers/capabilities` with what it can run for the asking peer, and says in a
  * `status` when a task handed to it waits for a capability (`waiting_capability`) and when it goes on (`running`, with
  * the capability named).
+ *
+ * `artifacts`: the node takes an `artifact.offer` for a task it handed over, decided against its own owner's grant for
+ * that task, and reads the files a `result` names (`evidence.artifacts`). A node that ran such a task offers its files
+ * only to a peer that advertises this, since an older build would refuse the whole result for the field it does not
+ * know.
  */
-export const peerFeatureSchema = z.enum(["notice", "skip", "capabilities"]);
+export const peerFeatureSchema = z.enum(["notice", "skip", "capabilities", "artifacts"]);
 export type PeerFeature = z.infer<typeof peerFeatureSchema>;
 /** Every feature this build takes, in the order it advertises them. */
 export const PEER_FEATURES: readonly PeerFeature[] = peerFeatureSchema.options;
@@ -552,30 +557,49 @@ export function checkArtifactAcceptance(
       reason: `artifact is ${offer.sizeBytes} bytes which exceeds the ${policy.maxBytes} byte budget`,
     };
   }
-  const mimeAllowed = policy.allowedMimePrefixes.some((prefix) =>
-    offer.mimeType.startsWith(prefix),
-  );
-  if (!allowedMime(offer.mimeType) || !mimeAllowed) {
+  if (!mimeTypePermitted(offer.mimeType, policy.allowedMimePrefixes)) {
     return { accepted: false, reason: `mime type ${offer.mimeType} is not permitted` };
   }
   return { accepted: true };
 }
 
 /**
- * Executable and markup MIME types are refused outright. An artifact named as a
- * document that is actually a program is the cheapest possible attack on a
- * transfer channel.
+ * A MIME type as it is compared: lowercase, without parameters (`; charset=…`) and surrounding space, so `TEXT/HTML;
+ * charset=utf-8` is `text/html` and cannot slip past a refusal by its spelling.
  */
-function allowedMime(mimeType: string): boolean {
-  const banned = [
-    "application/x-executable",
-    "application/x-sharedlib",
-    "application/x-mach-binary",
-    "application/x-msdownload",
-    "application/x-sh",
-    "application/x-httpd-php",
-    "text/html",
-    "image/svg+xml",
-  ];
-  return !banned.includes(mimeType);
+export function normalizedMimeType(mimeType: string): string {
+  return (mimeType.split(";", 1)[0] ?? "").trim().toLowerCase();
+}
+
+/**
+ * Executable, script and markup MIME types are refused outright. An artifact named as a document that is actually a
+ * program, or a page that runs one, is the cheapest possible attack on a transfer channel.
+ */
+const BANNED_MIME_TYPES: readonly string[] = [
+  "application/x-executable",
+  "application/x-sharedlib",
+  "application/x-mach-binary",
+  "application/x-msdownload",
+  "application/x-sh",
+  "application/x-httpd-php",
+  "text/html",
+  "application/xhtml+xml",
+  "image/svg+xml",
+  "text/javascript",
+  "text/ecmascript",
+  "text/x-javascript",
+  "application/javascript",
+  "application/ecmascript",
+  "application/x-javascript",
+];
+
+/**
+ * Whether a transfer may carry this MIME type: not one refused outright, and under one of the prefixes the receiver
+ * takes, both compared on the normalised type. The node that offers a file checks the same, so it does not offer what
+ * the receiver always refuses.
+ */
+export function mimeTypePermitted(mimeType: string, allowedMimePrefixes: readonly string[]): boolean {
+  const normalized = normalizedMimeType(mimeType);
+  if (normalized === "" || BANNED_MIME_TYPES.includes(normalized)) return false;
+  return allowedMimePrefixes.some((prefix) => normalized.startsWith(prefix.toLowerCase()));
 }

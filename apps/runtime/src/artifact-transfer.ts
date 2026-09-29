@@ -97,7 +97,10 @@ export async function fetchArtifactFromPeer(options: ArtifactTransferOptions): P
     };
   }
 
-  const bytes = new Uint8Array(await response.arrayBuffer());
+  // Read a chunk at a time and stopped past the ceiling, so a body that runs on is never held whole to be refused.
+  const read = await readBounded(response, options.maxBytes);
+  if (!read.ok) return read;
+  const bytes = read.bytes;
   if (bytes.byteLength > options.maxBytes) {
     return {
       ok: false,
@@ -118,6 +121,49 @@ export async function fetchArtifactFromPeer(options: ArtifactTransferOptions): P
   // Written only after the digest matches, so a refusal never leaves an unverifiable file behind.
   const stored = writeBlob({ dataDir: options.dataDir, bytes, extension: options.extension });
   return { ok: true, blobPath: stored.blobPath, blobRef: stored.blobRef, bytes: bytes.byteLength };
+}
+
+/**
+ * A response body, read up to one byte past `maxBytes` and no further: the rest is cancelled unread. A body that
+ * breaks off is reported as a transfer that did not arrive.
+ */
+async function readBounded(
+  response: Response,
+  maxBytes: number,
+): Promise<{ ok: true; bytes: Uint8Array } | Extract<ArtifactTransferResult, { ok: false }>> {
+  if (response.body === null) return { ok: true, bytes: new Uint8Array(0) };
+  const reader = response.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  try {
+    for (;;) {
+      const next = await reader.read();
+      if (next.done) break;
+      total += next.value.byteLength;
+      if (total > maxBytes) {
+        await reader.cancel().catch(() => undefined);
+        return {
+          ok: false,
+          code: "TOO_LARGE",
+          message: `the artifact arrived as more than the ${String(maxBytes)} bytes this node agreed to accept`,
+        };
+      }
+      chunks.push(next.value);
+    }
+  } catch (cause) {
+    return {
+      ok: false,
+      code: "UNREACHABLE",
+      message: `the artifact stopped arriving: ${cause instanceof Error ? cause.message : String(cause)}`,
+    };
+  }
+  const bytes = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return { ok: true, bytes };
 }
 
 /** The extension to store an artifact under, derived from the MIME type the offer declared. */
