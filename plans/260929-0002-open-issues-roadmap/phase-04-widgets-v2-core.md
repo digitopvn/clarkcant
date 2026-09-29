@@ -1,7 +1,7 @@
 ---
 phase: 4
 title: "#198 lõi: manifest hợp nhất, service facet, catalog P0"
-status: pending
+status: done
 issues: [198]
 ---
 

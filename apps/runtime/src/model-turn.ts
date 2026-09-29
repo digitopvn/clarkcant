@@ -15,7 +15,15 @@
  * approval, evidence and budgets live, and a conversation turn has none of them.
  */
 
-import { type AttachmentRef, type Instant, type MessageBlock, type Principal, modelChangeNeedsGeneration } from "@clarkcant/contracts";
+import {
+  type AttachmentRef,
+  type Instant,
+  type MessageBlock,
+  type Principal,
+  type WidgetSemanticDoc,
+  modelChangeNeedsGeneration,
+  uiContextNote,
+} from "@clarkcant/contracts";
 
 import {
   RealPiAdapter,
@@ -223,6 +231,14 @@ interface Turn {
   stopping: Promise<void> | undefined;
   /** When this session last answered or was created, which is what idle eviction orders by. */
   lastUsedAtMs: number;
+  /**
+   * What this session has been told about each widget on screen, and at which revision.
+   *
+   * On the turn because it describes the session's own context: a new session starts with none and is told the whole
+   * of what matters, a continuing one is told only what changed since, and one that has seen the current revision is
+   * told nothing.
+   */
+  uiSeen: Map<string, { doc: WidgetSemanticDoc; revision: number }>;
 }
 
 function isTextDelta(event: WorkerEvent): event is WorkerEvent & { type: "text-delta"; delta: string } {
@@ -285,15 +301,19 @@ async function recapFor(options: { history?: HistoryReader }, conversationId: st
   return `Mạch hội thoại trước đó, để bạn tiếp tục đúng việc đang làm:\n${lines.join("\n")}`;
 }
 
-function promptForTurn(input: { text: string; note?: string; brief?: string }): string {
+function promptForTurn(input: { text: string; note?: string; brief?: string; ui?: string }): string {
   const note = input.note?.trim() ?? "";
   const brief = input.brief?.trim() ?? "";
+  const ui = input.ui?.trim() ?? "";
   const parts = [input.text];
   if (note !== "") parts.push(`[Hướng dẫn cho lượt này: ${note}]`);
   // The attachment section is appended, never prepended: the person's own words stay first, so a file
   // whose content contains something that reads like an instruction is still arriving after the request
   // it belongs to.
   if (brief !== "") parts.push(brief);
+  // What is on screen goes last of all, and only on this new turn: nothing earlier in the session changes, so the
+  // prefix a provider cached is still the prefix, and a widget's words arrive after everything the person said.
+  if (ui !== "") parts.push(ui);
   return parts.join("\n\n");
 }
 
@@ -585,6 +605,13 @@ export async function createModelTurn(options: {
    */
   memoryBrief?: (conversationId: string) => string;
   /**
+   * The widgets a person changed in this conversation, each with what it means now and its revision (#195).
+   *
+   * Read when a turn starts, which is when the node works out what the changes since the last turn amounted to; this
+   * module decides, from what the session has already been told, whether any of it is news.
+   */
+  uiContext?: (conversationId: string) => readonly { doc: WidgetSemanticDoc; revision: number }[];
+  /**
    * The model to run for sessions created from now on, when somebody chose one.
    *
    * A function rather than a value, and read at session creation rather than here: the composition root builds the
@@ -620,6 +647,32 @@ export async function createModelTurn(options: {
       onEvent: () => turn.onEvent,
       channel: () => turn.channel,
     }) ?? [];
+  /*
+   * The note about the screen for this turn, and the session's record of what it has now been told.
+   *
+   * Only the widgets the note actually named are marked as seen, so one left out for the budget is still news next
+   * turn. A widget that cannot be read is left out rather than failing the turn: what the person asked is still
+   * answerable without it, and `inspect_ui` is there when it is not.
+   */
+  const uiNoteFor = (turn: Turn, conversationId: string): string => {
+    if (options.uiContext === undefined) return "";
+    let current: readonly { doc: WidgetSemanticDoc; revision: number }[];
+    try {
+      current = options.uiContext(conversationId);
+    } catch {
+      return "";
+    }
+    const note = uiContextNote(
+      current.map((entry) => {
+        const seen = turn.uiSeen.get(entry.doc.instanceId);
+        return seen === undefined ? entry : { ...entry, seen };
+      }),
+    );
+    for (const entry of current) {
+      if (note.shown.includes(entry.doc.instanceId)) turn.uiSeen.set(entry.doc.instanceId, entry);
+    }
+    return note.text;
+  };
   const budget = modelBudgetFromEnv(options.env);
   const adapter =
     options.adapter ??
@@ -787,6 +840,7 @@ export async function createModelTurn(options: {
       settleStop: undefined,
       stopping: undefined,
       lastUsedAtMs: Date.now(),
+      uiSeen: new Map(),
     };
     // The view tool is only registered when there is a catalog; the extra tools stand on their own
     // and are registered whatever the catalog says.
@@ -1013,6 +1067,7 @@ export async function createModelTurn(options: {
       // turn, which is what the Memory tab's promise to let them see the source and delete it has to mean.
       const memoryPart = options.memoryBrief?.(input.conversationId) ?? "";
       const brief = [attachmentPart, memoryPart].filter((part) => part !== "").join("\n\n");
+      const ui = uiNoteFor(turn, input.conversationId);
       // Set before the prompt rather than after it, so a message arriving while the first tokens are being written
       // already sees a turn in flight.
       turn.inFlight = true;
@@ -1056,6 +1111,7 @@ export async function createModelTurn(options: {
           text: input.text,
           ...(note === undefined ? {} : { note }),
           ...(brief === "" ? {} : { brief }),
+          ...(ui === "" ? {} : { ui }),
         }),
       );
       // A stop settles the race before the provider does, and whatever the provider says afterwards is already

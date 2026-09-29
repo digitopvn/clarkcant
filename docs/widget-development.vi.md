@@ -459,28 +459,53 @@ Kiểm thử: [composition-graph.spec.ts](../packages/contracts/test/composition
 
 ---
 
-## 9. Semantic contract cho voice
+## 9. Semantic contract cho voice và lượt kế tiếp
 
-Widget phải publish semantic view khi state actionable thay đổi:
+Những gì widget đang hiển thị đến được với Clark theo hai đường, cả hai đều dựng từ một tài liệu cho mỗi widget:
 
-- summary;
-- selected IDs;
-- available actions;
-- concise text representation.
+- **Voice** đọc summary, lựa chọn và các giá trị của widget đang được focus trước khi quyết định một câu nói có nghĩa gì.
+- **Lượt gõ hoặc nói kế tiếp** kết thúc bằng một ghi chú ngắn về các widget mà người dùng đã thay đổi trong cuộc trò
+  chuyện này. Khi người dùng chọn, tìm hay lưu trên một widget, không có lượt nào được bắt đầu và không có tin nhắn nào
+  được ghi: node chỉ ghi nhận widget đã được chạm vào, rồi tính xem thay đổi đó có nghĩa gì khi lượt kế tiếp bắt đầu.
+
+Tài liệu gồm một summary, vài giá trị có tên (khoảng thời gian, chuỗi số liệu được chọn, từ khóa tìm, trang), các
+selected ID và những action widget đang cung cấp. Tài liệu ở dạng chuẩn tắc và có giới hạn: tối đa 16 giá trị, danh
+sách 12 mục ngắn, 20 selected ID, 12 action và tổng cộng 4 KB. Ký tự điều khiển và ký tự đổi chiều văn bản bị loại bỏ,
+mọi thứ trông giống secret đều bị che. Revision chỉ tăng khi tài liệu thay đổi, nên lưu lại cùng một giá trị, một lần
+lưu chỉ thuộc view hay mười lần sửa giữa hai lượt đều được tính là một thay đổi hoặc không thay đổi nào.
+
+Ghi chú được nối vào sau mọi thứ khác trong lượt mới và không bao giờ viết lại ngữ cảnh trước đó, nên phần prefix mà
+provider đã cache không đổi. Một session chưa thấy widget sẽ được cho biết toàn bộ tài liệu; một session đang tiếp tục
+chỉ được cho biết phần đã đổi (`query: "" → "acme"`); một session đã thấy revision hiện tại thì không được cho biết gì.
+Ghi chú nêu tối đa ba widget trong khoảng 2.400 ký tự và nói rõ khi nó bỏ bớt phần nào. Model có thể đọc phần còn lại,
+chỉ trong cuộc trò chuyện này, bằng tool chỉ-đọc `inspect_ui`. Ghi chú được đánh dấu là dữ liệu từ màn hình, không phải
+chỉ dẫn.
+
+Ai viết tài liệu:
+
+- **Surface dựng sẵn và surface ghép** được host mô tả từ state nó lưu: khoảng thời gian, ngày được chọn và các giá trị
+  graph đã khai báo.
+- **Widget chạy trong frame riêng** đề xuất summary, selected ID và giá trị bằng
+  `semantic.publish(summary, selectedIds, values?)`. Host gửi lần publish cuối của một loạt sau 250 ms, kiểm tra theo
+  schema chặt (`POST …/widgets/{instanceId}/semantic`), làm sạch và đánh dấu đó là lời của chính widget. Frame không
+  được nêu action: action luôn lấy từ binding của instance, nên frame không thể quảng cáo một action mà nó không được
+  bind.
 
 Voice và click phải gọi cùng action binding/state path.
 
 Không publish raw DOM, hidden text, full dataset hoặc secret chỉ để voice “hiểu màn hình”.
 
-Example:
+Ví dụ, từ một frame:
 
-    semantic.publish({
-      summary: "Calendar for September 2026; September 20 selected.",
-      selectedIds: ["2026-09-20"],
-      availableActions: [
-        { actionBindingId: "act_create_event", label: "Create event" }
-      ]
-    })
+    semantic.publish(
+      "Calendar for September 2026; September 20 selected.",
+      ["2026-09-20"],
+      { view: "month", month: "2026-09" }
+    )
+
+Test: [widget-semantic.spec.ts](../packages/contracts/test/widget-semantic.spec.ts) cho tài liệu và ghi chú,
+[widget-semantic.spec.ts](../apps/runtime/test/widget-semantic.spec.ts) cho prompt, các route và `inspect_ui`, và
+journey trình duyệt [widget-semantic.spec.ts](../apps/web/e2e/widget-semantic.spec.ts).
 
 ---
 
@@ -508,7 +533,7 @@ Author-facing target:
     host.requestDetach()
     host.openExternal(approvedUrl)
 
-    semantic.publish(summary, selectedIds, availableActions)
+    semantic.publish(summary, selectedIds, values?)
 
     lifecycle.onMount()
     lifecycle.onSuspend()

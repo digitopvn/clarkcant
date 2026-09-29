@@ -1,7 +1,7 @@
 ---
 phase: 5
 title: "#195 semantic state của widget"
-status: pending
+status: done
 issues: [195]
 ---
 

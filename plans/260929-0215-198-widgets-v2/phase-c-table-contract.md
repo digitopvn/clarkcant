@@ -1,7 +1,7 @@
 ---
 phase: C
 title: "Hợp đồng đầy đủ của canvas.table@1"
-status: pending
+status: done
 issues: [198]
 ---
 

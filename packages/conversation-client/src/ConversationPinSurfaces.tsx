@@ -17,6 +17,20 @@ export interface ConversationPinSurfacesProps {
 }
 
 /**
+ * What a pin is called on the shelf: the name the widget was given, never its definition id.
+ *
+ * A composed surface and most views carry a `title`; an action button carries a `label`. The id is kept on the element
+ * for tooling and tests, not shown, because a person pinned "Bảng có liên kết", not `canvas.overview@1`.
+ */
+export function pinLabel(props: Record<string, unknown> | undefined): string | undefined {
+  for (const key of ["title", "label"]) {
+    const value = props?.[key];
+    if (typeof value === "string" && value.trim() !== "") return value.trim();
+  }
+  return undefined;
+}
+
+/**
  * The pinned widgets: the expanded live view of whichever instance is pinned that way, and the
  * shelf of every other pin.
  *
@@ -42,8 +56,14 @@ export function ConversationPinSurfaces({
         {pins.map((pin) => {
           const instance = instanceById.get(pin.instanceId);
           return (
-            <span key={pin.pinId} className="cc-pin" data-pin-id={pin.pinId} data-refresh-policy={pin.refreshPolicy}>
-              <span>{instance?.definitionId ?? pin.instanceId}</span>
+            <span
+              key={pin.pinId}
+              className="cc-pin"
+              data-pin-id={pin.pinId}
+              data-pin-definition={instance?.definitionId}
+              data-refresh-policy={pin.refreshPolicy}
+            >
+              <span>{pinLabel(instance?.props) ?? t("widgets.pins.untitled")}</span>
               <button
                 aria-label={t("widgets.pins.unpin")}
                 data-unpin={pin.pinId}

@@ -34,6 +34,7 @@ import { commandDigest } from "../run-command.ts";
 import { captureBrowserFrame, previewPageUrl } from "./browser-frame.ts";
 import { type NodeServices } from "../services.ts";
 import { buildViewCatalog } from "../view-catalog.ts";
+import { conversationUiContext } from "../widget-semantic.ts";
 
 /**
  * The deterministic composer, and the preconditions it needs to be reachable.
@@ -174,6 +175,26 @@ function longReplyModelTurn(): Promise<ModelTurn | undefined> {
 }
 
 /**
+ * A model turn whose provider answers with the prompt it was given, built on first use.
+ *
+ * The UI-context journey has to show what a model is told about the screen, and a fixture node has no provider to be
+ * told anything. The turn is the production one, reading the node's own widget state the way the composition root
+ * wires it; the only scripted part is a provider that repeats its prompt, so what the page shows is what a model would
+ * have read.
+ */
+let uiEchoTurn: Promise<ModelTurn | undefined> | undefined;
+
+function uiEchoModelTurn(conductor: () => NodeServices["conductor"]): Promise<ModelTurn | undefined> {
+  uiEchoTurn ??= createModelTurn({
+    env: { CC_MODEL_PROVIDER: "fake", CC_MODEL_ID: "fake-model" },
+    cwd: process.cwd(),
+    adapter: new FakePiAdapter(),
+    uiContext: (conversationId) => conversationUiContext(conductor(), conversationId),
+  });
+  return uiEchoTurn;
+}
+
+/**
  * The `control_app` call a scripted sentence stands for, if it is one.
  *
  * Two spellings: the original "go home" sentences the voice journey says, and `agent control_app <kind> [arg]`,
@@ -295,6 +316,30 @@ export function createModelComposer(deps: FixtureModelDeps): FixtureCompose {
       });
       const at = instantSchema.parse(new Date().toISOString());
       return { text: reply.text, block: modelReplyCard(deps.services().conductor, reply, at) };
+    }
+
+    /*
+     * What the screen shows, as a model turn would be told it (#195).
+     *
+     * The reply is the prompt the turn built, so a journey can read whether the note about the widgets a person changed
+     * arrived, whether a second question with nothing changed was told nothing, and whether a later change came as a
+     * delta.
+     */
+    if (/^(?:giao diện đang cho thấy gì|what does the ui show)\??$/iu.test(input.text.trim())) {
+      const turn = await uiEchoModelTurn(() => deps.services().conductor);
+      if (turn === undefined) return undefined;
+      const reply = await turn.answer({
+        conversationId: input.conversationId as never,
+        principal: {
+          principalId: input.principal.principalId as never,
+          kind: "user",
+          nodeId: deps.services().runtime.identity.nodeId as never,
+        },
+        text: input.text,
+        messageId: input.messageId,
+        onEvent: (event) => input.emit?.(event),
+      });
+      return { text: reply.text, block: { type: "text", format: "plain", content: reply.text, streaming: false } };
     }
 
     /*

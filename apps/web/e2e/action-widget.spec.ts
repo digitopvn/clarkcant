@@ -139,7 +139,8 @@ test("a view button pins itself to the conversation", async ({ page }) => {
   await button.getByRole("button", { name: "Ghim nút này" }).click();
 
   await expect(button.locator("[data-action-result='done']")).toHaveText("Đã ghim khung nhìn này.", { timeout: 10_000 });
-  await expect(page.locator("[data-pin-shelf] [data-pin-id]").filter({ hasText: "canvas.action@1" }).first()).toBeVisible();
+  // Named on the shelf by what the button says, not by its definition id.
+  await expect(page.locator("[data-pin-shelf] [data-pin-definition='canvas.action@1']").first()).toHaveText(/Ghim nút này/u);
 });
 
 test("an invoke button calls the package's service and shows what it answered", async ({ page }) => {

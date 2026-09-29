@@ -115,6 +115,16 @@ export const hostToWidgetSchema = z.discriminatedUnion("kind", [
 ]);
 export type HostToWidgetMessage = z.infer<typeof hostToWidgetSchema>;
 
+/**
+ * The named values a widget may publish about what it shows. The same bounds as the host's proposal schema in
+ * `@clarkcant/contracts`, repeated rather than imported so a widget bundle does not carry the host's contracts.
+ */
+export const semanticValuesSchema = z.record(
+  z.string().max(80),
+  z.union([z.string().max(600), z.number(), z.boolean(), z.array(z.string().max(600)).max(64)]),
+);
+export type SemanticValues = z.infer<typeof semanticValuesSchema>;
+
 export const widgetToHostSchema = z.discriminatedUnion("kind", [
   z.strictObject({ kind: z.literal("ready"), nonce: z.string().min(16).max(200) }),
   z.strictObject({
@@ -157,6 +167,11 @@ export const widgetToHostSchema = z.discriminatedUnion("kind", [
     nonce: z.string().min(16).max(200),
     summary: z.string().min(1).max(600),
     selectedIds: z.array(z.string().min(1).max(200)).max(64),
+    /**
+     * A few named values the widget shows now: a chosen filter, a query, a page. Bounded here and cleaned again by the
+     * host before a model reads them; never actions, which are the host's bindings.
+     */
+    values: semanticValuesSchema.optional(),
   }),
 ]);
 export type WidgetToHostMessage = z.infer<typeof widgetToHostSchema>;
@@ -252,7 +267,7 @@ export interface WidgetAuthorApi {
     requestPin(): void;
     openExternal(approvedUrl: string): void;
   };
-  semantic: { publish(summary: string, selectedIds: string[]): void };
+  semantic: { publish(summary: string, selectedIds: string[], values?: SemanticValues): void };
   lifecycle: {
     onMount(handler: () => void): void;
     onSuspend(handler: (reason: string) => void): void;

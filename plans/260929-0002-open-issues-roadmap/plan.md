@@ -1,6 +1,6 @@
 ---
 title: Lộ trình ưu tiên và hoàn thiện mọi issue mở không bị gate
-status: pending
+status: in-progress
 created: 2026-09-29
 branch: claude/clarkcant-issues-priority-7d4f7d
 issues: [93, 129, 137, 169, 170, 171, 172, 173, 174, 190, 192, 195, 196, 197, 198, 200, 201, 210]
@@ -63,11 +63,11 @@ issues: [93, 129, 137, 169, 170, 171, 172, 173, 174, 190, 192, 195, 196, 197, 19
 
 | # | Phase | Tier | Phụ thuộc | Trạng thái |
 |---|---|---|---|---|
-| 01 | [Gỡ kẹt merge gate và land PR mở](phase-01-unblock-merge-gate.md) | 0 | — | pending |
-| 02 | [Kiểm chứng và đóng issue đã xong](phase-02-close-done-issues.md) | 0 | 01 | pending |
-| 03 | [Bảo mật: #137 và Stop một turn đang chạy](phase-03-security-confinement-stop.md) | 1 | 01 | pending |
-| 04 | [#198 lõi: manifest hợp nhất, service facet, catalog P0](phase-04-widgets-v2-core.md) | 2 | 03 | pending |
-| 05 | [#195 semantic state của widget](phase-05-widget-semantic-state.md) | 2 | 04 (hợp đồng composition) | pending |
+| 01 | [Gỡ kẹt merge gate và land PR mở](phase-01-unblock-merge-gate.md) | 0 | — | done |
+| 02 | [Kiểm chứng và đóng issue đã xong](phase-02-close-done-issues.md) | 0 | 01 | done |
+| 03 | [Bảo mật: #137 và Stop một turn đang chạy](phase-03-security-confinement-stop.md) | 1 | 01 | done |
+| 04 | [#198 lõi: manifest hợp nhất, service facet, catalog P0](phase-04-widgets-v2-core.md) | 2 | 03 | done (A–G; #198 còn P1/P2 ở phase 10) |
+| 05 | [#195 semantic state của widget](phase-05-widget-semantic-state.md) | 2 | 04 (hợp đồng composition) | done (#195) |
 | 06 | [#197 phase 1–2: provenance, resource theo task, Signal/Intent](phase-06-reactive-automation-core.md) | 2 | 03 | pending |
 | 07 | [#210 A–D cùng #196 phase 1–2: hợp đồng reference chung](phase-07-composer-refs-actionable-inbox.md) | 2 | 01 | pending |
 | 08 | [#196 phase 3–5, #170, #172 phần còn lại](phase-08-inbox-completion.md) | 3 | 06, 07 | pending |

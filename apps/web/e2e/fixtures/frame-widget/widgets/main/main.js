@@ -78,6 +78,8 @@ function draw() {
       .then(() => {
         saved.textContent = "đã lưu";
         saved.setAttribute("data-widget-saved-state", "saved");
+        // What the widget shows now, in its own words, for the next turn: the host cleans it and marks it as such.
+        api.semantic.publish(String(props.title ?? "widget"), [], { count: next });
       })
       .catch((error) => {
         saved.textContent = String(error && error.message ? error.message : error);

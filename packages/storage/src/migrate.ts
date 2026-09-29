@@ -1229,6 +1229,38 @@ export const MIGRATIONS: readonly Migration[] = [
       `);
     },
   },
+  {
+    version: 27,
+    name: "widget_semantic_state",
+    reversible: true,
+    up: (db) => {
+      db.exec(`
+        -- What a live widget means now, for the next model turn and for voice. One row per widget a person touched,
+        -- in the conversation they touched it from, so the turn reads the few widgets that matter instead of scanning
+        -- every instance the node holds.
+        --
+        -- semantic_revision moves only when source_digest does: the digest is of the normalised document, so a
+        -- rerender, a saved view or a value set to what it already was is not a change. Ten edits between two turns
+        -- are one revision, read when the turn starts.
+        --
+        -- proposal is what a widget in its own frame published about itself, already bounded and cleaned. It is kept
+        -- apart from document because the host rebuilds document from it and from the instance's bindings; the frame
+        -- never writes the document, and never its actions.
+        CREATE TABLE widget_semantic_state (
+          instance_id        TEXT PRIMARY KEY,
+          conversation_id    TEXT NOT NULL,
+          schema_version     INTEGER NOT NULL,
+          semantic_revision  INTEGER NOT NULL DEFAULT 0,
+          source_digest      TEXT,
+          document           TEXT,
+          proposal           TEXT,
+          touched_at         TEXT NOT NULL,
+          updated_at         TEXT NOT NULL
+        );
+        CREATE INDEX idx_widget_semantic_recent ON widget_semantic_state(conversation_id, touched_at);
+      `);
+    },
+  },
 ];
 
 function readAll<T>(db: Database, sql: string): T[] {

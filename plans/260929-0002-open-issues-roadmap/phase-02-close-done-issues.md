@@ -1,7 +1,7 @@
 ---
 phase: 2
 title: Kiểm chứng và đóng issue đã xong
-status: pending
+status: done
 issues: [93, 129, 169, 171, 173, 174]
 ---
 

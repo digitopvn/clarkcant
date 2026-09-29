@@ -348,9 +348,15 @@ export function createWidgetRuntime(deps: RuntimeDeps): WidgetRuntime {
       },
     },
     semantic: {
-      publish: (summary, selectedIds) => {
+      publish: (summary, selectedIds, values) => {
         requireReady("publish semantic");
-        send({ kind: "semantic.publish", nonce: speakingNonce(), summary, selectedIds });
+        send({
+          kind: "semantic.publish",
+          nonce: speakingNonce(),
+          summary,
+          selectedIds,
+          ...(values === undefined ? {} : { values }),
+        });
       },
     },
     lifecycle: {

@@ -209,6 +209,15 @@ describe("what the runtime sends", () => {
 
     expect(bus.sent[0]).toMatchObject({ kind: "event", name: "filter.changed" });
     expect(bus.sent[1]).toMatchObject({ kind: "semantic.publish", summary: "đang xem doanh thu tháng 9" });
+    expect(bus.sent[1]).not.toHaveProperty("values");
+  });
+
+  it("publishes the named values a widget shows, only when it gives some", () => {
+    const { api, bus } = ready();
+
+    api.semantic.publish("3 việc, 1 đã ghim", ["n2"], { filter: "pinned", page: 2 });
+
+    expect(bus.sent[0]).toMatchObject({ kind: "semantic.publish", selectedIds: ["n2"], values: { filter: "pinned", page: 2 } });
   });
 
   it("resolves an action only when the host answers it", async () => {
