@@ -9,6 +9,7 @@ import {
 import { canRunHere } from "@clarkcant/core";
 import { type Database, getPeer, livePeerAllowance } from "@clarkcant/storage";
 
+import { hearsCapabilityWaits } from "./delegation.ts";
 import type { NodeIdentity } from "./node.ts";
 import { peerCapabilitiesUrl, readAnswer, sanitizeDeliveryError } from "./peer-transport.ts";
 import { outboundPeerToken } from "./peers.ts";
@@ -33,11 +34,14 @@ export function capabilitySummaryFor(
   peerNodeId: string,
 ): PeerCapabilitySummary {
   const allowance = livePeerAllowance(deps.db, peerNodeId, deps.now());
-  if (allowance === undefined) return { version: PEER_CAPABILITY_SUMMARY_VERSION, allowed: false, capabilities: [] };
+  // Whether a run handed over that this node cannot start yet waits here: the same check the hand-over is decided by.
+  const waits = hearsCapabilityWaits(deps.db, peerNodeId);
+  if (allowance === undefined) return { version: PEER_CAPABILITY_SUMMARY_VERSION, allowed: false, waits, capabilities: [] };
   const refs = [...new Set(allowance.grant.capabilityRefs)].slice(0, PEER_CAPABILITY_SUMMARY_MAX) as CapabilityRef[];
   return {
     version: PEER_CAPABILITY_SUMMARY_VERSION,
     allowed: true,
+    waits,
     capabilities: refs.map((ref) => ({ ref, ready: canRunHere(deps, ref) })),
   };
 }
@@ -123,8 +127,18 @@ export function capabilityWarning(peerNodeId: string, needed: CapabilityRef, ans
   if (offered === undefined) {
     return `Warning: what ${peerNodeId}'s owner allows this node there does not cover ${needed}, which this task needs, so each run is refused there until they allow it.`;
   }
+  if (!offered.ready && answer.summary.waits) {
+    return (
+      `Warning: ${peerNodeId} cannot run ${needed} right now. A run handed over waits there until it can, with no time ` +
+      "limit, and it is said in this conversation; you can stop it from here."
+    );
+  }
   if (!offered.ready) {
-    return `Warning: ${peerNodeId} cannot run ${needed} right now. A run handed over waits there until it can, and it is said in this conversation.`;
+    // That node has not yet heard that this one reads a wait, so it keeps nothing waiting: each run is refused at once.
+    return (
+      `Warning: ${peerNodeId} cannot run ${needed} right now, and a run handed over is refused there at once until it ` +
+      "can, since it has not yet heard from this node that a run may wait there. Each refusal is said in this conversation."
+    );
   }
   return `${peerNodeId} can run ${needed} for this node now.`;
 }

@@ -40,13 +40,13 @@
     },
     {
       "path": "distributed-runtime.md",
-      "bytes": 32163,
-      "sha256": "e23c069d32d17dc5d2b6900621ea6b2ab0baa8a1d1b925a7ea596f2749760b72"
+      "bytes": 32696,
+      "sha256": "cccb48ef9f68cd8ee46cb8abb1a5aa54a99793a86ef5df6798d58cda67b790c9"
     },
     {
       "path": "distributed-runtime.vi.md",
-      "bytes": 37098,
-      "sha256": "dbe053a4f21a74ca1b65ef0ae39b52ff54c323e445f865e3f4d5a35218b3b415"
+      "bytes": 37765,
+      "sha256": "6cd87679de3b8aeb9c7b3113bf2cb0e43429761f82417ead2dbe39adadf8773a"
     },
     {
       "path": "examples/README.md",

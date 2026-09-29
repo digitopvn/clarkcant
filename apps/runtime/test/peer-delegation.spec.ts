@@ -4,11 +4,21 @@ import { join } from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
 
-import type { Grant, Instant, MessageRecord, PeerEnvelope, TaskRecord } from "@clarkcant/contracts";
+import { type Grant, type Instant, type MessageRecord, PEER_FEATURES, type PeerEnvelope, type TaskRecord } from "@clarkcant/contracts";
 import { createTask, registerCapability, startTaskHere, updateReadiness } from "@clarkcant/core";
 import { sendEnvelope } from "@clarkcant/node-link";
 import { CONTROLLED_CODE_TASK } from "@clarkcant/project-work";
-import { allRows, getGrant, getPersistentIntent, getTask, nextOutboundSequence, parseJson, pendingOutbox, revokeGrant } from "@clarkcant/storage";
+import {
+  allRows,
+  getGrant,
+  getPersistentIntent,
+  getTask,
+  nextOutboundSequence,
+  parseJson,
+  pendingOutbox,
+  recordPeerAdvertisement,
+  revokeGrant,
+} from "@clarkcant/storage";
 
 import { createAutomationTools } from "../src/automation-tools.ts";
 import { startAutomationService } from "../src/automation-service.ts";
@@ -867,7 +877,9 @@ describe("what the other node can run, asked before a task is handed to it", { t
       executor: peerB,
     });
     expect(setUp).toContain("Set up.");
-    expect(setUp).toContain(`Warning: ${peerB} cannot run project.code.change@1 right now.`);
+    expect(setUp).toContain(
+      `Warning: ${peerB} cannot run project.code.change@1 right now. A run handed over waits there until it can, with no time limit`,
+    );
     await waitUntil(() => pendingOutbox(a.services.runtime.db).length === 0, "the grant to reach B");
 
     await signal(a, "note-1");
@@ -950,6 +962,9 @@ describe("what the other node can run, asked before a task is handed to it", { t
     const b = await startClark("laptop", { packLoading: true });
     // Paired as a build from before this: neither node has said it reads what a capability wait is.
     await pair(a, b);
+    // A has since heard from B that B answers what it runs, but B has not yet heard the same from A: a pairing made
+    // before this build, where only one side has answered anything since.
+    recordPeerAdvertisement(a.services.runtime.db, identityOf(b).nodeId, { features: [...PEER_FEATURES] });
     const onA = await conversation(a, "Ghi chú");
     const onB = await conversation(b, "Máy bàn");
     await tools(b, onB)("allow_peer_tasks", {
@@ -957,7 +972,22 @@ describe("what the other node can run, asked before a task is handed to it", { t
       folders: [{ path: b.root, access: "write" }],
       allowedEffects: ["read", "local-write"],
     });
-    await handToLaptop(a, b, onA, [{ path: b.root, access: "write" }], ["read", "local-write"]);
+
+    // B says a run would not wait there, so A's setup warns that each run is refused, not that it waits.
+    const setUp = await tools(a, onA)("create_automation", {
+      summary: "Ghi chú trên laptop",
+      topic: "local.note.requested",
+      action: "task",
+      goal: "Write notes.md with today's note.",
+      folders: [{ path: b.root, access: "write" }],
+      allowedEffects: ["read", "local-write"],
+      executor: identityOf(b).nodeId,
+    });
+    expect(setUp).toContain(
+      `Warning: ${identityOf(b).nodeId} cannot run project.code.change@1 right now, and a run handed over is refused there at once until it can`,
+    );
+    expect(setUp).not.toContain("waits there");
+    await waitUntil(() => pendingOutbox(a.services.runtime.db).length === 0, "the grant to reach B");
 
     await signal(a, "note-1");
 
@@ -994,13 +1024,13 @@ describe("what the other node can run, asked before a task is handed to it", { t
     // folder, and not why anything is not ready.
     const toA = await asked(tokenFor(a, b));
     expect(toA.status).toBe(200);
-    expect(JSON.parse(toA.text)).toEqual({ version: 1, allowed: true, capabilities: [{ ref: "project.file.read@1", ready: false }] });
+    expect(JSON.parse(toA.text)).toEqual({ version: 1, allowed: true, waits: true, capabilities: [{ ref: "project.file.read@1", ready: false }] });
     expect(toA.text).not.toContain(b.root);
     expect(toA.text).not.toContain("project.code.change@1");
     expect(toA.text).not.toContain("browser.session.drive@1");
 
     // C, paired but allowed nothing, hears only that; a caller without a peer token hears nothing at all.
-    expect(JSON.parse((await asked(tokenFor(c, b))).text)).toEqual({ version: 1, allowed: false, capabilities: [] });
+    expect(JSON.parse((await asked(tokenFor(c, b))).text)).toEqual({ version: 1, allowed: false, waits: true, capabilities: [] });
     expect((await asked(undefined)).status).toBe(401);
     expect((await asked(b.token)).status).toBe(401);
 

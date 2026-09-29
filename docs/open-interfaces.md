@@ -158,15 +158,17 @@ and no skips until an answer says it takes them. The sender reads at most 16 KiB
 30-second deadline; an answer past either is ignored, and the message stays acknowledged when its status was `200`.
 
 A node that advertises `capabilities` answers `GET /peers/capabilities` for a paired peer, with that peer's derived peer
-token (anything else is `401` `UNAUTHENTICATED`), with `{ version: 1, allowed, capabilities: [{ ref, ready }] }` — a
+token (anything else is `401` `UNAUTHENTICATED`), with `{ version: 1, allowed, waits, capabilities: [{ ref, ready }] }` — a
 strict object, at most 32 entries, built only from the allowance that node's owner set for the asking peer: the
 capability refs the allowance covers and whether the node can run each one now; `allowed: false` with an empty list when
-there is no allowance. It holds no folder, no other capability and no reason. The asking node waits at most 5 seconds,
+there is no allowance. `waits` says whether a run the asking peer hands over that the node cannot start yet waits there
+(`true`) or is refused at once (`false`: the node has not yet heard that the peer advertises `capabilities`), and the
+setup warning says the run waits only when it is `true`. It holds no folder, no other capability and no reason. The asking node waits at most 5 seconds,
 refuses redirects, and drops an answer that does not match the schema exactly; `list_peers` and `create_automation` with
 an `executor` use it to show and to warn, never to refuse. When a hand-over has to wait for a capability on the
 receiving node and the sender advertises `capabilities`, the receiver sends a NodeLink `status` whose payload is `{
 taskState: "waiting_capability", taskRevision, message, capabilityRef }`, then the same with `taskState: "running"` once
-the task starts; a sender that
+the task starts. The wait has no time limit; both owners are told when it starts, and the sender can stop it. A sender that
 does not advertise `capabilities` is refused at once, as before. The envelope stays at protocol version 1; the
 advertised feature is what versions the route and these statuses. See [distributed runtime](distributed-runtime.md).
 

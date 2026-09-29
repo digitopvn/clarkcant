@@ -698,11 +698,13 @@ describe("what a peer says about itself", () => {
 });
 
 describe("what a peer says it can run for this node", () => {
-  const summary = { version: 1, allowed: true, capabilities: [{ ref: "project.file.read@1", ready: true }] };
+  const summary = { version: 1, allowed: true, waits: true, capabilities: [{ ref: "project.file.read@1", ready: true }] };
 
   it("reads a summary of capability refs and readiness, and nothing else", () => {
     expect(peerCapabilitySummarySchema.safeParse(summary).success).toBe(true);
-    expect(peerCapabilitySummarySchema.safeParse({ version: 1, allowed: false, capabilities: [] }).success).toBe(true);
+    expect(peerCapabilitySummarySchema.safeParse({ version: 1, allowed: false, waits: false, capabilities: [] }).success).toBe(true);
+    // Whether a run it cannot start yet waits there is part of the answer, never guessed.
+    expect(peerCapabilitySummarySchema.safeParse({ version: 1, allowed: true, capabilities: [] }).success).toBe(false);
     // Strict at every level: a folder, a reason or any other field is refused whole, never read in part.
     expect(peerCapabilitySummarySchema.safeParse({ ...summary, folders: ["/home"] }).success).toBe(false);
     expect(

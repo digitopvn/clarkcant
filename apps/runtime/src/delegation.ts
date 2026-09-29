@@ -749,9 +749,10 @@ export function receiveDelegate(deps: DelegateReceiveDeps, envelope: PeerEnvelop
 /**
  * Whether a peer reads that a task it handed over waits here for a capability. One that does not — a build from before
  * it — would never hear it, so its hand-over is refused at once instead, as it always was, rather than kept waiting
- * without a word.
+ * without a word. The same answer is what this node tells that peer, asked what it can run for it, about whether a run
+ * waits here.
  */
-function hearsCapabilityWaits(db: Database, peerNodeId: string): boolean {
+export function hearsCapabilityWaits(db: Database, peerNodeId: string): boolean {
   return (getPeer(db, peerNodeId)?.features ?? []).includes("capabilities");
 }
 
