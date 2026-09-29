@@ -528,6 +528,32 @@ Shipped:
     arrive read and raise no notification outside the app. A collapsed "Quieted kinds" list says in words what
     each one covers and at what level (e.g. "Automation “…” — warning level"), with an example title, and "Notify
     again" reverses it; Undo does too.
+  - **What can be done about the thing itself leads** when that thing can still take it. The node works this out on
+    every read, like the rest.
+    - **Run again** leads on background work that failed, was stopped or was interrupted, while its record and its
+      conversation still exist. It starts the same request as new work in the same conversation, says so there, and
+      removes the old notification; the new run reports with a notification of its own. Background work is read-only,
+      so running it again needs no approval. Work already run again offers nothing; work whose record is gone says so
+      under "More". A worker task that failed does not offer this, because a task's failure is final and what it
+      already did has to be respected. "Ask Clark" leads instead.
+    - **Update** and **Review in Settings** lead on an update notification while the package is still installed at an
+      older version. Update goes through the same install route as the marketplace, with all its checks. A refusal is
+      said in words, the notification stays, and the installed version is unchanged. Review closes the inbox and opens
+      Settings → Extensions. A version from a local folder offers only Review, because only the person knows which
+      folder to install from. **Skip this version**, under "More", stops notifications about that version and older
+      ones of that package (or of Pi) for this person, removes the notification, and offers Undo; a newer version is
+      still reported. A collapsed "Skipped versions" list beside "Quieted kinds" names each skipped version, and its
+      Undo takes the skip back even after the notification is gone. Once the package is updated or removed, "More"
+      says so instead of offering Update.
+    - **Ask again** leads on the notification about a question nobody answered in time, while its conversation exists
+      and it has not been asked again. It asks the same question in the same conversation, and the new card waits in
+      "Waiting on you". The old card says it was asked again, and an expired card says it expired; neither claims an
+      answer was recorded.
+    - **Not offered yet**, because no route exists that could do them honestly:
+      - asking again for an expired approval: re-issuing it would bypass Jev's policy gate, and an expired task
+        approval has already ended its task;
+      - replying to, or opening, a message from another device: there is no message channel between devices yet;
+      - inspecting or fixing a system warning from the inbox.
   - **Waiting items are never snoozed or quieted.** Approvals, permission requests and Clark's questions are decisions,
     not notifications: they stay in "Waiting on you" until decided or expired.
 - **An action whose outcome nobody saw asks the person** (#273). When a command that reaches outside the node (a push, a
@@ -552,8 +578,8 @@ Shipped:
 - **Update notifications for the Pi SDK, installed packages and widgets** (`apps/runtime/src/update-checks.ts`), from a
   periodic job comparing the installed version against the directory index and the npm registry (a network error does
   not create an error notification). Content states current version → new version and risk lane, using the same
-  naming as the marketplace. There's no "Update" button yet: the real update route through the install/rollback
-  lifecycle isn't wired to this notification yet, so the inbox only says a new version exists but can't be clicked.
+  naming as the marketplace. Update, Review in Settings and Skip this version are described above; a version skipped
+  there, or anything older, is not reported again.
 - **Out-of-app notifications when the window is unfocused or in minimized/orb mode** (#171): on desktop this is an OS
   notification via Electron `Notification`, host-owned, with only redacted title/body — never a command line or a
   secret; clicking restores the window from orb/compact to normal size, focuses it and opens the inbox via the same

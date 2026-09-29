@@ -28,6 +28,7 @@ import {
   snoozeUntil,
   suppressionDescription,
   timeLeft,
+  updateFailureReason,
   waitingKey,
 } from "../src/inbox/inbox-model.ts";
 
@@ -267,6 +268,23 @@ describe("a decide failure", () => {
     expect(decideFailureMessageKey("ambiguous", false)).toBe("inbox.decideFailed.notRun");
     expect(decideFailureMessageKey("ambiguous", true)).toBe("inbox.decideFailed.stillWaiting");
     expect(decideFailureMessageKey("ambiguous", undefined)).toBe("inbox.decideFailed.stillWaiting");
+  });
+});
+
+describe("why an update from a notice did not install", () => {
+  it("says a version the directory does not list in the reader's language, not the node's English sentence", () => {
+    const reason = updateFailureReason(gatewayError("NOT_IN_DIRECTORY", "com.example.notes@1.0.1 is not in the directory"), "1.0.1", t);
+    expect(reason).toBe("danh mục gói không có bản 1.0.1.");
+    expect(t("inbox.updateFailed").replace("{reason}", reason)).toBe(
+      "Không cập nhật được: danh mục gói không có bản 1.0.1. Bản đang cài vẫn giữ nguyên.",
+    );
+  });
+
+  it("ends any other reason with a full stop, and adds none to one that already has it", () => {
+    expect(updateFailureReason(gatewayError("PACKAGE_DIGEST_MISMATCH", "the download does not match its digest"), "2.0.0", t)).toBe(
+      "the download does not match its digest.",
+    );
+    expect(updateFailureReason(new TypeError("network down!"), "2.0.0", t)).toBe("network down!");
   });
 });
 

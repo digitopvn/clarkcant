@@ -216,6 +216,8 @@ function sweepExpiredQuestions(services: ExpiryNoticeServices, now: Instant): vo
         title: "Câu hỏi đã hết hạn, không có ai trả lời",
         ...(prompt === undefined ? {} : { body: prompt }),
         conversationId,
+        // Named, so the inbox can offer to ask it again (`noticeActionsFor`) and check that nobody has since.
+        subject: { kind: "question", questionId, conversationId },
         dedupKey: `expired:${questionId}`,
         at: now,
       });

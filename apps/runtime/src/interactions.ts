@@ -291,6 +291,109 @@ export function cancelQuestion(deps: InteractionDeps, questionId: string, reason
 }
 
 /**
+ * Where a question stands for "Ask again", read from the transcript like everything else about it.
+ *
+ *   - `expired`: its deadline passed with nobody answering, and it has not been asked again. The only state that
+ *     offers it.
+ *   - `waiting`: still open; answer it instead.
+ *   - `closed`: answered or dropped, so there is nothing left to ask.
+ *   - `asked-again`: already put back once; the new question is the one to answer.
+ *   - `missing`: no card with that id in the part of the conversation that is read.
+ */
+export type AskAgainState = "expired" | "waiting" | "closed" | "asked-again" | "missing";
+
+export function askAgainState(blocks: readonly MessageBlock[], questionId: string, now: Instant): AskAgainState {
+  let card: QuestionInteraction | undefined;
+  let outcome: AskAgainState | undefined;
+  for (const block of blocks) {
+    if (block.type === "question-card" && block.questionId === questionId && card === undefined) {
+      card = interactionFromBlock(block, "");
+      continue;
+    }
+    if (block.type !== "tool-activity" || block.name !== "ask_user_question" || block.args.questionId !== questionId) continue;
+    const decision = block.args.decision;
+    if (decision === "asked-again") return "asked-again";
+    // "expired" is the one record that leaves a question askable again; any other is an answer or a drop.
+    if (decision !== "expired") outcome = "closed";
+  }
+  if (card === undefined) return "missing";
+  if (outcome !== undefined) return outcome;
+  const open = isWaiting({ status: card.status, ...(card.expiresAt === undefined ? {} : { expiresAt: card.expiresAt }) }, now);
+  return open ? "waiting" : "expired";
+}
+
+export type AskAgainResult =
+  | { ok: true; questionId: string }
+  | {
+      ok: false;
+      code: "QUESTION_NOT_FOUND" | "QUESTION_OPEN" | "QUESTION_CLOSED" | "ALREADY_ASKED_AGAIN" | "INVALID_QUESTION" | "SECRET_REQUEST";
+      message: string;
+    };
+
+/**
+ * Put a question that expired unanswered back in its conversation, as a new question with the same words and choices.
+ *
+ * A new card rather than reopening the old one: messages are immutable, and the old card's expiry is part of what
+ * happened. It goes through `createQuestion`, so it gets a fresh deadline and the same refusals any question gets,
+ * the secret check above all. The old question is then marked `asked-again`, pointing at the new one, which is what
+ * stops a second press (or a second surface) from asking it a third time. Both writes happen in one synchronous run,
+ * so two requests cannot both find it not yet asked again.
+ */
+export function askQuestionAgain(deps: InteractionDeps, questionId: string): AskAgainResult {
+  const blocks = deps.blocks();
+  const state = askAgainState(blocks, questionId, deps.now());
+  switch (state) {
+    case "missing":
+      return { ok: false, code: "QUESTION_NOT_FOUND", message: "Không có câu hỏi nào với id đó trong hội thoại này." };
+    case "waiting":
+      return { ok: false, code: "QUESTION_OPEN", message: "Câu hỏi này vẫn đang chờ trả lời, nên không cần hỏi lại." };
+    case "closed":
+      return { ok: false, code: "QUESTION_CLOSED", message: "Câu hỏi này đã được trả lời hoặc đã bỏ qua." };
+    case "asked-again":
+      return { ok: false, code: "ALREADY_ASKED_AGAIN", message: "Câu hỏi này đã được hỏi lại rồi." };
+    case "expired":
+      break;
+  }
+  const previous = interactionFor(deps, questionId);
+  if (previous === undefined) {
+    return { ok: false, code: "QUESTION_NOT_FOUND", message: "Không có câu hỏi nào với id đó trong hội thoại này." };
+  }
+  const created = createQuestion(deps, {
+    question: previous.prompt,
+    kind: previous.questionType,
+    ...(previous.options.length === 0
+      ? {}
+      : {
+          options: previous.options.map((option) => ({
+            id: option.id,
+            label: option.label,
+            ...(option.description === undefined ? {} : { description: option.description }),
+          })),
+        }),
+    ...(previous.allowOther ? { allowOther: true } : {}),
+  });
+  if (!created.ok) return created;
+  const at = deps.now();
+  deps.append({
+    at,
+    blocks: [
+      {
+        type: "tool-activity",
+        toolCallId: deps.newId("call"),
+        name: "ask_user_question",
+        label: `Hỏi lại: ${previous.prompt}`,
+        status: "done",
+        args: { questionId, decision: "asked-again", askedAs: created.interaction.questionId },
+        result: "Câu hỏi đã hết hạn được hỏi lại.",
+        startedAt: at,
+        endedAt: at,
+      },
+    ],
+  });
+  return { ok: true, questionId: created.interaction.questionId };
+}
+
+/**
  * Close the questions whose deadline has passed, and say which ones they were.
  *
  * Expiry is lazy — computed when somebody looks — because the alternative is a timer that has to survive a

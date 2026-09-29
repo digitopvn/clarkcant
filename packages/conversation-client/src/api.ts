@@ -39,6 +39,7 @@ import {
   type InboxResponse,
   type InboxSummary,
   type NoticeSuppression,
+  type SkippedVersion,
   type MemoryRecord,
   type RegisteredPreference,
   type SemanticProposal,
@@ -1267,6 +1268,11 @@ export class GatewayClient {
     return this.#call("POST", `/conversations/${conversationId}/questions/${encodeURIComponent(questionId)}/cancel`, {});
   }
 
+  /** Puts a question that expired unanswered back in its conversation as a new question; refused once it was. */
+  askQuestionAgain(conversationId: string, questionId: string): Promise<{ ok: boolean; questionId: string; timeline: Timeline }> {
+    return this.#call("POST", `/conversations/${conversationId}/questions/${encodeURIComponent(questionId)}/ask-again`, {});
+  }
+
   /** Resolve the live surface for an instance: current state, sections and ownership. */
   async liveWidget(
     conversationId: string,
@@ -1828,6 +1834,22 @@ export class GatewayClient {
     return this.#call("POST", `/inbox/notices/${encodeURIComponent(noticeId)}/unsnooze`);
   }
 
+  /** Stops reporting the version an update notice names, and anything older; the notice leaves the list. */
+  skipNoticeVersion(noticeId: string): Promise<{ skipped: true; name: string; version: string }> {
+    return this.#call("POST", `/inbox/notices/${encodeURIComponent(noticeId)}/skip-version`);
+  }
+
+  /** Takes a skip back: the version is reported again, and the notice returns while its dismissal can be undone. */
+  unskipNoticeVersion(noticeId: string): Promise<{ skipped: false; restored: boolean }> {
+    return this.#call("POST", `/inbox/notices/${encodeURIComponent(noticeId)}/unskip-version`);
+  }
+
+  /** Takes a skip back from the list of skipped versions, whether or not its notice is still around. */
+  removeSkippedVersion(skip: Pick<SkippedVersion, "subjectKind" | "name" | "version">): Promise<{ removed: true }> {
+    const path = [skip.subjectKind, skip.name, skip.version].map(encodeURIComponent).join("/");
+    return this.#call("DELETE", `/inbox/skipped-versions/${path}`);
+  }
+
   /** Stops notifying about notices of this one's kind; they still arrive in the list, already read. */
   suppressNoticeKind(noticeId: string): Promise<{ suppression: NoticeSuppression }> {
     return this.#call("POST", `/inbox/notices/${encodeURIComponent(noticeId)}/suppress`);
@@ -1862,5 +1884,10 @@ export class GatewayClient {
    */
   cancelWork(workId: string): Promise<{ workId: string; outcome: "stopped" | "dequeued" | "already-ended" }> {
     return this.#call("POST", `/work/${encodeURIComponent(workId)}/cancel`, {});
+  }
+
+  /** Runs background work that failed or was stopped again, once, as new work with the same words. */
+  retryWork(workId: string): Promise<{ accepted: true; workId: string; retriedFrom: string; state: "running" | "queued"; position?: number }> {
+    return this.#call("POST", `/work/${encodeURIComponent(workId)}/retry`, {});
   }
 }

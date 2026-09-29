@@ -520,6 +520,31 @@ phải một nơi điều hướng thứ hai. Mỗi mục trỏ về hội tho�
     giờ bị tắt báo. Các thông báo sau thuộc loại đã tắt vẫn được liệt kê nhưng đến ở trạng thái đã đọc và không hiện
     thông báo ngoài ứng dụng. Danh sách "Loại không báo" thu gọn nói bằng chữ mỗi dòng bao gồm gì và ở mức nào (ví
     dụ "Việc tự động “…” — mức cảnh báo"), kèm một tiêu đề ví dụ, và "Báo lại" đảo lại; Hoàn tác cũng vậy.
+  - **Việc làm được với chính thứ mà thông báo nói tới đứng đầu**, khi thứ đó vẫn còn làm được. Node tính việc này ở
+    mỗi lần đọc, như những thao tác khác.
+    - **Chạy lại** đứng đầu ở việc nền bị lỗi, bị dừng hoặc bị gián đoạn, khi bản ghi của việc và hội thoại của nó vẫn
+      còn. Nó chạy lại đúng yêu cầu đó thành một việc mới trong cùng hội thoại, nói rõ trong hội thoại, và gỡ thông báo
+      cũ; lần chạy mới báo kết quả bằng thông báo của riêng nó. Việc nền chỉ đọc, nên chạy lại không cần phê duyệt.
+      Việc đã được chạy lại thì không đưa ra gì; việc đã mất bản ghi thì nói rõ trong "Khác". Task của worker bị lỗi
+      không có thao tác này, vì lỗi của một task là kết cục cuối và những gì task đã làm phải được tôn trọng. Thay vào
+      đó "Hỏi Clark" đứng đầu.
+    - **Cập nhật** và **Xem trong Cài đặt** đứng đầu ở thông báo cập nhật khi gói vẫn đang cài ở bản cũ hơn. Cập nhật
+      đi qua đúng route cài đặt mà marketplace dùng, với đủ các bước kiểm tra. Nếu bị từ chối thì lý do được nói bằng
+      chữ, thông báo ở lại, và bản đang cài giữ nguyên. Xem trong Cài đặt đóng hộp thư và mở Cài đặt → Tiện ích. Bản
+      đến từ một thư mục cục bộ chỉ có Xem trong Cài đặt, vì chỉ người dùng biết cài từ thư mục nào. **Bỏ qua phiên
+      bản này**, trong "Khác", ngừng báo về bản đó và các bản cũ hơn của gói đó (hoặc của Pi) cho người này, gỡ thông
+      báo và đưa ra Hoàn tác; bản mới hơn vẫn được báo. Danh sách "Phiên bản đã bỏ qua" thu gọn, cạnh "Loại không
+      báo", nêu tên từng bản đã bỏ qua, và nút Hoàn tác ở đó rút lại việc bỏ qua kể cả khi thông báo đã không còn. Khi
+      gói đã được cập nhật hoặc gỡ, "Khác" nói rõ điều đó thay vì đưa ra Cập nhật.
+    - **Hỏi lại** đứng đầu ở thông báo về một câu hỏi không ai trả lời kịp, khi hội thoại của nó còn và câu hỏi chưa
+      được hỏi lại. Nó hỏi đúng câu hỏi đó trong cùng hội thoại, và thẻ mới chờ trong "Đang chờ bạn". Thẻ cũ nói rằng
+      câu hỏi đã được hỏi lại, và thẻ hết hạn nói rằng câu hỏi đã hết hạn; không thẻ nào nói là đã ghi nhận câu trả
+      lời.
+    - **Chưa có**, vì chưa có route nào làm được những việc này một cách trung thực:
+      - hỏi lại một approval đã hết hạn: đưa ra lại sẽ đi vòng qua cổng chính sách của Jev, và approval hết hạn của
+        một task đã kết thúc task đó;
+      - trả lời, hoặc mở, một tin nhắn từ thiết bị khác: chưa có kênh tin nhắn giữa các thiết bị;
+      - xem hoặc khắc phục một cảnh báo hệ thống từ hộp thư.
   - **Việc chờ không bao giờ bị hoãn hay tắt báo.** Approval, yêu cầu cấp quyền và câu hỏi của Clark là quyết định,
     không phải thông báo: chúng ở lại trong "Đang chờ bạn" cho đến khi được quyết định hoặc hết hạn.
 - **Thao tác không ai thấy kết quả thì hỏi người dùng** (#273). Khi một lệnh đi ra ngoài node (một lần push, một lần
@@ -543,8 +568,8 @@ phải một nơi điều hướng thứ hai. Mỗi mục trỏ về hội tho�
   không gọi được nó, vì một agent tự nói được lần push của chính nó đã thành công thì có thể tự báo là mình đã xong.
 - **Thông báo cập nhật cho Pi SDK, gói đã cài và widget** (`apps/runtime/src/update-checks.ts`), từ một job định kỳ
   so version đã cài với directory index và với npm registry (lỗi mạng không tạo thông báo lỗi). Nội dung nói version
-  hiện tại → mới và risk lane, cùng cách gọi tên với marketplace. Chưa có nút "Cập nhật": route cập nhật thật đi qua
-  lifecycle cài/rollback chưa nối tới thông báo này, nên hộp thư chỉ nói có bản mới chứ chưa cho bấm.
+  hiện tại → mới và risk lane, cùng cách gọi tên với marketplace. Cập nhật, Xem trong Cài đặt và Bỏ qua phiên bản
+  này được mô tả ở trên; bản đã bỏ qua ở đó, hoặc bản cũ hơn, sẽ không được báo lại.
 - **Thông báo ngoài ứng dụng khi cửa sổ không có focus hoặc ở chế độ thu nhỏ/orb** (#171): trên desktop là OS
   notification qua Electron `Notification`, host-owned, chỉ tiêu đề/nội dung đã redact — không bao giờ có dòng
   lệnh hay secret; click thì đưa cửa sổ về kích thước thường nếu đang là orb/compact, focus nó và mở hộp thư qua

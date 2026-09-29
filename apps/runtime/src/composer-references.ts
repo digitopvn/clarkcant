@@ -376,6 +376,8 @@ function subjectPointer(notice: Notice): string | undefined {
       return `việc tự động intentId ${subject.intentId}${subject.taskId === undefined ? "" : `, task taskId ${subject.taskId}`}${subject.conversationId === undefined ? "" : ` trong hội thoại conversationId ${subject.conversationId}`}`;
     case "signal-source":
       return `nguồn tín hiệu sourceKey ${subject.sourceKey}`;
+    case "question":
+      return `câu hỏi questionId ${subject.questionId} trong hội thoại conversationId ${subject.conversationId}`;
     case undefined:
       return notice.conversationId === undefined ? undefined : `hội thoại conversationId ${notice.conversationId}`;
   }

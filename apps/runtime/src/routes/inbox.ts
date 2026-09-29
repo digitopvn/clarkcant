@@ -1,5 +1,6 @@
 import {
   type Instant,
+  type Notice,
   NOTICE_SNOOZE_MAX_MS,
   inboxReadRequestSchema,
   inboxSnoozeRequestSchema,
@@ -7,6 +8,7 @@ import {
   noticeSuppressionKey,
 } from "@clarkcant/contracts";
 import {
+  type SkippedVersionKind,
   dismissNotification,
   findNoticeSuppression,
   getNotification,
@@ -14,9 +16,11 @@ import {
   markNotificationsUnread,
   removeNoticeSuppression,
   restoreNotification,
+  skipVersion,
   snoozeNotification,
   suppressNoticeKind,
   unsnoozeNotification,
+  unskipVersion,
 } from "@clarkcant/storage";
 
 import { type InboxServices, inboxSummary, readInbox } from "../inbox.ts";
@@ -35,7 +39,11 @@ import { type GatewayRequest, type GatewayResponse, fail, json, readJson } from 
  *   POST /inbox/notices/:id/unsnooze         take a snooze back: the notice returns as it was
  *   POST /inbox/notices/:id/suppress         stop notifying about notices of this one's kind (409 when too broad)
  *   POST /inbox/notices/:id/unsuppress       notify about this one's kind again
+ *   POST /inbox/notices/:id/skip-version     stop reporting the version an update notice names (and older); dismisses it
+ *   POST /inbox/notices/:id/unskip-version   take that back: the version is reported again and the notice returns
  *   DELETE /inbox/suppressions/:id           the same, from the list of quieted kinds
+ *   DELETE /inbox/skipped-versions/:kind/:name/:version
+ *                                            take a skip back from the list of skipped versions, which outlasts its notice
  *
  * There is no route that decides anything. Approving a command, granting a capability and answering a question
  * each already have a route, and the inbox calls those: a second way to approve would be a second set of checks,
@@ -176,6 +184,41 @@ export function handleInboxRoutes(deps: InboxRouteDeps): GatewayResponse | undef
     return json(200, { unsuppressed: true });
   }
 
+  if (segments.length === 4 && segments[1] === "notices" && (segments[3] === "skip-version" || segments[3] === "unskip-version")) {
+    const skip = segments[3] === "skip-version";
+    if (request.method !== "POST") return fail(405, "METHOD_NOT_ALLOWED", "a version is skipped or unskipped with POST");
+    const noticeId = segments[2] ?? "";
+    const stored = getNotification(services.runtime.db, principalId, noticeId);
+    if (stored === undefined) return fail(404, "RESOURCE_NOT_FOUND", "that notice is not in the inbox");
+    // What is skipped is read from the notice this node stored, never from the request: the person skips the version
+    // they were told about, and a caller cannot name some other package or version through this route.
+    const skipped = skippedVersionOf(stored.notice);
+    if (skipped === undefined) return fail(409, "NOT_AN_UPDATE", "only an update notice names a version that can be skipped");
+    const key = { principalId, ...skipped };
+    if (skip) {
+      if (stored.dismissed) return fail(404, "RESOURCE_NOT_FOUND", "that notice is not in the inbox");
+      skipVersion(services.runtime.db, { ...key, at: at() });
+      dismissNotification(services.runtime.db, { principalId, notificationId: noticeId, at: at() });
+      return json(200, { skipped: true, ...skipped });
+    }
+    unskipVersion(services.runtime.db, key);
+    // Undo brings the notice back too, while a dismissal can still be undone; an older one stays dismissed.
+    const restored = stored.dismissed ? restoreNotification(services.runtime.db, { principalId, notificationId: noticeId, at: at() }) : "not-dismissed";
+    return json(200, { skipped: false, restored: restored === "restored" || restored === "not-dismissed" });
+  }
+
+  if (segments.length === 5 && segments[1] === "skipped-versions") {
+    if (request.method !== "DELETE") return fail(405, "METHOD_NOT_ALLOWED", "a skipped version is taken back with DELETE");
+    const [kind, name, version] = segments.slice(2).map(decodeSegment);
+    if ((kind !== "package" && kind !== "pi") || name === undefined || name === "" || version === undefined || version === "") {
+      return fail(400, "INVALID_SCHEMA", "a skipped version is named by package or pi, then its name and version");
+    }
+    // Only this principal's own skips: the key is completed with the authenticated identity, never read from the path.
+    const removed = unskipVersion(services.runtime.db, { principalId, subjectKind: kind, name, version });
+    if (!removed) return fail(404, "RESOURCE_NOT_FOUND", "that version is not skipped");
+    return json(200, { removed: true });
+  }
+
   if (segments.length === 3 && segments[1] === "suppressions") {
     if (request.method !== "DELETE") return fail(405, "METHOD_NOT_ALLOWED", "a quieted kind of notice is removed with DELETE");
     const removed = removeNoticeSuppression(services.runtime.db, { principalId, suppressionId: segments[2] ?? "" });
@@ -184,4 +227,24 @@ export function handleInboxRoutes(deps: InboxRouteDeps): GatewayResponse | undef
   }
 
   return fail(404, "NOT_FOUND", `no inbox handler for ${request.method} ${request.path}`);
+}
+
+/** A path segment as the client encoded it (a package id may hold `@` and `/`), or nothing when it is not valid. */
+function decodeSegment(segment: string): string | undefined {
+  try {
+    return decodeURIComponent(segment);
+  } catch {
+    return undefined;
+  }
+}
+
+/** The package or Pi SDK version an update notice names, as `skipped_versions` keys it, or nothing for any other notice. */
+function skippedVersionOf(notice: Notice): { subjectKind: SkippedVersionKind; name: string; version: string } | undefined {
+  const subject = notice.subject;
+  if (notice.category !== "update") return undefined;
+  if (subject?.kind === "package" && subject.version !== undefined) {
+    return { subjectKind: "package", name: subject.packageId, version: subject.version };
+  }
+  if (subject?.kind === "pi-update") return { subjectKind: "pi", name: subject.packageName, version: subject.version };
+  return undefined;
 }

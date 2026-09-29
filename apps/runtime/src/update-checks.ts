@@ -8,6 +8,7 @@ import {
   type InstalledPackageView,
 } from "@clarkcant/core";
 import { sdkVersion } from "@clarkcant/pi-adapter";
+import { skippedVersionsOf, type SkippedVersionKind } from "@clarkcant/storage";
 
 import { packageUpdateNotice, piUpdateNotice, tryRecordNodeNotice, type NoticeServices } from "./notices.ts";
 
@@ -181,18 +182,23 @@ function isInstallableCandidate(candidate: UpdateCandidate, platform: Platform):
  * filtered to the ones `isInstallableCandidate` accepts and then to the ones actually newer than what is
  * installed, and the highest of those wins — never the first entry the directory happens to list. When this host's
  * platform is not one the vocabulary names at all, the package half is skipped entirely rather than guessing.
+ *
+ * A version the owner skipped from an earlier notice, or anything older than it, is not reported again, for a package
+ * or for the Pi SDK (`skipped_versions`); a newer one still is.
  */
 export async function checkForUpdates(input: CheckForUpdatesInput): Promise<UpdateCheckReport> {
   let packageUpdates = 0;
   const platform = "platform" in input ? input.platform : platformForHost(process.platform, process.arch);
   if (platform !== undefined) {
     for (const installed of input.installedPackages) {
+      const skipped = skippedFor(input.services, "package", installed.packageId);
       const newest = input.directory
         .filter(
           (entry) =>
             entry.packageId === installed.packageId &&
             isInstallableCandidate(entry, platform) &&
-            isNewerVersion(entry.version, installed.version),
+            isNewerVersion(entry.version, installed.version) &&
+            !skipped(entry.version),
         )
         .reduce<UpdateCandidate | undefined>(
           (best, entry) => (best === undefined || isNewerVersion(entry.version, best.version) ? entry : best),
@@ -227,7 +233,7 @@ export async function checkForUpdates(input: CheckForUpdatesInput): Promise<Upda
     // node, not a failure worth telling the person about every few hours it happens to be true.
     return { packageUpdates, piUpdate: false, piOffline: true };
   }
-  if (!isNewerVersion(latest.version, input.piInstalledVersion)) {
+  if (!isNewerVersion(latest.version, input.piInstalledVersion) || skippedFor(input.services, "pi", piPackageName)(latest.version)) {
     return { packageUpdates, piUpdate: false, piOffline: false };
   }
   tryRecordNodeNotice(
@@ -240,6 +246,15 @@ export async function checkForUpdates(input: CheckForUpdatesInput): Promise<Upda
     }),
   );
   return { packageUpdates, piUpdate: true, piOffline: false };
+}
+
+/**
+ * Whether a version is one the owner asked not to hear about: at or below a version they skipped from an update
+ * notice. Read per check rather than cached, so a skip made a minute ago holds on the next pass.
+ */
+function skippedFor(services: NoticeServices, kind: SkippedVersionKind, name: string): (version: string) => boolean {
+  const skipped = skippedVersionsOf(services.runtime.db, services.runtime.identity.ownerPrincipalId, kind, name);
+  return (version) => skipped.some((mark) => !isNewerVersion(version, mark));
 }
 
 /**

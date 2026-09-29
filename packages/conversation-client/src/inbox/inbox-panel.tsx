@@ -1,10 +1,20 @@
 import { Fragment, type KeyboardEvent as ReactKeyboardEvent, type ReactElement, useCallback, useEffect, useRef, useState } from "react";
 
-import type { EffectReconcileResponse, InboxResponse, Notice, NoticeAction, WaitingItem } from "@clarkcant/contracts";
+import type {
+  EffectReconcileResponse,
+  InboxResponse,
+  Notice,
+  NoticeAction,
+  NoticeActionUnavailable,
+  SettingsTab,
+  SkippedVersion,
+  WaitingItem,
+} from "@clarkcant/contracts";
 
 import type { GatewayClient, Timeline } from "../api.ts";
 import { Modal } from "../Modal.tsx";
 import { useLocaleState, useT } from "../i18n/locale-context.tsx";
+import type { MessageKey } from "../i18n/messages.ts";
 import {
   canOpenOtherConversation,
   decideFailureCategory,
@@ -28,6 +38,7 @@ import {
   snoozeUntil,
   suppressionDescription,
   timeLeft,
+  updateFailureReason,
   waitingKey,
 } from "./inbox-model.ts";
 
@@ -70,15 +81,28 @@ export interface InboxPanelProps {
    * took effect" takes. Absent when the host cannot, and then the two buttons are not drawn.
    */
   onReconcile?: (effectId: string, outcome: "confirmed" | "failed") => Promise<EffectReconcileResponse>;
+  /**
+   * Opens Settings on a tab, closing the inbox: an update notice's "Review in Settings" goes to the installed extensions.
+   * Absent when the host has no Settings to open, and then that action is not drawn.
+   */
+  onOpenSettings?: (tab: SettingsTab) => void;
 }
+
+/** The words for each reason an action cannot be taken now (`noticeActionSchema.unavailable`). */
+const UNAVAILABLE_KEYS = {
+  "conversation-gone": "inbox.action.conversationGone",
+  "work-gone": "inbox.action.workGone",
+  "package-gone": "inbox.action.packageGone",
+  "already-current": "inbox.action.alreadyCurrent",
+} as const satisfies Record<NoticeActionUnavailable, MessageKey>;
 
 type Load = { state: "loading" } | { state: "failed"; reason: string } | { state: "ready"; inbox: InboxResponse };
 
 /**
  * The outcome line. After a dismissal, a snooze or quieting a kind it carries what "Undo" reverses: bringing the notice
- * back, bringing it back from its snooze, or notifying about its kind again.
+ * back, bringing it back from its snooze, notifying about its kind again, or being told about a skipped version again.
  */
-type Undo = { kind: "restore" | "unsnooze" | "unsuppress"; noticeId: string };
+type Undo = { kind: "restore" | "unsnooze" | "unsuppress" | "unskip"; noticeId: string };
 type Status = { tone: "done" | "failed"; text: string; undo?: Undo };
 
 /** Where focus goes once the render that follows an action has landed, when a disabled button can take it again. */
@@ -110,6 +134,7 @@ export function InboxPanel({
   onAskClark,
   onAddToContext,
   onReconcile,
+  onOpenSettings,
 }: InboxPanelProps): ReactElement | null {
   const t = useT();
   const categoryLabels = effectCategoryLabels(t);
@@ -410,6 +435,14 @@ export function InboxPanel({
       .catch((cause: unknown) => finish({ tone: "failed", text: t("inbox.suppressFailed").replace("{reason}", failedReason(cause)) }, { kind: "status" }));
   };
 
+  const removeSkippedVersion = (skip: SkippedVersion) => {
+    if (!lock(`skipped:${skip.subjectKind}:${skip.name}@${skip.version}`)) return;
+    void client
+      .removeSkippedVersion(skip)
+      .then(() => finish({ tone: "done", text: t("inbox.unskipped") }, { kind: "status" }))
+      .catch((cause: unknown) => finish({ tone: "failed", text: t("inbox.skipFailed").replace("{reason}", failedReason(cause)) }, { kind: "status" }));
+  };
+
   const undo = (what: Undo) => {
     switch (what.kind) {
       case "restore":
@@ -420,6 +453,9 @@ export function InboxPanel({
         return;
       case "unsuppress":
         setQuiet(what.noticeId, false);
+        return;
+      case "unskip":
+        unskip(what.noticeId);
         return;
     }
   };
@@ -450,6 +486,118 @@ export function InboxPanel({
         ),
       );
   };
+
+  /** The notices on screen now, in order, so an action that takes one out of the list can move focus to its neighbour. */
+  const noticeIdsNow = (): string[] => (load.state === "ready" ? load.inbox.notices.map((existing) => existing.noticeId) : []);
+
+  /** Focus for a notice that just left the list: the one that took its place, or the heading when none is left. */
+  const afterLeaving = (before: readonly string[], noticeId: string): FocusTarget => {
+    const nextId = nextNoticeFocusTarget(before, noticeId);
+    return nextId === undefined ? { kind: "heading" } : { kind: "notice", noticeId: nextId };
+  };
+
+  /** "Try again": the node starts the same request as new work and takes this notice out; the new run reports itself. */
+  const retry = (notice: Notice) => {
+    if (notice.subject?.kind !== "background-work") return;
+    const workId = notice.subject.workId;
+    if (!lock(`notice:${notice.noticeId}`)) return;
+    const before = noticeIdsNow();
+    void client
+      .retryWork(workId)
+      .then((answer) =>
+        finish(
+          {
+            tone: "done",
+            text:
+              answer.state === "queued" && answer.position !== undefined
+                ? t("inbox.retryQueued").replace("{position}", String(answer.position))
+                : t("inbox.retried"),
+          },
+          afterLeaving(before, notice.noticeId),
+        ),
+      )
+      .catch((cause: unknown) => finish({ tone: "failed", text: t("inbox.retryFailed").replace("{reason}", failedReason(cause)) }, { kind: "status" }));
+  };
+
+  /**
+   * "Update": the version the notice names, through the same install route as any install, so its checks and any
+   * approval it needs are the same. Installed, the notice has done its job and leaves the list; an approval waits in
+   * the section above; a refusal says the node's reason and leaves the installed version as it was.
+   */
+  const update = (notice: Notice) => {
+    const subject = notice.subject;
+    if (subject?.kind !== "package" || subject.version === undefined) return;
+    const { packageId, version } = subject;
+    if (!lock(`notice:${notice.noticeId}`)) return;
+    const before = noticeIdsNow();
+    void client
+      .installPackage(packageId, version)
+      .then(async (answer) => {
+        if (answer.code === "APPROVAL_REQUIRED") {
+          finish({ tone: "done", text: t("inbox.updateNeedsApproval") }, { kind: "status" });
+          return;
+        }
+        // Not dismissed is not worth a line: the notice then says the version is already installed, which is true.
+        await client.dismissNotice(notice.noticeId).catch(() => undefined);
+        finish(
+          { tone: "done", text: t("inbox.updated").replace("{package}", packageId).replace("{version}", answer.installed?.version ?? version) },
+          afterLeaving(before, notice.noticeId),
+        );
+      })
+      .catch((cause: unknown) => finish({ tone: "failed", text: t("inbox.updateFailed").replace("{reason}", updateFailureReason(cause, version, t)) }, { kind: "status" }));
+  };
+
+  /** "Skip this version": the node stops reporting it (and anything older), and the notice leaves the list, undoably. */
+  const skip = (notice: Notice) => {
+    if (!lock(`notice:${notice.noticeId}`)) return;
+    const before = noticeIdsNow();
+    void client
+      .skipNoticeVersion(notice.noticeId)
+      .then((answer) =>
+        finish(
+          { tone: "done", text: t("inbox.skipped").replace("{version}", answer.version), undo: { kind: "unskip", noticeId: notice.noticeId } },
+          afterLeaving(before, notice.noticeId),
+        ),
+      )
+      .catch((cause: unknown) => finish({ tone: "failed", text: t("inbox.skipFailed").replace("{reason}", failedReason(cause)) }, { kind: "status" }));
+  };
+
+  const unskip = (noticeId: string) => {
+    if (!lock(`notice:${noticeId}`)) return;
+    void client
+      .unskipNoticeVersion(noticeId)
+      .then(() => finish({ tone: "done", text: t("inbox.unskipped") }, { kind: "notice", noticeId }))
+      .catch((cause: unknown) => finish({ tone: "failed", text: t("inbox.skipFailed").replace("{reason}", failedReason(cause)) }, { kind: "status" }));
+  };
+
+  /**
+   * "Ask again": the question goes back into its conversation as a new card, which then waits in the section above; the
+   * node takes the expiry notice out. The status line says so and takes focus, since the notice it was pressed on is gone.
+   */
+  const askAgain = (notice: Notice) => {
+    const subject = notice.subject;
+    if (subject?.kind !== "question") return;
+    if (!lock(`notice:${notice.noticeId}`)) return;
+    void client
+      .askQuestionAgain(subject.conversationId, subject.questionId)
+      .then((result) => {
+        if (subject.conversationId === currentConversationId.current) onTimeline(result.timeline);
+        finish({ tone: "done", text: t("inbox.askedAgain") }, { kind: "status" });
+      })
+      .catch((cause: unknown) => finish({ tone: "failed", text: t("inbox.askAgainFailed").replace("{reason}", failedReason(cause)) }, { kind: "status" }));
+  };
+
+  /** Why an action cannot be taken now, in words beside the others rather than as a button that fails. */
+  const unavailableNote = (notice: Notice, action: NoticeAction, reason: NoticeActionUnavailable): ReactElement => (
+    <span
+      key={`${action.id}-unavailable`}
+      className="cc-freshness"
+      {...(reason === "conversation-gone" ? { "data-inbox-open-gone": notice.noticeId } : { "data-inbox-unavailable": reason })}
+      style={{ flexBasis: "100%" }}
+    >
+      {t(UNAVAILABLE_KEYS[reason])}
+    </span>
+  );
 
   const addToContext = (notice: Notice) => {
     if (onAddToContext === undefined || inFlight.current !== undefined) return;
@@ -498,15 +646,9 @@ export function InboxPanel({
     const primary = action.placement === "primary";
     const emphasis = primary ? { "data-emphasis": "primary" } : {};
     const locked = busy !== undefined;
+    if (action.unavailable !== undefined) return unavailableNote(notice, action, action.unavailable);
     switch (action.id) {
       case "open": {
-        if (action.unavailable === "conversation-gone") {
-          return (
-            <span key="open" className="cc-freshness" data-inbox-open-gone={notice.noticeId} style={{ flexBasis: "100%" }}>
-              {t("inbox.action.conversationGone")}
-            </span>
-          );
-        }
         const target = noticeConversationTarget(notice);
         return target === undefined ? null : <Fragment key="open">{openButton(target, primary)}</Fragment>;
       }
@@ -624,6 +766,82 @@ export function InboxPanel({
             {t("inbox.action.unsnooze")}
           </button>
         );
+      case "retry":
+        return (
+          <button
+            key="retry"
+            type="button"
+            className="cc-action"
+            {...emphasis}
+            data-inbox-retry={notice.noticeId}
+            aria-label={t("inbox.action.retryAria").replace("{title}", notice.title)}
+            disabled={locked}
+            onClick={() => retry(notice)}
+          >
+            {t("inbox.action.retry")}
+          </button>
+        );
+      case "review-update":
+        if (onOpenSettings === undefined) return null;
+        return (
+          <button
+            key="review-update"
+            type="button"
+            className="cc-action"
+            {...emphasis}
+            data-inbox-review-update={notice.noticeId}
+            aria-label={t("inbox.action.reviewUpdateAria").replace("{title}", notice.title)}
+            disabled={locked}
+            onClick={() => onOpenSettings("extensions")}
+          >
+            {t("inbox.action.reviewUpdate")}
+          </button>
+        );
+      case "update":
+        return (
+          <button
+            key="update"
+            type="button"
+            className="cc-action"
+            {...emphasis}
+            data-inbox-update={notice.noticeId}
+            aria-label={t("inbox.action.updateAria").replace("{title}", notice.title)}
+            disabled={locked}
+            onClick={() => update(notice)}
+          >
+            {t("inbox.action.update")}
+          </button>
+        );
+      case "skip-version":
+        return (
+          <button
+            key="skip-version"
+            type="button"
+            className="cc-action"
+            {...emphasis}
+            data-inbox-skip-version={notice.noticeId}
+            aria-label={t("inbox.action.skipVersionAria").replace("{title}", notice.title)}
+            disabled={locked}
+            onClick={() => skip(notice)}
+          >
+            {t("inbox.action.skipVersion")}
+          </button>
+        );
+      case "ask-again":
+        return (
+          <button
+            key="ask-again"
+            type="button"
+            className="cc-action"
+            {...emphasis}
+            data-inbox-ask-again={notice.noticeId}
+            aria-label={t("inbox.action.askAgainAria").replace("{title}", notice.body ?? notice.title)}
+            disabled={locked}
+            onClick={() => askAgain(notice)}
+          >
+            {t("inbox.action.askAgain")}
+          </button>
+        );
       case "suppress":
       case "unsuppress": {
         const quiet = action.id === "suppress";
@@ -662,6 +880,11 @@ export function InboxPanel({
             {t(landed ? "inbox.action.reconcileConfirmed" : "inbox.action.reconcileFailed")}
           </button>
         );
+      }
+      default: {
+        // An action id added later has to be drawn here, rather than silently leaving its notice without it.
+        const unhandled: never = action.id;
+        return unhandled;
       }
     }
   };
@@ -1043,6 +1266,42 @@ export function InboxPanel({
                               onClick={() => removeSuppression(suppression.suppressionId)}
                             >
                               {t("inbox.suppressions.remove")}
+                            </button>
+                          </div>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                </details>
+              )}
+              {load.inbox.skippedVersions.length > 0 && (
+                <details className="cc-inbox-aside" data-inbox-skipped-versions="true">
+                  <summary>{t("inbox.skippedVersions.heading").replace("{count}", String(load.inbox.skippedVersions.length))}</summary>
+                  <p className="cc-freshness" style={{ marginTop: 0 }}>
+                    {t("inbox.skippedVersions.note")}
+                  </p>
+                  <ul className="cc-inbox-list">
+                    {load.inbox.skippedVersions.map((skip) => {
+                      const key = `${skip.subjectKind}:${skip.name}@${skip.version}`;
+                      const covers = t(skip.subjectKind === "pi" ? "inbox.skippedVersions.pi" : "inbox.skippedVersions.package")
+                        .replace("{name}", skip.name)
+                        .replace("{version}", skip.version);
+                      return (
+                        <li key={key} className="cc-inbox-notice" data-inbox-skipped-version={key}>
+                          <div className="cc-inbox-notice-head">
+                            <span className="cc-badge">{t(noticeSourceKey(skip.subjectKind))}</span>
+                          </div>
+                          <p className="cc-inbox-notice-title">{covers}</p>
+                          <div className="cc-card-actions">
+                            <button
+                              type="button"
+                              className="cc-action"
+                              data-inbox-remove-skipped-version={key}
+                              aria-label={t("inbox.skippedVersions.removeAria").replace("{title}", covers)}
+                              disabled={busy !== undefined}
+                              onClick={() => removeSkippedVersion(skip)}
+                            >
+                              {t("inbox.skippedVersions.remove")}
                             </button>
                           </div>
                         </li>

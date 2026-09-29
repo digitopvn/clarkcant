@@ -66,9 +66,20 @@ export const noticeSubjectSchema = z.discriminatedUnion("kind", [
   z.strictObject({ kind: z.literal("conversation"), conversationId: subjectIdSchema }),
   z.strictObject({ kind: z.literal("background-work"), workId: subjectIdSchema, conversationId: subjectIdSchema }),
   z.strictObject({ kind: z.literal("task"), taskId: subjectIdSchema, conversationId: subjectIdSchema.optional() }),
-  z.strictObject({ kind: z.literal("package"), packageId: subjectIdSchema, version: z.string().min(1).max(100).optional() }),
+  /**
+   * An installed package. An update notice names the version it offers and where that version comes from: a `local`
+   * one has no published digest, so it cannot be installed by id and version alone and the inbox does not offer to.
+   */
+  z.strictObject({
+    kind: z.literal("package"),
+    packageId: subjectIdSchema,
+    version: z.string().min(1).max(100).optional(),
+    source: z.enum(["npm", "git", "local"]).optional(),
+  }),
   z.strictObject({ kind: z.literal("pi-update"), packageName: subjectIdSchema, version: z.string().min(1).max(100) }),
   z.strictObject({ kind: z.literal("peer"), nodeId: subjectIdSchema }),
+  /** A question the agent asked in a conversation, which nobody answered before it expired. */
+  z.strictObject({ kind: z.literal("question"), questionId: subjectIdSchema, conversationId: subjectIdSchema }),
   /**
    * A standing request the person set up ("when X happens, do Y"), named by its intent id, with its summary in the
    * person's words as `label` so a list of quieted kinds can say which one it is. `taskId` is the task this run
@@ -109,6 +120,20 @@ export type NoticeSubject = z.infer<typeof noticeSubjectSchema>;
  *   - `reconcile-confirmed` / `reconcile-failed`: record what the person saw on the other side of an effect whose
  *     outcome nobody observed — it took effect, or it did not (`POST /effects/:effectId/reconcile`). Offered only while
  *     that effect is still `unknown`, and each carries the `effectId` it answers for.
+ *
+ * And the ones that act on what the notice is about, each offered only while that thing is in a state where it means
+ * something:
+ *
+ *   - `retry`: run a background request that failed, was stopped or was cut off again, as a new piece of work with the
+ *     same words, in the same conversation. Once per run: a run that was already retried offers it no more.
+ *   - `review-update`: go to the installed extensions in Settings, where the package the update is for can be looked at
+ *     before anything changes.
+ *   - `update`: install the version the update notice names, through the same install path as any other install, so
+ *     its checks and any approval it needs are the same.
+ *   - `skip-version`: stop being told about this version, and any older one, of this package or of the Pi SDK. A newer
+ *     version is still reported.
+ *   - `ask-again`: put a question that expired unanswered back in its conversation as a new question, with the same
+ *     words and choices, once.
  */
 export const noticeActionIdSchema = z.enum([
   "open",
@@ -123,6 +148,11 @@ export const noticeActionIdSchema = z.enum([
   "unsuppress",
   "reconcile-confirmed",
   "reconcile-failed",
+  "retry",
+  "review-update",
+  "update",
+  "skip-version",
+  "ask-again",
 ]);
 export type NoticeActionId = z.infer<typeof noticeActionIdSchema>;
 
@@ -134,12 +164,20 @@ export type NoticeActionId = z.infer<typeof noticeActionIdSchema>;
  * looks usable but fails is worse. `unavailable` is a code rather than a sentence so the surface words it in the
  * person's language; what only the surface knows (a reply being written, a draft that switching would drop) it adds
  * itself.
+ *
+ *   - `conversation-gone`: the conversation it points at was deleted.
+ *   - `work-gone`: the record of the background work is no longer kept, so there is nothing to run again.
+ *   - `package-gone`: the package the update is for is not installed any more.
+ *   - `already-current`: the version the update names, or a newer one, is already installed.
  */
+export const noticeActionUnavailableSchema = z.enum(["conversation-gone", "work-gone", "package-gone", "already-current"]);
+export type NoticeActionUnavailable = z.infer<typeof noticeActionUnavailableSchema>;
+
 export const noticeActionSchema = z
   .strictObject({
     id: noticeActionIdSchema,
     placement: z.enum(["primary", "secondary", "menu"]),
-    unavailable: z.enum(["conversation-gone"]).optional(),
+    unavailable: noticeActionUnavailableSchema.optional(),
     /** The effect a `reconcile-*` action answers for; present on those two and on nothing else. */
     effectId: z.string().min(1).max(128).optional(),
   })
@@ -200,7 +238,7 @@ export const noticeSchema = z.strictObject({
   /** When a snoozed notice comes back. Present only while that is still ahead, which is only in `snoozed`. */
   snoozedUntil: instantSchema.optional(),
   /** What can be done with it now, worked out by the node when it was read. Absent where nothing resolved them. */
-  actions: z.array(noticeActionSchema).max(10).optional(),
+  actions: z.array(noticeActionSchema).max(12).optional(),
 });
 export type Notice = z.infer<typeof noticeSchema>;
 
@@ -283,6 +321,7 @@ function suppressionScope(notice: Pick<Notice, "sourceKind" | "subject" | "origi
       return { scope: `peer:${subject.nodeId}`, label: subject.nodeId };
     case "task":
     case "background-work":
+    case "question":
     case "conversation":
     case undefined:
       return originScope;
@@ -306,6 +345,19 @@ export const noticeSuppressionSchema = z.strictObject({
   createdAt: instantSchema,
 });
 export type NoticeSuppression = z.infer<typeof noticeSuppressionSchema>;
+
+/**
+ * One "don't tell me about this version", from an update notice's "Skip this version": a package by its id, or the Pi
+ * SDK by its npm name. Belongs to one principal and lasts until it is taken back; an update at or below it is not
+ * reported, a newer one still is.
+ */
+export const skippedVersionSchema = z.strictObject({
+  subjectKind: z.enum(["package", "pi"]),
+  name: z.string().min(1).max(260),
+  version: z.string().min(1).max(128),
+  skippedAt: instantSchema,
+});
+export type SkippedVersion = z.infer<typeof skippedVersionSchema>;
 
 /**
  * Something that is waiting for the person to decide or answer.
@@ -377,6 +429,8 @@ export const inboxResponseSchema = z.strictObject({
   snoozed: z.array(noticeSchema).default([]),
   /** The kinds of notice this principal asked not to be notified about, newest first. */
   suppressions: z.array(noticeSuppressionSchema).default([]),
+  /** The versions this principal skipped, newest first. Defaults to empty for a node from before skipping. */
+  skippedVersions: z.array(skippedVersionSchema).default([]),
   readAt: instantSchema,
 });
 export type InboxResponse = z.infer<typeof inboxResponseSchema>;

@@ -7,6 +7,7 @@ import type {
   BlockActions,
   ControlSessionActionState,
   PackageInstallState,
+  QuestionOutcome,
   TaskStopState,
 } from "./blocks.tsx";
 
@@ -120,16 +121,20 @@ export function useBlockActions({
    * `waiting` because messages are never rewritten, and the record the node wrote when the answer
    * arrived is what says otherwise. Without it a reload would offer the question again.
    */
-  const answeredQuestions = useMemo(() => {
-    const answered = new Set<string>();
+  const { answeredQuestions, questionOutcomes } = useMemo(() => {
+    // The latest record wins: a question that expired and was then asked again reads as asked again.
+    const outcomes: Record<string, QuestionOutcome> = {};
     for (const message of timeline?.messages ?? []) {
       for (const block of message.blocks) {
         if (block.type !== "tool-activity" || block.name !== "ask_user_question") continue;
         const args = (block.args ?? {}) as Record<string, unknown>;
-        if (typeof args.questionId === "string") answered.add(args.questionId);
+        if (typeof args.questionId !== "string") continue;
+        const decision = args.decision;
+        outcomes[args.questionId] =
+          decision === "cancelled" || decision === "expired" || decision === "asked-again" ? decision : "answered";
       }
     }
-    return [...answered];
+    return { answeredQuestions: Object.keys(outcomes), questionOutcomes: outcomes };
   }, [timeline]);
 
   /*
@@ -364,6 +369,7 @@ export function useBlockActions({
       deniedApprovals,
       onQuestionAnswer: answerQuestion,
       answeredQuestions,
+      questionOutcomes,
       ...(questionDraft === undefined ? {} : { questionDraft }),
       onQuestionDraft: (input) =>
         setQuestionDraft((current) => {

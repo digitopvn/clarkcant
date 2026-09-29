@@ -180,6 +180,17 @@ export function sanitizeReason(cause: unknown): string | undefined {
 }
 
 /**
+ * Why an update from a notice did not install, as one finished sentence. A version the directory does not list is said
+ * in the reader's language, since the node's own sentence for it is English; any other refusal keeps the node's reason,
+ * ended with a full stop so the sentence that follows it reads as its own.
+ */
+export function updateFailureReason(cause: unknown, version: string, t: (key: MessageKey) => string): string {
+  if (gatewayErrorCode(cause) === "NOT_IN_DIRECTORY") return t("inbox.updateReason.notInDirectory").replace("{version}", version);
+  const reason = (sanitizeReason(cause) ?? t("inbox.reason.unavailable")).trimEnd();
+  return /[.!?…]$/u.test(reason) ? reason : `${reason}.`;
+}
+
+/**
  * Why a decide call failed, from the one fact the client can trust: the gateway's own error code.
  *
  * `expired` and `alreadyDecided` are certain — `decideApproval` (`packages/core/src/coordination.ts`) returns

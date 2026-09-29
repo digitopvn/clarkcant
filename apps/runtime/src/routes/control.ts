@@ -5,7 +5,7 @@ import { buildTimeline, type NodeServices } from "../services.ts";
 import { answerApprovalDecision } from "../delegation-handlers.ts";
 import { decideTaskApprovalForNode, stopTask } from "../task-dispatch.ts";
 import { nodeWork } from "../work-supervisor.ts";
-import { appendHostReply, startBackgroundWork } from "./conversations.ts";
+import { appendHostReply, retryBackgroundWork, startBackgroundWork } from "./conversations.ts";
 import { type GatewayRequest, type GatewayResponse, fail, json, readJson } from "./http.ts";
 
 /**
@@ -135,6 +135,32 @@ export async function handleControlRoutes(deps: ControlRouteDeps): Promise<Gatew
     const outcome = nodeWork().cancel(workId);
     if (outcome === "unknown") return fail(404, "WORK_NOT_FOUND", "không có việc nào mang mã này trên node này", { workId });
     return json(200, { workId, outcome });
+  }
+
+  /*
+   * Run background work again, by the id its notice or the work list showed.
+   *
+   * Scoped to the node's owner for the same reason a background request from a selection is: background work is the
+   * owner's, and there is no other person it could be run for. What may be run again, and only once, is decided in
+   * `retryBackgroundWork`.
+   */
+  if (segments.length === 3 && segments[0] === "work" && segments[2] === "retry") {
+    if (request.method !== "POST") return fail(405, "METHOD_NOT_ALLOWED", "work is run again with POST");
+    const workId = decodeURIComponent(segments[1] ?? "");
+    const owner: Principal = {
+      principalId: runtime.identity.ownerPrincipalId as Principal["principalId"],
+      kind: "user",
+      nodeId: runtime.identity.nodeId as Principal["nodeId"],
+    };
+    const retried = retryBackgroundWork(services, owner, () => deps.at() as never, workId);
+    if (!retried.ok) return fail(retried.status, retried.code, retried.message, { workId });
+    return json(202, {
+      accepted: true,
+      workId: retried.workId,
+      retriedFrom: retried.retriedFrom,
+      state: retried.state,
+      ...(retried.position === undefined ? {} : { position: retried.position }),
+    });
   }
 
   /*

@@ -657,3 +657,169 @@ test("saying it did not take effect, typed, opens the inbox on the answer instea
   await composer.press("Enter");
   await expect(page.locator("[data-intent-notice]")).toContainText("Không có việc nào đang chờ", { timeout: 20_000 });
 });
+
+/** Every notice the node lists now, read as the panel reads them. */
+async function listedNotices(page: Page): Promise<Array<{ noticeId: string; title: string; body?: string; conversationId?: string; severity: string }>> {
+  const response = await page.request.get(`${GATEWAY}/inbox`, { headers: { authorization: `Bearer ${token()}` } });
+  return ((await response.json()) as { notices: Array<{ noticeId: string; title: string; body?: string; conversationId?: string; severity: string }> }).notices;
+}
+
+test("background work that failed is run again from its notice, and the new run reports for itself", async ({ page }) => {
+  await openApp(page);
+  // The fixture fails the first run of a request that says so, and runs the same words cleanly the second time.
+  const { conversationId, noticeId } = await backgroundNotice(page, "đọc nhật ký hỏng lần đầu");
+  await page.locator("[data-inbox-mark]").click();
+  const dialog = page.getByRole("dialog");
+  const row = dialog.locator(`[data-inbox-notice="${noticeId}"]`);
+  await expect(row).toBeVisible({ timeout: 10_000 });
+
+  // What the notice is for leads: trying it again, then asking Clark about it; opening it is behind More.
+  const retry = row.locator(`[data-inbox-retry="${noticeId}"]`);
+  await expect(retry).toHaveAttribute("data-emphasis", "primary");
+  await expect(retry).toHaveAccessibleName(/^Chạy lại: /u);
+  await expect(row.locator(`[data-inbox-ask="${noticeId}"]`)).toBeVisible();
+
+  // By keyboard: the old notice leaves the list, the status says what happens next, and focus is not lost.
+  await retry.focus();
+  await page.keyboard.press("Enter");
+  await expect(dialog.locator('[data-inbox-status="done"]')).toHaveText("Đang chạy lại việc này; kết quả sẽ báo trong hội thoại của nó.");
+  await expect(row).toHaveCount(0, { timeout: 10_000 });
+  await expect(page.locator(":focus")).toHaveCount(1);
+
+  // The new run is new work with its own notice, in the same conversation, and this time it went well.
+  await expect
+    .poll(async () => (await listedNotices(page)).some((notice) => notice.conversationId === conversationId && notice.severity === "success"), {
+      timeout: 20_000,
+    })
+    .toBe(true);
+  expect((await listedNotices(page)).map((notice) => notice.noticeId)).not.toContain(noticeId);
+});
+
+test("a question nobody answered in time is asked again from its notice", async ({ page }) => {
+  await openApp(page);
+  const composer = page.locator("[data-composer]");
+  await composer.fill("để một câu hỏi hết hạn");
+  await composer.press("Enter");
+  await expect(page.getByText("Fixture: tui đã hỏi một câu và để nó hết hạn").first()).toBeVisible({ timeout: 20_000 });
+  const cards = page.locator('[data-host-card="question"]').filter({ hasText: "Chọn khu vực máy chủ cho bản thử." });
+  await expect(cards).toHaveCount(1);
+
+  let noticeId = "";
+  await expect
+    .poll(
+      async () => {
+        noticeId = (await listedNotices(page)).find((notice) => notice.body === "Chọn khu vực máy chủ cho bản thử.")?.noticeId ?? "";
+        return noticeId;
+      },
+      { timeout: 20_000 },
+    )
+    .not.toBe("");
+  await expect(page.locator("[data-inbox-mark]")).toBeVisible({ timeout: 15_000 });
+  await page.locator("[data-inbox-mark]").click();
+  const dialog = page.getByRole("dialog");
+  const row = dialog.locator(`[data-inbox-notice="${noticeId}"]`);
+  await expect(row).toBeVisible({ timeout: 10_000 });
+  const askAgain = row.locator(`[data-inbox-ask-again="${noticeId}"]`);
+  await expect(askAgain).toHaveAttribute("data-emphasis", "primary");
+  await expect(askAgain).toHaveAccessibleName("Hỏi lại câu hỏi: Chọn khu vực máy chủ cho bản thử.");
+
+  await askAgain.click();
+  const status = dialog.locator('[data-inbox-status="done"]');
+  await expect(status).toHaveText("Đã hỏi lại trong hội thoại; câu hỏi mới đang chờ bạn trả lời ở trên.");
+  await expect(row).toHaveCount(0, { timeout: 10_000 });
+  // The new question waits in the section above, and in the conversation on screen as a card that can be answered.
+  await expect(dialog.locator('[data-inbox-waiting-item="question"]').filter({ hasText: "Chọn khu vực máy chủ cho bản thử." })).toBeVisible({
+    timeout: 10_000,
+  });
+  await page.keyboard.press("Escape");
+  await expect(cards).toHaveCount(2, { timeout: 10_000 });
+  await expect(cards.last()).toHaveAttribute("data-answered", "false");
+  // The first card says what became of it rather than claiming an answer was recorded.
+  await expect(cards.first()).toHaveAttribute("data-question-outcome", "asked-again");
+  await expect(cards.first()).toContainText("trả lời ở câu hỏi mới");
+  await expect(cards.last().locator('[data-question-option="sg"]')).toBeVisible();
+});
+
+test("an update notice updates through the install route, opens Settings to review, and skips a version undoably", async ({ page }) => {
+  await openApp(page);
+  const headers = { authorization: `Bearer ${token()}` };
+  // Installed the way the other journeys that need a package install it: once, whichever spec ran first.
+  const listed = (await (await page.request.get(`${GATEWAY}/packages`, { headers })).json()) as { packages: { packageId: string }[] };
+  if (!listed.packages.some((entry) => entry.packageId === "com.example.notes")) {
+    const installed = await page.request.post(`${GATEWAY}/packages/install`, {
+      headers,
+      data: { packageId: "com.example.notes", version: "1.0.0", localDigest: "sha256:notes-service-digest" },
+    });
+    expect(installed.ok(), `install answered ${String(installed.status())}: ${await installed.text()}`).toBe(true);
+  }
+  const composer = page.locator("[data-composer]");
+  await composer.fill("kiểm tra bản cập nhật thử");
+  await composer.press("Enter");
+  await expect(page.getByText(/Fixture: đã kiểm tra bản cập nhật thử, [1-9]\d* gói có bản mới/u).first()).toBeVisible({ timeout: 20_000 });
+  const noticeId =
+    (await listedNotices(page)).find((notice) => notice.title === "Có bản cập nhật: com.example.notes" && notice.body?.includes("1.0.1") === true)
+      ?.noticeId ?? "";
+  expect(noticeId).not.toBe("");
+
+  // The notice arrives in the conversation on screen, so it is read at once and raises no mark of its own: open the
+  // inbox the way a person would here, by asking for it, so the journey does not lean on what earlier tests left waiting.
+  const openInbox = async (): Promise<void> => {
+    await composer.fill("mở hộp thư");
+    await composer.press("Enter");
+  };
+  await openInbox();
+  const dialog = page.getByRole("dialog");
+  const row = dialog.locator(`[data-inbox-notice="${noticeId}"]`);
+  await expect(row).toBeVisible({ timeout: 10_000 });
+  const update = row.locator(`[data-inbox-update="${noticeId}"]`);
+  await expect(update).toHaveAttribute("data-emphasis", "primary");
+  await expect(row.locator(`[data-inbox-review-update="${noticeId}"]`)).toBeVisible();
+
+  // The scripted directory offered a version the real one does not list: the install route refuses it by name, and
+  // the notice stays, because nothing was installed.
+  await update.click();
+  const failed = dialog.locator('[data-inbox-status="failed"]');
+  // Said in the reader's language, as whole sentences: the node's English refusal never reaches the line.
+  await expect(failed).toHaveText("Không cập nhật được: danh mục gói không có bản 1.0.1. Bản đang cài vẫn giữ nguyên.", { timeout: 20_000 });
+  await expect(row).toBeVisible();
+
+  // Skipping the version takes the notice out; Undo brings it back and the version is reported again.
+  const more = row.locator(`[data-inbox-more="${noticeId}"]`);
+  await more.click();
+  const skip = row.locator(`[data-inbox-skip-version="${noticeId}"]`);
+  await expect(skip).toHaveAttribute("aria-label", "Bỏ qua phiên bản này: Có bản cập nhật: com.example.notes");
+  await skip.click();
+  await expect(row).toHaveCount(0, { timeout: 10_000 });
+  await expect(dialog.locator('[data-inbox-status="done"]')).toHaveText("Sẽ không báo về bản 1.0.1 nữa; bản mới hơn vẫn được báo.");
+  const skipped = dialog.locator("[data-inbox-skipped-versions]");
+  const skippedRow = skipped.locator('[data-inbox-skipped-version="package:com.example.notes@1.0.1"]');
+  await expect(skipped).toBeVisible();
+  await dialog.locator(`[data-inbox-undo="${noticeId}"]`).click();
+  await expect(row).toBeVisible({ timeout: 10_000 });
+  await expect(dialog.locator('[data-inbox-status="done"]')).toHaveText("Sẽ báo lại về bản này.");
+  await expect(skippedRow).toHaveCount(0);
+
+  // A skip outlasts the status line's Undo: it is listed with the quieted kinds, and taken back from there.
+  await more.click();
+  await skip.click();
+  await expect(row).toHaveCount(0, { timeout: 10_000 });
+  await skipped.locator("summary").click();
+  await expect(skippedRow).toContainText("Gói “com.example.notes”, bản 1.0.1");
+  const undoSkip = skippedRow.locator("[data-inbox-remove-skipped-version]");
+  await expect(undoSkip).toHaveAttribute("aria-label", "Hoàn tác bỏ qua: Gói “com.example.notes”, bản 1.0.1");
+  await undoSkip.click();
+  await expect(dialog.locator('[data-inbox-status="done"]')).toHaveText("Sẽ báo lại về bản này.");
+  await expect(skippedRow).toHaveCount(0);
+  // The notice itself was dismissed by the skip; bring it back for the rest of the journey.
+  expect((await page.request.post(`${GATEWAY}/inbox/notices/${noticeId}/restore`, { headers })).ok()).toBe(true);
+  await page.keyboard.press("Escape");
+  await expect(dialog).toHaveCount(0);
+  await openInbox();
+  await expect(row).toBeVisible({ timeout: 10_000 });
+
+  // Review closes the inbox and opens Settings on the installed extensions.
+  await row.locator(`[data-inbox-review-update="${noticeId}"]`).click();
+  await expect(page.locator("#cc-tab-extensions")).toHaveAttribute("aria-selected", "true", { timeout: 10_000 });
+  await expect(page.locator(`[data-installed-package='com.example.notes']`)).toBeVisible({ timeout: 20_000 });
+  await expect(dialog.locator(`[data-inbox-notice="${noticeId}"]`)).toHaveCount(0);
+});

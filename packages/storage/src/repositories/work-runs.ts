@@ -36,6 +36,8 @@ export interface WorkRunRecord {
   attempt: number;
   startedAt: Instant;
   endedAt?: Instant;
+  /** The work a person started again from this run's notice, once they have. Written only by `claimWorkRunRetry`. */
+  retriedAs?: string;
 }
 
 interface WorkRunRow {
@@ -55,6 +57,7 @@ interface WorkRunRow {
   attempt: number;
   started_at: string;
   ended_at: string | null;
+  retried_as: string | null;
 }
 
 function fromRow(row: WorkRunRow): WorkRunRecord {
@@ -75,6 +78,7 @@ function fromRow(row: WorkRunRow): WorkRunRecord {
     attempt: Number(row.attempt),
     startedAt: row.started_at as Instant,
     ...(row.ended_at === null ? {} : { endedAt: row.ended_at as Instant }),
+    ...(row.retried_as === null ? {} : { retriedAs: row.retried_as }),
   };
 }
 
@@ -114,6 +118,25 @@ export function recordWorkRun(db: Database, run: WorkRunRecord): void {
 export function setWorkRunState(db: Database, workId: string, state: WorkRunState, at: Instant): void {
   const ended = state === "queued" || state === "running" ? null : at;
   db.prepare("UPDATE work_runs SET state = ?, ended_at = ? WHERE work_id = ?").run(state, ended, workId);
+}
+
+/**
+ * Claim a run for "Try again": true only for the one caller that found it not yet retried.
+ *
+ * The check and the write are one statement, so two presses racing each other cannot both see "not yet" and both
+ * start a run. A caller whose new run was then refused (the node was busy) gives the claim back with
+ * `releaseWorkRunRetry`, so the person can try again later.
+ */
+export function claimWorkRunRetry(db: Database, workId: string, retryWorkId: string): boolean {
+  const result = db
+    .prepare("UPDATE work_runs SET retried_as = ? WHERE work_id = ? AND retried_as IS NULL")
+    .run(retryWorkId, workId);
+  return Number(result.changes) === 1;
+}
+
+/** Give back a claim whose new run never started. Only the claim that was made is released, never a later one. */
+export function releaseWorkRunRetry(db: Database, workId: string, retryWorkId: string): void {
+  db.prepare("UPDATE work_runs SET retried_as = NULL WHERE work_id = ? AND retried_as = ?").run(workId, retryWorkId);
 }
 
 export function getWorkRun(db: Database, workId: string): WorkRunRecord | undefined {
