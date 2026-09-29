@@ -515,12 +515,17 @@ phải một nơi điều hướng thứ hai. Mỗi mục trỏ về hội tho�
 - **Approval hoặc câu hỏi hết hạn mà không ai trả lời được báo, không im lặng rơi khỏi danh sách.** Một quét định kỳ
   ở node ghi đúng một thông báo mỗi việc hết hạn, trỏ về đúng hội thoại của nó; approval xin quyền gói (không thuộc
   hội thoại nào) không có gì để trỏ về nên không được báo theo đường này.
+- **Một thao tác không ai thấy kết quả được báo đúng một lần.** Khi một lệnh mà việc nền chạy nhắm ra ngoài node (ví
+  dụ `git push`) bị dừng, hết giờ hoặc bị một lần khởi động lại cắt ngang trước khi báo lại, một thông báo nói điều gì
+  chưa rõ, rằng việc được giữ ở trạng thái "chưa rõ kết quả" và thao tác sẽ không tự chạy lại, và hãy kiểm tra ở phía
+  nhận trước khi chạy lại. Bỏ thông báo thì nó không quay lại.
+- **Nhắc việc và việc tự động đến hạn** để lại một thông báo cho mỗi lần đến hạn, trỏ về hội thoại của chúng, kể cả
+  khi một lần chạy đến hạn nhưng bị từ chối hoặc không bắt đầu được.
 
 Chưa ship (đích):
 
 - thông báo và việc chờ từ một node ClarkCant khác (đã có `originNodeId` và khoá dedup để nhận lặp lại an toàn);
-- thông báo khi một effect được ghi nhận ở trạng thái "unknown" cần đối soát: chưa có đường tạo dữ liệu này ở
-  production (effect ledger, §9 system-architecture.md, chưa có nơi ghi hàng thật);
+- đánh dấu một thao tác chưa rõ kết quả là đã kiểm tra (đã xảy ra hay chưa) ngay từ thông báo;
 - thông báo khi một kết nối OAuth hết hạn hoặc bị thu hồi: bảng `connections` chưa có nơi ghi hàng thật ở production.
 
 Không được: dùng hộp thư làm dashboard mặc định, đếm "0" thường trực, hay hiển thị một nút quyết định mà route thật

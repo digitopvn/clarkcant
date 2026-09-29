@@ -124,6 +124,20 @@ function assistantTexts(conversationId: string): string[] {
   });
 }
 
+/** The automation notices as stored, oldest first, with the key each producer chose. */
+function automationNotices(): {
+  title: string;
+  body: string | null;
+  conversation_id: string | null;
+  subject: string | null;
+  dedup_key: string;
+}[] {
+  return allRows(
+    services.runtime.db,
+    "SELECT title, body, conversation_id, subject, dedup_key FROM notifications WHERE source_kind = 'automation' ORDER BY rowid",
+  );
+}
+
 function codeChange(): CapabilityDescriptor {
   return {
     ref: "project.code.change@1" as CapabilityDescriptor["ref"],
@@ -204,6 +218,39 @@ describe("a reminder set up in the conversation", () => {
     now = "2026-09-29T09:01:00.000Z";
     service?.tick();
     expect(assistantTexts(conversationId).filter((text) => text.startsWith("Nhắc bạn"))).toHaveLength(2);
+  });
+
+  it("leaves one notice each time it comes due, pointing at its conversation", async () => {
+    const conversationId = await createConversation();
+    await tools(conversationId).create({
+      summary: "Nhắc họp",
+      schedule: { everyMinutes: 30 },
+      action: "remind",
+      message: "Họp nhóm",
+    });
+
+    now = "2026-09-29T08:31:00.000Z";
+    service?.tick();
+    service?.tick();
+    const first = automationNotices();
+    expect(first).toHaveLength(1);
+    expect(first[0]).toMatchObject({ title: "Nhắc họp", body: "Họp nhóm", conversation_id: conversationId });
+    expect(JSON.parse(first[0]?.subject ?? "null")).toEqual({ kind: "conversation", conversationId });
+
+    // A tick in the same slot, and a node that stops and starts again, find the same occurrence already reported.
+    shutdown();
+    boot();
+    service?.tick();
+    expect(automationNotices()).toEqual(first);
+
+    // The next slot is another occurrence, and another notice with its own key.
+    now = "2026-09-29T09:01:00.000Z";
+    service?.tick();
+    service?.tick();
+    const both = automationNotices();
+    expect(both).toHaveLength(2);
+    expect(new Set(both.map((notice) => notice.dedup_key)).size).toBe(2);
+    for (const notice of both) expect(notice.dedup_key).toMatch(/^automation:irun_[^:]+$/);
   });
 });
 
@@ -288,6 +335,65 @@ describe("a task set up in the conversation", () => {
     service?.tick();
     expect(dispatched).toHaveLength(0);
   });
+  it("says it is waiting and then that it started, once each, rather than letting the first swallow the second", async () => {
+    const conversationId = await createConversation();
+    await tools(conversationId).create({
+      summary: "Sửa issue khi có nhãn",
+      topic: "github.issue.labeled",
+      action: "task",
+      goal: "Fix it",
+      folders: [{ path: project, access: "write" }],
+      allowedEffects: ["read", "local-write"],
+    });
+
+    // Nothing here can run it yet: the run parks and says so.
+    await request("POST", "/signals", labeled("ai-handle", "parked-then-started"));
+    service?.tick();
+    service?.tick();
+    expect(automationNotices().map((notice) => notice.title)).toEqual(["Việc tự động đang chờ"]);
+
+    // The worker finishes loading; the same run goes on, and that is its own notice.
+    registerCapability({ db: services.runtime.db, nodeId: services.runtime.identity.nodeId }, codeChange());
+    service?.tick();
+    service?.tick();
+    expect(dispatched).toHaveLength(1);
+
+    const notices = automationNotices();
+    expect(notices.map((notice) => notice.title)).toEqual(["Việc tự động đang chờ", "Sửa issue khi có nhãn"]);
+    const [waiting, started] = notices;
+    const runId = /^automation:(irun_[^:]+)/.exec(started?.dedup_key ?? "")?.[1];
+    expect(runId).toBeDefined();
+    expect(waiting?.dedup_key).toBe(`automation:${runId ?? ""}:waiting`);
+    expect(started?.dedup_key).toBe(`automation:${runId ?? ""}`);
+    expect(started?.conversation_id).toBe(conversationId);
+    expect(JSON.parse(started?.subject ?? "null")).toEqual({ kind: "task", taskId: dispatched[0]?.taskId, conversationId });
+  });
+
+  it("says once, in the inbox and its conversation, when a run that came due was refused", async () => {
+    const conversationId = await createConversation();
+    await tools(conversationId).create({
+      summary: "Sửa issue trong repo",
+      topic: "github.issue.labeled",
+      action: "task",
+      goal: "Fix it",
+      // A folder that is not a clone of the repository the signal is about, so the run is refused before a task exists.
+      repositories: [project],
+      allowedEffects: ["read", "local-write"],
+    });
+
+    await request("POST", "/signals", labeled("ai-handle", "refused"));
+    service?.tick();
+    service?.tick();
+
+    expect(dispatched).toEqual([]);
+    const notices = automationNotices();
+    expect(notices).toHaveLength(1);
+    expect(notices[0]).toMatchObject({ title: "Việc tự động bị từ chối", conversation_id: conversationId });
+    expect(notices[0]?.dedup_key).toMatch(/^automation:irun_[^:]+$/);
+    expect(JSON.parse(notices[0]?.subject ?? "null")).toEqual({ kind: "conversation", conversationId });
+    expect(assistantTexts(conversationId).filter((text) => text.includes("không chạy cho"))).toHaveLength(1);
+  });
+
   it("refuses what an automation may not be given", async () => {
     const conversationId = await createConversation();
     const { create } = tools(conversationId);

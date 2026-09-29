@@ -4,14 +4,19 @@ import { join } from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { DEFAULT_EXECUTION_POLICY_CONFIG, type ExecutionPolicyConfig } from "@clarkcant/contracts";
-import type { ExecutionIntent } from "@clarkcant/core";
-import { migrate, openDatabase, type Database } from "@clarkcant/storage";
+import { DEFAULT_EXECUTION_POLICY_CONFIG, type ExecutionPolicyConfig, type Instant } from "@clarkcant/contracts";
+import { advanceResolving, applyTaskEvent, createTask, type ExecutionIntent, type TaskServiceDeps } from "@clarkcant/core";
+import { effectsForTask, getTask, migrate, openDatabase, type Database } from "@clarkcant/storage";
 
 import type { CommandToolDeps } from "../src/node-tools.ts";
 import { ownedResources } from "../src/preflight.ts";
 import { listRunningCommands, stopCommandsForTask, type CommandOutcome } from "../src/run-command.ts";
-import { createWorkerCommandBroker, parseWorkerCommandRequest } from "../src/worker-command-broker.ts";
+import {
+  createWorkerCommandBroker,
+  parseWorkerCommandRequest,
+  unknownCommandOutcome,
+  type CommandLedger,
+} from "../src/worker-command-broker.ts";
 
 /**
  * Commands a task's worker asks the host to run.
@@ -49,6 +54,7 @@ function makeBroker(options: {
   intent?: ExecutionIntent;
   roots?: readonly string[];
   run?: CommandToolDeps["run"] | "real";
+  ledger?: CommandLedger;
 } = {}): {
   broker: ReturnType<typeof createWorkerCommandBroker>;
   runs: { command: string; cwd: string }[];
@@ -91,6 +97,7 @@ function makeBroker(options: {
     conversationId: "conv_1",
     roots: options.roots ?? [taskRoot],
     intent: options.intent ?? { kind: "interactive" },
+    ...(options.ledger === undefined ? {} : { ledger: options.ledger }),
   });
   const effects = (): number =>
     (database.prepare("SELECT count(*) AS n FROM events WHERE kind = 'effect.executed'").get() as { n: number }).n;
@@ -221,4 +228,126 @@ describe("stopping a task stops what it started on the host", () => {
     // Another task's id reaches nothing.
     expect(stopCommandsForTask("task_other")).toBe(0);
   }, 30_000);
+});
+
+describe("a command that reaches outside the node is written into the effect ledger", () => {
+  const AT = "2026-09-29T00:00:00.000Z" as Instant;
+  const pushing: ExecutionIntent = { kind: "persistent", allowedCategories: ["local-write", "external-write"] };
+
+  /** The task the broker runs for, running on this node, the way the dispatcher hands one over. */
+  function runningTask(): CommandLedger {
+    let counter = 0;
+    const deps: TaskServiceDeps = {
+      db: database,
+      nodeId: "node_local",
+      now: () => AT,
+      newId: (prefix) => `${prefix}_${String((counter += 1))}`,
+    };
+    database
+      .prepare("INSERT INTO conversations (conversation_id, home_node_id, created_at, updated_at) VALUES (?,?,?,?)")
+      .run("conv_1", "node_local", AT, AT);
+    createTask(deps, {
+      taskId: "task_broker" as never,
+      conversationId: "conv_1" as never,
+      goal: "open the pull request",
+      principal: { principalId: "principal_1", kind: "user", nodeId: "node_local" as never },
+    });
+    applyTaskEvent(deps, "task_broker", "resolve.start");
+    advanceResolving(deps, "task_broker", { kind: "ready", executionNodeId: "node_local" });
+    applyTaskEvent(deps, "task_broker", "dispatch.acknowledged");
+    return { deps, runId: "run_1" };
+  }
+
+  const outcome = (overrides: Partial<CommandOutcome>): CommandToolDeps["run"] =>
+    async () => ({ exitCode: 0, stdout: "", stderr: "", durationMs: 5, timedOut: false, ...overrides });
+
+  it("confirms a push that exited 0, against the task and its run", async () => {
+    const ledger = runningTask();
+    const { broker } = makeBroker({ policy: { mode: "autonomous" }, intent: pushing, ledger, run: outcome({}) });
+
+    expect((await broker({ command: "git push origin HEAD" })).kind).toBe("ran");
+
+    const effects = effectsForTask(database, "task_broker");
+    expect(effects).toHaveLength(1);
+    expect(effects[0]).toMatchObject({
+      state: "confirmed",
+      resolution: "observed-applied",
+      category: "external-write",
+      capabilityRef: "project.command.run@1",
+      executorNodeId: "node_local",
+      runId: "run_1",
+      submitAttempts: 1,
+    });
+    expect(effects[0]?.intent).toContain("git push origin HEAD");
+    expect(getTask(database, "task_broker")?.state).toBe("running");
+  });
+
+  it("records a push that exited non-zero as failed, which it reported itself", async () => {
+    const ledger = runningTask();
+    const { broker } = makeBroker({ policy: { mode: "autonomous" }, intent: pushing, ledger, run: outcome({ exitCode: 1 }) });
+
+    await broker({ command: "git push origin HEAD" });
+
+    expect(effectsForTask(database, "task_broker").map((effect) => effect.state)).toEqual(["failed"]);
+  });
+
+  it("calls a push that ran out of time unknown, moves the task to uncertain, and will not push again", async () => {
+    const ledger = runningTask();
+    const { broker, runs } = makeBroker({
+      policy: { mode: "autonomous" },
+      intent: pushing,
+      ledger,
+      run: async (request) => {
+        runs.push({ command: request.command, cwd: request.cwd });
+        return { exitCode: null, stdout: "", stderr: "", durationMs: 120_000, timedOut: true };
+      },
+    });
+
+    expect((await broker({ command: "git push origin HEAD" })).kind).toBe("ran");
+    const [effect] = effectsForTask(database, "task_broker");
+    expect(effect?.state).toBe("unknown");
+    expect(effect?.reconciliationEvidence).toContain("ran out of time");
+    expect(getTask(database, "task_broker")?.state).toBe("uncertain");
+
+    // The same command in the same folder is a second push, not a retry of nothing.
+    const again = await broker({ command: "git push origin HEAD" });
+    expect(again).toEqual({ kind: "refused", text: expect.stringContaining("could do it twice") });
+    expect(runs).toHaveLength(1);
+    expect(effectsForTask(database, "task_broker")).toHaveLength(1);
+  });
+
+  it("calls a push whose runner failed unknown, since it may have started", async () => {
+    const ledger = runningTask();
+    const { broker } = makeBroker({
+      policy: { mode: "autonomous" },
+      intent: pushing,
+      ledger,
+      run: async () => {
+        throw new Error("spawn failed half-way");
+      },
+    });
+
+    await expect(broker({ command: "git push origin HEAD" })).rejects.toThrow("spawn failed half-way");
+    expect(effectsForTask(database, "task_broker").map((effect) => effect.state)).toEqual(["unknown"]);
+  });
+
+  it("writes nothing for a change inside the task's own folder, whose outcome is on disk", async () => {
+    const ledger = runningTask();
+    const { broker, runs } = makeBroker({ policy: { mode: "autonomous" }, intent: pushing, ledger });
+
+    await broker({ command: "git commit -m wip" });
+
+    expect(runs).toHaveLength(1);
+    expect(effectsForTask(database, "task_broker")).toEqual([]);
+  });
+
+  it("names an unknown outcome only for a command that never reported", () => {
+    const base: CommandOutcome = { exitCode: 0, stdout: "", stderr: "", durationMs: 1, timedOut: false };
+    expect(unknownCommandOutcome(base)).toBeUndefined();
+    expect(unknownCommandOutcome({ ...base, exitCode: 2 })).toBeUndefined();
+    expect(unknownCommandOutcome({ ...base, stopped: true, exitCode: null })).toContain("stopped");
+    expect(unknownCommandOutcome({ ...base, timedOut: true, exitCode: null })).toContain("ran out of time");
+    expect(unknownCommandOutcome({ ...base, exitCode: null })).toContain("without an exit status");
+    expect(unknownCommandOutcome(undefined)).toContain("before it reported");
+  });
 });

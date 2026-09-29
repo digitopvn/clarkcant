@@ -175,6 +175,7 @@ export function startAutomationService(
           title: "Việc tự động bị từ chối",
           body: text,
           conversationId: intent.conversationId,
+          subject: { kind: "conversation", conversationId: intent.conversationId },
           dedupKey: `automation:${run.runId}`,
           at: now(),
         });
@@ -201,12 +202,23 @@ export function startAutomationService(
     } catch (cause) {
       const reason = cause instanceof Error ? cause.message : String(cause);
       settleIntentRun(deps, run.runId, "failed", reason);
+      // Pointed at the conversation it was set up in, where it can be changed or set up again: a notice that only says
+      // something failed, with nowhere to go, leaves the person nothing to do about it.
       tryRecordNodeNotice(services, {
         sourceKind: "automation",
         category: "alert",
         severity: "error",
         title: "Việc tự động không bắt đầu được",
-        body: reason,
+        body:
+          intent === undefined
+            ? `Lần chạy cho ${because} không bắt đầu được: ${reason}. Lần này sẽ không chạy lại.`
+            : `"${intent.summary}" không bắt đầu được cho ${because}: ${reason}. Lần này sẽ không chạy lại; bản thân việc tự động vẫn được giữ nguyên.`,
+        ...(intent === undefined
+          ? {}
+          : {
+              conversationId: intent.conversationId,
+              subject: { kind: "conversation" as const, conversationId: intent.conversationId },
+            }),
         dedupKey: `automation:${run.runId}`,
         at: now(),
       });
@@ -228,6 +240,8 @@ export function startAutomationService(
           title: prepared.intent.summary,
           body: prepared.message,
           conversationId: prepared.intent.conversationId,
+          subject: { kind: "conversation", conversationId: prepared.intent.conversationId },
+          // The run is one per (automation, signal), and a timer's signal is one per slot: one notice per time it came due.
           dedupKey: `automation:${run.runId}`,
           at: now(),
         });
@@ -247,7 +261,9 @@ export function startAutomationService(
           body: text,
           conversationId: prepared.intent.conversationId,
           subject: { kind: "task", taskId: prepared.taskId, conversationId: prepared.intent.conversationId },
-          dedupKey: `automation:${run.runId}`,
+          // Its own key: the run goes on to start later under `automation:<runId>`, and sharing that key would swallow
+          // the notice that says it finally started.
+          dedupKey: `automation:${run.runId}:waiting`,
           at: now(),
         });
         setIntentRunState(deps.db, run.runId, "pending", now(), prepared.reason);

@@ -1,8 +1,18 @@
-import { type ExecutionIntent, decideExecution, guardrailCovers, recordEffectExecution } from "@clarkcant/core";
+import { advanceEffect, type CapabilityRef, type EffectCategory, type EffectRecord } from "@clarkcant/contracts";
+import {
+  type ExecutionIntent,
+  type TaskServiceDeps,
+  decideExecution,
+  guardrailCovers,
+  markEffectUnknown,
+  prepareEffect,
+  recordEffectExecution,
+} from "@clarkcant/core";
+import { effectsForTask, upsertEffect } from "@clarkcant/storage";
 
 import { decideGuardrailForCommand, type CommandToolDeps } from "./node-tools.ts";
 import { ownedResources, preflightCommand } from "./preflight.ts";
-import { commandDigest, runGuardedCommand } from "./run-command.ts";
+import { commandDigest, refusingNewCommands, runGuardedCommand, type CommandOutcome } from "./run-command.ts";
 
 /**
  * Commands a task's worker asks the host to run.
@@ -21,6 +31,10 @@ import { commandDigest, runGuardedCommand } from "./run-command.ts";
  * The intent is the task's: a person asking in the conversation, an automation acting for the effects it was given, or
  * the node's own work. That is what lets Autonomous run `git push` for an automation set up to open pull requests and
  * still ask before one that was never given external writes.
+ *
+ * A command that reaches outside the node — that `git push` — is also written into the task's effect ledger before it
+ * starts and settled on what it reported, so one that was stopped, timed out or outlived by its node reads as `unknown`
+ * rather than as done or as never having happened, and is not run a second time on its own.
  */
 
 export interface WorkerCommandRequest {
@@ -67,6 +81,105 @@ export function parseWorkerCommandRequest(value: unknown): WorkerCommandRequest 
   return request;
 }
 
+/** The capability a brokered command is carried out under, which is how the effect ledger names it. */
+const COMMAND_CAPABILITY = "project.command.run@1" as CapabilityRef;
+
+/**
+ * The commands whose outcome the effect ledger follows.
+ *
+ * The ones that reach past what the node can read back in place: a push, a message sent, a payment, or a deletion that
+ * cannot be taken back. A change inside the task's own folder is not here, because its outcome is on disk in that
+ * folder (a worktree with uncommitted changes is kept, and the person told where), so there is nothing to reconcile
+ * against. A read changes nothing.
+ */
+const LEDGERED_CATEGORIES: ReadonlySet<EffectCategory> = new Set<EffectCategory>([
+  "external-write",
+  "destructive",
+  "financial",
+  "communication",
+]);
+
+/** Where a task's commands are written into the effect ledger, and the run they belong to. */
+export interface CommandLedger {
+  deps: TaskServiceDeps;
+  runId?: string;
+}
+
+/**
+ * Write the effect down as handed off, before the command starts.
+ *
+ * Prepared and submitted in the same breath, because nothing stands between the two for a command: the decision is
+ * already made. What matters is that the row exists before the process does, so a node that dies while the command
+ * runs leaves a `submitted` row the next boot can call unknown, rather than no trace of an effect that may have landed.
+ */
+function openCommandEffect(
+  ledger: CommandLedger,
+  input: { taskId: string; category: EffectCategory; command: string; cwd: string; operationDigest: string },
+): EffectRecord {
+  const prepared = prepareEffect(ledger.deps, {
+    taskId: input.taskId,
+    ...(ledger.runId === undefined ? {} : { runId: ledger.runId }),
+    executorNodeId: ledger.deps.nodeId,
+    category: input.category,
+    capabilityRef: COMMAND_CAPABILITY,
+    intent: `${input.command} — ${input.cwd}`.slice(0, 2000),
+    operationDigest: input.operationDigest,
+    externalSupportsDedup: false,
+  });
+  const submitted = advanceEffect(prepared, { to: "submitted", at: ledger.deps.now() });
+  if (!submitted.ok) throw new Error(submitted.message);
+  upsertEffect(ledger.deps.db, submitted.effect);
+  return submitted.effect;
+}
+
+/**
+ * Why a finished command's effect cannot be called either way, or nothing when its exit status says.
+ *
+ * A command stopped, timed out or killed never reported, so whether a push or a send got through is not known — which
+ * is the ledger's `unknown`, not a failure. An exit status is the command's own report: zero confirms it, anything else
+ * says it did not do what it was asked.
+ */
+export function unknownCommandOutcome(outcome: CommandOutcome | undefined): string | undefined {
+  if (outcome === undefined) return "the command runner failed before it reported an outcome";
+  if (outcome.stopped === true) return "the command was stopped before it finished";
+  if (outcome.timedOut) return `the command ran out of time after ${String(outcome.durationMs)} ms and was stopped`;
+  if (outcome.exitCode === null) return "the command ended without an exit status";
+  return undefined;
+}
+
+/**
+ * Settle the effect on what the command reported.
+ *
+ * Unknown moves the task to `uncertain` in the same write, through the task machine, so the task cannot read as
+ * progressing while one of its effects is undetermined. When the task can no longer take that event (it is already
+ * uncertain from an earlier effect), the row is still moved: the ledger must never keep saying `submitted` for a command
+ * that has ended. A write that fails is reported and left: the row stays `submitted`, and the next boot calls it unknown.
+ */
+function settleCommandEffect(ledger: CommandLedger, effect: EffectRecord, outcome: CommandOutcome | undefined): void {
+  try {
+    const at = ledger.deps.now();
+    const reason = unknownCommandOutcome(outcome);
+    if (reason !== undefined) {
+      if (markEffectUnknown(ledger.deps, effect.effectId, reason).ok) return;
+      const moved = advanceEffect(effect, { to: "unknown", at, reason });
+      if (moved.ok) upsertEffect(ledger.deps.db, moved.effect);
+      return;
+    }
+    const exitCode = outcome?.exitCode ?? null;
+    const moved = advanceEffect(
+      effect,
+      exitCode === 0
+        ? { to: "confirmed", at, evidence: "the command exited with status 0" }
+        : { to: "failed", at, evidence: `the command exited with status ${String(exitCode)}` },
+    );
+    if (moved.ok) upsertEffect(ledger.deps.db, moved.effect);
+  } catch (cause) {
+    process.stderr.write(
+      `effect ledger: could not settle ${effect.effectId} (${cause instanceof Error ? cause.message : String(cause)})\n`,
+    );
+  }
+}
+
 export function createWorkerCommandBroker(input: {
   command: CommandToolDeps;
   taskId: string;
@@ -74,6 +187,11 @@ export function createWorkerCommandBroker(input: {
   /** The folders this task may run commands in. Never the node's other roots. */
   roots: readonly string[];
   intent: ExecutionIntent;
+  /**
+   * Where a command that reaches outside the node is written into the effect ledger. Absent means nothing is written,
+   * which is only right for a caller with no task row to write against.
+   */
+  ledger?: CommandLedger;
 }): (request: WorkerCommandRequest) => Promise<WorkerCommandReply> {
   const deps = input.command;
   const refuse = (text: string): WorkerCommandReply => {
@@ -139,6 +257,39 @@ export function createWorkerCommandBroker(input: {
       env = built.env;
     }
 
+    const operationDigest = commandDigest(guarded.command, guarded.cwd);
+    const ledger = input.ledger !== undefined && LEDGERED_CATEGORIES.has(guarded.effectCategory) ? input.ledger : undefined;
+    let effect: EffectRecord | undefined;
+    if (ledger !== undefined) {
+      // A command that would not start must not be written down as handed off: that row would read as an effect nobody
+      // can say landed, for something that never ran.
+      if (refusingNewCommands()) return refuse("refused: this node is shutting down; nothing was run");
+      // The same command, in the same folder, still waiting on an outcome: running it again is how a push or a send
+      // happens twice. Someone has to look first.
+      const pending = effectsForTask(ledger.deps.db, input.taskId).find(
+        (earlier) => earlier.operationDigest === operationDigest && (earlier.state === "submitted" || earlier.state === "unknown"),
+      );
+      if (pending !== undefined) {
+        return refuse(
+          `not run: this exact command already ran for this task and ${pending.state === "unknown" ? "whether it took effect is not known" : "has not reported back yet"}; ` +
+            `running it again could do it twice, so check whether it took effect first`,
+        );
+      }
+      try {
+        effect = openCommandEffect(ledger, {
+          taskId: input.taskId,
+          category: guarded.effectCategory,
+          command: guarded.command,
+          cwd: guarded.cwd,
+          operationDigest,
+        });
+      } catch (cause) {
+        return refuse(
+          `refused: the command could not be written down before it ran (${cause instanceof Error ? cause.message : String(cause)}); nothing was run`,
+        );
+      }
+    }
+
     const effectAudit = deps.effectAudit?.();
     if (effectAudit !== undefined) {
       recordEffectExecution(effectAudit.deps, {
@@ -146,23 +297,30 @@ export function createWorkerCommandBroker(input: {
         mode: policy.mode,
         decision,
         category: guarded.effectCategory,
-        operationDigest: commandDigest(guarded.command, guarded.cwd),
+        operationDigest,
         conversationId: input.conversationId,
         description: `${guarded.command} — ${guarded.cwd} (task ${input.taskId})`,
       });
     }
 
     const operationId = deps.newId();
-    const ran = await runGuardedCommand({
-      operationId,
-      envelope: guarded,
-      ...(why === "" ? {} : { why }),
-      ...(env === undefined ? {} : { env }),
-      conversationId: input.conversationId,
-      taskId: input.taskId,
-      ...(deps.now === undefined ? {} : { now: deps.now }),
-      ...(deps.run === undefined ? {} : { run: deps.run }),
-    });
+    let ran: Awaited<ReturnType<typeof runGuardedCommand>>;
+    try {
+      ran = await runGuardedCommand({
+        operationId,
+        envelope: guarded,
+        ...(why === "" ? {} : { why }),
+        ...(env === undefined ? {} : { env }),
+        conversationId: input.conversationId,
+        taskId: input.taskId,
+        ...(deps.now === undefined ? {} : { now: deps.now }),
+        ...(deps.run === undefined ? {} : { run: deps.run }),
+      });
+    } catch (cause) {
+      if (ledger !== undefined && effect !== undefined) settleCommandEffect(ledger, effect, undefined);
+      throw cause;
+    }
+    if (ledger !== undefined && effect !== undefined) settleCommandEffect(ledger, effect, ran.outcome);
     deps.audit?.({
       summary: `${ran.description} (task ${input.taskId})`,
       outcome:

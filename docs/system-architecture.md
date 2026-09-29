@@ -379,6 +379,28 @@ The inbox (`apps/runtime/src/inbox.ts`, `routes/inbox.ts`) gathers two things wi
     expired task approval also moves its task to `failed` (`run.approval_expired`). A capability approval (package
     install, no task, no card) has no conversation to point to and is not swept — the same reason it is not offered
     as pending work before it expires.
+  - **Effects whose outcome is unknown.** The effect ledger's production writer is the worker command broker
+    (`apps/runtime/src/worker-command-broker.ts`): a command a task's worker asks the host to run whose category reaches
+    past what the node can read back in place (`external-write`, `destructive`, `financial`, `communication` — a
+    `git push`, not a change inside the task's own folder) is written `prepared → submitted` against the task and its
+    run (capability `project.command.run@1`) before it starts, then settled on what it reported: exit 0 is
+    `confirmed`, another exit status `failed`, and a command that was stopped, timed out, ended without an exit status
+    or whose runner failed is `unknown` — which moves the task to `uncertain` in the same write (`markEffectUnknown`).
+    The same command in the same folder is refused while an earlier run of it is `submitted` or `unknown`, so it is
+    never pushed twice on its own. At boot, `work-recovery.ts` marks this node's still-`submitted` effects `unknown`
+    after the task pass. `apps/runtime/src/effect-notices.ts` sweeps once after recovery and then every minute (unref'd,
+    stopped when the node closes) and records one notice per `unknown` effect (`dedupKey: effect-unknown:<effectId>`,
+    subject `task`, pointing at the task's conversation) saying what is uncertain, that the task is kept uncertain and
+    nothing is re-run, and to check the receiving side before running it again. Effects older than the 30-day
+    dismissed-notice retention are not announced, so a dismissed one does not come back as new. There is no route yet
+    that records a person's reconciliation of an `unknown` effect.
+  - **Reminders and automations that come due** (`apps/runtime/src/automation-service.ts`). A reminder that comes due
+    records one notice per occurrence (`automation:<runId>`; a run is unique per automation and signal, and a timer's
+    signal per slot), subject `conversation`. A run that came due but cannot run records one notice under the same
+    key: refused before a task exists (subject `conversation`), failed to start (pointing at the automation's
+    conversation when the automation still exists), or started (subject `task`). A run waiting for a capability uses
+    its own key, `automation:<runId>:waiting` (subject `task`), so the notice that it later started is not swallowed.
+    A run whose automation was paused or removed after it matched says nothing: the person asked it to stop.
   - **Update checks** (`apps/runtime/src/update-checks.ts`) are a periodic job, started from
     `bootstrap/runtime-bootstrap.ts` on an `unref()` timer (it does not keep the process alive) and stopped when the
     node closes. It compares the version of installed packages/widgets (`listInstalledPackages`, `packages/core`)

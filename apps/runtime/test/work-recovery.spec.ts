@@ -4,9 +4,9 @@ import { join } from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
 
-import type { ConversationId, Instant, Principal } from "@clarkcant/contracts";
-import { advanceResolving, applyTaskEvent, createTask, type ConductorDeps } from "@clarkcant/core";
-import { getTask, getWorkRun, recordWorkRun, type WorkRunRecord } from "@clarkcant/storage";
+import { advanceEffect, type CapabilityRef, type ConversationId, type Instant, type Principal } from "@clarkcant/contracts";
+import { advanceResolving, applyTaskEvent, createTask, prepareEffect, type ConductorDeps } from "@clarkcant/core";
+import { effectsForTask, getTask, getWorkRun, recordWorkRun, upsertEffect, type WorkRunRecord } from "@clarkcant/storage";
 
 import { bootRuntime, type Runtime } from "../src/node.ts";
 import { createWorkJournal } from "../src/work-journal.ts";
@@ -210,6 +210,53 @@ describe("tasks this node was executing", () => {
     expect(getTask(node.db, taskId)?.state).toBe("uncertain");
     expect(said.some((text) => text.includes("chưa rõ kết quả"))).toBe(true);
     expect(reruns).toEqual([]);
+  });
+
+  it("calls an effect it handed off and never heard back about unknown, and leaves a settled one alone", () => {
+    const node = boot();
+    let counter = 0;
+    const conductor: ConductorDeps = {
+      db: node.db,
+      nodeId: node.identity.nodeId,
+      now: () => AT,
+      newId: (prefix) => `eff_test_${prefix}_${String((counter += 1))}`,
+      sampleRecipes: [],
+      validateProps: () => ({ ok: true }),
+    };
+    const taskId = executingTask(conductor, node.identity.nodeId);
+    const handedOff = (command: string, confirm = false): string => {
+      const prepared = prepareEffect(conductor, {
+        taskId,
+        executorNodeId: node.identity.nodeId,
+        category: "external-write",
+        capabilityRef: "project.command.run@1" as CapabilityRef,
+        intent: command,
+        operationDigest: `sha256:${command}`,
+        externalSupportsDedup: false,
+      });
+      const submitted = advanceEffect(prepared, { to: "submitted", at: AT });
+      if (!submitted.ok) throw new Error(submitted.message);
+      let effect = submitted.effect;
+      if (confirm) {
+        const observed = advanceEffect(effect, { to: "confirmed", at: AT });
+        if (!observed.ok) throw new Error(observed.message);
+        effect = observed.effect;
+      }
+      upsertEffect(node.db, effect);
+      return prepared.effectId;
+    };
+    const pushed = handedOff("git push origin HEAD");
+    const confirmed = handedOff("git push origin main", true);
+
+    const { report } = recover(node);
+
+    const states = new Map(effectsForTask(node.db, taskId).map((effect) => [effect.effectId, effect]));
+    expect(states.get(pushed)?.state).toBe("unknown");
+    expect(states.get(pushed)?.reconciliationEvidence).toContain("node restarted");
+    expect(states.get(confirmed)?.state).toBe("confirmed");
+    // The task pass still told the conversation: the effects are moved after it, not instead of it.
+    expect(getTask(node.db, taskId)?.state).toBe("uncertain");
+    expect(report.unsettledEffects).toBe(1);
   });
 });
 

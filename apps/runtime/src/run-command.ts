@@ -67,6 +67,11 @@ export function refuseNewCommands(): void {
   refusingCommands = true;
 }
 
+/** Whether this process has stopped starting commands, so a caller can refuse before recording one as started. */
+export function refusingNewCommands(): boolean {
+  return refusingCommands;
+}
+
 /**
  * SIGKILL every running command's group now, without the grace.
  *

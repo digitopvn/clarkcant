@@ -556,6 +556,11 @@ export function createTaskDispatcher(deps: TaskDispatcherDeps): TaskDispatcher {
             conversationId: task.conversationId,
             roots: write,
             intent,
+            // The task's effect ledger: a command that reaches outside the node is written against this run.
+            ledger: {
+              deps: { db: deps.conductor.db, nodeId: deps.conductor.nodeId, now: at, newId: deps.conductor.newId },
+              runId,
+            },
           });
 
     /*

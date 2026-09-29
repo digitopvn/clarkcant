@@ -388,6 +388,27 @@ Hộp thư (`apps/runtime/src/inbox.ts`, `routes/inbox.ts`) gom hai thứ khác 
     nên một lần ghi đóng lỗi không làm mất thông báo. Approval của task hết hạn còn đưa task sang `failed`
     (`run.approval_expired`). Capability approval (install gói, không task, không thẻ) không
     có hội thoại để trỏ về nên không được quét — cùng lý do nó không được offer như việc chờ khi chưa hết hạn.
+  - **Effect chưa rõ kết quả.** Nơi ghi effect ledger ở production là worker command broker
+    (`apps/runtime/src/worker-command-broker.ts`): một lệnh mà worker của task nhờ host chạy, có category vươn ra ngoài
+    những gì node đọc lại được tại chỗ (`external-write`, `destructive`, `financial`, `communication` — một `git push`,
+    không phải một thay đổi trong thư mục riêng của task), được ghi `prepared → submitted` theo task và run của nó
+    (capability `project.command.run@1`) trước khi chạy, rồi được chốt theo những gì lệnh báo lại: exit 0 là
+    `confirmed`, exit status khác là `failed`, còn lệnh bị dừng, hết giờ, kết thúc không có exit status hoặc runner lỗi
+    là `unknown` — đưa task sang `uncertain` trong cùng lần ghi (`markEffectUnknown`). Cùng một lệnh trong cùng thư mục
+    bị từ chối khi một lần chạy trước của nó còn `submitted` hoặc `unknown`, nên nó không bao giờ tự push hai lần. Khi
+    khởi động, `work-recovery.ts` đánh dấu `unknown` các effect còn `submitted` của node này, sau lượt xử lý task.
+    `apps/runtime/src/effect-notices.ts` quét một lần sau recovery rồi mỗi phút (unref, dừng khi node đóng) và ghi một
+    thông báo cho mỗi effect `unknown` (`dedupKey: effect-unknown:<effectId>`, subject `task`, trỏ về hội thoại của
+    task), nói điều gì chưa rõ, rằng task được giữ ở trạng thái chưa rõ kết quả và không có gì bị chạy lại, và hãy kiểm
+    tra ở phía nhận trước khi chạy lại. Effect cũ hơn thời gian giữ thông báo đã bỏ (30 ngày) không được báo, nên một
+    thông báo đã bỏ không quay lại như mới. Hiện chưa có route ghi lại việc một người đã đối soát một effect `unknown`.
+  - **Nhắc việc và automation đến hạn** (`apps/runtime/src/automation-service.ts`). Một lời nhắc đến hạn ghi một thông
+    báo cho mỗi lần đến hạn (`automation:<runId>`; một run là duy nhất theo automation và tín hiệu, và tín hiệu của
+    timer là duy nhất theo từng mốc giờ), subject `conversation`. Một run đến hạn nhưng không chạy được ghi một thông
+    báo cùng khoá đó: bị từ chối trước khi có task (subject `conversation`), không bắt đầu được (trỏ về hội thoại của
+    automation khi automation còn tồn tại), hoặc đã bắt đầu (subject `task`). Một run đang chờ capability dùng khoá
+    riêng, `automation:<runId>:waiting` (subject `task`), để thông báo rằng nó bắt đầu sau đó không bị nuốt mất. Một run
+    có automation đã bị tạm dừng hoặc xoá sau khi khớp thì không nói gì: người dùng đã yêu cầu nó dừng.
   - **Kiểm tra cập nhật** (`apps/runtime/src/update-checks.ts`) là một job định kỳ, khởi động từ
     `bootstrap/runtime-bootstrap.ts` bằng timer `unref()` (không giữ tiến trình sống), dừng lại khi node đóng. So
     version gói/widget đã cài (`listInstalledPackages`, `packages/core`) với directory index hiện có
