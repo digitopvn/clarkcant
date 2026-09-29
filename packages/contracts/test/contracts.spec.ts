@@ -34,6 +34,12 @@ import {
   isHostOwnedBlock,
   messageBlockSchema,
   peerNoticeSchema,
+  peerTextAsData,
+  readPeerFeatures,
+  readPeerLabel,
+  PEER_FEATURES,
+  PEER_FEATURES_MAX,
+  PEER_LABEL_MAX,
   NOTICE_BODY_MAX,
   NOTICE_TITLE_MAX,
 } from "../src/index.ts";
@@ -617,6 +623,29 @@ describe("a peer's notice", () => {
     expect(peerNoticeSchema.safeParse({ ...notice, body: "x".repeat(NOTICE_BODY_MAX + 1) }).success).toBe(false);
     expect(peerNoticeSchema.safeParse({ ...notice, key: "k".repeat(161) }).success).toBe(false);
     expect(peerNoticeSchema.safeParse({ ...notice, severity: "panic" }).success).toBe(false);
+  });
+});
+
+describe("what a peer says about itself", () => {
+  it("keeps only the features this build knows, each once, from a bounded list", () => {
+    expect(PEER_FEATURES).toEqual(["notice"]);
+    expect(readPeerFeatures(["notice", "teleport", "notice", 7, null])).toEqual(["notice"]);
+    expect(readPeerFeatures([])).toEqual([]);
+    // Past the bound nothing is read, so a long list cannot make this node parse without limit.
+    expect(readPeerFeatures([...Array.from({ length: PEER_FEATURES_MAX }, () => "x"), "notice"])).toEqual([]);
+    // A build from before features advertised nothing, which is not the same as advertising an empty list.
+    expect(readPeerFeatures(undefined)).toBeUndefined();
+    expect(readPeerFeatures("notice")).toBeUndefined();
+  });
+
+  it("reads its name as data: no control, bidi or zero-width characters, bounded, and never empty", () => {
+    expect(readPeerLabel("  Máy\u0007bàn\n của   Duy ")).toBe("Máy bàn của Duy");
+    expect(readPeerLabel("laptop‮gpj.exe​")).toBe("laptopgpj.exe");
+    expect(readPeerLabel("​⁦ \u0000")).toBeUndefined();
+    expect(readPeerLabel(42)).toBeUndefined();
+    const long = readPeerLabel("ồ".repeat(PEER_LABEL_MAX + 10));
+    expect(long === undefined ? 0 : [...long].length).toBe(PEER_LABEL_MAX);
+    expect(peerTextAsData("a\u0007b‍c")).toBe("a bc");
   });
 });
 

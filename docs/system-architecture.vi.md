@@ -380,17 +380,25 @@ Hộp thư (`apps/runtime/src/inbox.ts`, `routes/inbox.ts`) gom hai thứ khác 
   ngoài. Việc nền được điều phối khi xong ghi một thông báo mỗi task (`workerSettledNotice`, khoá `worker:<taskId>`).
   `originNodeId` chỉ được đặt trên thông báo do một node đã ghép cặp gửi tới.
   - **Thông báo từ node đã ghép cặp** (#170, `apps/runtime/src/peer-notices.ts`). Một peer đã xác nhận gửi message
-    NodeLink `notice` (key, category, severity, title, body; strict và có giới hạn, không có action). Bên nhận chỉ ghi nó
-    khi có một grant còn hiệu lực nối hai node, theo chiều nào cũng được, với `sourceKind` `peer`, `originNodeId` và
-    subject `peer`, dưới khóa `peer:<senderNodeId>:<key>`, nên replay chỉ thành một dòng; khi từ chối thì trả kèm lý do.
-    `recordNodeNotice` chuyển thông báo có subject là task mà một peer đã giao cho node này sang peer đó qua outbox.
-    Thông báo đang chờ `delegation-status:<taskId>:…` ở bên gửi được đóng khi task thôi chờ (status `running`, một
+    NodeLink `notice` (key, category, severity, title, body; strict và có giới hạn, không có action), được
+    `POST /peers/{nodeId}/notices` xếp hàng chỉ tới peer đã công bố feature `notice`; không có gì tự động gửi nó. Bên
+    nhận chỉ ghi nó khi chính chủ của mình đã quyết định làm việc với bên gửi (một grant còn hiệu lực do bên nhận viết
+    cho peer đó, hoặc một allowance `allow_peer_tasks` còn hiệu lực), tối đa 30 thông báo mỗi phút mỗi peer, với
+    `sourceKind` `peer`, `originNodeId` và subject `peer`, dưới khóa `peer:<senderNodeId>:<key>`, nên replay chỉ thành
+    một dòng; khi từ chối thì trả kèm lý do và lời từ chối là cuối cùng. `recordNotification` giữ tối đa 20 thông báo
+    chưa bỏ qua cho mỗi node gốc, tách khỏi giới hạn của thông báo cục bộ. Bên gửi biết `features` và `label` của peer
+    (migration lưu trữ 34) từ lời mời ghép cặp và từ mỗi phản hồi `200` của `POST /peers/messages`
+    (`recordPeerAdvertisement`). Thông báo đang chờ `delegation-status:<taskId>:…` ở bên gửi được đóng khi task thôi chờ (status `running`, một
     result được chấp nhận, hoặc việc chốt task sau khi bỏ cuộc không gửi được). Việc quyết định yêu cầu duyệt của bên
     nhận từ bên gửi chưa được làm (xem [runtime phân tán](distributed-runtime.vi.md)).
-  - **Một peer không liên lạc được** (`apps/runtime/src/peer-outage.ts`). Sau mỗi lượt gửi, `reconcilePeerOutages` đọc
-    trạng thái thử lại của outbox (`peerDeliveryState`) và, khi việc gửi tới một peer đã xác nhận thất bại suốt 10 phút,
-    ghi một thông báo cảnh báo cho mỗi lần mất liên lạc, với khóa là lần xác nhận gần nhất của peer
-    (`peer-offline:<peerNodeId>:<lastAck|never>`). Thông báo được đóng khi peer xác nhận lại hoặc bị thu hồi.
+  - **Một peer không liên lạc được** (`apps/runtime/src/peer-outage.ts`). `watchPeerOutages` chạy sau mỗi lượt gửi và
+    đọc trạng thái thử lại của outbox (`peerDeliveryState`). Khi việc gửi tới một peer đã xác nhận thất bại suốt 10 phút
+    trong thời gian tiến trình này theo dõi (tính từ thời điểm muộn nhất trong lần thất bại, lúc tiến trình khởi động và
+    lần thức dậy gần nhất mà bộ hẹn giờ gửi nhận ra), nó ghi một thông báo cho mỗi lần mất liên lạc, với lời theo điều
+    đang sai: `unreachable` (không trả lời), `refused` (một mã `4xx`), hoặc `given-up` (mọi thứ cần gửi đã bị
+    dead-letter), khóa `peer-offline:<peerNodeId>:<lastAck|never>:<situation>`. Thông báo gọi peer bằng label của nó,
+    nếu không có thì bằng node id, và được đóng khi peer xác nhận lại hoặc bị thu hồi. Một peer lỗi khi đối chiếu không
+    làm dừng các peer khác.
   - **Approval/câu hỏi hết hạn.** Một approval/câu hỏi hết hạn mà không ai quyết định thì rơi khỏi danh sách việc
     chờ trong im lặng — đúng thiết kế cho danh sách, nhưng người không nhìn vào lúc đó sẽ không bao giờ biết. `apps/runtime/src/expiry-notices.ts` quét định kỳ (interval
     unref, khởi động trong `wireRuntime`, dừng khi node đóng) những approval còn `pending` đã qua `expires_at` và câu

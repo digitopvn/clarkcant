@@ -167,9 +167,16 @@ export function startPeerDelivery(
     onDeadLettered?: (letter: DeadLetter) => void;
     /** Run after every pass, with the outbox as that pass left it: how a peer that stays unreachable is noticed. */
     afterPass?: () => void;
+    /**
+     * Told when the machine seems to have slept: the timer fired more than two intervals after it last did, which a
+     * process that kept running does not do. Told before the pass that tick starts.
+     */
+    onWake?: (at: Instant) => void;
   } = {},
 ): PeerDelivery {
   const log = options.log ?? ((line: string) => process.stderr.write(`${line}\n`));
+  const intervalMs = options.intervalMs ?? DEFAULT_DELIVERY_INTERVAL_MS;
+  let lastTick = Date.parse(deps.now());
   let stopped = false;
   let running = false;
   let again = false;
@@ -210,7 +217,21 @@ export function startPeerDelivery(
     }
   };
 
-  const timer = setInterval(() => void pass(), options.intervalMs ?? DEFAULT_DELIVERY_INTERVAL_MS);
+  const tick = (): void => {
+    const at = deps.now();
+    const now = Date.parse(at);
+    const slept = now - lastTick > 2 * intervalMs;
+    lastTick = now;
+    if (slept) {
+      try {
+        options.onWake?.(at);
+      } catch (cause) {
+        log(`nodelink: could not note a wake from sleep (${cause instanceof Error ? cause.message : String(cause)})`);
+      }
+    }
+    void pass();
+  };
+  const timer = setInterval(tick, intervalMs);
   timer.unref();
   return {
     kick() {

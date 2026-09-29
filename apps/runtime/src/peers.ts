@@ -1,9 +1,10 @@
 import { createHash, createHmac } from "node:crypto";
 
-import { type Instant, type PairInvite, claimInvite } from "@clarkcant/contracts";
+import { type Instant, type PairInvite, type PeerFeature, PEER_FEATURES, claimInvite } from "@clarkcant/contracts";
 import {
   type Database,
   type PeerRecord,
+  recordPeerAdvertisement,
   claimPairInvite,
   confirmPeer as confirmPeerRow,
   createPairInvite,
@@ -53,6 +54,8 @@ export interface PeerOffer {
   fingerprint: string;
   /** Hash of the token this node will present to the peer. The token itself never travels. */
   tokenHash: string;
+  /** What this node takes beyond the envelopes every build understands; absent from a build before features. */
+  features?: PeerFeature[];
 }
 
 export interface PairingDeps {
@@ -70,6 +73,7 @@ export function selfDescription(deps: PairingDeps, endpoint: string): Omit<PeerO
     endpoint,
     publicKey: deps.identity.publicKey,
     fingerprint: deps.identity.fingerprint,
+    features: [...PEER_FEATURES],
   };
 }
 
@@ -165,6 +169,7 @@ export function claimInviteFrom(
     revokedAt: null,
   };
   upsertPeer(deps.db, peer);
+  recordPeerAdvertisement(deps.db, peer.peerNodeId, { features: input.offer.features, label: input.offer.label });
 
   return {
     ok: true,
@@ -196,6 +201,7 @@ export function recordAcceptedClaim(
     revokedAt: null,
   };
   upsertPeer(deps.db, peer);
+  recordPeerAdvertisement(deps.db, peer.peerNodeId, { features: input.offer.features, label: input.offer.label });
   return peer;
 }
 

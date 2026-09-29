@@ -5,6 +5,9 @@ import {
   peerEnvelopeSchema,
   checkArtifactAcceptance,
   grantSchema,
+  nodeIdSchema,
+  PEER_FEATURES,
+  readPeerFeatures,
 } from "@clarkcant/contracts";
 import { type Database, type JsonValue, activeGrants, getGrant, grantIdsFrom, upsertGrant } from "@clarkcant/storage";
 import { type PeerGatewayDeps, receiveEnvelope } from "@clarkcant/node-link";
@@ -106,7 +109,11 @@ function readPeerOffer(fields: Record<string, unknown>): PeerOffer | undefined {
     tokenHash: read("tokenHash"),
   };
   if (Object.values(peer).some((value) => value === "")) return undefined;
-  return peer;
+  // The node id becomes a key in this node's tables and a segment of its routes, so it must be one.
+  if (!nodeIdSchema.safeParse(peer.nodeId).success) return undefined;
+  // Optional, and read through the closed list: a build from before features offers none.
+  const features = readPeerFeatures(fields["features"]);
+  return features === undefined ? peer : { ...peer, features };
 }
 
 /** A claim body: an invitation id plus the identity of the node claiming it. */
@@ -135,7 +142,7 @@ function peerHandler(
     const at = pairing.now();
 
     if (envelope.kind === "notice") {
-      // Words for this node's inbox, under the peer's name, taken only while a live grant ties the two nodes.
+      // Words for this node's inbox, under the peer's name, taken only when this node's owner chose to work with it.
       if (notice === undefined) return { accepted: false, reason: "this node records no notices from peers" };
       return notice(envelope);
     }
@@ -437,6 +444,10 @@ export function handlePeerUplinkRoutes(input: PeerUplinkDeps): GatewayResponse |
       // The recorded outcome, handed back verbatim on a replay. That is what makes a delegation whose
       // acknowledgement was lost a retry rather than a second instruction.
       response: recorded,
+      // What this node takes and what it calls itself, on every acknowledgement, so a peer paired before either
+      // existed learns them from its next delivery. A kind this node has no handler for is not advertised.
+      features: PEER_FEATURES.filter((feature) => feature !== "notice" || input.notice !== undefined),
+      label: pairing.identity.label,
     });
   }
 
@@ -552,6 +563,7 @@ export function handlePairingRoutes(input: PairingRouteDeps): GatewayResponse | 
         endpoint: offer.endpoint,
         publicKey: offer.publicKey,
         fingerprint: offer.fingerprint,
+        ...(offer.features === undefined ? {} : { features: offer.features }),
       },
       tokenHash: offer.tokenHash,
     });
@@ -583,7 +595,8 @@ export function handlePairingRoutes(input: PairingRouteDeps): GatewayResponse | 
 
   if (segments.length === 3 && segments[0] === "peers" && segments[2] === "notices" && request.method === "POST") {
     // Something the owner of this node wants their paired node's inbox to show. Queued like a signal, and refused here
-    // for a peer that would refuse it there: one that is not confirmed, or that no live grant ties to this node.
+    // for a peer that is not confirmed or has not said it takes notices. Whether it is recorded there is the decision
+    // of that node's owner, which this node cannot see.
     const parsed = readJson(request);
     if (!parsed.ok) return parsed.response;
     const body = parsed.value;
@@ -604,7 +617,7 @@ export function handlePairingRoutes(input: PairingRouteDeps): GatewayResponse | 
       },
     );
     if (!queued.ok) {
-      return fail(queued.code === "PEER_UNKNOWN" ? 404 : queued.code === "NO_LIVE_GRANT" ? 409 : 400, queued.code, queued.message);
+      return fail(queued.code === "PEER_UNKNOWN" ? 404 : queued.code === "NOTICES_UNSUPPORTED" ? 409 : 400, queued.code, queued.message);
     }
     input.onQueued?.();
     return json(202, { messageId: queued.messageId, queued: true });

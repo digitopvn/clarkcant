@@ -2,12 +2,28 @@ import { type Server } from "node:http";
 
 import { afterEach, describe, expect, it } from "vitest";
 
-import type { Instant, PeerEnvelope } from "@clarkcant/contracts";
+import { type Instant, type PeerEnvelope, grantSchema } from "@clarkcant/contracts";
 import { sendEnvelope } from "@clarkcant/node-link";
-import { allRows, getGrant, nextOutboundSequence, peerDeliveryState, pendingOutbox, revokeGrant } from "@clarkcant/storage";
+import {
+  allRows,
+  createConversation,
+  deadLetterOutbox,
+  getGrant,
+  getPeer,
+  nextOutboundSequence,
+  peerDeliveryState,
+  pendingOutbox,
+  putPeerAllowance,
+  recordNotification,
+  revokeGrant,
+  revokePeerAllowance,
+  upsertTask,
+} from "@clarkcant/storage";
 
-import { PEER_OFFLINE_NOTICE_AFTER_MS, reconcilePeerOutages } from "../src/peer-outage.ts";
+import { PEER_NOTICES_PER_MINUTE } from "../src/peer-notices.ts";
+import { PEER_OFFLINE_NOTICE_AFTER_MS, type PeerOutageWatch, watchPeerOutages } from "../src/peer-outage.ts";
 import { startPeerDelivery } from "../src/peer-signals.ts";
+import { deliverPending } from "../src/peer-transport.ts";
 import { createNodeServer } from "../src/server.ts";
 import { type LiveNode, call, identityOf, liveNodes, pair, tokenFor } from "./live-nodes.ts";
 
@@ -15,9 +31,10 @@ import { type LiveNode, call, identityOf, liveNodes, pair, tokenFor } from "./li
  * One Clark telling another's owner something, through the other's inbox.
  *
  * Two real nodes, paired the way a person pairs them, with real HTTP between them. What the tests are careful about is
- * that a notice is words under the sender's name and nothing more: it lands once however often it is sent, it needs the
- * two owners to be working together through a live grant, it cannot bring an action with it, and a node that cannot
- * reach its peer says so once per outage instead of going silent.
+ * that a notice is words under the sender's name and nothing more: it lands once however often it is sent, it is taken
+ * only when the receiving node's own owner chose to work with the sender, it is sent only to a node that said it takes
+ * notices, one peer cannot flood the inbox with it, it cannot bring an action with it, and a node that cannot deliver
+ * to its peer says so once per outage — in words that match what is actually wrong — instead of going silent.
  */
 
 const nodes = liveNodes();
@@ -28,19 +45,26 @@ afterEach(async () => {
   await nodes.stopAll();
 });
 
+type Clark = LiveNode & { skip: (ms: number) => void; clock: () => Instant; watch: PeerOutageWatch };
+
 /** A node with its delivery pass running on a clock the test can move, checking for unreachable peers after each pass. */
-async function startClark(label: string): Promise<LiveNode & { skip: (ms: number) => void; clock: () => Instant }> {
+async function startClark(label: string): Promise<Clark> {
   let skew = 0;
   const clock = (): Instant => new Date(Date.now() + skew).toISOString() as Instant;
+  let watch: PeerOutageWatch | undefined;
   const node = await nodes.start(label, (services) => {
+    const outages = watchPeerOutages(services, clock());
+    watch = outages;
     services.peerDelivery = startPeerDelivery(
       { db: services.runtime.db, identity: services.runtime.identity, now: clock },
-      { intervalMs: 3_600_000, log: () => undefined, afterPass: () => reconcilePeerOutages(services, clock()) },
+      { intervalMs: 3_600_000, log: () => undefined, afterPass: () => outages.reconcile(clock()) },
     );
   });
+  if (watch === undefined) throw new Error("the node started without its outage watch");
   return {
     ...node,
     clock,
+    watch,
     skip: (ms) => {
       skew += ms;
     },
@@ -55,7 +79,7 @@ async function waitUntil(condition: () => boolean, what: string, explain?: () =>
   }
 }
 
-/** A grant from one node's owner to the other: what says the two owners work together. */
+/** A grant from one node's owner to the other: that owner's decision to work with the other node. */
 async function grantBetween(from: LiveNode, to: LiveNode): Promise<string> {
   const grantId = `grant_${identityOf(from).nodeId}_${identityOf(to).nodeId}`.slice(0, 120);
   const written = await call(from, "/grants", {
@@ -75,6 +99,35 @@ async function grantBetween(from: LiveNode, to: LiveNode): Promise<string> {
   expect(written.status).toBe(201);
   await waitUntil(() => getGrant(to.services.runtime.db, grantId) !== undefined, "the grant to reach the peer");
   return grantId;
+}
+
+/** The node's owner allows a peer's work here, written the way `allow_peer_tasks` writes it. */
+function allowPeer(owner: LiveNode, peer: LiveNode): void {
+  const at = new Date().toISOString() as Instant;
+  putPeerAllowance(owner.services.runtime.db, {
+    peerNodeId: identityOf(peer).nodeId,
+    ownerPrincipalId: identityOf(owner).ownerPrincipalId,
+    conversationId: "conv_allowance",
+    grant: grantSchema.parse({
+      grantId: "grant_allowance",
+      ownerPrincipalId: identityOf(owner).ownerPrincipalId,
+      senderNodeId: identityOf(peer).nodeId,
+      receiverNodeId: identityOf(owner).nodeId,
+      capabilityRefs: [],
+      resources: [],
+      allowedDataClasses: ["public"],
+      expiresAt: new Date(Date.now() + 3_600_000).toISOString(),
+      maxDelegationDepth: 0,
+    }),
+    at,
+  });
+}
+
+/** Deliver something from one node to the other and wait until the sender has read the answer: how it learns features. */
+async function introduce(from: LiveNode, to: LiveNode, id = "hello"): Promise<void> {
+  const sent = await call(from, `/peers/${identityOf(to).nodeId}/signals`, { body: { id, topic: "hello" }, token: from.token });
+  expect(sent.status).toBe(202);
+  await waitUntil(() => (getPeer(from.services.runtime.db, identityOf(to).nodeId)?.features ?? []).includes("notice"), "the peer's features");
 }
 
 interface NoticeRow {
@@ -103,7 +156,7 @@ function fromPeer(node: LiveNode): NoticeRow[] {
 }
 
 /** Queue an envelope on a node as if its own checks had passed, to see what the receiver does with it. */
-function queueRaw(from: LiveNode, to: LiveNode, kind: PeerEnvelope["kind"], payload: Record<string, unknown>): void {
+function queueRaw(from: LiveNode, to: LiveNode, kind: PeerEnvelope["kind"], payload: Record<string, unknown>, taskId?: string): void {
   const at = new Date().toISOString() as Instant;
   const messageId = from.services.conductor.newId("msg");
   sendEnvelope(
@@ -116,12 +169,17 @@ function queueRaw(from: LiveNode, to: LiveNode, kind: PeerEnvelope["kind"], payl
       senderNodeId: identityOf(from).nodeId,
       recipientNodeId: identityOf(to).nodeId,
       kind,
+      ...(taskId === undefined ? {} : { taskId }),
       sourceSequence: nextOutboundSequence(from.services.runtime.db, identityOf(to).nodeId),
       sentAt: at,
       payload,
     },
   );
   from.services.peerDelivery?.kick();
+}
+
+function rawNotice(key: string, title = `Tin ${key}`): Record<string, unknown> {
+  return { notice: { key, category: "message", severity: "info", title } };
 }
 
 /** What the receiver answered each notice envelope with, as its NodeLink inbox recorded it. */
@@ -131,16 +189,32 @@ function answersOn(node: LiveNode): Record<string, unknown>[] {
   );
 }
 
+/** Notice envelopes a node still owes: once empty, every answer was final for the sender. */
+function owedNotices(node: LiveNode): PeerEnvelope[] {
+  return (pendingOutbox(node.services.runtime.db) as PeerEnvelope[]).filter((envelope) => envelope.kind === "notice");
+}
+
+const NOT_CHOSEN =
+  "this node's owner has not chosen to work with that peer (no grant to it, no allowance for it), so it takes no notices from it";
+
 describe("a paired Clark's notice", () => {
   it("is recorded once in the other node's inbox, under the sender's name, however often it is sent", async () => {
     const a = await startClark("desk");
     const b = await startClark("laptop");
     await pair(a, b);
-    await grantBetween(a, b);
-    const body = { id: "build-812", title: "Build hỏng trên máy bàn", body: "main đỏ\u0007từ 9 giờ", category: "alert", severity: "warning" };
+    // B's owner works with A: that is what admits A's notices on B.
+    await grantBetween(b, a);
+    await introduce(a, b);
+    const body = {
+      id: "build-812",
+      title: "Build hỏng trên máy bàn",
+      body: "main đỏ\u0007từ 9 giờ‮​",
+      category: "alert",
+      severity: "warning",
+    };
 
     expect((await call(a, `/peers/${identityOf(b).nodeId}/notices`, { body, token: a.token })).status).toBe(202);
-    await waitUntil(() => fromPeer(b).length === 1 && pendingOutbox(a.services.runtime.db).length === 0, "the notice on B");
+    await waitUntil(() => fromPeer(b).length === 1 && owedNotices(a).length === 0, "the notice on B");
 
     // The same envelope again, as a retry after a lost acknowledgement: answered from B's NodeLink inbox.
     const [sent] = allRows<{ document: string }>(a.services.runtime.db, "SELECT document FROM outbox ORDER BY rowid")
@@ -151,19 +225,21 @@ describe("a paired Clark's notice", () => {
       headers: { "content-type": "application/json", authorization: `Bearer ${tokenFor(a, b)}` },
       body: JSON.stringify(sent),
     });
-    expect(((await replay.json()) as { status: string }).status).toBe("duplicate");
+    const replayed = (await replay.json()) as { status: string; features: unknown; label: unknown };
+    // Every acknowledgement says what B takes and what it calls itself.
+    expect(replayed).toMatchObject({ status: "duplicate", features: ["notice"], label: "laptop" });
 
     // The same notice under new envelopes: B keys it by the sender and the sender's own key, so it is still one row.
     for (let again = 0; again < 3; again += 1) {
       expect((await call(a, `/peers/${identityOf(b).nodeId}/notices`, { body, token: a.token })).status).toBe(202);
     }
-    await waitUntil(() => pendingOutbox(a.services.runtime.db).length === 0 && answersOn(b).length === 4, "the resends");
+    await waitUntil(() => owedNotices(a).length === 0 && answersOn(b).length === 4, "the resends");
     expect(answersOn(b).map((answer) => answer["duplicate"])).toEqual([false, true, true, true]);
 
     expect(fromPeer(b)).toEqual([
       {
         title: "Build hỏng trên máy bàn",
-        // Its words as data: the control character is gone, nothing else is changed.
+        // Its words as data: the control character is a space, the bidi override and zero-width space are gone.
         body: "main đỏ từ 9 giờ",
         source_kind: "peer",
         origin_node_id: identityOf(a).nodeId,
@@ -181,56 +257,77 @@ describe("a paired Clark's notice", () => {
     expect(shown).toHaveLength(1);
     expect((shown[0]?.actions ?? []).map((action) => action.id)).not.toContain("open");
 
-    // A grant in either direction ties the two: B can tell A too, under the grant A wrote.
+    // The grant B wrote is B's owner's decision, not A's: A takes nothing from B under it. (B learned that A takes
+    // notices from A's answer to that grant.)
+    await waitUntil(() => (getPeer(b.services.runtime.db, identityOf(a).nodeId)?.features ?? []).includes("notice"), "A's features on B");
     expect(
       (await call(b, `/peers/${identityOf(a).nodeId}/notices`, { body: { id: "battery", title: "Pin laptop còn 5%" }, token: b.token })).status,
     ).toBe(202);
+    await waitUntil(() => answersOn(a).length === 1 && owedNotices(b).length === 0, "A's answer to B");
+    expect(answersOn(a)).toEqual([{ accepted: false, reason: NOT_CHOSEN }]);
+    expect(fromPeer(a)).toEqual([]);
+
+    // Once A's owner writes one of their own, A takes it.
+    await grantBetween(a, b);
+    expect(
+      (await call(b, `/peers/${identityOf(a).nodeId}/notices`, { body: { id: "battery-2", title: "Pin laptop còn 4%" }, token: b.token })).status,
+    ).toBe(202);
     await waitUntil(() => fromPeer(a).length === 1, "B's notice on A");
-    expect(fromPeer(a)[0]).toMatchObject({ title: "Pin laptop còn 5%", source_kind: "peer", origin_node_id: identityOf(b).nodeId });
+    expect(fromPeer(a)[0]).toMatchObject({ title: "Pin laptop còn 4%", source_kind: "peer", origin_node_id: identityOf(b).nodeId });
   });
 
-  it("is refused from a node no live grant ties to this one, and is not queued for one", async () => {
+  it("is taken only under a decision of the receiving node's owner, and is refused whole when it brings anything else", async () => {
     const a = await startClark("desk");
     const b = await startClark("laptop");
     const stranger = await startClark("stranger");
     await pair(a, b);
-    const peerB = identityOf(b).nodeId;
 
-    // Paired but working together on nothing: A's own gateway will not queue it.
-    const unqueued = await call(a, `/peers/${peerB}/notices`, { body: { id: "1", title: "Xin chào" }, token: a.token });
-    expect(unqueued).toMatchObject({ status: 409, body: { code: "NO_LIVE_GRANT" } });
-    expect(pendingOutbox(a.services.runtime.db)).toEqual([]);
+    // Working together on nothing: B refuses it, saying why, and records nothing; the refusal is final for A.
+    queueRaw(a, b, "notice", rawNotice("1", "Xin chào"));
+    await waitUntil(() => answersOn(b).length === 1 && owedNotices(a).length === 0, "B's answer");
+    expect(answersOn(b)[0]).toEqual({ accepted: false, reason: NOT_CHOSEN });
 
-    // And B refuses one that reaches it anyway, saying why, and records nothing.
-    queueRaw(a, b, "notice", { notice: { key: "1", category: "message", severity: "info", title: "Xin chào" } });
-    await waitUntil(() => answersOn(b).length === 1, "B's answer");
-    expect(answersOn(b)[0]).toEqual({ accepted: false, reason: "this node holds no live grant with that peer, so it takes no notices from it" });
-
-    // Under a grant it is taken; once that grant is withdrawn, it is refused again.
-    const grantId = await grantBetween(a, b);
-    queueRaw(a, b, "notice", { notice: { key: "2", category: "message", severity: "info", title: "Có grant" } });
+    // A grant A wrote is A's decision alone: still refused.
+    const fromA = await grantBetween(a, b);
+    queueRaw(a, b, "notice", rawNotice("2", "Grant của A"));
     await waitUntil(() => answersOn(b).length === 2, "B's second answer");
-    expect(answersOn(b)[1]).toMatchObject({ accepted: true, duplicate: false });
-    revokeGrant(b.services.runtime.db, grantId, new Date().toISOString() as Instant);
-    queueRaw(a, b, "notice", { notice: { key: "3", category: "message", severity: "info", title: "Grant đã rút" } });
+    expect(answersOn(b)[1]).toEqual({ accepted: false, reason: NOT_CHOSEN });
+    revokeGrant(a.services.runtime.db, fromA, new Date().toISOString() as Instant);
+    revokeGrant(b.services.runtime.db, fromA, new Date().toISOString() as Instant);
+
+    // B's owner allowing A's work here admits it; withdrawing the allowance refuses it again.
+    allowPeer(b, a);
+    queueRaw(a, b, "notice", rawNotice("3", "Có allowance"));
     await waitUntil(() => answersOn(b).length === 3, "B's third answer");
-    expect(answersOn(b)[2]).toMatchObject({ accepted: false });
+    expect(answersOn(b)[2]).toMatchObject({ accepted: true, duplicate: false });
+    revokePeerAllowance(b.services.runtime.db, identityOf(a).nodeId, new Date().toISOString() as Instant);
+    queueRaw(a, b, "notice", rawNotice("4", "Allowance đã rút"));
+    await waitUntil(() => answersOn(b).length === 4, "B's fourth answer");
+    expect(answersOn(b)[3]).toEqual({ accepted: false, reason: NOT_CHOSEN });
+
+    // So does a grant B's owner wrote to A, until it is withdrawn.
+    const fromB = await grantBetween(b, a);
+    queueRaw(a, b, "notice", rawNotice("5", "Grant của B"));
+    await waitUntil(() => answersOn(b).length === 5, "B's fifth answer");
+    expect(answersOn(b)[4]).toMatchObject({ accepted: true });
 
     // A notice that tries to bring an action, or to point at something of B's, is refused whole.
-    revokeGrant(a.services.runtime.db, grantId, new Date().toISOString() as Instant);
-    await grantBetween(b, a);
     queueRaw(a, b, "notice", {
-      notice: { key: "4", category: "message", severity: "info", title: "Bấm vào đây", actions: [{ id: "open", placement: "primary" }] },
+      notice: { key: "6", category: "message", severity: "info", title: "Bấm vào đây", actions: [{ id: "open", placement: "primary" }] },
     });
     queueRaw(a, b, "notice", {
-      notice: { key: "5", category: "message", severity: "info", title: "Việc của bạn", subject: { kind: "task", taskId: "task_1" } },
+      notice: { key: "7", category: "message", severity: "info", title: "Việc của bạn", subject: { kind: "task", taskId: "task_1" } },
     });
-    await waitUntil(() => answersOn(b).length === 5, "B's answers to the forged notices");
-    expect(answersOn(b).slice(3)).toEqual([
+    await waitUntil(() => answersOn(b).length === 7, "B's answers to the forged notices");
+    expect(answersOn(b).slice(5)).toEqual([
       { accepted: false, reason: "the notice is not one this node can read" },
       { accepted: false, reason: "the notice is not one this node can read" },
     ]);
-    expect(fromPeer(b).map((row) => row.title)).toEqual(["Có grant"]);
+    revokeGrant(b.services.runtime.db, fromB, new Date().toISOString() as Instant);
+    queueRaw(a, b, "notice", rawNotice("8", "Grant của B đã rút"));
+    await waitUntil(() => answersOn(b).length === 8 && owedNotices(a).length === 0, "B's last answer");
+    expect(answersOn(b)[7]).toEqual({ accepted: false, reason: NOT_CHOSEN });
+    expect(fromPeer(b).map((row) => row.title)).toEqual(["Có allowance", "Grant của B"]);
 
     // Not queued for a node never paired, nor when it is not a notice, nor without this node's own token.
     expect((await call(a, `/peers/${identityOf(stranger).nodeId}/notices`, { body: { id: "1", title: "x" }, token: a.token })).body).toMatchObject({
@@ -240,11 +337,123 @@ describe("a paired Clark's notice", () => {
       expect((await call(b, `/peers/${identityOf(a).nodeId}/notices`, { body, token: b.token })).status).toBe(400);
     }
     expect((await call(b, `/peers/${identityOf(a).nodeId}/notices`, { body: { id: "1", title: "x" } })).status).toBe(401);
-    expect(pendingOutbox(b.services.runtime.db)).toEqual([]);
+    expect(owedNotices(b)).toEqual([]);
+  });
+
+  it("is sent only to a node that said it takes notices, which a node paired before learns from the next answer", async () => {
+    const a = await startClark("desk");
+    const b = await startClark("laptop");
+    await pair(a, b);
+    await grantBetween(b, a);
+    const peerB = identityOf(b).nodeId;
+    // Paired, but B has never answered anything A sent it: A does not know B takes notices.
+    expect(getPeer(a.services.runtime.db, peerB)).not.toHaveProperty("features");
+    const refused = await call(a, `/peers/${peerB}/notices`, { body: { id: "1", title: "Xin chào" }, token: a.token });
+    expect(refused).toMatchObject({ status: 409, body: { code: "NOTICES_UNSUPPORTED" } });
+    expect(String(refused.body["message"])).toContain("has not said it takes notices");
+    expect(owedNotices(a)).toEqual([]);
+
+    // Anything A delivers is answered with what B takes and what it calls itself.
+    await introduce(a, b);
+    expect(getPeer(a.services.runtime.db, peerB)).toMatchObject({ features: ["notice"], label: "laptop" });
+    expect((await call(a, `/peers/${peerB}/notices`, { body: { id: "2", title: "Xin chào" }, token: a.token })).status).toBe(202);
+    await waitUntil(() => fromPeer(b).length === 1 && pendingOutbox(a.services.runtime.db).length === 0, "the notice on B");
+
+    // An answer from a build without features says B takes none now, and keeps the name it gave.
+    a.services.peerDelivery?.stop();
+    expect((await call(a, `/peers/${peerB}/signals`, { body: { id: "old", topic: "hello" }, token: a.token })).status).toBe(202);
+    const outcome = await deliverPending({
+      db: a.services.runtime.db,
+      identity: identityOf(a),
+      now: a.clock,
+      peerFor: (peerNodeId) => getPeer(a.services.runtime.db, peerNodeId),
+      fetchImpl: () => Promise.resolve(new Response(JSON.stringify({ status: "recorded", response: {} }), { status: 200 })),
+    });
+    expect(outcome.acknowledged).toBe(1);
+    expect(getPeer(a.services.runtime.db, peerB)).not.toHaveProperty("features");
+    expect(getPeer(a.services.runtime.db, peerB)).toMatchObject({ label: "laptop" });
+    expect((await call(a, `/peers/${peerB}/notices`, { body: { id: "3", title: "Xin chào" }, token: a.token })).status).toBe(409);
+  });
+
+  it("holds one peer to its rate and to its own share of the inbox, and a refusal past the rate is final", async () => {
+    const a = await startClark("desk");
+    const b = await startClark("laptop");
+    await pair(a, b);
+    await grantBetween(b, a);
+    recordNotification(b.services.runtime.db, {
+      notificationId: "ntf_local",
+      principalId: identityOf(b).ownerPrincipalId,
+      sourceKind: "worker",
+      category: "result",
+      severity: "success",
+      title: "Việc của máy này",
+      dedupKey: "worker:task_local",
+      at: new Date().toISOString() as Instant,
+    });
+
+    for (let index = 0; index <= PEER_NOTICES_PER_MINUTE; index += 1) queueRaw(a, b, "notice", rawNotice(String(index)));
+    await waitUntil(() => answersOn(b).length === PEER_NOTICES_PER_MINUTE + 1 && owedNotices(a).length === 0, "B's answers");
+    const answers = answersOn(b);
+    expect(answers.slice(0, PEER_NOTICES_PER_MINUTE).every((answer) => answer["accepted"] === true)).toBe(true);
+    expect(answers[PEER_NOTICES_PER_MINUTE]).toEqual({
+      accepted: false,
+      reason: `this node takes at most ${String(PEER_NOTICES_PER_MINUTE)} notices a minute from one peer; this one came past that and was not recorded`,
+    });
+
+    // A minute later it is taken again.
+    b.services.runtime.db.prepare("UPDATE inbox SET received_at = ? WHERE kind = 'notice'").run(new Date(Date.now() - 120_000).toISOString());
+    queueRaw(a, b, "notice", rawNotice("late"));
+    await waitUntil(() => answersOn(b).length === PEER_NOTICES_PER_MINUTE + 2, "B's answer a minute later");
+    expect(answersOn(b)[PEER_NOTICES_PER_MINUTE + 1]).toMatchObject({ accepted: true });
+
+    // Thirty-one taken, twenty kept: A's newest, and B's own notice is untouched.
+    const kept = noticesOn(b).filter((row) => row.dismissed_at === null);
+    expect(kept.filter((row) => row.origin_node_id === identityOf(a).nodeId)).toHaveLength(20);
+    expect(kept.map((row) => row.dedup_key)).toContain("worker:task_local");
+    expect(kept.map((row) => row.dedup_key)).toContain(`peer:${identityOf(a).nodeId}:late`);
+    expect(kept.map((row) => row.dedup_key)).not.toContain(`peer:${identityOf(a).nodeId}:0`);
+  });
+
+  it("points at a conversation only of a task this node handed to that very peer", async () => {
+    const a = await startClark("desk");
+    const b = await startClark("laptop");
+    await pair(a, b);
+    await grantBetween(a, b);
+    const at = new Date().toISOString() as Instant;
+    const task = (taskId: string, conversationId: string, executionNodeId: string): void => {
+      createConversation(a.services.runtime.db, { conversationId, homeNodeId: identityOf(a).nodeId, at });
+      upsertTask(a.services.runtime.db, {
+        taskId,
+        conversationId,
+        homeNodeId: identityOf(a).nodeId,
+        executionNodeId,
+        state: "running",
+        revision: 1,
+        goal: "việc thử",
+        createdAt: at,
+        updatedAt: at,
+      });
+    };
+    task("task_handed", "conv_handed", identityOf(b).nodeId);
+    task("task_elsewhere", "conv_elsewhere", "node_000000000000000000000000");
+    task("task_local", "conv_local", identityOf(a).nodeId);
+
+    queueRaw(b, a, "notice", rawNotice("handed"), "task_handed");
+    queueRaw(b, a, "notice", rawNotice("elsewhere"), "task_elsewhere");
+    queueRaw(b, a, "notice", rawNotice("local"), "task_local");
+    queueRaw(b, a, "notice", rawNotice("unknown"), "task_unknown");
+    await waitUntil(() => fromPeer(a).length === 4, "B's notices on A");
+    expect(Object.fromEntries(fromPeer(a).map((row) => [row.dedup_key.split(":").at(-1), row.conversation_id]))).toEqual({
+      handed: "conv_handed",
+      elsewhere: null,
+      local: null,
+      unknown: null,
+    });
   });
 });
 
 interface OutboxRow {
+  message_id: string;
   attempts: number;
   created_at: string;
   last_attempt_at: string | null;
@@ -256,7 +465,7 @@ interface OutboxRow {
 function outboxOf(node: LiveNode): OutboxRow[] {
   return allRows<OutboxRow>(
     node.services.runtime.db,
-    "SELECT attempts, created_at, last_attempt_at, next_attempt_at, last_error, acknowledged_at FROM outbox ORDER BY rowid",
+    "SELECT message_id, attempts, created_at, last_attempt_at, next_attempt_at, last_error, acknowledged_at FROM outbox ORDER BY rowid",
   );
 }
 
@@ -278,6 +487,8 @@ describe("a paired node that cannot be reached", () => {
     const b = await startClark("laptop");
     await pair(a, b);
     const peerB = identityOf(b).nodeId;
+    // Pairing told A what B calls itself; forget it, so the first notice shows what A falls back to.
+    a.services.runtime.db.prepare("UPDATE peers SET label = NULL WHERE peer_node_id = ?").run(peerB);
     const port = Number(new URL(b.base).port);
     const offline = (): NoticeRow[] => noticesOn(a, `peer-offline:${peerB}:`);
     const signal = async (id: string): Promise<void> => {
@@ -296,21 +507,22 @@ describe("a paired node that cannot be reached", () => {
     a.skip(PEER_OFFLINE_NOTICE_AFTER_MS + 60_000);
     a.services.peerDelivery?.kick();
     await waitUntil(() => failed(0, 2) && offline().length === 1, "the outage notice", explain);
-    reconcilePeerOutages(a.services, a.clock());
+    a.watch.reconcile(a.clock());
     a.skip(5 * 60_000);
     a.services.peerDelivery?.kick();
     await waitUntil(() => failed(0, 3), "another failed attempt", explain);
     expect(offline()).toHaveLength(1);
-    // Keyed by the last time B took something from A: one outage, one key.
+    // Keyed by the last time B took something from A and by what is wrong: one outage, one key.
     const lastTaken = peerDeliveryState(a.services.runtime.db, peerB).lastAcknowledgedAt;
     expect(offline()[0]).toMatchObject({
       title: "Không gửi được tới thiết bị khác",
       source_kind: "system",
       subject: JSON.stringify({ kind: "peer", nodeId: peerB }),
-      dedup_key: `peer-offline:${peerB}:${lastTaken ?? "never"}`,
+      dedup_key: `peer-offline:${peerB}:${lastTaken ?? "never"}:unreachable`,
       dismissed_at: null,
     });
-    expect(offline()[0]?.body).toMatch(new RegExp(`^Không gửi được tới thiết bị ${peerB} từ lúc \\d{2}:\\d{2} ngày `));
+    // A knows no name for B, so it shows B's node id.
+    expect(offline()[0]?.body).toMatch(new RegExp(`^Không gửi được tới thiết bị ${peerB} từ lúc \\d{2}:\\d{2} ngày .*không trả lời`));
     expect(offline()[0]?.body).toContain("vẫn nằm trong hàng đợi");
 
     // B is back: the message goes, and the notice with it.
@@ -321,7 +533,7 @@ describe("a paired node that cannot be reached", () => {
     a.services.peerDelivery?.kick();
     await waitUntil(() => pendingOutbox(a.services.runtime.db).length === 0 && offline()[0]?.dismissed_at !== null, "the recovery", explain);
 
-    // A second outage, after B answered, is a second notice; the first stays closed.
+    // A second outage, after B answered, is a second notice; the first stays closed. B's answer gave it a name.
     await new Promise<void>((resolve) => server.close(() => resolve()));
     restarted.splice(0);
     await signal("2");
@@ -331,6 +543,106 @@ describe("a paired node that cannot be reached", () => {
     await waitUntil(() => offline().length === 2, "the second outage notice", explain);
     expect(offline().map((row) => row.dismissed_at === null)).toEqual([false, true]);
     expect(offline()[1]?.dedup_key).not.toBe(offline()[0]?.dedup_key);
+    expect(offline()[1]?.body).toMatch(/^Không gửi được tới thiết bị laptop từ lúc/);
+  });
+
+  it("says a node that answers but refuses is refusing, not unreachable, and does not ask for it to be turned on", async () => {
+    const a = await startClark("desk");
+    const b = await startClark("laptop");
+    await pair(a, b);
+    const peerB = identityOf(b).nodeId;
+    // B's owner revoked the pairing on B: B still answers A, with a refusal.
+    expect((await call(b, `/peers/${identityOf(a).nodeId}/revoke`, { token: b.token })).status).toBe(200);
+    expect((await call(a, `/peers/${peerB}/signals`, { body: { id: "1", topic: "build.failed" }, token: a.token })).status).toBe(202);
+    await waitUntil(() => failedAttempts(a)[0] === 1, "the refused attempt", () => outboxOf(a));
+    expect(outboxOf(a)[0]?.last_error).toBe("the peer answered 401");
+
+    a.skip(PEER_OFFLINE_NOTICE_AFTER_MS + 60_000);
+    a.watch.reconcile(a.clock());
+    const [notice, ...rest] = noticesOn(a, `peer-offline:${peerB}:`);
+    expect(rest).toEqual([]);
+    expect(notice).toMatchObject({ title: "Thiết bị khác từ chối nhận", dedup_key: `peer-offline:${peerB}:never:refused` });
+    expect(notice?.body).toContain("vẫn trả lời nhưng từ chối");
+    expect(notice?.body).toContain("(mã 401)");
+    expect(notice?.body).not.toContain("bật nó lên");
+    expect(notice?.body).not.toContain("không trả lời");
+  });
+
+  it("says so, without promising a retry, once everything owed was given up on", async () => {
+    const a = await startClark("desk");
+    const b = await startClark("laptop");
+    await pair(a, b);
+    const peerB = identityOf(b).nodeId;
+    const offline = (): NoticeRow[] => noticesOn(a, `peer-offline:${peerB}:`);
+    await b.stop();
+    expect((await call(a, `/peers/${peerB}/signals`, { body: { id: "1", topic: "build.failed" }, token: a.token })).status).toBe(202);
+    await waitUntil(() => failedAttempts(a)[0] === 1, "the failed attempt", () => outboxOf(a));
+    a.skip(PEER_OFFLINE_NOTICE_AFTER_MS + 60_000);
+    a.watch.reconcile(a.clock());
+    expect(offline().map((row) => row.title)).toEqual(["Không gửi được tới thiết bị khác"]);
+
+    // The outbox gave the message up, as it does after its last retry.
+    deadLetterOutbox(a.services.runtime.db, String(outboxOf(a)[0]?.message_id), a.clock(), "connect ECONNREFUSED");
+    a.watch.reconcile(a.clock());
+    expect(offline().map((row) => [row.title, row.dismissed_at === null])).toEqual([
+      ["Không gửi được tới thiết bị khác", false],
+      ["Đã ngừng gửi tới thiết bị khác", true],
+    ]);
+    const givenUp = offline()[1]?.body ?? "";
+    expect(givenUp).toContain("sẽ không được gửi lại");
+    expect(givenUp).not.toContain("thử lại tự động");
+    expect(givenUp).not.toContain("hàng đợi");
+    // Said once, however often the node looks again.
+    a.watch.reconcile(a.clock());
+    expect(offline()).toHaveLength(2);
+  });
+
+  it("counts an outage only over time this node watched, after a restart or a wake from sleep", async () => {
+    const a = await startClark("desk");
+    const b = await startClark("laptop");
+    await pair(a, b);
+    const peerB = identityOf(b).nodeId;
+    const offline = (): NoticeRow[] => noticesOn(a, `peer-offline:${peerB}:`);
+    await b.stop();
+    expect((await call(a, `/peers/${peerB}/signals`, { body: { id: "1", topic: "build.failed" }, token: a.token })).status).toBe(202);
+    await waitUntil(() => failedAttempts(a)[0] === 1, "the failed attempt", () => outboxOf(a));
+    // The message has been owed for two hours, most of which this node did not see.
+    const twoHoursAgo = new Date(Date.parse(a.clock()) - 2 * 3_600_000).toISOString() as Instant;
+    a.services.runtime.db.prepare("UPDATE outbox SET created_at = ?").run(twoHoursAgo);
+
+    // A machine that slept through them says nothing on waking...
+    const slept = watchPeerOutages(a.services, twoHoursAgo);
+    slept.woke(a.clock());
+    slept.reconcile(a.clock());
+    expect(offline()).toEqual([]);
+    // ...nor does a node that just started...
+    const watchedFrom = a.clock();
+    const started = watchPeerOutages(a.services, watchedFrom);
+    started.reconcile(a.clock());
+    expect(offline()).toEqual([]);
+    // ...until it has watched delivery fail for long enough itself, and then it says since when it watched.
+    a.skip(PEER_OFFLINE_NOTICE_AFTER_MS + 60_000);
+    started.reconcile(a.clock());
+    expect(offline()).toHaveLength(1);
+    const time = new Intl.DateTimeFormat("vi-VN", { hour: "2-digit", minute: "2-digit", hour12: false }).format(new Date(watchedFrom));
+    expect(offline()[0]?.body).toContain(`từ lúc ${time}`);
+  });
+
+  it("notices a wake from sleep when its timer fires far later than it should", async () => {
+    const a = await startClark("desk");
+    let skew = 0;
+    const woke: Instant[] = [];
+    const delivery = startPeerDelivery(
+      { db: a.services.runtime.db, identity: identityOf(a), now: () => new Date(Date.now() + skew).toISOString() as Instant },
+      { intervalMs: 50, log: () => undefined, onWake: (at) => woke.push(at) },
+    );
+    try {
+      skew = 3_600_000;
+      const jumped = Date.now() + skew;
+      await waitUntil(() => woke.some((at) => Date.parse(at) >= jumped), "the wake to be noticed");
+    } finally {
+      delivery.stop();
+    }
   });
 
   it("says nothing about a node that was revoked, and takes back what it said", async () => {
@@ -342,11 +654,11 @@ describe("a paired node that cannot be reached", () => {
     expect((await call(a, `/peers/${peerB}/signals`, { body: { id: "1", topic: "build.failed" }, token: a.token })).status).toBe(202);
     await waitUntil(() => failedAttempts(a)[0] === 1, "the failed attempt", () => outboxOf(a));
     a.skip(PEER_OFFLINE_NOTICE_AFTER_MS + 60_000);
-    reconcilePeerOutages(a.services, a.clock());
+    a.watch.reconcile(a.clock());
     expect(noticesOn(a, `peer-offline:${peerB}:`)).toHaveLength(1);
 
     expect((await call(a, `/peers/${peerB}/revoke`, { token: a.token })).status).toBe(200);
-    reconcilePeerOutages(a.services, a.clock());
+    a.watch.reconcile(a.clock());
     expect(noticesOn(a, `peer-offline:${peerB}:`).map((row) => row.dismissed_at === null)).toEqual([false]);
   });
 });

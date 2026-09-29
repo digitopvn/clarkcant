@@ -1,6 +1,13 @@
 import { type Instant, type PeerEnvelope, peerEnvelopeSchema } from "@clarkcant/contracts";
 import { recordAcknowledgement, recordTransmissionAttempt, sendEnvelope } from "@clarkcant/node-link";
-import { type Database, type PeerRecord, deadLetterOutbox, markOutboxFailed, pendingOutbox } from "@clarkcant/storage";
+import {
+  type Database,
+  type PeerRecord,
+  deadLetterOutbox,
+  markOutboxFailed,
+  pendingOutbox,
+  recordPeerAdvertisement,
+} from "@clarkcant/storage";
 
 import type { NodeIdentity } from "./node.ts";
 import { outboundPeerToken } from "./peers.ts";
@@ -120,6 +127,44 @@ function sanitizeDeliveryError(reason: string): string {
     .replace(/:\/\/[^\s/]+:[^\s/@]+@/g, "://[redacted]@");
 }
 
+/** How a failure whose cause is the peer's own answer starts, followed by the HTTP status it answered with. */
+const PEER_ANSWERED = "the peer answered";
+
+/**
+ * The status a peer refused a message with, read back from a stored failure reason: a 4xx means the peer was reached
+ * and turned the message down, which is not the same as not being reachable. `undefined` for any other failure.
+ */
+export function refusalStatus(lastError: string | null): number | undefined {
+  const match = lastError === null ? null : new RegExp(`^${PEER_ANSWERED} (4\\d\\d)$`).exec(lastError);
+  return match?.[1] === undefined ? undefined : Number(match[1]);
+}
+
+/**
+ * What an acknowledging peer says about itself, recorded for that peer: the features it takes and the name it gives.
+ *
+ * Only from the answer of the peer this node authenticated and addressed, after its acknowledgement was recorded, so
+ * nothing but a real answer from that peer changes its row. A body this node cannot read changes nothing; an answer
+ * without features, as a build from before them gives, records that the peer takes none.
+ */
+async function recordAdvertisement(deps: PeerTransportDeps, peerNodeId: string, response: Response): Promise<void> {
+  let body: unknown;
+  try {
+    body = JSON.parse(await response.text());
+  } catch {
+    return;
+  }
+  if (body === null || typeof body !== "object" || Array.isArray(body)) return;
+  const fields = body as Record<string, unknown>;
+  try {
+    recordPeerAdvertisement(deps.db, peerNodeId, { features: fields["features"], label: fields["label"] });
+  } catch (cause) {
+    // The message was delivered and its acknowledgement is recorded; failing here must not turn it into a failure.
+    process.stderr.write(
+      `nodelink: could not record what ${peerNodeId} says it takes (${cause instanceof Error ? cause.message : String(cause)})\n`,
+    );
+  }
+}
+
 /** One pass over the outbox: attempt what is pending, record what the peer acknowledged. */
 export async function deliverPending(
   deps: PeerTransportDeps,
@@ -182,7 +227,7 @@ export async function deliverPending(
         redirect: "error",
       });
       if (!response.ok) {
-        const reason = `the peer answered ${response.status}`;
+        const reason = `${PEER_ANSWERED} ${response.status}`;
         outcome.refused.push({ messageId: envelope.messageId, reason });
         const failure = markOutboxFailed(deps.db, envelope.messageId, deps.now(), sanitizeDeliveryError(reason));
         // A 4xx is the peer refusing the message itself; anything else is a peer that could not answer.
@@ -191,6 +236,7 @@ export async function deliverPending(
       }
       recordAcknowledgement(deps, envelope.messageId);
       outcome.acknowledged += 1;
+      await recordAdvertisement(deps, peer.peerNodeId, response);
     } catch (cause) {
       const reason = cause instanceof Error ? cause.message : "delivery failed";
       outcome.refused.push({ messageId: envelope.messageId, reason });

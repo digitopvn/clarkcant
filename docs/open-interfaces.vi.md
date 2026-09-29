@@ -135,15 +135,25 @@ chính các yêu cầu lâu dài trên peer quyết định nó khởi động g
 
 Một node đã ghép cặp đưa một thông báo vào inbox của chủ node kia bằng `POST /peers/{nodeId}/notices` `{ id, title,
 body?, category?, severity? }` trên gateway của chính nó, với token của chính nó (`202` đã xếp hàng; `404`
-`PEER_UNKNOWN` khi peer chưa được ghép cặp và xác nhận; `409` `NO_LIVE_GRANT` khi không có grant còn hiệu lực nào nối
-hai node, theo chiều nào cũng được; `400` cho mọi trường hợp khác). Nó đi dưới dạng message NodeLink `notice` với
-payload là `notice` `{ key, category, severity, title, body? }` — một object strict: title tối đa 120 ký tự, body tối
-đa 500, key tối đa 160, và không gì khác, nên peer không gửi được action, subject hay liên kết. Bên nhận chỉ ghi nó khi
-đến từ một peer đã xác nhận mà nó có grant còn hiệu lực; nếu không, nó trả `accepted: false` kèm lý do. Thông báo được
-ghi là của peer (`sourceKind` `peer`, `originNodeId`, subject `peer`) dưới khóa `peer:<senderNodeId>:<key>`, nên gửi
-lại hay replay vẫn chỉ là một thông báo, nội dung được coi là dữ liệu (bỏ ký tự điều khiển), và việc có thể làm với nó
-do host bên nhận tự xác định như với mọi thông báo khác. Chính node cũng tự gửi message này: một thông báo nó ghi về
-task mà một peer đã giao cho nó (thất bại, hoặc kết quả không ai xác nhận được) cũng đi tới inbox của peer đó.
+`PEER_UNKNOWN` khi peer chưa được ghép cặp và xác nhận; `409` `NOTICES_UNSUPPORTED` khi peer chưa cho biết nó nhận
+thông báo; `400` cho mọi trường hợp khác). Hiện route này là nguồn tạo duy nhất: không node nào tự gửi thông báo, nên
+các công cụ cục bộ — CLI, một client MCP, một automation — dùng nó để báo cho một Clark đã ghép cặp và chịu nhận. Nó đi
+dưới dạng message NodeLink `notice` với payload là `notice` `{ key, category, severity, title, body? }` — một object
+strict: title tối đa 120 ký tự, body tối đa 500, key tối đa 160, và không gì khác, nên không có trường nào cho action,
+subject hay liên kết. Bên nhận chỉ ghi nó khi chính chủ của mình đã chọn làm việc với bên gửi — một grant còn hiệu
+lực do bên nhận viết cho peer đó, hoặc một allowance còn hiệu lực dành cho nó; grant do bên gửi viết không tính — và
+tối đa 30 thông báo mỗi phút từ một peer. Nếu không, nó trả `accepted: false` kèm lý do, và câu trả lời đó là cuối
+cùng: bên gửi không gửi lại. Thông báo được ghi là của peer (`sourceKind` `peer`, `originNodeId`, subject `peer`) dưới
+khóa `peer:<senderNodeId>:<key>`, nên gửi lại hay replay vẫn chỉ là một thông báo; nội dung được coi là dữ liệu (bỏ ký
+tự điều khiển, ký tự bidi và ký tự độ rộng bằng không); mỗi peer giữ tối đa 20 thông báo chưa bỏ qua, cái cũ nhất đi
+trước, mà không đẩy thông báo của chính node hay của peer khác ra; và việc có thể làm với nó do host bên nhận tự xác
+định như với mọi thông báo khác.
+
+Mọi phản hồi `200` từ `POST /peers/messages` đều mang `features` (những gì node trả lời nhận thêm ngoài các envelope
+cơ bản; hiện là `["notice"]`) và `label` (tên nó tự gọi mình). Bên gửi ghi cả hai cho peer đó, chỉ từ câu trả lời cho
+một thứ nó đã giao qua kênh đã xác thực; lời mời ghép cặp cũng có thể mang `features`. Feature lạ bị bỏ, label được làm
+sạch và cắt còn 64 ký tự, và một peer chưa cho biết gì — một bản dựng có trước thay đổi này — không được gửi thông báo
+cho tới khi một câu trả lời nói nó nhận.
 
 Task của một yêu cầu lâu dài cũng có thể chạy trên một node đã ghép cặp. Việc này được đặt trong hội thoại, không qua
 một route: chủ của node gửi nêu peer làm executor của task, và chủ của node nhận nói peer đó được chạy gì ở đó (thư

@@ -125,12 +125,27 @@ export interface PeerDeliveryState {
    * acknowledgement, and never earlier than that acknowledgement. Null while nothing owed to the peer is failing.
    */
   failingSince: Instant | null;
+  /**
+   * Why the latest attempt failed, while delivery is failing, or why the last message was given up on, once it has
+   * been: the reason the transport stored, so a peer that answered and refused can be told apart from one that never
+   * answered. Null otherwise.
+   */
+  lastError: string | null;
+  /**
+   * Since when what was owed to the peer was given up on: set only once nothing owed since the last acknowledgement is
+   * still being retried and at least one message was dead-lettered after it, and never earlier than that
+   * acknowledgement. Null otherwise; the next acknowledgement ends it.
+   */
+  givenUpSince: Instant | null;
 }
+
+const later = (first: Instant, second: Instant | null): Instant => (second !== null && second > first ? second : first);
 
 /**
  * Whether a peer is being reached, without a second record of it: an acknowledgement is a delivery that worked, and a
  * message still being retried whose last attempt came after the last acknowledgement is one that did not. A message
- * given up on is not counted as failing now, and a peer nothing is owed to is not failing either.
+ * given up on is not counted as failing now, and a peer nothing is owed to is not failing either; a peer whose every
+ * message since its last acknowledgement was given up on is reported as given up on.
  */
 export function peerDeliveryState(db: Database, peerNodeId: string): PeerDeliveryState {
   const acknowledged = oneRow<{ at: string | null }>(
@@ -150,8 +165,47 @@ export function peerDeliveryState(db: Database, peerNodeId: string): PeerDeliver
     lastAcknowledgedAt,
   );
   const since = (failing?.since ?? null) as Instant | null;
-  if (since === null) return { lastAcknowledgedAt, failingSince: null };
-  return { lastAcknowledgedAt, failingSince: lastAcknowledgedAt !== null && lastAcknowledgedAt > since ? lastAcknowledgedAt : since };
+  if (since !== null) {
+    const latest = oneRow<{ last_error: string | null }>(
+      db,
+      `SELECT last_error FROM outbox
+        WHERE peer_node_id = ? AND acknowledged_at IS NULL AND dead_lettered_at IS NULL
+          AND last_error IS NOT NULL AND last_attempt_at IS NOT NULL
+          AND (? IS NULL OR last_attempt_at > ?)
+        ORDER BY last_attempt_at DESC, rowid DESC LIMIT 1`,
+      peerNodeId,
+      lastAcknowledgedAt,
+      lastAcknowledgedAt,
+    );
+    return { lastAcknowledgedAt, failingSince: later(since, lastAcknowledgedAt), lastError: latest?.last_error ?? null, givenUpSince: null };
+  }
+
+  const owed = oneRow<{ count: number }>(
+    db,
+    "SELECT COUNT(*) AS count FROM outbox WHERE peer_node_id = ? AND acknowledged_at IS NULL AND dead_lettered_at IS NULL",
+    peerNodeId,
+  );
+  const dropped =
+    Number(owed?.count ?? 0) > 0
+      ? undefined
+      : oneRow<{ since: string | null; last_error: string | null }>(
+          db,
+          `SELECT MIN(created_at) OVER () AS since, last_error FROM outbox
+            WHERE peer_node_id = ? AND dead_lettered_at IS NOT NULL AND (? IS NULL OR dead_lettered_at > ?)
+            ORDER BY dead_lettered_at DESC, rowid DESC LIMIT 1`,
+          peerNodeId,
+          lastAcknowledgedAt,
+          lastAcknowledgedAt,
+        );
+  if (dropped?.since === undefined || dropped.since === null) {
+    return { lastAcknowledgedAt, failingSince: null, lastError: null, givenUpSince: null };
+  }
+  return {
+    lastAcknowledgedAt,
+    failingSince: null,
+    lastError: dropped.last_error,
+    givenUpSince: later(dropped.since as Instant, lastAcknowledgedAt),
+  };
 }
 
 export interface DeadLetteredOutboxEntry {

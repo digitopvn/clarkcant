@@ -614,7 +614,7 @@ describe("a task one Clark hands to another", { timeout: 60_000 }, () => {
     expect(readFileSync(join(b.root, "notes.md"), "utf8")).toBe("viết từ máy bàn\n");
   });
 
-  it("passes the other node's notice about a hand-over that failed there to the sender's inbox", async () => {
+  it("tells the sender once about a hand-over that failed on the other node, through its result and nothing else", async () => {
     const a = await startClark("desk");
     const b = await startClark("laptop", { crash: true });
     await pair(a, b);
@@ -628,34 +628,31 @@ describe("a task one Clark hands to another", { timeout: 60_000 }, () => {
     await handToLaptop(a, b, onA, [{ path: b.root, access: "write" }], ["read", "local-write"]);
 
     await signal(a, "note-1");
+    await waitUntil(() => tasksOn(a).length === 1, "A's task");
+    const taskId = String(tasksOn(a)[0]?.taskId);
+    await waitUntil(() => getTask(a.services.runtime.db, taskId)?.state === "failed", "A's task to end on B's failure");
 
-    const taskId = await (async () => {
-      await waitUntil(() => tasksOn(a).length === 1, "A's task");
-      return String(tasksOn(a)[0]?.taskId);
-    })();
-    const fromB = (): { title: string; body: string; source_kind: string; origin_node_id: string; conversation_id: string | null; subject: string; dedup_key: string }[] =>
-      allRows(
-        a.services.runtime.db,
-        "SELECT title, body, source_kind, origin_node_id, conversation_id, subject, dedup_key FROM notifications WHERE origin_node_id IS NOT NULL",
-      );
-    await waitUntil(() => fromB().length === 1, "B's notice to reach A");
-    expect(fromB()[0]).toEqual({
-      title: "Việc chạy nền không xong",
-      body: expect.stringContaining("the worker process exited with code 1") as string,
-      source_kind: "peer",
-      origin_node_id: identityOf(b).nodeId,
-      // Opened where A's owner set the work up, because the task is A's own and was handed to B.
-      conversation_id: onA,
-      subject: JSON.stringify({ kind: "peer", nodeId: identityOf(b).nodeId }),
-      dedup_key: `peer:${identityOf(b).nodeId}:worker:${taskId}`,
-    });
-    // B's own inbox keeps its notice; nothing B says about work nobody handed it leaves B.
-    const onBInbox = allRows<{ dedup_key: string }>(b.services.runtime.db, "SELECT dedup_key FROM notifications WHERE dedup_key = ?", `worker:${taskId}`);
-    expect(onBInbox).toHaveLength(1);
-    const notices = allRows<{ document: string }>(b.services.runtime.db, "SELECT document FROM outbox").filter(
+    // B's own inbox keeps its notice, and B sends none of its own about it: the result already told A.
+    const onBInbox = (): unknown[] =>
+      allRows(b.services.runtime.db, "SELECT dedup_key FROM notifications WHERE dedup_key = ?", `worker:${taskId}`);
+    await waitUntil(() => onBInbox().length === 1, "B's own notice");
+    await waitUntil(() => pendingOutbox(b.services.runtime.db).length === 0, "B's outbox to drain");
+    const noticeEnvelopes = allRows<{ document: string }>(b.services.runtime.db, "SELECT document FROM outbox").filter(
       (row) => (JSON.parse(row.document) as PeerEnvelope).kind === "notice",
     );
-    expect(notices).toHaveLength(1);
+    expect(noticeEnvelopes).toEqual([]);
+
+    // Every row on A about the task, read or not, dismissed or not, local or from B: one notice for the task, plus the
+    // one A records for any automation run that fails. Nothing from B, and nothing twice.
+    const aboutTask = allRows<{ dedup_key: string; origin_node_id: string | null }>(
+      a.services.runtime.db,
+      "SELECT dedup_key, origin_node_id FROM notifications WHERE instr(dedup_key, ?) > 0 OR instr(COALESCE(subject, ''), ?) > 0 ORDER BY dedup_key",
+      taskId,
+      taskId,
+    );
+    expect(aboutTask.map((row) => row.origin_node_id)).toEqual([null, null]);
+    expect(aboutTask[0]?.dedup_key).toMatch(/^automation:irun_/);
+    expect(aboutTask[1]?.dedup_key).toBe(`worker:${taskId}`);
   });
 
   it("settles the sender's task when the other node's owner lets the approval expire", async () => {

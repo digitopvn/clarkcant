@@ -95,6 +95,21 @@ export function recordInbox(
   });
 }
 
+/**
+ * How many envelopes of one kind a peer delivered here since a moment, answered either way: what a per-peer rate is
+ * read from. Only envelopes already recorded count, so the one being answered now is not among them.
+ */
+export function countRecentInbox(db: Database, input: { peerNodeId: string; kind: string; since: Instant }): number {
+  const row = oneRow<{ count: number }>(
+    db,
+    "SELECT COUNT(*) AS count FROM inbox WHERE peer_node_id = ? AND kind = ? AND received_at > ?",
+    input.peerNodeId,
+    input.kind,
+    input.since,
+  );
+  return Number(row?.count ?? 0);
+}
+
 export function peerCursor(db: Database, peerNodeId: string): number | undefined {
   const row = oneRow<{ last_sequence: number }>(
     db,

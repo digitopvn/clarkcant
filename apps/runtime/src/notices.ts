@@ -1,7 +1,5 @@
 import type { Instant, NoticeCategory, NoticeSeverity, NoticeSourceKind, NoticeSubject, RiskLane } from "@clarkcant/contracts";
-import { type Database, getNotification, recordNotification } from "@clarkcant/storage";
-
-import { forwardDelegatedNotice } from "./peer-notices.ts";
+import { type Database, recordNotification } from "@clarkcant/storage";
 
 /**
  * Writing a notice into the person's inbox, from anywhere on this node.
@@ -15,14 +13,12 @@ import { forwardDelegatedNotice } from "./peer-notices.ts";
  * conversation when it arrived.
  *
  * `originNodeId` is set for a notice a paired node sent (`peer-notices.ts`): it is recorded through this same function,
- * under a dedup key built from the peer and the peer's own key for it, so at-least-once delivery lands once. A notice
- * about a task a peer handed this node is passed on to that peer once it is recorded here.
+ * under a dedup key built from the peer and the peer's own key for it, so at-least-once delivery lands once. Nothing
+ * recorded here is passed on to a peer by itself: a notice leaves this node only when something asks for it to be sent.
  */
 export interface NoticeServices {
-  runtime: { db: Database; identity: { ownerPrincipalId: string; nodeId?: string } };
+  runtime: { db: Database; identity: { ownerPrincipalId: string } };
   conductor: { newId: (prefix: string) => string };
-  /** What carries a passed-on notice to its peer now rather than at the next pass. */
-  peerDelivery?: { kick(): void };
 }
 
 export interface NodeNotice {
@@ -43,43 +39,11 @@ export interface NodeNotice {
 }
 
 export function recordNodeNotice(services: NoticeServices, notice: NodeNotice): { notificationId: string; created: boolean } {
-  const recorded = recordNotification(services.runtime.db, {
+  return recordNotification(services.runtime.db, {
     notificationId: services.conductor.newId("ntf"),
     principalId: services.runtime.identity.ownerPrincipalId,
     ...notice,
   });
-  if (recorded.created && notice.subject?.kind === "task") passOnToDelegatingPeer(services, recorded.notificationId, notice);
-  return recorded;
-}
-
-/**
- * The same notice for the peer that handed this task over, when one did. Its text is read back as stored, so it leaves
- * this node redacted and bounded. Failing to queue it costs the peer a pointer, never this notice, so it is reported on
- * stderr and nothing is thrown.
- */
-function passOnToDelegatingPeer(services: NoticeServices, notificationId: string, notice: NodeNotice): void {
-  const { db, identity } = services.runtime;
-  if (notice.subject?.kind !== "task" || identity.nodeId === undefined) return;
-  try {
-    const stored = getNotification(db, identity.ownerPrincipalId, notificationId)?.notice;
-    if (stored === undefined) return;
-    const queued = forwardDelegatedNotice(
-      { db, identity: { nodeId: identity.nodeId }, now: () => notice.at, newId: services.conductor.newId },
-      {
-        dedupKey: notice.dedupKey,
-        category: stored.category,
-        severity: stored.severity,
-        title: stored.title,
-        ...(stored.body === undefined ? {} : { body: stored.body }),
-        taskId: notice.subject.taskId,
-      },
-    );
-    if (queued) services.peerDelivery?.kick();
-  } catch (cause) {
-    process.stderr.write(
-      `inbox: could not pass a notice about ${notice.subject.taskId} on to its peer (${cause instanceof Error ? cause.message : String(cause)})\n`,
-    );
-  }
 }
 
 /**

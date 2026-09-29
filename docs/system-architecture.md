@@ -369,17 +369,25 @@ The inbox (`apps/runtime/src/inbox.ts`, `routes/inbox.ts`) gathers two things wi
   does not push an unread notice out. A dispatched background task records one notice per task when it finishes
   (`workerSettledNotice`, key `worker:<taskId>`). `originNodeId` is set only on a notice a paired node sent.
   - **Notices from paired nodes** (#170, `apps/runtime/src/peer-notices.ts`). A confirmed peer sends a NodeLink
-    `notice` (key, category, severity, title, body; strict and bounded, no actions). The receiver records it only while
-    a live grant ties the two nodes, in either direction, as `sourceKind` `peer` with `originNodeId` and subject `peer`,
-    under `peer:<senderNodeId>:<key>`, so a replay lands once; a refusal is answered with its reason. `recordNodeNotice`
-    passes a notice whose subject is a task a peer handed this node on to that peer through the outbox. The sender's
+    `notice` (key, category, severity, title, body; strict and bounded, no actions), queued by
+    `POST /peers/{nodeId}/notices` only to a peer that advertised the `notice` feature; nothing sends one automatically.
+    The receiver records it only when its own owner decided to work with the sender (a live grant the receiver wrote
+    to that peer, or a live `allow_peer_tasks` allowance), at most 30 a minute per peer, as `sourceKind` `peer` with
+    `originNodeId` and subject `peer`, under `peer:<senderNodeId>:<key>`, so a replay lands once; a refusal is answered
+    with its reason and is final. `recordNotification` keeps at most 20 undismissed notices per origin node, apart from
+    the local cap. The sender learns a peer's `features` and `label` (storage migration 34) from pairing offers and from
+    each `200` of `POST /peers/messages` (`recordPeerAdvertisement`). The sender's
     `delegation-status:<taskId>:…` waiting notice is dismissed when the task stops waiting (a `running` status, an
     accepted result, or a settlement after giving up delivery). Deciding the receiver's approval from the sender is not
     implemented (see [distributed runtime](distributed-runtime.md)).
-  - **A peer that cannot be reached** (`apps/runtime/src/peer-outage.ts`). After each delivery pass,
-    `reconcilePeerOutages` reads the outbox's retry state (`peerDeliveryState`) and, once delivery to a confirmed peer
-    has been failing for 10 minutes, records one warning notice per outage, keyed by the peer's last acknowledgement
-    (`peer-offline:<peerNodeId>:<lastAck|never>`). It is dismissed when the peer acknowledges again or is revoked.
+  - **A peer that cannot be reached** (`apps/runtime/src/peer-outage.ts`). `watchPeerOutages` runs after each delivery
+    pass and reads the outbox's retry state (`peerDeliveryState`). Once delivery to a confirmed peer has been failing
+    for 10 minutes of time this process watched (counted from the later of the failure, the process start and the last
+    wake the delivery timer noticed), it records one notice per outage, worded for what is wrong: `unreachable` (no
+    answer), `refused` (a `4xx`), or `given-up` (everything owed was dead-lettered), keyed
+    `peer-offline:<peerNodeId>:<lastAck|never>:<situation>`. It names the peer by its label, falling back to the node
+    id, and is dismissed when the peer acknowledges again or is revoked. One peer failing to reconcile does not stop the
+    others.
   - **Expired approvals/questions.** An approval or question that expires without a decision drops out of the
     pending list silently — right for the list, but someone who was not looking at that moment would never find
     out. `apps/runtime/src/expiry-notices.ts` sweeps periodically (an unref'd interval, started in `wireRuntime`,
