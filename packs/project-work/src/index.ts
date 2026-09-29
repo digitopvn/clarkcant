@@ -80,7 +80,50 @@ export const CONTROLLED_CODE_TASK = descriptor({
   },
 });
 
-export const CAPABILITIES = [READ_FILE_QUESTION, CONTROLLED_CODE_TASK];
+/**
+ * One command a worker runs inside the task's own folders.
+ *
+ * Declared so a worker can be granted it, never run by the worker itself: the worker hands the command to the host,
+ * which runs the same preflight, policy, judgment layer, secret injection and audit a command from the conversation
+ * goes through. Its effect category is the least a command can be; the host classifies each command it is handed and
+ * decides on that, so `git push` is judged as the external write it is.
+ */
+export const RUN_PROJECT_COMMAND = descriptor({
+  ref: "project.command.run@1" as CapabilityDescriptor["ref"],
+  summary: "Run one command inside the task's own folder, through the host's command path",
+  resourceKinds: ["workspace", "git-worktree", "folder"],
+  effectCategory: "local-write",
+  supportsCancellation: true,
+  requiresConnection: false,
+  uiAffordances: ["shows-evidence"],
+  inputSchema: {
+    type: "object",
+    additionalProperties: false,
+    properties: {
+      command: { type: "string", maxLength: 4000 },
+      cwd: { type: "string" },
+    },
+    required: ["command"],
+  },
+});
+
+export const CAPABILITIES = [READ_FILE_QUESTION, CONTROLLED_CODE_TASK, RUN_PROJECT_COMMAND];
+
+/**
+ * What a worker is given when a task is dispatched for one of this pack's capabilities.
+ *
+ * A code change that cannot read the code it changes, or run its tests, is not a code change; so granting it grants
+ * the two it cannot work without. A read-only question is given reading and nothing else. The host still decides
+ * every write and every command on its own; this only says which tools the worker is offered.
+ */
+export function workerCapabilitiesFor(ref: string): readonly string[] {
+  switch (ref) {
+    case CONTROLLED_CODE_TASK.ref:
+      return [CONTROLLED_CODE_TASK.ref, READ_FILE_QUESTION.ref, RUN_PROJECT_COMMAND.ref];
+    default:
+      return [ref];
+  }
+}
 
 /**
  * @status-ref pack.project-work
@@ -92,6 +135,7 @@ export const CAPABILITIES = [READ_FILE_QUESTION, CONTROLLED_CODE_TASK];
  * execution policy at dispatch time in `apps/runtime/src/task-dispatch.ts` — rather than by this
  * package, which only declares what a worker is allowed to be granted.
  */
+export * from "./managed-worktree.ts";
 export * from "./worktree.ts";
 
 export const EXECUTION_STATUS = "descriptors-real-implementations-supplied-by-worker";

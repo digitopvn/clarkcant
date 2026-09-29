@@ -117,7 +117,7 @@ describe("which policy applies", () => {
         decideExecution({
           policy: denied,
           action: { kind: "effect", category, operationDigest: "sha256:x" },
-          explicitUserIntent: true,
+          intent: { kind: "interactive" },
         }).kind,
         category,
       ).toBe("deny");

@@ -33,10 +33,12 @@ import type { WorkerTool } from "./index.ts";
  */
 export const CAPABILITY_PROJECT_READ = "project.file.read@1";
 export const CAPABILITY_PROJECT_CODE_CHANGE = "project.code.change@1";
+export const CAPABILITY_PROJECT_COMMAND = "project.command.run@1";
 
 export const READ_PROJECT_FILE_TOOL = "read_project_file";
 export const LIST_PROJECT_FILES_TOOL = "list_project_files";
 export const WRITE_PROJECT_FILE_TOOL = "write_project_file";
+export const RUN_COMMAND_TOOL = "run_command";
 
 const MAX_READ_BYTES = 64 * 1024;
 /** A single call cannot write more than this many characters, so one call cannot flood the run's evidence. */
@@ -217,7 +219,136 @@ export function createCodeChangeTools(projectRoots: readonly string[]): WorkerTo
   ];
 }
 
-/** Every tool this worker can offer, before the brief narrows the set. */
-export function allWorkerTools(projectRoots: readonly string[]): WorkerTool[] {
-  return [...createFileTools(projectRoots), ...createCodeChangeTools(projectRoots)];
+/** A command request as the host reads it, and the host's answer. */
+export interface HostCommandRequest {
+  command: string;
+  cwd?: string;
+  why?: string;
+  secretRef?: string;
+  secretEnvVar?: string;
+}
+export type HostCommandReply = { kind: "ran"; text: string; exitCode: number | null } | { kind: "refused"; text: string };
+
+/** How the worker reaches the host that runs its commands. */
+export interface HostCommandChannel {
+  request(request: HostCommandRequest): Promise<HostCommandReply>;
+}
+
+/** The message types the host's side of the channel (`apps/runtime/src/worker-process.ts`) sends and expects. */
+const COMMAND_REQUEST = "clarkcant.command.request";
+const COMMAND_REPLY = "clarkcant.command.reply";
+
+/**
+ * The host, over this process's IPC channel, when it gave the worker one.
+ *
+ * Absent when the process was started without a channel: a worker nobody gave a way to ask cannot run commands, and
+ * says nothing about them rather than offering a tool that would fail on every call.
+ */
+export function processCommandChannel(): HostCommandChannel | undefined {
+  const send = process.send?.bind(process);
+  if (send === undefined) return undefined;
+  const pending = new Map<string, (reply: HostCommandReply) => void>();
+  let next = 0;
+  process.on("message", (message: unknown) => {
+    if (message === null || typeof message !== "object") return;
+    const envelope = message as { type?: unknown; id?: unknown; reply?: unknown };
+    if (envelope.type !== COMMAND_REPLY || typeof envelope.id !== "string") return;
+    const settle = pending.get(envelope.id);
+    if (settle === undefined) return;
+    pending.delete(envelope.id);
+    const reply = envelope.reply as Partial<HostCommandReply> | undefined;
+    if (reply?.kind === "ran" && typeof reply.text === "string") {
+      settle({ kind: "ran", text: reply.text, exitCode: typeof reply.exitCode === "number" ? reply.exitCode : null });
+    } else {
+      settle({ kind: "refused", text: typeof reply?.text === "string" ? reply.text : "the host sent no answer it could read" });
+    }
+  });
+  // The channel must not be what keeps a finished worker alive; it is held open only while a request waits.
+  process.channel?.unref();
+  return {
+    request(request) {
+      next += 1;
+      const id = `cmd-${String(next)}`;
+      return new Promise<HostCommandReply>((resolve) => {
+        pending.set(id, (reply) => {
+          if (pending.size === 0) process.channel?.unref();
+          resolve(reply);
+        });
+        process.channel?.ref();
+        send({ type: COMMAND_REQUEST, id, request }, undefined, {}, (error: Error | null) => {
+          if (error === null) return;
+          pending.delete(id);
+          if (pending.size === 0) process.channel?.unref();
+          resolve({ kind: "refused", text: `the request never reached the host: ${error.message}` });
+        });
+      });
+    },
+  };
+}
+
+/**
+ * Running a command, as a worker may ask for it.
+ *
+ * The worker does not run anything. It sends the command to the host, which decides and runs it exactly as it would a
+ * command from the conversation, inside this task's own folders; this tool only carries the request and the answer.
+ * A refusal is thrown, so the run's evidence records that something the model tried was not allowed, rather than a
+ * refusal reading as output.
+ */
+export function createCommandTools(channel: HostCommandChannel): WorkerTool[] {
+  return [
+    {
+      name: RUN_COMMAND_TOOL,
+      label: "Run a command",
+      description:
+        "Run one shell command in this task's folder: git, a build, the tests, a CLI such as gh. The host decides " +
+        "whether it may run under this node's policy and runs it; the result says what happened, or why it was not " +
+        "run. Pass `cwd` only for a subfolder of the task's folder. Pass `secretRef` when the command needs a " +
+        "credential by name (for example github_token); its value goes into that command's environment and you never " +
+        "see it.",
+      capabilityRef: CAPABILITY_PROJECT_COMMAND,
+      proves: "exit-status",
+      parameters: {
+        type: "object",
+        properties: {
+          command: { type: "string", description: "The exact command line to run." },
+          cwd: { type: "string", description: "A folder inside the task's folder. Defaults to the task's folder." },
+          why: { type: "string", description: "One sentence: what this is for." },
+          secretRef: { type: "string", description: "Name of a secret the command needs." },
+          secretEnvVar: { type: "string", description: "Environment variable to put it in. Defaults to the name in upper case." },
+        },
+        required: ["command"],
+        additionalProperties: false,
+      },
+      async execute(params: Record<string, unknown>) {
+        const request: HostCommandRequest = { command: stringParameter(params, "command") };
+        for (const key of ["cwd", "why", "secretRef", "secretEnvVar"] as const) {
+          const value = params[key];
+          if (typeof value === "string" && value.trim() !== "") request[key] = value;
+        }
+        const reply = await channel.request(request);
+        if (reply.kind === "refused") throw new Error(reply.text);
+        // A command that ran and failed is not evidence that it worked: the model still reads its output, as the
+        // tool's error, and the run records a failure rather than a verified exit status.
+        if (reply.exitCode !== 0) throw new Error(reply.text);
+        return { text: reply.text };
+      },
+    },
+  ];
+}
+
+/**
+ * Every tool this worker can offer, before the brief narrows the set.
+ *
+ * Reading covers every root the brief gave; writing only the writable ones, which are all of them unless the brief
+ * says otherwise. Commands are offered only when the host gave the worker a way to ask it for one.
+ */
+export function allWorkerTools(
+  projectRoots: readonly string[],
+  options: { writableRoots?: readonly string[]; commands?: HostCommandChannel } = {},
+): WorkerTool[] {
+  return [
+    ...createFileTools(projectRoots),
+    ...createCodeChangeTools(options.writableRoots ?? projectRoots),
+    ...(options.commands === undefined ? [] : createCommandTools(options.commands)),
+  ];
 }

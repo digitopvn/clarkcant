@@ -68,7 +68,18 @@ export interface WorkerProcessOptions {
    * of internally. Never used to read output: stdout and stderr are only available through the result.
    */
   onChild?: (child: ChildProcess) => void;
+  /**
+   * Where the worker's `run_command` requests are answered, when this run may run commands.
+   *
+   * Present means the child gets an IPC channel and nothing else changes: the worker never runs a command itself, it
+   * sends the request here and reads the reply. Absent means no channel, and the worker offers no command tool at all.
+   */
+  onCommand?: (request: unknown) => Promise<unknown>;
 }
+
+/** The two messages that cross the worker's IPC channel. Anything else on it is ignored. */
+export const WORKER_COMMAND_REQUEST = "clarkcant.command.request";
+export const WORKER_COMMAND_REPLY = "clarkcant.command.reply";
 
 export interface WorkerProcessResult {
   adapter: string;
@@ -117,13 +128,31 @@ export async function runWorkerProcess(options: WorkerProcessOptions): Promise<W
       // profile allows cross the boundary, so a provider key or an SSH agent socket sitting in this
       // node's own environment is not handed to code the worker's tools may invoke on the user's behalf.
       const child = (options.spawnImpl ?? spawn)(process.execPath, args, {
-        stdio: ["ignore", "pipe", "pipe"],
+        stdio: options.onCommand === undefined ? ["ignore", "pipe", "pipe"] : ["ignore", "pipe", "pipe", "ipc"],
         env: buildEnvironment(WORKER_ENV_PROFILE),
         // Its own process group, so a stop reaches what the worker's tools started as well as the worker.
         detached: process.platform !== "win32",
         windowsHide: true,
       });
       options.onChild?.(child);
+      const onCommand = options.onCommand;
+      if (onCommand !== undefined) {
+        child.on("message", (message: unknown) => {
+          if (message === null || typeof message !== "object") return;
+          const envelope = message as { type?: unknown; id?: unknown; request?: unknown };
+          if (envelope.type !== WORKER_COMMAND_REQUEST || typeof envelope.id !== "string") return;
+          const id = envelope.id.slice(0, 64);
+          void onCommand(envelope.request)
+            .catch((cause: unknown) => ({
+              kind: "refused",
+              text: `the host could not run it: ${cause instanceof Error ? cause.message : String(cause)}`,
+            }))
+            .then((reply) => {
+              // A worker that exited while its command ran has nobody to read the reply.
+              if (child.connected) child.send({ type: WORKER_COMMAND_REPLY, id, reply }, () => undefined);
+            });
+        });
+      }
       let stdout = "";
       let stderr = "";
       let outputBytes = 0;

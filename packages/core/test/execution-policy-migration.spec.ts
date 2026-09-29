@@ -89,7 +89,7 @@ function kind(policy: ExecutionPolicyConfig, category: EffectCategory): string {
   return decideExecution({
     policy,
     action: { kind: "effect", category, operationDigest: "sha256:migration" },
-    explicitUserIntent: true,
+    intent: { kind: "interactive" },
   }).kind;
 }
 
@@ -122,7 +122,7 @@ describe("the legacy refusal of everything", () => {
     const decision = decideExecution({
       policy,
       action: { kind: "effect", category: "media-capture", operationDigest: "sha256:migration" },
-      explicitUserIntent: true,
+      intent: { kind: "interactive" },
       hardBoundary: { kind: "oauth", because: "the account holder has to grant this" },
     });
     expect(decision.kind).toBe("deny");

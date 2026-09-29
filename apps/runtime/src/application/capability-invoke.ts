@@ -240,7 +240,7 @@ export async function invokeCapability(
     action: { kind: "effect", category: descriptor.effectCategory, operationDigest },
     // A click, a sentence or a spoken command is the person asking; the policy still decides whether that is
     // enough, and a prohibition or a hard boundary is read before the intent matters.
-    explicitUserIntent: true,
+    intent: { kind: "interactive" },
   });
   // An approval answers the policy's question; it does not outrank a refusal the person set after the card was shown.
   const decided =

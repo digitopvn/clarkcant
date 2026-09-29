@@ -48,6 +48,11 @@ export const workerBriefEnvelopeSchema = z.strictObject({
   leaseEpoch: z.int().nonnegative(),
   goal: z.string().min(1).max(4000),
   projectRoots: z.array(z.string().min(1).max(1000)).max(64),
+  /**
+   * The roots the worker may change, when that is fewer than it may read. Absent means every project root, which is
+   * what a person's request in the conversation has always been given.
+   */
+  writableRoots: z.array(z.string().min(1).max(1000)).max(64).optional(),
   allowedCapabilityRefs: z.array(z.string().min(1).max(200)).max(256),
   maxWallClockMs: z.int().positive().optional(),
   maxTokens: z.int().positive().optional(),

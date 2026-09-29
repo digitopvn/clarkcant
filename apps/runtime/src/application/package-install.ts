@@ -377,7 +377,7 @@ export async function installPackage(
      * which is exactly the case Autonomous exists to run without a second question. Guarded and Ask still apply,
      * because the decision is the policy's to make, not this route's.
      */
-    explicitUserIntent: true,
+    intent: { kind: "interactive" },
   });
 
   if (decision.kind === "deny") {
@@ -499,7 +499,7 @@ export async function installPackage(
     requested: manifestRequestedCapabilities,
     riskTier: computedRiskTier,
     policy,
-    explicitUserIntent: true,
+    intent: { kind: "interactive" },
     artifactDigest: entry.digest,
   });
 

@@ -110,6 +110,18 @@ export function stopCommand(workId: string): boolean {
   return false;
 }
 
+/** Stop every command a task's worker started on the host, answering how many were running. */
+export function stopCommandsForTask(taskId: string): number {
+  let stopped = 0;
+  for (const [child, entry] of liveCommands) {
+    if (entry.taskId !== taskId) continue;
+    stoppedByRequest.add(child);
+    void stopTree(child);
+    stopped += 1;
+  }
+  return stopped;
+}
+
 /**
  * Where a command's process is written down while it runs.
  *
@@ -144,6 +156,8 @@ export interface RunningCommand {
   startedAt: string;
   /** The conversation that ran it, when it was run from one — so "what is running here" can answer per conversation. */
   conversationId?: string;
+  /** The task whose worker asked for it, so stopping the task stops the commands it started on the host. */
+  taskId?: string;
   pid?: number;
 }
 
@@ -169,6 +183,8 @@ export interface RunCommandOptions {
   env?: NodeJS.ProcessEnv;
   /** The conversation this command belongs to, for listing and stopping per conversation. */
   conversationId?: string;
+  /** The task this command runs for, when a task's worker asked for it. */
+  taskId?: string;
 }
 
 /**
@@ -241,6 +257,7 @@ export async function runCommand(
       cwd: input.cwd,
       startedAt: new Date(startedAt).toISOString(),
       ...(options.conversationId === undefined ? {} : { conversationId: options.conversationId }),
+      ...(options.taskId === undefined ? {} : { taskId: options.taskId }),
       ...(child.pid === undefined ? {} : { pid: child.pid }),
     };
     liveCommands.set(child, entry);
@@ -348,6 +365,8 @@ export async function runGuardedCommand(input: {
   env?: Record<string, string>;
   /** The conversation the command runs for, so it can be listed and stopped from there. */
   conversationId?: string;
+  /** The task the command runs for, so stopping the task stops it. */
+  taskId?: string;
   now?: () => Instant;
   /** Injected so the whole path can be tested without spawning anything. */
   run?: (request: {
@@ -375,6 +394,7 @@ export async function runGuardedCommand(input: {
           // not in the parent, not in a file, and not in anything this module returns.
           env: commandEnvironment(request.env),
           ...(input.conversationId === undefined ? {} : { conversationId: input.conversationId }),
+          ...(input.taskId === undefined ? {} : { taskId: input.taskId }),
         },
       ))
   )({

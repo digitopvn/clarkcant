@@ -14,7 +14,7 @@ import {
   type WorkerDeps,
   type WorkerTool,
 } from "../src/index.ts";
-import { allWorkerTools, READ_PROJECT_FILE_TOOL } from "../src/tools.ts";
+import { allWorkerTools, createCommandTools, READ_PROJECT_FILE_TOOL, RUN_COMMAND_TOOL, type HostCommandReply } from "../src/tools.ts";
 
 /**
  * Worker run-loop tests.
@@ -353,5 +353,44 @@ describe("the brief is validated at the process boundary", () => {
 
   it("accepts a well-formed brief", () => {
     expect(workerBriefEnvelopeSchema.safeParse(brief()).success).toBe(true);
+  });
+});
+
+describe("a worker's command is a request to the host", () => {
+  function commandTool(reply: HostCommandReply): { tool: WorkerTool; sent: unknown[] } {
+    const sent: unknown[] = [];
+    const [tool] = createCommandTools({
+      request: async (request) => {
+        sent.push(request);
+        return reply;
+      },
+    });
+    if (tool === undefined) throw new Error("no command tool");
+    return { tool, sent };
+  }
+
+  it("carries the command and its optional fields to the host, and returns what ran", async () => {
+    const { tool, sent } = commandTool({ kind: "ran", text: "exit 0", exitCode: 0 });
+    expect(tool.name).toBe(RUN_COMMAND_TOOL);
+    await expect(tool.execute({ command: "git status", cwd: "sub", why: "", secretRef: "github_token" })).resolves.toEqual({
+      text: "exit 0",
+    });
+    expect(sent).toEqual([{ command: "git status", cwd: "sub", secretRef: "github_token" }]);
+  });
+
+  it("fails the call when the host refused it, so the refusal is not read as output", async () => {
+    const { tool } = commandTool({ kind: "refused", text: "not run: a background task does not wait" });
+    await expect(tool.execute({ command: "git push" })).rejects.toThrow("does not wait");
+  });
+
+  it("fails the call when the command ran and exited non-zero", async () => {
+    const { tool } = commandTool({ kind: "ran", text: "1 test failed", exitCode: 1 });
+    await expect(tool.execute({ command: "pnpm test" })).rejects.toThrow("1 test failed");
+  });
+
+  it("is offered only when the host gave the worker a channel", () => {
+    expect(allWorkerTools([root]).some((tool) => tool.name === RUN_COMMAND_TOOL)).toBe(false);
+    const withChannel = allWorkerTools([root], { commands: { request: async () => ({ kind: "refused", text: "" }) } });
+    expect(withChannel.some((tool) => tool.name === RUN_COMMAND_TOOL)).toBe(true);
   });
 });

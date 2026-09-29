@@ -57,6 +57,10 @@ export interface CreateTaskInput {
   goal: string;
   principal: Principal;
   budget?: TaskRecord["budget"];
+  /** Why the task exists. Defaults to the principal asking in this conversation. */
+  origin?: TaskRecord["origin"];
+  /** What the task may touch. Absent means the node's roots, which only an interactive task may use. */
+  resources?: TaskRecord["resources"];
 }
 
 export function createTask(deps: TaskServiceDeps, input: CreateTaskInput): TaskRecord {
@@ -69,11 +73,13 @@ export function createTask(deps: TaskServiceDeps, input: CreateTaskInput): TaskR
     revision: 0,
     goal: input.goal,
     ...(input.budget === undefined ? {} : { budget: input.budget }),
+    origin: input.origin ?? { kind: "interactive", principalId: input.principal.principalId },
+    ...(input.resources === undefined ? {} : { resources: input.resources }),
     createdAt: at,
     updatedAt: at,
   };
 
-  withEvent(deps, task, "task.created", { goal: task.goal, principalId: input.principal.principalId }, () => {
+  withEvent(deps, task, "task.created", { goal: task.goal, principalId: input.principal.principalId, origin: task.origin }, () => {
     upsertTask(deps.db, task);
   });
   return task;

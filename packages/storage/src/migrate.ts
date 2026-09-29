@@ -1261,6 +1261,20 @@ export const MIGRATIONS: readonly Migration[] = [
       `);
     },
   },
+  {
+    version: 28,
+    name: "task_origin_and_resources",
+    reversible: true,
+    up: (db) => {
+      db.exec(`
+        -- Why a task exists and what it may touch. A task stored before this has neither: it came from a person in
+        -- the conversation and used the node's roots, which is how it is still read. origin is written once, when the
+        -- task is created; a later update never rewrites why the task was started.
+        ALTER TABLE tasks ADD COLUMN origin TEXT;
+        ALTER TABLE tasks ADD COLUMN resources TEXT;
+      `);
+    },
+  },
 ];
 
 function readAll<T>(db: Database, sql: string): T[] {

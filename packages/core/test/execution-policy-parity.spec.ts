@@ -77,7 +77,7 @@ function decisionKind(
   return decideExecution({
     policy: inForce,
     action: { kind: "effect", category, operationDigest: "sha256:parity" },
-    explicitUserIntent: options.explicitUserIntent,
+    intent: options.explicitUserIntent ? { kind: "interactive" } : { kind: "system" },
     ...(options.hardBoundary !== true
       ? {}
       : { hardBoundary: { kind: "os-permission" as const, because: "the operating system asks" } }),
@@ -255,7 +255,7 @@ describe("one policy, whichever seam asks it", () => {
     const decision = decideExecution({
       policy: policy({ prohibition: "all" }),
       action: { kind: "effect", category: "local-write", operationDigest: bindingDigest },
-      explicitUserIntent: true,
+      intent: { kind: "interactive" },
     });
     if (decision.kind !== "deny") throw new Error("expected the prohibition to refuse");
 
@@ -274,7 +274,7 @@ describe("one policy, whichever seam asks it", () => {
       const decision = decideExecution({
         policy: inForce,
         action: { kind: "effect", category: "local-write", operationDigest: bindingDigest },
-        explicitUserIntent: true,
+        intent: { kind: "interactive" },
       });
 
       const outcome = invoke(inForce);
@@ -313,7 +313,7 @@ describe("one policy, whichever seam asks it", () => {
               decideExecution({
                 policy: policy({ mode }),
                 action: { kind: "effect", category, operationDigest },
-                explicitUserIntent,
+                intent: explicitUserIntent ? { kind: "interactive" } : { kind: "system" },
                 ...(hardBoundary
                   ? {
                       hardBoundary: {

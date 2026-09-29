@@ -12,8 +12,9 @@ export function upsertTask(db: Database, task: TaskRecord): void {
   db.prepare(
     `INSERT INTO tasks
        (task_id, conversation_id, home_node_id, execution_node_id, state, disposition, revision, goal,
-        parked_reason, waiting_capability_ref, waiting_install_plan_id, active_run_id, budget, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        parked_reason, waiting_capability_ref, waiting_install_plan_id, active_run_id, budget, origin, resources,
+        created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT(task_id) DO UPDATE SET
        execution_node_id = excluded.execution_node_id,
        state = excluded.state,
@@ -25,6 +26,7 @@ export function upsertTask(db: Database, task: TaskRecord): void {
        waiting_install_plan_id = excluded.waiting_install_plan_id,
        active_run_id = excluded.active_run_id,
        budget = excluded.budget,
+       resources = excluded.resources,
        updated_at = excluded.updated_at`,
   ).run(
     task.taskId,
@@ -40,6 +42,8 @@ export function upsertTask(db: Database, task: TaskRecord): void {
     task.waitingInstallPlanId ?? null,
     task.activeRunId ?? null,
     task.budget === undefined ? null : toJson(task.budget),
+    task.origin === undefined ? null : toJson(task.origin),
+    task.resources === undefined ? null : toJson(task.resources),
     task.createdAt,
     task.updatedAt,
   );
@@ -105,6 +109,12 @@ export function getTask(db: Database, taskId: string): TaskRecord | undefined {
       : { waitingInstallPlanId: String(row.waiting_install_plan_id) }),
     ...(row.active_run_id === null ? {} : { activeRunId: String(row.active_run_id) }),
     ...(row.budget === null ? {} : { budget: parseJson(row.budget, "tasks.budget") }),
+    ...(row.origin === null || row.origin === undefined
+      ? {}
+      : { origin: parseJson(row.origin, "tasks.origin") as TaskRecord["origin"] }),
+    ...(row.resources === null || row.resources === undefined
+      ? {}
+      : { resources: parseJson(row.resources, "tasks.resources") as TaskRecord["resources"] }),
     createdAt: String(row.created_at) as TaskRecord["createdAt"],
     updatedAt: String(row.updated_at) as TaskRecord["updatedAt"],
   };

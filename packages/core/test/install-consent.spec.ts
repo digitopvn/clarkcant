@@ -27,7 +27,7 @@ describe("deriveGrantedCapabilities", () => {
       requested: REQUESTED,
       riskTier: "isolated-ui",
       policy: AUTONOMOUS,
-      explicitUserIntent: true,
+      intent: { kind: "interactive" },
       artifactDigest: "sha256:pkg",
     });
     expect(grant.granted).toEqual(REQUESTED);
@@ -45,7 +45,7 @@ describe("deriveGrantedCapabilities", () => {
       requested: REQUESTED,
       riskTier: "trusted-native",
       policy: AUTONOMOUS,
-      explicitUserIntent: true,
+      intent: { kind: "interactive" },
       artifactDigest: "sha256:pkg",
     });
     expect(grant.granted).toEqual(REQUESTED);
@@ -56,7 +56,7 @@ describe("deriveGrantedCapabilities", () => {
       requested: REQUESTED,
       riskTier: "service",
       policy: ASK_ALWAYS,
-      explicitUserIntent: true,
+      intent: { kind: "interactive" },
       artifactDigest: "sha256:pkg",
     });
     expect(grant.granted).toEqual([]);
@@ -69,7 +69,7 @@ describe("deriveGrantedCapabilities", () => {
       requested: REQUESTED,
       riskTier: "isolated-ui",
       policy: PROHIBIT_ALL,
-      explicitUserIntent: true,
+      intent: { kind: "interactive" },
       artifactDigest: "sha256:pkg",
     });
     expect(grant.granted).toEqual([]);
@@ -81,7 +81,7 @@ describe("deriveGrantedCapabilities", () => {
       requested: REQUESTED,
       riskTier: "declarative",
       policy: ASK_ALWAYS,
-      explicitUserIntent: false,
+      intent: { kind: "system" },
       artifactDigest: "sha256:pkg",
     });
     expect(grant.granted).toEqual([]);
@@ -93,7 +93,7 @@ describe("deriveGrantedCapabilities", () => {
       requested: REQUESTED,
       riskTier: "service",
       policy: ASK_ALWAYS,
-      explicitUserIntent: true,
+      intent: { kind: "interactive" },
       artifactDigest: "sha256:pkg",
     });
     // Both requested refs are decided the same way here (both in the risky category), so both land in the same
@@ -106,7 +106,7 @@ describe("deriveGrantedCapabilities", () => {
       requested: [],
       riskTier: "trusted-native",
       policy: PROHIBIT_ALL,
-      explicitUserIntent: true,
+      intent: { kind: "interactive" },
       artifactDigest: "sha256:pkg",
     });
     expect(grant).toEqual({ granted: [], needsApproval: [], denied: [] });

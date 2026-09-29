@@ -73,7 +73,7 @@ function record(command: string, category: "local-write" | "external-write" = "l
   const decision = decideExecution({
     policy: DEFAULT_EXECUTION_POLICY_CONFIG,
     action: { kind: "effect", category, operationDigest: digest },
-    explicitUserIntent: true,
+    intent: { kind: "interactive" },
   });
   if (decision.kind !== "execute") throw new Error("expected an execution");
   recordEffectExecution(

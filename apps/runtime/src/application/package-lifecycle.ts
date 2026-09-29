@@ -124,7 +124,7 @@ export function changePackage(
     policy,
     action: { kind: "effect", category: "local-write", operationDigest },
     // The person named this package and this action; the policy still decides whether that is enough.
-    explicitUserIntent: true,
+    intent: { kind: "interactive" },
   });
   if (decided.kind === "deny") {
     return { kind: "refused", status: 403, code: "POLICY_REFUSED", message: decided.reason };

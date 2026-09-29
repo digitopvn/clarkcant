@@ -105,7 +105,7 @@ async function gateCommand(
     policy,
     action: { kind: "effect", category: envelope.effectCategory, operationDigest: commandDigest(envelope.command, envelope.cwd) },
     // As in `run_command`: the turn exists because the user acted. It lifts nothing a rule or a hard boundary denies.
-    explicitUserIntent: true,
+    intent: { kind: "interactive" },
   });
   if (decision.kind === "deny") {
     return {

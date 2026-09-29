@@ -1205,7 +1205,7 @@ export function invokeMiniAppAction(deps: WidgetDeps, request: MiniAppActionRequ
         ? undefined
         : decideExecution({
             policy: request.policy,
-            explicitUserIntent: true,
+            intent: { kind: "interactive" },
             action: {
               kind: "effect",
               category: binding.effectCategory,

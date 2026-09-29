@@ -1,6 +1,6 @@
 import type { CapabilityRef, EffectCategory, ExecutionPolicyConfig, RiskLane } from "@clarkcant/contracts";
 
-import { decideExecution } from "./execution-policy.ts";
+import { type ExecutionIntent, decideExecution } from "./execution-policy.ts";
 
 /**
  * Deriving what a package install actually grants.
@@ -35,8 +35,8 @@ export interface DeriveGrantedCapabilitiesInput {
   /** The package's strongest facet lane — `riskLaneFor(entry.isolations)` or `entry.riskTier`. */
   riskTier: RiskLane;
   policy: ExecutionPolicyConfig;
-  /** True for an install the user explicitly asked for, e.g. "install X" — false for one a task decided on its own. */
-  explicitUserIntent: boolean;
+  /** Whose intent the install carries out: a person saying "install X", or a task that decided on its own. */
+  intent: ExecutionIntent;
   /** Binds each capability's decision to the artifact it would run, same as the install's own approval. */
   artifactDigest: string;
 }
@@ -66,7 +66,7 @@ export function deriveGrantedCapabilities(input: DeriveGrantedCapabilitiesInput)
     const decision = decideExecution({
       policy: input.policy,
       action: { kind: "effect", category, operationDigest: `${input.artifactDigest}:${ref}` },
-      explicitUserIntent: input.explicitUserIntent,
+      intent: input.intent,
     });
     if (decision.kind === "execute") {
       granted.push(ref);
