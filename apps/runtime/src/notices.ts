@@ -1,4 +1,4 @@
-import type { Instant, NoticeCategory, NoticeSeverity, NoticeSourceKind, RiskLane } from "@clarkcant/contracts";
+import type { Instant, NoticeCategory, NoticeSeverity, NoticeSourceKind, NoticeSubject, RiskLane } from "@clarkcant/contracts";
 import { type Database, recordNotification } from "@clarkcant/storage";
 
 /**
@@ -28,6 +28,11 @@ export interface NodeNotice {
   body?: string;
   conversationId?: string;
   originNodeId?: string;
+  /**
+   * What the notice is about, when it is more than its conversation: the task, the background work, the package. A
+   * pointer the host resolves when the inbox is read; a producer names the thing and never what can be done with it.
+   */
+  subject?: NoticeSubject;
   dedupKey: string;
   at: Instant;
 }
@@ -79,6 +84,7 @@ export function workerSettledNotice(input: {
     title,
     body: input.message,
     conversationId: input.conversationId,
+    subject: { kind: "task", taskId: input.taskId, conversationId: input.conversationId },
     dedupKey: `worker:${input.taskId}`,
     at: input.at,
   };
@@ -135,6 +141,7 @@ export function packageUpdateNotice(input: {
     severity: "info",
     title: `Có bản cập nhật: ${input.packageId}`,
     body: `${input.currentVersion} → ${input.newVersion} · nguồn ${input.sourceKind} · ${LANE_LABEL[input.lane]}`,
+    subject: { kind: "package", packageId: input.packageId, version: input.newVersion },
     dedupKey: `update:${input.sourceKind}:${input.packageId}@${input.newVersion}`,
     at: input.at,
   };
@@ -158,6 +165,7 @@ export function piUpdateNotice(input: {
     severity: "info",
     title: "Có bản cập nhật cho Pi SDK",
     body: `${input.currentVersion} → ${input.newVersion} · ${LANE_LABEL["trusted-native"]}`,
+    subject: { kind: "pi-update", packageName: input.packageName, version: input.newVersion },
     dedupKey: `update:pi:${input.packageName}@${input.newVersion}`,
     at: input.at,
   };

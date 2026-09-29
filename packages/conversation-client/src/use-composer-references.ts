@@ -39,6 +39,11 @@ export interface ComposerReferencesState {
   /** `pick` adds the row as a reference; `open` goes into a project or folder to choose something inside it. */
   choose: (index: number, how: "pick" | "open") => void;
   remove: (key: string) => void;
+  /**
+   * Adds a reference from outside the picker — "Add to context" on a notice — at the end of the draft, where the person
+   * continues typing. Answers `full` when the message already carries as many references as it can.
+   */
+  insert: (key: string, ref: ComposerReference) => "added" | "already" | "full";
   /** After a send the node accepted: the chosen references belonged to that message. */
   clear: () => void;
 }
@@ -212,6 +217,23 @@ export function useComposerReferences({
     [chosen, draft, setDraft],
   );
 
+  const insert = useCallback(
+    (key: string, ref: ComposerReference): "added" | "already" | "full" => {
+      const token = referenceToken(ref);
+      const end = (text: string) => ({ draft: text, caret: text.length });
+      if (live.some((entry) => entry.key === key)) {
+        write(end(draft));
+        return "already";
+      }
+      if (full) return "full";
+      const before = draft === "" || /\s$/.test(draft) ? draft : `${draft} `;
+      write(end(`${before}${token} `));
+      setChosen((current) => [...current.filter((entry) => entry.key !== key), { key, ref }]);
+      return "added";
+    },
+    [draft, full, live, write],
+  );
+
   const clear = useCallback(() => setChosen([]), []);
   const leave = useCallback(() => setCaret(-1), []);
 
@@ -232,6 +254,7 @@ export function useComposerReferences({
     onKeyDown,
     choose,
     remove,
+    insert,
     clear,
   };
 }

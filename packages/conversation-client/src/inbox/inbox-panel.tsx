@@ -1,6 +1,6 @@
-import { type ReactElement, useCallback, useEffect, useRef, useState } from "react";
+import { Fragment, type KeyboardEvent as ReactKeyboardEvent, type ReactElement, useCallback, useEffect, useRef, useState } from "react";
 
-import type { InboxResponse, Notice, WaitingItem } from "@clarkcant/contracts";
+import type { InboxResponse, Notice, NoticeAction, WaitingItem } from "@clarkcant/contracts";
 
 import type { GatewayClient, Timeline } from "../api.ts";
 import { Modal } from "../Modal.tsx";
@@ -11,6 +11,8 @@ import {
   decideFailureMessageKey,
   effectCategoryLabels,
   nextNoticeFocusTarget,
+  noticeActionGroups,
+  noticeConversationTarget,
   noticeIdsToMarkRead,
   noticesMayBeCapped,
   noticeSourceKey,
@@ -44,11 +46,26 @@ export interface InboxPanelProps {
    * looks usable before its action is safe).
    */
   switchGuard: { busy: boolean; voiceOpen: boolean; draftNonEmpty: boolean; hasAttachments: boolean };
+  /**
+   * Asks Clark about a notice in a message of its own, which leaves whatever is being written alone. Absent when the
+   * host has no conversation to send it in, and then the button is not drawn. Held back while a reply is running
+   * (`switchGuard.busy`), with the reason shown.
+   */
+  onAskClark?: (notice: Notice) => void;
+  /**
+   * Puts a notice into the message being written, as the same chip `@` would have made. "full" when that message
+   * already carries as many references as one can; the panel says so and stays open.
+   */
+  onAddToContext?: (notice: Notice) => "added" | "already" | "full";
 }
 
 type Load = { state: "loading" } | { state: "failed"; reason: string } | { state: "ready"; inbox: InboxResponse };
 
-type Status = { tone: "done" | "failed"; text: string };
+/** The outcome line; after a dismissal it carries the notice that "Undo" brings back. */
+type Status = { tone: "done" | "failed"; text: string; undo?: string };
+
+/** Where focus goes once the render that follows an action has landed, when a disabled button can take it again. */
+type FocusTarget = { kind: "notice"; noticeId: string } | { kind: "heading" } | { kind: "status" };
 
 /** What is locked while a decision or a dismissal is in flight, and — for a command approval — which way it went. */
 type Busy = { key: string; decision?: "granted" | "denied" };
@@ -73,6 +90,8 @@ export function InboxPanel({
   onOpenConversation,
   onChanged,
   switchGuard,
+  onAskClark,
+  onAddToContext,
 }: InboxPanelProps): ReactElement | null {
   const t = useT();
   const categoryLabels = effectCategoryLabels(t);
@@ -80,11 +99,15 @@ export function InboxPanel({
   const [load, setLoad] = useState<Load>({ state: "loading" });
   const [busy, setBusy] = useState<Busy | undefined>(undefined);
   const [status, setStatus] = useState<Status | undefined>(undefined);
+  // The one notice whose "More" is open: opening another closes it, as a second disclosure left open would be noise.
+  const [menuFor, setMenuFor] = useState<string | undefined>(undefined);
+  const [focusTarget, setFocusTarget] = useState<FocusTarget | undefined>(undefined);
   const statusLine = useRef<HTMLParagraphElement>(null);
   const noticesHeading = useRef<HTMLHeadingElement>(null);
-  // The dismiss button for each notice currently on screen, so a dismissal can move focus to a real neighbour
-  // instead of to `<body>` once the dismissed `<li>` (and the button that held focus) is gone.
-  const dismissButtonRefs = useRef(new Map<string, HTMLButtonElement>());
+  // Each notice row on screen, so an action can move focus to a real neighbour — the row that took a dismissed one's
+  // place, or a restored one — instead of leaving it on `<body>` once the button that held it is gone.
+  const noticeRows = useRef(new Map<string, HTMLLIElement>());
+  const moreButtons = useRef(new Map<string, HTMLButtonElement>());
   // A synchronous lock a second click cannot race past: React state is not visible to the click handler that fires
   // a few milliseconds later with the network still in flight, but a ref write is immediate.
   const inFlight = useRef<string | undefined>(undefined);
@@ -120,6 +143,7 @@ export function InboxPanel({
     let cancelled = false;
     setLoad({ state: "loading" });
     setStatus(undefined);
+    setMenuFor(undefined);
     void read().then((inbox) => {
       if (cancelled || inbox === undefined) return;
       const shown = noticeIdsToMarkRead(inbox.notices);
@@ -239,38 +263,82 @@ export function InboxPanel({
       .catch((cause: unknown) => settleDecideFailure(cause, key));
   };
 
-  const dismiss = (notice: Notice) => {
-    const key = `notice:${notice.noticeId}`;
-    if (inFlight.current !== undefined) return;
+  // Runs after the render that re-enabled the buttons: focusing a button while it is still disabled does nothing.
+  useEffect(() => {
+    if (focusTarget === undefined || busy !== undefined) return;
+    setFocusTarget(undefined);
+    if (focusTarget.kind === "status") statusLine.current?.focus();
+    else if (focusTarget.kind === "heading") noticesHeading.current?.focus();
+    else noticeRows.current.get(focusTarget.noticeId)?.querySelector<HTMLElement>("button:not(:disabled)")?.focus();
+  }, [focusTarget, busy]);
+
+  /** Locks the panel for a notice action; false when another action already holds it. */
+  const lock = (key: string): boolean => {
+    if (inFlight.current !== undefined) return false;
     inFlight.current = key;
     setBusy({ key });
     setStatus(undefined);
+    setMenuFor(undefined);
+    return true;
+  };
+
+  /** Reads the inbox again after a notice action, then says how it went and moves focus where it belongs. */
+  const finish = (next: Status, focus: FocusTarget) => {
+    onChanged();
+    void read().then(() => {
+      inFlight.current = undefined;
+      setBusy(undefined);
+      setStatus(next);
+      setFocusTarget(focus);
+    });
+  };
+
+  const failedReason = (cause: unknown) => sanitizeReason(cause) ?? t("inbox.reason.unavailable");
+
+  const dismiss = (notice: Notice) => {
+    if (!lock(`notice:${notice.noticeId}`)) return;
     const noticeIdsBeforeDismiss = load.state === "ready" ? load.inbox.notices.map((existing) => existing.noticeId) : [];
     void client
       .dismissNotice(notice.noticeId)
       .then(() => {
-        onChanged();
-        return read();
-      })
-      .then(() => {
-        inFlight.current = undefined;
-        setBusy(undefined);
         // Announced through the status line's own live region regardless of where focus lands, and moved to a real
-        // neighbour — the notice that took the dismissed one's place, or the section heading when none are left —
-        // rather than to `<body>`, which is where focus goes once the button that held it is removed from the DOM.
-        setStatus({ tone: "done", text: t("inbox.dismissed") });
+        // neighbour — the notice that took the dismissed one's place, or the section heading when none are left.
+        // "Undo" sits in that line for as long as it stands; the node keeps the notice restorable for a few minutes.
         const nextId = nextNoticeFocusTarget(noticeIdsBeforeDismiss, notice.noticeId);
-        if (nextId !== undefined) dismissButtonRefs.current.get(nextId)?.focus();
-        else noticesHeading.current?.focus();
+        finish(
+          { tone: "done", text: t("inbox.dismissed"), undo: notice.noticeId },
+          nextId === undefined ? { kind: "heading" } : { kind: "notice", noticeId: nextId },
+        );
       })
-      .catch((cause: unknown) => {
-        inFlight.current = undefined;
-        settle({ tone: "failed", text: t("inbox.dismissFailed").replace("{reason}", sanitizeReason(cause) ?? t("inbox.reason.unavailable")) });
-      });
+      .catch((cause: unknown) => finish({ tone: "failed", text: t("inbox.dismissFailed").replace("{reason}", failedReason(cause)) }, { kind: "status" }));
+  };
+
+  const restore = (noticeId: string) => {
+    if (!lock(`notice:${noticeId}`)) return;
+    void client
+      .restoreNotice(noticeId)
+      .then(() => finish({ tone: "done", text: t("inbox.restored") }, { kind: "notice", noticeId }))
+      .catch((cause: unknown) => finish({ tone: "failed", text: t("inbox.restoreFailed").replace("{reason}", failedReason(cause)) }, { kind: "status" }));
+  };
+
+  const setRead = (notice: Notice, read: boolean) => {
+    if (!lock(`notice:${notice.noticeId}`)) return;
+    void (read ? client.markInboxRead([notice.noticeId]) : client.markInboxUnread([notice.noticeId]))
+      .then(() => finish({ tone: "done", text: t(read ? "inbox.markedRead" : "inbox.markedUnread") }, { kind: "notice", noticeId: notice.noticeId }))
+      .catch((cause: unknown) => finish({ tone: "failed", text: t("inbox.markFailed").replace("{reason}", failedReason(cause)) }, { kind: "status" }));
+  };
+
+  const addToContext = (notice: Notice) => {
+    if (onAddToContext === undefined || inFlight.current !== undefined) return;
+    // "added" and "already" close the panel from the host, with the caret in the composer after the chip.
+    if (onAddToContext(notice) !== "full") return;
+    setMenuFor(undefined);
+    setStatus({ tone: "failed", text: t("inbox.context.full") });
+    setFocusTarget({ kind: "status" });
   };
 
   /** "Open conversation" for the one already on screen is "close this"; for another, only when the host can switch. */
-  const openButton = (targetId: string): ReactElement | null => {
+  const openButton = (targetId: string, primary = false): ReactElement | null => {
     const isCurrent = targetId === conversationId;
     if (!isCurrent && onOpenConversation === undefined) return null;
     const blocked = !isCurrent && !canOpenOtherConversation(switchGuard);
@@ -279,6 +347,7 @@ export function InboxPanel({
         <button
           type="button"
           className="cc-action"
+          {...(primary ? { "data-emphasis": "primary" } : {})}
           data-inbox-open-conversation={targetId}
           disabled={blocked}
           onClick={() => {
@@ -297,6 +366,109 @@ export function InboxPanel({
     );
   };
 
+  /**
+   * One of a notice's actions as the node worked them out (`notice-actions.ts`). An action the host cannot carry out
+   * here — no way to switch conversations, no composer — is left out rather than drawn as a button that does nothing,
+   * and one that is held back says why in words beside it.
+   */
+  const noticeAction = (notice: Notice, action: NoticeAction): ReactElement | null => {
+    const primary = action.placement === "primary";
+    const emphasis = primary ? { "data-emphasis": "primary" } : {};
+    const locked = busy !== undefined;
+    switch (action.id) {
+      case "open": {
+        if (action.unavailable === "conversation-gone") {
+          return (
+            <span key="open" className="cc-freshness" data-inbox-open-gone={notice.noticeId} style={{ flexBasis: "100%" }}>
+              {t("inbox.action.conversationGone")}
+            </span>
+          );
+        }
+        const target = noticeConversationTarget(notice);
+        return target === undefined ? null : <Fragment key="open">{openButton(target, primary)}</Fragment>;
+      }
+      case "ask-clark":
+        if (onAskClark === undefined) return null;
+        return (
+          <Fragment key="ask-clark">
+            <button
+              type="button"
+              className="cc-action"
+              {...emphasis}
+              data-inbox-ask={notice.noticeId}
+              aria-label={t("inbox.action.askAria").replace("{title}", notice.title)}
+              disabled={locked || switchGuard.busy}
+              onClick={() => onAskClark(notice)}
+            >
+              {t("inbox.action.ask")}
+            </button>
+            {switchGuard.busy && (
+              <span className="cc-freshness" data-inbox-ask-blocked="true" style={{ flexBasis: "100%" }}>
+                {t("inbox.ask.busy")}
+              </span>
+            )}
+          </Fragment>
+        );
+      case "add-to-context":
+        if (onAddToContext === undefined) return null;
+        return (
+          <button
+            key="add-to-context"
+            type="button"
+            className="cc-action"
+            {...emphasis}
+            data-inbox-add-context={notice.noticeId}
+            disabled={locked}
+            onClick={() => addToContext(notice)}
+          >
+            {t("inbox.action.addToContext")}
+          </button>
+        );
+      case "mark-read":
+      case "mark-unread": {
+        const read = action.id === "mark-read";
+        return (
+          <button
+            key={action.id}
+            type="button"
+            className="cc-action"
+            {...emphasis}
+            {...(read ? { "data-inbox-mark-read": notice.noticeId } : { "data-inbox-mark-unread": notice.noticeId })}
+            disabled={locked}
+            onClick={() => setRead(notice, read)}
+          >
+            {t(read ? "inbox.action.markRead" : "inbox.action.markUnread")}
+          </button>
+        );
+      }
+      case "dismiss":
+        return (
+          <button
+            key="dismiss"
+            type="button"
+            className="cc-action"
+            {...emphasis}
+            data-inbox-dismiss={notice.noticeId}
+            aria-label={t("inbox.dismissAria").replace("{title}", notice.title)}
+            disabled={locked}
+            onClick={() => dismiss(notice)}
+          >
+            {t("inbox.dismiss")}
+          </button>
+        );
+    }
+  };
+
+  /** Escape closes an open "More" before it closes the panel, and hands focus back to the button that opened it. */
+  const closeMenuOnEscape = (noticeId: string) => (event: ReactKeyboardEvent<HTMLElement>) => {
+    if (event.key !== "Escape" || menuFor !== noticeId) return;
+    // Stopped here so the dialog's own Escape (a listener on `document`) never sees it.
+    event.stopPropagation();
+    event.preventDefault();
+    setMenuFor(undefined);
+    moreButtons.current.get(noticeId)?.focus();
+  };
+
   const readAt =
     load.state === "ready"
       ? new Date(load.inbox.readAt).toLocaleTimeString(locale === "vi" ? "vi-VN" : "en-US", { hour: "2-digit", minute: "2-digit" })
@@ -306,16 +478,31 @@ export function InboxPanel({
     <Modal open={open} onClose={onClose} title={t("inbox.title")} description={t("inbox.description")} width="560px">
       <div className="cc-inbox" data-inbox-panel={load.state}>
         {status !== undefined && (
-          <p
-            ref={statusLine}
-            tabIndex={-1}
-            className="cc-panel-note"
-            role="status"
-            data-inbox-status={status.tone}
-            style={{ marginTop: 0 }}
-          >
-            {status.text}
-          </p>
+          <div className="cc-inbox-status">
+            <p
+              ref={statusLine}
+              tabIndex={-1}
+              className="cc-panel-note"
+              role="status"
+              data-inbox-status={status.tone}
+              style={{ margin: 0 }}
+            >
+              {status.text}
+            </p>
+            {status.undo !== undefined && (
+              <button
+                type="button"
+                className="cc-action"
+                data-inbox-undo={status.undo}
+                disabled={busy !== undefined}
+                onClick={() => {
+                  if (status.undo !== undefined) restore(status.undo);
+                }}
+              >
+                {t("inbox.undo")}
+              </button>
+            )}
+          </div>
         )}
 
         {load.state === "loading" && (
@@ -504,9 +691,17 @@ export function InboxPanel({
                   {load.inbox.notices.map((notice) => {
                     const tone = noticeTone(notice.severity);
                     const unread = notice.readAt === undefined;
+                    const { buttons, menu } = noticeActionGroups(notice);
+                    const menuItems = menu.map((action) => noticeAction(notice, action)).filter((item) => item !== null);
+                    const menuOpen = menuFor === notice.noticeId;
+                    const menuId = `cc-inbox-more-${notice.noticeId}`;
                     return (
                       <li
                         key={notice.noticeId}
+                        ref={(el) => {
+                          if (el) noticeRows.current.set(notice.noticeId, el);
+                          else noticeRows.current.delete(notice.noticeId);
+                        }}
                         className="cc-inbox-notice"
                         data-inbox-notice={notice.noticeId}
                         data-unread={unread ? "true" : "false"}
@@ -532,22 +727,34 @@ export function InboxPanel({
                         </div>
                         <p className="cc-inbox-notice-title">{notice.title}</p>
                         {notice.body !== undefined && <p className="cc-inbox-notice-body">{notice.body}</p>}
-                        <div className="cc-card-actions">
-                          {notice.conversationId !== undefined && openButton(notice.conversationId)}
-                          <button
-                            type="button"
-                            className="cc-action"
-                            ref={(el) => {
-                              if (el) dismissButtonRefs.current.set(notice.noticeId, el);
-                              else dismissButtonRefs.current.delete(notice.noticeId);
-                            }}
-                            data-inbox-dismiss={notice.noticeId}
-                            aria-label={t("inbox.dismissAria").replace("{title}", notice.title)}
-                            disabled={busy !== undefined}
-                            onClick={() => dismiss(notice)}
-                          >
-                            {t("inbox.dismiss")}
-                          </button>
+                        <div className="cc-card-actions" onKeyDown={closeMenuOnEscape(notice.noticeId)}>
+                          {buttons.map((action) => noticeAction(notice, action))}
+                          {menuItems.length > 0 && (
+                            <button
+                              type="button"
+                              className="cc-action cc-inbox-more"
+                              ref={(el) => {
+                                if (el) moreButtons.current.set(notice.noticeId, el);
+                                else moreButtons.current.delete(notice.noticeId);
+                              }}
+                              data-inbox-more={notice.noticeId}
+                              aria-expanded={menuOpen}
+                              aria-controls={menuId}
+                              aria-label={t("inbox.action.moreAria").replace("{title}", notice.title)}
+                              onClick={() => setMenuFor(menuOpen ? undefined : notice.noticeId)}
+                            >
+                              {t("inbox.action.more")}
+                              <span aria-hidden="true" className="cc-inbox-more-caret" data-open={menuOpen ? "true" : "false"}>
+                                ▾
+                              </span>
+                            </button>
+                          )}
+                          {menuItems.length > 0 && (
+                            // Kept in the page while closed so `aria-controls` always names an element.
+                            <div id={menuId} className="cc-inbox-menu" data-inbox-menu={notice.noticeId} hidden={!menuOpen}>
+                              {menuItems}
+                            </div>
+                          )}
                         </div>
                       </li>
                     );

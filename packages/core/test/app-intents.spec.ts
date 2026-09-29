@@ -127,6 +127,11 @@ const DOCUMENTED: readonly { kind: AppIntentKind; vietnamese: readonly string[];
     english: "open my inbox",
   },
   {
+    kind: "inbox.ask",
+    vietnamese: ["hỏi Clark về thông báo mới nhất", "Xử lý thông báo mới nhất đi.", "hoi ve thong bao moi nhat"],
+    english: "ask Clark about the latest notification",
+  },
+  {
     // Whole-sentence too: "dừng lại ở bước build" is work for the agent, not a stop.
     kind: "turn.stop",
     vietnamese: ["dừng lại", "Dừng lại!", "ngừng lại", "dừng trả lời", "dừng viết đi", "dung lai"],

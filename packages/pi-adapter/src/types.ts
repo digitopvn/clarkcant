@@ -187,7 +187,7 @@ export interface PiSetting {
 /**
  * One skill pi would load for this node, as the composer offers it.
  *
- * evision is a digest of the skill's file, so a message that names a skill can say which version it meant: a skill
+ * `revision` is a digest of the skill's file, so a message that names a skill can say which version it meant: a skill
  * edited between choosing it and sending the message is reported rather than silently run in its new form. No path is
  * carried, because the composer and the model only ever need the name.
  */

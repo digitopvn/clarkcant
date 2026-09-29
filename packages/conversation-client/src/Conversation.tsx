@@ -16,6 +16,7 @@ import { DesktopChrome } from "./desktop-chrome.tsx";
 import { DotGrid } from "./dot-grid.tsx";
 import { ConversationHeader } from "./ConversationHeader.tsx";
 import { InboxPanel } from "./inbox/inbox-panel.tsx";
+import { useInboxNoticeActions } from "./inbox/use-inbox-notice-actions.ts";
 import { useInboxNotifications } from "./inbox/use-inbox-notifications.ts";
 import { ConversationHeroEmptyState } from "./ConversationHeroEmptyState.tsx";
 import { ConversationComposerBar } from "./ConversationComposerBar.tsx";
@@ -181,6 +182,7 @@ export function Conversation({
    */
   const liveTrigger = useRef<HTMLElement | null>(null);
   const composerInput = useRef<HTMLTextAreaElement>(null);
+  const askAboutLatestNotice = useRef<(() => Promise<void>) | undefined>(undefined);
   /** The hidden file input the `+` button opens, so the button itself is a real `<button>`. */
   const attachmentInput = useRef<HTMLInputElement>(null);
 
@@ -271,6 +273,10 @@ export function Conversation({
     },
     // "Dừng lại", typed or said, reaches the same call as the Stop button.
     stopTurn: () => void stop(),
+    // Read through a ref: the inbox actions need this hook's own inbox state, so they are made below it.
+    askAboutLatestNotice: async () => {
+      await askAboutLatestNotice.current?.();
+    },
     // The hotkey's own switches, so the alias and note on screen follow an agent's switch too.
     cycleModel,
     selectModel,
@@ -283,6 +289,18 @@ export function Conversation({
    * no real completion signal here yet, and a state published without one is the interface
    * claiming to know something it does not.
    */
+  const noticeActions = useInboxNoticeActions({
+    client,
+    busy,
+    inboxOpen: appIntents.inboxOpen,
+    closeInbox: () => appIntents.setInboxOpen(false),
+    send,
+    insertReference: references.insert,
+    composerInput,
+    t: localeState.t,
+  });
+  askAboutLatestNotice.current = noticeActions.askAboutLatestNotice;
+
   const agentState = agentStateFrom({
     failed: error !== undefined,
     listening: voiceOpen,
@@ -515,6 +533,8 @@ export function Conversation({
         {...(onOpenConversation === undefined ? {} : { onOpenConversation })}
         onChanged={() => setInboxTick((tick) => tick + 1)}
         switchGuard={{ busy, voiceOpen, draftNonEmpty: draft.trim() !== "", hasAttachments: chips.length > 0 }}
+        onAskClark={noticeActions.askClark}
+        onAddToContext={noticeActions.addToContext}
       />
 
       {/* The Widget Library, beside the conversation rather than in place of it. */}

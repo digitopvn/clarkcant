@@ -627,6 +627,7 @@ export function startBackgroundWork(
           title: `Việc nền đã xong: ${title}`,
           ...(said === "" ? {} : { body: said }),
           conversationId,
+          subject: { kind: "background-work", workId, conversationId },
           dedupKey: `background:${workId}`,
           at: at(),
         });
@@ -643,6 +644,7 @@ export function startBackgroundWork(
             title: stopped ? `Việc nền đã dừng: ${title}` : `Việc nền không xong: ${title}`,
             body: reply,
             conversationId,
+            subject: { kind: "background-work", workId, conversationId },
             dedupKey: `background:${workId}`,
             at: at(),
           });

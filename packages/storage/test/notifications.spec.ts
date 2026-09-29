@@ -9,12 +9,16 @@ import type { Instant } from "@clarkcant/contracts";
 import { openDatabase, type Database } from "../src/db.ts";
 import { migrate } from "../src/migrate.ts";
 import {
+  DISMISS_UNDO_WINDOW_MS,
   MAX_NOTIFICATIONS,
   countUnreadNotifications,
   dismissNotification,
+  getNotification,
   listNotifications,
   markNotificationsRead,
+  markNotificationsUnread,
   recordNotification,
+  restoreNotification,
   type RecordNotificationInput,
 } from "../src/repositories/notifications.ts";
 
@@ -219,5 +223,70 @@ describe("reading and dismissing", () => {
     expect(a.created).toBe(true);
     expect(b.created).toBe(true);
     expect(a.notificationId).not.toBe(b.notificationId);
+  });
+});
+
+describe("subjects, unread and undo", () => {
+  const later = (from: string, ms: number): Instant => new Date(Date.parse(from) + ms).toISOString() as Instant;
+
+  it("keeps what a notice is about, and reads a notice without one as before", () => {
+    record({ subject: { kind: "task", taskId: "task_7", conversationId: "conv_1" } });
+    record();
+    const [plain, about] = listNotifications(db, "owner_1");
+    expect(about?.subject).toEqual({ kind: "task", taskId: "task_7", conversationId: "conv_1" });
+    expect(plain?.subject).toBeUndefined();
+  });
+
+  it("refuses a subject that is not one of the known kinds before anything is written", () => {
+    expect(() => record({ subject: { kind: "command", command: "deploy production" } as never })).toThrow();
+    expect(listNotifications(db, "owner_1")).toHaveLength(0);
+  });
+
+  it("drops a stored subject this version cannot read instead of failing the whole list", () => {
+    const { notificationId } = record();
+    db.prepare("UPDATE notifications SET subject = ? WHERE notification_id = ?").run('{"kind":"from-the-future"}', notificationId);
+    expect(listNotifications(db, "owner_1")[0]?.subject).toBeUndefined();
+  });
+
+  it("marks read notices unread again, and only this principal's undismissed ones", () => {
+    const first = record().notificationId;
+    const second = record().notificationId;
+    const other = record({ principalId: "owner_2" }).notificationId;
+    const at = new Date(Date.UTC(2026, 8, 24, 8)).toISOString() as Instant;
+    markNotificationsRead(db, { principalId: "owner_1", at });
+    markNotificationsRead(db, { principalId: "owner_2", at });
+    dismissNotification(db, { principalId: "owner_1", notificationId: second, at });
+
+    expect(markNotificationsUnread(db, { principalId: "owner_1", notificationIds: [first, second, other] })).toBe(1);
+    expect(countUnreadNotifications(db, "owner_1")).toBe(1);
+    expect(countUnreadNotifications(db, "owner_2")).toBe(0);
+    // Marking a dismissed notice unread does not bring it back.
+    expect(listNotifications(db, "owner_1").map((notice) => notice.noticeId)).toEqual([first]);
+  });
+
+  it("undoes a recent dismissal and brings the notice back read", () => {
+    const { notificationId } = record();
+    const at = new Date(Date.UTC(2026, 8, 24, 8)).toISOString();
+    dismissNotification(db, { principalId: "owner_1", notificationId, at: at as Instant });
+
+    expect(restoreNotification(db, { principalId: "owner_1", notificationId, at: later(at, 5_000) })).toBe("restored");
+    const [back] = listNotifications(db, "owner_1");
+    expect(back?.noticeId).toBe(notificationId);
+    expect(back?.readAt).toBe(at);
+    expect(restoreNotification(db, { principalId: "owner_1", notificationId, at: later(at, 6_000) })).toBe("not-dismissed");
+  });
+
+  it("refuses to undo a dismissal older than the window, and another principal's", () => {
+    const { notificationId } = record();
+    const at = new Date(Date.UTC(2026, 8, 24, 8)).toISOString();
+    dismissNotification(db, { principalId: "owner_1", notificationId, at: at as Instant });
+
+    expect(restoreNotification(db, { principalId: "owner_2", notificationId, at: later(at, 1_000) })).toBe("not-found");
+    expect(restoreNotification(db, { principalId: "owner_1", notificationId, at: later(at, DISMISS_UNDO_WINDOW_MS + 1) })).toBe(
+      "expired",
+    );
+    expect(listNotifications(db, "owner_1")).toHaveLength(0);
+    expect(getNotification(db, "owner_1", notificationId)?.dismissed).toBe(true);
+    expect(getNotification(db, "owner_2", notificationId)).toBeUndefined();
   });
 });

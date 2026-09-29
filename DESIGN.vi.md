@@ -477,8 +477,24 @@ phải một nơi điều hướng thứ hai. Mỗi mục trỏ về hội tho�
 - **Clark trả lời được "có gì chờ tôi không?"** bằng tool chỉ đọc `read_inbox`, cùng dữ liệu với panel; tool không
   đánh dấu đã đọc và không duyệt được gì, và có thể mở hộp thư cho user qua `inbox.open`.
 - **Thông báo** có nguồn (việc nền, worker, gói mở rộng, Pi, thiết bị khác, ClarkCant), mức độ, tuổi tương đối, và
-  nhãn "chưa đọc" bằng chữ bên cạnh chấm. Mở hộp thư đánh dấu đã đọc đúng những thông báo nó đã hiện. "Bỏ" xoá khỏi
-  danh sách; "Mở hội thoại" chuyển sang hội thoại liên quan mà không mở thêm phiên.
+  nhãn "chưa đọc" bằng chữ bên cạnh chấm. Mở hộp thư đánh dấu đã đọc đúng những thông báo nó đã hiện. "Mở hội thoại"
+  chuyển sang hội thoại liên quan mà không mở thêm phiên.
+- **Mỗi thông báo mang những thao tác node tính ra cho nó** (#196), từ việc thông báo nói về cái gì (một task, việc
+  nền, một hội thoại, một gói, một bản cập nhật Pi) và cái đó hiện ra sao — không bao giờ từ nội dung chữ, và không bao
+  giờ là thao tác do nơi tạo thông báo tự đặt ra. Nhiều nhất hai thao tác là nút; phần còn lại nằm sau "Khác", một phần
+  mở rộng ngay dưới thông báo (không phải menu nổi), Escape đóng lại và trả focus về "Khác". Việc đã xong ổn thì "Mở hội
+  thoại" đứng đầu; việc lỗi hoặc cần chú ý thì "Hỏi Clark" đứng đầu. Thông báo có hội thoại đã bị xoá thì nói rõ bằng
+  chữ thay vì đưa ra một nút bấm vào sẽ lỗi.
+  - **Hỏi Clark** đóng hộp thư và gửi một tin nhắn riêng mang thông báo làm tham chiếu của ô soạn (§6.3),
+    được kiểm như một tham chiếu chọn sau `@`: node đọc lại thông báo đã lưu và trích nội dung của nó cho model dưới dạng dữ liệu. Những gì người
+    dùng đang viết, cùng các chip trên đó, giữ nguyên. Khi Clark còn đang trả lời, nút bị tắt và lý do được ghi ngay bên
+    cạnh. "Hỏi Clark về thông báo mới nhất" — gõ hoặc nói — làm đúng việc đó cho thông báo mới nhất qua intent
+    `inbox.ask`.
+  - **Thêm vào ngữ cảnh** gắn thông báo vào tin nhắn đang viết dưới dạng chip và trả focus về ô soạn; nói rõ khi tin
+    nhắn đã có đủ số tham chiếu tối đa.
+  - **Đánh dấu đã đọc / Đánh dấu chưa đọc** chỉ đổi thông báo đó; dấu trên header hiện lại khi có thông báo chưa đọc.
+  - **Bỏ** xoá khỏi danh sách và đưa ra **Hoàn tác** trong năm phút; thông báo được đưa lại trở về ở trạng thái đã
+    đọc.
 - **Thông báo cập nhật cho Pi SDK, gói đã cài và widget** (`apps/runtime/src/update-checks.ts`), từ một job định kỳ
   so version đã cài với directory index và với npm registry (lỗi mạng không tạo thông báo lỗi). Nội dung nói version
   hiện tại → mới và risk lane, cùng cách gọi tên với marketplace. Chưa có nút "Cập nhật": route cập nhật thật đi qua

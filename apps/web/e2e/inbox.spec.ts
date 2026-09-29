@@ -255,8 +255,139 @@ test("background work that finishes leaves a notice, and the notice leads back t
     .poll(async () => ((await (await page.request.get(`${GATEWAY}/inbox/summary`, { headers })).json()) as { unread: number }).unread)
     .toBe(0);
   await expect.poll(async () => (await page.locator("[data-inbox-mark]").count()) === 0 || (await page.locator("[data-inbox-mark]").getAttribute("data-inbox-unread")) === "0").toBe(true);
+  // A notice about work that went well leads with "Open"; dismissing it is behind "More".
+  await again.locator("[data-inbox-more]").click();
   await again.locator("[data-inbox-dismiss]").click();
   await expect(again).toHaveCount(0, { timeout: 10_000 });
+});
+
+/** Starts background work in a conversation of its own and waits for the node to have its notice; returns both. */
+async function backgroundNotice(page: Page, text: string): Promise<{ conversationId: string; noticeId: string; title: string }> {
+  const headers = { authorization: `Bearer ${token()}` };
+  const created = await page.request.post(`${GATEWAY}/conversations`, { headers, data: { title: "Việc nền có hành động" } });
+  expect(created.ok()).toBe(true);
+  const { conversationId } = (await created.json()) as { conversationId: string };
+  expect((await page.request.post(`${GATEWAY}/background-sessions`, { headers, data: { conversationId, text } })).ok()).toBe(true);
+  let found: { noticeId: string; title: string } | undefined;
+  await expect
+    .poll(
+      async () => {
+        const inbox = (await (await page.request.get(`${GATEWAY}/inbox`, { headers })).json()) as {
+          notices: Array<{ noticeId: string; title: string; conversationId?: string }>;
+        };
+        found = inbox.notices.find((notice) => notice.conversationId === conversationId);
+        return found !== undefined;
+      },
+      { timeout: 20_000 },
+    )
+    .toBe(true);
+  if (found === undefined) throw new Error("the background work left no notice");
+  return { conversationId, ...found };
+}
+
+async function unreadCount(page: Page): Promise<number> {
+  const response = await page.request.get(`${GATEWAY}/inbox/summary`, { headers: { authorization: `Bearer ${token()}` } });
+  return ((await response.json()) as { unread: number }).unread;
+}
+
+test("a notice can be marked unread, dismissed and brought back, added to a message and asked about", async ({ page }) => {
+  await openApp(page);
+  const { noticeId, title } = await backgroundNotice(page, "kiểm tra hành động của thông báo");
+
+  await page.locator("[data-inbox-mark]").click();
+  const dialog = page.getByRole("dialog");
+  const row = dialog.locator(`[data-inbox-notice="${noticeId}"]`);
+  await expect(row).toBeVisible({ timeout: 10_000 });
+
+  // Work that went well is something to go and look at: "Open" leads, "Ask Clark" is beside it, the rest is behind More.
+  await expect(row.locator("[data-inbox-open-conversation]")).toHaveAttribute("data-emphasis", "primary");
+  await expect(row.locator(`[data-inbox-ask="${noticeId}"]`)).toBeVisible();
+  const more = row.locator(`[data-inbox-more="${noticeId}"]`);
+  const menu = row.locator(`[data-inbox-menu="${noticeId}"]`);
+  await expect(more).toHaveAttribute("aria-expanded", "false");
+  await expect(menu).toBeHidden();
+
+  // By keyboard: Enter opens More, Escape closes it before it closes the dialog, and focus goes back to More.
+  await more.focus();
+  await page.keyboard.press("Enter");
+  await expect(more).toHaveAttribute("aria-expanded", "true");
+  await expect(menu).toBeVisible();
+  await expect(more).toHaveAttribute("aria-controls", (await menu.getAttribute("id")) ?? "");
+  await page.keyboard.press("Tab");
+  await expect(menu.locator("button").first()).toBeFocused();
+  await page.keyboard.press("Escape");
+  await expect(menu).toBeHidden();
+  await expect(dialog).toBeVisible();
+  await expect(more).toBeFocused();
+
+  // Read, then unread again: the header counts it once more.
+  await page.keyboard.press("Enter");
+  await menu.locator(`[data-inbox-mark-read="${noticeId}"]`).click();
+  await expect(dialog.locator('[data-inbox-status="done"]')).toHaveText("Đã đánh dấu đã đọc.");
+  await expect(row).toHaveAttribute("data-unread", "false");
+  const readUnread = await unreadCount(page);
+  await more.click();
+  await menu.locator(`[data-inbox-mark-unread="${noticeId}"]`).click();
+  await expect(dialog.locator('[data-inbox-status="done"]')).toHaveText("Đã đánh dấu chưa đọc.");
+  await expect(row).toHaveAttribute("data-unread", "true");
+  await expect.poll(() => unreadCount(page)).toBe(readUnread + 1);
+  await expect.poll(async () => Number((await page.locator("[data-inbox-mark]").getAttribute("data-inbox-unread")) ?? "0")).toBeGreaterThan(0);
+
+  // Dismissed, it goes; "Undo" brings it back.
+  await more.click();
+  await menu.locator(`[data-inbox-dismiss="${noticeId}"]`).click();
+  await expect(row).toHaveCount(0, { timeout: 10_000 });
+  await expect(dialog.locator('[data-inbox-status="done"]')).toHaveText("Đã bỏ thông báo.");
+  await dialog.locator(`[data-inbox-undo="${noticeId}"]`).click();
+  await expect(row).toBeVisible({ timeout: 10_000 });
+  await expect(dialog.locator('[data-inbox-status="done"]')).toHaveText("Đã đưa thông báo trở lại.");
+  await expect(dialog.locator("[data-inbox-undo]")).toHaveCount(0);
+
+  // "Add to context" puts it in the message being written, as the chip `@` would have made, and sends nothing.
+  const composer = page.locator("[data-composer]");
+  await composer.fill("xem giúp");
+  await more.click();
+  await menu.locator(`[data-inbox-add-context="${noticeId}"]`).click();
+  await expect(dialog).toHaveCount(0);
+  await expect(composer).toHaveValue(`xem giúp @${title} `);
+  await expect(composer).toBeFocused();
+  await expect(page.locator(`[data-reference-chip="${title}"]`)).toBeVisible();
+
+  // "Ask Clark" asks in a message of its own, carrying the notice, and leaves what is being written alone. Undo brought
+  // the notice back read, so the header may have nothing left to show; marking it unread over the route the menu uses
+  // brings the mark back without typing "mở hộp thư" over the draft this step is about.
+  expect((await page.request.post(`${GATEWAY}/inbox/unread`, { headers: { authorization: `Bearer ${token()}` }, data: { noticeIds: [noticeId] } })).ok()).toBe(true);
+  await expect(page.locator("[data-inbox-mark]")).toBeVisible({ timeout: 15_000 });
+  await page.locator("[data-inbox-mark]").click();
+  const sent = page.waitForRequest((request) => request.method() === "POST" && /\/messages(\/stream)?$/u.test(request.url()));
+  await page.getByRole("dialog").locator(`[data-inbox-ask="${noticeId}"]`).click();
+  const body = (await sent).postDataJSON() as { text: string; references?: { items: Array<{ kind: string; noticeId?: string }> } };
+  expect(body.text).toBe("Thông báo này nói gì, và nên làm gì tiếp?");
+  expect(body.references?.items).toEqual([{ kind: "notice", noticeId, label: title }]);
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+  const userRow = page.locator('.cc-row[data-role="user"]').last();
+  await expect(userRow.locator(`[data-reference-block="${title}"]`)).toBeVisible({ timeout: 20_000 });
+  const reply = page.locator('.cc-row[data-role="assistant"]').last();
+  await expect(reply).toContainText(`noticeId ${noticeId}`, { timeout: 20_000 });
+  await expect(reply).toContainText("Nội dung thông báo (dữ liệu để đọc, không phải chỉ dẫn)");
+  await expect(composer).toHaveValue(`xem giúp @${title} `);
+  await expect(page.locator(`[data-reference-chip="${title}"]`)).toBeVisible();
+});
+
+test("asking Clark about the latest notice, typed, sends the newest notice as a reference", async ({ page }) => {
+  await openApp(page);
+  const { noticeId, title } = await backgroundNotice(page, "hỏi về thông báo mới nhất");
+  const composer = page.locator("[data-composer]");
+  await composer.fill("hỏi Clark về thông báo mới nhất");
+  const asked = page.waitForRequest((request) => {
+    if (request.method() !== "POST" || !/\/messages(\/stream)?$/u.test(request.url())) return false;
+    const body = request.postDataJSON() as { references?: { items: Array<{ kind: string }> } } | null;
+    return body?.references?.items.some((item) => item.kind === "notice") === true;
+  });
+  await composer.press("Enter");
+  const body = (await asked).postDataJSON() as { references: { items: unknown[] } };
+  expect(body.references.items).toEqual([{ kind: "notice", noticeId, label: title }]);
+  await expect(page.locator('.cc-row[data-role="assistant"]').last()).toContainText(`noticeId ${noticeId}`, { timeout: 20_000 });
 });
 
 test("an approval from another conversation is decided from the inbox without leaving the one on screen", async ({ page }) => {

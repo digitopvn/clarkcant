@@ -1355,6 +1355,20 @@ export const MIGRATIONS: readonly Migration[] = [
       `);
     },
   },
+  {
+    version: 31,
+    name: "notification_subjects",
+    reversible: true,
+    up: (db) => {
+      db.exec(`
+        -- What a notice is about, as the JSON of a typed pointer (a task, a piece of background work, a package). What
+        -- the inbox offers for it is worked out from this and the thing's current state when the inbox is read, never
+        -- stored, so a producer cannot store a button. A notice written before this has none and is read as being
+        -- about its conversation, if it has one.
+        ALTER TABLE notifications ADD COLUMN subject TEXT;
+      `);
+    },
+  },
 ];
 
 function readAll<T>(db: Database, sql: string): T[] {

@@ -85,6 +85,11 @@ export interface AppIntentHost {
    */
   openInbox?(): HostEffect;
   /**
+   * Asks Clark about the newest notice in the inbox: the inbox's own "Ask Clark", reached by a sentence. Optional for
+   * the reason `openInbox` is; a host that has an inbox but nothing in it refuses with a sentence saying so.
+   */
+  askAboutLatestNotice?(): HostEffect;
+  /**
    * Stops the reply this conversation is writing, keeping what it has already written. Optional: a host with no
    * node behind it has no turn to stop.
    */
@@ -142,6 +147,7 @@ function missingCapabilitySay(intent: AppIntent): string {
     case "nav.conversation":
       return catalog["shell.intent.notConversation"];
     case "inbox.open":
+    case "inbox.ask":
       return catalog["shell.intent.notInbox"];
     case "turn.stop":
       return catalog["shell.intent.notTurn"];
@@ -215,6 +221,8 @@ function carryOut(intent: AppIntent, host: AppIntentHost): HostEffect {
       return host.showConversation?.();
     case "inbox.open":
       return host.openInbox?.();
+    case "inbox.ask":
+      return host.askAboutLatestNotice?.();
     case "turn.stop":
       return host.stopTurn?.();
     case "model.cycle":
@@ -270,6 +278,8 @@ function hostHasCapability(host: AppIntentHost, intent: AppIntent): boolean {
       return host.showConversation !== undefined;
     case "inbox.open":
       return host.openInbox !== undefined;
+    case "inbox.ask":
+      return host.askAboutLatestNotice !== undefined;
     case "turn.stop":
       return host.stopTurn !== undefined;
     case "model.cycle":

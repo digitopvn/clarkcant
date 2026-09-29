@@ -246,6 +246,16 @@ const PHRASES: readonly { phrase: string; kind: AppIntentKind; wholeSentence?: t
   { phrase: "show my inbox", kind: "inbox.open", wholeSentence: true },
   { phrase: "open notifications", kind: "inbox.open", wholeSentence: true },
   { phrase: "show notifications", kind: "inbox.open", wholeSentence: true },
+  // Asking about the newest notice is the inbox's "Ask Clark" said aloud: the same notice reference, the same prompt.
+  // Whole-sentence for the reason above; "xử lý thông báo mới nhất" is here because handling one starts with Clark
+  // reading it, and whatever it then does still goes through the tools and policy every turn does.
+  { phrase: "hoi clark ve thong bao moi nhat", kind: "inbox.ask", wholeSentence: true },
+  { phrase: "hoi ve thong bao moi nhat", kind: "inbox.ask", wholeSentence: true },
+  { phrase: "xu ly thong bao moi nhat", kind: "inbox.ask", wholeSentence: true },
+  { phrase: "ask clark about the latest notification", kind: "inbox.ask", wholeSentence: true },
+  { phrase: "ask about the latest notification", kind: "inbox.ask", wholeSentence: true },
+  { phrase: "ask clark about the latest notice", kind: "inbox.ask", wholeSentence: true },
+  { phrase: "handle the latest notification", kind: "inbox.ask", wholeSentence: true },
   // Closing it is going back to the conversation, which is what closing any surface over it already means.
   { phrase: "dong hop thu", kind: "nav.conversation", wholeSentence: true },
   { phrase: "close the inbox", kind: "nav.conversation", wholeSentence: true },

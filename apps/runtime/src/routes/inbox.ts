@@ -1,5 +1,5 @@
-import { type Instant, inboxReadRequestSchema } from "@clarkcant/contracts";
-import { dismissNotification, markNotificationsRead } from "@clarkcant/storage";
+import { type Instant, inboxReadRequestSchema, inboxUnreadRequestSchema } from "@clarkcant/contracts";
+import { dismissNotification, markNotificationsRead, markNotificationsUnread, restoreNotification } from "@clarkcant/storage";
 
 import { type InboxServices, inboxSummary, readInbox } from "../inbox.ts";
 import { type GatewayRequest, type GatewayResponse, fail, json, readJson } from "./http.ts";
@@ -10,7 +10,9 @@ import { type GatewayRequest, type GatewayResponse, fail, json, readJson } from 
  *   GET  /inbox                              waiting items + notices, as a snapshot with the time it was read
  *   GET  /inbox/summary                      the two counts the header mark polls
  *   POST /inbox/read        { noticeIds? }   mark notices read (no ids: all of them)
+ *   POST /inbox/unread      { noticeIds }    mark notices unread again
  *   POST /inbox/notices/:id/dismiss          take one notice out of the list
+ *   POST /inbox/notices/:id/restore          undo a dismissal, while it is recent enough to be an undo
  *
  * There is no route that decides anything. Approving a command, granting a capability and answering a question
  * each already have a route, and the inbox calls those: a second way to approve would be a second set of checks,
@@ -57,6 +59,31 @@ export function handleInboxRoutes(deps: InboxRouteDeps): GatewayResponse | undef
       ...(parsed.data.noticeIds === undefined ? {} : { notificationIds: parsed.data.noticeIds }),
     });
     return json(200, { marked });
+  }
+
+  if (segments.length === 2 && segments[1] === "unread") {
+    if (request.method !== "POST") return fail(405, "METHOD_NOT_ALLOWED", "notices are marked unread with POST");
+    const body = readJson(request);
+    if (!body.ok) return body.response;
+    const parsed = inboxUnreadRequestSchema.safeParse(body.value);
+    if (!parsed.success) return fail(400, "INVALID_SCHEMA", "noticeIds must be a non-empty list of notice ids");
+    return json(200, { marked: markNotificationsUnread(services.runtime.db, { principalId, notificationIds: parsed.data.noticeIds }) });
+  }
+
+  if (segments.length === 4 && segments[1] === "notices" && segments[3] === "restore") {
+    if (request.method !== "POST") return fail(405, "METHOD_NOT_ALLOWED", "a dismissed notice is restored with POST");
+    const outcome = restoreNotification(services.runtime.db, { principalId, notificationId: segments[2] ?? "", at: at() });
+    switch (outcome) {
+      case "restored":
+        return json(200, { restored: true });
+      case "not-dismissed":
+        // Already back, from a second press or another surface: what was asked for is true.
+        return json(200, { restored: true });
+      case "expired":
+        return fail(409, "UNDO_EXPIRED", "that notice was dismissed too long ago to undo");
+      case "not-found":
+        return fail(404, "RESOURCE_NOT_FOUND", "that notice is not in the inbox");
+    }
   }
 
   if (segments.length === 4 && segments[1] === "notices" && segments[3] === "dismiss") {

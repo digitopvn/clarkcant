@@ -4,8 +4,10 @@ import {
   type NoticeCategory,
   type NoticeSeverity,
   type NoticeSourceKind,
+  type NoticeSubject,
   NOTICE_BODY_MAX,
   NOTICE_TITLE_MAX,
+  noticeSubjectSchema,
   redactSecrets,
 } from "@clarkcant/contracts";
 
@@ -32,6 +34,14 @@ export const MAX_NOTIFICATIONS = 200;
  */
 export const DISMISSED_RETENTION_MS = 30 * 24 * 60 * 60_000;
 
+/**
+ * How long after a dismissal it can still be undone.
+ *
+ * The surface offers Undo for a few seconds; the node accepts it for longer, so a slow round trip or a person who
+ * pressed it at the last moment is not refused. Past this, the dismissal is a decision, and the notice stays gone.
+ */
+export const DISMISS_UNDO_WINDOW_MS = 5 * 60_000;
+
 export interface RecordNotificationInput {
   notificationId: string;
   principalId: string;
@@ -42,6 +52,8 @@ export interface RecordNotificationInput {
   body?: string;
   conversationId?: string;
   originNodeId?: string;
+  /** What the notice is about. Stored as the pointer only; what can be done with it is worked out when it is read. */
+  subject?: NoticeSubject;
   /**
    * The producer's own name for this event: `background:<sessionId>`, `worker:<taskId>`, later
    * `update:<packageId>@<version>` or a peer's message id. The same key twice is one notice.
@@ -61,7 +73,11 @@ interface NotificationRow {
   origin_node_id: string | null;
   created_at: string;
   read_at: string | null;
+  subject: string | null;
 }
+
+const NOTIFICATION_COLUMNS = `notification_id, source_kind, category, severity, title, body, conversation_id, origin_node_id,
+            created_at, read_at, subject`;
 
 /** Redacted and bounded here rather than at every producer: this is the one door text comes through. */
 function clean(text: string, max: number): string {
@@ -110,8 +126,8 @@ export function recordNotification(
     db.prepare(
       `INSERT INTO notifications
          (notification_id, principal_id, source_kind, category, severity, title, body,
-          conversation_id, origin_node_id, dedup_key, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          conversation_id, origin_node_id, dedup_key, created_at, subject)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     ).run(
       input.notificationId,
       input.principalId,
@@ -124,6 +140,7 @@ export function recordNotification(
       input.originNodeId ?? null,
       dedupKey,
       input.at,
+      input.subject === undefined ? null : JSON.stringify(noticeSubjectSchema.parse(input.subject)),
     );
 
     const dismissedBefore = new Date(Date.parse(input.at) - DISMISSED_RETENTION_MS).toISOString();
@@ -142,7 +159,19 @@ export function recordNotification(
   });
 }
 
+/** A stored subject, read back only if it is still one this version knows; anything else is as if there were none. */
+function subjectFromColumn(column: string | null): NoticeSubject | undefined {
+  if (column === null) return undefined;
+  try {
+    const parsed = noticeSubjectSchema.safeParse(JSON.parse(column));
+    return parsed.success ? parsed.data : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 function noticeFromRow(row: NotificationRow): Notice {
+  const subject = subjectFromColumn(row.subject);
   // SAFETY: every column below was written by `recordNotification` from the contract's own enums, and the route
   // that serves the list parses the response with `inboxResponseSchema` in the client.
   return {
@@ -156,6 +185,7 @@ function noticeFromRow(row: NotificationRow): Notice {
     ...(row.origin_node_id === null ? {} : { originNodeId: row.origin_node_id }),
     createdAt: row.created_at as Instant,
     ...(row.read_at === null ? {} : { readAt: row.read_at as Instant }),
+    ...(subject === undefined ? {} : { subject }),
   };
 }
 
@@ -163,8 +193,7 @@ function noticeFromRow(row: NotificationRow): Notice {
 export function listNotifications(db: Database, principalId: string, limit = 50): Notice[] {
   return allRows<NotificationRow>(
     db,
-    `SELECT notification_id, source_kind, category, severity, title, body, conversation_id, origin_node_id,
-            created_at, read_at
+    `SELECT ${NOTIFICATION_COLUMNS}
        FROM notifications
       WHERE principal_id = ? AND dismissed_at IS NULL
       ORDER BY created_at DESC, rowid DESC
@@ -172,6 +201,26 @@ export function listNotifications(db: Database, principalId: string, limit = 50)
     principalId,
     Math.max(1, Math.min(limit, MAX_NOTIFICATIONS)),
   ).map(noticeFromRow);
+}
+
+/**
+ * One notice of this principal, whether or not it is still in the list.
+ *
+ * `dismissed` says which: a message that pointed at a notice still describes what it pointed at after the notice was
+ * dismissed, while a new reference to it is refused.
+ */
+export function getNotification(
+  db: Database,
+  principalId: string,
+  notificationId: string,
+): { notice: Notice; dismissed: boolean } | undefined {
+  const row = oneRow<NotificationRow & { dismissed_at: string | null }>(
+    db,
+    `SELECT ${NOTIFICATION_COLUMNS}, dismissed_at FROM notifications WHERE principal_id = ? AND notification_id = ?`,
+    principalId,
+    notificationId,
+  );
+  return row === undefined ? undefined : { notice: noticeFromRow(row), dismissed: row.dismissed_at !== null };
 }
 
 export function countUnreadNotifications(db: Database, principalId: string): number {
@@ -225,4 +274,52 @@ export function dismissNotification(
     )
     .run(input.at, input.at, input.principalId, input.notificationId);
   return Number(result.changes) > 0;
+}
+
+/**
+ * Mark notices unread again: attention state only, so a notice already dismissed is not touched — marking it unread
+ * must not bring it back.
+ */
+export function markNotificationsUnread(
+  db: Database,
+  input: { principalId: string; notificationIds: readonly string[] },
+): number {
+  if (input.notificationIds.length === 0) return 0;
+  return transaction(db, () => {
+    const statement = db.prepare(
+      `UPDATE notifications SET read_at = NULL
+        WHERE principal_id = ? AND notification_id = ? AND dismissed_at IS NULL AND read_at IS NOT NULL`,
+    );
+    let changed = 0;
+    for (const id of input.notificationIds) changed += Number(statement.run(input.principalId, id).changes);
+    return changed;
+  });
+}
+
+/**
+ * Undo a dismissal, while it is recent enough to be an undo (`DISMISS_UNDO_WINDOW_MS`).
+ *
+ * The notice comes back as it was dismissed, read: dismissing marked it read, and the person has seen it. Refused
+ * once the window has passed, so an old dismissal cannot be reversed by replaying the request later.
+ */
+export function restoreNotification(
+  db: Database,
+  input: { principalId: string; notificationId: string; at: Instant },
+): "restored" | "not-dismissed" | "expired" | "not-found" {
+  return transaction(db, () => {
+    const row = oneRow<{ dismissed_at: string | null }>(
+      db,
+      "SELECT dismissed_at FROM notifications WHERE principal_id = ? AND notification_id = ?",
+      input.principalId,
+      input.notificationId,
+    );
+    if (row === undefined) return "not-found";
+    if (row.dismissed_at === null) return "not-dismissed";
+    if (Date.parse(input.at) - Date.parse(row.dismissed_at) > DISMISS_UNDO_WINDOW_MS) return "expired";
+    db.prepare("UPDATE notifications SET dismissed_at = NULL WHERE principal_id = ? AND notification_id = ?").run(
+      input.principalId,
+      input.notificationId,
+    );
+    return "restored";
+  });
 }

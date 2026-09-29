@@ -1,4 +1,13 @@
-import type { EffectCategory, InboxSummary, Notice, NoticeSeverity, NoticeSourceKind, WaitingItem } from "@clarkcant/contracts";
+import type {
+  ComposerReference,
+  EffectCategory,
+  InboxSummary,
+  Notice,
+  NoticeAction,
+  NoticeSeverity,
+  NoticeSourceKind,
+  WaitingItem,
+} from "@clarkcant/contracts";
 
 import type { MessageKey } from "../i18n/messages.ts";
 
@@ -239,4 +248,46 @@ export function canOpenOtherConversation(state: {
   hasAttachments: boolean;
 }): boolean {
   return !state.busy && !state.voiceOpen && !state.draftNonEmpty && !state.hasAttachments;
+}
+
+/**
+ * The conversation "Open" leads to: the one the notice's subject names, else the one the notice was written for. The
+ * node has already said whether that conversation still exists (an `open` action marked `conversation-gone`), so this
+ * only answers where, never whether.
+ */
+export function noticeConversationTarget(notice: Notice): string | undefined {
+  const subject = notice.subject;
+  if (subject !== undefined && "conversationId" in subject && subject.conversationId !== undefined) return subject.conversationId;
+  return notice.conversationId;
+}
+
+/** Longest label a reference carries (`composer-references.ts`); a longer title is cut at a word where it can be. */
+const REFERENCE_LABEL_MAX = 120;
+
+/**
+ * The reference "Ask Clark" and "Add to context" put on a message: a `notice` composer reference, checked and stored
+ * like the ones chosen after `@`, labelled with the notice's title so the chip reads as what it points at.
+ */
+export function noticeReference(notice: Notice): { key: string; ref: Extract<ComposerReference, { kind: "notice" }> } {
+  const title = notice.title.replace(/\s+/g, " ").trim();
+  let label = title;
+  if (label.length > REFERENCE_LABEL_MAX) {
+    const cut = label.slice(0, REFERENCE_LABEL_MAX - 1);
+    const space = cut.lastIndexOf(" ");
+    label = `${(space > REFERENCE_LABEL_MAX / 2 ? cut.slice(0, space) : cut).trimEnd()}…`;
+  }
+  return { key: `notice:${notice.noticeId}`, ref: { kind: "notice", noticeId: notice.noticeId, label: label === "" ? notice.noticeId : label } };
+}
+
+/**
+ * A notice's actions split the way the row draws them: at most two buttons, and the rest behind "More". A notice read
+ * from a node that does not work out actions yet keeps the two it always had, "Open" and "Dismiss".
+ */
+export function noticeActionGroups(notice: Notice): { buttons: NoticeAction[]; menu: NoticeAction[] } {
+  const list: readonly NoticeAction[] = notice.actions ?? [
+    ...(notice.conversationId === undefined ? [] : [{ id: "open", placement: "secondary" } as const]),
+    { id: "dismiss", placement: "secondary" } as const,
+  ];
+  const order = (placement: NoticeAction["placement"]) => list.filter((action) => action.placement === placement);
+  return { buttons: [...order("primary"), ...order("secondary")].slice(0, 2), menu: order("menu") };
 }

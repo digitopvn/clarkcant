@@ -404,9 +404,24 @@ The inbox (`apps/runtime/src/inbox.ts`, `routes/inbox.ts`) gathers two things wi
     detect a new commit whose publisher did not bump the version — there is no way to know a git ref has a newer
     version short of cloning it, and this module does not pretend to.
 
+  - **Subject and actions** (#196). A notice may name what it is about in a typed `subject` (migration 31: `task`,
+    `background-work`, `conversation`, `package`, `pi-update`, `peer`); a subject of an unknown kind is refused before
+    anything is written, and one stored by a later version that this node cannot read is dropped on read rather than
+    failing the list. The actions a notice offers are **not stored**: `apps/runtime/src/notice-actions.ts`
+    (`noticeActionsFor`) works them out on every read from the subject and the current state — the conversation a task
+    now belongs to, whether that conversation still exists — from a closed list the host implements (`open`,
+    `ask-clark`, `add-to-context`, `mark-read`/`mark-unread`, `dismiss`), each placed `primary`, `secondary` or
+    `menu`. A producer never contributes an action. "Ask Clark" and "Add to context" carry the notice as a `notice`
+    composer reference; `composer-references.ts` re-reads it for the owner and quotes its text in the turn brief as
+    data.
+
 Routes: `GET /inbox`, `GET /inbox/summary` (two numbers for the header badge), `POST /inbox/read` (`noticeIds` or all),
-`POST /inbox/notices/:id/dismiss`. The contract is in `packages/contracts/src/inbox.ts`. UI in DESIGN.md §6.7; opened with
-the `inbox.open` intent (text, voice, `control_app`). The agent reads the same data through the read-only tool `read_inbox`
+`POST /inbox/unread` (`noticeIds`, required and non-empty; only this principal's undismissed notices),
+`POST /inbox/notices/:id/dismiss`, `POST /inbox/notices/:id/restore` (undoes a dismissal within five minutes —
+`DISMISS_UNDO_WINDOW_MS` — and answers `409 UNDO_EXPIRED` after; a restored notice comes back read). These routes are
+not part of the stable open-interface description. The contract is in `packages/contracts/src/inbox.ts`. UI in
+DESIGN.md §6.7; opened with the `inbox.open` intent (text, voice, `control_app`), and `inbox.ask` asks Clark about the
+newest notice. The agent reads the same data through the read-only tool `read_inbox`
 (`apps/runtime/src/read-inbox-tool.ts`): it does not mark anything as read (the user has not seen it yet) and cannot decide anything
 (the model is not the user).
 

@@ -236,6 +236,7 @@ export function startAutomationService(
           title: "Việc tự động đang chờ",
           body: text,
           conversationId: prepared.intent.conversationId,
+          subject: { kind: "task", taskId: prepared.taskId, conversationId: prepared.intent.conversationId },
           dedupKey: `automation:${run.runId}`,
           at: now(),
         });
@@ -254,6 +255,7 @@ export function startAutomationService(
           title: prepared.intent.summary,
           body: text,
           conversationId: prepared.intent.conversationId,
+          subject: { kind: "task", taskId: prepared.taskId, conversationId: prepared.intent.conversationId },
           dedupKey: `automation:${run.runId}`,
           at: now(),
         });

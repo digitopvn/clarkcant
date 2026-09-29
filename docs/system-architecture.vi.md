@@ -410,10 +410,23 @@ Hộp thư (`apps/runtime/src/inbox.ts`, `routes/inbox.ts`) gom hai thứ khác 
   - Gói nguồn `git` chỉ so trên `version` field mà directory entry khai báo, không phát hiện được một commit mới mà
     publisher không tự bump version — không có cách nào biết bản mới hơn của một git ref ngoài việc clone và xem,
     và module này không giả vờ làm được điều đó.
+  - **Subject và thao tác** (#196). Một thông báo có thể nêu nó nói về cái gì qua `subject` có kiểu (migration 31:
+    `task`, `background-work`, `conversation`, `package`, `pi-update`, `peer`); subject thuộc loại không biết bị từ chối
+    trước khi ghi bất cứ gì, còn subject do một phiên bản sau lưu mà node này không đọc được thì bị bỏ khi đọc thay vì
+    làm hỏng cả danh sách. Thao tác của một thông báo **không được lưu**: `apps/runtime/src/notice-actions.ts`
+    (`noticeActionsFor`) tính lại ở mỗi lần đọc từ subject và trạng thái hiện tại — hội thoại mà task giờ thuộc về, hội
+    thoại đó còn tồn tại không — trong một danh sách đóng do host cài đặt (`open`, `ask-clark`, `add-to-context`,
+    `mark-read`/`mark-unread`, `dismiss`), mỗi thao tác đặt ở `primary`, `secondary` hoặc `menu`. Nơi tạo thông báo
+    không bao giờ góp thêm thao tác. "Hỏi Clark" và "Thêm vào ngữ cảnh" mang thông báo dưới dạng tham chiếu `notice`
+    của ô soạn; `composer-references.ts` đọc lại nó cho chủ sở hữu và trích nội dung vào brief của lượt dưới dạng dữ
+    liệu.
 
 Route: `GET /inbox`, `GET /inbox/summary` (hai số cho dấu trên header), `POST /inbox/read` (`noticeIds` hoặc tất cả),
-`POST /inbox/notices/:id/dismiss`. Contract ở `packages/contracts/src/inbox.ts`. UI ở DESIGN.vi.md §6.7; mở bằng
-intent `inbox.open` (text, voice, `control_app`). Agent đọc cùng dữ liệu đó qua tool chỉ đọc `read_inbox`
+`POST /inbox/unread` (`noticeIds`, bắt buộc và không rỗng; chỉ các thông báo chưa bỏ của principal này),
+`POST /inbox/notices/:id/dismiss`, `POST /inbox/notices/:id/restore` (hoàn tác việc bỏ trong năm phút —
+`DISMISS_UNDO_WINDOW_MS` — quá hạn thì trả `409 UNDO_EXPIRED`; thông báo được đưa lại trở về ở trạng thái đã đọc). Các
+route này không thuộc mô tả open-interface ổn định. Contract ở `packages/contracts/src/inbox.ts`. UI ở DESIGN.vi.md
+§6.7; mở bằng intent `inbox.open` (text, voice, `control_app`), còn `inbox.ask` hỏi Clark về thông báo mới nhất. Agent đọc cùng dữ liệu đó qua tool chỉ đọc `read_inbox`
 (`apps/runtime/src/read-inbox-tool.ts`): không đánh dấu đã đọc (người dùng chưa nhìn thấy) và không quyết định được gì
 (model không phải người dùng).
 
