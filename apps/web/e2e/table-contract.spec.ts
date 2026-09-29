@@ -67,6 +67,12 @@ const BOM = String.fromCharCode(0xfeff);
 
 test("a table sorts, pages, searches, selects and exports a CSV with its formulas defused", async ({ page }) => {
   mkdirSync(EVIDENCE, { recursive: true });
+  // Reduced motion, so the transcript scrolls instantly. When a click has to retry (the table is still settling), Playwright
+  // brings the target into view with `Element.scrollIntoView`, which follows the transcript's smooth scrolling: the call
+  // returns with the target where it was and it glides into place over the next frames, so the click lands on the spot it
+  // is leaving. On CI that missed the table's next-page button. What this test proves does not depend on the scroll being
+  // animated.
+  await page.emulateMedia({ reducedMotion: "reduce" });
   await page.setViewportSize({ width: 1280, height: 900 });
   const widget = await openRevenueTable(page);
 

@@ -78,8 +78,13 @@ afterAll(async () => {
   await closeServer();
   services.runtime.close();
   await new Promise<void>((resolve) => server.close(() => resolve()));
-  rmSync(profiles, { recursive: true, force: true });
-  rmSync(dataDir, { recursive: true, force: true });
+  /*
+   * Windows can still hold a file in a closed browser's profile for a moment: `driver.close()` waits for the browser,
+   * not for every helper process Chromium started beside it, and removing the directory then fails with EPERM. Retry
+   * as the other suites that remove a directory a process just let go of do.
+   */
+  rmSync(profiles, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+  rmSync(dataDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
 });
 
 /**

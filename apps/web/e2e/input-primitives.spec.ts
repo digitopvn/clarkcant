@@ -56,12 +56,16 @@ async function place(page: Page, what: "biểu mẫu" | "danh sách" | "danh sá
  * Wait for a widget to hold still. Everything that lands in the conversation comes up and settles, scaled a little on the
  * way, and a pressed button gives a little and springs back a moment after the press, so a size read during either is
  * the size of a moment rather than of the control. Still means nothing in or around the widget moving for a few frames
- * in a row; a looping animation never stops and is not counted.
+ * in a row; a looping animation never stops and is not counted. A button a finger has just tapped counts as moving until
+ * the browser lets go of it: it stays pressed for a moment after the tap, and under reduced motion the press is a step
+ * with no transition running, so nothing else says it is not at rest (a 44px button measured 42.68px for about 80ms).
  */
 async function settled(target: Locator): Promise<void> {
   await target.evaluate(async (element) => {
     const frame = (): Promise<number> => new Promise((resolve) => requestAnimationFrame(resolve));
     const moving = (): boolean =>
+      element.matches(":active") ||
+      element.querySelector(":active") !== null ||
       document.getAnimations().some((animation) => {
         const node = animation.effect instanceof KeyframeEffect ? animation.effect.target : null;
         return (
@@ -312,7 +316,18 @@ test("a search box in a composed surface narrows the table beside it, and nothin
 
 test("a form and a list read at phone width, and a finger can use them", async ({ browser }, testInfo) => {
   test.setTimeout(120_000);
-  const context = await browser.newContext({ viewport: { width: 375, height: 812 }, hasTouch: true, isMobile: true });
+  // Reduced motion, so the transcript scrolls instantly. When a tap has to retry (the form is still arriving), Playwright
+  // brings the target into view with `Element.scrollIntoView`, which follows the transcript's smooth scrolling: the call
+  // returns with the target where it was and it glides into place over the next frames (755px to 647px over 11 frames,
+  // measured here), so the tap lands on the spot it is leaving. On CI that missed the chip, a list item's checkbox and the
+  // list's next page. What this test proves (the layout at phone width, and that a finger can use every control) does not
+  // depend on the scroll being animated.
+  const context = await browser.newContext({
+    viewport: { width: 375, height: 812 },
+    hasTouch: true,
+    isMobile: true,
+    reducedMotion: "reduce",
+  });
   const page = await context.newPage();
   try {
     await openApp(page);
