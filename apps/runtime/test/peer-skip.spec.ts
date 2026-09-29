@@ -143,13 +143,18 @@ function failedTimes(node: LiveNode, messageId: string, attempts: number): boole
   return row.dead_lettered_at !== null || (row.next_attempt_at !== null && row.last_attempt_at !== null && row.next_attempt_at > row.last_attempt_at);
 }
 
-/** Retry one refused message until it is given up on, moving the sender's clock past each backoff. */
-async function giveUpOn(node: Clark, messageId: string, explain: () => unknown): Promise<void> {
-  await waitUntil(() => failedTimes(node, messageId, 1), "the first refusal", explain);
+/**
+ * Retry one refused message until it is given up on, moving the sender's clock past each backoff. Messages named in
+ * `alongside` are tried in the same passes: the clock moves only once each of them has failed that attempt too, since a
+ * failure recorded after the clock moved is backed off from the moved clock and would not be due on the next pass.
+ */
+async function giveUpOn(node: Clark, messageId: string, explain: () => unknown, alongside: readonly string[] = []): Promise<void> {
+  const failedAll = (attempt: number): boolean => [messageId, ...alongside].every((id) => failedTimes(node, id, attempt));
+  await waitUntil(() => failedAll(1), "the first refusal", explain);
   for (let attempt = 2; attempt <= MAX_OUTBOX_ATTEMPTS; attempt += 1) {
     node.skip(16 * 60_000);
     node.services.peerDelivery?.kick();
-    await waitUntil(() => failedTimes(node, messageId, attempt), `attempt ${String(attempt)}`, explain);
+    await waitUntil(() => failedAll(attempt), `attempt ${String(attempt)}`, explain);
   }
   expect(rowOf(node, messageId)?.dead_lettered_at).not.toBeNull();
 }
@@ -659,14 +664,14 @@ describe("a message given up on, to a peer too old to take a skip", () => {
 
     // Queued together, before the pass the first one starts: both are tried on every pass from the first.
     const lost = queueRaw(a, b, "notice", {});
-    queueRaw(a, b, "signal", signalPayload(a, "after-1"));
+    const after = queueRaw(a, b, "signal", signalPayload(a, "after-1"));
     const explain = (): unknown => ({ outbox: outboxOf(a), notices: noticesOn(a, "peer-") });
     await waitUntil(() => failedTimes(a, lost, 1), "the first refusal", explain);
     // B refuses what follows for the gap, as before; nothing was given up on yet, so nothing is stuck yet.
     await waitUntil(() => outboxOf(a).at(-1)?.last_error === "the peer answered 409", "the gap refusal", explain);
     expect(noticesOn(a, "peer-stuck:")).toEqual([]);
 
-    await giveUpOn(a, lost, explain);
+    await giveUpOn(a, lost, explain, [after]);
     await waitUntil(() => noticesOn(a, "peer-stuck:").length === 1, "the stuck notice", explain);
     // Still refused there, and more passes say nothing new.
     a.skip(60 * 60_000);
@@ -697,9 +702,9 @@ describe("a message given up on, to a peer too old to take a skip", () => {
     const peerB = identityOf(b).nodeId;
     // Queued together, before the pass the first one starts: both are tried on every pass from the first.
     const lost = queueRaw(a, b, "notice", {});
-    queueRaw(a, b, "signal", signalPayload(a, "after-1"));
+    const after = queueRaw(a, b, "signal", signalPayload(a, "after-1"));
     const explain = (): unknown => ({ outbox: outboxOf(a), notices: noticesOn(a, "peer-") });
-    await giveUpOn(a, lost, explain);
+    await giveUpOn(a, lost, explain, [after]);
     await waitUntil(() => noticesOn(a, "peer-stuck:").length === 1, "the stuck notice", explain);
     // What followed was refused for the gap as often as the lost one was refused, and given up on with it.
     expect(outboxOf(a).map((row) => row.dead_lettered_at !== null)).toEqual([false, true, true]);
