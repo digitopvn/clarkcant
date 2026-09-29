@@ -51,7 +51,7 @@ import {
 
 import { repositoryBindingRefusal, triggerBrief } from "./automation-service.ts";
 import type { NodeIdentity } from "./node.ts";
-import { describeResultArtifacts, prepareDelegatedArtifacts, queueArtifactOffers } from "./delegated-artifacts.ts";
+import { describeResultArtifacts, prepareDelegatedArtifacts, queueArtifactOffers, returnableFileBytes } from "./delegated-artifacts.ts";
 import { type TaskDispatcher, type TaskOutputFile, stopTask } from "./task-dispatch.ts";
 
 /**
@@ -471,8 +471,9 @@ export function queueResult(
  *
  * `ran` is false for a task that ended before its worker did anything, such as one whose approval was refused here.
  * `files` are what its worker wrote, read from `dataDir`'s side of the disk: each one this node can still vouch for is
- * offered back ahead of the answer, which names them, to a peer that said it takes them. Read before this returns,
- * since a task's worktree goes once it is reported.
+ * offered back ahead of the answer, which names them, to a peer that said it takes them — only when the grant the task
+ * came under asks for files and this node's owner's allowance lets them go back, within both budgets. Read before this
+ * returns, since a task's worktree goes once it is reported; a run that may send nothing back reads and stores nothing.
  */
 export function reportDelegatedOutcome(
   deps: DelegationDeps,
@@ -488,11 +489,17 @@ export function reportDelegatedOutcome(
   if (task?.origin?.kind !== "delegated") return false;
   const peer = task.origin.peerNodeId;
   const ran = input.ran ?? true;
-  const offering =
+  const returnable =
     ran && input.files !== undefined && input.files.outputs.length > 0 && (getPeer(deps.db, peer)?.features ?? []).includes("artifacts")
-      ? prepareDelegatedArtifacts(input.files.dataDir, input.files.outputs)
+      ? returnableFileBytes(deps.db, task, deps.now())
       : undefined;
-  const left = offering === undefined || offering.left.length === 0 ? "" : ` Không gửi về: ${offering.left.join("; ")}.`;
+  const offering =
+    input.files !== undefined && returnable !== undefined && returnable.bytes > 0
+      ? prepareDelegatedArtifacts(input.files.dataDir, input.files.outputs, returnable.bytes)
+      : undefined;
+  // The peer asked for files and this node's owner has not let any go back: said, so no one waits for them there.
+  const kept = returnable?.asked === true && returnable.bytes === 0 ? " Tệp việc này ghi vẫn ở lại máy này: chủ máy này chưa cho phép gửi tệp về." : "";
+  const left = offering === undefined || offering.left.length === 0 ? kept : ` Không gửi về: ${offering.left.join("; ")}.`;
   const message = (input.message.slice(0, 1000 - left.length) || input.outcome) + left;
   const answer = (): void => {
     const artifacts =

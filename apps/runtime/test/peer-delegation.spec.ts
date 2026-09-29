@@ -1103,19 +1103,30 @@ describe("the files a task handed to another Clark brings back", { timeout: 60_0
   const writtenDigest = `sha256:${createHash("sha256").update(written).digest("hex")}`;
   const writtenBytes = Buffer.byteLength(written);
 
-  /** A and B paired by this build, each saying what it takes, with B's owner letting A write in B's folder. */
-  async function allowingDesks(options: { advertise?: boolean } = { advertise: true }): Promise<{ a: Clark; b: Clark; onA: string }> {
+  /**
+   * A and B paired by this build, each saying what it takes, with B's owner letting A write in B's folder and letting
+   * `returnBytes` of what a run writes there go back to A (none when it is left out).
+   */
+  async function allowingDesks(
+    options: { advertise?: boolean; returnBytes?: number } = { advertise: true, returnBytes: 4096 },
+  ): Promise<{ a: Clark; b: Clark; onA: string; allowed: string }> {
     const a = await startClark("desk");
     const b = await startClark("laptop");
-    await pair(a, b, options);
+    await pair(a, b, { advertise: options.advertise ?? true });
     const onA = await conversation(a, "Ghi chú");
     const onB = await conversation(b, "Máy bàn");
-    await tools(b, onB)("allow_peer_tasks", {
+    const allowed = await tools(b, onB)("allow_peer_tasks", {
       peer: identityOf(a).nodeId,
       folders: [{ path: b.root, access: "write" }],
       allowedEffects: ["read", "local-write"],
+      ...(options.returnBytes === undefined ? {} : { maxArtifactBytes: options.returnBytes }),
     });
-    return { a, b, onA };
+    return { a, b, onA, allowed };
+  }
+
+  /** Whether B's blob store holds the bytes the task wrote: only a file it offered is ever copied there. */
+  function heldOnB(b: Clark): boolean {
+    return blobPathForDigest({ dataDir: b.services.runtime.dataDir, digest: writtenDigest }) !== undefined;
   }
 
   async function ranTask(a: Clark, onA: string, outcome: "Xong" | "Không xong" = "Xong"): Promise<string> {
@@ -1125,9 +1136,10 @@ describe("the files a task handed to another Clark brings back", { timeout: 60_0
   }
 
   it("brings a file the task wrote back to the sender within its owner's byte budget, and shows it with the result", async () => {
-    const { a, b, onA } = await allowingDesks();
+    const { a, b, onA, allowed } = await allowingDesks();
+    expect(allowed).toContain("Files a run writes here go back to it when it asks, up to 4096 bytes per run.");
     const setUp = await handToLaptop(a, b, onA, [{ path: b.root, access: "write" }], ["read", "local-write"], { maxArtifactBytes: 1024 });
-    expect(setUp).toContain("Files a run writes there come back here, up to 1024 bytes per run.");
+    expect(setUp).toContain("Files a run writes there come back here, up to 1024 bytes per run, once that node's owner also lets");
 
     const taskId = await ranTask(a, onA);
     await waitUntil(() => listTaskArtifacts(a.services.runtime.db, taskId, "received")[0]?.state === "received", "the file to reach A");
@@ -1145,6 +1157,7 @@ describe("the files a task handed to another Clark brings back", { timeout: 60_0
       { artifactId: offered.artifactId, digest: writtenDigest, name: "notes.md", sizeBytes: writtenBytes, mimeType: "text/markdown" },
     ]);
     expect(listTaskArtifacts(b.services.runtime.db, taskId, "offered")).toMatchObject([{ peerArtifactId: offered.artifactId, state: "offered" }]);
+    expect(heldOnB(b)).toBe(true);
     // The offer names the file by where it sits in the folder, and carries no path on B.
     const offerDocument = JSON.stringify(offer);
     expect(offerDocument).not.toContain(JSON.stringify(b.root).slice(1, -1));
@@ -1222,41 +1235,67 @@ describe("the files a task handed to another Clark brings back", { timeout: 60_0
     expect(resumeArtifactIntake(artifactIntakeDeps(a.services, now))).toBe(0);
   });
 
-  it("refuses a file larger than the sender's byte budget, and says why with the result", async () => {
+  it("leaves on the running node a file larger than the sender's byte budget, stores no copy, and says why", async () => {
     const { a, b, onA } = await allowingDesks();
     await handToLaptop(a, b, onA, [{ path: b.root, access: "write" }], ["read", "local-write"], { maxArtifactBytes: 4 });
 
     const taskId = await ranTask(a, onA);
+    await waitUntil(() => pendingOutbox(b.services.runtime.db).length === 0, "B's answer to be delivered");
 
+    // B knows the sender takes 4 bytes, so it offers nothing the sender would refuse and copies nothing to offer.
     expect(said(a, onA).find((text) => text.startsWith(`Xong (task ${taskId})`))).toContain(
-      `Tệp: không nhận notes.md: the file is ${String(writtenBytes)} bytes and the automation allows 4 bytes of files back per run.`,
+      "Không gửi về: notes.md (vượt 4 byte cho cả việc).",
     );
-    expect(listTaskArtifacts(a.services.runtime.db, taskId, "received")).toMatchObject([{ state: "refused", digest: writtenDigest }]);
+    expect(sentBy(b).filter((envelope) => envelope.kind === "artifact.offer")).toEqual([]);
+    expect(listTaskArtifacts(b.services.runtime.db, taskId, "offered")).toEqual([]);
+    expect(heldOnB(b)).toBe(false);
+    expect(listTaskArtifacts(a.services.runtime.db, taskId, "received")).toEqual([]);
     expect(allRows(a.services.runtime.db, "SELECT artifact_id FROM artifacts")).toEqual([]);
     expect(blobPathForDigest({ dataDir: a.services.runtime.dataDir, digest: writtenDigest })).toBeUndefined();
     expect(shownFiles(a, onA)).toEqual([]);
-    expect(sentBy(b).filter((envelope) => envelope.kind === "artifact.offer")).toHaveLength(1);
+    expect(readFileSync(join(b.root, "notes.md"), "utf8")).toBe(written);
   });
 
-  it("takes no file back when the sender's owner allowed no bytes, and says so", async () => {
+  it("is offered no file when the sender's owner allowed no bytes, and the running node copies none", async () => {
     const { a, b, onA } = await allowingDesks();
     const setUp = await handToLaptop(a, b, onA, [{ path: b.root, access: "write" }], ["read", "local-write"]);
     expect(setUp).toContain("Files a run writes there stay there; set maxArtifactBytes to bring them back here.");
 
     const taskId = await ranTask(a, onA);
+    await waitUntil(() => pendingOutbox(b.services.runtime.db).length === 0, "B's answer to be delivered");
+
+    expect(said(a, onA).find((text) => text.startsWith(`Xong (task ${taskId})`))).not.toContain("Tệp");
+    expect(sentBy(b).filter((envelope) => envelope.kind === "artifact.offer")).toEqual([]);
+    expect(listTaskArtifacts(b.services.runtime.db, taskId, "offered")).toEqual([]);
+    expect(heldOnB(b)).toBe(false);
+    expect(listTaskArtifacts(a.services.runtime.db, taskId, "received")).toEqual([]);
+    expect(allRows(a.services.runtime.db, "SELECT artifact_id FROM artifacts")).toEqual([]);
+    expect(blobPathForDigest({ dataDir: a.services.runtime.dataDir, digest: writtenDigest })).toBeUndefined();
+    expect(readFileSync(join(b.root, "notes.md"), "utf8")).toBe(written);
+  });
+
+  it("keeps the files on the running node when its owner let none go back, though the sender asked, and says so", async () => {
+    const { a, b, onA, allowed } = await allowingDesks({ advertise: true });
+    expect(allowed).toContain("Files its runs write here stay here.");
+    await handToLaptop(a, b, onA, [{ path: b.root, access: "write" }], ["read", "local-write"], { maxArtifactBytes: 1024 });
+
+    const taskId = await ranTask(a, onA);
+    await waitUntil(() => pendingOutbox(b.services.runtime.db).length === 0, "B's answer to be delivered");
 
     expect(said(a, onA).find((text) => text.startsWith(`Xong (task ${taskId})`))).toContain(
-      "Tệp: không nhận notes.md: the automation that handed this task over allows no file bytes back.",
+      "Tệp việc này ghi vẫn ở lại máy này: chủ máy này chưa cho phép gửi tệp về.",
     );
-    expect(listTaskArtifacts(a.services.runtime.db, taskId, "received")).toMatchObject([{ state: "refused" }]);
-    expect(allRows(a.services.runtime.db, "SELECT artifact_id FROM artifacts")).toEqual([]);
+    expect(sentBy(b).filter((envelope) => envelope.kind === "artifact.offer")).toEqual([]);
+    expect(listTaskArtifacts(b.services.runtime.db, taskId, "offered")).toEqual([]);
+    expect(heldOnB(b)).toBe(false);
+    expect(listTaskArtifacts(a.services.runtime.db, taskId, "received")).toEqual([]);
     expect(blobPathForDigest({ dataDir: a.services.runtime.dataDir, digest: writtenDigest })).toBeUndefined();
     expect(readFileSync(join(b.root, "notes.md"), "utf8")).toBe(written);
   });
 
   it("offers nothing to a sender that has not said it takes files, and answers it as before", async () => {
     // Paired as a build from before this: B has not heard A say it takes files when the task ends.
-    const { a, b, onA } = await allowingDesks({ advertise: false });
+    const { a, b, onA } = await allowingDesks({ advertise: false, returnBytes: 4096 });
     await handToLaptop(a, b, onA, [{ path: b.root, access: "write" }], ["read", "local-write"], { maxArtifactBytes: 1024 });
     expect(getPeer(b.services.runtime.db, identityOf(a).nodeId)?.features ?? []).not.toContain("artifacts");
 
@@ -1270,6 +1309,7 @@ describe("the files a task handed to another Clark brings back", { timeout: 60_0
     expect(said(a, onA).find((text) => text.startsWith(`Xong (task ${taskId})`))).not.toContain("Tệp:");
     expect(listTaskArtifacts(a.services.runtime.db, taskId, "received")).toEqual([]);
     expect(listTaskArtifacts(b.services.runtime.db, taskId, "offered")).toEqual([]);
+    expect(heldOnB(b)).toBe(false);
   });
 });
 

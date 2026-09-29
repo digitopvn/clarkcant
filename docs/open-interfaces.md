@@ -182,6 +182,11 @@ by its own owner's grant for that task: its `budget.maxArtifactBytes`, counted a
 0 takes no file. It then pulls an accepted file from `GET /peers/artifacts/{digest}` with its derived peer token; the
 offering node serves a digest only to the peer it offered it to (`401` without a peer token, `404` otherwise, the same
 as an unknown digest), and the sender reads no more than the size offered and checks the digest before storing it.
+The offering node offers files only when the sender's grant for the task sets a byte budget above 0 and its own
+owner's allowance for that sender sets one too (`allow_peer_tasks` takes `maxArtifactBytes`, 0 to 16 MiB; none when
+omitted), both covering the `internal` class, and within the smaller budget. It drops any path its worker reports
+outside the task's folders, never offers a markup or script type, and names each file it leaves out in the `result`
+message without storing it. Blocked MIME types are matched after lowercasing and dropping parameters.
 `create_automation` takes `maxArtifactBytes` (0 to 16 MiB, with an `executor` only). A sender that does not advertise
 `artifacts` is offered nothing. The envelope stays at protocol version 1; the advertised feature versions the offers
 and `evidence.artifacts`.

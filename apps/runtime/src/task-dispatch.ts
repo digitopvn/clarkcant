@@ -1,6 +1,6 @@
 import type { ChildProcess } from "node:child_process";
 import { realpathSync } from "node:fs";
-import { basename, isAbsolute, relative, sep } from "node:path";
+import { isAbsolute, relative, sep } from "node:path";
 
 import type {
   ApprovalId,
@@ -70,16 +70,31 @@ import type { WorkView } from "./work-supervisor.ts";
 export interface TaskOutputFile {
   path: string;
   sha256: string;
-  /** Relative to the root it was written under, with `/` between folders; the file's own name when none contains it. */
+  /** Relative to the root it was written under, with `/` between folders. */
   name: string;
 }
 
 /**
- * The name a written file has in the folder the task was given, so a person told about it recognises it without
- * learning where that folder is on this machine. Compared against each root as given and as the filesystem resolves
- * it, since the worker reports the resolved path.
+ * The files a worker reported writing that lie inside a folder the task was given to write, each named as it is in
+ * that folder. One reported anywhere else is left out: the worker's report is not trusted to reach past the task's
+ * folders, so nothing outside them is ever named, read or offered on from here.
  */
-function outputName(path: string, roots: readonly string[]): string {
+export function grantedOutputs(
+  reported: readonly { path: string; sha256: string }[],
+  roots: readonly string[],
+): TaskOutputFile[] {
+  return reported.flatMap((file) => {
+    const name = outputName(file.path, roots);
+    return name === undefined ? [] : [{ ...file, name }];
+  });
+}
+
+/**
+ * The name a written file has in the folder the task was given, so a person told about it recognises it without
+ * learning where that folder is on this machine; nothing when no such folder holds it. Compared against each root as
+ * given and as the filesystem resolves it, since the worker reports the resolved path.
+ */
+function outputName(path: string, roots: readonly string[]): string | undefined {
   for (const root of roots) {
     const candidates = [root];
     try {
@@ -92,7 +107,7 @@ function outputName(path: string, roots: readonly string[]): string {
       if (inside !== "" && !inside.startsWith("..") && !isAbsolute(inside)) return inside.split(sep).join("/");
     }
   }
-  return basename(path);
+  return undefined;
 }
 
 export interface TaskDispatcherDeps {
@@ -718,7 +733,7 @@ export function createTaskDispatcher(deps: TaskDispatcherDeps): TaskDispatcher {
       });
 
       journal((j) => j.taskEnded(job.taskId, outcome.outcome === "succeeded" ? "done" : "failed"));
-      const outputs = (result.outputs ?? []).map((file) => ({ ...file, name: outputName(file.path, write) }));
+      const outputs = grantedOutputs(result.outputs ?? [], write);
       settle(job, outcome.outcome, outcome.message, outputs);
     } catch (cause) {
       // A worker ended by a signal — a person's stop, the wall-clock budget, a crash — rejects rather than returning,

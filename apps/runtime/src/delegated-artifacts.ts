@@ -17,6 +17,7 @@ import {
   artifactOfferSchema,
   checkArtifactAcceptance,
   isTerminal,
+  mimeTypePermitted,
   peerTextAsData,
 } from "@clarkcant/contracts";
 import { recordEvidence } from "@clarkcant/core";
@@ -32,6 +33,7 @@ import {
   insertTaskArtifact,
   listAcceptedTaskArtifacts,
   listTaskArtifacts,
+  livePeerAllowance,
   nextOutboundSequence,
   settleReceivedTaskArtifact,
   upsertArtifact,
@@ -47,9 +49,12 @@ import type { TaskOutputFile } from "./task-dispatch.ts";
  * The files a task handed to a paired node brings back.
  *
  * The node that ran the task offers each file its worker wrote, one `artifact.offer` per file, queued before its
- * `result` so every offer has been decided by the time the result is read. It offers only what it can still vouch for
- * — the file as the worker last wrote it, by digest — and only within fixed bounds on count and bytes. It serves the
- * bytes of a file only to the node it offered that file to.
+ * `result` so every offer has been decided by the time the result is read. It offers files only when both owners said
+ * so: the grant the task arrived under names a byte budget for files (`maxArtifactBytes`), and this node's owner's own
+ * allowance for that peer names one too and covers the data class the files go back as. It offers only what it can
+ * still vouch for — the file as the worker last wrote it, by digest — within the smaller of the two budgets and fixed
+ * bounds on count and bytes, and never a type the other node always refuses; so nothing is copied into its blob store
+ * that the other node was never going to take. It serves the bytes of a file only to the node it offered that file to.
  *
  * The node that handed the task over decides each offer against its own owner's grant for that task, the one the
  * automation was set up with: its byte budget (`maxArtifactBytes`), counted across the task, its data classes, and the
@@ -58,10 +63,22 @@ import type { TaskOutputFile } from "./task-dispatch.ts";
  * recorded as an artifact from that peer, attached to the task's run as evidence, and shown where the result is said.
  */
 
-/** The file types this node takes from a peer, on top of the contract's own refusal of executable and markup types. */
+/**
+ * The file types a node takes from a peer for a task it handed over, on top of the contract's own refusal of
+ * executable, script and markup types. The node that ran the task checks the same before it offers anything.
+ */
 const RECEIVABLE_MIME_PREFIXES = ["text/", "image/", "application/"];
 
-/** Files a task's worker writes are text; a known extension says which kind, anything else is plain text. */
+/**
+ * The data class a file a task's worker wrote goes back as. The node that ran the task offers files only when its
+ * owner's allowance for that peer, and the grant the task came under, both cover it.
+ */
+const RETURNED_FILE_CLASSIFICATION = "internal";
+
+/**
+ * Files a task's worker writes are text; a known extension says which kind, anything else is plain text. Markup and
+ * script extensions are named for what they are, so they are never offered as plain text.
+ */
 const MIME_BY_EXTENSION: Record<string, string> = {
   md: "text/markdown",
   markdown: "text/markdown",
@@ -73,7 +90,11 @@ const MIME_BY_EXTENSION: Record<string, string> = {
   yml: "application/yaml",
   html: "text/html",
   htm: "text/html",
+  xhtml: "application/xhtml+xml",
   svg: "image/svg+xml",
+  js: "text/javascript",
+  mjs: "text/javascript",
+  cjs: "text/javascript",
 };
 
 function mimeTypeFor(name: string): string {
@@ -107,24 +128,55 @@ export interface PreparedArtifact {
 }
 
 /**
+ * How many bytes of files a task a peer handed here may send back to it, decided on this node: what the grant the task
+ * came under asks for (its `maxArtifactBytes`, so a node that said it takes no files is sent none), and what this
+ * node's owner's live allowance for that peer lets go back (its own `maxArtifactBytes`, and a data class covering the
+ * files), whichever is smaller. `asked` says whether the peer asked for files at all, so a run it asked for files from
+ * and was sent none can say why.
+ */
+export function returnableFileBytes(db: Database, task: TaskRecord, at: Instant): { asked: boolean; bytes: number } {
+  if (task.origin?.kind !== "delegated") return { asked: false, bytes: 0 };
+  const grant = getGrant(db, task.origin.delegationId);
+  if (grant === undefined || grant.revokedAt !== undefined || Date.parse(at) >= Date.parse(grant.expiresAt)) {
+    return { asked: false, bytes: 0 };
+  }
+  const asked = grant.budget?.maxArtifactBytes ?? 0;
+  if (asked === 0 || !grant.allowedDataClasses.includes(RETURNED_FILE_CLASSIFICATION)) return { asked: false, bytes: 0 };
+  const allowance = livePeerAllowance(db, task.origin.peerNodeId, at);
+  const allowed =
+    allowance !== undefined && allowance.grant.allowedDataClasses.includes(RETURNED_FILE_CLASSIFICATION)
+      ? (allowance.grant.budget?.maxArtifactBytes ?? 0)
+      : 0;
+  return { asked: true, bytes: Math.min(asked, allowed, DELEGATED_ARTIFACTS_MAX_TOTAL_BYTES) };
+}
+
+/**
  * Read back the files a task's worker wrote and keep the ones this node can still offer, as blobs.
  *
- * A file is offered only as the worker last wrote it: one changed since, gone, or larger than one file may be is left
- * out, and so is anything past the count or the total bytes one task may offer. What was left out is said in words, so
- * the node that handed the task over hears it rather than finding fewer files than were written.
+ * A file is offered only as the worker last wrote it: one changed since, gone, larger than one file may be, or of a
+ * type the other node always refuses is left out, and so is anything past the count or `maxTotalBytes`, the bytes this
+ * run may send back. What was left out is said in words, so the node that handed the task over hears it rather than
+ * finding fewer files than were written. Nothing left out is stored.
  *
  * Runs before anything is queued, and reads the files at once: a task's worktree is taken away once it is reported.
  */
 export function prepareDelegatedArtifacts(
   dataDir: string,
   outputs: readonly TaskOutputFile[],
+  maxTotalBytes: number,
 ): { prepared: PreparedArtifact[]; left: string[] } {
   const prepared: PreparedArtifact[] = [];
   const left: string[] = [];
+  const budget = Math.min(maxTotalBytes, DELEGATED_ARTIFACTS_MAX_TOTAL_BYTES);
   let total = 0;
   for (const output of outputs) {
     if (prepared.length >= DELEGATED_ARTIFACTS_MAX) {
       left.push(`${output.name} (quá ${String(DELEGATED_ARTIFACTS_MAX)} tệp)`);
+      continue;
+    }
+    const mimeType = mimeTypeFor(output.name);
+    if (!mimeTypePermitted(mimeType, RECEIVABLE_MIME_PREFIXES)) {
+      left.push(`${output.name} (loại ${mimeType} không được gửi về)`);
       continue;
     }
     let bytes: Buffer;
@@ -143,13 +195,13 @@ export function prepareDelegatedArtifacts(
       left.push(`${output.name} (đã đổi sau khi việc ghi nó)`);
       continue;
     }
-    if (total + bytes.byteLength > DELEGATED_ARTIFACTS_MAX_TOTAL_BYTES) {
-      left.push(`${output.name} (vượt ${String(DELEGATED_ARTIFACTS_MAX_TOTAL_BYTES)} byte cho cả việc)`);
+    if (total + bytes.byteLength > budget) {
+      left.push(`${output.name} (vượt ${String(budget)} byte cho cả việc)`);
       continue;
     }
     const stored = writeBlob({ dataDir, bytes, extension: blobExtensionFor(output.name) });
     total += bytes.byteLength;
-    prepared.push({ name: output.name.slice(0, 200), digest: stored.digest, sizeBytes: bytes.byteLength, mimeType: mimeTypeFor(output.name) });
+    prepared.push({ name: output.name.slice(0, 200), digest: stored.digest, sizeBytes: bytes.byteLength, mimeType });
   }
   return { prepared, left };
 }
@@ -170,7 +222,7 @@ export function queueArtifactOffers(
       digest: file.digest,
       sizeBytes: file.sizeBytes,
       mimeType: file.mimeType,
-      classification: "internal",
+      classification: RETURNED_FILE_CLASSIFICATION,
       originNodeId: deps.identity.nodeId,
     };
     insertTaskArtifact(deps.db, {

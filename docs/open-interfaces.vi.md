@@ -184,7 +184,12 @@ không kèm `reason`, chỉ dựa trên grant của chính chủ nó cho task đ
 các tệp của task, trong đó không đặt hoặc bằng 0 thì không nhận tệp nào. Sau đó nó kéo tệp đã nhận từ `GET
 /peers/artifacts/{digest}` bằng peer token dẫn xuất của nó; node đề nghị chỉ phục vụ một digest cho đúng peer nó đã đề
 nghị (`401` khi không có peer token, `404` trong mọi trường hợp khác, giống như một digest không biết), và bên gửi không
-đọc quá kích thước đã đề nghị và kiểm tra digest trước khi lưu. `create_automation` nhận `maxArtifactBytes` (0 đến 16 MiB,
+đọc quá kích thước đã đề nghị và kiểm tra digest trước khi lưu. Node đề nghị chỉ gửi tệp khi grant của bên gửi cho task
+đặt hạn mức byte lớn hơn 0 và allowance của chính chủ nó cho bên gửi đó cũng đặt một hạn mức (`allow_peer_tasks` nhận
+`maxArtifactBytes`, 0 đến 16 MiB; không đặt thì là không có), cả hai đều bao gồm lớp `internal`, và trong phạm vi hạn mức
+nhỏ hơn. Nó bỏ mọi đường dẫn worker báo nằm ngoài các thư mục của task, không bao giờ đề nghị gửi loại markup hay script,
+và nêu tên từng tệp nó bỏ ra trong lời nhắn của `result` mà không lưu tệp đó. Các MIME type bị chặn được so khớp sau khi
+chuyển về chữ thường và bỏ tham số. `create_automation` nhận `maxArtifactBytes` (0 đến 16 MiB,
 chỉ khi có `executor`). Bên gửi không quảng bá `artifacts` không được đề nghị tệp nào. Envelope vẫn ở phiên bản giao
 thức 1; feature được quảng bá là thứ đánh phiên bản cho các lời đề nghị và `evidence.artifacts`.
 

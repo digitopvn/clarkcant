@@ -583,7 +583,8 @@ export function createAutomationTools(deps: AutomationToolDeps): ToolDefinition[
               `${describePlaces(task.resources)} there, each run is refused on that node and said here.${ready}\n` +
               (fileBytes.bytes === undefined || fileBytes.bytes === 0
                 ? "Files a run writes there stay there; set maxArtifactBytes to bring them back here."
-                : `Files a run writes there come back here, up to ${String(fileBytes.bytes)} bytes per run.`);
+                : `Files a run writes there come back here, up to ${String(fileBytes.bytes)} bytes per run, once that ` +
+                  "node's owner also lets its files come back here; until then they stay there, and each run says so.");
         const setUp = `Set up. It reports in this conversation.${there}\n${describe(created.intent, [])}`;
         if (created.intent.when.topic.startsWith("github.")) return { text: `${setUp}\n${githubSetup(deps, created.intent)}` };
         const webhookSource = webhookSourceOfTopic(created.intent.when.topic);
@@ -739,6 +740,14 @@ export function createAutomationTools(deps: AutomationToolDeps): ToolDefinition[
             items: { type: "string", enum: [...GIVABLE_EFFECTS] },
             description: "Only what the user said that node's work may do here without asking.",
           },
+          maxArtifactBytes: {
+            type: "integer",
+            minimum: 0,
+            maximum: DELEGATED_ARTIFACTS_MAX_TOTAL_BYTES,
+            description:
+              "How many bytes of the files one of that node's runs writes here may go back to it, when the user says " +
+              "they may. Omit and none go back; the files stay on this node.",
+          },
           stop: { type: "boolean", description: "Withdraw what that node was allowed. Tasks it hands over are refused after." },
         },
       },
@@ -761,7 +770,10 @@ export function createAutomationTools(deps: AutomationToolDeps): ToolDefinition[
         }
         const effects = readEffects(params);
         if (!effects.ok) return { text: effects.text };
-        // Written as a grant from that node to this one, so it intersects with that node's own grant field by field.
+        const fileBytes = readMaxArtifactBytes(params.maxArtifactBytes, true);
+        if (!fileBytes.ok) return { text: fileBytes.text };
+        // Written as a grant from that node to this one, so it intersects with that node's own grant field by field. Its
+        // byte budget is how much of what a run writes here this node's owner lets go back; none unless they said so.
         const built = taskGrant({
           grantId: deps.newId("alw"),
           ownerPrincipalId: owner,
@@ -770,14 +782,19 @@ export function createAutomationTools(deps: AutomationToolDeps): ToolDefinition[
           resources: resources.resources,
           allowedCategories: effects.allowedCategories,
           expiresAt: grantExpiry(),
+          ...(fileBytes.bytes === undefined ? {} : { maxArtifactBytes: fileBytes.bytes }),
         });
         if (!built.ok) return { text: `Not allowed: ${built.message}` };
         putPeerAllowance(deps.db, { peerNodeId: peer, ownerPrincipalId: owner, conversationId: deps.conversationId, grant: built.grant, at: deps.now() });
+        const files =
+          fileBytes.bytes === undefined || fileBytes.bytes === 0
+            ? " Files its runs write here stay here."
+            : ` Files a run writes here go back to it when it asks, up to ${String(fileBytes.bytes)} bytes per run.`;
         return {
           text:
             `${peer} may now run the tasks it hands over here, in ${describePlaces(resources.resources)}, and may ` +
             `${effects.allowedCategories.join(", ") || "only read"} without asking. Anything outside that is refused, a ` +
-            "risky effect outside it waits for the user, and that work reports in this conversation.",
+            `risky effect outside it waits for the user, and that work reports in this conversation.${files}`,
         };
       },
     },

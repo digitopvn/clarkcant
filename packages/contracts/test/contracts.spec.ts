@@ -6,6 +6,8 @@ import {
   instantSchema,
   principalIdSchema,
   checkArtifactAcceptance,
+  mimeTypePermitted,
+  normalizedMimeType,
   checkGrant,
   compileActionBinding,
   consentStillValid,
@@ -857,6 +859,36 @@ describe("artifact acceptance (T10)", () => {
         allowedMimePrefixes: ["application/"],
       }).accepted,
     ).toBe(false);
+  });
+
+  it("refuses markup and script types however they are spelled", () => {
+    const policy = { allowedClassifications: ["internal" as const], maxBytes: 4096, allowedMimePrefixes: ["text/", "image/", "application/"] };
+    for (const mimeType of [
+      "text/html",
+      "TEXT/HTML",
+      "text/html; charset=utf-8",
+      " Text/Html ;charset=UTF-8",
+      "image/svg+xml",
+      "IMAGE/SVG+XML; charset=utf-8",
+      "application/xhtml+xml",
+      "Application/XHTML+XML; charset=utf-8",
+      "text/javascript",
+      "text/javascript; charset=utf-8",
+      "application/javascript",
+      "APPLICATION/X-JAVASCRIPT",
+      "text/ecmascript",
+      "application/ecmascript",
+      "",
+      "; charset=utf-8",
+    ]) {
+      expect({ mimeType, accepted: checkArtifactAcceptance({ ...offer, mimeType }, policy).accepted }).toEqual({ mimeType, accepted: false });
+      expect(mimeTypePermitted(mimeType, policy.allowedMimePrefixes)).toBe(false);
+    }
+    // A permitted type is compared the same way, so its spelling does not refuse it either.
+    expect(checkArtifactAcceptance({ ...offer, mimeType: "Text/CSV; charset=utf-8" }, policy).accepted).toBe(true);
+    expect(normalizedMimeType(" Text/Markdown ; charset=utf-8")).toBe("text/markdown");
+    // Outside every prefix the receiver takes, whatever the spelling.
+    expect(mimeTypePermitted("audio/mpeg", policy.allowedMimePrefixes)).toBe(false);
   });
 });
 
