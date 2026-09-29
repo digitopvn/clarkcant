@@ -431,6 +431,95 @@ describe("a capability something else on the node already provides", () => {
   });
 });
 
+describe("a capability another package held when this one started", () => {
+  const OTHER = "com.example.othernotes";
+  const OTHER_GENERATION = `${OTHER}@1.0.0:code_1`;
+
+  function activateOther(): void {
+    const at = new Date(Date.UTC(2026, 8, 29, 5, 0, counter++)).toISOString();
+    const generation = {
+      generationId: OTHER_GENERATION,
+      packageId: OTHER,
+      version: "1.0.0",
+      digest: "sha256:other-notes-digest",
+      nodeId: NODE,
+      codeGeneration: "code_1",
+      activatedAt: at,
+      uiOnlyFacets: [],
+      grantedCapabilities: [],
+    };
+    db.prepare(
+      `INSERT INTO package_generations
+         (generation_id, package_id, version, digest, node_id, code_generation, activated_at, document)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(OTHER_GENERATION, OTHER, "1.0.0", generation.digest, NODE, "code_1", at, JSON.stringify(generation));
+  }
+
+  /** Each facet's pid file by its folder, so a restart shows as a changed or new pid. */
+  function pids(): Map<string, string> {
+    const servicesDir = join(dir, "services");
+    const found = new Map<string, string>();
+    for (const packageFolder of readdir(servicesDir)) {
+      for (const facetFolder of readdir(join(servicesDir, packageFolder))) {
+        const pid = join(servicesDir, packageFolder, facetFolder, "pid");
+        if (existsSync(pid)) found.set(join(packageFolder, facetFolder), readFileSync(pid, "utf8"));
+      }
+    }
+    return found;
+  }
+
+  it("is served by this package after the next reconcile once that package is gone, without restarting its service", async () => {
+    // Package B declares the same refs as the notes package, from its own copy of the files.
+    const otherRoot = join(dir, "other-package");
+    cpSync(FIXTURE, otherRoot, { recursive: true });
+    const serviceHost = start({
+      packageRoot: (packageId) => (packageId === PACKAGE ? root : packageId === OTHER ? otherRoot : undefined),
+    });
+
+    // 1. B holds ADD.
+    activateOther();
+    await running(serviceHost);
+    expect(serviceHost.serves(ADD)).toEqual({ packageId: OTHER, generationId: OTHER_GENERATION });
+    const otherOnly = pids();
+    expect(otherOnly.size).toBe(1);
+
+    // 2. The notes package starts and is refused ADD, which stays B's.
+    activate();
+    await running(serviceHost);
+    await until(() => pids().size === 2, "the notes service's pid file");
+    const notesFolder = [...pids().keys()].find((folder) => !otherOnly.has(folder));
+    if (notesFolder === undefined) throw new Error("unreachable");
+    const notesPid = pids().get(notesFolder);
+    expect(logs.filter((line) => line.includes(`${GENERATION}#com.example.notes.service declares ${ADD}, which is already registered`))).toHaveLength(1);
+    expect(serviceHost.serves(ADD)).toEqual({ packageId: OTHER, generationId: OTHER_GENERATION });
+    expect(getCapability({ db, nodeId: NODE }, ADD, NODE)?.providedBy?.packageId).toBe(OTHER);
+
+    // 3. B is uninstalled. 4. After one reconcile, the notes package serves ADD.
+    db.prepare("UPDATE package_generations SET superseded_at = ? WHERE package_id = ? AND superseded_at IS NULL").run(
+      new Date().toISOString(),
+      OTHER,
+    );
+    await serviceHost.reconcile();
+
+    expect(serviceHost.serves(ADD)).toEqual({ packageId: PACKAGE, generationId: GENERATION });
+    const add = getCapability({ db, nodeId: NODE }, ADD, NODE);
+    expect(add?.providedBy).toMatchObject({ packageId: PACKAGE, generation: GENERATION });
+    expect(add?.readiness).toMatchObject({ installed: true, loaded: true, healthy: true });
+    expect(add?.inputSchema).toBeDefined();
+    expect(readiness(LIST)).toMatchObject({ installed: true, loaded: true, healthy: true });
+    expect(logs.some((line) => line.includes(`now serves ${ADD}`))).toBe(true);
+
+    const added = await invokeCapability(invokeDeps(), { ref: ADD, args: { text: "sau khi gỡ" }, source: "agent" });
+    expect(added).toMatchObject({ kind: "done" });
+    const listed = await invokeCapability(invokeDeps(), { ref: LIST, args: {}, source: "agent" });
+    expect(JSON.stringify(listed)).toContain("sau khi gỡ");
+
+    // The notes service is the same process it was before B went away.
+    expect(serviceHost.status()).toEqual([expect.objectContaining({ packageId: PACKAGE, state: "running" })]);
+    expect(pids().get(notesFolder)).toBe(notesPid);
+  });
+});
+
 describe("what the manifest declares against what the service lists", () => {
   it("never registers a tool the manifest did not declare", async () => {
     withManifest((manifest) => {

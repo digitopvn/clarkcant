@@ -181,7 +181,8 @@ Những gì registry báo là những gì host đã quan sát được, không p
   ký tự;
 - service bị dừng thì được khởi động lại với backoff, và bị để dừng hẳn nếu cứ crash mãi, lý do nói rõ trường hợp nào;
 - ref mà node hoặc package khác đã đăng ký thì được giữ nguyên và package này không phục vụ nó, log của node ghi rõ điều
-  đó;
+  đó; khi package kia không còn hoạt động trên node, lần đối soát kế tiếp sẽ trao ref cho package này mà không cần khởi
+  động lại service của nó;
 - node không tìm thấy engine sẽ hỏi lại sau một phút, nên bật Docker sau đó không cần khởi động lại node.
 
 Lý do đó là thứ người dùng đọc được bên cạnh một action bị vô hiệu hoá. Binding `invoke` của widget, tool
