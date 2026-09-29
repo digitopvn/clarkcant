@@ -216,6 +216,21 @@ describe("grants (T07, T08)", () => {
     expect(merged.maxDelegationDepth).toBe(1);
   });
 
+  it("keeps only the effects both sides allowed, and none when either side names none", () => {
+    const both = intersectGrants(
+      { ...grant, allowedEffectCategories: ["read", "local-write"] },
+      { ...grant, allowedEffectCategories: ["read", "external-write"] },
+    );
+    expect(both.allowedEffectCategories).toEqual(["read"]);
+    // An absent list is none, not "whatever the other side says".
+    expect(intersectGrants({ ...grant, allowedEffectCategories: ["read"] }, grant).allowedEffectCategories).toEqual([]);
+    expect(intersectGrants(grant, grant).allowedEffectCategories).toBeUndefined();
+  });
+
+  it("refuses to intersect grants between different nodes", () => {
+    expect(() => intersectGrants(grant, { ...grant, senderNodeId: "node_c" })).toThrow(/same node pair/);
+  });
+
   it("refuses a capability the grant does not include", () => {
     const decision = checkGrant(grant, { capabilityRef: "shell.exec@1", at: AT });
     expect(decision.allowed).toBe(false);

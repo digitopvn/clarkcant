@@ -1,4 +1,5 @@
 import {
+  type RunRecord,
   type TaskRecord,
 } from "@clarkcant/contracts";
 
@@ -129,4 +130,28 @@ export function listActiveTasks(db: Database, conversationId: string): TaskRecor
     conversationId,
   );
   return rows.map((row) => getTask(db, row.task_id)).filter((task): task is TaskRecord => task !== undefined);
+}
+
+/**
+ * Record a run: something now holds this revision of the task.
+ *
+ * Written once, when the run starts. A run on another node is recorded here too, because it is what the task's
+ * evidence and a stop refer to, and evidence may only name a run this node has a row for.
+ */
+export function recordRun(db: Database, run: RunRecord): void {
+  db.prepare(
+    `INSERT INTO runs (run_id, task_id, task_revision, execution_node_id, lease_epoch, replaces_run_id, started_at, ended_at, document)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT(run_id) DO NOTHING`,
+  ).run(
+    run.runId,
+    run.taskId,
+    run.taskRevision,
+    run.executionNodeId,
+    run.leaseEpoch,
+    run.replacesRunId ?? null,
+    run.startedAt,
+    run.endedAt ?? null,
+    toJson(run),
+  );
 }

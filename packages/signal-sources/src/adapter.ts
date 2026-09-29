@@ -1,3 +1,5 @@
+import { createHmac, timingSafeEqual } from "node:crypto";
+
 import type { SignalInput } from "@clarkcant/contracts";
 
 /**
@@ -66,4 +68,31 @@ export function headerValue(headers: SourceDelivery["headers"], name: string): s
     return Array.isArray(value) ? value[0] : value;
   }
   return undefined;
+}
+
+/**
+ * Whether a body was signed with this secret: `sha256=<hex>` of HMAC-SHA256 over the exact bytes, in the named header.
+ *
+ * The comparison is over the decoded digests, in constant time, after a length check that reveals nothing a caller
+ * does not already know (every SHA-256 digest is 32 bytes). Shared by every source that signs this way, so none of
+ * them carries its own copy of the one part that must not be subtly wrong.
+ */
+export function verifySha256Signature(
+  rawBody: Uint8Array,
+  signatureHeader: string | undefined,
+  secret: string,
+  headerName: string,
+): VerifyResult {
+  if (secret === "") return { ok: false, reason: "no webhook secret is set" };
+  if (signatureHeader === undefined || !signatureHeader.startsWith("sha256=")) {
+    return { ok: false, reason: `the delivery carries no ${headerName}` };
+  }
+  const presentedHex = signatureHeader.slice("sha256=".length).trim();
+  if (!/^[0-9a-fA-F]{64}$/.test(presentedHex)) return { ok: false, reason: "the signature is not a SHA-256 digest" };
+  const expected = createHmac("sha256", secret).update(rawBody).digest();
+  const presented = Buffer.from(presentedHex, "hex");
+  if (presented.length !== expected.length || !timingSafeEqual(presented, expected)) {
+    return { ok: false, reason: "the signature does not match" };
+  }
+  return { ok: true };
 }

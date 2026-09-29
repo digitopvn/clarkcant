@@ -12,6 +12,7 @@ import {
   type WidgetDefinition,
   assertBlockProvenance,
   attachmentRefSchema,
+  isTerminal,
   messageBlockSchema,
   nowInstant,
 } from "@clarkcant/contracts";
@@ -962,6 +963,13 @@ export interface RunTaskResult {
   message: string;
 }
 
+/** What a run reported about itself: the only evidence a dispatched task is settled on. */
+export interface ReportedEvidence {
+  kind: "exit-status" | "file-diff" | "api-receipt" | "read-after-write" | "test-output";
+  summary: string;
+  verified: boolean;
+}
+
 /**
  * Drive one dispatched task to a terminal state.
  *
@@ -974,66 +982,91 @@ export async function runDispatchedTask(
   deps: ConductorDeps,
   input: {
     taskId: string;
-    collectEvidence: (task: TaskRecord) => Promise<{ kind: "exit-status" | "file-diff" | "api-receipt" | "read-after-write" | "test-output"; summary: string; verified: boolean } | undefined>;
+    collectEvidence: (task: TaskRecord) => Promise<ReportedEvidence | undefined>;
   },
 ): Promise<RunTaskResult> {
   const task = getTask(deps.db, input.taskId);
   if (!task) {
     return { taskId: input.taskId, outcome: "failed", evidenceKinds: [], message: "task does not exist" };
   }
-
   const reported = await input.collectEvidence(task);
-  if (!reported) {
-    const failed = applyTaskEvent(deps, task.taskId, "run.verifying");
-    if (failed.ok) applyTaskEvent(deps, task.taskId, "verify.failed");
-    return {
-      taskId: task.taskId,
-      outcome: "failed",
-      evidenceKinds: [],
-      message: "the run produced no evidence, so it is reported as failed rather than as success",
-    };
+  return settleDispatchedTask(deps, task.taskId, reported);
+}
+
+/**
+ * Settle a dispatched task on what its run reported, in one synchronous step.
+ *
+ * The task is read again here rather than trusted from before the run: a stop asked for while the run was working has
+ * moved it to `cancel_requested`, and the report is then the executor's answer to that stop. A run that verified
+ * nothing confirms the stop; a run that verified something finished anyway, and what it did is called unknown rather
+ * than reported as a success or as stopped.
+ *
+ * The outcome returned is always the state the task is actually in: a transition the machine refuses is never
+ * reported as if it had happened.
+ */
+export function settleDispatchedTask(deps: ConductorDeps, taskId: string, reported: ReportedEvidence | undefined): RunTaskResult {
+  const task = getTask(deps.db, taskId);
+  if (!task) {
+    return { taskId, outcome: "failed", evidenceKinds: [], message: "task does not exist" };
+  }
+  const evidenceKinds = reported === undefined ? [] : [reported.kind];
+  const record = (): ReturnType<typeof recordEvidence> | undefined =>
+    reported === undefined
+      ? undefined
+      : recordEvidence(deps, {
+          taskId,
+          evidence: { kind: reported.kind, summary: reported.summary, verdict: reported.verified ? "verified" : "not-verified" },
+        });
+
+  if (task.state === "cancel_requested") {
+    const recorded = record();
+    if (reported?.verified === true || recorded?.blocked !== undefined) {
+      applyTaskEvent(deps, taskId, "effect.unknown");
+      const done = reported === undefined ? "an effect it started is unsettled" : reported.summary;
+      return settledAs(deps, taskId, evidenceKinds, `the run finished after it was asked to stop (${done}); what it did is not confirmed`);
+    }
+    applyTaskEvent(deps, taskId, "cancel.confirmed");
+    return settledAs(deps, taskId, evidenceKinds, reported?.summary ?? "stopped on request; the run reported nothing");
+  }
+  if (isTerminal(task.state)) {
+    return settledAs(deps, taskId, evidenceKinds, "the task had already ended before its run reported");
   }
 
-  const recorded = recordEvidence(deps, {
-    taskId: task.taskId,
-    evidence: {
-      kind: reported.kind,
-      summary: reported.summary,
-      verdict: reported.verified ? "verified" : "not-verified",
-    },
-  });
+  if (!reported) {
+    const failed = applyTaskEvent(deps, taskId, "run.verifying");
+    if (failed.ok) applyTaskEvent(deps, taskId, "verify.failed");
+    return settledAs(deps, taskId, [], "the run produced no evidence, so it is reported as failed rather than as success");
+  }
 
-  applyTaskEvent(deps, task.taskId, "run.verifying");
+  const recorded = record();
+  const verifying = task.state === "verifying" ? { ok: true } : applyTaskEvent(deps, taskId, "run.verifying");
+  if (!verifying.ok) return settledAs(deps, taskId, evidenceKinds, reported.summary);
 
   // The ledger decides: an unsettled effect blocks success no matter how clean the run was.
-  if (recorded.blocked) {
+  if (recorded?.blocked) {
     return {
-      taskId: task.taskId,
+      taskId,
       outcome: "uncertain",
-      evidenceKinds: [reported.kind],
+      evidenceKinds,
       message: `effect ${recorded.blocked.effectId} is still ${recorded.blocked.state}; the outcome is undetermined and must be reconciled`,
     };
   }
 
-  const gate = checkSuccessPreconditions(deps, task.taskId, [recorded.evidence]);
+  const gate = checkSuccessPreconditions(deps, taskId, recorded === undefined ? [] : [recorded.evidence]);
   if (!gate.allowed) {
-    applyTaskEvent(deps, task.taskId, "verify.failed");
-    return {
-      taskId: task.taskId,
-      outcome: "failed",
-      evidenceKinds: [reported.kind],
-      // What went wrong comes first: "nothing was verified" alone does not tell a person which step it was.
-      message: reported.verified ? gate.message : `${reported.summary} — ${gate.message}`,
-    };
+    applyTaskEvent(deps, taskId, "verify.failed");
+    // What went wrong comes first: "nothing was verified" alone does not tell a person which step it was.
+    return settledAs(deps, taskId, evidenceKinds, reported.verified ? gate.message : `${reported.summary} — ${gate.message}`);
   }
 
-  applyTaskEvent(deps, task.taskId, "verify.passed");
-  return {
-    taskId: task.taskId,
-    outcome: "succeeded",
-    evidenceKinds: [reported.kind],
-    message: reported.summary,
-  };
+  applyTaskEvent(deps, taskId, "verify.passed");
+  return settledAs(deps, taskId, evidenceKinds, reported.summary);
 }
 
+/** The outcome a task's actual state stands for. Anything not ended is not known to have ended, so it is uncertain. */
+function settledAs(deps: ConductorDeps, taskId: string, evidenceKinds: string[], message: string): RunTaskResult {
+  const state = getTask(deps.db, taskId)?.state;
+  const outcome = state === "succeeded" || state === "failed" || state === "cancelled" ? state : "uncertain";
+  return { taskId, outcome, evidenceKinds, message };
+}
 export { nowInstant };

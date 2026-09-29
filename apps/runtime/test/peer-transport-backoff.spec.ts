@@ -118,7 +118,8 @@ describe("deliverPending backoff", () => {
       lastOutcome = await deliverPending(transport);
     }
 
-    expect(lastOutcome?.deadLettered).toEqual([{ messageId: "msg_1", peerNodeId: "node_b" }]);
+    // A peer that never answered did not refuse it: what the message was about may still have happened there.
+    expect(lastOutcome?.deadLettered).toEqual([{ messageId: "msg_1", peerNodeId: "node_b", kind: "cancel.request", refusedByPeer: false }]);
 
     // A dead-lettered message is not retried again, however long is waited.
     tick(24 * 60 * 60_000);
@@ -147,5 +148,30 @@ describe("deliverPending backoff", () => {
 
     const stillPending = await deliverPending(transport);
     expect(stillPending.attempted).toBe(0);
+  });
+
+  it("says a message the peer kept refusing was refused, so what it was about is known not to have run there", async () => {
+    const refusing = (async (): Promise<Response> => new Response("{}", { status: 400 })) as unknown as typeof fetch;
+    const transport = deps(refusing);
+    await sendToPeer(transport, envelope("msg_1", 1));
+    let lastOutcome = undefined as Awaited<ReturnType<typeof deliverPending>> | undefined;
+    for (let i = 0; i < MAX_OUTBOX_ATTEMPTS - 1; i += 1) {
+      tick(20 * 60_000);
+      lastOutcome = await deliverPending(transport);
+    }
+    expect(lastOutcome?.deadLettered).toEqual([{ messageId: "msg_1", peerNodeId: "node_b", kind: "cancel.request", refusedByPeer: true }]);
+  });
+
+  it("gives up at once on a message to a peer whose pairing was revoked, without dialling it", async () => {
+    let calls = 0;
+    const counting = (async (): Promise<Response> => {
+      calls += 1;
+      return new Response("{}", { status: 200 });
+    }) as unknown as typeof fetch;
+    const transport: PeerTransportDeps = { ...deps(counting), peerFor: () => ({ ...PEER, revokedAt: now }) };
+    const sent = await sendToPeer(transport, envelope("msg_1", 1));
+    expect(calls).toBe(0);
+    expect(sent.deadLettered).toEqual([{ messageId: "msg_1", peerNodeId: "node_b", kind: "cancel.request", refusedByPeer: true }]);
+    expect(deadLetteredOutbox(db).map((entry) => entry.messageId)).toEqual(["msg_1"]);
   });
 });

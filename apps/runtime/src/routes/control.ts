@@ -1,9 +1,8 @@
 import { type Principal, nowInstant } from "@clarkcant/contracts";
-import { cancelTask } from "@clarkcant/core";
 
 import { performEmergencyStop } from "../application/emergency-stop.ts";
 import { buildTimeline, type NodeServices } from "../services.ts";
-import { decideTaskApprovalForNode } from "../task-dispatch.ts";
+import { decideTaskApprovalForNode, stopTask } from "../task-dispatch.ts";
 import { nodeWork } from "../work-supervisor.ts";
 import { appendHostReply, startBackgroundWork } from "./conversations.ts";
 import { type GatewayRequest, type GatewayResponse, fail, json, readJson } from "./http.ts";
@@ -27,7 +26,7 @@ import { type GatewayRequest, type GatewayResponse, fail, json, readJson } from 
 export interface ControlRouteDeps {
   services: Pick<
     NodeServices,
-    "runtime" | "conductor" | "controlSessions" | "search" | "turnControl" | "taskDispatch" | "terminals" | "serviceHost"
+    "runtime" | "conductor" | "controlSessions" | "search" | "turnControl" | "taskDispatch" | "terminals" | "serviceHost" | "peerDelivery"
   >;
   request: GatewayRequest;
   segments: string[];
@@ -146,11 +145,15 @@ export async function handleControlRoutes(deps: ControlRouteDeps): Promise<Gatew
    */
   if (segments.length === 3 && segments[0] === "tasks" && segments[2] === "cancel" && request.method === "POST") {
     const taskId = decodeURIComponent(segments[1] ?? "");
-    const outcome = cancelTask(
+    const outcome = stopTask(
       { db: runtime.db, nodeId: runtime.identity.nodeId, now: nowInstant, newId: services.conductor.newId },
+      services.taskDispatch,
       taskId,
     );
     if (!outcome.ok) return fail(409, outcome.code, outcome.message, { taskId });
+    // A task running on a peer is stopped by a message to it, queued with the request: send it now. One running here
+    // was stopped by `stopTask`, and its run confirms the stop when it settles.
+    if (!outcome.confirmed) services.peerDelivery?.kick();
     appendHostReply(services, {
       conversationId: outcome.task.conversationId,
       at: nowInstant(),

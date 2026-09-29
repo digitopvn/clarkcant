@@ -47,6 +47,7 @@ The stable surface is the one `/openapi.json` describes:
 | POST | `/conversations/{id}/questions/{questionId}/cancel` | – |
 | POST | `/signals` | `{ source, topic, subject?, payload, occurredAt, dedupeKey, provenance? }` — something happened; `202` recorded, `200` already recorded |
 | POST | `/signals/github` | a GitHub webhook delivery, signed with the webhook secret instead of the token — see below |
+| POST | `/signals/webhook/{source}` | `{ id, topic, payload?, subject?, occurredAt? }` signed with that source's secret instead of the token — see below |
 | GET | `/automations` | – the standing requests set up in conversation, each with its recent runs |
 | POST | `/stop` | – emergency stop |
 
@@ -97,6 +98,33 @@ verified delivery becomes a signal — `github.issue.labeled|opened|edited`, `gi
 and a task only starts in a local clone whose `origin` is the repository the signal is about. Bodies over 2 MiB are
 refused `413`. For a node GitHub cannot reach, `@clarkcant/signal-sources` also has a poller that reads a repository's
 events into the same signals; the node does not run it on a schedule yet.
+
+Anything else that can sign a request delivers to `POST /signals/webhook/{source}`, also without the node's token. The
+person names the source when they set up a standing request on a `webhook.<source>.<what happened>` topic, and Clark
+asks for the source's shared secret through the same host-owned form, stored as `webhook_<source>_secret` for that
+source only. The sender signs the raw body with it — `X-Signature-256: sha256=<hex HMAC-SHA256>` — and sends
+`{ "id": "build-812", "topic": "build.failed", "payload": { "branch": "main" } }`; the node records the signal
+`webhook.<source>.build.failed`, deduplicated on `id`. The topic is always prefixed with the source's name, so a sender
+cannot make its delivery look like GitHub's or another source's. A missing or wrong signature is refused `401` with
+nothing recorded, a source with no secret set is `404`, and bodies over 256 KiB are refused `413`.
+
+```bash
+BODY='{"id":"build-812","topic":"build.failed","payload":{"branch":"main"}}'
+SIG=$(printf '%s' "$BODY" | openssl dgst -sha256 -hmac "$WEBHOOK_SECRET" | sed 's/^.* //')
+curl -X POST localhost:8765/signals/webhook/deploys -H 'content-type: application/json' \
+  -H "x-signature-256: sha256=$SIG" -d "$BODY"
+```
+
+A paired node tells another what happened with `POST /peers/{nodeId}/signals` `{ id, topic, payload?, subject?,
+occurredAt? }` on its own gateway, with its own token. The signal is queued in the outbox and carried to the peer as a
+NodeLink `signal` message; the peer records it as `peer.<topic>` from the node the authenticated channel says sent it,
+so its standing requests decide what, if anything, it starts. See [distributed runtime](distributed-runtime.md).
+
+A standing request's task can also run on a paired node. That is set up in conversation, not through a route: the
+sending node's owner names the peer as the task's executor, and the receiving node's owner says what that peer may run
+there (folders, repositories, effects). The nodes exchange the grant, the hand-over (`delegate`), its answer
+(`result`) and a stop (`cancel.request`) as NodeLink messages; the receiver runs the task only within both, and each
+owner hears the outcome in their own conversation.
 
 Other routes exist (settings, packages, widgets, peers…) and are reachable with the same token, but they are not yet
 part of the stable description and may change.

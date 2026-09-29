@@ -233,6 +233,27 @@ export function openApiDocument(): Record<string, unknown> {
           },
         },
       },
+      "/signals/webhook/{source}": {
+        post: {
+          summary: "A signed webhook from anything, as a named signal source",
+          description:
+            "{ id, topic, payload?, subject?, occurredAt? }, verified instead of the bearer token: HMAC-SHA256 of the raw " +
+            "body with the secret the node keeps as webhook_<source>_secret, as sha256=<hex> in X-Signature-256. " +
+            "Recorded as the signal webhook.<source>.<topic>, deduplicated on id, so a sender cannot name another " +
+            "source's topic. A source with no secret set is not found. Bodies over 256 KiB are refused with 413.",
+          security: [],
+          parameters: [{ name: "source", in: "path", required: true, schema: { type: "string", pattern: "^[a-z0-9][a-z0-9_-]{0,62}$" } }],
+          requestBody: { content: { "application/json": { schema: { type: "object" } } } },
+          responses: {
+            "202": ok("Recorded: { signalId, duplicate: false }"),
+            "200": ok("A redelivery: { signalId, duplicate: true }"),
+            "400": ok("DELIVERY_INVALID: not { id, topic, payload?, subject?, occurredAt? }"),
+            "401": ok("SIGNATURE_INVALID: missing or wrong signature; nothing is recorded"),
+            "404": ok("WEBHOOK_SOURCE_UNKNOWN: no secret is set for this source"),
+            "413": ok("PAYLOAD_TOO_LARGE"),
+          },
+        },
+      },
       "/automations": {
         get: {
           summary: "The standing requests set up in conversation, each with what it did lately",

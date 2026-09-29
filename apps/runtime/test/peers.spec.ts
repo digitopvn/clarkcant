@@ -209,7 +209,7 @@ describe("two live hosts delegate", () => {
     });
     expect(delegated.acknowledged).toBe(1);
 
-    // B accepted it, and the acceptance is what was recorded rather than a bare acknowledgement.
+    // B answered it, and the answer is what was recorded rather than a bare acknowledgement.
     const listed = await call(b, "/peers", { method: "GET", token: b.token });
     expect(listed.status).toBe(200);
 
@@ -227,9 +227,11 @@ describe("two live hosts delegate", () => {
     });
     expect(replay.status).toBe(200);
     expect(replay.body["status"]).toBe("duplicate");
+    // What B decided the first time, refused here because the brief is not one it can read: the answer a hand-over
+    // that does run gets is covered end to end in peer-delegation.spec.ts.
     expect(replay.body["response"]).toEqual({
       status: "recorded",
-      outcome: { accepted: true, acceptedAt: expect.any(String) as unknown, delegationId: grant.grantId },
+      outcome: { accepted: false, reason: "the hand-over is not one this node can read" },
     });
   });
 

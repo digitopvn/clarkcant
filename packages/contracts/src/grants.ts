@@ -161,6 +161,11 @@ export const grantSchema = z.strictObject({
     .optional(),
   /** How many further hops a delegated task may take. `0` forbids re-delegation. */
   maxDelegationDepth: z.int().nonnegative().max(8),
+  /**
+   * The effects a task run under this grant may carry out without asking the receiver's owner. Absent means none: a
+   * grant written before effects were named, or one that never named them, carries out nothing risky on its own.
+   */
+  allowedEffectCategories: z.array(effectCategorySchema).max(8).optional(),
   revokedAt: instantSchema.optional(),
 });
 export type Grant = z.infer<typeof grantSchema>;
@@ -209,6 +214,12 @@ export function intersectGrants(a: Grant, b: Grant): Grant {
 
   const budget = intersectBudgets(a.budget, b.budget);
 
+  // An absent list is none, so either side leaving it out leaves the intersection empty rather than the other's list.
+  const allowedEffectCategories =
+    a.allowedEffectCategories === undefined && b.allowedEffectCategories === undefined
+      ? undefined
+      : (a.allowedEffectCategories ?? []).filter((category) => (b.allowedEffectCategories ?? []).includes(category));
+
   const revokedAt =
     a.revokedAt && b.revokedAt
       ? new Date(a.revokedAt).getTime() <= new Date(b.revokedAt).getTime()
@@ -227,6 +238,7 @@ export function intersectGrants(a: Grant, b: Grant): Grant {
     expiresAt,
     ...(budget === undefined ? {} : { budget }),
     maxDelegationDepth: Math.min(a.maxDelegationDepth, b.maxDelegationDepth),
+    ...(allowedEffectCategories === undefined ? {} : { allowedEffectCategories }),
     ...(revokedAt === undefined ? {} : { revokedAt }),
   });
 }

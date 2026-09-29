@@ -200,9 +200,12 @@ describe("tasks this node was executing", () => {
       validateProps: () => ({ ok: true }),
     };
     const taskId = executingTask(conductor, node.identity.nodeId);
+    const told: string[] = [];
 
-    const { report, said, reruns } = recover(node);
+    // Whoever else waits on the task is told too: the peer that handed it over, when one did.
+    const { report, said, reruns } = recover(node, { onUncertain: (id) => told.push(id) });
 
+    expect(told).toEqual([taskId]);
     expect(report.uncertainTasks).toBe(1);
     expect(getTask(node.db, taskId)?.state).toBe("uncertain");
     expect(said.some((text) => text.includes("chưa rõ kết quả"))).toBe(true);

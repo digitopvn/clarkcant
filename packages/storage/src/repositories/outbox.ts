@@ -84,6 +84,15 @@ export function markOutboxFailed(db: Database, messageId: string, at: Instant, e
   return { status: "scheduled", nextAttemptAt };
 }
 
+/** Give up on a message at once: one that can never be delivered, such as one to a peer whose pairing was revoked. */
+export function deadLetterOutbox(db: Database, messageId: string, at: Instant, error: string): void {
+  db.prepare("UPDATE outbox SET dead_lettered_at = ?, last_error = ? WHERE message_id = ? AND dead_lettered_at IS NULL").run(
+    at,
+    error.slice(0, 500),
+    messageId,
+  );
+}
+
 export function pendingOutbox(db: Database, peerNodeId?: string, now?: Instant): unknown[] {
   // Dead-lettered rows are excluded unconditionally: that state means this node has stopped retrying
   // automatically, regardless of what "now" happens to be. The `next_attempt_at` filter only applies

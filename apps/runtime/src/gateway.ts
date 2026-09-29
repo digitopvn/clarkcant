@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import { type Instant, nowInstant } from "@clarkcant/contracts";
 import { verifyFrameGrant } from "@clarkcant/core";
 
+import { peerDelegationHandlers } from "./delegation-handlers.ts";
 import { type PairingDeps } from "./peers.ts";
 import { type NodeServices } from "./services.ts";
 import { type GatewayRequest, type GatewayResponse, bearer, fail, tokenMatches } from "./routes/http.ts";
@@ -24,6 +25,7 @@ import { handlePackageRoutes } from "./routes/packages.ts";
 import { handleInboxRoutes } from "./routes/inbox.ts";
 import { handleSignalRoutes } from "./routes/signals.ts";
 import { handleGithubSignalRoute } from "./routes/github-signals.ts";
+import { handleWebhookSignalRoute } from "./routes/webhook-signals.ts";
 import { handleInteractionRoutes } from "./routes/interactions.ts";
 import { handleMcpRoute } from "./routes/mcp.ts";
 import { handleConversationRoutes, handleRawCommand } from "./routes/conversations.ts";
@@ -144,7 +146,13 @@ export async function handleRequest(deps: GatewayDeps, request: GatewayRequest):
     newId: (prefix) => `${prefix}_${randomUUID().replaceAll("-", "").slice(0, 24)}`,
   };
 
-  const peerUplinkResponse = handlePeerUplinkRoutes({ pairing, runtime, request });
+  const peerUplinkResponse = handlePeerUplinkRoutes({
+    pairing,
+    runtime,
+    request,
+    onSignal: () => services.automation?.kick(),
+    delegation: peerDelegationHandlers(services, () => at() as Instant),
+  });
   if (peerUplinkResponse !== undefined) return peerUplinkResponse;
 
   /*
@@ -154,6 +162,9 @@ export async function handleRequest(deps: GatewayDeps, request: GatewayRequest):
    */
   const githubResponse = handleGithubSignalRoute({ services, request, at });
   if (githubResponse !== undefined) return githubResponse;
+  // Any other signed webhook, the same way: the shared secret stands in for the token the sender never holds.
+  const webhookResponse = handleWebhookSignalRoute({ services, request, at });
+  if (webhookResponse !== undefined) return webhookResponse;
 
   if (!grantCovers && !tokenMatches(runtime.identity.localToken, bearer(request.headers))) {
     // Identical for a missing and a wrong token: distinguishing them would tell an
@@ -179,7 +190,14 @@ export async function handleRequest(deps: GatewayDeps, request: GatewayRequest):
    * none of them is reachable by a peer. The module owns the routes, this only hands them the pairing
    * seam it already built.
    */
-  const pairingResponse = handlePairingRoutes({ pairing, runtime, now: at, request, segments });
+  const pairingResponse = handlePairingRoutes({
+    pairing,
+    runtime,
+    now: at,
+    request,
+    segments,
+    onQueued: () => services.peerDelivery?.kick(),
+  });
   if (pairingResponse !== undefined) return pairingResponse;
 
   /*

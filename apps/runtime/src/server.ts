@@ -30,10 +30,17 @@ export const ATTACHMENT_UPLOAD_BODY_LIMIT = 36_700_160;
  */
 export const GITHUB_WEBHOOK_BODY_LIMIT = 2 * 1024 * 1024;
 
+/**
+ * 256 KiB for a signed webhook's delivery: the same reason as GitHub's, and smaller, because the sender writes the
+ * body itself and a signal's payload is capped at 64 KiB anyway.
+ */
+export const SIGNED_WEBHOOK_BODY_LIMIT = 256 * 1024;
+
 /** The paths with a body ceiling, and each ceiling. Everything else is read as it always was. */
 export function bodyLimitForPath(path: string): number | undefined {
   if (path === "/attachments") return ATTACHMENT_UPLOAD_BODY_LIMIT;
   if (path === "/signals/github") return GITHUB_WEBHOOK_BODY_LIMIT;
+  if (path.startsWith("/signals/webhook/")) return SIGNED_WEBHOOK_BODY_LIMIT;
   return undefined;
 }
 

@@ -1332,6 +1332,29 @@ export const MIGRATIONS: readonly Migration[] = [
       `);
     },
   },
+  {
+    version: 30,
+    name: "peer_allowances",
+    reversible: true,
+    up: (db) => {
+      db.exec(`
+        -- What this node's owner lets a paired node run here, in the owner's own words: one row per peer, written only
+        -- from this node and never from an envelope. A peer's grant is intersected with it before anything runs, so a
+        -- grant a peer wrote can narrow what runs here but never widen it. Kept apart from grants, which peers write,
+        -- so nothing a peer sends can overwrite it.
+        CREATE TABLE peer_allowances (
+          peer_node_id        TEXT PRIMARY KEY,
+          owner_principal_id  TEXT NOT NULL,
+          conversation_id     TEXT NOT NULL,
+          document            TEXT NOT NULL,
+          expires_at          TEXT NOT NULL,
+          revoked_at          TEXT,
+          created_at          TEXT NOT NULL,
+          updated_at          TEXT NOT NULL
+        );
+      `);
+    },
+  },
 ];
 
 function readAll<T>(db: Database, sql: string): T[] {
