@@ -76,6 +76,8 @@ export interface AppIntentSurfacesDeps {
   stopTurn?: () => void;
   /** The inbox's "Ask Clark" for its newest notice; rejects with the reason when it cannot. */
   askAboutLatestNotice?: () => Promise<void>;
+  /** The inbox's "It took effect" / "It did not take effect" for the effect the node named; rejects with the reason. */
+  recordEffectOutcome?: (effectId: string, outcome: "confirmed" | "failed") => Promise<void>;
   /**
    * The model switches the hotkey makes (`useModelAlias`), so an intent that switches the model updates
    * the alias and note on screen exactly as the hotkey does.
@@ -107,6 +109,7 @@ export function useAppIntentSurfaces({
   openVoice,
   stopTurn,
   askAboutLatestNotice,
+  recordEffectOutcome,
   cycleModel,
   selectModel,
   selectOrbProfile,
@@ -189,6 +192,7 @@ export function useAppIntentSurfaces({
       ...(openVoice === undefined ? {} : { openVoice }),
       ...(stopTurn === undefined ? {} : { stopTurn }),
       ...(askAboutLatestNotice === undefined ? {} : { askAboutLatestNotice }),
+      ...(recordEffectOutcome === undefined ? {} : { recordEffectOutcome }),
       ...(selectOrbProfile === undefined ? {} : { selectOrbProfile }),
       ...(desktop
         ? {
@@ -227,6 +231,7 @@ export function useAppIntentSurfaces({
     openVoice,
     stopTurn,
     askAboutLatestNotice,
+    recordEffectOutcome,
     cycleModel,
     selectModel,
     selectOrbProfile,

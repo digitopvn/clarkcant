@@ -44,6 +44,12 @@ export function upsertEffect(db: Database, effect: EffectRecord): void {
   );
 }
 
+/** One effect by its id, or nothing when this node has no such row. */
+export function getEffect(db: Database, effectId: string): EffectRecord | undefined {
+  const [row] = allRows<Record<string, unknown>>(db, "SELECT * FROM effects WHERE effect_id = ?", effectId);
+  return row === undefined ? undefined : effectFromRow(row);
+}
+
 export function effectsForTask(db: Database, taskId: string): EffectRecord[] {
   return allRows<Record<string, unknown>>(db, "SELECT * FROM effects WHERE task_id = ? ORDER BY prepared_at", taskId).map(
     effectFromRow,

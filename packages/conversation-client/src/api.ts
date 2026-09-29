@@ -22,6 +22,7 @@ import type {
 import {
   appIntentDecisionSchema,
   composerSuggestionsResponseSchema,
+  effectReconcileResponseSchema,
   parseSseChunk,
   inboxResponseSchema,
   inboxSummarySchema,
@@ -34,6 +35,7 @@ import {
   type ComposerSuggestionsResponse,
   type ComposerTrigger,
   type ConfirmationDecision,
+  type EffectReconcileResponse,
   type InboxResponse,
   type InboxSummary,
   type NoticeSuppression,
@@ -1832,6 +1834,19 @@ export class GatewayClient {
   /** Notifies about this notice's kind again. */
   unsuppressNoticeKind(noticeId: string): Promise<{ unsuppressed: true }> {
     return this.#call("POST", `/inbox/notices/${encodeURIComponent(noticeId)}/unsuppress`);
+  }
+
+  /**
+   * Record what the person saw of an effect whose outcome was unknown: it took effect, or it did not. `EFFECT_NOT_UNKNOWN`
+   * (409) once it was already recorded; a person-only route, so this is only ever called from the person's own screen.
+   */
+  async reconcileEffect(
+    effectId: string,
+    outcome: "confirmed" | "failed",
+    source: "click" | "chat" | "voice",
+  ): Promise<EffectReconcileResponse> {
+    const body = await this.#call<unknown>("POST", `/effects/${encodeURIComponent(effectId)}/reconcile`, { outcome, source });
+    return effectReconcileResponseSchema.parse(body);
   }
 
   /** The same, from the inbox's list of quieted kinds, for a kind with no notice left to act from. */

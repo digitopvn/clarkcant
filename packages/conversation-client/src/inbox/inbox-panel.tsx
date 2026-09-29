@@ -1,6 +1,6 @@
 import { Fragment, type KeyboardEvent as ReactKeyboardEvent, type ReactElement, useCallback, useEffect, useRef, useState } from "react";
 
-import type { InboxResponse, Notice, NoticeAction, WaitingItem } from "@clarkcant/contracts";
+import type { EffectReconcileResponse, InboxResponse, Notice, NoticeAction, WaitingItem } from "@clarkcant/contracts";
 
 import type { GatewayClient, Timeline } from "../api.ts";
 import { Modal } from "../Modal.tsx";
@@ -15,7 +15,9 @@ import {
   noticeConversationTarget,
   noticeIdsToMarkRead,
   noticeKindQuieted,
+  noticeReconcileEffect,
   noticesMayBeCapped,
+  reconcileAlreadyRecorded,
   noticeSourceKey,
   noticeTone,
   relativeAge,
@@ -63,6 +65,11 @@ export interface InboxPanelProps {
    * already carries as many references as one can; the panel says so and stays open.
    */
   onAddToContext?: (notice: Notice) => "added" | "already" | "full";
+  /**
+   * Records what the person saw of an effect whose outcome was unknown, through the same path a typed or spoken "it
+   * took effect" takes. Absent when the host cannot, and then the two buttons are not drawn.
+   */
+  onReconcile?: (effectId: string, outcome: "confirmed" | "failed") => Promise<EffectReconcileResponse>;
 }
 
 type Load = { state: "loading" } | { state: "failed"; reason: string } | { state: "ready"; inbox: InboxResponse };
@@ -102,6 +109,7 @@ export function InboxPanel({
   switchGuard,
   onAskClark,
   onAddToContext,
+  onReconcile,
 }: InboxPanelProps): ReactElement | null {
   const t = useT();
   const categoryLabels = effectCategoryLabels(t);
@@ -416,6 +424,33 @@ export function InboxPanel({
     }
   };
 
+  /**
+   * Record what the person saw of the effect the notice asks about. The notice leaves the list once it is answered (the
+   * node dismisses it), so focus goes where a dismissal would send it; a 409 means somebody already answered — another
+   * screen, a sentence — and the refreshed list is the truth to show.
+   */
+  const reconcile = (notice: Notice, effectId: string, outcome: "confirmed" | "failed") => {
+    if (onReconcile === undefined || !lock(`notice:${notice.noticeId}`)) return;
+    const noticeIdsBefore = load.state === "ready" ? load.inbox.notices.map((existing) => existing.noticeId) : [];
+    void onReconcile(effectId, outcome)
+      .then((answer) => {
+        const nextId = nextNoticeFocusTarget(noticeIdsBefore, notice.noticeId);
+        const recorded = t(outcome === "confirmed" ? "inbox.reconciled.confirmed" : "inbox.reconciled.failed");
+        finish(
+          { tone: "done", text: answer.remainingUnknown > 0 ? `${recorded} ${t("inbox.reconciled.more")}` : recorded },
+          nextId === undefined ? { kind: "heading" } : { kind: "notice", noticeId: nextId },
+        );
+      })
+      .catch((cause: unknown) =>
+        finish(
+          reconcileAlreadyRecorded(cause)
+            ? { tone: "done", text: t("inbox.reconcileFailed.already") }
+            : { tone: "failed", text: t("inbox.reconcileFailed").replace("{reason}", failedReason(cause)) },
+          { kind: "status" },
+        ),
+      );
+  };
+
   const addToContext = (notice: Notice) => {
     if (onAddToContext === undefined || inFlight.current !== undefined) return;
     // "added" and "already" close the panel from the host, with the caret in the composer after the chip.
@@ -603,6 +638,28 @@ export function InboxPanel({
             onClick={() => setQuiet(notice.noticeId, quiet)}
           >
             {t(quiet ? "inbox.action.suppress" : "inbox.action.unsuppress")}
+          </button>
+        );
+      }
+      case "reconcile-confirmed":
+      case "reconcile-failed": {
+        const effectId = action.effectId;
+        if (onReconcile === undefined || effectId === undefined) return null;
+        const landed = action.id === "reconcile-confirmed";
+        return (
+          <button
+            key={action.id}
+            type="button"
+            className="cc-action"
+            {...emphasis}
+            data-inbox-reconcile={landed ? "confirmed" : "failed"}
+            data-inbox-reconcile-effect={effectId}
+            aria-label={t(landed ? "inbox.action.reconcileConfirmedAria" : "inbox.action.reconcileFailedAria").replace("{title}", notice.title)}
+            aria-busy={busy?.key === `notice:${notice.noticeId}` ? "true" : undefined}
+            disabled={locked}
+            onClick={() => reconcile(notice, effectId, landed ? "confirmed" : "failed")}
+          >
+            {t(landed ? "inbox.action.reconcileConfirmed" : "inbox.action.reconcileFailed")}
           </button>
         );
       }
@@ -882,6 +939,13 @@ export function InboxPanel({
                           // Says why a notice of this kind arrived already read, in words rather than by its look alone.
                           <p className="cc-freshness" data-inbox-quiet-kind={notice.noticeId} style={{ margin: 0 }}>
                             {t("inbox.quietKind")}
+                          </p>
+                        )}
+                        {onReconcile !== undefined && noticeReconcileEffect(notice) !== undefined && (
+                          // Said before the buttons, not after a press: an answer is recorded for good, and "did you
+                          // look?" is the one question worth asking before it.
+                          <p className="cc-freshness" data-inbox-reconcile-hint={notice.noticeId} style={{ margin: 0 }}>
+                            {t("inbox.reconcile.hint")}
                           </p>
                         )}
                         <div className="cc-card-actions" onKeyDown={closeMenuOnEscape(notice.noticeId)}>

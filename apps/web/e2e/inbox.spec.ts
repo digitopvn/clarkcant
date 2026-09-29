@@ -544,3 +544,96 @@ test("an approval from another conversation is decided from the inbox without le
   const card = page.locator(`[data-host-card="approval"][data-approval-id="${approvalId}"]`);
   await expect(card.locator("[data-approve]")).toHaveCount(0);
 });
+
+/**
+ * An action whose outcome nobody saw leaves one notice that asks the person, and the answer is theirs to give.
+ *
+ * The scripted sentence leaves real rows: a task, an effect marked unknown by the call the command broker makes, and
+ * the notice the node's own sweep writes. What the browser proves is the surface: the two answers are the row's
+ * buttons with the warning before them, a press records through the person-only route, the notice goes, the
+ * conversation hears how the task ended, and the same words typed reach the same route.
+ */
+async function leaveUnknownEffect(page: Page): Promise<{ effectId: string; noticeId: string }> {
+  const composer = page.locator("[data-composer]");
+  await composer.fill("thử thao tác không rõ kết quả");
+  await composer.press("Enter");
+  await expect(page.locator('[data-role="assistant"]').last()).toContainText("chưa rõ nó có hiệu lực", { timeout: 20_000 });
+  const headers = { authorization: `Bearer ${token()}` };
+  const inbox = (await (await page.request.get(`${GATEWAY}/inbox`, { headers })).json()) as {
+    notices: Array<{ noticeId: string; createdAt: string; actions?: Array<{ id: string; effectId?: string }> }>;
+  };
+  const asking = inbox.notices
+    .flatMap((notice) => {
+      const effectId = notice.actions?.find((action) => action.id === "reconcile-confirmed")?.effectId;
+      return effectId === undefined ? [] : [{ noticeId: notice.noticeId, effectId, createdAt: notice.createdAt }];
+    })
+    .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  const newest = asking[0];
+  if (newest === undefined) throw new Error("the unknown effect left no notice offering an answer");
+  return newest;
+}
+
+test("answering an unknown outcome from the inbox resolves its notice and tells the conversation", async ({ page }) => {
+  await openApp(page);
+  const { effectId, noticeId } = await leaveUnknownEffect(page);
+
+  await page.locator("[data-composer]").fill("mở hộp thư");
+  await page.locator("[data-composer]").press("Enter");
+  const dialog = page.getByRole("dialog");
+  const row = dialog.locator(`[data-inbox-notice="${noticeId}"]`);
+  await expect(row).toBeVisible({ timeout: 10_000 });
+  // The warning is said before the buttons, and the two answers are the row's own buttons, named for their notice.
+  await expect(row.locator(`[data-inbox-reconcile-hint="${noticeId}"]`)).toBeVisible();
+  const confirm = row.locator(`[data-inbox-reconcile="confirmed"][data-inbox-reconcile-effect="${effectId}"]`);
+  await expect(confirm).toHaveText("Đã có hiệu lực");
+  await expect(confirm).toHaveAttribute("aria-label", /^Ghi nhận là đã có hiệu lực: /u);
+  await expect(row.locator(`[data-inbox-reconcile="failed"][data-inbox-reconcile-effect="${effectId}"]`)).toHaveText("Chưa có hiệu lực");
+
+  // Reachable by keyboard like any other button on the row.
+  await confirm.focus();
+  await page.keyboard.press("Enter");
+
+  await expect(dialog.locator('[data-inbox-status="done"]')).toContainText("Đã ghi nhận là thao tác đã có hiệu lực", { timeout: 20_000 });
+  await expect(dialog.locator(`[data-inbox-notice="${noticeId}"]`)).toHaveCount(0);
+  // Focus is not dropped on the page when the row it was on leaves.
+  await expect.poll(() => page.evaluate(() => document.activeElement !== document.body)).toBe(true);
+
+  await page.keyboard.press("Escape");
+  await expect(dialog).toHaveCount(0);
+  await expect(page.locator('[data-role="assistant"]').last()).toContainText("bạn xác nhận “git push origin fixture” đã có hiệu lực", {
+    timeout: 20_000,
+  });
+
+  // Answered once, for good: a second answer is refused, and the notice does not come back.
+  const again = await page.request.post(`${GATEWAY}/effects/${effectId}/reconcile`, {
+    headers: { authorization: `Bearer ${token()}` },
+    data: { outcome: "failed" },
+  });
+  expect(again.status()).toBe(409);
+  const inbox = (await (await page.request.get(`${GATEWAY}/inbox`, { headers: { authorization: `Bearer ${token()}` } })).json()) as {
+    notices: Array<{ noticeId: string }>;
+  };
+  expect(inbox.notices.map((notice) => notice.noticeId)).not.toContain(noticeId);
+});
+
+test("saying it did not take effect, typed, records the same answer through the same route", async ({ page }) => {
+  await openApp(page);
+  const { effectId } = await leaveUnknownEffect(page);
+  const recorded = page.waitForRequest(
+    (request) => request.method() === "POST" && request.url().endsWith(`/effects/${effectId}/reconcile`),
+  );
+
+  const composer = page.locator("[data-composer]");
+  await composer.fill("chưa có hiệu lực");
+  await composer.press("Enter");
+
+  expect((await recorded).postDataJSON()).toMatchObject({ outcome: "failed", source: "chat" });
+  await expect(page.locator('[data-role="assistant"]').last()).toContainText("bạn xác nhận “git push origin fixture” chưa có hiệu lực", {
+    timeout: 20_000,
+  });
+
+  // With nothing left waiting, the same words are refused out loud rather than answered about something else.
+  await composer.fill("chưa có hiệu lực");
+  await composer.press("Enter");
+  await expect(page.locator("[data-intent-notice]")).toContainText("Không có việc nào đang chờ", { timeout: 20_000 });
+});

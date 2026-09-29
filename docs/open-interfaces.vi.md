@@ -228,7 +228,10 @@ báo cho principal này: các thông báo cùng loại về sau vẫn được l
 báo. Chỉ loại đủ hẹp mới tắt báo được, tức loại gắn với một việc tự động, một nguồn tín hiệu, một gói, một node, hoặc
 việc nền của chính người dùng; loại khác sẽ tắt luôn cả lời nhắc và thông báo của mọi việc tự động khác, nên route từ
 chối bằng `409 SUPPRESSION_TOO_BROAD` và `actions` của thông báo không bao giờ đưa ra thao tác này. Mỗi route chỉ tác động lên thông báo của chính principal gọi nó.
-Hình dạng dữ liệu ở `packages/contracts/src/inbox.ts`; hành vi được mô tả trong
+`POST /effects/:effectId/reconcile` với `{ "outcome": "confirmed" | "failed" }` ghi nhận điều người dùng thấy về
+một thao tác chưa rõ kết quả, tức câu trả lời mà thông báo chưa rõ kết quả đưa ra thành hai nút: `404` với effect
+thuộc task của principal khác hoặc không tồn tại, `409 EFFECT_NOT_UNKNOWN` khi nó không còn ở trạng thái chưa rõ; route
+này chỉ dành cho người dùng, như bên dưới. Hình dạng dữ liệu ở `packages/contracts/src/inbox.ts`; hành vi được mô tả trong
 [system-architecture.vi.md](system-architecture.vi.md) ở phần hộp thư.
 
 Các route khác (settings, packages, widgets, peers…) vẫn gọi được với cùng token nhưng chưa thuộc mô tả ổn định và
@@ -256,8 +259,10 @@ nó sẽ cho phép client AI tự duyệt hành động bị guard của chính 
 các relay tổng quát (frame `request` qua WebSocket, `clarkcant api`) cùng MCP từ chối mọi route ghi nhận quyết định
 của con người với `403 PERSON_ONLY` vì cùng lý do đó: duyệt hành động bị guard (trên thẻ, hoặc do một task đang
 chạy raise ra), quyết định capability của package,
-xác nhận app intent, báo cáo trang đã làm gì với một hành động agent yêu cầu, tin cậy một peer đã ghép cặp và cấp
-grant. Xuất một bảng ra file CSV
+xác nhận app intent, báo cáo trang đã làm gì với một hành động agent yêu cầu, tin cậy một peer đã ghép cặp, cấp
+grant, và ghi nhận một thao tác không ai thấy kết quả đã có hiệu lực hay chưa (`POST /effects/{effectId}/reconcile`;
+một client AI nói được "lần push đó đã thành công" thì có thể tự gỡ trạng thái chưa rõ của task của chính nó rồi tự
+báo là đã xong). Xuất một bảng ra file CSV
 (`POST /conversations/{id}/widgets/{instanceId}/export`) cũng bị các relay đó từ chối: file được viết cho người đang
 xem bảng, không trao cho một client máy. Dừng, trả lời câu hỏi và đọc vẫn dùng được. Discovery document ghi điều này
 ở mục `personDecisions`.

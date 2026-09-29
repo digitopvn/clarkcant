@@ -414,6 +414,21 @@ export function dismissNotificationsByKeyPrefix(
 }
 
 /**
+ * Take the one notice a producer keyed `dedupKey` out of the inbox once what it said is no longer so — the same
+ * dismissal a person makes, so the row stays for the retention window and the producer stays deduplicated. Exact, not a
+ * prefix: `worker:task_1` must not also take `worker:task_12`. False when there was nothing left to dismiss.
+ */
+export function dismissNotificationByKey(db: Database, input: { principalId: string; dedupKey: string; at: Instant }): boolean {
+  const result = db
+    .prepare(
+      `UPDATE notifications SET dismissed_at = ?, read_at = COALESCE(read_at, ?)
+        WHERE principal_id = ? AND dedup_key = ? AND dismissed_at IS NULL`,
+    )
+    .run(input.at, input.at, input.principalId, input.dedupKey.slice(0, 300));
+  return Number(result.changes) > 0;
+}
+
+/**
  * The key of the newest notice (dismissed or not) whose key starts with `dedupKeyPrefix`, by insertion: how a producer
  * that keys one story by a family of keys finds where the story got to. Read as a range of the dedup index, like the
  * dismissal above.

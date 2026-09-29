@@ -539,7 +539,8 @@ Route: `GET /inbox`, `GET /inbox/summary` (hai số cho dấu trên header), `PO
 `DISMISS_UNDO_WINDOW_MS` — quá hạn thì trả `409 UNDO_EXPIRED`; thông báo được đưa lại trở về ở trạng thái đã đọc),
 `POST /inbox/notices/:id/snooze` (`{ until }`; `400 SNOOZE_OUT_OF_RANGE` khi không nằm sau hiện tại hoặc xa quá 30
 ngày), `POST /inbox/notices/:id/unsnooze`, `POST /inbox/notices/:id/suppress` (trả về `suppression`; gọi lại không
-đổi gì; `409 SUPPRESSION_TOO_BROAD` với loại quá rộng để tắt báo), `POST /inbox/notices/:id/unsuppress` và `DELETE /inbox/suppressions/:id`. Tất cả chỉ tác động lên thông
+đổi gì; `409 SUPPRESSION_TOO_BROAD` với loại quá rộng để tắt báo), `POST /inbox/notices/:id/unsuppress` và `DELETE /inbox/suppressions/:id`. `POST /effects/:effectId/reconcile` (`{ outcome: "confirmed" | "failed" }`) ghi câu trả lời mà thông báo chưa rõ kết
+quả đưa ra (`409 EFFECT_NOT_UNKNOWN` khi đã được trả lời) và chỉ dành cho người dùng. Tất cả chỉ tác động lên thông
 báo và mục tắt báo của principal này; id của principal khác trả 404. Các route này không thuộc mô tả open-interface
 ổn định. Contract ở `packages/contracts/src/inbox.ts`. UI ở DESIGN.vi.md
 §6.7; mở bằng intent `inbox.open` (text, voice, `control_app`), còn `inbox.ask` hỏi Clark về thông báo mới nhất. Agent đọc cùng dữ liệu đó qua tool chỉ đọc `read_inbox`

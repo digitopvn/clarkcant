@@ -137,6 +137,19 @@ const DOCUMENTED: readonly { kind: AppIntentKind; vietnamese: readonly string[];
     vietnamese: ["dừng lại", "Dừng lại!", "ngừng lại", "dừng trả lời", "dừng viết đi", "dung lai"],
     english: "stop generating",
   },
+  {
+    // Whole-sentence: the answer to "did that take effect?". Which effect it answers is decided on the node, which
+    // refuses rather than guesses when not exactly one is waiting (apps/runtime/test/effect-reconciliation.spec.ts).
+    kind: "effect.confirmed",
+    vietnamese: ["đã có hiệu lực", "Nó đã có hiệu lực rồi.", "việc đó đã có hiệu lực", "da co hieu luc"],
+    english: "it took effect",
+  },
+  {
+    // "chưa có hiệu lực" must not read as its positive twin: the longest phrase decides, and "chua" is in this one.
+    kind: "effect.failed",
+    vietnamese: ["chưa có hiệu lực", "Nó chưa có hiệu lực.", "việc đó chưa có hiệu lực", "chua co hieu luc"],
+    english: "it did not take effect",
+  },
 ];
 
 describe("every documented way of asking maps to one intent", () => {

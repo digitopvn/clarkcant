@@ -62,10 +62,26 @@ export const APP_INTENT_KINDS = [
   "inbox.ask",
   "turn.stop",
   "orb.select",
+  "effect.confirmed",
+  "effect.failed",
 ] as const;
 
 export const appIntentKindSchema = z.enum(APP_INTENT_KINDS);
 export type AppIntentKind = z.infer<typeof appIntentKindSchema>;
+
+/**
+ * The kinds only the person may ask for: saying whether an effect whose outcome nobody observed took effect.
+ *
+ * "It took effect" decides what a task may report about itself, so it is the person's the way an approval is. The node
+ * refuses these from the agent's own sources (`agent`, `voice-agent`), `control_app` does not offer them, the page's
+ * executor refuses one that carries an agent's `controlId`, and the route it finally calls is person-only
+ * (`isPersonOnlyRoute`). Four checks rather than one, because each surface is reachable on its own.
+ */
+export const PERSON_ONLY_APP_INTENT_KINDS: readonly AppIntentKind[] = ["effect.confirmed", "effect.failed"];
+
+export function isPersonOnlyAppIntent(kind: AppIntentKind): boolean {
+  return PERSON_ONLY_APP_INTENT_KINDS.includes(kind);
+}
 
 /**
  * The tabs Settings can be opened at.
@@ -130,6 +146,12 @@ export const appIntentSchema = z
      * could not.
      */
     orbProfile: orbProfileSchema.optional(),
+    /**
+     * Carried only by `effect.confirmed` and `effect.failed`: the one effect the node found waiting for the person's
+     * answer when it understood the sentence. Filled in by the node, never taken from the words, so a sentence can only
+     * answer the effect the node itself named in the read-back.
+     */
+    effectId: z.string().min(1).max(128).optional(),
   })
   .refine((intent) => intent.kind !== "settings.tab" || intent.tab !== undefined, {
     message: "settings.tab must name the tab to change to",
@@ -158,6 +180,14 @@ export const appIntentSchema = z
   .refine((intent) => intent.kind === "orb.select" || intent.orbProfile === undefined, {
     message: "only orb.select may name an orb profile",
     path: ["orbProfile"],
+  })
+  .refine((intent) => !isPersonOnlyAppIntent(intent.kind) || intent.effectId !== undefined, {
+    message: "an answer about an effect must name the effect it answers",
+    path: ["effectId"],
+  })
+  .refine((intent) => isPersonOnlyAppIntent(intent.kind) || intent.effectId === undefined, {
+    message: "only an answer about an effect may name one",
+    path: ["effectId"],
   });
 export type AppIntent = z.infer<typeof appIntentSchema>;
 
@@ -275,6 +305,10 @@ function describeAppIntentVi(intent: AppIntent): string {
       return "Tôi dừng câu trả lời đang chạy nhé; phần đã viết vẫn được giữ lại.";
     case "orb.select":
       return `Tôi đổi Orb sang kiểu ${orbProfileLabel(intent)} nhé.`;
+    case "effect.confirmed":
+      return "Tôi ghi nhận là việc đang chờ đã có hiệu lực nhé.";
+    case "effect.failed":
+      return "Tôi ghi nhận là việc đang chờ chưa có hiệu lực nhé.";
     default: {
       // Every kind above returns, so this is unreachable today. It exists so that adding a tenth kind
       // without a sentence is a loud failure in a test rather than `undefined` read aloud by a voice.
@@ -332,6 +366,10 @@ function describeAppIntentEn(intent: AppIntent): string {
       return "Stopping the reply in progress; what it already wrote is kept.";
     case "orb.select":
       return `Switching the Orb to the ${orbProfileLabel(intent)} style.`;
+    case "effect.confirmed":
+      return "Recording that the waiting action took effect.";
+    case "effect.failed":
+      return "Recording that the waiting action did not take effect.";
     default: {
       const unreachable: never = intent.kind;
       throw new Error(`no read-back sentence for app intent ${String(unreachable)}`);
@@ -461,6 +499,8 @@ export const appIntentEventDocumentSchema = z.strictObject({
   modelAlias: modelAliasSchema.optional(),
   /** Recorded so the audit can answer which orb an `orb.select` switched to. */
   orbProfile: orbProfileSchema.optional(),
+  /** Recorded so the audit can answer which effect a sentence was understood to answer. */
+  effectId: z.string().min(1).max(128).optional(),
   source: appIntentSourceSchema,
   confirmed: z.boolean(),
 });

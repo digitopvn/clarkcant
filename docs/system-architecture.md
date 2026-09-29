@@ -533,7 +533,8 @@ Routes: `GET /inbox`, `GET /inbox/summary` (two numbers for the header badge), `
 `POST /inbox/notices/:id/snooze` (`{ until }`; `400 SNOOZE_OUT_OF_RANGE` when not ahead of now or beyond 30 days),
 `POST /inbox/notices/:id/unsnooze`, `POST /inbox/notices/:id/suppress` (answers the `suppression`; idempotent;
 `409 SUPPRESSION_TOO_BROAD` for a kind too wide to quiet),
-`POST /inbox/notices/:id/unsuppress` and `DELETE /inbox/suppressions/:id`. All of them act only on this principal's
+`POST /inbox/notices/:id/unsuppress` and `DELETE /inbox/suppressions/:id`. `POST /effects/:effectId/reconcile` (`{ outcome: "confirmed" | "failed" }`) records the answer an unknown-outcome
+notice offers (`409 EFFECT_NOT_UNKNOWN` once answered) and is person-only. All of them act only on this principal's
 notices and suppressions; another principal's id answers 404. These routes are not part of the stable
 open-interface description. The contract is in `packages/contracts/src/inbox.ts`. UI in
 DESIGN.md §6.7; opened with the `inbox.open` intent (text, voice, `control_app`), and `inbox.ask` asks Clark about the

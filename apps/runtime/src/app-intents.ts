@@ -43,8 +43,17 @@ import {
   type SettingsTab,
   appIntentSchema,
   describeAppIntent,
+  isPersonOnlyAppIntent,
 } from "@clarkcant/contracts";
-import { deletePreference, getPreference, recordAppIntentEvent, resolveAppIntent, setPreference } from "@clarkcant/core";
+import {
+  answerableUnknownEffects,
+  deletePreference,
+  getPreference,
+  quotedEffectIntent,
+  recordAppIntentEvent,
+  resolveAppIntent,
+  setPreference,
+} from "@clarkcant/core";
 import type { WidgetTarget } from "@clarkcant/core";
 import { type Database } from "@clarkcant/storage";
 
@@ -249,12 +258,14 @@ export function decideAppIntent(
     return resolution.kind === "refused" ? resolution : { kind: "none" };
   }
 
-  const intent = resolution.intent;
-  if (resolution.kind === "needs-confirmation") {
+  const answered = answerAboutEffect(deps, input, resolution, locale);
+  if (answered.kind === "refused") return answered;
+  const intent = answered.intent;
+  if (answered.kind === "needs-confirmation") {
     // The minted token is replaced here by one that is actually stored: the decision function is pure
     // and cannot write, so the write happens in this layer.
     const token = mint(intent);
-    return { ...resolution, confirmationToken: token };
+    return { ...answered, confirmationToken: token };
   }
   recordAppIntentEvent(deps, {
     intent,
@@ -262,7 +273,65 @@ export function decideAppIntent(
     confirmed: false,
     ...(input.conversationId === undefined ? {} : { conversationId: input.conversationId }),
   });
-  return resolution;
+  return answered;
+}
+
+/**
+ * "It took effect", "chưa có hiệu lực": the person's answer to an effect whose outcome nobody observed, as a sentence.
+ *
+ * A sentence names no effect, so the node names it: exactly one effect waiting for this person is the one the sentence
+ * answers, and the read-back says which, before the page records it. None waiting, or several, is refused rather than
+ * guessed — with several, the inbox is where each one can be answered by its own buttons. The agent's own sources are
+ * refused outright: it is the person's answer (see `PERSON_ONLY_APP_INTENT_KINDS`).
+ *
+ * Only decided here. Recording is the page's, through the person-only `POST /effects/:effectId/reconcile`, so a
+ * message sent through a machine surface can at most be told what would be answered, never answer it.
+ */
+function answerAboutEffect(
+  deps: AppIntentDeps,
+  input: DecideInput,
+  resolution: Exclude<AppIntentResolution, { kind: "none" | "refused" }>,
+  locale: AppIntentLocale,
+): Exclude<AppIntentResolution, { kind: "none" }> {
+  const kind = resolution.intent.kind;
+  if (!isPersonOnlyAppIntent(kind)) return resolution;
+  const en = locale === "en";
+  if (input.request.source === "agent" || input.request.source === "voice-agent") {
+    return {
+      kind: "refused",
+      say: en
+        ? "Only you can say whether that took effect, so I have not recorded anything."
+        : "Chỉ bạn mới ghi nhận được việc đó đã có hiệu lực hay chưa, nên tôi chưa ghi gì cả.",
+    };
+  }
+  const waiting = answerableUnknownEffects({ db: deps.db, nodeId: deps.nodeId, principalId: input.principalId });
+  const [only] = waiting;
+  if (only === undefined) {
+    return {
+      kind: "refused",
+      say: en
+        ? "Nothing is waiting for you to say whether it took effect, so I have not recorded anything."
+        : "Không có việc nào đang chờ bạn xác nhận kết quả, nên tôi chưa ghi gì cả.",
+    };
+  }
+  if (waiting.length > 1) {
+    return {
+      kind: "refused",
+      say: en
+        ? `${waiting.length} actions are waiting for your answer. Open the inbox and answer the one you checked, so nothing is recorded against the wrong one.`
+        : `Có ${waiting.length} việc đang chờ bạn xác nhận kết quả. Bạn mở hộp thư và trả lời đúng việc bạn đã kiểm tra, để tôi không ghi nhầm.`,
+    };
+  }
+  const name = quotedEffectIntent(only);
+  const confirmed = kind === "effect.confirmed";
+  return {
+    kind: "intent",
+    intent: { kind, effectId: only.effectId },
+    requiresConfirmation: false,
+    readBack: en
+      ? `Recording that ${name} ${confirmed ? "took effect" : "did not take effect"}.`
+      : `Tôi ghi nhận ${name} ${confirmed ? "đã" : "chưa"} có hiệu lực nhé.`,
+  };
 }
 
 /** The sentence for the one refusal that comes from a request naming no tab. */

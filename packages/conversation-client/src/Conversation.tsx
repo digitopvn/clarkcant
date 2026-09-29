@@ -19,6 +19,7 @@ import { DesktopChrome } from "./desktop-chrome.tsx";
 import { DotGrid } from "./dot-grid.tsx";
 import { ConversationHeader } from "./ConversationHeader.tsx";
 import { InboxPanel } from "./inbox/inbox-panel.tsx";
+import { reconcileAlreadyRecorded, sanitizeReason } from "./inbox/inbox-model.ts";
 import { useInboxNoticeActions } from "./inbox/use-inbox-notice-actions.ts";
 import { useInboxNotifications } from "./inbox/use-inbox-notifications.ts";
 import { ConversationHeroEmptyState } from "./ConversationHeroEmptyState.tsx";
@@ -187,6 +188,9 @@ export function Conversation({
   const liveTrigger = useRef<HTMLElement | null>(null);
   const composerInput = useRef<HTMLTextAreaElement>(null);
   const askAboutLatestNotice = useRef<(() => Promise<void>) | undefined>(undefined);
+  const recordEffectOutcome = useRef<((effectId: string, outcome: "confirmed" | "failed") => Promise<void>) | undefined>(
+    undefined,
+  );
   /** The hidden file input the `+` button opens, so the button itself is a real `<button>`. */
   const attachmentInput = useRef<HTMLInputElement>(null);
 
@@ -281,6 +285,10 @@ export function Conversation({
     askAboutLatestNotice: async () => {
       await askAboutLatestNotice.current?.();
     },
+    // "It took effect", typed or said, reaches the same person-only route as the inbox's two buttons.
+    recordEffectOutcome: async (effectId, outcome) => {
+      await recordEffectOutcome.current?.(effectId, outcome);
+    },
     // The hotkey's own switches, so the alias and note on screen follow an agent's switch too.
     cycleModel,
     selectModel,
@@ -319,8 +327,24 @@ export function Conversation({
     insertReference: references.insert,
     composerInput,
     t: localeState.t,
+    refreshTimeline,
+    onInboxChanged: () => setInboxTick((tick) => tick + 1),
   });
   askAboutLatestNotice.current = noticeActions.askAboutLatestNotice;
+  // A typed command arrives while the voice screen is closed, a spoken one while it is open: that is the surface the
+  // person answered from, and the node records it beside the answer.
+  recordEffectOutcome.current = async (effectId, outcome) => {
+    try {
+      await noticeActions.reconcile(effectId, outcome, voiceOpen ? "voice" : "chat");
+    } catch (cause) {
+      throw new Error(
+        reconcileAlreadyRecorded(cause)
+          ? localeState.t("inbox.reconcileFailed.already")
+          : localeState.t("inbox.reconcileFailed").replace("{reason}", sanitizeReason(cause) ?? localeState.t("inbox.reason.unavailable")),
+        { cause },
+      );
+    }
+  };
 
   const agentState = agentStateFrom({
     failed: error !== undefined,
@@ -557,6 +581,7 @@ export function Conversation({
         switchGuard={{ busy, voiceOpen, draftNonEmpty: draft.trim() !== "", hasAttachments: chips.length > 0 }}
         onAskClark={noticeActions.askClark}
         onAddToContext={noticeActions.addToContext}
+        onReconcile={(effectId, outcome) => noticeActions.reconcile(effectId, outcome, "click")}
       />
 
       {/* The Widget Library, beside the conversation rather than in place of it. */}

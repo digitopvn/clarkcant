@@ -7,6 +7,8 @@
  * routes instead, so an AI client handed one of those surfaces cannot approve its own action or widen its own trust.
  * Exporting a table to a CSV file is the person's too: it hands a whole dataset over as a download. The person's own
  * surfaces call the routes over HTTP as before. Stop, answering a question and reading stay reachable everywhere.
+ * Saying whether an effect whose outcome was unknown took effect is the person's for the same reason as an approval: it
+ * decides what a task may report about itself.
  *
  * Segments are split the way the gateway splits them (on `/`, empty segments dropped, no decoding), so a path this
  * lets through cannot reach one of these routes under another spelling.
@@ -25,7 +27,13 @@ export function isPersonOnlyRoute(method: string, path: string): boolean {
     case 3:
       // POST /peers/:id/confirm, and POST /app-intents/host-control/:controlId: the screen's own report of
       // what it did with an agent's app-control action, which a machine surface must not be able to forge.
-      return (first === "peers" && third === "confirm") || (first === "app-intents" && second === "host-control");
+      // POST /effects/:effectId/reconcile: what the person saw of an effect whose outcome nobody observed. An AI client
+      // that could say "that push landed" could clear its own task's uncertainty and then report its own success.
+      return (
+        (first === "peers" && third === "confirm") ||
+        (first === "app-intents" && second === "host-control") ||
+        (first === "effects" && third === "reconcile")
+      );
     case 4:
       // POST /packages/approvals/:id/decision
       return first === "packages" && second === "approvals" && fourth === "decision";
@@ -46,5 +54,5 @@ export function isPersonOnlyRoute(method: string, path: string): boolean {
 export const PERSON_ONLY_REFUSAL = Object.freeze({
   code: "PERSON_ONLY",
   message:
-    "approvals, grants, trust and file exports are decided by the person on their own surface, not through a machine interface",
+    "approvals, grants, trust, file exports and what an unknown effect did are decided by the person on their own surface, not through a machine interface",
 });

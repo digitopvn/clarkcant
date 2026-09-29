@@ -28,6 +28,7 @@ import {
   type OrbProfileName,
   type SettingsTab,
   describeAppIntent,
+  isPersonOnlyAppIntent,
 } from "@clarkcant/contracts";
 
 import { readStoredLocale } from "./i18n/locale.ts";
@@ -90,6 +91,12 @@ export interface AppIntentHost {
    * the reason `openInbox` is; a host that has an inbox but nothing in it refuses with a sentence saying so.
    */
   askAboutLatestNotice?(): HostEffect;
+  /**
+   * Records the person's answer about an effect whose outcome was unknown — the inbox's "It took effect" and "It did not
+   * take effect", reached by a sentence. The node named the effect in the decision; this records it through the same
+   * person-only route the buttons call. Optional for the reason `openInbox` is.
+   */
+  recordEffectOutcome?(effectId: string, outcome: "confirmed" | "failed"): HostEffect;
   /**
    * Stops the reply this conversation is writing, keeping what it has already written. Optional: a host with no
    * node behind it has no turn to stop.
@@ -156,6 +163,8 @@ function missingCapabilitySay(intent: AppIntent): string {
       return catalog["shell.intent.notConversation"];
     case "inbox.open":
     case "inbox.ask":
+    case "effect.confirmed":
+    case "effect.failed":
       return catalog["shell.intent.notInbox"];
     case "turn.stop":
       return catalog["shell.intent.notTurn"];
@@ -205,6 +214,12 @@ export async function runAppIntent(decision: AppIntentDecision, host: AppIntentH
   const intent = decision.intent;
   const readBack = decision.readBack === "" ? describeAppIntent(intent) : decision.readBack;
 
+  // The node never issues one of these through `control_app`; a decision that carries an agent's id and names one
+  // anyway did not come through it, and is refused rather than recorded as the person's answer.
+  if (decision.controlId !== undefined && isPersonOnlyAppIntent(intent.kind)) {
+    return { ran: false, say: CATALOGS[readStoredLocale()]["shell.intent.personOnly"] };
+  }
+
   if (!hostHasCapability(host, intent)) {
     return { ran: false, say: missingCapabilitySay(intent) };
   }
@@ -237,6 +252,12 @@ function carryOut(intent: AppIntent, host: AppIntentHost): HostEffect {
       return host.openInbox?.();
     case "inbox.ask":
       return host.askAboutLatestNotice?.();
+    case "effect.confirmed":
+    case "effect.failed":
+      // The contract refuses one without an effect, so this is a decision that did not come through it: refused
+      // rather than answered about whichever effect happens to be waiting.
+      if (intent.effectId === undefined) throw new Error(CATALOGS[readStoredLocale()]["shell.intent.personOnly"]);
+      return host.recordEffectOutcome?.(intent.effectId, intent.kind === "effect.confirmed" ? "confirmed" : "failed");
     case "turn.stop":
       return host.stopTurn?.();
     case "model.cycle":
@@ -299,6 +320,9 @@ function hostHasCapability(host: AppIntentHost, intent: AppIntent): boolean {
       return host.openInbox !== undefined;
     case "inbox.ask":
       return host.askAboutLatestNotice !== undefined;
+    case "effect.confirmed":
+    case "effect.failed":
+      return host.recordEffectOutcome !== undefined;
     case "turn.stop":
       return host.stopTurn !== undefined;
     case "model.cycle":

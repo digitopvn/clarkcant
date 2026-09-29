@@ -28,6 +28,7 @@ import { handlePreferenceRoutes } from "./routes/preferences.ts";
 import { handlePackageRoutes } from "./routes/packages.ts";
 import { handleComposerRoutes } from "./routes/composer.ts";
 import { handleInboxRoutes } from "./routes/inbox.ts";
+import { handleEffectRoutes } from "./routes/effects.ts";
 import { handleSignalRoutes } from "./routes/signals.ts";
 import { handleGithubSignalRoute } from "./routes/github-signals.ts";
 import { handleWebhookSignalRoute } from "./routes/webhook-signals.ts";
@@ -276,6 +277,10 @@ export async function handleRequest(deps: GatewayDeps, request: GatewayRequest):
   // offers goes back through the route that already owns that decision.
   const inboxResponse = handleInboxRoutes({ services, request, segments, at });
   if (inboxResponse !== undefined) return inboxResponse;
+
+  // What the person saw of an effect whose outcome was unknown. Person-only: see `isPersonOnlyRoute`.
+  const effectResponse = handleEffectRoutes({ services, request, segments, at });
+  if (effectResponse !== undefined) return effectResponse;
 
   // What the composer offers after / or @. Read only; a reference is checked again when the message is sent.
   const composerResponse = await handleComposerRoutes({ services, request, segments });

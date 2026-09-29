@@ -28,6 +28,7 @@ import {
 } from "@clarkcant/storage";
 
 import { type CapabilitySummary, type RegistryDeps, listCapabilitySummaries } from "./capability-registry.ts";
+import { settleReconciledTask } from "./effect-reconciliation.ts";
 import {
   type TaskServiceDeps,
   advanceResolving,
@@ -1047,6 +1048,19 @@ export function settleDispatchedTask(deps: ConductorDeps, taskId: string, report
   }
   if (isTerminal(task.state)) {
     return settledAs(deps, taskId, evidenceKinds, "the task had already ended before its run reported");
+  }
+  if (task.state === "uncertain") {
+    // An effect went unknown while the run kept going. The run's report is recorded either way; if the person has
+    // already answered for every unknown effect by now, it is what settles the task, on their answer.
+    const recorded = record();
+    const settled = recorded?.blocked === undefined ? settleReconciledTask(deps, taskId) : undefined;
+    if (settled !== undefined) return settledAs(deps, taskId, evidenceKinds, settled.message);
+    return settledAs(
+      deps,
+      taskId,
+      evidenceKinds,
+      reported?.summary ?? "the run produced no evidence, so it is reported as failed rather than as success",
+    );
   }
 
   if (!reported) {
