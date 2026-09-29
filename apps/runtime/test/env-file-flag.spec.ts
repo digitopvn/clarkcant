@@ -1,5 +1,6 @@
 import { spawn } from "node:child_process";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, writeFileSync } from "node:fs";
+import { rm } from "node:fs/promises";
 import { createServer, type Server } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -18,10 +19,10 @@ import { afterEach, describe, expect, it } from "vitest";
 const MAIN = join(import.meta.dirname, "..", "src", "main.ts");
 const PROBE = "CC_ENV_FILE_FLAG_PROBE";
 
-const cleanups: (() => void)[] = [];
-afterEach(() => {
-  for (const cleanup of cleanups.splice(0)) cleanup();
-});
+const cleanups: (() => unknown)[] = [];
+afterEach(async () => {
+  for (const cleanup of cleanups.splice(0)) await cleanup();
+}, 30_000);
 
 async function holdPort(): Promise<{ server: Server; port: number }> {
   const server = createServer();
@@ -57,8 +58,9 @@ async function runNodeIn(cwd: string, args: string[]): Promise<string> {
 
 async function setup(): Promise<{ cwd: string; args: string[] }> {
   const cwd = mkdtempSync(join(tmpdir(), "cc-envfile-"));
-  // Windows can hold the node's working directory for a moment after `close`, which fails the first removal with EPERM.
-  cleanups.push(() => rmSync(cwd, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 }));
+  // Windows can hold the node's working directory after `close` (for seconds while the whole suite runs and the files
+  // just written are being scanned), which fails the removal with EPERM; the retries back off for up to about 20s.
+  cleanups.push(() => rm(cwd, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 }));
   writeFileSync(join(cwd, ".env"), `${PROBE}=from-file\n`);
   const { port } = await holdPort();
   return { cwd, args: ["--data-dir", join(cwd, "data"), "--port", String(port), "--label", "env-file-flag"] };
