@@ -50,6 +50,10 @@ describe("what Save As may write", () => {
 
   it("writes back only to a handle this window was given, in the handle's own shape", () => {
     expect(reviewSaveFileRequest({ suggestedName: "a.txt", contentBase64: "aGk=", replaceHandle: "C:/secrets.txt" }).allowed).toBe(false);
+    // Something that only starts like a handle is not one: the whole shape is the check.
+    expect(reviewSaveFileRequest({ suggestedName: "a.txt", contentBase64: "aGk=", replaceHandle: "fh_../../secrets.txt" }).allowed).toBe(false);
+    expect(reviewSaveFileRequest({ suggestedName: "a.txt", contentBase64: "aGk=", replaceHandle: `fh_${"A".repeat(32)}` }).allowed).toBe(false);
+    expect(reviewSaveFileRequest({ suggestedName: "a.txt", contentBase64: "aGk=", replaceHandle: `fh_${"a".repeat(32)}` }).allowed).toBe(true);
     expect(reviewSaveFileRequest({ suggestedName: "a.txt", contentBase64: "not base64!" }).allowed).toBe(false);
     expect(reviewSaveFileRequest({ suggestedName: "a.txt", contentBase64: "aGk=" })).toMatchObject({ allowed: true, suggestedName: "a.txt" });
   });

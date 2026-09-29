@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, readdirSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readdirSync, rmSync, truncateSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -7,7 +7,14 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { ARTIFACT_LIMITS, ATTACHMENT_LIMITS, type Instant } from "@clarkcant/contracts";
 import { createInstance } from "@clarkcant/core";
 import { TABLE } from "@clarkcant/data-canvas";
-import { getArtifactGrant, getBrokerArtifact, insertAttachment, insertBrokerArtifact, putArtifactGrant } from "@clarkcant/storage";
+import {
+  getArtifactGrant,
+  getBrokerArtifact,
+  insertAttachment,
+  insertBrokerArtifact,
+  putArtifactGrant,
+  recordWorkingArtifactWrite,
+} from "@clarkcant/storage";
 
 import {
   type ArtifactBrokerDeps,
@@ -163,6 +170,9 @@ describe("staged blobs", () => {
   it("never turns a staging name into a path", () => {
     expect(createStagedBlob({ dataDir: dir, stagingRef: "../identity.json" })).toMatchObject({ ok: false, code: "STAGING_REF_INVALID" });
     expect(createStagedBlob({ dataDir: dir, stagingRef: "x.part/../../y.part" })).toMatchObject({ ok: false, code: "STAGING_REF_INVALID" });
+    // Inside the staging folder is not enough: only a name of the shape the node makes is one.
+    expect(createStagedBlob({ dataDir: dir, stagingRef: "notes.txt" })).toMatchObject({ ok: false, code: "STAGING_REF_INVALID" });
+    expect(readdirSync(dir)).not.toContain("notes.txt");
     expect(readBlobRange({ dataDir: dir, location: { blobPath: join(dir, "identity.json") }, offset: 0, length: 10 })).toMatchObject({
       ok: false,
       code: "BLOB_PATH_ESCAPES_ROOT",
@@ -222,6 +232,21 @@ describe("a working artifact, written in chunks", () => {
     expect(past.body).toMatchObject({ code: "ARTIFACT_RANGE_INVALID" });
     const huge = await call("GET", widget(`/${artifactId}/content`), undefined, { offset: "0", length: String(ARTIFACT_LIMITS.maxReadBytes + 1) });
     expect(huge.body).toMatchObject({ code: "ARTIFACT_RANGE_INVALID" });
+  });
+
+  it("refuses a chunk that would take the artifact past the one-file ceiling, and takes one that fits", async () => {
+    const artifactId = await create();
+    const nearlyFull = ARTIFACT_LIMITS.maxBytes - 2;
+    // Stands in for a hundred chunks already written: a staged file of that length, and the row that says so.
+    truncateSync(join(stagingDir(dir), `${artifactId}.part`), nearlyFull);
+    recordWorkingArtifactWrite(services.runtime.db, { artifactId, sizeBytes: nearlyFull, expiresAt: "2099-01-01T00:00:00.000Z" as Instant });
+
+    const over = await write(artifactId, nearlyFull, "abc");
+    expect(over.status).toBe(413);
+    expect(over.body).toMatchObject({ code: "ARTIFACT_TOO_LARGE" });
+    const fits = await write(artifactId, nearlyFull, "ab");
+    expect(fits.status).toBe(200);
+    expect((fits.body as RefBody).artifactRef.sizeBytes).toBe(ARTIFACT_LIMITS.maxBytes);
   });
 
   it("refuses a type the attachment pipeline would not take, and bytes that disagree with the declared type", async () => {
@@ -314,6 +339,12 @@ describe("a ref is a pointer, not a permission", () => {
     expect(read.body).toMatchObject({ code: "ARTIFACT_CROSS_PRINCIPAL" });
     // The person's own routes answer "not found" rather than say whose it is.
     expect((await call("GET", "/artifacts/art_foreign")).status).toBe(404);
+    const content = await call("GET", "/artifacts/art_foreign/content");
+    expect(content.status).toBe(404);
+    expect(content.body).toMatchObject({ code: "ARTIFACT_NOT_FOUND" });
+    const exported = await call("POST", "/artifacts/art_foreign/export", {});
+    expect(exported.status).toBe(404);
+    expect(exported.body).toMatchObject({ code: "ARTIFACT_NOT_FOUND" });
   });
 
   it("refuses once the grant expires, and once it is revoked", async () => {
