@@ -210,6 +210,18 @@ test("an agent button with a context reference gives the model what the host rea
 test("Stop cancels an invoke still waiting on the service, and says whether it took effect is unknown", async ({ page }) => {
   test.setTimeout(90_000);
   await openApp(page);
+  /** Notices asking whether an effect took effect that were not there before this press. */
+  const waitingBefore = new Set<string>();
+  const asking = async (): Promise<{ noticeId: string; effectId: string }[]> => {
+    const inbox = (await (await page.request.get(`${GATEWAY}/inbox`, { headers: headers() })).json()) as {
+      notices: { noticeId: string; actions?: { id: string; effectId?: string }[] }[];
+    };
+    return inbox.notices.flatMap((notice) => {
+      const effectId = notice.actions?.find((action) => action.id === "reconcile-failed")?.effectId;
+      return effectId === undefined || waitingBefore.has(notice.noticeId) ? [] : [{ noticeId: notice.noticeId, effectId }];
+    });
+  };
+  for (const question of await asking()) waitingBefore.add(question.noticeId);
   const button = await place(page, "chậm");
   await expect(button).toHaveAttribute("data-action-actionable", "true");
   const pressed = page.waitForResponse((response) => response.request().method() === "POST" && /\/widgets\/[^/]+\/actions$/u.test(response.url()));
@@ -231,6 +243,18 @@ test("Stop cancels an invoke still waiting on the service, and says whether it t
     { timeout: 10_000 },
   );
   await expect(stop).toBeHidden();
+
+  // The inbox asks whether it took effect, offering the answer for this call's own effect.
+  await expect.poll(async () => (await asking()).length, { timeout: 10_000 }).toBe(1);
+  // The service dropped the withdrawn request, so the honest answer is that it did not take effect. Answering it also
+  // leaves nothing waiting for the journeys after this one.
+  const [question] = await asking();
+  const answered = await page.request.post(`${GATEWAY}/effects/${question?.effectId ?? ""}/reconcile`, {
+    headers: headers(),
+    data: { outcome: "failed" },
+  });
+  expect(answered.ok(), `reconcile answered ${String(answered.status())}: ${await answered.text()}`).toBe(true);
+  await expect.poll(async () => (await asking()).length, { timeout: 10_000 }).toBe(0);
 });
 
 test("a press the node refuses shows the reason, and an unknown or stale binding is refused", async ({ page, request }) => {
