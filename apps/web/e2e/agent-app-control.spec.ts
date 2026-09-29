@@ -159,8 +159,10 @@ test("the agent returns to the conversation from Settings without leaving it, un
 
   await page.locator('[data-composer="true"]').fill("agent control_app settings.open; nav.conversation");
   await page.locator('[data-send="true"]').click();
-  // Both calls answered done, each only after the page said so.
-  await expect(page.getByText(DONE)).toHaveCount(2, { timeout: 20_000 });
+  // Both calls answered done, each only after the page said so, in the order they were asked, in one reply said once.
+  const reply = page.locator('[data-role="assistant"]').last();
+  await expect(reply).toContainText(new RegExp(`${DONE}: .*Settings.*${DONE}: .*cuộc trò chuyện`, "su"), { timeout: 20_000 });
+  await expect(page.getByText(DONE)).toHaveCount(1);
 
   expect(await page.evaluate(() => (window as unknown as { sawSettings?: boolean }).sawSettings)).toBe(true);
   // Settings closed, and the conversation is the same one: both messages still there, no start screen.
