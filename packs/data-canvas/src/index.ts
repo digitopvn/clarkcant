@@ -1,20 +1,31 @@
 import {
   AS_OF_PATTERN,
+  type ArtifactViewerKind,
   CHOICE_KINDS,
+  DIFF_LINE_KINDS,
   INPUT_KINDS,
+  LANGUAGE_PATTERN,
   LIST_PAGE_SIZES,
+  MAX_CODE_CHARS,
   MAX_DETAIL_ITEMS,
+  MAX_DIFF_FILES,
+  MAX_DIFF_HUNKS,
+  MAX_DIFF_LINE_CHARS,
+  MAX_DIFF_LINES,
   MAX_FIELD_OPTIONS,
   MAX_FORM_FIELDS,
   MAX_LIST_ITEMS,
   MAX_PROGRESS_STEPS,
+  MAX_START_LINE,
   MAX_TEXT_LENGTH,
+  MEDIA_TYPE_PATTERN,
   ONE_LINE_PATTERN,
   ONE_LINE_REQUIRED_PATTERN,
   STATUS_TONES,
   STEP_STATUSES,
   type StatusCardKind,
   type WidgetDefinition,
+  artifactViewerProblems,
   checkField,
   checkFieldValue,
   checkFields,
@@ -869,6 +880,143 @@ export const STATUS_CARD_KIND: Readonly<Record<string, StatusCardKind>> = {
   [DETAILS.id]: "details",
 };
 
+/*
+ * Artifact viewers: a block of code, a unified diff, a file.
+ *
+ * What they show is what the model wrote into their props, bounded here and in `artifactViewerProblems`. None fetches
+ * anything and none links anywhere: a reference to a real artifact goes only through the node's own artifact broker,
+ * which a model cannot name with a URL. The node's host-owned artifact and diff cards stay as they are, built from its
+ * records; these are primitives beside them.
+ */
+
+/** A block of code with its line numbers, in a bounded scroll, with a copy button. */
+export const CODE: WidgetDefinition = {
+  id: "canvas.code@1",
+  version: "1.0.0",
+  renderer: "catalog",
+  propsSchema: {
+    type: "object",
+    additionalProperties: false,
+    properties: {
+      title: oneLineProp(200),
+      path: oneLineProp(300, 1),
+      language: { type: "string", maxLength: 40, pattern: LANGUAGE_PATTERN },
+      code: { type: "string", minLength: 1, maxLength: MAX_CODE_CHARS },
+      startLine: { type: "integer", minimum: 1, maximum: MAX_START_LINE },
+      truncated: { type: "boolean" },
+    },
+    required: ["code"],
+  },
+  eventSchemas: {},
+  sizing: { compact: true, expanded: true, minHeight: 120 },
+  semanticDescription: "A block of code the model shows: its path, language and line numbers, copyable as text",
+  requestedCapabilities: [],
+  textFallback: "Code appears as text: its path and language, then its lines.",
+  effectCategories: ["read"],
+  datasetRefs: [],
+};
+
+/** A unified diff: files, hunks, and each line added, removed or kept, with its old and new line numbers. */
+export const DIFF: WidgetDefinition = {
+  id: "canvas.diff@1",
+  version: "1.0.0",
+  renderer: "catalog",
+  propsSchema: {
+    type: "object",
+    additionalProperties: false,
+    properties: {
+      title: oneLineProp(200),
+      files: {
+        type: "array",
+        minItems: 1,
+        maxItems: MAX_DIFF_FILES,
+        items: {
+          type: "object",
+          additionalProperties: false,
+          properties: {
+            path: oneLineProp(300, 1),
+            oldPath: oneLineProp(300, 1),
+            hunks: {
+              type: "array",
+              minItems: 1,
+              maxItems: MAX_DIFF_HUNKS,
+              items: {
+                type: "object",
+                additionalProperties: false,
+                properties: {
+                  oldStart: { type: "integer", minimum: 0, maximum: MAX_START_LINE },
+                  newStart: { type: "integer", minimum: 0, maximum: MAX_START_LINE },
+                  section: oneLineProp(200),
+                  lines: {
+                    type: "array",
+                    minItems: 1,
+                    maxItems: MAX_DIFF_LINES,
+                    items: {
+                      type: "object",
+                      additionalProperties: false,
+                      properties: {
+                        kind: { type: "string", enum: [...DIFF_LINE_KINDS] },
+                        text: { type: "string", maxLength: MAX_DIFF_LINE_CHARS },
+                      },
+                      required: ["kind", "text"],
+                    },
+                  },
+                },
+                required: ["oldStart", "newStart", "lines"],
+              },
+            },
+          },
+          required: ["path", "hunks"],
+        },
+      },
+      truncated: { type: "boolean" },
+    },
+    required: ["files"],
+  },
+  eventSchemas: {},
+  sizing: { compact: true, expanded: true, minHeight: 120 },
+  semanticDescription: "A unified diff the model shows: each file's lines added and removed, with line numbers",
+  requestedCapabilities: [],
+  textFallback: "A diff appears as text: each file with its lines added (+) and removed (-).",
+  effectCategories: ["read"],
+  datasetRefs: [],
+};
+
+/** A file named and described: its name, type, size and where it came from. No link, no open, no download. */
+export const FILE: WidgetDefinition = {
+  id: "canvas.file@1",
+  version: "1.0.0",
+  renderer: "catalog",
+  propsSchema: {
+    type: "object",
+    additionalProperties: false,
+    properties: {
+      title: oneLineProp(200),
+      name: oneLineProp(200, 1),
+      mediaType: { type: "string", maxLength: 128, pattern: MEDIA_TYPE_PATTERN },
+      sizeBytes: { type: "integer", minimum: 0, maximum: Number.MAX_SAFE_INTEGER },
+      source: oneLineProp(200),
+      path: oneLineProp(500, 1),
+      summary: { type: "string", maxLength: 500 },
+    },
+    required: ["name"],
+  },
+  eventSchemas: {},
+  sizing: { compact: true, expanded: true, minHeight: 72 },
+  semanticDescription: "A file the model names and describes: its name, type, size and source, with no link to open it",
+  requestedCapabilities: [],
+  textFallback: "A file appears as text: its name, type, size and source.",
+  effectCategories: ["read"],
+  datasetRefs: [],
+};
+
+/** Which kind of artifact viewer each definition draws. */
+export const ARTIFACT_VIEWER_KIND: Readonly<Record<string, ArtifactViewerKind>> = {
+  [CODE.id]: "code",
+  [DIFF.id]: "diff",
+  [FILE.id]: "file",
+};
+
 /**
  * A personal note.
  *
@@ -932,6 +1080,9 @@ export const WIDGETS = [
   STATUS,
   PROGRESS,
   DETAILS,
+  CODE,
+  DIFF,
+  FILE,
 ];
 
 /**
@@ -971,6 +1122,11 @@ export const FAMILY_BY_DEFINITION: Record<string, string> = {
   "canvas.status@1": "status",
   "canvas.progress@1": "status",
   "canvas.details@1": "status",
+  // One family for the three: each shows a piece of work the model wrote out. No layout region reads this family, so
+  // none of them is a layout leaf; each is placed on its own.
+  "canvas.code@1": "artifact",
+  "canvas.diff@1": "artifact",
+  "canvas.file@1": "artifact",
 };
 
 /**
@@ -999,6 +1155,8 @@ export function primitivePropsProblems(definitionId: string, props: Readonly<Rec
   }
   const card = STATUS_CARD_KIND[definitionId];
   if (card !== undefined) return statusCardProblems(card, props);
+  const viewer = ARTIFACT_VIEWER_KIND[definitionId];
+  if (viewer !== undefined) return artifactViewerProblems(viewer, props);
   return [];
 }
 export function familyOf(definitionId: string): string {

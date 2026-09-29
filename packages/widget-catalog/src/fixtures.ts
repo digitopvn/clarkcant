@@ -269,6 +269,133 @@ export const FIXTURES: Record<string, readonly WidgetFixture[]> = {
       mode: "read-only",
     },
   ],
+  "canvas.code@1": [
+    {
+      id: "code.normal",
+      label: "Đoạn mã TypeScript",
+      props: {
+        path: "src/lib/greet.ts",
+        startLine: 12,
+        code: [
+          "// Chào theo giờ trong ngày.",
+          "export function greet(name: string, hour: number): string {",
+          '  const part = hour < 12 ? "sáng" : hour < 18 ? "chiều" : "tối";',
+          "  return `Chào buổi ${part}, ${name}!`;",
+          "}",
+        ].join("\n"),
+      },
+      mode: "read-only",
+    },
+    {
+      id: "code.long",
+      label: "Mã dài, đã cắt bớt",
+      props: {
+        title: "Nhật ký bản dựng",
+        language: "bash",
+        truncated: true,
+        code: Array.from({ length: 40 }, (_, index) =>
+          index === 3
+            ? `echo "${"một dòng rất dài để thử cuộn ngang bên trong khối mã ".repeat(4).trim()}"`
+            : `echo "bước ${String(index + 1)}"`,
+        ).join("\n"),
+      },
+      mode: "read-only",
+    },
+    {
+      id: "code.plain",
+      label: "Văn bản không rõ ngôn ngữ",
+      props: { path: "notes/ghi-chu.xyz", code: "<b>không in đậm</b>\nchỉ là chữ" },
+      mode: "read-only",
+    },
+  ],
+  "canvas.diff@1": [
+    {
+      id: "diff.normal",
+      label: "Diff hai tệp",
+      props: {
+        title: "Sửa lời chào",
+        files: [
+          {
+            path: "src/lib/greet.ts",
+            hunks: [
+              {
+                oldStart: 12,
+                newStart: 12,
+                section: "export function greet(name: string, hour: number): string {",
+                lines: [
+                  { kind: "context", text: "export function greet(name: string, hour: number): string {" },
+                  { kind: "remove", text: '  const part = hour < 12 ? "sáng" : "chiều";' },
+                  { kind: "add", text: '  const part = hour < 12 ? "sáng" : hour < 18 ? "chiều" : "tối";' },
+                  { kind: "context", text: "  return `Chào buổi ${part}, ${name}!`;" },
+                ],
+              },
+            ],
+          },
+          {
+            path: "src/lib/greet.spec.ts",
+            hunks: [
+              {
+                oldStart: 0,
+                newStart: 1,
+                lines: [
+                  { kind: "add", text: 'import { greet } from "./greet.ts";' },
+                  { kind: "add", text: 'it("chào buổi tối", () => expect(greet("An", 20)).toBe("Chào buổi tối, An!"));' },
+                ],
+              },
+            ],
+          },
+        ],
+      },
+      mode: "read-only",
+    },
+    {
+      id: "diff.renamed",
+      label: "Đổi tên và lược bớt",
+      props: {
+        truncated: true,
+        files: [
+          {
+            path: "docs/huong-dan.md",
+            oldPath: "docs/guide.md",
+            hunks: [
+              { oldStart: 1, newStart: 1, lines: [{ kind: "remove", text: "# Guide" }, { kind: "add", text: "# Hướng dẫn" }] },
+              {
+                oldStart: 40,
+                newStart: 40,
+                lines: [
+                  { kind: "context", text: "" },
+                  { kind: "remove", text: "See the setup section." },
+                  { kind: "add", text: "Xem phần cài đặt." },
+                ],
+              },
+            ],
+          },
+        ],
+      },
+      mode: "read-only",
+    },
+  ],
+  "canvas.file@1": [
+    {
+      id: "file.normal",
+      label: "Tệp PDF",
+      props: {
+        name: "bao-cao-quy-3.pdf",
+        mediaType: "application/pdf",
+        sizeBytes: 482_133,
+        source: "Clark tạo từ bảng doanh thu",
+        path: "Tài liệu/Báo cáo/bao-cao-quy-3.pdf",
+        summary: "Doanh thu quý 3, so với quý 2 và cùng kỳ năm trước.",
+      },
+      mode: "read-only",
+    },
+    {
+      id: "file.minimal",
+      label: "Chỉ có tên",
+      props: { name: "README" },
+      mode: "read-only",
+    },
+  ],
   "canvas.action@1": [
     {
       id: "action.normal",

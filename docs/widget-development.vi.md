@@ -298,8 +298,8 @@ Không giữ stale rows dưới nhãn live khi refresh fail.
 ## 8. Hành động, nhập liệu và thẻ chỉ đọc
 
 Mục này nói về việc một widget làm (§8.1), điều người dùng đưa cho Clark qua một widget (§8.2), cách các widget trên
-cùng một bề mặt tác động lên nhau (§8.3), và các thẻ chỉ đọc không làm gì cả (§8.4). Ba phần đầu dựa trên một phân biệt
-cứng:
+cùng một bề mặt tác động lên nhau (§8.3), và các thẻ chỉ đọc không làm gì cả: thẻ trạng thái, tiến độ và chi tiết
+(§8.4), cùng mã, diff và tệp (§8.5). Ba phần đầu dựa trên một phân biệt cứng:
 
 ### Local view action
 
@@ -570,6 +570,86 @@ bao giờ tạo cột hẹp hơn 220 px, và một cột trên điện thoại),
 [text-rules.spec.ts](../packages/contracts/test/text-rules.spec.ts), và
 [status-card-schemas.spec.ts](../packages/widget-catalog/test/status-card-schemas.spec.ts) kiểm rằng JSON Schema và
 bộ kiểm của chính thẻ chấp nhận và từ chối cùng những props như nhau.
+
+### 8.5 Mã, diff và tệp
+
+Ba định nghĩa hiển thị một phần công việc: một khối mã, một bản diff dạng unified và một tệp. Mọi thứ trên thẻ là những
+gì model viết vào props, được kiểm theo một mô tả chung trong
+[artifact-viewers.ts](../packages/contracts/src/artifact-viewers.ts) mà node và trang cùng dùng. Không thẻ nào tải, mở
+hay liên kết tới thứ gì. Thẻ artifact và thẻ diff của chính node vẫn do host sở hữu và được dựng từ bản ghi của node. Ba
+thẻ này là thẻ catalog mà model đặt bên cạnh chúng.
+
+| Định nghĩa | Nó là gì | Model đặt nó thế nào |
+| --- | --- | --- |
+| `canvas.code@1` | Một khối mã có số dòng, được tô màu, và một nút sao chép. | `show_view` với `props.code` (tối đa 20.000 ký tự và 400 dòng), và tuỳ chọn `path`, `language`, `startLine` (số của dòng đầu tiên, khi là một đoạn trích) và `truncated`. Khi không có `language`, thẻ lấy nó từ phần mở rộng của đường dẫn. |
+| `canvas.diff@1` | Một bản diff dạng unified: các hunk của từng tệp, mỗi dòng có số dòng cũ, số dòng mới và một dấu. | `show_view` với `props.files` (1–20). Mỗi tệp có `path`, `oldPath` tuỳ chọn khi đổi tên, và các hunk (1–20 mỗi tệp) gồm `oldStart`, `newStart`, `section` tuỳ chọn, và `lines` dạng `{ kind: "add" \| "remove" \| "context", text }`. Tổng cộng tối đa 600 dòng và 40.000 ký tự, mỗi dòng tối đa 1.000 ký tự. |
+| `canvas.file@1` | Một tệp, được nêu tên và mô tả. | `show_view` với `props.name`, và tuỳ chọn `mediaType` (`type/subtype`), `sizeBytes`, `source` (bằng lời), `path` (dạng chữ) và `summary`. |
+
+Node bảo đảm:
+
+- **Từ chối trước khi lưu bất cứ thứ gì.** Props không khớp bị từ chối kèm lý do, ngay trong lượt đó, và không để lại
+  instance nào. Mã hoặc diff vượt một giới hạn bị từ chối kèm lý do nêu rõ giới hạn đó và chỗ bị vượt (độ dài hay số
+  dòng của mã, số hunk của một tệp, một dòng của một hunk, hay tổng của cả bản diff), và yêu cầu model cắt bớt rồi đặt
+  `truncated`. Diff còn bị từ chối khi có hunk không thay đổi gì, hunk ở dòng cũ 0 mà vẫn giữ hoặc bớt dòng, hunk ở
+  dòng mới 0 mà vẫn giữ hoặc thêm dòng, các hunk chồng lên nhau hoặc sai thứ tự, và một tệp được nêu hai lần. Thẻ tệp
+  bị từ chối khi tên có kèm thư mục, và khi `path` là một URL (bất cứ thứ gì bắt đầu bằng một scheme như `https:` hay
+  `file:`; ổ đĩa Windows như `C:\` là đường dẫn và được giữ nguyên). Thuộc tính lạ, như `url` hay `href`, cũng bị từ
+  chối.
+- **Các hunk khớp với nhau.** Mỗi hunk sau hunk đầu phải bắt đầu đúng chỗ các hunk phía trên để lại tệp: nếu chúng đưa
+  dòng cũ 30 thành dòng mới 32, thì hunk kế tiếp bắt đầu ở dòng cũ 40 phải bắt đầu ở dòng mới 42. Bước kiểm này được bỏ
+  qua khi có `truncated`, vì một phần thay đổi có thể đã bị bỏ ra, và với hunk có số đếm 0 ở một phía, vì diff dạng
+  unified đánh số hunk chỉ thêm hoặc chỉ bớt từ dòng ngay trước nó.
+- **Chữ một dòng giữ nguyên một dòng và cho thấy những gì nó chứa.** Đường dẫn, tên, tiêu đề, section, nguồn và loại
+  media bị từ chối nếu chứa ký tự xuống dòng, ký tự điều khiển hướng chữ (U+202A–U+202E, U+2066–U+2069) hay ký tự vô
+  hình có thể khiến chữ đọc khác với vẻ ngoài (U+200B, U+200E, U+200F, U+2028, U+2029, U+0085, U+FEFF). Lý do nêu tên
+  ký tự đó. Ký tự nối và không nối độ rộng 0 (U+200D, U+200C) được giữ, vì emoji và nhiều hệ chữ cần chúng. `summary`
+  của tệp được phép nhiều dòng nhưng vẫn bị từ chối với cùng các ký tự ẩn đó.
+- **Ký tự xuống dòng trong mã là một dòng.** `\r\n`, `\r`, U+2028, U+2029 và U+0085 trong mã đều được tính là xuống
+  dòng và được lưu thành `\n`, nên số dòng khớp với các dòng người dùng thấy và giới hạn 400 dòng cũng đếm chúng. Một
+  dòng của diff bị từ chối nếu chứa bất kỳ ký tự xuống dòng nào: mỗi dòng của diff được đưa thành một dòng riêng.
+- **Số đếm lấy từ các dòng.** Tiêu đề `@@ -a,b +c,d @@` của mỗi hunk và mọi số dòng thêm, bớt đều được tính từ chính các
+  dòng, nên một bản diff không thể nói có nhiều hay ít thay đổi hơn những gì nó hiển thị.
+- **Phương án chữ là chính nội dung.** Khi không có renderer, người đọc nhận được mã, bản diff kèm tiêu đề hunk, hoặc
+  tên, loại, kích thước và nguồn của tệp. Nó được cắt ở 4.000 ký tự, kèm ghi chú còn bao nhiêu ký tự nữa trên thẻ, và
+  không bao giờ cắt giữa một ký tự. Chú thích (caption) không được dùng thay cho nó. Ký tự ẩn trong mã hay trong một
+  dòng diff được viết ở đó thành `⟨U+202E⟩` thay vì được áp dụng, kèm một dòng cho biết có bao nhiêu ký tự như vậy.
+- **Những gì voice và lượt kế tiếp đọc không có phần thân.** Tài liệu ngữ nghĩa nêu đường dẫn, ngôn ngữ và khoảng dòng
+  của mã, các tệp và số đếm của diff, và tên, loại, kích thước của tệp. Nó không bao giờ chứa mã hay chính các dòng,
+  nhưng có nói mã hay diff chứa bao nhiêu ký tự ẩn. Độ mới của nó là `unknown`: thẻ hiển thị những gì model viết lúc
+  đặt thẻ, và không có gì được đọc lại.
+- **Không phải lá của layout.** Chúng thuộc họ `artifact`, không vùng layout nào đọc họ này. Model đặt từng thẻ riêng.
+
+Trang làm gì:
+
+- Mã và diff được hiển thị dạng chữ. Bộ tô màu chỉ tách chữ thành token và escape nó. Kết quả được dựng thành phần tử
+  React, nên mã trông giống markup, kể cả `<script>`, vẫn hiển thị đúng các ký tự của nó.
+- Ký tự điều khiển hướng chữ, ký tự vô hình, ký tự thẻ hay ký tự lấp chỗ Hangul trong mã hoặc một dòng diff (chính
+  những ký tự mà một trường một dòng từ chối, ở §8.4) được vẽ thành một dấu hiệu nhìn thấy được, như `⟨U+202E⟩`, có
+  tooltip cho biết đó là loại ký tự gì, thay vì được áp dụng. Ký tự thẻ dài hai đơn vị UTF-16 và được vẽ thành một dấu
+  hiệu duy nhất. Khi đó thẻ có thêm một dòng cảnh báo
+  rằng nó chứa ký tự ẩn có thể khiến nội dung đọc khác với vẻ ngoài. Đây là trường hợp "Trojan Source", khi một ký tự
+  điều khiển hướng chữ khiến mã chạy khác với cách nó được đọc.
+- Khối dài cuộn bên trong một vùng có giới hạn (tối đa `min(24rem, 60vh)`), không xuống dòng và không làm trang rộng
+  ra. Vùng đó là một region có tên mà bàn phím tới được và cuộn được, với vòng focus vẽ ở bên trong để góc bo của thẻ
+  không cắt mất nó.
+- Nút sao chép đưa chính đoạn mã vào clipboard. Nút được đặt tên theo thứ nó sao chép ("Sao chép mã:
+  src/auth/role.ts"), bắt đầu bằng chữ hiện trên nút. Nó nói bằng lời việc sao chép có thành công không, và nếu không
+  thì hướng dẫn người dùng tự chọn đoạn mã rồi sao chép. Lời đó nằm trong một vùng trạng thái có sẵn trên thẻ từ đầu và
+  không chiếm chỗ khi trống, và mỗi kết quả thay cho kết quả trước, nên cùng một lời được đọc lại ở lần thử thứ hai.
+- Trong diff, mỗi dòng được phân biệt bằng dấu và nền, không chỉ bằng màu. Trình đọc màn hình nghe loại và số của mỗi
+  dòng bằng lời ("Thêm, dòng mới 41:") trước nội dung dòng; các dấu và số mà nó sẽ đọc từng ký tự một được ẩn khỏi nó.
+  Tệp đổi tên có ghi tên cũ.
+- Thẻ tệp không có liên kết, không có nút mở, không có nút tải về. Nó nói điều đó bằng lời, thay vì vẽ một nút không
+  làm gì.
+- Khi có `truncated`, thẻ nói rằng đây không phải toàn bộ mã hay toàn bộ diff.
+
+Kiểm thử: [artifact-viewers.spec.ts](../packages/contracts/test/artifact-viewers.spec.ts) cho các quy tắc,
+[artifact-viewers.spec.ts](../apps/runtime/test/artifact-viewers.spec.ts) cho node,
+[artifact-viewers.spec.ts](../packages/conversation-client/test/artifact-viewers.spec.ts) cho trang, và journey trình
+duyệt [artifact-viewers.spec.ts](../apps/web/e2e/artifact-viewers.spec.ts). Journey chạy với cả hai theme, khi giảm
+chuyển động, ở 390 px có cảm ứng, và trong thư viện. Nó cũng kiểm ký tự ẩn được vẽ thành dấu hiệu kèm cảnh báo, ký tự
+phân dòng (line separator) trong mã mà số dòng vẫn nằm cạnh đúng dòng, ký tự xuống dòng trong một dòng diff bị từ chối,
+lần sao chép bị trình duyệt từ chối, và vòng focus phải được vẽ bên trong vùng cuộn.
 
 ---
 

@@ -6,14 +6,16 @@ import {
   type SemanticProposal,
   type SemanticView,
   type WidgetSemanticDoc,
+  artifactViewerSemantic,
   canonicalSemanticDoc,
   describeSemanticDoc,
   graphSemanticState,
   normalizeSemanticDoc,
+  readArtifactViewer,
   readStatusCard,
   statusCardSemantic,
 } from "@clarkcant/contracts";
-import { STATUS_CARD_KIND } from "@clarkcant/data-canvas";
+import { ARTIFACT_VIEWER_KIND, STATUS_CARD_KIND } from "@clarkcant/data-canvas";
 import { type WidgetDeps, getActionBinding, getInstance, liveStateOf, semanticViewOf } from "@clarkcant/core";
 import {
   findCompositionByInstance,
@@ -103,6 +105,14 @@ export function buildWidgetSemantic(
       availableActions,
       source: "frame",
     });
+  }
+
+  // A code, diff or file card says what its props say: a name, a language, line counts, never the body. Its freshness is
+  // unknown rather than live: the props are what the model stated when it placed the card, and nothing here re-reads them.
+  const viewerKind = ARTIFACT_VIEWER_KIND[definitionId];
+  const viewer = viewerKind === undefined ? undefined : readArtifactViewer(viewerKind, instance.props);
+  if (viewer !== undefined) {
+    return normalizeSemanticDoc({ instanceId, definitionId, ...artifactViewerSemantic(viewer), availableActions, freshness: "unknown" });
   }
 
   return normalizeSemanticDoc({ instanceId, definitionId, summary: `${definitionId} (${instance.lifecycle})`, availableActions });

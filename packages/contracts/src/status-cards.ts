@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-import { clipWithMarker, hiddenCharacterProblem, sliceCodePoints } from "./text-rules.ts";
+import { cardSchemaProblems, clipWithMarker, oneLineText, sliceCodePoints } from "./text-rules.ts";
 import { SNAPSHOT_TEXT_LIMIT } from "./widgets.ts";
 import { SEMANTIC_LIMITS, type SemanticValue } from "./widget-semantic.ts";
 
@@ -35,58 +35,39 @@ export const MAX_DETAIL_ITEMS = 24;
 export const AS_OF_PATTERN = "^\\d{4}-\\d{2}-\\d{2}(?:T\\d{2}:\\d{2}(?::\\d{2}(?:\\.\\d{1,3})?)?(?:Z|[+-]\\d{2}:\\d{2}))?$";
 const asOfSchema = z.string().max(40).regex(new RegExp(AS_OF_PATTERN, "u"));
 
-/**
- * One line of the model's words, as a card shows it.
- *
- * Refused when it holds a line break, a control, a bidi control or an invisible character, with a reason that names
- * it; otherwise read in NFC and trimmed, so a label of spaces is empty and two labels that look the same are the same.
- * The length is the model's own, before trimming, as its JSON Schema counts it.
- */
-function oneLine(max: number, required: boolean) {
-  return z
-    .string()
-    .max(max, `is longer than ${String(max)} characters`)
-    .superRefine((value, ctx) => {
-      const problem = hiddenCharacterProblem(value);
-      if (problem !== undefined) ctx.addIssue({ code: "custom", message: problem });
-    })
-    .transform((value) => value.normalize("NFC").trim())
-    .refine((value) => !required || value !== "", "is empty");
-}
-
-const titleSchema = oneLine(200, false);
+const titleSchema = oneLineText(200, false);
 
 export const statusCardSchema = z.strictObject({
   title: titleSchema.optional(),
-  label: oneLine(120, true),
+  label: oneLineText(120, true),
   tone: z.enum(STATUS_TONES),
-  detail: oneLine(500, false).optional(),
+  detail: oneLineText(500, false).optional(),
   asOf: asOfSchema.optional(),
 });
 export type StatusCard = z.infer<typeof statusCardSchema>;
 
 export const progressStepSchema = z.strictObject({
-  label: oneLine(120, true),
+  label: oneLineText(120, true),
   status: z.enum(STEP_STATUSES),
-  detail: oneLine(200, false).optional(),
+  detail: oneLineText(200, false).optional(),
 });
 export type ProgressStep = z.infer<typeof progressStepSchema>;
 
 export const progressCardSchema = z.strictObject({
   title: titleSchema.optional(),
   /** What is progressing, in the model's words. */
-  label: oneLine(200, false).optional(),
+  label: oneLineText(200, false).optional(),
   value: z.number().nonnegative().optional(),
   max: z.number().positive().optional(),
-  unit: oneLine(20, false).optional(),
+  unit: oneLineText(20, false).optional(),
   steps: z.array(progressStepSchema).min(1).max(MAX_PROGRESS_STEPS).optional(),
   asOf: asOfSchema.optional(),
 });
 export type ProgressCard = z.infer<typeof progressCardSchema>;
 
 export const detailItemSchema = z.strictObject({
-  label: oneLine(80, true),
-  value: oneLine(300, true),
+  label: oneLineText(80, true),
+  value: oneLineText(300, true),
 });
 export type DetailItem = z.infer<typeof detailItemSchema>;
 
@@ -108,29 +89,19 @@ export type StatusCardContent =
  * Reading and checking
  * ------------------------------------------------------------------ */
 
-/** At most this many schema problems in one refusal, so one bad list cannot flood it. */
-const MAX_SCHEMA_PROBLEMS = 5;
-
 type Parsed = { ok: true; content: StatusCardContent } | { ok: false; problems: string[] };
-
-function schemaProblems(error: z.ZodError): string[] {
-  return error.issues.slice(0, MAX_SCHEMA_PROBLEMS).map((issue) => {
-    const where = issue.path.length === 0 ? "props" : `"${issue.path.map(String).join(".")}"`;
-    return `${where}: ${issue.message}`;
-  });
-}
 
 function parsed(kind: StatusCardKind, props: unknown): Parsed {
   if (kind === "status") {
     const result = statusCardSchema.safeParse(props);
-    return result.success ? { ok: true, content: { kind, card: result.data } } : { ok: false, problems: schemaProblems(result.error) };
+    return result.success ? { ok: true, content: { kind, card: result.data } } : { ok: false, problems: cardSchemaProblems(result.error.issues) };
   }
   if (kind === "progress") {
     const result = progressCardSchema.safeParse(props);
-    return result.success ? { ok: true, content: { kind, card: result.data } } : { ok: false, problems: schemaProblems(result.error) };
+    return result.success ? { ok: true, content: { kind, card: result.data } } : { ok: false, problems: cardSchemaProblems(result.error.issues) };
   }
   const result = detailsCardSchema.safeParse(props);
-  return result.success ? { ok: true, content: { kind, card: result.data } } : { ok: false, problems: schemaProblems(result.error) };
+  return result.success ? { ok: true, content: { kind, card: result.data } } : { ok: false, problems: cardSchemaProblems(result.error.issues) };
 }
 
 /** Whether an `asOf` names a day that exists: the pattern alone would let 2026-02-30 through. */
