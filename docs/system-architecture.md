@@ -498,7 +498,7 @@ stateDiagram-v2
   reconciling --> cancelled
 ```
 
-The diagram shows the main paths; the implementation must have a complete reducer/transition table: every nonterminal accepts cancel, resolving failures do not hang forever, and a terminal state only creates a new run with clear lineage. `waiting_capability` keeps the continuation; it does not hold a worker continuously or repeat install prompts on its own.
+The diagram shows the main paths; the implementation must have a complete reducer/transition table: every nonterminal accepts cancel, resolving failures do not hang forever, and a terminal state only creates a new run with clear lineage. `waiting_capability` keeps the continuation; it does not hold a worker continuously or repeat install prompts on its own. When the capability it waits for becomes usable — most often the project-work pack finishing its load after the node starts — the node takes each task a person asked for back through resolution and dispatch once, and says so in the task's conversation first (`packages/core/src/capability-waiters.ts`, called from `apps/runtime/src/bootstrap/runtime-bootstrap.ts` after the pack load). An automation's task is resumed by the automation service on its tick instead, and a paired node's task never parks.
 
 An idle worker, an LLM ending its turn or a closed socket is not success. An outcome has evidence: exit status, file/diff version, API receipt/read-after-write, observed browser state; if there is no test count, do not invent a test count.
 
