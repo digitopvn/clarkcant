@@ -63,6 +63,16 @@ export function tryRecordNodeNotice(services: NoticeServices, notice: NodeNotice
 }
 
 /**
+ * The one inbox entry a dispatched task gets for how it ended.
+ *
+ * Shared by the notice a task leaves when it settles and the one for an effect of it whose outcome is unknown, so a
+ * task that became uncertain because of that effect is one warning, whichever of the two is written first.
+ */
+export function workerNoticeKey(taskId: string): string {
+  return `worker:${taskId}`;
+}
+
+/**
  * The notice a dispatched task leaves when it settles.
  *
  * A cancellation was the person's own doing, so it is information rather than something that went wrong;
@@ -85,7 +95,7 @@ export function workerSettledNotice(input: {
     body: input.message,
     conversationId: input.conversationId,
     subject: { kind: "task", taskId: input.taskId, conversationId: input.conversationId },
-    dedupKey: `worker:${input.taskId}`,
+    dedupKey: workerNoticeKey(input.taskId),
     at: input.at,
   };
 }

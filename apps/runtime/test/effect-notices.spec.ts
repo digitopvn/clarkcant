@@ -14,16 +14,18 @@ import {
 } from "@clarkcant/core";
 import { allRows, DISMISSED_RETENTION_MS, upsertEffect } from "@clarkcant/storage";
 
-import { sweepUnknownEffects } from "../src/effect-notices.ts";
+import { COMMAND_STOPPED_ON_REQUEST, sweepUnknownEffects, unknownEffectNotice } from "../src/effect-notices.ts";
 import { readInbox } from "../src/inbox.ts";
 import { bootNodeServices, type NodeServices } from "../src/services.ts";
+import { taskDispatchReports } from "../src/task-reporting.ts";
 
 /**
  * The notice for an effect nobody saw land.
  *
  * The rows are written the way the command broker and the boot's recovery write them — prepared, handed off, then
- * called unknown — and the sweep is run the way its timer runs it. What is under test is that one unknown effect is
- * one notice however often the sweep looks, and that the notice points at the task and its conversation.
+ * called unknown — and the sweep is run the way its timer runs it. What is under test is that a task with an unknown
+ * effect is one notice however often the sweep looks and whichever of the sweep and the task's own report writes it
+ * first, and that the notice points at the task and its conversation.
  */
 
 const AT = "2026-09-29T07:00:00.000Z" as Instant;
@@ -58,7 +60,13 @@ function taskInConversation(goal: string): { taskId: string; conversationId: str
 }
 
 /** An effect handed off for the task, then left the way `settle` says. */
-function handOff(taskId: string, intent: string, settle: "unknown" | "confirmed" | "submitted", preparedAt = AT): string {
+function handOff(
+  taskId: string,
+  intent: string,
+  settle: "unknown" | "confirmed" | "submitted",
+  options: { preparedAt?: Instant; reason?: string } = {},
+): string {
+  const preparedAt = options.preparedAt ?? AT;
   const prepared = prepareEffect(
     { ...deps, now: () => preparedAt },
     {
@@ -76,7 +84,7 @@ function handOff(taskId: string, intent: string, settle: "unknown" | "confirmed"
   upsertEffect(services.runtime.db, submitted.effect);
   if (settle === "unknown") {
     // Through the same call the broker makes, so the ledger row is exactly what production leaves.
-    expect(markEffectUnknown(deps, prepared.effectId, "the command ran out of time").ok).toBe(true);
+    expect(markEffectUnknown(deps, prepared.effectId, options.reason ?? "the command ran out of time").ok).toBe(true);
   } else if (settle === "confirmed") {
     const observed = advanceEffect(submitted.effect, { to: "confirmed", at: AT });
     if (!observed.ok) throw new Error(observed.message);
@@ -85,46 +93,92 @@ function handOff(taskId: string, intent: string, settle: "unknown" | "confirmed"
   return prepared.effectId;
 }
 
-function storedNotices(): { dedup_key: string; conversation_id: string | null; subject: string | null; title: string; body: string | null }[] {
+type StoredNotice = {
+  dedup_key: string;
+  conversation_id: string | null;
+  subject: string | null;
+  title: string;
+  body: string | null;
+  severity: string;
+};
+
+function storedNotices(): StoredNotice[] {
   return allRows(
     services.runtime.db,
-    "SELECT dedup_key, conversation_id, subject, title, body FROM notifications WHERE dedup_key LIKE 'effect-unknown:%' ORDER BY rowid",
+    "SELECT dedup_key, conversation_id, subject, title, body, severity FROM notifications WHERE dedup_key LIKE 'worker:%' ORDER BY rowid",
   );
 }
 
 describe("an effect whose outcome is unknown", () => {
   it("is reported once, pointing at its task and conversation, however often the sweep runs", () => {
     const { taskId, conversationId } = taskInConversation("mở pull request cho bản sửa");
-    const effectId = handOff(taskId, "git push origin HEAD — /work/repo", "unknown");
+    handOff(taskId, "git push origin HEAD — /work/repo", "unknown");
 
     sweepUnknownEffects(services, AT);
     sweepUnknownEffects(services, "2026-09-29T07:01:00.000Z" as Instant);
 
     const notices = storedNotices();
     expect(notices).toHaveLength(1);
-    expect(notices[0]?.dedup_key).toBe(`effect-unknown:${effectId}`);
+    // The key the task's own settled notice uses: one event, one notice.
+    expect(notices[0]?.dedup_key).toBe(`worker:${taskId}`);
+    expect(notices[0]?.severity).toBe("warning");
     expect(notices[0]?.conversation_id).toBe(conversationId);
     expect(JSON.parse(notices[0]?.subject ?? "null")).toEqual({ kind: "task", taskId, conversationId });
     // What is uncertain, what was kept, and what to do next.
     expect(notices[0]?.body).toContain("git push origin HEAD");
     expect(notices[0]?.body).toContain("mở pull request cho bản sửa");
-    expect(notices[0]?.body).toContain("sẽ không tự chạy lại");
+    expect(notices[0]?.body).toContain("không báo lại kết quả");
+    expect(notices[0]?.body).toContain("mọi lệnh ra bên ngoài mà nó nhận ra đều bị từ chối");
     expect(notices[0]?.body).toContain("Hãy kiểm tra");
 
     const inbox = readInbox(services, AT);
     expect(inbox.notices.filter((notice) => notice.title.startsWith("Chưa rõ"))).toHaveLength(1);
   });
 
-  it("gives each unknown effect its own notice", () => {
-    const { taskId } = taskInConversation("gửi hai thay đổi");
-    handOff(taskId, "git push origin a", "unknown");
-    // A second task, so the first task's move to uncertain does not refuse the second effect's.
-    const other = taskInConversation("gửi thay đổi khác");
-    handOff(other.taskId, "git push origin b", "unknown");
+  it("says the person's own stop was why, rather than something going wrong on its own", () => {
+    const { taskId } = taskInConversation("mở pull request");
+    handOff(taskId, "gh pr create --fill — /work/repo", "unknown", { reason: COMMAND_STOPPED_ON_REQUEST });
 
     sweepUnknownEffects(services, AT);
 
-    expect(storedNotices()).toHaveLength(2);
+    const [notice] = storedNotices();
+    expect(notice?.body).toContain("đã bị dừng theo yêu cầu trong lúc đang chạy");
+    expect(notice?.body).not.toContain("không báo lại kết quả");
+  });
+
+  it("keeps what to do next inside the notice however long the command and the task's goal are", () => {
+    const notice = unknownEffectNotice({
+      effects: Array.from({ length: 100 }, (_, index) => ({
+        taskId: "task_long",
+        intent: `gh pr create --title "${"x".repeat(400)}" — /work/${String(index)}`,
+        reconciliationEvidence: COMMAND_STOPPED_ON_REQUEST,
+      })),
+      task: { conversationId: "conv_long", goal: "sửa lỗi ".repeat(100) },
+      at: AT,
+    });
+    const body = notice?.body ?? "";
+    expect(body.length).toBeGreaterThan(0);
+    expect(body.length).toBeLessThanOrEqual(500);
+    expect(body.endsWith("trước khi chạy lại.")).toBe(true);
+    expect(body).toContain("và 99 thao tác khác cũng vậy");
+  });
+
+  it("gives each task its own notice, and counts a task's other unknown effects in it", () => {
+    const { taskId } = taskInConversation("gửi hai thay đổi");
+    handOff(taskId, "git push origin a", "unknown");
+    // A second unknown effect of the same task, written the way the boot's recovery leaves one on an uncertain task.
+    const second = handOff(taskId, "git push origin b", "submitted");
+    const [row] = allRows<{ state: string }>(services.runtime.db, "SELECT state FROM effects WHERE effect_id = ?", second);
+    expect(row?.state).toBe("submitted");
+    services.runtime.db.prepare("UPDATE effects SET state = 'unknown' WHERE effect_id = ?").run(second);
+    const other = taskInConversation("gửi thay đổi khác");
+    handOff(other.taskId, "git push origin c", "unknown");
+
+    sweepUnknownEffects(services, AT);
+
+    const notices = storedNotices();
+    expect(notices.map((notice) => notice.dedup_key).sort()).toEqual([`worker:${taskId}`, `worker:${other.taskId}`].sort());
+    expect(notices.find((notice) => notice.dedup_key === `worker:${taskId}`)?.body).toContain("và 1 thao tác khác cũng vậy");
   });
 
   it("says nothing for an effect that was confirmed, is still in flight, or is older than a dismissal is kept", () => {
@@ -133,7 +187,7 @@ describe("an effect whose outcome is unknown", () => {
     handOff(taskId, "git push origin in-flight", "submitted");
     const long = new Date(Date.parse(AT) - DISMISSED_RETENTION_MS - 60_000).toISOString() as Instant;
     const old = taskInConversation("việc cũ");
-    handOff(old.taskId, "git push origin old", "unknown", long);
+    handOff(old.taskId, "git push origin old", "unknown", { preparedAt: long });
 
     sweepUnknownEffects(services, AT);
 
@@ -144,10 +198,46 @@ describe("an effect whose outcome is unknown", () => {
     const { taskId } = taskInConversation("đẩy nhánh");
     handOff(taskId, "git push origin HEAD", "unknown");
     sweepUnknownEffects(services, AT);
-    services.runtime.db.prepare("UPDATE notifications SET dismissed_at = ? WHERE dedup_key LIKE 'effect-unknown:%'").run(AT);
+    services.runtime.db.prepare("UPDATE notifications SET dismissed_at = ? WHERE dedup_key LIKE 'worker:%'").run(AT);
 
     sweepUnknownEffects(services, "2026-09-29T08:00:00.000Z" as Instant);
 
     expect(storedNotices()).toHaveLength(1);
+  });
+});
+
+describe("a task that settles with an unknown effect", () => {
+  it("is reported as that effect, once, whether the task's report or the sweep writes first", () => {
+    const { taskId, conversationId } = taskInConversation("mở pull request");
+    handOff(taskId, "gh pr create --fill — /work/repo", "unknown", { reason: COMMAND_STOPPED_ON_REQUEST });
+    const reports = taskDispatchReports(services);
+
+    reports.onSettled({ taskId, conversationId, outcome: "uncertain", message: "stopped on request before the worker finished" });
+    sweepUnknownEffects(services, AT);
+
+    const notices = storedNotices();
+    expect(notices).toHaveLength(1);
+    expect(notices[0]?.title).toBe("Chưa rõ một thao tác đã có hiệu lực hay chưa");
+    expect(notices[0]?.body).toContain("gh pr create --fill");
+    expect(notices[0]?.body).toContain("dừng theo yêu cầu");
+    expect(notices[0]?.severity).toBe("warning");
+
+    // And the other way round: the sweep first, then the task's report, is still the one notice.
+    const later = taskInConversation("đẩy nhánh");
+    handOff(later.taskId, "git push origin HEAD", "unknown");
+    sweepUnknownEffects(services, AT);
+    reports.onSettled({ taskId: later.taskId, conversationId: later.conversationId, outcome: "uncertain", message: "timed out" });
+    expect(storedNotices().filter((notice) => notice.dedup_key === `worker:${later.taskId}`)).toHaveLength(1);
+  });
+
+  it("is reported the ordinary way when it has no unknown effect", () => {
+    const { taskId, conversationId } = taskInConversation("đẩy nhánh");
+    handOff(taskId, "git push origin HEAD", "confirmed");
+
+    taskDispatchReports(services).onSettled({ taskId, conversationId, outcome: "succeeded", message: "pushed" });
+
+    const notices = storedNotices();
+    expect(notices).toHaveLength(1);
+    expect(notices[0]?.title).not.toBe("Chưa rõ một thao tác đã có hiệu lực hay chưa");
   });
 });

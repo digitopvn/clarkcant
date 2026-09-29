@@ -394,6 +394,46 @@ describe("a task set up in the conversation", () => {
     expect(assistantTexts(conversationId).filter((text) => text.includes("không chạy cho"))).toHaveLength(1);
   });
 
+  it("says once, pointing at its conversation, when a run that came due could not start, and keeps the automation", async () => {
+    registerCapability({ db: services.runtime.db, nodeId: services.runtime.identity.nodeId }, codeChange());
+    const conversationId = await createConversation();
+    await tools(conversationId).create({
+      summary: "Sửa issue khi có nhãn",
+      topic: "github.issue.labeled",
+      action: "task",
+      goal: "Fix it",
+      folders: [{ path: project, access: "write" }],
+      allowedEffects: ["read", "local-write"],
+    });
+    // The node cannot write the run's task: the failure is the store's, not the automation's.
+    services.runtime.db.exec(
+      "CREATE TEMP TRIGGER refuse_tasks BEFORE INSERT ON tasks BEGIN SELECT RAISE(ABORT, 'disk is full'); END;",
+    );
+
+    await request("POST", "/signals", labeled("ai-handle", "could-not-start"));
+    service?.tick();
+    service?.tick();
+
+    expect(dispatched).toEqual([]);
+    const notices = automationNotices();
+    expect(notices).toHaveLength(1);
+    expect(notices[0]).toMatchObject({ title: "Việc tự động không bắt đầu được", conversation_id: conversationId });
+    expect(notices[0]?.body).toContain('"Sửa issue khi có nhãn" không bắt đầu được');
+    expect(notices[0]?.body).toContain("disk is full");
+    expect(notices[0]?.body).toContain("bản thân việc tự động vẫn được giữ nguyên");
+    expect(notices[0]?.dedup_key).toMatch(/^automation:irun_[^:]+$/);
+    expect(JSON.parse(notices[0]?.subject ?? "null")).toEqual({ kind: "conversation", conversationId });
+
+    // What the notice says was kept is kept: the automation is still there to run the next time.
+    const listed = await request("GET", "/automations");
+    expect((listed.body as { automations: unknown[] }).automations).toHaveLength(1);
+    services.runtime.db.exec("DROP TRIGGER temp.refuse_tasks;");
+    await request("POST", "/signals", labeled("ai-handle", "starts-next-time"));
+    service?.tick();
+    service?.tick();
+    expect(dispatched).toHaveLength(1);
+  });
+
   it("refuses what an automation may not be given", async () => {
     const conversationId = await createConversation();
     const { create } = tools(conversationId);

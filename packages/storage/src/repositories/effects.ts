@@ -89,3 +89,13 @@ export function unsettledEffects(db: Database, nodeId: string): EffectRecord[] {
     nodeId,
   ).map(effectFromRow);
 }
+
+/** Effects this node executed whose outcome is `unknown`, prepared at or after `since`, oldest first. */
+export function unknownEffectsSince(db: Database, nodeId: string, since: Instant): EffectRecord[] {
+  return allRows<Record<string, unknown>>(
+    db,
+    "SELECT * FROM effects WHERE executor_node_id = ? AND state = 'unknown' AND prepared_at >= ? ORDER BY prepared_at",
+    nodeId,
+    since,
+  ).map(effectFromRow);
+}

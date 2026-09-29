@@ -8,10 +8,11 @@ import {
   prepareEffect,
   recordEffectExecution,
 } from "@clarkcant/core";
-import { effectsForTask, upsertEffect } from "@clarkcant/storage";
+import { effectsForTask, transaction, upsertEffect } from "@clarkcant/storage";
 
+import { COMMAND_STOPPED_ON_REQUEST } from "./effect-notices.ts";
 import { decideGuardrailForCommand, type CommandToolDeps } from "./node-tools.ts";
-import { ownedResources, preflightCommand } from "./preflight.ts";
+import { changesSomethingOutside, commandSegmentCount, ownedResources, preflightCommand } from "./preflight.ts";
 import { commandDigest, refusingNewCommands, runGuardedCommand, type CommandOutcome } from "./run-command.ts";
 
 /**
@@ -32,9 +33,10 @@ import { commandDigest, refusingNewCommands, runGuardedCommand, type CommandOutc
  * the node's own work. That is what lets Autonomous run `git push` for an automation set up to open pull requests and
  * still ask before one that was never given external writes.
  *
- * A command that reaches outside the node — that `git push` — is also written into the task's effect ledger before it
- * starts and settled on what it reported, so one that was stopped, timed out or outlived by its node reads as `unknown`
- * rather than as done or as never having happened, and is not run a second time on its own.
+ * A command that changes something outside the node — that `git push` — is also written into the task's effect ledger
+ * before it starts and settled on what it reported, so one that was stopped, timed out or outlived by its node reads as
+ * `unknown` rather than as done or as never having happened. Once a task has one of those, nothing else it asks for
+ * that reaches outside is run: however it is worded, a second attempt could do the same thing twice.
  */
 
 export interface WorkerCommandRequest {
@@ -85,19 +87,18 @@ export function parseWorkerCommandRequest(value: unknown): WorkerCommandRequest 
 const COMMAND_CAPABILITY = "project.command.run@1" as CapabilityRef;
 
 /**
- * The commands whose outcome the effect ledger follows.
+ * The category a command is written into the ledger under, or nothing when the ledger does not follow it.
  *
- * The ones that reach past what the node can read back in place: a push, a message sent, a payment, or a deletion that
- * cannot be taken back. A change inside the task's own folder is not here, because its outcome is on disk in that
- * folder (a worktree with uncommitted changes is kept, and the person told where), so there is nothing to reconcile
- * against. A read changes nothing.
+ * Only a command that changes something outside the node (`changesSomethingOutside`): its outcome is on the other
+ * side, where nothing on this node can read it back. Everything else — a read, a build, a commit, or deleting a folder
+ * on this machine — leaves its outcome on disk here or changes nothing, so there is nothing to reconcile, and a timeout
+ * on it (`gh pr checks --watch` running out of time) must not turn the whole task uncertain. `git push --force` is both
+ * destructive and outside, and keeps the destructive reading.
  */
-const LEDGERED_CATEGORIES: ReadonlySet<EffectCategory> = new Set<EffectCategory>([
-  "external-write",
-  "destructive",
-  "financial",
-  "communication",
-]);
+function ledgerCategory(command: string, classified: EffectCategory): EffectCategory | undefined {
+  if (!changesSomethingOutside(command)) return undefined;
+  return classified === "destructive" ? "destructive" : "external-write";
+}
 
 /** Where a task's commands are written into the effect ledger, and the run they belong to. */
 export interface CommandLedger {
@@ -108,28 +109,57 @@ export interface CommandLedger {
 /**
  * Write the effect down as handed off, before the command starts.
  *
- * Prepared and submitted in the same breath, because nothing stands between the two for a command: the decision is
- * already made. What matters is that the row exists before the process does, so a node that dies while the command
- * runs leaves a `submitted` row the next boot can call unknown, rather than no trace of an effect that may have landed.
+ * Prepared and submitted in one transaction, because nothing stands between the two for a command: the decision is
+ * already made, and a `prepared` row left alone by a failed second write would read as work nobody handed off. What
+ * matters is that the row exists before the process does, so a node that dies while the command runs leaves a
+ * `submitted` row the next boot can call unknown, rather than no trace of an effect that may have landed.
  */
 function openCommandEffect(
   ledger: CommandLedger,
   input: { taskId: string; category: EffectCategory; command: string; cwd: string; operationDigest: string },
 ): EffectRecord {
-  const prepared = prepareEffect(ledger.deps, {
-    taskId: input.taskId,
-    ...(ledger.runId === undefined ? {} : { runId: ledger.runId }),
-    executorNodeId: ledger.deps.nodeId,
-    category: input.category,
-    capabilityRef: COMMAND_CAPABILITY,
-    intent: `${input.command} — ${input.cwd}`.slice(0, 2000),
-    operationDigest: input.operationDigest,
-    externalSupportsDedup: false,
+  return transaction(ledger.deps.db, () => {
+    const prepared = prepareEffect(ledger.deps, {
+      taskId: input.taskId,
+      ...(ledger.runId === undefined ? {} : { runId: ledger.runId }),
+      executorNodeId: ledger.deps.nodeId,
+      category: input.category,
+      capabilityRef: COMMAND_CAPABILITY,
+      intent: `${input.command} — ${input.cwd}`.slice(0, 2000),
+      operationDigest: input.operationDigest,
+      externalSupportsDedup: false,
+    });
+    const submitted = advanceEffect(prepared, { to: "submitted", at: ledger.deps.now() });
+    if (!submitted.ok) throw new Error(submitted.message);
+    upsertEffect(ledger.deps.db, submitted.effect);
+    return submitted.effect;
   });
-  const submitted = advanceEffect(prepared, { to: "submitted", at: ledger.deps.now() });
-  if (!submitted.ok) throw new Error(submitted.message);
-  upsertEffect(ledger.deps.db, submitted.effect);
-  return submitted.effect;
+}
+
+/**
+ * Why a ledgered command must not run now, or nothing when it may.
+ *
+ * An earlier effect of this task whose outcome is not known stops every later one, not only the same line again:
+ * `git push -u origin feat` and `git push origin HEAD:refs/heads/feat` are the same push in other words, and no digest
+ * tells them apart. The task cannot succeed with an unknown effect anyway, so nothing is lost by stopping here, and
+ * the refusal says what to put in the result instead — the way a refusal for want of an approval does. An earlier run
+ * of this exact line still waiting on its own answer is refused for the same reason.
+ */
+function ledgerRefusal(effects: readonly EffectRecord[], operationDigest: string): string | undefined {
+  const unknown = effects.find((earlier) => earlier.state === "unknown");
+  if (unknown !== undefined) {
+    const earlier = unknown.intent.split(" — ")[0] ?? unknown.intent;
+    return (
+      `not run: an earlier command of this task ("${earlier}") may or may not have taken effect, and nothing on this ` +
+      `node can tell which; anything else that reaches outside could do the same thing twice. Say in the result that ` +
+      `"${earlier}" may or may not have landed and what you observed, rather than trying this or another way`
+    );
+  }
+  const pending = effects.find((earlier) => earlier.state === "submitted" && earlier.operationDigest === operationDigest);
+  if (pending !== undefined) {
+    return "not run: this exact command already ran for this task and has not reported back yet; running it again could do it twice";
+  }
+  return undefined;
 }
 
 /**
@@ -141,7 +171,7 @@ function openCommandEffect(
  */
 export function unknownCommandOutcome(outcome: CommandOutcome | undefined): string | undefined {
   if (outcome === undefined) return "the command runner failed before it reported an outcome";
-  if (outcome.stopped === true) return "the command was stopped before it finished";
+  if (outcome.stopped === true) return COMMAND_STOPPED_ON_REQUEST;
   if (outcome.timedOut) return `the command ran out of time after ${String(outcome.durationMs)} ms and was stopped`;
   if (outcome.exitCode === null) return "the command ended without an exit status";
   return undefined;
@@ -180,6 +210,17 @@ function settleCommandEffect(ledger: CommandLedger, effect: EffectRecord, outcom
   }
 }
 
+/**
+ * The broker: answer one request, and `idle()` to wait for every request still being answered.
+ *
+ * `idle` is for whoever settles the task. A worker that was stopped or crashed is gone while a command it asked for may
+ * still be ending on the host, and that command's ledger row is only settled when it does; a task settled before then
+ * is reported without the one fact that matters most — that an effect of it may or may not have landed.
+ */
+export type WorkerCommandBroker = ((request: WorkerCommandRequest) => Promise<WorkerCommandReply>) & {
+  idle: () => Promise<void>;
+};
+
 export function createWorkerCommandBroker(input: {
   command: CommandToolDeps;
   taskId: string;
@@ -192,14 +233,28 @@ export function createWorkerCommandBroker(input: {
    * which is only right for a caller with no task row to write against.
    */
   ledger?: CommandLedger;
-}): (request: WorkerCommandRequest) => Promise<WorkerCommandReply> {
+}): WorkerCommandBroker {
   const deps = input.command;
   const refuse = (text: string): WorkerCommandReply => {
     deps.audit?.({ summary: text, outcome: "refused", ref: input.taskId });
     return { kind: "refused", text };
   };
 
-  return async (request) => {
+  const answering = new Set<Promise<WorkerCommandReply>>();
+  const broker = (request: WorkerCommandRequest): Promise<WorkerCommandReply> => {
+    const answer = answerRequest(request);
+    answering.add(answer);
+    const done = (): void => {
+      answering.delete(answer);
+    };
+    answer.then(done, done);
+    return answer;
+  };
+  const idle = async (): Promise<void> => {
+    await Promise.allSettled([...answering]);
+  };
+
+  async function answerRequest(request: WorkerCommandRequest): Promise<WorkerCommandReply> {
     const first = input.roots[0];
     if (first === undefined) return refuse("refused: this task has no folder it may run commands in");
 
@@ -258,27 +313,27 @@ export function createWorkerCommandBroker(input: {
     }
 
     const operationDigest = commandDigest(guarded.command, guarded.cwd);
-    const ledger = input.ledger !== undefined && LEDGERED_CATEGORIES.has(guarded.effectCategory) ? input.ledger : undefined;
+    const category = input.ledger === undefined ? undefined : ledgerCategory(guarded.command, guarded.effectCategory);
+    const ledger = category === undefined ? undefined : input.ledger;
     let effect: EffectRecord | undefined;
-    if (ledger !== undefined) {
+    if (ledger !== undefined && category !== undefined) {
       // A command that would not start must not be written down as handed off: that row would read as an effect nobody
       // can say landed, for something that never ran.
       if (refusingNewCommands()) return refuse("refused: this node is shutting down; nothing was run");
-      // The same command, in the same folder, still waiting on an outcome: running it again is how a push or a send
-      // happens twice. Someone has to look first.
-      const pending = effectsForTask(ledger.deps.db, input.taskId).find(
-        (earlier) => earlier.operationDigest === operationDigest && (earlier.state === "submitted" || earlier.state === "unknown"),
-      );
-      if (pending !== undefined) {
+      // One exit status for several commands says nothing certain about the one that reached outside: `git push && gh
+      // pr create` failing may be a push that landed and a pull request that did not. Run on its own, the status is its own.
+      if (commandSegmentCount(guarded.command) > 1) {
         return refuse(
-          `not run: this exact command already ran for this task and ${pending.state === "unknown" ? "whether it took effect is not known" : "has not reported back yet"}; ` +
-            `running it again could do it twice, so check whether it took effect first`,
+          "not run: this line joins a command that reaches outside the node to other commands, so its exit status would " +
+            "not say whether that part took effect; run the part that reaches outside as a command of its own",
         );
       }
+      const refusal = ledgerRefusal(effectsForTask(ledger.deps.db, input.taskId), operationDigest);
+      if (refusal !== undefined) return refuse(refusal);
       try {
         effect = openCommandEffect(ledger, {
           taskId: input.taskId,
-          category: guarded.effectCategory,
+          category,
           command: guarded.command,
           cwd: guarded.cwd,
           operationDigest,
@@ -328,5 +383,7 @@ export function createWorkerCommandBroker(input: {
       ref: operationId,
     });
     return { kind: "ran", text: `${ran.description}\n\n${ran.receipt}`, exitCode: ran.outcome.exitCode };
-  };
+  }
+
+  return Object.assign(broker, { idle });
 }

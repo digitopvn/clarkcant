@@ -8,6 +8,7 @@ import { DEFAULT_EXECUTION_POLICY_CONFIG, type ExecutionPolicyConfig, type Insta
 import { advanceResolving, applyTaskEvent, createTask, type ExecutionIntent, type TaskServiceDeps } from "@clarkcant/core";
 import { effectsForTask, getTask, migrate, openDatabase, type Database } from "@clarkcant/storage";
 
+import { COMMAND_STOPPED_ON_REQUEST } from "../src/effect-notices.ts";
 import type { CommandToolDeps } from "../src/node-tools.ts";
 import { ownedResources } from "../src/preflight.ts";
 import { listRunningCommands, stopCommandsForTask, type CommandOutcome } from "../src/run-command.ts";
@@ -291,7 +292,7 @@ describe("a command that reaches outside the node is written into the effect led
     expect(effectsForTask(database, "task_broker").map((effect) => effect.state)).toEqual(["failed"]);
   });
 
-  it("calls a push that ran out of time unknown, moves the task to uncertain, and will not push again", async () => {
+  it("calls a push that ran out of time unknown, moves the task to uncertain, and refuses anything else that reaches outside", async () => {
     const ledger = runningTask();
     const { broker, runs } = makeBroker({
       policy: { mode: "autonomous" },
@@ -309,11 +310,118 @@ describe("a command that reaches outside the node is written into the effect led
     expect(effect?.reconciliationEvidence).toContain("ran out of time");
     expect(getTask(database, "task_broker")?.state).toBe("uncertain");
 
-    // The same command in the same folder is a second push, not a retry of nothing.
-    const again = await broker({ command: "git push origin HEAD" });
-    expect(again).toEqual({ kind: "refused", text: expect.stringContaining("could do it twice") });
+    // The same command, or the same push in other words, is a second push, not a retry of nothing — and the refusal
+    // tells the model what to say instead of what to try next.
+    for (const command of ["git push origin HEAD", "git push -u origin feat", "git push origin HEAD:refs/heads/feat", "gh pr create --fill"]) {
+      const again = await broker({ command });
+      expect(again.kind).toBe("refused");
+      if (again.kind !== "refused") return;
+      expect(again.text).toContain('"git push origin HEAD" may or may not have landed');
+      expect(again.text).toContain("rather than trying this or another way");
+    }
     expect(runs).toHaveLength(1);
     expect(effectsForTask(database, "task_broker")).toHaveLength(1);
+
+    // What stays inside the node still runs: the task can look, and report what it saw.
+    expect((await broker({ command: "git status" })).kind).toBe("ran");
+    expect(runs.map((run) => run.command)).toEqual(["git push origin HEAD", "git status"]);
+  });
+
+  it("calls a push a person stopped unknown, and says it was their stop", async () => {
+    const ledger = runningTask();
+    const { broker } = makeBroker({
+      policy: { mode: "autonomous" },
+      intent: pushing,
+      ledger,
+      run: outcome({ exitCode: null, stopped: true }),
+    });
+
+    await broker({ command: "git push origin HEAD" });
+
+    const [effect] = effectsForTask(database, "task_broker");
+    expect(effect?.state).toBe("unknown");
+    expect(effect?.reconciliationEvidence).toBe(COMMAND_STOPPED_ON_REQUEST);
+    expect(getTask(database, "task_broker")?.state).toBe("uncertain");
+  });
+
+  it("does not run a line that joins a push to other commands, whose one exit status could not say which part landed", async () => {
+    const ledger = runningTask();
+    const { broker, runs } = makeBroker({ policy: { mode: "autonomous" }, intent: pushing, ledger });
+
+    for (const command of [
+      "git push origin HEAD && gh pr create --fill",
+      "git push origin HEAD; echo done",
+      "git push origin HEAD 2>&1 | tail -n 5",
+      "git add -A && git push origin HEAD",
+      "git push origin $(git branch --show-current)",
+    ]) {
+      const reply = await broker({ command });
+      expect(reply, command).toEqual({ kind: "refused", text: expect.stringContaining("run the part that reaches outside as a command of its own") });
+    }
+    expect(runs).toEqual([]);
+    expect(effectsForTask(database, "task_broker")).toEqual([]);
+
+    // Separators inside quotes are text, and a redirection is not a second command.
+    expect((await broker({ command: 'gh pr create --title "fix: a; b | c && d" --body "x"' })).kind).toBe("ran");
+    expect((await broker({ command: "git push origin HEAD 2>&1" })).kind).toBe("ran");
+    expect(effectsForTask(database, "task_broker").map((effect) => effect.state)).toEqual(["confirmed", "confirmed"]);
+  });
+
+  it("writes nothing for deleting a folder on this machine or reading from GitHub, even when either runs out of time", async () => {
+    const ledger = runningTask();
+    const { broker, runs } = makeBroker({
+      policy: { mode: "autonomous" },
+      intent: { kind: "persistent", allowedCategories: ["local-write", "external-write", "destructive"] },
+      ledger,
+      run: async (request) => {
+        runs.push({ command: request.command, cwd: request.cwd });
+        return { exitCode: null, stdout: "", stderr: "", durationMs: 120_000, timedOut: true };
+      },
+    });
+
+    for (const command of ["rm -rf dist", "gh pr view 1", "gh pr checks --watch", "gh api repos/o/r/pulls", "gh api -X GET search/issues -f q=bug"]) {
+      expect((await broker({ command })).kind, command).toBe("ran");
+    }
+    expect(runs).toHaveLength(5);
+    expect(effectsForTask(database, "task_broker")).toEqual([]);
+    // A read that ran out of time is the read's failure, not an effect that may have landed.
+    expect(getTask(database, "task_broker")?.state).toBe("running");
+  });
+
+  it("keeps the destructive reading of a force-push it follows", async () => {
+    const ledger = runningTask();
+    const { broker } = makeBroker({
+      policy: { mode: "autonomous" },
+      intent: { kind: "persistent", allowedCategories: ["local-write", "external-write", "destructive"] },
+      ledger,
+      run: outcome({}),
+    });
+
+    await broker({ command: "git push --force origin HEAD" });
+
+    expect(effectsForTask(database, "task_broker")).toMatchObject([{ category: "destructive", state: "confirmed" }]);
+  });
+
+  it("waits, when asked, for every command it is still answering", async () => {
+    let finish: () => void = () => undefined;
+    const { broker } = makeBroker({
+      policy: { mode: "autonomous" },
+      run: () =>
+        new Promise<CommandOutcome>((resolve) => {
+          finish = () => resolve({ exitCode: 0, stdout: "", stderr: "", durationMs: 1, timedOut: false });
+        }),
+    });
+    const answer = broker({ command: "git status" });
+    let idle = false;
+    const waiting = broker.idle().then(() => {
+      idle = true;
+    });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(idle).toBe(false);
+    finish();
+    await answer;
+    await waiting;
+    expect(idle).toBe(true);
   });
 
   it("calls a push whose runner failed unknown, since it may have started", async () => {
@@ -345,7 +453,7 @@ describe("a command that reaches outside the node is written into the effect led
     const base: CommandOutcome = { exitCode: 0, stdout: "", stderr: "", durationMs: 1, timedOut: false };
     expect(unknownCommandOutcome(base)).toBeUndefined();
     expect(unknownCommandOutcome({ ...base, exitCode: 2 })).toBeUndefined();
-    expect(unknownCommandOutcome({ ...base, stopped: true, exitCode: null })).toContain("stopped");
+    expect(unknownCommandOutcome({ ...base, stopped: true, exitCode: null })).toBe(COMMAND_STOPPED_ON_REQUEST);
     expect(unknownCommandOutcome({ ...base, timedOut: true, exitCode: null })).toContain("ran out of time");
     expect(unknownCommandOutcome({ ...base, exitCode: null })).toContain("without an exit status");
     expect(unknownCommandOutcome(undefined)).toContain("before it reported");

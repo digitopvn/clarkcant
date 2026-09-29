@@ -515,10 +515,13 @@ phải một nơi điều hướng thứ hai. Mỗi mục trỏ về hội tho�
 - **Approval hoặc câu hỏi hết hạn mà không ai trả lời được báo, không im lặng rơi khỏi danh sách.** Một quét định kỳ
   ở node ghi đúng một thông báo mỗi việc hết hạn, trỏ về đúng hội thoại của nó; approval xin quyền gói (không thuộc
   hội thoại nào) không có gì để trỏ về nên không được báo theo đường này.
-- **Một thao tác không ai thấy kết quả được báo đúng một lần.** Khi một lệnh mà việc nền chạy nhắm ra ngoài node (ví
-  dụ `git push`) bị dừng, hết giờ hoặc bị một lần khởi động lại cắt ngang trước khi báo lại, một thông báo nói điều gì
-  chưa rõ, rằng việc được giữ ở trạng thái "chưa rõ kết quả" và thao tác sẽ không tự chạy lại, và hãy kiểm tra ở phía
-  nhận trước khi chạy lại. Bỏ thông báo thì nó không quay lại.
+- **Một thao tác không ai thấy kết quả là một thông báo cho việc của nó.** Khi một lệnh mà việc nền chạy làm thay
+  đổi thứ gì đó bên ngoài node (ví dụ `git push` hoặc mở một pull request — không phải xoá một thư mục trên máy này hay
+  đọc từ GitHub) bị dừng, hết giờ hoặc bị một lần khởi động lại cắt ngang trước khi báo lại, việc được giữ ở trạng
+  thái "chưa rõ kết quả" và từ chối mọi lệnh tiếp theo mà nó nhận ra là ra bên ngoài, nên việc đó không tự làm lại
+  thao tác ấy lần thứ hai, dù bằng đúng lệnh cũ hay bằng cách viết khác. Một thông báo cho việc đó — thay cho thông báo nói việc đã dừng hay đã kết
+  thúc, không phải thêm vào — trích thao tác, nói rõ khi đó là lần Dừng của chính người dùng, nói điều gì được giữ lại,
+  và đề nghị kiểm tra ở phía nhận trước khi chạy lại. Bỏ thông báo thì nó không quay lại.
 - **Nhắc việc và việc tự động đến hạn** để lại một thông báo cho mỗi lần đến hạn, trỏ về hội thoại của chúng, kể cả
   khi một lần chạy đến hạn nhưng bị từ chối hoặc không bắt đầu được.
 

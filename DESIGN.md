@@ -525,10 +525,14 @@ Shipped:
   on the node writes exactly one notification per expired item, pointing back to its own conversation; a package
   permission approval (which belongs to no conversation) has nothing to point back to, so it isn't reported through
   this path.
-- **An action whose outcome nobody saw is reported once.** When a command a background task ran against something
-  outside the node (a `git push`, for example) was stopped, timed out or was cut off by a restart before it reported
-  back, one notification says what is uncertain, that the task is kept as "outcome unknown" and the action will not
-  be re-run on its own, and to check the receiving side before running it again. Dismissing it does not bring it back.
+- **An action whose outcome nobody saw is one notification for its task.** When a command a background task ran that
+  changes something outside the node (a `git push` or opening a pull request, for example — not deleting a folder on
+  this machine or reading from GitHub) was stopped, timed out or was cut off by a restart before it reported back, the
+  task is kept as "outcome unknown" and refuses every further command it recognises as reaching outside, so the task
+  does not do that action a second time on its own, as the same command or in other words. One notification for that
+  task — in place of the one saying it stopped or ended, not in addition to it — quotes the action, says when it was
+  the person's own Stop, says what was kept, and asks them to check the receiving side before running it again.
+  Dismissing it does not bring it back.
 - **Reminders and automations that come due** leave one notification per occurrence, pointing back to their
   conversation, including when a run came due but was refused or could not start.
 

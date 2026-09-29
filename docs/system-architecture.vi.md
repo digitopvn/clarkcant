@@ -389,19 +389,33 @@ Hộp thư (`apps/runtime/src/inbox.ts`, `routes/inbox.ts`) gom hai thứ khác 
     (`run.approval_expired`). Capability approval (install gói, không task, không thẻ) không
     có hội thoại để trỏ về nên không được quét — cùng lý do nó không được offer như việc chờ khi chưa hết hạn.
   - **Effect chưa rõ kết quả.** Nơi ghi effect ledger ở production là worker command broker
-    (`apps/runtime/src/worker-command-broker.ts`): một lệnh mà worker của task nhờ host chạy, có category vươn ra ngoài
-    những gì node đọc lại được tại chỗ (`external-write`, `destructive`, `financial`, `communication` — một `git push`,
-    không phải một thay đổi trong thư mục riêng của task), được ghi `prepared → submitted` theo task và run của nó
-    (capability `project.command.run@1`) trước khi chạy, rồi được chốt theo những gì lệnh báo lại: exit 0 là
-    `confirmed`, exit status khác là `failed`, còn lệnh bị dừng, hết giờ, kết thúc không có exit status hoặc runner lỗi
-    là `unknown` — đưa task sang `uncertain` trong cùng lần ghi (`markEffectUnknown`). Cùng một lệnh trong cùng thư mục
-    bị từ chối khi một lần chạy trước của nó còn `submitted` hoặc `unknown`, nên nó không bao giờ tự push hai lần. Khi
-    khởi động, `work-recovery.ts` đánh dấu `unknown` các effect còn `submitted` của node này, sau lượt xử lý task.
-    `apps/runtime/src/effect-notices.ts` quét một lần sau recovery rồi mỗi phút (unref, dừng khi node đóng) và ghi một
-    thông báo cho mỗi effect `unknown` (`dedupKey: effect-unknown:<effectId>`, subject `task`, trỏ về hội thoại của
-    task), nói điều gì chưa rõ, rằng task được giữ ở trạng thái chưa rõ kết quả và không có gì bị chạy lại, và hãy kiểm
-    tra ở phía nhận trước khi chạy lại. Effect cũ hơn thời gian giữ thông báo đã bỏ (30 ngày) không được báo, nên một
-    thông báo đã bỏ không quay lại như mới. Hiện chưa có route ghi lại việc một người đã đối soát một effect `unknown`.
+    (`apps/runtime/src/worker-command-broker.ts`). Nó chỉ ghi ledger cho một lệnh mà worker của task nhờ host chạy và
+    lệnh đó thay đổi thứ gì đó bên ngoài node này (`changesSomethingOutside` trong `preflight.ts`): `git push`, publish
+    một gói, `docker push`, `ssh`/`scp`/`sftp`/`rsync`, một lệnh `curl`/`wget` gửi dữ liệu đi, và một subcommand
+    `gh pr|issue|release` không phải `view`/`list`/`status`/`checks`/`diff` hoặc một lời gọi `gh api` có method khác
+    GET hay có field body. Một lệnh chỉ
+    thay đổi máy này — `rm -rf dist`, `git commit` — và một lệnh đọc của `gh` không được ghi ledger, kể cả khi nó mang
+    tính phá huỷ hay khi nó hết giờ. Effect được ghi `prepared → submitted` trong một transaction theo task và run của
+    nó (capability `project.command.run@1`, category `destructive` cho một force-push, còn lại là `external-write`)
+    trước khi lệnh chạy, rồi được chốt theo những gì lệnh báo lại: exit 0 là `confirmed`, exit status khác là `failed`,
+    còn lệnh bị dừng, hết giờ, kết thúc không có exit status hoặc runner lỗi là `unknown` — đưa task sang `uncertain`
+    trong cùng lần ghi (`markEffectUnknown`). Một dòng nối lệnh như vậy với lệnh khác (`;`, `&&`, `||`, `|`, `&`, xuống
+    dòng, hoặc command substitution, ngoài dấu nháy) bị từ chối trước khi chạy bất cứ thứ gì, vì một exit status không
+    thể cho biết phần nào đã có hiệu lực. Cùng một lệnh bị từ chối khi một lần chạy trước của nó còn `submitted`; khi
+    đã có một effect của task là `unknown`, mọi lệnh cần ghi ledger tiếp theo của task đó đều bị từ chối, và lời từ
+    chối bảo worker báo lại rằng lệnh trước có thể đã hoặc chưa có hiệu lực thay vì thử cách khác. Các lệnh chỉ ở trong
+    node vẫn chạy. Khi khởi động, `work-recovery.ts` đánh dấu `unknown` các effect còn `submitted` của node này, sau
+    lượt xử lý task. Dispatcher đợi mọi lệnh mà worker của task đã bắt đầu kết thúc và được ghi vào ledger rồi mới chốt
+    task (`broker.idle()`), nên một task bị dừng giữa lúc push được chốt là `uncertain`, không phải `cancelled`. Một
+    task có effect `unknown` có một thông báo, dùng chung khoá với thông báo mà việc chốt task để lại
+    (`dedupKey: worker:<taskId>`, subject `task`, trỏ về hội thoại của task): dù báo cáo khi chốt (`task-reporting.ts`)
+    hay lượt quét trong `apps/runtime/src/effect-notices.ts` ghi trước, đó đều là thông báo về effect, nên một lần
+    Dừng giữa lúc push là một cảnh báo, không phải một thông báo "đã dừng" cộng thêm một thông báo nữa về lần push. Nó
+    trích lệnh `unknown` đầu tiên, đếm các lệnh còn lại, nói rõ khi lý do là chính người dùng đã dừng, nói rằng task
+    được giữ ở trạng thái chưa rõ kết quả và các lệnh ra bên ngoài tiếp theo của nó bị từ chối, và đề nghị kiểm tra
+    ở phía nhận trước khi chạy lại. Lượt quét chạy một lần sau recovery rồi mỗi phút (unref, dừng khi node đóng), chỉ đọc các effect `unknown`
+    được chuẩn bị trong thời gian giữ thông báo đã bỏ (30 ngày), nên một thông báo đã bỏ không quay lại như mới. Hiện
+    chưa có route ghi lại việc một người đã đối soát một effect `unknown`.
   - **Nhắc việc và automation đến hạn** (`apps/runtime/src/automation-service.ts`). Một lời nhắc đến hạn ghi một thông
     báo cho mỗi lần đến hạn (`automation:<runId>`; một run là duy nhất theo automation và tín hiệu, và tín hiệu của
     timer là duy nhất theo từng mốc giờ), subject `conversation`. Một run đến hạn nhưng không chạy được ghi một thông

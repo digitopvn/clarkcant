@@ -632,6 +632,9 @@ export function createTaskDispatcher(deps: TaskDispatcherDeps): TaskDispatcher {
           );
         },
       });
+      // Settled only once every command it asked the host for has ended and been written into the ledger: a task
+      // reported before then is reported without knowing whether one of its effects landed.
+      await broker?.idle();
 
       if (wallClockExceeded) {
         journal((j) => j.taskEnded(job.taskId, "failed"));
@@ -672,7 +675,9 @@ export function createTaskDispatcher(deps: TaskDispatcherDeps): TaskDispatcher {
     } catch (cause) {
       // A worker ended by a signal — a person's stop, the wall-clock budget, a crash — rejects rather than returning,
       // so this is the path most stops actually take. It settles the task through the state machine like every
-      // other refusal: a message alone would leave the task `running` until the next boot called it uncertain.
+      // other refusal: a message alone would leave the task `running` until the next boot called it uncertain. A stop
+      // ends the worker and its commands together, and the worker usually goes first; the report waits for the commands.
+      await broker?.idle();
       const stopped = stopping.has(job.taskId);
       journal((j) => j.taskEnded(job.taskId, wallClockExceeded ? "failed" : stopped ? "stopped" : "failed"));
       const refusal = wallClockExceeded
