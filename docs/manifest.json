@@ -100,13 +100,13 @@
     },
     {
       "path": "platform-smoke.md",
-      "bytes": 3347,
-      "sha256": "dd87f82a2302470853b399367f677affd83d944221f07d2ef76b136d6940720a"
+      "bytes": 4513,
+      "sha256": "98d7eeb39a066dc5a0ced24c2c7a990ec6254f87926b6e239ba45e1dc4c4d037"
     },
     {
       "path": "platform-smoke.vi.md",
-      "bytes": 3707,
-      "sha256": "6b6be2a86c0a357502c2cea4a15c812274e7a40581f05b30dee41b02372abce0"
+      "bytes": 5245,
+      "sha256": "11eccee39b29b70a361d5ae4fdcd25bda48e792ba31c7c6f7b312d108471fecd"
     },
     {
       "path": "research-and-decisions.md",
@@ -130,13 +130,13 @@
     },
     {
       "path": "system-architecture.md",
-      "bytes": 92781,
-      "sha256": "dea77fb71444fafe22896d563abdaf06f994224476571f103fc0d3062fd80868"
+      "bytes": 93280,
+      "sha256": "27d00061f367a45b2576f694cdf33f60f1d44f68f7205625f2eafbb3850d40d0"
     },
     {
       "path": "system-architecture.vi.md",
-      "bytes": 101639,
-      "sha256": "d30e433258815c0edf6e3fa34c4ed25051e835f0b5b291bdf72693b53d7e12a1"
+      "bytes": 102363,
+      "sha256": "e10cecaebb6dd2711287e56fec496042b84704ecea0b6c85f12e617072c4a607"
     },
     {
       "path": "widget-development.md",

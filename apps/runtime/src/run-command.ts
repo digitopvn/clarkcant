@@ -5,7 +5,7 @@ import type { Instant, MessageBlock } from "@clarkcant/contracts";
 
 import { commandEnvironment } from "./child-env.ts";
 import { preflightCommand, type CommandEnvelope, type OwnedResources } from "./preflight.ts";
-import { STOP_GRACE_MS, readProcStartTime, signalTree, stopTree } from "./process-tree.ts";
+import { STOP_GRACE_MS, noteStarted, readProcStartTime, signalTree, stopTree } from "./process-tree.ts";
 
 /**
  * Running one command, in the directory it was asked for, once a person has approved it.
@@ -234,6 +234,8 @@ export async function runCommand(
       windowsHide: true,
       env: options.env ?? commandEnvironment(),
     });
+    // So a stop on Windows can also end what the shell started and left behind; see `noteStarted`.
+    noteStarted(child);
 
     let stdout = "";
     let stderr = "";
