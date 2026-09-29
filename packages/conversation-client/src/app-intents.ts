@@ -25,6 +25,7 @@
 import {
   type AppIntent,
   type AppIntentDecision,
+  type NoticeOperationId,
   type OrbProfileName,
   type SettingsTab,
   describeAppIntent,
@@ -85,7 +86,14 @@ export interface AppIntentHost {
    * Opens the inbox over the conversation: what is waiting for the person, and the notices from work that ran
    * while nobody was looking. Optional: a host with no node behind it has no inbox to open.
    */
-  openInbox?(): HostEffect;
+  openInbox?(target?: string): HostEffect;
+  /**
+   * Carries out one of a notice's own actions — mark read, dismiss, snooze, retry, update, skip a version, ask again —
+   * through the node's notice-action route, the one the panel's buttons, MCP and both agents reach; the node checks it
+   * against what the notice offers now. Resolves to the sentence saying what the node did; throws the node's reason when
+   * it did not. Optional for the reason `openInbox` is.
+   */
+  actOnNotice?(noticeId: string, action: NoticeOperationId): HostEffect;
   /**
    * Asks Clark about the newest notice in the inbox: the inbox's own "Ask Clark", reached by a sentence. Optional for
    * the reason `openInbox` is; a host that has an inbox but nothing in it refuses with a sentence saying so.
@@ -163,6 +171,7 @@ function missingCapabilitySay(intent: AppIntent): string {
       return catalog["shell.intent.notConversation"];
     case "inbox.open":
     case "inbox.ask":
+    case "notice.act":
     case "effect.confirmed":
     case "effect.failed":
       return catalog["shell.intent.notInbox"];
@@ -249,9 +258,16 @@ function carryOut(intent: AppIntent, host: AppIntentHost): HostEffect {
     case "nav.conversation":
       return host.showConversation?.();
     case "inbox.open":
-      return host.openInbox?.();
+      return host.openInbox?.(intent.inboxTarget);
     case "inbox.ask":
       return host.askAboutLatestNotice?.();
+    case "notice.act":
+      // The node names the notice and the action before it decides; one without either did not come through it, and
+      // is refused rather than carried out on whichever notice happens to be first.
+      if (intent.noticeId === undefined || intent.noticeAction === undefined) {
+        throw new Error(CATALOGS[readStoredLocale()]["shell.intent.noticeMissing"]);
+      }
+      return host.actOnNotice?.(intent.noticeId, intent.noticeAction);
     case "effect.confirmed":
     case "effect.failed":
       // The contract refuses one without an effect, so this is a decision that did not come through it: refused
@@ -320,6 +336,8 @@ function hostHasCapability(host: AppIntentHost, intent: AppIntent): boolean {
       return host.openInbox !== undefined;
     case "inbox.ask":
       return host.askAboutLatestNotice !== undefined;
+    case "notice.act":
+      return host.actOnNotice !== undefined;
     case "effect.confirmed":
     case "effect.failed":
       return host.recordEffectOutcome !== undefined;

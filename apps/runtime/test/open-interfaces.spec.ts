@@ -7,7 +7,11 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { WebSocket } from "ws";
 
+import type { Instant } from "@clarkcant/contracts";
+import { getNotification } from "@clarkcant/storage";
+
 import { attachApiSocket, type ApiSocket } from "../src/api-socket.ts";
+import { recordNodeNotice } from "../src/notices.ts";
 import { MCP_PROTOCOL_VERSIONS } from "../src/open-interfaces.ts";
 import { createNodeServer } from "../src/server.ts";
 import { bootNodeServices, type NodeServices } from "../src/services.ts";
@@ -229,6 +233,38 @@ describe("MCP endpoint", () => {
     // Refused before any route ran, so no conversation was started by accident.
     const conversations = await mcp({ jsonrpc: "2.0", id: 3, method: "tools/call", params: { name: "list_conversations", arguments: {} } });
     expect(JSON.stringify(conversations.body)).not.toContain("conv_");
+  });
+
+  it("reads the inbox and acts on a notice through the inbox's own route, but never gives the person's answer about an effect", async () => {
+    const { notificationId } = recordNodeNotice(services, {
+      sourceKind: "background",
+      category: "result",
+      severity: "success",
+      title: "Việc nền đã xong",
+      dedupKey: "background:bg_mcp",
+      at: new Date().toISOString() as Instant,
+    });
+    const tool = (id: number, name: string, args: Record<string, unknown>) =>
+      mcp({ jsonrpc: "2.0", id, method: "tools/call", params: { name, arguments: args } });
+
+    const read = await tool(1, "read_inbox", {});
+    expect(JSON.stringify(read.body)).toContain(notificationId);
+
+    const dismissed = await tool(2, "act_on_notice", { noticeId: notificationId, action: "dismiss" });
+    expect(dismissed.body).toMatchObject({
+      result: { structuredContent: { noticeId: notificationId, action: "dismiss", outcome: "done" } },
+    });
+    expect(getNotification(services.runtime.db, services.runtime.identity.ownerPrincipalId, notificationId)?.dismissed).toBe(true);
+
+    const stale = await tool(3, "act_on_notice", { noticeId: notificationId, action: "dismiss" });
+    expect(stale.body).toMatchObject({ result: { isError: true } });
+    expect(JSON.stringify(stale.body)).toContain("RESOURCE_NOT_FOUND");
+
+    const answer = await tool(4, "act_on_notice", { noticeId: notificationId, action: "reconcile-confirmed" });
+    expect(answer.body).toMatchObject({ result: { isError: true } });
+    expect(JSON.stringify(answer.body)).toContain("PERSON_ONLY");
+
+    expect((await tool(5, "act_on_notice", { action: "dismiss" })).body).toMatchObject({ result: { isError: true } });
   });
 
   it("does not accept GET, because the server never speaks first", async () => {

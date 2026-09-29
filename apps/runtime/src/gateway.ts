@@ -274,9 +274,9 @@ export async function handleRequest(deps: GatewayDeps, request: GatewayRequest):
   const memoryResponse = handleMemoryRoutes({ services, request, segments });
   if (memoryResponse !== undefined) return memoryResponse;
 
-  // What is waiting for the person, and what happened while they were elsewhere. Reads only: every decision it
-  // offers goes back through the route that already owns that decision.
-  const inboxResponse = handleInboxRoutes({ services, request, segments, at });
+  // What is waiting for the person, and what happened while they were elsewhere. Every decision it offers goes back
+  // through the route that already owns that decision; a notice's own actions go through `performNoticeOperation`.
+  const inboxResponse = await handleInboxRoutes({ services, request, segments, at });
   if (inboxResponse !== undefined) return inboxResponse;
 
   // What the person saw of an effect whose outcome was unknown. Person-only: see `isPersonOnlyRoute`.

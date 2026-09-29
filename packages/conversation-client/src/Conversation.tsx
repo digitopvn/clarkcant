@@ -1,6 +1,6 @@
 import { type CSSProperties, type ReactElement, useRef, useState } from "react";
 
-import type { OrbProfileName } from "@clarkcant/contracts";
+import type { NoticeOperationId, OrbProfileName } from "@clarkcant/contracts";
 
 import type { GatewayClient, Timeline } from "./api.ts";
 import { agentStateFrom, windowModeFrom } from "./input-modality.ts";
@@ -180,6 +180,8 @@ export function Conversation({
   const [backgroundTick, setBackgroundTick] = useState(0);
   /** The same, for the inbox mark: bumped when the inbox panel changed something the mark counts. */
   const [inboxTick, setInboxTick] = useState(0);
+  /** Bumped when a notice changed from outside the inbox panel (a sentence), so an open panel reads again. */
+  const [inboxPanelRefresh, setInboxPanelRefresh] = useState(0);
   const [draft, setDraft] = useState("");
 
   /**
@@ -194,6 +196,7 @@ export function Conversation({
   const recordEffectOutcome = useRef<((effectId: string, outcome: "confirmed" | "failed") => Promise<void>) | undefined>(
     undefined,
   );
+  const actOnNotice = useRef<((noticeId: string, action: NoticeOperationId) => Promise<string>) | undefined>(undefined);
   /** The hidden file input the `+` button opens, so the button itself is a real `<button>`. */
   const attachmentInput = useRef<HTMLInputElement>(null);
 
@@ -308,6 +311,11 @@ export function Conversation({
     recordEffectOutcome: async (effectId, outcome) => {
       await recordEffectOutcome.current?.(effectId, outcome);
     },
+    // "Dismiss the latest notification", typed or said: the notice's own action, through the route the panel uses.
+    actOnNotice: async (noticeId, action) => {
+      if (actOnNotice.current === undefined) throw new Error(localeState.t("shell.intent.notInbox"));
+      return actOnNotice.current(noticeId, action);
+    },
     // The hotkey's own switches, so the alias and note on screen follow an agent's switch too.
     cycleModel,
     selectModel,
@@ -348,8 +356,11 @@ export function Conversation({
     t: localeState.t,
     refreshTimeline,
     onInboxChanged: () => setInboxTick((tick) => tick + 1),
+    refreshInboxPanel: () => setInboxPanelRefresh((tick) => tick + 1),
+    locale: localeState.locale,
   });
   askAboutLatestNotice.current = noticeActions.askAboutLatestNotice;
+  actOnNotice.current = noticeActions.actOnNotice;
   // A typed command arrives while the voice screen is closed, a spoken one while it is open: that is the surface the
   // person answered from, and the node records it beside the answer.
   recordEffectOutcome.current = async (effectId, outcome) => {
@@ -409,7 +420,8 @@ export function Conversation({
     client,
     t: localeState.t,
     windowMode,
-    onOpenInbox: () => appIntents.clickIntent("inbox.open"),
+    // A notification leads to what it was about: the inbox opens on that notice or waiting item.
+    onOpenInbox: (target) => appIntents.clickIntent("inbox.open", target === undefined ? undefined : { inboxTarget: target }),
     onNoticesArrived: (conversationIds) => {
       if (conversationId !== undefined && conversationIds.includes(conversationId)) refreshTimeline();
     },
@@ -605,6 +617,9 @@ export function Conversation({
         onAddToContext={noticeActions.addToContext}
         onReconcile={(effectId, outcome) => noticeActions.reconcile(effectId, outcome, "click")}
         onOpenSettings={appIntents.openSettings}
+        refreshKey={inboxPanelRefresh}
+        {...(appIntents.inboxTarget === undefined ? {} : { target: appIntents.inboxTarget })}
+        onTargetShown={appIntents.clearInboxTarget}
       />
 
       {/* The Widget Library, beside the conversation rather than in place of it. */}

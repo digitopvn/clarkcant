@@ -51,6 +51,7 @@ import { createFindRuntimeTool } from "./runtime-candidates.ts";
 import { createInvokeCapabilityTool, type InvokeCapabilityToolDeps } from "./invoke-capability-tool.ts";
 import { createManagePackageTool, type ManagePackageToolDeps } from "./manage-package-tool.ts";
 import { createReadInboxTool } from "./read-inbox-tool.ts";
+import { type ActOnNoticeToolDeps, createActOnNoticeTool } from "./act-on-notice-tool.ts";
 import { type InspectUiDeps, createInspectUiTool } from "./inspect-ui-tool.ts";
 import { createTerminalTools } from "./terminal-tools.ts";
 import type { TerminalRegistry } from "./terminal-sessions.ts";
@@ -191,6 +192,13 @@ export function createNodeTools(input: {
    */
   inbox?: () => InboxResponse;
   /**
+   * Acting on one notice, when this node has an inbox to act in.
+   *
+   * Absent means `act_on_notice` is not registered. Present, it calls the same `performNoticeOperation` the inbox's own
+   * action route calls, so the panel, a typed or spoken command and the agents are one path with one set of checks.
+   */
+  notices?: ActOnNoticeToolDeps;
+  /**
    * What is running and how to stop it (`work-tools.ts`), scoped first to this conversation.
    *
    * Absent means neither tool is registered; the node's supervisor is the list both read.
@@ -278,6 +286,7 @@ export function createNodeTools(input: {
     ...(input.capabilities === undefined ? [] : [createInvokeCapabilityTool(input.capabilities)]),
     ...(input.work === undefined ? [] : createWorkTools(input.work)),
     ...(input.inbox === undefined ? [] : [createReadInboxTool(input.inbox)]),
+    ...(input.notices === undefined ? [] : [createActOnNoticeTool(input.notices)]),
     ...(input.ui === undefined ? [] : [createInspectUiTool(input.ui)]),
     ...(input.automations === undefined ? [] : createAutomationTools(input.automations)),
     ...(input.browserTasks === undefined ? [] : [createBrowserTaskTool(input.browserTasks)]),

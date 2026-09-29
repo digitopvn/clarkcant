@@ -14,7 +14,7 @@ type Listener = (...args: unknown[]) => void;
 
 interface Bridge {
   onWidgetReattached(callback: (payload: unknown) => void): () => void;
-  onNotificationClicked(callback: () => void): () => void;
+  onNotificationClicked(callback: (payload: { target?: unknown }) => void): () => void;
 }
 
 function loadPreload(): { bridge: Bridge; listeners: Map<string, Set<Listener>> } {
@@ -82,5 +82,19 @@ describe("preload subscriptions", () => {
     expect(listeners.get("desktop:notificationClicked")?.size).toBe(1);
     keep();
     expect(listeners.get("desktop:notificationClicked")?.size).toBe(0);
+  });
+
+  it("passes a clicked notification's target on as a copied string, and nothing else from the IPC payload", () => {
+    const { bridge, listeners } = loadPreload();
+    const seen: unknown[] = [];
+    const off = bridge.onNotificationClicked((payload) => seen.push(payload));
+    const fire = (payload: unknown) => {
+      for (const listener of listeners.get("desktop:notificationClicked") ?? []) listener({ sender: "ipc" }, payload);
+    };
+    fire({ target: "notice:ntf_1", extra: "dropped" });
+    fire({ target: { toString: () => "notice:ntf_1" } });
+    fire(undefined);
+    expect(seen).toEqual([{ target: "notice:ntf_1" }, {}, {}]);
+    off();
   });
 });

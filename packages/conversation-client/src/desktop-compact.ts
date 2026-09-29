@@ -54,9 +54,14 @@ interface DesktopBridge {
   minimizeWindow?: () => Promise<unknown>;
   setFullScreen?: (value: boolean) => Promise<unknown>;
   onWindowStateChanged?: (callback: (payload: unknown) => void) => unknown;
-  notify?: (input: { title: string; body: string }) => Promise<unknown>;
-  /** Returns the unsubscribe: called once, it stops this callback from hearing any later click. */
-  onNotificationClicked?: (callback: () => void) => () => void;
+  /** `target` names the notice or waiting item (`inboxTargetSchema`) a click on the notification should open the inbox on. */
+  notify?: (input: { title: string; body: string; target?: string }) => Promise<unknown>;
+  /**
+   * Returns the unsubscribe: called once, it stops this callback from hearing any later click. The payload carries the
+   * clicked notification's `target` when it was shown with one; a shell from before targets calls it with nothing, so
+   * the payload is read as untrusted and optional.
+   */
+  onNotificationClicked?: (callback: (payload?: { target?: unknown }) => void) => () => void;
   status?: () => Promise<unknown>;
   closeWindow?: () => Promise<unknown>;
 }

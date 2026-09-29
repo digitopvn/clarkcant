@@ -23,7 +23,8 @@ const bridge = {
   },
   /**
    * Told when the person clicks an OS notification the shell showed, so the renderer that is actually
-   * displaying the conversation can open the inbox through its own `inbox.open` intent.
+   * displaying the conversation can open the inbox through its own `inbox.open` intent, on the notice or
+   * waiting item the notification was about (`{ target }`, which the main process already checked).
    *
    * A named subscription rather than a generic `on(channel)`, for the same reason `onWidgetReattached` is one.
    * Returns the unsubscribe: the polling hook that calls this remounts on every client change, and an
@@ -31,7 +32,9 @@ const bridge = {
    * its now-stale closure on every future click.
    */
   onNotificationClicked(callback) {
-    const listener = () => callback();
+    // Only a string target is passed on: the payload is copied, never handed over as the IPC event's own object.
+    const listener = (_event, payload) =>
+      callback(typeof payload?.target === "string" ? { target: payload.target } : {});
     ipcRenderer.on("desktop:notificationClicked", listener);
     return () => ipcRenderer.removeListener("desktop:notificationClicked", listener);
   },

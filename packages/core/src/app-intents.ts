@@ -37,6 +37,7 @@ import {
   type ConfirmationToken,
   type ConversationId,
   type Instant,
+  type NoticeOperationId,
   type SettingsTab,
   appIntentNotUnderstood,
   describeAppIntent,
@@ -131,7 +132,14 @@ const APP_COMMAND_MAX_WORDS = 8;
  * cannot be stolen by the shorter "thu nho". Relying on table order for that would make the table's
  * meaning depend on where a line sits.
  */
-const PHRASES: readonly { phrase: string; kind: AppIntentKind; wholeSentence?: true; opener?: string }[] = [
+const PHRASES: readonly {
+  phrase: string;
+  kind: AppIntentKind;
+  wholeSentence?: true;
+  opener?: string;
+  /** For `notice.act`: which of the node's notice actions the sentence asks for. The notice itself the node names. */
+  noticeAction?: NoticeOperationId;
+}[] = [
   // Ending the voice session.
   { phrase: "ket thuc phien thoai", kind: "voice.end" },
   { phrase: "ket thuc phien", kind: "voice.end" },
@@ -256,6 +264,46 @@ const PHRASES: readonly { phrase: string; kind: AppIntentKind; wholeSentence?: t
   { phrase: "ask about the latest notification", kind: "inbox.ask", wholeSentence: true },
   { phrase: "ask clark about the latest notice", kind: "inbox.ask", wholeSentence: true },
   { phrase: "handle the latest notification", kind: "inbox.ask", wholeSentence: true },
+  { phrase: "xu ly notification moi nhat", kind: "inbox.ask", wholeSentence: true },
+  // A notice's own actions, said or typed: the inbox's buttons reached by a sentence, carried out through the same node
+  // route (`POST /inbox/notices/:id/actions/:action`). Whole-sentence for the reason above. The words name the action and
+  // never the notice: the node picks it (the newest notice, or for an action on what a notice is about the newest one
+  // that offers it now), names it in the read-back, and refuses when there is none.
+  { phrase: "danh dau thong bao moi nhat da doc", kind: "notice.act", noticeAction: "mark-read", wholeSentence: true },
+  { phrase: "danh dau da doc thong bao moi nhat", kind: "notice.act", noticeAction: "mark-read", wholeSentence: true },
+  { phrase: "mark the latest notification read", kind: "notice.act", noticeAction: "mark-read", wholeSentence: true },
+  { phrase: "mark the latest notification as read", kind: "notice.act", noticeAction: "mark-read", wholeSentence: true },
+  { phrase: "mark the latest notice as read", kind: "notice.act", noticeAction: "mark-read", wholeSentence: true },
+  { phrase: "danh dau thong bao moi nhat chua doc", kind: "notice.act", noticeAction: "mark-unread", wholeSentence: true },
+  { phrase: "danh dau chua doc thong bao moi nhat", kind: "notice.act", noticeAction: "mark-unread", wholeSentence: true },
+  { phrase: "mark the latest notification unread", kind: "notice.act", noticeAction: "mark-unread", wholeSentence: true },
+  { phrase: "mark the latest notification as unread", kind: "notice.act", noticeAction: "mark-unread", wholeSentence: true },
+  { phrase: "mark the latest notice as unread", kind: "notice.act", noticeAction: "mark-unread", wholeSentence: true },
+  { phrase: "bo thong bao moi nhat", kind: "notice.act", noticeAction: "dismiss", wholeSentence: true },
+  { phrase: "an thong bao moi nhat", kind: "notice.act", noticeAction: "dismiss", wholeSentence: true },
+  { phrase: "dismiss the latest notification", kind: "notice.act", noticeAction: "dismiss", wholeSentence: true },
+  { phrase: "dismiss the latest notice", kind: "notice.act", noticeAction: "dismiss", wholeSentence: true },
+  { phrase: "hoan thong bao moi nhat", kind: "notice.act", noticeAction: "snooze", wholeSentence: true },
+  { phrase: "hoan thong bao moi nhat mot tieng", kind: "notice.act", noticeAction: "snooze", wholeSentence: true },
+  { phrase: "snooze the latest notification", kind: "notice.act", noticeAction: "snooze", wholeSentence: true },
+  { phrase: "snooze the latest notice", kind: "notice.act", noticeAction: "snooze", wholeSentence: true },
+  { phrase: "dua thong bao da hoan tro lai", kind: "notice.act", noticeAction: "unsnooze", wholeSentence: true },
+  { phrase: "bring back the snoozed notification", kind: "notice.act", noticeAction: "unsnooze", wholeSentence: true },
+  { phrase: "bring back the snoozed notice", kind: "notice.act", noticeAction: "unsnooze", wholeSentence: true },
+  { phrase: "chay lai viec nen bi loi", kind: "notice.act", noticeAction: "retry", wholeSentence: true },
+  { phrase: "chay lai viec nen do", kind: "notice.act", noticeAction: "retry", wholeSentence: true },
+  { phrase: "retry the failed background work", kind: "notice.act", noticeAction: "retry", wholeSentence: true },
+  { phrase: "retry that background task", kind: "notice.act", noticeAction: "retry", wholeSentence: true },
+  { phrase: "retry background task do", kind: "notice.act", noticeAction: "retry", wholeSentence: true },
+  { phrase: "cai ban cap nhat moi nhat", kind: "notice.act", noticeAction: "update", wholeSentence: true },
+  { phrase: "cap nhat theo thong bao moi nhat", kind: "notice.act", noticeAction: "update", wholeSentence: true },
+  { phrase: "install the latest update", kind: "notice.act", noticeAction: "update", wholeSentence: true },
+  { phrase: "bo qua phien ban nay", kind: "notice.act", noticeAction: "skip-version", wholeSentence: true },
+  { phrase: "skip this version", kind: "notice.act", noticeAction: "skip-version", wholeSentence: true },
+  { phrase: "skip that version", kind: "notice.act", noticeAction: "skip-version", wholeSentence: true },
+  { phrase: "hoi lai cau hoi da het han", kind: "notice.act", noticeAction: "ask-again", wholeSentence: true },
+  { phrase: "hoi lai cau hoi vua het han", kind: "notice.act", noticeAction: "ask-again", wholeSentence: true },
+  { phrase: "ask the expired question again", kind: "notice.act", noticeAction: "ask-again", wholeSentence: true },
   // Closing it is going back to the conversation, which is what closing any surface over it already means.
   { phrase: "dong hop thu", kind: "nav.conversation", wholeSentence: true },
   { phrase: "close the inbox", kind: "nav.conversation", wholeSentence: true },
@@ -320,7 +368,7 @@ function wholeSentenceOf(bare: string): string {
   return sentence;
 }
 
-function wholeSentenceMatch(bare: string): { phrase: string; kind: AppIntentKind } | undefined {
+function wholeSentenceMatch(bare: string): { phrase: string; kind: AppIntentKind; noticeAction?: NoticeOperationId } | undefined {
   const sentence = wholeSentenceOf(bare);
   return PHRASES.find((entry) => entry.wholeSentence === true && entry.phrase === sentence);
 }
@@ -529,7 +577,10 @@ export function matchAppIntent(
   }
 
   const whole = wholeSentenceMatch(normalised);
-  if (whole !== undefined) return { kind: "intent", intent: { kind: whole.kind } };
+  if (whole !== undefined) {
+    // A notice action names which action and never which notice; the node fills that in (see the phrases above).
+    return { kind: "intent", intent: { kind: whole.kind, ...(whole.noticeAction === undefined ? {} : { noticeAction: whole.noticeAction }) } };
+  }
 
   const matched = [...PHRASES]
     .filter((entry) => entry.wholeSentence !== true)
@@ -619,6 +670,9 @@ export function recordAppIntentEvent(
     ...(input.intent.modelAlias === undefined ? {} : { modelAlias: input.intent.modelAlias }),
     ...(input.intent.orbProfile === undefined ? {} : { orbProfile: input.intent.orbProfile }),
     ...(input.intent.effectId === undefined ? {} : { effectId: input.intent.effectId }),
+    ...(input.intent.noticeId === undefined ? {} : { noticeId: input.intent.noticeId }),
+    ...(input.intent.noticeAction === undefined ? {} : { noticeAction: input.intent.noticeAction }),
+    ...(input.intent.inboxTarget === undefined ? {} : { inboxTarget: input.intent.inboxTarget }),
     source: input.source,
     confirmed: input.confirmed,
   };

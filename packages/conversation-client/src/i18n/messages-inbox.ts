@@ -151,7 +151,7 @@ export const MESSAGES_INBOX_VI = {
   "inbox.action.update": "Cập nhật",
   "inbox.action.updateAria": "Cập nhật: {title}",
   "inbox.updated": "Đã cập nhật {package} lên bản {version}.",
-  "inbox.updateNeedsApproval": "Bản cập nhật cần bạn duyệt trước khi cài; yêu cầu duyệt đang chờ ở mục Đang chờ bạn.",
+  "inbox.updateNeedsApproval": "Chế độ thực thi của bạn yêu cầu duyệt trước khi cài bản cập nhật này, nên chưa cài gì cả.",
   "inbox.updateFailed": "Không cập nhật được: {reason} Bản đang cài vẫn giữ nguyên.",
   "inbox.updateReason.notInDirectory": "danh mục gói không có bản {version}.",
   "inbox.action.packageGone": "Gói này không còn được cài, nên không có gì để cập nhật.",
@@ -171,6 +171,9 @@ export const MESSAGES_INBOX_VI = {
   "inbox.action.askAgainAria": "Hỏi lại câu hỏi: {title}",
   "inbox.askedAgain": "Đã hỏi lại trong hội thoại; câu hỏi mới đang chờ bạn trả lời ở trên.",
   "inbox.askAgainFailed": "Không hỏi lại được: {reason}",
+  "inbox.act.updated": "Đã cài bản {version}; thông báo đã được bỏ khỏi hộp thư.",
+  "inbox.act.failed": "Chưa làm được: {reason} Thông báo vẫn như trước.",
+  "inbox.target.gone": "Mục mà thông báo trỏ tới không còn trong hộp thư; có thể nó đã được xử lý ở nơi khác.",
 } as const;
 
 export type MessageInboxKey = keyof typeof MESSAGES_INBOX_VI;
@@ -319,7 +322,7 @@ export const MESSAGES_INBOX_EN = {
   "inbox.action.update": "Update",
   "inbox.action.updateAria": "Update: {title}",
   "inbox.updated": "Updated {package} to version {version}.",
-  "inbox.updateNeedsApproval": "The update needs your approval before it is installed; the request is waiting under Waiting for you.",
+  "inbox.updateNeedsApproval": "Your execution mode asks for approval before this update is installed, so nothing was installed.",
   "inbox.updateFailed": "Could not update: {reason} The installed version is unchanged.",
   "inbox.updateReason.notInDirectory": "the package directory does not list version {version}.",
   "inbox.action.packageGone": "This package is no longer installed, so there is nothing to update.",
@@ -339,4 +342,7 @@ export const MESSAGES_INBOX_EN = {
   "inbox.action.askAgainAria": "Ask the question again: {title}",
   "inbox.askedAgain": "Asked again in its conversation; the new question is waiting for your answer above.",
   "inbox.askAgainFailed": "Could not ask again: {reason}",
+  "inbox.act.updated": "Installed version {version}; the notice is out of the inbox.",
+  "inbox.act.failed": "That did not happen: {reason} The notice is as it was.",
+  "inbox.target.gone": "What that notification pointed to is no longer in the inbox; it may have been handled elsewhere.",
 } as const satisfies Record<MessageInboxKey, string>;

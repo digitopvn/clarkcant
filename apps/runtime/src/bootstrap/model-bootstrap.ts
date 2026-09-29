@@ -299,6 +299,13 @@ export async function createNodeModelTurn(deps: ModelBootstrapDeps): Promise<Mod
         memory: { conversationId: turn.conversationId, newId: deps.services().conductor.newId },
         // "Anything waiting for me?" is answered from the same read the inbox panel makes, at the moment it is asked.
         inbox: () => readInbox(deps.services(), instantSchema.parse(new Date().toISOString())),
+        // "Dismiss that", "try it again", said to either agent: the same action the inbox's own buttons and routes take.
+        notices: {
+          services: deps.services,
+          now: () => instantSchema.parse(new Date().toISOString()),
+          conversationId: turn.conversationId,
+          channel: turn.channel,
+        },
         // What the widgets the person changed show now, read from the same documents the turn's UI note is built from.
         ui: { deps: () => deps.services().conductor, conversationId: turn.conversationId },
         // "From now on, when X happens, do Y": kept for the owner, reporting in the conversation it was set up in, and

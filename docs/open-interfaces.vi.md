@@ -308,6 +308,24 @@ không có gì được lưu. Node
 không đẩy thay đổi gói về client: client đọc lại `/appearance` sau khi chính nó thay đổi một gói và khi cửa sổ được
 nhìn lại. Hình dạng dữ liệu ở `packages/contracts/src/themes.ts`.
 
+`POST /inbox/notices/:id/actions/:action` là route duy nhất cho các thao tác của chính một thông báo, dù ai yêu cầu:
+hộp thư, một câu gõ hoặc nói, agent chính và voice agent, `act_on_notice` của MCP và `clarkcant api`. Thao tác là
+một trong `mark-read`, `mark-unread`, `dismiss`, `snooze`, `unsnooze`, `suppress`, `unsuppress`, `retry`, `update`,
+`skip-version` hoặc `ask-again` (`NOTICE_OPERATION_IDS`); body là `{}` hoặc, riêng `snooze` và bắt buộc ở đó,
+`{ "until": "<ISO instant>" }`. Trừ `mark-read` và `mark-unread`, node đối chiếu thao tác với `actions` của thông báo
+ngay lúc đó và từ chối mọi thứ khác mà không đổi gì: `400 UNKNOWN_ACTION` với tên không phải thao tác của thông báo,
+`403 PERSON_ONLY` với `reconcile-confirmed` và `reconcile-failed` (câu trả lời của người dùng, có route riêng bên
+dưới), `409 SURFACE_ACTION` với `open`, `ask-clark`, `add-to-context` và `review-update` (chúng đổi thứ đang hiện
+trên màn hình của người dùng, nên chỉ màn hình đó làm được), `404 RESOURCE_NOT_FOUND` với thông báo đã mất, đã bị bỏ
+hoặc thuộc principal khác, `409 ACTION_NOT_OFFERED` khi thông báo lúc này không đưa ra thao tác đó, và
+`409 ACTION_UNAVAILABLE` kèm lý do (`conversation-gone`, `work-gone`, `package-gone`, `already-current`) khi thao tác
+được liệt kê nhưng lúc này không làm được. `update` trả nguyên các lời từ chối của route cài đặt, và `202` với
+`{ "outcome": "approval-required", "approvalId", "version" }` khi chế độ thực thi của người dùng yêu cầu hỏi trước khi
+cài; khi đó không có gì được cài, và approval đó là của người dùng. Còn lại là `200` với
+`{ noticeId, action, outcome: "done" }` cùng những gì thao tác tạo ra (`snoozedUntil`, `workId` kèm `state` và
+`position`, `version`, `questionId`); `retry` và `ask-again` gỡ thông báo cũ, nên yêu cầu lần thứ hai nhận `404`.
+Các route theo từng thao tác ở trên vẫn trả lời như trước.
+
 Các route khác (settings, packages, widgets, peers…) vẫn gọi được với cùng token nhưng chưa thuộc mô tả ổn định và
 có thể thay đổi.
 
@@ -327,6 +345,8 @@ có thể thay đổi.
 | `stop_reply` | `conversationId` | `POST /conversations/{id}/stop` |
 | `stop_all_work` | – | `POST /stop` |
 | `node_status` | – | `GET /node` |
+| `read_inbox` | – | `GET /inbox` |
+| `act_on_notice` | `noticeId`, `action`, `until?` | `POST /inbox/notices/{noticeId}/actions/{action}` |
 
 **Cố ý không có tool duyệt approval.** Approval là quyết định của con người về việc agent muốn làm; một MCP tool cho
 nó sẽ cho phép client AI tự duyệt hành động bị guard của chính nó. Approval chỉ nằm trên bề mặt của người dùng, và
@@ -338,8 +358,14 @@ grant, và ghi nhận một thao tác không ai thấy kết quả đã có hi�
 một client AI nói được "lần push đó đã thành công" thì có thể tự gỡ trạng thái chưa rõ của task của chính nó rồi tự
 báo là đã xong). Xuất một bảng ra file CSV
 (`POST /conversations/{id}/widgets/{instanceId}/export`) cũng bị các relay đó từ chối: file được viết cho người đang
-xem bảng, không trao cho một client máy. Dừng, trả lời câu hỏi và đọc vẫn dùng được. Discovery document ghi điều này
-ở mục `personDecisions`.
+xem bảng, không trao cho một client máy. Dừng, trả lời câu hỏi và đọc vẫn dùng được, và `act_on_notice` cũng vậy:
+nó không bao giờ đưa ra câu trả lời của người dùng về một thao tác chưa rõ kết quả (`403 PERSON_ONLY`), và bản cập
+nhật mà nó yêu cầu dưới chế độ thực thi hỏi trước sẽ không cài gì (`approval-required`). Discovery document ghi điều
+này ở mục `personDecisions`.
+
+WebMCP (trang web đưa tool cho agent của chính trình duyệt) đã được cân nhắc cho cùng các thao tác thông báo và chưa
+được đưa ra: đề xuất này vẫn là bản nháp, chưa có API trình duyệt nào ship, và trang của ClarkCant không có bề mặt
+tool riêng để đưa ra; các MCP tool ở trên là bề mặt dành cho máy.
 
 Cấu hình client — HTTP:
 

@@ -664,6 +664,35 @@ async function listedNotices(page: Page): Promise<Array<{ noticeId: string; titl
   return ((await response.json()) as { notices: Array<{ noticeId: string; title: string; body?: string; conversationId?: string; severity: string }> }).notices;
 }
 
+test("dismissing the latest notification, typed, is done by the node on the notice it names, and says so", async ({ page }) => {
+  await openApp(page);
+  const { noticeId, title } = await backgroundNotice(page, "thông báo để bỏ bằng một câu");
+  const actions: string[] = [];
+  page.on("request", (request) => {
+    if (request.method() === "POST" && request.url().includes("/inbox/notices/")) actions.push(new URL(request.url()).pathname);
+  });
+
+  const composer = page.locator("[data-composer]");
+  await composer.fill("bỏ thông báo mới nhất");
+  await composer.press("Enter");
+
+  // The read-back names the notice the node chose, so a person who hears the wrong one knows it.
+  await expect(page.locator('[data-role="assistant"]').last()).toContainText(`Tôi bỏ thông báo “${title}” khỏi hộp thư nhé.`, { timeout: 20_000 });
+  // What the node answered, not the read-back again: it was done.
+  await expect(page.locator("[data-intent-notice]")).toContainText("Đã bỏ thông báo.", { timeout: 20_000 });
+  expect(actions).toEqual([`/inbox/notices/${noticeId}/actions/dismiss`]);
+  await expect.poll(async () => (await listedNotices(page)).map((notice) => notice.noticeId)).not.toContain(noticeId);
+
+  // The inbox shows the same state a press would have left: the notice is gone from the list.
+  await composer.fill("mở hộp thư");
+  await composer.press("Enter");
+  const dialog = page.getByRole("dialog");
+  await expect(dialog.locator('[data-inbox-panel="ready"]')).toBeVisible({ timeout: 20_000 });
+  await expect(dialog.locator(`[data-inbox-notice="${noticeId}"]`)).toHaveCount(0);
+  await page.keyboard.press("Escape");
+  await expect(dialog).toHaveCount(0);
+});
+
 test("background work that failed is run again from its notice, and the new run reports for itself", async ({ page }) => {
   await openApp(page);
   // The fixture fails the first run of a request that says so, and runs the same words cleanly the second time.

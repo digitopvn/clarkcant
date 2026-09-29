@@ -547,6 +547,23 @@ phải một nơi điều hướng thứ hai. Mỗi mục trỏ về hội tho�
       - xem hoặc khắc phục một cảnh báo hệ thống từ hộp thư.
   - **Việc chờ không bao giờ bị hoãn hay tắt báo.** Approval, yêu cầu cấp quyền và câu hỏi của Clark là quyết định,
     không phải thông báo: chúng ở lại trong "Đang chờ bạn" cho đến khi được quyết định hoặc hết hạn.
+- **Thao tác của một thông báo là cùng một thao tác dù được yêu cầu ở đâu** (#196). Nút trong hộp thư, một câu gõ
+  hoặc nói, agent chính và voice agent, MCP và `clarkcant api` đều đi tới một route trên node; node đối chiếu thao tác
+  với những gì thông báo đang đưa ra ngay lúc đó, và từ chối mọi thứ khác kèm lý do, không đổi gì. Các câu là cả một
+  yêu cầu trọn vẹn ("đánh dấu thông báo mới nhất đã đọc", "bỏ thông báo mới nhất", "hoãn thông báo mới nhất", "đưa
+  thông báo đã hoãn trở lại", "chạy lại việc nền bị lỗi", "cài bản cập nhật mới nhất", "bỏ qua phiên bản này", "hỏi
+  lại câu hỏi đã hết hạn", và dạng tiếng Anh như "dismiss the latest notification"). Câu nói nêu thao tác, không nêu
+  thông báo: node chọn thông báo mới nhất cho đã đọc, chưa đọc, bỏ và hoãn (một giờ), thông báo đã hoãn sắp quay lại
+  sớm nhất cho đưa trở lại, và thông báo mới nhất đang làm được thao tác đó cho chạy lại, cập nhật, bỏ qua phiên bản
+  và hỏi lại. Câu đọc lại nêu tên thông báo đó bằng tiêu đề, nên người nghe thấy sai thông báo sẽ biết; khi không có
+  thông báo nào phù hợp, Clark nói rõ và không làm gì. Những thao tác này được làm luôn mà không hỏi lại, như các app
+  intent có thể hoàn tác khác (bỏ thông báo vẫn có Hoàn tác trong hộp thư), và dòng trạng thái ngắn ở đầu cuộc trò chuyện
+  sau đó nói node đã làm gì, bằng đúng lời của hộp thư. Hai agent đọc hộp thư trước, nơi liệt kê id của từng thông báo cùng các thao tác
+  làm được ngay lúc đó và những thao tác chưa làm được kèm lý do, rồi gọi `act_on_notice`; nhật ký ghi đó là việc của
+  agent hoặc của voice agent, không phải của người dùng. Mở hội thoại, Hỏi Clark, Thêm vào ngữ cảnh và Xem trong Cài
+  đặt thay đổi thứ đang hiện trên màn hình của người dùng nên vẫn là nút trên màn hình đó; câu trả lời về một thao tác
+  không ai thấy kết quả vẫn là của người dùng (bên dưới). Bản cập nhật mà chế độ thực thi yêu cầu duyệt trước khi cài
+  sẽ nói rõ điều đó và không cài gì.
 - **Thao tác không ai thấy kết quả thì hỏi người dùng** (#273). Khi một lệnh đi ra ngoài node (một lần push, một lần
   deploy) hết giờ hoặc bị dừng trước khi báo lại, task chờ ở trạng thái chưa rõ và hộp thư có đúng một thông báo về nó,
   trỏ tới task và cuộc trò chuyện của task. Một thao tác trình duyệt quan trọng (một lần gửi biểu mẫu) cũng được ghi vào
@@ -573,7 +590,13 @@ phải một nơi điều hướng thứ hai. Mỗi mục trỏ về hội tho�
 - **Thông báo ngoài ứng dụng khi cửa sổ không có focus hoặc ở chế độ thu nhỏ/orb** (#171): trên desktop là OS
   notification qua Electron `Notification`, host-owned, chỉ tiêu đề/nội dung đã redact — không bao giờ có dòng
   lệnh hay secret; click thì đưa cửa sổ về kích thước thường nếu đang là orb/compact, focus nó và mở hộp thư qua
-  cùng intent `inbox.open`. Trên trình duyệt là Web Notification API, chỉ bật sau khi người dùng bấm nút trong
+  cùng intent `inbox.open`, ở đúng mục mà thông báo nói tới: hàng đó được đánh dấu bằng viền nhấn, cuộn vào tầm nhìn
+  (không cuộn mượt khi giảm chuyển động) và focus vào nút đầu tiên của nó. Khi mục đó đã được quyết định, trả lời hoặc
+  bỏ ở nơi khác trong lúc chờ, hộp thư mở ở đầu và nói rõ điều đó. Thông báo chỉ mang id của mục (`notice:…`,
+  `question:…`, `command-approval:…`, `capability-approval:…`, `task-approval:…`), được desktop shell và trang kiểm
+  tra theo cùng một ngữ pháp; mọi thứ khác mở hộp thư ở đầu. Click vào web notification cũng làm như vậy. Nút ngay trên
+  thông báo của hệ điều hành chưa được đưa ra (#340): trên Windows chúng cần app được đóng gói có danh tính, còn
+  các notification server trên Linux khác nhau ở chỗ có hiện chúng hay không. Trên trình duyệt là Web Notification API, chỉ bật sau khi người dùng bấm nút trong
   Settings → Control và trình duyệt tự cấp quyền; công tắc phản ánh quyền thật của trình duyệt, nói rõ khi bị từ
   chối hoặc bị bỏ qua, và bị ẩn trên desktop. Trên desktop, khi thông báo gần nhất không chuyển được cho hệ điều hành,
   một trạng thái inline cạnh công tắc thông báo hệ điều hành nói rõ lý do và rằng mục vẫn nằm trong hộp thư, cho tới
@@ -598,7 +621,8 @@ Chưa ship (đích):
 
 - thông báo và việc chờ từ một node ClarkCant khác (đã có `originNodeId` và khoá dedup để nhận lặp lại an toàn);
 - đánh dấu một thao tác chưa rõ kết quả là đã kiểm tra (đã xảy ra hay chưa) ngay từ thông báo;
-- thông báo khi một kết nối OAuth hết hạn hoặc bị thu hồi: bảng `connections` chưa có nơi ghi hàng thật ở production.
+- thông báo khi một kết nối OAuth hết hạn hoặc bị thu hồi: bảng `connections` chưa có nơi ghi hàng thật ở production;
+- nút thao tác ngay trên thông báo của hệ điều hành (#340).
 
 Không được: dùng hộp thư làm dashboard mặc định, đếm "0" thường trực, hay hiển thị một nút quyết định mà route thật
 chưa có.
@@ -636,7 +660,9 @@ Voice phải có semantic commands cho:
 - scroll/focus conversation;
 - mute/end voice;
 - mở marketplace và cài widget;
-- hỏi user question / trả lời panel đang mở.
+- hỏi user question / trả lời panel đang mở;
+- xử lý một thông báo: đánh dấu thông báo mới nhất đã đọc hoặc chưa đọc, bỏ hoặc hoãn nó, đưa thông báo đã hoãn trở
+  lại, chạy lại việc nền bị lỗi, cài bản cập nhật, bỏ qua một phiên bản, hỏi lại câu hỏi đã hết hạn (§6.7).
 
 Không implement bằng raw voice strings ở frontend. Voice transcript đi qua cùng intent/action layer với text.
 

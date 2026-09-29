@@ -8,6 +8,7 @@ import {
   reviewCredentialRequest,
   reviewDevServerUrl,
   reviewIpcCall,
+  reviewNotificationTarget,
 } from "../src/security.mjs";
 
 /**
@@ -118,6 +119,36 @@ describe("a dev server is accepted only on loopback in an unpackaged app", () =>
     const result = reviewDevServerUrl("http://127.0.0.1:5173/", { packaged: true });
     expect(result.ok).toBe(false);
     expect(result.ok === false && result.reason).toContain("packaged");
+  });
+});
+
+describe("a notification carries only an inbox target to the renderer", () => {
+  // The same vectors as packages/contracts/test/notice-actions.spec.ts: the shell and the page read one grammar.
+  it("keeps a target that names one kind of inbox item and an id", () => {
+    for (const target of ["notice:ntf_1", "question:q_1", "command-approval:appr_1", "capability-approval:appr_2", "task-approval:task_1:appr_3", "notice:a.b-c_d@e/f"]) {
+      expect(reviewNotificationTarget(target), target).toBe(target);
+    }
+  });
+
+  it("drops anything else, so a page cannot use a notification to send the renderer somewhere", () => {
+    const refused = [
+      undefined,
+      null,
+      7,
+      { target: "notice:ntf_1" },
+      "",
+      "notice:",
+      "notice",
+      "effect:eff_1",
+      `${"java"}script:alert(1)`,
+      "notice:a b",
+      "notice:<script>",
+      "notice:ntf\n1",
+      `notice:${"a".repeat(161)}`,
+    ];
+    for (const candidate of refused) {
+      expect(reviewNotificationTarget(candidate), JSON.stringify(candidate)).toBeUndefined();
+    }
   });
 });
 

@@ -40,9 +40,14 @@ import {
   type ConfirmationToken,
   type ConversationId,
   type Instant,
+  type Notice,
+  type NoticeAction,
+  type NoticeActionUnavailable,
+  type NoticeOperationId,
   type SettingsTab,
   appIntentSchema,
   describeAppIntent,
+  describeNoticeAction,
   isPersonOnlyAppIntent,
 } from "@clarkcant/contracts";
 import {
@@ -55,7 +60,9 @@ import {
   setPreference,
 } from "@clarkcant/core";
 import type { WidgetTarget } from "@clarkcant/core";
-import { type Database } from "@clarkcant/storage";
+import { type Database, getNotification, listNotifications, listSnoozedNotifications } from "@clarkcant/storage";
+
+import { noticeActionsFor } from "./notice-actions.ts";
 
 export interface AppIntentDeps {
   db: Database;
@@ -230,6 +237,9 @@ export function requestedIntent(request: AppIntentRequest): RequestedIntent {
     ...(request.definitionId === undefined ? {} : { definitionId: request.definitionId }),
     ...(request.family === undefined ? {} : { family: request.family }),
     ...(request.orbProfile === undefined ? {} : { orbProfile: request.orbProfile }),
+    ...(request.noticeId === undefined ? {} : { noticeId: request.noticeId }),
+    ...(request.noticeAction === undefined ? {} : { noticeAction: request.noticeAction }),
+    ...(request.inboxTarget === undefined ? {} : { inboxTarget: request.inboxTarget }),
   });
   if (!parsed.success) {
     return { ok: false, message: parsed.error.issues.map((issue) => issue.message).join("; ") };
@@ -263,7 +273,9 @@ export function decideAppIntent(
     return resolution.kind === "refused" ? resolution : { kind: "none" };
   }
 
-  const answered = answerAboutEffect(deps, input, resolution, locale);
+  const effectAnswer = answerAboutEffect(deps, input, resolution, locale);
+  if (effectAnswer.kind === "refused") return effectAnswer;
+  const answered = resolveNoticeTarget(deps, input, effectAnswer, locale);
   if (answered.kind === "refused") return answered;
   const intent = answered.intent;
   if (answered.kind === "needs-confirmation") {
@@ -357,6 +369,133 @@ function answerAboutEffect(
       : `Để ghi nhận ${name} ${confirmed ? "đã" : "chưa"} có hiệu lực, bạn bấm “${button}” ở thông báo của nó trong hộp thư. Ghi nhận xong thì không đổi lại được.`,
   };
 }
+
+/**
+ * Without a notice named, these act on the newest notice in the list, which is the one "the latest notice" means. The
+ * rest act on the newest notice that offers them now: "retry the failed background work" means the work that failed,
+ * wherever its notice sits in the list.
+ */
+const NEWEST_NOTICE_ACTIONS: ReadonlySet<NoticeOperationId> = new Set(["mark-read", "mark-unread", "dismiss", "snooze", "suppress", "unsuppress"]);
+
+/** How many notices a sentence's target is looked for among: the page the inbox shows. */
+const NOTICE_TARGET_WINDOW = 50;
+
+/**
+ * "Dismiss the latest notification", "retry the failed background work": which notice a sentence means, decided here.
+ *
+ * A sentence names an action and never a notice, so the node names it from the inbox as it is now (see
+ * `NEWEST_NOTICE_ACTIONS`); a click names the notice itself, and that notice is checked the same way. Either way the
+ * action has to be one `noticeActionsFor` offers the notice now, and possible — the same resolver that draws the panel's
+ * buttons and that `performNoticeOperation` checks again when the page carries the action out — so a sentence cannot
+ * reach an action the panel would not show. Nothing that fits is refused with a sentence that says so rather than
+ * guessed. The read-back names the notice by its title, so a person who hears the wrong one can stop it.
+ */
+function resolveNoticeTarget(
+  deps: AppIntentDeps,
+  input: DecideInput,
+  resolution: Exclude<AppIntentResolution, { kind: "none" | "refused" }>,
+  locale: AppIntentLocale,
+): Exclude<AppIntentResolution, { kind: "none" }> {
+  if (resolution.kind !== "intent" || resolution.intent.kind !== "notice.act") return resolution;
+  const en = locale === "en";
+  const action = resolution.intent.noticeAction;
+  // The matcher always names the action and the contract refuses a request without one; kept so the type says so.
+  if (action === undefined) return { kind: "refused", say: APP_INTENT_NOT_UNDERSTOOD };
+  const now = deps.now();
+  const context = { nodeId: deps.nodeId, now };
+  const offer = (notice: Notice): NoticeAction | undefined =>
+    action === "mark-read" || action === "mark-unread"
+      ? { id: action, placement: "menu" }
+      : noticeActionsFor(deps.db, input.principalId, notice, context).find((entry) => entry.id === action);
+
+  let notice: Notice | undefined;
+  const named = resolution.intent.noticeId;
+  if (named !== undefined) {
+    const stored = getNotification(deps.db, input.principalId, named, now);
+    if (stored === undefined || stored.dismissed) {
+      return {
+        kind: "refused",
+        say: en ? "That notice is no longer in your inbox, so I have not done anything." : "Thông báo đó không còn trong hộp thư, nên tôi chưa làm gì cả.",
+      };
+    }
+    notice = stored.notice;
+  } else if (action === "unsnooze") {
+    [notice] = listSnoozedNotifications(deps.db, input.principalId, now);
+  } else if (NEWEST_NOTICE_ACTIONS.has(action)) {
+    [notice] = listNotifications(deps.db, input.principalId, 1, now);
+  } else {
+    notice = listNotifications(deps.db, input.principalId, NOTICE_TARGET_WINDOW, now).find((candidate) => {
+      const offered = offer(candidate);
+      return offered !== undefined && offered.unavailable === undefined;
+    });
+  }
+  if (notice === undefined) {
+    return {
+      kind: "refused",
+      say: en
+        ? `No notice in your inbox lets me ${NOTICE_ACTION_LABEL_EN[action]} right now, so I have not done anything.`
+        : `Lúc này không có thông báo nào trong hộp thư để ${NOTICE_ACTION_LABEL_VI[action]}, nên tôi chưa làm gì cả.`,
+    };
+  }
+  const offered = offer(notice);
+  if (offered === undefined || offered.unavailable !== undefined) {
+    const why = offered?.unavailable;
+    return {
+      kind: "refused",
+      say: en
+        ? `The notice “${notice.title}” does not let me ${NOTICE_ACTION_LABEL_EN[action]} right now${why === undefined ? "" : ` because ${UNAVAILABLE_EN[why]}`}, so I have not done anything.`
+        : `Không thể ${NOTICE_ACTION_LABEL_VI[action]} với thông báo “${notice.title}”${why === undefined ? "" : ` vì ${UNAVAILABLE_VI[why]}`}, nên tôi chưa làm gì cả.`,
+    };
+  }
+  return {
+    kind: "intent",
+    intent: { kind: "notice.act", noticeId: notice.noticeId, noticeAction: action },
+    requiresConfirmation: false,
+    readBack: describeNoticeAction(action, locale, notice.title),
+  };
+}
+
+const NOTICE_ACTION_LABEL_VI: Record<NoticeOperationId, string> = {
+  "mark-read": "đánh dấu đã đọc",
+  "mark-unread": "đánh dấu chưa đọc",
+  dismiss: "bỏ thông báo",
+  snooze: "hoãn thông báo",
+  unsnooze: "đưa thông báo đã hoãn trở lại",
+  suppress: "tắt báo loại thông báo này",
+  unsuppress: "bật lại báo loại thông báo này",
+  retry: "chạy lại việc nền",
+  update: "cài bản cập nhật",
+  "skip-version": "bỏ qua phiên bản",
+  "ask-again": "hỏi lại câu hỏi đã hết hạn",
+};
+
+const NOTICE_ACTION_LABEL_EN: Record<NoticeOperationId, string> = {
+  "mark-read": "mark it as read",
+  "mark-unread": "mark it as unread",
+  dismiss: "dismiss it",
+  snooze: "snooze it",
+  unsnooze: "bring it back from a snooze",
+  suppress: "stop notifications of its kind",
+  unsuppress: "turn notifications of its kind back on",
+  retry: "retry its background work",
+  update: "install its update",
+  "skip-version": "skip its version",
+  "ask-again": "ask its expired question again",
+};
+
+const UNAVAILABLE_VI: Record<NoticeActionUnavailable, string> = {
+  "conversation-gone": "cuộc trò chuyện của nó không còn",
+  "work-gone": "node không còn bản ghi của việc đó",
+  "package-gone": "gói đó không còn được cài",
+  "already-current": "gói đã ở phiên bản đó rồi",
+};
+
+const UNAVAILABLE_EN: Record<NoticeActionUnavailable, string> = {
+  "conversation-gone": "its conversation is gone",
+  "work-gone": "the node no longer keeps a record of that work",
+  "package-gone": "that package is no longer installed",
+  "already-current": "the package is already at that version",
+};
 
 /** The sentence for the one refusal that comes from a request naming no tab. */
 export const TAB_MISSING_SAY = APP_INTENT_NOT_UNDERSTOOD;

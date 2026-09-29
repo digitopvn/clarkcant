@@ -374,3 +374,94 @@ test("a desktop notification the OS refused is reported beside the OS toggle, an
   await closeSettings(page);
   await drainWaiting(page);
 });
+
+type ClickScope = {
+  __ccNotifyInputs: Array<{ title: string; body: string; target?: string }>;
+  __ccNotificationClicked?: (payload?: { target?: unknown }) => void;
+};
+
+/** What a click on the shell's notification sends the renderer, as the preload passes it on. */
+async function clickDesktopNotification(page: Page, target: unknown): Promise<void> {
+  await page.evaluate((payload) => {
+    const scope = window as unknown as ClickScope;
+    if (scope.__ccNotificationClicked === undefined) throw new Error("nothing subscribed to notification clicks");
+    scope.__ccNotificationClicked(payload);
+  }, { target });
+}
+
+test("clicking a desktop notification opens the inbox on the item it was about, and says so once that item is gone", async ({ page }) => {
+  // A stand-in desktop bridge that records what each notification carried and keeps the click subscription, so the
+  // test can click a notification the way the main process reports one.
+  await page.addInitScript(() => {
+    const scope = window as unknown as ClickScope & { clarkcant: unknown };
+    scope.__ccNotifyInputs = [];
+    scope.clarkcant = {
+      setCompactMode: () => Promise.resolve({ ok: true }),
+      notify: (input: { title: string; body: string; target?: string }) => {
+        scope.__ccNotifyInputs.push(input);
+        return Promise.resolve({ ok: true });
+      },
+      onNotificationClicked: (callback: (payload?: { target?: unknown }) => void) => {
+        scope.__ccNotificationClicked = callback;
+        return () => {
+          if (scope.__ccNotificationClicked === callback) delete scope.__ccNotificationClicked;
+        };
+      },
+    };
+    document.hasFocus = () => false;
+  });
+  await openApp(page);
+  await drainWaiting(page);
+
+  await openControlSettings(page);
+  const panel = page.locator("#cc-tabpanel-control");
+  await expect(panel).toBeVisible();
+  for (const toggleId of ["inbox-notify-os", "inbox-notify-group-waitingApprovals"]) {
+    const input = panel.locator(`[data-toggle="${toggleId}"] input[type="checkbox"]`);
+    if (!(await input.isChecked())) {
+      await panel.locator(`[data-toggle="${toggleId}"]`).click();
+      await expect(input).toBeChecked({ timeout: 10_000 });
+    }
+  }
+  await closeSettings(page);
+
+  const approvalId = await propose(page);
+  const target = `command-approval:${approvalId}`;
+  // The notification names the item by id only: its title and body never carry the command.
+  await expect
+    .poll(async () => (await page.evaluate(() => (window as unknown as ClickScope).__ccNotifyInputs)).some((input) => input.target === target), {
+      timeout: 20_000,
+    })
+    .toBe(true);
+  for (const input of await page.evaluate(() => (window as unknown as ClickScope).__ccNotifyInputs)) {
+    expect(`${input.title} ${input.body}`).not.toContain("node -e");
+    if (input.target !== undefined) expect(input.target).toMatch(/^(notice|question|command-approval|capability-approval|task-approval):[A-Za-z0-9._:@/-]{1,160}$/u);
+  }
+
+  await clickDesktopNotification(page, target);
+  const dialog = page.getByRole("dialog");
+  const row = dialog.locator(`[data-inbox-waiting-key="${target}"]`);
+  await expect(row).toHaveAttribute("data-inbox-target", "true", { timeout: 10_000 });
+  // Keyboard and screen-reader users land on the item, not at the top of the list.
+  await expect
+    .poll(() => page.evaluate(() => document.activeElement?.closest("[data-inbox-waiting-key]")?.getAttribute("data-inbox-waiting-key") ?? ""))
+    .toBe(target);
+  await page.keyboard.press("Escape");
+  await expect(dialog).toHaveCount(0);
+
+  // Decided elsewhere meanwhile: the click still opens the inbox, and says what became of the item.
+  await drainWaiting(page);
+  await clickDesktopNotification(page, target);
+  const gone = dialog.locator('[data-inbox-status="failed"]');
+  await expect(gone).toHaveText("Mục mà thông báo trỏ tới không còn trong hộp thư; có thể nó đã được xử lý ở nơi khác.", { timeout: 10_000 });
+  await expect(dialog.locator('[data-inbox-target="true"]')).toHaveCount(0);
+  await page.keyboard.press("Escape");
+  await expect(dialog).toHaveCount(0);
+
+  // A target the grammar does not allow is dropped: the inbox opens at the top, pointed at nothing.
+  await clickDesktopNotification(page, `${"java"}script:alert(1)`);
+  await expect(dialog.locator('[data-inbox-panel="ready"]')).toBeVisible({ timeout: 10_000 });
+  await expect(dialog.locator('[data-inbox-target="true"]')).toHaveCount(0);
+  await expect(dialog.locator('[data-inbox-status="failed"]')).toHaveCount(0);
+  await closeSettings(page);
+});

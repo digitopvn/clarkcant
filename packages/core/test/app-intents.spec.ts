@@ -145,6 +145,13 @@ const DOCUMENTED: readonly { kind: AppIntentKind; vietnamese: readonly string[];
     english: "it took effect",
   },
   {
+    // Whole-sentence: the action only. Which notice it acts on is decided on the node, from the inbox as it is now
+    // (apps/runtime/test/notice-action-surfaces.spec.ts).
+    kind: "notice.act",
+    vietnamese: ["bỏ thông báo mới nhất", "Chạy lại việc nền bị lỗi.", "đánh dấu thông báo mới nhất đã đọc", "hỏi lại câu hỏi đã hết hạn"],
+    english: "dismiss the latest notification",
+  },
+  {
     // "chưa có hiệu lực" must not read as its positive twin: the longest phrase decides, and "chua" is in this one.
     kind: "effect.failed",
     vietnamese: ["chưa có hiệu lực", "Nó chưa có hiệu lực.", "việc đó chưa có hiệu lực", "chua co hieu luc"],
@@ -195,6 +202,37 @@ describe("every documented way of asking maps to one intent", () => {
     const accented = matchAppIntent("mở cài đặt");
     const bare = matchAppIntent("mo cai dat");
     expect(accented).toEqual(bare);
+  });
+});
+
+describe("a notice action said as a sentence", () => {
+  const actionOf = (sentence: string) => {
+    const match = matchAppIntent(sentence);
+    return match?.kind === "intent" && match.intent.kind === "notice.act" ? match.intent : undefined;
+  };
+
+  it("names the action and never a notice, in Vietnamese and English", () => {
+    const expected: readonly [string, string][] = [
+      ["đánh dấu thông báo mới nhất đã đọc", "mark-read"],
+      ["mark the latest notification as unread", "mark-unread"],
+      ["Bỏ thông báo mới nhất.", "dismiss"],
+      ["hoãn thông báo mới nhất", "snooze"],
+      ["đưa thông báo đã hoãn trở lại", "unsnooze"],
+      ["bring back the snoozed notification", "unsnooze"],
+      ["chạy lại việc nền bị lỗi", "retry"],
+      ["retry the failed background work", "retry"],
+      ["cài bản cập nhật mới nhất", "update"],
+      ["skip this version", "skip-version"],
+      ["ask the expired question again", "ask-again"],
+    ];
+    for (const [sentence, action] of expected) {
+      expect(actionOf(sentence), sentence).toEqual({ kind: "notice.act", noticeAction: action });
+    }
+  });
+
+  it("is recognised only as the whole request, so work that mentions a notification stays with the agent", () => {
+    expect(actionOf("bỏ thông báo mới nhất rồi xoá thư mục build")).toBeUndefined();
+    expect(actionOf("retry the failed background work and then deploy to production")).toBeUndefined();
   });
 });
 

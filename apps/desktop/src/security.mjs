@@ -277,6 +277,23 @@ export function reviewIpcCall(event, channel, rendererUrl, detachedUrl) {
  * meaningfully; an empty purpose would render as a dialog asking for a secret and explaining
  * nothing.
  */
+/**
+ * The grammar of an inbox target: one notice (`notice:<id>`) or one waiting item keyed the way the inbox keys it. The same
+ * pattern as `inboxTargetSchema` in `@clarkcant/contracts`; this file stays free of workspace imports, so a test holds
+ * the two to each other (`security.spec.ts`).
+ */
+export const INBOX_TARGET_PATTERN = /^(notice|question|command-approval|capability-approval|task-approval):[A-Za-z0-9._:@/-]{1,160}$/;
+
+/**
+ * Where a clicked OS notification should open the inbox, as the shell will pass it on: an id and nothing else, or
+ * nothing at all when the renderer sent something that is not one. A notification with no target still opens the inbox,
+ * at the top, which is what a click did before targets existed.
+ */
+export function reviewNotificationTarget(raw) {
+  if (typeof raw !== "string" || raw.length > 200 || !INBOX_TARGET_PATTERN.test(raw)) return undefined;
+  return raw;
+}
+
 export function reviewCredentialRequest(input) {
   if (input === null || typeof input !== "object") {
     return { allowed: false, reason: "the credential request must be an object" };

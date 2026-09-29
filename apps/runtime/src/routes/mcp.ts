@@ -1,4 +1,10 @@
-import { isPersonOnlyRoute, type MessageBlock, messageBlocksAsText, PERSON_ONLY_REFUSAL } from "@clarkcant/contracts";
+import {
+  isPersonOnlyRoute,
+  type MessageBlock,
+  messageBlocksAsText,
+  NOTICE_OPERATION_IDS,
+  PERSON_ONLY_REFUSAL,
+} from "@clarkcant/contracts";
 
 import { MCP_PATH, MCP_PROTOCOL_VERSIONS } from "../open-interfaces.ts";
 import { type GatewayRequest, type GatewayResponse, json } from "./http.ts";
@@ -47,7 +53,8 @@ const INSTRUCTIONS =
   "ClarkCant is one conversational agent, Clark. Use ask_clark for anything you would ask a person-facing assistant " +
   "on this machine; pass the conversationId it returns to continue the same conversation. When Clark asks a " +
   "question, answer it with answer_question. stop_reply stops the reply one conversation is writing; stop_all_work " +
-  "is an emergency stop for everything on the node.";
+  "is an emergency stop for everything on the node. read_inbox shows what is waiting and the recent notices; " +
+  "act_on_notice carries out one of a notice's own actions. Approvals are the person's and are not offered here.";
 
 const objectSchema = (properties: Record<string, unknown>, required: string[] = []): Record<string, unknown> => ({
   type: "object",
@@ -129,6 +136,30 @@ const TOOLS = [
     title: "Node status",
     description: "This node's label and configured model.",
     inputSchema: objectSchema({}),
+  },
+  {
+    name: "read_inbox",
+    title: "Read the inbox",
+    description:
+      "What is waiting for the person's decision and the recent notices, each notice with the actions it offers now. " +
+      "Read-only: it marks nothing read.",
+    inputSchema: objectSchema({}),
+  },
+  {
+    name: "act_on_notice",
+    title: "Act on a notice",
+    description:
+      "Carry out one of a notice's own actions: mark-read, mark-unread, dismiss, snooze (needs until), unsnooze, " +
+      "suppress, unsuppress, retry, update, skip-version or ask-again. The node refuses an action the notice does not " +
+      "offer now. An update that needs approval answers outcome approval-required; only the person can approve it.",
+    inputSchema: objectSchema(
+      {
+        noticeId: { type: "string", minLength: 1, maxLength: 128, description: "The notice id, from read_inbox" },
+        action: { type: "string", enum: [...NOTICE_OPERATION_IDS] },
+        until: { type: "string", description: "Only for snooze: the UTC instant the notice comes back, at most 30 days ahead" },
+      },
+      ["noticeId", "action"],
+    ),
   },
 ] as const;
 
@@ -319,6 +350,22 @@ async function callTool(deps: McpRouteDeps, name: string, args: Record<string, u
       return fromResponse(await call("POST", "/stop"));
     case "node_status":
       return fromResponse(await call("GET", "/node"));
+    case "read_inbox":
+      return fromResponse(await call("GET", "/inbox"));
+    case "act_on_notice": {
+      if (typeof args.noticeId !== "string" || args.noticeId === "" || typeof args.action !== "string") {
+        return toolError("noticeId and action are required");
+      }
+      if (args.until !== undefined && typeof args.until !== "string") return toolError("until must be a UTC instant string");
+      // The same route the panel and `clarkcant api` use; the node checks the action against the notice itself.
+      return fromResponse(
+        await call(
+          "POST",
+          `/inbox/notices/${encodeURIComponent(args.noticeId)}/actions/${encodeURIComponent(args.action)}`,
+          typeof args.until === "string" ? { until: args.until } : {},
+        ),
+      );
+    }
     default:
       return toolError(`unknown tool: ${name}`);
   }

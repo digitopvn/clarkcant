@@ -1,4 +1,4 @@
-import { type InboxResponse, type WaitingItem, redactSecrets } from "@clarkcant/contracts";
+import { type InboxResponse, type Notice, type WaitingItem, isNoticeOperation, redactSecrets } from "@clarkcant/contracts";
 import type { ToolDefinition } from "@clarkcant/pi-adapter";
 
 /** How many notices the tool reports. The inbox keeps more; a turn needs the recent ones, not the archive. */
@@ -59,7 +59,10 @@ export function describeInbox(inbox: InboxResponse): string {
       const body = notice.body === undefined ? "" : ` — ${clip(notice.body, BODY_REPORTED)}`;
       const where = notice.conversationId === undefined ? "" : ` (conversation ${notice.conversationId})`;
       const state = notice.readAt === undefined ? "unread" : "read";
-      lines.push(`- [${state}] ${notice.severity} from ${notice.sourceKind} at ${notice.createdAt}: ${notice.title}${body}${where}`);
+      lines.push(
+        `- [${state}] ${notice.severity} from ${notice.sourceKind} at ${notice.createdAt}: ${notice.title}${body}${where}` +
+          ` (notice ${notice.noticeId}${describeOperations(notice)})`,
+      );
     }
     if (inbox.notices.length > notices.length) lines.push(`(${inbox.notices.length - notices.length} older notices not listed.)`);
   }
@@ -69,7 +72,26 @@ export function describeInbox(inbox: InboxResponse): string {
   }
 
   lines.push("To show the user, open the inbox with control_app kind inbox.open.");
+  if (notices.length > 0) lines.push("To act on a notice when the user asks you to, use act_on_notice with its id and one of its actions.");
   return lines.join("\n");
+}
+
+/**
+ * The actions `act_on_notice` can take on a notice now, as the node resolved them for the panel, and those offered but
+ * not possible now with why. Only the node's own operations are named: opening, asking about or adding a notice to
+ * the conversation happen on the person's screen, and the answers about an unknown effect are the person's to give.
+ */
+function describeOperations(notice: Notice): string {
+  const actions = notice.actions ?? [];
+  const possible = actions.filter((action) => isNoticeOperation(action.id) && action.unavailable === undefined).map((action) => action.id);
+  const blocked = actions
+    .filter((action) => isNoticeOperation(action.id) && action.unavailable !== undefined)
+    .map((action) => `${action.id} (${action.unavailable ?? ""})`);
+  const parts = [
+    ...(possible.length === 0 ? [] : [`actions: ${possible.join(", ")}`]),
+    ...(blocked.length === 0 ? [] : [`not possible now: ${blocked.join(", ")}`]),
+  ];
+  return parts.length === 0 ? "" : `; ${parts.join("; ")}`;
 }
 
 /**

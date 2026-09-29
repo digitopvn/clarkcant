@@ -86,6 +86,20 @@ export interface InboxPanelProps {
    * Absent when the host has no Settings to open, and then that action is not drawn.
    */
   onOpenSettings?: (tab: SettingsTab) => void;
+  /**
+   * Changes when a notice changed from outside the panel — a typed or spoken "dismiss the latest notification" — so an
+   * open panel reads again instead of showing a notice that is gone.
+   */
+  refreshKey?: number;
+  /**
+   * The notice or waiting item a clicked notification was about (`notice:<id>`, or the waiting item's own key). Once the
+   * list is read, the panel scrolls to it, marks it and moves focus into it; when it is no longer there, the status line
+   * says so. A new target while the panel is open reads the list again first, since a notification is usually about
+   * something newer than the last read.
+   */
+  target?: string;
+  /** The target was shown, or said to be gone; the host clears it so a later opening starts at the top. */
+  onTargetShown?: () => void;
 }
 
 /** The words for each reason an action cannot be taken now (`noticeActionSchema.unavailable`). */
@@ -135,6 +149,9 @@ export function InboxPanel({
   onAddToContext,
   onReconcile,
   onOpenSettings,
+  refreshKey,
+  target,
+  onTargetShown,
 }: InboxPanelProps): ReactElement | null {
   const t = useT();
   const categoryLabels = effectCategoryLabels(t);
@@ -179,16 +196,41 @@ export function InboxPanel({
     }
   }, [client, t]);
 
+  // Every row a notification can point at, keyed the way a target names it: `notice:<id>`, or the waiting item's key.
+  const targetRows = useRef(new Map<string, HTMLLIElement>());
+  // The row a notification led to, marked until the panel closes or another target arrives.
+  const [highlighted, setHighlighted] = useState<string | undefined>(undefined);
+  // A target waiting for the render that draws the list it was checked against; its row exists only after that.
+  const [pendingTarget, setPendingTarget] = useState<{ target: string; present: boolean } | undefined>(undefined);
+  const targetNow = useRef(target);
+  targetNow.current = target;
+  // False from an opening until its first read lands: a target that arrives with the opening waits for that read,
+  // rather than reading the inbox a second time.
+  const openRead = useRef(false);
+
+  /** Whether the target is in the inbox this read returned; the render after it scrolls to it (see the effect below). */
+  const showTarget = useCallback((inbox: InboxResponse, wanted: string) => {
+    const present =
+      inbox.notices.some((notice) => `notice:${notice.noticeId}` === wanted) || inbox.waiting.some((item) => waitingKey(item) === wanted);
+    setPendingTarget({ target: wanted, present });
+  }, []);
+
   // Read once per opening, and mark read exactly what that read drew. The panel keeps showing those as "unread" for
   // as long as it stays open, because that is what they were when the person opened it.
   useEffect(() => {
-    if (!open) return;
+    if (!open) {
+      openRead.current = false;
+      setHighlighted(undefined);
+      return;
+    }
     let cancelled = false;
     setLoad({ state: "loading" });
     setStatus(undefined);
     setMenuFor(undefined);
     void read().then((inbox) => {
       if (cancelled || inbox === undefined) return;
+      openRead.current = true;
+      if (targetNow.current !== undefined) showTarget(inbox, targetNow.current);
       const shown = noticeIdsToMarkRead(inbox.notices);
       if (shown.length === 0) return;
       void client
@@ -200,7 +242,54 @@ export function InboxPanel({
     return () => {
       cancelled = true;
     };
-  }, [open, read, client]);
+  }, [open, read, client, showTarget]);
+
+  // A notification clicked while the panel is already open: read again, then go to it.
+  useEffect(() => {
+    if (!open || target === undefined || !openRead.current) return;
+    let cancelled = false;
+    void read().then((inbox) => {
+      if (!cancelled && inbox !== undefined) showTarget(inbox, target);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [open, target, read, showTarget]);
+
+  // Something outside the panel changed a notice: read again, keeping whatever the status line says.
+  const lastRefresh = useRef(refreshKey);
+  useEffect(() => {
+    if (refreshKey === lastRefresh.current) return;
+    lastRefresh.current = refreshKey;
+    if (open && openRead.current) void read();
+  }, [refreshKey, open, read]);
+
+  // Runs after the render that drew the list the target was checked against, so its row exists to scroll to.
+  useEffect(() => {
+    if (pendingTarget === undefined || load.state !== "ready") return;
+    setPendingTarget(undefined);
+    onTargetShown?.();
+    if (!pendingTarget.present) {
+      // Said rather than silently landing on the top of the list: the person clicked something specific.
+      setHighlighted(undefined);
+      setStatus({ tone: "failed", text: t("inbox.target.gone") });
+      setFocusTarget({ kind: "status" });
+      return;
+    }
+    setHighlighted(pendingTarget.target);
+    const row = targetRows.current.get(pendingTarget.target);
+    if (row === undefined) return;
+    const reduceMotion = typeof window.matchMedia === "function" && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    row.scrollIntoView({ block: "nearest", behavior: reduceMotion ? "auto" : "smooth" });
+    // Into the item's first action, which is what the person came to do; the row itself when it has none enabled.
+    (row.querySelector<HTMLElement>("button:not(:disabled)") ?? row).focus();
+  }, [pendingTarget, load.state, onTargetShown, t]);
+
+  /** The ref callback that keeps `targetRows` in step with the rows on screen. */
+  const targetRow = (key: string) => (el: HTMLLIElement | null) => {
+    if (el) targetRows.current.set(key, el);
+    else targetRows.current.delete(key);
+  };
 
   const settle = useCallback(
     (next: Status) => {
@@ -520,9 +609,11 @@ export function InboxPanel({
   };
 
   /**
-   * "Update": the version the notice names, through the same install route as any install, so its checks and any
-   * approval it needs are the same. Installed, the notice has done its job and leaves the list; an approval waits in
-   * the section above; a refusal says the node's reason and leaves the installed version as it was.
+   * "Update": the notice's own action on the node, which installs the version the notice names through the same install
+   * as any other — so its checks and any approval it needs are the same — and takes the notice out once it is installed.
+   * The same action a typed or spoken "install the latest update" and the agents reach. When the execution mode asks
+   * first, the line says so and nothing is installed; a refusal says the node's reason and leaves the installed version
+   * as it was.
    */
   const update = (notice: Notice) => {
     const subject = notice.subject;
@@ -531,16 +622,14 @@ export function InboxPanel({
     if (!lock(`notice:${notice.noticeId}`)) return;
     const before = noticeIdsNow();
     void client
-      .installPackage(packageId, version)
-      .then(async (answer) => {
-        if (answer.code === "APPROVAL_REQUIRED") {
+      .actOnNotice(notice.noticeId, "update")
+      .then((answer) => {
+        if (answer.outcome === "approval-required") {
           finish({ tone: "done", text: t("inbox.updateNeedsApproval") }, { kind: "status" });
           return;
         }
-        // Not dismissed is not worth a line: the notice then says the version is already installed, which is true.
-        await client.dismissNotice(notice.noticeId).catch(() => undefined);
         finish(
-          { tone: "done", text: t("inbox.updated").replace("{package}", packageId).replace("{version}", answer.installed?.version ?? version) },
+          { tone: "done", text: t("inbox.updated").replace("{package}", packageId).replace("{version}", answer.version ?? version) },
           afterLeaving(before, notice.noticeId),
         );
       })
@@ -971,7 +1060,15 @@ export function InboxPanel({
                     const denying = busyHere && busy?.decision === "denied";
                     const left = timeLeft(item.expiresAt, load.inbox.readAt, t);
                     return (
-                      <li key={key} className="cc-card cc-inbox-item" data-inbox-waiting-item={item.kind}>
+                      <li
+                        key={key}
+                        ref={targetRow(key)}
+                        tabIndex={-1}
+                        className="cc-card cc-inbox-item"
+                        data-inbox-waiting-item={item.kind}
+                        data-inbox-waiting-key={key}
+                        {...(highlighted === key ? { "data-inbox-target": "true" } : {})}
+                      >
                         <div className="cc-card-body">
                           {item.kind === "command-approval" && (
                             <>
@@ -1132,10 +1229,13 @@ export function InboxPanel({
                         ref={(el) => {
                           if (el) noticeRows.current.set(notice.noticeId, el);
                           else noticeRows.current.delete(notice.noticeId);
+                          targetRow(`notice:${notice.noticeId}`)(el);
                         }}
+                        tabIndex={-1}
                         className="cc-inbox-notice"
                         data-inbox-notice={notice.noticeId}
                         data-unread={unread ? "true" : "false"}
+                        {...(highlighted === `notice:${notice.noticeId}` ? { "data-inbox-target": "true" } : {})}
                       >
                         <div className="cc-inbox-notice-head">
                           <span className="cc-badge" {...(tone === undefined ? {} : { "data-tone": tone })}>

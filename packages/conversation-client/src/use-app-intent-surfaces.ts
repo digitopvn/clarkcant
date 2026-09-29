@@ -10,7 +10,7 @@ import {
   requestWindowMode,
 } from "./desktop-compact.ts";
 import { runAppIntent, type AppIntentHost } from "./app-intents.ts";
-import type { AppIntentDecision, AppIntentKind, OrbProfileName, SettingsTab } from "@clarkcant/contracts";
+import type { AppIntentDecision, AppIntentKind, NoticeOperationId, OrbProfileName, SettingsTab } from "@clarkcant/contracts";
 import { CLOSED_LIBRARY, applyLibraryAction, type WidgetLibraryState } from "./widget-library/widget-library-state.ts";
 import type { MessageKey } from "./i18n/messages.ts";
 
@@ -34,13 +34,19 @@ export interface AppIntentSurfacesState {
   /** Whether the inbox is open over the conversation. */
   inboxOpen: boolean;
   setInboxOpen: (open: boolean) => void;
+  /**
+   * The notice or waiting item the inbox was last opened on (`inboxTargetSchema`), from a clicked OS or web notification;
+   * cleared once the panel has shown it.
+   */
+  inboxTarget: string | undefined;
+  clearInboxTarget: () => void;
   intentNotice: string | undefined;
   /** Shows a notice outside the click/voice/typed-command path, e.g. a voice session that failed to open. */
   setIntentNotice: (message: string) => void;
   /** Carry out a decision, whichever way it arrived (click, voice, or a typed command). */
   runIntent: (decision: AppIntentDecision) => void;
-  /** Ask the node what a click means, then do it. */
-  clickIntent: (kind: AppIntentKind) => void;
+  /** Ask the node what a click means, then do it. `inboxTarget` goes only with `inbox.open`. */
+  clickIntent: (kind: AppIntentKind, extra?: { inboxTarget?: string }) => void;
   /** A command a typed message resolved to, to be carried out once the send that produced it settles. */
   pendingIntent: AppIntentDecision | undefined;
   setPendingIntent: (decision: AppIntentDecision | undefined) => void;
@@ -80,6 +86,8 @@ export interface AppIntentSurfacesDeps {
   askAboutLatestNotice?: () => Promise<void>;
   /** The inbox's "It took effect" / "It did not take effect" for the effect the node named; rejects with the reason. */
   recordEffectOutcome?: (effectId: string, outcome: "confirmed" | "failed") => Promise<void>;
+  /** One of a notice's own actions, on the notice the node named; resolves to what the node did, rejects with why not. */
+  actOnNotice?: (noticeId: string, action: NoticeOperationId) => Promise<string>;
   /**
    * The model switches the hotkey makes (`useModelAlias`), so an intent that switches the model updates
    * the alias and note on screen exactly as the hotkey does.
@@ -112,6 +120,7 @@ export function useAppIntentSurfaces({
   stopTurn,
   askAboutLatestNotice,
   recordEffectOutcome,
+  actOnNotice,
   cycleModel,
   selectModel,
   selectOrbProfile,
@@ -121,6 +130,8 @@ export function useAppIntentSurfaces({
   const [settingsTab, setSettingsTab] = useState<SettingsTab | undefined>(undefined);
   const [widgetLibrary, setWidgetLibrary] = useState<WidgetLibraryState>(CLOSED_LIBRARY);
   const [inboxOpen, setInboxOpen] = useState(false);
+  const [inboxTarget, setInboxTarget] = useState<string | undefined>(undefined);
+  const clearInboxTarget = useCallback(() => setInboxTarget(undefined), []);
   const [intentNotice, setIntentNotice] = useState<string | undefined>(undefined);
   const [pendingIntent, setPendingIntent] = useState<AppIntentDecision | undefined>(undefined);
   const [liveRefresh, setLiveRefresh] = useState(0);
@@ -155,9 +166,11 @@ export function useAppIntentSurfaces({
     const windowControls = hasWindowControls();
     return {
       openSettings,
-      openInbox: () => {
+      openInbox: (target?: string) => {
         setUiCheckOpen(false);
         setWidgetLibrary(CLOSED_LIBRARY);
+        // Only a notification's own target is kept; any other opening starts at the top of the list, as before.
+        setInboxTarget(target);
         setInboxOpen(true);
       },
       goHome: restartSession,
@@ -197,6 +210,7 @@ export function useAppIntentSurfaces({
       ...(stopTurn === undefined ? {} : { stopTurn }),
       ...(askAboutLatestNotice === undefined ? {} : { askAboutLatestNotice }),
       ...(recordEffectOutcome === undefined ? {} : { recordEffectOutcome }),
+      ...(actOnNotice === undefined ? {} : { actOnNotice }),
       ...(selectOrbProfile === undefined ? {} : { selectOrbProfile }),
       ...(desktop
         ? {
@@ -237,6 +251,7 @@ export function useAppIntentSurfaces({
     stopTurn,
     askAboutLatestNotice,
     recordEffectOutcome,
+    actOnNotice,
     cycleModel,
     selectModel,
     selectOrbProfile,
@@ -251,6 +266,10 @@ export function useAppIntentSurfaces({
         // says why in the note beside the model label - near the thing it is about - so it is not said twice.
         if (!run.ran && !(decision.kind === "intent" && MODEL_SWITCH_KINDS.has(decision.intent.kind))) {
           setIntentNotice(run.say);
+        } else if (run.ran && decision.kind === "intent" && decision.intent.kind === "notice.act") {
+          // A notice action leaves nothing on screen that says it happened — the inbox may not even be open — so what
+          // the node did is said, in the same words the panel uses for the same press.
+          setIntentNotice(run.say);
         }
         // An action the agent asked for is reported back, run or not: the agent's tool is waiting to
         // tell the model whether the screen changed, and "sent" is not an answer it may give as "done".
@@ -263,13 +282,14 @@ export function useAppIntentSurfaces({
   );
 
   const clickIntent = useCallback(
-    (kind: AppIntentKind): void => {
+    (kind: AppIntentKind, extra?: { inboxTarget?: string }): void => {
       if (client === undefined) return;
       void client
         .sendAppIntent({
           kind,
           source: "click",
           ...(conversationId === undefined ? {} : { conversationId }),
+          ...(extra?.inboxTarget === undefined ? {} : { inboxTarget: extra.inboxTarget }),
         })
         .then((decision) => {
           if (decision.kind !== "none") runIntent(decision);
@@ -305,6 +325,8 @@ export function useAppIntentSurfaces({
     openWidgetLibrary,
     inboxOpen,
     setInboxOpen,
+    inboxTarget,
+    clearInboxTarget,
     intentNotice,
     setIntentNotice,
     runIntent,

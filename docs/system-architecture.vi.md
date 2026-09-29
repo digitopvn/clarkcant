@@ -591,7 +591,26 @@ báo và mục tắt báo của principal này; id của principal khác trả 4
 ổn định. Contract ở `packages/contracts/src/inbox.ts`. UI ở DESIGN.vi.md
 §6.7; mở bằng intent `inbox.open` (text, voice, `control_app`), còn `inbox.ask` hỏi Clark về thông báo mới nhất. Agent đọc cùng dữ liệu đó qua tool chỉ đọc `read_inbox`
 (`apps/runtime/src/read-inbox-tool.ts`): không đánh dấu đã đọc (người dùng chưa nhìn thấy) và không quyết định được gì
-(model không phải người dùng).
+(model không phải người dùng). Mỗi thông báo được liệt kê kèm id, các thao tác làm được ngay lúc đó và những thao tác
+chưa làm được, kèm lý do.
+
+**Một lớp thao tác cho các thao tác của chính thông báo.** `performNoticeOperation`
+(`apps/runtime/src/notice-operations.ts`) thực hiện các thao tác trong `NOTICE_OPERATION_IDS` (đã đọc, chưa đọc, bỏ,
+hoãn, đưa trở lại, tắt báo, báo lại, chạy lại, cập nhật, bỏ qua phiên bản, hỏi lại), và mọi bề mặt đều đi tới nó:
+`POST /inbox/notices/:id/actions/:action` (hộp thư, `act_on_notice` của MCP, `clarkcant api`), tool `act_on_notice`
+của agent chính và voice agent (`act-on-notice-tool.ts`, ghi nhật ký là `agent` hoặc `voice-agent`), và intent
+`notice.act` từ một câu gõ hoặc nói. Nó từ chối theo một thứ tự cố định và không đổi gì khi từ chối: tên lạ, câu trả
+lời của người dùng về một thao tác chưa rõ kết quả (`403 PERSON_ONLY`), thao tác đổi thứ đang hiện trên màn hình của
+người dùng (`409 SURFACE_ACTION`), thông báo không phải thông báo còn sống của principal này (`404`), và, với mọi thao
+tác trừ đã đọc và chưa đọc, thao tác mà thông báo lúc này không đưa ra (`409 ACTION_NOT_OFFERED`) hoặc đưa ra nhưng
+chưa làm được (`409 ACTION_UNAVAILABLE`), được đọc lại từ kho ngay lúc yêu cầu chứ không theo những gì bên gọi thấy
+lần trước. `update` đi qua `installPackage` thông thường với đủ các bước kiểm tra; dưới chế độ thực thi hỏi trước, nó
+trả `202 approval-required` và không cài gì. Bộ so khớp ở core chỉ biết câu nói nêu thao tác nào; `resolveNoticeTarget`
+trong `app-intents.ts` của runtime chọn thông báo (mới nhất cho đã đọc, chưa đọc, bỏ, hoãn và tắt báo; thông báo đã
+hoãn sắp quay lại sớm nhất cho đưa trở lại; thông báo mới nhất trong 50 thông báo gần nhất đang đưa ra thao tác đó và
+làm được cho chạy lại, cập nhật, bỏ qua phiên bản và hỏi lại) và đưa tiêu đề của nó vào câu đọc lại, hoặc trả lời
+rằng không có thông báo nào phù hợp. Trang thực hiện quyết định qua `host.actOnNotice`, gửi tới cùng route đó, và nói
+câu trả lời của node bằng lời của hộp thư.
 
 **Thông báo ngoài ứng dụng** là việc của client, không phải node. `use-inbox-notifications.ts` poll `GET /inbox`
 và preference `inbox.notifications` (`packages/contracts/src/preferences.ts`; giá trị lưu thiếu trường được trộn
@@ -601,7 +620,13 @@ dung chỉ gồm tiêu đề/nội dung đã redact và bị giới hạn độ 
 nội bộ. Trên desktop, renderer gọi `desktop:notify`; main process giữ tham chiếu tới từng `Notification` còn trên
 màn hình, và khi click thì khôi phục cửa sổ shell khỏi orb/compact, focus nó rồi gửi `desktop:notificationClicked`
 **chỉ tới cửa sổ shell** (không bao giờ tới cửa sổ widget tách rời); preload trả về hàm huỷ đăng ký listener đó
-(`onWidgetReattached` cũng vậy). Khi `desktop:notify` từ chối (`reason`: `unsupported`, `no-window`) hoặc lỗi,
+(`onWidgetReattached` cũng vậy). Renderer gửi kèm `desktop:notify` đích trong hộp thư của mục (`notice:<id>`,
+`question:<id>`, `command-approval:<id>`, `capability-approval:<id>`, `task-approval:<id>`); main process chỉ giữ nó
+khi khớp ngữ pháp (`reviewNotificationTarget` trong `security.mjs`, cùng pattern với `inboxTargetSchema`), khi click
+chỉ gửi lại đúng chuỗi đó, và preload chỉ chép một `target` kiểu chuỗi vào callback. Trang kiểm tra lại lần nữa
+(`inboxTargetOf`) và mở hộp thư bằng `inbox.open` mang `inboxTarget`: hộp thư đánh dấu hàng đó, cuộn nó vào tầm nhìn
+và focus vào nút đầu tiên của nó, hoặc nói rằng mục đó không còn trong hộp thư. Click vào web notification cũng làm
+như vậy với `tag` của nó. Nút ngay trên thông báo của hệ điều hành chưa được đưa ra (#340). Khi `desktop:notify` từ chối (`reason`: `unsupported`, `no-window`) hoặc lỗi,
 renderer ghi lại kết quả gần nhất (`desktop-notify-status.ts`, chỉ loại lỗi, không có nội dung) và Settings → Control
 hiện trạng thái inline cạnh công tắc thông báo hệ điều hành cho tới khi hệ điều hành nhận lại một thông báo.
 Trên trình duyệt, Web Notification API chỉ được dùng khi người dùng đã bấm bật trong Settings → Control và trình
