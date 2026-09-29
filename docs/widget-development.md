@@ -163,7 +163,10 @@ third-party code and a separate process is not a sandbox, so the container is th
 `apps/runtime/src/service-container.ts` defines it: no network, a read-only root, every Linux capability dropped, no
 privilege escalation, a non-root user, the package mounted read-only at `/pkg`, one private writable folder at `/data`,
 and only the environment variables it names, never the node's own. The host speaks MCP over the container's stdio, so
-no port is opened. The engine is Docker running Linux containers, or Podman. A node with neither does not run the
+no port is opened. The engine is Docker running Linux containers, or Podman. Under rootless Docker, which the node
+detects from what `docker info` reports, the service runs as the container's id 0: rootless Docker maps that id, and
+only that id, back to the account that runs the daemon, so the private folder stays the person's own. It holds no
+privilege there, since every capability is dropped and escalation is refused. A node with neither engine does not run the
 service. There is no process-only fallback. The capabilities are still registered, as not loaded, with the reason
 "needs Docker or Podman to run; this node has neither running".
 

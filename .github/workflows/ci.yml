@@ -225,6 +225,84 @@ jobs:
           retention-days: 7
           if-no-files-found: ignore
 
+  # A package service runs in a container as the node's own user, which rootless Docker maps onto a subordinate id the
+  # person does not own. The service-container suite is run here against a rootless daemon set up on the runner, so the
+  # notes package's service really adds and lists a note in a folder the person owns, instead of that being assumed from
+  # the command line. The rootful daemon is stopped first so the suite cannot quietly find it instead.
+  service-rootless-docker:
+    name: service container (rootless docker)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+
+      - name: Enable corepack
+        run: corepack enable
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "22.19"
+          cache: pnpm
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      # The runner's Docker comes without the rootless extras and its apt sources carry none, so Docker's own static
+      # release is used, pinned by version and digest. Ubuntu 24.04 lets AppArmor refuse unprivileged user namespaces,
+      # which a rootless daemon is made of, so that restriction is lifted for this job only.
+      - name: Set up rootless Docker
+        env:
+          DOCKER_STATIC: https://download.docker.com/linux/static/stable/x86_64
+          DOCKER_VERSION: 29.8.1
+          DOCKER_SHA256: d8db66739d2e28d4933786d73e918d9be643a67fbd835db1bf740d650a259e70
+          ROOTLESS_EXTRAS_SHA256: 8f1ed16fc6913241e599af6234a7f30502bde6e73bebbbc7176b17802d967d49
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y uidmap slirp4netns
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          sudo systemctl disable --now docker.service docker.socket
+          grep -q "^$(whoami):" /etc/subuid || echo "$(whoami):100000:65536" | sudo tee -a /etc/subuid
+          grep -q "^$(whoami):" /etc/subgid || echo "$(whoami):100000:65536" | sudo tee -a /etc/subgid
+
+          cd "$RUNNER_TEMP"
+          curl -fsSLO "$DOCKER_STATIC/docker-$DOCKER_VERSION.tgz"
+          curl -fsSLO "$DOCKER_STATIC/docker-rootless-extras-$DOCKER_VERSION.tgz"
+          echo "$DOCKER_SHA256  docker-$DOCKER_VERSION.tgz" | sha256sum -c -
+          echo "$ROOTLESS_EXTRAS_SHA256  docker-rootless-extras-$DOCKER_VERSION.tgz" | sha256sum -c -
+          bin="$RUNNER_TEMP/rootless-docker/bin"
+          mkdir -p "$bin"
+          tar -xzf "docker-$DOCKER_VERSION.tgz" --strip-components=1 -C "$bin"
+          tar -xzf "docker-rootless-extras-$DOCKER_VERSION.tgz" --strip-components=1 -C "$bin"
+
+          # The daemon puts each container in a systemd scope, which needs the person's own systemd session, as on
+          # a desktop where they are logged in; lingering starts that session for the runner's user.
+          sudo loginctl enable-linger "$(whoami)"
+          export XDG_RUNTIME_DIR="/run/user/$(id -u)"
+          for _ in $(seq 30); do [ -S "$XDG_RUNTIME_DIR/bus" ] && break; sleep 1; done
+          export DBUS_SESSION_BUS_ADDRESS="unix:path=$XDG_RUNTIME_DIR/bus"
+          cat "/sys/fs/cgroup/user.slice/user-$(id -u).slice/user@$(id -u).service/cgroup.controllers"
+
+          export PATH="$bin:$PATH"
+          nohup dockerd-rootless.sh > "$RUNNER_TEMP/dockerd-rootless.log" 2>&1 &
+          export DOCKER_HOST="unix://$XDG_RUNTIME_DIR/docker.sock"
+          for _ in $(seq 60); do docker info > /dev/null 2>&1 && break; sleep 1; done
+          docker info --format '{{json .SecurityOptions}}'
+
+          echo "$bin" >> "$GITHUB_PATH"
+          echo "XDG_RUNTIME_DIR=$XDG_RUNTIME_DIR" >> "$GITHUB_ENV"
+          echo "DBUS_SESSION_BUS_ADDRESS=$DBUS_SESSION_BUS_ADDRESS" >> "$GITHUB_ENV"
+          echo "DOCKER_HOST=$DOCKER_HOST" >> "$GITHUB_ENV"
+
+      - name: Service container suite on rootless Docker
+        env:
+          CC_EXPECT_ROOTLESS_DOCKER: "1"
+        run: pnpm exec vitest run apps/runtime/test/service-container-engine.spec.ts apps/runtime/test/service-container.spec.ts
+
+      - name: The rootless daemon's log
+        if: failure()
+        run: tail -n 100 "$RUNNER_TEMP/dockerd-rootless.log" || true
+
   # The desktop shell's own behaviour - the bounds it reports, the floor it
   # enforces, whether it is always on top -
   # can only be read back from a real window. Electron needs a display and a set

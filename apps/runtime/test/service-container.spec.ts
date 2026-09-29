@@ -9,6 +9,7 @@ import {
   type EngineRunner,
   mountSource,
   NEEDS_ENGINE_REASON,
+  ROOTLESS_DOCKER_USER,
   SERVICE_IMAGE,
   serviceContainerName,
   serviceRunArgs,
@@ -91,6 +92,26 @@ describe("the service container's command line", () => {
     expect(serviceRunArgs(SPEC)).not.toContain("--userns");
   });
 
+  it("runs as the id rootless Docker maps back to the person, keeping every other part of the boundary", () => {
+    const { user: _user, ...unpinned } = SPEC;
+    const args = serviceRunArgs({ ...unpinned, rootless: true });
+    expect(ROOTLESS_DOCKER_USER).toEqual({ uid: 0, gid: 0 });
+    expect(flag(args, "--user")).toBe("0:0");
+    expect(flag(args, "--network")).toBe("none");
+    expect(args).toContain("--read-only");
+    expect(flag(args, "--cap-drop")).toBe("ALL");
+    expect(flag(args, "--security-opt")).toBe("no-new-privileges");
+    expect(args).not.toContain("--userns");
+    expect(serviceRunArgs({ ...unpinned, rootless: true }).filter((arg) => arg.startsWith("type=bind"))).toEqual(
+      serviceRunArgs(SPEC).filter((arg) => arg.startsWith("type=bind")),
+    );
+
+    // Only Docker is mapped this way; rootful Docker and Podman keep the node's own ids.
+    expect(flag(serviceRunArgs({ ...unpinned, engine: "podman", rootless: true }), "--user")).not.toBe("0:0");
+    expect(flag(serviceRunArgs({ ...unpinned, rootless: false }), "--user")).not.toBe("0:0");
+    expect(flag(serviceRunArgs({ ...SPEC, rootless: true }), "--user")).toBe("1000:1000");
+  });
+
   it("never runs a service as root", () => {
     expect(serviceUser("win32")).toEqual({ uid: 1000, gid: 1000 });
     if (process.platform !== "win32" && typeof process.getuid === "function") {
@@ -119,6 +140,31 @@ describe("finding an engine that can run a service", () => {
   it("takes Docker when it runs Linux containers", async () => {
     const engine = await detectServiceEngine({ run: answering({ docker: { status: 0, stdout: "linux 29.8.0\n", stderr: "" } }) });
     expect(engine).toEqual({ available: true, engine: "docker", version: "29.8.0" });
+  });
+
+  it("says when Docker runs rootless, and only then", async () => {
+    const docker = (securityOptions: EngineAnswer): EngineRunner => async (binary, args) => {
+      if (binary !== "docker") return { status: null, stdout: "", stderr: "not found" };
+      return args[0] === "info" ? securityOptions : { status: 0, stdout: "linux 29.8.0\n", stderr: "" };
+    };
+    const rootless = await detectServiceEngine({
+      run: docker({ status: 0, stdout: '["name=seccomp,profile=builtin","name=rootless","name=cgroupns"]\n', stderr: "" }),
+    });
+    expect(rootless).toEqual({ available: true, engine: "docker", version: "29.8.0", rootless: true });
+
+    const rootful = await detectServiceEngine({
+      run: docker({ status: 0, stdout: '["name=apparmor","name=seccomp,profile=builtin","name=cgroupns"]\n', stderr: "" }),
+    });
+    expect(rootful).toEqual({ available: true, engine: "docker", version: "29.8.0" });
+
+    // An answer that cannot be read is treated as rootful, as every Docker was before this was asked.
+    for (const unreadable of [
+      { status: 1, stdout: "", stderr: "permission denied" },
+      { status: 0, stdout: "not json", stderr: "" },
+      { status: 0, stdout: '"name=rootless"', stderr: "" },
+    ]) {
+      expect(await detectServiceEngine({ run: docker(unreadable) })).toEqual({ available: true, engine: "docker", version: "29.8.0" });
+    }
   });
 
   it("falls back to Podman, and says why Docker was not used", async () => {

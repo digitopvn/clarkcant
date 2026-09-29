@@ -294,7 +294,9 @@ export function createServiceHost(options: ServiceHostOptions): ServiceHost {
         engine = found;
         engineAskedAt = Date.now();
         if (changed) {
-          if (found.available) log(`services: ${found.engine} ${found.version} runs package services on this node`);
+          if (found.available) {
+        log(`services: ${found.engine} ${found.version}${found.rootless === true ? " (rootless)" : ""} runs package services on this node`);
+      }
           else log(`services: not started — ${found.reason} (${found.detail})`);
         }
         return found;
@@ -617,6 +619,7 @@ export function createServiceHost(options: ServiceHostOptions): ServiceHost {
       prepareServiceDataDir(dataDir);
       launch = launcher({
         engine: found.engine,
+        ...(found.rootless === true ? { rootless: true } : {}),
         nodeId: registry.nodeId,
         name: runName,
         packageRoot: entry.packageRoot,

@@ -164,8 +164,11 @@ ba, còn một process riêng không phải sandbox, nên container mới là ra
 `apps/runtime/src/service-container.ts` định nghĩa ranh giới đó: không có mạng, root filesystem chỉ đọc, bỏ mọi Linux
 capability, không cho leo thang đặc quyền, user không phải root, package được mount chỉ đọc tại `/pkg`, một thư mục
 riêng ghi được tại `/data`, và chỉ những biến môi trường mà hàm này nêu tên, không bao giờ là biến môi trường của node.
-Host nói MCP qua stdio của container, nên không mở cổng nào. Engine là Docker chạy Linux container, hoặc Podman. Node
-không có engine nào thì không chạy service. Không có fallback chỉ chạy process. Các capability vẫn được đăng ký, ở
+Host nói MCP qua stdio của container, nên không mở cổng nào. Engine là Docker chạy Linux container, hoặc Podman. Với
+Docker rootless, mà node nhận ra qua những gì `docker info` báo, service chạy với id 0 của container: Docker rootless
+ánh xạ id đó, và chỉ id đó, về đúng tài khoản chạy daemon, nên thư mục riêng vẫn thuộc về chính người dùng. Id này
+không có đặc quyền nào, vì mọi capability đều bị bỏ và leo thang đặc quyền bị từ chối. Node không có engine nào thì
+không chạy service. Không có fallback chỉ chạy process. Các capability vẫn được đăng ký, ở
 trạng thái chưa load, kèm lý do "needs Docker or Podman to run; this node has neither running".
 
 Những gì registry báo là những gì host đã quan sát được, không phải điều manifest mong đợi:
