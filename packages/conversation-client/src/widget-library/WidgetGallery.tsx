@@ -16,7 +16,8 @@ import { WidgetPreview } from "./WidgetPreview.tsx";
  * widget's own text alternative and say the live view is one step away.
  *
  * **The card is a button.** Pointer, keyboard and voice all reach the same `select` action, and hover
- * reveals nothing that is not also reachable by focus.
+ * reveals nothing that is not also reachable by focus. Its preview is inert, so a click anywhere on the
+ * card, including on a control the preview draws, selects the card.
  */
 
 /** Definitions whose renderer reaches outside the document, so a grid is the wrong place to draw them. */
@@ -62,7 +63,12 @@ export function WidgetGallery({ entries, onSelect }: WidgetGalleryProps): ReactE
                 .replace("{description}", entry.description)}
               data-widget-card={entry.cardId}
             >
-              <span className="cc-widget-card-preview">
+              {/*
+                The preview is a picture of the widget, not a second set of controls inside the button.
+                Without `inert`, a click on a disabled field it draws is swallowed by the browser instead of
+                reaching the card, and its enabled controls become Tab stops nested inside a button.
+              */}
+              <span className="cc-widget-card-preview" inert>
                 {fixture === undefined ? (
                   <span className="cc-widget-preview-missing" data-widget-preview-missing={entry.cardId}>
                     {t("widgets.gallery.noFixture")}
