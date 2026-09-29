@@ -158,24 +158,32 @@ and no skips until an answer says it takes them. The sender reads at most 16 KiB
 30-second deadline; an answer past either is ignored, and the message stays acknowledged when its status was `200`.
 
 NodeLink sequences every envelope a node sends one peer, and the peer refuses anything past a gap with `409`
-`SEQUENCE_GAP`. When the sender gives up on a message (12 failed attempts, or the pairing revoked), a peer that
-advertises `skip` is sent a NodeLink `skip` message in its place; the envelope stays at protocol version 1, and the
-advertised feature is what versions it. Its payload is `skip` `{ through, lost: [{ sequence, messageId, kind, taskId? }]
-}` — a strict object: `through` equals the envelope's own `sourceSequence` (the slot of the last message it gives up
-on, so it can never reach past a message not yet sent), `lost` lists 1 to 50 given-up messages in ascending sequence
-order, none past `through`, none of kind `skip`, and a `taskId` is id-shaped; anything else is refused whole with `400`
-`SKIP_INVALID`. The sender covers only given-up messages above the highest sequence the peer acknowledged and below the
-lowest one still owed, one skip at a time. The receiver processes a skip only ahead of its cursor, moves the cursor to
-`through`, and answers `accepted: true` with `from` (the first sequence it had not received), `through` and `settled`
-(tasks it handed the sender whose lost `result` it settled as uncertain); a replay is answered from its inbox, and a
-skip whose every sequence had arrived after all is answered `200` `status: "stale"` with `code` `SKIP_STALE`, changing
-nothing. Both sides write an audit event of kind `peer` and put one notice in their owner's inbox (keys
-`peer-lost:<peerNodeId>:out|in:<through>`), naming what was lost and its task; the receiver tells its owner at most 30
-times a minute per peer. A node without a skip handler answers `400` `UNSUPPORTED_KIND` and does not advertise it. To a
-peer that does not advertise `skip`, delivery stays as before, and the sender's owner is told once per stretch without
-an acknowledgement (`peer-stuck:<peerNodeId>:<lastAck|never>`) that the pairing is stuck until that device updates; the
-next `409` from an updated peer carries `skip`, and the skip follows. To a peer that takes skips, messages go lowest
-sequence first and one at a time, so what waits behind a refused message is not refused with it.
+`SEQUENCE_GAP`. When the sender gives up on a message after 12 failed attempts, a peer that advertises `skip` is sent a
+NodeLink `skip` message in its place; the envelope stays at protocol version 1, and the advertised feature is what
+versions it. (A revoked pairing's messages are given up on too, but nothing, a skip included, is sent to a revoked
+peer.) Its payload is `skip` `{ through, lost: [{ sequence, messageId, kind, taskId? }] }` — a strict object:
+`through` equals the envelope's own `sourceSequence` (the slot of the last message it gives up on, so it can never reach
+past a message not yet sent), `lost` lists 1 to 50 given-up messages in ascending sequence order, the last one at
+`through`, none of kind `skip`, and a `taskId` is id-shaped; anything else is refused whole with `400` `SKIP_INVALID`.
+The sender covers only given-up messages above the highest sequence the peer acknowledged and below the lowest one still
+owed, one skip at a time, and sends as many skips as a longer run needs before anything the gap would refuse is sent
+again. The receiver processes a skip only ahead of its cursor, moves the cursor to `through`, and answers
+`accepted: true` with `from` (the first sequence it had not received), `through` and `settled` (tasks it handed the
+sender whose lost `result` it settled as uncertain); a replay is answered from its inbox, and a skip whose every
+sequence had arrived after all is answered `200` `status: "stale"` with `code` `SKIP_STALE`, changing nothing. The
+sender acknowledges a skip only once it has read that answer: it tells its owner first, then records the
+acknowledgement and its audit event together, so an answer it cannot read, or a crash, sends the skip again and the
+replay's answer tells it once. Both sides write an audit event of kind `peer` and put one notice in their owner's inbox
+(keys `peer-lost:<peerNodeId>:out|in:<through>`) that says what failed, what was kept and what happens to the tasks
+involved before it lists what was lost, so the list is what gets shortened to fit; the receiver tells its owner at most
+30 times a minute per peer. A node without a skip handler answers `400` `UNSUPPORTED_KIND` and does not advertise it; a
+sender whose skip is answered `400` with any code but `SKIP_INVALID` records that the peer takes no skips (until an
+answer advertises `skip` again), gives the skip up and reports the pairing as stuck. To a peer that does not advertise
+`skip`, delivery stays as before, and the sender's owner is told once per stretch without an acknowledgement
+(`peer-stuck:<peerNodeId>:<lastAck|never>`) that the pairing is stuck until that device updates, but only while a
+message given up on is still missing there; the next `409` from an updated peer carries `skip`, and the skip follows.
+To a peer that takes skips, messages go lowest sequence first and one at a time, so what waits behind a refused message
+is not refused with it.
 
 A standing request's task can also run on a paired node. That is set up in conversation, not through a route: the
 sending node's owner names the peer as the task's executor, and the receiving node's owner says what that peer may run

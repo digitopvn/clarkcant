@@ -197,12 +197,20 @@ export function startPeerDelivery(
     try {
       do {
         again = false;
-        const outcome = await deliverPending({ ...deps, peerFor: (peerNodeId) => getPeer(deps.db, peerNodeId) });
+        // Told inside the pass, before each skip is acknowledged, so a crash in between cannot lose the telling.
+        const onSkipped = options.onSkipped ?? deps.onSkipped;
+        const outcome = await deliverPending({
+          ...deps,
+          peerFor: (peerNodeId) => getPeer(deps.db, peerNodeId),
+          ...(onSkipped === undefined ? {} : { onSkipped }),
+        });
         for (const dead of outcome.deadLettered ?? []) {
           log(
             dead.refusedByPeer
               ? `nodelink: gave up delivering ${dead.messageId} to ${dead.peerNodeId}; the peer refused it`
-              : `nodelink: gave up delivering ${dead.messageId} to ${dead.peerNodeId} after repeated failures`,
+              : dead.neverSent === true
+                ? `nodelink: gave up delivering ${dead.messageId} to ${dead.peerNodeId}; the peer could not be reached, so it was never sent`
+                : `nodelink: gave up delivering ${dead.messageId} to ${dead.peerNodeId} after repeated failures`,
           );
           try {
             options.onDeadLettered?.(dead);
@@ -219,11 +227,6 @@ export function startPeerDelivery(
         }
         for (const report of outcome.skipped ?? []) {
           log(`nodelink: ${report.peerNodeId} skipped ${String(report.lost.length)} message(s) this node gave up on, through sequence ${String(report.through)}`);
-          try {
-            options.onSkipped?.(report);
-          } catch (cause) {
-            log(`nodelink: could not tell what ${report.peerNodeId} skipped (${cause instanceof Error ? cause.message : String(cause)})`);
-          }
         }
         for (const peerNodeId of outcome.stuck ?? []) {
           log(`nodelink: ${peerNodeId} takes no skips, so it will refuse what follows a message given up on until it is updated`);

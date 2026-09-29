@@ -354,13 +354,14 @@ export function receiveResult(
 /**
  * A hand-over or a stop this node gave up delivering: the task that waits on it is settled here, since no answer comes.
  *
- * A hand-over the peer refused was never run there, so the task failed. One nobody answered may have been run, and a
+ * A hand-over the peer refused was never run there, and neither was one that never left this node (it only waited behind
+ * a message that could not reach the peer): the task failed. One nobody answered may have been run, and a
  * stop that never arrived may not have stopped anything: both are outcomes nobody here can vouch for, and are called
  * that. Anything else, or a task already settled, is left alone. Answers whether a task was settled.
  */
 export function settleUndelivered(
   deps: ResultReceiveDeps,
-  letter: { peerNodeId: string; kind: PeerEnvelope["kind"]; taskId?: string; refusedByPeer: boolean },
+  letter: { peerNodeId: string; kind: PeerEnvelope["kind"]; taskId?: string; refusedByPeer: boolean; neverSent?: boolean },
 ): boolean {
   if (letter.kind !== "delegate" && letter.kind !== "cancel.request") return false;
   const task = letter.taskId === undefined ? undefined : getTask(deps.db, letter.taskId);
@@ -371,8 +372,10 @@ export function settleUndelivered(
   const peer = letter.peerNodeId;
   let settled: { outcome: "succeeded" | "failed" | "uncertain" | "cancelled"; message: string } | undefined;
 
-  if (letter.kind === "delegate" && letter.refusedByPeer) {
-    const message = `${peer} từ chối nhận việc này nên nó không chạy ở đó`;
+  if (letter.kind === "delegate" && (letter.refusedByPeer || letter.neverSent === true)) {
+    const message = letter.refusedByPeer
+      ? `${peer} từ chối nhận việc này nên nó không chạy ở đó`
+      : `không gửi được việc này tới ${peer} vì không liên lạc được; việc chưa từng rời máy này nên nó không chạy ở đó`;
     if (task.state === "cancel_requested") {
       if (applyTaskEvent(coordination, task.taskId, "cancel.confirmed").ok) settled = { outcome: "cancelled", message };
     } else {

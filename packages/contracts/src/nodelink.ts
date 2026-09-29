@@ -105,14 +105,18 @@ export const peerSkipSchema = z.strictObject({
 });
 export type PeerSkip = z.infer<typeof peerSkipSchema>;
 
-/** Whether a skip lists each message once, in ascending sequence order, none past `through`. */
+/**
+ * Whether a skip lists each message once, in ascending sequence order, ending at `through`: a skip takes the slot of the
+ * last message it gives up on, so one reaching past its last listed message would move the cursor over a sequence it
+ * does not account for.
+ */
 function skipListsInOrder(skip: PeerSkip): boolean {
   let previous = -1;
   for (const lost of skip.lost) {
     if (lost.sequence <= previous || lost.sequence > skip.through) return false;
     previous = lost.sequence;
   }
-  return true;
+  return previous === skip.through;
 }
 
 /**
@@ -348,7 +352,7 @@ export function validatePeerEnvelope(
     } else if (!skipListsInOrder(skip.data)) {
       issues.push({
         code: "SKIP_INVALID",
-        message: "skip lists a message outside its range, or out of sequence order",
+        message: "skip lists a message outside its range, out of sequence order, or does not end at its own sequence",
         field: "payload.skip.lost",
       });
     }

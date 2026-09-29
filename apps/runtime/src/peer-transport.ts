@@ -17,10 +17,13 @@ import {
   appendAuditEvent,
   deadLetterOutbox,
   markOutboxFailed,
+  markOutboxHeldBack,
   markOutboxTurnedDown,
   outboxLedger,
+  outboxRetryState,
   pendingOutbox,
   recordPeerAdvertisement,
+  transaction,
 } from "@clarkcant/storage";
 
 import type { NodeIdentity } from "./node.ts";
@@ -59,6 +62,11 @@ export interface PeerTransportDeps {
   batchSize?: number;
   /** How long one delivery may take, answer included, before it counts as failed. */
   timeoutMs?: number;
+  /**
+   * Told what a peer skipped, before the skip is acknowledged: a crash after telling sends the skip again and tells
+   * again, so what it does must be idempotent.
+   */
+  onSkipped?: (report: SkipReport) => void;
 }
 
 /**
@@ -127,7 +135,8 @@ export interface SkipReport {
  * A message given up on, with what it was about: the task it concerned is waiting for it, and has to be told.
  *
  * `refusedByPeer` says the peer answered and turned it down (or the pairing was revoked), so it never acted on it; a
- * message that only never got an answer may have been acted on.
+ * message that only never got an answer may have been acted on. `neverSent` says no attempt ever dialled it, since it
+ * only waited behind one that could not reach the peer: the peer cannot have acted on it either.
  */
 export interface DeadLetter {
   messageId: string;
@@ -135,6 +144,8 @@ export interface DeadLetter {
   kind: PeerEnvelope["kind"];
   taskId?: string;
   refusedByPeer: boolean;
+  /** Present, and true, only when the message never left this node. */
+  neverSent?: true;
 }
 
 /**
@@ -317,11 +328,21 @@ function failedForEveryMessage(status: number | undefined): boolean {
 }
 
 /**
- * A skip the peer acknowledged: what it skipped, audited here as given up on. `undefined` for anything else, and for a
- * skip the peer answered as stale, since then everything it covered had arrived after all.
+ * Whether a failure stored on an outbox row says nothing about the message itself (see `failedForEveryMessage`): the
+ * peer never answered, or answered with a status every message would have had. `false` for a row with no failure.
  */
-function skipAnswered(deps: PeerTransportDeps, envelope: PeerEnvelope, fields: Record<string, unknown> | undefined): SkipReport | undefined {
-  if (envelope.kind !== "skip") return undefined;
+function storedForEveryMessage(lastError: string | null): boolean {
+  if (lastError === null) return false;
+  if (!lastError.startsWith(PEER_ANSWERED)) return true;
+  const status = answeredStatus(lastError);
+  return status !== undefined && failedForEveryMessage(status);
+}
+
+/**
+ * What a skip the peer acknowledged says it skipped. `undefined` for a skip the peer answered as stale, or one whose
+ * every listed message had reached it after all: then nothing was lost there.
+ */
+function skipReport(envelope: PeerEnvelope, fields: Record<string, unknown>): SkipReport | undefined {
   const skip = peerSkipSchema.safeParse(envelope.payload["skip"]);
   const answer = handlerAnswer(fields);
   if (!skip.success || answer?.["accepted"] !== true) return undefined;
@@ -329,28 +350,27 @@ function skipAnswered(deps: PeerTransportDeps, envelope: PeerEnvelope, fields: R
   // Only what the peer had not received: an earlier one it did receive was delivered, whatever this node recorded.
   const lost = skip.data.lost.filter((one) => from === undefined || one.sequence >= from);
   if (lost.length === 0) return undefined;
-  const report: SkipReport = {
+  return {
     peerNodeId: envelope.recipientNodeId,
     messageId: envelope.messageId,
     ...(from === undefined ? {} : { from }),
     through: skip.data.through,
     lost,
   };
-  try {
-    appendAuditEvent(deps.db, {
-      auditId: `audit_${randomUUID().replaceAll("-", "").slice(0, 24)}`,
-      principalId: deps.identity.ownerPrincipalId,
-      nodeId: deps.identity.nodeId,
-      kind: "peer",
-      summary: `gave up on ${String(lost.length)} message(s) to ${report.peerNodeId} (${[...new Set(lost.map((one) => one.kind))].join(", ")}); the peer skipped sequences ${String(from ?? lost[0]?.sequence ?? report.through)}-${String(report.through)}`,
-      outcome: "failed",
-      at: deps.now(),
-      ref: envelope.messageId,
-    });
-  } catch (cause) {
-    process.stderr.write(`nodelink: could not audit the skip ${envelope.messageId} (${cause instanceof Error ? cause.message : String(cause)})\n`);
-  }
-  return report;
+}
+
+/** The sender's audit of a skip the peer accepted: what this node gave up on, and where the peer skipped past it. */
+function auditSkip(deps: PeerTransportDeps, report: SkipReport): void {
+  appendAuditEvent(deps.db, {
+    auditId: `audit_${randomUUID().replaceAll("-", "").slice(0, 24)}`,
+    principalId: deps.identity.ownerPrincipalId,
+    nodeId: deps.identity.nodeId,
+    kind: "peer",
+    summary: `gave up on ${String(report.lost.length)} message(s) to ${report.peerNodeId} (${[...new Set(report.lost.map((one) => one.kind))].join(", ")}); the peer skipped sequences ${String(report.from ?? report.lost[0]?.sequence ?? report.through)}-${String(report.through)}`,
+    outcome: "failed",
+    at: deps.now(),
+    ref: report.messageId,
+  });
 }
 
 /** A given-up message as a skip lists it: its task only when that is an id, since the receiver shows it to its owner. */
@@ -367,31 +387,48 @@ function lostEntry(envelope: PeerEnvelope): PeerSkipLost | undefined {
 }
 
 /**
- * Queue a skip for what this node gave up on, when a peer that takes skips is waiting for it. Answers whether one was
- * queued.
- *
- * Read from the outbox alone, which never deletes a row. The skip covers the given-up messages above the highest
- * sequence the peer acknowledged and below the lowest one still owed, at most `PEER_SKIP_LOST_MAX` of them, and it
- * takes the sequence of the last one it covers: so it never covers a message the peer acknowledged, one still being
- * sent, or one not yet queued. Only one skip is owed to a peer at a time; a longer run is covered by the next.
+ * What the stream to one peer carried, as far as skipping goes: the highest sequence the peer acknowledged, and the
+ * messages this node gave up on (skips aside), oldest first. Read from the outbox alone, which never deletes a row, once
+ * per peer per pass, and kept in step with what the pass acknowledges and gives up on afterwards.
  */
-function queueSkip(deps: PeerTransportDeps, peerNodeId: string): boolean {
-  let acknowledgedThrough = 0;
-  let lowestOwed = Number.POSITIVE_INFINITY;
-  const dead: PeerEnvelope[] = [];
+interface SkipLedger {
+  acknowledgedThrough: number;
+  dead: PeerEnvelope[];
+}
+
+function readSkipLedger(deps: PeerTransportDeps, peerNodeId: string): SkipLedger {
+  const ledger: SkipLedger = { acknowledgedThrough: 0, dead: [] };
   for (const row of outboxLedger(deps.db, peerNodeId)) {
     const parsed = peerEnvelopeSchema.safeParse(row.document);
     if (!parsed.success) continue;
-    const envelope = parsed.data;
-    if (row.acknowledgedAt !== null) acknowledgedThrough = Math.max(acknowledgedThrough, envelope.sourceSequence);
-    else if (row.deadLetteredAt !== null) {
-      if (envelope.kind !== "skip") dead.push(envelope);
-    } else if (envelope.kind === "skip") return false;
-    else lowestOwed = Math.min(lowestOwed, envelope.sourceSequence);
+    if (row.acknowledgedAt !== null) ledger.acknowledgedThrough = Math.max(ledger.acknowledgedThrough, parsed.data.sourceSequence);
+    else if (row.deadLetteredAt !== null && parsed.data.kind !== "skip") ledger.dead.push(parsed.data);
   }
+  return ledger;
+}
+
+/** The given-up messages the peer is still waiting for: none it acknowledged, which a later acknowledgement passed. */
+function gapsLeft(ledger: SkipLedger): PeerEnvelope[] {
+  return ledger.dead
+    .filter((envelope) => envelope.sourceSequence > ledger.acknowledgedThrough)
+    .sort((first, second) => first.sourceSequence - second.sourceSequence);
+}
+
+/**
+ * Queue a skip for what this node gave up on, when a peer that takes skips is waiting for it. Answers whether one was
+ * queued.
+ *
+ * The skip covers the given-up messages above the highest sequence the peer acknowledged and below the lowest one still
+ * owed, at most `PEER_SKIP_LOST_MAX` of them, and it takes the sequence of the last one it covers: so it never covers a
+ * message the peer acknowledged, one still being sent, or one not yet queued. Only one skip is owed to a peer at a
+ * time; a longer run is covered by the next.
+ */
+function queueSkip(deps: PeerTransportDeps, peerNodeId: string, ledger: SkipLedger, owed: readonly PeerEnvelope[]): boolean {
+  if (owed.some((envelope) => envelope.kind === "skip")) return false;
+  const lowestOwed = Math.min(...owed.map((envelope) => envelope.sourceSequence));
   const lost: PeerSkipLost[] = [];
-  for (const envelope of dead.sort((first, second) => first.sourceSequence - second.sourceSequence)) {
-    if (envelope.sourceSequence <= acknowledgedThrough || envelope.sourceSequence >= lowestOwed) continue;
+  for (const envelope of gapsLeft(ledger)) {
+    if (envelope.sourceSequence >= lowestOwed) break;
     if (lost.at(-1)?.sequence === envelope.sourceSequence) continue;
     const entry = lostEntry(envelope);
     if (entry !== undefined) lost.push(entry);
@@ -417,13 +454,23 @@ function queueSkip(deps: PeerTransportDeps, peerNodeId: string): boolean {
   return true;
 }
 
-/** Whether this node gave up on a message to a peer that the peer never acknowledged: what leaves a gap there. */
+/**
+ * Whether this node gave up on a message a peer is still waiting for: what leaves a gap there. One the peer
+ * acknowledged something after is not, since the peer got past it.
+ */
 function givenUpOn(deps: PeerTransportDeps, peerNodeId: string): boolean {
-  return outboxLedger(deps.db, peerNodeId).some((row) => {
-    if (row.deadLetteredAt === null || row.acknowledgedAt !== null) return false;
-    const parsed = peerEnvelopeSchema.safeParse(row.document);
-    return parsed.success && parsed.data.kind !== "skip";
-  });
+  return gapsLeft(readSkipLedger(deps, peerNodeId)).length > 0;
+}
+
+/** Record that a peer takes no skips after all, keeping everything else it said it takes. */
+function forgetSkips(deps: PeerTransportDeps, peer: PeerRecord): void {
+  try {
+    recordPeerAdvertisement(deps.db, peer.peerNodeId, { features: (peer.features ?? []).filter((feature) => feature !== "skip") });
+  } catch (cause) {
+    process.stderr.write(
+      `nodelink: could not record that ${peer.peerNodeId} takes no skips (${cause instanceof Error ? cause.message : String(cause)})\n`,
+    );
+  }
 }
 
 /** How one attempt went, as the rest of the pass needs it. */
@@ -437,6 +484,8 @@ interface Attempt {
   forEveryMessage: boolean;
   /** A skip the peer accepted: what follows it may be covered by the next one. */
   skipAccepted: boolean;
+  /** A skip the peer refused as a kind it does not read: it takes no skips now, whatever it said before. */
+  skipsRefused: boolean;
   status?: number;
   reason: string;
 }
@@ -445,13 +494,15 @@ interface Attempt {
  * One pass over the outbox: attempt what is pending, record what the peer acknowledged.
  *
  * To a peer that takes skips, messages go in sequence order and one at a time: only the lowest sequence still owed is
- * sent, since the peer refuses anything past a gap. What waits behind it is not dialled and not counted against, unless
- * the failure is one every message would share (the peer not answering, or failing on its side), in which case each
- * waiting message that was due is counted as tried and failed, as it would have been had it been sent. When a message
- * is given up on, or the peer says it is waiting for one this node gave up on, a skip is queued in its place and sent at
- * once, so what follows is delivered instead of being refused for good. To a peer that does not take skips, messages go
- * as they always did, and one given up on is reported as leaving that pairing stuck. A message named with `only` is
- * attempted by itself, whatever is owed before it.
+ * sent, since the peer refuses anything past a gap. What waits behind it is not dialled. When the failure is one every
+ * message would share (the peer not answering, or failing on its side), each waiting message is counted as failing
+ * whenever it is due, on its own schedule, whether the one ahead of it was dialled this pass or is waiting out its own
+ * backoff: so it is given up on no later than it would have been had it been sent, and one given up on that way is
+ * reported as never having left this node. When a message is given up on, or the peer says it is waiting for one this
+ * node gave up on, a skip is queued in its place and sent at once, and as many more as the run of given-up messages
+ * needs, before anything the gap would refuse is sent again. To a peer that does not take skips, messages go as they
+ * always did, and a gap one given up on leaves there is reported as leaving that pairing stuck. A message named with
+ * `only` is attempted by itself, whatever is owed before it.
  */
 export async function deliverPending(
   deps: PeerTransportDeps,
@@ -462,13 +513,14 @@ export async function deliverPending(
   const turnedDown: TurnedDown[] = [];
   const skipped: SkipReport[] = [];
   const stuck = new Set<string>();
-  const gaveUp = (envelope: PeerEnvelope, refusedByPeer: boolean): void => {
+  const gaveUp = (envelope: PeerEnvelope, refusedByPeer: boolean, neverSent = false): void => {
     deadLettered.push({
       messageId: envelope.messageId,
       peerNodeId: envelope.recipientNodeId,
       kind: envelope.kind,
       ...(envelope.taskId === undefined ? {} : { taskId: envelope.taskId }),
       refusedByPeer,
+      ...(neverSent ? { neverSent: true as const } : {}),
     });
   };
   const send = deps.fetchImpl ?? fetch;
@@ -500,11 +552,52 @@ export async function deliverPending(
     return { owed, due };
   };
 
+  /**
+   * A skip the peer answered with success. Its owner is told first, then the skip is acknowledged together with the
+   * audit of what it skipped: a crash in between sends the skip again, the peer answers the resend from its inbox with
+   * the same report, and the notice's key keeps the telling to once. An answer that cannot be read acknowledges nothing,
+   * for the same reason: the resend reads it again.
+   */
+  const skipAcknowledged = (envelope: PeerEnvelope, status: number, text: string | undefined): Attempt | { failed: string } => {
+    const fields = answerFields(text);
+    if (fields === undefined) return { failed: `${PEER_ANSWERED} ${String(status)} with an answer this node could not read` };
+    recordAdvertisement(deps, envelope.recipientNodeId, fields);
+    const report = skipReport(envelope, fields);
+    if (report !== undefined && deps.onSkipped !== undefined) {
+      try {
+        deps.onSkipped(report);
+      } catch (cause) {
+        process.stderr.write(
+          `nodelink: could not tell what ${report.peerNodeId} skipped (${cause instanceof Error ? cause.message : String(cause)})\n`,
+        );
+      }
+    }
+    try {
+      transaction(deps.db, () => {
+        recordAcknowledgement(deps, envelope.messageId);
+        if (report !== undefined) auditSkip(deps, report);
+      });
+    } catch (cause) {
+      return { failed: `${PEER_ANSWERED} ${String(status)}, and recording it failed: ${cause instanceof Error ? cause.message : String(cause)}` };
+    }
+    outcome.acknowledged += 1;
+    if (report !== undefined) skipped.push(report);
+    return {
+      acknowledged: true,
+      gaveUp: false,
+      gap: false,
+      forEveryMessage: false,
+      skipAccepted: report !== undefined,
+      skipsRefused: false,
+      reason: "",
+    };
+  };
+
   const attempt = async (peer: PeerRecord, envelope: PeerEnvelope): Promise<Attempt> => {
     outcome.attempted += 1;
     recordTransmissionAttempt(deps, envelope.messageId);
     const deadline = AbortSignal.timeout(deps.timeoutMs ?? PEER_DELIVERY_TIMEOUT_MS);
-    let failure: { reason: string; status?: number; gap: boolean };
+    let failure: { reason: string; status?: number; gap: boolean; skipsRefused?: boolean };
     try {
       const response = await send(peerMessagesUrl(peer.endpoint), {
         method: "POST",
@@ -518,7 +611,11 @@ export async function deliverPending(
         redirect: "error",
         signal: deadline,
       });
-      if (response.ok) {
+      if (response.ok && envelope.kind === "skip") {
+        const answered = skipAcknowledged(envelope, response.status, await readAnswer(response, deadline));
+        if (!("failed" in answered)) return answered;
+        failure = { reason: answered.failed, status: response.status, gap: false };
+      } else if (response.ok) {
         recordAcknowledgement(deps, envelope.messageId);
         outcome.acknowledged += 1;
         // Acknowledged first: however the answer's body goes, the peer has the message and it is not sent again.
@@ -526,26 +623,39 @@ export async function deliverPending(
         if (fields !== undefined) recordAdvertisement(deps, envelope.recipientNodeId, fields);
         const turned = noticeTurnedDown(deps, envelope, fields);
         if (turned !== undefined) turnedDown.push(turned);
-        const report = skipAnswered(deps, envelope, fields);
-        if (report !== undefined) skipped.push(report);
-        return { acknowledged: true, gaveUp: false, gap: false, forEveryMessage: false, skipAccepted: report !== undefined, reason: "" };
-      }
-      let gap = false;
-      if (response.status === 409) {
+        return { acknowledged: true, gaveUp: false, gap: false, forEveryMessage: false, skipAccepted: false, skipsRefused: false, reason: "" };
+      } else if (response.status === 409) {
         // Read, bounded, for one thing: a peer waiting for an earlier sequence says so, and says whether it takes skips.
         const fields = answerFields(await readAnswer(response, deadline));
-        gap = fields?.["code"] === "SEQUENCE_GAP";
+        const gap = fields?.["code"] === "SEQUENCE_GAP";
         if (gap && fields !== undefined && Array.isArray(fields["features"])) recordAdvertisement(deps, envelope.recipientNodeId, fields);
+        failure = { reason: `${PEER_ANSWERED} ${response.status}`, status: response.status, gap };
+      } else if (response.status === 400 && envelope.kind === "skip") {
+        // A skip refused for anything but its own contents is a kind the peer does not read: a build from before skips,
+        // or one without them. It is taken at its word until it says it takes skips again.
+        const fields = answerFields(await readAnswer(response, deadline));
+        failure = {
+          reason: `${PEER_ANSWERED} ${response.status}`,
+          status: response.status,
+          gap: false,
+          skipsRefused: fields?.["code"] !== "SKIP_INVALID",
+        };
       } else {
         // Its body is not needed, and a connection left holding an unread one is not given back.
         void response.body?.cancel().catch(() => undefined);
+        failure = { reason: `${PEER_ANSWERED} ${response.status}`, status: response.status, gap: false };
       }
-      failure = { reason: `${PEER_ANSWERED} ${response.status}`, status: response.status, gap };
     } catch (cause) {
       failure = { reason: cause instanceof Error ? cause.message : "delivery failed", gap: false };
     }
     outcome.refused.push({ messageId: envelope.messageId, reason: failure.reason });
     const reason = sanitizeDeliveryError(failure.reason);
+    if (failure.skipsRefused === true) {
+      forgetSkips(deps, peer);
+      // Never deliverable there: sending it again would only be refused again.
+      deadLetterOutbox(deps.db, envelope.messageId, deps.now(), `${reason}: the peer takes no skips`);
+      return { acknowledged: false, gaveUp: false, gap: false, forEveryMessage: false, skipAccepted: false, skipsRefused: true, reason };
+    }
     const marked = markOutboxFailed(deps.db, envelope.messageId, deps.now(), reason);
     // A 4xx is the peer refusing the message itself; anything else is a peer that could not answer.
     const refusedByPeer = failure.status !== undefined && failure.status >= 400 && failure.status < 500;
@@ -557,37 +667,79 @@ export async function deliverPending(
       gap: failure.gap,
       forEveryMessage: failedForEveryMessage(failure.status),
       skipAccepted: false,
+      skipsRefused: false,
       ...(failure.status === undefined ? {} : { status: failure.status }),
       reason,
     };
   };
 
-  /** Deliver to a peer that takes skips, lowest sequence first. Answers whether a skip may now be owed to it. */
-  const inOrder = async (peer: PeerRecord): Promise<boolean> => {
-    const { owed, due } = owedNow(peer.peerNodeId);
-    const queue = [...(owed.get(peer.peerNodeId) ?? [])].sort((first, second) => first.sourceSequence - second.sourceSequence);
-    let skipMayBeOwed = false;
-    for (const [index, envelope] of queue.entries()) {
-      if (handled >= limit || !(due.has(envelope.messageId) || gapRefused.delete(envelope.messageId))) break;
-      handled += 1;
-      const result = await attempt(peer, envelope);
-      skipMayBeOwed ||= (result.gaveUp && envelope.kind !== "skip") || result.gap || result.skipAccepted;
-      if (result.acknowledged) continue;
-      if (result.forEveryMessage) {
-        for (const waiting of queue.slice(index + 1)) {
-          if (!due.has(waiting.messageId)) continue;
-          // Counted as tried: dialling the peer again for each one would only have said the same.
-          recordTransmissionAttempt(deps, waiting.messageId);
-          outcome.refused.push({ messageId: waiting.messageId, reason: result.reason });
-          if (markOutboxFailed(deps.db, waiting.messageId, deps.now(), result.reason).status === "dead-lettered") {
-            gaveUp(waiting, result.status !== undefined && result.status >= 400 && result.status < 500);
-            skipMayBeOwed ||= waiting.kind !== "skip";
-          }
-        }
-      }
-      break;
+  /**
+   * Count each due message waiting behind one that could not reach the peer as failing too: nothing is dialled for it,
+   * since dialling again would only have said the same. Answers the ones this gave up on.
+   */
+  const holdBack = (waiting: readonly PeerEnvelope[], due: ReadonlySet<string>, reason: string): PeerEnvelope[] => {
+    const lost: PeerEnvelope[] = [];
+    for (const envelope of waiting) {
+      if (!due.has(envelope.messageId)) continue;
+      markOutboxHeldBack(deps.db, envelope.messageId);
+      outcome.refused.push({ messageId: envelope.messageId, reason });
+      if (markOutboxFailed(deps.db, envelope.messageId, deps.now(), reason).status !== "dead-lettered") continue;
+      // Never sent when no attempt ever dialled it: the peer cannot have acted on it.
+      gaveUp(envelope, false, outboxRetryState(deps.db, envelope.messageId)?.lastAttemptAt === null);
+      lost.push(envelope);
     }
-    return skipMayBeOwed;
+    return lost;
+  };
+
+  /**
+   * Deliver to a peer that takes skips, lowest sequence first. With `skipFirst`, a skip may already be owed, and nothing
+   * is sent unless one is.
+   */
+  const inOrder = async (peer: PeerRecord, skipFirst: boolean): Promise<void> => {
+    // Read once, when a skip is first considered, and kept in step with what this pass acknowledges and gives up on.
+    let ledger: SkipLedger | undefined;
+    // What comes next: send on; queue a skip first if one is owed; or queue a skip and stop unless one was.
+    let next: "send" | "skip-or-send" | "skip-or-stop" = skipFirst ? "skip-or-stop" : "send";
+    while (handled < limit) {
+      let { owed, due } = owedNow(peer.peerNodeId);
+      if (next !== "send") {
+        ledger ??= readSkipLedger(deps, peer.peerNodeId);
+        if (queueSkip(deps, peer.peerNodeId, ledger, owed.get(peer.peerNodeId) ?? [])) ({ owed, due } = owedNow(peer.peerNodeId));
+        else if (next === "skip-or-stop") return;
+      }
+      const [head, ...waiting] = [...(owed.get(peer.peerNodeId) ?? [])].sort(
+        (first, second) => first.sourceSequence - second.sourceSequence,
+      );
+      if (head === undefined) return;
+      if (!due.has(head.messageId) && !gapRefused.has(head.messageId)) {
+        // The head waits out its backoff. When it last failed because the peer could not be reached, what waits behind it
+        // goes on failing on its own schedule rather than on the head's. What it gives up on is still behind the head, so
+        // no skip can be owed for it yet.
+        const last = outboxRetryState(deps.db, head.messageId)?.lastError ?? null;
+        if (last !== null && storedForEveryMessage(last)) holdBack(waiting, due, last);
+        return;
+      }
+      gapRefused.delete(head.messageId);
+      handled += 1;
+      const result = await attempt(peer, head);
+      if (result.acknowledged) {
+        if (ledger !== undefined) ledger.acknowledgedThrough = Math.max(ledger.acknowledgedThrough, head.sourceSequence);
+        // A skip covers at most `PEER_SKIP_LOST_MAX` given-up messages: the next goes before anything the rest would refuse.
+        next = result.skipAccepted ? "skip-or-send" : "send";
+        continue;
+      }
+      if (result.skipsRefused) {
+        if (givenUpOn(deps, peer.peerNodeId)) stuck.add(peer.peerNodeId);
+        return;
+      }
+      const lost = result.gaveUp ? [head] : [];
+      if (result.forEveryMessage) lost.push(...holdBack(waiting, due, result.reason));
+      const lostHere = lost.filter((envelope) => envelope.kind !== "skip");
+      ledger?.dead.push(...lostHere);
+      // Given up on, or refused for a gap one left: a skip goes in its place, and what it closes is tried again at once.
+      if (!(result.gap || lostHere.length > 0)) return;
+      next = "skip-or-stop";
+    }
   };
 
   const { owed, due } = owedNow();
@@ -619,35 +771,25 @@ export async function deliverPending(
       continue;
     }
 
-    let skipMayBeOwed: boolean;
     // A message a caller names is sent as it is, in order or not: that one attempt is what the caller asked for.
     if (takesSkip(peer) && options.only === undefined) {
-      skipMayBeOwed = await inOrder(peer);
-    } else {
-      let lostOne = false;
-      let gap = false;
-      for (const envelope of dueHere) {
-        if (handled >= limit) break;
-        handled += 1;
-        const result = await attempt(peer, envelope);
-        lostOne ||= result.gaveUp && envelope.kind !== "skip";
-        gap ||= result.gap;
-      }
-      if (!lostOne && !gap) continue;
-      // The refusal may have said the peer takes skips now: it was updated, and that is the way out of the gap.
-      peer = deps.peerFor(peerNodeId);
-      if (peer === undefined || !takesSkip(peer)) {
-        // Stuck only once something was given up on: a gap behind a message still being retried may yet close.
-        if (lostOne || givenUpOn(deps, peerNodeId)) stuck.add(peerNodeId);
-        continue;
-      }
-      skipMayBeOwed = true;
+      await inOrder(peer, false);
+      continue;
     }
-    // Bounded: each round either sends a skip or stops, and a long run of given-up messages is not one pass's work.
-    for (let round = 0; skipMayBeOwed && round < 3 && handled < limit; round += 1) {
-      if (!queueSkip(deps, peerNodeId)) break;
-      skipMayBeOwed = await inOrder(peer);
+    let trouble = false;
+    for (const envelope of dueHere) {
+      if (handled >= limit) break;
+      handled += 1;
+      const result = await attempt(peer, envelope);
+      trouble ||= (result.gaveUp && envelope.kind !== "skip") || result.gap;
     }
+    if (!trouble) continue;
+    // The refusal may have said the peer takes skips now: it was updated, and that is the way out of the gap.
+    peer = deps.peerFor(peerNodeId);
+    if (peer !== undefined && takesSkip(peer)) await inOrder(peer, true);
+    // Stuck only while something given up on is still missing there: a gap behind a message still being retried may
+    // yet close, and one a later acknowledgement passed is closed.
+    else if (givenUpOn(deps, peerNodeId)) stuck.add(peerNodeId);
   }
 
   if (deadLettered.length > 0) outcome.deadLettered = deadLettered;

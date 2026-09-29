@@ -1,13 +1,24 @@
 import { afterEach, describe, expect, it } from "vitest";
 
-import { type Instant, type PeerEnvelope } from "@clarkcant/contracts";
+import { type Instant, type PeerEnvelope, type PeerSkipLost, NOTICE_BODY_MAX } from "@clarkcant/contracts";
 import { sendEnvelope } from "@clarkcant/node-link";
-import { MAX_OUTBOX_ATTEMPTS, allRows, createConversation, getPeer, getTask, nextOutboundSequence, upsertTask } from "@clarkcant/storage";
+import {
+  MAX_OUTBOX_ATTEMPTS,
+  allRows,
+  createConversation,
+  deadLetterOutbox,
+  getPeer,
+  getTask,
+  nextOutboundSequence,
+  upsertTask,
+} from "@clarkcant/storage";
 
+import { settleUndeliveredTasks } from "../src/delegation-handlers.ts";
 import { watchPeerOutages } from "../src/peer-outage.ts";
-import { tellSkipped, tellStuck } from "../src/peer-skip.ts";
+import { peerLostNotice, tellSkipped, tellStuck } from "../src/peer-skip.ts";
 import { startPeerDelivery } from "../src/peer-signals.ts";
-import { deliverPending } from "../src/peer-transport.ts";
+import { type DeadLetter, deliverPending } from "../src/peer-transport.ts";
+import { handlePeerUplinkRoutes } from "../src/routes/peers.ts";
 import { type LiveNode, call, identityOf, liveNodes, pair, tokenFor } from "./live-nodes.ts";
 
 /**
@@ -361,6 +372,262 @@ describe("a message given up on, to a peer that takes skips", () => {
       [1, "connect ECONNREFUSED"],
     ]);
   });
+
+  it("gives up on a hand-over queued behind an unreachable peer on its own schedule, even while the one ahead waits out its backoff, and settles it as not run", async () => {
+    const a = await startClark("desk");
+    const b = await startClark("laptop");
+    await pair(a, b);
+    await introduce(a, b);
+    a.services.peerDelivery?.stop();
+    const dialled: string[] = [];
+    const letters: DeadLetter[] = [];
+    const pass = async (): Promise<void> => {
+      const outcome = await deliverPending({
+        db: a.services.runtime.db,
+        identity: identityOf(a),
+        now: a.clock,
+        peerFor: (peerNodeId) => getPeer(a.services.runtime.db, peerNodeId),
+        fetchImpl: (_url, init) => {
+          dialled.push(String(init?.body));
+          return Promise.reject(new Error("connect ECONNREFUSED"));
+        },
+      });
+      letters.push(...(outcome.deadLettered ?? []));
+    };
+    const STEP_MS = 5_000;
+
+    // B goes dark. The head has failed for a while: its backoff is at the cap when the hand-over is queued.
+    const head = queueRaw(a, b, "signal", signalPayload(a, "head"));
+    for (let steps = 0; (rowOf(a, head)?.attempts ?? 0) < 9; steps += 1) {
+      if (steps > 2_000) throw new Error(`the head never reached 9 attempts: ${JSON.stringify(rowOf(a, head))}`);
+      await pass();
+      a.skip(STEP_MS);
+    }
+
+    const at = a.clock();
+    createConversation(a.services.runtime.db, { conversationId: "conv_waiting", homeNodeId: identityOf(a).nodeId, at });
+    upsertTask(a.services.runtime.db, {
+      taskId: "task_waiting",
+      conversationId: "conv_waiting",
+      homeNodeId: identityOf(a).nodeId,
+      executionNodeId: identityOf(b).nodeId,
+      state: "running",
+      revision: 1,
+      goal: "việc thử",
+      createdAt: at,
+      updatedAt: at,
+    });
+    const handOver = queueRaw(a, b, "delegate", { goal: "việc thử" }, "task_waiting");
+    const queuedAt = Date.parse(a.clock());
+    // Checked on every step, across many passes, most of which dial nothing: the head is waiting out its backoff.
+    while (rowOf(a, handOver)?.dead_lettered_at === null) {
+      if (Date.parse(a.clock()) - queuedAt > 3 * 3_600_000) throw new Error(`never given up on: ${JSON.stringify(rowOf(a, handOver))}`);
+      await pass();
+      a.skip(STEP_MS);
+    }
+
+    // Given up on no later than it would have been had it been sent itself: twelve tries, 5 s doubling to a 15 min cap.
+    const givenUpAt = Date.parse(rowOf(a, handOver)?.dead_lettered_at ?? "");
+    expect(givenUpAt - queuedAt).toBeLessThanOrEqual((3_975 + 5) * 1_000);
+    expect(rowOf(a, handOver)).toMatchObject({ attempts: MAX_OUTBOX_ATTEMPTS, last_attempt_at: null });
+    // Never sent: it only waited behind messages that could not reach B.
+    expect(dialled.some((body) => body.includes(handOver))).toBe(false);
+    const letter = letters.find((one) => one.messageId === handOver);
+    expect(letter).toMatchObject({ kind: "delegate", taskId: "task_waiting", refusedByPeer: false, neverSent: true });
+
+    // It never left this node, so it did not run on B: the task failed, rather than being called uncertain.
+    if (letter !== undefined) settleUndeliveredTasks(a.services, a.clock)(letter);
+    expect(getTask(a.services.runtime.db, "task_waiting")?.state).toBe("failed");
+  });
+
+  it("sends every skip a long run of given-up messages needs before what the gap refuses is sent again", async () => {
+    const a = await startClark("desk");
+    const b = await startClark("laptop");
+    await pair(a, b);
+    await introduce(a, b);
+    a.services.peerDelivery?.stop();
+    // More given up on than one skip can list.
+    const at = a.clock();
+    for (let index = 0; index < 120; index += 1) {
+      deadLetterOutbox(a.services.runtime.db, queueRaw(a, b, "signal", signalPayload(a, `lost-${String(index)}`)), at, "given up on for the test");
+    }
+    const next = queueRaw(a, b, "signal", signalPayload(a, "next"));
+    const outcome = await deliverPending({
+      db: a.services.runtime.db,
+      identity: identityOf(a),
+      now: a.clock,
+      peerFor: (peerNodeId) => getPeer(a.services.runtime.db, peerNodeId),
+    });
+
+    const skips = outboxOf(a).filter((row) => row.kind === "skip");
+    expect(skips.map((row) => row.acknowledged_at !== null)).toEqual([true, true, true]);
+    expect(outcome.skipped?.map((report) => report.lost.length)).toEqual([50, 50, 20]);
+    // Refused once for the gap, then sent once it was closed: not resent, and not charged, between the skips.
+    expect(rowOf(a, next)).toMatchObject({ attempts: 2 });
+    expect(rowOf(a, next)?.acknowledged_at).not.toBeNull();
+    expect(received(b, "signal").at(-1)?.message_id).toBe(next);
+  });
+
+  it("tells and audits a skip only once it has read the peer's answer, so a crash or a lost answer cannot lose either", async () => {
+    let cutAnswer = true;
+    // The first skip reaches B, and B takes it, but its answer never arrives whole.
+    const cutting: typeof fetch = async (input, init) => {
+      const response = await fetch(input, init);
+      if (!cutAnswer || !String(init?.body).includes('"kind":"skip"')) return response;
+      cutAnswer = false;
+      await response.text();
+      const broken = new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.error(new Error("connection reset"));
+        },
+      });
+      return new Response(broken, { status: 200, headers: { "content-type": "application/json" } });
+    };
+    const a = await startClark("desk", cutting);
+    const b = await startClark("laptop");
+    await pair(a, b);
+    await introduce(a, b);
+    const peerB = identityOf(b).nodeId;
+    const lost = queueRaw(a, b, "notice", {}, "task_lost");
+    await signal(a, b, "after-1");
+    const explain = (): unknown => ({ outbox: outboxOf(a), inbox: received(b, "skip") });
+    await giveUpOn(a, lost, explain);
+
+    await waitUntil(() => !cutAnswer && received(b, "skip").length === 1, "the skip to reach B", explain);
+    await waitUntil(
+      () => {
+        const row = outboxOf(a).find((one) => one.kind === "skip");
+        return row !== undefined && row.last_error !== null;
+      },
+      "the unread answer",
+      explain,
+    );
+    const skip = outboxOf(a).find((row) => row.kind === "skip");
+    // Not acknowledged on an answer it could not read, and nothing told or audited on it.
+    expect(skip?.acknowledged_at).toBeNull();
+    expect(noticesOn(a, `peer-lost:${peerB}:out:`)).toEqual([]);
+    expect(peerAudit(a)).toEqual([]);
+
+    // Sent again, B answers from its inbox, and only now is it acknowledged, told and audited: once.
+    a.skip(60_000);
+    a.services.peerDelivery?.kick();
+    await waitUntil(() => rowOf(a, skip?.message_id ?? "")?.acknowledged_at !== null, "the skip acknowledged", explain);
+    await waitUntil(() => received(b, "signal").length === 2, "what followed", explain);
+    expect(noticesOn(a, `peer-lost:${peerB}:out:`)).toHaveLength(1);
+    expect(peerAudit(a).map((row) => row.ref)).toEqual([skip?.message_id]);
+    expect(received(b, "skip")).toHaveLength(1);
+  });
+});
+
+describe("the receiving side of a skip", () => {
+  it("is refused unread, and recorded nowhere, by a node that takes no skips", async () => {
+    const a = await startClark("desk");
+    const b = await startClark("laptop");
+    await pair(a, b);
+    const at = new Date().toISOString() as Instant;
+    const response = handlePeerUplinkRoutes({
+      pairing: {
+        db: b.services.runtime.db,
+        identity: b.services.runtime.identity,
+        now: () => at,
+        newId: (prefix) => `${prefix}_test`,
+      },
+      runtime: { dataDir: b.services.runtime.dataDir },
+      request: {
+        method: "POST",
+        path: "/peers/messages",
+        query: {},
+        headers: { authorization: `Bearer ${tokenFor(a, b)}`, "content-type": "application/json" },
+        body: JSON.stringify({
+          protocol: "agent.nodelink",
+          version: 1,
+          messageId: "skip_unwanted",
+          correlationId: "skip_unwanted",
+          senderNodeId: identityOf(a).nodeId,
+          recipientNodeId: identityOf(b).nodeId,
+          kind: "skip",
+          sourceSequence: 1,
+          sentAt: at,
+          payload: { skip: { through: 1, lost: [{ sequence: 1, messageId: "msg_1", kind: "signal" }] } },
+        }),
+      },
+    });
+    expect(response).toMatchObject({ status: 400, body: { code: "UNSUPPORTED_KIND" } });
+    expect(received(b, "skip")).toEqual([]);
+    expect(peerAudit(b)).toEqual([]);
+  });
+
+  it("tells its owner about at most 30 skips a minute from one peer, and still takes and audits the rest", async () => {
+    const a = await startClark("desk");
+    const b = await startClark("laptop");
+    await pair(a, b);
+    await introduce(a, b);
+    const at = new Date().toISOString();
+    for (let sequence = 2; sequence <= 32; sequence += 1) {
+      const answer = await fetch(`${b.base}/peers/messages`, {
+        method: "POST",
+        headers: { "content-type": "application/json", authorization: `Bearer ${tokenFor(a, b)}` },
+        body: JSON.stringify({
+          protocol: "agent.nodelink",
+          version: 1,
+          messageId: `skip_${String(sequence)}`,
+          correlationId: `skip_${String(sequence)}`,
+          senderNodeId: identityOf(a).nodeId,
+          recipientNodeId: identityOf(b).nodeId,
+          kind: "skip",
+          sourceSequence: sequence,
+          sentAt: at,
+          payload: { skip: { through: sequence, lost: [{ sequence, messageId: `msg_${String(sequence)}`, kind: "signal" }] } },
+        }),
+      });
+      expect(answer.status).toBe(200);
+    }
+    expect(received(b, "skip")).toHaveLength(31);
+    expect(peerAudit(b)).toHaveLength(31);
+    expect(noticesOn(b, `peer-lost:${identityOf(a).nodeId}:in:`)).toHaveLength(30);
+  });
+});
+
+describe("what the owner is told about messages given up on", () => {
+  const taskIds = ["a", "b", "c", "d", "e"].map((letter) => `task_${letter.repeat(24)}`);
+  const at = "2026-09-30T04:00:00.000Z" as Instant;
+  const longest = "l".repeat(64);
+
+  it("puts what failed, what was kept and what happens next first, and fits the list of what was lost after it", () => {
+    const lost: PeerSkipLost[] = (["delegate", "result", "approval.response", "input.response", "cancel.request"] as const).map((kind, index) => ({
+      sequence: index + 1,
+      messageId: `msg_${String(index)}`,
+      kind,
+      taskId: taskIds[index] ?? "",
+    }));
+    const out = peerLostNotice({ side: "out", peerNodeId: "node_b", label: longest, through: 5, lost, at }).body ?? "";
+    expect(taskIds.every((id) => id.length === 29)).toBe(true);
+    expect(out.length).toBeLessThanOrEqual(NOTICE_BODY_MAX);
+    expect(out.endsWith(".")).toBe(true);
+    expect(out).toContain("Đã báo cho thiết bị đó; những tin gửi sau vẫn được giữ và gửi tiếp theo thứ tự.");
+    expect(out).toContain("Việc giao đi hoặc lệnh dừng bị mất đã được chốt trong hội thoại của việc đó.");
+    expect(out).toContain("Thiết bị đó chốt việc có kết quả bị mất là chưa rõ.");
+    expect(out).toContain("Câu hỏi, câu trả lời hay việc duyệt bị mất sẽ không gửi lại; bên chờ sẽ chờ tới khi hết hạn.");
+    expect(out).toContain("Nếu vẫn cần, hãy gửi lại. Đã bỏ: ");
+    expect(out.indexOf("Nếu vẫn cần")).toBeLessThan(out.indexOf("Đã bỏ: "));
+
+    const heard = peerLostNotice({ side: "in", peerNodeId: "node_a", label: longest, through: 5, lost, settled: [taskIds[1] ?? ""], at }).body ?? "";
+    expect(heard.length).toBeLessThanOrEqual(NOTICE_BODY_MAX);
+    expect(heard).toContain("những tin khác từ thiết bị đó vẫn được nhận bình thường.");
+    expect(heard).toContain("Việc có kết quả bị mất được chốt là chưa rõ trong hội thoại của việc đó.");
+    expect(heard).toContain("Câu hỏi, câu trả lời hay việc duyệt bị mất sẽ không gửi lại; bên chờ sẽ chờ tới khi hết hạn.");
+  });
+
+  it("says a task was settled only when a hand-over or a stop was lost", () => {
+    const lost: PeerSkipLost[] = [
+      { sequence: 1, messageId: "msg_1", kind: "status", taskId: taskIds[0] ?? "" },
+      { sequence: 2, messageId: "msg_2", kind: "signal" },
+    ];
+    const out = peerLostNotice({ side: "out", peerNodeId: "node_b", through: 2, lost, at }).body ?? "";
+    expect(out).not.toContain("được chốt");
+    expect(out).toContain("Không việc nào phải chốt lại vì các tin này.");
+    expect(out).toContain(`cập nhật trạng thái của việc (việc ${taskIds[0] ?? ""}); tín hiệu.`);
+  });
 });
 
 /** A peer's answers as a build from before skips gives them, while `old()` says so: `skip` is never among its features. */
@@ -413,6 +680,9 @@ describe("a message given up on, to a peer too old to take a skip", () => {
     expect(stuck).toMatchObject({ title: "Ghép cặp với thiết bị khác đang bị kẹt", severity: "error", dismissed_at: null });
     expect(stuck?.body).toContain("thiết bị laptop");
     expect(stuck?.body).toContain("Hãy cập nhật ClarkCant trên thiết bị đó");
+    // What is known, and no more: that device has not said it can skip a lost message.
+    expect(stuck?.body).toContain("thiết bị đó chưa cho biết nó bỏ qua được tin đã mất");
+    expect(stuck?.body).not.toContain("bản cũ");
     expect(noticesOn(a, "peer-lost:")).toEqual([]);
     expect(peerAudit(a)).toEqual([]);
     expect(peerAudit(b)).toEqual([]);

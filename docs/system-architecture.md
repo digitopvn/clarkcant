@@ -398,9 +398,13 @@ The inbox (`apps/runtime/src/inbox.ts`, `routes/inbox.ts`) gathers two things wi
     covering only given-up messages between the highest acknowledged and the lowest still-owed sequence, at most 50.
     The receiver's `receivePeerSkip` moves its cursor (`recordInbox` `closesGap`), settles a lost `result` as uncertain
     (`settleLostResult`), audits (kind `peer`) and records `peer-lost:<peer>:in:<through>`; the sender audits and
-    records `peer-lost:<peer>:out:<through>` (`tellSkipped`). A peer without the feature keeps the old behaviour and its
-    owner gets `peer-stuck:<peer>:<lastAck|never>` (`tellStuck`), dismissed by the outage watch on the next
-    acknowledgement. No migration: `audit_log.kind` is text.
+    records `peer-lost:<peer>:out:<through>` (`tellSkipped`, called through `onSkipped` before the skip's acknowledgement
+    and audit are written in one transaction). Messages waiting behind a peer that cannot be reached are charged on their
+    own schedule (`markOutboxHeldBack`, which leaves `last_attempt_at` unset, so one given up on that way is reported
+    `neverSent` and a hand-over among them settles as failed). A peer without the feature keeps the old behaviour and its
+    owner gets `peer-stuck:<peer>:<lastAck|never>` (`tellStuck`) while a given-up message is still missing there,
+    dismissed by the outage watch on the next acknowledgement; a `400` to a skip other than `SKIP_INVALID` drops the
+    peer's `skip` feature. No migration: `audit_log.kind` is text.
   - **Expired approvals/questions.** An approval or question that expires without a decision drops out of the
     pending list silently — right for the list, but someone who was not looking at that moment would never find
     out. `apps/runtime/src/expiry-notices.ts` sweeps periodically (an unref'd interval, started in `wireRuntime`,

@@ -634,6 +634,12 @@ describe("peer envelope validation (T08, T11)", () => {
       expect(codes(skip(60, { through: 60, lost: tooMany }))).toEqual(["SKIP_INVALID"]);
     });
 
+    it("is refused when its list does not end at its own sequence, so it never moves a cursor past what it accounts for", () => {
+      // Lost 4, but the skip takes slot 5: 5 would be skipped without being named.
+      expect(codes(skip(5, { through: 5, lost: [lost] }))).toEqual(["SKIP_INVALID"]);
+      expect(codes(skip(5, { through: 5, lost: [lost, { ...lost, sequence: 5, messageId: "msg_5" }] }))).toEqual([]);
+    });
+
     it("is refused whole when it carries anything else, a skip of a skip, or a task that is not an id", () => {
       expect(codes(skip(4, { through: 4, lost: [lost], note: "x" }))).toEqual(["SKIP_INVALID"]);
       expect(codes(skip(4, { through: 4, lost: [{ ...lost, kind: "skip" }] }))).toEqual(["SKIP_INVALID"]);

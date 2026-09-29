@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 
-import { type Instant, type PeerEnvelope, type PeerSkipLost, peerSkipSchema } from "@clarkcant/contracts";
+import { type Instant, type PeerEnvelope, type PeerSkipLost, NOTICE_BODY_MAX, peerSkipSchema } from "@clarkcant/contracts";
 import { type Database, appendAuditEvent, countRecentInbox, getPeer, peerCursor, peerDeliveryState } from "@clarkcant/storage";
 
 import { type NodeNotice, type NoticeServices, tryRecordNodeNotice } from "./notices.ts";
@@ -48,20 +48,52 @@ const KIND_WORDS: Record<PeerSkipLost["kind"], string> = {
 /** How many lost messages a notice names one by one; the rest are counted. */
 const NAMED_MAX = 5;
 
-function lostInWords(lost: readonly PeerSkipLost[]): string {
-  const named = lost
-    .slice(0, NAMED_MAX)
-    .map((one) => `${KIND_WORDS[one.kind]}${one.taskId === undefined ? "" : ` (việc ${one.taskId})`}`)
-    .join("; ");
-  return lost.length > NAMED_MAX ? `${named}; và ${String(lost.length - NAMED_MAX)} tin khác` : named;
+const inWords = (one: PeerSkipLost): string => `${KIND_WORDS[one.kind]}${one.taskId === undefined ? "" : ` (việc ${one.taskId})`}`;
+
+/**
+ * The lost messages, named one by one as far as `room` allows and at most `NAMED_MAX`, the rest counted. The guidance
+ * comes before this list in a notice, so it is the list that gives way when the body would run past its bound.
+ */
+function lostInWords(lost: readonly PeerSkipLost[], room: number): string {
+  for (let named = Math.min(lost.length, NAMED_MAX); named >= 0; named -= 1) {
+    const rest = lost.length - named;
+    const parts = lost.slice(0, named).map(inWords);
+    if (rest > 0) parts.push(named === 0 ? howMany(rest) : `và ${String(rest)} tin khác`);
+    const text = parts.join("; ");
+    if (text.length <= room) return text;
+  }
+  return howMany(lost.length);
 }
 
 const howMany = (count: number): string => (count === 1 ? "một tin" : `${String(count)} tin`);
 
 /**
+ * What losing these messages does, and what does not happen, by kind. Only a lost hand-over or stop settles a task,
+ * and only on the side that sent it; a lost result settles the task on the side that handed it out; a lost question,
+ * answer or approval is not sent again, so whoever waits for it waits until the request expires.
+ */
+function consequences(side: "out" | "in", lost: readonly PeerSkipLost[], settled: number): string {
+  const kinds = new Set(lost.map((one) => one.kind));
+  const said: string[] = [];
+  if (side === "out" && (kinds.has("delegate") || kinds.has("cancel.request"))) {
+    said.push("Việc giao đi hoặc lệnh dừng bị mất đã được chốt trong hội thoại của việc đó.");
+  }
+  if (side === "out" && kinds.has("result")) said.push("Thiết bị đó chốt việc có kết quả bị mất là chưa rõ.");
+  if (side === "in" && settled > 0) {
+    said.push("Việc có kết quả bị mất được chốt là chưa rõ trong hội thoại của việc đó.");
+  }
+  if (["input.request", "input.response", "approval.request", "approval.response"].some((kind) => kinds.has(kind as PeerSkipLost["kind"]))) {
+    said.push("Câu hỏi, câu trả lời hay việc duyệt bị mất sẽ không gửi lại; bên chờ sẽ chờ tới khi hết hạn.");
+  }
+  if (said.length === 0) said.push("Không việc nào phải chốt lại vì các tin này.");
+  return said.join(" ");
+}
+
+/**
  * The notice for a run of messages given up on: on the node that gave them up (`out`) or on the one they were for
- * (`in`). What was lost and which task it concerned, that later messages were kept and go on in order, and what the
- * person can do. One per skip: the key names its peer, its side and the last sequence it covered.
+ * (`in`). What failed, what was kept, what it does to the tasks involved and what the person can do come first; the
+ * list of what was lost comes last and is shortened to fit, so the guidance always survives the body's bound. One per
+ * skip: the key names its peer, its side and the last sequence it covered.
  */
 export function peerLostNotice(input: {
   side: "out" | "in";
@@ -76,18 +108,15 @@ export function peerLostNotice(input: {
 }): NodeNotice {
   const name = input.label ?? input.peerNodeId;
   const count = input.lost.length;
-  const them = count === 1 ? "tin này" : "các tin này";
-  const body =
+ const guidance =
     input.side === "out"
-      ? `Máy này đã bỏ ${howMany(count)} gửi tới thiết bị ${name} vì không gửi được sau nhiều lần thử: ${lostInWords(input.lost)}. ` +
-        `Thiết bị đó đã được báo là ${them} bị mất; những tin gửi sau vẫn được giữ và gửi tiếp theo thứ tự. ` +
-        "Việc đã giao liên quan được chốt trong hội thoại của từng việc (thất bại hoặc chưa rõ); nếu vẫn cần, hãy gửi lại."
-      : `Thiết bị ${name} báo đã bỏ ${howMany(count)} gửi tới máy này vì không gửi được sau nhiều lần thử: ${lostInWords(input.lost)}. ` +
-        `Máy này chưa nhận ${count === 1 ? "tin đó" : "các tin đó"} và sẽ không nhận lại; những tin khác từ thiết bị đó vẫn được nhận bình thường. ` +
-        ((input.settled ?? []).length > 0
-          ? "Việc máy này đã giao cho thiết bị đó mà kết quả bị mất được chốt là chưa rõ trong hội thoại của từng việc. "
-          : "") +
-        "Nếu vẫn cần, hãy làm lại hoặc nhờ gửi lại từ thiết bị đó.";
+      ? `Máy này đã bỏ ${howMany(count)} gửi tới thiết bị ${name} vì gửi mãi không được. ` +
+        "Đã báo cho thiết bị đó; những tin gửi sau vẫn được giữ và gửi tiếp theo thứ tự. " +
+        `${consequences("out", input.lost, 0)} Nếu vẫn cần, hãy gửi lại. Đã bỏ: `
+      : `Thiết bị ${name} báo đã bỏ ${howMany(count)} gửi tới máy này vì gửi mãi không được. ` +
+        `Máy này sẽ không nhận được ${count === 1 ? "tin đó" : "các tin đó"}; những tin khác từ thiết bị đó vẫn được nhận bình thường. ` +
+        `${consequences("in", input.lost, (input.settled ?? []).length)} Nếu vẫn cần, hãy làm lại hoặc nhờ gửi lại. Tin đã mất: `;
+  const body = `${guidance}${lostInWords(input.lost, NOTICE_BODY_MAX - guidance.length - 1)}.`;
   return {
     sourceKind: "system",
     category: "alert",
@@ -99,7 +128,6 @@ export function peerLostNotice(input: {
     at: input.at,
   };
 }
-
 /** Tell this node's owner that a peer skipped messages this node gave up on. Never throws into the delivery pass. */
 export function tellSkipped(services: NoticeServices, report: SkipReport, at: Instant): void {
   const label = getPeer(services.runtime.db, report.peerNodeId)?.label;
@@ -127,8 +155,8 @@ export function peerStuckKey(peerNodeId: string, lastAcknowledgedAt: Instant | n
 }
 
 /**
- * The notice that a pairing is stuck: this node gave up on a message to a peer too old to take a skip, so that peer
- * refuses everything after it. What happened, what is kept, and that updating ClarkCant there is what frees it.
+ * The notice that a pairing is stuck: this node gave up on a message to a peer that has not said it takes a skip, so
+ * that peer refuses everything after it. What happened, what is kept, and that updating ClarkCant there is what frees it.
  */
 export function peerStuckNotice(input: { peerNodeId: string; label?: string; lastAcknowledgedAt: Instant | null; at: Instant }): NodeNotice {
   const name = input.label ?? input.peerNodeId;
@@ -138,7 +166,7 @@ export function peerStuckNotice(input: { peerNodeId: string; label?: string; las
     severity: "error",
     title: "Ghép cặp với thiết bị khác đang bị kẹt",
     body:
-      `Máy này đã bỏ ít nhất một tin gửi tới thiết bị ${name} sau nhiều lần thử, và ClarkCant trên thiết bị đó là bản cũ, chưa biết bỏ qua tin đã mất: ` +
+      `Máy này đã bỏ ít nhất một tin gửi tới thiết bị ${name} sau nhiều lần thử, và thiết bị đó chưa cho biết nó bỏ qua được tin đã mất: ` +
       "nó sẽ từ chối mọi tin gửi sau từ máy này. Những tin còn lại vẫn nằm trong hàng đợi trên máy này và còn được thử lại một thời gian. " +
       "Hãy cập nhật ClarkCant trên thiết bị đó: khi có tin gửi tới, máy này sẽ tự báo cho nó những gì đã mất rồi gửi tiếp. " +
       "Thông báo này tự đóng khi thiết bị đó nhận được tin từ máy này.",

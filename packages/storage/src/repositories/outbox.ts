@@ -41,6 +41,30 @@ export function markOutboxAttempt(db: Database, messageId: string, at: Instant):
   db.prepare("UPDATE outbox SET attempts = attempts + 1, last_attempt_at = ? WHERE message_id = ?").run(at, messageId);
 }
 
+/**
+ * Count an attempt against a message that was not sent, because the one ahead of it could not reach the peer: it is
+ * counted towards giving up on its own schedule, as it would be had it been sent. `last_attempt_at` is left as it was,
+ * since nothing was transmitted, so a message never sent keeps none and can be told apart from one that was.
+ */
+export function markOutboxHeldBack(db: Database, messageId: string): void {
+  db.prepare("UPDATE outbox SET attempts = attempts + 1 WHERE message_id = ?").run(messageId);
+}
+
+/** Where one message's retries stand: how often it was counted, when it was last sent, if ever, and why it last failed. */
+export function outboxRetryState(
+  db: Database,
+  messageId: string,
+): { attempts: number; lastAttemptAt: Instant | null; lastError: string | null } | undefined {
+  const row = oneRow<{ attempts: number; last_attempt_at: string | null; last_error: string | null }>(
+    db,
+    "SELECT attempts, last_attempt_at, last_error FROM outbox WHERE message_id = ?",
+    messageId,
+  );
+  return row === undefined
+    ? undefined
+    : { attempts: row.attempts, lastAttemptAt: (row.last_attempt_at ?? null) as Instant | null, lastError: row.last_error ?? null };
+}
+
 export function markOutboxAcknowledged(db: Database, messageId: string, at: Instant): void {
   db.prepare("UPDATE outbox SET acknowledged_at = ? WHERE message_id = ?").run(at, messageId);
 }

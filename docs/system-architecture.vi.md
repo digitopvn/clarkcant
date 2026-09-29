@@ -410,9 +410,13 @@ Hộp thư (`apps/runtime/src/inbox.ts`, `routes/inbox.ts`) gom hai thứ khác 
     message đã bị bỏ nằm giữa số thứ tự cao nhất đã được xác nhận và số thấp nhất còn đang nợ, tối đa 50. Hàm
     `receivePeerSkip` của bên nhận dời cursor (`recordInbox` `closesGap`), chốt một `result` bị mất là chưa rõ
     (`settleLostResult`), ghi audit (kind `peer`) và ghi `peer-lost:<peer>:in:<through>`; bên gửi ghi audit và ghi
-    `peer-lost:<peer>:out:<through>` (`tellSkipped`). Một peer không có feature này giữ hành vi cũ và chủ của bên gửi
-    nhận `peer-stuck:<peer>:<lastAck|never>` (`tellStuck`), được outage watch đóng ở lần xác nhận kế tiếp. Không cần
-    migration: `audit_log.kind` là text.
+    `peer-lost:<peer>:out:<through>` (`tellSkipped`, được gọi qua `onSkipped` trước khi xác nhận và audit của skip được
+    ghi trong cùng một transaction). Các message chờ sau một peer không liên lạc được bị tính theo lịch của chính chúng
+    (`markOutboxHeldBack`, vốn để trống `last_attempt_at`, nên một message bị bỏ theo cách đó được báo `neverSent` và
+    một lần giao việc trong số đó được chốt là thất bại). Một peer không có feature này giữ hành vi cũ và chủ của bên gửi
+    nhận `peer-stuck:<peer>:<lastAck|never>` (`tellStuck`) khi một message đã bỏ vẫn còn thiếu ở đó, được outage watch
+    đóng ở lần xác nhận kế tiếp; một phản hồi `400` cho skip với mã khác `SKIP_INVALID` gỡ feature `skip` của peer đó.
+    Không cần migration: `audit_log.kind` là text.
   - **Approval/câu hỏi hết hạn.** Một approval/câu hỏi hết hạn mà không ai quyết định thì rơi khỏi danh sách việc
     chờ trong im lặng — đúng thiết kế cho danh sách, nhưng người không nhìn vào lúc đó sẽ không bao giờ biết. `apps/runtime/src/expiry-notices.ts` quét định kỳ (interval
     unref, khởi động trong `wireRuntime`, dừng khi node đóng) những approval còn `pending` đã qua `expires_at` và câu
