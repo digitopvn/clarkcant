@@ -12,7 +12,7 @@ import { MIGRATIONS, migrate, openDatabase, type Database } from "../src/index.t
  * (Clark Default) answers for it.
  */
 
-const VERSION = 35;
+const VERSION = 36;
 
 type PreferenceRow = {
   principal_id: string;
@@ -73,7 +73,7 @@ function legacy(principal: string, value: string, extra: Partial<PreferenceRow> 
   };
 }
 
-describe("migration 35: split_theme_preference_into_color_scheme", () => {
+describe("migration 36: split_theme_preference_into_color_scheme", () => {
   it("carries every stored choice across unchanged, with its provenance and Undo", () => {
     const db = databaseBeforeSplit();
     insert(db, legacy("prin_dark", "dark", { revision: 3, previous_value: JSON.stringify("light"), source: "voice" }));

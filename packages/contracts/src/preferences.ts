@@ -601,8 +601,9 @@ const normalizeNameList = (value: unknown): string[] | undefined => {
 export const PREFERENCE_REGISTRY = {
   /*
    * The theme and the colour scheme are two preferences, not one. `experience.theme` held `system | light | dark`,
-   * which is only a colour scheme; storage migration 35 carried every stored value of it into `experience.colorScheme`
-   * unchanged, and nobody has chosen a theme yet, so `experience.themeRef` starts at Clark Default for everyone.
+   * which is only a colour scheme; storage migration 36 carried every valid stored value of it into
+   * `experience.colorScheme` unchanged, and nobody has chosen a theme yet, so `experience.themeRef` starts at Clark
+   * Default for everyone.
    */
   "experience.themeRef": {
     key: "experience.themeRef",
