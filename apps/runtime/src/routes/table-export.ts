@@ -96,15 +96,17 @@ export function exportTableCsv(services: Pick<NodeServices, "runtime" | "conduct
   const document = dataset.document;
   const rows: unknown[] = isRecord(document) && Array.isArray(document.rows) ? document.rows : [];
 
-  const columns = exportColumns(normalizeTableColumns(instance.props.columns, rows), input.body.columns);
+  // The rows are chosen over the table's own columns, exactly as the page chose them: searching and sorting see every
+  // column the table shows. The requested keys only decide which of those columns the file carries.
+  const own = normalizeTableColumns(instance.props.columns, rows);
   const view = tableView(rows, {
-    columns,
+    columns: own,
     rowIdField: instance.props.rowIdField,
     sort: input.body.sort,
     query: input.body.query,
     filters: input.body.filters,
   });
-  const csv = `${BOM}${toCsv(view.columns, view.rows.map((entry) => entry.row))}`;
+  const csv = `${BOM}${toCsv(exportColumns(view.columns, input.body.columns), view.rows.map((entry) => entry.row))}`;
 
   return {
     status: 200,

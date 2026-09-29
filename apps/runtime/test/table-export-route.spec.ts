@@ -134,6 +134,18 @@ describe("the table export route", () => {
     expect(csv.slice(1)).toBe("note,name\r\nplain,Hà Nội\r\n");
   });
 
+  it("chooses rows over every column the table shows, whichever columns the file carries", async () => {
+    // "Huế" is in the name column, which the file leaves out; the row still matches, as it does on screen, and the
+    // sort by a column the file leaves out still orders it.
+    const csv = csvOf(
+      await exportOf(table(), { query: "hue", sort: { column: "name", direction: "asc" }, columns: ["amount"] }),
+    );
+    expect(csv.slice(1)).toBe("Số tiền\r\n40\r\n");
+    const sorted = csvOf(await exportOf(table(), { sort: { column: "name", direction: "asc" }, columns: ["amount"] }));
+    // An Giang, Đồng Nai, Hà Nội, Huế.
+    expect(sorted.slice(1)).toBe("Số tiền\r\n-5\r\n12\r\n3\r\n40\r\n");
+  });
+
   it("never takes rows or a dataset from the request", async () => {
     upsertDataset(services.runtime.db, {
       datasetId: "dataset_other",
