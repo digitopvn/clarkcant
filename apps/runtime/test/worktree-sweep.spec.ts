@@ -42,24 +42,28 @@ function taskIn(state: "open" | "cancelled"): string {
   return task.taskId;
 }
 
-async function worktreeFor(taskId: string): Promise<{ path: string; branch: string }> {
-  const made = await ensureManagedWorktree({ repoPath: repo, worktreesDir: join(dir, "worktrees"), taskId });
+async function worktreeFor(taskId: string, repoPath = repo): Promise<{ path: string; branch: string }> {
+  const made = await ensureManagedWorktree({ repoPath, worktreesDir: join(dir, "worktrees"), taskId });
   if (!made.ok) throw new Error(made.message);
   return made.worktree;
+}
+
+function makeRepo(path: string): string {
+  execFileSync("git", ["init", "--initial-branch=main", path], { stdio: "ignore" });
+  git(path, ["config", "user.email", "test@example.invalid"]);
+  git(path, ["config", "user.name", "Test"]);
+  git(path, ["config", "core.autocrlf", "false"]);
+  writeFileSync(join(path, "readme.txt"), "original\n", "utf8");
+  git(path, ["add", "."]);
+  git(path, ["commit", "-m", "initial"]);
+  return path;
 }
 
 beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), "clarkcant-sweep-"));
   services = bootNodeServices({ dataDir: dir, label: "sweep node" });
   createConversation(services.runtime.db, { conversationId: CONVERSATION_ID, homeNodeId: services.runtime.identity.nodeId, at: AT });
-  repo = join(dir, "repo");
-  execFileSync("git", ["init", "--initial-branch=main", repo], { stdio: "ignore" });
-  git(repo, ["config", "user.email", "test@example.invalid"]);
-  git(repo, ["config", "user.name", "Test"]);
-  git(repo, ["config", "core.autocrlf", "false"]);
-  writeFileSync(join(repo, "readme.txt"), "original\n", "utf8");
-  git(repo, ["add", "."]);
-  git(repo, ["commit", "-m", "initial"]);
+  repo = makeRepo(join(dir, "repo"));
 });
 
 afterEach(() => {
@@ -113,6 +117,45 @@ describe("the worktrees a stopped node left behind", () => {
     expect(sweep).toEqual({ removed: [], kept: [] });
     expect(existsSync(open.path)).toBe(true);
     expect(existsSync(unknown.path)).toBe(true);
+  });
+
+  it("tidies each repository's worktree of a finished task, and says once where the kept ones are", async () => {
+    const other = makeRepo(join(dir, "other"));
+    const third = makeRepo(join(dir, "third"));
+    const taskId = taskIn("cancelled");
+    const clean = await worktreeFor(taskId);
+    const dirtyA = await worktreeFor(taskId, other);
+    const dirtyB = await worktreeFor(taskId, third);
+    writeFileSync(join(dirtyA.path, "readme.txt"), "not committed\n", "utf8");
+    writeFileSync(join(dirtyB.path, "readme.txt"), "not committed either\n", "utf8");
+
+    const sweep = await sweepTaskWorktrees(services, { worktreesDir: join(dir, "worktrees"), now: () => AT });
+    await sweepTaskWorktrees(services, { worktreesDir: join(dir, "worktrees"), now: () => AT });
+
+    expect(sweep.removed).toEqual([clean.path]);
+    expect(sweep.kept.map((kept) => kept.path).sort()).toEqual([dirtyA.path, dirtyB.path].sort());
+    expect(existsSync(clean.path)).toBe(false);
+    // The task's folder stays while it still holds what was kept.
+    expect(existsSync(dirtyA.path) && existsSync(dirtyB.path)).toBe(true);
+    expect(listNotifications(services.runtime.db, services.runtime.identity.ownerPrincipalId)).toHaveLength(1);
+    const said = allRows<{ document: string }>(services.runtime.db, "SELECT document FROM messages WHERE conversation_id = ?", CONVERSATION_ID)
+      .map((row) => row.document)
+      .filter((document) => document.includes("để lại thay đổi chưa commit"));
+    expect(said).toHaveLength(1);
+    for (const path of [dirtyA.path, dirtyB.path]) expect(said[0]).toContain(JSON.stringify(path).slice(1, -1));
+  });
+
+  it("takes a finished task's folder away once every worktree in it is gone", async () => {
+    const other = makeRepo(join(dir, "other"));
+    const taskId = taskIn("cancelled");
+    await worktreeFor(taskId);
+    await worktreeFor(taskId, other);
+
+    const sweep = await sweepTaskWorktrees(services, { worktreesDir: join(dir, "worktrees"), now: () => AT });
+
+    expect(sweep.removed).toHaveLength(2);
+    expect(existsSync(join(dir, "worktrees", taskId))).toBe(false);
+    expect(listNotifications(services.runtime.db, services.runtime.identity.ownerPrincipalId)).toEqual([]);
   });
 
   it("does nothing on a node that has never made a worktree", async () => {

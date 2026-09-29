@@ -64,8 +64,8 @@ function git(cwd: string, args: string[]): string {
   return execFileSync("git", args, { cwd, encoding: "utf8" }).trim();
 }
 
-function makeRepo(parent: string): string {
-  const path = join(parent, "repo");
+function makeRepo(parent: string, name = "repo"): string {
+  const path = join(parent, name);
   mkdirSync(path, { recursive: true });
   git(path, ["init", "--initial-branch=main"]);
   git(path, ["config", "user.email", "test@example.invalid"]);
@@ -350,6 +350,62 @@ describe("a repository is worked on in the task's own worktree", () => {
     expect(existsSync(givenRoots[0] ?? "")).toBe(false);
     expect(kept).toEqual([]);
   }, 40_000);
+
+  it("gives each repository of one task its own worktree, and takes them all away when it ends", async () => {
+    const { runtime, conductor } = testNode();
+    const owned = tempDir("cc-scoped-owned-");
+    const app = makeRepo(owned, "app");
+    const docs = makeRepo(owned, "docs");
+    for (const repo of [app, docs]) writeFileSync(join(repo, "readme.txt"), "a person's unsaved thought\n", "utf8");
+    const worktreesDir = join(tempDir("cc-scoped-data-"), "worktrees");
+    const task = dispatchedTask(conductor, runtime.identity.nodeId, {
+      origin: AUTOMATION,
+      resources: [
+        { kind: "repository", path: app },
+        { kind: "repository", path: docs },
+      ],
+    });
+
+    const settled: { outcome: string; message: string }[] = [];
+    const kept: string[] = [];
+    let given: { read: readonly string[]; write: readonly string[] } = { read: [], write: [] };
+    const dispatcher = createTaskDispatcher({
+      conductor,
+      projectRoots: () => [owned],
+      ownedRoots: () => [owned],
+      worktreesDir: () => worktreesDir,
+      commandDeps: () => commandDeps(owned),
+      onWorktreeKept: (input) => kept.push(input.path),
+      onSettled: (input) => settled.push({ outcome: input.outcome, message: input.message }),
+      // The worker changes and commits in each worktree it was given.
+      runWorker: async (options) => {
+        given = { read: options.brief.projectRoots, write: options.brief.writableRoots ?? [] };
+        for (const path of options.brief.writableRoots ?? []) {
+          writeFileSync(join(path, "readme.txt"), "the task's change\n", "utf8");
+          git(path, ["commit", "-am", "task change"]);
+        }
+        return verifiedResult();
+      },
+    });
+    dispatcher.dispatch({ taskId: task.taskId, capabilityRef: CONTROLLED_CODE_TASK.ref, executionNodeId: runtime.identity.nodeId });
+    await waitUntil(() => settled.length > 0, 10_000);
+
+    expect(settled[0]?.outcome).toBe("succeeded");
+    expect(given.write).toHaveLength(2);
+    expect(given.write[0]).not.toBe(given.write[1]);
+    expect(given.write.every((path) => path.startsWith(join(worktreesDir, task.taskId)))).toBe(true);
+    expect(given.read).toEqual(given.write);
+    const branch = managedBranchFor(task.taskId);
+    for (const repo of [app, docs]) {
+      expect(git(repo, ["show", `${branch}:readme.txt`])).toBe("the task's change");
+      expect(git(repo, ["rev-parse", "--abbrev-ref", "HEAD"])).toBe("main");
+      expect(readFileSync(join(repo, "readme.txt"), "utf8")).toBe("a person's unsaved thought\n");
+    }
+    // Both clean worktrees go when the task ends, and so does the task's folder that held them.
+    await waitUntil(() => !existsSync(join(worktreesDir, task.taskId)) || kept.length > 0, 10_000);
+    expect(kept).toEqual([]);
+    expect(existsSync(join(worktreesDir, task.taskId))).toBe(false);
+  }, 30_000);
 
   it("refuses a repository task on a node that keeps no place for worktrees, rather than working in place", async () => {
     const { runtime, conductor } = testNode();
