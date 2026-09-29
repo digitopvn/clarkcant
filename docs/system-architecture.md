@@ -552,7 +552,9 @@ The inbox (`apps/runtime/src/inbox.ts`, `routes/inbox.ts`) gathers two things wi
       reads the version from the stored subject — the body is ignored — writes a `skipped_versions` row for this
       principal, and dismisses the notice; `unskip-version` deletes the row and restores the notice. `checkForUpdates`
       reports nothing at or below a skipped version, and still reports anything newer. `409 NOT_AN_UPDATE` for a
-      notice that names no version.
+      notice that names no version. `GET /inbox` → `skippedVersions` lists this principal's rows, newest first, for the
+      panel's "Skipped versions" list; `DELETE /inbox/skipped-versions/:kind/:name/:version` deletes one from there,
+      so a skip can be taken back after its notice is gone.
     - `ask-again` on a `question` notice (written by the expiry sweep) while the question is expired, not asked again,
       and its conversation exists. `POST /conversations/:id/questions/:qid/ask-again` creates a new question with the
       same prompt and options, records `decision: "asked-again"` (with `askedAs`) on the old one, and dismisses the

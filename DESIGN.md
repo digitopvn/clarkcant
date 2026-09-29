@@ -542,7 +542,9 @@ Shipped:
       Settings → Extensions. A version from a local folder offers only Review, because only the person knows which
       folder to install from. **Skip this version**, under "More", stops notifications about that version and older
       ones of that package (or of Pi) for this person, removes the notification, and offers Undo; a newer version is
-      still reported. Once the package is updated or removed, "More" says so instead of offering Update.
+      still reported. A collapsed "Skipped versions" list beside "Quieted kinds" names each skipped version, and its
+      Undo takes the skip back even after the notification is gone. Once the package is updated or removed, "More"
+      says so instead of offering Update.
     - **Ask again** leads on the notification about a question nobody answered in time, while its conversation exists
       and it has not been asked again. It asks the same question in the same conversation, and the new card waits in
       "Waiting on you". The old card says it was asked again, and an expired card says it expired; neither claims an

@@ -781,12 +781,36 @@ test("an update notice updates through the install route, opens Settings to revi
   // Skipping the version takes the notice out; Undo brings it back and the version is reported again.
   const more = row.locator(`[data-inbox-more="${noticeId}"]`);
   await more.click();
-  await row.locator(`[data-inbox-skip-version="${noticeId}"]`).click();
+  const skip = row.locator(`[data-inbox-skip-version="${noticeId}"]`);
+  await expect(skip).toHaveAttribute("aria-label", "Bỏ qua phiên bản này: Có bản cập nhật: com.example.notes");
+  await skip.click();
   await expect(row).toHaveCount(0, { timeout: 10_000 });
   await expect(dialog.locator('[data-inbox-status="done"]')).toHaveText("Sẽ không báo về bản 1.0.1 nữa; bản mới hơn vẫn được báo.");
+  const skipped = dialog.locator("[data-inbox-skipped-versions]");
+  const skippedRow = skipped.locator('[data-inbox-skipped-version="package:com.example.notes@1.0.1"]');
+  await expect(skipped).toBeVisible();
   await dialog.locator(`[data-inbox-undo="${noticeId}"]`).click();
   await expect(row).toBeVisible({ timeout: 10_000 });
   await expect(dialog.locator('[data-inbox-status="done"]')).toHaveText("Sẽ báo lại về bản này.");
+  await expect(skippedRow).toHaveCount(0);
+
+  // A skip outlasts the status line's Undo: it is listed with the quieted kinds, and taken back from there.
+  await more.click();
+  await skip.click();
+  await expect(row).toHaveCount(0, { timeout: 10_000 });
+  await skipped.locator("summary").click();
+  await expect(skippedRow).toContainText("Gói “com.example.notes”, bản 1.0.1");
+  const undoSkip = skippedRow.locator("[data-inbox-remove-skipped-version]");
+  await expect(undoSkip).toHaveAttribute("aria-label", "Hoàn tác bỏ qua: Gói “com.example.notes”, bản 1.0.1");
+  await undoSkip.click();
+  await expect(dialog.locator('[data-inbox-status="done"]')).toHaveText("Sẽ báo lại về bản này.");
+  await expect(skippedRow).toHaveCount(0);
+  // The notice itself was dismissed by the skip; bring it back for the rest of the journey.
+  expect((await page.request.post(`${GATEWAY}/inbox/notices/${noticeId}/restore`, { headers })).ok()).toBe(true);
+  await page.keyboard.press("Escape");
+  await expect(dialog).toHaveCount(0);
+  await page.locator("[data-inbox-mark]").click();
+  await expect(row).toBeVisible({ timeout: 10_000 });
 
   // Review closes the inbox and opens Settings on the installed extensions.
   await row.locator(`[data-inbox-review-update="${noticeId}"]`).click();

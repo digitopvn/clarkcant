@@ -15,7 +15,7 @@ import {
   getConversation,
   getTask,
   getWorkRun,
-  latestMessages,
+  latestMessagesContaining,
   oneRow,
 } from "@clarkcant/storage";
 
@@ -82,10 +82,12 @@ export function noticeActionsFor(
     if (canOpen) actions.push({ id: "open", placement: "menu" });
   } else {
     // Lead with what can be done about the thing, then the usual pair; the first two are buttons, the rest go to "More".
+    // "Dismiss" stands in for "Open" only as a button: pushed into "More" by an operation, it keeps its usual place
+    // there, after "Add to context" and the rest.
     const leading: NoticeActionId[] = [
       ...operations.lead,
       ...(look ? (["open", "ask-clark"] as const) : (["ask-clark", canOpen ? "open" : "dismiss"] as const)),
-    ];
+    ].filter((id, index) => index < 2 || id !== "dismiss");
     for (const [index, id] of leading.entries()) {
       actions.push({ id, placement: index === 0 ? "primary" : index === 1 ? "secondary" : "menu" });
     }
@@ -175,7 +177,7 @@ function subjectOperations(
       return { lead: [], menu: ["skip-version"], unavailable: [] };
     case "question": {
       if (!conversationExists) return NONE;
-      const state = askAgainState(recentBlocks(db, subject.conversationId), subject.questionId, context.now);
+      const state = askAgainState(questionBlocks(db, subject.conversationId, subject.questionId), subject.questionId, context.now);
       return state === "expired" ? { lead: ["ask-again"], menu: [], unavailable: [] } : NONE;
     }
     case "task":
@@ -209,8 +211,15 @@ export function installedVersion(db: Database, nodeId: string, packageId: string
  */
 const QUESTION_WINDOW_MESSAGES = 2000;
 
-function recentBlocks(db: Database, conversationId: string): MessageBlock[] {
-  return latestMessages(db, conversationId, QUESTION_WINDOW_MESSAGES).flatMap((message) => message.blocks);
+/**
+ * The blocks of the messages in that window that name this question: its card and every record of what became of it,
+ * which is all `askAgainState` reads. Each carries the id as `"questionId":"…"` in its stored document (the card as its
+ * own field, a record in its arguments), so only those messages are parsed — an inbox read with several expired
+ * questions does not parse a whole long transcript for each.
+ */
+function questionBlocks(db: Database, conversationId: string, questionId: string): MessageBlock[] {
+  const needle = `"questionId":${JSON.stringify(questionId)}`;
+  return latestMessagesContaining(db, conversationId, needle, QUESTION_WINDOW_MESSAGES).flatMap((message) => message.blocks);
 }
 
 /**

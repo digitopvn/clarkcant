@@ -39,6 +39,7 @@ import {
   type InboxResponse,
   type InboxSummary,
   type NoticeSuppression,
+  type SkippedVersion,
   type MemoryRecord,
   type RegisteredPreference,
   type SemanticProposal,
@@ -1833,7 +1834,6 @@ export class GatewayClient {
     return this.#call("POST", `/inbox/notices/${encodeURIComponent(noticeId)}/unsnooze`);
   }
 
-  /** Stops notifying about notices of this one's kind; they still arrive in the list, already read. */
   /** Stops reporting the version an update notice names, and anything older; the notice leaves the list. */
   skipNoticeVersion(noticeId: string): Promise<{ skipped: true; name: string; version: string }> {
     return this.#call("POST", `/inbox/notices/${encodeURIComponent(noticeId)}/skip-version`);
@@ -1844,6 +1844,13 @@ export class GatewayClient {
     return this.#call("POST", `/inbox/notices/${encodeURIComponent(noticeId)}/unskip-version`);
   }
 
+  /** Takes a skip back from the list of skipped versions, whether or not its notice is still around. */
+  removeSkippedVersion(skip: Pick<SkippedVersion, "subjectKind" | "name" | "version">): Promise<{ removed: true }> {
+    const path = [skip.subjectKind, skip.name, skip.version].map(encodeURIComponent).join("/");
+    return this.#call("DELETE", `/inbox/skipped-versions/${path}`);
+  }
+
+  /** Stops notifying about notices of this one's kind; they still arrive in the list, already read. */
   suppressNoticeKind(noticeId: string): Promise<{ suppression: NoticeSuppression }> {
     return this.#call("POST", `/inbox/notices/${encodeURIComponent(noticeId)}/suppress`);
   }

@@ -217,10 +217,12 @@ what it was started with or why it failed; its `serviceKey` also names the packa
 makes an earlier reference stale.
 
 The inbox routes are reachable with the same token but are **not** in `/openapi.json` yet and may change: `GET /inbox`
-(what waits on the person, the notices, the notices snoozed for later and the kinds quieted), `GET /inbox/summary`,
+(what waits on the person, the notices, the notices snoozed for later, the kinds quieted and the versions skipped),
+`GET /inbox/summary`,
 `POST /inbox/read` and `/inbox/unread`, per notice `POST /inbox/notices/:id/<action>` where the action is `dismiss`,
 `restore`, `snooze`, `unsnooze`, `suppress`, `unsuppress`, `skip-version` or `unskip-version`, and
-`DELETE /inbox/suppressions/:id`. `snooze` takes `{ "until": "<ISO instant>" }`, ahead of
+`DELETE /inbox/suppressions/:id`, plus `DELETE /inbox/skipped-versions/:kind/:name/:version` (`package` or `pi`, each part
+URL-encoded) to take a skip back from the list, even after its notice is gone. `snooze` takes `{ "until": "<ISO instant>" }`, ahead of
 now and at most 30 days away (else `400 SNOOZE_OUT_OF_RANGE`); the notice leaves the list and the unread count and comes
 back unread once that time has passed; `unsnooze` returns it at once, read or unread as it was before. `suppress` quiets
 the notice's kind for this principal: later notices of that kind are still listed but arrive read and raise no

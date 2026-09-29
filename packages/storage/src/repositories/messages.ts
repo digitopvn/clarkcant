@@ -58,6 +58,37 @@ export function latestMessages(db: Database, conversationId: string, limit: numb
   return rows.reverse().map((row) => parseJson<MessageRecord>(row.document, "messages.document"));
 }
 
+/**
+ * Of the newest `window` messages of one conversation, the ones whose stored document contains `needle`, oldest
+ * first.
+ *
+ * For a reader after the few messages about one thing — a question's card and what became of it — in a long
+ * transcript. The match runs over the stored text in SQLite, so only matching messages are parsed. The window is the
+ * one `latestMessages(db, conversationId, window)` reads, so a reader using this sees what one parsing all of those
+ * messages would see of that thing.
+ */
+export function latestMessagesContaining(
+  db: Database,
+  conversationId: string,
+  needle: string,
+  window: number,
+): MessageRecord[] {
+  const rows = allRows<{ document: string }>(
+    db,
+    `SELECT document FROM (
+       SELECT document, sequence FROM messages
+        WHERE conversation_id = ?
+        ORDER BY sequence DESC LIMIT ?
+     )
+     WHERE instr(document, ?) > 0
+     ORDER BY sequence ASC`,
+    conversationId,
+    window,
+    needle,
+  );
+  return rows.map((row) => parseJson<MessageRecord>(row.document, "messages.document"));
+}
+
 export function conversationMetadata(
   db: Database,
   conversationId: string,

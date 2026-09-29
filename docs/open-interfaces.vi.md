@@ -218,10 +218,12 @@ chỉ mang trạng thái (đang chạy, đang lỗi, chưa chạy), không bao g
 `serviceKey` của nó còn gắn với thế hệ gói đang chạy nó, nên một bản cập nhật làm tham chiếu cũ hết hiệu lực.
 
 Các route hộp thư gọi được với cùng token nhưng **chưa** có trong `/openapi.json` và có thể thay đổi: `GET /inbox`
-(những gì đang chờ người dùng, các thông báo, các thông báo đang hoãn và các loại đang tắt báo), `GET /inbox/summary`,
+(những gì đang chờ người dùng, các thông báo, các thông báo đang hoãn, các loại đang tắt báo và các phiên bản đã bỏ
+qua), `GET /inbox/summary`,
 `POST /inbox/read` và `/inbox/unread`, với từng thông báo là `POST /inbox/notices/:id/<action>` trong đó action là
 `dismiss`, `restore`, `snooze`, `unsnooze`, `suppress`, `unsuppress`, `skip-version` hoặc `unskip-version`, và
-`DELETE /inbox/suppressions/:id`.
+`DELETE /inbox/suppressions/:id` cùng `DELETE /inbox/skipped-versions/:kind/:name/:version` (`package` hoặc `pi`, mỗi phần
+được URL-encode) để rút lại một lần bỏ qua từ danh sách, kể cả khi thông báo của nó đã không còn.
 `snooze` nhận `{ "until": "<ISO instant>" }`, nằm sau hiện tại và không xa quá 30 ngày (nếu không thì
 `400 SNOOZE_OUT_OF_RANGE`); thông báo rời khỏi danh sách và số chưa đọc, rồi quay lại ở trạng thái chưa đọc khi đã qua
 thời điểm đó; `unsnooze` đưa nó trở lại ngay, đã đọc hay chưa đọc như trước khi hoãn. `suppress` tắt báo loại của thông

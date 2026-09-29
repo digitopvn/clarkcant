@@ -533,8 +533,9 @@ phải một nơi điều hướng thứ hai. Mỗi mục trỏ về hội tho�
       chữ, thông báo ở lại, và bản đang cài giữ nguyên. Xem trong Cài đặt đóng hộp thư và mở Cài đặt → Tiện ích. Bản
       đến từ một thư mục cục bộ chỉ có Xem trong Cài đặt, vì chỉ người dùng biết cài từ thư mục nào. **Bỏ qua phiên
       bản này**, trong "Khác", ngừng báo về bản đó và các bản cũ hơn của gói đó (hoặc của Pi) cho người này, gỡ thông
-      báo và đưa ra Hoàn tác; bản mới hơn vẫn được báo. Khi gói đã được cập nhật hoặc gỡ, "Khác" nói rõ điều đó thay
-      vì đưa ra Cập nhật.
+      báo và đưa ra Hoàn tác; bản mới hơn vẫn được báo. Danh sách "Phiên bản đã bỏ qua" thu gọn, cạnh "Loại không
+      báo", nêu tên từng bản đã bỏ qua, và nút Hoàn tác ở đó rút lại việc bỏ qua kể cả khi thông báo đã không còn. Khi
+      gói đã được cập nhật hoặc gỡ, "Khác" nói rõ điều đó thay vì đưa ra Cập nhật.
     - **Hỏi lại** đứng đầu ở thông báo về một câu hỏi không ai trả lời kịp, khi hội thoại của nó còn và câu hỏi chưa
       được hỏi lại. Nó hỏi đúng câu hỏi đó trong cùng hội thoại, và thẻ mới chờ trong "Đang chờ bạn". Thẻ cũ nói rằng
       câu hỏi đã được hỏi lại, và thẻ hết hạn nói rằng câu hỏi đã hết hạn; không thẻ nào nói là đã ghi nhận câu trả

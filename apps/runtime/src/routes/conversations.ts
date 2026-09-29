@@ -1215,7 +1215,8 @@ export async function handleConversationRoutes(deps: ConversationRouteDeps): Pro
    * while it is still open, once it was answered or dropped, and once it was already asked again (`askQuestionAgain`).
    * The notice that said it expired is dismissed: the new card is now the thing waiting.
    */
-  if (segments.length === 5 && segments[2] === "questions" && segments[4] === "ask-again" && request.method === "POST") {
+  if (segments.length === 5 && segments[2] === "questions" && segments[4] === "ask-again") {
+    if (request.method !== "POST") return fail(405, "METHOD_NOT_ALLOWED", "a question is asked again with POST");
     const questionId = segments[3];
     if (questionId === undefined) return fail(400, "INVALID_SCHEMA", "asking again needs the question it repeats");
     const asked = askQuestionAgain(interactionDepsFor(services, conversationId), questionId);

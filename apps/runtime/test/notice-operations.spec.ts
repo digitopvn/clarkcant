@@ -19,6 +19,7 @@ import {
 import { sweepExpired } from "../src/expiry-notices.ts";
 import { handleRequest, type GatewayDeps, type GatewayResponse } from "../src/gateway.ts";
 import { QUESTION_TTL_MS, answerQuestion, createQuestion } from "../src/interactions.ts";
+import { noticeActionsFor } from "../src/notice-actions.ts";
 import { recordNodeNotice } from "../src/notices.ts";
 import { interactionDepsFor } from "../src/routes/conversations.ts";
 import { bootNodeServices, type NodeServices } from "../src/services.ts";
@@ -351,6 +352,10 @@ describe("an update notice", () => {
     ]);
     expect(actions).toContainEqual({ id: "ask-clark", placement: "menu" });
     expect(actions).toContainEqual({ id: "skip-version", placement: "menu" });
+    // Pushed off the buttons, Dismiss keeps its usual place in More: after Add to context, not ahead of it.
+    const ids = actions?.map((action) => action.id) ?? [];
+    expect(ids.filter((id) => id === "dismiss")).toHaveLength(1);
+    expect(ids.indexOf("add-to-context")).toBeLessThan(ids.indexOf("dismiss"));
   });
 
   it("offers only Review for a version from a local folder, which cannot be installed by id and version alone", async () => {
@@ -420,6 +425,36 @@ describe("an update notice", () => {
     expect(skipped.body).toMatchObject({ skipped: true, subjectKind: "pi", version: "1.2.0" });
     expect((await check("1.1.0")).piUpdate).toBe(false);
     expect((await check("1.3.0")).piUpdate).toBe(true);
+  });
+
+  it("lists every skipped version for review, newest first, and takes one back from the list", async () => {
+    installPackageGeneration("1.0.0");
+    const first = updateNotice("1.1.0");
+    await request("POST", `/inbox/notices/${first.notificationId}/skip-version`);
+    now = new Date(Date.parse(now) + 1_000).toISOString();
+    const pi = recordNodeNotice(services, {
+      sourceKind: "pi",
+      category: "update",
+      severity: "info",
+      title: "Có bản cập nhật cho Pi SDK",
+      subject: { kind: "pi-update", packageName: "@scope/pi-sdk", version: "2.0.0" },
+      dedupKey: "update:pi:@scope/pi-sdk@2.0.0",
+      at: now as Instant,
+    });
+    await request("POST", `/inbox/notices/${pi.notificationId}/skip-version`);
+    expect((await inbox()).skippedVersions).toEqual([
+      { subjectKind: "pi", name: "@scope/pi-sdk", version: "2.0.0", skippedAt: now },
+      { subjectKind: "package", name: PACKAGE_ID, version: "1.1.0", skippedAt: expect.any(String) },
+    ]);
+
+    // Named in the path as the client encodes it: a package name may hold "@" and "/".
+    const path = `/inbox/skipped-versions/pi/${encodeURIComponent("@scope/pi-sdk")}/2.0.0`;
+    expect((await request("DELETE", path)).body).toEqual({ removed: true });
+    expect((await inbox()).skippedVersions.map((skip) => skip.name)).toEqual([PACKAGE_ID]);
+    expect((await request("DELETE", path)).status).toBe(404);
+    expect((await request("GET", path)).status).toBe(405);
+    expect((await request("DELETE", `/inbox/skipped-versions/other/x/1.0.0`)).status).toBe(400);
+    expect((await request("DELETE", `/inbox/skipped-versions/pi/%E0%A4%A/1.0.0`)).status).toBe(400);
   });
 
   it("skips only what the stored notice names, only for its owner, and only for an update", async () => {
@@ -533,6 +568,32 @@ describe("asking an expired question again", () => {
     expect((closed.body as { code: string }).code).toBe("QUESTION_CLOSED");
 
     expect((await request("POST", `/conversations/${conversationId}/questions/q_missing/ask-again`)).status).toBe(404);
+    expect((await request("GET", `/conversations/${conversationId}/questions/q_missing/ask-again`)).status).toBe(405);
+  });
+
+  it("finds the expired question behind a long stretch of later messages, reading only the ones that name it", async () => {
+    const conversationId = await createConversation();
+    const questionId = askedLongAgo(conversationId);
+    sweepExpired(services, now as Instant);
+    const notice = expiredNotice(conversationId);
+    const deps = interactionDepsFor(services, conversationId);
+    for (let index = 0; index < 30; index += 1) {
+      deps.append({ at: now as Instant, blocks: [{ type: "text", format: "plain", content: `tin ${index}`, streaming: false }] });
+    }
+    const stored = getNotification(services.runtime.db, owner(), notice.noticeId);
+    if (stored === undefined) throw new Error("the expiry notice was not stored");
+    expect(stored.notice.subject).toEqual({ kind: "question", questionId, conversationId });
+    const parse = vi.spyOn(JSON, "parse");
+    const actions = noticeActionsFor(services.runtime.db, owner(), stored.notice, {
+      nodeId: services.runtime.identity.nodeId,
+      now: now as Instant,
+    });
+    const parsedMessages = parse.mock.calls.filter(([text]) => typeof text === "string" && text.includes('"messageId":'));
+    parse.mockRestore();
+    expect(actions[0]).toEqual({ id: "ask-again", placement: "primary" });
+    // The question's card and its expiry record, not the thirty messages after them.
+    expect(parsedMessages.length).toBeGreaterThan(0);
+    expect(parsedMessages.length).toBeLessThanOrEqual(2);
   });
 
   it("offers nothing to ask when the question's conversation is gone", async () => {

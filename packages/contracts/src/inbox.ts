@@ -347,6 +347,19 @@ export const noticeSuppressionSchema = z.strictObject({
 export type NoticeSuppression = z.infer<typeof noticeSuppressionSchema>;
 
 /**
+ * One "don't tell me about this version", from an update notice's "Skip this version": a package by its id, or the Pi
+ * SDK by its npm name. Belongs to one principal and lasts until it is taken back; an update at or below it is not
+ * reported, a newer one still is.
+ */
+export const skippedVersionSchema = z.strictObject({
+  subjectKind: z.enum(["package", "pi"]),
+  name: z.string().min(1).max(260),
+  version: z.string().min(1).max(128),
+  skippedAt: instantSchema,
+});
+export type SkippedVersion = z.infer<typeof skippedVersionSchema>;
+
+/**
  * Something that is waiting for the person to decide or answer.
  *
  * The approval members carry the digest because deciding needs it: the node compares it against the operation it
@@ -416,6 +429,8 @@ export const inboxResponseSchema = z.strictObject({
   snoozed: z.array(noticeSchema).default([]),
   /** The kinds of notice this principal asked not to be notified about, newest first. */
   suppressions: z.array(noticeSuppressionSchema).default([]),
+  /** The versions this principal skipped, newest first. Defaults to empty for a node from before skipping. */
+  skippedVersions: z.array(skippedVersionSchema).default([]),
   readAt: instantSchema,
 });
 export type InboxResponse = z.infer<typeof inboxResponseSchema>;

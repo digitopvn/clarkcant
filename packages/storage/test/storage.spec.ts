@@ -8,6 +8,7 @@ import {
   acceptCommand,
   activeGrants,
   appendMessage,
+  latestMessagesContaining,
   messagesSince,
   checkRestoreCompatibility,
   claimConversationAuthority,
@@ -545,6 +546,38 @@ describe("a stored message", () => {
     // the property the search path relies on when it filters by principal rather than by text.
     expect(messagesSince(db, "conv_other" as never, 0)).toHaveLength(0);
     expect(messagesSince(db, "conv_meta" as never, 7)).toHaveLength(0);
+  });
+
+  it("finds the messages naming one thing, oldest first, only within the newest window and the conversation", () => {
+    const db = freshDb();
+    const at = "2026-09-17T05:00:00.000Z";
+    for (const id of ["conv_long", "conv_other"]) {
+      db.prepare(
+        "INSERT INTO conversations (conversation_id, title, home_node_id, created_at, updated_at) VALUES (?, NULL, ?, ?, ?)",
+      ).run(id, "node_local", at, at);
+    }
+    const say = (conversationId: string, sequence: number, content: string) =>
+      appendMessage(
+        db,
+        {
+          messageId: `msg_${conversationId}_${sequence}`,
+          conversationId,
+          role: "assistant",
+          blocks: [{ type: "text", format: "plain", content, streaming: false }],
+          authorNodeId: "node_local",
+          createdAt: at,
+          delivery: "accepted",
+        } as never,
+        sequence,
+      );
+    say("conv_long", 1, "about q_1, too old to be read");
+    for (let sequence = 2; sequence <= 10; sequence += 1) say("conv_long", sequence, sequence % 3 === 0 ? "about q_1" : "other");
+    say("conv_other", 1, "about q_1 elsewhere");
+
+    const found = latestMessagesContaining(db, "conv_long", "q_1", 9);
+    expect(found.map((message) => message.messageId)).toEqual(["msg_conv_long_3", "msg_conv_long_6", "msg_conv_long_9"]);
+    expect(latestMessagesContaining(db, "conv_long", "q_1", 10)).toHaveLength(4);
+    expect(latestMessagesContaining(db, "conv_long", "q_2", 10)).toHaveLength(0);
   });
 });
 

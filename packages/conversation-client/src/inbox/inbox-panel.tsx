@@ -7,6 +7,7 @@ import type {
   NoticeAction,
   NoticeActionUnavailable,
   SettingsTab,
+  SkippedVersion,
   WaitingItem,
 } from "@clarkcant/contracts";
 
@@ -433,6 +434,14 @@ export function InboxPanel({
       .catch((cause: unknown) => finish({ tone: "failed", text: t("inbox.suppressFailed").replace("{reason}", failedReason(cause)) }, { kind: "status" }));
   };
 
+  const removeSkippedVersion = (skip: SkippedVersion) => {
+    if (!lock(`skipped:${skip.subjectKind}:${skip.name}@${skip.version}`)) return;
+    void client
+      .removeSkippedVersion(skip)
+      .then(() => finish({ tone: "done", text: t("inbox.unskipped") }, { kind: "status" }))
+      .catch((cause: unknown) => finish({ tone: "failed", text: t("inbox.skipFailed").replace("{reason}", failedReason(cause)) }, { kind: "status" }));
+  };
+
   const undo = (what: Undo) => {
     switch (what.kind) {
       case "restore":
@@ -810,6 +819,7 @@ export function InboxPanel({
             className="cc-action"
             {...emphasis}
             data-inbox-skip-version={notice.noticeId}
+            aria-label={t("inbox.action.skipVersionAria").replace("{title}", notice.title)}
             disabled={locked}
             onClick={() => skip(notice)}
           >
@@ -1255,6 +1265,42 @@ export function InboxPanel({
                               onClick={() => removeSuppression(suppression.suppressionId)}
                             >
                               {t("inbox.suppressions.remove")}
+                            </button>
+                          </div>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                </details>
+              )}
+              {load.inbox.skippedVersions.length > 0 && (
+                <details className="cc-inbox-aside" data-inbox-skipped-versions="true">
+                  <summary>{t("inbox.skippedVersions.heading").replace("{count}", String(load.inbox.skippedVersions.length))}</summary>
+                  <p className="cc-freshness" style={{ marginTop: 0 }}>
+                    {t("inbox.skippedVersions.note")}
+                  </p>
+                  <ul className="cc-inbox-list">
+                    {load.inbox.skippedVersions.map((skip) => {
+                      const key = `${skip.subjectKind}:${skip.name}@${skip.version}`;
+                      const covers = t(skip.subjectKind === "pi" ? "inbox.skippedVersions.pi" : "inbox.skippedVersions.package")
+                        .replace("{name}", skip.name)
+                        .replace("{version}", skip.version);
+                      return (
+                        <li key={key} className="cc-inbox-notice" data-inbox-skipped-version={key}>
+                          <div className="cc-inbox-notice-head">
+                            <span className="cc-badge">{t(noticeSourceKey(skip.subjectKind))}</span>
+                          </div>
+                          <p className="cc-inbox-notice-title">{covers}</p>
+                          <div className="cc-card-actions">
+                            <button
+                              type="button"
+                              className="cc-action"
+                              data-inbox-remove-skipped-version={key}
+                              aria-label={t("inbox.skippedVersions.removeAria").replace("{title}", covers)}
+                              disabled={busy !== undefined}
+                              onClick={() => removeSkippedVersion(skip)}
+                            >
+                              {t("inbox.skippedVersions.remove")}
                             </button>
                           </div>
                         </li>

@@ -559,7 +559,10 @@ Hộp thư (`apps/runtime/src/inbox.ts`, `routes/inbox.ts`) gom hai thứ khác 
       `POST /inbox/notices/:id/skip-version` đọc phiên bản từ subject đã lưu — bỏ qua body —, ghi một dòng
       `skipped_versions` cho principal này và bỏ thông báo; `unskip-version` xoá dòng đó và đưa thông báo trở lại.
       `checkForUpdates` không báo gì bằng hoặc thấp hơn một bản đã bỏ qua, và vẫn báo mọi bản mới hơn.
-      `409 NOT_AN_UPDATE` với thông báo không nêu phiên bản nào.
+      `409 NOT_AN_UPDATE` với thông báo không nêu phiên bản nào. `GET /inbox` → `skippedVersions` liệt kê các dòng của
+      principal này, mới nhất trước, cho danh sách "Phiên bản đã bỏ qua" của panel;
+      `DELETE /inbox/skipped-versions/:kind/:name/:version` xoá một dòng từ đó, nên việc bỏ qua rút lại được kể cả khi
+      thông báo đã không còn.
     - `ask-again` ở thông báo `question` (do vòng quét hết hạn ghi) khi câu hỏi đã hết hạn, chưa được hỏi lại, và hội
       thoại của nó còn. `POST /conversations/:id/questions/:qid/ask-again` tạo một câu hỏi mới với cùng nội dung và
       lựa chọn, ghi `decision: "asked-again"` (kèm `askedAs`) lên câu hỏi cũ, và bỏ thông báo. Từ chối:

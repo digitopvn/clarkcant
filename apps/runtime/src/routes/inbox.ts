@@ -42,6 +42,8 @@ import { type GatewayRequest, type GatewayResponse, fail, json, readJson } from 
  *   POST /inbox/notices/:id/skip-version     stop reporting the version an update notice names (and older); dismisses it
  *   POST /inbox/notices/:id/unskip-version   take that back: the version is reported again and the notice returns
  *   DELETE /inbox/suppressions/:id           the same, from the list of quieted kinds
+ *   DELETE /inbox/skipped-versions/:kind/:name/:version
+ *                                            take a skip back from the list of skipped versions, which outlasts its notice
  *
  * There is no route that decides anything. Approving a command, granting a capability and answering a question
  * each already have a route, and the inbox calls those: a second way to approve would be a second set of checks,
@@ -205,6 +207,18 @@ export function handleInboxRoutes(deps: InboxRouteDeps): GatewayResponse | undef
     return json(200, { skipped: false, restored: restored === "restored" || restored === "not-dismissed" });
   }
 
+  if (segments.length === 5 && segments[1] === "skipped-versions") {
+    if (request.method !== "DELETE") return fail(405, "METHOD_NOT_ALLOWED", "a skipped version is taken back with DELETE");
+    const [kind, name, version] = segments.slice(2).map(decodeSegment);
+    if ((kind !== "package" && kind !== "pi") || name === undefined || name === "" || version === undefined || version === "") {
+      return fail(400, "INVALID_SCHEMA", "a skipped version is named by package or pi, then its name and version");
+    }
+    // Only this principal's own skips: the key is completed with the authenticated identity, never read from the path.
+    const removed = unskipVersion(services.runtime.db, { principalId, subjectKind: kind, name, version });
+    if (!removed) return fail(404, "RESOURCE_NOT_FOUND", "that version is not skipped");
+    return json(200, { removed: true });
+  }
+
   if (segments.length === 3 && segments[1] === "suppressions") {
     if (request.method !== "DELETE") return fail(405, "METHOD_NOT_ALLOWED", "a quieted kind of notice is removed with DELETE");
     const removed = removeNoticeSuppression(services.runtime.db, { principalId, suppressionId: segments[2] ?? "" });
@@ -213,6 +227,15 @@ export function handleInboxRoutes(deps: InboxRouteDeps): GatewayResponse | undef
   }
 
   return fail(404, "NOT_FOUND", `no inbox handler for ${request.method} ${request.path}`);
+}
+
+/** A path segment as the client encoded it (a package id may hold `@` and `/`), or nothing when it is not valid. */
+function decodeSegment(segment: string): string | undefined {
+  try {
+    return decodeURIComponent(segment);
+  } catch {
+    return undefined;
+  }
 }
 
 /** The package or Pi SDK version an update notice names, as `skipped_versions` keys it, or nothing for any other notice. */

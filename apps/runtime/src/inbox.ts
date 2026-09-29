@@ -13,6 +13,7 @@ import {
   getTask,
   listNoticeSuppressions,
   listNotifications,
+  listSkippedVersions,
   listSnoozedNotifications,
   parseJson,
 } from "@clarkcant/storage";
@@ -254,6 +255,7 @@ export function readInbox(services: InboxServices, now: Instant, limit = 50): In
     unread: countUnreadNotifications(db, principalId, now),
     snoozed: listSnoozedNotifications(db, principalId, now).map(withActions),
     suppressions: listNoticeSuppressions(db, principalId),
+    skippedVersions: listSkippedVersions(db, principalId),
     readAt: now,
   };
 }

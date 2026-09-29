@@ -1,4 +1,4 @@
-import type { Instant } from "@clarkcant/contracts";
+import type { Instant, SkippedVersion } from "@clarkcant/contracts";
 
 import { type Database, allRows } from "../db.ts";
 
@@ -32,6 +32,16 @@ export function unskipVersion(db: Database, input: SkippedVersionKey): boolean {
     .prepare("DELETE FROM skipped_versions WHERE principal_id = ? AND subject_kind = ? AND name = ? AND version = ?")
     .run(input.principalId, input.subjectKind, input.name, input.version);
   return Number(result.changes) > 0;
+}
+
+/** Every version this principal skipped, newest skip first: the list a person reviews and takes skips back from. */
+export function listSkippedVersions(db: Database, principalId: string): SkippedVersion[] {
+  return allRows<{ subject_kind: SkippedVersionKind; name: string; version: string; skipped_at: Instant }>(
+    db,
+    `SELECT subject_kind, name, version, skipped_at FROM skipped_versions
+      WHERE principal_id = ? ORDER BY skipped_at DESC, rowid DESC`,
+    principalId,
+  ).map((row) => ({ subjectKind: row.subject_kind, name: row.name, version: row.version, skippedAt: row.skipped_at }));
 }
 
 /** Every version of one package (or of the Pi SDK) this principal skipped, in no particular order. */
