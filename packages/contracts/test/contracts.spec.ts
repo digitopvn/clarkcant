@@ -38,6 +38,8 @@ import {
   readPeerFeatures,
   readPeerLabel,
   PEER_FEATURES,
+  PEER_CAPABILITY_SUMMARY_MAX,
+  peerCapabilitySummarySchema,
   PEER_FEATURES_MAX,
   PEER_LABEL_MAX,
   PEER_SKIP_LOST_MAX,
@@ -673,7 +675,7 @@ describe("a peer's notice", () => {
 
 describe("what a peer says about itself", () => {
   it("keeps only the features this build knows, each once, from a bounded list", () => {
-    expect(PEER_FEATURES).toEqual(["notice", "skip"]);
+    expect(PEER_FEATURES).toEqual(["notice", "skip", "capabilities"]);
     expect(readPeerFeatures(["notice", "teleport", "notice", 7, null])).toEqual(["notice"]);
     expect(readPeerFeatures(["skip", "notice", "skip"])).toEqual(["skip", "notice"]);
     expect(readPeerFeatures([])).toEqual([]);
@@ -692,6 +694,26 @@ describe("what a peer says about itself", () => {
     const long = readPeerLabel("ồ".repeat(PEER_LABEL_MAX + 10));
     expect(long === undefined ? 0 : [...long].length).toBe(PEER_LABEL_MAX);
     expect(peerTextAsData("a\u0007b‍c")).toBe("a bc");
+  });
+});
+
+describe("what a peer says it can run for this node", () => {
+  const summary = { version: 1, allowed: true, waits: true, capabilities: [{ ref: "project.file.read@1", ready: true }] };
+
+  it("reads a summary of capability refs and readiness, and nothing else", () => {
+    expect(peerCapabilitySummarySchema.safeParse(summary).success).toBe(true);
+    expect(peerCapabilitySummarySchema.safeParse({ version: 1, allowed: false, waits: false, capabilities: [] }).success).toBe(true);
+    // Whether a run it cannot start yet waits there is part of the answer, never guessed.
+    expect(peerCapabilitySummarySchema.safeParse({ version: 1, allowed: true, capabilities: [] }).success).toBe(false);
+    // Strict at every level: a folder, a reason or any other field is refused whole, never read in part.
+    expect(peerCapabilitySummarySchema.safeParse({ ...summary, folders: ["/home"] }).success).toBe(false);
+    expect(
+      peerCapabilitySummarySchema.safeParse({ ...summary, capabilities: [{ ref: "project.file.read@1", ready: false, reason: "x" }] }).success,
+    ).toBe(false);
+    expect(peerCapabilitySummarySchema.safeParse({ ...summary, capabilities: [{ ref: "not a ref", ready: true }] }).success).toBe(false);
+    expect(peerCapabilitySummarySchema.safeParse({ ...summary, version: 2 }).success).toBe(false);
+    const many = Array.from({ length: PEER_CAPABILITY_SUMMARY_MAX + 1 }, (_, index) => ({ ref: `pack.thing${String(index)}@1`, ready: true }));
+    expect(peerCapabilitySummarySchema.safeParse({ ...summary, capabilities: many }).success).toBe(false);
   });
 });
 

@@ -5,6 +5,8 @@ import { join } from "node:path";
 
 import { expect } from "vitest";
 
+import { PEER_FEATURES } from "@clarkcant/contracts";
+
 import { outboundPeerToken, peerTokenHash } from "../src/peers.ts";
 import { createNodeServer } from "../src/server.ts";
 import { bootNodeServices, type NodeServices } from "../src/services.ts";
@@ -91,7 +93,7 @@ export function tokenFor(presenter: LiveNode, peer: LiveNode): string {
   return outboundPeerToken(identityOf(presenter).localToken, identityOf(peer).nodeId);
 }
 
-function offerTo(node: LiveNode, peer: LiveNode): Record<string, string> {
+function offerTo(node: LiveNode, peer: LiveNode, advertise: boolean): Record<string, unknown> {
   return {
     nodeId: identityOf(node).nodeId,
     label: identityOf(node).label,
@@ -99,18 +101,25 @@ function offerTo(node: LiveNode, peer: LiveNode): Record<string, string> {
     publicKey: identityOf(node).publicKey,
     fingerprint: identityOf(node).fingerprint,
     tokenHash: peerTokenHash(tokenFor(node, peer)),
+    ...(advertise ? { features: [...PEER_FEATURES] } : {}),
   };
 }
 
-/** Pair two live nodes the way a person would: an invitation, a claim, and a confirmation on each side. */
-export async function pair(a: LiveNode, b: LiveNode): Promise<void> {
+/**
+ * Pair two live nodes the way a person would: an invitation, a claim, and a confirmation on each side.
+ *
+ * `advertise` has each offer say what its node takes, as this build's own pairing does; without it the offers are a
+ * build's from before features, and each node learns the other's from the answers to what it delivers.
+ */
+export async function pair(a: LiveNode, b: LiveNode, options: { advertise?: boolean } = {}): Promise<void> {
+  const advertise = options.advertise === true;
   const invite = await call(a, "/peers/invites", { body: { endpoint: a.base }, token: a.token });
   expect(invite.status).toBe(201);
   const inviteId = (invite.body["invite"] as { inviteId: string }).inviteId;
-  const claim = await call(a, "/peers/claim", { body: { inviteId, node: offerTo(b, a) } });
+  const claim = await call(a, "/peers/claim", { body: { inviteId, node: offerTo(b, a, advertise) } });
   expect(claim.status).toBe(200);
   const record = await call(b, "/peers/record", {
-    body: { node: { ...offerTo(a, b), tokenHash: String(claim.body["tokenHash"]) } },
+    body: { node: { ...offerTo(a, b, advertise), tokenHash: String(claim.body["tokenHash"]) } },
     token: b.token,
   });
   expect(record.status).toBe(201);

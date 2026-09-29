@@ -14,6 +14,7 @@ import { type PeerGatewayDeps, receiveEnvelope } from "@clarkcant/node-link";
 
 import { extensionForMimeType, fetchArtifactFromPeer } from "../artifact-transfer.ts";
 import { receiveRevoke, writeGrant } from "../delegation.ts";
+import { capabilitySummaryFor } from "../peer-capabilities.ts";
 import { queuePeerNotice } from "../peer-notices.ts";
 import { queuePeerSignal, receivePeerSignal } from "../peer-signals.ts";
 import { blobPathForDigest, readBlob } from "../blobs.ts";
@@ -385,7 +386,7 @@ const CLAIM_REFUSAL_STATUS: Record<
 };
 
 /**
- * The two routes another node calls, answered before the local token check.
+ * The routes another node calls, answered before the local token check.
  */
 export function handlePeerUplinkRoutes(input: PeerUplinkDeps): GatewayResponse | undefined {
   const pairing = input.pairing;
@@ -495,6 +496,23 @@ export function handlePeerUplinkRoutes(input: PeerUplinkDeps): GatewayResponse |
       // existed learns them from its next delivery.
       ...advertised,
     });
+  }
+
+  /*
+   * What this node can run for the peer asking, inside what this node's owner allows that peer and nothing more.
+   *
+   * Read-only and answered from the authenticated channel alone: the peer the token names is the peer asked about, so
+   * no peer can ask what another one may run here.
+   */
+  if (request.method === "GET" && request.path === "/peers/capabilities") {
+    const peer = authenticatePeer(pairing, bearer(request.headers));
+    if (peer === undefined) {
+      return fail(401, "UNAUTHENTICATED", "a confirmed peer token is required to ask what this node runs");
+    }
+    return json(
+      200,
+      capabilitySummaryFor({ db: pairing.db, nodeId: pairing.identity.nodeId, now: pairing.now }, peer.peerNodeId),
+    );
   }
 
   /*

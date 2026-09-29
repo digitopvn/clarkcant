@@ -152,12 +152,27 @@ trước, mà không đẩy thông báo của chính node hay của peer khác r
 định như với mọi thông báo khác.
 
 Mọi phản hồi `200` từ `POST /peers/messages` đều mang `features` (những gì node trả lời nhận thêm ngoài các envelope
-cơ bản; hiện là `["notice", "skip"]`) và `label` (tên nó tự gọi mình), và phản hồi `409` `SEQUENCE_GAP` cũng vậy
+cơ bản; hiện là `["notice", "skip", "capabilities"]`) và `label` (tên nó tự gọi mình), và phản hồi `409` `SEQUENCE_GAP` cũng vậy
 (`{ code, expected, received, features, label }`). Bên gửi ghi cả hai cho peer đó, chỉ từ câu trả lời cho một thứ nó đã
 giao qua kênh đã xác thực; lời mời ghép cặp cũng có thể mang `features`. Feature lạ bị bỏ, label được làm sạch và cắt
 còn 64 ký tự, và một peer chưa cho biết gì — một bản dựng có trước thay đổi này — không được gửi thông báo hay skip cho
 tới khi một câu trả lời nói nó nhận. Bên gửi chỉ đọc tối đa 16 KiB của một câu trả lời, trong hạn 30 giây của lần giao;
 câu trả lời vượt một trong hai bị bỏ qua, và message vẫn được xác nhận khi mã của nó là `200`.
+
+Một node có quảng bá `capabilities` trả lời `GET /peers/capabilities` cho một peer đã ghép cặp, với peer token dẫn xuất
+của peer đó (mọi trường hợp khác là `401` `UNAUTHENTICATED`), bằng `{ version: 1, allowed, waits, capabilities: [{
+ref, ready }] }` — một object nghiêm ngặt, tối đa 32 mục, chỉ dựng từ allowance mà chủ node đó đặt cho peer hỏi: các capability ref
+mà allowance bao và việc node hiện có chạy được từng ref không; `allowed: false` với danh sách rỗng khi không có
+allowance. `waits` cho biết một lượt chạy peer hỏi giao sang mà node chưa bắt đầu được sẽ chờ ở đó (`true`) hay bị từ
+chối ngay (`false`: node chưa nghe rằng peer có quảng bá `capabilities`), và cảnh báo lúc thiết lập chỉ nói lượt chạy
+sẽ chờ khi nó là `true`. Không có thư mục, capability khác hay lý do nào trong đó. Bên hỏi chờ tối đa 5 giây, từ chối redirect, và bỏ
+nguyên câu trả lời không khớp đúng schema; `list_peers` và `create_automation` có `executor` dùng nó để hiển thị và cảnh
+báo, không bao giờ để từ chối. Khi một lần giao phải chờ một capability trên node nhận, và bên gửi có quảng bá
+`capabilities`, bên nhận gửi message NodeLink `status` có payload `{ taskState: "waiting_capability", taskRevision,
+message, capabilityRef }`, rồi cùng payload đó với `taskState: "running"` khi task bắt đầu chạy. Việc chờ không có giới hạn thời gian; cả hai chủ node được báo khi nó bắt đầu chờ, và bên gửi có
+thể dừng nó. Bên gửi không quảng bá `capabilities` thì bị từ chối ngay như trước.
+Envelope vẫn ở phiên bản giao thức 1; chính feature được quảng bá là thứ đánh phiên bản cho route và các status này. Xem
+[distributed runtime](distributed-runtime.md).
 
 NodeLink đánh số thứ tự mọi envelope một node gửi cho một peer, và peer từ chối mọi thứ nằm sau một chỗ hổng bằng `409`
 `SEQUENCE_GAP`. Khi bên gửi bỏ một message sau 12 lần thử thất bại, một peer có quảng bá `skip` được gửi một message

@@ -1,7 +1,7 @@
 import type { CapabilityRef } from "@clarkcant/contracts";
 import { listTasksWaitingOnCapability } from "@clarkcant/storage";
 
-import { chooseCapability } from "./automation.ts";
+import { canRunHere, chooseCapability } from "./automation.ts";
 import type { ConductorDeps } from "./conductor.ts";
 import { advanceResolving, applyTaskEvent } from "./task-service.ts";
 
@@ -21,8 +21,9 @@ export interface ResumedTask {
  * runner.
  *
  * Once per task, however often it is called: a task leaves `waiting_capability` in the same synchronous step that
- * hands it over, so a second call, or a later boot, does not find it waiting. Work an automation or a paired node owns
- * is left to them — the automation service resumes its own runs on its tick, and a paired node's task never parks.
+ * hands it over, so a second call, or a later boot, does not find it waiting. An automation's own task is left to the
+ * automation service, which resumes its runs on its tick. A task a paired node handed over goes ahead here too, but
+ * only on this node's own capability: it runs here or not at all.
  *
  * `onResume` is called before the runner starts, so what it says reaches the conversation ahead of the run's report.
  * A node with no runner moves nothing: a task dispatched to nobody would sit there claiming to run.
@@ -35,10 +36,15 @@ export function resumeCapabilityWaiters(
   if (runTask === undefined) return [];
   const resumed: ResumedTask[] = [];
   for (const task of listTasksWaitingOnCapability(deps.db, deps.nodeId)) {
-    if (task.origin?.kind === "persistent" || task.origin?.kind === "delegated") continue;
+    if (task.origin?.kind === "persistent") continue;
     if (task.waitingCapabilityRef === undefined) continue;
     const capabilityRef = task.waitingCapabilityRef as CapabilityRef;
-    const chosen = chooseCapability(deps, capabilityRef);
+    const chosen =
+      task.origin?.kind === "delegated"
+        ? canRunHere(deps, capabilityRef)
+          ? { executionNodeId: deps.nodeId }
+          : undefined
+        : chooseCapability(deps, capabilityRef);
     if (chosen === undefined) continue;
     if (!applyTaskEvent(deps, task.taskId, "capability.ready").ok) continue;
     if (!applyTaskEvent(deps, task.taskId, "resolve.start").ok) continue;

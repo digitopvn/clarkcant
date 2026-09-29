@@ -318,31 +318,45 @@ export function chooseCapability(deps: TaskServiceDeps, capabilityRef: Capabilit
 }
 
 /**
+ * Whether this node can run a task on this capability itself, right now: one of its own, registered by no package, and
+ * usable. The one check a hand-over from a paired node is decided by, and what this node tells a peer it can run.
+ */
+export function canRunHere(deps: Pick<TaskServiceDeps, "db" | "nodeId">, capabilityRef: CapabilityRef): boolean {
+  return listCapabilitySummaries(deps, { usableOnly: true, taskRunnersOnly: true }).some(
+    (summary) => summary.ref === capabilityRef && summary.executionNodeId === deps.nodeId,
+  );
+}
+
+/**
  * Take a task just created on this node to dispatched and acknowledged, run by this node's own capability.
  *
- * For work a paired node handed over: it runs here or not at all, so a capability that is not usable here now is a
- * refusal the sender hears, never a park nothing would come back to. The task fails in resolution, so it is not left
- * queued.
+ * For work a paired node handed over: it runs here or not at all. With `park`, a capability that is not usable here
+ * yet — the project-work pack still loading after a start, most often — parks the task on it (`parked`), and it goes on
+ * by itself once the capability becomes usable here; the caller tells the peer it waits. Without it, that is a refusal
+ * the sender hears, for a sender that would not be told it waits: the task fails in resolution rather than being left
+ * queued. It is never handed to another node.
  */
 export function startTaskHere(
   deps: TaskServiceDeps,
   taskId: string,
   capabilityRef: CapabilityRef,
-): { ok: true } | { ok: false; reason: string } {
-  const usable = listCapabilitySummaries(deps, { usableOnly: true, taskRunnersOnly: true }).some(
-    (summary) => summary.ref === capabilityRef && summary.executionNodeId === deps.nodeId,
-  );
+  options: { park?: boolean } = {},
+): { ok: true; parked: boolean } | { ok: false; reason: string } {
+  const usable = canRunHere(deps, capabilityRef);
   const started = applyTaskEvent(deps, taskId, "resolve.start");
   if (!started.ok) return { ok: false, reason: started.message };
   if (!usable) {
-    const reason = `this node cannot run ${capabilityRef} right now`;
-    applyTaskEvent(deps, taskId, "resolve.failed");
-    return { ok: false, reason };
+    if (options.park !== true) {
+      applyTaskEvent(deps, taskId, "resolve.failed");
+      return { ok: false, reason: `this node cannot run ${capabilityRef} right now` };
+    }
+    const parked = advanceResolving(deps, taskId, { kind: "needs-capability", capabilityRef });
+    return parked.ok ? { ok: true, parked: true } : { ok: false, reason: parked.message };
   }
   const ready = advanceResolving(deps, taskId, { kind: "ready", executionNodeId: deps.nodeId });
   if (!ready.ok) return { ok: false, reason: ready.message };
   const acknowledged = applyTaskEvent(deps, taskId, "dispatch.acknowledged");
-  return acknowledged.ok ? { ok: true } : { ok: false, reason: acknowledged.message };
+  return acknowledged.ok ? { ok: true, parked: false } : { ok: false, reason: acknowledged.message };
 }
 
 function taskOrigin(intent: PersistentIntent, run: IntentRun, action: Extract<IntentAction, { kind: "task" }>, sourceRef?: string): TaskRecord["origin"] {

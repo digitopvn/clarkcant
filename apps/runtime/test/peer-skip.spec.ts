@@ -332,7 +332,7 @@ describe("a message given up on, to a peer that takes skips", () => {
     expect(await answer.json()).toMatchObject({
       status: "stale",
       response: { status: "stale", outcome: { accepted: false, code: "SKIP_STALE" } },
-      features: ["notice", "skip"],
+      features: ["notice", "skip", "capabilities"],
     });
     expect(received(b, "skip")).toEqual([]);
     expect(peerAudit(b)).toEqual([]);
@@ -635,7 +635,10 @@ describe("what the owner is told about messages given up on", () => {
   });
 });
 
-/** A peer's answers as a build from before skips gives them, while `old()` says so: `skip` is never among its features. */
+/**
+ * A peer's answers as a build from before skips gives them, while `old()` says so: `notice` is the only feature such a
+ * build had, so `skip` and everything added after it are never among its features.
+ */
 function asOldBuild(old: () => boolean = () => true): typeof fetch {
   return async (input, init) => {
     const response = await fetch(input, init);
@@ -644,7 +647,7 @@ function asOldBuild(old: () => boolean = () => true): typeof fetch {
     let body = text;
     try {
       const fields = JSON.parse(text) as Record<string, unknown>;
-      if (Array.isArray(fields["features"])) fields["features"] = fields["features"].filter((feature) => feature !== "skip");
+      if (Array.isArray(fields["features"])) fields["features"] = fields["features"].filter((feature) => feature === "notice");
       body = JSON.stringify(fields);
     } catch {
       // Not JSON: passed on as it came.

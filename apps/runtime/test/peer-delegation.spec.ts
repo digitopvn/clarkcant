@@ -4,14 +4,26 @@ import { join } from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
 
-import type { Grant, Instant, MessageRecord, PeerEnvelope, TaskRecord } from "@clarkcant/contracts";
-import { createTask, registerCapability, startTaskHere } from "@clarkcant/core";
+import { type Grant, type Instant, type MessageRecord, PEER_FEATURES, type PeerEnvelope, type TaskRecord } from "@clarkcant/contracts";
+import { createTask, registerCapability, startTaskHere, updateReadiness } from "@clarkcant/core";
 import { sendEnvelope } from "@clarkcant/node-link";
 import { CONTROLLED_CODE_TASK } from "@clarkcant/project-work";
-import { allRows, getGrant, getPersistentIntent, getTask, nextOutboundSequence, parseJson, pendingOutbox, revokeGrant } from "@clarkcant/storage";
+import {
+  allRows,
+  getGrant,
+  getPersistentIntent,
+  getTask,
+  nextOutboundSequence,
+  parseJson,
+  pendingOutbox,
+  recordPeerAdvertisement,
+  revokeGrant,
+} from "@clarkcant/storage";
 
 import { createAutomationTools } from "../src/automation-tools.ts";
 import { startAutomationService } from "../src/automation-service.ts";
+import { resumeTasksWaitingOnCapability } from "../src/capability-waiters.ts";
+import { askPeerCapabilities } from "../src/peer-capabilities.ts";
 import { queueResult, writeGrant } from "../src/delegation.ts";
 import { answerUncertain, settleUndeliveredTasks } from "../src/delegation-handlers.ts";
 import { sweepExpired } from "../src/expiry-notices.ts";
@@ -20,7 +32,7 @@ import { createTaskDispatcher } from "../src/task-dispatch.ts";
 import { taskDispatchReports } from "../src/task-reporting.ts";
 import { runWorkerProcess } from "../src/worker-process.ts";
 import { recoverUnfinishedWork } from "../src/work-recovery.ts";
-import { type LiveNode, call, identityOf, liveNodes, pair } from "./live-nodes.ts";
+import { type LiveNode, call, identityOf, liveNodes, pair, tokenFor } from "./live-nodes.ts";
 
 /**
  * A standing request on one Clark whose task runs on another.
@@ -82,7 +94,10 @@ function writeScript(dir: string): string {
 }
 
 /** A node as `wireRuntime` starts it: its automation service, its delivery pass, and a dispatcher with a worker. */
-async function startClark(label: string, options: { hang?: boolean; stoppable?: boolean; crash?: boolean } = {}): Promise<Clark> {
+async function startClark(
+  label: string,
+  options: { hang?: boolean; stoppable?: boolean; crash?: boolean; packLoading?: boolean; alsoRuns?: string } = {},
+): Promise<Clark> {
   let root = "";
   const node = await nodes.start(label, (services) => {
     root = join(services.runtime.dataDir, "work");
@@ -97,9 +112,25 @@ async function startClark(label: string, options: { hang?: boolean; stoppable?: 
       {
         ...CONTROLLED_CODE_TASK,
         executionNodeId: services.runtime.identity.nodeId as never,
-        readiness: { installed: true, loaded: true, authenticated: true, authorized: true, healthy: true },
+        // Still loading, as the pack is for the first minute after a start: registered, and not usable yet.
+        readiness:
+          options.packLoading === true
+            ? { installed: true, loaded: false, authenticated: true, authorized: true, healthy: false, blockedReason: "no worker has loaded the pack yet" }
+            : { installed: true, loaded: true, authenticated: true, authorized: true, healthy: true },
       },
     );
+    // Something else this node can run, which no allowance names.
+    if (options.alsoRuns !== undefined) {
+      registerCapability(
+        { db: services.runtime.db, nodeId: services.runtime.identity.nodeId },
+        {
+          ...CONTROLLED_CODE_TASK,
+          ref: options.alsoRuns as never,
+          executionNodeId: services.runtime.identity.nodeId as never,
+          readiness: { installed: true, loaded: true, authenticated: true, authorized: true, healthy: true },
+        },
+      );
+    }
     const script = writeScript(services.runtime.dataDir);
     const dispatcher = createTaskDispatcher({
       conductor: services.conductor,
@@ -138,6 +169,7 @@ function tools(node: Clark, conversationId: string) {
     kick: () => node.services.automation?.kick(),
     kickDelivery: () => node.services.peerDelivery?.kick(),
     fingerprint: identityOf(node).fingerprint,
+    peerCapabilities: (peerNodeId) => askPeerCapabilities(node.services.runtime, peerNodeId),
   });
   return async (name: string, params: Record<string, unknown>): Promise<string> => {
     const tool = all.find((candidate) => candidate.name === name);
@@ -377,7 +409,7 @@ describe("a task one Clark hands to another", { timeout: 60_000 }, () => {
       },
     );
     const coordination = { db: b.services.runtime.db, nodeId: identityOf(b).nodeId, now: at, newId: b.services.conductor.newId };
-    expect(startTaskHere(coordination, task.taskId, CONTROLLED_CODE_TASK.ref)).toEqual({ ok: true });
+    expect(startTaskHere(coordination, task.taskId, CONTROLLED_CODE_TASK.ref)).toEqual({ ok: true, parked: false });
     b.services.conductor.runTask?.({ taskId: task.taskId, capabilityRef: CONTROLLED_CODE_TASK.ref, executionNodeId: identityOf(b).nodeId });
     await waitUntil(() => workers.length === 1, "the worker to start");
 
@@ -808,6 +840,217 @@ describe("a task one Clark hands to another", { timeout: 60_000 }, () => {
       "allows 1 run(s), and they are used up",
     );
     expect(tasksOn(b)).toHaveLength(1);
+  });
+});
+
+describe("what the other node can run, asked before a task is handed to it", { timeout: 60_000 }, () => {
+  it("shows the sender a node that cannot run the task yet, warns at setup, and says at once that a hand-over waits there", async () => {
+    const a = await startClark("desk");
+    const b = await startClark("laptop", { packLoading: true });
+    await pair(a, b, { advertise: true });
+    const onA = await conversation(a, "Ghi chú");
+    const onB = await conversation(b, "Máy bàn");
+    const peerA = identityOf(a).nodeId;
+    const peerB = identityOf(b).nodeId;
+
+    // Before B's owner allows anything, B runs nothing for A, and A is told so.
+    expect(await tools(a, onA)("list_peers", {})).toContain(
+      `${peerB} · fingerprint ${identityOf(b).fingerprint} · may not run work here · runs nothing for this node: its owner has not allowed this node to run work there`,
+    );
+    await tools(b, onB)("allow_peer_tasks", {
+      peer: peerA,
+      folders: [{ path: b.root, access: "write" }],
+      allowedEffects: ["read", "local-write"],
+    });
+    // Allowed now, but the pack on B is still loading: A sees B unable to run it for now.
+    expect(await tools(a, onA)("list_peers", {})).toContain(
+      "can run for this node: project.file.read@1 (not ready), project.code.change@1 (not ready)",
+    );
+
+    const setUp = await tools(a, onA)("create_automation", {
+      summary: "Ghi chú trên laptop",
+      topic: "local.note.requested",
+      action: "task",
+      goal: "Write notes.md with today's note.",
+      folders: [{ path: b.root, access: "write" }],
+      allowedEffects: ["read", "local-write"],
+      executor: peerB,
+    });
+    expect(setUp).toContain("Set up.");
+    expect(setUp).toContain(
+      `Warning: ${peerB} cannot run project.code.change@1 right now. A run handed over waits there until it can, with no time limit`,
+    );
+    await waitUntil(() => pendingOutbox(a.services.runtime.db).length === 0, "the grant to reach B");
+
+    await signal(a, "note-1");
+
+    // The hand-over reaches B and waits there; A is told at once, naming what it waits for, and its task still runs.
+    await waitUntil(() => tasksOn(b)[0]?.state === "waiting_capability", "the task on B to wait for the capability");
+    const taskId = String(tasksOn(a)[0]?.taskId);
+    await waitUntil(() => said(a, onA).some((text) => text.startsWith(`Task ${taskId} đã tới ${peerB} nhưng chưa chạy`)), "A to hear it waits");
+    expect(said(a, onA).find((text) => text.startsWith(`Task ${taskId} đã tới`))).toContain(`${peerB} chưa chạy được project.code.change@1 lúc này`);
+    expect(getTask(a.services.runtime.db, taskId)?.state).toBe("running");
+    expect(waitingOnA(a, taskId)).toBe(true);
+    const notices = allRows<{ body: string }>(
+      a.services.runtime.db,
+      "SELECT body FROM notifications WHERE title = 'Việc đang chờ máy kia sẵn sàng'",
+    );
+    expect(notices).toHaveLength(1);
+    expect(notices[0]?.body).toContain("project.code.change@1");
+    expect(said(b, onB).some((text) => text.includes(`máy này chưa chạy được project.code.change@1 lúc này`))).toBe(true);
+    expect(existsSync(join(b.root, "notes.md"))).toBe(false);
+
+    // The pack on B finishes loading: the task goes on there by itself, and A hears it.
+    updateReadiness(
+      { db: b.services.runtime.db, nodeId: peerB },
+      {
+        ref: CONTROLLED_CODE_TASK.ref,
+        executionNodeId: peerB,
+        change: { loaded: true, healthy: true, blockedReason: undefined },
+        at: new Date().toISOString() as Instant,
+      },
+    );
+    expect(resumeTasksWaitingOnCapability(b.services).map((task) => task.taskId)).toEqual([taskId]);
+    await waitUntil(
+      () => said(a, onA).includes(`project.code.change@1 đã dùng được trên ${peerB}; task ${taskId} bắt đầu chạy ở đó.`),
+      "A to hear it runs now",
+    );
+    await waitUntil(() => getTask(a.services.runtime.db, taskId)?.state === "succeeded", "A's task to finish");
+    expect(waitingOnA(a, taskId)).toBe(false);
+    expect(readFileSync(join(b.root, "notes.md"), "utf8")).toBe("viết từ máy bàn\n");
+  });
+
+  it("stops a hand-over waiting there for a capability when the sender stops it", async () => {
+    const a = await startClark("desk");
+    const b = await startClark("laptop", { packLoading: true });
+    await pair(a, b, { advertise: true });
+    const onA = await conversation(a, "Ghi chú");
+    const onB = await conversation(b, "Máy bàn");
+    await tools(b, onB)("allow_peer_tasks", {
+      peer: identityOf(a).nodeId,
+      folders: [{ path: b.root, access: "write" }],
+      allowedEffects: ["read", "local-write"],
+    });
+    await handToLaptop(a, b, onA, [{ path: b.root, access: "write" }], ["read", "local-write"]);
+    await signal(a, "note-1");
+    await waitUntil(() => tasksOn(b)[0]?.state === "waiting_capability", "the task on B to wait for the capability");
+    const taskId = String(tasksOn(a)[0]?.taskId);
+    await waitUntil(() => waitingOnA(a, taskId), "A to hear it waits");
+
+    expect((await call(a, `/tasks/${taskId}/cancel`, { token: a.token })).status).toBe(200);
+
+    // Nothing runs for it on B, so B stops it at once and says so; A's task stops and its waiting item goes.
+    await waitUntil(() => getTask(a.services.runtime.db, taskId)?.state === "cancelled", "A's task to be stopped");
+    expect(tasksOn(b)[0]?.state).toBe("cancelled");
+    expect(waitingOnA(a, taskId)).toBe(false);
+    // Stopped for good: the capability becoming usable later does not start it.
+    updateReadiness(
+      { db: b.services.runtime.db, nodeId: identityOf(b).nodeId },
+      {
+        ref: CONTROLLED_CODE_TASK.ref,
+        executionNodeId: identityOf(b).nodeId,
+        change: { loaded: true, healthy: true, blockedReason: undefined },
+        at: new Date().toISOString() as Instant,
+      },
+    );
+    expect(resumeTasksWaitingOnCapability(b.services)).toEqual([]);
+    expect(existsSync(join(b.root, "notes.md"))).toBe(false);
+  });
+
+  it("refuses at once, as before, a hand-over from a node that would not hear it waits", async () => {
+    const a = await startClark("desk");
+    const b = await startClark("laptop", { packLoading: true });
+    // Paired as a build from before this: neither node has said it reads what a capability wait is.
+    await pair(a, b);
+    // A has since heard from B that B answers what it runs, but B has not yet heard the same from A: a pairing made
+    // before this build, where only one side has answered anything since.
+    recordPeerAdvertisement(a.services.runtime.db, identityOf(b).nodeId, { features: [...PEER_FEATURES] });
+    const onA = await conversation(a, "Ghi chú");
+    const onB = await conversation(b, "Máy bàn");
+    await tools(b, onB)("allow_peer_tasks", {
+      peer: identityOf(a).nodeId,
+      folders: [{ path: b.root, access: "write" }],
+      allowedEffects: ["read", "local-write"],
+    });
+
+    // B says a run would not wait there, so A's setup warns that each run is refused, not that it waits.
+    const setUp = await tools(a, onA)("create_automation", {
+      summary: "Ghi chú trên laptop",
+      topic: "local.note.requested",
+      action: "task",
+      goal: "Write notes.md with today's note.",
+      folders: [{ path: b.root, access: "write" }],
+      allowedEffects: ["read", "local-write"],
+      executor: identityOf(b).nodeId,
+    });
+    expect(setUp).toContain(
+      `Warning: ${identityOf(b).nodeId} cannot run project.code.change@1 right now, and a run handed over is refused there at once until it can`,
+    );
+    expect(setUp).not.toContain("waits there");
+    await waitUntil(() => pendingOutbox(a.services.runtime.db).length === 0, "the grant to reach B");
+
+    await signal(a, "note-1");
+
+    await waitUntil(() => said(a, onA).some((text) => text.startsWith("Không xong (task")), "A to hear it did not run");
+    expect(said(a, onA).find((text) => text.startsWith("Không xong (task"))).toContain(
+      `${identityOf(b).nodeId} không chạy việc này: this node cannot run project.code.change@1 right now`,
+    );
+    expect(tasksOn(b)[0]?.state).toBe("failed");
+  });
+
+  it("tells a peer only what its owner allowed that peer, and nothing to a peer it allowed nothing", async () => {
+    const a = await startClark("desk");
+    const b = await startClark("laptop", { alsoRuns: "browser.session.drive@1" });
+    const c = await startClark("stranger");
+    await pair(a, b, { advertise: true });
+    await pair(c, b, { advertise: true });
+    const onA = await conversation(a, "Ghi chú");
+    const onB = await conversation(b, "Máy bàn");
+    // B's owner lets A read one folder, and nothing more.
+    await tools(b, onB)("allow_peer_tasks", {
+      peer: identityOf(a).nodeId,
+      folders: [{ path: b.root, access: "read" }],
+      allowedEffects: ["read"],
+    });
+
+    const asked = async (token: string | undefined): Promise<{ status: number; text: string }> => {
+      const response = await fetch(`${b.base}/peers/capabilities`, {
+        headers: token === undefined ? {} : { authorization: `Bearer ${token}` },
+      });
+      return { status: response.status, text: await response.text() };
+    };
+
+    // A hears exactly the reader its allowance covers: not the code-change worker or the browser B also runs, not the
+    // folder, and not why anything is not ready.
+    const toA = await asked(tokenFor(a, b));
+    expect(toA.status).toBe(200);
+    expect(JSON.parse(toA.text)).toEqual({ version: 1, allowed: true, waits: true, capabilities: [{ ref: "project.file.read@1", ready: false }] });
+    expect(toA.text).not.toContain(b.root);
+    expect(toA.text).not.toContain("project.code.change@1");
+    expect(toA.text).not.toContain("browser.session.drive@1");
+
+    // C, paired but allowed nothing, hears only that; a caller without a peer token hears nothing at all.
+    expect(JSON.parse((await asked(tokenFor(c, b))).text)).toEqual({ version: 1, allowed: false, waits: true, capabilities: [] });
+    expect((await asked(undefined)).status).toBe(401);
+    expect((await asked(b.token)).status).toBe(401);
+
+    // What A's listing and setup say comes from that answer alone.
+    const listed = await tools(a, onA)("list_peers", {});
+    expect(listed).toContain("can run for this node: project.file.read@1 (not ready)");
+    expect(listed).not.toContain("browser.session.drive@1");
+    const setUp = await tools(a, onA)("create_automation", {
+      summary: "Ghi chú trên laptop",
+      topic: "local.note.requested",
+      action: "task",
+      goal: "Write notes.md with today's note.",
+      folders: [{ path: b.root, access: "write" }],
+      allowedEffects: ["read", "local-write"],
+      executor: identityOf(b).nodeId,
+    });
+    expect(setUp).toContain("Set up.");
+    expect(setUp).toContain(
+      `Warning: what ${identityOf(b).nodeId}'s owner allows this node there does not cover project.code.change@1, which this task needs`,
+    );
   });
 });
 

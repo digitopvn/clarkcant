@@ -189,13 +189,18 @@ export function peerArtifactUrl(endpoint: string, digest: string): string {
   return new URL(`/peers/artifacts/${encodeURIComponent(digest)}`, peerOrigin(endpoint)).toString();
 }
 
+/** Where a peer says what it can run for this node. */
+export function peerCapabilitiesUrl(endpoint: string): string {
+  return new URL("/peers/capabilities", peerOrigin(endpoint)).toString();
+}
+
 /**
  * Strip anything a failure reason might carry that should never sit in a durable `last_error` column:
  * a bearer token from an authorization header, or credentials embedded in a URL. `fetch`'s own thrown
  * messages can echo the request it was given, and this is the one place every one of those messages
  * passes through before it is stored.
  */
-function sanitizeDeliveryError(reason: string): string {
+export function sanitizeDeliveryError(reason: string): string {
   return reason
     .replace(/Bearer\s+\S+/gi, "Bearer [redacted]")
     .replace(/:\/\/[^\s/]+:[^\s/@]+@/g, "://[redacted]@");
@@ -218,7 +223,7 @@ export function answeredStatus(lastError: string | null): number | undefined {
  * `undefined` when it is longer, stops coming, or cannot be read: the caller treats that as an answer that says nothing
  * more than its status.
  */
-async function readAnswer(response: Response, deadline: AbortSignal): Promise<string | undefined> {
+export async function readAnswer(response: Response, deadline: AbortSignal): Promise<string | undefined> {
   const declared = Number(response.headers.get("content-length") ?? "");
   const body = response.body;
   if (body === null) return "";
