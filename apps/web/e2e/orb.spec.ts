@@ -306,6 +306,124 @@ test("a style chosen in Settings changes the orb at once, keeps its colours in t
   await expect.poll(() => orbProfile(page)).toBe("clark");
 });
 
+/** What the inside of a drawn orb looks like, measured from a picture of it. */
+interface InteriorSample {
+  /** Share of the interior that is white or nearly so. A washed-out orb is all white. */
+  whiteShare: number;
+  /** Standard deviation of lightness, 0..255. A flat disc has none. */
+  lightnessSpread: number;
+  /** Mean of max(r,g,b) - min(r,g,b), 0..255. A grey or white disc has none. */
+  chroma: number;
+  /** The interior's pixels as r,g,b triples, so two styles can be compared with each other. */
+  pixels: number[];
+}
+
+/**
+ * Measure the interior of an orb from a screenshot of its canvas.
+ *
+ * A WebGL canvas cannot be read back without asking the renderer to keep its buffer, so the picture a person
+ * would see is decoded in the page instead. Only the middle of the disc is sampled — the shipped radius, which no
+ * profile may change, shrunk so the rim and the silhouette's antialiasing are not part of the measurement.
+ */
+async function sampleInterior(page: Page, png: Buffer): Promise<InteriorSample> {
+  return page.evaluate(async (base64) => {
+    const image = new Image();
+    image.src = `data:image/png;base64,${base64}`;
+    await image.decode();
+    const canvas = document.createElement("canvas");
+    canvas.width = image.naturalWidth;
+    canvas.height = image.naturalHeight;
+    const context = canvas.getContext("2d");
+    if (context === null) throw new Error("the browser gave no 2D context to read the screenshot with");
+    context.drawImage(image, 0, 0);
+    const { data, width, height } = context.getImageData(0, 0, canvas.width, canvas.height);
+    const radius = (Math.min(width, height) / 2) * 0.72 * 0.8;
+    let count = 0;
+    let white = 0;
+    let sum = 0;
+    let sumSquares = 0;
+    let chroma = 0;
+    const pixels: number[] = [];
+    for (let y = 0; y < height; y += 1) {
+      for (let x = 0; x < width; x += 1) {
+        if (Math.hypot(x + 0.5 - width / 2, y + 0.5 - height / 2) > radius) continue;
+        const at = (y * width + x) * 4;
+        const r = data[at] ?? 0;
+        const g = data[at + 1] ?? 0;
+        const b = data[at + 2] ?? 0;
+        const lightness = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+        count += 1;
+        sum += lightness;
+        sumSquares += lightness * lightness;
+        chroma += Math.max(r, g, b) - Math.min(r, g, b);
+        if (r > 240 && g > 240 && b > 240) white += 1;
+        pixels.push(r, g, b);
+      }
+    }
+    if (count === 0) throw new Error("the screenshot is too small to hold an orb");
+    const mean = sum / count;
+    return {
+      whiteShare: white / count,
+      lightnessSpread: Math.sqrt(Math.max(0, sumSquares / count - mean * mean)),
+      chroma: chroma / count,
+      pixels,
+    };
+  }, png.toString("base64"));
+}
+
+/** Mean absolute difference between two samples of the same size, per channel, 0..255. */
+function interiorDifference(a: InteriorSample, b: InteriorSample): number {
+  const length = Math.min(a.pixels.length, b.pixels.length);
+  if (length === 0) return 0;
+  let total = 0;
+  for (let index = 0; index < length; index += 1) total += Math.abs((a.pixels[index] ?? 0) - (b.pixels[index] ?? 0));
+  return total / length;
+}
+
+const STYLE_NAMES = ["clark", "calm", "jelly", "glass", "pearl", "plasma"] as const;
+
+test("on the light theme every style's interior shows through the glass, and the styles look different", async ({
+  page,
+}) => {
+  mkdirSync(EVIDENCE, { recursive: true });
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await page.emulateMedia({ colorScheme: "light" });
+  await openApp(page);
+  await openOrbSettings(page);
+  // `system`, so the emulated scheme decides the theme whatever an earlier journey stored.
+  await page.locator('[data-theme-choice="system"]').click();
+  await expect.poll(() => page.evaluate(() => document.documentElement.getAttribute("data-cc-theme"))).toBe("light");
+
+  const samples = new Map<string, InteriorSample>();
+  for (const name of STYLE_NAMES) {
+    await preset(page, name).click();
+    await expect(previewCanvas(page)).toHaveAttribute("data-orb-profile", name);
+    // Drawn by WebGL: the still gradient would pass every check below while proving nothing about the shader.
+    await expect(previewCanvas(page)).toHaveAttribute("data-orb", "gl");
+    // A few frames, so the picture is of the rebuilt renderer rather than the one it replaced.
+    await page.waitForTimeout(300);
+    const png = await previewCanvas(page).screenshot({ path: join(EVIDENCE, `orb-light-interior-${name}.png`) });
+    const sample = await sampleInterior(page, png);
+
+    // Not washed out: the glass keeps a body the interior's light can show against, so most of the disc is not
+    // white, its lightness varies, and it carries colour.
+    expect(sample.whiteShare, `${name}: share of white pixels`).toBeLessThan(0.25);
+    expect(sample.lightnessSpread, `${name}: lightness spread`).toBeGreaterThan(12);
+    expect(sample.chroma, `${name}: chroma`).toBeGreaterThan(10);
+    samples.set(name, sample);
+  }
+
+  // Every style is its own picture. On a washed-out orb they were all the same white disc.
+  for (const [index, first] of STYLE_NAMES.entries()) {
+    for (const second of STYLE_NAMES.slice(index + 1)) {
+      const a = samples.get(first);
+      const b = samples.get(second);
+      if (a === undefined || b === undefined) throw new Error(`no sample for ${first} or ${second}`);
+      expect(interiorDifference(a, b), `${first} against ${second}`).toBeGreaterThan(4);
+    }
+  }
+});
+
 test("the styles are chosen from the keyboard alone, with a visible focus ring", async ({ page }) => {
   await openApp(page);
   await openOrbSettings(page);
@@ -374,8 +492,8 @@ test("reduced motion stills every style, and the preview says so", async ({ page
   await api("PUT", "/preferences/orb.profile", { value: "plasma" });
 
   // First with motion, so the stillness below is a property of the setting rather than of a canvas that
-  // never moves: plasma is the busiest style there is. Dark, because on a light surface the orb's
-  // additive interior saturates to white, and a white disc looks the same from one frame to the next.
+  // never moves: plasma is the busiest style there is. The theme is pinned so the check does not depend on
+  // whatever the runner emulates.
   await page.emulateMedia({ colorScheme: "dark" });
   await openApp(page);
   await openOrbSettings(page);
