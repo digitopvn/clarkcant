@@ -61,6 +61,26 @@ Record in the PR or in this section: the macOS version, the Electron version, th
 that `getMinimumSize()` returns. If `COMPACT_MIN_SIZE` is wrong on macOS, that is a finding, and fixing it is the job
 of a separate change — not adjusting the number to fit the machine.
 
+## Windows: what a stop guarantees
+
+This one is not a manual smoke. It runs on the Windows CI runner, and it is written down here because the guarantee
+differs from macOS and Linux.
+
+- **On macOS and Linux,** a stop signals the command's whole process group. That group includes a child the shell
+  starts after the stop.
+- **On Windows,** a stop runs `taskkill /T /F`, which ends the command's tree as it is at that moment. Once the shell has
+  exited, the processes it left running are also found and ended. They are found by their parent pid and by a creation
+  time inside the shell's lifetime. So when a `.cmd` shim (the `gh` and `pnpm` wrappers) starts its command just after
+  the kill, the command is still stopped.
+  - That lifetime runs from the shell's recorded start to its recorded exit, not to the stop. A process that later
+    reuses the shell's pid, and anything it starts, is therefore never ended. When the exit was not recorded, nothing
+    is searched for.
+  - `apps/runtime/test/process-tree.spec.ts` checks this on Windows: "stopping a command a .cmd shim started, on
+    Windows".
+- **What Windows does not guarantee.** A process whose own parent had already exited before that search has no living
+  link back to the command, and it is not found. An example is the grandchild of a shim whose child exited first. A Job
+  Object would reach it, but Node cannot create one without a native addon.
+
 ## Why there is no skipped test
 
 A `skip` test on this machine would make the test suite say "green" while the thing it was meant to check has never

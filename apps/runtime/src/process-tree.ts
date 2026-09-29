@@ -10,7 +10,10 @@ import { readFileSync } from "node:fs";
  *
  *   - **The group, not the child.** A shell's command is the shell's child; a worker's tools are the worker's
  *     children. Every such child is started in its own process group (`detached` on POSIX), so one signal to the
- *     negative pid reaches all of it. Windows has no groups and uses `taskkill /T`.
+ *     negative pid reaches all of it. Windows has no groups and uses `taskkill /T`, which kills the tree as it is at
+ *     that moment; once the child has exited, the processes it started that are still alive are found by their parent
+ *     pid and a creation time between the child's recorded start and exit, and ended too (`sweepWindowsDescendants`).
+ *     The window closes at the exit, never at the stop, so a process that later reuses the pid is never reached.
  *   - **Ask, then insist.** SIGTERM first so a process can flush and remove what it wrote, then SIGKILL after a short
  *     grace for one that did not listen. A stop is a person's decision and must work on something that is not
  *     listening, so the second step is not optional; the grace is only how long the first step gets.
@@ -21,6 +24,49 @@ import { readFileSync } from "node:fs";
 
 /** How long a process gets between SIGTERM and SIGKILL. Long enough to flush a file, short enough that a stop is a stop. */
 export const STOP_GRACE_MS = 1_500;
+
+/** When a child started and, once this process has heard, when it exited. */
+interface Lifetime {
+  readonly startedAt: number;
+  exitedAt?: number;
+}
+
+const lifetimes = new WeakMap<ChildProcess, Lifetime>();
+
+/**
+ * Record that `child` has just been started, as soon as `spawn` has returned, and record its exit when it comes.
+ *
+ * On Windows this is what lets a stop reach a process the child started before the stop and left behind when it
+ * exited (`start /b`, or a child the first `taskkill /T` did not see): a process whose parent pid is the child's pid
+ * and that was created between the child's start and its exit can only be the child's own. Without it, a stop reaches
+ * only what was created after the stop itself. Nothing reads it on POSIX, where the process group already covers both.
+ */
+export function noteStarted(child: ChildProcess, at: number = Date.now()): void {
+  const lifetime: Lifetime = { startedAt: at };
+  lifetimes.set(child, lifetime);
+  // Heard before the handle this process holds on the child is released, and Windows does not give the pid to another
+  // process while that handle is open: nothing created after this moment can be the child's.
+  child.once("exit", () => {
+    lifetime.exitedAt = Date.now();
+  });
+}
+
+/**
+ * The time a process whose parent pid is `child`'s pid must have been created in to be `child`'s own: from its
+ * recorded start to its recorded exit. Undefined until both are known, and then nothing is swept, because a window that
+ * ran on past the exit would take in a process that reused the pid, and whatever that process started.
+ */
+export function childLifetime(child: ChildProcess): { fromMs: number; toMs: number } | undefined {
+  const lifetime = lifetimes.get(child);
+  if (lifetime?.exitedAt === undefined) return undefined;
+  return { fromMs: lifetime.startedAt, toMs: lifetime.exitedAt };
+}
+
+/** On Windows, once `child` has exited, end what it left running; nothing when its lifetime is not known. */
+function sweepAfterExit(pid: number, child: ChildProcess): void {
+  const lifetime = childLifetime(child);
+  if (lifetime !== undefined) sweepWindowsDescendants(pid, lifetime.fromMs, lifetime.toMs);
+}
 
 /**
  * Send one signal to a process group, falling back to the process itself when the group cannot be reached.
@@ -87,6 +133,12 @@ export function stopTree(child: ChildProcess, graceMs: number = STOP_GRACE_MS): 
     return Promise.resolve();
   }
   if ((child.exitCode ?? null) !== null || (child.signalCode ?? null) !== null) {
+    if (process.platform === "win32") {
+      // No group to signal, and the pid may not be the child's any more. What it left running is found by its parent
+      // pid, within the child's recorded start and exit; a child whose exit was not recorded gets no sweep.
+      sweepAfterExit(pid, child);
+      return Promise.resolve();
+    }
     // The shell has gone but `sleep 60 &` it started may still hold the output pipes, which is why the caller is still
     // waiting. The group outlives the shell; it gets the same two steps, without ever touching the bare pid.
     return new Promise<void>((resolve) => {
@@ -100,6 +152,14 @@ export function stopTree(child: ChildProcess, graceMs: number = STOP_GRACE_MS): 
       }, graceMs);
       timer.unref?.();
     });
+  }
+  if (process.platform === "win32") {
+    // `taskkill /T` below ends the tree as it stands when it runs; a child the shell starts after that outlives it.
+    // Once the shell has exited, whenever that is (after the grace too, so this listener is never removed), what it
+    // left alive is swept. Without a recorded start, the window opens at this stop, which still covers every process
+    // created after the kill's snapshot. Recording it here adds its exit listener ahead of the one below.
+    if (!lifetimes.has(child)) noteStarted(child);
+    child.once("exit", () => sweepAfterExit(pid, child));
   }
   return new Promise<void>((resolve) => {
     let done = false;
@@ -125,6 +185,68 @@ export function stopTree(child: ChildProcess, graceMs: number = STOP_GRACE_MS): 
     child.once("exit", onExit);
     if (!signalTree(pid, "SIGTERM", child)) finish();
   });
+}
+
+/**
+ * On Windows, end what a child that has exited left running: the processes it started, and theirs.
+ *
+ * `taskkill /T` walks the tree as it is when it runs. A shell that starts its command just after that (a `.cmd` shim
+ * between being started and starting `node`, `git` or `gh`) leaves the command alive and holding the shell's pipes,
+ * and nothing sent to the shell's pid reaches it once the shell has gone. Windows keeps the parent's pid on such a
+ * process, so it can still be found. A live process whose parent pid is the child's pid and that was created while the
+ * child was alive (`fromMs` to `toMs`, its recorded start and exit) is the child's own: no other process could hold that
+ * pid in that time. A process that reused the pid after the exit, and anything it started, is outside the window, and a
+ * process created before the start is too. What those processes started is found
+ * the same way, from each one's creation, and everything found is ended. The search runs again until a pass finds
+ * nothing (five passes at most), so a process started while its parent was being ended is ended as well.
+ *
+ * Bounded, not airtight: a process whose own parent exited before the search, such as the grandchild of a shell whose
+ * child exited first, has no living link back to the child and is not found. A Job Object would reach it, but Node
+ * cannot create one without a native addon.
+ */
+function sweepWindowsDescendants(rootPid: number, fromMs: number, toMs: number): void {
+  // 0 is the idle process and 4 is System: never a child's.
+  if (!Number.isInteger(rootPid) || rootPid <= 4) return;
+  const script = `
+$ErrorActionPreference = 'SilentlyContinue'
+$epoch = [DateTime]::new(1970, 1, 1, 0, 0, 0, [DateTimeKind]::Utc)
+$windows = @{ ${String(rootPid)} = @($epoch.AddMilliseconds(${String(Math.floor(fromMs))}), $epoch.AddMilliseconds(${String(Math.ceil(toMs))})) }
+for ($pass = 0; $pass -lt 5; $pass++) {
+  $all = @(Get-CimInstance Win32_Process -Property ProcessId, ParentProcessId, CreationDate)
+  $found = @()
+  do {
+    $grew = $false
+    foreach ($p in $all) {
+      $id = [int]$p.ProcessId
+      if ($windows.ContainsKey($id) -or $null -eq $p.CreationDate) { continue }
+      $window = $windows[[int]$p.ParentProcessId]
+      if ($null -eq $window) { continue }
+      $created = $p.CreationDate.ToUniversalTime()
+      if ($created -lt $window[0] -or $created -gt $window[1]) { continue }
+      $windows[$id] = @($created, [DateTime]::MaxValue)
+      $found += $id
+      $grew = $true
+    }
+  } while ($grew)
+  if ($found.Count -eq 0) { break }
+  foreach ($id in $found) { Stop-Process -Id $id -Force }
+  $ended = [DateTime]::UtcNow
+  foreach ($id in $found) { $windows[$id] = @($windows[$id][0], $ended) }
+  Start-Sleep -Milliseconds 250
+}
+`;
+  try {
+    const sweeper = spawn(
+      "powershell.exe",
+      // Execution policy governs script files, not `-EncodedCommand`, so there is nothing to bypass.
+      ["-NoProfile", "-NonInteractive", "-EncodedCommand", Buffer.from(script, "utf16le").toString("base64")],
+      { windowsHide: true, stdio: "ignore" },
+    );
+    // A missing PowerShell is reported on the handle, not thrown; unheard, it would crash the node.
+    sweeper.on("error", () => undefined);
+  } catch {
+    // Nothing more can be done from here; the first `taskkill` has already run.
+  }
 }
 
 /**

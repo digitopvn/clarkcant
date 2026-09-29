@@ -1,9 +1,20 @@
-import { spawn } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { spawn, type ChildProcessByStdio } from "node:child_process";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { type Readable } from "node:stream";
 
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { isSameProcess, machineBootId, readProcStartTime, signalTree, stopTree } from "../src/process-tree.ts";
+import {
+  childLifetime,
+  isSameProcess,
+  machineBootId,
+  noteStarted,
+  readProcStartTime,
+  signalTree,
+  stopTree,
+} from "../src/process-tree.ts";
 
 // Fields 3.. of /proc/<pid>/stat; the 20th of them (field 22) is the start time.
 const TAIL = "S 1 100 100 0 -1 4194560 100 0 0 0 1 2 0 0 20 0 1 0 987654 1000 10";
@@ -100,4 +111,123 @@ describe.runIf(process.platform === "linux")("stopping a process group", () => {
     await new Promise((resolve) => child.once("exit", resolve));
     await expect(stopTree(child, 5_000)).resolves.toBeUndefined();
   });
+});
+
+/**
+ * On Windows a stop looks for what a child left running by its parent pid, so the window those processes must have been
+ * created in is what keeps it off a process that reused the pid. It must close at the child's exit: a window that ran
+ * on to the stop would take in whatever a process holding the reused pid started after the exit.
+ */
+describe("the lifetime a stop on Windows sweeps within", () => {
+  it("ends at the child's exit, not at a stop that comes later", async () => {
+    const started = Date.now() - 50;
+    const child = spawn(process.execPath, ["-e", ""], { stdio: "ignore" });
+    noteStarted(child, started);
+    expect(childLifetime(child)).toBeUndefined();
+
+    await new Promise((resolve) => child.once("exit", resolve));
+    const heard = Date.now();
+    await new Promise((resolve) => setTimeout(resolve, 200));
+
+    const lifetime = childLifetime(child);
+    expect(lifetime?.fromMs).toBe(started);
+    expect(lifetime?.toMs).toBeGreaterThanOrEqual(started);
+    expect(lifetime?.toMs).toBeLessThanOrEqual(heard);
+    // A stop now would come 200ms after the exit; the window does not move with it.
+    expect(childLifetime(child)).toEqual(lifetime);
+  });
+
+  it("is unknown for a child whose start was never recorded, so nothing is swept", async () => {
+    const child = spawn(process.execPath, ["-e", ""], { stdio: "ignore" });
+    await new Promise((resolve) => child.once("exit", resolve));
+    expect(childLifetime(child)).toBeUndefined();
+  });
+
+  it("is unknown for a child recorded only after it had exited, whose exit was never heard", async () => {
+    const child = spawn(process.execPath, ["-e", ""], { stdio: "ignore" });
+    await new Promise((resolve) => child.once("exit", resolve));
+    noteStarted(child);
+    expect(childLifetime(child)).toBeUndefined();
+  });
+});
+
+/**
+ * Windows has no process groups: a stop is `taskkill /T`, which ends the tree as it stands when it runs. A `.cmd` shim
+ * (the `gh` and `pnpm` wrappers are shims) that starts its command just after that leaves the command running with no
+ * parent, holding the shim's pipes, so the caller waiting on the command never hears it end.
+ *
+ * The moment is too narrow to hit on purpose, but the state it leaves is not: ending the shim's own process, which is
+ * what `kill` is on Windows, leaves the command exactly as a `taskkill /T` that ran too early would. Each test checks
+ * that the stop still ends the command, observed as the shim's pipes closing: `ping -n 30` holds them for about 29
+ * seconds, and nothing else does.
+ */
+describe.runIf(process.platform === "win32")("stopping a command a .cmd shim started, on Windows", () => {
+  let dir: string;
+
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), "cc-stop-shim-"));
+  });
+
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+  });
+
+  /** Run a shim the way `run_command` runs a command, and resolve once its command is running. */
+  async function startShim(): Promise<ChildProcessByStdio<null, Readable, null>> {
+    const shim = join(dir, "long.cmd");
+    writeFileSync(shim, "@echo off\r\nping -n 30 127.0.0.1\r\n");
+    const child = spawn(`"${shim}"`, { shell: true, windowsHide: true, stdio: ["ignore", "pipe", "ignore"] });
+    noteStarted(child);
+    // The shim prints nothing itself, so the first output is `ping`'s: from here the command is running.
+    await new Promise<void>((resolve) => child.stdout.once("data", () => resolve()));
+    return child;
+  }
+
+  function closeOf(child: ChildProcessByStdio<null, Readable, null>): Promise<void> {
+    return new Promise<void>((resolve) => child.once("close", () => resolve()));
+  }
+
+  it("ends the command a shim left running when the stop comes after the shim has gone", async () => {
+    const child = await startShim();
+    const closed = closeOf(child);
+    child.kill();
+    await new Promise((resolve) => child.once("exit", resolve));
+
+    const stopped = Date.now();
+    await stopTree(child, 200);
+    await closed;
+
+    expect(Date.now() - stopped).toBeLessThan(10_000);
+  }, 30_000);
+
+  it("ends the command a shim left running when the shim goes while the stop is under way", async () => {
+    const child = await startShim();
+    const closed = closeOf(child);
+    // Gone as far as Windows is concerned, not yet as far as this process has heard: the stop takes its first step on a
+    // shim that is still, to it, running.
+    child.kill();
+
+    const stopped = Date.now();
+    await stopTree(child, 200);
+    await closed;
+
+    expect(Date.now() - stopped).toBeLessThan(10_000);
+  }, 30_000);
+
+  it("leaves alone a process the shim did not start", async () => {
+    const other = spawn("ping", ["-n", "30", "127.0.0.1"], { windowsHide: true, stdio: "ignore" });
+    try {
+      const child = await startShim();
+      const closed = closeOf(child);
+      child.kill();
+      await new Promise((resolve) => child.once("exit", resolve));
+      await stopTree(child, 200);
+      await closed;
+
+      expect(other.exitCode).toBeNull();
+      expect(() => process.kill(other.pid ?? -1, 0)).not.toThrow();
+    } finally {
+      other.kill();
+    }
+  }, 30_000);
 });

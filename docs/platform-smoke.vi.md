@@ -60,6 +60,27 @@ Ghi lại vào PR hoặc vào mục này: phiên bản macOS, phiên bản Elect
 `getMinimumSize()` trả về. Nếu `COMPACT_MIN_SIZE` sai trên macOS thì đó là một finding, và sửa nó là việc của một
 change riêng — không phải chỉnh con số cho vừa máy.
 
+## Windows: một lần dừng bảo đảm được gì
+
+Mục này không phải smoke thủ công. Nó chạy trên runner Windows của CI, và được ghi ở đây vì bảo đảm trên Windows khác
+với macOS và Linux.
+
+- **Trên macOS và Linux,** lệnh dừng gửi tín hiệu cho cả process group của lệnh. Group đó gồm cả tiến trình con mà
+  shell khởi chạy sau lúc dừng.
+- **Trên Windows,** lệnh dừng chạy `taskkill /T /F`, và lệnh này kết thúc cây tiến trình của lệnh như nó đang có lúc
+  đó. Khi shell đã thoát, những tiến trình nó để lại vẫn còn chạy cũng được tìm ra và kết thúc. Chúng được tìm theo pid
+  cha và theo thời điểm tạo nằm trong khoảng shell còn sống. Vì vậy khi một shim `.cmd` (các wrapper `gh` và `pnpm`)
+  khởi chạy lệnh của nó ngay sau lần kill, lệnh đó vẫn bị dừng.
+  - Khoảng sống đó tính từ lúc shell được ghi nhận là bắt đầu đến lúc nó được ghi nhận là thoát, không kéo tới lúc
+    dừng. Vì vậy một tiến trình về sau dùng lại pid của shell, cùng mọi thứ nó khởi chạy, không bao giờ bị kết thúc.
+    Khi lúc thoát không được ghi nhận thì không tìm gì cả.
+  - `apps/runtime/test/process-tree.spec.ts` kiểm điều này trên Windows: "stopping a command a .cmd shim started, on
+    Windows".
+- **Điều Windows không bảo đảm.** Một tiến trình mà chính tiến trình cha của nó đã thoát trước lần tìm đó thì không
+  còn mối liên kết sống nào về lệnh, và không được tìm thấy. Ví dụ là tiến trình cháu của một shim mà tiến trình con
+  của shim đã thoát trước. Một Job Object sẽ tới được nó, nhưng Node không tạo được Job Object nếu không có native
+  addon.
+
 ## Vì sao không có test bị skip
 
 Một test `skip` trên máy này sẽ khiến bộ kiểm tra nói "xanh" trong khi thứ nó định kiểm chưa từng chạy. Thứ đúng
