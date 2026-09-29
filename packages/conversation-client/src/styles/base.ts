@@ -328,6 +328,12 @@ body {
 .cc-inbox-more-caret[data-open="true"] { transform: rotate(180deg); }
 .cc-inbox-menu { flex-basis: 100%; display: flex; align-items: center; gap: var(--cc-space-sm); flex-wrap: wrap; }
 .cc-inbox-menu[hidden] { display: none; }
+/* The snooze choices sit inside "More" as one labelled row of plain buttons, wrapping on a narrow window. */
+.cc-inbox-snooze { flex-basis: 100%; display: flex; align-items: center; gap: var(--cc-space-xs) var(--cc-space-sm); flex-wrap: wrap; }
+/* Snoozed notices and quieted kinds: secondary lists under the notices, closed until somebody asks for them. */
+.cc-inbox-aside > summary { cursor: pointer; font-size: var(--cc-text-label); font-weight: 600; color: var(--cc-text-muted); min-height: 26px; }
+.cc-inbox-aside > summary:focus-visible { outline: 2px solid var(--cc-focus); outline-offset: 2px; }
+.cc-inbox-aside[open] > summary { margin-bottom: var(--cc-space-sm); }
 @media (max-width: 520px) {
   /* The count words go on a narrow header; the dot and the button stay, and the label keeps the count. */
   .cc-inbox-mark > span:last-child { max-width: 9em; overflow: hidden; text-overflow: ellipsis; }

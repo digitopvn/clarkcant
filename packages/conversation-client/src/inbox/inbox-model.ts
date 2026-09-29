@@ -6,6 +6,7 @@ import type {
   NoticeAction,
   NoticeSeverity,
   NoticeSourceKind,
+  NoticeSuppression,
   WaitingItem,
 } from "@clarkcant/contracts";
 
@@ -277,6 +278,109 @@ export function noticeReference(notice: Notice): { key: string; ref: Extract<Com
     label = `${(space > REFERENCE_LABEL_MAX / 2 ? cut.slice(0, space) : cut).trimEnd()}…`;
   }
   return { key: `notice:${notice.noticeId}`, ref: { kind: "notice", noticeId: notice.noticeId, label: label === "" ? notice.noticeId : label } };
+}
+
+export type SnoozePresetId = "hour" | "evening" | "tomorrow" | "next-week";
+
+/** "This evening" and "tomorrow morning", as local clock hours. */
+const EVENING_HOUR = 18;
+const MORNING_HOUR = 8;
+
+/**
+ * The times a notice can be snoozed to, worked out from the person's own clock and time zone: the node stores an instant
+ * and has no idea when "this evening" is for somebody.
+ *
+ *   - `hour`: an hour from now.
+ *   - `evening`: 18:00 today, offered only until 17:00, so it is never less than an hour away and never already past.
+ *   - `tomorrow`: 08:00 tomorrow.
+ *   - `next-week`: 08:00 on the next Monday — a week away when today is Monday.
+ *
+ * Local-time arithmetic through `Date`'s own setters, so a daylight-saving change in between still lands on the wall
+ * clock hour the label promises.
+ */
+export function snoozePresets(now: Date): Array<{ id: SnoozePresetId; until: Date }> {
+  const at = (days: number, hour: number): Date => {
+    const date = new Date(now.getTime());
+    date.setDate(date.getDate() + days);
+    date.setHours(hour, 0, 0, 0);
+    return date;
+  };
+  const presets: Array<{ id: SnoozePresetId; until: Date }> = [{ id: "hour", until: new Date(now.getTime() + 60 * 60_000) }];
+  if (now.getHours() < EVENING_HOUR - 1) presets.push({ id: "evening", until: at(0, EVENING_HOUR) });
+  presets.push({ id: "tomorrow", until: at(1, MORNING_HOUR) });
+  // getDay(): 0 is Sunday, 1 is Monday. Days until the next Monday, never zero.
+  const toMonday = ((8 - now.getDay()) % 7) || 7;
+  presets.push({ id: "next-week", until: at(toMonday, MORNING_HOUR) });
+  return presets;
+}
+
+/**
+ * When a preset ends if it is chosen at `now`. The surface asks this at the moment of the press, not when the menu was
+ * drawn, so a menu left open past 18:00 cannot snooze a notice to an evening that has already gone. Undefined when the
+ * preset is no longer offered at `now`.
+ */
+export function snoozeUntil(id: SnoozePresetId, now: Date): Date | undefined {
+  return snoozePresets(now).find((preset) => preset.id === id)?.until;
+}
+
+export function snoozePresetKey(id: SnoozePresetId): MessageKey {
+  switch (id) {
+    case "hour":
+      return "inbox.snooze.hour";
+    case "evening":
+      return "inbox.snooze.evening";
+    case "tomorrow":
+      return "inbox.snooze.tomorrow";
+    case "next-week":
+      return "inbox.snooze.nextWeek";
+  }
+}
+
+/**
+ * What a quieted kind covers, in parts the surface words: which thing it is limited to (an automation, a signal
+ * source, a package, the Pi SDK, a node — or a whole source when it has no scope) and which level. One example title
+ * alone would not say whether quieting it also quiets anything else; this does.
+ */
+export function suppressionDescription(suppression: NoticeSuppression): { scopeKey: MessageKey; label: string; levelKey: MessageKey } {
+  const levelKey = suppressionLevelKey(suppression.severity);
+  const scope = suppression.scope;
+  if (scope === undefined) return { scopeKey: "inbox.suppressions.scope.all", label: "", levelKey };
+  const colon = scope.indexOf(":");
+  const prefix = colon === -1 ? scope : scope.slice(0, colon);
+  const label = suppression.scopeLabel ?? (colon === -1 ? scope : scope.slice(colon + 1));
+  switch (prefix) {
+    case "automation":
+      return { scopeKey: "inbox.suppressions.scope.automation", label, levelKey };
+    case "source":
+      return { scopeKey: "inbox.suppressions.scope.source", label, levelKey };
+    case "package":
+      return { scopeKey: "inbox.suppressions.scope.package", label, levelKey };
+    case "pi":
+      return { scopeKey: "inbox.suppressions.scope.pi", label, levelKey };
+    default:
+      return { scopeKey: "inbox.suppressions.scope.peer", label, levelKey };
+  }
+}
+
+function suppressionLevelKey(severity: NoticeSeverity): MessageKey {
+  switch (severity) {
+    case "info":
+      return "inbox.suppressions.level.info";
+    case "success":
+      return "inbox.suppressions.level.success";
+    case "warning":
+      return "inbox.suppressions.level.warning";
+    case "error":
+      return "inbox.suppressions.level.error";
+  }
+}
+
+/**
+ * Whether the node says this notice's kind is quieted: it offers "notify about this kind again" only then. Read from the
+ * actions it worked out, so the surface never keeps its own copy of the suppression list to disagree with.
+ */
+export function noticeKindQuieted(notice: Notice): boolean {
+  return notice.actions?.some((action) => action.id === "unsuppress") === true;
 }
 
 /**

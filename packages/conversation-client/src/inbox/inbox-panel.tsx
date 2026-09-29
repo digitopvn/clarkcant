@@ -14,11 +14,17 @@ import {
   noticeActionGroups,
   noticeConversationTarget,
   noticeIdsToMarkRead,
+  noticeKindQuieted,
   noticesMayBeCapped,
   noticeSourceKey,
   noticeTone,
   relativeAge,
   sanitizeReason,
+  type SnoozePresetId,
+  snoozePresetKey,
+  snoozePresets,
+  snoozeUntil,
+  suppressionDescription,
   timeLeft,
   waitingKey,
 } from "./inbox-model.ts";
@@ -61,8 +67,12 @@ export interface InboxPanelProps {
 
 type Load = { state: "loading" } | { state: "failed"; reason: string } | { state: "ready"; inbox: InboxResponse };
 
-/** The outcome line; after a dismissal it carries the notice that "Undo" brings back. */
-type Status = { tone: "done" | "failed"; text: string; undo?: string };
+/**
+ * The outcome line. After a dismissal, a snooze or quieting a kind it carries what "Undo" reverses: bringing the notice
+ * back, bringing it back from its snooze, or notifying about its kind again.
+ */
+type Undo = { kind: "restore" | "unsnooze" | "unsuppress"; noticeId: string };
+type Status = { tone: "done" | "failed"; text: string; undo?: Undo };
 
 /** Where focus goes once the render that follows an action has landed, when a disabled button can take it again. */
 type FocusTarget = { kind: "notice"; noticeId: string } | { kind: "heading" } | { kind: "status" };
@@ -306,7 +316,7 @@ export function InboxPanel({
         // "Undo" sits in that line for as long as it stands; the node keeps the notice restorable for a few minutes.
         const nextId = nextNoticeFocusTarget(noticeIdsBeforeDismiss, notice.noticeId);
         finish(
-          { tone: "done", text: t("inbox.dismissed"), undo: notice.noticeId },
+          { tone: "done", text: t("inbox.dismissed"), undo: { kind: "restore", noticeId: notice.noticeId } },
           nextId === undefined ? { kind: "heading" } : { kind: "notice", noticeId: nextId },
         );
       })
@@ -326,6 +336,84 @@ export function InboxPanel({
     void (read ? client.markInboxRead([notice.noticeId]) : client.markInboxUnread([notice.noticeId]))
       .then(() => finish({ tone: "done", text: t(read ? "inbox.markedRead" : "inbox.markedUnread") }, { kind: "notice", noticeId: notice.noticeId }))
       .catch((cause: unknown) => finish({ tone: "failed", text: t("inbox.markFailed").replace("{reason}", failedReason(cause)) }, { kind: "status" }));
+  };
+
+  /** A moment as the person reads it on their own clock: the weekday and the time, which is what "until when" needs. */
+  const when = (instant: string | Date): string =>
+    new Date(instant).toLocaleString(locale === "vi" ? "vi-VN" : "en-US", { weekday: "long", hour: "2-digit", minute: "2-digit" });
+
+  const snooze = (notice: Notice, preset: SnoozePresetId) => {
+    // Worked out at the press, not when the menu was drawn: a menu left open past 17:00 no longer has an evening.
+    const until = snoozeUntil(preset, new Date());
+    if (until === undefined) {
+      setMenuFor(undefined);
+      setStatus({ tone: "failed", text: t("inbox.snooze.gone") });
+      setFocusTarget({ kind: "status" });
+      return;
+    }
+    if (!lock(`notice:${notice.noticeId}`)) return;
+    const noticeIdsBefore = load.state === "ready" ? load.inbox.notices.map((existing) => existing.noticeId) : [];
+    void client
+      .snoozeNotice(notice.noticeId, until.toISOString())
+      .then((answer) => {
+        // It leaves the list like a dismissed notice does, so focus goes to the same neighbour a dismissal would pick.
+        const nextId = nextNoticeFocusTarget(noticeIdsBefore, notice.noticeId);
+        finish(
+          {
+            tone: "done",
+            text: t("inbox.snoozed").replace("{time}", when(answer.snoozedUntil)),
+            undo: { kind: "unsnooze", noticeId: notice.noticeId },
+          },
+          nextId === undefined ? { kind: "heading" } : { kind: "notice", noticeId: nextId },
+        );
+      })
+      .catch((cause: unknown) => finish({ tone: "failed", text: t("inbox.snoozeFailed").replace("{reason}", failedReason(cause)) }, { kind: "status" }));
+  };
+
+  const unsnooze = (noticeId: string) => {
+    if (!lock(`notice:${noticeId}`)) return;
+    void client
+      .unsnoozeNotice(noticeId)
+      .then(() => finish({ tone: "done", text: t("inbox.unsnoozed") }, { kind: "notice", noticeId }))
+      .catch((cause: unknown) => finish({ tone: "failed", text: t("inbox.unsnoozeFailed").replace("{reason}", failedReason(cause)) }, { kind: "status" }));
+  };
+
+  /** Quiet this notice's kind, or notify about it again. The notice itself stays where it is, so focus stays on it. */
+  const setQuiet = (noticeId: string, quiet: boolean) => {
+    if (!lock(`notice:${noticeId}`)) return;
+    void (quiet ? client.suppressNoticeKind(noticeId) : client.unsuppressNoticeKind(noticeId))
+      .then(() =>
+        finish(
+          quiet
+            ? { tone: "done", text: t("inbox.suppressed"), undo: { kind: "unsuppress", noticeId } }
+            : { tone: "done", text: t("inbox.unsuppressed") },
+          { kind: "notice", noticeId },
+        ),
+      )
+      .catch((cause: unknown) => finish({ tone: "failed", text: t("inbox.suppressFailed").replace("{reason}", failedReason(cause)) }, { kind: "status" }));
+  };
+
+  /** From the list of quieted kinds, for a kind that may have no notice left in the list to act from. */
+  const removeSuppression = (suppressionId: string) => {
+    if (!lock(`suppression:${suppressionId}`)) return;
+    void client
+      .removeNoticeSuppression(suppressionId)
+      .then(() => finish({ tone: "done", text: t("inbox.unsuppressed") }, { kind: "status" }))
+      .catch((cause: unknown) => finish({ tone: "failed", text: t("inbox.suppressFailed").replace("{reason}", failedReason(cause)) }, { kind: "status" }));
+  };
+
+  const undo = (what: Undo) => {
+    switch (what.kind) {
+      case "restore":
+        restore(what.noticeId);
+        return;
+      case "unsnooze":
+        unsnooze(what.noticeId);
+        return;
+      case "unsuppress":
+        setQuiet(what.noticeId, false);
+        return;
+    }
   };
 
   const addToContext = (notice: Notice) => {
@@ -456,6 +544,68 @@ export function InboxPanel({
             {t("inbox.dismiss")}
           </button>
         );
+      case "snooze":
+        // One labelled row of choices rather than a second disclosure inside "More": one press from the menu, and every
+        // choice says the time it means on this person's clock.
+        return (
+          <div
+            key="snooze"
+            role="group"
+            className="cc-inbox-snooze"
+            aria-label={t("inbox.snooze.groupAria").replace("{title}", notice.title)}
+            data-inbox-snooze-group={notice.noticeId}
+          >
+            <span className="cc-freshness" aria-hidden="true">
+              {t("inbox.snooze.label")}
+            </span>
+            {snoozePresets(new Date()).map((preset) => (
+              <button
+                key={preset.id}
+                type="button"
+                className="cc-action"
+                data-inbox-snooze={notice.noticeId}
+                data-snooze-preset={preset.id}
+                title={when(preset.until)}
+                disabled={locked}
+                onClick={() => snooze(notice, preset.id)}
+              >
+                {t(snoozePresetKey(preset.id))}
+              </button>
+            ))}
+          </div>
+        );
+      case "unsnooze":
+        return (
+          <button
+            key="unsnooze"
+            type="button"
+            className="cc-action"
+            {...emphasis}
+            data-inbox-unsnooze={notice.noticeId}
+            aria-label={t("inbox.action.unsnoozeAria").replace("{title}", notice.title)}
+            disabled={locked}
+            onClick={() => unsnooze(notice.noticeId)}
+          >
+            {t("inbox.action.unsnooze")}
+          </button>
+        );
+      case "suppress":
+      case "unsuppress": {
+        const quiet = action.id === "suppress";
+        return (
+          <button
+            key={action.id}
+            type="button"
+            className="cc-action"
+            {...emphasis}
+            {...(quiet ? { "data-inbox-suppress": notice.noticeId } : { "data-inbox-unsuppress": notice.noticeId })}
+            disabled={locked}
+            onClick={() => setQuiet(notice.noticeId, quiet)}
+          >
+            {t(quiet ? "inbox.action.suppress" : "inbox.action.unsuppress")}
+          </button>
+        );
+      }
     }
   };
 
@@ -493,10 +643,11 @@ export function InboxPanel({
               <button
                 type="button"
                 className="cc-action"
-                data-inbox-undo={status.undo}
+                data-inbox-undo={status.undo.noticeId}
+                data-inbox-undo-kind={status.undo.kind}
                 disabled={busy !== undefined}
                 onClick={() => {
-                  if (status.undo !== undefined) restore(status.undo);
+                  if (status.undo !== undefined) undo(status.undo);
                 }}
               >
                 {t("inbox.undo")}
@@ -727,6 +878,12 @@ export function InboxPanel({
                         </div>
                         <p className="cc-inbox-notice-title">{notice.title}</p>
                         {notice.body !== undefined && <p className="cc-inbox-notice-body">{notice.body}</p>}
+                        {noticeKindQuieted(notice) && (
+                          // Says why a notice of this kind arrived already read, in words rather than by its look alone.
+                          <p className="cc-freshness" data-inbox-quiet-kind={notice.noticeId} style={{ margin: 0 }}>
+                            {t("inbox.quietKind")}
+                          </p>
+                        )}
                         <div className="cc-card-actions" onKeyDown={closeMenuOnEscape(notice.noticeId)}>
                           {buttons.map((action) => noticeAction(notice, action))}
                           {menuItems.length > 0 && (
@@ -760,6 +917,75 @@ export function InboxPanel({
                     );
                   })}
                 </ul>
+              )}
+              {load.inbox.snoozed.length > 0 && (
+                // Closed by default: what the person put aside is out of the way on purpose, but never out of reach.
+                <details className="cc-inbox-aside" data-inbox-snoozed-list="true">
+                  <summary>{t("inbox.snoozed.heading").replace("{count}", String(load.inbox.snoozed.length))}</summary>
+                  <ul className="cc-inbox-list">
+                    {load.inbox.snoozed.map((notice) => (
+                      <li key={notice.noticeId} className="cc-inbox-notice" data-inbox-snoozed={notice.noticeId}>
+                        <div className="cc-inbox-notice-head">
+                          <span className="cc-badge">{t(noticeSourceKey(notice.sourceKind))}</span>
+                          {notice.snoozedUntil !== undefined && (
+                            <span className="cc-freshness" data-inbox-snoozed-until={notice.snoozedUntil}>
+                              {t("inbox.snoozed.until").replace("{time}", when(notice.snoozedUntil))}
+                            </span>
+                          )}
+                        </div>
+                        <p className="cc-inbox-notice-title">{notice.title}</p>
+                        <div className="cc-card-actions">
+                          {noticeActionGroups(notice).buttons.map((action) => noticeAction(notice, action))}
+                        </div>
+                      </li>
+                    ))}
+                  </ul>
+                </details>
+              )}
+              {load.inbox.suppressions.length > 0 && (
+                <details className="cc-inbox-aside" data-inbox-suppressions="true">
+                  <summary>{t("inbox.suppressions.heading").replace("{count}", String(load.inbox.suppressions.length))}</summary>
+                  <p className="cc-freshness" style={{ marginTop: 0 }}>
+                    {t("inbox.suppressions.note")}
+                  </p>
+                  <ul className="cc-inbox-list">
+                    {load.inbox.suppressions.map((suppression) => {
+                      const parts = suppressionDescription(suppression);
+                      const covers = `${t(parts.scopeKey).replace("{label}", parts.label).replace("{source}", t(noticeSourceKey(suppression.sourceKind)))} — ${t(parts.levelKey)}`;
+                      return (
+                        <li
+                          key={suppression.suppressionId}
+                          className="cc-inbox-notice"
+                          data-inbox-suppression={suppression.suppressionId}
+                        >
+                          <div className="cc-inbox-notice-head">
+                            <span className="cc-badge" {...(noticeTone(suppression.severity) === undefined ? {} : { "data-tone": noticeTone(suppression.severity) })}>
+                              {t(noticeSourceKey(suppression.sourceKind))}
+                            </span>
+                          </div>
+                          <p className="cc-inbox-notice-title" data-inbox-suppression-covers={suppression.suppressionId}>
+                            {covers}
+                          </p>
+                          <p className="cc-freshness" style={{ margin: 0 }}>
+                            {t("inbox.suppressions.example").replace("{title}", suppression.example)}
+                          </p>
+                          <div className="cc-card-actions">
+                            <button
+                              type="button"
+                              className="cc-action"
+                              data-inbox-remove-suppression={suppression.suppressionId}
+                              aria-label={t("inbox.suppressions.removeAria").replace("{title}", covers)}
+                              disabled={busy !== undefined}
+                              onClick={() => removeSuppression(suppression.suppressionId)}
+                            >
+                              {t("inbox.suppressions.remove")}
+                            </button>
+                          </div>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                </details>
               )}
             </section>
           </>

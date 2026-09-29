@@ -69,6 +69,25 @@ export const noticeSubjectSchema = z.discriminatedUnion("kind", [
   z.strictObject({ kind: z.literal("package"), packageId: subjectIdSchema, version: z.string().min(1).max(100).optional() }),
   z.strictObject({ kind: z.literal("pi-update"), packageName: subjectIdSchema, version: z.string().min(1).max(100) }),
   z.strictObject({ kind: z.literal("peer"), nodeId: subjectIdSchema }),
+  /**
+   * A standing request the person set up ("when X happens, do Y"), named by its intent id, with its summary in the
+   * person's words as `label` so a list of quieted kinds can say which one it is. `taskId` is the task this run
+   * started, when it started one: "Open" leads to wherever that task now belongs, as it would for a `task` subject.
+   */
+  z.strictObject({
+    kind: z.literal("automation"),
+    intentId: subjectIdSchema,
+    label: z.string().min(1).max(NOTICE_TITLE_MAX),
+    taskId: subjectIdSchema.optional(),
+    conversationId: subjectIdSchema.optional(),
+  }),
+  /** One source of signals this node polls or listens to, such as one GitHub repository; `label` names it for a person. */
+  z.strictObject({
+    kind: z.literal("signal-source"),
+    sourceKey: subjectIdSchema,
+    label: z.string().min(1).max(NOTICE_TITLE_MAX),
+    conversationId: subjectIdSchema.optional(),
+  }),
 ]);
 export type NoticeSubject = z.infer<typeof noticeSubjectSchema>;
 
@@ -82,8 +101,24 @@ export type NoticeSubject = z.infer<typeof noticeSubjectSchema>;
  *   - `add-to-context`: put the same reference in the composer without sending.
  *   - `mark-read` / `mark-unread`: attention state only; neither hides the notice.
  *   - `dismiss`: take it out of the list, undoable for a short while.
+ *   - `snooze` / `unsnooze`: take this one notice out of the list and the unread count until a chosen time, when it
+ *     comes back unread; or bring a snoozed one back now.
+ *   - `suppress` / `unsuppress`: stop notifying about notices of this kind (`noticeSuppressionKey`) from now on, or
+ *     start again. Future matching notices are still listed, but arrive read, so they raise no count and no
+ *     notification outside the app. Nothing already in the list changes.
  */
-export const noticeActionIdSchema = z.enum(["open", "ask-clark", "add-to-context", "mark-read", "mark-unread", "dismiss"]);
+export const noticeActionIdSchema = z.enum([
+  "open",
+  "ask-clark",
+  "add-to-context",
+  "mark-read",
+  "mark-unread",
+  "dismiss",
+  "snooze",
+  "unsnooze",
+  "suppress",
+  "unsuppress",
+]);
 export type NoticeActionId = z.infer<typeof noticeActionIdSchema>;
 
 /**
@@ -117,10 +152,115 @@ export const noticeSchema = z.strictObject({
   readAt: instantSchema.optional(),
   /** What the notice is about, when its producer said. */
   subject: noticeSubjectSchema.optional(),
+  /** When a snoozed notice comes back. Present only while that is still ahead, which is only in `snoozed`. */
+  snoozedUntil: instantSchema.optional(),
   /** What can be done with it now, worked out by the node when it was read. Absent where nothing resolved them. */
   actions: z.array(noticeActionSchema).max(8).optional(),
 });
 export type Notice = z.infer<typeof noticeSchema>;
+
+/**
+ * The longest a notice can be snoozed. A week covers "next week"; beyond a month a snooze is a dismissal that has not
+ * admitted it yet, and the notice would outlive the work it points at.
+ */
+export const NOTICE_SNOOZE_MAX_MS = 30 * 24 * 60 * 60_000;
+
+/**
+ * What "notices of this kind" means for a suppression: the narrowest key the stored data supports.
+ *
+ *   - `sourceKind`, `category` and `severity` together, so quieting "background work finished" never quiets "background
+ *     work failed": a failure is a different kind of notice, and the one a person would least want to lose by accident.
+ *   - `scope`, only where the subject names something that keeps producing notices of its own: one standing request
+ *     (`automation:<intentId>`), one signal source such as one GitHub repository (`source:<sourceKey>`), one package's
+ *     updates (`package:<packageId>`, not the version, which changes with every update), the Pi SDK
+ *     (`pi:<packageName>`), one paired node (`peer:<nodeId>`, from the subject, or the notice's origin unless it is an
+ *     automation notice, which only its automation or source scopes). A task, a piece
+ *     of background work or a conversation produces one notice and is done, so scoping to it would quiet nothing that
+ *     could still come.
+ *
+ * Not every notice can be quieted (`noticeKindQuietable`). Without a scope, a key is only as narrow as its source, and
+ * for most sources that is far too wide: every automation notice is `automation`, so quieting "an automation started"
+ * with no scope would also quiet the reminders the person asked for and every other automation's warnings. Unscoped
+ * keys are allowed only for `background` and `worker`, whose every notice is the person's own work reporting back, so
+ * "stop telling me when my background work goes well" means exactly that. A reminder is never quietable: it has no
+ * scope, and its source is `automation`.
+ *
+ * Not the dedup key: producers choose it for their own idempotency (`worker:<taskId>`, `automation:<runId>`), its shape is
+ * not a contract, and a prefix of it would silently change meaning the day a producer renames it.
+ */
+export interface NoticeSuppressionKey {
+  sourceKind: NoticeSourceKind;
+  category: NoticeCategory;
+  severity: NoticeSeverity;
+  scope?: string;
+}
+
+type SuppressionInput = Pick<Notice, "sourceKind" | "category" | "severity" | "subject" | "originNodeId">;
+
+export function noticeSuppressionKey(notice: SuppressionInput): NoticeSuppressionKey {
+  const scope = suppressionScope(notice);
+  return {
+    sourceKind: notice.sourceKind,
+    category: notice.category,
+    severity: notice.severity,
+    ...(scope === undefined ? {} : { scope: scope.scope }),
+  };
+}
+
+/** Whether "stop notifying me about this kind" is narrow enough to offer for this notice. See `NoticeSuppressionKey`. */
+export function noticeKindQuietable(notice: SuppressionInput): boolean {
+  return suppressionScope(notice) !== undefined || notice.sourceKind === "background" || notice.sourceKind === "worker";
+}
+
+/** The words that name a notice's scope for a person — which automation, repository, package or node — if it has one. */
+export function noticeSuppressionScopeLabel(notice: SuppressionInput): string | undefined {
+  return suppressionScope(notice)?.label;
+}
+
+function suppressionScope(notice: Pick<Notice, "sourceKind" | "subject" | "originNodeId">): { scope: string; label: string } | undefined {
+  const subject = notice.subject;
+  // An automation notice from another node is scoped by its automation or source, never by the node alone: "this node's
+  // automation messages" would take in the reminders set there along with everything else it runs.
+  const originScope =
+    notice.originNodeId === undefined || notice.sourceKind === "automation"
+      ? undefined
+      : { scope: `peer:${notice.originNodeId}`, label: notice.originNodeId };
+  switch (subject?.kind) {
+    case "automation":
+      return { scope: `automation:${subject.intentId}`, label: subject.label };
+    case "signal-source":
+      return { scope: `source:${subject.sourceKey}`, label: subject.label };
+    case "package":
+      return { scope: `package:${subject.packageId}`, label: subject.packageId };
+    case "pi-update":
+      return { scope: `pi:${subject.packageName}`, label: subject.packageName };
+    case "peer":
+      return { scope: `peer:${subject.nodeId}`, label: subject.nodeId };
+    case "task":
+    case "background-work":
+    case "conversation":
+    case undefined:
+      return originScope;
+  }
+}
+
+/**
+ * One "stop notifying me about this kind", as the person set it. Belongs to one principal and is removed by deleting it;
+ * nothing else expires it. The list says what it quiets in words, not as a key: `scopeLabel` names which automation,
+ * repository, package or node it is limited to (absent when it covers a whole source), and `example` is the title of
+ * the notice it was made from.
+ */
+export const noticeSuppressionSchema = z.strictObject({
+  suppressionId: z.string().min(1).max(128),
+  sourceKind: noticeSourceKindSchema,
+  category: noticeCategorySchema,
+  severity: noticeSeveritySchema,
+  scope: z.string().min(1).max(260).optional(),
+  scopeLabel: z.string().min(1).max(NOTICE_TITLE_MAX).optional(),
+  example: z.string().min(1).max(NOTICE_TITLE_MAX),
+  createdAt: instantSchema,
+});
+export type NoticeSuppression = z.infer<typeof noticeSuppressionSchema>;
 
 /**
  * Something that is waiting for the person to decide or answer.
@@ -185,6 +325,13 @@ export const inboxResponseSchema = z.strictObject({
   waiting: z.array(waitingItemSchema),
   notices: z.array(noticeSchema),
   unread: z.number().int().nonnegative(),
+  /**
+   * Notices snoozed until a time still ahead, soonest back first. Neither in `notices` nor in `unread`. Defaults to
+   * empty, like `suppressions`, so a client reading a node from before snoozing still parses the rest of the inbox.
+   */
+  snoozed: z.array(noticeSchema).default([]),
+  /** The kinds of notice this principal asked not to be notified about, newest first. */
+  suppressions: z.array(noticeSuppressionSchema).default([]),
   readAt: instantSchema,
 });
 export type InboxResponse = z.infer<typeof inboxResponseSchema>;
@@ -207,3 +354,8 @@ export const inboxUnreadRequestSchema = z.strictObject({
   noticeIds: z.array(z.string().min(1).max(128)).min(1).max(500),
 });
 export type InboxUnreadRequest = z.infer<typeof inboxUnreadRequestSchema>;
+
+/** `POST /inbox/notices/:id/snooze`. The surface works out "this evening" in the person's own time zone; the node only
+ * checks that the moment is ahead of it and within `NOTICE_SNOOZE_MAX_MS`. */
+export const inboxSnoozeRequestSchema = z.strictObject({ until: instantSchema });
+export type InboxSnoozeRequest = z.infer<typeof inboxSnoozeRequestSchema>;

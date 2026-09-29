@@ -1,6 +1,6 @@
 import { execFileSync } from "node:child_process";
 
-import type { Instant, IntentRun, Signal } from "@clarkcant/contracts";
+import type { Instant, IntentRun, NoticeSubject, PersistentIntent, Signal } from "@clarkcant/contracts";
 import {
   fireDueTimers,
   matchDueSignals,
@@ -40,6 +40,27 @@ export interface AutomationService {
 }
 
 const DEFAULT_INTERVAL_MS = 30_000;
+
+/**
+ * What an automation's own notice is about: that automation, named in the person's words, and the task it started when
+ * it started one. It is what lets the person quiet one automation's notices without quieting every other one, and
+ * "Open" still leads to wherever the task now belongs.
+ *
+ * A reminder's notice is not about the automation but is the reminder itself, so it keeps its conversation subject and
+ * can never be quieted: a reminder that arrives read is a reminder that did not happen.
+ */
+function automationSubject(
+  intent: Pick<PersistentIntent, "intentId" | "summary" | "conversationId">,
+  taskId?: string,
+): NoticeSubject {
+  return {
+    kind: "automation",
+    intentId: intent.intentId,
+    label: intent.summary,
+    conversationId: intent.conversationId,
+    ...(taskId === undefined ? {} : { taskId }),
+  };
+}
 
 /** A signal in words a person reads: what happened and to what. */
 export function describeSignal(signal: Signal | undefined): string {
@@ -175,7 +196,7 @@ export function startAutomationService(
           title: "Việc tự động bị từ chối",
           body: text,
           conversationId: intent.conversationId,
-          subject: { kind: "conversation", conversationId: intent.conversationId },
+          subject: automationSubject(intent),
           dedupKey: `automation:${run.runId}`,
           at: now(),
         });
@@ -217,7 +238,7 @@ export function startAutomationService(
           ? {}
           : {
               conversationId: intent.conversationId,
-              subject: { kind: "conversation" as const, conversationId: intent.conversationId },
+              subject: automationSubject(intent),
             }),
         dedupKey: `automation:${run.runId}`,
         at: now(),
@@ -260,7 +281,7 @@ export function startAutomationService(
           title: "Việc tự động đang chờ",
           body: text,
           conversationId: prepared.intent.conversationId,
-          subject: { kind: "task", taskId: prepared.taskId, conversationId: prepared.intent.conversationId },
+          subject: automationSubject(prepared.intent, prepared.taskId),
           // Its own key: the run goes on to start later under `automation:<runId>`, and sharing that key would swallow
           // the notice that says it finally started.
           dedupKey: `automation:${run.runId}:waiting`,
@@ -281,7 +302,7 @@ export function startAutomationService(
           title: prepared.intent.summary,
           body: text,
           conversationId: prepared.intent.conversationId,
-          subject: { kind: "task", taskId: prepared.taskId, conversationId: prepared.intent.conversationId },
+          subject: automationSubject(prepared.intent, prepared.taskId),
           dedupKey: `automation:${run.runId}`,
           at: now(),
         });

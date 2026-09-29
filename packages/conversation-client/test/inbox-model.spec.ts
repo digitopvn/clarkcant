@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import type { Instant, Notice, WaitingItem } from "@clarkcant/contracts";
+import type { Instant, Notice, NoticeSuppression, WaitingItem } from "@clarkcant/contracts";
 
 import { MESSAGES_VI, type MessageKey } from "../src/i18n/messages.ts";
 import {
@@ -14,11 +14,17 @@ import {
   noticeActionGroups,
   noticeConversationTarget,
   noticeIdsToMarkRead,
+  noticeKindQuieted,
   noticeReference,
   noticesMayBeCapped,
+  noticeSourceKey,
   noticeTone,
   relativeAge,
   sanitizeReason,
+  snoozePresetKey,
+  snoozePresets,
+  snoozeUntil,
+  suppressionDescription,
   timeLeft,
   waitingKey,
 } from "../src/inbox/inbox-model.ts";
@@ -52,6 +58,91 @@ function notice(id: string, readAt?: string): Notice {
     ...(readAt === undefined ? {} : { readAt: readAt as Instant }),
   };
 }
+
+describe("snoozing", () => {
+  // Local wall-clock dates, so these hold in whatever time zone the suite runs: the presets are about the person's clock.
+  const local = (day: number, hour: number, minute = 0) => new Date(2026, 8, day, hour, minute);
+
+  it("offers an hour, this evening, tomorrow morning and next Monday on a weekday morning", () => {
+    // 29 September 2026 is a Tuesday.
+    const presets = snoozePresets(local(29, 10, 30));
+    expect(presets.map((preset) => preset.id)).toEqual(["hour", "evening", "tomorrow", "next-week"]);
+    const until = Object.fromEntries(presets.map((preset) => [preset.id, preset.until]));
+    expect(until.hour?.getTime()).toBe(local(29, 11, 30).getTime());
+    expect(until.evening?.getTime()).toBe(local(29, 18).getTime());
+    expect(until.tomorrow?.getTime()).toBe(local(30, 8).getTime());
+    expect(until["next-week"]?.getTime()).toBe(new Date(2026, 9, 5, 8).getTime());
+  });
+
+  it("stops offering this evening once it is less than an hour away, and every choice is ahead of now", () => {
+    const now = local(29, 17, 5);
+    const presets = snoozePresets(now);
+    expect(presets.map((preset) => preset.id)).toEqual(["hour", "tomorrow", "next-week"]);
+    for (const preset of presets) expect(preset.until.getTime()).toBeGreaterThan(now.getTime());
+  });
+
+  it("makes next week a whole week away on a Monday, and the next day on a Sunday", () => {
+    // 5 October 2026 is a Monday, 4 October a Sunday.
+    expect(snoozePresets(local(35, 9)).find((preset) => preset.id === "next-week")?.until.getTime()).toBe(new Date(2026, 9, 12, 8).getTime());
+    expect(snoozePresets(local(34, 9)).find((preset) => preset.id === "next-week")?.until.getTime()).toBe(new Date(2026, 9, 5, 8).getTime());
+  });
+
+  it("names every preset in words", () => {
+    for (const preset of snoozePresets(local(29, 9))) expect(t(snoozePresetKey(preset.id)).length).toBeGreaterThan(0);
+  });
+
+  it("reads a quieted kind from the node's own actions rather than a copy of the list", () => {
+    expect(noticeKindQuieted({ ...notice("a"), actions: [{ id: "unsuppress", placement: "menu" }] })).toBe(true);
+    expect(noticeKindQuieted({ ...notice("b"), actions: [{ id: "suppress", placement: "menu" }] })).toBe(false);
+    expect(noticeKindQuieted(notice("c"))).toBe(false);
+  });
+
+  it("keeps snooze and quieting behind More, never as one of the two buttons", () => {
+    const { buttons, menu } = noticeActionGroups({
+      ...notice("d"),
+      actions: [
+        { id: "open", placement: "primary" },
+        { id: "ask-clark", placement: "secondary" },
+        { id: "snooze", placement: "menu" },
+        { id: "suppress", placement: "menu" },
+      ],
+    });
+    expect(buttons.map((action) => action.id)).toEqual(["open", "ask-clark"]);
+    expect(menu.map((action) => action.id)).toEqual(["snooze", "suppress"]);
+  });
+
+  it("works out a preset's time when it is pressed, so an evening that passed with the menu open is not offered", () => {
+    // Drawn at 16:50, pressed at 17:10: the evening the menu showed is less than an hour away by then.
+    expect(snoozeUntil("evening", local(29, 16, 50))?.getTime()).toBe(local(29, 18).getTime());
+    expect(snoozeUntil("evening", local(29, 17, 10))).toBeUndefined();
+    expect(snoozeUntil("hour", local(29, 17, 10))?.getTime()).toBe(local(29, 18, 10).getTime());
+  });
+});
+
+describe("a quieted kind, in words", () => {
+  const base = { suppressionId: "nsp_1", category: "alert", example: "Việc tự động bị từ chối", createdAt: READ_AT as Instant } as const;
+  const words = (suppression: NoticeSuppression): string => {
+    const parts = suppressionDescription(suppression);
+    return `${t(parts.scopeKey).replace("{label}", parts.label).replace("{source}", t(noticeSourceKey(suppression.sourceKind)))} — ${t(parts.levelKey)}`;
+  };
+
+  it("names the automation, repository, package or node it is limited to, and the level", () => {
+    expect(words({ ...base, sourceKind: "automation", severity: "warning", scope: "automation:int_a", scopeLabel: "Dọn repo A" })).toBe(
+      "Việc tự động “Dọn repo A” — mức cảnh báo",
+    );
+    expect(words({ ...base, sourceKind: "automation", severity: "warning", scope: "source:github:acme/x", scopeLabel: "acme/x" })).toBe(
+      "Nguồn tín hiệu “acme/x” — mức cảnh báo",
+    );
+    expect(words({ ...base, sourceKind: "package", category: "update", severity: "info", scope: "package:demo", scopeLabel: "demo" })).toBe(
+      "Gói “demo” — mức thông tin",
+    );
+  });
+
+  it("says plainly when it covers a whole source, and falls back to the scope itself when no label was stored", () => {
+    expect(words({ ...base, sourceKind: "background", category: "result", severity: "success" })).toBe("Mọi thông báo loại “Việc nền” — mức thành công");
+    expect(words({ ...base, sourceKind: "peer", severity: "error", scope: "peer:node_b" })).toBe("Node “node_b” — mức lỗi");
+  });
+});
 
 describe("the header mark", () => {
   it("is absent at zero and while the node has not answered", () => {

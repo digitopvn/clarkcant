@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { type CapabilityDescriptor, type Instant, type MessageRecord, inboxResponseSchema } from "@clarkcant/contracts";
+import { type CapabilityDescriptor, type Instant, type MessageRecord, type Notice, inboxResponseSchema } from "@clarkcant/contracts";
 import { matchDueSignals, registerCapability } from "@clarkcant/core";
 import { allRows, getTask, parseJson } from "@clarkcant/storage";
 
@@ -366,7 +366,15 @@ describe("a task set up in the conversation", () => {
     expect(waiting?.dedup_key).toBe(`automation:${runId ?? ""}:waiting`);
     expect(started?.dedup_key).toBe(`automation:${runId ?? ""}`);
     expect(started?.conversation_id).toBe(conversationId);
-    expect(JSON.parse(started?.subject ?? "null")).toEqual({ kind: "task", taskId: dispatched[0]?.taskId, conversationId });
+    // Both are about the automation, so they can be quieted as that one automation; the one that started names its task.
+    const automation = {
+      kind: "automation",
+      intentId: expect.stringMatching(/^intent_/),
+      label: "Sửa issue khi có nhãn",
+      conversationId,
+    };
+    expect(JSON.parse(waiting?.subject ?? "null")).toEqual({ ...automation, taskId: dispatched[0]?.taskId });
+    expect(JSON.parse(started?.subject ?? "null")).toEqual({ ...automation, taskId: dispatched[0]?.taskId });
   });
 
   it("says once, in the inbox and its conversation, when a run that came due was refused", async () => {
@@ -390,7 +398,12 @@ describe("a task set up in the conversation", () => {
     expect(notices).toHaveLength(1);
     expect(notices[0]).toMatchObject({ title: "Việc tự động bị từ chối", conversation_id: conversationId });
     expect(notices[0]?.dedup_key).toMatch(/^automation:irun_[^:]+$/);
-    expect(JSON.parse(notices[0]?.subject ?? "null")).toEqual({ kind: "conversation", conversationId });
+    expect(JSON.parse(notices[0]?.subject ?? "null")).toEqual({
+      kind: "automation",
+      intentId: expect.stringMatching(/^intent_/),
+      label: "Sửa issue trong repo",
+      conversationId,
+    });
     expect(assistantTexts(conversationId).filter((text) => text.includes("không chạy cho"))).toHaveLength(1);
   });
 
@@ -422,7 +435,12 @@ describe("a task set up in the conversation", () => {
     expect(notices[0]?.body).toContain("disk is full");
     expect(notices[0]?.body).toContain("bản thân việc tự động vẫn được giữ nguyên");
     expect(notices[0]?.dedup_key).toMatch(/^automation:irun_[^:]+$/);
-    expect(JSON.parse(notices[0]?.subject ?? "null")).toEqual({ kind: "conversation", conversationId });
+    expect(JSON.parse(notices[0]?.subject ?? "null")).toEqual({
+      kind: "automation",
+      intentId: expect.stringMatching(/^intent_/),
+      label: "Sửa issue khi có nhãn",
+      conversationId,
+    });
 
     // What the notice says was kept is kept: the automation is still there to run the next time.
     const listed = await request("GET", "/automations");
@@ -467,5 +485,61 @@ describe("a task set up in the conversation", () => {
     expect((await update({ intentId, change: "remove" })).text).toContain("Removed");
     expect((await list({})).text).toBe("Nothing is set up to happen on its own.");
     expect((await update({ intentId, change: "resume" })).text).toContain("Not changed");
+  });
+});
+
+describe("quieting an automation's notices", () => {
+  it("quiets that one automation, and never another automation or a reminder", async () => {
+    const conversationId = await createConversation();
+    const { create } = tools(conversationId);
+    // Two automations whose folder is not a clone of the repository, so every signal leaves a refusal warning for each,
+    // and a reminder on the same signal.
+    for (const summary of ["Sửa repo A", "Sửa repo B"]) {
+      await create({
+        summary,
+        topic: "github.issue.labeled",
+        action: "task",
+        goal: "Fix it",
+        repositories: [project],
+        allowedEffects: ["read", "local-write"],
+      });
+    }
+    await create({ summary: "Nhắc xem issue", topic: "github.issue.labeled", action: "remind", message: "Có issue mới" });
+
+    const noticesAt = async (at: string) =>
+      inboxResponseSchema
+        .parse((await request("GET", "/inbox")).body)
+        .notices.filter((notice) => notice.sourceKind === "automation" && notice.createdAt === at);
+    const labelOf = (notice: Notice): string =>
+      notice.subject?.kind === "automation" ? notice.subject.label : (notice.subject?.kind ?? "none");
+
+    await request("POST", "/signals", labeled("ai-handle", "first"));
+    service?.tick();
+    service?.tick();
+    const first = await noticesAt(now);
+    expect(first.map(labelOf).sort()).toEqual(["Sửa repo A", "Sửa repo B", "conversation"]);
+    const a = first.find((notice) => labelOf(notice) === "Sửa repo A");
+    const reminder = first.find((notice) => labelOf(notice) === "conversation");
+    expect(reminder?.actions?.map((action) => action.id)).not.toContain("suppress");
+
+    const quieted = await request("POST", `/inbox/notices/${a?.noticeId ?? ""}/suppress`);
+    expect(quieted.status).toBe(200);
+    const intentA = a?.subject?.kind === "automation" ? a.subject.intentId : "";
+    expect((quieted.body as { suppression: unknown }).suppression).toMatchObject({
+      scope: `automation:${intentA}`,
+      scopeLabel: "Sửa repo A",
+    });
+    const refused = await request("POST", `/inbox/notices/${reminder?.noticeId ?? ""}/suppress`);
+    expect(refused.status).toBe(409);
+    expect((refused.body as { code: string }).code).toBe("SUPPRESSION_TOO_BROAD");
+
+    // The next signal: A's warning is still written down, but arrives read; B's warning and the reminder arrive unread.
+    now = "2026-09-29T09:00:00.000Z";
+    await request("POST", "/signals", labeled("ai-handle", "second"));
+    service?.tick();
+    service?.tick();
+    const second = await noticesAt(now);
+    const arrivedRead = Object.fromEntries(second.map((notice) => [labelOf(notice), notice.readAt !== undefined]));
+    expect(arrivedRead).toEqual({ "Sửa repo A": true, "Sửa repo B": false, conversation: false });
   });
 });

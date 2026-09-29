@@ -85,8 +85,8 @@ function signalKeys(): string[] {
   );
 }
 
-function notices(): { title: string; body: string; conversation_id: string | null }[] {
-  return allRows(services.runtime.db, "SELECT title, body, conversation_id FROM notifications ORDER BY created_at");
+function notices(): { title: string; body: string; conversation_id: string | null; subject: string | null }[] {
+  return allRows(services.runtime.db, "SELECT title, body, conversation_id, subject FROM notifications ORDER BY created_at");
 }
 
 function assistantTexts(): string[] {
@@ -306,6 +306,13 @@ describe("a private repository, and GitHub refusing", () => {
     expect(told).toHaveLength(1);
     expect(told[0]).toMatchObject({ title: `Chưa theo dõi được ${REPOSITORY}`, conversation_id: CONVERSATION_ID });
     expect(told[0]?.body).toContain("repository riêng tư");
+    // It names the repository, so quieting it quiets this repository's polling and no other's.
+    expect(JSON.parse(told[0]?.subject ?? "null")).toEqual({
+      kind: "signal-source",
+      sourceKey: "github.com/codertocat/hello-world",
+      label: REPOSITORY,
+      conversationId: CONVERSATION_ID,
+    });
     // The agent, asked about it, reads exactly what to ask for.
     expect(await call("list_automations")).toContain(
       `GitHub polling of ${REPOSITORY} has failed 2 time(s)`,

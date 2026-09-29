@@ -4,13 +4,16 @@ import {
   type InboxSummary,
   type Instant,
   type MessageRecord,
+  type Notice,
   type WaitingItem,
 } from "@clarkcant/contracts";
 import {
   allRows,
   countUnreadNotifications,
   getTask,
+  listNoticeSuppressions,
   listNotifications,
+  listSnoozedNotifications,
   parseJson,
 } from "@clarkcant/storage";
 
@@ -236,15 +239,20 @@ export function waitingItems(services: InboxServices, now: Instant): WaitingItem
   ].sort((a, b) => a.requestedAt.localeCompare(b.requestedAt));
 }
 
+/**
+ * The inbox at `now`. A snoozed notice is read back as it stands at that moment: out of `notices` and `unread` while
+ * its time is ahead, back in both once it has passed — nothing runs when it comes due, so there is no timer to miss.
+ */
 export function readInbox(services: InboxServices, now: Instant, limit = 50): InboxResponse {
+  const { db } = services.runtime;
   const principalId = services.runtime.identity.ownerPrincipalId;
+  const withActions = (notice: Notice): Notice => ({ ...notice, actions: noticeActionsFor(db, principalId, notice) });
   return {
     waiting: waitingItems(services, now),
-    notices: listNotifications(services.runtime.db, principalId, limit).map((notice) => ({
-      ...notice,
-      actions: noticeActionsFor(services.runtime.db, notice),
-    })),
-    unread: countUnreadNotifications(services.runtime.db, principalId),
+    notices: listNotifications(db, principalId, limit, now).map(withActions),
+    unread: countUnreadNotifications(db, principalId, now),
+    snoozed: listSnoozedNotifications(db, principalId, now).map(withActions),
+    suppressions: listNoticeSuppressions(db, principalId),
     readAt: now,
   };
 }
@@ -252,6 +260,6 @@ export function readInbox(services: InboxServices, now: Instant, limit = 50): In
 export function inboxSummary(services: InboxServices, now: Instant): InboxSummary {
   return {
     waiting: waitingItems(services, now).length,
-    unread: countUnreadNotifications(services.runtime.db, services.runtime.identity.ownerPrincipalId),
+    unread: countUnreadNotifications(services.runtime.db, services.runtime.identity.ownerPrincipalId, now),
   };
 }

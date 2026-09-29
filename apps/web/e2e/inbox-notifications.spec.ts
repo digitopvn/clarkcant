@@ -249,6 +249,8 @@ test("a notification for a waiting item never carries its command or a secret-sh
         ],
         notices: [],
         unread: 2,
+        snoozed: [],
+        suppressions: [],
         readAt: now.toISOString(),
       }),
     });

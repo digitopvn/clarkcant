@@ -122,6 +122,20 @@ describe("decideInboxNotifications", () => {
     expect(result.candidates).toHaveLength(0);
   });
 
+  it("does not notify for a notice that is already read when first seen, such as one of a quieted kind", () => {
+    const result = decideInboxNotifications(baseInput({ notices: [notice("n1", { readAt: NOW })] }));
+    expect(result.candidates).toHaveLength(0);
+    expect(result.seenIds.has("notice:n1")).toBe(true);
+  });
+
+  it("notifies again for a snoozed notice that came back, since it left the list and returned unread", () => {
+    // Snoozed, it was absent from the previous poll, so it is no longer among the known ids.
+    const snoozedPoll = decideInboxNotifications(baseInput({ notices: [], knownIds: new Set(["notice:n1"]) }));
+    expect(snoozedPoll.seenIds.has("notice:n1")).toBe(false);
+    const back = decideInboxNotifications(baseInput({ notices: [notice("n1")], knownIds: snoozedPoll.seenIds }));
+    expect(back.candidates.map((candidate) => candidate.id)).toEqual(["notice:n1"]);
+  });
+
   it("does not notify while the in-app mark already covers it", () => {
     const result = decideInboxNotifications(baseInput({ notices: [notice("n1")], documentHidden: false }));
     expect(result.candidates).toHaveLength(0);
