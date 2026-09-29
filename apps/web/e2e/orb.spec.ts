@@ -219,6 +219,21 @@ async function openOrbSettings(page: Page): Promise<void> {
 }
 
 const preset = (page: Page, name: string) => page.locator(`[data-orb-preset="${name}"]`);
+
+const PRESET_NAMES = ["clark", "calm", "jelly", "glass", "pearl", "plasma", "custom"] as const;
+
+type Box = { x: number; y: number; width: number; height: number };
+
+/** Where each style button is drawn, in the order the picker lists them. */
+async function presetBoxes(page: Page): Promise<Box[]> {
+  const boxes: Box[] = [];
+  for (const name of PRESET_NAMES) {
+    const box = await preset(page, name).boundingBox();
+    if (box === null) throw new Error(`${name} has no box`);
+    boxes.push(box);
+  }
+  return boxes;
+}
 const previewCanvas = (page: Page) => page.locator(".cc-orb-preview-canvas");
 
 /**
@@ -249,6 +264,16 @@ test("a style chosen in Settings changes the orb at once, keeps its colours in t
   // Every style the contract names is offered, and the shipped one is selected.
   await expect(page.locator("[data-orb-preset]")).toHaveCount(7);
   await expect(preset(page, "clark")).toHaveAttribute("aria-pressed", "true");
+
+  // The styles sit under the row's description, not beside it, and all seven fit on one line at this width.
+  const boxes = await presetBoxes(page);
+  const description = await page
+    .locator('[data-orb-settings="true"] .cc-setting-row[data-layout="stacked"] .cc-setting-desc')
+    .boundingBox();
+  if (description === null) throw new Error("the style row has no description");
+  const top = Math.min(...boxes.map((box) => box.y));
+  expect(top).toBeGreaterThanOrEqual(description.y + description.height);
+  expect(new Set(boxes.map((box) => Math.round(box.y))).size).toBe(1);
 
   await preset(page, "pearl").click();
   await expect(preset(page, "pearl")).toHaveAttribute("aria-pressed", "true");
@@ -310,13 +335,26 @@ test.describe("on a phone", () => {
     await page.locator('[data-theme-choice="system"]').click();
 
     // Nothing in the list runs off the side of the screen: every style is reachable without scrolling sideways.
-    for (const name of ["clark", "calm", "jelly", "glass", "pearl", "plasma", "custom"]) {
-      const box = await preset(page, name).boundingBox();
-      if (box === null) throw new Error(`${name} has no box`);
+    const boxes = await presetBoxes(page);
+    boxes.forEach((box, index) => {
+      const name = PRESET_NAMES[index];
       expect(box.x, name).toBeGreaterThanOrEqual(0);
       expect(box.x + box.width, name).toBeLessThanOrEqual(390);
       // A target a finger can hit.
       expect(box.height, name).toBeGreaterThanOrEqual(44);
+      expect(box.width, name).toBeGreaterThanOrEqual(44);
+    });
+    // Wrapped rows line up from the left edge: every row starts where the first one does, and each style sits in
+    // a column the row above also uses.
+    const left = boxes[0]?.x ?? 0;
+    const rows = new Map<number, number[]>();
+    for (const box of boxes) rows.set(Math.round(box.y), [...(rows.get(Math.round(box.y)) ?? []), box.x]);
+    expect(rows.size).toBeGreaterThan(1);
+    const firstRow = [...rows.values()][0] ?? [];
+    const columns = new Set(firstRow.map((x) => Math.round(x)));
+    for (const xs of rows.values()) {
+      expect(Math.round(Math.min(...xs))).toBe(Math.round(left));
+      for (const x of xs) expect(columns.has(Math.round(x))).toBe(true);
     }
 
     await preset(page, "jelly").tap();

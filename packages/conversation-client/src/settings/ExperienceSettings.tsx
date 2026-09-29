@@ -274,6 +274,7 @@ export function ExperienceSettings({
         <SettingsRow
           label={t("settings.experience.orb.style.label")}
           description={t("settings.experience.orb.style.description")}
+          layout="stacked"
         >
           {/*
             Each style's description, as the accessible description of its button. `hidden` keeps them off screen

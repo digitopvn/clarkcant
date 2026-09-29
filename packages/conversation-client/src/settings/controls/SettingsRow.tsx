@@ -8,6 +8,11 @@ export interface SettingsRowProps {
   description?: string;
   /** `blocked` states a limitation rather than hiding the control behind a spinner. */
   state?: "ok" | "blocked" | "absent";
+  /**
+   * `stacked` puts the control under the label and description at every width, for a control too wide to sit
+   * beside them (a grid of choices, say) without squeezing the text into a narrow column.
+   */
+  layout?: "inline" | "stacked";
   children?: ReactNode;
 }
 
@@ -17,9 +22,9 @@ export interface SettingsRowProps {
  * The description is always rendered rather than tucked into a `title` attribute: a limitation
  * that only appears on hover is a limitation most people never learn about.
  */
-export function SettingsRow({ label, description, state, children }: SettingsRowProps): ReactElement {
+export function SettingsRow({ label, description, state, layout, children }: SettingsRowProps): ReactElement {
   return (
-    <div className="cc-setting-row" data-state={state ?? "ok"}>
+    <div className="cc-setting-row" data-state={state ?? "ok"} data-layout={layout ?? "inline"}>
       <div className="cc-setting-text">
         <span className="cc-setting-label">{label}</span>
         {description !== undefined && <span className="cc-setting-desc">{description}</span>}

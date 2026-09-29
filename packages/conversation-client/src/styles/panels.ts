@@ -77,6 +77,13 @@ button:focus-visible, textarea:focus-visible, input:focus-visible, [tabindex]:fo
 .cc-setting-label { color: var(--cc-text); font-size: var(--cc-text-body-sm); line-height: var(--cc-leading-body-sm); font-weight: 600; }
 .cc-setting-desc { color: var(--cc-text-muted); font-size: var(--cc-text-label); line-height: var(--cc-leading-label); }
 .cc-setting-control { flex: none; display: flex; align-items: center; gap: var(--cc-space-sm); color: var(--cc-text-muted); }
+/*
+ * A stacked row: label and description on top at full width, the control under them at full width, at every
+ * width. For a control too wide to sit beside the text, which would otherwise squeeze the description into a
+ * column a few words wide.
+ */
+.cc-setting-row[data-layout="stacked"] { flex-direction: column; align-items: stretch; gap: var(--cc-space-sm); }
+.cc-setting-row[data-layout="stacked"] > .cc-setting-control { flex: initial; display: block; }
 .cc-setting-control code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: var(--cc-text-mono-sm); line-height: var(--cc-leading-mono-sm); color: var(--cc-text-muted); overflow-wrap: anywhere; }
 
 /* A capability, with its real readiness. The reason is shown whenever there is one. */
@@ -391,17 +398,21 @@ button:focus-visible, textarea:focus-visible, input:focus-visible, [tabindex]:fo
 }
 
 /*
- * The preset list: a swatch and a name per preset, wrapping onto as many rows as the width needs.
+ * The preset list: a swatch and a name per preset, in equal columns under the row's label.
+ *
+ * A grid rather than a wrapping flex row, so that when the width does not hold every preset the rows line up
+ * column for column from the left edge instead of the last row drifting to one side. auto-fit collapses the
+ * columns nobody fills, so a width that holds all seven shares it between them in one row.
  *
  * Buttons rather than a radio group because each one is a single action that saves at once, the same as the
  * theme and motion controls. The selected one is marked by its border, its weight and aria-pressed together,
  * so the state never rests on colour alone. At least 44px tall, so a finger can hit one without its neighbour.
  */
-.cc-orb-presets { display: flex; flex-wrap: wrap; gap: var(--cc-space-xs); justify-content: flex-end; }
+.cc-orb-presets { display: grid; grid-template-columns: repeat(auto-fit, minmax(64px, 1fr)); gap: var(--cc-space-xs); }
 .cc-orb-preset {
-  display: inline-flex; flex-direction: column; align-items: center; justify-content: center;
-  gap: var(--cc-space-xxs); min-width: 64px; min-height: 44px;
-  padding: var(--cc-space-xs) var(--cc-space-sm);
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: var(--cc-space-xxs); min-width: 0; min-height: 44px; width: 100%;
+  padding: var(--cc-space-xs) var(--cc-space-xxs);
   border: 1px solid var(--cc-border); border-radius: var(--cc-radius-badge);
   background: var(--cc-card); color: var(--cc-text-muted);
   font: inherit; font-size: var(--cc-text-label); cursor: pointer;
