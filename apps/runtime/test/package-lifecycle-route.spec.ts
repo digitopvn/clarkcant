@@ -299,6 +299,62 @@ describe("uninstalling a package whose widget this node cannot load", () => {
 
     await uninstallAndRestore(instanceId);
   });
+
+  it("records every declared id at install, even when each definition names a different id than its facet", async () => {
+    // 33 facets whose definitions each carry their own id: 66 ids, more than one per facet.
+    const root = join(dir, "board-many");
+    const facets = Array.from({ length: 33 }, (_, index) => {
+      const name = `w${String(index)}`;
+      mkdirSync(join(root, "widgets", name), { recursive: true });
+      writeFileSync(join(root, "widgets", name, "index.html"), "<!doctype html><div id=root></div>\n");
+      writeFileSync(
+        join(root, "widgets", name, "widget.json"),
+        JSON.stringify({ ...definition("2.0.0"), id: `com.example.board.${name}.definition@1` }),
+      );
+      return {
+        kind: "widget",
+        id: `com.example.board.${name}@1`,
+        entry: `widgets/${name}/index.html`,
+        definition: `widgets/${name}/widget.json`,
+        isolation: "isolated-ui",
+      };
+    });
+    writeFileSync(
+      join(root, "clarkcant.json"),
+      JSON.stringify({
+        schemaVersion: 1,
+        id: PACKAGE,
+        version: "2.0.0",
+        displayName: "Board",
+        description: "A task board.",
+        hostApi: { min: 1, max: 1 },
+        facets,
+        requestedCapabilities: [],
+        permissions: { networkOrigins: [], filesystem: [], microphone: false, camera: false, lifecycleScripts: [] },
+        platforms: ["darwin-arm64", "linux-x64", "win32-x64", "web"],
+        publisher: { id: "example", sourceUrl: "https://example.com", license: "MIT" },
+      }),
+    );
+    writeFileSync(process.env["CC_DIRECTORY_INDEX"]!, JSON.stringify([entry("2.0.0", root)]));
+
+    const installed = await send("POST", "/packages/install", {
+      packageId: PACKAGE,
+      version: "2.0.0",
+      localDigest: "sha256:board-2.0.0",
+    });
+
+    expect(installed.status).toBe(200);
+    const recorded = allRows<{ document: string }>(
+      services.runtime.db,
+      "SELECT document FROM package_generations WHERE package_id = ? AND superseded_at IS NULL",
+      PACKAGE,
+    ).map((row) => (JSON.parse(row.document) as { widgetIds?: string[] }).widgetIds);
+    expect(recorded).toHaveLength(1);
+    expect(recorded[0]).toHaveLength(66);
+    expect(recorded[0]).toEqual(
+      expect.arrayContaining(["com.example.board.w0@1", "com.example.board.w0.definition@1", "com.example.board.w32.definition@1"]),
+    );
+  });
 });
 
 describe("rolling back to the previous version", () => {
