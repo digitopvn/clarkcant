@@ -2,7 +2,7 @@ import hljs from "highlight.js/lib/common";
 import { isValidElement, type ReactElement, type ReactNode } from "react";
 import { describe, expect, it } from "vitest";
 
-import { highlightNodes, highlightedCode, markdownTree } from "../src/markdown.tsx";
+import { highlightNodes, highlightedCode, linkedText, markdownTree } from "../src/markdown.tsx";
 
 /**
  * Markdown rendering, from the side that matters.
@@ -179,5 +179,34 @@ describe("highlighted code becomes elements", () => {
     const known = highlightedCode("SELECT 1;", "sql");
     expect(known.language).toBe("sql");
     expect(known.nodes).toBeDefined();
+  });
+});
+
+describe("plain text the node said, with its addresses made into links", () => {
+  it("makes a whole address a link that leaves the app safely, and keeps every other character", () => {
+    const text = "Xong (task t1): opened\nhttps://github.com/acme/widgets/pull/42.";
+    const nodes = linkedText(text);
+    const links = elements(nodes).filter((element) => element.type === "a");
+    expect(links).toHaveLength(1);
+    expect(links[0]?.props).toMatchObject({
+      href: "https://github.com/acme/widgets/pull/42",
+      target: "_blank",
+      rel: "noopener noreferrer",
+      children: "https://github.com/acme/widgets/pull/42",
+    });
+    // The sentence's full stop is not part of the address, and nothing is lost around it.
+    const rebuilt = nodes.map((node) => (typeof node === "string" ? node : (node as ReactElement<{ children: string }>).props.children)).join("");
+    expect(rebuilt).toBe(text);
+  });
+
+  it("never makes a link of anything but http or https", () => {
+    const text = "javascript:alert(1) file:///etc/passwd data:text/html,x ftp://host/x";
+    expect(typesOf(linkedText(text))).not.toContain("a");
+    expect(linkedText(text)).toEqual([text]);
+  });
+
+  it("leaves text with no address as it was", () => {
+    expect(linkedText("Nhắc bạn — kiểm tra bản build")).toEqual(["Nhắc bạn — kiểm tra bản build"]);
+    expect(linkedText("")).toEqual([]);
   });
 });

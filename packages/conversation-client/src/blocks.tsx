@@ -2,7 +2,7 @@ import { useEffect, useState, type ReactElement } from "react";
 
 import { attachmentRefSchema, type AttachmentRef } from "@clarkcant/contracts";
 
-import { CodeBlock, Markdown } from "./markdown.tsx";
+import { CodeBlock, Markdown, linkedText } from "./markdown.tsx";
 import { formatFileSize } from "./attachments.ts";
 import { useAttachmentUrls } from "./use-attachment-urls.ts";
 import { useObjectUrls } from "./use-object-urls.ts";
@@ -58,7 +58,7 @@ export function TextBlock({ block }: { block: Record<string, unknown> }): ReactE
   }
   return (
     <p className="cc-text" data-streaming={streaming} style={{ margin: 0, whiteSpace: "pre-wrap" }}>
-      {content}
+      {linkedText(content)}
     </p>
   );
 }

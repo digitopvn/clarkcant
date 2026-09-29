@@ -36,6 +36,35 @@ function safeHref(href: string): string | undefined {
   }
 }
 
+/** An address in plain text: up to whitespace or a character that cannot be part of one written in a sentence. */
+const PLAIN_URL = /https?:\/\/[^\s<>"'`]+/g;
+
+/**
+ * Plain text with the web addresses in it made into links, and nothing else changed.
+ *
+ * What the node says in plain words — a task's result, a reminder — often ends in the one thing to open next: the pull
+ * request a task opened, the page a check failed on. The text is kept exactly as written; only a whole `http(s)`
+ * address becomes an anchor, and the punctuation that ends a sentence stays outside it.
+ */
+export function linkedText(text: string): ReactNode[] {
+  const nodes: ReactNode[] = [];
+  let last = 0;
+  for (const match of text.matchAll(PLAIN_URL)) {
+    const start = match.index;
+    const address = match[0].replace(/[.,;:!?)\]]+$/, "");
+    const href = safeHref(address);
+    if (href === undefined) continue;
+    if (start > last) nodes.push(text.slice(last, start));
+    nodes.push(
+      <a key={`url-${String(start)}`} href={href} target="_blank" rel="noopener noreferrer">
+        {address}
+      </a>,
+    );
+    last = start + address.length;
+  }
+  if (last < text.length) nodes.push(text.slice(last));
+  return nodes;
+}
 function inline(tokens: readonly Token[] | undefined, keyPrefix: string): ReactNode[] {
   const nodes: ReactNode[] = [];
   (tokens ?? []).forEach((token, index) => {

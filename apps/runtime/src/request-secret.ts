@@ -64,7 +64,9 @@ export function createRequestSecretTool(deps: RequestSecretDeps): ToolDefinition
         },
         consumer: {
           type: "string",
-          description: "Who will use it, e.g. command:git or capability:github. Recorded as the allowed consumer.",
+          description:
+            "Who will use it, e.g. command:gh or capability:github; comma-separate several (command:gh,command:git). " +
+            "Recorded as the allowed consumers. A command consumer receives it in that one command's environment, via secretRef.",
         },
       },
     },

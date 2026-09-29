@@ -1022,7 +1022,8 @@ export async function runDispatchedTask(
       taskId: task.taskId,
       outcome: "failed",
       evidenceKinds: [reported.kind],
-      message: gate.message,
+      // What went wrong comes first: "nothing was verified" alone does not tell a person which step it was.
+      message: reported.verified ? gate.message : `${reported.summary} — ${gate.message}`,
     };
   }
 

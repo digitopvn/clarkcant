@@ -262,6 +262,20 @@ function narrowEvidenceKind(
 }
 
 /**
+ * The one piece of a run's evidence that settles its task.
+ *
+ * `runDispatchedTask` carries a single piece, and which one is not a detail: a worker that edited a file, ran the tests
+ * and saw them fail has a verified edit first and the failure after it, and reporting the first would call that run
+ * done. So anything short of verified wins — a failed command, a refusal, a run stopped by its budget — and the first
+ * of those is what the person is told. A run with nothing but verified steps is reported by its last one, which is
+ * where it ended up: the pull request it opened rather than the file it read on the way. Every piece is still on the
+ * run record for anyone reading it back.
+ */
+export function settlingEvidence<T extends { verdict: string }>(evidence: readonly T[]): T | undefined {
+  return evidence.find((piece) => piece.verdict !== "verified") ?? evidence.at(-1);
+}
+
+/**
  * Build the dispatcher for one node.
  *
  * A closure rather than a class, matching every other seam in this app: the state it owns — the
@@ -592,12 +606,9 @@ export function createTaskDispatcher(deps: TaskDispatcherDeps): TaskDispatcher {
       const outcome = await runDispatchedTask(deps.conductor, {
         taskId: job.taskId,
         collectEvidence: async () => {
-          // The primary piece of evidence is what settles the task; a worker that produced several
-          // reports the first, because that is the one `runDispatchedTask`'s single-evidence contract
-          // can carry today. Every piece is still on the run record itself for anyone reading it back.
-          const first = result.record.evidence[0];
-          if (first === undefined) return undefined;
-          return { kind: narrowEvidenceKind(first.kind), summary: first.summary, verified: first.verdict === "verified" };
+          const settling = settlingEvidence(result.record.evidence);
+          if (settling === undefined) return undefined;
+          return { kind: narrowEvidenceKind(settling.kind), summary: settling.summary, verified: settling.verdict === "verified" };
         },
       });
 

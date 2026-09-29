@@ -16,6 +16,7 @@ import { resolveFrameAncestors } from "@clarkcant/core";
 import { applyEnvFile } from "@clarkcant/pi-adapter";
 
 import { createNodeServer } from "./server.ts";
+import { sweepTaskWorktrees } from "./worktree-sweep.ts";
 import type { ViewDescriptor } from "./model-turn.ts";
 import { fixtureGatesFromEnv, loadFixtureComposition } from "./bootstrap/fixtures.ts";
 import { createNodeModelTurn } from "./bootstrap/model-bootstrap.ts";
@@ -269,6 +270,22 @@ async function main(): Promise<void> {
     // A recovery that cannot run leaves the rows for the next boot; it must not stop this one from serving.
     process.stderr.write(`could not recover unfinished work: ${cause instanceof Error ? cause.message : String(cause)}\n`);
   }
+
+  // After recovery too, so a task the previous process left running is already called uncertain and its worktree is
+  // left for it; only a finished task's leftover worktree is taken away. Not awaited: git on a slow disk must not hold
+  // the node back from serving, and a sweep that fails is tried again on the next boot.
+  void sweepTaskWorktrees(services, { worktreesDir: join(services.runtime.dataDir, "worktrees") })
+    .then((sweep) => {
+      if (sweep.removed.length + sweep.kept.length > 0) {
+        process.stderr.write(
+          `task worktrees left by the previous process: ${String(sweep.removed.length)} removed, ` +
+            `${String(sweep.kept.length)} kept with uncommitted changes\n`,
+        );
+      }
+    })
+    .catch((cause: unknown) => {
+      process.stderr.write(`could not sweep task worktrees: ${cause instanceof Error ? cause.message : String(cause)}\n`);
+    });
 
   // After recovery, so a task an automation started before the node stopped is already called uncertain rather than
   // started a second time; the first tick also picks up signals and runs the previous process recorded.

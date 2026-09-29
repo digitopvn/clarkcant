@@ -25,10 +25,23 @@ export type ScriptedTurn =
   | string
   | {
       /** The tool to call before the reply, exactly as the worker registered it. */
-      callTool: { name: string; params: Record<string, unknown> };
+      callTool: ScriptedToolCall;
       /** The words that follow the call. Defaults to a generic scripted reply. */
       reply?: string;
+    }
+  | {
+      /**
+       * Several calls in one turn, in order, the way a model edits, tests, commits and pushes before it answers. A call
+       * that throws ends the turn there, as a model that reads a failure stops rather than carrying on regardless.
+       */
+      callTools: ScriptedToolCall[];
+      reply?: string;
     };
+
+export interface ScriptedToolCall {
+  name: string;
+  params: Record<string, unknown>;
+}
 
 /**
  * Deterministic in-process adapter.
@@ -245,7 +258,9 @@ export class FakePiAdapter implements PiAdapter {
     const hadToolCalls = typeof turn === "object";
 
     if (hadToolCalls) {
-      await this.callToolResult(sessionId, turn.callTool.name, turn.callTool.params);
+      for (const call of "callTools" in turn ? turn.callTools : [turn.callTool]) {
+        await this.callToolResult(sessionId, call.name, call.params);
+      }
     }
     const scripted = typeof turn === "string" ? turn : (turn?.reply ?? `scripted reply to: ${prompt}`);
     session.turns += 1;

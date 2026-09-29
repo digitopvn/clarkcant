@@ -17,6 +17,7 @@ import {
   runCommand,
   receiptForModel,
   stopCommand,
+  withoutInjectedValues,
 } from "../src/run-command.ts";
 import { ownedResources } from "../src/preflight.ts";
 
@@ -350,3 +351,23 @@ describe("the receipt a model is given", () => {
   });
 });
 
+describe("the output of a command that was handed a secret", () => {
+  const ran = { exitCode: 0, stdout: "", stderr: "", timedOut: false, durationMs: 5 };
+
+  it("never carries the value it was given, wherever the command printed it", () => {
+    const token = "ghp-fixture-token-value";
+    const outcome = withoutInjectedValues(
+      { ...ran, stdout: `Logged in with ${token}\n`, stderr: `debug: token=${token}; again ${token}` },
+      { GH_TOKEN: token },
+    );
+    expect(outcome.stdout).toBe("Logged in with [redacted]\n");
+    expect(outcome.stderr).toBe("debug: token=[redacted]; again [redacted]");
+    expect(JSON.stringify(outcome)).not.toContain(token);
+  });
+
+  it("leaves output alone when nothing was injected, or the value is too short to be a credential", () => {
+    const printed = { ...ran, stdout: "on main, 2 ahead" };
+    expect(withoutInjectedValues(printed, undefined)).toBe(printed);
+    expect(withoutInjectedValues(printed, { FLAG: "on" }).stdout).toBe("on main, 2 ahead");
+  });
+});

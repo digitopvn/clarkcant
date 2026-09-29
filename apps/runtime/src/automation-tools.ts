@@ -190,6 +190,10 @@ function hasSecret(db: Database, principalId: string, name: string): boolean {
  * the conversation; which account is Clark's own, so its own labels and comments do not start the work again; and the
  * repository the automation is about, so a label anywhere else does not start work in this checkout.
  */
+/** The token a coding task pushes and opens pull requests with, and the two commands it is for. */
+const GITHUB_TOKEN_SECRET_NAME = "github_token";
+const GITHUB_TOKEN_CONSUMERS = "command:gh,command:git";
+
 function githubSetup(deps: AutomationToolDeps, intent: PersistentIntent): string {
   const lines = [
     `GitHub reaches this automation with a repository webhook to POST ${GITHUB_SIGNAL_PATH} on this node's public address, ` +
@@ -208,6 +212,13 @@ function githubSetup(deps: AutomationToolDeps, intent: PersistentIntent): string
       ? "No GitHub account is recorded as Clark's own. Ask the user which login Clark pushes and comments as, and pass it as githubSelfLogins, so what Clark does is not taken as new work."
       : `Signals caused by ${selfLogins.join(", ")} are Clark's own and do not start it${intent.allowSelfTriggered ? " — except this one, which was asked to" : ""}.`,
   );
+  if (intent.do.kind === "task" && !hasSecret(deps.db, deps.principalId, GITHUB_TOKEN_SECRET_NAME)) {
+    lines.push(
+      `The task's worker pushes and opens pull requests with run_command, passing secretRef "${GITHUB_TOKEN_SECRET_NAME}" ` +
+        `to git push and gh. No such token is set: call request_secret with name "${GITHUB_TOKEN_SECRET_NAME}", secretKind ` +
+        `"token", consumer "${GITHUB_TOKEN_CONSUMERS}", so it reaches those two commands' environment and nothing else.`,
+    );
+  }
   const bound = intent.match.some((condition) => condition.path === "subject.refs.repository");
   if (!bound && intent.do.kind === "task") {
     lines.push("It is not bound to one repository: add match subject.refs.repository equals owner/name, or every repository's events will reach it and be refused against its checkout.");
