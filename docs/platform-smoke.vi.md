@@ -71,6 +71,9 @@ với macOS và Linux.
   đó. Khi shell đã thoát, những tiến trình nó để lại vẫn còn chạy cũng được tìm ra và kết thúc. Chúng được tìm theo pid
   cha và theo thời điểm tạo nằm trong khoảng shell còn sống. Vì vậy khi một shim `.cmd` (các wrapper `gh` và `pnpm`)
   khởi chạy lệnh của nó ngay sau lần kill, lệnh đó vẫn bị dừng.
+  - Khoảng sống đó tính từ lúc shell được ghi nhận là bắt đầu đến lúc nó được ghi nhận là thoát, không kéo tới lúc
+    dừng. Vì vậy một tiến trình về sau dùng lại pid của shell, cùng mọi thứ nó khởi chạy, không bao giờ bị kết thúc.
+    Khi lúc thoát không được ghi nhận thì không tìm gì cả.
   - `apps/runtime/test/process-tree.spec.ts` kiểm điều này trên Windows: "stopping a command a .cmd shim started, on
     Windows".
 - **Điều Windows không bảo đảm.** Một tiến trình mà chính tiến trình cha của nó đã thoát trước lần tìm đó thì không

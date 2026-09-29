@@ -7,6 +7,7 @@ import { type Readable } from "node:stream";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import {
+  childLifetime,
   isSameProcess,
   machineBootId,
   noteStarted,
@@ -109,6 +110,44 @@ describe.runIf(process.platform === "linux")("stopping a process group", () => {
     const child = spawn("true", [], { detached: true, stdio: "ignore" });
     await new Promise((resolve) => child.once("exit", resolve));
     await expect(stopTree(child, 5_000)).resolves.toBeUndefined();
+  });
+});
+
+/**
+ * On Windows a stop looks for what a child left running by its parent pid, so the window those processes must have been
+ * created in is what keeps it off a process that reused the pid. It must close at the child's exit: a window that ran
+ * on to the stop would take in whatever a process holding the reused pid started after the exit.
+ */
+describe("the lifetime a stop on Windows sweeps within", () => {
+  it("ends at the child's exit, not at a stop that comes later", async () => {
+    const started = Date.now() - 50;
+    const child = spawn(process.execPath, ["-e", ""], { stdio: "ignore" });
+    noteStarted(child, started);
+    expect(childLifetime(child)).toBeUndefined();
+
+    await new Promise((resolve) => child.once("exit", resolve));
+    const heard = Date.now();
+    await new Promise((resolve) => setTimeout(resolve, 200));
+
+    const lifetime = childLifetime(child);
+    expect(lifetime?.fromMs).toBe(started);
+    expect(lifetime?.toMs).toBeGreaterThanOrEqual(started);
+    expect(lifetime?.toMs).toBeLessThanOrEqual(heard);
+    // A stop now would come 200ms after the exit; the window does not move with it.
+    expect(childLifetime(child)).toEqual(lifetime);
+  });
+
+  it("is unknown for a child whose start was never recorded, so nothing is swept", async () => {
+    const child = spawn(process.execPath, ["-e", ""], { stdio: "ignore" });
+    await new Promise((resolve) => child.once("exit", resolve));
+    expect(childLifetime(child)).toBeUndefined();
+  });
+
+  it("is unknown for a child recorded only after it had exited, whose exit was never heard", async () => {
+    const child = spawn(process.execPath, ["-e", ""], { stdio: "ignore" });
+    await new Promise((resolve) => child.once("exit", resolve));
+    noteStarted(child);
+    expect(childLifetime(child)).toBeUndefined();
   });
 });
 
