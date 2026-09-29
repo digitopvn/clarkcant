@@ -627,8 +627,9 @@ What the page does:
 
 - Code and diffs are shown as text. The highlighter only splits the text into tokens and escapes it. Its output is
   built as React elements, so code that looks like markup, `<script>` included, is shown as the characters it is.
-- A bidi control or invisible character in code or a diff line is drawn as a visible marker, such as `⟨U+202E⟩`,
-  whose tooltip says what kind of character it is, instead of being applied. The card then carries one line warning
+- A bidi control, an invisible character, a tag character or a Hangul filler in code or a diff line (the set a
+  one-line field refuses, in §8.4) is drawn as a visible marker, such as `⟨U+202E⟩`, whose tooltip says what kind of
+  character it is, instead of being applied. A tag character is two UTF-16 units and is drawn as one marker. The card then carries one line warning
   that it holds hidden characters that could make it read differently from how it looks. This is the "Trojan Source"
   case, where a bidi control makes code run differently from how it reads.
 - A long block scrolls inside a bounded area (at most `min(24rem, 60vh)`) and does not wrap or widen the page. That

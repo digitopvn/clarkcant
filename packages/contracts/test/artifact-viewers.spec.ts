@@ -260,6 +260,17 @@ describe("hidden characters", () => {
     expect(artifactViewerText(diff)).not.toContain(BIDI);
   });
 
+  it("marks a tag character in code as one character, and the other classes a line of code may hide", () => {
+    // A tag character is two UTF-16 units; each of these would be invisible in a code block if it were not marked.
+    const hidden = [0xe0061, 0x3164, 0x115f, 0xffa0, 0x2060, 0x2064, 0x00ad, 0x180e, 0xfffb].map(ch).join("");
+    const code = readArtifactViewer("code", { code: `a${hidden}b` });
+    if (code === undefined) throw new Error("refused");
+    expect(hiddenCharacterCount(code)).toBe(9);
+    const text = artifactViewerText(code);
+    expect(text).toContain("a⟨U+E0061⟩⟨U+3164⟩⟨U+115F⟩⟨U+FFA0⟩⟨U+2060⟩⟨U+2064⟩⟨U+00AD⟩⟨U+180E⟩⟨U+FFFB⟩b");
+    expect(text).not.toMatch(/[\ud800-\udfff]/u);
+  });
+
   it("says nothing about hidden characters when there are none", () => {
     const code = readArtifactViewer("code", { code: "x\ty" });
     if (code === undefined) throw new Error("refused");

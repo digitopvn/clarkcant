@@ -623,8 +623,10 @@ Trang làm gì:
 
 - Mã và diff được hiển thị dạng chữ. Bộ tô màu chỉ tách chữ thành token và escape nó. Kết quả được dựng thành phần tử
   React, nên mã trông giống markup, kể cả `<script>`, vẫn hiển thị đúng các ký tự của nó.
-- Ký tự điều khiển hướng chữ hay ký tự vô hình trong mã hoặc một dòng diff được vẽ thành một dấu hiệu nhìn thấy được,
-  như `⟨U+202E⟩`, có tooltip cho biết đó là loại ký tự gì, thay vì được áp dụng. Khi đó thẻ có thêm một dòng cảnh báo
+- Ký tự điều khiển hướng chữ, ký tự vô hình, ký tự thẻ hay ký tự lấp chỗ Hangul trong mã hoặc một dòng diff (chính
+  những ký tự mà một trường một dòng từ chối, ở §8.4) được vẽ thành một dấu hiệu nhìn thấy được, như `⟨U+202E⟩`, có
+  tooltip cho biết đó là loại ký tự gì, thay vì được áp dụng. Ký tự thẻ dài hai đơn vị UTF-16 và được vẽ thành một dấu
+  hiệu duy nhất. Khi đó thẻ có thêm một dòng cảnh báo
   rằng nó chứa ký tự ẩn có thể khiến nội dung đọc khác với vẻ ngoài. Đây là trường hợp "Trojan Source", khi một ký tự
   điều khiển hướng chữ khiến mã chạy khác với cách nó được đọc.
 - Khối dài cuộn bên trong một vùng có giới hạn (tối đa `min(24rem, 60vh)`), không xuống dòng và không làm trang rộng

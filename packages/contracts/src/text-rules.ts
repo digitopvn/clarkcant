@@ -51,7 +51,9 @@ export const ONE_LINE_PATTERN = `^${ALLOWED}*$`;
  */
 export const ONE_LINE_REQUIRED_PATTERN = `^[${ALLOWED_SPACE}]*${ALLOWED_NOT_SPACE}${ALLOWED}*$`;
 
-const HIDDEN = new RegExp(`[${HIDDEN_CHARACTER_CLASS}\\u{e0000}-\\u{e007f}]`, "u");
+/** Every refused character as code points, the tag characters included: compiled with the `u` flag. */
+const HIDDEN_SOURCE = `[${HIDDEN_CHARACTER_CLASS}\\u{e0000}-\\u{e007f}]`;
+const HIDDEN = new RegExp(HIDDEN_SOURCE, "u");
 
 export type HiddenCharacterKind = "control" | "line-break" | "bidi" | "invisible" | "tag" | "filler";
 
@@ -129,8 +131,8 @@ export function hiddenCharacterProblem(value: string, options: { lineBreaks?: bo
 /**
  * One line of the model's words, as a card shows it.
  *
- * Refused when it holds a line break, a control, a bidi control or an invisible character, with a reason that names
- * it; otherwise read in NFC and trimmed, so a label of spaces is empty and two labels that look the same are the same.
+ * Refused when it holds a line break, a control, a bidi control, an invisible character, a tag character or a Hangul
+ * filler, with a reason that names it; otherwise read in NFC and trimmed, so a label of spaces is empty and two labels that look the same are the same.
  * The length is the model's own, before trimming, as its JSON Schema counts it.
  */
 export function oneLineText(max: number, required: boolean) {
@@ -176,13 +178,14 @@ export function hiddenCharacterSegments(text: string): HiddenCharacterSegment[] 
   let from = 0;
   // One pass with a global expression: a block of code can hold thousands of them, and rescanning from each one would
   // make that quadratic.
-  for (const match of text.matchAll(new RegExp(`[${HIDDEN_CHARACTER_CLASS}]`, "gu"))) {
+  for (const match of text.matchAll(new RegExp(HIDDEN_SOURCE, "gu"))) {
     const index = match.index;
-    const code = text.charCodeAt(index);
+    const code = text.codePointAt(index) ?? 0;
     if (code === 0x0a || code === 0x09) continue;
     if (index > from) segments.push({ text: text.slice(from, index) });
     segments.push({ hidden: { codePoint: codePointLabel(match[0]), kind: kindOf(code), index } });
-    from = index + 1;
+    // A tag character is two UTF-16 units: the text resumes after both, so no half of it is drawn as ordinary text.
+    from = index + match[0].length;
   }
   if (from < text.length) segments.push({ text: text.slice(from) });
   return segments;

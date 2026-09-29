@@ -2311,6 +2311,8 @@ function ViewerUnreadable({ title, role, message }: { title: string; role: strin
 const HIDDEN_TITLE: Record<HiddenCharacterKind, MessageKey> = {
   bidi: "widgets.hiddenChar.bidi",
   invisible: "widgets.hiddenChar.invisible",
+  tag: "widgets.hiddenChar.tag",
+  filler: "widgets.hiddenChar.filler",
   control: "widgets.hiddenChar.control",
   "line-break": "widgets.hiddenChar.control",
 };

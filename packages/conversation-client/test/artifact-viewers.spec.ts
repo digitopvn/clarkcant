@@ -14,6 +14,8 @@ import { RENDERER_IDS, markHiddenInTree, withHiddenMarkers } from "../src/render
 /** Written by code point, so no hidden character sits in this file's own source. */
 const BIDI = String.fromCodePoint(0x202e);
 const ZERO_WIDTH = String.fromCodePoint(0x200b);
+const TAG_A = String.fromCodePoint(0xe0061);
+const HANGUL_FILLER = String.fromCodePoint(0x3164);
 
 type Marker = { codePoint: string; title: string; text: string };
 
@@ -130,6 +132,21 @@ describe("artifact viewers", () => {
     expect(withHiddenMarkers("a\tb\nc", () => "")).toBe("a\tb\nc");
   });
 
+  it("draws a tag character as one marker, never half of one, and names a tag and a Hangul filler for what they are", () => {
+    const { text, markers } = walk(withHiddenMarkers(`a${TAG_A}b${HANGUL_FILLER}c`, (hidden) => hidden.kind));
+    expect(text).toBe("a⟨U+E0061⟩b⟨U+3164⟩c");
+    expect(markers).toEqual([
+      { codePoint: "U+E0061", title: "tag", text: "⟨U+E0061⟩" },
+      { codePoint: "U+3164", title: "filler", text: "⟨U+3164⟩" },
+    ]);
+    // No lone surrogate is left behind in the text around the marker.
+    expect(text).not.toMatch(/[\ud800-\udfff]/u);
+    expect(MESSAGES_EN["widgets.hiddenChar.tag"]).toContain("a tag character");
+    expect(MESSAGES_VI["widgets.hiddenChar.tag"]).toContain("ký tự thẻ");
+    expect(MESSAGES_EN["widgets.hiddenChar.filler"]).toContain("a Hangul filler");
+    expect(MESSAGES_VI["widgets.hiddenChar.filler"]).toContain("Hangul");
+  });
+
   it("warns on the card whenever it draws a marker, in the code and in the diff", () => {
     const code = functionBody("renderers.tsx", "CodeViewerView");
     expect(code).toContain('<HiddenWarning count={hiddenCharacterCount(content)} messageKey="widgets.code.hidden" />');
@@ -159,6 +176,8 @@ describe("artifact viewers", () => {
       "widgets.hiddenChar.bidi",
       "widgets.hiddenChar.invisible",
       "widgets.hiddenChar.control",
+      "widgets.hiddenChar.tag",
+      "widgets.hiddenChar.filler",
     ];
     for (const key of keys) {
       expect(MESSAGES_EN[key], key).toBeTruthy();
