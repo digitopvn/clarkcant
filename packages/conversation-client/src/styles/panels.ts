@@ -432,6 +432,69 @@ button:focus-visible, textarea:focus-visible, input:focus-visible, [tabindex]:fo
   box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--cc-text) 14%, transparent);
 }
 
+/*
+ * The theme list.
+ *
+ * One column of cards. A card is the choose button — name, description and trust lane, which is what a person decides
+ * by — and, under it, a disclosure holding the package id, version and full digest. The disclosure is a sibling of the
+ * button, not inside it: a button's content is not interactive. Everything may break anywhere, so a long package id or
+ * digest never widens the panel on a phone.
+ */
+.cc-theme-options { display: flex; flex-direction: column; gap: var(--cc-space-xs); }
+.cc-theme-option {
+  display: flex; flex-direction: column; min-width: 0;
+  border: 1px solid var(--cc-border); border-radius: var(--cc-radius-badge);
+  background: var(--cc-card); color: var(--cc-text-muted); font-size: var(--cc-text-label);
+}
+.cc-theme-option:hover { border-color: color-mix(in oklab, var(--cc-text) 35%, var(--cc-border)); }
+.cc-theme-option[data-selected="true"] {
+  border-color: var(--cc-accent);
+  box-shadow: inset 0 0 0 1px var(--cc-accent);
+  background: color-mix(in oklab, var(--cc-accent) 12%, var(--cc-card));
+}
+.cc-theme-option-choose {
+  display: flex; flex-direction: column; align-items: flex-start; gap: var(--cc-space-xxs);
+  min-width: 0; min-height: 44px; width: 100%; text-align: start;
+  padding: var(--cc-space-sm); border: 0; border-radius: var(--cc-radius-badge);
+  background: transparent; color: inherit; font: inherit; cursor: pointer;
+}
+.cc-theme-option-choose:hover, .cc-theme-option-choose[aria-pressed="true"] { color: var(--cc-text); }
+.cc-theme-option-choose:focus-visible { outline: 2px solid var(--cc-focus); outline-offset: 2px; }
+.cc-theme-option-choose:disabled { cursor: progress; }
+.cc-theme-option-name { color: var(--cc-text); font-weight: 600; }
+.cc-theme-option-desc { overflow-wrap: anywhere; }
+.cc-theme-option-lane { color: var(--cc-text-tertiary); font-size: var(--cc-text-meta); }
+.cc-theme-option-provenance { padding: 0 var(--cc-space-sm) var(--cc-space-sm); min-width: 0; }
+.cc-theme-option-provenance > summary {
+  width: fit-content; min-height: 24px; display: flex; align-items: center; gap: var(--cc-space-xxs);
+  cursor: pointer; list-style: none; color: var(--cc-text-muted); font-size: var(--cc-text-meta); border-radius: var(--cc-radius-badge);
+}
+.cc-theme-option-provenance > summary::-webkit-details-marker { display: none; }
+.cc-theme-option-provenance > summary::before { content: "▸"; color: var(--cc-text-tertiary); }
+.cc-theme-option-provenance[open] > summary::before { content: "▾"; }
+.cc-theme-option-provenance > summary:hover { color: var(--cc-text); }
+.cc-theme-option-provenance > summary:focus-visible { outline: 2px solid var(--cc-focus); outline-offset: 2px; }
+.cc-theme-option-provenance[open] > summary { margin-bottom: var(--cc-space-xs); }
+.cc-theme-option-provenance dd { min-width: 0; overflow-wrap: anywhere; }
+.cc-theme-option-provenance code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: var(--cc-text-mono-sm); color: var(--cc-text);
+}
+.cc-theme-contrast { margin: var(--cc-space-xxs) 0 0; padding-inline-start: var(--cc-space-lg); }
+.cc-theme-contrast li { overflow-wrap: anywhere; }
+.cc-theme-contrast li + li { margin-top: var(--cc-space-xxs); }
+.cc-theme-notice {
+  margin: var(--cc-space-sm) 0 0; padding: var(--cc-space-sm);
+  border: 1px solid var(--cc-border); border-left: 3px solid var(--cc-accent); border-radius: var(--cc-radius-badge);
+  background: var(--cc-card); font-size: var(--cc-text-label); color: var(--cc-text);
+}
+.cc-theme-notice p { margin: 0; }
+.cc-theme-notice details, .cc-theme-notice-detail { margin-top: var(--cc-space-xs); }
+.cc-theme-notice-detail { color: var(--cc-text-muted); overflow-wrap: anywhere; }
+.cc-theme-problems { margin: var(--cc-space-sm) 0 0; font-size: var(--cc-text-label); color: var(--cc-text-muted); }
+.cc-theme-problems ul { margin: var(--cc-space-xs) 0 0; padding-inline-start: var(--cc-space-lg); }
+.cc-theme-problems li { overflow-wrap: anywhere; }
+.cc-theme-problems code { color: var(--cc-text); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: var(--cc-text-mono-sm); }
+
 .cc-effect-list { list-style: none; margin: var(--cc-space-sm) 0 0; padding: 0; display: flex; flex-direction: column; gap: var(--cc-space-xs); }
 .cc-effect-list li { font-size: var(--cc-text-label); color: var(--cc-text-muted); overflow-wrap: anywhere; }
 .cc-effect-list code { color: var(--cc-text); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: var(--cc-text-mono-sm); }

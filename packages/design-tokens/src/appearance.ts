@@ -7,6 +7,7 @@ import {
   type AppearanceSnapshot,
   type AppearanceTokens,
   type ResolvedColorScheme,
+  type ThemeContrastFailureView,
   type ThemeDocument,
 } from "@clarkcant/contracts";
 
@@ -101,6 +102,42 @@ export function auditAppearance(snapshot: AppearanceSnapshot): ContrastAudit {
  */
 export function auditThemeDocument(theme: ThemeDocument): ContrastAudit[] {
   return RESOLVED_COLOR_SCHEMES.map((scheme) => auditColors(scheme, themeColors(scheme, theme)));
+}
+
+/** Why a theme cannot be drawn readably: every failing pair as data, and the same failures as one English sentence. */
+export interface ThemeContrastProblem {
+  /** For a surface a person reads, which words each pair in their own language. */
+  failures: ThemeContrastFailureView[];
+  /** For logs and API messages. Never shown to a person as it is. */
+  message: string;
+}
+
+/**
+ * Why a theme cannot be drawn readably, or `undefined` when it can.
+ *
+ * The one place that decides which pairs a theme fails, so the node's listing, its refusal of a choice and the page's
+ * own refusal agree. A theme that fails in either scheme is refused whole: the colour scheme is a separate choice, and a
+ * person switching it must not land on unreadable text.
+ */
+export function themeContrastProblem(theme: ThemeDocument): ThemeContrastProblem | undefined {
+  const failing = auditThemeDocument(theme).filter((audit) => audit.failures.length > 0);
+  if (failing.length === 0) return undefined;
+  const failures = failing.flatMap((audit) =>
+    audit.failures.map((failure) => ({
+      scheme: audit.scheme,
+      foreground: failure.foregroundToken,
+      background: failure.backgroundToken,
+      ratio: failure.ratio,
+      minimum: failure.minimum,
+    })),
+  );
+  const parts = failing.map(
+    (audit) =>
+      `in the ${audit.scheme} scheme, ${audit.failures
+        .map((failure) => `${failure.purpose} is ${failure.ratio.toFixed(2)}:1 and needs ${String(failure.minimum)}:1`)
+        .join(", ")}`,
+  );
+  return { failures, message: `its colours are too close to read: ${parts.join("; ")}` };
 }
 
 /** A theme's palette in one scheme: Clark's, patched by what the theme says for that scheme. */

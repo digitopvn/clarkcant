@@ -1,0 +1,38 @@
+{
+  "appearanceApi": {
+    "min": 1,
+    "max": 1
+  },
+  "id": "dusk",
+  "displayName": "Dusk",
+  "description": "Dusk with a dark accent too dim to read on its own page.",
+  "colors": {
+    "dark": {
+      "canvas": "#1A1B26",
+      "window": "#1F2335",
+      "card": "#24283B",
+      "elevated": "#292E42",
+      "border": "#3B4261",
+      "text": "#C0CAF5",
+      "textMuted": "#A9B1D6",
+      "textTertiary": "#9AA3CC",
+      "accent": "#3D4A7A",
+      "onAccent": "#1A1B26",
+      "danger": "#F7768E",
+      "focus": "#7DCFFF"
+    },
+    "light": {
+      "canvas": "#E1E2E7",
+      "window": "#E9E9ED",
+      "card": "#F2F2F5",
+      "elevated": "#FFFFFF",
+      "border": "#C4C8DA",
+      "text": "#343B58",
+      "textMuted": "#4C5374",
+      "textTertiary": "#565C7A",
+      "accent": "#2959AA",
+      "onAccent": "#FFFFFF",
+      "focus": "#007197"
+    }
+  }
+}

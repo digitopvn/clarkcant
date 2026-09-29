@@ -1,4 +1,4 @@
-import { type Instant } from "@clarkcant/contracts";
+import { parseThemeRef, type Instant } from "@clarkcant/contracts";
 import {
   EXECUTION_POLICY_PREFERENCE_KEY,
   listRegisteredPreferences,
@@ -7,8 +7,9 @@ import {
   undoRegisteredPreference,
   writeRegisteredPreference,
 } from "@clarkcant/core";
-import { type Database, recentEvents } from "@clarkcant/storage";
+import { recentEvents } from "@clarkcant/storage";
 
+import { readThemeRegistry, resolveThemeRef, themeRegistryDeps, type ThemeServices } from "../application/themes.ts";
 import { projectPolicyPreference, undoPolicyPreference, writePolicyPreference } from "../autonomy-settings.ts";
 import { nodeWork } from "../work-supervisor.ts";
 import { type GatewayRequest, type GatewayResponse, fail, json, readJson } from "./http.ts";
@@ -24,7 +25,8 @@ import { type GatewayRequest, type GatewayResponse, fail, json, readJson } from 
  * these branches lived in the gateway.
  */
 export interface PreferenceRouteDeps {
-  services: { runtime: { db: Database; identity: { ownerPrincipalId: string } } };
+  /** The theme registry's fields too: a theme choice is checked against the themes this node can draw. */
+  services: ThemeServices;
   request: GatewayRequest;
   segments: string[];
   at: () => string;
@@ -140,6 +142,27 @@ export function handlePreferenceRoutes(deps: PreferenceRouteDeps): GatewayRespon
       });
       if (view !== undefined) {
         return json(200, { preference: projectPolicyPreference(policy, view) });
+      }
+    }
+    /*
+     * A theme is chosen only when this node can draw it. A reference no installed package provides, or one whose theme
+     * fails validation or the contrast audit, would otherwise be stored and answered with success while the page went
+     * on drawing Clark Default: a change that changes nothing. The refusal carries the same code and reason the
+     * appearance would have given. A choice already stored is never re-checked here, so a package removed after its
+     * theme was chosen still falls back visibly and comes back when the package does.
+     */
+    // A value that is not a reference at all is left to the key's own schema, which refuses it as malformed.
+    const chosenTheme = requested === "experience.themeRef" && typeof parsed.value.value === "string" ? parsed.value.value : undefined;
+    if (chosenTheme !== undefined && parseThemeRef(chosenTheme) !== undefined) {
+      const resolved = resolveThemeRef(readThemeRegistry(themeRegistryDeps(deps.services)), chosenTheme);
+      if (!resolved.ok) {
+        const { code, message, contrast } = resolved.fallback;
+        return fail(
+          409,
+          code,
+          `that theme cannot be drawn here, so it was not chosen: ${message}`,
+          contrast === undefined ? undefined : { contrast },
+        );
       }
     }
     const outcome = writeRegisteredPreference(preferenceDeps, {

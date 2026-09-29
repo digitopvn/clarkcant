@@ -21,6 +21,7 @@
 
 import { z } from "zod";
 
+import type { RiskLane } from "./directory.ts";
 import { facetIdSchema } from "./install.ts";
 
 /** The version of the theme document and snapshot shapes. A theme declares the range it was written against. */
@@ -347,3 +348,105 @@ export const appearanceSnapshotSchema = z.strictObject({
   tokens: appearanceTokensSchema,
 });
 export type AppearanceSnapshot = z.infer<typeof appearanceSnapshotSchema>;
+
+/* ------------------------------------------------------------------ *
+ * The node's answers: the theme registry and the resolved appearance
+ * ------------------------------------------------------------------ */
+
+/** Who provides a theme, with the provenance a person needs to judge it. */
+export type ThemeProviderView =
+  | { kind: "builtin" }
+  | {
+      kind: "package";
+      packageId: string;
+      version: string;
+      digest: string;
+      /** The package's strongest lane, not the theme's own: a theme shipped beside a service is a service package. */
+      lane: RiskLane;
+      sourceTier: string;
+    };
+
+/** One theme that can be selected. */
+export interface ThemeListingView {
+  themeRef: string;
+  displayName: string;
+  description?: string;
+  provider: ThemeProviderView;
+}
+
+/**
+ * One colour pair a theme fails the contrast audit on, as data rather than a sentence.
+ *
+ * `message` fields are English, for logs and for clients that show nothing better. A surface a person reads words each
+ * failure itself, in their language, from these fields. `foreground` and `background` are names from the public token
+ * contract.
+ */
+export interface ThemeContrastFailureView {
+  scheme: ResolvedColorScheme;
+  foreground: ColorTokenName;
+  background: ColorTokenName;
+  /** The ratio the pair has, rounded to two decimals. */
+  ratio: number;
+  /** The ratio it needs. */
+  minimum: number;
+}
+
+/** A theme an installed package declares that could not be loaded, and why. */
+export interface ThemeProblemView {
+  packageId: string;
+  version: string;
+  /** Absent when the package id cannot form a reference at all. */
+  themeRef: string | undefined;
+  message: string;
+  /** Present when the theme is valid and fails the contrast audit: every failing pair. */
+  contrast?: ThemeContrastFailureView[];
+}
+
+/** An installed package this node could not inspect for themes, which is a different fact from "has none". */
+export interface UncheckedThemePackageView {
+  packageId: string;
+  version: string;
+  code: "NO_DIRECTORY" | "NOT_IN_DIRECTORY" | "NOT_LOCAL" | "UNREADABLE";
+  message: string;
+}
+
+/** `GET /themes`. Clark Default is always first. */
+export interface ThemesResponse {
+  themes: ThemeListingView[];
+  problems: ThemeProblemView[];
+  unchecked: UncheckedThemePackageView[];
+}
+
+/** Why the chosen theme is not the one being drawn. */
+export type AppearanceFallbackCode =
+  /** No active package provides it: never installed here, uninstalled, or its facet is gone in this version. */
+  | "THEME_NOT_INSTALLED"
+  /** The package is installed, and this theme in it did not pass validation. */
+  | "THEME_INVALID"
+  /** The theme is valid, and its colours fail the contrast audit Clark Default is held to, so text in it is unreadable. */
+  | "THEME_LOW_CONTRAST"
+  /** The package is installed, and this node could not read it. */
+  | "THEME_UNAVAILABLE"
+  /** A built-in name this build does not have. */
+  | "THEME_UNKNOWN";
+
+/** Why Clark Default is drawn instead of the chosen theme. */
+export interface AppearanceFallbackView {
+  code: AppearanceFallbackCode;
+  /** English, for logs. A person is shown a sentence of the client's own, chosen by `code`. */
+  message: string;
+  /** With `THEME_LOW_CONTRAST`: every pair the theme fails. */
+  contrast?: ThemeContrastFailureView[];
+}
+
+/** `GET /appearance`: the theme to draw now, and why it is not the chosen one when it is not. */
+export interface AppearanceResponse {
+  /** What the person chose. Kept as it is when it cannot be drawn, so restoring the package brings it back. */
+  selectedRef: string;
+  /** What is drawn. */
+  appliedRef: string;
+  /** The validated document to compile, or `null` for Clark Default. */
+  theme: ThemeDocument | null;
+  provider: ThemeProviderView;
+  fallback: AppearanceFallbackView | null;
+}

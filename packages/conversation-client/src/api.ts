@@ -7,6 +7,7 @@
  */
 
 import type {
+  AppearanceResponse,
   AutonomySettings,
   CompositionGraph,
   GraphSemanticState,
@@ -15,6 +16,7 @@ import type {
   SseEvent,
   TableFilterValue,
   TableSort,
+  ThemesResponse,
   WidgetDefinition,
   WidgetFixture,
 } from "@clarkcant/contracts";
@@ -612,6 +614,7 @@ export class GatewayClient {
   readonly #baseUrl: string;
   readonly #token: string;
   readonly #fetch: typeof fetch;
+  readonly #packageListeners = new Set<() => void>();
 
   constructor(options: GatewayClientOptions) {
     this.#baseUrl = options.baseUrl.replace(/\/$/, "");
@@ -1440,7 +1443,38 @@ export class GatewayClient {
    * The id is percent-encoded because a package installed from disk is recorded under its path.
    */
   changePackage(packageId: string, action: PackageChangeResponse["action"]): Promise<PackageChangeResponse> {
-    return this.#call("POST", `/packages/${encodeURIComponent(packageId)}/${action}`);
+    return this.#changedPackages(this.#call("POST", `/packages/${encodeURIComponent(packageId)}/${action}`));
+  }
+
+  /**
+   * Called after this client installs, updates, uninstalls, restores or rolls back a package.
+   *
+   * The node does not push package changes, so a surface that draws something a package provides — the theme above
+   * all, which colours every other surface — would otherwise keep drawing the previous generation until reloaded.
+   * Returns the function that stops listening.
+   */
+  onPackagesChanged(listener: () => void): () => void {
+    this.#packageListeners.add(listener);
+    return () => {
+      this.#packageListeners.delete(listener);
+    };
+  }
+
+  #changedPackages<T>(call: Promise<T>): Promise<T> {
+    return call.then((result) => {
+      for (const listener of this.#packageListeners) listener();
+      return result;
+    });
+  }
+
+  /** Every theme this node can draw, with who provides each, and the ones that could not be loaded. */
+  themes(): Promise<ThemesResponse> {
+    return this.#call("GET", "/themes");
+  }
+
+  /** The theme to draw now. A fallback names why it is not the one chosen. */
+  appearance(): Promise<AppearanceResponse> {
+    return this.#call("GET", "/appearance");
   }
 
   capabilityApprovals(): Promise<{ approvals: PendingCapabilityApprovalView[] }> {
@@ -1488,7 +1522,7 @@ export class GatewayClient {
     /** What the node actually checked. `digest-only` means the plan was bound to a published digest. */
     verified?: string;
   }> {
-    return this.#call("POST", "/packages/install", { packageId, version });
+    return this.#changedPackages(this.#call("POST", "/packages/install", { packageId, version }));
   }
 
   claimLiveOwner(

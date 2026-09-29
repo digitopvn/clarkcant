@@ -9,8 +9,7 @@
  * whose palette the test suite audits for WCAG AA in both themes.
  */
 
-import { themeStylesheet } from "@clarkcant/design-tokens";
-
+import { installStyleSheets } from "./appearance.ts";
 import { APP_CSS } from "./styles.ts";
 
 export { APP_CSS } from "./styles.ts";
@@ -192,23 +191,8 @@ export {
 export function installStyles(theme: "dark" | "light" = "dark"): void {
   if (typeof document === "undefined") return;
   if (!installed) {
-    const css = `${themeStylesheet()}\n${APP_CSS}`;
-    /*
-     * A constructed sheet rather than a `<style>` element: the desktop shell's policy has no `'unsafe-inline'` in
-     * `style-src`, which blocks a script-made `<style>` and left the window with no stylesheet at all. `style-src`
-     * does not govern an adopted sheet, so the same policy stands and the styles still apply. The element stays
-     * as the fallback for an engine without constructable sheets.
-     */
-    if (typeof CSSStyleSheet === "function" && "adoptedStyleSheets" in document) {
-      const sheet = new CSSStyleSheet();
-      sheet.replaceSync(css);
-      document.adoptedStyleSheets = [...document.adoptedStyleSheets, sheet];
-    } else {
-      const style = document.createElement("style");
-      style.dataset.clarkcant = "styles";
-      style.textContent = css;
-      document.head.append(style);
-    }
+    // Clark Default until the node says otherwise; `applyAppearance` replaces only the token sheet from then on.
+    installStyleSheets(APP_CSS);
     installed = true;
   }
   document.documentElement.dataset.ccTheme = theme;

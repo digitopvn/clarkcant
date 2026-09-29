@@ -158,6 +158,19 @@ Facet `tools` khai báo capability ngay trong manifest, nhờ vậy màn hình �
 đoạn code nào của package chạy. Việc cài package chính là sự đồng ý với những gì package khai báo; mỗi lời gọi vẫn do
 execution policy quyết định.
 
+**Node đọc theme facet như thế nào.** `entry` của một facet `themes` là một tài liệu theme dạng JSON nằm trong gói, ví
+dụ `{ "kind": "themes", "id": "dusk", "entry": "themes/dusk.json", "isolation": "declarative" }`. Tài liệu là một bản
+vá đè lên Clark Default: `appearanceApi` (`{ "min": 1, "max": 1 }`), một `id` trùng với `id` của facet, một
+`displayName`, `description` tuỳ chọn, `colors.dark` / `colors.light` tuỳ chọn (giá trị hex sáu chữ số cho các token màu
+được đặt tên trong `packages/contracts/src/themes.ts`), và `radius` tuỳ chọn (rem từ 0 đến 2 cho `badge`, `button`,
+`card`, `response`, `modal`). Ngoài ra không có gì khác: không CSS, không selector, không font. Node đọc nó từ các byte đã cài qua cùng cơ chế giới hạn như tệp của
+widget, từ chối tài liệu lớn hơn 64 KiB, và kiểm tra nó (`packages/core/src/installed-themes.ts`); theme không qua được
+kiểm tra sẽ được liệt kê kèm lý do, và các theme khác của gói vẫn được nạp. Theme hợp lệ còn phải qua bài kiểm tra tương
+phản mà Clark Default phải qua, ở cả hai chế độ màu (`requiredPairs` trong `packages/design-tokens/src/contrast.ts`);
+theme không đạt sẽ được liệt kê kèm các cặp màu không đạt và không chọn được, nên hãy kiểm tra cả hai chế độ màu trước
+khi phát hành. Theme được chọn bằng
+`package:<package id>#<theme id>`, và một gói chỉ có theme là một lần làm mới UI, không bao giờ khởi động lại Pi. Theme đã
+cài xuất hiện ở Cài đặt → Trải nghiệm → Chủ đề.
 **Node chạy service facet như thế nào.** Node chạy một container cho mỗi facet `tools` của mọi package generation
 đang active, và dừng nó khi generation không còn active (`apps/runtime/src/service-host.ts`). Service là code bên thứ
 ba, còn một process riêng không phải sandbox, nên container mới là ranh giới. `serviceRunArgs` trong

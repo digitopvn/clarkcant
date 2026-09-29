@@ -1062,9 +1062,24 @@ Dùng segmented controls, toggles và swatches:
   (khoá `localStorage` là `cc.theme`), cũng là thứ script chạy trước lần vẽ đầu tiên đọc, nên trang được vẽ đúng chế
   độ màu đã chọn trước khi mọi thứ khác tải xong. Node cũng đăng ký một khoá cho nó, `experience.colorScheme`, mà
   REST API đọc và ghi được (`GET /preferences`, `PUT /preferences/experience.colorScheme`); web client hiện chưa đọc
-  hay ghi khoá đó, nên chế độ màu chọn trên thiết bị này không đi theo người dùng sang thiết bị khác. Theme là một preference riêng (`experience.themeRef`, mặc định
-  `builtin:clark`, tức Clark Default), và theme nào cũng được vẽ theo chế độ màu mà lựa chọn này phân giải ra. Hiện
-  chưa có điều khiển chọn theme: nó chỉ xuất hiện khi một theme đã cài thực sự chọn được (#201).
+  hay ghi khoá đó, nên chế độ màu chọn trên thiết bị này không đi theo người dùng sang thiết bị khác. Theme là một
+  preference riêng (`experience.themeRef`, mặc định `builtin:clark`, tức Clark Default), và theme nào cũng được vẽ
+  theo chế độ màu mà lựa chọn này phân giải ra.
+- Theme: một danh sách nằm dưới chế độ màu, Clark Default đứng đầu, rồi đến từng theme mà một gói đã cài cung cấp. Mỗi
+  mục hiển thị tên, mô tả và trust lane của gói, vì theme tác động lên toàn bộ cửa sổ; package id, phiên bản và digest
+  đầy đủ nằm sau một mục mở rộng nhỏ trên chính mục đó. Chọn
+  một theme sẽ ghi `experience.themeRef` và đổi kiểu trang tại chỗ bằng cách chỉ thay stylesheet token: không tải lại,
+  hội thoại, tin nhắn đang gõ dở, widget đã ghim và Orb vẫn tiếp tục (Orb vẽ lại theo màu mới). Theme nào cũng phải qua
+  cùng bài kiểm tra tương phản mà Clark Default phải qua, ở cả hai chế độ màu (các cặp màu là `requiredPairs` trong
+  `packages/design-tokens/src/contrast.ts`). Theme không đạt sẽ không được đưa ra để chọn — nó được liệt kê kèm các cặp màu
+  không đạt — và việc chọn nó bị từ chối với đúng lý do đó. Trang kiểm tra lại tài liệu, kể cả độ tương phản, trước khi
+  biên dịch, và giữ một bản sao trên thiết bị (`cc.appearance`) để lần tải sau bắt đầu luôn bằng theme đó; bản sao
+  không còn biên dịch được sẽ bị bỏ và trang bắt đầu bằng Clark Default thay vì trống trơn. Khi theme đã chọn không vẽ
+  được — gói của nó đã bị gỡ, một bản cập nhật làm nó không hợp lệ hoặc có độ tương phản quá thấp để đọc, hoặc không
+  đọc được tệp của nó — trang hiển thị Clark Default và nói rõ điều đó bằng một thông báo trạng thái ngay chỗ chọn, kèm
+  lý do trong mục "Chi tiết" bằng ngôn ngữ của người đọc — với màu sắc là mỗi cặp màu không đạt một dòng, dựng từ các
+  cặp mà node gửi dưới dạng dữ liệu chứ không phải từ thông điệp tiếng Anh của node; lựa chọn vẫn được giữ, nên khôi phục gói, hoặc một bản cập nhật sửa được nó, là
+  theme quay lại.
 - Ngôn ngữ: Tiếng Việt / English — segmented control, áp dụng ngay (không có nút lưu), đặt
   `<html lang>`, và được giữ qua reload và giữa các thiết bị nhờ preference registry
   (`experience.language`). Mặc định là tiếng Việt; không có tuỳ chọn "theo hệ thống", vì không có
