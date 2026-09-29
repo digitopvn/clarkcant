@@ -23,7 +23,7 @@ Stop, audit và recovery. Người dùng không phải học signal, worker, nod
 | --- | --- | --- | --- |
 | 01 | [Ngữ nghĩa thực thi: provenance, resource theo task, lệnh qua broker cho worker](phase-01-execution-semantics.md) | #137 (đã xong) | done (#240) |
 | 02 | [Lõi Signal và persistent intent](phase-02-signal-intent-core.md) | 01 | done (#241) |
-| 03 | [Adapter GitHub](phase-03-github-adapter.md) | 02 | pending (#242) |
+| 03 | [Adapter GitHub](phase-03-github-adapter.md) | 02 | done (#242) |
 | 04 | [Hành trình code trọn vẹn (fixture)](phase-04-coding-journey.md) | 03 | pending (#243) |
 | 05 | [Signal từ peer và nguồn thứ hai](phase-05-peer-and-sources.md) | 02 | pending (#244) |
 

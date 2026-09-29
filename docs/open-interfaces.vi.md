@@ -47,6 +47,7 @@ Bề mặt ổn định là phần `/openapi.json` mô tả:
 | POST | `/conversations/{id}/questions/{questionId}/answer` | `{ text?, optionIds?, confirmed? }` |
 | POST | `/conversations/{id}/questions/{questionId}/cancel` | – |
 | POST | `/signals` | `{ source, topic, subject?, payload, occurredAt, dedupeKey, provenance? }` — báo một việc vừa xảy ra; `202` đã ghi, `200` đã ghi từ trước |
+| POST | `/signals/github` | một lần giao webhook của GitHub, ký bằng webhook secret thay cho token — xem bên dưới |
 | GET | `/automations` | – những việc tự động đã đặt trong hội thoại, kèm các lần chạy gần nhất |
 | POST | `/stop` | – dừng khẩn cấp |
 
@@ -84,6 +85,19 @@ curl -X POST localhost:8765/signals -H "authorization: Bearer $TOKEN" -H 'conten
   "dedupeKey": "build-812"
 }'
 ```
+
+GitHub gửi tới `POST /signals/github` mà không cần token của node: webhook của repository (content type
+`application/json`) ký mỗi lần giao bằng một secret mà node giữ dưới tên `github_webhook_secret`, và lần giao nào có
+`X-Hub-Signature-256` không khớp thì bị từ chối `401`, không ghi gì. Clark xin secret đó qua form secret do host sở hữu
+vào lần đầu một việc tự động GitHub được thiết lập, nên giá trị không bao giờ đi vào hội thoại. Lần giao đã xác minh trở
+thành một signal — `github.issue.labeled|opened|edited`, `github.pull_request.opened|synchronize`,
+`github.issue_comment.created`, `github.pull_request_review_comment.created`, `github.workflow_run.completed`,
+`github.check_suite.completed`, cùng các action khác của những event đó — với repository ở `subject.refs.repository`,
+khử trùng theo `X-GitHub-Delivery`. Việc do chính các login GitHub của node gây ra (preference
+`signals.github.selfLogins`) được đánh dấu tự gây ra và không khởi động gì, trừ khi việc tự động yêu cầu điều đó; và
+một task chỉ bắt đầu trong bản clone cục bộ có `origin` đúng là repository mà signal nói tới. Body quá 2 MiB bị từ chối
+`413`. Với node mà GitHub không gọi tới được, `@clarkcant/signal-sources` còn có một poller đọc các event của
+repository thành cùng loại signal đó; node chưa tự chạy nó theo lịch.
 
 Các route khác (settings, packages, widgets, peers…) vẫn gọi được với cùng token nhưng chưa thuộc mô tả ổn định và
 có thể thay đổi.

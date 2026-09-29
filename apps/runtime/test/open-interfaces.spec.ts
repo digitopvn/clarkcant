@@ -90,6 +90,7 @@ describe("discovery", () => {
       "/conversations/{conversationId}/messages/stream",
       "/conversations/{conversationId}/timeline",
       "/signals",
+      "/signals/github",
       "/automations",
       "/stop",
     ]) {

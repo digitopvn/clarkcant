@@ -23,6 +23,7 @@ import { handlePreferenceRoutes } from "./routes/preferences.ts";
 import { handlePackageRoutes } from "./routes/packages.ts";
 import { handleInboxRoutes } from "./routes/inbox.ts";
 import { handleSignalRoutes } from "./routes/signals.ts";
+import { handleGithubSignalRoute } from "./routes/github-signals.ts";
 import { handleInteractionRoutes } from "./routes/interactions.ts";
 import { handleMcpRoute } from "./routes/mcp.ts";
 import { handleConversationRoutes, handleRawCommand } from "./routes/conversations.ts";
@@ -145,6 +146,14 @@ export async function handleRequest(deps: GatewayDeps, request: GatewayRequest):
 
   const peerUplinkResponse = handlePeerUplinkRoutes({ pairing, runtime, request });
   if (peerUplinkResponse !== undefined) return peerUplinkResponse;
+
+  /*
+   * GitHub's webhook, also before the local token check and for the same reason: GitHub does not hold this node's
+   * token. It presents a signature over the delivery made with the webhook secret instead, and the route refuses
+   * anything whose signature does not verify before reading a byte of it.
+   */
+  const githubResponse = handleGithubSignalRoute({ services, request, at });
+  if (githubResponse !== undefined) return githubResponse;
 
   if (!grantCovers && !tokenMatches(runtime.identity.localToken, bearer(request.headers))) {
     // Identical for a missing and a wrong token: distinguishing them would tell an

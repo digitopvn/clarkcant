@@ -18,6 +18,11 @@ export interface GatewayRequest {
   query: Record<string, string>;
   headers: Record<string, string | string[] | undefined>;
   body: string;
+  /**
+   * The body exactly as it arrived, for a route that checks a signature over it. Decoding to text and back is not
+   * guaranteed to give the same bytes, and a signature is over bytes. Absent when a caller built the request in memory.
+   */
+  rawBody?: Uint8Array;
 }
 
 export interface GatewayResponse {

@@ -1,7 +1,7 @@
 ---
 phase: 3
 title: "Adapter GitHub"
-status: pending
+status: done
 issues: [197]
 ---
 
@@ -39,3 +39,11 @@ issues: [197]
 - Mỗi loại sự kiện chuẩn hoá đúng topic và subject (fixture payload thật của GitHub).
 - Signal tự gây ra không match.
 - Remote không khớp thì task bị từ chối.
+
+## Kết quả
+
+- Package `packages/signal-sources` gồm `adapter.ts` (hợp đồng chung `SignalSourceAdapter`, `SignalPoller`) và `github.ts` (xác minh HMAC, chuẩn hoá, parse remote, poller Events API).
+- Route `POST /signals/github` nằm trước bước kiểm tra bearer, trong `apps/runtime/src/routes/github-signals.ts`, với giới hạn body 2 MiB ở `server.ts`.
+- Automation service kiểm tra `origin` của repository trước khi tạo task.
+- Preference `signals.github.selfLogins` được ghi qua `create_automation` (tham số `githubSelfLogins`).
+- Việc chạy poller theo lịch chưa được nối; phần này được theo dõi ở một issue riêng.

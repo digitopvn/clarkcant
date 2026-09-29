@@ -9,11 +9,19 @@ import type {
   PersistentIntent,
   TaskResource,
 } from "@clarkcant/contracts";
-import { type AutomationChange, createAutomation, listAutomations, updateAutomation } from "@clarkcant/core";
+import {
+  type AutomationChange,
+  createAutomation,
+  listAutomations,
+  updateAutomation,
+  writeRegisteredPreference,
+} from "@clarkcant/core";
 import type { ToolDefinition } from "@clarkcant/pi-adapter";
-import type { Database } from "@clarkcant/storage";
+import { GITHUB_EVENTS, GITHUB_WEBHOOK_CONSUMER, GITHUB_WEBHOOK_SECRET_NAME } from "@clarkcant/signal-sources";
+import { type Database, getSecretMetadata, secretBackendFor } from "@clarkcant/storage";
 
 import { containingRoot, ownedResources } from "./preflight.ts";
+import { GITHUB_SELF_LOGINS_PREFERENCE, GITHUB_SIGNAL_PATH, githubSelfLogins } from "./routes/github-signals.ts";
 
 /**
  * "From now on, when X happens, do Y", as tools the main agent calls.
@@ -170,6 +178,56 @@ function readAction(
   return { ok: true, action: { kind: "task", goal, resources, allowedCategories } };
 }
 
+function hasSecret(db: Database, principalId: string, name: string): boolean {
+  const metadata = getSecretMetadata(db, principalId, name);
+  return metadata !== undefined && secretBackendFor(db, principalId, metadata.backend)?.has(metadata.backendRef) === true;
+}
+
+/**
+ * What a GitHub automation still needs before a delivery can reach it, said to the agent right after it is set up.
+ *
+ * Asked for only now, when something needs it: the webhook secret through `request_secret`, so its value never enters
+ * the conversation; which account is Clark's own, so its own labels and comments do not start the work again; and the
+ * repository the automation is about, so a label anywhere else does not start work in this checkout.
+ */
+function githubSetup(deps: AutomationToolDeps, intent: PersistentIntent): string {
+  const lines = [
+    `GitHub reaches this automation with a repository webhook to POST ${GITHUB_SIGNAL_PATH} on this node's public address, ` +
+      `content type application/json, for the events it answers (${GITHUB_EVENTS.join(", ")}).`,
+  ];
+  if (!hasSecret(deps.db, deps.principalId, GITHUB_WEBHOOK_SECRET_NAME)) {
+    lines.push(
+      `No webhook secret is set yet, and a delivery without one is refused. Call request_secret with name ` +
+        `"${GITHUB_WEBHOOK_SECRET_NAME}", secretKind "webhook-secret", consumer "${GITHUB_WEBHOOK_CONSUMER}", and tell the ` +
+        `user to put the same secret in the webhook's settings on GitHub.`,
+    );
+  }
+  const selfLogins = githubSelfLogins(deps.db, deps.principalId, deps.now);
+  lines.push(
+    selfLogins.length === 0
+      ? "No GitHub account is recorded as Clark's own. Ask the user which login Clark pushes and comments as, and pass it as githubSelfLogins, so what Clark does is not taken as new work."
+      : `Signals caused by ${selfLogins.join(", ")} are Clark's own and do not start it${intent.allowSelfTriggered ? " — except this one, which was asked to" : ""}.`,
+  );
+  const bound = intent.match.some((condition) => condition.path === "subject.refs.repository");
+  if (!bound && intent.do.kind === "task") {
+    lines.push("It is not bound to one repository: add match subject.refs.repository equals owner/name, or every repository's events will reach it and be refused against its checkout.");
+  }
+  return lines.join("\n");
+}
+
+function rememberSelfLogins(deps: AutomationToolDeps, raw: unknown): { ok: true } | { ok: false; text: string } {
+  if (raw === undefined) return { ok: true };
+  if (!Array.isArray(raw) || !raw.every((entry) => typeof entry === "string")) {
+    return { ok: false, text: "githubSelfLogins is a list of GitHub logins" };
+  }
+  const merged = [...githubSelfLogins(deps.db, deps.principalId, deps.now), ...(raw as string[])];
+  const written = writeRegisteredPreference(
+    { db: deps.db, now: deps.now },
+    { principalId: deps.principalId, key: GITHUB_SELF_LOGINS_PREFERENCE, value: merged, source: "user" },
+  );
+  return written.ok ? { ok: true } : { ok: false, text: `githubSelfLogins not kept: ${written.message}` };
+}
+
 export function createAutomationTools(deps: AutomationToolDeps): ToolDefinition[] {
   const serviceDeps = { db: deps.db, nodeId: deps.nodeId, now: deps.now, newId: deps.newId };
   return [
@@ -224,6 +282,12 @@ export function createAutomationTools(deps: AutomationToolDeps): ToolDefinition[
             type: "boolean",
             description: "Whether a signal Clark's own work caused may start it again. Default false.",
           },
+          githubSelfLogins: {
+            type: "array",
+            maxItems: 20,
+            items: { type: "string" },
+            description: "GitHub logins that are Clark itself on this node (the account it pushes and comments as). Kept for every GitHub automation.",
+          },
         },
       },
       promptSnippet: "create_automation — keep doing something later, when a signal arrives or on a schedule",
@@ -240,6 +304,8 @@ export function createAutomationTools(deps: AutomationToolDeps): ToolDefinition[
         }
         const action = readAction(params, ownedResources(deps.ownedRoots()));
         if (!action.ok) return { text: action.text };
+        const remembered = rememberSelfLogins(deps, params.githubSelfLogins);
+        if (!remembered.ok) return { text: remembered.text };
         const created = createAutomation(serviceDeps, {
           principalId: deps.principalId,
           conversationId: deps.conversationId,
@@ -251,7 +317,8 @@ export function createAutomationTools(deps: AutomationToolDeps): ToolDefinition[
         } as Parameters<typeof createAutomation>[1]);
         if (!created.ok) return { text: `Not set up: ${created.message}` };
         deps.kick?.();
-        return { text: `Set up. It reports in this conversation.\n${describe(created.intent, [])}` };
+        const setUp = `Set up. It reports in this conversation.\n${describe(created.intent, [])}`;
+        return { text: created.intent.when.topic.startsWith("github.") ? `${setUp}\n${githubSetup(deps, created.intent)}` : setUp };
       },
     },
     {

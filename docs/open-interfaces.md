@@ -46,6 +46,7 @@ The stable surface is the one `/openapi.json` describes:
 | POST | `/conversations/{id}/questions/{questionId}/answer` | `{ text?, optionIds?, confirmed? }` |
 | POST | `/conversations/{id}/questions/{questionId}/cancel` | – |
 | POST | `/signals` | `{ source, topic, subject?, payload, occurredAt, dedupeKey, provenance? }` — something happened; `202` recorded, `200` already recorded |
+| POST | `/signals/github` | a GitHub webhook delivery, signed with the webhook secret instead of the token — see below |
 | GET | `/automations` | – the standing requests set up in conversation, each with its recent runs |
 | POST | `/stop` | – emergency stop |
 
@@ -83,6 +84,19 @@ curl -X POST localhost:8765/signals -H "authorization: Bearer $TOKEN" -H 'conten
   "dedupeKey": "build-812"
 }'
 ```
+
+GitHub delivers to `POST /signals/github` without the node's token: a repository webhook (content type
+`application/json`) signs each delivery with a secret the node keeps as `github_webhook_secret`, and a delivery whose
+`X-Hub-Signature-256` does not verify is refused `401` with nothing recorded. Clark asks for that secret through its
+host-owned secret form the first time a GitHub automation is set up, so the value never enters the conversation. A
+verified delivery becomes a signal — `github.issue.labeled|opened|edited`, `github.pull_request.opened|synchronize`,
+`github.issue_comment.created`, `github.pull_request_review_comment.created`, `github.workflow_run.completed`,
+`github.check_suite.completed`, and the other actions of those events — with the repository as
+`subject.refs.repository`, deduplicated on `X-GitHub-Delivery`. What the node's own GitHub logins did (the
+`signals.github.selfLogins` preference) is marked self-generated and starts nothing unless an automation asked for it,
+and a task only starts in a local clone whose `origin` is the repository the signal is about. Bodies over 2 MiB are
+refused `413`. For a node GitHub cannot reach, `@clarkcant/signal-sources` also has a poller that reads a repository's
+events into the same signals; the node does not run it on a schedule yet.
 
 Other routes exist (settings, packages, widgets, peers…) and are reachable with the same token, but they are not yet
 part of the stable description and may change.

@@ -249,6 +249,9 @@ importers:
       '@clarkcant/project-work':
         specifier: workspace:*
         version: link:../../packs/project-work
+      '@clarkcant/signal-sources':
+        specifier: workspace:*
+        version: link:../../packages/signal-sources
       '@clarkcant/storage':
         specifier: workspace:*
         version: link:../../packages/storage
@@ -495,6 +498,12 @@ importers:
       typebox:
         specifier: 1.3.31
         version: 1.3.31
+
+  packages/signal-sources:
+    dependencies:
+      '@clarkcant/contracts':
+        specifier: workspace:*
+        version: link:../contracts
 
   packages/storage:
     dependencies:
