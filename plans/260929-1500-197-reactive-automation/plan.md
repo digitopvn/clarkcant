@@ -1,6 +1,6 @@
 ---
 title: "#197 Signal → Intent → Effect: tự động hoá phản ứng"
-status: in-progress
+status: completed
 created: 2026-09-29
 issues: [197]
 related: [137, 172, 196, 170]
@@ -25,7 +25,7 @@ Stop, audit và recovery. Người dùng không phải học signal, worker, nod
 | 02 | [Lõi Signal và persistent intent](phase-02-signal-intent-core.md) | 01 | done (#241) |
 | 03 | [Adapter GitHub](phase-03-github-adapter.md) | 02 | done (#242) |
 | 04 | [Hành trình code trọn vẹn (fixture)](phase-04-coding-journey.md) | 03 | done (#243) |
-| 05 | [Signal từ peer và nguồn thứ hai](phase-05-peer-and-sources.md) | 02 | pending (#244) |
+| 05 | [Signal từ peer và nguồn thứ hai](phase-05-peer-and-sources.md) | 02 | done (#244; phần còn lại ở #253) |
 
 Mỗi phase là một PR, một sub-issue của #197. Hai phase cùng thêm migration thì xếp hàng theo thứ tự merge.
 

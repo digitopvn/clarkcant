@@ -120,6 +120,12 @@ occurredAt? }` on its own gateway, with its own token. The signal is queued in t
 NodeLink `signal` message; the peer records it as `peer.<topic>` from the node the authenticated channel says sent it,
 so its standing requests decide what, if anything, it starts. See [distributed runtime](distributed-runtime.md).
 
+A standing request's task can also run on a paired node. That is set up in conversation, not through a route: the
+sending node's owner names the peer as the task's executor, and the receiving node's owner says what that peer may run
+there (folders, repositories, effects). The nodes exchange the grant, the hand-over (`delegate`), its answer
+(`result`) and a stop (`cancel.request`) as NodeLink messages; the receiver runs the task only within both, and each
+owner hears the outcome in their own conversation.
+
 Other routes exist (settings, packages, widgets, peers…) and are reachable with the same token, but they are not yet
 part of the stable description and may change.
 

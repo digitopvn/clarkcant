@@ -1,7 +1,7 @@
 ---
 phase: 5
 title: "Signal từ peer và nguồn thứ hai"
-status: in-progress
+status: completed
 issues: [197, 244]
 ---
 
@@ -37,6 +37,10 @@ tách phần đó thành sub-issue, nêu rõ lý do.
   `peer.<topic>` theo danh tính của kênh; webhook chung `POST /signals/webhook/<source>` với secret riêng cho từng
   nguồn qua Secret Broker, giới hạn 256 KiB, đặt nguồn trong hội thoại. Bằng chứng: `webhook.spec.ts` (7),
   `webhook-signals.spec.ts` (7), `peer-signals.spec.ts` (6, hai node thật qua HTTP thật).
-- Còn lại (PR thứ hai của #244): chạy task trên node kia — `delegate` tạo task origin `delegated` ở bên nhận trong
-  phạm vi grant, rồi `result` quay về hội thoại của bên gửi. Hai node trên cùng máy qua HTTP là đủ để kiểm chứng; hai
-  máy thật vẫn là phạm vi của #5.
+- Xong (PR thứ hai của #244): chạy task trên node kia — `executor` trên automation, `allow_peer_tasks`/`list_peers`
+  ở bên nhận, grant đi bằng `pair.confirm`, `delegate` tạo task origin `delegated` ở bên nhận trong phần giao của grant
+  và allowance, effect ngoài phần đó chờ chủ node nhận ở mọi chế độ, `result` quay về hội thoại của bên gửi (kể cả từ
+  chối và "chưa rõ" sau khi bên nhận khởi động lại), `cancel.request` dừng ở cả hai bên. Bằng chứng:
+  `peer-delegation.spec.ts` (7, hai node thật qua HTTP thật, worker thật).
+- Tách ra #253: trạng thái khi task chờ ở bên nhận, thu hồi grant khi gỡ automation, budget giữa các node, trả
+  artifact, capability discovery. Hai máy thật vẫn là phạm vi của #5.
