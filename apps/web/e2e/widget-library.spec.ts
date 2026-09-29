@@ -132,6 +132,31 @@ test("every catalog card previews through the production renderer", async ({ pag
   }
 });
 
+test("a click anywhere on a card opens it, even on a control drawn inside its preview", async ({ page }) => {
+  await openLibraryFromExtensions(page);
+
+  /*
+   * The form preview draws disabled fields, and a browser swallows a click on a disabled control
+   * instead of passing it to the card around it. A person clicking the middle of the card got nothing,
+   * so the click lands on the field itself here rather than on whatever the card's centre happens to be.
+   */
+  const field = page.locator("[data-widget-card='canvas.form@1'] input:disabled").first();
+  await field.scrollIntoViewIfNeeded();
+  const box = await field.boundingBox();
+  if (box === null) throw new Error("the form preview drew no field to click");
+  await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+  await expect(page.locator("[data-widget-detail='canvas.form@1']")).toBeVisible({ timeout: 20_000 });
+  await page.locator("[data-widget-library-back]").click();
+
+  // The preview is a picture of the widget, so none of its controls is a Tab stop inside the card.
+  await page.locator("[data-widget-card='canvas.list@1']").focus();
+  await page.keyboard.press("Tab");
+  const focusedInsidePreview = await page.evaluate(
+    () => (document.activeElement?.closest(".cc-widget-card-preview") ?? null) !== null,
+  );
+  expect(focusedInsidePreview).toBe(false);
+});
+
 test("a data-backed widget renders instead of reporting its dataset unavailable", async ({ page }) => {
   await openLibraryFromExtensions(page);
 

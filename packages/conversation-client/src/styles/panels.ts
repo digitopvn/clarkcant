@@ -562,7 +562,7 @@ button:focus-visible, textarea:focus-visible, input:focus-visible, [tabindex]:fo
 .cc-widget-card { margin: 0; }
 .cc-widget-card-btn { display: flex; flex-direction: column; gap: var(--cc-space-sm); width: 100%; text-align: left; cursor: pointer; font: inherit; color: inherit; padding: var(--cc-space-md); border: 1px solid var(--cc-border); border-radius: var(--cc-radius-card); background: transparent; }
 .cc-widget-card-btn:focus-visible { outline: 2px solid var(--cc-focus); outline-offset: 2px; }
-.cc-widget-card-preview { display: block; min-height: 96px; overflow: hidden; }
+.cc-widget-card-preview { display: block; min-height: 96px; overflow: hidden; pointer-events: none; }
 .cc-widget-card-text { display: block; color: var(--cc-text-muted); }
 .cc-widget-card-meta { display: flex; flex-direction: column; gap: var(--cc-space-xxs); }
 .cc-widget-card-name { font-weight: 600; }
