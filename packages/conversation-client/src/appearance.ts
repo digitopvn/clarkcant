@@ -1,5 +1,5 @@
 import { BUILTIN_CLARK_THEME_REF, checkThemeDocument, type ThemeDocument } from "@clarkcant/contracts";
-import { appearanceStylesheet, compileAppearance } from "@clarkcant/design-tokens";
+import { appearanceStylesheet, compileAppearance, themeContrastProblem } from "@clarkcant/design-tokens";
 
 /**
  * The theme a page is drawn in, applied without reloading it.
@@ -10,7 +10,8 @@ import { appearanceStylesheet, compileAppearance } from "@clarkcant/design-token
  *
  * What reaches the sheet is compiled here, from a document checked here, even though the node already checked it. The
  * page is where a value would become CSS, so the page does not take the node's word for it: a document that fails the
- * contract, or compiles to a value the snapshot schema refuses, is drawn as Clark Default instead.
+ * contract, fails the contrast audit, or compiles to a value the snapshot schema refuses, is drawn as Clark Default
+ * instead.
  */
 
 /** `data-cc-appearance` on the root: the revision being drawn, so a canvas that paints its own colours can follow it. */
@@ -22,6 +23,9 @@ export const APPEARANCE_ATTRIBUTE = "ccAppearance";
  */
 export const APPEARANCE_STORAGE_KEY = "cc.appearance";
 
+/** The revision a page is marked with when not even Clark Default's token sheet could be built. */
+export const APPEARANCE_UNAVAILABLE = "unavailable";
+
 let tokenSheet: { kind: "constructed"; sheet: CSSStyleSheet } | { kind: "element"; element: HTMLStyleElement } | undefined;
 
 export interface CompiledAppearance {
@@ -30,11 +34,36 @@ export interface CompiledAppearance {
   revision: string;
 }
 
-/** Compile a theme into the token stylesheet, both schemes. Throws when the result would break the snapshot contract. */
+/**
+ * Compile a theme into the token stylesheet, both schemes.
+ *
+ * Throws when the theme's colours fail the contrast audit Clark Default is held to, or when the result would break the
+ * snapshot contract: either way the caller draws Clark Default and says why.
+ */
 export function compileThemeStylesheet(theme: ThemeDocument | undefined, themeRef: string): CompiledAppearance {
-  const dark = compileAppearance({ scheme: "dark", theme, themeRef });
-  const light = compileAppearance({ scheme: "light", theme, themeRef });
+  if (theme !== undefined) {
+    const unreadable = themeContrastProblem(theme);
+    if (unreadable !== undefined) throw new Error(unreadable);
+  }
+  const dark = compileAppearance(theme === undefined ? { scheme: "dark" } : { scheme: "dark", theme, themeRef });
+  const light = compileAppearance(theme === undefined ? { scheme: "light" } : { scheme: "light", theme, themeRef });
   return { css: appearanceStylesheet({ dark, light }), revision: `${dark.revision}-${light.revision}` };
+}
+
+/**
+ * Clark Default's token sheet, which never throws.
+ *
+ * Every fallback lands here, so it cannot itself be a way to fail. If even Clark Default does not compile — a broken
+ * build, not anything a person or a package did — the token sheet is left empty and the error is logged: the component
+ * sheet still installs and the conversation still renders, which is better than a window with nothing in it.
+ */
+function clarkStylesheet(): CompiledAppearance {
+  try {
+    return compileThemeStylesheet(undefined, BUILTIN_CLARK_THEME_REF);
+  } catch (error) {
+    console.error("Clark Default's token sheet did not compile", error);
+    return { css: "", revision: APPEARANCE_UNAVAILABLE };
+  }
 }
 
 /**
@@ -44,10 +73,13 @@ export function compileThemeStylesheet(theme: ThemeDocument | undefined, themeRe
  * `style-src`, which blocks a script-made `<style>` and left the window with no stylesheet at all. `style-src` does not
  * govern an adopted sheet, so the same policy stands and the styles still apply. The element stays as the fallback for
  * an engine without constructable sheets.
+ *
+ * Nothing here throws. This runs before the first render, and a throw would leave the window blank; a theme remembered
+ * from an earlier load that cannot be drawn now is dropped, and the page starts on Clark Default.
  */
 export function installStyleSheets(componentCss: string): void {
   if (typeof document === "undefined" || tokenSheet !== undefined) return;
-  const clark = compileThemeStylesheet(undefined, BUILTIN_CLARK_THEME_REF);
+  const clark = clarkStylesheet();
   if (typeof CSSStyleSheet === "function" && "adoptedStyleSheets" in document) {
     const tokens = new CSSStyleSheet();
     tokens.replaceSync(clark.css);
@@ -67,7 +99,14 @@ export function installStyleSheets(componentCss: string): void {
   }
   document.documentElement.dataset[APPEARANCE_ATTRIBUTE] = clark.revision;
   const cached = readCachedAppearance();
-  if (cached !== undefined) applyAppearance(cached);
+  if (cached === undefined) return;
+  try {
+    applyAppearance(cached);
+  } catch (error) {
+    console.error("the remembered theme could not be drawn, so the page starts on Clark Default", error);
+    writeTokens(clark);
+    cacheAppearance(undefined);
+  }
 }
 
 export type AppliedAppearance =
@@ -84,7 +123,7 @@ export function applyAppearance(input: { theme: unknown; themeRef: string }): Ap
   let compiled: CompiledAppearance | undefined;
   let problem: string | undefined;
   if (input.theme === null) {
-    compiled = compileThemeStylesheet(undefined, BUILTIN_CLARK_THEME_REF);
+    compiled = clarkStylesheet();
   } else {
     const checked = checkThemeDocument(input.theme);
     if (!checked.ok) {
@@ -98,7 +137,7 @@ export function applyAppearance(input: { theme: unknown; themeRef: string }): Ap
     }
   }
 
-  const drawn = compiled ?? compileThemeStylesheet(undefined, BUILTIN_CLARK_THEME_REF);
+  const drawn = compiled ?? clarkStylesheet();
   writeTokens(drawn);
   cacheAppearance(problem === undefined && input.theme !== null ? { theme: input.theme, themeRef: input.themeRef } : undefined);
   return problem === undefined && compiled !== undefined

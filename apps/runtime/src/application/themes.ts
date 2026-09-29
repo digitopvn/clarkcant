@@ -4,6 +4,7 @@ import {
   BUILTIN_CLARK_THEME_REF,
   nowInstant,
   parseThemeRef,
+  type AppearanceFallbackCode,
   type AppearanceResponse,
   type DirectoryEntry,
   type ThemeDocument,
@@ -21,6 +22,7 @@ import {
   resolveLocalSource,
   type InstalledPackageView,
 } from "@clarkcant/core";
+import { themeContrastProblem } from "@clarkcant/design-tokens";
 import { type Database } from "@clarkcant/storage";
 
 /**
@@ -40,12 +42,30 @@ export interface ThemeRegistryDeps {
   newId: (prefix: string) => string;
 }
 
+/** The node fields the registry reads, as the gateway's services carry them. */
+export interface ThemeServices {
+  runtime: { db: Database; identity: { nodeId: string; ownerPrincipalId: string }; dataDir: string };
+  conductor: { newId: (prefix: string) => string };
+}
+
+export function themeRegistryDeps(services: ThemeServices): ThemeRegistryDeps {
+  return {
+    db: services.runtime.db,
+    nodeId: services.runtime.identity.nodeId,
+    dataDir: services.runtime.dataDir,
+    ownerPrincipalId: services.runtime.identity.ownerPrincipalId,
+    newId: services.conductor.newId,
+  };
+}
+
 export interface ThemeRegistry {
   themes: ThemeListingView[];
   problems: ThemeProblemView[];
   unchecked: UncheckedThemePackageView[];
   /** The validated documents, by reference. Only package themes; Clark Default is the compiler's own base. */
   documents: ReadonlyMap<string, ThemeDocument>;
+  /** Valid themes whose colours fail the contrast audit, by reference, with why. Listed as problems, never drawn. */
+  lowContrast: ReadonlyMap<string, string>;
 }
 
 const CLARK_LISTING: ThemeListingView = {
@@ -79,6 +99,8 @@ export function readThemeRegistry(deps: ThemeRegistryDeps): ThemeRegistry {
   const problems: ThemeProblemView[] = [];
   const unchecked: UncheckedThemePackageView[] = [];
   const documents = new Map<string, ThemeDocument>();
+  const lowContrast = new Map<string, string>();
+  const claimed = new Set<string>();
 
   for (const pkg of installed) {
     if (index.kind !== "configured") {
@@ -113,13 +135,23 @@ export function readThemeRegistry(deps: ThemeRegistryDeps): ThemeRegistry {
     for (const theme of read.themes) {
       // Two installed packages declaring the same id would claim one reference; the first keeps it and the other is
       // named, rather than one silently replacing the other depending on listing order.
-      if (documents.has(theme.themeRef)) {
+      if (claimed.has(theme.themeRef)) {
         problems.push({
           packageId,
           version: listed.version,
           themeRef: theme.themeRef,
           message: `theme ${theme.facetId}: another installed package already provides ${theme.themeRef}`,
         });
+        continue;
+      }
+      claimed.add(theme.themeRef);
+      // A theme is held to the contrast Clark Default is held to. One that fails is named rather than offered: drawing
+      // it would make the conversation itself hard to read, which is not a look anybody chose.
+      const unreadable = themeContrastProblem(theme.document);
+      if (unreadable !== undefined) {
+        const message = `theme ${theme.facetId}: ${unreadable}`;
+        lowContrast.set(theme.themeRef, message);
+        problems.push({ packageId, version: listed.version, themeRef: theme.themeRef, message });
         continue;
       }
       documents.set(theme.themeRef, theme.document);
@@ -135,7 +167,7 @@ export function readThemeRegistry(deps: ThemeRegistryDeps): ThemeRegistry {
     }
   }
 
-  return { themes, problems, unchecked, documents };
+  return { themes, problems, unchecked, documents, lowContrast };
 }
 
 export function resolveAppearance(deps: ThemeRegistryDeps, registry: ThemeRegistry = readThemeRegistry(deps)): AppearanceResponse {
@@ -144,31 +176,47 @@ export function resolveAppearance(deps: ThemeRegistryDeps, registry: ThemeRegist
     { principalId: deps.ownerPrincipalId, key: "experience.themeRef" },
   )?.value;
   const selectedRef = typeof stored === "string" ? stored : BUILTIN_CLARK_THEME_REF;
-  const clark = (fallback: AppearanceResponse["fallback"]): AppearanceResponse => ({
-    selectedRef,
-    appliedRef: BUILTIN_CLARK_THEME_REF,
-    theme: null,
-    provider: { kind: "builtin" },
-    fallback,
+  const resolved = resolveThemeRef(registry, selectedRef);
+  return resolved.ok
+    ? { selectedRef, appliedRef: resolved.themeRef, theme: resolved.theme, provider: resolved.provider, fallback: null }
+    : {
+        selectedRef,
+        appliedRef: BUILTIN_CLARK_THEME_REF,
+        theme: null,
+        provider: { kind: "builtin" },
+        fallback: resolved.fallback,
+      };
+}
+
+export type ThemeResolution =
+  | { ok: true; themeRef: string; theme: ThemeDocument | null; provider: ThemeProviderView }
+  | { ok: false; fallback: { code: AppearanceFallbackCode; message: string } };
+
+/**
+ * What a theme reference draws on this node right now: the theme, or why Clark Default is drawn instead.
+ *
+ * The one place that answers it, so the appearance a page is told to draw and the check a choice is written through
+ * cannot disagree about which references work.
+ */
+export function resolveThemeRef(registry: ThemeRegistry, themeRef: string): ThemeResolution {
+  if (themeRef === BUILTIN_CLARK_THEME_REF) return { ok: true, themeRef, theme: null, provider: { kind: "builtin" } };
+  const fallback = (code: AppearanceFallbackCode, message: string): ThemeResolution => ({
+    ok: false,
+    fallback: { code, message },
   });
+  const parts = parseThemeRef(themeRef);
+  if (parts === undefined || parts.kind === "builtin") return fallback("THEME_UNKNOWN", `${themeRef} is not a theme this build has`);
 
-  if (selectedRef === BUILTIN_CLARK_THEME_REF) return clark(null);
-  const parts = parseThemeRef(selectedRef);
-  if (parts === undefined || parts.kind === "builtin") {
-    return clark({ code: "THEME_UNKNOWN", message: `${selectedRef} is not a theme this build has` });
-  }
-
-  const document = registry.documents.get(selectedRef);
-  const listing = registry.themes.find((theme) => theme.themeRef === selectedRef);
+  const document = registry.documents.get(themeRef);
+  const listing = registry.themes.find((theme) => theme.themeRef === themeRef);
   if (document !== undefined && listing !== undefined) {
-    return { selectedRef, appliedRef: selectedRef, theme: document, provider: listing.provider, fallback: null };
+    return { ok: true, themeRef, theme: document, provider: listing.provider };
   }
-  const problem = registry.problems.find((candidate) => candidate.themeRef === selectedRef);
-  if (problem !== undefined) return clark({ code: "THEME_INVALID", message: problem.message });
-  const unreadable = registry.unchecked.find((candidate) => candidate.packageId === parts.packageId);
-  if (unreadable !== undefined) return clark({ code: "THEME_UNAVAILABLE", message: unreadable.message });
-  return clark({
-    code: "THEME_NOT_INSTALLED",
-    message: `no installed package provides ${selectedRef}`,
-  });
+  const unreadable = registry.lowContrast.get(themeRef);
+  if (unreadable !== undefined) return fallback("THEME_LOW_CONTRAST", unreadable);
+  const problem = registry.problems.find((candidate) => candidate.themeRef === themeRef);
+  if (problem !== undefined) return fallback("THEME_INVALID", problem.message);
+  const unchecked = registry.unchecked.find((candidate) => candidate.packageId === parts.packageId);
+  if (unchecked !== undefined) return fallback("THEME_UNAVAILABLE", unchecked.message);
+  return fallback("THEME_NOT_INSTALLED", `no installed package provides ${themeRef}`);
 }

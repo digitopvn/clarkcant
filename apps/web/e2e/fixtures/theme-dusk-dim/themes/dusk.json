@@ -5,7 +5,7 @@
   },
   "id": "dusk",
   "displayName": "Dusk",
-  "description": "Cool blues at dusk, in both colour schemes.",
+  "description": "Dusk with a dark accent too dim to read on its own page.",
   "colors": {
     "dark": {
       "canvas": "#1A1B26",
@@ -16,7 +16,7 @@
       "text": "#C0CAF5",
       "textMuted": "#A9B1D6",
       "textTertiary": "#9AA3CC",
-      "accent": "#7AA2F7",
+      "accent": "#3D4A7A",
       "onAccent": "#1A1B26",
       "danger": "#F7768E",
       "focus": "#7DCFFF"

@@ -1,6 +1,4 @@
-import { type Database } from "@clarkcant/storage";
-
-import { readThemeRegistry, resolveAppearance, type ThemeRegistryDeps } from "../application/themes.ts";
+import { readThemeRegistry, resolveAppearance, themeRegistryDeps, type ThemeServices } from "../application/themes.ts";
 import { type GatewayRequest, type GatewayResponse, json } from "./http.ts";
 
 /**
@@ -11,10 +9,7 @@ import { type GatewayRequest, type GatewayResponse, json } from "./http.ts";
  * routes. Nothing here is a second way to do either.
  */
 export interface ThemeRouteDeps {
-  services: {
-    runtime: { db: Database; identity: { nodeId: string; ownerPrincipalId: string }; dataDir: string };
-    conductor: { newId: (prefix: string) => string };
-  };
+  services: ThemeServices;
   request: GatewayRequest;
   segments: string[];
 }
@@ -24,14 +19,7 @@ export function handleThemeRoutes(deps: ThemeRouteDeps): GatewayResponse | undef
   if (request.method !== "GET" || segments.length !== 1) return undefined;
   if (segments[0] !== "themes" && segments[0] !== "appearance") return undefined;
 
-  const { runtime, conductor } = deps.services;
-  const registryDeps: ThemeRegistryDeps = {
-    db: runtime.db,
-    nodeId: runtime.identity.nodeId,
-    dataDir: runtime.dataDir,
-    ownerPrincipalId: runtime.identity.ownerPrincipalId,
-    newId: conductor.newId,
-  };
+  const registryDeps = themeRegistryDeps(deps.services);
   const registry = readThemeRegistry(registryDeps);
 
   /*

@@ -1086,11 +1086,16 @@ Use segmented controls, toggles and swatches:
 - Theme: a list under the colour scheme, Clark Default first, then each theme an installed package provides. Every
   entry names its provider — package, version, trust lane and a short digest — because a theme reaches the whole
   window. Choosing one writes `experience.themeRef` and restyles the page in place by replacing only the token
-  stylesheet: no reload, and the conversation, a half-typed message and the Orb carry on (the Orb redraws in the new
-  colours). The page checks the document again before compiling it, and keeps a copy on the device (`cc.appearance`)
-  so the next load starts in it. When the chosen theme cannot be drawn — its package was removed, it failed validation,
-  or its files cannot be read — the page shows Clark Default and says so in a status notice where the choice is made,
-  with the node's reason under "Details"; the choice is kept, so restoring the package brings the theme back.
+  stylesheet: no reload, and the conversation, a half-typed message, a pinned widget and the Orb carry on (the Orb
+  redraws in the new colours). Every theme is held to the contrast audit Clark Default is held to, in both schemes (the
+  pairs are `requiredPairs` in `packages/design-tokens/src/contrast.ts`). A theme that fails is
+  not offered — it is listed with the failing pairs — and a choice of it is refused with that reason. The page checks
+  the document again, contrast included, before compiling it, and keeps a copy on the device (`cc.appearance`) so the
+  next load starts in it; a copy that no longer compiles is dropped and the page starts on Clark Default rather than
+  blank. When the chosen theme cannot be drawn — its package was removed, an update made it invalid or too low in
+  contrast to read, or its files cannot be read — the page shows Clark Default and says so in a status notice where
+  the choice is made, with the node's reason under "Details"; the choice is kept, so restoring the package, or an
+  update that fixes it, brings the theme back.
 - Language: Tiếng Việt / English — segmented control, applies immediately (no save button), sets
   `<html lang>`, and persists across reload and devices through the preference registry
   (`experience.language`). Default is Vietnamese; there is no "follow system" option, because no

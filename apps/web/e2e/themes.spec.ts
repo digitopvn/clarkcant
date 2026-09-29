@@ -7,9 +7,10 @@ import { expect, test, type APIRequestContext, type Page } from "@playwright/tes
  * Choosing a theme a package provides, in the browser.
  *
  * The node's tests cover the registry and every lifecycle step; this covers what only a page can show: that choosing a
- * theme restyles the window without reloading it or touching the conversation, that removing the package draws Clark
- * Default and says so where the choice was made, and that restoring the package brings the chosen theme back without
- * choosing it again.
+ * theme restyles the window without reloading it or touching the conversation — a half-typed message and a pinned
+ * widget are both still there — that removing the package draws Clark Default and says so where the choice was made,
+ * that restoring the package brings the chosen theme back without choosing it again, and that an update whose colours
+ * are too dim to read is refused the same way, with the failing pairs named.
  */
 
 const DATA_DIR = join(process.cwd(), ".data", "e2e");
@@ -60,7 +61,7 @@ async function settle(page: Page): Promise<void> {
 const accent = (page: Page): Promise<string> =>
   page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue("--cc-accent").trim().toUpperCase());
 
-test("a package theme restyles the window in place, falls back when removed, and returns when restored", async ({
+test("a package theme restyles the window in place, falls back when removed or unreadable, and returns when restored", async ({
   page,
   request,
 }) => {
@@ -68,11 +69,36 @@ test("a package theme restyles the window in place, falls back when removed, and
   await prepare(request);
   await page.setViewportSize({ width: 1280, height: 900 });
   await page.emulateMedia({ colorScheme: "dark" });
+  // The node's own suggestions are asked for none, so the first chip is the written sample chart (see j1.spec.ts).
+  await page.route("**/suggestions", (route) =>
+    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ items: [] }) }),
+  );
   await page.goto(`/?token=${token()}&gateway=${encodeURIComponent(GATEWAY)}`);
   await expect(page.locator("text=Ready")).toBeVisible({ timeout: 15_000 });
 
   const clarkAccent = await accent(page);
   expect(clarkAccent).not.toBe("#7AA2F7");
+
+  // A pinned widget, marked on its own element so that re-creating it — not only losing it — would show.
+  await page.locator("[data-suggestion]").first().click();
+  await expect(page.locator('[data-widget-role="chart"]').first()).toBeVisible({ timeout: 20_000 });
+  // The conversation carries on from earlier specs, so this pin is told apart from any they left by its id.
+  const pinIds = (): Promise<string[]> =>
+    page.locator("[data-pin-shelf='true'] [data-pin-id]").evaluateAll((elements) => elements.map((element) => element.getAttribute("data-pin-id") ?? ""));
+  const pinsBefore = await pinIds();
+  await page.locator("[data-pin-instance]").first().click();
+  await expect.poll(async () => (await pinIds()).filter((id) => !pinsBefore.includes(id)).length).toBe(1);
+  const pinId = (await pinIds()).find((id) => !pinsBefore.includes(id)) ?? "";
+  const pinned = page.locator(`[data-pin-shelf='true'] [data-pin-id='${pinId}']`);
+  await pinned.evaluate((element) => {
+    (element as HTMLElement & { ccThemeMark?: boolean }).ccThemeMark = true;
+  });
+  const pinSurvived = async (): Promise<void> => {
+    const same = page.locator(`[data-pin-shelf='true'] [data-pin-id='${pinId}']`);
+    await expect(same).toBeVisible();
+    expect(await same.evaluate((element) => (element as HTMLElement & { ccThemeMark?: boolean }).ccThemeMark)).toBe(true);
+  };
+
   // A half-typed message, and a mark that only survives if the page is never reloaded.
   await page.locator("[data-composer]").fill(DRAFT);
   await page.evaluate(() => {
@@ -96,7 +122,7 @@ test("a package theme restyles the window in place, falls back when removed, and
 
   // The colour scheme is a separate choice: switching it redraws the same theme's light colours.
   await page.locator('[data-theme-choice="light"]').click();
-  await expect.poll(() => accent(page)).toBe("#2E7DE9");
+  await expect.poll(() => accent(page)).toBe("#2959AA");
   await settle(page);
   await page.screenshot({ path: join(EVIDENCE, "theme-picker-1280-light.png") });
   await page.locator('[data-theme-choice="dark"]').click();
@@ -110,10 +136,11 @@ test("a package theme restyles the window in place, falls back when removed, and
   expect(overflow).toBeLessThanOrEqual(0);
   await page.setViewportSize({ width: 1280, height: 900 });
 
-  // The page was restyled, not reloaded: the mark and the draft are both still there.
+  // The page was restyled, not reloaded: the mark, the draft and the pinned widget are all still there.
   expect(await page.evaluate(() => (window as { ccThemeMark?: boolean }).ccThemeMark)).toBe(true);
   await page.keyboard.press("Escape");
   await expect(page.locator("[data-composer]")).toHaveValue(DRAFT);
+  await pinSurvived();
 
   // Removing the package from Settings draws Clark Default at once, and the choice is kept.
   await page.locator("[data-settings='true']").click();
@@ -143,7 +170,54 @@ test("a package theme restyles the window in place, falls back when removed, and
   await expect(page.locator("[data-theme-fallback]")).toHaveCount(0);
   expect(await page.evaluate(() => (window as { ccThemeMark?: boolean }).ccThemeMark)).toBe(true);
 
+  /*
+   * An update whose dark accent is too dim to read is refused where it would be drawn: the page shows Clark Default
+   * and says why, naming the pairs that fail, and the choice is kept. The update is installed from outside this page,
+   * as another device would, and reaches it when the window is looked at again.
+   */
+  const headers = { authorization: `Bearer ${token()}` };
+  const dim = await request.post(`${GATEWAY}/packages/install`, {
+    headers,
+    data: { packageId: PACKAGE, version: "1.1.0", localDigest: "sha256:theme-dusk-dim-digest" },
+  });
+  expect(dim.ok(), `install answered ${String(dim.status())}: ${await dim.text()}`).toBe(true);
+  await page.evaluate(() => window.dispatchEvent(new Event("focus")));
+  await expect.poll(() => accent(page), { timeout: 15_000 }).toBe(clarkAccent);
+  const unreadable = page.locator("[data-theme-fallback='THEME_LOW_CONTRAST']");
+  await expect(unreadable).toBeVisible({ timeout: 15_000 });
+  await expect(unreadable).toHaveAttribute("role", "status");
+  await expect(unreadable).toContainText("Clark Default");
+  await expect(unreadable).toContainText("khó đọc");
+  await unreadable.locator("summary").click();
+  await expect(unreadable.locator(".cc-theme-notice-detail")).toContainText("accent text on the page");
+  await expect(page.locator(`[data-theme-ref='${DUSK_REF}']`)).toHaveCount(0);
+  await unreadable.scrollIntoViewIfNeeded();
+  await expect
+    .poll(() => page.evaluate(() => document.getAnimations().filter((animation) => animation instanceof CSSTransition).length))
+    .toBe(0);
+  await page.screenshot({ path: join(EVIDENCE, "theme-fallback-low-contrast-1280-dark.png") });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await unreadable.scrollIntoViewIfNeeded();
+  await page.screenshot({ path: join(EVIDENCE, "theme-fallback-low-contrast-390-dark.png") });
+  expect(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)).toBeLessThanOrEqual(0);
+  await page.setViewportSize({ width: 1280, height: 900 });
+
+  // Rolling the update back draws the kept choice again.
+  const rolledBack = await request.post(`${GATEWAY}/packages/${encodeURIComponent(PACKAGE)}/rollback`, { headers });
+  expect(rolledBack.ok(), `rollback answered ${String(rolledBack.status())}: ${await rolledBack.text()}`).toBe(true);
+  await page.evaluate(() => window.dispatchEvent(new Event("focus")));
+  await expect.poll(() => accent(page), { timeout: 15_000 }).toBe("#7AA2F7");
+  await expect(page.locator("[data-theme-fallback]")).toHaveCount(0);
+
   // Back to Clark Default through the same list, so the specs after this one start where they expect to.
   await page.locator("[data-theme-ref='builtin:clark']").click();
   await expect.poll(() => accent(page), { timeout: 15_000 }).toBe(clarkAccent);
+  await page.keyboard.press("Escape");
+  await expect(page.locator("[data-composer]")).toHaveValue(DRAFT);
+  await pinSurvived();
+  expect(await page.evaluate(() => (window as { ccThemeMark?: boolean }).ccThemeMark)).toBe(true);
+
+  // Unpinned again, so a spec after this one finds the shelf as it was.
+  await page.locator(`[data-unpin='${pinId}']`).click();
+  await expect(page.locator(`[data-pin-id='${pinId}']`)).toHaveCount(0);
 });

@@ -25,6 +25,7 @@
     "@clarkcant/contracts": "workspace:*",
     "@clarkcant/core": "workspace:*",
     "@clarkcant/data-canvas": "workspace:*",
+    "@clarkcant/design-tokens": "workspace:*",
     "@clarkcant/execution-supervisor": "workspace:*",
     "@clarkcant/host-adapters": "workspace:*",
     "@clarkcant/mcp-adapters": "workspace:*",

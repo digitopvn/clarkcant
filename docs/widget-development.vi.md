@@ -165,7 +165,10 @@ vá đè lên Clark Default: `appearanceApi` (`{ "min": 1, "max": 1 }`), một `
 được đặt tên trong `packages/contracts/src/themes.ts`), và `radius` tuỳ chọn (rem từ 0 đến 2 cho `badge`, `button`,
 `card`, `response`, `modal`). Ngoài ra không có gì khác: không CSS, không selector, không font. Node đọc nó từ các byte đã cài qua cùng cơ chế giới hạn như tệp của
 widget, từ chối tài liệu lớn hơn 64 KiB, và kiểm tra nó (`packages/core/src/installed-themes.ts`); theme không qua được
-kiểm tra sẽ được liệt kê kèm lý do, và các theme khác của gói vẫn được nạp. Theme được chọn bằng
+kiểm tra sẽ được liệt kê kèm lý do, và các theme khác của gói vẫn được nạp. Theme hợp lệ còn phải qua bài kiểm tra tương
+phản mà Clark Default phải qua, ở cả hai chế độ màu (`requiredPairs` trong `packages/design-tokens/src/contrast.ts`);
+theme không đạt sẽ được liệt kê kèm các cặp màu không đạt và không chọn được, nên hãy kiểm tra cả hai chế độ màu trước
+khi phát hành. Theme được chọn bằng
 `package:<package id>#<theme id>`, và một gói chỉ có theme là một lần làm mới UI, không bao giờ khởi động lại Pi. Theme đã
 cài xuất hiện ở Cài đặt → Trải nghiệm → Chủ đề.
 **Node chạy service facet như thế nào.** Node chạy một container cho mỗi facet `tools` của mọi package generation

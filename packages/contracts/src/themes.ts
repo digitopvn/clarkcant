@@ -404,6 +404,8 @@ export type AppearanceFallbackCode =
   | "THEME_NOT_INSTALLED"
   /** The package is installed, and this theme in it did not pass validation. */
   | "THEME_INVALID"
+  /** The theme is valid, and its colours fail the contrast audit Clark Default is held to, so text in it is unreadable. */
+  | "THEME_LOW_CONTRAST"
   /** The package is installed, and this node could not read it. */
   | "THEME_UNAVAILABLE"
   /** A built-in name this build does not have. */

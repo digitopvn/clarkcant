@@ -196,7 +196,8 @@ export function installStyles(theme: "dark" | "light" = "dark"): void {
     installed = true;
   }
   document.documentElement.dataset.ccTheme = theme;
-}export { firstRunSteps, type FirstRunStep, type NodeReadiness } from "./first-run.ts";
+}
+export { firstRunSteps, type FirstRunStep, type NodeReadiness } from "./first-run.ts";
 export {
   SEARCH_SELECT_MAX_OPTIONS,
   SearchSelect,

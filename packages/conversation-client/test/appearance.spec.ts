@@ -90,6 +90,19 @@ describe("applyAppearance", () => {
     expect(tokens()).not.toContain("display: none");
   });
 
+  it("refuses a theme whose colours fail the contrast audit, draws Clark Default, and names the pairs", () => {
+    applyAppearance({ theme: DUSK, themeRef: "package:com.example.dusk#dusk" });
+    const dim = { ...DUSK, colors: { dark: { accent: "#3A3470" } } };
+
+    const applied = applyAppearance({ theme: dim, themeRef: "package:com.example.dusk#dusk" });
+
+    expect(applied).toMatchObject({ ok: false, themeRef: "builtin:clark" });
+    expect(applied.ok === false && applied.problem).toMatch(/in the dark scheme, accent text on the page is 1\.69:1 and needs 4\.5:1/);
+    expect(tokens()).toBe(themeStylesheet());
+    expect(tokens()).not.toContain("#3A3470");
+    expect(stored.has(APPEARANCE_STORAGE_KEY)).toBe(false);
+  });
+
   it("returns to exactly the stylesheet Clark Default always had", () => {
     applyAppearance({ theme: DUSK, themeRef: "package:com.example.dusk#dusk" });
 
@@ -136,5 +149,111 @@ describe("the theme a page starts in", () => {
 
     expect(tokens()).toBe(themeStylesheet());
     expect(stored.has(APPEARANCE_STORAGE_KEY)).toBe(false);
+  });
+
+  it("starts on Clark Default when the remembered theme is one whose colours fail the contrast audit", async () => {
+    stored.set(
+      APPEARANCE_STORAGE_KEY,
+      JSON.stringify({ theme: { ...DUSK, colors: { dark: { accent: "#3A3470" } } }, themeRef: "package:com.example.dusk#dusk" }),
+    );
+    appended.length = 0;
+    vi.resetModules();
+    const fresh = await import("../src/appearance.ts");
+
+    fresh.installStyleSheets(".component {}");
+
+    expect(tokens()).toBe(themeStylesheet());
+    expect(stored.has(APPEARANCE_STORAGE_KEY)).toBe(false);
+  });
+
+  it("still installs the component styles, and draws Clark Default, when building a stylesheet throws at load", async () => {
+    stored.set(APPEARANCE_STORAGE_KEY, JSON.stringify({ theme: DUSK, themeRef: "package:com.example.dusk#dusk" }));
+    appended.length = 0;
+    vi.resetModules();
+    const errors = vi.spyOn(console, "error").mockImplementation(() => {});
+    // The compiler throws for every input: the worst a broken build can do to the first paint.
+    vi.doMock("@clarkcant/design-tokens", async (importOriginal) => ({
+      ...(await importOriginal<typeof import("@clarkcant/design-tokens")>()),
+      compileAppearance: () => {
+        throw new Error("the compiler is broken");
+      },
+    }));
+    try {
+      const fresh = await import("../src/appearance.ts");
+
+      expect(() => fresh.installStyleSheets(".component { color: var(--cc-text); }")).not.toThrow();
+
+      expect(appended.map((style) => style.dataset["clarkcant"])).toEqual(["tokens", "styles"]);
+      expect(components()).toBe(".component { color: var(--cc-text); }");
+      expect(tokens()).toBe("");
+      expect(root.dataset[APPEARANCE_ATTRIBUTE]).toBe(fresh.APPEARANCE_UNAVAILABLE);
+      expect(stored.has(APPEARANCE_STORAGE_KEY)).toBe(false);
+      expect(errors).toHaveBeenCalled();
+    } finally {
+      vi.doUnmock("@clarkcant/design-tokens");
+      errors.mockRestore();
+    }
+  });
+
+  it("draws Clark Default at load when the page refuses the remembered theme's sheet", async () => {
+    stored.set(APPEARANCE_STORAGE_KEY, JSON.stringify({ theme: DUSK, themeRef: "package:com.example.dusk#dusk" }));
+    appended.length = 0;
+    vi.resetModules();
+    const errors = vi.spyOn(console, "error").mockImplementation(() => {});
+    const fake = globalThis.document as unknown as { createElement: () => FakeStyle };
+    const createElement = fake.createElement;
+    // An engine that will not take the themed sheet: the write throws, the way replacing a locked sheet does.
+    fake.createElement = (): FakeStyle => {
+      let text = "";
+      return {
+        dataset: {},
+        get textContent() {
+          return text;
+        },
+        set textContent(value: string) {
+          if (value.includes("#7AA2F7")) throw new Error("the sheet cannot be replaced now");
+          text = value;
+        },
+      };
+    };
+    try {
+      const fresh = await import("../src/appearance.ts");
+
+      expect(() => fresh.installStyleSheets(".component {}")).not.toThrow();
+
+      expect(tokens()).toBe(themeStylesheet());
+      expect(components()).toBe(".component {}");
+      expect(stored.has(APPEARANCE_STORAGE_KEY)).toBe(false);
+      expect(errors).toHaveBeenCalled();
+    } finally {
+      fake.createElement = createElement;
+      errors.mockRestore();
+    }
+  });
+
+  it("draws Clark Default at load when only the remembered theme fails to compile", async () => {
+    stored.set(APPEARANCE_STORAGE_KEY, JSON.stringify({ theme: DUSK, themeRef: "package:com.example.dusk#dusk" }));
+    appended.length = 0;
+    vi.resetModules();
+    vi.doMock("@clarkcant/design-tokens", async (importOriginal) => {
+      const actual = await importOriginal<typeof import("@clarkcant/design-tokens")>();
+      return {
+        ...actual,
+        compileAppearance: (input: Parameters<typeof actual.compileAppearance>[0]) => {
+          if (input.theme !== undefined) throw new Error("this theme does not compile");
+          return actual.compileAppearance(input);
+        },
+      };
+    });
+    try {
+      const fresh = await import("../src/appearance.ts");
+
+      fresh.installStyleSheets(".component {}");
+
+      expect(tokens()).toBe(themeStylesheet());
+      expect(stored.has(APPEARANCE_STORAGE_KEY)).toBe(false);
+    } finally {
+      vi.doUnmock("@clarkcant/design-tokens");
+    }
   });
 });

@@ -18,6 +18,7 @@ import {
   auditAppearance,
   auditThemeDocument,
   compileAppearance,
+  themeContrastProblem,
 } from "../src/appearance.ts";
 import { requiredPairs } from "../src/contrast.ts";
 import { appearanceToCss, themeStylesheet } from "../src/css.ts";
@@ -160,6 +161,16 @@ describe("contrast audits run against any theme, not only Clark's palettes", () 
     expect(failed).toContain("accent text on a code block");
     expect(failed).not.toContain("label on an accent button");
     expect(light!.failures).toEqual([]);
+  });
+
+  it("says why a theme cannot be drawn readably, in one sentence the node and the page share", () => {
+    const dim: ThemeDocument = { ...PIXEL, colors: { dark: { accent: "#3A3470", onAccent: "#FFFFFF" } } };
+
+    expect(themeContrastProblem(CLARK_THEME)).toBeUndefined();
+    expect(themeContrastProblem({ ...PIXEL, colors: { dark: { accent: "#7AA2F7" } } })).toBeUndefined();
+    const problem = themeContrastProblem(dim);
+    expect(problem).toMatch(/^its colours are too close to read: in the dark scheme, accent text on the page is 1\.69:1 and needs 4\.5:1, /);
+    expect(problem).not.toMatch(/light scheme/);
   });
 
   it("holds the accent and every status colour to the text threshold on every surface text is drawn on", () => {

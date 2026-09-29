@@ -103,6 +103,25 @@ export function auditThemeDocument(theme: ThemeDocument): ContrastAudit[] {
   return RESOLVED_COLOR_SCHEMES.map((scheme) => auditColors(scheme, themeColors(scheme, theme)));
 }
 
+/**
+ * Why a theme cannot be drawn readably, or `undefined` when it can.
+ *
+ * One sentence naming every pair that fails, in each scheme, with the ratio it has and the one it needs, so the node's
+ * notice and the page's own refusal say the same thing. A theme that fails in either scheme is refused whole: the
+ * colour scheme is a separate choice, and a person switching it must not land on unreadable text.
+ */
+export function themeContrastProblem(theme: ThemeDocument): string | undefined {
+  const failing = auditThemeDocument(theme).filter((audit) => audit.failures.length > 0);
+  if (failing.length === 0) return undefined;
+  const parts = failing.map(
+    (audit) =>
+      `in the ${audit.scheme} scheme, ${audit.failures
+        .map((failure) => `${failure.purpose} is ${failure.ratio.toFixed(2)}:1 and needs ${String(failure.minimum)}:1`)
+        .join(", ")}`,
+  );
+  return `its colours are too close to read: ${parts.join("; ")}`;
+}
+
 /** A theme's palette in one scheme: Clark's, patched by what the theme says for that scheme. */
 function themeColors(scheme: ResolvedColorScheme, theme: ThemeDocument): ColorTokens {
   return { ...CLARK_SCHEMES[scheme], ...theme.colors?.[scheme] } as ColorTokens;

@@ -1068,11 +1068,16 @@ Dùng segmented controls, toggles và swatches:
 - Theme: một danh sách nằm dưới chế độ màu, Clark Default đứng đầu, rồi đến từng theme mà một gói đã cài cung cấp. Mỗi
   mục nêu rõ nơi cung cấp — gói, phiên bản, trust lane và digest rút gọn — vì theme tác động lên toàn bộ cửa sổ. Chọn
   một theme sẽ ghi `experience.themeRef` và đổi kiểu trang tại chỗ bằng cách chỉ thay stylesheet token: không tải lại,
-  hội thoại, tin nhắn đang gõ dở và Orb vẫn tiếp tục (Orb vẽ lại theo màu mới). Trang kiểm tra lại tài liệu trước khi
-  biên dịch, và giữ một bản sao trên thiết bị (`cc.appearance`) để lần tải sau bắt đầu luôn bằng theme đó. Khi theme đã
-  chọn không vẽ được — gói của nó đã bị gỡ, nó không qua được kiểm tra, hoặc không đọc được tệp của nó — trang hiển thị
-  Clark Default và nói rõ điều đó bằng một thông báo trạng thái ngay chỗ chọn, kèm lý do của node trong mục "Chi tiết";
-  lựa chọn vẫn được giữ, nên khôi phục gói là theme quay lại.
+  hội thoại, tin nhắn đang gõ dở, widget đã ghim và Orb vẫn tiếp tục (Orb vẽ lại theo màu mới). Theme nào cũng phải qua
+  cùng bài kiểm tra tương phản mà Clark Default phải qua, ở cả hai chế độ màu (các cặp màu là `requiredPairs` trong
+  `packages/design-tokens/src/contrast.ts`). Theme không đạt sẽ không được đưa ra để chọn — nó được liệt kê kèm các cặp màu
+  không đạt — và việc chọn nó bị từ chối với đúng lý do đó. Trang kiểm tra lại tài liệu, kể cả độ tương phản, trước khi
+  biên dịch, và giữ một bản sao trên thiết bị (`cc.appearance`) để lần tải sau bắt đầu luôn bằng theme đó; bản sao
+  không còn biên dịch được sẽ bị bỏ và trang bắt đầu bằng Clark Default thay vì trống trơn. Khi theme đã chọn không vẽ
+  được — gói của nó đã bị gỡ, một bản cập nhật làm nó không hợp lệ hoặc có độ tương phản quá thấp để đọc, hoặc không
+  đọc được tệp của nó — trang hiển thị Clark Default và nói rõ điều đó bằng một thông báo trạng thái ngay chỗ chọn, kèm
+  lý do của node trong mục "Chi tiết"; lựa chọn vẫn được giữ, nên khôi phục gói, hoặc một bản cập nhật sửa được nó, là
+  theme quay lại.
 - Ngôn ngữ: Tiếng Việt / English — segmented control, áp dụng ngay (không có nút lưu), đặt
   `<html lang>`, và được giữ qua reload và giữa các thiết bị nhờ preference registry
   (`experience.language`). Mặc định là tiếng Việt; không có tuỳ chọn "theo hệ thống", vì không có

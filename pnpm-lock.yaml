@@ -231,6 +231,9 @@ importers:
       '@clarkcant/data-canvas':
         specifier: workspace:*
         version: link:../../packs/data-canvas
+      '@clarkcant/design-tokens':
+        specifier: workspace:*
+        version: link:../../packages/design-tokens
       '@clarkcant/execution-supervisor':
         specifier: workspace:*
         version: link:../../packages/execution-supervisor

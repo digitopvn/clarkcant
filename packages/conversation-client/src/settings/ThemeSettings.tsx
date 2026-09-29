@@ -25,6 +25,7 @@ import type { PreferencesHandle } from "./controls/use-preferences.ts";
 const FALLBACK_KEYS: Readonly<Record<AppearanceFallbackCode, MessageKey>> = {
   THEME_NOT_INSTALLED: "settings.experience.themePicker.fallback.notInstalled",
   THEME_INVALID: "settings.experience.themePicker.fallback.invalid",
+  THEME_LOW_CONTRAST: "settings.experience.themePicker.fallback.lowContrast",
   THEME_UNAVAILABLE: "settings.experience.themePicker.fallback.unavailable",
   THEME_UNKNOWN: "settings.experience.themePicker.fallback.unknown",
 };

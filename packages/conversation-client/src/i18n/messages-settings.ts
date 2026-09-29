@@ -90,6 +90,8 @@ export const MESSAGES_SETTINGS_VI = {
     "Chủ đề bạn chọn không còn được cài, nên Clark đang dùng Clark Default. Lựa chọn của bạn vẫn được giữ: cài lại gói là chủ đề quay lại.",
   "settings.experience.themePicker.fallback.invalid":
     "Chủ đề bạn chọn không hợp lệ, nên Clark đang dùng Clark Default. Lựa chọn của bạn vẫn được giữ.",
+  "settings.experience.themePicker.fallback.lowContrast":
+    "Màu của chủ đề bạn chọn quá sát nhau nên chữ khó đọc, vì vậy Clark đang dùng Clark Default. Lựa chọn của bạn vẫn được giữ: bản cập nhật của gói sửa được màu thì chủ đề quay lại.",
   "settings.experience.themePicker.fallback.unavailable":
     "Node không đọc được gói chứa chủ đề bạn chọn, nên Clark đang dùng Clark Default. Lựa chọn của bạn vẫn được giữ.",
   "settings.experience.themePicker.fallback.unknown":
@@ -478,6 +480,8 @@ export const MESSAGES_SETTINGS_EN = {
     "The theme you chose is no longer installed, so Clark is shown in Clark Default. Your choice is kept: reinstall the package and the theme comes back.",
   "settings.experience.themePicker.fallback.invalid":
     "The theme you chose is not valid, so Clark is shown in Clark Default. Your choice is kept.",
+  "settings.experience.themePicker.fallback.lowContrast":
+    "The colors of the theme you chose are too close to read text in, so Clark is shown in Clark Default. Your choice is kept: an update of the package that fixes its colors brings the theme back.",
   "settings.experience.themePicker.fallback.unavailable":
     "The node cannot read the package that holds the theme you chose, so Clark is shown in Clark Default. Your choice is kept.",
   "settings.experience.themePicker.fallback.unknown":

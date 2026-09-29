@@ -164,7 +164,9 @@ optional `description`, optional `colors.dark` / `colors.light` (six-digit hex v
 `packages/contracts/src/themes.ts`), and optional `radius` (rem from 0 to 2 for `badge`, `button`, `card`, `response`,
 `modal`). Nothing else: no CSS, no selectors, no fonts. The node reads it from the installed bytes through the same containment as a widget's files, refuses
 one over 64 KiB, and validates it (`packages/core/src/installed-themes.ts`); a theme that fails is listed with its
-reason, and the package's other themes still load. It is selected as `package:<package id>#<theme id>`, and a
+reason, and the package's other themes still load. A valid theme is also held to the contrast audit Clark Default is
+held to, in both schemes (`requiredPairs` in `packages/design-tokens/src/contrast.ts`); one that fails is listed with
+the pairs that fail and cannot be chosen, so check both schemes before publishing. It is selected as `package:<package id>#<theme id>`, and a
 theme-only package is a UI refresh, never a Pi restart. Installed themes appear under Settings → Experience → Theme.
 **How the node runs a service facet.** The node runs one container for each `tools` facet of every active package
 generation, and stops it when the generation stops being active (`apps/runtime/src/service-host.ts`). A service is
