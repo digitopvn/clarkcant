@@ -26,6 +26,12 @@ import {
   type StatusCardKind,
   type WidgetDefinition,
   AREA_CHART_ID,
+  CALENDAR_ID,
+  CALENDAR_STATE_MIGRATIONS,
+  CALENDAR_STATE_VERSION,
+  CALENDAR_VIEWS,
+  CALENDAR_VIEW_OPERATION,
+  MAX_EVENT_ID,
   MAX_CHART_POINTS,
   MAX_CHART_SERIES,
   MAX_FIELD_NAME,
@@ -323,7 +329,7 @@ export const FILTER: WidgetDefinition = {
  * letting a user assume a sync that does not exist.
  */
 export const CALENDAR: WidgetDefinition = {
-  id: "canvas.calendar@1",
+  id: CALENDAR_ID,
   version: "1.0.0",
   renderer: "catalog",
   propsSchema: {
@@ -334,14 +340,37 @@ export const CALENDAR: WidgetDefinition = {
       month: { type: "string", maxLength: 10 },
       timezone: { type: "string", maxLength: 60 },
       title: { type: "string", maxLength: 200 },
+      /** The view it opens in; what a person picks after that is the calendar's state. */
+      view: { type: "string", enum: [...CALENDAR_VIEWS] },
     },
     required: ["datasetRef", "month"],
   },
-  eventSchemas: { "date.select": { type: "object" } },
-  stateSchema: { type: "object", properties: { selectedDate: { type: "string" } } },
-  stateVersion: 1,
+  eventSchemas: {
+    "date.select": { type: "object" },
+    [CALENDAR_VIEW_OPERATION]: {
+      type: "object",
+      properties: {
+        view: { type: "string", enum: [...CALENDAR_VIEWS] },
+        selectedDate: { type: "string" },
+        selectedEventId: { type: "string" },
+      },
+    },
+  },
+  stateSchema: {
+    type: "object",
+    additionalProperties: false,
+    properties: {
+      view: { type: "string", enum: [...CALENDAR_VIEWS] },
+      selectedDate: { type: "string", maxLength: 10 },
+      selectedEventId: { type: "string", maxLength: MAX_EVENT_ID },
+    },
+  },
+  // Version 1 held only the selected day; a state saved then is a month view, which is what the step says.
+  stateVersion: CALENDAR_STATE_VERSION,
+  stateMigrations: [...CALENDAR_STATE_MIGRATIONS],
   sizing: { compact: true, expanded: true, minHeight: 260 },
-  semanticDescription: "A month view of local calendar events, with event details for the selected day",
+  semanticDescription:
+    "Local calendar events in a month, week or agenda view, with the selected day's events and a selected event's details",
   requestedCapabilities: [],
   textFallback: "Calendar events are listed as text when the month view cannot be rendered.",
   effectCategories: ["read"],

@@ -104,9 +104,9 @@ describe("inputs, forms, search and lists", () => {
     expect(wiring).not.toMatch(/\bkind\b|"invoke"|"agent"|"workflow"|capabilityRef/u);
   });
 
-  it("keeps a search query and a list selection on the page inside a composed surface", () => {
+  it("keeps a search query, a list selection and a calendar's view on the page inside a composed surface", () => {
     const surface = readFileSync(join(SOURCE, "mini-app-surface.tsx"), "utf8");
-    expect(surface).toContain('const VIEW_EVENTS: ReadonlySet<string> = new Set(["query.change", "selection.change"]);');
+    expect(surface).toContain('const VIEW_EVENTS: ReadonlySet<string> = new Set(["query.change", "selection.change", "calendar.view"]);');
     expect(surface).toContain("if (VIEW_EVENTS.has(action)) return;");
   });
 });

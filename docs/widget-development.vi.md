@@ -858,6 +858,96 @@ giải, chọn bằng bàn phím, khung nhìn được giữ sau khi tải lại
 nhãn nói điều đó, tiêu đề trục của biểu đồ phân tán, các lần từ chối vì thiếu trường và vì giá trị không phải số,
 việc từ chối một điểm node không còn giữ được nói bằng tiếng Việt, giảm chuyển động, 390 px có cảm ứng ở theme sáng, và thư viện.
 
+### 8.7 Các kiểu xem lịch
+
+`canvas.calendar@1` hiện các sự kiện của một dataset theo ba kiểu xem: tháng, tuần (thứ Hai đến Chủ nhật) và lịch
+trình, tức danh sách những ngày trong tháng có sự kiện. Kiểu xem, ngày được chọn và sự kiện được chọn là trạng thái
+widget của lịch. Một bộ hàm duy nhất, trong [calendar-view.ts](../packages/contracts/src/calendar-view.ts), đọc các sự
+kiện, đặt chúng vào đúng ngày, kiểm tra một khung nhìn và viết phần chữ. Node và trang cùng dùng bộ hàm này.
+
+| Prop | Là gì |
+| --- | --- |
+| `datasetRef` | Một dataset trên node này, mỗi hàng là một sự kiện. |
+| `month` | Tháng được vẽ, dạng `YYYY-MM`. |
+| `timezone` | Múi giờ IANA dùng để hiện các sự kiện; `UTC` khi bỏ trống. |
+| `view` | Tuỳ chọn: `month`, `week` hoặc `agenda`, kiểu xem lúc mở. `month` khi bỏ trống. |
+| `title` | Tuỳ chọn, tối đa 200 ký tự. |
+
+Một hàng được đọc theo một trong ba dạng. Hàng không khớp dạng nào, hàng không có tiêu đề và hàng kết thúc trước khi
+bắt đầu đều được tính là không đọc được, và lịch nói có bao nhiêu hàng như vậy:
+
+- **Có giờ**: `title`, `startsAt` và `endsAt`, là các thời điểm ISO. Sự kiện nằm trên mọi ngày, từ ngày nó bắt đầu tới
+  ngày nó vẫn còn đang diễn ra, theo múi giờ của lịch. Một sự kiện từ 22:00 tới 02:00 nằm trên cả hai ngày, ghi "từ
+  22:00" ở ngày đầu và "đến 02:00" ở ngày sau. Một sự kiện kết thúc lúc nửa đêm không nằm trên ngày mà nửa đêm đó mở
+  đầu.
+- **Cả ngày**: `title`, `allDay: true`, `startDate` và `endDate` tuỳ chọn, là ngày sau ngày cuối cùng, theo cách
+  iCalendar và Google Calendar ghi. Không có `endDate` thì sự kiện kéo dài một ngày, và `date` có thể thay cho
+  `startDate`. Sự kiện cả ngày nằm trên đúng các ngày của nó dù được xem ở đâu: nó không bao giờ được đọc thành nửa đêm
+  ở một múi giờ nào đó, vì chính cách đọc ấy làm sự kiện cả ngày trôi sang ngày hôm trước.
+- **Chỉ có ngày**: `title` và `date`, nằm trên ngày đó, không có giờ.
+
+`eventId` (hoặc `id`) gọi tên một sự kiện; hàng không có nó được gọi tên theo vị trí. `timezone` là múi giờ sự kiện
+được ghi. Lịch đọc 500 hàng đầu tiên và nói khi còn nhiều hơn.
+
+Model đặt lịch bằng `show_view`. Trước khi có instance, node từ chối, kèm lý do, một tháng không phải `YYYY-MM` có
+thật, một múi giờ node không biết, và một dataset không có trên node này hoặc không thuộc về người dùng.
+
+Những gì node bảo đảm:
+
+- **Điều người dùng thay đổi là một khung nhìn mà node giữ lại.** Nút đổi kiểu xem, các ngày và các sự kiện đều ghi qua
+  một binding `calendar.view` duy nhất của lịch: `{ view, selectedDate?, selectedEventId? }`. Đây là một thao tác khung
+  nhìn: nó chỉ đọc, không thay đổi gì khác, và không bao giờ thêm, dời hay xoá một sự kiện. Node kiểm tra từng khung
+  nhìn theo lịch và theo các hàng node đang giữ lúc đó. Kiểu xem là một trong ba kiểu, ngày được chọn là một ngày tháng
+  đó vẽ, và sự kiện được chọn là một sự kiện của lịch, nằm trên ngày được chọn khi có ngày được chọn. Khung nhìn không
+  khớp bị từ chối kèm lý do, ví dụ `"evt_deploy" is not an event on this calendar now`, và trạng thái được giữ nguyên.
+  Một khung nhìn thay thế trọn vẹn khung nhìn trước.
+- **Lịch được lưu từ trước khi có các kiểu xem mở ra ở kiểu tháng.** Trạng thái của lịch là phiên bản 2. Phiên bản 1
+  chỉ giữ `selectedDate`, và bước migration được khai báo cho nó `view: "month"`. Timeline và tài liệu ngữ nghĩa đọc
+  trạng thái cũ theo hình dạng hiện tại, còn chính hàng dữ liệu chỉ được ghi thành phiên bản 2 ở lần đổi khung nhìn kế
+  tiếp.
+- **Văn bản thay thế là lời của chính lịch**: từng sự kiện trong tháng và thời gian của nó, theo múi giờ của lịch, ví
+  dụ `Deploy (2026-10-06 at 22:00 to 2026-10-07 at 02:00)`.
+- **Voice và `inspect_ui` đọc lịch như nó đang là.** Tài liệu ngữ nghĩa (§9) cho biết kiểu xem, tháng, múi giờ, số sự
+  kiện trong tháng, ngày được chọn cùng tiêu đề các sự kiện của ngày đó, và sự kiện được chọn cùng thời gian của nó,
+  kèm múi giờ gốc khi sự kiện được ghi ở múi giờ khác. Sự kiện đó cũng nằm trong `selectedIds`. Tài liệu được dựng từ
+  trạng thái và các hàng node đang giữ lúc đó. Sự kiện được chọn mà không còn trong các hàng thì được nói là đã mất, và
+  dataset đã mất thì được nói là không còn.
+- **Sự kiện cục bộ có thể là sự kiện cả ngày.** Các sự kiện riêng của node (`POST /calendar/events`) nhận `allDay: true`
+  cùng `startDate` và `endDate` tuỳ chọn, và từ chối một ngày không có thật hoặc một `endDate` không nằm sau
+  `startDate` (`INVALID_DATE`, `INVALID_RANGE`). Một thay đổi giữ sự kiện cả ngày là cả ngày, trên đúng các ngày của
+  nó, trừ khi thay đổi đó ghi `allDay: false`.
+
+Những gì trang làm:
+
+- Các kiểu xem là một hàng nút có `aria-pressed`. Ngày được chọn được giữ khi đổi kiểu xem, và kiểu tuần hiện tuần của
+  ngày đó, kèm nút sang tuần trước và tuần sau.
+- Hôm nay là ngày theo múi giờ của lịch, không phải của trình duyệt. Ngày đó được viền, gạch chân và ghi "hôm nay".
+  Một dòng dưới nút đổi kiểu xem nói giờ hiện tại, và một vạch "bây giờ" nằm giữa các sự kiện hôm nay trong kiểu tuần
+  và kiểu lịch trình, sau những sự kiện đã bắt đầu. Vạch này dời theo từng phút.
+- Sự kiện cả ngày được ghi "Cả ngày" và vẽ với vân sọc cùng viền đôi, còn sự kiện kéo dài nhiều ngày ghi "ngày 2/3",
+  nên không điều nào được nhận ra chỉ bằng màu sắc.
+- Các ngày và các sự kiện là nút. Trong kiểu tháng, một ngày nằm trong thứ tự tab và phím mũi tên dời một ngày hoặc một
+  tuần; Home và End tới hai đầu tuần. Trong kiểu tuần, trái và phải chuyển giữa các tiêu đề ngày. Lên và xuống chuyển
+  giữa các sự kiện, Home và End tới sự kiện đầu và cuối, Enter hoặc Space để chọn, và Esc bỏ chọn sự kiện.
+- Sự kiện được chọn được mô tả bên dưới khung nhìn trong một vùng live: thời gian theo múi giờ của lịch, số ngày nó kéo
+  dài, thời gian theo múi giờ gốc khi đó là múi giờ khác, và một nút bỏ chọn.
+- Khi node từ chối một khung nhìn, lịch hiện lý do của node, vẽ khung nhìn node đang giữ, và đọc lại các sự kiện.
+- Trong một surface được ghép, khung nhìn được giữ trên surface và `date.select` vẫn cấp dữ liệu cho bố cục (§8.3).
+- Lịch không tự thêm chuyển động nào. Dưới 560 px, các ngày trong tuần và lịch trình xếp thành một cột, nên kiểu tuần
+  dùng được ở 390 px. Lịch theo theme sáng và tối. Trong Widget Library, các fixture tháng, tuần và lịch trình dùng
+  được mà không cần node.
+
+Kiểm thử: [calendar-view.spec.ts](../packages/contracts/test/calendar-view.spec.ts) cho các quy tắc,
+[calendar-views.spec.ts](../apps/runtime/test/calendar-views.spec.ts) cho node,
+[mini-app-data.spec.ts](../apps/runtime/test/mini-app-data.spec.ts) cho sự kiện cục bộ cả ngày,
+[calendar-layout.spec.ts](../packages/conversation-client/test/calendar-layout.spec.ts) cho bàn phím, tuần và vạch
+"bây giờ", [calendar-schemas.spec.ts](../packages/widget-catalog/test/calendar-schemas.spec.ts), kiểm tra phiên bản
+trạng thái, bước migration của nó, và rằng mọi fixture trong thư viện đều là khung nhìn node sẽ giữ, và journey trình
+duyệt [calendar-views.spec.ts](../apps/web/e2e/calendar-views.spec.ts). Journey chạy trong một trình duyệt ở New York
+với một lịch ở Thành phố Hồ Chí Minh. Nó bao gồm từng kiểu xem, bàn phím, sự kiện được chọn được giữ sau khi tải lại,
+hôm nay và "bây giờ" theo múi giờ của lịch, sự kiện cả ngày và sự kiện qua đêm, việc node từ chối một sự kiện nó không
+còn giữ, một tháng không tồn tại, giảm chuyển động, 390 px có cảm ứng ở theme sáng, và thư viện.
+
 ---
 
 ## 9. Semantic contract cho voice và lượt kế tiếp

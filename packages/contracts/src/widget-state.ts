@@ -179,6 +179,33 @@ export function applyStateMigrationOps(
 }
 
 /**
+ * A stored state as the definition's current version reads it, carried forward in memory by the declared steps.
+ *
+ * For readers that show state rather than write it — a timeline, a semantic document — so a state saved by an older
+ * version of a built-in widget is read in today's shape without the read writing anything. When a step is missing or
+ * refuses the state, the state is returned as it was stored, and a lenient reader makes what it can of it.
+ */
+export function stateAsCurrentVersion(
+  definition: Pick<WidgetDefinition, "stateVersion" | "stateMigrations">,
+  stored: { stateVersion: number; body: Record<string, unknown> },
+): { stateVersion: number; body: Record<string, unknown> } {
+  const target = definition.stateVersion ?? 0;
+  let version = stored.stateVersion;
+  let body = stored.body;
+  try {
+    while (version < target) {
+      const step = (definition.stateMigrations ?? []).find((candidate) => candidate.from === version);
+      if (step === undefined) return stored;
+      body = applyStateMigrationOps(body, step.ops);
+      version = step.to;
+    }
+  } catch {
+    return stored;
+  }
+  return { stateVersion: version, body };
+}
+
+/**
  * Check that a definition's migrations can carry every older `stateVersion` to the current one.
  *
  * A chain with a gap is caught at publish rather than on a user's machine, where the only honest answer would be a

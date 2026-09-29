@@ -28,11 +28,19 @@ import {
   checkSurfaceCompositionSpec,
   compileActionBinding,
   graphValues,
+  CALENDAR_ID,
+  CALENDAR_STATE_VERSION,
+  CALENDAR_VIEW_OPERATION,
   MAX_CHART_POINTS,
+  calendarViewProblems,
+  isKnownTimeZone,
+  readCalendarEvents,
+  readCalendarState,
   XY_CHART_KIND,
   nowInstant,
   readXyChart,
   readXyChartView,
+  stateAsCurrentVersion,
   toCompositionSection,
   widgetInstanceSchema,
   widgetSnapshotSchema,
@@ -1134,7 +1142,7 @@ export function listPinsForConversation(deps: WidgetDeps, conversationId: string
  * `invoke`, an `agent` intent, a workflow — goes through the approval path instead, and a binding
  * that proposes one is refused here rather than quietly executed.
  */
-export const M1_VIEW_OPERATIONS = ["period.change", "date.select", "view.save", "state.event", "chart.view"] as const;
+export const M1_VIEW_OPERATIONS = ["period.change", "date.select", "view.save", "state.event", "chart.view", "calendar.view"] as const;
 
 /** Bumped when a filter changes the range, because the underlying rows are re-read. */
 const OPERATION_BUMP: Record<string, "presentation" | "data"> = {
@@ -1145,6 +1153,8 @@ const OPERATION_BUMP: Record<string, "presentation" | "data"> = {
   "state.event": "presentation",
   // Hiding a series or selecting a point changes what the chart shows, not the rows it reads.
   "chart.view": "presentation",
+  // Switching view or selecting a day or an event changes what the calendar shows, not the events it reads.
+  "calendar.view": "presentation",
 };
 
 export interface MiniAppActionRequest extends ActionInvocation {
@@ -1321,7 +1331,12 @@ export function invokeMiniAppAction(deps: WidgetDeps, request: MiniAppActionRequ
     };
   }
 
-  const validation = operation === "chart.view" ? chartViewPatch(deps, instance, request.input) : validateViewInput(operation, request.input);
+  const validation =
+    operation === "chart.view"
+      ? chartViewPatch(deps, instance, request.input)
+      : operation === CALENDAR_VIEW_OPERATION
+        ? calendarViewPatch(deps, instance, request.input)
+        : validateViewInput(operation, request.input);
   if (!validation.ok) return { ok: false, code: "INVALID_INPUT", message: validation.message };
 
   const precheck = precheckInvocation(deps, request);
@@ -1355,18 +1370,27 @@ export function invokeMiniAppAction(deps: WidgetDeps, request: MiniAppActionRequ
       if (!applied.ok) return { ok: false, code: "INVALID_INPUT", message: applied.problem };
       patch = { graph: applied.values };
     }
-    // A chart view is the chart's whole state, so it replaces what was stored: a selection cleared is a key removed.
-    const body: Record<string, unknown> = operation === "chart.view" ? patch : { ...(current?.body ?? {}), ...patch };
+    // A chart or calendar view is the widget's whole state, so it replaces what was stored: a selection cleared is a key
+    // removed.
+    const replaces = operation === "chart.view" || operation === CALENDAR_VIEW_OPERATION;
+    const body: Record<string, unknown> = replaces ? patch : { ...(current?.body ?? {}), ...patch };
     const stateRevision = (current?.revision ?? 0) + 1;
+    // A calendar view is written in the calendar's current state shape, so the row says so; a row written in an older
+    // shape is replaced whole, which is its migration. Every other operation keeps the version the row already has.
+    const stateVersion = operation === CALENDAR_VIEW_OPERATION ? CALENDAR_STATE_VERSION : undefined;
 
     if (current === undefined) {
       deps.db
         .prepare(
           `INSERT INTO widget_state
              (instance_id, state_version, state_revision, document, draft, draft_revision, draft_saved_at, updated_at)
-           VALUES (?, 1, ?, ?, NULL, NULL, NULL, ?)`,
+           VALUES (?, ?, ?, ?, NULL, NULL, NULL, ?)`,
         )
-        .run(instance.instanceId, stateRevision, toJson(body), at);
+        .run(instance.instanceId, stateVersion ?? 1, stateRevision, toJson(body), at);
+    } else if (stateVersion !== undefined) {
+      deps.db
+        .prepare("UPDATE widget_state SET state_version = ?, state_revision = ?, document = ?, updated_at = ? WHERE instance_id = ?")
+        .run(stateVersion, stateRevision, toJson(body), at, instance.instanceId);
     } else {
       deps.db
         .prepare("UPDATE widget_state SET state_revision = ?, document = ?, updated_at = ? WHERE instance_id = ?")
@@ -1758,12 +1782,20 @@ export function readWidgetStateRow(
   };
 }
 
-/** Public read of live state, for the state route. */
+/**
+ * Public read of live state, for the state route.
+ *
+ * Given the instance's definition, a state stored by an older version of it is read in the current shape, migrated in
+ * memory by the definition's declared steps; the row itself is left as it is until something writes the state.
+ */
 export function liveStateOf(
   deps: WidgetDeps,
   instanceId: string,
+  definition?: Pick<WidgetDefinition, "stateVersion" | "stateMigrations">,
 ): { revision: number; stateVersion: number; body: Record<string, unknown> } | undefined {
-  return readWidgetStateRow(deps.db, instanceId);
+  const row = readWidgetStateRow(deps.db, instanceId);
+  if (row === undefined || definition === undefined) return row;
+  return { revision: row.revision, ...stateAsCurrentVersion(definition, row) };
 }
 
 type InputValidation = { ok: true; patch: Record<string, unknown> } | { ok: false; message: string };
@@ -1813,6 +1845,39 @@ function chartViewPatch(deps: WidgetDeps, instance: WidgetInstance, input: Recor
   if (problems.length > 0) return { ok: false, message: `the chart view was refused: ${problems.join("; ")}` };
   const view = readXyChartView(chart, input, shown);
   return { ok: true, patch: { hiddenSeries: view.hiddenSeries, ...(view.selected === undefined ? {} : { selected: view.selected }) } };
+}
+
+/**
+ * The state a calendar view sets, checked against the calendar it is set on.
+ *
+ * The month and timezone are the ones the calendar was placed with, and a selected event is one the node reads from the
+ * rows it holds now, placed on its days in that timezone. What is stored is the view read back from what passed, so the
+ * state row never holds a key the calendar's state schema does not.
+ */
+function calendarViewPatch(deps: WidgetDeps, instance: WidgetInstance, input: Record<string, unknown>): InputValidation {
+  if (instance.definitionRef.id !== CALENDAR_ID) return { ok: false, message: "only a calendar holds a calendar view" };
+  const month = typeof instance.props.month === "string" ? instance.props.month : "";
+  const timeZone = instance.props.timezone ?? "UTC";
+  const datasetRef = instance.props.datasetRef;
+  if (!isKnownTimeZone(timeZone) || typeof datasetRef !== "string") {
+    return { ok: false, message: "the calendar view was refused: the calendar does not name a dataset and a timezone this node reads" };
+  }
+  const document = getDatasetForPrincipal(deps.db, datasetRef, instance.ownerPrincipalId)?.document;
+  const rows = typeof document === "object" && document !== null && Array.isArray((document as { rows?: unknown }).rows)
+    ? ((document as { rows: unknown[] }).rows)
+    : [];
+  const { events } = readCalendarEvents(rows, timeZone);
+  const problems = calendarViewProblems(month, input, events);
+  if (problems.length > 0) return { ok: false, message: `the calendar view was refused: ${problems.join("; ")}` };
+  const view = readCalendarState(input, month, undefined, events);
+  return {
+    ok: true,
+    patch: {
+      view: view.view,
+      ...(view.selectedDate === undefined ? {} : { selectedDate: view.selectedDate }),
+      ...(view.selectedEventId === undefined ? {} : { selectedEventId: view.selectedEventId }),
+    },
+  };
 }
 
 /**

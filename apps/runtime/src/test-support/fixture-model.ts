@@ -130,6 +130,21 @@ const FIXTURE_REVENUE_PLACES = [
   "Khánh Hòa",
   "Bình Dương",
 ];
+/**
+ * The sample calendar's events in October 2026, shown in Ho Chi Minh City: a timed event, one that crosses midnight, an
+ * all-day event over three days, one written in Berlin time, a single all-day day, one that ends at midnight, and a timed
+ * event on the all-day day. Fixed instants, so what each view draws does not depend on when the test runs.
+ */
+const FIXTURE_CALENDAR_ROWS: Record<string, unknown>[] = [
+  { eventId: "evt_standup", title: "Họp đầu tuần", startsAt: "2026-10-05T02:00:00Z", endsAt: "2026-10-05T03:00:00Z", timezone: "Asia/Ho_Chi_Minh" },
+  { eventId: "evt_deploy", title: "Triển khai đêm", startsAt: "2026-10-06T15:00:00Z", endsAt: "2026-10-06T19:00:00Z", timezone: "Asia/Ho_Chi_Minh" },
+  { eventId: "evt_offsite", title: "Hội thảo nhóm", allDay: true, startDate: "2026-10-07", endDate: "2026-10-10" },
+  { eventId: "evt_berlin", title: "Gọi với Berlin", startsAt: "2026-10-08T08:00:00Z", endsAt: "2026-10-08T09:00:00Z", timezone: "Europe/Berlin" },
+  { eventId: "evt_review", title: "Rà soát cuối ngày", startsAt: "2026-10-12T15:00:00Z", endsAt: "2026-10-12T17:00:00Z", timezone: "Asia/Ho_Chi_Minh" },
+  { eventId: "evt_holiday", title: "Ngày nghỉ", allDay: true, date: "2026-10-20" },
+  { eventId: "evt_lunch", title: "Ăn trưa nhóm", startsAt: "2026-10-20T05:00:00Z", endsAt: "2026-10-20T06:00:00Z", timezone: "Asia/Ho_Chi_Minh" },
+];
+
 /** The weeks the sample area chart draws; rising and distinct, as an area chart's x must be. */
 const FIXTURE_RUN_WEEKS = ["W35", "W36", "W37", "W38", "W39", "W40"];
 const FIXTURE_REVENUE_ROWS: Record<string, unknown>[] = Array.from({ length: 60 }, (_, index) => ({
@@ -1042,6 +1057,56 @@ export function createModelComposer(deps: FixtureModelDeps): FixtureCompose {
         `Đây là việc trên trình duyệt do fixture tạo, không phải model thật — ${outcome} ` +
         `Hộp thư có một thông báo để bạn ghi nhận nếu kết quả chưa rõ.`;
       return { text: reply, block: { type: "text", format: "plain", content: reply, streaming: false } };
+    }
+
+    /*
+     * The calendar over sample events written to a dataset the person owns, placed through the same view `show_view`
+     * uses, opening in the view named ("tuần", "lịch trình", or the month when none is). "tháng sai" names a month that
+     * does not exist, so the refusal a model would read is the host's own sentence. "bỏ sự kiện đêm khỏi lịch mẫu"
+     * rewrites the dataset without the event that crosses midnight, the way a provider that replaces its rows would.
+     */
+    const calendar = /^(?:đặt|place)\s+lịch mẫu(?:\s+(tuần|lịch trình|tháng sai))?$/iu.exec(input.text.trim());
+    const dropNight = /^bỏ sự kiện đêm khỏi lịch mẫu$/iu.test(input.text.trim());
+    if (calendar !== null || dropNight) {
+      const { runtime } = deps.services();
+      const rows = dropNight ? FIXTURE_CALENDAR_ROWS.filter((row) => row.eventId !== "evt_deploy") : FIXTURE_CALENDAR_ROWS;
+      upsertDataset(runtime.db, {
+        datasetId: "dataset_fixture_calendar",
+        originNodeId: runtime.identity.nodeId,
+        rowCount: rows.length,
+        freshness: "sample",
+        updatedAt: instantSchema.parse(new Date().toISOString()),
+        document: { rows },
+        ownerPrincipalId: input.principal.principalId,
+      });
+      if (dropNight) {
+        const reply = "Fixture: lịch mẫu không còn sự kiện đêm (không phải model thật).";
+        return { text: reply, block: { type: "text", format: "plain", content: reply, streaming: false } };
+      }
+      const which = (calendar?.[1] ?? "").toLowerCase();
+      const view = buildViewCatalog(deps.services().conductor).find((entry) => entry.id === "canvas.calendar@1");
+      if (view === undefined) return undefined;
+      const props: Record<string, unknown> = {
+        title: "Lịch nhóm (mẫu)",
+        datasetRef: "dataset_fixture_calendar",
+        month: which === "tháng sai" ? "2026-13" : "2026-10",
+        timezone: "Asia/Ho_Chi_Minh",
+        ...(which === "tuần" ? { view: "week" } : which === "lịch trình" ? { view: "agenda" } : {}),
+      };
+      try {
+        const block = await view.build({
+          props,
+          caption: "",
+          at: instantSchema.parse(new Date().toISOString()),
+          principal: input.principal as never,
+          messageId: input.messageId,
+          conversationId: input.conversationId,
+        });
+        return { text: `Fixture: đặt lịch mẫu${which === "" ? "" : ` ${which}`} trên dữ liệu mẫu (không phải model thật).`, block };
+      } catch (cause) {
+        const reply = `Fixture không đặt được: ${cause instanceof Error ? cause.message : String(cause)}`;
+        return { text: reply, block: { type: "text", format: "plain", content: reply, streaming: false } };
+      }
     }
 
     /*

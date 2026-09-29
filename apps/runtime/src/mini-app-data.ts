@@ -10,7 +10,9 @@ import {
   type Principal,
   bucketKeyOf,
   countsByBucket,
+  addDaysIso,
   donutSlices,
+  isIsoDate,
   localTimeToUtc,
   periodRange,
   summariseSeries,
@@ -237,8 +239,16 @@ export function trendSummary(result: TaskMetricsResult): ReturnType<typeof summa
 export const MAX_EVENT_TITLE = 200;
 
 export type CalendarValidation =
-  | { ok: true; title: string; startsAt: string; endsAt: string; timezone: string }
-  | { ok: false; code: "INVALID_TITLE" | "INVALID_RANGE" | "INVALID_TIMEZONE" | "INVALID_INSTANT"; message: string };
+  | {
+      ok: true;
+      title: string;
+      startsAt: string;
+      endsAt: string;
+      timezone: string;
+      /** Present on an all-day event: its first date and the day after its last. */
+      allDay?: { startDate: string; endDate: string };
+    }
+  | { ok: false; code: "INVALID_TITLE" | "INVALID_RANGE" | "INVALID_TIMEZONE" | "INVALID_INSTANT" | "INVALID_DATE"; message: string };
 
 /**
  * Validate a local event.
@@ -246,12 +256,19 @@ export type CalendarValidation =
  * An end before the start is refused rather than swapped: the two timestamps came from somewhere,
  * and silently reordering them hides the bug that produced them. An unknown timezone is refused
  * too, because `Intl` falling back to UTC would move every event in the month view.
+ *
+ * An all-day event (`allDay: true`) is given as dates, `startDate` and optionally `endDate`, the day after its last day
+ * as iCalendar writes it; one day when it is left out. Its instants are midnight in its timezone, so a range query
+ * finds it, but what it is on is the dates, which do not move with the timezone it is looked at in.
  */
 export function validateLocalEvent(input: {
   title: unknown;
   startsAt: unknown;
   endsAt: unknown;
   timezone: unknown;
+  allDay?: unknown;
+  startDate?: unknown;
+  endDate?: unknown;
 }): CalendarValidation {
   const title = typeof input.title === "string" ? input.title.trim() : "";
   if (title.length === 0 || title.length > MAX_EVENT_TITLE) {
@@ -264,6 +281,27 @@ export function validateLocalEvent(input: {
   const timezone = typeof input.timezone === "string" ? input.timezone : "";
   if (!isKnownTimezone(timezone)) {
     return { ok: false, code: "INVALID_TIMEZONE", message: `"${timezone}" is not a timezone this node knows` };
+  }
+  if (input.allDay !== undefined && typeof input.allDay !== "boolean") {
+    return { ok: false, code: "INVALID_DATE", message: "allDay is true or false" };
+  }
+  if (input.allDay === true) {
+    if (!isIsoDate(input.startDate)) {
+      return { ok: false, code: "INVALID_DATE", message: "an all-day event needs startDate, a date in YYYY-MM-DD form" };
+    }
+    const startDate = input.startDate;
+    if (input.endDate !== undefined && !isIsoDate(input.endDate)) {
+      return { ok: false, code: "INVALID_DATE", message: "endDate is a date in YYYY-MM-DD form, the day after the last day" };
+    }
+    const endDate = input.endDate ?? addDaysIso(startDate, 1);
+    if (endDate <= startDate) {
+      return { ok: false, code: "INVALID_RANGE", message: "an all-day event's endDate is the day after its last day, so it is after startDate" };
+    }
+    const midnight = (date: string): string => {
+      const [year, month, day] = date.split("-").map((part) => Number.parseInt(part, 10));
+      return localTimeToUtc(year ?? 1970, month ?? 1, day ?? 1, timezone).toISOString();
+    };
+    return { ok: true, title, startsAt: midnight(startDate), endsAt: midnight(endDate), timezone, allDay: { startDate, endDate } };
   }
   const startsAt = typeof input.startsAt === "string" ? input.startsAt : "";
   const endsAt = typeof input.endsAt === "string" ? input.endsAt : "";
@@ -315,6 +353,9 @@ export function createLocalEvent(
     startsAt: unknown;
     endsAt: unknown;
     timezone: unknown;
+    allDay?: unknown;
+    startDate?: unknown;
+    endDate?: unknown;
   },
 ): { ok: true; event: CalendarEventRecord } | { ok: false; code: string; message: string } {
   const validated = validateLocalEvent(input);
@@ -325,11 +366,7 @@ export function createLocalEvent(
     eventId: deps.newId("cevt"),
     ownerPrincipalId: input.principalId,
     nodeId: deps.nodeId,
-    title: validated.title,
-    startsAt: validated.startsAt,
-    endsAt: validated.endsAt,
-    timezone: validated.timezone,
-    localDate: localDateOf(validated.startsAt, validated.timezone),
+    ...eventTiming(validated),
     createdAt: at,
     updatedAt: at,
   };
@@ -346,6 +383,9 @@ export function updateLocalEvent(
     startsAt: unknown;
     endsAt: unknown;
     timezone: unknown;
+    allDay?: unknown;
+    startDate?: unknown;
+    endDate?: unknown;
   },
 ): { ok: true; event: CalendarEventRecord } | { ok: false; code: string; message: string } {
   const existing = getCalendarEvent(deps.db, input.eventId, input.principalId);
@@ -357,13 +397,11 @@ export function updateLocalEvent(
   const validated = validateLocalEvent(input);
   if (!validated.ok) return validated;
 
+  // The timing is replaced whole, so an event that stops being all-day loses its dates rather than keeping stale ones.
+  const { allDay: _allDay, startDate: _startDate, endDate: _endDate, ...rest } = existing;
   const event: CalendarEventRecord = {
-    ...existing,
-    title: validated.title,
-    startsAt: validated.startsAt,
-    endsAt: validated.endsAt,
-    timezone: validated.timezone,
-    localDate: localDateOf(validated.startsAt, validated.timezone),
+    ...rest,
+    ...eventTiming(validated),
     updatedAt: deps.now(),
   };
   const changed = updateCalendarEvent(deps.db, event);
@@ -371,6 +409,22 @@ export function updateLocalEvent(
     return { ok: false, code: "EVENT_NOT_FOUND", message: "that event is no longer on this principal's calendar" };
   }
   return { ok: true, event };
+}
+
+/** The fields a validated event sets on its record: title, instants, timezone, the day it starts, and its dates if all-day. */
+function eventTiming(
+  validated: Extract<CalendarValidation, { ok: true }>,
+): Pick<CalendarEventRecord, "title" | "startsAt" | "endsAt" | "timezone" | "localDate" | "allDay" | "startDate" | "endDate"> {
+  return {
+    title: validated.title,
+    startsAt: validated.startsAt,
+    endsAt: validated.endsAt,
+    timezone: validated.timezone,
+    localDate: validated.allDay?.startDate ?? localDateOf(validated.startsAt, validated.timezone),
+    ...(validated.allDay === undefined
+      ? {}
+      : { allDay: true as const, startDate: validated.allDay.startDate, endDate: validated.allDay.endDate }),
+  };
 }
 
 export function removeLocalEvent(
@@ -401,6 +455,8 @@ export function calendarRowsForRange(
     startsAt: event.startsAt,
     endsAt: event.endsAt,
     timezone: event.timezone,
+    // An all-day event is drawn from its dates, which do not move with the timezone it is looked at in.
+    ...(event.allDay === true ? { allDay: true, startDate: event.startDate, endDate: event.endDate } : {}),
     /** Labelled so the UI can say plainly that this is a local record. */
     source: "local" as const,
   }));

@@ -13,6 +13,13 @@ import {
 } from "react";
 
 import {
+  CALENDAR_VIEWS,
+  CALENDAR_VIEW_OPERATION,
+  type CalendarEvent,
+  type CalendarViewKind,
+  type CalendarViewState,
+  calendarFocusDate,
+  calendarGridDates,
   checkField,
   checkFieldValue,
   checkFields,
@@ -20,6 +27,7 @@ import {
   codeLanguage,
   codeLineRange,
   diffCounts,
+  dateInZone,
   diffFileCounts,
   type DiffLineKind,
   donutSlices,
@@ -32,22 +40,30 @@ import {
   numberedHunkLines,
   readArtifactViewer,
   emptyValueOf,
+  eventDayCount,
+  eventsOnDay,
   fieldFromProps,
   type FormField,
   isEmptyValue,
+  isKnownTimeZone,
+  isOnDay,
   LIST_PAGE_SIZES,
   listPage,
-  monthGrid,
+  MAX_CALENDAR_EVENTS,
+  monthDates,
   normalizeTableSelectedIds,
   normalizeTableSelection,
   parseFields,
   parseListItems,
   progressPercent,
+  readCalendarEvents,
+  readCalendarState,
   readStatusCard,
   type StatusTone,
   type StepStatus,
   stepCounts,
   tableView,
+  timeInZone,
   type TableTotalFn,
   XY_CHART_KIND,
   XY_CHART_VIEW_OPERATION,
@@ -66,6 +82,7 @@ import {
 
 import type { ResolvedDataset } from "./api.ts";
 import { formatFileSize } from "./attachments.ts";
+import { calendarWeek, eventSegment, moveDay, moveInList, nowIndex } from "./calendar-layout.ts";
 import {
   CHART_HEIGHT,
   CHART_PAD,
@@ -1541,34 +1558,124 @@ function PeriodFilter({ props, onAction, state }: RendererProps): ReactElement {
   );
 }
 
+/** Now, from this device's clock, moved on each minute so a calendar left open does not keep an old "now". */
+function useMinuteClock(): Date {
+  const [now, setNow] = useState(() => new Date());
+  useEffect(() => {
+    const timer = setInterval(() => setNow(new Date()), 60_000);
+    return () => clearInterval(timer);
+  }, []);
+  return now;
+}
+
+const CALENDAR_WEEKDAYS: readonly MessageKey[] = [
+  "widgets.calendar.day.mon",
+  "widgets.calendar.day.tue",
+  "widgets.calendar.day.wed",
+  "widgets.calendar.day.thu",
+  "widgets.calendar.day.fri",
+  "widgets.calendar.day.sat",
+  "widgets.calendar.day.sun",
+];
+
+const CALENDAR_VIEW_LABEL: Record<CalendarViewKind, MessageKey> = {
+  month: "widgets.calendar.view.month",
+  week: "widgets.calendar.view.week",
+  agenda: "widgets.calendar.view.agenda",
+};
+
+/** When an event is, in the person's language and in `timeZone`. */
+function calendarWhen(t: Translate, event: CalendarEvent, timeZone: string): string {
+  if (event.allDay) {
+    return event.startDate === event.lastDate
+      ? t("widgets.calendar.when.allDay").replace("{date}", event.startDate)
+      : t("widgets.calendar.when.allDayRange").replace("{start}", event.startDate).replace("{end}", event.lastDate);
+  }
+  if (event.startsAt === undefined || event.endsAt === undefined) return event.startDate;
+  const start = new Date(event.startsAt);
+  const end = new Date(event.endsAt);
+  const startDate = dateInZone(start, timeZone);
+  const endDate = dateInZone(end, timeZone);
+  return startDate === endDate
+    ? `${startDate} ${timeInZone(start, timeZone)}–${timeInZone(end, timeZone)}`
+    : `${startDate} ${timeInZone(start, timeZone)} → ${endDate} ${timeInZone(end, timeZone)}`;
+}
+
+/** What an event shows on one of its days: its hours that day, or that it is all day or runs through the day. */
+function calendarDayTime(t: Translate, event: CalendarEvent, date: string, timeZone: string): string {
+  if (event.allDay) return t("widgets.calendar.allDay");
+  if (event.startsAt === undefined || event.endsAt === undefined) return t("widgets.calendar.noTime");
+  const start = timeInZone(new Date(event.startsAt), timeZone);
+  const end = timeInZone(new Date(event.endsAt), timeZone);
+  const first = date === event.startDate;
+  const last = date === event.lastDate;
+  if (first && last) return `${start}–${end}`;
+  if (first) return t("widgets.calendar.from").replace("{time}", start);
+  if (last) return t("widgets.calendar.until").replace("{time}", end);
+  return t("widgets.calendar.continues");
+}
+
+/** The view as the node is asked to hold it: only the keys that are set. */
+function calendarViewPayload(view: CalendarViewState): Record<string, unknown> {
+  return {
+    view: view.view,
+    ...(view.selectedDate === undefined ? {} : { selectedDate: view.selectedDate }),
+    ...(view.selectedEventId === undefined ? {} : { selectedEventId: view.selectedEventId }),
+  };
+}
+
+/** Moves focus to another button of the same kind inside `root`, by Up, Down, Home or End. */
+function focusSibling(root: HTMLElement | null, selector: string, key: string): boolean {
+  if (root === null) return false;
+  const buttons = Array.from(root.querySelectorAll<HTMLButtonElement>(selector));
+  const index = buttons.findIndex((button) => button === document.activeElement);
+  if (index < 0) return false;
+  const next = moveInList(key, index, buttons.length);
+  if (next === undefined) return false;
+  buttons[next]?.focus();
+  return true;
+}
+
 /**
- * Month view of local events.
+ * Local and provider events in a month, week or agenda view.
  *
- * Days are buttons, so a keyboard can reach them and the selected day is announced. Each day opens
- * a detail list rather than a modal: the transcript stays readable and nothing is hidden behind a
- * surface that a snapshot cannot reproduce.
+ * The view, the selected day and the selected event are the calendar's state: a change is drawn at once and sent as
+ * the one bound view operation, and the view the node then holds is adopted. Every event is placed on each day it
+ * covers in the calendar's own timezone, and an all-day event on its own dates, so a Tuesday offsite is on Tuesday
+ * wherever the page is opened. Nothing here adds, moves or removes an event: that belongs to whatever owns the events.
+ *
+ * Days and events are buttons, so a keyboard reaches them and the selected one is announced; the selected event opens
+ * a preview under the view rather than a modal, so the transcript stays readable and a snapshot can reproduce it.
  */
 function Calendar({ props, dataset, state, onAction, onStateChange }: RendererProps): ReactElement {
   const t = useT();
   const title = String(props.title ?? t("widgets.calendar.title"));
   const month = String(props.month ?? "");
-  const timezone = String(props.timezone ?? "UTC");
-  const rows = dataset?.rows ?? [];
-  const cells = useMemo(() => monthGrid(month, timezone), [month, timezone]);
-  const selectedDate = typeof state?.selectedDate === "string" ? state.selectedDate : undefined;
+  const namedZone = typeof props.timezone === "string" && props.timezone !== "" ? props.timezone : "UTC";
+  const zoneKnown = isKnownTimeZone(namedZone);
+  const timezone = zoneKnown ? namedZone : "UTC";
+  const rows = dataset?.rows ?? NO_ROWS;
+  const read = useMemo(() => readCalendarEvents(rows, timezone), [rows, timezone]);
+  const grid = useMemo(() => calendarGridDates(month), [month]);
+  const ownDays = useMemo(() => monthDates(month), [month]);
+  const now = useMinuteClock();
+  const today = dateInZone(now, timezone);
+  const hintId = useId();
+  const rootRef = useRef<HTMLDivElement>(null);
 
-  const byDate = useMemo(() => {
-    const map = new Map<string, Record<string, unknown>[]>();
-    for (const row of rows) {
-      const date = String(row.date ?? "");
-      const bucket = map.get(date) ?? [];
-      bucket.push(row);
-      map.set(date, bucket);
-    }
-    return map;
-  }, [rows]);
+  // The view the node holds, adopted whenever it changes; between those, what the person just did is drawn at once.
+  const stored = readCalendarState(state, month, props.view, read.events);
+  // A refusal counts up `viewReset`, so a change the node refused is undrawn even when the view it holds did not move.
+  const storedKey = `${JSON.stringify(stored)}#${String(state?.viewReset ?? 0)}`;
+  const [view, setView] = useState(stored);
+  const [syncedKey, setSyncedKey] = useState(storedKey);
+  if (syncedKey !== storedKey) {
+    setSyncedKey(storedKey);
+    setView(stored);
+  }
+  const [focusDay, setFocusDay] = useState<string | undefined>(undefined);
 
-  if (cells.length === 0) {
+  if (grid.length === 0) {
     return (
       <Frame title={title} dataset={dataset} role="calendar">
         <Unavailable reason={t("widgets.calendar.notReadable")} />
@@ -1576,80 +1683,358 @@ function Calendar({ props, dataset, state, onAction, onStateChange }: RendererPr
     );
   }
 
-  const selectedEvents = selectedDate === undefined ? [] : byDate.get(selectedDate) ?? [];
-  const weekdays: MessageKey[] = [
-    "widgets.calendar.day.mon",
-    "widgets.calendar.day.tue",
-    "widgets.calendar.day.wed",
-    "widgets.calendar.day.thu",
-    "widgets.calendar.day.fri",
-    "widgets.calendar.day.sat",
-    "widgets.calendar.day.sun",
-  ];
+  const commit = (next: CalendarViewState): void => {
+    setView(next);
+    onStateChange?.({
+      view: next.view,
+      ...(next.selectedDate !== view.selectedDate ? { selectedDate: next.selectedDate } : {}),
+      selectedEventId: next.selectedEventId,
+    });
+    onAction?.(CALENDAR_VIEW_OPERATION, calendarViewPayload(next));
+  };
+  const selectDay = (date: string): void => {
+    const keep = view.selectedEventId !== undefined && read.events.some((event) => event.id === view.selectedEventId && isOnDay(event, date));
+    commit({ view: view.view, selectedDate: date, ...(keep && view.selectedEventId !== undefined ? { selectedEventId: view.selectedEventId } : {}) });
+    onAction?.("date.select", { date });
+  };
+  const selectEvent = (event: CalendarEvent, date: string): void => {
+    const same = view.selectedEventId === event.id && view.selectedDate === date;
+    commit({ view: view.view, selectedDate: date, ...(same ? {} : { selectedEventId: event.id }) });
+  };
+  const clearEvent = (): void => {
+    if (view.selectedEventId === undefined) return;
+    commit({ view: view.view, ...(view.selectedDate === undefined ? {} : { selectedDate: view.selectedDate }) });
+  };
+
+  const anchor = calendarFocusDate(month, view.selectedDate, today);
+  const rovingDay = focusDay !== undefined && grid.includes(focusDay) ? focusDay : anchor;
+  const selectedEvent = view.selectedEventId === undefined ? undefined : read.events.find((event) => event.id === view.selectedEventId);
+  const showsLocal = read.events.some((event) => event.source === "local");
+  const nowText = timeInZone(now, timezone);
+  const shownNotes: string[] = [];
+  if (!zoneKnown) shownNotes.push(t("widgets.calendar.timeZoneUnknown").replace("{timezone}", namedZone));
+  if (read.total > MAX_CALENDAR_EVENTS) {
+    shownNotes.push(t("widgets.calendar.truncated").replace("{shown}", String(MAX_CALENDAR_EVENTS)).replace("{total}", String(read.total)));
+  }
+  if (read.unreadable > 0) shownNotes.push(t("widgets.calendar.unreadable").replace("{count}", String(read.unreadable)));
+
+  const moveFocusToDay = (container: HTMLElement | null, key: string, from: string, days: readonly string[]): boolean => {
+    const next = moveDay(key, from, days);
+    if (next === undefined) return false;
+    setFocusDay(next);
+    container?.querySelector<HTMLButtonElement>(`[data-calendar-day="${next}"]`)?.focus();
+    return true;
+  };
+
+  const eventButton = (event: CalendarEvent, date: string): ReactElement => {
+    const segment = eventSegment(event, date);
+    const time = calendarDayTime(t, event, date, timezone);
+    const selected = view.selectedEventId === event.id && view.selectedDate === date;
+    return (
+      <button
+        type="button"
+        className="cc-calendar-event"
+        data-calendar-event={event.id}
+        data-all-day={event.allDay ? "true" : "false"}
+        data-segment={segment.position}
+        aria-pressed={selected}
+        aria-label={t("widgets.calendar.eventAria")
+          .replace("{title}", event.title)
+          .replace("{when}", segment.days > 1 ? `${time}, ${t("widgets.calendar.dayN").replace("{day}", String(segment.day)).replace("{days}", String(segment.days))}` : time)}
+        onClick={() => selectEvent(event, date)}
+      >
+        <span className="cc-calendar-event-time">{time}</span>
+        <span className="cc-calendar-event-title">{event.title}</span>
+        {segment.days > 1 && (
+          <span className="cc-calendar-event-span">
+            {t("widgets.calendar.dayN").replace("{day}", String(segment.day)).replace("{days}", String(segment.days))}
+          </span>
+        )}
+      </button>
+    );
+  };
+
+  const nowMarker = (key: string): ReactElement => (
+    <li key={key} className="cc-calendar-now" data-calendar-now="true">
+      <span>{t("widgets.calendar.now").replace("{time}", nowText)}</span>
+    </li>
+  );
+
+  /** A day's events as a list, with the "now" line among them when the day is today. */
+  const dayList = (date: string, emptyText?: string): ReactElement => {
+    const events = eventsOnDay(read.events, date);
+    const at = date === today ? nowIndex(events, date, now) : -1;
+    const items: ReactElement[] = [];
+    events.forEach((event, index) => {
+      if (index === at) items.push(nowMarker("now"));
+      items.push(
+        <li key={event.id} data-event-day={date}>
+          {eventButton(event, date)}
+        </li>,
+      );
+    });
+    if (at === events.length) items.push(nowMarker("now"));
+    if (events.length === 0 && emptyText !== undefined) {
+      items.push(
+        <li key="empty" className="cc-calendar-empty">
+          {emptyText}
+        </li>,
+      );
+    }
+    return <ul className="cc-calendar-events">{items}</ul>;
+  };
+
+  const monthView = (): ReactElement => (
+    <table
+      className="cc-calendar"
+      data-calendar-month={month}
+      aria-describedby={hintId}
+      onKeyDown={(keyEvent) => {
+        const target = keyEvent.target as HTMLElement;
+        const from = target.getAttribute("data-calendar-day");
+        if (from === null) return;
+        if (moveFocusToDay(keyEvent.currentTarget, keyEvent.key, from, grid)) keyEvent.preventDefault();
+      }}
+    >
+      <caption className="cc-sr-only">{t("widgets.calendar.caption").replace("{month}", month).replace("{timezone}", timezone)}</caption>
+      <thead>
+        <tr>
+          {CALENDAR_WEEKDAYS.map((dayKey) => (
+            <th key={dayKey} scope="col">
+              {t(dayKey)}
+            </th>
+          ))}
+        </tr>
+      </thead>
+      <tbody>
+        {Array.from({ length: 6 }, (_unused, week) => (
+          <tr key={week}>
+            {grid.slice(week * 7, week * 7 + 7).map((date) => {
+              const count = eventsOnDay(read.events, date).length;
+              const isToday = date === today;
+              return (
+                <td key={date} data-date={date} data-in-month={ownDays.includes(date)} data-today={isToday ? "true" : undefined}>
+                  <button
+                    type="button"
+                    className="cc-calendar-day"
+                    data-calendar-day={date}
+                    tabIndex={date === rovingDay ? 0 : -1}
+                    aria-pressed={view.selectedDate === date}
+                    aria-current={isToday ? "date" : undefined}
+                    aria-label={`${t("widgets.calendar.dayAriaEvents").replace("{date}", date).replace("{count}", String(count))}${isToday ? `, ${t("widgets.calendar.today")}` : ""}`}
+                    onFocus={() => setFocusDay(date)}
+                    onClick={() => selectDay(date)}
+                  >
+                    <span>{Number(date.slice(8))}</span>
+                    {count > 0 && <span className="cc-calendar-count">{count}</span>}
+                  </button>
+                </td>
+              );
+            })}
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  );
+
+  const weekView = (): ReactElement => {
+    const week = calendarWeek(grid, anchor);
+    const first = week.days[0] ?? anchor;
+    const last = week.days[6] ?? anchor;
+    return (
+      <div className="cc-calendar-week-wrap">
+        <div className="cc-calendar-week-nav">
+          <button
+            type="button"
+            data-calendar-week="previous"
+            disabled={week.previous === undefined}
+            onClick={() => {
+              if (week.previous !== undefined) selectDay(week.previous);
+            }}
+          >
+            {t("widgets.calendar.previousWeek")}
+          </button>
+          <span className="cc-calendar-week-label">{`${first} – ${last}`}</span>
+          <button
+            type="button"
+            data-calendar-week="next"
+            disabled={week.next === undefined}
+            onClick={() => {
+              if (week.next !== undefined) selectDay(week.next);
+            }}
+          >
+            {t("widgets.calendar.nextWeek")}
+          </button>
+        </div>
+        <ol
+          className="cc-calendar-week"
+          data-calendar-week-of={first}
+          aria-label={t("widgets.calendar.weekCaption").replace("{start}", first).replace("{end}", last).replace("{timezone}", timezone)}
+          aria-describedby={hintId}
+          onKeyDown={(keyEvent) => {
+            const target = keyEvent.target as HTMLElement;
+            const from = target.getAttribute("data-calendar-day");
+            if (from !== null && ["ArrowLeft", "ArrowRight", "Home", "End"].includes(keyEvent.key)) {
+              if (moveFocusToDay(keyEvent.currentTarget, keyEvent.key, from, week.days)) keyEvent.preventDefault();
+            }
+          }}
+        >
+          {week.days.map((date, index) => {
+            const isToday = date === today;
+            const dayKey = CALENDAR_WEEKDAYS[index] ?? "widgets.calendar.day.mon";
+            return (
+              <li key={date} className="cc-calendar-week-day" data-date={date} data-today={isToday ? "true" : undefined}>
+                <button
+                  type="button"
+                  className="cc-calendar-week-head"
+                  data-calendar-day={date}
+                  tabIndex={date === (focusDay !== undefined && week.days.includes(focusDay) ? focusDay : anchor) ? 0 : -1}
+                  aria-pressed={view.selectedDate === date}
+                  aria-current={isToday ? "date" : undefined}
+                  onFocus={() => setFocusDay(date)}
+                  onClick={() => selectDay(date)}
+                >
+                  <span className="cc-calendar-week-name">{t(dayKey)}</span>
+                  <span className="cc-calendar-week-date">{date}</span>
+                  {isToday && <span className="cc-calendar-today-tag">{t("widgets.calendar.today")}</span>}
+                </button>
+                {dayList(date, t("widgets.calendar.noEvents"))}
+              </li>
+            );
+          })}
+        </ol>
+      </div>
+    );
+  };
+
+  const agendaView = (): ReactElement => {
+    const days = ownDays.filter((date) => eventsOnDay(read.events, date).length > 0);
+    const todayInMonth = ownDays.includes(today);
+    const groups: ReactElement[] = [];
+    let nowPlaced = !todayInMonth || days.includes(today);
+    for (const date of days) {
+      if (!nowPlaced && date > today) {
+        groups.push(nowMarker("now"));
+        nowPlaced = true;
+      }
+      groups.push(
+        <li key={date} className="cc-calendar-agenda-day" data-date={date} data-today={date === today ? "true" : undefined}>
+          <p className="cc-calendar-agenda-date">
+            {date}
+            {date === today && <span className="cc-calendar-today-tag">{t("widgets.calendar.today")}</span>}
+          </p>
+          {dayList(date)}
+        </li>,
+      );
+    }
+    if (!nowPlaced) groups.push(nowMarker("now"));
+    return days.length === 0 ? (
+      <p className="cc-freshness" data-calendar-agenda-empty="true" style={{ margin: 0 }}>
+        {t("widgets.calendar.agendaEmpty").replace("{month}", month)}
+      </p>
+    ) : (
+      <ol
+        className="cc-calendar-agenda"
+        data-calendar-agenda={month}
+        aria-label={t("widgets.calendar.agendaCaption").replace("{month}", month).replace("{timezone}", timezone)}
+        aria-describedby={hintId}
+      >
+        {groups}
+      </ol>
+    );
+  };
+
+  const eventDetail = (event: CalendarEvent): ReactElement => {
+    const days = eventDayCount(event);
+    const ownZone = event.timezone !== undefined && event.timezone !== timezone && isKnownTimeZone(event.timezone) ? event.timezone : undefined;
+    return (
+      <div className="cc-calendar-event-detail" data-calendar-selected-event={event.id} role="group" aria-label={t("widgets.calendar.selectedEvent")}>
+        <strong>{event.title}</strong>
+        <span>{calendarWhen(t, event, timezone)}</span>
+        {!event.allDay && event.startsAt !== undefined && (
+          <span className="cc-freshness">{t("widgets.calendar.detail.shownIn").replace("{timezone}", timezone)}</span>
+        )}
+        {days > 1 && <span className="cc-freshness">{t("widgets.calendar.detail.span").replace("{days}", String(days))}</span>}
+        {ownZone !== undefined && (
+          <span className="cc-freshness" data-calendar-source-zone={ownZone}>
+            {t("widgets.calendar.detail.sourceZone").replace("{timezone}", ownZone).replace("{when}", calendarWhen(t, event, ownZone))}
+          </span>
+        )}
+        <button type="button" className="cc-calendar-clear" data-calendar-clear="true" onClick={clearEvent}>
+          {t("widgets.calendar.clearEvent")}
+        </button>
+      </div>
+    );
+  };
+
+  const todayShown =
+    view.view === "month" ? grid.includes(today) : view.view === "week" ? calendarWeek(grid, anchor).days.includes(today) : ownDays.includes(today);
 
   return (
     <Frame title={title} dataset={dataset} role="calendar">
-      <>
-        <table className="cc-calendar" data-calendar-month={month}>
-          <caption className="cc-sr-only">
-            {t("widgets.calendar.caption").replace("{month}", month).replace("{timezone}", timezone)}
-          </caption>
-          <thead>
-            <tr>
-              {weekdays.map((dayKey) => (
-                <th key={dayKey} scope="col">
-                  {t(dayKey)}
-                </th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {Array.from({ length: 6 }, (_unused, week) => (
-              <tr key={week}>
-                {cells.slice(week * 7, week * 7 + 7).map((cell) => {
-                  const events = byDate.get(cell.date) ?? [];
-                  return (
-                    <td key={cell.date} data-date={cell.date} data-in-month={cell.inMonth}>
-                      <button
-                        type="button"
-                        className="cc-calendar-day"
-                        aria-pressed={selectedDate === cell.date}
-                        aria-label={t("widgets.calendar.dayAriaEvents")
-                          .replace("{date}", cell.date)
-                          .replace("{count}", String(events.length))}
-                        onClick={() => {
-                          onStateChange?.({ selectedDate: cell.date });
-                          onAction?.("date.select", { date: cell.date });
-                        }}
-                      >
-                        <span>{cell.day}</span>
-                        {events.length > 0 && <span className="cc-calendar-count">{events.length}</span>}
-                      </button>
-                    </td>
-                  );
-                })}
-              </tr>
-            ))}
-          </tbody>
-        </table>
-        <div className="cc-calendar-detail" data-selected-date={selectedDate ?? ""}>
-          {selectedDate === undefined
-            ? t("widgets.calendar.selectADay")
-            : selectedEvents.length === 0
-              ? t("widgets.calendar.noEventsThatDay")
-              : (
-                <ul>
-                  {selectedEvents.map((event, index) => (
-                    <li key={String(event.eventId ?? index)}>
-                      <strong>{String(event.title ?? "")}</strong>{" "}
-                      <span className="cc-freshness">{`${String(event.startsAt ?? "")} → ${String(event.endsAt ?? "")}`}</span>
-                    </li>
-                  ))}
-                </ul>
-              )}
+      <div
+        ref={rootRef}
+        className="cc-calendar-root"
+        data-calendar-view={view.view}
+        onKeyDown={(keyEvent) => {
+          if (keyEvent.key === "Escape" && view.selectedEventId !== undefined) {
+            keyEvent.preventDefault();
+            clearEvent();
+            return;
+          }
+          const target = keyEvent.target as HTMLElement;
+          if (target.getAttribute("data-calendar-event") !== null && focusSibling(rootRef.current, "[data-calendar-event]", keyEvent.key)) {
+            keyEvent.preventDefault();
+          }
+        }}
+      >
+        <div className="cc-calendar-views" role="group" aria-label={t("widgets.calendar.views")}>
+          {CALENDAR_VIEWS.map((kind) => (
+            <button
+              key={kind}
+              type="button"
+              data-calendar-view-button={kind}
+              aria-pressed={view.view === kind}
+              onClick={() => {
+                if (view.view !== kind) commit({ ...view, view: kind });
+              }}
+            >
+              {t(CALENDAR_VIEW_LABEL[kind])}
+            </button>
+          ))}
         </div>
-        <span className="cc-freshness">{t("widgets.calendar.localOnlyNotice")}</span>
-      </>
+        {typeof state?.message === "string" && state.message !== "" && (
+          <p className="cc-freshness" role="status" data-calendar-message="true" style={{ margin: 0 }}>
+            {state.message}
+          </p>
+        )}
+        {todayShown && (
+          <p className="cc-freshness cc-calendar-now-text" data-calendar-now-text="true" style={{ margin: 0 }}>
+            {t("widgets.calendar.nowLine").replace("{date}", today).replace("{time}", nowText).replace("{timezone}", timezone)}
+          </p>
+        )}
+        {view.view === "month" ? monthView() : view.view === "week" ? weekView() : agendaView()}
+        <p id={hintId} className="cc-sr-only">
+          {t("widgets.calendar.keyboardHint")}
+        </p>
+        <div className="cc-calendar-detail" data-selected-date={view.selectedDate ?? ""} aria-live="polite">
+          {view.view === "month" &&
+            (view.selectedDate === undefined
+              ? t("widgets.calendar.selectADay")
+              : eventsOnDay(read.events, view.selectedDate).length === 0
+                ? t("widgets.calendar.noEventsThatDay")
+                : dayList(view.selectedDate))}
+          {selectedEvent !== undefined
+            ? eventDetail(selectedEvent)
+            : view.view !== "month" && <span className="cc-freshness">{t("widgets.calendar.selectAnEvent")}</span>}
+        </div>
+        {shownNotes.map((note) => (
+          <p key={note} className="cc-freshness" data-calendar-note="true" style={{ margin: 0 }}>
+            {note}
+          </p>
+        ))}
+        {showsLocal && <span className="cc-freshness">{t("widgets.calendar.localOnlyNotice")}</span>}
+      </div>
     </Frame>
   );
 }

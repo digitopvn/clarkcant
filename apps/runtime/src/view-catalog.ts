@@ -45,8 +45,15 @@ import {
   readStatusCard,
   statusCardText,
   readArtifactViewer,
+  CALENDAR_VIEWS,
+  CALENDAR_VIEW_OPERATION,
+  MAX_CALENDAR_EVENTS,
   MAX_CHART_POINTS,
   MAX_CHART_SERIES,
+  calendarText,
+  isKnownTimeZone,
+  monthDates,
+  readCalendarEvents,
   XY_CHART_KIND,
   XY_CHART_VIEW_OPERATION,
   compileActionBinding,
@@ -62,6 +69,7 @@ import {
   ACTION_ICONS,
   AREA_CHART,
   ARTIFACT_VIEWER_KIND,
+  CALENDAR,
   CHOICE,
   CODE,
   CTA,
@@ -119,7 +127,7 @@ export function buildViewCatalog(
   // The status cards are registered below too: what they show is all in their props, so their text alternative is
   // written from those props rather than from the definition's generic sentence. So are the code, diff and file
   // viewers: their text alternative is the content itself, written by the node rather than the model. So are the area and
-  // scatter charts, whose rows are read and checked before an instance exists.
+  // scatter charts and the calendar, whose rows are read and checked before an instance exists.
   const placed = new Set([
     OVERVIEW.id,
     CTA.id,
@@ -137,6 +145,7 @@ export function buildViewCatalog(
     FILE.id,
     AREA_CHART.id,
     SCATTER_CHART.id,
+    CALENDAR.id,
   ]);
   const simple: ViewDescriptor[] = CATALOG_WIDGETS.filter((definition) => !placed.has(definition.id)).map(
     (definition): ViewDescriptor => ({
@@ -179,7 +188,7 @@ export function buildViewCatalog(
   );
 
   if (actions !== undefined) simple.push(actionView(deps, actions), formView(deps, actions));
-  simple.push(listView(deps, actions), ...statusCardViews(deps), ...artifactViews(deps), ...xyChartViews(deps));
+  simple.push(listView(deps, actions), ...statusCardViews(deps), ...artifactViews(deps), ...xyChartViews(deps), calendarView(deps));
   if (compose === undefined) return simple;
 
   const overview = OVERVIEW;
@@ -641,4 +650,91 @@ function xyChartViews(deps: WidgetDeps): ViewDescriptor[] {
       return { type: "surface", definitionRef: { id: definition.id, version: definition.version }, snapshot };
     },
   }));
+}
+
+/**
+ * The calendar.
+ *
+ * The month, the timezone and the dataset are checked here, before an instance exists, so a calendar that would open on
+ * no month, in a timezone this node cannot place instants in, or over rows that are not the person's is refused in the
+ * same turn with the reason. It is placed with the one view binding its view switcher, days and events write through;
+ * the binding is a view operation, so it reads and re-renders and never changes an event. Adding, moving or removing an
+ * event stays the capability of whatever owns the events.
+ */
+function calendarView(deps: WidgetDeps): ViewDescriptor {
+  const definition = CALENDAR;
+  return {
+    id: definition.id,
+    label: definition.semanticDescription,
+    notes:
+      `props.datasetRef names a dataset on this node whose rows are events: {title, startsAt, endsAt} with ISO instants, or ` +
+      `{title, allDay:true, startDate, endDate} with endDate the day after the last day, or {title, date}; eventId and ` +
+      `timezone are optional. props.month is YYYY-MM; props.timezone (an IANA name, default UTC) is the one the events are ` +
+      `shown in; optional props.view (${CALENDAR_VIEWS.join(", ")}) is the view it opens in, and props.title. ` +
+      `The calendar reads the first ${String(MAX_CALENDAR_EVENTS)} rows. It shows events; it does not add or change them.`,
+    shownText:
+      `Shown: ${definition.id}, drawn from the dataset as it is now. A person can switch between month, week and agenda ` +
+      `and select a day or an event; what they chose is in the calendar's widget state.`,
+    build: (request) => {
+      const full = validateProps(definition, request.props);
+      if (!full.ok) throw new Error(`${definition.id} has props that do not fit its schema: ${full.problems.join(", ")}`);
+      const month = typeof request.props.month === "string" ? request.props.month : "";
+      if (!/^\d{4}-\d{2}$/.test(month) || monthDates(month).length === 0) {
+        throw new Error(`${definition.id} cannot be shown: props.month "${month}" is not a month in YYYY-MM form`);
+      }
+      const timeZone = request.props.timezone ?? "UTC";
+      if (!isKnownTimeZone(timeZone)) {
+        throw new Error(`${definition.id} cannot be shown: props.timezone "${String(timeZone)}" is not a timezone this node knows`);
+      }
+      const datasetRef = String(request.props.datasetRef);
+      const dataset = getDatasetForPrincipal(deps.db, datasetRef, request.principal.principalId);
+      if (dataset === undefined) {
+        throw new Error(`${definition.id} cannot be shown: dataset "${datasetRef}" is not on this node, or is not yours to read`);
+      }
+      const document = typeof dataset.document === "object" && dataset.document !== null ? (dataset.document as Record<string, unknown>) : {};
+      const rows = Array.isArray(document.rows) ? (document.rows as unknown[]) : [];
+      const read = readCalendarEvents(rows, timeZone);
+      const title = typeof request.props.title === "string" && request.props.title.trim() !== "" ? request.props.title : undefined;
+
+      const packageDigest = definitionDigest(definition);
+      // The calendar's own words are its text alternative: each event of the month and when it is, from the rows it read.
+      const textAlternative = keptText(definition.id, "", calendarText({ month, timeZone, ...(title === undefined ? {} : { title }) }, read));
+      const { snapshot } = placeInstance(deps, {
+        definition,
+        packageDigest,
+        ownerPrincipalId: request.principal.principalId,
+        props: request.props,
+        bind: (instanceId) => {
+          const compiled = compileActionBinding({
+            bindingId: deps.newId("act"),
+            instance: {
+              instanceId,
+              ownerNodeId: deps.nodeId,
+              definitionRef: { id: definition.id, version: definition.version, packageDigest },
+              actionBindingRevision: 1,
+            },
+            packageGeneration: packageDigest,
+            label: "Calendar view",
+            proposal: { kind: "view", operation: CALENDAR_VIEW_OPERATION, args: {} },
+            inputSchema: { type: "object" },
+            allowedDataRefs: [datasetRef],
+            fixedConstraints: {},
+            // A view operation reads and re-renders; it writes nothing outside the node's own state.
+            effectCategory: "read",
+            requiresApproval: false,
+            limits: {},
+            bindingDigest: `sha256:${CALENDAR_VIEW_OPERATION}:${instanceId}`,
+            at: deps.now(),
+            knownCapabilities: new Set(),
+          });
+          if (!compiled.ok) throw new Error(compiled.message);
+          return compiled.binding;
+        },
+        messageId: request.messageId,
+        textAlternative,
+        presentationRef: `catalog:${definition.id}`,
+      });
+      return { type: "surface", definitionRef: { id: definition.id, version: definition.version }, snapshot };
+    },
+  };
 }

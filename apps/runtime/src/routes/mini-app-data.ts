@@ -72,6 +72,9 @@ export function handleMiniAppDataRoutes(deps: MiniAppDataRouteDeps): GatewayResp
           startsAt: parsed.value.startsAt,
           endsAt: parsed.value.endsAt,
           timezone: parsed.value.timezone,
+          allDay: parsed.value.allDay,
+          startDate: parsed.value.startDate,
+          endDate: parsed.value.endDate,
         });
         if (!created.ok) return fail(400, created.code, created.message);
         return json(201, { event: toEventView(created.event) });
@@ -93,6 +96,11 @@ export function handleMiniAppDataRoutes(deps: MiniAppDataRouteDeps): GatewayResp
         startsAt: parsed.value.startsAt ?? existing.startsAt,
         endsAt: parsed.value.endsAt ?? existing.endsAt,
         timezone: parsed.value.timezone ?? existing.timezone,
+        // An all-day event stays all-day, on the dates it had, unless the change says otherwise; `allDay: false` makes it a
+        // timed event again, from the instants sent with it. A new startDate sent without an endDate is a one-day event.
+        allDay: parsed.value.allDay ?? existing.allDay,
+        startDate: parsed.value.startDate ?? existing.startDate,
+        endDate: parsed.value.endDate ?? (parsed.value.startDate === undefined ? existing.endDate : undefined),
       });
       if (!updated.ok) {
         return fail(updated.code === "EVENT_NOT_FOUND" ? 404 : 400, updated.code, updated.message);
@@ -179,6 +187,7 @@ function toEventView(event: CalendarEventRecord): Record<string, unknown> {
     endsAt: event.endsAt,
     timezone: event.timezone,
     date: event.localDate,
+    ...(event.allDay === true ? { allDay: true, startDate: event.startDate, endDate: event.endDate } : {}),
     source: "local",
   };
 }

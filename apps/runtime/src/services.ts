@@ -814,7 +814,9 @@ export function buildTimeline(
   for (const instanceId of instanceIds) {
     const instance = getInstance(deps, instanceId);
     if (!instance) continue;
-    const state = liveStateOf(deps, instance.instanceId);
+    // A built-in widget's state saved by an older version of it is read in the shape its renderer draws today.
+    const definition = CATALOG_WIDGETS.find((candidate) => candidate.id === instance.definitionRef.id);
+    const state = liveStateOf(deps, instance.instanceId, definition);
     const owner = liveOwnerOf(deps, instance.instanceId);
     const composition = findCompositionByInstance(db, instance.instanceId, instance.ownerPrincipalId);
     const actions = instance.actionBindingIds.flatMap((bindingId): TimelineActionView[] => {
