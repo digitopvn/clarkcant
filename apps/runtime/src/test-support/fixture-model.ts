@@ -11,9 +11,9 @@ import {
   saveActionBinding,
   setPreference,
 } from "@clarkcant/core";
-import { GALLERY, YOUTUBE } from "@clarkcant/data-canvas";
+import { GALLERY, TABLE, YOUTUBE } from "@clarkcant/data-canvas";
 import { FakePiAdapter, type WorkerEvent } from "@clarkcant/pi-adapter";
-import { listLocalImages, upsertArtifact } from "@clarkcant/storage";
+import { listLocalImages, upsertArtifact, upsertDataset } from "@clarkcant/storage";
 import { definitionDigest } from "@clarkcant/widget-host";
 import { join } from "node:path";
 
@@ -79,6 +79,33 @@ export type FixtureCompose = NonNullable<ConductorDeps["composeFromIntent"]>;
 /** How many pieces the long reply is written in, and how long each takes: about a minute, far longer than a stop. */
 const LONG_REPLY_PIECES = 400;
 const LONG_REPLY_PIECE_MS = 150;
+
+/**
+ * Sixty deterministic rows for the table journey: enough for six pages of ten, twelve places that each repeat five
+ * times so a search narrows to a known count, and one note a spreadsheet would run as a formula.
+ */
+const FIXTURE_REVENUE_PLACES = [
+  "Đồng Nai",
+  "Hà Nội",
+  "Huế",
+  "Cần Thơ",
+  "Đà Nẵng",
+  "Hải Phòng",
+  "An Giang",
+  "Lâm Đồng",
+  "Nghệ An",
+  "Quảng Ninh",
+  "Khánh Hòa",
+  "Bình Dương",
+];
+const FIXTURE_REVENUE_ROWS: Record<string, unknown>[] = Array.from({ length: 60 }, (_, index) => ({
+  code: `P${String(index + 1).padStart(2, "0")}`,
+  province: `${FIXTURE_REVENUE_PLACES[index % FIXTURE_REVENUE_PLACES.length] ?? ""} ${String(Math.floor(index / 12) + 1)}`,
+  revenue: 100 + ((index * 73) % 900),
+  growth: (((index * 17) % 41) - 20) / 100,
+  updatedOn: new Date(Date.UTC(2026, 8, 1 + (index % 28))).toISOString().slice(0, 10),
+  note: index === 0 ? '=HYPERLINK("http://example.invalid","xem")' : "",
+}));
 
 /**
  * A provider that writes slowly and stops when it is told to.
@@ -898,6 +925,63 @@ export function createModelComposer(deps: FixtureModelDeps): FixtureCompose {
       return {
         text: reply,
         block: { type: "surface", definitionRef: { id: YOUTUBE.id, version: YOUTUBE.version }, snapshot },
+      };
+    }
+
+    /*
+     * A table with every part of its contract: declared columns, search, multi-select, totals, several pages and a
+     * cell that is a spreadsheet formula.
+     *
+     * The rows are written to a real dataset owned by the person, because the export route reads the instance's own
+     * dataset and nothing else: a table whose rows lived only in the fixture would have nothing to export. The data
+     * is labelled `sample`, which is what it is.
+     */
+    if (/báo cáo doanh thu|revenue report/i.test(input.text)) {
+      const { runtime, conductor } = deps.services();
+      const datasetId = "dataset_fixture_revenue";
+      upsertDataset(runtime.db, {
+        datasetId,
+        originNodeId: runtime.identity.nodeId,
+        rowCount: FIXTURE_REVENUE_ROWS.length,
+        freshness: "sample",
+        updatedAt: instantSchema.parse(new Date().toISOString()),
+        document: { rows: FIXTURE_REVENUE_ROWS },
+        ownerPrincipalId: input.principal.principalId,
+      });
+      const instance = createInstance(conductor, {
+        definition: TABLE,
+        packageDigest: definitionDigest(TABLE),
+        ownerPrincipalId: input.principal.principalId,
+        props: {
+          title: "Doanh thu theo tỉnh (fixture)",
+          datasetRef: datasetId,
+          pageSize: 10,
+          searchable: true,
+          selection: "multi",
+          rowIdField: "code",
+          columns: [
+            { key: "province", label: "Tỉnh" },
+            { key: "revenue", label: "Doanh thu", type: "number", format: { unit: "tr ₫" } },
+            { key: "growth", label: "Tăng trưởng", type: "number", format: { style: "percent", decimals: 1 } },
+            { key: "updatedOn", label: "Cập nhật", type: "date" },
+            { key: "note", label: "Ghi chú" },
+          ],
+          totals: [
+            { column: "revenue", fn: "sum" },
+            { column: "growth", fn: "avg" },
+          ],
+        },
+      });
+      const snapshot = captureSnapshot(conductor, {
+        messageId: input.messageId,
+        instance,
+        textAlternative: TABLE.textFallback,
+        presentationRef: `catalog:${TABLE.id}`,
+      });
+      const reply = "Fixture: bảng doanh thu mẫu theo tỉnh, để thử sắp xếp, tìm, chọn nhiều dòng và xuất CSV (không phải model thật).";
+      return {
+        text: reply,
+        block: { type: "surface", definitionRef: { id: TABLE.id, version: TABLE.version }, snapshot },
       };
     }
 

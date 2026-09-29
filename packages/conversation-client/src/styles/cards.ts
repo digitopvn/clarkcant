@@ -65,9 +65,100 @@ button.cc-badge:hover, .cc-badge[role="button"]:hover { color: var(--cc-text); b
 .cc-table tbody tr[data-selectable="true"]:hover td { background: var(--cc-elevated); cursor: pointer; }
 .cc-table tbody tr[data-selectable="true"]:focus-visible { outline: 2px solid var(--cc-focus); outline-offset: -2px; }
 .cc-table tbody tr:last-child td { border-bottom: none; }
-.cc-table-scroll { overflow: auto; max-height: 360px; border-radius: var(--cc-radius-badge); }
+/* Tall enough for a ten-row page with its header and totals; a longer page scrolls inside the table. */
+/*
+ * A shadow shows at whichever side still has columns to scroll to, so a table cut off at the edge of a phone says so
+ * instead of looking finished. The card-coloured covers scroll with the content and hide the shadow once that side is
+ * reached; the shadows themselves stay fixed to the edges. No script: it follows the scroll position by itself.
+ */
+.cc-table-scroll {
+  overflow: auto; max-height: min(28rem, 70vh); border-radius: var(--cc-radius-badge);
+  background:
+    linear-gradient(to right, var(--cc-card) 40%, transparent) left / 24px 100% no-repeat local,
+    linear-gradient(to left, var(--cc-card) 40%, transparent) right / 24px 100% no-repeat local,
+    radial-gradient(farthest-side at 0 50%, color-mix(in oklab, var(--cc-text) 22%, transparent), transparent) left / 12px 100% no-repeat scroll,
+    radial-gradient(farthest-side at 100% 50%, color-mix(in oklab, var(--cc-text) 22%, transparent), transparent) right / 12px 100% no-repeat scroll,
+    var(--cc-card);
+}
 .cc-table-scroll:focus-visible { outline: 2px solid var(--cc-focus); outline-offset: 2px; }
 .cc-table-scroll thead th { position: sticky; top: 0; background: var(--cc-card); z-index: 1; }
+.cc-table [data-align="end"] { text-align: right; }
+.cc-table [data-align="center"] { text-align: center; }
+/*
+ * A number or a date reads as one unit, so it never breaks across lines, and a text cell keeps a readable width
+ * rather than folding a short name onto three lines. A table wider than its card scrolls inside its own region.
+ */
+.cc-table td[data-type]:not([data-type="text"]) { white-space: nowrap; }
+.cc-table td[data-type="text"] { min-width: 12ch; }
+/*
+ * A sortable header is a real button filling its cell, so the whole header is the target and the focus ring is on
+ * the thing that acts. The arrow says which way it sorts; aria-sort says it to a screen reader.
+ */
+.cc-table th[aria-sort] { padding: 0; }
+.cc-table-sort {
+  display: inline-flex; align-items: center; gap: var(--cc-space-xxs); width: 100%; min-height: 32px;
+  padding: var(--cc-space-xs) var(--cc-space-sm); background: transparent; border: 0; border-radius: var(--cc-radius-badge);
+  color: inherit; font: inherit; font-weight: 500; text-align: inherit; white-space: nowrap; cursor: pointer;
+}
+.cc-table th[data-align="end"] .cc-table-sort { justify-content: flex-end; }
+.cc-table th[data-align="center"] .cc-table-sort { justify-content: center; }
+.cc-table-sort:hover { color: var(--cc-text); }
+.cc-table-sort:focus-visible { outline: 2px solid var(--cc-focus); outline-offset: -2px; }
+.cc-table th[aria-sort="ascending"], .cc-table th[aria-sort="descending"] { color: var(--cc-text); }
+.cc-table-sort-icon { font-size: 0.75em; color: var(--cc-text-tertiary); }
+.cc-table-sort-icon[data-sorted="ascending"], .cc-table-sort-icon[data-sorted="descending"] { color: var(--cc-accent); }
+.cc-table { --cc-table-check-width: 36px; }
+.cc-table .cc-table-check-cell { width: var(--cc-table-check-width); min-width: var(--cc-table-check-width); padding: 0; text-align: center; }
+/*
+ * The checkbox and the column that names a row stay at the start edge while the rest scroll under them, with a rule
+ * where they end. They carry the card's colour so the scrolled cells pass beneath; a selected or hovered row's own
+ * colour still wins, being more specific.
+ */
+.cc-table-scroll .cc-table-check-cell, .cc-table-scroll .cc-table-sticky {
+  position: sticky; inset-inline-start: 0; z-index: 1; background: var(--cc-card);
+}
+.cc-table-scroll .cc-table[data-multi="true"] .cc-table-sticky { inset-inline-start: var(--cc-table-check-width); }
+/* The edge is drawn by a pseudo-element: a collapsed-border table does not paint a cell's own shadow. */
+.cc-table-scroll .cc-table-sticky::after {
+  content: ""; position: absolute; top: 0; bottom: 0; inset-inline-end: -6px; width: 6px; pointer-events: none;
+  border-inline-start: 1px solid var(--cc-border);
+  background: linear-gradient(to right, color-mix(in oklab, var(--cc-text) 12%, transparent), transparent);
+}
+.cc-table-scroll thead :is(.cc-table-check-cell, .cc-table-sticky), .cc-table-scroll tfoot :is(.cc-table-check-cell, .cc-table-sticky) { z-index: 2; }
+.cc-table-check { display: inline-flex; align-items: center; justify-content: center; min-width: 36px; min-height: 32px; cursor: pointer; }
+.cc-table-check input { width: 16px; height: 16px; margin: 0; accent-color: var(--cc-accent); cursor: pointer; }
+.cc-table-check input:focus-visible { outline: 2px solid var(--cc-focus); outline-offset: 2px; }
+.cc-table td.cc-table-empty { color: var(--cc-text-muted); text-align: center; padding: var(--cc-space-md); }
+/* Totals stay in view at the bottom of a long page, as the header does at the top. */
+.cc-table tfoot td { border-top: 2px solid var(--cc-border); border-bottom: none; font-weight: 600; }
+.cc-table-scroll tfoot td { position: sticky; bottom: 0; background: var(--cc-card); z-index: 1; }
+.cc-table-total { display: block; white-space: nowrap; }
+.cc-table-total-fn { color: var(--cc-text-muted); font-weight: 500; font-size: var(--cc-text-label); }
+.cc-table-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: var(--cc-space-sm); margin-bottom: var(--cc-space-sm); }
+.cc-table-search { flex: 1 1 200px; min-width: 0; display: flex; }
+.cc-table-search input {
+  flex: 1; min-width: 0; min-height: 32px; font: inherit; font-size: var(--cc-text-body-sm); color: var(--cc-text);
+  background: var(--cc-elevated); border: 1px solid var(--cc-border); border-radius: var(--cc-radius-badge);
+  padding: var(--cc-space-xs) var(--cc-space-sm);
+}
+.cc-table-search input:focus-visible { outline: 2px solid var(--cc-focus); outline-offset: 1px; }
+.cc-table-selected { font-size: var(--cc-text-label); color: var(--cc-text-muted); }
+.cc-table-export { margin-inline-start: auto; }
+.cc-table-note { margin: 0 0 var(--cc-space-sm); font-size: var(--cc-text-label); }
+.cc-table-note[role="alert"] { color: var(--cc-danger); }
+.cc-table-pager { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: var(--cc-space-sm); margin-top: var(--cc-space-sm); }
+.cc-table-page-status { font-size: var(--cc-text-label); color: var(--cc-text-muted); font-variant-numeric: tabular-nums; }
+/* On a narrow screen the page status takes its own line, with previous and next under it at either edge. */
+@media (max-width: 480px) {
+  .cc-table-pager { justify-content: space-between; }
+  .cc-table-page-status { order: -1; flex-basis: 100%; text-align: center; }
+}
+/* Touch: every table control grows to the 44 px a thumb needs, the visible shape with it. */
+@media (pointer: coarse) {
+  .cc-table-sort, .cc-table-check, .cc-table-search input, .cc-table-toolbar .cc-action, .cc-table-pager .cc-action { min-height: 44px; }
+  .cc-table-check { min-width: 44px; }
+  .cc-table { --cc-table-check-width: 44px; }
+}
 
 /* Charts */
 /*

@@ -47,12 +47,31 @@ export const LINE_CHART = chart("canvas.line@1", "Line chart over a dataset refe
 export const BAR_CHART = chart("canvas.bar@1", "Bar chart over a dataset reference");
 export const DONUT_CHART = chart("canvas.donut@1", "Donut chart over a dataset reference");
 
+const tableColumnKey = { type: "string", minLength: 1, maxLength: 200 };
+
+const tableSortSchema = {
+  type: "object",
+  additionalProperties: false,
+  properties: { column: tableColumnKey, direction: { type: "string", enum: ["asc", "desc"] } },
+  required: ["column", "direction"],
+};
+
+const tableFiltersSchema = {
+  type: "object",
+  description: "Exact-match filters by field; values are strings, numbers, booleans or null (empty)",
+  additionalProperties: { type: ["string", "number", "boolean", "null"] },
+  maxProperties: 20,
+};
+
 /**
  * A table.
  *
- * Sorting and filtering happen against the dataset view, and exports are requested
- * as a host action so formula injection is handled by the host rather than by an
- * arbitrary in-widget implementation.
+ * Every property after `datasetRef` is optional and was added without changing the id, so a
+ * `canvas.table@1` written before them still renders as it did. The view (sort, search,
+ * filters, page, totals) is computed by `tableView` in `@clarkcant/contracts`, which the node
+ * runs too: an export is a host route that re-reads the instance's own dataset and writes
+ * the rows the person was looking at, with formula injection defused by the host rather
+ * than by an in-widget implementation.
  */
 export const TABLE: WidgetDefinition = {
   id: "canvas.table@1",
@@ -64,16 +83,87 @@ export const TABLE: WidgetDefinition = {
     properties: {
       title: { type: "string", maxLength: 200 },
       datasetRef: datasetProp,
-      pageSize: { type: "number" },
-      columns: { type: "array", items: { type: "string" }, maxItems: 40 },
+      pageSize: { type: "number", minimum: 5, maximum: 200, multipleOf: 1, default: 25 },
+      columns: {
+        type: "array",
+        description: "Columns in display order; when absent, the first row's fields are shown",
+        maxItems: 40,
+        items: {
+          oneOf: [
+            tableColumnKey,
+            {
+              type: "object",
+              additionalProperties: false,
+              properties: {
+                key: tableColumnKey,
+                label: { type: "string", maxLength: 120 },
+                type: { type: "string", enum: ["text", "number", "date", "datetime", "boolean"] },
+                format: {
+                  type: "object",
+                  additionalProperties: false,
+                  properties: {
+                    decimals: { type: "number", minimum: 0, maximum: 6, multipleOf: 1 },
+                    unit: { type: "string", maxLength: 16 },
+                    style: { type: "string", enum: ["percent"] },
+                  },
+                },
+                align: { type: "string", enum: ["start", "center", "end"] },
+              },
+              required: ["key"],
+            },
+          ],
+        },
+      },
+      rowIdField: {
+        type: "string",
+        maxLength: 200,
+        description: "Field holding a stable row id; defaults to `id`, else rows are identified by position",
+      },
+      selection: { type: "string", enum: ["none", "single", "multi"], default: "single" },
+      totals: {
+        type: "array",
+        maxItems: 40,
+        items: {
+          type: "object",
+          additionalProperties: false,
+          properties: { column: tableColumnKey, fn: { type: "string", enum: ["sum", "avg", "min", "max", "count"] } },
+          required: ["column", "fn"],
+        },
+      },
+      searchable: { type: "boolean" },
     },
     required: ["datasetRef"],
   },
   eventSchemas: {
-    "row.select": { type: "object" },
-    "export.requested": { type: "object" },
+    "row.select": {
+      type: "object",
+      description: "The selected rows by id; row contents never travel in the event",
+      additionalProperties: false,
+      properties: { rowIds: { type: "array", items: { type: "string", maxLength: 200 }, maxItems: 64 } },
+      required: ["rowIds"],
+    },
+    "export.requested": {
+      type: "object",
+      description: "Asks the host for a CSV of the current view; the host reads the dataset itself",
+      additionalProperties: false,
+      properties: {
+        sort: tableSortSchema,
+        query: { type: "string", maxLength: 200 },
+        filters: tableFiltersSchema,
+        columns: { type: "array", items: tableColumnKey, maxItems: 40 },
+      },
+    },
   },
-  stateSchema: { type: "object", properties: { sort: { type: "object" }, page: { type: "number" } } },
+  stateSchema: {
+    type: "object",
+    properties: {
+      sort: tableSortSchema,
+      page: { type: "number", minimum: 1, multipleOf: 1 },
+      query: { type: "string", maxLength: 200 },
+      filters: tableFiltersSchema,
+      selectedIds: { type: "array", items: { type: "string", maxLength: 200 }, maxItems: 64 },
+    },
+  },
   stateVersion: 1,
   semanticDescription:
     "Sortable, filterable and paged table over a dataset reference, with CSV export requested through the host",

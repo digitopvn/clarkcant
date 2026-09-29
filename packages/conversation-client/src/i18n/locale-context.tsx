@@ -1,7 +1,7 @@
 import { createContext, useContext, type ReactElement, type ReactNode } from "react";
 
 import type { LocaleState } from "./use-locale.ts";
-import { readStoredLocale } from "./locale.ts";
+import { type LocaleChoice, readStoredLocale } from "./locale.ts";
 import { CATALOGS, type MessageKey } from "./messages.ts";
 
 /**
@@ -36,6 +36,15 @@ export function useT(): (key: MessageKey) => string {
     return (key) => catalog[key];
   }
   return state.t;
+}
+
+/**
+ * The current UI language, for locale-aware number and date formatting.
+ *
+ * Falls back to the stored choice outside `LocaleProvider`, for the same reason `useT` does.
+ */
+export function useLocale(): LocaleChoice {
+  return useContext(LocaleContext)?.locale ?? readStoredLocale();
 }
 
 /** The current locale choice and setter, for the settings picker. */

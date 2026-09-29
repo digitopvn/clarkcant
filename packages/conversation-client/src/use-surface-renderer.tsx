@@ -1,9 +1,16 @@
 import type { MessageKey } from "./i18n/messages.ts";
-import { useCallback, type ReactElement, type RefObject } from "react";
+import { useCallback, useRef, useState, type ReactElement, type RefObject } from "react";
 
-import type { GatewayClient, ResolvedDataset, SnapshotPresentationResponse, Timeline } from "./api.ts";
+import {
+  GatewayError,
+  type GatewayClient,
+  type ResolvedDataset,
+  type SnapshotPresentationResponse,
+  type Timeline,
+} from "./api.ts";
 import { type SurfaceBlockRef } from "./blocks.tsx";
 import { resolveRenderer, toRendererDataset } from "./renderers.tsx";
+import { tableExportRequestFrom } from "./table-model.ts";
 import { MiniAppSurface, type CompositeSurfaceView } from "./mini-app-surface.tsx";
 
 /**
@@ -55,6 +62,26 @@ function toSurfaceViewFromSnapshot(captured: SnapshotPresentationResponse, revis
   };
 }
 
+/** `unavailable` is a refusal the node would repeat (the dataset or the instance is gone); `failed` may pass on retry. */
+type ExportStatus = "pending" | "failed" | "unavailable" | "done";
+
+const TABLE_DEFINITION_ID = "canvas.table@1";
+
+/** Hand a file to the browser's download flow, then release the object URL. */
+function downloadBlob(blob: Blob, filename: string): void {
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  link.rel = "noopener";
+  link.style.display = "none";
+  document.body.append(link);
+  link.click();
+  link.remove();
+  // The click starts the download synchronously; the URL is released once the browser has read it.
+  window.setTimeout(() => URL.revokeObjectURL(url), 1_000);
+}
+
 export interface SurfaceRendererDeps {
   /** Passed, not read via `useT()`: this hook runs in `Conversation`'s body, before its provider mounts. */
   t: (key: MessageKey) => string;
@@ -92,6 +119,32 @@ export function useSurfaceRenderer({
   liveTrigger,
   t,
 }: SurfaceRendererDeps): (input: SurfaceBlockRef) => ReactElement {
+  /*
+   * A standalone table's view (sort, search, page, selection) is held here for the session: the node keeps no view
+   * state for a catalog widget, so this is what brings a remounted table back the way it was left. It is not
+   * persisted, and it is never sent anywhere except as the view an export writes.
+   */
+  const tableViews = useRef(new Map<string, Record<string, unknown>>());
+  const [exports, setExports] = useState<Record<string, ExportStatus>>({});
+  const exportTable = useCallback(
+    (conversation: string, instanceId: string, payload: Record<string, unknown>): void => {
+      setExports((current) => ({ ...current, [instanceId]: "pending" }));
+      // The node reads the instance's own dataset and writes the file; the page only says which view it wants.
+      void client
+        .exportTable(conversation, instanceId, tableExportRequestFrom(payload))
+        .then(({ blob, filename }) => {
+          downloadBlob(blob, filename);
+          setExports((current) => ({ ...current, [instanceId]: "done" }));
+        })
+        .catch((cause: unknown) => {
+          // Shown in the table itself, next to the button: what was kept, and whether trying again can help.
+          const lasting = cause instanceof GatewayError && (cause.status === 404 || cause.status === 409);
+          setExports((current) => ({ ...current, [instanceId]: lasting ? "unavailable" : "failed" }));
+        });
+    },
+    [client],
+  );
+
   return useCallback(
     (input: SurfaceBlockRef): ReactElement => {
       const instance = input.instanceId === undefined ? undefined : instanceById.get(input.instanceId);
@@ -167,6 +220,8 @@ export function useSurfaceRenderer({
       const datasetRef = instance.props.datasetRef;
       const resolved = typeof datasetRef === "string" ? datasets[datasetRef] : undefined;
       const dataset = resolved === undefined ? undefined : toRendererDataset(resolved);
+      const isTable = definitionId === TABLE_DEFINITION_ID;
+      const exportStatus = exports[instance.instanceId];
 
       return (
         <div data-widget-instance={instance.instanceId} data-widget-definition={definitionId}>
@@ -189,10 +244,35 @@ export function useSurfaceRenderer({
               // this out made every picture widget show its text alternative while the bytes sat
               // unread on the node.
               imageUrl={imageUrl}
-              onAction={(action) => {
-                // View actions only for now: an action that would cause an effect goes through
-                // the approval route, and there is no code path here that bypasses it.
-                void action;
+              {...(isTable
+                ? {
+                    state: {
+                      ...tableViews.current.get(instance.instanceId),
+                      ...(exportStatus === undefined ? {} : { exportStatus }),
+                    },
+                    onStateChange: (patch: Record<string, unknown>) => {
+                      const id = instance.instanceId;
+                      tableViews.current.set(id, { ...tableViews.current.get(id), ...patch });
+                      // "Downloaded" described the view that was exported; once the view changes it no longer does.
+                      if (exportStatus === "done") {
+                        setExports((current) => {
+                          if (current[id] !== "done") return current;
+                          const { [id]: _done, ...rest } = current;
+                          return rest;
+                        });
+                      }
+                    },
+                    canExport: conversationId !== undefined,
+                  }
+                : {})}
+              onAction={(action, payload) => {
+                // A table's export is a read the node answers with a file, through its own person-only route.
+                if (isTable && action === "export.requested" && conversationId !== undefined) {
+                  if (exportStatus !== "pending") exportTable(conversationId, instance.instanceId, payload);
+                  return;
+                }
+                // Everything else is a view action: selection and paging stay in the view, and an action that
+                // would cause an effect goes through the approval route, which no code path here bypasses.
               }}
             />
           )}
@@ -225,6 +305,20 @@ export function useSurfaceRenderer({
         </div>
       );
     },
-    [applyTimeline, client, conversationId, datasets, imageUrl, instanceById, liveTrigger, setError, snapshots, t, timeline],
+    [
+      applyTimeline,
+      client,
+      conversationId,
+      datasets,
+      exportTable,
+      exports,
+      imageUrl,
+      instanceById,
+      liveTrigger,
+      setError,
+      snapshots,
+      t,
+      timeline,
+    ],
   );
 }

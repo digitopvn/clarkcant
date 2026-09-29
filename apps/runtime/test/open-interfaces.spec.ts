@@ -286,7 +286,7 @@ describe("WebSocket gateway", () => {
     client.close();
   });
 
-  it("does not relay a grant, an app-intent confirmation or a peer's trust either, under any spelling", async () => {
+  it("does not relay a grant, an app-intent confirmation, a peer's trust or a file export either, under any spelling", async () => {
     const client = await openSocket();
     client.send({ type: "auth", token: token() });
     await client.next();
@@ -301,6 +301,8 @@ describe("WebSocket gateway", () => {
       "/tasks/task_x/approvals/appr_x/decide",
       // The gateway drops empty segments, so a doubled slash reaches the same route and is refused the same way.
       "//conversations//conv_x/approvals/appr_x/decide/",
+      // A table's CSV is a whole dataset handed over as a file; it is downloaded by the person, not by a relay.
+      "/conversations/conv_x/widgets/winst_x/export",
     ];
     for (const [index, path] of decisions.entries()) {
       client.send({ type: "request", id: index, method: "POST", path, body: {} });

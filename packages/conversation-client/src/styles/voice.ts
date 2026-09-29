@@ -262,10 +262,11 @@ export const VOICE_CSS = `
   min-height: 32px;
   transition-property: transform; transition-duration: var(--cc-motion-micro); transition-timing-function: var(--cc-motion-bounce);
 }
-.cc-action:hover:not(:disabled) { border-color: var(--cc-accent); }
-.cc-action:active:not(:disabled) { transform: scale(0.97); }
+.cc-action:hover:not(:disabled, [aria-disabled="true"]) { border-color: var(--cc-accent); }
+.cc-action:active:not(:disabled, [aria-disabled="true"]) { transform: scale(0.97); }
 .cc-action:focus-visible { outline: 2px solid var(--cc-focus); outline-offset: 2px; }
-.cc-action:disabled { cursor: not-allowed; color: var(--cc-text-tertiary); }
+/* aria-disabled looks the same as disabled: it is used where the button must keep the focus that pressed it. */
+.cc-action:disabled, .cc-action[aria-disabled="true"] { cursor: not-allowed; color: var(--cc-text-tertiary); }
 /*
  * The one action a card is about. Filled, so "đang làm" looks different from the view controls beside it;
  * disabled, it drops back to the plain outline so a filled button never means "cannot".

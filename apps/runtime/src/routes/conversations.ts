@@ -70,6 +70,7 @@ import { receiptForModel, runApprovedCommand } from "../run-command.ts";
 import { type NodeServices, buildTimeline } from "../services.ts";
 import { indexMessages, textOfMessage } from "../session-search.ts";
 import { type GatewayRequest, type GatewayResponse, fail, json, readJson } from "./http.ts";
+import { exportTableCsv } from "./table-export.ts";
 
 /**
  * The conversation family: the thread, its messages, its turns, its questions and its approvals, plus
@@ -1191,6 +1192,22 @@ export async function handleConversationRoutes(deps: ConversationRouteDeps): Pro
     return fail(STATE_REFUSAL_STATUS[outcome.code], outcome.code, outcome.message, {
       ...(outcome.stateRevision === undefined ? {} : { stateRevision: outcome.stateRevision }),
       ...(outcome.state === undefined ? {} : { state: outcome.state }),
+    });
+  }
+
+  // /conversations/:id/widgets/:instanceId/export — a table's CSV, person-only (see `isPersonOnlyRoute`).
+  if (
+    segments.length === 5 &&
+    segments[2] === "widgets" &&
+    segments[4] === "export" &&
+    request.method === "POST"
+  ) {
+    const parsed = readJson(request);
+    if (!parsed.ok) return parsed.response;
+    return exportTableCsv(services, {
+      instanceId: segments[3] ?? "",
+      principalId: runtime.identity.ownerPrincipalId,
+      body: parsed.value,
     });
   }
 

@@ -5,8 +5,8 @@
  * issuing a grant are each the person's decision. MCP has no tool for any of them, and the generic relays - the
  * WebSocket `request` frame and `clarkcant api` - would otherwise reach the same decision by path. They refuse these
  * routes instead, so an AI client handed one of those surfaces cannot approve its own action or widen its own trust.
- * The person's own surfaces call the routes over HTTP as before. Stop, answering a question and reading stay
- * reachable everywhere.
+ * Exporting a table to a CSV file is the person's too: it hands a whole dataset over as a download. The person's own
+ * surfaces call the routes over HTTP as before. Stop, answering a question and reading stay reachable everywhere.
  *
  * Segments are split the way the gateway splits them (on `/`, empty segments dropped, no decoding), so a path this
  * lets through cannot reach one of these routes under another spelling.
@@ -32,7 +32,11 @@ export function isPersonOnlyRoute(method: string, path: string): boolean {
     case 5:
       // POST /conversations/:id/approvals/:approvalId/decide (a card) and
       // POST /tasks/:id/approvals/:approvalId/decide (an approval a running task raised, which has no card)
-      return (first === "conversations" || first === "tasks") && third === "approvals" && fifth === "decide";
+      if ((first === "conversations" || first === "tasks") && third === "approvals" && fifth === "decide") return true;
+      // POST /conversations/:id/widgets/:instanceId/export: a table's rows written to a file for the person to
+      // download. A machine surface reads the conversation instead; a whole dataset handed over as a file is not a read
+      // an AI client should be able to make on the person's behalf.
+      return first === "conversations" && third === "widgets" && fifth === "export";
     default:
       return false;
   }
@@ -41,5 +45,6 @@ export function isPersonOnlyRoute(method: string, path: string): boolean {
 /** The refusal a machine surface gives for a person-only route, in the shape every surface uses. */
 export const PERSON_ONLY_REFUSAL = Object.freeze({
   code: "PERSON_ONLY",
-  message: "approvals, grants and trust are decided by the person on their own surface, not through a machine interface",
+  message:
+    "approvals, grants, trust and file exports are decided by the person on their own surface, not through a machine interface",
 });

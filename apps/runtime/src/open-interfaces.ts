@@ -37,7 +37,7 @@ export function discoveryDocument(): Record<string, unknown> {
       websocket: { endpoint: API_SOCKET_PATH, protocol: API_SOCKET_PROTOCOL, auth: "first frame { type: 'auth', token }" },
       cli: { command: "clarkcant", package: "@clarkcant/cli", mcpStdio: "clarkcant mcp" },
     },
-    // Told up front so a tool does not try: approvals, grants and trust are made by the person in the app.
+    // Told up front so a tool does not try: approvals, grants, trust and file exports are made by the person in the app.
     personDecisions: {
       refusedOn: ["websocket", "mcp", "cli api"],
       refusal: { status: 403, code: PERSON_ONLY_REFUSAL.code },
