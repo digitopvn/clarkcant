@@ -91,6 +91,7 @@ describe("discovery", () => {
       "/conversations/{conversationId}/timeline",
       "/signals",
       "/signals/github",
+      "/signals/webhook/{source}",
       "/automations",
       "/stop",
     ]) {

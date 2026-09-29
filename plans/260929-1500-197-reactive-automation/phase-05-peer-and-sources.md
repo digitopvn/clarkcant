@@ -1,8 +1,8 @@
 ---
 phase: 5
 title: "Signal từ peer và nguồn thứ hai"
-status: pending
-issues: [197]
+status: in-progress
+issues: [197, 244]
 ---
 
 # Phase 05 — Signal từ peer và nguồn thứ hai
@@ -29,3 +29,14 @@ issues: [197]
 
 Transport NodeLink còn là stub ở một số chỗ (`docs/distributed-runtime.md`). Nếu delegation thật không khả thi thì
 tách phần đó thành sub-issue, nêu rõ lý do.
+
+## Tiến độ
+
+- Xong (PR đầu của #244): envelope `signal` trong NodeLink, `POST /peers/<nodeId>/signals` xếp signal vào outbox,
+  lượt chuyển outbox chạy thật trên node (`startPeerDelivery`, ngay khi có hàng và mỗi 30 giây), bên nhận ghi
+  `peer.<topic>` theo danh tính của kênh; webhook chung `POST /signals/webhook/<source>` với secret riêng cho từng
+  nguồn qua Secret Broker, giới hạn 256 KiB, đặt nguồn trong hội thoại. Bằng chứng: `webhook.spec.ts` (7),
+  `webhook-signals.spec.ts` (7), `peer-signals.spec.ts` (6, hai node thật qua HTTP thật).
+- Còn lại (PR thứ hai của #244): chạy task trên node kia — `delegate` tạo task origin `delegated` ở bên nhận trong
+  phạm vi grant, rồi `result` quay về hội thoại của bên gửi. Hai node trên cùng máy qua HTTP là đủ để kiểm chứng; hai
+  máy thật vẫn là phạm vi của #5.

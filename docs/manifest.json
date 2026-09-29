@@ -40,13 +40,13 @@
     },
     {
       "path": "distributed-runtime.md",
-      "bytes": 15429,
-      "sha256": "74087a6121f3b934ff60d70d782b15b62fc5588b9122b5270fcba47844208ec7"
+      "bytes": 16446,
+      "sha256": "97ad07c2bffbb3ea0a58872f4cacb4779010eaf708635ed04ca193a80af3af1c"
     },
     {
       "path": "distributed-runtime.vi.md",
-      "bytes": 15524,
-      "sha256": "034211dd357dc4e617dc2a01ec6207a994eb3e5bf0c9dd72902fee6d5d3e2d19"
+      "bytes": 16824,
+      "sha256": "4a1cd430e409fd41c6e833414483a71d9a40fc2c9db521da72f493e4baa7ebe6"
     },
     {
       "path": "examples/README.md",
@@ -130,13 +130,13 @@
     },
     {
       "path": "system-architecture.md",
-      "bytes": 74487,
-      "sha256": "968ef1965e5be6a8315658295486af54da0fa095abdec880a8f8410fbb5db43c"
+      "bytes": 76041,
+      "sha256": "29b5b0040a1d6b915230a24e537c7059cb08716aab63d488b30b42202916b014"
     },
     {
       "path": "system-architecture.vi.md",
-      "bytes": 78828,
-      "sha256": "74ab5145675b23daa03c8a0604e6ae3bb67d6163cec5b9c202321633b44479a1"
+      "bytes": 80635,
+      "sha256": "63b25055a62ee70d2d965c20af9411daeec11009927af50a996ca67c490def68"
     },
     {
       "path": "widget-development.md",
