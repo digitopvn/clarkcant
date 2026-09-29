@@ -99,11 +99,21 @@ export interface CapabilitySummary {
 
 export function listCapabilitySummaries(
   deps: RegistryDeps,
-  options: { usableOnly?: boolean; limit?: number } = {},
+  options: {
+    usableOnly?: boolean;
+    limit?: number;
+    /**
+     * Only capabilities a task can be handed to. A package service's capability is one call with typed input, made
+     * through `invokeCapability` by a widget, the agent's tool or a spoken command; it never takes a whole request.
+     */
+    taskRunnersOnly?: boolean;
+  } = {},
 ): CapabilitySummary[] {
   const rows = allRows<{ capability_ref: string; execution_node_id: string; readiness: string; summary: string; document: string }>(
     deps.db,
-    "SELECT capability_ref, execution_node_id, readiness, summary, document FROM capabilities ORDER BY capability_ref LIMIT ?",
+    `SELECT capability_ref, execution_node_id, readiness, summary, document FROM capabilities
+     ${options.taskRunnersOnly === true ? "WHERE package_generation IS NULL" : ""}
+     ORDER BY capability_ref LIMIT ?`,
     options.limit ?? 200,
   );
 

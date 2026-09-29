@@ -552,7 +552,9 @@ export async function handleUserMessage(
     }
   }
 
-  const usable = listCapabilitySummaries(deps, { usableOnly: true });
+  // A package service's capabilities are left to the model's tools: without this, installing one package with a service
+  // would turn every message into a "task" handed to whichever of its capabilities sorted first.
+  const usable = listCapabilitySummaries(deps, { usableOnly: true, taskRunnersOnly: true });
   const executionNode = await chooseExecutionNode(deps, input.text, usable);
 
   // A scripted recipe is only considered when nothing installed can answer, so an
