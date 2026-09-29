@@ -379,23 +379,6 @@ export function dismissNotification(
 }
 
 /**
- * Take the one notice a producer keyed `dedupKey` out of the inbox, once acting on what it said has made it stale: work
- * that was started again, a question that was asked again. The same dismissal a person makes. Answers whether one was.
- */
-export function dismissNotificationByKey(
-  db: Database,
-  input: { principalId: string; dedupKey: string; at: Instant },
-): boolean {
-  const result = db
-    .prepare(
-      `UPDATE notifications SET dismissed_at = ?, read_at = COALESCE(read_at, ?)
-        WHERE principal_id = ? AND dedup_key = ? AND dismissed_at IS NULL`,
-    )
-    .run(input.at, input.at, input.principalId, input.dedupKey);
-  return Number(result.changes) > 0;
-}
-
-/**
  * Take a producer's notices out of the inbox once what they said is no longer so: a wait that ended, a peer that
  * answers again. The same dismissal a person makes, so the rows stay for the retention window and the producer stays
  * deduplicated.
