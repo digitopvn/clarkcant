@@ -30,6 +30,24 @@ export interface CredentialFieldInput {
 
 export type CredentialVaultOutcome = { ok: true; names: string[] } | { ok: false; code: string; message: string };
 
+/** The consumers a form named, comma-separated when one secret serves several: `command:gh,command:git`. */
+export function consumersOf(value: unknown): string[] {
+  if (typeof value !== "string") return [];
+  return [...new Set(value.split(",").map((entry) => entry.trim()).filter((entry) => entry !== ""))].slice(0, 10);
+}
+
+/**
+ * How far the value may travel, decided by who it was asked for.
+ *
+ * A command can receive a secret in one way only, as a variable in its own environment, so a secret asked for a
+ * `command:` consumer is stored as `process-env`: without that, the only thing the person typed it for could never
+ * use it. Every other consumer is served by a callback that runs and returns, which is `tool-only`. Nothing here can
+ * produce `agent-context`, the one exposure that puts a value where it cannot be taken back from.
+ */
+export function injectionPolicyFor(consumers: readonly string[]): "tool-only" | "process-env" {
+  return consumers.some((consumer) => consumer.startsWith("command:")) ? "process-env" : "tool-only";
+}
+
 /**
  * Validate the fields, store each value and its description together, and answer with the names now set.
  *
@@ -56,6 +74,7 @@ export function storeCredentialFields(
      * The consumer is recorded as the form said it. It is what the broker checks before handing the value to
      * anything, so it is the honest answer to "what will this be used for" rather than a label.
      */
+    const consumers = consumersOf(field.consumer);
     putSecretMetadata(deps.db, {
       secretId: deps.newId("secret"),
       principalId: deps.ownerPrincipalId,
@@ -64,8 +83,8 @@ export function storeCredentialFields(
       kind: secretKindOr(field.kind),
       backend: "node-store",
       backendRef: name,
-      allowedConsumers: typeof field.consumer === "string" && field.consumer.trim() !== "" ? [field.consumer.trim()] : [],
-      injectionPolicy: "tool-only",
+      allowedConsumers: consumers,
+      injectionPolicy: injectionPolicyFor(consumers),
       nodeId: deps.nodeId,
       at,
     });

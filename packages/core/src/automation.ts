@@ -335,7 +335,7 @@ function taskOrigin(intent: PersistentIntent, run: IntentRun, action: Extract<In
 export function prepareIntentRun(
   deps: TaskServiceDeps,
   run: IntentRun,
-  context: { sourceRef?: string } = {},
+  context: { sourceRef?: string; trigger?: string } = {},
 ): PreparedRun {
   const intent = getPersistentIntent(deps.db, run.intentId);
   if (intent === undefined) return { kind: "skipped", run, reason: "the automation no longer exists" };
@@ -355,7 +355,8 @@ export function prepareIntentRun(
     task = createTask(deps, {
       taskId: run.taskId as TaskRecord["taskId"],
       conversationId: intent.conversationId as TaskRecord["conversationId"],
-      goal: action.goal,
+      // The worker is told what it is answering, not only what to do: "fix the labelled issue" needs the issue.
+      goal: (context.trigger === undefined ? action.goal : `${action.goal}\n\n${context.trigger}`).slice(0, 4000),
       principal,
       origin: taskOrigin(intent, run, action, context.sourceRef),
       resources: action.resources,

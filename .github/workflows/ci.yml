@@ -191,6 +191,17 @@ jobs:
       - name: Browser suite
         run: pnpm test:e2e
 
+      # A failure on the runner is otherwise known only by its message: the trace, screenshot and page snapshot of
+      # each failed attempt are what show what the page was doing when it failed.
+      - name: Keep what a failed browser test saw
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: e2e-test-results
+          path: test-results/
+          retention-days: 7
+          if-no-files-found: ignore
+
   # The desktop shell's own behaviour - the bounds it reports, the floor it
   # enforces, whether it is always on top -
   # can only be read back from a real window. Electron needs a display and a set

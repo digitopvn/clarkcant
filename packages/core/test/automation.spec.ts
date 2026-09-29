@@ -219,6 +219,19 @@ describe("a signal is recorded once and matched once", () => {
     expect(tasks.n).toBe(1);
   });
 
+  it("gives the task the goal the person wrote, then what started it, kept apart", () => {
+    registerCapability(deps, capability("project.code.change@1", "local-write"));
+    const intent = automation();
+    ingestSignal(deps, labeled("ai-handle"));
+    const [run] = matchDueSignals(deps).runs;
+    if (run === undefined) throw new Error("no run");
+
+    prepareIntentRun(deps, run, { trigger: "What started this task: github.issue.labeled\nissue: 7" });
+    const goal = getTask(deps.db, run.taskId)?.goal;
+    expect(goal?.startsWith(intent.do.kind === "task" ? intent.do.goal : "")).toBe(true);
+    expect(goal).toContain("\n\nWhat started this task: github.issue.labeled\nissue: 7");
+  });
+
   it("resumes a run whose task was created before the node stopped, without a second task", () => {
     registerCapability(deps, capability("project.code.change@1", "local-write"));
     automation();

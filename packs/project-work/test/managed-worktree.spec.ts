@@ -1,11 +1,12 @@
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import {
   ensureManagedWorktree,
+  findManagedWorktrees,
   managedBranchFor,
   removeManagedWorktree,
 } from "../src/managed-worktree.ts";
@@ -127,5 +128,37 @@ describe("taking a finished task's worktree away", () => {
     const removed = await removeManagedWorktree({ repoPath: repo, path: made.worktree.path });
     expect(removed.removed).toBe(false);
     expect(readFileSync(join(made.worktree.path, "readme.txt"), "utf8")).toBe("not committed\n");
+  });
+});
+
+describe("finding what a stopped node left behind", () => {
+  it("names each task's worktree with its repository, branch and whether it holds uncommitted changes", async () => {
+    const repo = makeRepo();
+    const worktreesDir = tempDir("managed-worktrees");
+    const clean = await ensureManagedWorktree({ repoPath: repo, worktreesDir, taskId: "task_7" });
+    const dirty = await ensureManagedWorktree({ repoPath: repo, worktreesDir, taskId: "task_8" });
+    if (!clean.ok || !dirty.ok) throw new Error("test setup: worktrees were not made");
+    writeFileSync(join(dirty.worktree.path, "readme.txt"), "not committed\n", "utf8");
+
+    const found = (await findManagedWorktrees({ worktreesDir })).sort((a, b) => a.name.localeCompare(b.name));
+    expect(found.map(({ name, branch, dirty: isDirty }) => ({ name, branch, dirty: isDirty }))).toEqual([
+      { name: "task_7", branch: managedBranchFor("task_7"), dirty: false },
+      { name: "task_8", branch: managedBranchFor("task_8"), dirty: true },
+    ]);
+    // The repository the worktree belongs to, so it can be removed through that repository's own git.
+    expect(found.every((worktree) => git(worktree.repoPath, ["rev-parse", "--show-toplevel"]) === git(repo, ["rev-parse", "--show-toplevel"]))).toBe(true);
+  });
+
+  it("ignores anything in the folder that is not a worktree git knows about", async () => {
+    const worktreesDir = tempDir("managed-worktrees");
+    mkdirSync(join(worktreesDir, "stray-folder"));
+    writeFileSync(join(worktreesDir, "stray-file.txt"), "x", "utf8");
+    // A whole repository copied in is not a task's worktree either.
+    const cloneParent = join(worktreesDir, "a-clone");
+    mkdirSync(cloneParent);
+    git(cloneParent, ["init", "--initial-branch=main"]);
+
+    expect(await findManagedWorktrees({ worktreesDir })).toEqual([]);
+    expect(await findManagedWorktrees({ worktreesDir: join(worktreesDir, "does-not-exist") })).toEqual([]);
   });
 });

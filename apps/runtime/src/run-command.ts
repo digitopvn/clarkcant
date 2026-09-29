@@ -348,6 +348,22 @@ export function commandOutput(outcome: CommandOutcome): string {
  * whichever policy let it run. The receipt is returned as text as well as a block because the model is
  * still holding the turn: unlike the approved path there is no second turn to hand the output to.
  */
+/**
+ * A command's output with the values it was given taken out.
+ *
+ * A command handed a token can print it — `gh auth status -t`, a verbose `git`, a script that echoes its environment —
+ * and the output is what goes into the conversation, the task's evidence and the audit trail. This is the second line:
+ * the first is that a command gets a secret only for its declared consumer, and nothing here stops the command from
+ * sending the value somewhere. Values too short to be a credential are left alone, so a two-letter variable does not
+ * blank out every word that contains it.
+ */
+export function withoutInjectedValues(outcome: CommandOutcome, env: Record<string, string> | undefined): CommandOutcome {
+  const values = Object.values(env ?? {}).filter((value) => value.length >= 8);
+  if (values.length === 0) return outcome;
+  const scrub = (text: string): string => values.reduce((scrubbed, value) => scrubbed.split(value).join("[redacted]"), text);
+  return { ...outcome, stdout: scrub(outcome.stdout), stderr: scrub(outcome.stderr) };
+}
+
 export async function runGuardedCommand(input: {
   operationId: string;
   /** The envelope the preflight produced, already narrowed by the guardrail if it asked for that. */
@@ -382,7 +398,7 @@ export async function runGuardedCommand(input: {
   const startedAt = at();
   const { command, cwd } = input.envelope;
 
-  const outcome = await (
+  const ran = await (
     input.run ??
     ((request) =>
       runCommand(
@@ -404,6 +420,7 @@ export async function runGuardedCommand(input: {
     maxOutputBytes: input.envelope.budget.maxOutputBytes,
     ...(input.env === undefined ? {} : { env: input.env }),
   });
+  const outcome = withoutInjectedValues(ran, input.env);
 
   const description = describeCommandOutcome(command, outcome);
   const succeeded = outcome.exitCode === 0 && !outcome.timedOut;

@@ -72,3 +72,43 @@ test("a reminder set up in the conversation is said there, and left in the inbox
   await expect(notice).toContainText("kiểm tra bản build");
   await page.screenshot({ path: join(EVIDENCE, "automation-02-inbox.png"), fullPage: true, animations: "disabled" });
 });
+
+test("an address in what the node says on its own opens as a link, the way a task's pull request is reported", async ({ page }) => {
+  await page.goto(`/?token=${token()}&gateway=${encodeURIComponent(GATEWAY)}`);
+  await expect(page.locator("text=Ready")).toBeVisible({ timeout: 15_000 });
+
+  // A task's result and a reminder reach the conversation the same way, as a plain sentence from the node; a
+  // fixture node runs no worker, so the reminder is the one of the two a browser can be sent here.
+  const topic = `e2e.pr.opened-${Date.now().toString(36)}`;
+  const pullRequest = "https://github.com/Codertocat/Hello-World/pull/42";
+  await page.locator("[data-composer]").fill(`nhắc tôi khi có ${topic}: xem draft PR ${pullRequest}`);
+  await page.locator("[data-send]").click();
+  await expect(page.getByText("Set up.", { exact: false }).last()).toBeVisible({ timeout: 20_000 });
+
+  const sent = await page.request.post(`${GATEWAY}/signals`, {
+    headers: { authorization: `Bearer ${token()}` },
+    data: {
+      source: { kind: "external", provider: "e2e", sourceId: "e2e:github" },
+      topic,
+      subject: { type: "pull_request", id: "42" },
+      payload: {},
+      occurredAt: new Date().toISOString(),
+      dedupeKey: `${topic}:1`,
+    },
+  });
+  expect(sent.status()).toBe(202);
+
+  const said = page.locator("p.cc-text").filter({ hasText: `Nhắc bạn — Nhắc khi có ${topic}` });
+  await expect(said).toHaveCount(1, { timeout: 20_000 });
+  const link = said.getByRole("link", { name: pullRequest, exact: true });
+  await expect(link).toHaveAttribute("href", pullRequest);
+  await expect(link).toHaveAttribute("target", "_blank");
+  await expect(link).toHaveAttribute("rel", "noopener noreferrer");
+  // The sentence itself is unchanged around the link.
+  await expect(said).toHaveText(`Nhắc bạn — Nhắc khi có ${topic}: xem draft PR ${pullRequest}`);
+  // Reachable from the keyboard, like every other control in the conversation.
+  await link.focus();
+  await expect(link).toBeFocused();
+  await said.scrollIntoViewIfNeeded();
+  await page.screenshot({ path: join(EVIDENCE, "automation-03-linked-result.png"), fullPage: true, animations: "disabled" });
+});

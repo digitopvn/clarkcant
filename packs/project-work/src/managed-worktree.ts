@@ -11,9 +11,9 @@
  */
 
 import { execFile } from "node:child_process";
-import { existsSync, realpathSync } from "node:fs";
+import { existsSync, readdirSync, realpathSync } from "node:fs";
 import { mkdir } from "node:fs/promises";
-import { join, resolve } from "node:path";
+import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import { promisify } from "node:util";
 
 import { readRepoIdentity, type RepoIdentity, type RepoSafetyOptions } from "./worktree.ts";
@@ -162,4 +162,51 @@ export async function removeManagedWorktree(
   } catch (cause) {
     return { removed: false, reason: cause instanceof Error ? cause.message : String(cause) };
   }
+}
+
+/** A worktree found under the node's worktree folder, as git describes it. */
+export interface FoundWorktree {
+  /** The directory name, which is the task id it was made for (see `managedWorktreePath`). */
+  name: string;
+  path: string;
+  repoPath: string;
+  branch: string;
+  /** Changes nobody committed, untracked files included: things that exist nowhere else. */
+  dirty: boolean;
+}
+
+/**
+ * The worktrees a previous process of this node left under its worktree folder.
+ *
+ * Only what git itself lists as a worktree of the repository it points back to is returned. A folder that is not one,
+ * or whose repository has moved or forgotten it, is not the node's to judge and is left out rather than guessed at.
+ */
+export async function findManagedWorktrees(input: { worktreesDir: string } & RepoSafetyOptions): Promise<FoundWorktree[]> {
+  const gitRun = input.git ?? git;
+  const root = resolve(input.worktreesDir);
+  let names: string[];
+  try {
+    names = readdirSync(root, { withFileTypes: true })
+      .filter((entry) => entry.isDirectory())
+      .map((entry) => entry.name);
+  } catch {
+    return [];
+  }
+  const found: FoundWorktree[] = [];
+  for (const name of names) {
+    const path = join(root, name);
+    try {
+      const common = await gitRun(["rev-parse", "--git-common-dir"], path);
+      const commonDir = isAbsolute(common) ? common : resolve(path, common);
+      if (basename(commonDir) !== ".git") continue;
+      const repoPath = dirname(commonDir);
+      if (!(await isRegisteredWorktree(gitRun, repoPath, path))) continue;
+      const branch = await gitRun(["rev-parse", "--abbrev-ref", "HEAD"], path);
+      const status = await gitRun(["status", "--porcelain"], path);
+      found.push({ name, path, repoPath, branch, dirty: status !== "" });
+    } catch {
+      continue;
+    }
+  }
+  return found;
 }

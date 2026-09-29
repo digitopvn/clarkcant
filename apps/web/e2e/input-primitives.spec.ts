@@ -52,6 +52,32 @@ async function place(page: Page, what: "biểu mẫu" | "danh sách" | "danh sá
   return page.locator(selector).nth(before);
 }
 
+/**
+ * Wait for a widget to hold still. Everything that lands in the conversation comes up and settles, scaled a little on the
+ * way, and a pressed button gives a little and springs back a moment after the press, so a size read during either is
+ * the size of a moment rather than of the control. Still means nothing in or around the widget moving for a few frames
+ * in a row; a looping animation never stops and is not counted.
+ */
+async function settled(target: Locator): Promise<void> {
+  await target.evaluate(async (element) => {
+    const frame = (): Promise<number> => new Promise((resolve) => requestAnimationFrame(resolve));
+    const moving = (): boolean =>
+      document.getAnimations().some((animation) => {
+        const node = animation.effect instanceof KeyframeEffect ? animation.effect.target : null;
+        return (
+          node !== null &&
+          (node.contains(element) || element.contains(node)) &&
+          animation.playState === "running" &&
+          animation.effect?.getComputedTiming().iterations !== Infinity
+        );
+      });
+    const deadline = performance.now() + 5_000;
+    for (let still = 0; still < 6 && performance.now() < deadline; ) {
+      await frame();
+      still = moving() ? 0 : still + 1;
+    }
+  });
+}
 async function horizontalOverflow(page: Page): Promise<number> {
   return page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
 }
@@ -209,8 +235,16 @@ test("a list pages, picks by id, and sends the item a person pressed", async ({ 
   });
   await expect(list.locator("[data-list-result='done']")).toContainText("Việc số 3: ", { timeout: 30_000 });
   // Clark's answer is said once, in the conversation and beside the list.
+  // The list hears the answer from the action and the conversation from its own stream, so the conversation is read
+  // once it has it, and by what it says rather than by position: other replies may land after it. The reply that holds
+  // the list carries the answer beside the list, which is checked on its own below.
   const once = (text: string): number => text.split("đã nhận yêu cầu").length - 1;
-  expect(once(await page.locator("[data-role='assistant']").last().innerText())).toBe(1);
+  const answers = page
+    .locator("[data-role='assistant']")
+    .filter({ hasText: "đã nhận yêu cầu" })
+    .filter({ hasNot: page.locator("[data-widget-role='list']") });
+  await expect(answers).toHaveCount(1, { timeout: 30_000 });
+  expect(once(await answers.innerText())).toBe(1);
   expect(once(await list.locator("[data-list-result='done']").innerText())).toBe(1);
   await list.scrollIntoViewIfNeeded();
   await page.screenshot({ path: testInfo.outputPath("list-desktop.png") });
@@ -296,6 +330,7 @@ test("a form and a list read at phone width, and a finger can use them", async (
       ["date", form.getByLabel(/^Ngày họp/u)],
       ["send", form.locator("[data-form-submit]")],
     ];
+    await settled(form);
     for (const [name, target] of targets) {
       const box = await target.boundingBox();
       expect(box?.height ?? 0, `the ${name} is at least 44px tall`).toBeGreaterThanOrEqual(44);
@@ -313,6 +348,7 @@ test("a form and a list read at phone width, and a finger can use them", async (
     await list.locator("[data-list-page='next']").tap();
     await expect(list.locator("[data-list-item]").first()).toHaveAttribute("data-list-item", "task-6");
     const itemButton = list.locator("[data-list-item-action='task-6']");
+    await settled(list);
     for (const target of [itemButton, list.locator("[data-list-page='next']"), list.locator("[data-list-item='task-6'] label")]) {
       expect((await target.boundingBox())?.height ?? 0).toBeGreaterThanOrEqual(44);
     }

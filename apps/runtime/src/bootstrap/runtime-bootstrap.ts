@@ -15,8 +15,7 @@ import { ownedResources } from "../preflight.ts";
 import { refreshProjectIndex } from "../project-finder.ts";
 import { startAutomationService } from "../automation-service.ts";
 import { startExpiryNoticeSweep } from "../expiry-notices.ts";
-import { tryRecordNodeNotice, workerSettledNotice } from "../notices.ts";
-import { appendHostReply } from "../routes/conversations.ts";
+import { taskDispatchReports } from "../task-reporting.ts";
 import { createSecretBroker } from "../secret-broker.ts";
 import { type RequestSecretDeps } from "../request-secret.ts";
 import { detectServiceEngine } from "../service-container.ts";
@@ -262,44 +261,8 @@ export function wireRuntime(deps: RuntimeBootstrapDeps): RuntimeHandles {
       worktreesDir: () => join(deps.services.runtime.dataDir, "worktrees"),
       // The same command path the conversation uses, so a worker's command is decided and recorded the same way.
       commandDeps: () => wiring.command.deps,
-      onWorktreeKept: ({ taskId, conversationId, path, branch }) => {
-        appendHostReply(deps.services, {
-          conversationId,
-          text: `Task ${taskId} để lại thay đổi chưa commit, nên chúng được giữ nguyên ở ${path} (nhánh ${branch}).`,
-          at: new Date().toISOString() as Instant,
-        });
-      },
+      ...taskDispatchReports(deps.services),
       ...(deps.work === undefined ? {} : { journal: deps.work.journal }),
-      onSettled: ({ taskId, conversationId, outcome, message }) => {
-        const label =
-          outcome === "succeeded"
-            ? "Xong"
-            : outcome === "failed"
-              ? "Không xong"
-              : outcome === "cancelled"
-                ? "Đã hủy"
-                : "Chưa rõ kết quả";
-        const at = new Date().toISOString() as Instant;
-        appendHostReply(deps.services, {
-          conversationId,
-          text: `${label} (task ${taskId}): ${message}`,
-          at,
-        });
-        // The pointer for a person who is not looking at that conversation.
-        tryRecordNodeNotice(deps.services, workerSettledNotice({ taskId, conversationId, outcome, message, at }));
-      },
-      // A park is not a settlement: it is reported to the conversation so the wait is not silent, but never
-      // through `tryRecordNodeNotice`/`workerSettledNotice` above - that dedup key (`worker:<taskId>`) belongs to
-      // this run's eventual real outcome, and a notice recorded here would suppress it once the approval is
-      // decided and the run actually settles. The inbox already surfaces the pending approval itself as a
-      // waiting item, derived live, so no separate notice is needed for the park to be visible.
-      onWaitingApproval: ({ taskId, conversationId, message }) => {
-        appendHostReply(deps.services, {
-          conversationId,
-          text: `Đang chờ bạn duyệt (task ${taskId}): ${message}`,
-          at: new Date().toISOString() as Instant,
-        });
-      },
     });
     deps.services.taskDispatch = dispatcher;
     // Task workers are listed and stopped with everything else, by task id.

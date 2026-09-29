@@ -9,7 +9,7 @@ import { advanceResolving, applyTaskEvent, createTask, type ConductorDeps } from
 import { getTask } from "@clarkcant/storage";
 
 import { bootRuntime, type Runtime } from "../src/node.ts";
-import { createTaskDispatcher } from "../src/task-dispatch.ts";
+import { createTaskDispatcher, settlingEvidence } from "../src/task-dispatch.ts";
 import type { WorkerProcessResult } from "../src/worker-process.ts";
 
 /**
@@ -335,3 +335,24 @@ async function waitUntil(condition: () => boolean, timeoutMs: number): Promise<v
     await new Promise((resolve) => setTimeout(resolve, 20));
   }
 }
+
+describe("the evidence a task settles on", () => {
+  const piece = (summary: string, verdict: "verified" | "contradicted" | "unverified") => ({ summary, verdict });
+
+  it("is the last thing verified when everything was", () => {
+    expect(settlingEvidence([piece("wrote the fix", "verified"), piece("opened the pull request", "verified")])?.summary).toBe(
+      "opened the pull request",
+    );
+  });
+
+  it("is the first thing that was not, however much succeeded after it", () => {
+    // A failed test followed by a successful push is a failed task: the push does not make the test pass.
+    const evidence = [piece("wrote the fix", "verified"), piece("tests failed", "contradicted"), piece("pushed", "verified")];
+    expect(settlingEvidence(evidence)?.summary).toBe("tests failed");
+    expect(settlingEvidence([piece("could not tell", "unverified"), piece("pushed", "verified")])?.summary).toBe("could not tell");
+  });
+
+  it("is nothing when there is none", () => {
+    expect(settlingEvidence([])).toBeUndefined();
+  });
+});

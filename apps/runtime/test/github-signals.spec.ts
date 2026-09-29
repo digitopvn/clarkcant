@@ -308,6 +308,28 @@ describe("what a delivery starts", () => {
     expect(created.text).toContain("POST /signals/github");
     expect(created.text).toContain('request_secret with name "github_webhook_secret"');
     expect(created.text).toContain("pass it as githubSelfLogins");
+    // A reminder pushes nothing, so it needs no token.
+    expect(created.text).not.toContain('request_secret with name "github_token"');
+  });
+
+  it("asks for a token only a task's git and gh can receive, when the automation will push", async () => {
+    const conversationId = await conversation();
+    const create = createTool(conversationId);
+    const repository = clone("hello-world", "git@github.com:Codertocat/Hello-World.git");
+    const task = {
+      summary: "Sửa issue có nhãn bug",
+      topic: "github.issue.labeled",
+      action: "task",
+      goal: "fix the labelled issue",
+      repositories: [repository],
+      allowedEffects: ["read", "local-write", "external-write"],
+    };
+    const created = await create(task);
+    expect(created.text).toContain('request_secret with name "github_token", secretKind "token", consumer "command:gh,command:git"');
+
+    // Once it is there, nothing more is asked.
+    expect((await authed("POST", "/credentials", { fields: [{ name: "github_token", value: "fixture-token-value", kind: "token", consumer: "command:gh,command:git" }] })).status).toBe(201);
+    expect((await create({ ...task, summary: "Lần hai" })).text).not.toContain('name "github_token"');
   });
 });
 

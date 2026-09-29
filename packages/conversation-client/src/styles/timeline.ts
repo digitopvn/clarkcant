@@ -167,7 +167,8 @@ export const TIMELINE_CSS = `
   border-left: 2px solid var(--cc-border); color: var(--cc-text-muted);
 }
 .cc-md hr { border: none; border-top: 1px solid var(--cc-border); margin: var(--cc-space-md) 0; }
-.cc-md a { color: var(--cc-accent); }
+.cc-md a, .cc-text a { color: var(--cc-accent); }
+.cc-md a:focus-visible, .cc-text a:focus-visible { outline: 2px solid var(--cc-focus); outline-offset: 2px; border-radius: 2px; }
 .cc-md-inline-code {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: var(--cc-text-mono-sm);
   background: var(--cc-elevated); border: 1px solid var(--cc-border);
