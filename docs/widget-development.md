@@ -296,7 +296,8 @@ Do not keep stale rows under a live label when a refresh fails.
 ## 8. Actions, input and read-only cards
 
 This section covers what a widget does (§8.1), what a person gives Clark through one (§8.2), how widgets on one
-surface affect one another (§8.3), and the read-only cards that do nothing at all (§8.4). The first three rest on one
+surface affect one another (§8.3), and the read-only cards that do nothing at all: status, progress and details
+(§8.4), and code, diffs and files (§8.5). The first three rest on one
 hard distinction:
 
 ### Local view action
@@ -572,6 +573,61 @@ in [text-rules.ts](../packages/contracts/src/text-rules.ts), tested by
 [text-rules.spec.ts](../packages/contracts/test/text-rules.spec.ts), and
 [status-card-schemas.spec.ts](../packages/widget-catalog/test/status-card-schemas.spec.ts) checks that the JSON Schema
 and the card's own checks accept and refuse the same props.
+
+### 8.5 Code, diffs and files
+
+Three definitions show a piece of work: a block of code, a unified diff and a file. Everything on them is what the
+model wrote into their props, checked against one description in
+[artifact-viewers.ts](../packages/contracts/src/artifact-viewers.ts) that the node and the page share. None of them
+fetches, opens or links anything. The node's own artifact and diff cards stay host-owned and are built from its
+records. These three are catalog cards a model places beside them.
+
+| Definition | What it is | How a model places it |
+| --- | --- | --- |
+| `canvas.code@1` | A block of code with line numbers, highlighted, and a copy button. | `show_view` with `props.code` (at most 20,000 characters and 400 lines), and optionally `path`, `language`, `startLine` (the number of the first line, for an excerpt) and `truncated`. With no `language`, the card takes it from the path's extension. |
+| `canvas.diff@1` | A unified diff: each file's hunks, each line with its old and new number and a sign. | `show_view` with `props.files` (1–20). Each file has a `path`, an optional `oldPath` for a rename, and hunks (1–20 per file) of `oldStart`, `newStart`, an optional `section`, and `lines` of `{ kind: "add" \| "remove" \| "context", text }`. At most 600 lines and 40,000 characters in all, and 1,000 characters a line. |
+| `canvas.file@1` | A file, named and described. | `show_view` with `props.name`, and optionally `mediaType` (`type/subtype`), `sizeBytes`, `source` (in words), `path` (as text) and `summary`. |
+
+What the node guarantees:
+
+- **Refused before anything is stored.** Props that do not fit are refused with the reason, in the same turn, and no
+  instance is left behind. Code or a diff over its limit is refused with a request to cut it and set `truncated`. A diff
+  is also refused for a hunk that changes nothing, a hunk at old line 0 that keeps or removes lines, a hunk at new line 0
+  that keeps or adds lines, a line holding a line break, hunks that overlap or are out of order, and a file given twice.
+  A file card is refused for a name that includes its folder, and for a `path` that is a URL. An unknown property, such
+  as `url` or `href`, is refused too.
+- **Counts come from the lines.** Each hunk's `@@ -a,b +c,d @@` header and every count of lines added and removed are
+  worked out from the lines themselves, so a diff cannot claim more or fewer changes than it shows.
+- **The text is the content.** Without the renderer, a reader gets the code, the diff with its headers, or the file's
+  name, type, size and source. It is cut at 4,000 characters with a note of how much more is on the card. The
+  caption is not used in its place.
+- **What voice and the next turn read has no body.** The semantic document names the path, the language and the line
+  range of code, the files and counts of a diff, and a file's name, type and size. It never carries the code or the
+  lines themselves. Its freshness is `unknown`: the card shows what the model wrote when it placed it, and nothing is
+  read again.
+- **Not layout leaves.** They belong to the `artifact` family, which no layout region reads. A model places each one
+  on its own.
+
+What the page does:
+
+- Code and diffs are shown as text. The highlighter only splits the text into tokens and escapes it. Its output is
+  built as React elements, so code that looks like markup, `<script>` included, is shown as the characters it is.
+- A long block scrolls inside a bounded area (at most `min(24rem, 60vh)`) and does not wrap or widen the page. That
+  area is a named region a keyboard can reach and scroll, with a focus ring drawn inside it.
+- Copy puts the code itself on the clipboard. It says in words whether the copy worked, and if it did not, asks the
+  person to select the code and copy it.
+- In a diff, a line is told apart by its sign and background, not by colour alone. A screen reader hears each line's
+  kind and number in words ("Added, new line 41:") before its text; the signs and numbers it would otherwise read one
+  character at a time are hidden from it. A rename says what the file was called before.
+- A file card has no link, no open and no download. It says so in words, rather than drawing a button that does
+  nothing.
+- With `truncated`, the card says that it is not the whole of the code or the diff.
+
+Tests: [artifact-viewers.spec.ts](../packages/contracts/test/artifact-viewers.spec.ts) for the rules,
+[artifact-viewers.spec.ts](../apps/runtime/test/artifact-viewers.spec.ts) for the node,
+[artifact-viewers.spec.ts](../packages/conversation-client/test/artifact-viewers.spec.ts) for the page, and the
+browser journey [artifact-viewers.spec.ts](../apps/web/e2e/artifact-viewers.spec.ts). It runs in both themes, with
+reduced motion, at 390 px with touch, and in the library.
 
 ---
 

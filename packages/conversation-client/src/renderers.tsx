@@ -15,7 +15,15 @@ import {
   checkFieldValue,
   checkFields,
   checkListItems,
+  codeLanguage,
+  codeLineRange,
+  diffCounts,
+  diffFileCounts,
+  type DiffLineKind,
   donutSlices,
+  hunkHeader,
+  numberedHunkLines,
+  readArtifactViewer,
   emptyValueOf,
   fieldFromProps,
   type FormField,
@@ -37,6 +45,7 @@ import {
 } from "@clarkcant/contracts";
 
 import type { ResolvedDataset } from "./api.ts";
+import { formatFileSize } from "./attachments.ts";
 import {
   CHART_HEIGHT,
   CHART_PAD,
@@ -48,6 +57,7 @@ import {
   labelStride,
   valueLabelShown,
 } from "./chart-layout.ts";
+import { highlightedCode } from "./markdown.tsx";
 import { vendorEmbedUrl } from "./media-embed.ts";
 import { useLocale, useT } from "./i18n/locale-context.tsx";
 import {
@@ -2233,6 +2243,264 @@ function FormView({ props, state, onAction, onStateChange }: RendererProps): Rea
   );
 }
 
+/* ------------------------------------------------------------------ *
+ * Code, diff and file viewers
+ * ------------------------------------------------------------------ */
+
+/*
+ * What these show is what the model wrote into their props, and every piece of it reaches the page as text React escapes.
+ * Highlighted code goes through the same tokenizer and element builder as a fenced block in a reply, so no markup in the
+ * code becomes an element. None reads a dataset, so none carries a freshness badge, and none links anywhere.
+ */
+
+type CopyState = "idle" | "copied" | "failed";
+
+/**
+ * Copying text that is already on the page, and saying in words what happened.
+ *
+ * A refused clipboard (no permission, an insecure page, an unfocused window) is said, with what to do instead, rather
+ * than left as a button that seemed to work.
+ */
+function useCopy(text: string): { state: CopyState; copy: () => void } {
+  const [state, setState] = useState<CopyState>("idle");
+  const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  useEffect(() => () => clearTimeout(timer.current), []);
+  const copy = useCallback(() => {
+    const settle = (next: CopyState): void => {
+      clearTimeout(timer.current);
+      setState(next);
+      if (next === "copied") timer.current = setTimeout(() => setState("idle"), 4000);
+    };
+    const clipboard = typeof navigator === "undefined" ? undefined : navigator.clipboard;
+    if (clipboard === undefined) {
+      settle("failed");
+      return;
+    }
+    clipboard.writeText(text).then(
+      () => settle("copied"),
+      () => settle("failed"),
+    );
+  }, [text]);
+  return { state, copy };
+}
+
+function nonEmptyText(value: unknown): string | undefined {
+  return typeof value === "string" && value !== "" ? value : undefined;
+}
+
+function ViewerUnreadable({ title, role, message }: { title: string; role: string; message: string }): ReactElement {
+  return (
+    <Frame title={title} dataset={undefined} role={role}>
+      <p className="cc-freshness" data-viewer-state="error" style={{ margin: 0 }}>
+        {message}
+      </p>
+    </Frame>
+  );
+}
+
+/** A block of code with its line numbers, in a scroll that is bounded, focusable and named, with a copy button. */
+function CodeViewerView({ props }: RendererProps): ReactElement {
+  const t = useT();
+  const content = useMemo(() => readArtifactViewer("code", props), [props]);
+  const card = content?.kind === "code" ? content.card : undefined;
+  const highlighted = useMemo(() => (card === undefined ? undefined : highlightedCode(card.code, codeLanguage(card))), [card]);
+  const { state: copyState, copy } = useCopy(card?.code ?? "");
+  const title = nonEmptyText(props.title) ?? t("widgets.code.title");
+  if (card === undefined || highlighted === undefined) {
+    return <ViewerUnreadable title={title} role="code" message={t("widgets.code.unreadable")} />;
+  }
+
+  const { first, last, count } = codeLineRange(card);
+  const name = card.path ?? highlighted.language;
+  const lines = t("widgets.code.lines").replace("{first}", String(first)).replace("{last}", String(last));
+  return (
+    <Frame title={title} dataset={undefined} role="code">
+      <div className="cc-code cc-viewer-code" data-code-lang={highlighted.language} data-viewer-state="ready">
+        <div className="cc-code-head cc-viewer-head">
+          <span className="cc-viewer-name">{name}</span>
+          <span className="cc-viewer-meta">
+            {card.path === undefined ? lines : `${highlighted.language} · ${lines}`}
+          </span>
+          <button type="button" className="cc-action cc-viewer-copy" onClick={copy} data-viewer-copy={copyState}>
+            {t("widgets.code.copy")}
+          </button>
+        </div>
+        <div
+          className="cc-viewer-scroll"
+          // Reachable without a pointer: a long block that only a mouse can scroll hides its end from a keyboard.
+          tabIndex={0}
+          role="region"
+          aria-label={t("widgets.code.region").replace("{name}", name)}
+          data-viewer-scroll="code"
+        >
+          <pre className="cc-viewer-gutter" aria-hidden="true">
+            {Array.from({ length: count }, (_, index) => String(first + index)).join("\n")}
+          </pre>
+          <pre className="cc-code-body">
+            <code>{highlighted.nodes ?? card.code}</code>
+          </pre>
+        </div>
+      </div>
+      {card.truncated === true && (
+        <p className="cc-freshness" data-viewer-truncated="true" style={{ margin: 0 }}>
+          {t("widgets.code.truncated")}
+        </p>
+      )}
+      <p className="cc-freshness cc-viewer-copy-status" role="status" data-copy-state={copyState}>
+        {copyState === "copied" ? t("widgets.code.copied") : copyState === "failed" ? t("widgets.code.copyFailed") : ""}
+      </p>
+    </Frame>
+  );
+}
+
+const DIFF_SIGN: Record<DiffLineKind, string> = { add: "+", remove: "−", context: " " };
+
+/**
+ * A unified diff: each file's hunks, each line with its old and new numbers and a sign as well as a colour.
+ *
+ * The header of each hunk and every count are worked out from the lines, so a diff cannot claim more or fewer changes
+ * than it shows. A screen reader hears each line's kind and number before its text; the signs and numbers it would
+ * otherwise read one character at a time are hidden from it.
+ */
+function DiffViewerView({ props }: RendererProps): ReactElement {
+  const t = useT();
+  const content = useMemo(() => readArtifactViewer("diff", props), [props]);
+  const title = nonEmptyText(props.title) ?? t("widgets.diff.title");
+  if (content?.kind !== "diff") return <ViewerUnreadable title={title} role="diff" message={t("widgets.diff.unreadable")} />;
+
+  const card = content.card;
+  const counts = diffCounts(card);
+  return (
+    <Frame title={title} dataset={undefined} role="diff">
+      <p
+        className="cc-freshness"
+        data-viewer-state="ready"
+        data-diff-summary={`${String(counts.files)}:${String(counts.additions)}:${String(counts.deletions)}`}
+        style={{ margin: 0 }}
+      >
+        {t("widgets.diff.summary")
+          .replace("{files}", String(counts.files))
+          .replace("{additions}", String(counts.additions))
+          .replace("{deletions}", String(counts.deletions))}
+      </p>
+      {card.files.map((file) => {
+        const fileCounts = diffFileCounts(file);
+        return (
+          <div key={file.path} className="cc-viewer-diff-file" data-diff-path={file.path}>
+            <div className="cc-diff-file-head">
+              <code>{file.path}</code>
+              <span className="cc-freshness cc-viewer-diff-counts">
+                <span aria-hidden="true">
+                  <span data-diff-additions={fileCounts.additions}>+{fileCounts.additions}</span>{" "}
+                  <span data-diff-deletions={fileCounts.deletions}>−{fileCounts.deletions}</span>
+                </span>
+                <span className="cc-sr-only">
+                  {t("widgets.diff.fileCounts")
+                    .replace("{additions}", String(fileCounts.additions))
+                    .replace("{deletions}", String(fileCounts.deletions))}
+                </span>
+              </span>
+            </div>
+            {file.oldPath !== undefined && (
+              <p className="cc-freshness" data-diff-renamed-from={file.oldPath} style={{ margin: 0 }}>
+                {t("widgets.diff.renamed").replace("{path}", file.oldPath)}
+              </p>
+            )}
+            <div
+              className="cc-viewer-scroll cc-viewer-diff-scroll"
+              tabIndex={0}
+              role="region"
+              aria-label={t("widgets.diff.region").replace("{name}", file.path)}
+              data-viewer-scroll="diff"
+            >
+              {file.hunks.map((hunk, hunkIndex) => (
+                <div key={hunkIndex} className="cc-viewer-hunk">
+                  <div className="cc-diff-header">{hunkHeader(hunk)}</div>
+                  {numberedHunkLines(hunk).map((line, lineIndex) => {
+                    const number = line.kind === "remove" ? line.oldLine : line.newLine;
+                    return (
+                      <div key={lineIndex} className="cc-diff-line cc-viewer-diff-line" data-line-kind={line.kind}>
+                        <span className="cc-viewer-num" aria-hidden="true">
+                          {line.oldLine ?? ""}
+                        </span>
+                        <span className="cc-viewer-num" aria-hidden="true">
+                          {line.newLine ?? ""}
+                        </span>
+                        <span className="cc-diff-gutter" aria-hidden="true">
+                          {DIFF_SIGN[line.kind]}
+                        </span>
+                        <span className="cc-sr-only">
+                          {t(`widgets.diff.line.${line.kind}` as MessageKey).replace("{line}", String(number ?? ""))}{" "}
+                        </span>
+                        <code>{line.text}</code>
+                      </div>
+                    );
+                  })}
+                </div>
+              ))}
+            </div>
+          </div>
+        );
+      })}
+      {card.truncated === true && (
+        <p className="cc-freshness" data-viewer-truncated="true" style={{ margin: 0 }}>
+          {t("widgets.diff.truncated")}
+        </p>
+      )}
+    </Frame>
+  );
+}
+
+/** The short mark a file card draws beside the name: its extension, or a dot when it has none. */
+function fileMark(name: string): string {
+  const dot = name.lastIndexOf(".");
+  return dot > 0 && dot < name.length - 1 ? name.slice(dot + 1, dot + 5).toUpperCase() : "•";
+}
+
+/** A file named and described. It has no link, no open and no download: it says so rather than drawing a dead button. */
+function FileViewerView({ props }: RendererProps): ReactElement {
+  const t = useT();
+  const content = useMemo(() => readArtifactViewer("file", props), [props]);
+  const title = nonEmptyText(props.title) ?? t("widgets.file.title");
+  if (content?.kind !== "file") return <ViewerUnreadable title={title} role="file" message={t("widgets.file.unreadable")} />;
+
+  const card = content.card;
+  const facts: { key: MessageKey; value: string; exact?: string }[] = [
+    ...(card.mediaType === undefined ? [] : [{ key: "widgets.file.type" as MessageKey, value: card.mediaType }]),
+    ...(card.sizeBytes === undefined
+      ? []
+      : [{ key: "widgets.file.size" as MessageKey, value: formatFileSize(card.sizeBytes), exact: `${String(card.sizeBytes)} B` }]),
+    ...(nonEmptyText(card.source) === undefined ? [] : [{ key: "widgets.file.source" as MessageKey, value: String(card.source) }]),
+    ...(card.path === undefined ? [] : [{ key: "widgets.file.path" as MessageKey, value: card.path }]),
+  ];
+  return (
+    <Frame title={title} dataset={undefined} role="file">
+      <div className="cc-viewer-file" data-viewer-state="ready">
+        <span className="cc-viewer-file-mark" aria-hidden="true">
+          {fileMark(card.name)}
+        </span>
+        <div className="cc-viewer-file-text">
+          <p className="cc-viewer-file-name">{card.name}</p>
+          {nonEmptyText(card.summary) !== undefined && <p className="cc-viewer-file-summary">{card.summary}</p>}
+          {facts.length > 0 && (
+            <dl className="cc-viewer-facts">
+              {facts.map((fact) => (
+                <div key={fact.key} className="cc-viewer-fact" data-file-fact={fact.key.slice("widgets.file.".length)}>
+                  <dt>{t(fact.key)}</dt>
+                  <dd title={fact.exact}>{fact.value}</dd>
+                </div>
+              ))}
+            </dl>
+          )}
+        </div>
+      </div>
+      <p className="cc-freshness" data-file-named-only="true" style={{ margin: 0 }}>
+        {t("widgets.file.namedOnly")}
+      </p>
+    </Frame>
+  );
+}
+
 /**
  * A list of items with stable ids.
  *
@@ -2701,6 +2969,9 @@ export const CATALOG: Record<string, CatalogRenderer> = {
   "canvas.youtube@1": YouTubeEmbed,
   "canvas.video@1": LocalVideo,
   "canvas.cta@1": CallToAction,
+  "canvas.code@1": CodeViewerView,
+  "canvas.diff@1": DiffViewerView,
+  "canvas.file@1": FileViewerView,
   "canvas.action@1": ActionButton,
   "canvas.choice@1": ChoiceControl,
   "canvas.input@1": InputControl,

@@ -26,6 +26,7 @@ export * from "./table-view.ts";
 export * from "./composition-graph.ts";
 export * from "./widget-semantic.ts";
 export * from "./schema-patterns.ts";
+export * from "./artifact-viewers.ts";
 export * from "./widget-props.ts";
 export * from "./composition-layout.ts";
 export * from "./form-fields.ts";

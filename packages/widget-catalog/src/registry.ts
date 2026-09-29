@@ -143,6 +143,24 @@ const META: Record<string, CatalogMeta> = {
     aliases: ["cta", "lưu", "ghim"],
     status: "stable",
   },
+  "canvas.code@1": {
+    displayName: "Khối mã",
+    tags: ["artifact", "code"],
+    aliases: ["code", "snippet", "mã", "đoạn mã", "mã nguồn"],
+    status: "stable",
+  },
+  "canvas.diff@1": {
+    displayName: "Diff",
+    tags: ["artifact", "code", "diff"],
+    aliases: ["diff", "patch", "thay đổi", "so sánh", "khác biệt"],
+    status: "stable",
+  },
+  "canvas.file@1": {
+    displayName: "Tệp",
+    tags: ["artifact", "file"],
+    aliases: ["file", "artifact", "tệp", "tập tin", "tài liệu"],
+    status: "stable",
+  },
   "canvas.action@1": {
     displayName: "Nút hành động",
     tags: ["action", "button"],

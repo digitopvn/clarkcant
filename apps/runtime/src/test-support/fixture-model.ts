@@ -562,6 +562,90 @@ export function createModelComposer(deps: FixtureModelDeps): FixtureCompose {
     }
 
     /*
+     * A code block, a diff and a file card, placed through the same views `show_view` uses. The code holds a script tag and
+     * a line far wider than a phone, so the browser journey sees both drawn as text inside the card. "bản diff sai" starts a
+     * hunk at old line 0 while keeping context lines, so the refusal a model would read is the host's own sentence.
+     */
+    const viewer = /^(?:đặt|place)\s+(khối mã|bản diff|bản diff sai|thẻ tệp)$/iu.exec(input.text.trim());
+    if (viewer !== null) {
+      const which = (viewer[1] ?? "").toLowerCase();
+      const definitionId = which === "khối mã" ? "canvas.code@1" : which === "thẻ tệp" ? "canvas.file@1" : "canvas.diff@1";
+      const view = buildViewCatalog(deps.services().conductor).find((entry) => entry.id === definitionId);
+      if (view === undefined) return undefined;
+      const props: Record<string, unknown> =
+        which === "khối mã"
+          ? {
+              title: "Hàm định dạng tiền",
+              path: "packages/billing/src/format-money.ts",
+              startLine: 40,
+              code: [
+                "// Định dạng số tiền theo đồng Việt Nam.",
+                "export function formatMoney(amount: number): string {",
+                '  const note = "<script>alert(1)</script>";',
+                '  return new Intl.NumberFormat("vi-VN", { style: "currency", currency: "VND", maximumFractionDigits: 0 }).format(amount) + " " + note.length.toString();',
+                "}",
+              ].join("\n"),
+            }
+          : which === "thẻ tệp"
+            ? {
+                name: "bao-cao-quy-3.pdf",
+                mediaType: "application/pdf",
+                sizeBytes: 482_133,
+                source: "Clark tạo từ bảng doanh thu",
+                path: "Tài liệu/Báo cáo/bao-cao-quy-3.pdf",
+                summary: "Doanh thu quý 3, so với quý 2 và cùng kỳ năm trước.",
+              }
+            : {
+                title: "Sửa lỗi làm tròn",
+                files: [
+                  {
+                    path: "packages/billing/src/format-money.ts",
+                    hunks: [
+                      {
+                        oldStart: which === "bản diff sai" ? 0 : 40,
+                        newStart: 40,
+                        section: "export function formatMoney(amount: number): string {",
+                        lines: [
+                          { kind: "context", text: "export function formatMoney(amount: number): string {" },
+                          { kind: "remove", text: '  return amount.toFixed(2) + " ₫";' },
+                          { kind: "add", text: '  return new Intl.NumberFormat("vi-VN", { style: "currency", currency: "VND" }).format(amount);' },
+                          { kind: "context", text: "}" },
+                        ],
+                      },
+                    ],
+                  },
+                  {
+                    path: "packages/billing/test/format-money.spec.ts",
+                    hunks: [
+                      {
+                        oldStart: 0,
+                        newStart: 1,
+                        lines: [
+                          { kind: "add", text: 'import { formatMoney } from "../src/format-money.ts";' },
+                          { kind: "add", text: 'it("rounds to whole dong", () => expect(formatMoney(1250.5)).toBe("1.251 ₫"));' },
+                        ],
+                      },
+                    ],
+                  },
+                ],
+              };
+      try {
+        const block = await view.build({
+          props,
+          caption: "",
+          at: instantSchema.parse(new Date().toISOString()),
+          principal: input.principal as never,
+          messageId: input.messageId,
+          conversationId: input.conversationId,
+        });
+        return { text: `Fixture: đặt ${which} (không phải model thật).`, block };
+      } catch (cause) {
+        const reply = `Fixture không đặt được: ${cause instanceof Error ? cause.message : String(cause)}`;
+        return { text: reply, block: { type: "text", format: "plain", content: reply, streaming: false } };
+      }
+    }
+
+    /*
      * A form and a list, placed through the views the model's `show_view` uses.
      *
      * The proposals are scripted; the descriptors are the real ones, so the fields are checked, the action is compiled

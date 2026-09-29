@@ -200,6 +200,71 @@ button.cc-badge:hover, .cc-badge[role="button"]:hover { color: var(--cc-text); b
 /* "saved" stays muted: the save is optimistic until the host confirms it, so it is not shown as a success. */
 .cc-note-meta { font-size: var(--cc-text-label); color: var(--cc-text-muted); }
 
+/*
+ * Code, diff and file viewers.
+ *
+ * A long line scrolls inside its own block, never across the page, and a long block scrolls inside a bounded height. The
+ * scroll is focusable, so it is ringed from the inside: the rounded card around it clips anything drawn outside. Diff
+ * hunks take their own class rather than the host card's .cc-diff-hunk, whose later composer layer scrolls each hunk on
+ * its own and would leave a keyboard in the outer scroll unable to reach a long line.
+ */
+.cc-viewer-head { flex-wrap: wrap; gap: var(--cc-space-xxs) var(--cc-space-sm); }
+.cc-viewer-name { flex: 1 1 auto; min-width: 0; color: var(--cc-text); overflow-wrap: anywhere; }
+.cc-viewer-meta { font-variant-numeric: tabular-nums; }
+/* The head is monospace for the path; the button is a control and keeps the interface's own face. */
+.cc-viewer-copy { font-family: "Plus Jakarta Sans Variable", ui-sans-serif, -apple-system, "Segoe UI", Inter, system-ui, sans-serif; }
+.cc-viewer-scroll { max-block-size: min(24rem, 60vh); overflow: auto; overscroll-behavior: contain; }
+.cc-viewer-scroll:focus-visible { outline: 2px solid var(--cc-focus); outline-offset: -2px; }
+.cc-viewer-code .cc-viewer-scroll { display: grid; grid-template-columns: max-content minmax(max-content, 1fr); }
+/*
+ * The block itself takes the code's size and leading, not only the <code> inside it: a line box is never shorter than
+ * its block's own line height, so a larger one here would space the lines apart from the numbers beside them.
+ */
+.cc-viewer-code .cc-code-body {
+  overflow: visible;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: var(--cc-text-mono-sm); line-height: var(--cc-leading-mono-sm);
+}
+.cc-viewer-gutter {
+  position: sticky; left: 0; margin: 0; padding: var(--cc-space-sm) var(--cc-space-xs) var(--cc-space-sm) var(--cc-space-sm);
+  background: var(--cc-code); border-inline-end: 1px solid var(--cc-border); color: var(--cc-text-tertiary); text-align: end;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: var(--cc-text-mono-sm); line-height: var(--cc-leading-mono-sm);
+  font-variant-numeric: tabular-nums; user-select: none;
+}
+.cc-viewer-copy-status:empty { display: none; }
+.cc-viewer-copy-status { margin: 0; }
+.cc-viewer-copy-status[data-copy-state="failed"] { color: var(--cc-danger); }
+.cc-viewer-diff-file { display: flex; flex-direction: column; gap: var(--cc-space-xxs); min-width: 0; }
+/* A long path wraps; the counts beside it do not, so "+2 −0" never splits across two lines. */
+.cc-viewer-diff-counts { flex: none; white-space: nowrap; }
+.cc-viewer-diff-scroll { background: var(--cc-code); border: 1px solid var(--cc-border); border-radius: var(--cc-radius-badge); }
+.cc-viewer-hunk { min-inline-size: max-content; }
+.cc-viewer-hunk + .cc-viewer-hunk { border-top: 1px solid var(--cc-border); }
+.cc-viewer-num {
+  flex: none; min-inline-size: 4ch; text-align: end; color: var(--cc-text-tertiary); user-select: none;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: var(--cc-text-mono-sm); font-variant-numeric: tabular-nums;
+}
+.cc-viewer-file { display: flex; align-items: flex-start; gap: var(--cc-space-sm); min-width: 0; }
+.cc-viewer-file-mark {
+  flex: none; display: inline-grid; place-items: center; min-inline-size: 44px; block-size: 44px; padding: 0 var(--cc-space-xxs);
+  border-radius: var(--cc-radius-button); border: 1px solid var(--cc-border); background: var(--cc-elevated);
+  font-size: var(--cc-text-label); font-weight: 700; color: var(--cc-text-muted); letter-spacing: 0.04em;
+}
+.cc-viewer-file-text { display: flex; flex-direction: column; gap: var(--cc-space-xs); min-width: 0; flex: 1 1 auto; }
+.cc-viewer-file-name { margin: 0; font-weight: 600; color: var(--cc-text); overflow-wrap: anywhere; }
+.cc-viewer-file-summary { margin: 0; font-size: var(--cc-text-body-sm); color: var(--cc-text-muted); overflow-wrap: anywhere; }
+.cc-viewer-facts {
+  display: grid; grid-template-columns: minmax(0, max-content) minmax(0, 1fr); gap: var(--cc-space-xxs) var(--cc-space-md); margin: 0;
+  font-size: var(--cc-text-body-sm);
+}
+/* Each pair is a row of the parent grid, so a label and its value line up whatever their lengths. */
+.cc-viewer-fact { display: contents; }
+.cc-viewer-facts dt { color: var(--cc-text-muted); }
+.cc-viewer-facts dd { margin: 0; min-width: 0; color: var(--cc-text); overflow-wrap: anywhere; }
+@media (max-width: 480px) {
+  .cc-viewer-facts { grid-template-columns: minmax(0, 1fr); row-gap: 0; }
+  .cc-viewer-facts dd { margin-bottom: var(--cc-space-xs); }
+}
+
 /* Fields, forms, search and lists */
 /*
  * Every field is at least 44 px tall so a thumb can hit it (a button grows to it on a touch screen, in the voice layer
