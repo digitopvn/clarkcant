@@ -285,6 +285,19 @@ describe("uninstalling a package whose widget this node cannot load", () => {
     await uninstallAndRestore(instanceId);
   });
 
+  it("takes offline, and brings back, an instance whose definition was refused for a props pattern that could stall the node", async () => {
+    recordInstall("2.0.0");
+    const instanceId = instanceWithState();
+    breakDefinition(
+      JSON.stringify({
+        ...definition("2.0.0"),
+        propsSchema: { type: "object", properties: { text: { type: "string", pattern: "^(a+)+$" } } },
+      }),
+    );
+
+    await uninstallAndRestore(instanceId);
+  });
+
   it("takes offline, and brings back, the instances of a package whose files are no longer on this node", async () => {
     const installed = await send("POST", "/packages/install", {
       packageId: PACKAGE,
