@@ -2,7 +2,7 @@ import { z } from "zod";
 
 import { describeUnsafePattern, MAX_PATTERN_INPUT_LENGTH, overlongPatternInput, unsafeSchemaPattern } from "./schema-patterns.ts";
 import type { MessageBlock } from "./surfaces.ts";
-import { hiddenCharacterProblem } from "./text-rules.ts";
+import { ONE_LINE_PATTERN, ONE_LINE_REQUIRED_PATTERN, hiddenCharacterProblem } from "./text-rules.ts";
 import type { WidgetDefinition } from "./widgets.ts";
 
 /**
@@ -107,10 +107,17 @@ function structuralProblems(schema: StructuralSchema, props: Record<string, unkn
  * Why a string failed its pattern, in words, when the pattern is a one-line field's.
  *
  * A one-line field's pattern (`ONE_LINE_PATTERN`) is a long character class; "must match pattern" with that class
- * tells a model nothing it can fix, while "contains U+202E" or "is empty" does.
+ * tells a model nothing it can fix, while "contains U+202E" or "is empty" does. Any other pattern keeps its own
+ * message: its author's rule is not this one, and a value can fail it for a reason that has nothing to do with a hidden
+ * character the value also holds.
  */
+const ONE_LINE_PATTERNS: ReadonlySet<string> = new Set(
+  [ONE_LINE_PATTERN, ONE_LINE_REQUIRED_PATTERN].map((pattern) => new RegExp(pattern).toString()),
+);
+
 function patternProblemAt(props: Record<string, unknown>, issue: z.core.$ZodIssue): string | undefined {
   if (issue.code !== "invalid_format" || issue.format !== "regex") return undefined;
+  if (issue.pattern === undefined || !ONE_LINE_PATTERNS.has(issue.pattern)) return undefined;
   let value: unknown = props;
   for (const key of issue.path) {
     if (value === null || typeof value !== "object") return undefined;

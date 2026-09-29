@@ -249,6 +249,16 @@ export function useSurfaceRenderer({
       const instance = input.instanceId === undefined ? undefined : instanceById.get(input.instanceId);
       const definitionId = instance?.definitionId ?? input.definitionId;
 
+      // The node could not read this block's stored snapshot back. It says so here, in place of the block, rather than
+      // drawing the widget from a record it could not check; the rest of the conversation is unaffected.
+      if (input.snapshotId !== "" && timeline?.snapshots.some((entry) => entry.snapshotId === input.snapshotId && entry.unreadable === true)) {
+        return (
+          <div className="cc-card cc-freshness" role="note" data-widget-unreadable="true" style={{ padding: "var(--cc-space-md)" }}>
+            {t("widgets.snapshot.unreadable")}
+          </div>
+        );
+      }
+
       if (definitionId === "canvas.overview@1") {
         const captured = input.snapshotId === "" ? undefined : snapshots[input.snapshotId];
         // Staleness is the one field that changes after a snapshot is written, and it is recorded

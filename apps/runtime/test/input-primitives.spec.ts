@@ -4,7 +4,7 @@ import { join } from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { type CapabilityRef, type Instant, type MessageBlock } from "@clarkcant/contracts";
+import { type CapabilityRef, type Instant, type MessageBlock, SNAPSHOT_TEXT_LIMIT } from "@clarkcant/contracts";
 import { getActionBinding, getInstance, registerCapability } from "@clarkcant/core";
 import { FORM, LIST } from "@clarkcant/data-canvas";
 import { appendMessage } from "@clarkcant/storage";
@@ -385,5 +385,39 @@ describe("primitives in a layout", () => {
     expect(refused.problems.join("\n")).toContain("make it a field of a canvas.form@1");
     expect(refused.problems.join("\n")).toContain("a list whose items act is placed with its own show_view");
     expect(refused.problems.join("\n")).toContain("item ids repeat");
+  });
+});
+
+describe("a list whose own words are longer than a snapshot keeps", () => {
+  it("is stored with its text shortened and marked, and the conversation reads it back", async () => {
+    // Twenty titles at their longest make about 4040 characters of text; nothing the model wrote is too long.
+    const items = Array.from({ length: 20 }, (_, index) => ({ id: `i${String(index)}`, title: `${"t".repeat(197)}${String(index).padStart(3, "0")}` }));
+    const instanceId = await place(LIST.id, { items });
+    const timeline = buildTimeline(services, { conversationId, afterSequence: 0 });
+    const text = timeline.snapshots.find((snapshot) => snapshot.instanceId === instanceId)?.textAlternative ?? "";
+    expect(text.length).toBeLessThanOrEqual(SNAPSHOT_TEXT_LIMIT);
+    expect(text.startsWith(`${items[0]?.title ?? ""}; ${items[1]?.title ?? ""}`)).toBe(true);
+    expect(text.endsWith("… (shortened)")).toBe(true);
+  });
+
+  it("still refuses a caption the model wrote too long, in the same turn", async () => {
+    const view = buildViewCatalog(services.conductor, undefined, bindingDeps).find((entry) => entry.id === LIST.id);
+    const before = instanceRows();
+    await expect(
+      (async () =>
+        view?.build({
+          props: { items: [{ id: "a", title: "A" }] },
+          caption: "x".repeat(SNAPSHOT_TEXT_LIMIT + 1),
+          at: AT,
+          principal: { principalId: services.runtime.identity.ownerPrincipalId, kind: "user", nodeId: services.runtime.identity.nodeId } as never,
+          messageId: "msg_long_caption",
+          conversationId,
+        }))(),
+    ).rejects.toThrow(
+      new Error(
+        `${LIST.id} cannot be shown: its caption is ${String(SNAPSHOT_TEXT_LIMIT + 1)} characters and at most ${String(SNAPSHOT_TEXT_LIMIT)} are kept; write one short sentence`,
+      ),
+    );
+    expect(instanceRows()).toBe(before);
   });
 });

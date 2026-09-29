@@ -99,29 +99,74 @@ async function factOffset(details: Locator, label: string): Promise<{ dy: number
 }
 
 /**
- * The card says it shows what Clark stated, at the time its message was kept, as a time the reader can read: the time
- * alone today. The attribute is the stored instant, so the words are checked against it rather than against a clock.
+ * Which conversation the page is in, read from the requests the page itself makes for it. The node's timeline for that
+ * conversation is what a card's stated time is checked against.
  */
-async function expectStated(card: Locator): Promise<void> {
+function watchConversation(page: Page): () => string {
+  let conversationId = "";
+  page.on("request", (request) => {
+    const match = /\/conversations\/([^/?]+)\/(?:timeline|messages)/u.exec(request.url());
+    if (match !== null) conversationId = decodeURIComponent(match[1] ?? "");
+  });
+  return () => {
+    if (conversationId === "") throw new Error("the page has not asked the node for a conversation yet");
+    return conversationId;
+  };
+}
+
+/**
+ * The card says it shows what Clark stated, at the time its message was kept, as a time the reader can read: the time
+ * alone when that is today, the day and the time otherwise. Both are formatted from the stored instant, so a run that
+ * crosses midnight between keeping the card and reading it still passes, and nothing is checked against a clock.
+ *
+ * The instant itself is the one the node kept: it is read back from the node's timeline for the snapshot of the card's
+ * own instance, so a card that showed the time it was drawn, or any time but its capture, fails here.
+ */
+async function expectStated(page: Page, conversationId: string, card: Locator): Promise<void> {
   const stated = card.locator("time[data-status-stated-at]");
   await expect(stated).toHaveCount(1);
-  const at = await stated.getAttribute("data-status-stated-at");
-  expect(Number.isNaN(Date.parse(at ?? "")), "the stated time is an instant").toBe(false);
+  const at = (await stated.getAttribute("data-status-stated-at")) ?? "";
+  expect(Number.isNaN(Date.parse(at)), "the stated time is an instant").toBe(false);
   expect(await stated.getAttribute("datetime")).toBe(at);
+
+  const instanceId = await card.evaluate(
+    (element) => element.closest("[data-widget-instance]")?.getAttribute("data-widget-instance") ?? "",
+  );
+  expect(instanceId, "the card is drawn for an instance").not.toBe("");
+  const response = await page.request.get(`${GATEWAY}/conversations/${encodeURIComponent(conversationId)}/timeline?after=0`, {
+    headers: { authorization: `Bearer ${token()}` },
+  });
+  expect(response.ok(), "the node gives the conversation's timeline").toBe(true);
+  const timeline = (await response.json()) as { snapshots: { instanceId?: string; capturedAt: string }[] };
+  const captured = timeline.snapshots.filter((snapshot) => snapshot.instanceId === instanceId);
+  expect(captured, "the card's instance was kept once").toHaveLength(1);
+  expect(Date.parse(at), "the card states the instant its snapshot was kept").toBe(Date.parse(captured[0]?.capturedAt ?? ""));
+
   const shown = await stated.evaluate((element, instant) => {
-    const time = new Intl.DateTimeFormat(document.documentElement.lang || "vi", { timeStyle: "short" }).format(new Date(instant));
-    return { text: element.textContent ?? "", time };
-  }, at ?? "");
-  expect(shown.text).toBe(`Theo Clark lúc ${shown.time}`);
+    const locale = document.documentElement.lang || "vi";
+    const date = new Date(instant);
+    return {
+      text: element.textContent ?? "",
+      timeOnly: new Intl.DateTimeFormat(locale, { timeStyle: "short" }).format(date),
+      dayAndTime: new Intl.DateTimeFormat(locale, { dateStyle: "medium", timeStyle: "short" }).format(date),
+    };
+  }, at);
+  expect([`Theo Clark lúc ${shown.timeOnly}`, `Theo Clark lúc ${shown.dayAndTime}`]).toContain(shown.text);
 }
 
 /**
  * How each fact of a details card sits in the space it was given: whether a label or a value spills out of its own box,
  * how narrow the label was squeezed, and whether a row reaches past the card.
  */
-async function factFit(details: Locator): Promise<{ label: string; spills: boolean; labelWidth: number; pastCard: number; dy: number }[]> {
+async function factFit(
+  details: Locator,
+): Promise<{ label: string; spills: boolean; labelWidth: number; listWidth: number; boxWidth: number; pastCard: number; dy: number }[]> {
   return details.evaluate((card) => {
     const box = card.getBoundingClientRect();
+    const list = card.querySelector(".cc-details")?.getBoundingClientRect();
+    // The box the details card sizes its columns by: its container query measures this, not the window.
+    const sizedBy = card.querySelector(".cc-details-box")?.getBoundingClientRect();
+    if (list === undefined || sizedBy === undefined) throw new Error("the details card has no list of facts");
     return [...card.querySelectorAll<HTMLElement>("[data-details-item]")].map((row) => {
       const term = row.querySelector("dt");
       const value = row.querySelector("dd");
@@ -132,6 +177,8 @@ async function factFit(details: Locator): Promise<{ label: string; spills: boole
         label: row.dataset.detailsItem ?? "",
         spills: term.scrollWidth > term.clientWidth + 1 || value.scrollWidth > value.clientWidth + 1,
         labelWidth: termBox.width,
+        listWidth: list.width,
+        boxWidth: sizedBy.width,
         pastCard: Math.max(termBox.right, valueBox.right) - box.right,
         dy: valueBox.top - termBox.top,
       };
@@ -151,6 +198,7 @@ test("a status, a progress and a details card say what the model wrote, and noth
   test.setTimeout(120_000);
   await page.setViewportSize({ width: 1280, height: 900 });
   await page.emulateMedia({ colorScheme: "dark" });
+  const conversation = watchConversation(page);
   await openApp(page);
   const { status, value, steps, details } = await placeAll(page);
 
@@ -175,7 +223,7 @@ test("a status, a progress and a details card say what the model wrote, and noth
   await expect(bar).toHaveAccessibleName("Ảnh đã nhập");
   await expect(value.locator("[data-progress-percent='35']")).toHaveText("42 / 120 ảnh · 35%");
   // Progress looks like a reading, so it always says whose words it is and when they were kept, in the reader's time.
-  await expectStated(value);
+  await expectStated(page, conversation(), value);
 
   // Steps say how many are finished and which one is current, in words as well as marks.
   await expect(steps.locator("[data-progress-kind='steps']")).toBeVisible();
@@ -187,7 +235,7 @@ test("a status, a progress and a details card say what the model wrote, and noth
   await expect(current).toContainText("Chuyển đồ");
   await expect(current).toContainText("Đang làm");
   await expect(steps.locator("[data-step-status='done']")).toContainText("Xong");
-  await expectStated(steps);
+  await expectStated(page, conversation(), steps);
 
   // Facts are label and value pairs, each label beside its own value.
   await expect(details.locator("[data-details-item]")).toHaveCount(3);
@@ -199,6 +247,9 @@ test("a status, a progress and a details card say what the model wrote, and noth
   const wide = await factOffset(details, "Khách hàng");
   expect(Math.abs(wide.dy), "a label and its value share a row at desktop width").toBeLessThan(4);
   expect(wide.dx).toBeGreaterThan(0);
+  // On its own the card is wider than the width its facts stack at, which is what the grid below is measured against.
+  const alone = await factFit(details);
+  expect(alone[0]?.boxWidth ?? 0, "a details card on its own is wider than the stacking width").toBeGreaterThan(360);
 
   // What is shown is what the model wrote: no card carries a freshness badge and none has a control to press.
   for (const card of [status, value, steps, details]) {
@@ -304,6 +355,11 @@ test("the library previews each card through the production renderer", async ({ 
     await expect(preview).toBeVisible({ timeout: 20_000 });
     await expect(preview.locator(ready).first()).toBeVisible();
     await expect(preview.locator(".cc-freshness[data-freshness]")).toHaveCount(0);
+    // A preview draws a fixture nobody stated, so it never says Clark stated it: a card that would say so says "Sample".
+    await expect(preview.locator("[data-status-stated-at]")).toHaveCount(0);
+    await expect(preview).not.toContainText("Theo lời Clark");
+    await expect(preview).not.toContainText("Theo Clark");
+    if (id === "canvas.progress@1") await expect(preview.locator("[data-status-sample]").first()).toHaveText("Mẫu");
     await settled(page.locator("[data-widget-library='true']"));
     await page.screenshot({ path: testInfo.outputPath(`library-${id.replace(/[@.]/gu, "-")}.png`) });
     await page.locator("[data-widget-library-back]").click();
@@ -319,19 +375,43 @@ async function arrangeCards(page: Page): Promise<Locator> {
   return page.locator("[data-layout-root]").nth(before);
 }
 
-test("a details card as one tile of a three-column grid keeps each label beside or above its own value", async ({ page }, testInfo) => {
+/**
+ * How many columns a layout grid is drawn with, and how many its width has room for. A grid takes at most the columns
+ * the tree asked for and never one narrower than 220px, so a three-column grid in the conversation column is as many
+ * columns as fit there: the count is measured, not assumed.
+ */
+async function gridColumns(surface: Locator): Promise<{ drawn: number; fit: number; tiles: number }> {
+  return surface.locator(".cc-layout-grid-body").first().evaluate((grid) => {
+    const style = getComputedStyle(grid);
+    const gap = Number.parseFloat(style.columnGap) || 0;
+    const width = grid.getBoundingClientRect().width;
+    const lefts = new Set([...grid.children].map((child) => Math.round(child.getBoundingClientRect().left)));
+    return { drawn: lefts.size, fit: Math.max(1, Math.floor((width + gap) / (220 + gap))), tiles: grid.children.length };
+  });
+}
+
+test("a details card as a tile of a grid asked for three columns keeps each label beside or above its own value", async ({ page }, testInfo) => {
   test.setTimeout(120_000);
   await page.setViewportSize({ width: 1280, height: 900 });
   await page.emulateMedia({ colorScheme: "dark" });
+  const conversation = watchConversation(page);
   await openApp(page);
   const surface = await arrangeCards(page);
   const details = surface.locator("[data-widget-role='details']");
   await expect(details.locator("[data-details-item]")).toHaveCount(3);
   await expect(details.locator("[data-details-item='Địa chỉ giao hàng đầy đủ'] dd")).toHaveText("12 Nguyễn Huệ, Quận 1, TP. Hồ Chí Minh");
   // In a layout, the cards read as they do on their own: the status and the progress say they are what Clark stated.
-  await expectStated(surface.locator("[data-widget-role='progress']"));
-  await expectStated(surface.locator("[data-widget-role='status']"));
+  await expectStated(page, conversation(), surface.locator("[data-widget-role='progress']"));
+  await expectStated(page, conversation(), surface.locator("[data-widget-role='status']"));
   await settled(surface);
+
+  // The tree asks for three columns; the conversation column is drawn with as many as fit at 220px or more, never more
+  // than three. At 1280 that is two, and the test says so rather than calling it a three-column grid.
+  const columns = await gridColumns(surface);
+  expect(columns.tiles).toBe(3);
+  expect(columns.drawn, "the grid is drawn with as many columns as fit, up to the three asked for").toBe(Math.min(3, columns.fit));
+  expect(columns.drawn, "a grid asked for three columns is two in the conversation column at 1280").toBe(2);
+  testInfo.annotations.push({ type: "grid columns at 1280", description: `${columns.drawn} of the 3 asked for` });
 
   for (const scheme of ["dark", "light"] as const) {
     await page.emulateMedia({ colorScheme: scheme });
@@ -342,7 +422,15 @@ test("a details card as one tile of a three-column grid keeps each label beside 
       expect(fact.pastCard, `"${fact.label}" stays inside the card`).toBeLessThanOrEqual(0.5);
       // A label is never squeezed to a sliver by a long value: it keeps room for a word, or goes above its value.
       expect(fact.labelWidth, `"${fact.label}" has room to be read`).toBeGreaterThan(48);
+      // Beside its value a label takes at most 40% of the list; otherwise the value is under it.
+      expect(fact.labelWidth <= fact.listWidth * 0.4 + 1 || fact.dy > 0, `"${fact.label}" takes at most 40% or sits above`).toBe(true);
+      // The card stacks by the width of its own box, not the window's: the window is 1280 wide, where the same card on
+      // its own keeps its values beside their labels, and a tile narrower than 360px puts each value under its label.
+      if (fact.boxWidth <= 360) expect(fact.dy, `"${fact.label}" goes under its label in a ${fact.boxWidth}px tile`).toBeGreaterThan(0);
+      else expect(Math.abs(fact.dy), `"${fact.label}" stays beside its label in a ${fact.boxWidth}px tile`).toBeLessThan(4);
     }
+    // At 1280 the tile is narrower than the stacking width, so the container query is what stacks it.
+    if (columns.drawn > 1) expect(facts[0]?.boxWidth ?? 0, "a tile of a grid is narrower than the stacking width").toBeLessThanOrEqual(360);
     // Every row is laid out the same way, so labels and values line up down the card.
     const beside = facts.map((fact) => Math.abs(fact.dy) < 4);
     expect(new Set(beside).size, "every fact is laid out the same way").toBe(1);

@@ -12,6 +12,7 @@ import {
   SECTION_TEXT_LIMIT,
   SEMANTIC_LIMITS,
   SNAPSHOT_TEXT_LIMIT,
+  AS_OF_PATTERN,
   canonicalSemanticDoc,
 } from "@clarkcant/contracts";
 import { captureSnapshot, getInstance } from "@clarkcant/core";
@@ -129,6 +130,7 @@ describe("the model's vocabulary", () => {
     expect(byId.get(STATUS.id)?.notes).toContain("neutral, info, success, warning, danger");
     expect(byId.get(PROGRESS.id)?.notes).toContain("at most one current step");
     expect(byId.get(PROGRESS.id)?.notes).toContain("Not for this node's own tasks and runs");
+    expect(byId.get(STATUS.id)?.notes).toContain("Not for this node's own tasks, runs or connections");
   });
 
   it("lets a layout place them", () => {
@@ -166,8 +168,10 @@ describe("placing a card", () => {
   });
 
   it.each([
-    ["a value above its maximum", PROGRESS.id, { value: 130, max: 120 }, "the value 130 is above the maximum 120"],
-    ["progress with nothing behind it", PROGRESS.id, { label: "Working" }, "there is no progress without either"],
+    ["a value above its maximum", PROGRESS.id, { value: 130, max: 120 }, "canvas.progress@1 cannot be shown: the value 130 is above the maximum 120"],
+    ["progress with nothing behind it", PROGRESS.id, { label: "Working" },
+      "canvas.progress@1 cannot be shown: a progress card needs a value and a maximum, or steps; there is no progress without either",
+    ],
     [
       "two current steps",
       PROGRESS.id,
@@ -177,28 +181,38 @@ describe("placing a card", () => {
           { label: "b", status: "current" },
         ],
       },
-      "at most one step is",
+      "canvas.progress@1 cannot be shown: 2 steps are current; at most one step is",
     ],
-    ["a repeated label", DETAILS.id, { items: [{ label: "A", value: "1" }, { label: "A", value: "2" }] }, "labels repeat"],
-    ["an as-of with no offset", STATUS.id, { label: "x", tone: "info", asOf: "2026-09-30T09:00:00" }, "asOf"],
-    ["an unknown tone", STATUS.id, { label: "x", tone: "red" }, "tone"],
-    ["a key the card does not have", STATUS.id, { label: "x", tone: "info", live: true }, 'unknown property "live"'],
+    ["a repeated label", DETAILS.id, { items: [{ label: "A", value: "1" }, { label: "A", value: "2" }] },
+      "canvas.details@1 cannot be shown: labels repeat: A; each fact needs its own label",
+    ],
+    ["an as-of with no offset", STATUS.id, { label: "x", tone: "info", asOf: "2026-09-30T09:00:00" },
+      `canvas.status@1 has props that do not fit its schema: property "asOf": Invalid string: must match pattern /${AS_OF_PATTERN}/`,
+    ],
+    ["an unknown tone", STATUS.id, { label: "x", tone: "red" },
+      'canvas.status@1 has props that do not fit its schema: property "tone": Invalid option: expected one of "neutral"|"info"|"success"|"warning"|"danger"',
+    ],
+    ["a key the card does not have", STATUS.id, { label: "x", tone: "info", live: true },
+      'canvas.status@1 has props that do not fit its schema: unknown property "live"',
+    ],
     [
       "a line break in a label",
       STATUS.id,
       { label: "Up\nDown", tone: "info" },
-      'property "label": contains U+000A, a line break, and this field is one line; remove it',
+      'canvas.status@1 has props that do not fit its schema: property "label": contains U+000A, a line break, and this field is one line; remove it',
     ],
     [
       "a bidi control in a fact",
       DETAILS.id,
       { items: [{ label: "Owner", value: "L\u202ean" }] },
-      'property "items.0.value": contains U+202E, a control that changes text direction',
+      'canvas.details@1 has props that do not fit its schema: property "items.0.value": contains U+202E, a control that changes text direction, so the text would read differently from how it is drawn; remove it',
     ],
-    ["a label of spaces", DETAILS.id, { items: [{ label: "  ", value: "1" }] }, 'property "items.0.label": is empty'],
-  ])("refuses %s and leaves nothing behind", async (_name, definitionId, props, reason) => {
+    ["a label of spaces", DETAILS.id, { items: [{ label: "  ", value: "1" }] },
+      'canvas.details@1 has props that do not fit its schema: property "items.0.label": is empty',
+    ],
+  ])("refuses %s with the exact reason and leaves nothing behind", async (_name, definitionId, props, reason) => {
     const before = instanceRows();
-    await expect(place(definitionId, props)).rejects.toThrow(reason);
+    await expect(place(definitionId, props)).rejects.toThrow(new Error(reason));
     expect(instanceRows()).toBe(before);
   });
 });
@@ -339,6 +353,58 @@ describe("a conversation with the largest cards in it", () => {
       `its caption is ${String(SNAPSHOT_TEXT_LIMIT + 1)} characters and at most ${String(SNAPSHOT_TEXT_LIMIT)} are kept`,
     );
     expect({ instances: instanceRows(), snapshots: snapshotRows() }).toEqual(before);
+  });
+
+  it("still opens when a stored snapshot cannot be read back, with that block marked unreadable and the rest intact", async () => {
+    const before = await place(STATUS.id, { label: "Up", tone: "success" });
+    const broken = await place(STATUS.id, { label: "Down", tone: "danger" });
+    const after = await place(DETAILS.id, { items: [{ label: "Region", value: "ap-southeast-1" }] });
+    for (const block of [before, broken, after]) keep(block, block.snapshot.messageId);
+    // A row written before snapshots were checked on the way in: its text is longer than a reader accepts.
+    const document = JSON.parse(
+      (
+        services.runtime.db.prepare("SELECT document FROM widget_snapshots WHERE snapshot_id = ?").get(broken.snapshot.snapshotId) as {
+          document: string;
+        }
+      ).document,
+    ) as Record<string, unknown>;
+    services.runtime.db
+      .prepare("UPDATE widget_snapshots SET document = ? WHERE snapshot_id = ?")
+      .run(JSON.stringify({ ...document, textAlternative: "x".repeat(SNAPSHOT_TEXT_LIMIT + 1) }), broken.snapshot.snapshotId);
+
+    const logged: string[] = [];
+    const write = process.stderr.write.bind(process.stderr);
+    process.stderr.write = ((chunk: string | Uint8Array) => {
+      logged.push(String(chunk));
+      return true;
+    }) as typeof process.stderr.write;
+    let timeline: ReturnType<typeof buildTimeline>;
+    try {
+      timeline = buildTimeline(services, { conversationId: CONVERSATION, afterSequence: 0 });
+    } finally {
+      process.stderr.write = write;
+    }
+
+    expect(timeline.messages).toHaveLength(3);
+    const byId = new Map(timeline.snapshots.map((snapshot) => [snapshot.snapshotId, snapshot]));
+    expect(byId.get(before.snapshot.snapshotId)).toMatchObject({ textAlternative: "Up (success)" });
+    expect(byId.get(after.snapshot.snapshotId)).toMatchObject({ textAlternative: "Region: ap-southeast-1" });
+    expect(byId.get(broken.snapshot.snapshotId)).toEqual({
+      snapshotId: broken.snapshot.snapshotId,
+      messageId: broken.snapshot.messageId,
+      instanceId: broken.snapshot.instanceId,
+      capturedRevision: broken.snapshot.capturedRevision,
+      capturedAt: broken.snapshot.capturedAt,
+      stale: false,
+      presentationRef: "",
+      textAlternative: "",
+      unreadable: true,
+    });
+    expect(timeline.instances.map((instance) => instance.instanceId)).toEqual(
+      expect.arrayContaining([before.snapshot.instanceId, broken.snapshot.instanceId, after.snapshot.instanceId]),
+    );
+    expect(logged).toHaveLength(1);
+    expect(logged[0]).toContain(`timeline: snapshot ${broken.snapshot.snapshotId} of message ${broken.snapshot.messageId} in ${CONVERSATION} could not be read`);
   });
 
   it("never stores a snapshot the conversation could not read back", async () => {

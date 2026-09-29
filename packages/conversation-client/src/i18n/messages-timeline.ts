@@ -303,6 +303,7 @@ export const MESSAGES_TIMELINE_VI = {
   "widgets.status.asOf": "Tính đến {time}",
   "widgets.status.statedAt": "Theo Clark lúc {time}",
   "widgets.status.stated": "Theo lời Clark",
+  "widgets.status.sample": "Mẫu",
   "widgets.status.tone.neutral": "Ghi chú",
   "widgets.status.tone.info": "Thông tin",
   "widgets.status.tone.success": "Ổn",
@@ -354,6 +355,8 @@ export const MESSAGES_TIMELINE_VI = {
 
   // use-surface-renderer.tsx
   "widgets.surface.openCurrent": "Mở bản hiện tại",
+  "widgets.snapshot.unreadable":
+    "Không đọc lại được phần này của cuộc trò chuyện nên nó không được hiển thị. Phần còn lại vẫn được giữ nguyên. Nếu cần, hãy nhờ Clark hiển thị lại.",
   "widgets.surface.pinAgain": "Ghim lại",
 
   // DetachedWidgetSurface.tsx
@@ -843,6 +846,7 @@ export const MESSAGES_TIMELINE_EN = {
   "widgets.status.asOf": "As of {time}",
   "widgets.status.statedAt": "As Clark stated at {time}",
   "widgets.status.stated": "As Clark stated",
+  "widgets.status.sample": "Sample",
   "widgets.status.tone.neutral": "Note",
   "widgets.status.tone.info": "Info",
   "widgets.status.tone.success": "OK",
@@ -890,6 +894,8 @@ export const MESSAGES_TIMELINE_EN = {
   "widgets.surface.availableAction": "Available action: {label}",
 
   "widgets.surface.openCurrent": "Open current view",
+  "widgets.snapshot.unreadable":
+    "This part of the conversation could not be read back, so it is not shown. The rest is kept as it was. Ask Clark to show it again if you need it.",
   "widgets.surface.pinAgain": "Pin again",
 
   "widgets.detached.cannotOpen": "Could not open this widget",

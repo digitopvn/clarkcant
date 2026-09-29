@@ -3,32 +3,55 @@
  *
  * A card shows what the model wrote, and the same words become the text a screen reader, a transcript and a later model
  * turn read. Some characters make those differ from what the page draws: a bidi control reorders text on screen while
- * the stored bytes read in another order, an invisible character hides inside a word, and a line break or a line
- * separator in a one-line field forges a new line in the text alternative. Every card that shows model-written text
- * refuses them with the same rules, so a reason names the character and a model can remove it and try again.
+ * the stored bytes read in another order, an invisible character hides inside a word, a tag character carries text no
+ * reader sees, and a line break or a line separator in a one-line field forges a new line in the text alternative. Every
+ * card that shows model-written text refuses them with the same rules, so a reason names the character and a model can
+ * remove it and try again.
  *
  * ZWJ (U+200D) and ZWNJ (U+200C) are left alone: they join and separate letters in scripts people write every day, and
- * emoji sequences depend on them.
+ * emoji sequences depend on them. So are the variation selectors, which choose how an emoji or an ideograph is drawn.
  */
-
-/** The characters refused in one-line text, as the body of a regular-expression character class. */
-export const HIDDEN_CHARACTER_CLASS =
-  "\\u0000-\\u001f\\u007f-\\u009f\\u061c\\u200b\\u200e\\u200f\\u2028\\u2029\\u202a-\\u202e\\u2066-\\u2069\\ufeff";
 
 /**
- * One line with no hidden character: the JSON Schema `pattern` a definition gives a one-line string.
+ * The characters refused in one-line text, as the body of a regular-expression character class.
  *
- * Written with `\u` escapes that mean the same with or without the `u` flag, so the schema reads the same wherever it is
- * compiled.
+ * Every one is in the Basic Multilingual Plane, so the class means the same with or without the `u` flag. The tag
+ * characters (U+E0000–U+E007F) are refused too, but they are two UTF-16 units each, so the patterns below name them as
+ * a pair and `findHiddenCharacter` names them as code points.
  */
-export const ONE_LINE_PATTERN = `^[^${HIDDEN_CHARACTER_CLASS}]*$`;
+export const HIDDEN_CHARACTER_CLASS =
+  "\\u0000-\\u001f\\u007f-\\u009f\\u00ad\\u061c\\u115f\\u1160\\u180e\\u200b\\u200e\\u200f\\u2028\\u2029\\u202a-\\u202e" +
+  "\\u2060-\\u2064\\u2066-\\u2069\\u3164\\ufeff\\uffa0\\ufff9-\\ufffb";
 
-/** The same, for a field that may not be empty: at least one character that is not a space once the line is trimmed. */
-export const ONE_LINE_REQUIRED_PATTERN = `^[^${HIDDEN_CHARACTER_CLASS}]*[^\\s${HIDDEN_CHARACTER_CLASS}][^${HIDDEN_CHARACTER_CLASS}]*$`;
+/** The white space `\s` matches that is not refused: what a required line may start with before its first letter. */
+const ALLOWED_SPACE = " \\u00a0\\u1680\\u2000-\\u200a\\u202f\\u205f\\u3000";
 
-const HIDDEN = new RegExp(`[${HIDDEN_CHARACTER_CLASS}]`, "u");
+/**
+ * One allowed character, read as UTF-16 units the way this node compiles a schema's `pattern` (without the `u` flag).
+ *
+ * A tag character is the pair U+DB40 U+DC00–U+DC7F, so U+DB40 is allowed only before U+DC80–U+DFFF (a variation selector
+ * and the rest of that block). The two options start with different units, so each character is matched one way only.
+ * Compiled with the `u` flag a tag character is one code point the class does not name and passes the pattern; the
+ * node never compiles it that way, and every card also runs `findHiddenCharacter`, which reads code points.
+ */
+const ALLOWED = `(?:[^${HIDDEN_CHARACTER_CLASS}\\udb40]|\\udb40[\\udc80-\\udfff])`;
+const ALLOWED_NOT_SPACE = `(?:[^\\s${HIDDEN_CHARACTER_CLASS}\\udb40]|\\udb40[\\udc80-\\udfff])`;
 
-export type HiddenCharacterKind = "control" | "line-break" | "bidi" | "invisible";
+/** One line with no hidden character: the JSON Schema `pattern` a definition gives a one-line string. */
+export const ONE_LINE_PATTERN = `^${ALLOWED}*$`;
+
+/**
+ * The same, for a field that may not be empty: at least one character that is not a space once the line is trimmed.
+ *
+ * The leading spaces come from a class that shares no character with the first letter's, so there is one way to match
+ * any line and a refused line is decided in time linear in its length. `[^X]*[^\sX][^X]*`, the obvious spelling, tries
+ * every split of a long refused line and takes time quadratic in it.
+ */
+export const ONE_LINE_REQUIRED_PATTERN = `^[${ALLOWED_SPACE}]*${ALLOWED_NOT_SPACE}${ALLOWED}*$`;
+
+const HIDDEN = new RegExp(`[${HIDDEN_CHARACTER_CLASS}\\u{e0000}-\\u{e007f}]`, "u");
+
+export type HiddenCharacterKind = "control" | "line-break" | "bidi" | "invisible" | "tag" | "filler";
 
 export interface HiddenCharacter {
   /** `U+202E` */
@@ -48,7 +71,18 @@ function kindOf(code: number): HiddenCharacterKind {
   if (code === 0x061c || code === 0x200e || code === 0x200f || (code >= 0x202a && code <= 0x202e) || (code >= 0x2066 && code <= 0x2069)) {
     return "bidi";
   }
-  if (code === 0x200b || code === 0xfeff) return "invisible";
+  if (code >= 0xe0000 && code <= 0xe007f) return "tag";
+  if (code === 0x115f || code === 0x1160 || code === 0x3164 || code === 0xffa0) return "filler";
+  if (
+    code === 0x00ad ||
+    code === 0x180e ||
+    code === 0x200b ||
+    code === 0xfeff ||
+    (code >= 0x2060 && code <= 0x2064) ||
+    (code >= 0xfff9 && code <= 0xfffb)
+  ) {
+    return "invisible";
+  }
   return "control";
 }
 
@@ -64,12 +98,12 @@ export function findHiddenCharacter(value: string, options: { lineBreaks?: boole
     const match = HIDDEN.exec(value.slice(from));
     if (match === null) return undefined;
     const index = from + match.index;
-    const code = value.charCodeAt(index);
+    const code = value.codePointAt(index) ?? 0;
     if (options.lineBreaks === true && (code === 0x0a || code === 0x09)) {
       from = index + 1;
       continue;
     }
-    return { codePoint: codePointLabel(value[index] ?? ""), kind: kindOf(code), index };
+    return { codePoint: codePointLabel(String.fromCodePoint(code)), kind: kindOf(code), index };
   }
   return undefined;
 }
@@ -78,6 +112,8 @@ const WHAT: Record<HiddenCharacterKind, string> = {
   "line-break": "a line break, and this field is one line",
   bidi: "a control that changes text direction, so the text would read differently from how it is drawn",
   invisible: "an invisible character",
+  tag: "a tag character, which is invisible and can carry text no reader sees",
+  filler: "a Hangul filler, which draws as a blank",
   control: "a control character",
 };
 

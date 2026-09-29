@@ -17,8 +17,6 @@
 
 import {
   type WidgetDefinition,
-  type WidgetInstance,
-  type WidgetSnapshot,
   CHOICE_KINDS,
   INPUT_KINDS,
   MAX_COMPOSITION_SECTIONS,
@@ -33,18 +31,14 @@ import {
   SNAPSHOT_TEXT_LIMIT,
   STATUS_TONES,
   STEP_STATUSES,
+  clipWithMarker,
   formInputSchema,
   parseFields,
   parseListItems,
   readStatusCard,
   statusCardText,
 } from "@clarkcant/contracts";
-import {
-  type WidgetDeps,
-  captureSnapshot,
-  createInstance,
-  saveActionBinding,
-} from "@clarkcant/core";
+import { type WidgetDeps, placeInstance } from "@clarkcant/core";
 import {
   ACTION,
   ACTION_ICONS,
@@ -134,16 +128,12 @@ export function buildViewCatalog(
       // The caption is what a reader sees if the renderer is gone, so it wins over the
       // definition's generic fallback whenever the model supplied one.
       const textAlternative = keptText(definition.id, caption, definition.textFallback);
-      const instance: WidgetInstance = createInstance(deps, {
+      const { snapshot } = placeInstance(deps, {
         definition,
         packageDigest: definitionDigest(definition),
         ownerPrincipalId: principal.principalId,
         props,
-      });
-
-      const snapshot: WidgetSnapshot = captureSnapshot(deps, {
         messageId,
-        instance,
         textAlternative,
         presentationRef: `catalog:${definition.id}`,
       });
@@ -255,18 +245,14 @@ function actionView(deps: WidgetDeps, bindingDeps: () => ActionBindingDeps): Vie
       if (!compiled.ok) throw new Error(compiled.message);
       const textAlternative = keptText(ACTION.id, caption, `${String(shown.label)}. ${ACTION.textFallback}`);
 
-      const instance: WidgetInstance = createInstance(deps, {
+      const { snapshot } = placeInstance(deps, {
         definition: ACTION,
         packageDigest: definitionRef.packageDigest,
         ownerPrincipalId: principal.principalId,
         props: shown,
-      });
-      saveActionBinding(deps, compiled.bindTo(instance.instanceId));
-      const snapshot: WidgetSnapshot = captureSnapshot(deps, {
+        bind: compiled.bindTo,
         messageId,
-        instance,
         textAlternative,
-
         presentationRef: `catalog:${ACTION.id}`,
       });
       return { type: "surface", definitionRef: { id: ACTION.id, version: ACTION.version }, snapshot };
@@ -285,16 +271,18 @@ type ViewRequest = Parameters<ViewDescriptor["build"]>[0];
  * The text a widget's snapshot keeps: the model's caption, or the widget's own words when it wrote none.
  *
  * Checked before anything is stored. A snapshot with more text than a reader of the conversation accepts would make the
- * whole conversation fail to open, so a caption that long is refused in the same turn, with nothing left behind.
+ * whole conversation fail to open. A caption that long is the model's to shorten, so it is refused in the same turn with
+ * nothing left behind; the widget's own words are built by this node from props that already passed their schema, so
+ * they are shortened, and say so, rather than refusing a widget the model placed correctly.
  */
 function keptText(definitionId: string, caption: string, fallback: string): string {
-  const text = caption.trim() === "" ? fallback : caption;
-  if (text.length > SNAPSHOT_TEXT_LIMIT) {
+  if (caption.trim() === "") return clipWithMarker(fallback, SNAPSHOT_TEXT_LIMIT);
+  if (caption.length > SNAPSHOT_TEXT_LIMIT) {
     throw new Error(
-      `${definitionId} cannot be shown: its caption is ${String(text.length)} characters and at most ${String(SNAPSHOT_TEXT_LIMIT)} are kept; write one short sentence`,
+      `${definitionId} cannot be shown: its caption is ${String(caption.length)} characters and at most ${String(SNAPSHOT_TEXT_LIMIT)} are kept; write one short sentence`,
     );
   }
-  return text;
+  return caption;
 }
 
 /**
@@ -327,18 +315,14 @@ function placeSending(
   }
   const kept = keptText(definition.id, request.caption, textAlternative);
 
-  const instance: WidgetInstance = createInstance(deps, {
+  const { snapshot } = placeInstance(deps, {
     definition,
     packageDigest: definitionRef.packageDigest,
     ownerPrincipalId: request.principal.principalId,
     props: request.props,
-  });
-  if (compiled !== undefined) saveActionBinding(deps, compiled.bindTo(instance.instanceId));
-  const snapshot: WidgetSnapshot = captureSnapshot(deps, {
+    ...(compiled === undefined ? {} : { bind: compiled.bindTo }),
     messageId: request.messageId,
-    instance,
     textAlternative: kept,
-
     presentationRef: `catalog:${definition.id}`,
   });
   return { type: "surface", definitionRef: { id: definition.id, version: definition.version }, snapshot };
@@ -433,7 +417,8 @@ function listView(deps: WidgetDeps, bindingDeps: (() => ActionBindingDeps) | und
 const STATUS_CARD_NOTES: Readonly<Record<string, string>> = {
   [STATUS.id]:
     `props.label is the status in a few words and props.tone one of ${STATUS_TONES.join(", ")}; optional props.title, ` +
-    `props.detail and props.asOf (a day like 2026-09-30, or an instant with its offset like 2026-09-30T09:00:00+07:00).`,
+    `props.detail and props.asOf (a day like 2026-09-30, or an instant with its offset like 2026-09-30T09:00:00+07:00). ` +
+    `Not for this node's own tasks, runs or connections: those already have live cards, and this card only repeats what you wrote.`,
   [PROGRESS.id]:
     `Either props.value and props.max (value 0 to max; optional props.unit), or props.steps: 1-${String(MAX_PROGRESS_STEPS)} of ` +
     `{"label":"...","status":"${STEP_STATUSES.join('" | "')}","detail"?} with at most one current step. ` +

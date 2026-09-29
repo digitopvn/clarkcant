@@ -31,25 +31,75 @@ const REFUSED = [
   ["an Arabic letter mark", "؜", "bidi"],
   ["a zero-width space", "​", "invisible"],
   ["a byte order mark", "﻿", "invisible"],
+  ["a soft hyphen", String.fromCodePoint(0xad), "invisible"],
+  ["the Mongolian vowel separator", String.fromCodePoint(0x180e), "invisible"],
+  ["a word joiner", String.fromCodePoint(0x2060), "invisible"],
+  ["an invisible plus", String.fromCodePoint(0x2064), "invisible"],
+  ["an interlinear annotation anchor", String.fromCodePoint(0xfff9), "invisible"],
+  ["an interlinear annotation terminator", String.fromCodePoint(0xfffb), "invisible"],
+  ["the Hangul choseong filler", String.fromCodePoint(0x115f), "filler"],
+  ["the Hangul jungseong filler", String.fromCodePoint(0x1160), "filler"],
+  ["the Hangul filler", String.fromCodePoint(0x3164), "filler"],
+  ["the halfwidth Hangul filler", String.fromCodePoint(0xffa0), "filler"],
 ] as const;
+
+/** Tag characters are outside the Basic Multilingual Plane: two UTF-16 units each. */
+const TAGS = [
+  ["the language tag", String.fromCodePoint(0xe0001)],
+  ["tag latin small letter a", String.fromCodePoint(0xe0061)],
+  ["the cancel tag", String.fromCodePoint(0xe007f)],
+] as const;
+
+const MESSAGE = {
+  "line-break": "a line break, and this field is one line",
+  bidi: "a control that changes text direction, so the text would read differently from how it is drawn",
+  invisible: "an invisible character",
+  tag: "a tag character, which is invisible and can carry text no reader sees",
+  filler: "a Hangul filler, which draws as a blank",
+  control: "a control character",
+} as const;
 
 describe("hidden characters", () => {
   it.each(REFUSED)("refuses %s and names it", (_name, character, kind) => {
     const value = `ab${character}cd`;
     expect(findHiddenCharacter(value)).toEqual({ codePoint: codePointLabel(character), kind, index: 2 });
-    expect(hiddenCharacterProblem(value)).toBe(
-      `contains ${codePointLabel(character)}, ${
-        kind === "line-break"
-          ? "a line break, and this field is one line"
-          : kind === "bidi"
-            ? "a control that changes text direction, so the text would read differently from how it is drawn"
-            : kind === "invisible"
-              ? "an invisible character"
-              : "a control character"
-      }; remove it`,
-    );
+    expect(hiddenCharacterProblem(value)).toBe(`contains ${codePointLabel(character)}, ${MESSAGE[kind]}; remove it`);
     expect(new RegExp(ONE_LINE_PATTERN, "u").test(value)).toBe(false);
     expect(new RegExp(ONE_LINE_PATTERN).test(value)).toBe(false);
+    expect(new RegExp(ONE_LINE_REQUIRED_PATTERN).test(value)).toBe(false);
+  });
+
+  it.each(TAGS)("refuses %s, as the node compiles a schema pattern and as a card reads the words", (_name, character) => {
+    const value = `ab${character}cd`;
+    const label = codePointLabel(character);
+    expect(label).toMatch(/^U\+E00[0-7][0-9A-F]$/u);
+    expect(findHiddenCharacter(value)).toEqual({ codePoint: label, kind: "tag", index: 2 });
+    expect(hiddenCharacterProblem(value)).toBe(`contains ${label}, ${MESSAGE.tag}; remove it`);
+    // The node compiles a schema's pattern without the `u` flag (zod's fromJSONSchema), reading the pair.
+    expect(new RegExp(ONE_LINE_PATTERN).test(value)).toBe(false);
+    expect(new RegExp(ONE_LINE_REQUIRED_PATTERN).test(value)).toBe(false);
+    expect(new RegExp(ONE_LINE_REQUIRED_PATTERN).test(character)).toBe(false);
+  });
+
+  it("allows the variation selectors that share the tag characters' first unit", () => {
+    const supplement = `a${String.fromCodePoint(0xe0100)}b${String.fromCodePoint(0xe01ef)}`;
+    expect(findHiddenCharacter(supplement)).toBeUndefined();
+    expect(new RegExp(ONE_LINE_PATTERN).test(supplement)).toBe(true);
+    expect(new RegExp(ONE_LINE_REQUIRED_PATTERN).test(supplement)).toBe(true);
+    expect(new RegExp(ONE_LINE_PATTERN, "u").test(supplement)).toBe(true);
+  });
+
+  it("decides a long refused line in time linear in its length", () => {
+    // `^[^X]*[^\sX][^X]*$` tries every split of this line: about 60 ms for 200 runs here, against 0.1 ms for these.
+    const value = `${"a".repeat(1000)}${String.fromCodePoint(0)}`;
+    for (const pattern of [ONE_LINE_PATTERN, ONE_LINE_REQUIRED_PATTERN]) {
+      const compiled = new RegExp(pattern);
+      let matched = 0;
+      const started = performance.now();
+      for (let run = 0; run < 1000; run += 1) if (compiled.test(value)) matched += 1;
+      expect(performance.now() - started, pattern).toBeLessThan(50);
+      expect(matched).toBe(0);
+    }
   });
 
   it("leaves the joiners people write with alone, and ordinary text of any script", () => {
@@ -72,6 +122,10 @@ describe("hidden characters", () => {
     expect(required.test("")).toBe(false);
     expect(required.test("   ")).toBe(false);
     expect(required.test("a‮b")).toBe(false);
+    for (const space of [" ", String.fromCodePoint(0xa0), String.fromCodePoint(0x3000), String.fromCodePoint(0x2003)]) {
+      expect(new RegExp(ONE_LINE_REQUIRED_PATTERN).test(`${space}${space}x`), space).toBe(true);
+      expect(new RegExp(ONE_LINE_REQUIRED_PATTERN).test(`${space}${space}`), space).toBe(false);
+    }
   });
 });
 

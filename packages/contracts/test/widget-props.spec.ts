@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { MAX_PATTERN_INPUT_LENGTH } from "../src/schema-patterns.ts";
+import { ONE_LINE_PATTERN, ONE_LINE_REQUIRED_PATTERN } from "../src/text-rules.ts";
 import { validateProps } from "../src/widget-props.ts";
 import type { WidgetDefinition } from "../src/widgets.ts";
 
@@ -152,6 +153,27 @@ describe("a props schema whose pattern could stall the node", () => {
     const safe = definition({ type: "object", properties: { id: { type: "string", pattern: "^[a-z]+$" } } });
     expect(validateProps(safe, { id: "abc" })).toMatchObject({ ok: true });
     expect(validateProps(safe, { id: "ABC" })).toMatchObject({ ok: false });
+  });
+
+  it("names the hidden character only where the pattern is a one-line field's, and keeps any other pattern's own message", () => {
+    const schema = definition({
+      type: "object",
+      properties: {
+        id: { type: "string", pattern: "^[a-z]+$" },
+        line: { type: "string", pattern: ONE_LINE_PATTERN },
+        name: { type: "string", pattern: ONE_LINE_REQUIRED_PATTERN },
+      },
+    });
+    const zeroWidth = String.fromCodePoint(0x200b);
+    expect(validateProps(schema, { id: `ab${zeroWidth}` })).toMatchObject({
+      ok: false,
+      problems: ['property "id": Invalid string: must match pattern /^[a-z]+$/'],
+    });
+    expect(validateProps(schema, { line: `ab${zeroWidth}` })).toMatchObject({
+      ok: false,
+      problems: ['property "line": contains U+200B, an invisible character; remove it'],
+    });
+    expect(validateProps(schema, { name: "   " })).toMatchObject({ ok: false, problems: ['property "name": is empty'] });
   });
 
   it("refuses a value longer than the bound only where a pattern would be run on it", () => {

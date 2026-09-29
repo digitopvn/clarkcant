@@ -427,6 +427,33 @@ export function captureSnapshot(
   return snapshot;
 }
 
+/**
+ * Place one widget in a message: the instance, the binding its action runs through if it has one, and the snapshot the
+ * message keeps.
+ *
+ * In one transaction. A snapshot the conversation could not read back is refused by `captureSnapshot`, and without the
+ * transaction that refusal would leave an instance and a live action binding that no message shows and nothing
+ * removes.
+ */
+export function placeInstance(
+  deps: WidgetDeps,
+  input: Parameters<typeof createInstance>[1] & {
+    messageId: string;
+    textAlternative: string;
+    presentationRef: string;
+    /** The binding for the new instance, made once its id exists. */
+    bind?: (instanceId: string) => ActionBinding;
+  },
+): { instance: WidgetInstance; snapshot: WidgetSnapshot } {
+  const { messageId, textAlternative, presentationRef, bind, ...creating } = input;
+  return transaction(deps.db, () => {
+    const instance = createInstance(deps, creating);
+    if (bind !== undefined) saveActionBindingWithinTransaction(deps, bind(instance.instanceId));
+    const snapshot = captureSnapshot(deps, { messageId, instance, textAlternative, presentationRef });
+    return { instance, snapshot };
+  });
+}
+
 /* ------------------------------------------------------------------ *
  * Composed surfaces
  * ------------------------------------------------------------------ */
@@ -762,40 +789,43 @@ export function markSnapshotsStale(deps: WidgetDeps, instanceId: string): number
  * ------------------------------------------------------------------ */
 
 export function saveActionBinding(deps: WidgetDeps, binding: ActionBinding): void {
-  transaction(deps.db, () => {
-    deps.db
-      .prepare(
-        `INSERT INTO action_bindings
-           (action_binding_id, instance_id, definition_id, package_generation, binding_digest, effect_category, requires_approval, document, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-         ON CONFLICT(action_binding_id) DO UPDATE SET
-           package_generation = excluded.package_generation,
-           binding_digest = excluded.binding_digest,
-           document = excluded.document`,
-      )
-      .run(
-        binding.actionBindingId,
-        binding.instanceId,
-        binding.definitionId,
-        binding.packageGeneration,
-        binding.bindingDigest,
-        binding.effectCategory,
-        binding.requiresApproval ? 1 : 0,
-        toJson(binding),
-        binding.createdAt,
-      );
+  transaction(deps.db, () => saveActionBindingWithinTransaction(deps, binding));
+}
 
-    const instance = getInstance(deps, binding.instanceId);
-    if (instance && !instance.actionBindingIds.includes(binding.actionBindingId)) {
-      const next: WidgetInstance = {
-        ...instance,
-        actionBindingIds: [...instance.actionBindingIds, binding.actionBindingId],
-      };
-      deps.db
-        .prepare("UPDATE widget_instances SET document = ? WHERE instance_id = ?")
-        .run(toJson(next), binding.instanceId);
-    }
-  });
+/** `saveActionBinding` for a caller that already holds the transaction the binding belongs to. */
+export function saveActionBindingWithinTransaction(deps: WidgetDeps, binding: ActionBinding): void {
+  deps.db
+    .prepare(
+      `INSERT INTO action_bindings
+         (action_binding_id, instance_id, definition_id, package_generation, binding_digest, effect_category, requires_approval, document, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(action_binding_id) DO UPDATE SET
+         package_generation = excluded.package_generation,
+         binding_digest = excluded.binding_digest,
+         document = excluded.document`,
+    )
+    .run(
+      binding.actionBindingId,
+      binding.instanceId,
+      binding.definitionId,
+      binding.packageGeneration,
+      binding.bindingDigest,
+      binding.effectCategory,
+      binding.requiresApproval ? 1 : 0,
+      toJson(binding),
+      binding.createdAt,
+    );
+
+  const instance = getInstance(deps, binding.instanceId);
+  if (instance && !instance.actionBindingIds.includes(binding.actionBindingId)) {
+    const next: WidgetInstance = {
+      ...instance,
+      actionBindingIds: [...instance.actionBindingIds, binding.actionBindingId],
+    };
+    deps.db
+      .prepare("UPDATE widget_instances SET document = ? WHERE instance_id = ?")
+      .run(toJson(next), binding.instanceId);
+  }
 }
 
 export function getActionBinding(deps: WidgetDeps, bindingId: string): ActionBinding | undefined {

@@ -54,6 +54,20 @@ describe("status cards", () => {
     expect(MESSAGES_VI["widgets.status.statedAt" as MessageKey]).toBe("Theo Clark lúc {time}");
     expect(MESSAGES_EN["widgets.status.stated" as MessageKey]).toBe("As Clark stated");
     expect(MESSAGES_VI["widgets.status.stated" as MessageKey]).toBe("Theo lời Clark");
+    expect(MESSAGES_EN["widgets.status.sample" as MessageKey]).toBe("Sample");
+    expect(MESSAGES_VI["widgets.status.sample" as MessageKey]).toBe("Mẫu");
+  });
+
+  it("never says Clark stated a fixture: a library preview is marked as a sample, and every card passes that on", () => {
+    expect(functionBody("widget-library/WidgetPreview.tsx", "WidgetPreview")).toContain("sample: true,");
+    expect(functionBody("renderers.tsx", "Provenance")).toMatch(
+      /sample === true \? \(\s*<span data-status-sample="">\{t\("widgets\.status\.sample"\)\}<\/span>\s*\) : statedText/u,
+    );
+    for (const name of RENDERERS) {
+      const body = functionBody("renderers.tsx", name);
+      expect(body, name).toContain("sample }: RendererProps");
+      for (const use of body.match(/<Provenance [^>]*\/>/gu) ?? []) expect(use, name).toContain("sample={sample}");
+    }
   });
 
   it("draws no freshness badge and no control on any of the three", () => {

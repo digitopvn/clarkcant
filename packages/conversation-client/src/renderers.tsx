@@ -131,6 +131,13 @@ export interface RendererProps {
    * Absent where there is no such message (a preview in the library).
    */
   statedAt?: string | undefined;
+  /**
+   * The props are a fixture shown in the widget library, not anything Clark said.
+   *
+   * A card that would say "As Clark stated" in a conversation says "Sample" instead, so a preview never claims words
+   * nobody wrote.
+   */
+  sample?: boolean | undefined;
 }
 
 export type CatalogRenderer = (props: RendererProps) => ReactElement | null;
@@ -2469,16 +2476,18 @@ function statedTime(locale: string, at: Date): string {
  * day the model named; an instant carries its offset and is shown in the reader's own timezone, which is the moment it
  * names. "As Clark stated at 09:30" when `stated` is asked for: the time the message was kept, so a card that looks
  * like a reading says it is what Clark wrote then. A progress card always says it; a status card says it when it has no
- * "as of".
+ * "as of". A fixture in the library says "Sample" there instead: nobody stated it.
  */
 function Provenance({
   asOf,
   stated,
   statedAt,
+  sample,
 }: {
   asOf: string | undefined;
   stated: boolean;
   statedAt: string | undefined;
+  sample: boolean | undefined;
 }): ReactElement | null {
   const t = useT();
   const locale = useLocale();
@@ -2499,7 +2508,9 @@ function Provenance({
       {asOfText !== undefined && <time dateTime={asOf}>{asOfText}</time>}
       {asOfText !== undefined && stated && " · "}
       {stated &&
-        (statedText !== undefined ? (
+        (sample === true ? (
+          <span data-status-sample="">{t("widgets.status.sample")}</span>
+        ) : statedText !== undefined ? (
           <time dateTime={statedAt} data-status-stated-at={statedAt}>
             {t("widgets.status.statedAt").replace("{time}", () => statedText)}
           </time>
@@ -2510,7 +2521,7 @@ function Provenance({
   );
 }
 
-function StatusCardView({ props, statedAt }: RendererProps): ReactElement {
+function StatusCardView({ props, statedAt, sample }: RendererProps): ReactElement {
   const t = useT();
   const content = useMemo(() => readStatusCard("status", props), [props]);
   const title = typeof props.title === "string" && props.title !== "" ? props.title : t("widgets.status.title");
@@ -2541,12 +2552,12 @@ function StatusCardView({ props, statedAt }: RendererProps): ReactElement {
           {detail !== undefined && detail !== "" && <p className="cc-status-card-detail">{detail}</p>}
         </div>
       </div>
-      <Provenance asOf={asOf} stated={asOf === undefined} statedAt={statedAt} />
+      <Provenance asOf={asOf} stated={asOf === undefined} statedAt={statedAt} sample={sample} />
     </Frame>
   );
 }
 
-function ProgressCardView({ props, statedAt }: RendererProps): ReactElement {
+function ProgressCardView({ props, statedAt, sample }: RendererProps): ReactElement {
   const t = useT();
   const locale = useLocale();
   const content = useMemo(() => readStatusCard("progress", props), [props]);
@@ -2595,7 +2606,7 @@ function ProgressCardView({ props, statedAt }: RendererProps): ReactElement {
             {figure}
           </span>
         </div>
-        <Provenance asOf={card.asOf} stated statedAt={statedAt} />
+        <Provenance asOf={card.asOf} stated statedAt={statedAt} sample={sample} />
       </Frame>
     );
   }
@@ -2629,12 +2640,12 @@ function ProgressCardView({ props, statedAt }: RendererProps): ReactElement {
           </li>
         ))}
       </ol>
-      <Provenance asOf={card.asOf} stated statedAt={statedAt} />
+      <Provenance asOf={card.asOf} stated statedAt={statedAt} sample={sample} />
     </Frame>
   );
 }
 
-function DetailsCardView({ props, statedAt }: RendererProps): ReactElement {
+function DetailsCardView({ props, statedAt, sample }: RendererProps): ReactElement {
   const t = useT();
   const content = useMemo(() => readStatusCard("details", props), [props]);
   const title = typeof props.title === "string" && props.title !== "" ? props.title : t("widgets.details.title");
@@ -2659,7 +2670,7 @@ function DetailsCardView({ props, statedAt }: RendererProps): ReactElement {
           ))}
         </dl>
       </div>
-      <Provenance asOf={content.card.asOf} stated={false} statedAt={statedAt} />
+      <Provenance asOf={content.card.asOf} stated={false} statedAt={statedAt} sample={sample} />
     </Frame>
   );
 }

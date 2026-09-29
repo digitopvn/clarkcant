@@ -99,17 +99,63 @@ export function deletePin(db: Database, pinId: string): boolean {
  * History is read from these rather than from the instance's current props: a snapshot is what the
  * user saw, and re-deriving it from the live row is how a transcript silently rewrites itself.
  */
-export function listSnapshotsForMessage(db: Database, messageId: string): WidgetSnapshot[] {
-  const rows = allRows<{ document: string; stale: number }>(
+/** A snapshot row whose document this node cannot read, described by the columns that were readable. */
+export interface UnreadableSnapshot {
+  snapshotId: string;
+  messageId: string;
+  instanceId?: string;
+  capturedRevision: number;
+  capturedAt: string;
+  stale: boolean;
+  /** Why the document was refused, for the log; never shown as the snapshot's text. */
+  problem: string;
+}
+
+/**
+ * The snapshots one message kept.
+ *
+ * Without `onUnreadable`, a row whose document does not parse throws, as it always has. A reader that must keep going
+ * (a conversation page, where one bad row would otherwise stop every other message from opening) passes
+ * `onUnreadable` and is told about each such row instead; the row is left out of the result.
+ */
+export function listSnapshotsForMessage(
+  db: Database,
+  messageId: string,
+  onUnreadable?: (row: UnreadableSnapshot) => void,
+): WidgetSnapshot[] {
+  const rows = allRows<{
+    snapshot_id: string;
+    instance_id: string | null;
+    captured_revision: number;
+    captured_at: string;
+    document: string;
+    stale: number;
+  }>(
     db,
-    "SELECT document, stale FROM widget_snapshots WHERE message_id = ? ORDER BY captured_at ASC",
+    `SELECT snapshot_id, instance_id, captured_revision, captured_at, document, stale
+       FROM widget_snapshots WHERE message_id = ? ORDER BY captured_at ASC`,
     messageId,
   );
-  return rows.map((row) => {
-    const parsed = widgetSnapshotSchema.parse(parseJson<unknown>(row.document, "widget_snapshots.document"));
+  return rows.flatMap((row) => {
+    let parsed: WidgetSnapshot;
+    try {
+      parsed = widgetSnapshotSchema.parse(parseJson<unknown>(row.document, "widget_snapshots.document"));
+    } catch (cause) {
+      if (onUnreadable === undefined) throw cause;
+      onUnreadable({
+        snapshotId: row.snapshot_id,
+        messageId,
+        ...(row.instance_id === null ? {} : { instanceId: row.instance_id }),
+        capturedRevision: Number(row.captured_revision),
+        capturedAt: row.captured_at,
+        stale: Number(row.stale) === 1,
+        problem: cause instanceof Error ? cause.message : String(cause),
+      });
+      return [];
+    }
     // The column wins over the stored document. Staleness is the one field that changes after a
     // snapshot is written, and a reader that trusted the document would report history as current
     // for as long as nothing rewrote the whole row.
-    return { ...parsed, stale: Number(row.stale) === 1 };
+    return [{ ...parsed, stale: Number(row.stale) === 1 }];
   });
 }

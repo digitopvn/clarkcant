@@ -60,6 +60,8 @@ export function WidgetPreview({ entry, fixture }: WidgetPreviewProps): ReactElem
         dataset: rendererDataset(fixture),
         ...(fixture.state === undefined ? {} : { state: fixture.state }),
         imageUrl: fixtureImageUrl,
+        // Fixture props are sample words: a card never says Clark stated them.
+        sample: true,
       })}
     </div>
   );

@@ -496,7 +496,10 @@ text. The node and the page both use it, so the page never draws a card the node
 | `canvas.progress@1` | The progress of one thing: a value of a maximum, or a list of steps. | Either `value` (0 or more) with `max` (above 0) and an optional `unit` (up to 20), or `steps` (1–12), each `{ label (1–120), status, detail? (up to 200) }` with status `done`, `current`, `pending`, `failed` or `skipped`. Optional `title` and `label` (each up to 200) and `asOf`. |
 | `canvas.details@1` | Labelled facts. | `items` (1–24), each `{ label (1–80), value (1–300) }`, with no label repeated. Optional `title` (up to 200) and `asOf`. |
 
-Every text prop is one line. Lengths count UTF-16 code units, as JSON Schema's `maxLength` does.
+Every text prop is one line. This node counts a length in UTF-16 code units, so a character outside the Basic
+Multilingual Plane, such as most emoji, counts as two. JSON Schema's `maxLength` counts code points, so the node is
+the stricter of the two: a label of 120 emoji fits the schema as a standard validator reads it, and this node refuses
+it.
 
 A model places each card with `show_view`, or as a leaf of a layout tree
 ([widgets and extensions §4.1](widgets-and-extensions.md#41-implementation-status-2026-09-17)), where the three take
@@ -508,12 +511,16 @@ What the node guarantees:
   neither, with both, with a value above its maximum, with a unit on steps, or with more than one current step is
   refused with the reason in the same turn, and no instance is stored.
 - **What is drawn is what is read.** A text prop may not hold a line break, a control character, a bidi control
-  (U+202A–U+202E, U+2066–U+2069, U+200E, U+200F, U+061C) or an invisible character (U+200B, U+FEFF). Each would make
-  what a screen reader, a transcript or the next turn reads differ from what the page draws. The refusal names the
-  character, for example `property "label": contains U+202E, a control that changes text direction …; remove it`.
-  ZWJ and ZWNJ stay allowed, since scripts and emoji need them. The definition's JSON Schema carries the same rule as a
-  `pattern`, so a model can read it before it tries. Text is trimmed and put in NFC before a label is checked for being
-  empty or repeated.
+  (U+202A–U+202E, U+2066–U+2069, U+200E, U+200F, U+061C), an invisible character (U+200B, U+FEFF, U+00AD, U+180E,
+  U+2060–U+2064, U+FFF9–U+FFFB), a tag character (U+E0000–U+E007F) or a Hangul filler (U+115F, U+1160, U+3164,
+  U+FFA0). Each would make what a screen reader, a transcript or the next turn reads differ from what the page draws.
+  The refusal names the character, for example
+  `property "label": contains U+202E, a control that changes text direction …; remove it`. ZWJ, ZWNJ and the variation
+  selectors stay allowed, since scripts and emoji need them. The definition's JSON Schema carries the same rule as a
+  `pattern`, so a model can read it before it tries. The pattern is written for the way this node compiles it, without
+  the `u` flag, where a tag character is a pair of UTF-16 units; a validator that adds the `u` flag lets tag characters
+  through the pattern, and the node's own check still refuses them. The pattern decides any line in time linear in its
+  length. Text is trimmed and put in NFC before a label is checked for being empty or repeated.
 - **An "as of" time is never ambiguous.** `asOf` is a day (`2026-09-30`) or an instant with `Z` or an offset
   (`2026-09-30T07:30:00+07:00`). A local time with no offset, or a date that does not exist, is refused.
 - **The text alternative is the card's own words.** It is built from the props, for example
@@ -522,7 +529,13 @@ What the node guarantees:
 - **The text is bounded.** A snapshot the conversation cannot read back would stop the whole conversation from
   opening, so the node checks every snapshot before it stores it. A card's text keeps whole facts or steps up to 4000
   characters, and ends with `…and N more facts` (or steps) when some did not fit. A layout section keeps up to 2000,
-  and a whole layout's text ends with `… (shortened)` past 4000. A caption over 4000 characters is refused.
+  and a whole layout's text ends with `… (shortened)` past 4000. Any other widget's own words, such as a list's titles,
+  are shortened the same way. Only a caption the model wrote over 4000 characters is refused, since only the model can
+  say it in fewer words. The instance, its action binding and its snapshot are written in one transaction, so a refusal
+  leaves none of them behind.
+- **One unreadable snapshot does not close the conversation.** A snapshot stored before these checks existed may be
+  one this node cannot read back. The conversation still opens: that block says it could not be read and that the rest
+  of the conversation is kept, the others are drawn as usual, and the node logs which snapshot failed.
 - **A figure never overstates.** The percentage is rounded, and shows 99% rather than 100% while the value is still
   below its maximum.
 - **Voice and `inspect_ui` read what was stated, not a live reading.** The semantic document (§9) is built from the
@@ -538,8 +551,9 @@ What the page does:
 - An `asOf` day is shown as that day. An instant is shown in the reader's own time zone and locale, after "As of".
 - A card that looks like a reading says whose words it shows. A progress card always ends with "As Clark stated at
   09:30", and a status card does when it has no `asOf`. The time is when the message was kept, in the reader's locale,
-  with the date when it was not today. A model is told not to use a progress card for the node's own tasks and runs,
-  which already have a live task card.
+  with the date when it was not today. A model is told not to use a status or progress card for the node's own tasks
+  and runs, which already have live cards. In the Widget Library a fixture says "Sample" there instead, since nobody
+  stated it.
 - The card shows no freshness badge, since what it shows is what the model wrote. It has no control, and it adds no
   motion of its own.
 - Details line up as two columns, the labels taking at most 40% of the card. When the card itself is narrower than
@@ -552,7 +566,8 @@ Tests: [status-cards.spec.ts](../packages/contracts/test/status-cards.spec.ts) f
 [status-cards.spec.ts](../apps/runtime/test/status-cards.spec.ts) for the node,
 [status-cards.spec.ts](../packages/conversation-client/test/status-cards.spec.ts) for the page, and the browser
 journey [status-cards.spec.ts](../apps/web/e2e/status-cards.spec.ts), which runs at 1280 px in dark and light themes,
-at 390 px with touch, as tiles of a three-column grid, and in the Widget Library. The rules for hidden characters are
+at 390 px with touch, as tiles of a grid asked for three columns (drawn as two in the conversation column at 1280 px,
+since a grid never makes a column narrower than 220 px, and as one on a phone), and in the Widget Library. The rules for hidden characters are
 in [text-rules.ts](../packages/contracts/src/text-rules.ts), tested by
 [text-rules.spec.ts](../packages/contracts/test/text-rules.spec.ts), and
 [status-card-schemas.spec.ts](../packages/widget-catalog/test/status-card-schemas.spec.ts) checks that the JSON Schema
