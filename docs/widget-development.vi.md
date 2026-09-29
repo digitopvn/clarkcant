@@ -184,9 +184,10 @@ mà service liệt kê cho tool đó quyết định input có được chấp n
 khi policy cần hỏi thì một approval card do host sở hữu xuất hiện trong cuộc trò chuyện. Các lời từ chối là các mã
 `CapabilityInvokeRefusal` trong file đó.
 
-Chưa xây: credential broker cho service, cô lập bằng VM, và gọi service trên node khác. Composer chưa tự đặt widget của
-một package đã cài kèm binding `invoke` ([#223](https://github.com/digitopvn/clarkcant/issues/223)). Journey trình
-duyệt [`service-facet.spec.ts`](../apps/web/e2e/service-facet.spec.ts) tạo chúng qua một fixture model.
+Chưa xây: credential broker cho service, cô lập bằng VM, và gọi service trên node khác. Model gọi được service của
+package ngay trong cuộc trò chuyện bằng cách đặt nút hành động chung với action `invoke` (§8.1). Journey trình duyệt
+[`service-facet.spec.ts`](../apps/web/e2e/service-facet.spec.ts) vẫn tạo widget riêng của package kèm binding `invoke`
+qua một fixture model.
 
 `publisher` là tuỳ chọn trong manifest. `clark widget publish` thì bắt buộc phải có, vì một directory entry phải
 cho biết package đến từ ai. `dependencies` mặc định là `[]`.
@@ -313,6 +314,37 @@ Mọi effect invocation cần:
 - double-click dedup.
 
 Label phải mô tả operation thật. Không dùng “Continue” cho destructive effect.
+
+### 8.1 Nút hành động chung (`canvas.action@1`)
+
+Một nút cho mọi loại effect. Model đặt nút bằng `show_view`. Props nói nút hiển thị gì (`label`, `description` tuỳ
+chọn, `emphasis` `primary|secondary`, và `icon` trong một tập cố định), còn `props.action` nói nút làm gì. Host biên
+dịch `action` thành action binding trước khi lưu bất cứ thứ gì và bỏ nó khỏi props, nên renderer chỉ biết nhãn, không
+biết gì về hành động. Nếu host từ chối đề xuất, model đọc lý do ngay trong lượt đó và không nút nào bị để lại.
+
+| `action.kind` | Bấm nút thì làm gì | Biên dịch từ |
+| --- | --- | --- |
+| `view` (`view.save`) | Ghim nút này vào cuộc trò chuyện. | Effect category `local-write`. |
+| `agent` | Mở một lượt trong cùng cuộc trò chuyện với tin nhắn đúng bằng nhãn; `intent` được gửi kèm cho model. Câu trả lời là kết quả của lần bấm. | Bản thân việc mở lượt không thay đổi gì; lượt đó làm gì tiếp thì tự đi qua policy. |
+| `invoke` | Gọi một capability của package service qua `invokeCapability`, cùng đường với tool `invoke_capability` của agent và giọng nói. | Effect category của chính capability và thế hệ package đang phục vụ nó; tham số được kiểm theo input schema. |
+| `workflow` | Chưa làm gì: node này chưa chạy được quy trình, nên nút hiện ở trạng thái tắt kèm lý do. | Category nặng nhất trong các bước. |
+
+Binding digest bao gồm đề xuất, thế hệ package, effect category và nhãn. Khi package được cập nhật, binding trở nên cũ
+(`BINDING_STALE`) thay vì bị trỏ sang đích khác. Lần bấm có cần phê duyệt hay không là quyết định của execution policy
+tại thời điểm bấm, không phải một cờ đóng băng lúc biên dịch.
+
+Mọi bề mặt đọc trạng thái sẵn sàng từ một hàm duy nhất (`bindingAvailability` trong
+`apps/runtime/src/application/action-bindings.ts`), và timeline mang trạng thái đó bên cạnh instance. Service đã dừng,
+capability không phải service, binding cũ hay workflow đều là nút bị tắt kèm lý do bằng lời, không phải nút trông như
+bấm được rồi thất bại. Lần bấm vẫn được kiểm lại khi tới node. Khi bấm, nút hiện trạng thái đang chạy, rồi kết quả trong
+một dòng `role="status"`. Kết quả là output của service, câu trả lời của agent, "đã ghim", "đang chờ bạn phê duyệt"
+hoặc lý do bị từ chối. Bấm lần hai khi lần đầu còn đang chạy thì không gửi gì. Bấm nút agent khi Clark còn đang trả lời
+thì bị từ chối với `TURN_IN_PROGRESS` thay vì ngắt ngang.
+
+`canvas.cta@1` được giữ để lịch sử vẫn hiển thị. Model không đặt nó được nữa, vì nó không có hành động nào phía sau.
+
+Kiểm thử: `apps/runtime/test/action-widget.spec.ts`, `packages/conversation-client/test/action-button.spec.ts`, và
+journey trình duyệt `apps/web/e2e/action-widget.spec.ts`, chạy từng loại với một notes service thật trong container.
 
 ---
 

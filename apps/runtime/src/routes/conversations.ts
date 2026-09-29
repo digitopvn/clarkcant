@@ -5,7 +5,6 @@ import {
   type AppIntentDecision,
   type AppIntentResolution,
   type AttachmentRef,
-  type CapabilityRef,
   type DirectoryEntry,
   type Instant,
   type MessageBlock,
@@ -58,6 +57,7 @@ import {
 import { type AppIntentDeps, decideAppIntent, mintConfirmation } from "../app-intents.ts";
 import { activeGenerationWithResolvedGrants } from "../application/package-install.ts";
 import { NOTHING_TO_STOP_SAY, type StopTurnSource, stopTurnOnNode } from "../application/stop-turn.ts";
+import { bindingAvailability } from "../application/action-bindings.ts";
 import { invokeWidgetAction } from "../application/widget-actions.ts";
 import { resolveAttachmentRefs } from "../attachments.ts";
 import { type InteractionDeps, answerQuestion, cancelQuestion } from "../interactions.ts";
@@ -261,26 +261,23 @@ function resolveLiveWidget(
         effectCategory: binding.effectCategory,
         bindingDigest: binding.bindingDigest,
       };
-      if (binding.proposal.kind !== "invoke") return [{ ...base, unavailable: undefined }];
-      const ref = binding.proposal.capabilityRef;
-      // The same first question the invoke path asks: a row the registry holds is not a service this node runs.
-      const checked: ReturnType<typeof preflight> | { ready: false; code: "NOT_A_SERVICE_CAPABILITY"; message: string } =
-        services.serviceHost?.serves(ref as CapabilityRef) === undefined
-          ? {
-              ready: false,
-              code: "NOT_A_SERVICE_CAPABILITY",
-              message: `${ref} is not provided by an active package's service on this node`,
-            }
-          : preflight(ref);
+      const ref = binding.proposal.kind === "invoke" ? binding.proposal.capabilityRef : undefined;
+      const checked = bindingAvailability(
+        { db: runtime.db, nodeId: runtime.identity.nodeId, serviceHost: services.serviceHost },
+        binding,
+      );
+      const named = ref === undefined ? {} : { capabilityRef: ref };
       return [
-        checked.ready
-          ? { ...base, capabilityRef: ref, available: true, unavailable: undefined }
+        checked.available
+          ? { ...base, ...named, available: true, unavailable: undefined }
           : {
               ...base,
-              capabilityRef: ref,
+              ...named,
               available: false,
-              unavailableReason: checked.message,
-              unavailable: { ref, code: checked.code, message: checked.message },
+              unavailableReason: checked.reason,
+              // Only a capability is named in the frame's "not connected" notice; a workflow the node cannot run is
+              // the binding's own reason, shown on the binding.
+              unavailable: ref === undefined ? undefined : { ref, code: checked.code, message: checked.reason },
             },
       ];
     });

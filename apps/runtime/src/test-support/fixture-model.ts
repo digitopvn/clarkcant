@@ -33,6 +33,7 @@ import { createRequestSecretTool, type RequestSecretDeps } from "../request-secr
 import { commandDigest } from "../run-command.ts";
 import { captureBrowserFrame, previewPageUrl } from "./browser-frame.ts";
 import { type NodeServices } from "../services.ts";
+import { buildViewCatalog } from "../view-catalog.ts";
 
 /**
  * The deterministic composer, and the preconditions it needs to be reachable.
@@ -213,7 +214,21 @@ export function createModelComposer(deps: FixtureModelDeps): FixtureCompose {
     messageId: string;
     emit?: (event: ConductorEmit) => void;
     channel?: "voice" | "chat";
+    note?: string;
   }): Promise<{ block: MessageBlock; text: string } | undefined> => {
+    /*
+     * A press of an `agent` action button, answered.
+     *
+     * The turn itself is the product's: the host checked the binding and started it with the button's label as the
+     * person's message and the offered intent as guidance. What the fixture adds is only the reply, and it quotes the
+     * intent it was given, so a journey can see that what the model was asked is what the button was made to ask.
+     */
+    const pressed = input.note === undefined ? null : /You offered it for: (.+)\nDo that now\.$/su.exec(input.note);
+    if (pressed !== null) {
+      const reply = `Fixture: đã nhận yêu cầu từ nút "${input.text}". Việc cần làm: ${(pressed[1] ?? "").trim()}`;
+      return { text: reply, block: { type: "text", format: "plain", content: reply, streaming: false } };
+    }
+
     /*
      * The attachment, read back - the acceptance criterion this feature is judged by.
      *
@@ -903,12 +918,82 @@ export function createModelComposer(deps: FixtureModelDeps): FixtureCompose {
     }
 
     /*
+     * An action button, placed through the view the model's `show_view` uses.
+     *
+     * The decision to place it is scripted; the descriptor is the real one, so the action is compiled by the host,
+     * the binding is stored and the refusal of a bad proposal is the host's own sentence. `invoke` names the notes
+     * package's list capability, which is served only when that package is installed and its service is running.
+     */
+    const placed = /^(?:đặt nút|place button)\s+(view|agent|invoke|workflow)$/iu.exec(input.text.trim());
+    if (placed !== null) {
+      const services = deps.services();
+      const view = buildViewCatalog(services.conductor, undefined, () => ({
+        db: services.runtime.db,
+        nodeId: services.runtime.identity.nodeId,
+        serviceHost: services.serviceHost,
+        now: () => new Date().toISOString(),
+        newId: services.conductor.newId,
+      })).find((entry) => entry.id === "canvas.action@1");
+      if (view === undefined) return undefined;
+      const kind = (placed[1] ?? "").toLowerCase();
+      const props: Record<string, unknown> =
+        kind === "view"
+          ? {
+              label: "Ghim nút này",
+              description: "Giữ nút này trên kệ ghim của cuộc trò chuyện.",
+              icon: "save",
+              action: { kind: "view", operation: "view.save", args: {} },
+            }
+          : kind === "agent"
+            ? {
+                label: "Tóm tắt cuộc trò chuyện",
+                description: "Clark tóm tắt những gì đã nói ở đây.",
+                icon: "send",
+                action: { kind: "agent", intent: "Tóm tắt cuộc trò chuyện này trong ba dòng." },
+              }
+            : kind === "invoke"
+              ? {
+                  label: "Tải ghi chú",
+                  description: "Đọc danh sách từ dịch vụ của gói ghi chú.",
+                  emphasis: "secondary",
+                  icon: "refresh",
+                  action: { kind: "invoke", capabilityRef: "com.example.notes.list@1", args: {} },
+                }
+              : {
+                  label: "Chạy quy trình",
+                  description: "Đọc ghi chú rồi đếm.",
+                  icon: "play",
+                  action: {
+                    kind: "workflow",
+                    steps: [
+                      { stepId: "list", kind: "invoke", capabilityRef: "com.example.notes.list@1", args: {}, dependsOn: [] },
+                      { stepId: "count", kind: "transform", transform: "count", dependsOn: ["list"] },
+                    ],
+                  },
+                };
+      try {
+        const block = await view.build({
+          props,
+          caption: "",
+          at: instantSchema.parse(new Date().toISOString()),
+          principal: input.principal as never,
+          messageId: input.messageId,
+          conversationId: input.conversationId,
+        });
+        return { text: "Fixture: đặt một nút hành động (không phải model thật).", block };
+      } catch (cause) {
+        const reply = `Fixture không đặt được nút: ${cause instanceof Error ? cause.message : String(cause)}`;
+        return { text: reply, block: { type: "text", format: "plain", content: reply, streaming: false } };
+      }
+    }
+
+    /*
      * The notes widget, whose buttons call its package's own service.
      *
      * The bindings are `invoke` bindings made here, because nothing in the product makes them for a package widget
-     * yet (#223 does): what this fixture stands in for is that step, not the call. Everything after it — the binding
-     * check, the registry's readiness, the capability's schema, the policy, the service in its container — is the path
-     * a real binding takes. The definition is written out for the same reason as the frame widget's: it has to agree
+     * yet: a host button is compiled from a model's proposal, but a package widget's own buttons are not. What this
+     * fixture stands in for is that step, not the call. Everything after it — the binding check, the registry's
+     * readiness, the capability's schema, the policy, the service in its container — is the path a real binding takes. The definition is written out for the same reason as the frame widget's: it has to agree
      * with the package's own `widget.json`.
      *
      * The binding records the generation the service host is serving now, so a later install of a different version

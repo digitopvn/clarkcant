@@ -55,6 +55,11 @@ export interface ViewDescriptor {
    */
   notes?: string;
   /**
+   * What the model is told once the view is shown, when "it is sample data" would be wrong: a button shows no data,
+   * and saying otherwise would have the model describe it as something it is not.
+   */
+  shownText?: string;
+  /**
    * Build the block.
    *
    * Maybe asynchronous because one view — the composed surface — has to consult a selector and read
@@ -733,7 +738,7 @@ export async function createModelTurn(options: {
             text: `The view "${requested}" could not be built: ${cause instanceof Error ? cause.message : String(cause)}.`,
           };
         }
-        return { text: `Shown: ${requested}. It is sample data and is labelled that way.` };
+        return { text: descriptor.shownText ?? `Shown: ${requested}. It is sample data and is labelled that way.` };
       },
     };
   }

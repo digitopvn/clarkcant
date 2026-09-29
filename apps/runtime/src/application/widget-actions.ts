@@ -1,8 +1,10 @@
-import { type Instant } from "@clarkcant/contracts";
+import { type ActionProposal, type Instant } from "@clarkcant/contracts";
 import {
+  checkBoundAction,
   checkInvokeAction,
   getActionBinding,
   getInstance,
+  handleUserMessage,
   invokeMiniAppAction,
   readExecutionPolicy,
   readWidgetStateRow,
@@ -11,6 +13,7 @@ import {
 
 import { appendHostReply } from "../routes/conversations.ts";
 import { type NodeServices, buildTimeline } from "../services.ts";
+import { indexMessages, textOfMessage } from "../session-search.ts";
 import { type CapabilityInvokeSource, capabilityInvokeDeps, invokeCapability, mayHaveRun } from "./capability-invoke.ts";
 
 /**
@@ -64,7 +67,10 @@ function statusOf(code: string): number {
     ? 404
     : code === "NOT_AUTHORIZED"
       ? 403
-      : code === "REVISION_MISMATCH" || code === "BINDING_STALE" || code === "INVOCATION_KEY_REUSED"
+      : code === "REVISION_MISMATCH" ||
+          code === "BINDING_STALE" ||
+          code === "INVOCATION_KEY_REUSED" ||
+          code === "TURN_IN_PROGRESS"
         ? 409
         : 400;
 }
@@ -172,6 +178,109 @@ async function invokeCapabilityAction(
   return respond(200, { output: outcome.output }, false);
 }
 
+/** What the model is told about a turn a button started, beside the label the person saw. */
+function agentActionNote(label: string, intent: string): string {
+  return (
+    `The person pressed the button "${label}" that you offered earlier in this conversation. ` +
+    `You offered it for: ${intent}\nDo that now.`
+  );
+}
+
+type WidgetActionServices = Pick<NodeServices, "runtime" | "conductor" | "search" | "serviceHost" | "turnControl">;
+
+/**
+ * The `agent` half: a button that asks Clark for something.
+ *
+ * It passes the same gate every bound action does, then becomes a turn in the same conversation whose message is the
+ * button's label — exactly what the person saw and pressed — with the intent the button was offered for given to the
+ * model beside it. The turn is an ordinary one: whatever it goes on to do passes the policy on its own. Its reply is the
+ * outcome, recorded per invocation id, so a double click starts one turn and a spoken request hears the answer.
+ */
+async function invokeAgentAction(
+  services: WidgetActionServices,
+  request: WidgetActionRequest,
+  source: "click" | "voice",
+): Promise<WidgetActionResult> {
+  const checked = checkBoundAction(services.conductor, request, "agent");
+  if (!checked.ok) {
+    return {
+      ok: false,
+      status: statusOf(checked.code),
+      code: checked.code,
+      message: checked.message,
+      ...(checked.currentRevision === undefined ? {} : { currentRevision: checked.currentRevision }),
+    };
+  }
+  // The same body an `invoke` answers with, so a surface reads every kind the same way.
+  const state = readWidgetStateRow(services.runtime.db, checked.instance.instanceId);
+  const respond = (output: string, duplicate: boolean): WidgetActionResult => ({
+    ok: true,
+    status: 200,
+    body: {
+      duplicate,
+      instanceId: checked.instance.instanceId,
+      revision: checked.instance.revision,
+      stateRevision: state?.revision ?? 0,
+      state: state?.body ?? {},
+      pinId: null,
+      output,
+      timeline: buildTimeline(services, { conversationId: request.conversationId, afterSequence: 0 }),
+    },
+  });
+  if (checked.duplicate !== undefined) {
+    return respond(checked.duplicate.kind === "done" ? checked.duplicate.output : "", true);
+  }
+  if (inFlight.has(request.invocationId)) {
+    return {
+      ok: false,
+      status: 409,
+      code: "INVOCATION_IN_PROGRESS",
+      message: "this action is already running; its answer will come back to the first request",
+    };
+  }
+  // A button does not decide whether to interrupt, steer or queue beside a running answer the way a typed message is
+  // decided: it says so and leaves the choice to the person, who can press it again once the answer is done.
+  if (services.turnControl?.running().includes(request.conversationId) === true) {
+    return {
+      ok: false,
+      status: 409,
+      code: "TURN_IN_PROGRESS",
+      message: "Clark is still answering in this conversation; press it again when the answer is done",
+    };
+  }
+
+  const proposal = checked.binding.proposal as Extract<ActionProposal, { kind: "agent" }>;
+  const at = new Date().toISOString() as Instant;
+  inFlight.add(request.invocationId);
+  try {
+    const outcome = await handleUserMessage(services.conductor, {
+      conversationId: request.conversationId as never,
+      principal: { principalId: request.principalId as never, kind: "user", nodeId: services.runtime.identity.nodeId as never },
+      text: checked.binding.label,
+      at,
+      note: agentActionNote(checked.binding.label, proposal.intent),
+      channel: source === "voice" ? "voice" : "chat",
+    });
+    indexMessages(services.search, { conversationId: request.conversationId, messages: outcome.messages, at });
+    const reply = outcome.messages
+      .filter((message) => message.role === "assistant")
+      .map((message) => textOfMessage(message))
+      .join("\n\n")
+      .trim()
+      .slice(0, 2_000);
+    recordInvokeAction(services.conductor, {
+      invocationId: request.invocationId,
+      actionBindingId: request.actionBindingId,
+      instanceId: checked.instance.instanceId,
+      digest: checked.digest,
+      result: { kind: "done", output: reply },
+    });
+    return respond(reply, false);
+  } finally {
+    inFlight.delete(request.invocationId);
+  }
+}
+
 /**
  * Invoke a widget action.
  *
@@ -184,7 +293,7 @@ async function invokeCapabilityAction(
  * looks like is the transport's business, and whether an action may run is not.
  */
 export async function invokeWidgetAction(
-  services: Pick<NodeServices, "runtime" | "conductor" | "search" | "serviceHost">,
+  services: WidgetActionServices,
   request: WidgetActionRequest,
   source: "click" | "voice" = "click",
 ): Promise<WidgetActionResult> {
@@ -198,8 +307,24 @@ export async function invokeWidgetAction(
     };
   }
 
-  if (getActionBinding(services.conductor, request.actionBindingId)?.proposal.kind === "invoke") {
-    return invokeCapabilityAction(services, request, source === "voice" ? "voice" : "widget");
+  // The binding decides what the action is; the request only names it. An unknown binding falls through to the view path,
+  // whose gate refuses it with the reason.
+  const kind = getActionBinding(services.conductor, request.actionBindingId)?.proposal.kind;
+  if (kind === "invoke") return invokeCapabilityAction(services, request, source === "voice" ? "voice" : "widget");
+  if (kind === "agent") return invokeAgentAction(services, request, source);
+  if (kind === "workflow") {
+    // Gated first, so a stale or foreign binding is refused as that rather than as a missing executor.
+    const checked = checkBoundAction(services.conductor, request, "workflow");
+    if (!checked.ok) {
+      return {
+        ok: false,
+        status: statusOf(checked.code),
+        code: checked.code,
+        message: checked.message,
+        ...(checked.currentRevision === undefined ? {} : { currentRevision: checked.currentRevision }),
+      };
+    }
+    return { ok: false, status: 400, code: "UNSUPPORTED_ACTION", message: "this node cannot run a workflow action yet" };
   }
 
   // Read at the invocation rather than captured, so a mode the user changed applies to the next action they take

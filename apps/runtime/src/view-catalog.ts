@@ -21,8 +21,10 @@ import {
   type WidgetDeps,
   captureSnapshot,
   createInstance,
+  saveActionBinding,
 } from "@clarkcant/core";
-import { OVERVIEW, WIDGETS as CATALOG_WIDGETS } from "@clarkcant/data-canvas";
+import { ACTION, ACTION_ICONS, CTA, OVERVIEW, WIDGETS as CATALOG_WIDGETS } from "@clarkcant/data-canvas";
+import { type ActionBindingDeps, compileWidgetAction } from "./application/action-bindings.ts";
 import { COMPOSITION_TEMPLATES, type ComposeDeps, composeMiniApp } from "./compose-mini-app.ts";
 import { definitionDigest } from "@clarkcant/widget-host";
 
@@ -39,10 +41,17 @@ import type { ViewDescriptor } from "./model-turn.ts";
  * entries are unchanged, which is what keeps the existing `show_view` path working exactly as it
  * did.
  */
-export function buildViewCatalog(deps: WidgetDeps, compose?: ComposeDeps): ViewDescriptor[] {
+export function buildViewCatalog(
+  deps: WidgetDeps,
+  compose?: ComposeDeps,
+  actions?: () => ActionBindingDeps,
+): ViewDescriptor[] {
   // The container is excluded: it is not a leaf a model may place, and registering it twice would
-  // give the model a view name whose build knows nothing about the composition.
-  const simple: ViewDescriptor[] = CATALOG_WIDGETS.filter((definition) => definition.id !== OVERVIEW.id).map(
+  // give the model a view name whose build knows nothing about the composition. The old call to action is
+  // excluded because a model placing one got a button with nothing behind it; `canvas.action@1` replaces it and is
+  // registered below, with the build that compiles its action.
+  const placed = new Set([OVERVIEW.id, CTA.id, ACTION.id]);
+  const simple: ViewDescriptor[] = CATALOG_WIDGETS.filter((definition) => !placed.has(definition.id)).map(
     (definition): ViewDescriptor => ({
     id: definition.id,
     label: definition.semanticDescription,
@@ -85,6 +94,7 @@ export function buildViewCatalog(deps: WidgetDeps, compose?: ComposeDeps): ViewD
     }),
   );
 
+  if (actions !== undefined) simple.push(actionView(deps, actions));
   if (compose === undefined) return simple;
 
   const overview = OVERVIEW;
@@ -124,4 +134,53 @@ export function buildViewCatalog(deps: WidgetDeps, compose?: ComposeDeps): ViewD
       },
     },
   ];
+}
+
+/**
+ * The one button a model may place, with the action it performs.
+ *
+ * `props.action` is taken out before anything is stored: the host compiles it into a binding and keeps it, and the
+ * instance holds only what the button shows. A proposal the host refuses is thrown before the instance exists, so the
+ * model reads the refusal in the same turn and no button without an action is left in the conversation.
+ */
+function actionView(deps: WidgetDeps, bindingDeps: () => ActionBindingDeps): ViewDescriptor {
+  return {
+    id: ACTION.id,
+    label: ACTION.semanticDescription,
+    notes:
+      `props.label is the button text (also the request sent to Clark for an agent action); optional props.description, ` +
+      `props.emphasis ("primary" | "secondary") and props.icon (${ACTION_ICONS.join(" | ")}). ` +
+      `props.action is required and is exactly one of: {"kind":"agent","intent":"<what Clark should do when pressed>"}; ` +
+      `{"kind":"invoke","capabilityRef":"<a package service capability>","args":{...}}; ` +
+      `{"kind":"view","operation":"view.save","args":{}} to pin this button to the conversation; ` +
+      `or {"kind":"workflow","steps":[...]}, which this node shows but cannot run yet.`,
+    shownText:
+      "Shown: canvas.action@1. The button is bound to that action; nothing has run yet, and it runs only when the person presses it.",
+    build: ({ props, caption, principal, messageId }) => {
+      const { action, ...shown } = props;
+      if (action === undefined) throw new Error("canvas.action@1 needs props.action: the action the button performs");
+      const definitionRef = { id: ACTION.id, version: ACTION.version, packageDigest: definitionDigest(ACTION) };
+      const compiled = compileWidgetAction(bindingDeps(), {
+        definitionRef,
+        label: typeof shown.label === "string" ? shown.label : "",
+        action,
+      });
+      if (!compiled.ok) throw new Error(compiled.message);
+
+      const instance: WidgetInstance = createInstance(deps, {
+        definition: ACTION,
+        packageDigest: definitionRef.packageDigest,
+        ownerPrincipalId: principal.principalId,
+        props: shown,
+      });
+      saveActionBinding(deps, compiled.bindTo(instance.instanceId));
+      const snapshot: WidgetSnapshot = captureSnapshot(deps, {
+        messageId,
+        instance,
+        textAlternative: caption.trim() === "" ? `${String(shown.label)}. ${ACTION.textFallback}` : caption,
+        presentationRef: `catalog:${ACTION.id}`,
+      });
+      return { type: "surface", definitionRef: { id: ACTION.id, version: ACTION.version }, snapshot };
+    },
+  };
 }

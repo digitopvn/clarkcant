@@ -7,6 +7,7 @@ import {
   type ResolvedDataset,
   type SnapshotPresentationResponse,
   type Timeline,
+  type TimelineAction,
 } from "./api.ts";
 import { type SurfaceBlockRef } from "./blocks.tsx";
 import { resolveRenderer, toRendererDataset } from "./renderers.tsx";
@@ -66,6 +67,42 @@ function toSurfaceViewFromSnapshot(captured: SnapshotPresentationResponse, revis
 type ExportStatus = "pending" | "failed" | "unavailable" | "done";
 
 const TABLE_DEFINITION_ID = "canvas.table@1";
+/** Buttons that act only through a host binding: without one they are drawn view-only, never as a live control. */
+const BOUND_BUTTON_DEFINITION_IDS = new Set(["canvas.cta@1", "canvas.action@1"]);
+
+/** What a press of a bound button said, kept per instance for the session. */
+interface ActionRun {
+  pending: boolean;
+  message?: string;
+  tone?: "done" | "waiting" | "refused";
+}
+
+const UNAVAILABLE_KEYS: Record<string, MessageKey> = {
+  WORKFLOW_UNSUPPORTED: "widgets.action.unavailable.WORKFLOW_UNSUPPORTED",
+  NOT_A_SERVICE_CAPABILITY: "widgets.action.unavailable.NOT_A_SERVICE_CAPABILITY",
+  BINDING_STALE: "widgets.action.unavailable.BINDING_STALE",
+  CAPABILITY_NOT_READY: "widgets.action.unavailable.CAPABILITY_NOT_READY",
+  CAPABILITY_NOT_AUTHENTICATED: "widgets.action.unavailable.CAPABILITY_NOT_AUTHENTICATED",
+  CAPABILITY_MISSING: "widgets.action.unavailable.CAPABILITY_MISSING",
+};
+
+/**
+ * The sentence for a binding the node says cannot run, or for a press it refused.
+ *
+ * A known code is said in the person's language; an unknown one falls back to the node's own reason, which is still
+ * the real answer rather than a generic "something went wrong".
+ */
+function reasonFor(t: (key: MessageKey) => string, code: string | undefined, reason: string | undefined): string {
+  const key = code === undefined ? undefined : UNAVAILABLE_KEYS[code];
+  if (key !== undefined) return t(key);
+  return reason ?? t("widgets.action.refusedGeneric");
+}
+
+function newInvocationId(): string {
+  const cryptoApi = globalThis.crypto as { randomUUID?: () => string } | undefined;
+  if (cryptoApi?.randomUUID !== undefined) return cryptoApi.randomUUID();
+  return `inv_${Date.now().toString(36)}${Math.random().toString(36).slice(2)}`;
+}
 
 /** Hand a file to the browser's download flow, then release the object URL. */
 function downloadBlob(blob: Blob, filename: string): void {
@@ -145,6 +182,54 @@ export function useSurfaceRenderer({
     [client],
   );
 
+  /*
+   * A bound button's press goes to the same action route every surface uses, with the binding digest and instance
+   * revision the timeline carried: the node checks both again, so a button drawn from an out-of-date timeline is
+   * refused rather than running something the person did not see. A fresh id per press is what lets a double click be
+   * one effect without making a later, deliberate press a duplicate.
+   */
+  const [actionRuns, setActionRuns] = useState<Record<string, ActionRun>>({});
+  const runAction = useCallback(
+    (conversation: string, instance: Timeline["instances"][number], action: TimelineAction): void => {
+      const id = instance.instanceId;
+      setActionRuns((current) => ({ ...current, [id]: { pending: true } }));
+      void client
+        .invokeAction(conversation, id, {
+          actionBindingId: action.actionBindingId,
+          expectedRevision: instance.revision,
+          expectedBindingDigest: action.bindingDigest,
+          input: {},
+          invocationId: newInvocationId(),
+        })
+        .then((result) => {
+          applyTimeline(result.timeline);
+          const run: ActionRun =
+            result.approvalRequired !== undefined
+              ? // Nothing ran yet; the card the host placed in the conversation is where it is decided.
+                { pending: false, tone: "waiting", message: t("widgets.action.awaitingApproval") }
+              : result.duplicate
+                ? { pending: false, tone: "done", message: t("widgets.action.duplicate") }
+                : typeof result.output === "string" && result.output !== ""
+                  ? { pending: false, tone: "done", message: result.output }
+                  : result.pinId !== null
+                    ? { pending: false, tone: "done", message: t("widgets.action.pinned") }
+                    : { pending: false, tone: "done", message: t("widgets.action.done") };
+          setActionRuns((current) => ({ ...current, [id]: run }));
+        })
+        .catch((cause: unknown) => {
+          const code = cause instanceof GatewayError ? cause.code : undefined;
+          const message =
+            code === "TURN_IN_PROGRESS"
+              ? t("widgets.action.turnInProgress")
+              : code === "REVISION_MISMATCH"
+                ? t("widgets.action.revisionMismatch")
+                : reasonFor(t, code, cause instanceof GatewayError ? cause.reason : undefined);
+          setActionRuns((current) => ({ ...current, [id]: { pending: false, tone: "refused", message } }));
+        });
+    },
+    [applyTimeline, client, t],
+  );
+
   return useCallback(
     (input: SurfaceBlockRef): ReactElement => {
       const instance = input.instanceId === undefined ? undefined : instanceById.get(input.instanceId);
@@ -222,6 +307,21 @@ export function useSurfaceRenderer({
       const dataset = resolved === undefined ? undefined : toRendererDataset(resolved);
       const isTable = definitionId === TABLE_DEFINITION_ID;
       const exportStatus = exports[instance.instanceId];
+      // One button, one binding: `canvas.action@1` is made with exactly one, and the renderer never learns its kind.
+      const boundAction = instance.actions?.[0];
+      const isBoundButton = BOUND_BUTTON_DEFINITION_IDS.has(definitionId);
+      const actionRun = actionRuns[instance.instanceId];
+      const buttonState: Record<string, unknown> | undefined = !isBoundButton
+        ? undefined
+        : {
+            ...(actionRun?.pending === true ? { pending: true } : {}),
+            ...(actionRun?.message === undefined ? {} : { message: actionRun.message, tone: actionRun.tone }),
+            ...(boundAction !== undefined && !boundAction.available
+              ? { unavailableReason: reasonFor(t, boundAction.unavailableCode, boundAction.unavailableReason) }
+              : {}),
+          };
+      // A button with no binding, or no conversation to run it in, is drawn view-only instead of as a live control.
+      const buttonActionable = boundAction !== undefined && conversationId !== undefined;
 
       return (
         <div data-widget-instance={instance.instanceId} data-widget-definition={definitionId}>
@@ -265,15 +365,24 @@ export function useSurfaceRenderer({
                     canExport: conversationId !== undefined,
                   }
                 : {})}
-              onAction={(action, payload) => {
-                // A table's export is a read the node answers with a file, through its own person-only route.
-                if (isTable && action === "export.requested" && conversationId !== undefined) {
-                  if (exportStatus !== "pending") exportTable(conversationId, instance.instanceId, payload);
-                  return;
-                }
-                // Everything else is a view action: selection and paging stay in the view, and an action that
-                // would cause an effect goes through the approval route, which no code path here bypasses.
-              }}
+              {...(buttonState === undefined ? {} : { state: buttonState })}
+              {...(isBoundButton && !buttonActionable
+                ? {}
+                : {
+                    onAction: (action: string, payload: Record<string, unknown>) => {
+                      // A table's export is a read the node answers with a file, through its own person-only route.
+                      if (isTable && action === "export.requested" && conversationId !== undefined) {
+                        if (exportStatus !== "pending") exportTable(conversationId, instance.instanceId, payload);
+                        return;
+                      }
+                      if (isBoundButton && action === "activate" && boundAction !== undefined && conversationId !== undefined) {
+                        if (actionRun?.pending !== true) runAction(conversationId, instance, boundAction);
+                        return;
+                      }
+                      // Everything else is a view action: selection and paging stay in the view, and an action that
+                      // would cause an effect goes through the approval route, which no code path here bypasses.
+                    },
+                  })}
             />
           )}
           {conversationId !== undefined && (
@@ -306,6 +415,7 @@ export function useSurfaceRenderer({
       );
     },
     [
+      actionRuns,
       applyTimeline,
       client,
       conversationId,
@@ -315,6 +425,7 @@ export function useSurfaceRenderer({
       imageUrl,
       instanceById,
       liveTrigger,
+      runAction,
       setError,
       snapshots,
       t,

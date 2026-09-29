@@ -436,7 +436,13 @@ export const VIDEO: WidgetDefinition = {
   datasetRefs: [],
 };
 
-/** The one action in the M1 vocabulary: save the current view and pin it. */
+/**
+ * The M1 call to action, which could only save the current view and pin it.
+ *
+ * Superseded by `canvas.action@1` for anything a model places. It stays in `WIDGETS` because the composed overview
+ * still uses it for its save region, and because every message that already shows one must keep rendering; it is
+ * left out of the view vocabulary in the runtime, which is what stops new ones being asked for.
+ */
 export const CTA: WidgetDefinition = {
   id: "canvas.cta@1",
   version: "1.0.0",
@@ -457,6 +463,43 @@ export const CTA: WidgetDefinition = {
   requestedCapabilities: [],
   textFallback: "An action was offered here. It is available again when the surface can be rendered.",
   effectCategories: ["local-write"],
+  datasetRefs: [],
+};
+
+/** The icons an action may show: a closed set, so a model names one and never supplies a picture. */
+export const ACTION_ICONS = ["none", "play", "send", "save", "add", "refresh", "open", "check"] as const;
+
+/**
+ * One button, bound by the host to one action.
+ *
+ * What the button does is not in its props. A model asks for the action alongside the props, the host compiles it into
+ * a binding — `view`, `invoke`, `agent` or `workflow` — and keeps it; the renderer is told only what to show and whether
+ * the binding can run now. That is what lets one renderer draw every kind without knowing any of them, and what stops a
+ * stored prop from introducing an action after the fact.
+ */
+export const ACTION: WidgetDefinition = {
+  id: "canvas.action@1",
+  version: "1.0.0",
+  renderer: "catalog",
+  propsSchema: {
+    type: "object",
+    additionalProperties: false,
+    properties: {
+      label: { type: "string", minLength: 1, maxLength: 120 },
+      description: { type: "string", maxLength: 300 },
+      emphasis: { type: "string", enum: ["primary", "secondary"] },
+      icon: { type: "string", enum: [...ACTION_ICONS] },
+    },
+    required: ["label"],
+  },
+  eventSchemas: { activate: { type: "object" } },
+  sizing: { compact: true, expanded: true, minHeight: 56 },
+  semanticDescription:
+    "One button bound to one action the host runs: pinning this view, a package service capability, a new request to Clark, or a workflow",
+  requestedCapabilities: [],
+  textFallback: "An action was offered here. It can be used again when the button can be shown.",
+  // A button can be bound to anything the node can run; the binding carries the category that actually applies.
+  effectCategories: ["read", "local-write", "external-write", "destructive", "financial", "communication", "media-capture"],
   datasetRefs: [],
 };
 
@@ -514,6 +557,7 @@ export const WIDGETS = [
   YOUTUBE,
   VIDEO,
   CTA,
+  ACTION,
 ];
 
 /**
@@ -538,6 +582,9 @@ export const FAMILY_BY_DEFINITION: Record<string, string> = {
   "canvas.youtube@1": "media",
   "canvas.video@1": "media",
   "canvas.cta@1": "cta",
+  // Its own family rather than `cta`: a composed template filling its save region must not be offered a button whose
+  // action is not a view save.
+  "canvas.action@1": "action",
 };
 
 export function familyOf(definitionId: string): string {
