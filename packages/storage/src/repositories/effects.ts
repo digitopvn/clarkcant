@@ -45,12 +45,13 @@ export function upsertEffect(db: Database, effect: EffectRecord): void {
 }
 
 export function effectsForTask(db: Database, taskId: string): EffectRecord[] {
-  const rows = allRows<Record<string, unknown>>(
-    db,
-    "SELECT * FROM effects WHERE task_id = ? ORDER BY prepared_at",
-    taskId,
+  return allRows<Record<string, unknown>>(db, "SELECT * FROM effects WHERE task_id = ? ORDER BY prepared_at", taskId).map(
+    effectFromRow,
   );
-  return rows.map((row) => ({
+}
+
+function effectFromRow(row: Record<string, unknown>): EffectRecord {
+  return {
     effectId: String(row.effect_id) as EffectRecord["effectId"],
     taskId: String(row.task_id) as EffectRecord["taskId"],
     ...(row.run_id === null ? {} : { runId: String(row.run_id) as NonNullable<EffectRecord["runId"]> }),
@@ -72,15 +73,29 @@ export function effectsForTask(db: Database, taskId: string): EffectRecord[] {
       ? {}
       : { reconciliationEvidence: String(row.reconciliation_evidence) }),
     submitAttempts: Number(row.submit_attempts),
-  }));
+  };
 }
 
-/** Effects whose outcome is undetermined, for the reconciliation queue (T05). */
+/**
+ * Effects whose outcome is undetermined, for the reconciliation queue (T05).
+ *
+ * Only the unsettled rows themselves: a task with one unknown push and one confirmed one has one effect to reconcile,
+ * and counting its settled siblings would report work that is already done.
+ */
 export function unsettledEffects(db: Database, nodeId: string): EffectRecord[] {
-  const rows = allRows<{ task_id: string }>(
+  return allRows<Record<string, unknown>>(
     db,
-    "SELECT DISTINCT task_id FROM effects WHERE executor_node_id = ? AND state IN ('prepared','submitted','unknown')",
+    "SELECT * FROM effects WHERE executor_node_id = ? AND state IN ('prepared','submitted','unknown') ORDER BY prepared_at",
     nodeId,
-  );
-  return rows.flatMap((row) => effectsForTask(db, row.task_id));
+  ).map(effectFromRow);
+}
+
+/** Effects this node executed whose outcome is `unknown`, prepared at or after `since`, oldest first. */
+export function unknownEffectsSince(db: Database, nodeId: string, since: Instant): EffectRecord[] {
+  return allRows<Record<string, unknown>>(
+    db,
+    "SELECT * FROM effects WHERE executor_node_id = ? AND state = 'unknown' AND prepared_at >= ? ORDER BY prepared_at",
+    nodeId,
+    since,
+  ).map(effectFromRow);
 }

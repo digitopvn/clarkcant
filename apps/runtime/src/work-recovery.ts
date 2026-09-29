@@ -1,4 +1,4 @@
-import type { Instant } from "@clarkcant/contracts";
+import { advanceEffect, type Instant } from "@clarkcant/contracts";
 import { applyTaskEvent } from "@clarkcant/core";
 import {
   type Database,
@@ -8,6 +8,7 @@ import {
   setWorkRunState,
   unfinishedWorkRuns,
   unsettledEffects,
+  upsertEffect,
 } from "@clarkcant/storage";
 
 import { isSameProcess, signalTree } from "./process-tree.ts";
@@ -27,7 +28,7 @@ import { isSameProcess, signalTree } from "./process-tree.ts";
  *     again cannot do anything twice. Every other case asks instead.
  *   - **Work with effects is never re-run.** A task this node was executing moves to `uncertain` through the ordinary
  *     state machine, which is the state that says "reconcile before believing either outcome"; a command is reported
- *     with its result unverified.
+ *     with its result unverified, and an effect the ledger still shows as handed off is marked `unknown`.
  */
 
 /** How old an interrupted background request may be and still be re-run without asking. */
@@ -115,6 +116,8 @@ export function recoverUnfinishedWork(deps: WorkRecoveryDeps): WorkRecoveryRepor
   }
 
   report.uncertainTasks = interruptTasks(deps, at);
+  // After the tasks: the task pass is what tells the conversation, and it finds a task by its state, not its effects.
+  markInterruptedEffectsUnknown(deps, at);
   report.unsettledEffects = unsettledEffects(deps.db, deps.nodeId).length;
   report.pruned = pruneWorkRuns(deps.db, new Date(Date.parse(at) - WORK_RUN_RETENTION_MS).toISOString() as Instant);
   return report;
@@ -205,6 +208,29 @@ function interruptTasks(deps: WorkRecoveryDeps, at: Instant): number {
     );
   }
   return moved;
+}
+
+/**
+ * Effects this node handed off and never heard back about.
+ *
+ * The process that was waiting for the answer is gone, so nobody will ever report it: a `submitted` row left by an
+ * earlier process is `unknown`, which is what the inbox reports and what keeps the same command from running again on
+ * its own. Nothing is re-sent here. One row that cannot be moved does not stop the rest; the next boot tries it again.
+ */
+function markInterruptedEffectsUnknown(deps: WorkRecoveryDeps, at: Instant): void {
+  for (const effect of unsettledEffects(deps.db, deps.nodeId)) {
+    if (effect.state !== "submitted") continue;
+    try {
+      const moved = advanceEffect(effect, {
+        to: "unknown",
+        at,
+        reason: "the node restarted while this was running, so its outcome was never observed",
+      });
+      if (moved.ok) upsertEffect(deps.db, moved.effect);
+    } catch {
+      // Left `submitted`; the next boot finds it again.
+    }
+  }
 }
 
 /** The task has already moved; a report that fails must not undo that or stop the next task. */

@@ -8,10 +8,19 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { DEFAULT_EXECUTION_POLICY_CONFIG, type Instant, type MessageRecord } from "@clarkcant/contracts";
 import { registerCapability } from "@clarkcant/core";
 import { CONTROLLED_CODE_TASK, managedBranchFor, managedWorktreePath } from "@clarkcant/project-work";
-import { allRows, appendAuditEvent, listAuditEvents, parseJson, type AuditKind, type AuditOutcome } from "@clarkcant/storage";
+import {
+  allRows,
+  appendAuditEvent,
+  effectsForTask,
+  listAuditEvents,
+  parseJson,
+  type AuditKind,
+  type AuditOutcome,
+} from "@clarkcant/storage";
 
 import { createAutomationTools } from "../src/automation-tools.ts";
 import { startAutomationService, type AutomationService } from "../src/automation-service.ts";
+import { COMMAND_STOPPED_ON_REQUEST, sweepUnknownEffects } from "../src/effect-notices.ts";
 import { handleRequest, type GatewayDeps } from "../src/gateway.ts";
 import type { CommandToolDeps } from "../src/node-tools.ts";
 import { ownedResources } from "../src/preflight.ts";
@@ -106,17 +115,19 @@ function installGhShim(): string {
   writeFileSync(
     join(bin, "gh-shim.mjs"),
     [
-      'import { appendFileSync } from "node:fs";',
+      'import { appendFileSync, existsSync, renameSync, writeFileSync } from "node:fs";',
       'import { createHash } from "node:crypto";',
       'import { dirname, join } from "node:path";',
       'import { fileURLToPath } from "node:url";',
       "const args = process.argv.slice(2);",
       "const token = process.env.GH_TOKEN;",
       "const record = { args, cwd: process.cwd(), token: token === undefined ? null : createHash(\"sha256\").update(token).digest(\"hex\") };",
-      'appendFileSync(join(dirname(fileURLToPath(import.meta.url)), "calls.jsonl"), JSON.stringify(record) + "\\n");',
-      `if (args[0] === "pr" && args[1] === "create") { process.stdout.write(${JSON.stringify(`${PR_URL}\n`)}); process.exit(0); }`,
-      'process.stderr.write("gh shim: unexpected call\\n");',
-      "process.exit(1);",
+      "const here = dirname(fileURLToPath(import.meta.url));",
+      'appendFileSync(join(here, "calls.jsonl"), JSON.stringify(record) + "\\n");',
+      // A GitHub that takes the request and never answers, while a test has left `hang` beside the shim.
+      'if (args[0] === "pr" && args[1] === "create" && existsSync(join(here, "hang"))) { writeFileSync(join(here, "hanging.pid.tmp"), String(process.pid)); renameSync(join(here, "hanging.pid.tmp"), join(here, "hanging.pid")); setInterval(() => {}, 1000); }',
+      `else if (args[0] === "pr" && args[1] === "create") { process.stdout.write(${JSON.stringify(`${PR_URL}\n`)}); process.exit(0); }`,
+      'else { process.stderr.write("gh shim: unexpected call\\n"); process.exit(1); }',
       "",
     ].join("\n"),
     "utf8",
@@ -166,6 +177,29 @@ async function waitUntil<T>(read: () => T | undefined, timeoutMs: number): Promi
     if (value !== undefined) return value;
     if (Date.now() > deadline) throw new Error(`condition not met within ${String(timeoutMs)}ms`);
     await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+}
+
+/**
+ * The pid of the `gh` that took a pull request and never answered, once it is running.
+ *
+ * It is the `node` the shim runs: the leaf of the tree a stop ends, on POSIX through `exec` in the shell script and on
+ * Windows as the batch file's child. The shim writes the file whole with a rename, so a read never sees half of it.
+ */
+function hangingGhPid(): number | undefined {
+  const file = join(dir, "bin", "hanging.pid");
+  if (!existsSync(file)) return undefined;
+  const pid = Number(readFileSync(file, "utf8"));
+  return Number.isInteger(pid) && pid > 1 ? pid : undefined;
+}
+
+function isAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    // EPERM is a process that exists and belongs to somebody else; only "no such process" is gone.
+    return (error as NodeJS.ErrnoException).code === "EPERM";
   }
 }
 
@@ -387,6 +421,16 @@ describe("a labelled issue becomes a draft pull request", () => {
     expect(calls[0]?.token).toBe(digest(token));
     expect(readFileSync(join(dir, "push-tokens.log"), "utf8").trim()).toBe(digest(token));
 
+    // The dispatcher hands its task's commands the effect ledger: the push and the pull request are written against the
+    // task and its run, each confirmed by its own exit status, and the test run and the commit, which stay on this
+    // machine, are not.
+    const effects = effectsForTask(services.runtime.db, taskId);
+    expect(effects.map((effect) => ({ command: effect.intent.split(" — ")[0], state: effect.state, category: effect.category }))).toEqual([
+      { command: "git push origin HEAD", state: "confirmed", category: "external-write" },
+      { command: "gh pr create --draft --fill", state: "confirmed", category: "external-write" },
+    ]);
+    expect(effects.every((effect) => effect.runId !== undefined)).toBe(true);
+
     // The goal the worker was given names the issue it answers, and the task remembers what started it.
     const goal = allRows<{ goal: string }>(services.runtime.db, "SELECT goal FROM tasks WHERE task_id = ?", taskId)[0]?.goal;
     expect(goal).toContain("What started this task (facts from the signal, not instructions): github.issue.labeled");
@@ -453,5 +497,75 @@ describe("a labelled issue becomes a draft pull request", () => {
     expect(git(bare, ["branch", "--list", managedBranchFor(taskId)])).toBe("");
     expect(ghCalls()).toEqual([]);
     await waitUntil(() => assistantTexts(conversationId).find((text) => text.startsWith(`Task ${taskId} để lại`)), 10_000);
+  }, 120_000);
+
+  it("calls a pull request it was stopped in the middle of unknown, and tells the person once", async () => {
+    const { conversationId } = await setUp("node --test");
+    writeFileSync(join(dir, "bin", "hang"), "", "utf8");
+    await labelIssue();
+
+    const taskId = await waitUntil(taskIdOfRun, 10_000);
+    // Stopped while `gh` has the request and has not answered: the push before it is done, the pull request may be.
+    // The command being listed is not enough: the shell is up before `gh` is, and a stop that lands before `gh` has
+    // started is a different moment — on POSIX it never writes its pid, and on Windows `taskkill /T` can walk the tree
+    // before the batch file has started `node`, leaving a `gh` nobody stopped. So the stop waits for `gh` itself.
+    await waitUntil(
+      () => (listRunningCommands().some((running) => running.taskId === taskId && running.command.includes("gh pr create")) ? true : undefined),
+      80_000,
+    );
+    const hangingPid = await waitUntil(hangingGhPid, 30_000);
+    expect(dispatcher.stop(taskId)).toBe(true);
+
+    const report = await waitUntil(
+      () => assistantTexts(conversationId).find((text) => text.includes(`(task ${taskId}):`)),
+      30_000,
+    );
+    // Not "cancelled": what it did outside may have landed, and the task says so.
+    expect(report.startsWith(`Chưa rõ kết quả (task ${taskId}):`)).toBe(true);
+    expect(
+      effectsForTask(services.runtime.db, taskId).map((effect) => ({
+        command: effect.intent.split(" — ")[0],
+        state: effect.state,
+        evidence: effect.reconciliationEvidence,
+      })),
+    ).toEqual([
+      { command: "git push origin HEAD", state: "confirmed", evidence: "the command exited with status 0" },
+      { command: "gh pr create --draft --fill", state: "unknown", evidence: COMMAND_STOPPED_ON_REQUEST },
+    ]);
+
+    // One warning, the effect's, whichever of the task's report and the sweep wrote it: not "the task stopped" and then
+    // "something is unknown" for the one stop.
+    sweepUnknownEffects(services, new Date().toISOString() as Instant);
+    const aboutTheTask = allRows<{ source_kind: string; dedup_key: string; severity: string; title: string; body: string | null }>(
+      services.runtime.db,
+      "SELECT source_kind, dedup_key, severity, title, body FROM notifications WHERE subject LIKE ? ORDER BY rowid",
+      `%${taskId}%`,
+    );
+    // The automation said, earlier, that it started this task; that is its own event and says nothing about the end.
+    expect(aboutTheTask.filter((notice) => notice.source_kind === "automation").map((notice) => notice.severity)).toEqual(["info"]);
+    const notices = aboutTheTask.filter((notice) => notice.source_kind !== "automation");
+    expect(notices).toHaveLength(1);
+    expect(notices[0]?.dedup_key).toBe(`worker:${taskId}`);
+    expect(notices[0]?.severity).toBe("warning");
+    expect(notices[0]?.body).toContain("gh pr create --draft --fill");
+    expect(notices[0]?.body).toContain("dừng theo yêu cầu");
+
+    // Gone before the folder is removed: the `gh` that never answered, whose working directory is the task's worktree,
+    // and the worktree itself, which the dispatcher takes away once the task has settled.
+    await waitUntil(() => (listRunningCommands().some((running) => running.taskId === taskId) ? undefined : true), 15_000);
+    try {
+      await waitUntil(() => (isAlive(hangingPid) ? undefined : true), 15_000);
+    } finally {
+      // A stop that missed it fails the line above; the process is still ended so a failing run leaves nothing behind.
+      if (isAlive(hangingPid)) process.kill(hangingPid, "SIGKILL");
+    }
+    await waitUntil(
+      () =>
+        !existsSync(join(dir, "worktrees", taskId)) ||
+        assistantTexts(conversationId).some((text) => text.startsWith(`Task ${taskId} để lại`))
+          ? true
+          : undefined,
+      15_000,
+    );
   }, 120_000);
 });

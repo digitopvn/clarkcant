@@ -125,7 +125,101 @@ const EXTERNAL_FORM = /\b(git\s+push|npm\s+publish|pnpm\s+publish|gh\s+(pr|issue
  */
 const EXTERNAL_WRITE_HEAD = /^(scp|ssh|sftp|rsync)$/i;
 const EXTERNAL_WRITE_FORM =
-  /\b(git\s+push|npm\s+publish|pnpm\s+publish|gh\s+(pr|issue|release|api)|docker\s+push)\b|\b(curl|wget)\b[^|;&]*(-X\s*(POST|PUT|PATCH|DELETE)|-d\b|--data|--form|-F\b|-T\b|--upload-file|--post-data|--post-file|--method)/i;
+  /\b(git\s+push|npm\s+publish|pnpm\s+publish|docker\s+push)\b|\b(curl|wget)\b[^|;&]*(-X\s*(POST|PUT|PATCH|DELETE)|-d\b|--data|--form|-F\b|-T\b|--upload-file|--post-data|--post-file|--method)/i;
+/**
+ * `gh pr|issue|release|api`, and the rest of the segment after it.
+ *
+ * Read per segment, so the subcommand is the one that follows `gh`, not a word further along the line.
+ */
+const GH_COMMAND = /\bgh\s+(pr|issue|release|api)\b(.*)$/i;
+/**
+ * The `gh` subcommands that only read. Named rather than inferred, and every other subcommand of these groups is a
+ * write: `gh pr checkout` changes the working tree and `gh pr merge` changes GitHub, and a subcommand this list has
+ * never heard of is read the conservative way.
+ */
+const GH_READ_SUBCOMMAND = /^\s+(view|list|status|checks|diff)\b/i;
+/** An explicit HTTP method on `gh api`: `-X POST`, `-XPOST`, `--method POST`, `--method=POST`. */
+const GH_API_METHOD = /(?:^|\s)(?:-X|--method)(?:\s+|=)?['"]?([A-Za-z]+)/;
+/** The flags that give `gh api` a body, which makes it a POST unless a method says otherwise. */
+const GH_API_BODY = /(?:^|\s)(?:-f|-F|--field|--raw-field|--input)(?:\s|=|$)/;
+
+/** Whether one segment of a line is a `gh` call that changes something. */
+function ghWrites(segment: string): boolean {
+  const gh = GH_COMMAND.exec(segment);
+  if (gh === null) return false;
+  const rest = gh[2] ?? "";
+  if ((gh[1] ?? "").toLowerCase() !== "api") return !GH_READ_SUBCOMMAND.test(rest);
+  const method = GH_API_METHOD.exec(rest)?.[1]?.toUpperCase();
+  if (method !== undefined) return method !== "GET" && method !== "HEAD";
+  return GH_API_BODY.test(rest);
+}
+
+/**
+ * Whether a command changes something outside this node: pushes, publishes, uploads, writes to GitHub, or runs
+ * somewhere else.
+ *
+ * What the effect ledger follows, and the external half of `classifyCommand`. Deleting a folder is destructive and
+ * still inside the node, so it is not here; `git push --force` is both, and it is. A read that happens to use the
+ * network — `gh pr view`, `gh api` with no body, a plain fetch — is not.
+ */
+export function changesSomethingOutside(command: string): boolean {
+  const text = command.trim();
+  return (
+    commandHeads(text).some((head) => EXTERNAL_WRITE_HEAD.test(head)) ||
+    EXTERNAL_WRITE_FORM.test(text) ||
+    text.split(/&&|\|\||;|\|/u).some(ghWrites)
+  );
+}
+
+/**
+ * How many commands a line runs, reading quotes and escapes the way a shell does.
+ *
+ * `gh pr create --title "fix: a; b"` is one command; `git push && gh pr create` is two, and so is anything piped,
+ * sequenced, backgrounded or substituted, because its exit status is no longer the status of each part. Command
+ * substitution and an unterminated quote count as more than one: when the line cannot be read with confidence, the
+ * answer that keeps an outcome from being misread is the one given.
+ */
+export function commandSegmentCount(command: string): number {
+  let segments = 1;
+  let quote: "'" | '"' | undefined;
+  const text = command.trim();
+  for (let index = 0; index < text.length; index += 1) {
+    const char = text[index];
+    const next = text[index + 1];
+    if (quote === "'") {
+      if (char === "'") quote = undefined;
+      continue;
+    }
+    if (char === "\\") {
+      index += 1;
+      continue;
+    }
+    if (quote === '"') {
+      if (char === '"') quote = undefined;
+      else if (char === "`" || (char === "$" && next === "(")) return Math.max(segments, 2);
+      continue;
+    }
+    if (char === "'" || char === '"') {
+      quote = char;
+    } else if (char === "`" || (char === "$" && next === "(")) {
+      return Math.max(segments, 2);
+    } else if (char === ";" || char === "\n") {
+      segments += 1;
+    } else if (char === "|") {
+      segments += 1;
+      if (next === "|") index += 1;
+    } else if (char === "&") {
+      if (next === "&") {
+        segments += 1;
+        index += 1;
+      } else if (text[index - 1] !== ">" && text[index - 1] !== "<" && next !== ">") {
+        // A lone `&` backgrounds what came before it; `2>&1` and `&>` are redirections.
+        segments += 1;
+      }
+    }
+  }
+  return quote === undefined ? segments : Math.max(segments, 2);
+}
 const PACKAGE_MANAGER = /^\s*(pnpm|npm|yarn|pip|pip3|poetry|cargo|go)\b/i;
 const BUILD = /^\s*(pnpm|npm|yarn|make|cmake|cargo|go|tsc|vite|vitest|playwright)\b.*\b(build|test|run|install|ci|lint|typecheck)\b/i;
 
@@ -144,8 +238,7 @@ export function classifyCommand(command: string): CommandClassification {
     heads.some((head) => EXTERNAL_HEAD.test(head)) ||
     EXTERNAL_FORM.test(text) ||
     heads.some((head) => EXTERNAL_WRITE_HEAD.test(head));
-  const externalWrite =
-    heads.some((head) => EXTERNAL_WRITE_HEAD.test(head)) || EXTERNAL_WRITE_FORM.test(text);
+  const externalWrite = changesSomethingOutside(text);
   const readOnly = heads.some((head) => READ_ONLY_HEAD.test(head)) || READ_ONLY_FORM.test(text);
   // A fetch reaches outward and changes nothing out there: it is a read that happens to use the network.
   const networkRead = external && !externalWrite;

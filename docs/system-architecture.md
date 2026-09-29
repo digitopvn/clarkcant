@@ -379,6 +379,42 @@ The inbox (`apps/runtime/src/inbox.ts`, `routes/inbox.ts`) gathers two things wi
     expired task approval also moves its task to `failed` (`run.approval_expired`). A capability approval (package
     install, no task, no card) has no conversation to point to and is not swept — the same reason it is not offered
     as pending work before it expires.
+  - **Effects whose outcome is unknown.** The effect ledger's production writer is the worker command broker
+    (`apps/runtime/src/worker-command-broker.ts`). It ledgers only a command a task's worker asks the host to run that
+    changes something outside this node (`changesSomethingOutside` in `preflight.ts`): `git push`, a package publish,
+    `docker push`, `ssh`/`scp`/`sftp`/`rsync`, a `curl`/`wget` that sends data, and a `gh pr|issue|release`
+    subcommand other than `view`/`list`/`status`/`checks`/`diff` or a `gh api` call with a non-GET method or body
+    fields. A command that
+    only changes this machine — `rm -rf dist`, `git commit` — and a `gh` read are not ledgered, even when destructive
+    or when they run out of time. The effect is written `prepared → submitted` in one transaction against the task and
+    its run (capability `project.command.run@1`, category `destructive` for a force-push, otherwise `external-write`)
+    before the command starts, then settled on what it reported: exit 0 is `confirmed`, another exit status `failed`,
+    and a command that was stopped, timed out, ended without an exit status or whose runner failed is `unknown` —
+    which moves the task to `uncertain` in the same write (`markEffectUnknown`). A line that joins such a command to
+    others (`;`, `&&`, `||`, `|`, `&`, a newline, or command substitution, outside quotes) is refused before anything
+    runs, since one exit status could not say which part took effect. The same command is refused while an earlier run
+    of it is still `submitted`; once any effect of the task is `unknown`, every further ledgered command of that task
+    is refused, and the refusal tells the worker to report that the earlier command may or may not have landed rather
+    than try another way. Commands that stay on the node still run. At boot, `work-recovery.ts` marks this node's
+    still-`submitted` effects `unknown` after the task pass. The dispatcher waits for every command a task's worker
+    started to end and be written into the ledger before it settles the task (`broker.idle()`), so a task stopped
+    during a push settles as `uncertain`, not `cancelled`. A task with an `unknown` effect has one notice, under the
+    same key as the notice its settlement leaves (`dedupKey: worker:<taskId>`, subject `task`, pointing at the task's
+    conversation): whichever of the settle report (`task-reporting.ts`) and the sweep in
+    `apps/runtime/src/effect-notices.ts` writes first, it is the effect notice, so a Stop during a push is one warning,
+    not a "stopped" notice and a second one about the push. It quotes the first unknown command, counts the others,
+    says the person's own stop when that is why, says the task is kept uncertain and its further outward commands are
+    refused, and asks to check the receiving side before running it again. The sweep runs once after recovery and then every minute
+    (unref'd, stopped when the node closes), reading only `unknown` effects prepared within the 30-day dismissed-notice
+    retention, so a dismissed one does not come back as new. There is no route yet that records a person's
+    reconciliation of an `unknown` effect.
+  - **Reminders and automations that come due** (`apps/runtime/src/automation-service.ts`). A reminder that comes due
+    records one notice per occurrence (`automation:<runId>`; a run is unique per automation and signal, and a timer's
+    signal per slot), subject `conversation`. A run that came due but cannot run records one notice under the same
+    key: refused before a task exists (subject `conversation`), failed to start (pointing at the automation's
+    conversation when the automation still exists), or started (subject `task`). A run waiting for a capability uses
+    its own key, `automation:<runId>:waiting` (subject `task`), so the notice that it later started is not swallowed.
+    A run whose automation was paused or removed after it matched says nothing: the person asked it to stop.
   - **Update checks** (`apps/runtime/src/update-checks.ts`) are a periodic job, started from
     `bootstrap/runtime-bootstrap.ts` on an `unref()` timer (it does not keep the process alive) and stopped when the
     node closes. It compares the version of installed packages/widgets (`listInstalledPackages`, `packages/core`)

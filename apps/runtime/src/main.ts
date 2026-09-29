@@ -23,6 +23,7 @@ import { createNodeModelTurn } from "./bootstrap/model-bootstrap.ts";
 import { createRuntimeWiring, wireRuntime } from "./bootstrap/runtime-bootstrap.ts";
 import { attachNodeWork } from "./bootstrap/work-bootstrap.ts";
 import { startLeaseSweeper } from "./lease-sweeper.ts";
+import { startUnknownEffectNoticeSweep } from "./effect-notices.ts";
 import { performEmergencyStop } from "./application/emergency-stop.ts";
 import { STOP_GRACE_MS } from "./process-tree.ts";
 import { killRunningCommandsNow, refuseNewCommands } from "./run-command.ts";
@@ -271,6 +272,10 @@ async function main(): Promise<void> {
     process.stderr.write(`could not recover unfinished work: ${cause instanceof Error ? cause.message : String(cause)}\n`);
   }
 
+  // After recovery, which is what turns an effect the previous process handed off and never heard back about into
+  // `unknown`: the first pass reports those at once, and later passes report the ones this process leaves unknown.
+  const effectNotices = startUnknownEffectNoticeSweep(services);
+
   // After recovery too, so a task the previous process left running is already called uncertain and its worktree is
   // left for it; only a finished task's leftover worktree is taken away. Not awaited: git on a slow disk must not hold
   // the node back from serving, and a sweep that fails is tried again on the next boot.
@@ -490,6 +495,7 @@ async function main(): Promise<void> {
     leaseSweeper.stop();
     runtimeHandles.stopUpdateChecks();
     services.expirySweep?.stop();
+    effectNotices.stop();
     services.automation?.stop();
     services.peerDelivery?.stop();
     void (async () => {

@@ -535,13 +535,22 @@ Shipped:
   on the node writes exactly one notification per expired item, pointing back to its own conversation; a package
   permission approval (which belongs to no conversation) has nothing to point back to, so it isn't reported through
   this path.
+- **An action whose outcome nobody saw is one notification for its task.** When a command a background task ran that
+  changes something outside the node (a `git push` or opening a pull request, for example — not deleting a folder on
+  this machine or reading from GitHub) was stopped, timed out or was cut off by a restart before it reported back, the
+  task is kept as "outcome unknown" and refuses every further command it recognises as reaching outside, so the task
+  does not do that action a second time on its own, as the same command or in other words. One notification for that
+  task — in place of the one saying it stopped or ended, not in addition to it — quotes the action, says when it was
+  the person's own Stop, says what was kept, and asks them to check the receiving side before running it again.
+  Dismissing it does not bring it back.
+- **Reminders and automations that come due** leave one notification per occurrence, pointing back to their
+  conversation, including when a run came due but was refused or could not start.
 
 Not shipped (target):
 
 - notifications and waiting items from another ClarkCant node (already has `originNodeId` and a dedup key so repeated
   receipt is safe);
-- notification when an effect is recorded in an "unknown" state needing reconciliation: there's no production path
-  that creates this data yet (effect ledger, §9 system-architecture.md, no place writes real rows yet);
+- marking an action whose outcome was unknown as checked (done or not done) from the notification;
 - notification when an OAuth connection expires or is revoked: the `connections` table has no place writing real rows
   in production yet.
 

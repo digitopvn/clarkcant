@@ -1,6 +1,7 @@
 import type { Instant } from "@clarkcant/contracts";
 
 import { reportDelegatedOutcome, reportDelegatedStatus } from "./delegation.ts";
+import { unknownEffectsNotice } from "./effect-notices.ts";
 import { tryRecordNodeNotice, workerSettledNotice } from "./notices.ts";
 import { appendHostReply } from "./routes/conversations.ts";
 import type { NodeServices } from "./services.ts";
@@ -38,8 +39,16 @@ export function taskDispatchReports(
         text: `${label} (task ${taskId}): ${message}`,
         at,
       });
-      // The pointer for a person who is not looking at that conversation.
-      tryRecordNodeNotice(services, workerSettledNotice({ taskId, conversationId, outcome, message, at }));
+      // The pointer for a person who is not looking at that conversation. A task with an effect whose outcome is unknown
+      // is reported as that effect, under the same key: it is the one thing the person has to do something about, and
+      // the effect sweep would otherwise say it a second time.
+      let effectNotice: ReturnType<typeof unknownEffectsNotice>;
+      try {
+        effectNotice = unknownEffectsNotice(services.runtime.db, taskId, at);
+      } catch (cause) {
+        process.stderr.write(`inbox: could not read the effects of task ${taskId} (${cause instanceof Error ? cause.message : String(cause)})\n`);
+      }
+      tryRecordNodeNotice(services, effectNotice ?? workerSettledNotice({ taskId, conversationId, outcome, message, at }));
       // A task a peer handed over is answered there too, which is how its own task settles.
       const { runtime, conductor } = services;
       if (reportDelegatedOutcome({ db: runtime.db, identity: runtime.identity, now: () => at, newId: conductor.newId }, { taskId, outcome, message })) {
