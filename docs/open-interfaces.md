@@ -142,7 +142,10 @@ reading, running or changing anything it names still goes through the node's usu
 by the start of the first message when the title is the clients' placeholder) and background work after `@`; one
 directory of a project after `@<project>/`. At most 8 rows, ranked exact, then prefix, then substring, then by kind
 (projects, services, conversations, work), recently used first, with diacritics optional when typing. With nothing
-typed after `@`, each kind gets its share of the rows. A row that cannot be chosen says why in `disabledReason`.
+typed after `@`, each kind gets its share of the rows. A row that cannot be chosen says why in `disabledReason`. A
+service is labelled with the id its package gave it and carries only its state (running, failed, not running), never
+what it was started with or why it failed; its `serviceKey` also names the package generation running it, so an update
+makes an earlier reference stale.
 
 Other routes exist (settings, packages, widgets, peers…) and are reachable with the same token, but they are not yet
 part of the stable description and may change.

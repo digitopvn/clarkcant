@@ -210,7 +210,8 @@ export function ConversationComposerBar({
             }}
             onKeyDown={(event) => {
               if (references.onKeyDown(event)) return;
-              if (event.key === "Enter" && !event.shiftKey) {
+              // An input method still composing a word takes its own Enter to finish it; that is not a send.
+              if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) {
                 event.preventDefault();
                 onSubmit();
               }

@@ -1,13 +1,14 @@
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import {
   ensureManagedWorktree,
   findManagedWorktrees,
   managedBranchFor,
+  removeEmptyTaskFolder,
   removeManagedWorktree,
 } from "../src/managed-worktree.ts";
 
@@ -30,8 +31,9 @@ function tempDir(name: string): string {
   return path;
 }
 
-function makeRepo(): string {
-  const path = tempDir("managed-repo");
+function makeRepo(parent?: string): string {
+  const path = parent === undefined ? tempDir("managed-repo") : join(parent, "repo");
+  mkdirSync(path, { recursive: true });
   git(path, ["init", "--initial-branch=main"]);
   git(path, ["config", "user.email", "test@example.invalid"]);
   git(path, ["config", "user.name", "Test"]);
@@ -94,6 +96,55 @@ describe("a task works in its own worktree, never in the person's tree", () => {
     expect(readFileSync(join(again.worktree.path, "progress.txt"), "utf8")).toBe("half done\n");
   });
 
+  it("gives each repository of one task its own worktree, even two that share a folder name", async () => {
+    // Both are called `repo`: what tells them apart is where they are.
+    const first = makeRepo(tempDir("managed-parent"));
+    const second = makeRepo(tempDir("managed-parent"));
+    writeFileSync(join(first, "readme.txt"), "unsaved in the first\n", "utf8");
+    writeFileSync(join(second, "readme.txt"), "unsaved in the second\n", "utf8");
+    const worktreesDir = tempDir("managed-worktrees");
+
+    const a = await ensureManagedWorktree({ repoPath: first, worktreesDir, taskId: "task_multi" });
+    const b = await ensureManagedWorktree({ repoPath: second, worktreesDir, taskId: "task_multi" });
+    if (!a.ok || !b.ok) throw new Error(`test setup: ${a.ok ? "" : a.message} ${b.ok ? "" : b.message}`);
+
+    expect(a.worktree.path).not.toBe(b.worktree.path);
+    // One folder for the task, one worktree per repository inside it.
+    expect(dirname(a.worktree.path)).toBe(join(worktreesDir, "task_multi"));
+    expect(dirname(b.worktree.path)).toBe(join(worktreesDir, "task_multi"));
+    for (const [made, repo] of [[a, first], [b, second]] as const) {
+      expect(git(made.worktree.path, ["rev-parse", "--abbrev-ref", "HEAD"])).toBe(managedBranchFor("task_multi"));
+      writeFileSync(join(made.worktree.path, "readme.txt"), "the task's change\n", "utf8");
+      git(made.worktree.path, ["commit", "-am", "task change"]);
+      expect(git(repo, ["show", `${managedBranchFor("task_multi")}:readme.txt`])).toBe("the task's change");
+      expect(git(repo, ["rev-parse", "--abbrev-ref", "HEAD"])).toBe("main");
+    }
+    expect(readFileSync(join(first, "readme.txt"), "utf8")).toBe("unsaved in the first\n");
+    expect(readFileSync(join(second, "readme.txt"), "utf8")).toBe("unsaved in the second\n");
+
+    // Dispatched again, each repository finds its own worktree, with what the task did in it.
+    const againA = await ensureManagedWorktree({ repoPath: first, worktreesDir, taskId: "task_multi" });
+    const againB = await ensureManagedWorktree({ repoPath: second, worktreesDir, taskId: "task_multi" });
+    if (!againA.ok || !againB.ok) throw new Error("the worktrees were not found again");
+    expect([againA.worktree.path, againA.worktree.reused]).toEqual([a.worktree.path, true]);
+    expect([againB.worktree.path, againB.worktree.reused]).toEqual([b.worktree.path, true]);
+  });
+
+  it("continues in the worktree a task made before tasks could name several repositories", async () => {
+    const repo = makeRepo();
+    const worktreesDir = tempDir("managed-worktrees");
+    // Where a task's worktree used to be: the task's folder itself.
+    const earlier = join(worktreesDir, "task_earlier");
+    git(repo, ["worktree", "add", "-b", managedBranchFor("task_earlier"), earlier]);
+    writeFileSync(join(earlier, "progress.txt"), "half done\n", "utf8");
+
+    const made = await ensureManagedWorktree({ repoPath: repo, worktreesDir, taskId: "task_earlier" });
+    if (!made.ok) throw new Error(made.message);
+    expect(made.worktree.reused).toBe(true);
+    expect(made.worktree.path).toBe(earlier);
+    expect(readFileSync(join(made.worktree.path, "progress.txt"), "utf8")).toBe("half done\n");
+  });
+
   it("refuses a folder that is not a repository", async () => {
     const made = await ensureManagedWorktree({
       repoPath: tempDir("not-a-repo"),
@@ -140,13 +191,49 @@ describe("finding what a stopped node left behind", () => {
     if (!clean.ok || !dirty.ok) throw new Error("test setup: worktrees were not made");
     writeFileSync(join(dirty.worktree.path, "readme.txt"), "not committed\n", "utf8");
 
-    const found = (await findManagedWorktrees({ worktreesDir })).sort((a, b) => a.name.localeCompare(b.name));
-    expect(found.map(({ name, branch, dirty: isDirty }) => ({ name, branch, dirty: isDirty }))).toEqual([
-      { name: "task_7", branch: managedBranchFor("task_7"), dirty: false },
-      { name: "task_8", branch: managedBranchFor("task_8"), dirty: true },
+    const found = (await findManagedWorktrees({ worktreesDir })).sort((a, b) => a.taskId.localeCompare(b.taskId));
+    expect(found.map(({ taskId, branch, dirty: isDirty }) => ({ taskId, branch, dirty: isDirty }))).toEqual([
+      { taskId: "task_7", branch: managedBranchFor("task_7"), dirty: false },
+      { taskId: "task_8", branch: managedBranchFor("task_8"), dirty: true },
     ]);
     // The repository the worktree belongs to, so it can be removed through that repository's own git.
     expect(found.every((worktree) => git(worktree.repoPath, ["rev-parse", "--show-toplevel"]) === git(repo, ["rev-parse", "--show-toplevel"]))).toBe(true);
+  });
+
+  it("finds every repository's worktree of a task, and a task's worktree from before", async () => {
+    const first = makeRepo(tempDir("managed-parent"));
+    const second = makeRepo(tempDir("managed-parent"));
+    const worktreesDir = tempDir("managed-worktrees");
+    const a = await ensureManagedWorktree({ repoPath: first, worktreesDir, taskId: "task_multi" });
+    const b = await ensureManagedWorktree({ repoPath: second, worktreesDir, taskId: "task_multi" });
+    if (!a.ok || !b.ok) throw new Error("test setup: worktrees were not made");
+    const earlier = join(worktreesDir, "task_earlier");
+    git(first, ["worktree", "add", "-b", managedBranchFor("task_earlier"), earlier]);
+
+    const found = await findManagedWorktrees({ worktreesDir });
+    expect(found.map(({ taskId, path }) => ({ taskId, path })).sort((x, y) => x.path.localeCompare(y.path))).toEqual(
+      [
+        { taskId: "task_earlier", path: earlier },
+        { taskId: "task_multi", path: a.worktree.path },
+        { taskId: "task_multi", path: b.worktree.path },
+      ].sort((x, y) => x.path.localeCompare(y.path)),
+    );
+  });
+
+  it("takes a task's folder away only once nothing is left in it", async () => {
+    const repo = makeRepo();
+    const worktreesDir = tempDir("managed-worktrees");
+    const made = await ensureManagedWorktree({ repoPath: repo, worktreesDir, taskId: "task_folder" });
+    if (!made.ok) throw new Error(made.message);
+
+    await removeEmptyTaskFolder({ worktreesDir, taskId: "task_folder" });
+    expect(existsSync(made.worktree.path)).toBe(true);
+
+    expect(await removeManagedWorktree({ repoPath: repo, path: made.worktree.path })).toEqual({ removed: true });
+    await removeEmptyTaskFolder({ worktreesDir, taskId: "task_folder" });
+    expect(existsSync(join(worktreesDir, "task_folder"))).toBe(false);
+    // Already gone is not an error.
+    await removeEmptyTaskFolder({ worktreesDir, taskId: "task_folder" });
   });
 
   it("ignores anything in the folder that is not a worktree git knows about", async () => {

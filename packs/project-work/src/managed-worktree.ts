@@ -11,8 +11,9 @@
  */
 
 import { execFile } from "node:child_process";
+import { createHash } from "node:crypto";
 import { existsSync, readdirSync, realpathSync } from "node:fs";
-import { mkdir } from "node:fs/promises";
+import { mkdir, rmdir } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import { promisify } from "node:util";
 
@@ -51,8 +52,36 @@ export function managedBranchFor(taskId: string): string {
   return `clarkcant/task-${safeName(taskId)}`;
 }
 
-export function managedWorktreePath(worktreesDir: string, taskId: string): string {
+/**
+ * Where a task keeps its worktree of one repository: `<worktreesDir>/<taskId>/<repository>`.
+ *
+ * One folder per task, one worktree per repository inside it, so a task that changes several repositories gives each
+ * its own. The repository's part is its folder name, for a person reading the path, and a short digest of where it is,
+ * so two repositories that share a name do not share a worktree. The same repository gets the same path every time the
+ * task is dispatched, which is what lets a task continue where it stopped.
+ */
+export function managedWorktreePath(worktreesDir: string, taskId: string, repoPath: string): string {
+  const digest = createHash("sha256").update(canonical(repoPath)).digest("hex").slice(0, 8);
+  const repoName = safeName(basename(resolve(repoPath))).slice(0, 40) || "repository";
+  return join(taskFolder(worktreesDir, taskId), `${repoName}-${digest}`);
+}
+
+/** The folder holding a task's worktrees. Before a task could name several repositories, it was the worktree itself. */
+function taskFolder(worktreesDir: string, taskId: string): string {
   return join(resolve(worktreesDir), safeName(taskId));
+}
+
+/**
+ * Take away a task's folder once nothing is left in it.
+ *
+ * Only an empty folder goes: one still holding a worktree that was kept, or anything else, stays as it is.
+ */
+export async function removeEmptyTaskFolder(input: { worktreesDir: string; taskId: string }): Promise<void> {
+  try {
+    await rmdir(taskFolder(input.worktreesDir, input.taskId));
+  } catch {
+    // Not empty, or already gone: either way there is nothing for this to do.
+  }
 }
 
 async function branchExists(gitRun: NonNullable<RepoSafetyOptions["git"]>, repo: string, branch: string): Promise<boolean> {
@@ -115,14 +144,22 @@ export async function ensureManagedWorktree(
 
   const repo = identity.worktree;
   const branch = managedBranchFor(input.taskId);
-  const path = managedWorktreePath(input.worktreesDir, input.taskId);
+  const path = managedWorktreePath(input.worktreesDir, input.taskId, repo);
+  // A task started before tasks could name several repositories has its worktree at the task's folder itself. It
+  // continues there rather than in a second worktree, which git would refuse anyway: the branch is checked out there.
+  const earlier = taskFolder(input.worktreesDir, input.taskId);
 
   try {
-    if (existsSync(path) && (await isRegisteredWorktree(gitRun, repo, path))) {
-      const baseSha = await gitRun(["rev-parse", "HEAD"], path);
-      return { ok: true, worktree: { taskId: input.taskId, repoPath: repo, path, branch, baseSha, reused: true } };
+    for (const candidate of [path, earlier]) {
+      if (existsSync(candidate) && (await isRegisteredWorktree(gitRun, repo, candidate))) {
+        const baseSha = await gitRun(["rev-parse", "HEAD"], candidate);
+        return {
+          ok: true,
+          worktree: { taskId: input.taskId, repoPath: repo, path: candidate, branch, baseSha, reused: true },
+        };
+      }
     }
-    await mkdir(resolve(input.worktreesDir), { recursive: true });
+    await mkdir(dirname(path), { recursive: true });
     // A branch left from an earlier attempt whose directory is gone is checked out again rather than replaced: it may
     // hold commits the task made.
     if (await branchExists(gitRun, repo, branch)) {
@@ -166,8 +203,8 @@ export async function removeManagedWorktree(
 
 /** A worktree found under the node's worktree folder, as git describes it. */
 export interface FoundWorktree {
-  /** The directory name, which is the task id it was made for (see `managedWorktreePath`). */
-  name: string;
+  /** The task it was made for: the name of its task's folder (see `managedWorktreePath`). */
+  taskId: string;
   path: string;
   repoPath: string;
   branch: string;
@@ -193,20 +230,50 @@ export async function findManagedWorktrees(input: { worktreesDir: string } & Rep
     return [];
   }
   const found: FoundWorktree[] = [];
-  for (const name of names) {
-    const path = join(root, name);
-    try {
-      const common = await gitRun(["rev-parse", "--git-common-dir"], path);
-      const commonDir = isAbsolute(common) ? common : resolve(path, common);
-      if (basename(commonDir) !== ".git") continue;
-      const repoPath = dirname(commonDir);
-      if (!(await isRegisteredWorktree(gitRun, repoPath, path))) continue;
-      const branch = await gitRun(["rev-parse", "--abbrev-ref", "HEAD"], path);
-      const status = await gitRun(["status", "--porcelain"], path);
-      found.push({ name, path, repoPath, branch, dirty: status !== "" });
-    } catch {
+  for (const taskId of names) {
+    const folder = join(root, taskId);
+    // A task's folder from before tasks could name several repositories is the worktree itself.
+    const earlier = await describeWorktree(gitRun, taskId, folder);
+    if (earlier !== undefined) {
+      found.push(earlier);
       continue;
+    }
+    for (const path of subfolders(folder)) {
+      const worktree = await describeWorktree(gitRun, taskId, path);
+      if (worktree !== undefined) found.push(worktree);
     }
   }
   return found;
+}
+
+function subfolders(folder: string): string[] {
+  try {
+    return readdirSync(folder, { withFileTypes: true })
+      .filter((entry) => entry.isDirectory())
+      .map((entry) => join(folder, entry.name));
+  } catch {
+    return [];
+  }
+}
+
+/** The worktree at `path`, when git lists it as one of the repository it points back to. */
+async function describeWorktree(
+  gitRun: NonNullable<RepoSafetyOptions["git"]>,
+  taskId: string,
+  path: string,
+): Promise<FoundWorktree | undefined> {
+  try {
+    const common = await gitRun(["rev-parse", "--git-common-dir"], path);
+    const commonDir = isAbsolute(common) ? common : resolve(path, common);
+    if (basename(commonDir) !== ".git") return undefined;
+    const repoPath = dirname(commonDir);
+    // Git lists only a worktree's own top folder, so a task's folder, whose git answers for something further up or
+    // not at all, is not taken for one.
+    if (!(await isRegisteredWorktree(gitRun, repoPath, path))) return undefined;
+    const branch = await gitRun(["rev-parse", "--abbrev-ref", "HEAD"], path);
+    const status = await gitRun(["status", "--porcelain"], path);
+    return { taskId, path, repoPath, branch, dirty: status !== "" };
+  } catch {
+    return undefined;
+  }
 }
