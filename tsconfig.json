@@ -61,6 +61,9 @@
       ],
       "@clarkcant/conversation-client": [
         "packages/conversation-client/src/index.ts"
+      ],
+      "@clarkcant/signal-sources": [
+        "packages/signal-sources/src/index.ts"
       ]
     },
     "allowJs": true

@@ -335,6 +335,16 @@ export type BackgroundRouting = z.infer<typeof backgroundRoutingSchema>;
 export const modelFavoritesPreferenceSchema = z.array(z.string().trim().min(1).max(200)).max(12);
 
 /**
+ * The GitHub accounts that are this node itself: the login Clark pushes, labels and comments as, and its app's bot.
+ *
+ * A GitHub signal one of them caused is marked self-generated, which an automation ignores unless it was set up to
+ * react to its own effects. Per node, because which account a machine acts as is a fact about that machine.
+ */
+export const githubSelfLoginsPreferenceSchema = z
+  .array(z.string().trim().min(1).max(100).regex(/^[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?(?:\[bot\])?$/, "a GitHub login"))
+  .max(20);
+
+/**
  * What the user wants Clark to know about them, beyond the product's own instructions.
  *
  * The bound is the whole safety story of the text field: it is a section inside the system prompt,
@@ -524,13 +534,13 @@ const normalizePersonalInstructions = (
 };
 
 /**
- * Trims and de-duplicates favourites, keeping the user's order.
+ * Trims and de-duplicates a list of names — model favourites, GitHub logins — keeping the user's order.
  *
- * Order is the meaning of this preference, so it is preserved; only an entry that is already
- * present is dropped. An entry that could not be a model reference at all is left for the schema
+ * Order is the meaning of a favourites list, so it is preserved; only an entry that is already
+ * present is dropped. An entry that could not be a valid name at all is left for the schema
  * to refuse, rather than being quietly removed from a list the user typed.
  */
-const normalizeModelFavorites = (value: unknown): string[] | undefined => {
+const normalizeNameList = (value: unknown): string[] | undefined => {
   if (!Array.isArray(value)) return undefined;
   if (!value.every((entry) => typeof entry === "string" && entry.trim() !== "")) return undefined;
   const seen = new Set<string>();
@@ -628,7 +638,7 @@ export const PREFERENCE_REGISTRY = {
     applies: "immediate",
     default: [],
     schema: modelFavoritesPreferenceSchema,
-    normalize: normalizeModelFavorites,
+    normalize: normalizeNameList,
   },
   "ai.backgroundRouting": {
     key: "ai.backgroundRouting",
@@ -686,6 +696,14 @@ export const PREFERENCE_REGISTRY = {
     applies: "immediate",
     default: DEFAULT_INBOX_NOTIFICATIONS_PREFERENCE,
     schema: inboxNotificationsPreferenceSchema,
+  },
+  "signals.github.selfLogins": {
+    key: "signals.github.selfLogins",
+    scope: "node",
+    applies: "immediate",
+    default: [],
+    schema: githubSelfLoginsPreferenceSchema,
+    normalize: normalizeNameList,
   },
 } as const satisfies Record<string, PreferenceDefinition>;
 

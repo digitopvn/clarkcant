@@ -5,7 +5,7 @@ import { join } from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { ATTACHMENT_UPLOAD_BODY_LIMIT, bodyLimitForPath, createNodeServer } from "../src/server.ts";
+import { ATTACHMENT_UPLOAD_BODY_LIMIT, GITHUB_WEBHOOK_BODY_LIMIT, bodyLimitForPath, createNodeServer } from "../src/server.ts";
 import { bootNodeServices, type NodeServices } from "../src/services.ts";
 
 /**
@@ -56,8 +56,10 @@ function token(): string {
 }
 
 describe("the deployed body ceiling", () => {
-  it("applies to the upload route and to nothing else", () => {
+  it("applies to the upload route and GitHub's webhook, and to nothing else", () => {
     expect(bodyLimitForPath("/attachments")).toBe(ATTACHMENT_UPLOAD_BODY_LIMIT);
+    expect(bodyLimitForPath("/signals/github")).toBe(GITHUB_WEBHOOK_BODY_LIMIT);
+    expect(bodyLimitForPath("/signals")).toBeUndefined();
     expect(bodyLimitForPath("/attachments/att_1")).toBeUndefined();
     expect(bodyLimitForPath("/command")).toBeUndefined();
     expect(bodyLimitForPath("/conversations/conv_1/messages")).toBeUndefined();

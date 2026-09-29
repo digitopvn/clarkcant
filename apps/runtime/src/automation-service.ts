@@ -1,3 +1,5 @@
+import { execFileSync } from "node:child_process";
+
 import type { Instant, IntentRun, Signal } from "@clarkcant/contracts";
 import {
   fireDueTimers,
@@ -7,7 +9,8 @@ import {
   settleIntentRun,
   type TaskServiceDeps,
 } from "@clarkcant/core";
-import { getSignalDelivery, setIntentRunState } from "@clarkcant/storage";
+import { GITHUB_PROVIDER, githubRepositoryFromRemote, remoteMatchesRepository } from "@clarkcant/signal-sources";
+import { getPersistentIntent, getSignalDelivery, getTask, setIntentRunState } from "@clarkcant/storage";
 
 import { tryRecordNodeNotice } from "./notices.ts";
 import { appendHostReply } from "./routes/conversations.ts";
@@ -47,11 +50,55 @@ export function describeSignal(signal: Signal | undefined): string {
   return `${signal.topic}${what}${where}`;
 }
 
+/** The `origin` remote of a clone, or nothing when it has none or is not a clone. Never printed: it may carry a token. */
+export function readOriginRemote(path: string): string | undefined {
+  try {
+    const remote = execFileSync("git", ["-C", path, "remote", "get-url", "origin"], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+      timeout: 10_000,
+      windowsHide: true,
+    }).trim();
+    return remote === "" ? undefined : remote;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Why a run must not start in the repositories it was given, or nothing.
+ *
+ * A signal about `acme/widgets` starts work in a local folder only when that folder is a clone of `acme/widgets`:
+ * a person who pointed an automation at the wrong checkout, or a repository whose remote has since changed, gets a
+ * refusal that says so, never a task that changes some other project because a label appeared somewhere.
+ */
+export function repositoryBindingRefusal(
+  signal: Signal | undefined,
+  repositories: readonly string[],
+  readRemote: (path: string) => string | undefined,
+): string | undefined {
+  const repository = signal?.subject?.refs?.repository;
+  if (signal?.source.provider !== GITHUB_PROVIDER || repository === undefined) return undefined;
+  const host = signal.subject?.refs?.host;
+  for (const path of repositories) {
+    const remote = readRemote(path);
+    if (remote === undefined) return `${path} has no origin remote, so it cannot be checked against ${repository}`;
+    if (!remoteMatchesRepository(remote, repository, host)) {
+      const actual = githubRepositoryFromRemote(remote);
+      // The parsed name only: a remote URL may carry a token, and this sentence goes into the conversation.
+      const where = actual === undefined ? "a remote that is not a GitHub repository" : `${actual.host}/${actual.fullName}`;
+      return `${path} is a clone of ${where}, not ${host ?? "github.com"}/${repository}`;
+    }
+  }
+  return undefined;
+}
+
 export function startAutomationService(
   services: AutomationServices,
-  options: { intervalMs?: number; now?: () => Instant } = {},
+  options: { intervalMs?: number; now?: () => Instant; readRemote?: (path: string) => string | undefined } = {},
 ): AutomationService {
   const now = options.now ?? ((): Instant => new Date().toISOString() as Instant);
+  const readRemote = options.readRemote ?? readOriginRemote;
   const deps: TaskServiceDeps = {
     db: services.runtime.db,
     nodeId: services.runtime.identity.nodeId,
@@ -74,6 +121,30 @@ export function startAutomationService(
   const start = (run: IntentRun): void => {
     const signal = getSignalDelivery(deps.db, run.signalId)?.signal;
     const because = describeSignal(signal);
+
+    // Checked once, before the task exists: a run whose task was already created passed this before the node stopped.
+    const intent = getPersistentIntent(deps.db, run.intentId);
+    if (intent?.state === "active" && intent.do.kind === "task" && getTask(deps.db, run.taskId) === undefined) {
+      const repositories = intent.do.resources.flatMap((resource) => (resource.kind === "repository" ? [resource.path] : []));
+      const refusal = repositoryBindingRefusal(signal, repositories, readRemote);
+      if (refusal !== undefined) {
+        settleIntentRun(deps, run.runId, "failed", refusal);
+        const text = `Việc tự động "${intent.summary}" không chạy cho ${because}: ${refusal}.`;
+        say(intent.conversationId, text);
+        tryRecordNodeNotice(services, {
+          sourceKind: "automation",
+          category: "alert",
+          severity: "warning",
+          title: "Việc tự động bị từ chối",
+          body: text,
+          conversationId: intent.conversationId,
+          dedupKey: `automation:${run.runId}`,
+          at: now(),
+        });
+        return;
+      }
+    }
+
     let prepared: ReturnType<typeof prepareIntentRun>;
     try {
       prepared = prepareIntentRun(deps, run, { sourceRef: because });

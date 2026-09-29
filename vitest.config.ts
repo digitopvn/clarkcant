@@ -24,6 +24,7 @@ const aliases: Record<string, string> = {
   "@clarkcant/execution-supervisor": "packages/execution-supervisor/src/index.ts",
   "@clarkcant/voice-adapters": "packages/voice-adapters/src/index.ts",
   "@clarkcant/conversation-client": "packages/conversation-client/src/index.ts",
+  "@clarkcant/signal-sources": "packages/signal-sources/src/index.ts",
 };
 
 export default defineConfig({

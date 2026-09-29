@@ -31,6 +31,7 @@
     "@clarkcant/node-link": "workspace:*",
     "@clarkcant/pi-adapter": "workspace:*",
     "@clarkcant/project-work": "workspace:*",
+    "@clarkcant/signal-sources": "workspace:*",
     "@clarkcant/storage": "workspace:*",
     "@clarkcant/voice-adapters": "workspace:*",
     "@clarkcant/widget-catalog": "workspace:*",

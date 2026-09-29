@@ -24,9 +24,17 @@ import type { NodeServices } from "./services.ts";
  */
 export const ATTACHMENT_UPLOAD_BODY_LIMIT = 36_700_160;
 
-/** The one path with a body ceiling, and the ceiling. Everything else is read as it always was. */
+/**
+ * 2 MiB for a GitHub delivery. The route answers before the token check, so anyone who can reach the node can send it
+ * bytes; the ceiling is what bounds that. The deliveries it turns into signals are well under it.
+ */
+export const GITHUB_WEBHOOK_BODY_LIMIT = 2 * 1024 * 1024;
+
+/** The paths with a body ceiling, and each ceiling. Everything else is read as it always was. */
 export function bodyLimitForPath(path: string): number | undefined {
-  return path === "/attachments" ? ATTACHMENT_UPLOAD_BODY_LIMIT : undefined;
+  if (path === "/attachments") return ATTACHMENT_UPLOAD_BODY_LIMIT;
+  if (path === "/signals/github") return GITHUB_WEBHOOK_BODY_LIMIT;
+  return undefined;
 }
 
 /**
@@ -114,6 +122,7 @@ function handleOne(
       // The handler is guarded. A request that cannot be satisfied is the request's problem, and
       // answering it with a 500 is the whole job of this boundary — letting it reach the process
       // means one bad message takes the node down and every other conversation with it.
+      const body = Buffer.concat(chunks);
       let result: GatewayResponse;
       try {
         result = await handleRequest(
@@ -123,7 +132,8 @@ function handleOne(
             path: url.pathname,
             query: Object.fromEntries(url.searchParams),
             headers: request.headers as Record<string, string | string[] | undefined>,
-            body: Buffer.concat(chunks).toString("utf8"),
+            body: body.toString("utf8"),
+            rawBody: body,
           },
         );
       } catch (cause) {

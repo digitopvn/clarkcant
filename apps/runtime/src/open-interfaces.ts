@@ -211,6 +211,28 @@ export function openApiDocument(): Record<string, unknown> {
           },
         },
       },
+      "/signals/github": {
+        post: {
+          summary: "GitHub's repository webhook",
+          description:
+            "A delivery exactly as GitHub sends it, verified instead of the bearer token: HMAC-SHA256 of the raw body " +
+            "with the webhook secret the node keeps as github_webhook_secret, in X-Hub-Signature-256. Normalized into " +
+            "a signal (github.issue.*, github.pull_request.*, github.issue_comment.*, " +
+            "github.pull_request_review_comment.*, github.workflow_run.*, github.check_suite.*) deduplicated on " +
+            "X-GitHub-Delivery. Signals caused by the node's own GitHub logins (signals.github.selfLogins) are marked " +
+            "selfGenerated. Bodies over 2 MiB are refused with 413.",
+          security: [],
+          requestBody: { content: { "application/json": { schema: { type: "object" } } } },
+          responses: {
+            "202": ok("Recorded: { signalId, duplicate: false }"),
+            "200": ok("A redelivery { signalId, duplicate: true }, a ping { pong: true }, or an event not turned into signals { ignored }"),
+            "400": ok("DELIVERY_INVALID: no event, no delivery id, or not a GitHub payload"),
+            "401": ok("SIGNATURE_INVALID: missing or wrong signature; nothing is recorded"),
+            "413": ok("PAYLOAD_TOO_LARGE"),
+            "503": ok("GITHUB_WEBHOOK_NOT_CONFIGURED: the node has no webhook secret yet"),
+          },
+        },
+      },
       "/automations": {
         get: {
           summary: "The standing requests set up in conversation, each with what it did lately",
