@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { readFile, readdir } from "node:fs/promises";
 import { join } from "node:path";
 
@@ -6,7 +7,7 @@ import { nowInstant } from "@clarkcant/contracts";
 
 import { NotImplementedError, type ModelCatalogue,
   type PiExtension,
-  type PiSetting, type PiAdapter, type ResourceRefreshRequest, type ToolDefinition, type WorkerBrief, type WorkerEvent, type WorkerSessionHandle, type WorkerUsage } from "./types.ts";
+  type PiSetting, type PiSkill, type PiSkillBody, type PiAdapter, type ResourceRefreshRequest, type ToolDefinition, type WorkerBrief, type WorkerEvent, type WorkerSessionHandle, type WorkerUsage } from "./types.ts";
 import { canonicalRoots, createScopedFsTools, SCOPED_FS_TOOL_NAMES } from "./scoped-fs.ts";
 
 /**
@@ -355,6 +356,66 @@ export class RealPiAdapter implements PiAdapter {
     return Object.entries(parsed as Record<string, unknown>)
       .map(([key, value]) => ({ key, value: looksSecret(key) ? "[redacted]" : describeSetting(value) }))
       .sort((left, right) => left.key.localeCompare(right.key));
+  }
+
+  /**
+   * The skills pi discovers for this node.
+   *
+   * Read through a loader configured like the worker's, so the list is the set a worker session would load, including
+   * skills from installed pi packages and from paths in pi's settings, rather than a guess at where they live.
+   * Extensions, prompt templates, themes and context files are switched off: this is a listing, and loading an
+   * extension runs its code. A skill passed on a command line only (	emporary) is not offered, because nothing the
+   * composer sends can rely on it still being there.
+   */
+  async skills(): Promise<readonly PiSkill[]> {
+    const listed: PiSkill[] = [];
+    for (const skill of await this.#discoverSkills()) {
+      const content = await readSkillFile(skill.filePath);
+      if (content === undefined) continue;
+      listed.push({ name: skill.name, description: skill.description, source: skill.source, revision: digest(content) });
+    }
+    return listed.sort((left, right) => left.name.localeCompare(right.name));
+  }
+
+  async skillBody(name: string, revision: string): Promise<PiSkillBody> {
+    const sdk = await this.#load();
+    const skill = (await this.#discoverSkills()).find((candidate) => candidate.name === name);
+    const content = skill === undefined ? undefined : await readSkillFile(skill.filePath);
+    if (content === undefined) return { ok: false, reason: "missing" };
+    if (digest(content) !== revision) return { ok: false, reason: "changed" };
+    return { ok: true, name, body: sdk.stripFrontmatter(content).trim() };
+  }
+
+  async #discoverSkills(): Promise<{ name: string; description: string; filePath: string; source: PiSkill["source"] }[]> {
+    const sdk = await this.#load();
+    try {
+      const loader = new sdk.DefaultResourceLoader({
+        cwd: this.#options.cwd,
+        agentDir: this.#options.agentDir ?? sdk.getAgentDir(),
+        noExtensions: true,
+        noPromptTemplates: true,
+        noThemes: true,
+        noContextFiles: true,
+      } as never);
+      await loader.reload();
+      return loader.getSkills().skills.flatMap((skill) => {
+        const source =
+          skill.sourceInfo.origin === "package"
+            ? ("package" as const)
+            : skill.sourceInfo.scope === "user"
+              ? ("personal" as const)
+              : skill.sourceInfo.scope === "project"
+                ? ("project" as const)
+                : undefined;
+        return source === undefined
+          ? []
+          : [{ name: skill.name, description: skill.description, filePath: skill.filePath, source }];
+      });
+    } catch {
+      // A loader that cannot read pi's configuration offers no skills: the composer then has nothing to suggest, which
+      // is true, rather than an error in a picker the person only opened to type a slash.
+      return [];
+    }
   }
 
   async createWorkerSession(brief: WorkerBrief): Promise<WorkerSessionHandle> {
@@ -726,6 +787,19 @@ export class RealPiAdapter implements PiAdapter {
     const entry = this.#sessions.get(sessionId);
     if (!entry) throw new Error(`unknown or disposed Pi session ${sessionId}`);
     return entry;
+  }
+}
+
+function digest(content: string): string {
+  return createHash("sha256").update(content).digest("hex");
+}
+
+/** A skill file removed between discovery and reading is simply not there, which the caller reports as missing. */
+async function readSkillFile(filePath: string): Promise<string | undefined> {
+  try {
+    return await readFile(filePath, "utf8");
+  } catch {
+    return undefined;
   }
 }
 

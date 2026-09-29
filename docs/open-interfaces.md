@@ -39,7 +39,7 @@ The stable surface is the one `/openapi.json` describes:
 |---|---|---|
 | GET | `/node` | – |
 | GET / POST | `/conversations` | `{ title? }` |
-| POST | `/conversations/{id}/messages` | `{ text, attachmentIds? }` — waits for the answer |
+| POST | `/conversations/{id}/messages` | `{ text, attachmentIds?, references? }` — waits for the answer |
 | POST | `/conversations/{id}/messages/stream` | same, answered as SSE: `delta`, `reasoning`, `tool-start`, `tool-end`, `host-control`, `error`, `done` |
 | POST | `/conversations/{id}/stop` | `{ source? }` — stops the reply being written; keeps what was written, labelled as stopped; answers `{ stopped }` |
 | GET | `/conversations/{id}/timeline?after=N` | – |
@@ -49,6 +49,7 @@ The stable surface is the one `/openapi.json` describes:
 | POST | `/signals/github` | a GitHub webhook delivery, signed with the webhook secret instead of the token — see below |
 | POST | `/signals/webhook/{source}` | `{ id, topic, payload?, subject?, occurredAt? }` signed with that source's secret instead of the token — see below |
 | GET | `/automations` | – the standing requests set up in conversation, each with its recent runs |
+| GET | `/composer/suggestions?trigger=/\|@&q=&conversationId=` | – what the composer offers after `/` or `@` |
 | POST | `/stop` | – emergency stop |
 
 ```bash
@@ -125,6 +126,22 @@ sending node's owner names the peer as the task's executor, and the receiving no
 there (folders, repositories, effects). The nodes exchange the grant, the hand-over (`delegate`), its answer
 (`result`) and a stop (`cancel.request`) as NodeLink messages; the receiver runs the task only within both, and each
 owner hears the outcome in their own conversation.
+
+A message can carry what the person picked after `/` or `@` in the composer as `references`: `{ "version": 1,
+"items": [...] }`, at most 8, each one of `skill { skillId, source, revision }`, `project { projectId }`,
+`file|folder { projectId, path }` (a path relative to the project, never absolute), `mcp-server { serviceKey }`,
+`conversation { conversationId }`, `background-work { workId }` or `notice { noticeId }`, all with a `label`. The node
+checks each one again when the message is sent — the skill is still there at that revision, the path still resolves
+inside the project once links are followed, the project is still inside the approved folders, the notice is still in the inbox —
+and a reference that no longer holds refuses the whole message with `400 REFERENCE_NOT_AVAILABLE`, naming it, before
+anything is stored. What passes is kept on the user message as a `reference` block and briefed to the turn by
+project-relative path; a skill's instructions are included in that turn. A reference is a pointer, not a permission:
+reading, running or changing anything it names still goes through the node's usual checks.
+
+`GET /composer/suggestions` is what fills the picker: skills after `/`; projects, services, titled conversations and
+background work after `@`; one directory of a project after `@<project>/`. At most 8 rows, ranked exact, then prefix,
+then substring, recently used first, with diacritics optional when typing. A row that cannot be chosen says why in
+`disabledReason`.
 
 Other routes exist (settings, packages, widgets, peers…) and are reachable with the same token, but they are not yet
 part of the stable description and may change.

@@ -33,6 +33,7 @@ export * from "./automation.ts";
 export * from "./nodelink.ts";
 export * from "./voice.ts";
 export * from "./attachments.ts";
+export * from "./composer-references.ts";
 export * from "./app-intents.ts";
 export * from "./surfaces.ts";
 export * from "./machine-surfaces.ts";

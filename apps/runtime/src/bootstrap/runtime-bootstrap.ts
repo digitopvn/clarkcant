@@ -119,6 +119,7 @@ export function wireRuntime(deps: RuntimeBootstrapDeps): RuntimeHandles {
     // The same line, for the same reason: the adapter exists above this and the services below it.
     deps.services.extensions = modelTurn.extensions;
     deps.services.piSettings = modelTurn.piSettings;
+    deps.services.skills = { list: modelTurn.skills, body: modelTurn.skillBody };
   }
   /*
    * A turn control for a fixture node.

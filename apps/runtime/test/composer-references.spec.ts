@@ -1,0 +1,370 @@
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+
+import type { ComposerReference, ComposerSuggestionsResponse, MessageRecord } from "@clarkcant/contracts";
+import { setPreference } from "@clarkcant/core";
+import { DEFAULT_FAKE_SKILLS, FakePiAdapter, fakeSkillRevision } from "@clarkcant/pi-adapter";
+import { dismissNotification, messagesSince, recordNotification, upsertProject } from "@clarkcant/storage";
+
+import { referenceBrief, referencesForLastUserMessage, resolveComposerReferences } from "../src/composer-references.ts";
+import { rankCandidates } from "../src/composer-suggestions.ts";
+import { handleRequest, type GatewayDeps } from "../src/gateway.ts";
+import { createModelTurn } from "../src/model-turn.ts";
+import { bootNodeServices, type NodeServices } from "../src/services.ts";
+
+/**
+ * References from the composer, end to end through the node's own routes (#210).
+ *
+ * What a person picks after `/` or `@` is checked again when the message is sent, stored on the message, and briefed
+ * into the turn. The prompt is observed at the fake adapter, the one boundary where it can be, as the attachment tests
+ * do: no absolute path may reach it, and a stale reference must refuse the message by name instead of being dropped.
+ */
+
+const ENV = { CC_MODEL_PROVIDER: "test-provider", CC_MODEL_ID: "test-model" } satisfies NodeJS.ProcessEnv;
+const AT = "2026-09-29T06:00:00.000Z";
+
+let dir: string;
+let work: string;
+let projectDir: string;
+let services: NodeServices;
+let deps: GatewayDeps;
+let conversationId: string;
+let sequence = 0;
+let adapter: FakePiAdapter;
+
+const REVIEW = DEFAULT_FAKE_SKILLS.find((skill) => skill.name === "review");
+if (REVIEW === undefined) throw new Error("the fake adapter no longer offers review");
+const reviewRef: ComposerReference = {
+  kind: "skill",
+  skillId: "review",
+  source: REVIEW.source,
+  revision: fakeSkillRevision(REVIEW),
+  label: "review",
+};
+
+beforeEach(async () => {
+  dir = mkdtempSync(join(tmpdir(), "clarkcant-refs-"));
+  work = join(dir, "work");
+  projectDir = join(work, "clarkcant");
+  mkdirSync(join(projectDir, "src"), { recursive: true });
+  mkdirSync(join(projectDir, "docs"), { recursive: true });
+  mkdirSync(join(projectDir, ".git"), { recursive: true });
+  writeFileSync(join(projectDir, "src", "app.ts"), "export const app = 1;\n");
+  writeFileSync(join(projectDir, "README.md"), "# ClarkCant\n");
+
+  services = bootNodeServices({ dataDir: join(dir, "node"), label: "test node" });
+  sequence = 0;
+  deps = {
+    services,
+    now: () => AT,
+    newConversationId: () => {
+      sequence += 1;
+      return `conv_refs_${sequence}`;
+    },
+  };
+  approveRoots([work]);
+  upsertProject(services.runtime.db, {
+    projectId: "proj_clark",
+    nodeId: services.runtime.identity.nodeId,
+    path: projectDir,
+    name: "clarkcant",
+    aliases: [],
+    gitRemote: undefined,
+    markers: ["package.json"],
+    kind: "code",
+    mtime: 0,
+    lastUsedAt: undefined,
+    indexedAt: AT,
+  });
+
+  adapter = new FakePiAdapter({ script: ["Đã xem."] });
+  const turn = await createModelTurn({
+    env: ENV,
+    cwd: process.cwd(),
+    adapter,
+    references: {
+      briefFor: (id, skillBody) =>
+        referenceBrief({
+          blocks: referencesForLastUserMessage({ db: services.runtime.db, conversationId: id }),
+          projects: services.projects,
+          skillBody,
+        }),
+    },
+  });
+  if (turn === undefined) throw new Error("the test environment did not configure a model");
+  services.conductor.respondWithModel = (input) => turn.answer(input);
+  services.skills = { list: () => adapter.skills(), body: (name, revision) => adapter.skillBody(name, revision) };
+
+  conversationId = await createConversation("tham chiếu");
+});
+
+afterEach(() => {
+  services.runtime.close();
+  rmSync(dir, { recursive: true, force: true });
+});
+
+function approveRoots(roots: string[]): void {
+  setPreference(
+    { db: services.runtime.db, now: () => AT as never },
+    { principalId: services.runtime.identity.ownerPrincipalId, key: "workspace.roots", scope: "global", value: roots, source: "user" },
+  );
+}
+
+async function call(method: string, path: string, body?: unknown, query: Record<string, string> = {}) {
+  return handleRequest(deps, {
+    method,
+    path,
+    query,
+    headers: { authorization: `Bearer ${services.runtime.identity.localToken}` },
+    body: body === undefined ? "" : JSON.stringify(body),
+  });
+}
+
+async function createConversation(title: string): Promise<string> {
+  const response = await call("POST", "/conversations", { title });
+  expect(response.status).toBe(201);
+  return (response.body as { conversationId: string }).conversationId;
+}
+
+function send(text: string, items: unknown[], route = "messages") {
+  return call("POST", `/conversations/${conversationId}/${route}`, { text, references: { version: 1, items } });
+}
+
+function userMessages(): MessageRecord[] {
+  return messagesSince(services.runtime.db, conversationId, 0, 40).filter((record) => record.role === "user");
+}
+
+function expectNoPath(prompt: string): void {
+  expect(prompt).not.toContain(dir);
+  expect(prompt).not.toMatch(/[A-Za-z]:[\\/]/);
+  expect(prompt).not.toMatch(/(^|[\s"'`(])\/(Users|home|tmp|var|opt|etc|private)\//);
+}
+
+async function suggest(trigger: string, q: string, extra: Record<string, string> = {}) {
+  const response = await call("GET", "/composer/suggestions", undefined, { trigger, q, ...extra });
+  return response;
+}
+
+describe("a skill named with a slash", () => {
+  it("is stored on the message and its instructions reach the prompt, without a path", async () => {
+    const response = await send("/review xem thay đổi này", [reviewRef]);
+    expect(response.status, JSON.stringify(response.body)).toBe(200);
+
+    const [stored] = userMessages();
+    expect(stored?.blocks.filter((block) => block.type === "reference")).toEqual([{ type: "reference", reference: reviewRef }]);
+
+    const prompt = adapter.allPrompts()[0] ?? "";
+    expect(prompt).toContain('<skill name="review">');
+    expect(prompt).toContain(REVIEW.body);
+    expect(prompt).toContain("Tham chiếu là con trỏ, không phải quyền");
+    expect(prompt).toContain("/review xem thay đổi này");
+    expectNoPath(prompt);
+  });
+
+  it("refuses the message by name when the skill was edited after it was chosen", async () => {
+    adapter.setSkills(DEFAULT_FAKE_SKILLS.map((skill) => (skill.name === "review" ? { ...skill, body: "khác" } : skill)));
+    const response = await send("/review", [reviewRef]);
+    expect(response.status).toBe(400);
+    expect(response.body).toMatchObject({ code: "REFERENCE_NOT_AVAILABLE" });
+    expect(JSON.stringify(response.body)).toContain("/review");
+    expect(JSON.stringify(response.body)).toContain("đã được sửa");
+    // Nothing was sent: no message, no turn.
+    expect(userMessages()).toEqual([]);
+    expect(adapter.allPrompts()).toEqual([]);
+  });
+
+  it("refuses the message by name when the skill is gone, on the streaming route too", async () => {
+    adapter.setSkills([]);
+    const response = await send("/review", [reviewRef], "messages/stream");
+    expect(response.status).toBe(400);
+    expect(JSON.stringify(response.body)).toContain("/review");
+    expect(JSON.stringify(response.body)).toContain("không còn");
+  });
+});
+
+describe("things named with an at sign", () => {
+  const appRef: ComposerReference = { kind: "file", projectId: "proj_clark", path: "src/app.ts", label: "clarkcant/src/app.ts" };
+
+  it("a file is stored with what the node found and briefed by a path relative to its root", async () => {
+    const response = await send("đọc @clarkcant/src/app.ts", [appRef]);
+    expect(response.status, JSON.stringify(response.body)).toBe(200);
+    const [stored] = userMessages();
+    expect(stored?.blocks.find((block) => block.type === "reference")).toEqual({
+      type: "reference",
+      reference: appRef,
+      note: "22 byte",
+    });
+    const prompt = adapter.allPrompts()[0] ?? "";
+    expect(prompt).toContain("đường dẫn clarkcant/src/app.ts");
+    expect(prompt).toContain("projectId proj_clark");
+    expectNoPath(prompt);
+  });
+
+  it("refuses a file that was deleted, a path that leaves the project through a link, and a project outside the roots", async () => {
+    rmSync(join(projectDir, "src", "app.ts"));
+    const deleted = await send("đọc", [appRef]);
+    expect(deleted.status).toBe(400);
+    expect(JSON.stringify(deleted.body)).toContain("@clarkcant/src/app.ts: không còn tồn tại");
+
+    const outside = join(dir, "secret");
+    mkdirSync(outside);
+    writeFileSync(join(outside, "key.txt"), "không được đọc");
+    symlinkSync(outside, join(projectDir, "link"), "junction");
+    const escaped = await send("đọc", [{ kind: "file", projectId: "proj_clark", path: "link/key.txt", label: "clarkcant/link/key.txt" }]);
+    expect(escaped.status).toBe(400);
+    expect(JSON.stringify(escaped.body)).toContain("ra ngoài dự án");
+
+    approveRoots([join(dir, "elsewhere")]);
+    const unapproved = await send("xem", [{ kind: "project", projectId: "proj_clark", label: "clarkcant" }]);
+    expect(unapproved.status).toBe(400);
+    expect(JSON.stringify(unapproved.body)).toContain("thư mục được phép");
+  });
+
+  it("refuses a dismissed notice and a conversation that does not exist, and accepts live ones", async () => {
+    const principalId = services.runtime.identity.ownerPrincipalId;
+    for (const id of ["ntc_live", "ntc_gone"]) {
+      recordNotification(services.runtime.db, {
+        notificationId: id,
+        principalId,
+        sourceKind: "background",
+        category: "result",
+        severity: "info",
+        title: `Thông báo ${id}`,
+        dedupKey: id,
+        at: AT as never,
+      });
+    }
+    dismissNotification(services.runtime.db, { principalId, notificationId: "ntc_gone", at: AT as never });
+
+    const gone = await send("sao vậy", [{ kind: "notice", noticeId: "ntc_gone", label: "Build lỗi" }]);
+    expect(gone.status).toBe(400);
+    expect(JSON.stringify(gone.body)).toContain("@Build lỗi");
+
+    const missing = await send("xem", [{ kind: "conversation", conversationId: "conv_none", label: "Cũ" }]);
+    expect(missing.status).toBe(400);
+    expect(JSON.stringify(missing.body)).toContain("@Cũ: hội thoại này không còn tồn tại");
+
+    const other = await createConversation("Kế hoạch quý");
+    const ok = await send("so sánh", [
+      { kind: "notice", noticeId: "ntc_live", label: "Build lỗi" },
+      { kind: "conversation", conversationId: other, label: "Kế hoạch quý" },
+    ]);
+    expect(ok.status, JSON.stringify(ok.body)).toBe(200);
+    const prompt = adapter.allPrompts()[0] ?? "";
+    expect(prompt).toContain("noticeId ntc_live");
+    expect(prompt).toContain(`conversationId ${other}`);
+  });
+
+  it("refuses another envelope version and stores a reference named twice once", async () => {
+    const wrong = await call("POST", `/conversations/${conversationId}/messages`, {
+      text: "x",
+      references: { version: 2, items: [] },
+    });
+    expect(wrong.status).toBe(400);
+    expect(wrong.body).toMatchObject({ code: "REFERENCE_NOT_AVAILABLE" });
+
+    const project = { kind: "project", projectId: "proj_clark", label: "clarkcant" };
+    expect((await send("hai lần", [project, { ...project, label: "tên khác" }])).status).toBe(200);
+    expect(userMessages()[0]?.blocks.filter((block) => block.type === "reference")).toHaveLength(1);
+  });
+
+  it("a message with no references gets exactly the prompt it got before", async () => {
+    const response = await call("POST", `/conversations/${conversationId}/messages`, { text: "chỉ có chữ thôi" });
+    expect(response.status).toBe(200);
+    expect(adapter.allPrompts()[0]).toBe("chỉ có chữ thôi");
+  });
+
+  it("background work is checked against the node's work list", async () => {
+    const listed = await resolveComposerReferences(
+      { ...services, work: () => [{ workId: "work_1", kind: "background", title: "Dọn log", state: "running", startedAt: AT }] },
+      { value: { version: 1, items: [{ kind: "background-work", workId: "work_1", label: "Dọn log" }] } },
+    );
+    expect(listed).toMatchObject({ ok: true, blocks: [{ note: "đang chạy" }] });
+    const gone = await resolveComposerReferences(
+      { ...services, work: () => [] },
+      { value: { version: 1, items: [{ kind: "background-work", workId: "work_1", label: "Dọn log" }] } },
+    );
+    expect(gone).toMatchObject({ ok: false });
+  });
+});
+
+describe("the picker", () => {
+  it("offers skills after a slash, best match first", async () => {
+    const all = await suggest("/", "");
+    expect(all.status).toBe(200);
+    const body = all.body as ComposerSuggestionsResponse;
+    expect(body.suggestions.map((row) => row.label)).toEqual(["release-notes", "review"]);
+    expect(body.suggestions[1]?.ref).toEqual(reviewRef);
+
+    const narrowed = (await suggest("/", "rev")).body as ComposerSuggestionsResponse;
+    expect(narrowed.suggestions.map((row) => row.label)).toEqual(["review"]);
+  });
+
+  it("offers projects and titled conversations after an at sign, leaving out the one being written in", async () => {
+    const other = await createConversation("Dự án mới");
+    const body = (await suggest("@", "", { conversationId })).body as ComposerSuggestionsResponse;
+    const labels = body.suggestions.map((row) => row.label);
+    expect(labels).toContain("clarkcant");
+    expect(labels).toContain("Dự án mới");
+    expect(labels).not.toContain("tham chiếu");
+
+    // Diacritics are optional when typing.
+    const folded = (await suggest("@", "du an")).body as ComposerSuggestionsResponse;
+    expect(folded.suggestions.map((row) => row.ref)).toContainEqual({ kind: "conversation", conversationId: other, label: "Dự án mới" });
+  });
+
+  it("lists one directory of a project, folders first, and never leaves it", async () => {
+    const outside = join(dir, "secret");
+    mkdirSync(outside);
+    symlinkSync(outside, join(projectDir, "link"), "junction");
+
+    const root = (await suggest("@", "clarkcant/")).body as ComposerSuggestionsResponse;
+    expect(root.suggestions.map((row) => [row.kind, row.label])).toEqual([
+      ["folder", "clarkcant/docs"],
+      ["folder", "clarkcant/src"],
+      ["file", "clarkcant/README.md"],
+    ]);
+
+    const inner = (await suggest("@", "clarkcant/src/a")).body as ComposerSuggestionsResponse;
+    expect(inner.suggestions.map((row) => row.ref)).toEqual([appRefFor()]);
+
+    for (const q of ["clarkcant/../", "clarkcant/link/", "nothing/"]) {
+      expect(((await suggest("@", q)).body as ComposerSuggestionsResponse).suggestions).toEqual([]);
+    }
+  });
+
+  it("says why a project that left the approved roots cannot be chosen", async () => {
+    approveRoots([join(dir, "elsewhere")]);
+    const body = (await suggest("@", "clark")).body as ComposerSuggestionsResponse;
+    expect(body.suggestions.find((row) => row.label === "clarkcant")?.disabledReason).toBe(
+      "Không còn nằm trong thư mục được phép.",
+    );
+  });
+
+  it("refuses a trigger it does not know", async () => {
+    expect((await suggest("#", "")).status).toBe(400);
+  });
+});
+
+describe("the ranking", () => {
+  it("puts an exact match before a prefix before a substring, recent first within each, at most eight", () => {
+    const rows = [
+      { match: "mở review", id: "substring" },
+      { match: "reviewer", id: "prefix-old" },
+      { match: "reviewing", id: "prefix-recent", recency: 0 },
+      { match: "Review", id: "exact" },
+      ...Array.from({ length: 10 }, (_, index) => ({ match: `review ${index}`, id: `many-${index}` })),
+    ];
+    const ranked = rankCandidates(rows, "review").map((row) => row.id);
+    expect(ranked.slice(0, 3)).toEqual(["exact", "prefix-recent", "prefix-old"]);
+    expect(ranked).toHaveLength(8);
+    expect(ranked).not.toContain("substring");
+  });
+});
+
+function appRefFor(): ComposerReference {
+  return { kind: "file", projectId: "proj_clark", path: "src/app.ts", label: "clarkcant/src/app.ts" };
+}

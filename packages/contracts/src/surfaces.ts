@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 import { attachmentRefSchema } from "./attachments.ts";
+import { referenceBlockSchema, referenceToken } from "./composer-references.ts";
 import { packageSourceSchema, riskLaneSchema } from "./directory.ts";
 import { facetKindSchema } from "./install.ts";
 import { instantSchema, platformSchema } from "./primitives.ts";
@@ -755,6 +756,7 @@ export const questionCardBlockSchema = z.strictObject({
 export const messageBlockSchema = z.discriminatedUnion("type", [
   textBlockSchema,
   attachmentBlockSchema,
+  referenceBlockSchema,
   toolActivityBlockSchema,
   reasoningBlockSchema,
   surfaceBlockSchema,
@@ -913,6 +915,9 @@ export function messageBlocksAsText(blocks: readonly MessageBlock[]): string {
         break;
       case "attachment":
         lines.push(`[attachment ${block.attachment.filename}]`);
+        break;
+      case "reference":
+        lines.push(`[reference ${referenceToken(block.reference)}]`);
         break;
       case "approval-card":
         lines.push(`[approval ${block.approvalId}] ${block.operationDescription}`);

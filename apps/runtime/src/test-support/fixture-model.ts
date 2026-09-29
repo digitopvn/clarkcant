@@ -22,6 +22,7 @@ import { capabilityInvokeDeps } from "../application/capability-invoke.ts";
 import { attachmentRefsForLastUserMessage } from "../attachments.ts";
 import { blobsDir, readBlob } from "../blobs.ts";
 import { composeMiniApp } from "../compose-mini-app.ts";
+import { referenceBrief, referencesForLastUserMessage } from "../composer-references.ts";
 import { type InteractionDeps } from "../interactions.ts";
 import { type ModelTurn, createModelTurn } from "../model-turn.ts";
 import { writeCurrentAlias, writeModelPool } from "../model-registry.ts";
@@ -75,7 +76,7 @@ export interface FixtureModelDeps {
   /** The node this fixture stands in for, read when a turn asks rather than when the composer is built. */
   services: () => Pick<
     NodeServices,
-    "runtime" | "conductor" | "controlSessions" | "terminals" | "hostControl" | "serviceHost" | "automation"
+    "runtime" | "conductor" | "controlSessions" | "terminals" | "hostControl" | "serviceHost" | "automation" | "projects" | "skills"
   >;
   dataDir: string;
   wiring: FixtureModelWiring;
@@ -287,6 +288,25 @@ export function createModelComposer(deps: FixtureModelDeps): FixtureCompose {
         text: "Tui đọc tệp bạn gửi. Nội dung nó nói:",
         block: { type: "text", format: "markdown", content: quoted, streaming: false },
       };
+    }
+
+    /*
+     * The references, as the turn would brief them.
+     *
+     * A fixture node has no model to follow a skill, so it answers with the reference section the model turn would have
+     * been given, built by the same eferenceBrief from the same stored blocks. That proves the pipeline from the
+     * picker to the prompt; it does not prove a model would follow the skill, which needs a provider.
+     */
+    const referenced = referencesForLastUserMessage({ db: deps.services().runtime.db, conversationId: input.conversationId });
+    const skills = deps.services().skills;
+    if (referenced.length > 0 && skills !== undefined) {
+      const brief = await referenceBrief({
+        blocks: referenced,
+        projects: deps.services().projects,
+        skillBody: (name, revision) => skills.body(name, revision),
+      });
+      const reply = `Fixture: lượt này được đưa phần tham chiếu sau.\n\n${brief}`;
+      return { text: reply, block: { type: "text", format: "plain", content: reply, streaming: false } };
     }
     /*
      * A command proposal, scripted.
@@ -1702,4 +1722,11 @@ export function arrangeModelNode(deps: { services: NodeServices; dataDir: string
    * Only when nothing else answered, so a fixture node that does build a model turn keeps its own catalogue.
    */
   services.modelCatalogue ??= () => new FakePiAdapter().catalogue();
+
+  // The fake adapter's skills, for the composer's slash: the same list a node with the fake model would offer.
+  const skillSource = new FakePiAdapter();
+  services.skills ??= {
+    list: () => skillSource.skills(),
+    body: (name, revision) => skillSource.skillBody(name, revision),
+  };
 }

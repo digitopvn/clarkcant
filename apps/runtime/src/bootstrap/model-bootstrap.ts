@@ -8,6 +8,7 @@ import { credentialNames, messagesSince, readPreference } from "@clarkcant/stora
 import { capabilityInvokeDeps } from "../application/capability-invoke.ts";
 import { packageInstallDepsOf } from "../application/package-install.ts";
 import { attachmentRefsForLastUserMessage } from "../attachments.ts";
+import { referenceBrief, referencesForLastUserMessage } from "../composer-references.ts";
 import { readInbox } from "../inbox.ts";
 import { type InteractionDeps } from "../interactions.ts";
 import { decideModelRoute } from "../jev-decider.ts";
@@ -184,6 +185,17 @@ export async function createNodeModelTurn(deps: ModelBootstrapDeps): Promise<Mod
       dataDir: deps.dataDir,
       refsFor: (conversationId) =>
         attachmentRefsForLastUserMessage({ db: deps.services().runtime.db, conversationId }),
+    },
+    // What the current message points at, read back from its stored row like the attachments above. A skill's
+    // instructions are read through the adapter this turn runs on, so they are the installation's words, checked
+    // against the version the message named.
+    references: {
+      briefFor: (conversationId, skillBody) =>
+        referenceBrief({
+          blocks: referencesForLastUserMessage({ db: deps.services().runtime.db, conversationId }),
+          projects: deps.services().projects,
+          skillBody,
+        }),
     },
     // The node registers the sample dataset itself, so this is the complete set it holds rather
     // than a guess. The model is told these names because a view over data that is not there
