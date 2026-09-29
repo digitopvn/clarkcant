@@ -340,6 +340,7 @@ export const MESSAGES_TIMELINE_VI = {
 
   // ConversationPinSurfaces.tsx
   "widgets.pins.unpin": "Bỏ ghim",
+  "widgets.pins.untitled": "Widget đã ghim",
 
   // widget-library/InstalledProvenance.tsx
   "widgets.provenance.title": "Gói đã cài trên node này",
@@ -848,6 +849,7 @@ export const MESSAGES_TIMELINE_EN = {
   "widgets.detached.serverRefused": "The server refused this action.",
 
   "widgets.pins.unpin": "Unpin",
+  "widgets.pins.untitled": "Pinned widget",
 
   "widgets.provenance.title": "Packages installed on this node",
   "widgets.provenance.loading": "Reading the package list…",
