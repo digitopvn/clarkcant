@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 
+import { MAX_PATTERN_INPUT_LENGTH } from "../src/schema-patterns.ts";
 import { validateProps } from "../src/widget-props.ts";
 import type { WidgetDefinition } from "../src/widgets.ts";
 
@@ -109,5 +110,63 @@ describe("validateProps", () => {
     const result = validateProps(unreadable, {});
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.problems.join(" ")).toContain("could not be read");
+  });
+});
+
+describe("a props schema whose pattern could stall the node", () => {
+  /** The pattern backtracks exponentially on a run of a's that ends in something else. */
+  const EVIL = definition({
+    type: "object",
+    required: ["text"],
+    properties: { text: { type: "string", pattern: "^(a+)+$" } },
+  });
+  const EVIL_INPUT = `${"a".repeat(49)}!`;
+
+  it("refuses the props within a fixed time budget, names the pattern and says what to write, with the text fallback", () => {
+    const started = performance.now();
+    const result = validateProps(EVIL, { text: EVIL_INPUT });
+    expect(performance.now() - started).toBeLessThan(1000);
+
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("unreachable");
+    expect(result.fallback).toMatchObject({ type: "text", content: "The widget is shown as text." });
+    const said = result.problems.join(" ");
+    expect(said).toContain("props schema was refused");
+    expect(said).toContain('"^(a+)+$"');
+    expect(said).toContain("properties.text.pattern");
+    expect(said).toContain("could stall this node");
+    expect(said).toContain("instead of (a+)+");
+  });
+
+  it("refuses every props object under that schema, even one the pattern would accept", () => {
+    expect(validateProps(EVIL, { text: "aaa" })).toMatchObject({ ok: false });
+  });
+
+  it("still names what the structural pass finds beside the refusal", () => {
+    const result = validateProps(EVIL, {});
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.problems).toContain('required property "text" is missing');
+  });
+
+  it("checks a value against a safe pattern as before", () => {
+    const safe = definition({ type: "object", properties: { id: { type: "string", pattern: "^[a-z]+$" } } });
+    expect(validateProps(safe, { id: "abc" })).toMatchObject({ ok: true });
+    expect(validateProps(safe, { id: "ABC" })).toMatchObject({ ok: false });
+  });
+
+  it("refuses a value longer than the bound only where a pattern would be run on it", () => {
+    const schema = definition({
+      type: "object",
+      properties: { id: { type: "string", pattern: "^[a-z]+$" }, body: { type: "string" } },
+    });
+    const long = "a".repeat(MAX_PATTERN_INPUT_LENGTH + 1);
+    expect(validateProps(schema, { body: long })).toMatchObject({ ok: true });
+    const refused = validateProps(schema, { id: long });
+    expect(refused.ok).toBe(false);
+    if (!refused.ok) {
+      expect(refused.problems).toEqual([
+        `property "id": is longer than the ${String(MAX_PATTERN_INPUT_LENGTH)} characters a value checked against a pattern may have`,
+      ]);
+    }
   });
 });

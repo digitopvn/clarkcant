@@ -172,6 +172,13 @@ Những gì registry báo là những gì host đã quan sát được, không p
 
 - tool mà service liệt kê nhưng manifest không khai báo thì không bao giờ được đăng ký;
 - tool đã khai báo mà service không liệt kê thì vẫn ở trạng thái chưa load, và lý do nói rõ điều đó;
+- tool đã khai báo có input schema chứa `pattern` hoặc `patternProperties` có thể khiến việc kiểm tra tốn thời gian không
+  giới hạn thì vẫn ở trạng thái chưa load, schema không được lưu, và lý do nêu tên pattern, vị trí của nó và cách viết
+  thay thế (`packages/contracts/src/schema-patterns.ts`). Các pattern bị từ chối gồm: một phép lặp mà phần thân khớp được
+  theo nhiều cách, như `(a+)+`; một lựa chọn lặp lại giữa các phương án bắt đầu bằng cùng một ký tự, như `(a|ab)+`; hai
+  phép lặp không giới hạn liền nhau khớp cùng ký tự, như `\d+\d+`; backreference; quantifier bên trong lookahead hoặc
+  lookbehind; và pattern dài hơn 512 ký tự. Một giá trị hoặc key mà schema sẽ kiểm tra bằng pattern thì dài tối đa 1.000
+  ký tự;
 - service bị dừng thì được khởi động lại với backoff, và bị để dừng hẳn nếu cứ crash mãi, lý do nói rõ trường hợp nào;
 - ref mà node hoặc package khác đã đăng ký thì được giữ nguyên và package này không phục vụ nó, log của node ghi rõ điều
   đó;
@@ -230,6 +237,16 @@ Mỗi widget definition phải khai báo:
 - entry artifact cho executable UI.
 
 Không dùng props như một kênh truyền code, callback, HTML tùy ý, secret hoặc arbitrary URL.
+
+Node kiểm tra props theo props schema trên main thread của nó, nên `pattern` và `patternProperties` trong schema phải
+tuân theo cùng các quy tắc như input schema của service (§4, `packages/contracts/src/schema-patterns.ts`). Definition có
+props schema chứa pattern có thể khiến việc kiểm tra tốn thời gian không giới hạn thì không được load:
+
+- `clark widget test` báo lỗi ở bước "the package can be read" và nêu tên pattern, vị trí của nó và cách viết thay thế;
+- Widget Library hiển thị cùng lý do đó dưới dạng ghi chú của package, các widget khác của package vẫn được load;
+- props được kiểm tra theo schema như vậy ở bất kỳ đâu, trong node hay trong Widget Lab, đều bị từ chối kèm text fallback.
+
+Một chuỗi mà props schema kiểm tra bằng pattern thì dài tối đa 1.000 ký tự.
 
 ---
 

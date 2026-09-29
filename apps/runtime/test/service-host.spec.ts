@@ -469,6 +469,37 @@ describe("what the manifest declares against what the service lists", () => {
   });
 });
 
+describe("a tool whose input schema could stall the node", () => {
+  it("is registered as not loaded, says why, and cannot stall the node on an input made to backtrack", async () => {
+    // The service lists add_note with a pattern that backtracks exponentially on a run of a's ending in something else.
+    const server = join(root, "service", "server.mjs");
+    const source = readFileSync(server, "utf8");
+    const safe = 'text: { type: "string", minLength: 1, maxLength: 500 }';
+    expect(source).toContain(safe);
+    writeFileSync(server, source.replace(safe, 'text: { type: "string", pattern: "^(a+)+$" }'));
+    activate();
+    await running(start());
+
+    const add = getCapability({ db, nodeId: NODE }, ADD, NODE);
+    expect(add?.readiness).toMatchObject({ installed: true, loaded: false, healthy: true });
+    expect(add?.readiness.blockedReason).toContain("add_note");
+    expect(add?.readiness.blockedReason).toContain('"^(a+)+$"');
+    expect(add?.readiness.blockedReason).toContain("could stall this node");
+    // The schema is not kept, so nothing reads it later; the tool beside it is unaffected.
+    expect(add?.inputSchema).toBeUndefined();
+    expect(readiness(LIST)).toMatchObject({ loaded: true, healthy: true });
+    expect(logs.some((line) => line.includes("add_note was refused"))).toBe(true);
+
+    const started = performance.now();
+    const outcome = await invokeCapability(invokeDeps(), { ref: ADD, args: { text: `${"a".repeat(49)}!` }, source: "widget" });
+    expect(performance.now() - started).toBeLessThan(1000);
+    expect(outcome).toMatchObject({ kind: "refused", code: "CAPABILITY_NOT_READY", status: 503 });
+    if (outcome.kind !== "refused") throw new Error("unreachable");
+    expect(outcome.message).toContain("simpler pattern");
+    expect(await invokeCapability(invokeDeps(), { ref: LIST, args: {}, source: "agent" })).toMatchObject({ kind: "done" });
+  });
+});
+
 describe("a service that is not running", () => {
   it("registers every capability as not loaded, with the reason a person can act on, when there is no engine", async () => {
     activate();

@@ -3,10 +3,12 @@ import { join } from "node:path";
 
 import {
   PACKAGE_MANIFEST_SCHEMA_VERSION,
+  describeUnsafePattern,
   fixtureDatasetSchema,
   manifestProblems,
   networkOriginSchema,
   packageManifestSchema,
+  unsafeSchemaPattern,
   widgetDefinitionSchema,
   type FixtureDataset,
   type PackageManifest,
@@ -214,6 +216,13 @@ export function readPackage(root: string): WidgetPackage {
     // where they disagree is a package whose instance cannot be resolved to what it renders.
     if (definition.data.id !== facet.id) {
       problems.push(`${facet.definition}: id "${definition.data.id}" does not match the manifest facet id "${facet.id}"`);
+    }
+    // Props are checked against this schema on the node's main thread, so a pattern that could stall it keeps the
+    // widget out: named here, where the author's tools and the node's library both read the package.
+    const unsafe = unsafeSchemaPattern(definition.data.propsSchema, "propsSchema");
+    if (unsafe !== undefined) {
+      problems.push(`${facet.definition}: the widget is not loaded, because ${describeUnsafePattern(unsafe)}`);
+      continue;
     }
     facets.push({
       manifest,

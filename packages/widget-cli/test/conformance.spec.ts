@@ -298,6 +298,23 @@ describe("what the suite refuses", () => {
     expect(check?.detail).toContain("undeclared");
   });
 
+  it("refuses a package whose props schema holds a pattern that could stall the node, and says what to write", async () => {
+    const root = await tempPackage();
+    const definitionPath = join(root, "widgets", "main", "widget.json");
+    const definition = JSON.parse(readFileSync(definitionPath, "utf8")) as { propsSchema: { properties: Record<string, unknown> } };
+    definition.propsSchema.properties["code"] = { type: "string", pattern: "(\\w+\\s?)*$" };
+    writeFileSync(definitionPath, JSON.stringify(definition));
+
+    const result = runConformance(root);
+
+    expect(result.ok).toBe(false);
+    const check = result.checks.find((c) => c.id === "package.readable");
+    expect(check?.status).toBe("fail");
+    expect(check?.detail).toContain("propsSchema.properties.code.pattern");
+    expect(check?.detail).toContain("could stall this node");
+    expect(check?.detail).toContain("instead of (\\w+\\s?)*");
+  });
+
   it("fails a package whose facet id disagrees with its definition id", async () => {
     const root = await tempPackage();
     const definitionPath = join(root, "widgets", "main", "widget.json");

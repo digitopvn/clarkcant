@@ -1,5 +1,6 @@
 import { z } from "zod";
 
+import { describeUnsafePattern, MAX_PATTERN_INPUT_LENGTH, overlongPatternInput, unsafeSchemaPattern } from "./schema-patterns.ts";
 import type { MessageBlock } from "./surfaces.ts";
 import type { WidgetDefinition } from "./widgets.ts";
 
@@ -15,6 +16,10 @@ import type { WidgetDefinition } from "./widgets.ts";
  * second holds the props to the definition's whole JSON Schema (ranges, enums, array items, nested
  * objects, `oneOf`), so a `pageSize` of 1000 on a table that allows 200 is refused rather than stored.
  * Either way a failure carries the definition's text fallback so the timeline still reads.
+ *
+ * Before either, the schema's own patterns are read (`schema-patterns.ts`): one that could take unbounded time to check
+ * means no parser is ever built for that schema and no props are accepted under it, and a value a pattern would be run
+ * on may be at most {@link MAX_PATTERN_INPUT_LENGTH} characters.
  */
 
 export type PropsValidation =
@@ -32,6 +37,18 @@ const MAX_SCHEMA_PROBLEMS = 5;
 
 /** Parsers by schema object: a definition's schema is fixed for its lifetime, and building one is not free. */
 const parsers = new WeakMap<object, z.ZodType | null>();
+
+/** Why a schema's patterns were refused, by schema object, for the same reason; `null` when none was. */
+const refusals = new WeakMap<object, string | null>();
+
+function refusalOf(schema: Record<string, unknown>): string | null {
+  const cached = refusals.get(schema);
+  if (cached !== undefined) return cached;
+  const unsafe = unsafeSchemaPattern(schema);
+  const refusal = unsafe === undefined ? null : `the widget's props schema was refused: ${describeUnsafePattern(unsafe)}`;
+  refusals.set(schema, refusal);
+  return refusal;
+}
 
 function parserFor(schema: Record<string, unknown>): z.ZodType | null {
   const cached = parsers.get(schema);
@@ -111,13 +128,28 @@ function schemaProblems(
   return problems;
 }
 
+/** Why these props cannot be checked at all, before any pattern in the schema runs, or undefined. */
+function uncheckable(schema: Record<string, unknown>, props: Record<string, unknown>): string | undefined {
+  const refusal = refusalOf(schema);
+  if (refusal !== null) return refusal;
+  const overlong = overlongPatternInput(schema, props);
+  if (overlong === undefined) return undefined;
+  const where = overlong === "" ? "props" : `property "${overlong}"`;
+  return `${where}: is longer than the ${String(MAX_PATTERN_INPUT_LENGTH)} characters a value checked against a pattern may have`;
+}
+
 export function validateProps(definition: WidgetDefinition, props: Record<string, unknown>): PropsValidation {
   const schema = definition.propsSchema;
+  const refused = uncheckable(schema, props);
   const structural = structuralProblems(schema as StructuralSchema, props);
-  const problems = [
-    ...structural.problems,
-    ...schemaProblems(schema, props, structural.keys, (schema as StructuralSchema).additionalProperties === false),
-  ];
+  const problems =
+    refused === undefined
+      ? [
+          ...structural.problems,
+          ...schemaProblems(schema, props, structural.keys, (schema as StructuralSchema).additionalProperties === false),
+        ]
+      : // The structural pass runs no pattern, so what it names is still worth saying; the full schema is not run.
+        [refused, ...structural.problems];
 
   if (problems.length === 0) return { ok: true, props };
 
