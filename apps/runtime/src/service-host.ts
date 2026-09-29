@@ -65,7 +65,8 @@ export { engineEnvironment } from "./service-container.ts";
  * call is checked against that schema on the node's main thread, so the schema is refused rather than stored.
  *
  * A package only ever writes its own rows. A ref the registry already holds for something else — one of the node's own
- * capabilities, or another package's — is left as it is, and the facet does not serve it.
+ * capabilities, or another package's — is left as it is, and the facet does not serve it. Once that other package is no
+ * longer active, the next reconcile claims the ref for this facet, without restarting its service.
  */
 
 /**
@@ -200,6 +201,8 @@ interface ServiceEntry {
   runName?: string | undefined;
   /** Declared ref → the tool it runs, once matched against what the service listed. */
   tools: Map<CapabilityRef, string>;
+  /** What the running service listed, by name, so a ref freed later is served without restarting it. */
+  listed?: ReadonlyMap<string, McpToolMetadata> | undefined;
   crashes: number[];
   /** Consecutive image fetches that failed, for their own backoff. */
   fetchFailures: number;
@@ -318,17 +321,27 @@ export function createServiceHost(options: ServiceHostOptions): ServiceHost {
     return entry.generation.packageId.slice(0, 160);
   }
 
-  /** Whether a ref's registry row is free or already this package's. Read only; `claim` is the one that reports. */
+  /**
+   * Whether a ref's registry row is free or already this package's. Read only; `claim` is the one that reports.
+   *
+   * A row another package wrote outlives that package: it stays, marked not installed, after the package is removed. It
+   * is free again once that package has no active generation on this node; an update of it still holds the row. A row
+   * the node wrote itself is never free.
+   */
   function owns(entry: Pick<ServiceEntry, "generation">, ref: CapabilityRef): boolean {
     const existing = getCapability(registry, ref, registry.nodeId);
-    return existing === undefined || existing.providedBy?.packageId === providerIdOf(entry);
+    if (existing === undefined || existing.providedBy?.packageId === providerIdOf(entry)) return true;
+    const holder = existing.providedBy?.packageId;
+    return holder !== undefined && !activeGenerations(registry).some((generation) => providerIdOf({ generation }) === holder);
   }
 
   /**
    * Whether this facet may write a ref's row. A row the node or another package holds is not overwritten: the facet
-   * does not serve that ref, and the log says so once per facet.
+   * does not serve that ref, and the log says so once per facet. A ref refused once stays refused until a reconcile
+   * finds it free (`reclaimFreed`), so a restart in between does not quietly take it.
    */
   function claim(entry: ServiceEntry, ref: CapabilityRef): boolean {
+    if (entry.refused.has(ref)) return false;
     if (owns(entry, ref)) return true;
     if (!entry.refused.has(ref)) {
       entry.refused.add(ref);
@@ -362,6 +375,60 @@ export function createServiceHost(options: ServiceHostOptions): ServiceHost {
       uiAffordances: [],
     };
     registerCapability(registry, descriptor);
+  }
+
+  /** Register one declared tool against what the running service listed: ready, or not loaded with the reason. */
+  function registerListed(
+    entry: ServiceEntry,
+    declaration: ServiceCapabilityDeclaration,
+    listed: ReadonlyMap<string, McpToolMetadata>,
+  ): void {
+    const tool = listed.get(declaration.tool);
+    if (tool === undefined) {
+      register(entry, declaration, {
+        readiness: readiness({
+          loaded: false,
+          healthy: true,
+          blockedReason: `the service does not provide the tool ${declaration.tool} its package declares`,
+        }),
+      });
+      return;
+    }
+    const unsafe = unsafeSchemaPattern(tool.inputSchema);
+    if (unsafe !== undefined) {
+      // Not run, and its schema not kept: every call would be checked against it on the node's main thread.
+      const reason = `the input schema the service lists for ${declaration.tool} was refused, and a version of the package with a simpler pattern will load: ${describeUnsafePattern(unsafe)}`;
+      register(entry, declaration, { readiness: readiness({ loaded: false, healthy: true, blockedReason: reason.slice(0, 500) }) });
+      log(`services: ${entry.key} ${reason}`);
+      return;
+    }
+    if (!claim(entry, declaration.ref)) return;
+    entry.tools.set(declaration.ref, declaration.tool);
+    register(entry, declaration, {
+      readiness: readiness({ loaded: true, healthy: true }),
+      effectCategory: serviceEffectCategory(declaration.effectCategory, tool),
+      inputSchema: tool.inputSchema,
+    });
+  }
+
+  /**
+   * Claim the refs a facet was refused because something else held them, once that owner is gone.
+   *
+   * A running service is not restarted for it: the ref is registered against what the service already listed. One that
+   * is not running registers the ref with its own current reason, and its next start registers it like the others.
+   */
+  function reclaimFreed(entry: ServiceEntry): void {
+    for (const declaration of entry.facet.capabilities) {
+      if (!entry.refused.has(declaration.ref) || !owns(entry, declaration.ref)) continue;
+      entry.refused.delete(declaration.ref);
+      log(`services: ${entry.key} now serves ${declaration.ref}; what registered it before is no longer on this node`);
+      if (entry.state === "running" && entry.listed !== undefined) {
+        registerListed(entry, declaration, entry.listed);
+        continue;
+      }
+      const reason = (entry.reason ?? "the service has not started yet").slice(0, 500);
+      register(entry, declaration, { readiness: readiness({ loaded: false, healthy: false, blockedReason: reason }) });
+    }
   }
 
   /** Mark every capability of a facet with one readiness change, keeping what was learned about each tool. */
@@ -453,6 +520,7 @@ export function createServiceHost(options: ServiceHostOptions): ServiceHost {
     const runName = entry.runName;
     entry.connection = undefined;
     entry.runName = undefined;
+    entry.listed = undefined;
     await connection?.close().catch(() => undefined);
     // Closing the engine's command line does not stop the container on every engine; removing it does.
     await removeContainer(runName);
@@ -601,36 +669,9 @@ export function createServiceHost(options: ServiceHostOptions): ServiceHost {
     entry.state = "running";
     entry.reason = undefined;
     entry.tools.clear();
-    const byName = new Map(listed.map((tool) => [tool.name, tool]));
+    entry.listed = new Map(listed.map((tool) => [tool.name, tool]));
     const declaredNames = new Set(entry.facet.capabilities.map((declaration) => declaration.tool));
-    for (const declaration of entry.facet.capabilities) {
-      const tool = byName.get(declaration.tool);
-      if (tool === undefined) {
-        register(entry, declaration, {
-          readiness: readiness({
-            loaded: false,
-            healthy: true,
-            blockedReason: `the service does not provide the tool ${declaration.tool} its package declares`,
-          }),
-        });
-        continue;
-      }
-      const unsafe = unsafeSchemaPattern(tool.inputSchema);
-      if (unsafe !== undefined) {
-        // Not run, and its schema not kept: every call would be checked against it on the node's main thread.
-        const reason = `the input schema the service lists for ${declaration.tool} was refused, and a version of the package with a simpler pattern will load: ${describeUnsafePattern(unsafe)}`;
-        register(entry, declaration, { readiness: readiness({ loaded: false, healthy: true, blockedReason: reason.slice(0, 500) }) });
-        log(`services: ${entry.key} ${reason}`);
-        continue;
-      }
-      if (!claim(entry, declaration.ref)) continue;
-      entry.tools.set(declaration.ref, declaration.tool);
-      register(entry, declaration, {
-        readiness: readiness({ loaded: true, healthy: true }),
-        effectCategory: serviceEffectCategory(declaration.effectCategory, tool),
-        inputSchema: tool.inputSchema,
-      });
-    }
+    for (const declaration of entry.facet.capabilities) registerListed(entry, declaration, entry.listed);
     const undeclared = listed.filter((tool) => !declaredNames.has(tool.name)).map((tool) => tool.name);
     if (undeclared.length > 0) {
       log(`services: ${entry.key} offers ${undeclared.join(", ")}, which its package does not declare; not registered`);
@@ -684,6 +725,9 @@ export function createServiceHost(options: ServiceHostOptions): ServiceHost {
         });
       }
     }
+
+    // A ref a running facet was refused is claimed once what held it is gone, in this reconcile rather than at a restart.
+    for (const entry of entries.values()) reclaimFreed(entry);
 
     for (const [key, next] of wanted) {
       if (entries.has(key)) continue;
@@ -746,7 +790,9 @@ export function createServiceHost(options: ServiceHostOptions): ServiceHost {
     serves(ref) {
       for (const entry of entries.values()) {
         if (!entry.facet.capabilities.some((declaration) => declaration.ref === ref)) continue;
-        if (!owns(entry, ref)) return undefined;
+        // Another facet may declare the same ref and hold it; this one does not serve it, that one might. A ref this
+        // facet was refused stays refused until a reconcile claims it.
+        if (entry.refused.has(ref) || !owns(entry, ref)) continue;
         return { packageId: entry.generation.packageId, generationId: entry.generation.generationId };
       }
       return undefined;

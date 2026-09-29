@@ -180,7 +180,8 @@ What the registry reports is what the host observed, not what the manifest hoped
   may be at most 1,000 characters;
 - a service that stops is restarted with backoff and left stopped if it keeps crashing, and the reason says which;
 - a ref the node or another package already registered is left as it is and not served by this package, and the node's
-  log says so;
+  log says so; once that other package is no longer active on the node, the next reconcile gives the ref to this
+  package, without restarting its service;
 - a node that finds no engine asks again after a minute, so starting Docker later does not need a node restart.
 
 The reason is what a person reads beside a disabled action. A widget's `invoke` binding, the agent's
