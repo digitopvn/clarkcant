@@ -514,6 +514,22 @@ Shipped:
   - **Mark as read / Mark as unread** changes only that notification; the header mark comes back when something is unread.
   - **Dismiss** removes it from the list and offers **Undo** for five minutes; a notification brought back returns
     already read.
+  - **Snooze**, under "More", offers four presets as a labelled group: "In 1 hour", "This evening (18:00)" (only
+    before 17:00), "Tomorrow morning (8:00)" and "Next Monday (8:00)". A preset's time is worked out when it is
+    pressed, on the device's clock. A snoozed notification leaves the list and the unread count and waits in a
+    collapsed "Snoozed" list, where "Bring back now" returns it. Snoozing keeps whether it was read: Undo or "Bring
+    back now" returns it exactly as it was, and only a snooze that runs out brings it back unread, at the top. A
+    snoozed notification of a kind quieted since still comes back unread and may notify, because snoozing asked to be
+    reminded of that notification.
+  - **Stop notifying me about this kind**, under "More", is offered only for a kind narrow enough to mean what it
+    says: one automation, one signal source such as one repository, one package, Pi, one paired device, or the
+    person's own background and worker work. Anything wider would also silence reminders and every other automation,
+    so it is not offered. Reminders are never quieted. Later notifications of a quieted kind are still listed but
+    arrive read and raise no notification outside the app. A collapsed "Quieted kinds" list says in words what
+    each one covers and at what level (e.g. "Automation “…” — warning level"), with an example title, and "Notify
+    again" reverses it; Undo does too.
+  - **Waiting items are never snoozed or quieted.** Approvals, permission requests and Clark's questions are decisions,
+    not notifications: they stay in "Waiting on you" until decided or expired.
 - **Update notifications for the Pi SDK, installed packages and widgets** (`apps/runtime/src/update-checks.ts`), from a
   periodic job comparing the installed version against the directory index and the npm registry (a network error does
   not create an error notification). Content states current version → new version and risk lane, using the same

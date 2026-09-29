@@ -507,6 +507,21 @@ phải một nơi điều hướng thứ hai. Mỗi mục trỏ về hội tho�
   - **Đánh dấu đã đọc / Đánh dấu chưa đọc** chỉ đổi thông báo đó; dấu trên header hiện lại khi có thông báo chưa đọc.
   - **Bỏ** xoá khỏi danh sách và đưa ra **Hoàn tác** trong năm phút; thông báo được đưa lại trở về ở trạng thái đã
     đọc.
+  - **Hoãn**, trong "Khác", đưa ra bốn mốc thành một nhóm có nhãn: "1 giờ nữa", "Tối nay (18:00)" (chỉ trước
+    17:00), "Sáng mai (8:00)" và "Thứ Hai tuần sau (8:00)". Thời điểm của mốc được tính lúc bấm, theo đồng hồ của
+    thiết bị. Thông báo đang hoãn rời khỏi danh sách và số chưa đọc, nằm trong danh sách "Đang hoãn" thu gọn, nơi
+    "Đưa trở lại ngay" đưa nó về. Hoãn giữ nguyên việc thông báo đã đọc hay chưa: Hoàn tác hoặc "Đưa trở lại ngay"
+    đưa nó về đúng như trước, và chỉ khi hết thời gian hoãn nó mới trở lại ở trạng thái chưa đọc, ở đầu danh sách.
+    Thông báo đang hoãn thuộc một loại vừa bị tắt báo vẫn trở lại chưa đọc và có thể hiện thông báo, vì hoãn là
+    nhờ được nhắc lại đúng thông báo đó.
+  - **Không báo về loại này nữa**, trong "Khác", chỉ được đưa ra khi loại đủ hẹp để đúng nghĩa: một việc tự động,
+    một nguồn tín hiệu như một repository, một gói, Pi, một thiết bị đã ghép, hoặc việc nền và worker của chính người
+    dùng. Loại rộng hơn sẽ tắt luôn cả lời nhắc và mọi việc tự động khác, nên không được đưa ra. Lời nhắc không bao
+    giờ bị tắt báo. Các thông báo sau thuộc loại đã tắt vẫn được liệt kê nhưng đến ở trạng thái đã đọc và không hiện
+    thông báo ngoài ứng dụng. Danh sách "Loại không báo" thu gọn nói bằng chữ mỗi dòng bao gồm gì và ở mức nào (ví
+    dụ "Việc tự động “…” — mức cảnh báo"), kèm một tiêu đề ví dụ, và "Báo lại" đảo lại; Hoàn tác cũng vậy.
+  - **Việc chờ không bao giờ bị hoãn hay tắt báo.** Approval, yêu cầu cấp quyền và câu hỏi của Clark là quyết định,
+    không phải thông báo: chúng ở lại trong "Đang chờ bạn" cho đến khi được quyết định hoặc hết hạn.
 - **Thông báo cập nhật cho Pi SDK, gói đã cài và widget** (`apps/runtime/src/update-checks.ts`), từ một job định kỳ
   so version đã cài với directory index và với npm registry (lỗi mạng không tạo thông báo lỗi). Nội dung nói version
   hiện tại → mới và risk lane, cùng cách gọi tên với marketplace. Chưa có nút "Cập nhật": route cập nhật thật đi qua
