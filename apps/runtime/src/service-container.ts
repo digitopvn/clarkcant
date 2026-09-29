@@ -18,7 +18,8 @@ import { posix, resolve } from "node:path";
  *   - **Its package, read-only**, at `/pkg`, and **one private folder**, read-write, at `/data`. The root filesystem is
  *     read-only; `/tmp` is a small memory-backed scratch space that cannot hold an executable.
  *   - **No privilege.** A non-root user, every capability dropped, no privilege escalation, and bounded processes,
- *     memory and CPU.
+ *     memory and CPU. Under rootless Docker the user is the container's id 0, because that is the only id the daemon
+ *     maps back to the person's own account; it holds none of those privileges either (`ROOTLESS_DOCKER_USER`).
  *   - **Standard streams only.** The host speaks the Model Context Protocol over stdin/stdout (`docker run -i`), so no
  *     port is opened and there is nothing for a widget frame, or anything else on the machine, to connect to.
  *
@@ -37,7 +38,16 @@ export const NEEDS_ENGINE_REASON = "needs Docker or Podman to run; this node has
 export type ContainerEngineName = "docker" | "podman";
 
 export type ServiceEngine =
-  | { available: true; engine: ContainerEngineName; version: string }
+  | {
+      available: true;
+      engine: ContainerEngineName;
+      version: string;
+      /**
+       * Set only when the engine is Docker running rootless, where a container's ids are mapped onto subordinate ids of
+       * the person's own account rather than kept as they are. See `serviceRunArgs`.
+       */
+      rootless?: true;
+    }
   | {
       available: false;
       /** One sentence a person can act on; it is what a capability's blocked reason shows. */
@@ -140,7 +150,10 @@ export async function detectServiceEngine(options: ServiceEngineOptions = {}): P
   const docker = await run("docker", ["version", "--format", "{{.Server.Os}} {{.Server.Version}}"], timeoutMs);
   if (docker.status === 0 && docker.stdout.trim() !== "") {
     const [os, version] = docker.stdout.trim().split(/\s+/);
-    if (os === "linux") return { available: true, engine: "docker", version: version ?? "unknown" };
+    if (os === "linux") {
+      const found = { available: true as const, engine: "docker" as const, version: version ?? "unknown" };
+      return (await isRootlessDocker(run, timeoutMs)) ? { ...found, rootless: true } : found;
+    }
     dockerOs = os ?? "unknown";
     failures.push(`docker runs ${dockerOs} containers, and a service needs Linux ones`);
   } else {
@@ -164,6 +177,23 @@ export async function detectServiceEngine(options: ServiceEngineOptions = {}): P
   };
 }
 
+/**
+ * Whether the Docker daemon runs rootless, which it says among its security options as `name=rootless`.
+ *
+ * An answer that cannot be read counts as not rootless, which is how every Docker was treated before this was asked: the
+ * service then starts as the node's own ids and, on a rootless daemon, fails on its first write with a reason in its log.
+ */
+async function isRootlessDocker(run: EngineRunner, timeoutMs: number): Promise<boolean> {
+  const info = await run("docker", ["info", "--format", "{{json .SecurityOptions}}"], timeoutMs);
+  if (info.status !== 0) return false;
+  try {
+    const options: unknown = JSON.parse(info.stdout);
+    return Array.isArray(options) && options.some((option) => typeof option === "string" && option.split(",").includes("name=rootless"));
+  } catch {
+    return false;
+  }
+}
+
 /** A container name that is stable for one facet of one generation on one node, and valid for both engines. */
 export function serviceContainerName(input: { nodeId: string; generationId: string; facetId: string }): string {
   const digest = createHash("sha256")
@@ -183,8 +213,10 @@ export interface ServiceContainerSpec {
   dataDir: string;
   /** The facet's entry, relative to the package root, as the manifest declares it. */
   entry: string;
-  /** The user the container runs as. Defaults to `serviceUser()`. */
+  /** The user the container runs as. Defaults to `serviceUser()`, or to `ROOTLESS_DOCKER_USER` under rootless Docker. */
   user?: { uid: number; gid: number };
+  /** The engine is Docker running rootless, as `detectServiceEngine` found it. */
+  rootless?: boolean;
   image?: string;
 }
 
@@ -203,6 +235,17 @@ export function serviceUser(platform: NodeJS.Platform = process.platform): { uid
   const gid = process.getgid();
   return uid === 0 ? { uid: 65534, gid: 65534 } : { uid, gid };
 }
+
+/**
+ * The user a service runs as under rootless Docker.
+ *
+ * Rootless Docker maps the container's id 0 onto the account that runs the daemon, which is the person's own, and every
+ * other id onto a subordinate id that account does not own. The node's own ids inside the container would therefore be
+ * a stranger on the host, unable to write the private folder the node created; id 0 is the one that writes it as the
+ * person. It holds no privilege: every capability is dropped, escalation is refused, the root filesystem is read-only
+ * and there is no network, and outside the container it is the unprivileged person who started the daemon.
+ */
+export const ROOTLESS_DOCKER_USER = { uid: 0, gid: 0 } as const;
 
 /**
  * The arguments that start one service container.
@@ -227,7 +270,7 @@ export function mountSource(path: string): string {
 }
 
 export function serviceRunArgs(spec: ServiceContainerSpec): string[] {
-  const user = spec.user ?? serviceUser();
+  const user = spec.user ?? (spec.engine === "docker" && spec.rootless === true ? ROOTLESS_DOCKER_USER : serviceUser());
   const entry = posix.join("/pkg", spec.entry.replaceAll("\\", "/"));
   return [
     "run",
@@ -253,7 +296,8 @@ export function serviceRunArgs(spec: ServiceContainerSpec): string[] {
     "--tmpfs",
     "/tmp:rw,noexec,nosuid,size=16m",
     // Rootless Podman maps the container's ids into the user's own namespace; keeping the id is what lets the private
-    // folder stay writable. Docker has no such flag and needs none.
+    // folder stay writable. Docker has no such flag: rootful Docker needs none, and rootless Docker is given the one id
+    // that maps back to the person instead (`ROOTLESS_DOCKER_USER`).
     ...(spec.engine === "podman" ? ["--userns", "keep-id"] : []),
     // The service's stdout is the protocol, which carries what a person gave it. Docker would also keep a copy in its
     // log files, unrotated, for as long as the container lives; the host reads the stream itself and needs no copy.
