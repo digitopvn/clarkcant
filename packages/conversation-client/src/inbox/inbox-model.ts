@@ -265,8 +265,8 @@ export function noticeConversationTarget(notice: Notice): string | undefined {
 const REFERENCE_LABEL_MAX = 120;
 
 /**
- * The reference "Ask Clark" and "Add to context" put on a message: the same `notice` reference a person could have
- * picked after `@`, labelled with the notice's title so the chip reads as what it points at.
+ * The reference "Ask Clark" and "Add to context" put on a message: a `notice` composer reference, checked and stored
+ * like the ones chosen after `@`, labelled with the notice's title so the chip reads as what it points at.
  */
 export function noticeReference(notice: Notice): { key: string; ref: Extract<ComposerReference, { kind: "notice" }> } {
   const title = notice.title.replace(/\s+/g, " ").trim();

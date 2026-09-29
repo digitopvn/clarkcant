@@ -29,7 +29,7 @@ export interface InboxNoticeActions {
  * What the inbox's "Ask Clark" and "Add to context" do to the conversation, in one place, so the buttons and the
  * spoken or typed "ask Clark about the latest notice" reach the same code.
  *
- * Both carry the notice as the `notice` reference a person could have picked after `@`, never as pasted text: the
+ * Both carry the notice as a `notice` composer reference, never as pasted text: like a reference chosen after `@`, the
  * node checks it again when the message arrives and briefs the turn from what it has stored, quoting the notice's
  * words as data.
  */

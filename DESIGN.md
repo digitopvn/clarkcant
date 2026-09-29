@@ -492,8 +492,8 @@ Shipped:
   under the notification (not a floating menu) that Escape closes, returning focus to "More". Something that went well
   leads with "Open conversation"; something that failed or needs attention leads with "Ask Clark". A notification
   whose conversation was deleted says so in words instead of offering a button that fails.
-  - **Ask Clark** closes the inbox and sends a message of its own carrying the notification as a reference (the same
-    kind a person can pick after `@`, §6.2): the node reads the stored notification again and quotes its words to the
+  - **Ask Clark** closes the inbox and sends a message of its own carrying the notification as a composer reference
+    (§6.3), checked like one chosen after `@`: the node reads the stored notification again and quotes its words to the
     model as data. Whatever the person was writing, and its chips, stay as they are. While Clark is still answering,
     the button is disabled with the reason written beside it. "Ask Clark about the latest notification" — typed or
     spoken — does the same for the newest notification through the `inbox.ask` intent.

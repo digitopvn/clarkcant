@@ -485,8 +485,8 @@ phải một nơi điều hướng thứ hai. Mỗi mục trỏ về hội tho�
   mở rộng ngay dưới thông báo (không phải menu nổi), Escape đóng lại và trả focus về "Khác". Việc đã xong ổn thì "Mở hội
   thoại" đứng đầu; việc lỗi hoặc cần chú ý thì "Hỏi Clark" đứng đầu. Thông báo có hội thoại đã bị xoá thì nói rõ bằng
   chữ thay vì đưa ra một nút bấm vào sẽ lỗi.
-  - **Hỏi Clark** đóng hộp thư và gửi một tin nhắn riêng mang thông báo làm tham chiếu (cùng loại người dùng chọn được
-    sau `@`, §6.2): node đọc lại thông báo đã lưu và trích nội dung của nó cho model dưới dạng dữ liệu. Những gì người
+  - **Hỏi Clark** đóng hộp thư và gửi một tin nhắn riêng mang thông báo làm tham chiếu của ô soạn (§6.3),
+    được kiểm như một tham chiếu chọn sau `@`: node đọc lại thông báo đã lưu và trích nội dung của nó cho model dưới dạng dữ liệu. Những gì người
     dùng đang viết, cùng các chip trên đó, giữ nguyên. Khi Clark còn đang trả lời, nút bị tắt và lý do được ghi ngay bên
     cạnh. "Hỏi Clark về thông báo mới nhất" — gõ hoặc nói — làm đúng việc đó cho thông báo mới nhất qua intent
     `inbox.ask`.
