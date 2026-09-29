@@ -1,4 +1,5 @@
 import { type Notice, type NoticeAction, noticeKindQuietable, noticeSuppressionKey } from "@clarkcant/contracts";
+import { answerableUnknownEffect } from "@clarkcant/core";
 import { type Database, findNoticeSuppression, getConversation, getTask } from "@clarkcant/storage";
 
 /**
@@ -11,7 +12,9 @@ import { type Database, findNoticeSuppression, getConversation, getTask } from "
  *
  * Placement follows one rule: a notice that says something went well is mostly something to go and look at, so
  * "Open" leads; one that says something went wrong or needs attention is mostly something to act on, so "Ask Clark"
- * leads. At most two actions are drawn as buttons; the rest go behind "More".
+ * leads. One exception outranks both: a notice about a task with an effect whose outcome is unknown is waiting for the
+ * person to say whether it landed, so "It took effect" and "It did not" lead, for as long as that effect is unknown. At
+ * most two actions are drawn as buttons; the rest go behind "More".
  *
  * Snoozing and quieting a kind are always behind "More": they change when the person hears about things, not what the
  * notice is about. Which of "stop notifying about this kind" and "notify again" is offered is read from this principal's
@@ -19,7 +22,7 @@ import { type Database, findNoticeSuppression, getConversation, getTask } from "
  * (`noticeKindQuietable`: a reminder, a notice tied to no automation, source, package or node) offers neither. A notice
  * that is snoozed is not in the list at all; the one thing to do with it is bring it back.
  */
-export function noticeActionsFor(db: Database, principalId: string, notice: Notice): NoticeAction[] {
+export function noticeActionsFor(db: Database, principalId: string, notice: Notice, nodeId: string): NoticeAction[] {
   if (notice.snoozedUntil !== undefined) return [{ id: "unsnooze", placement: "primary" }];
   const target = conversationOf(db, notice);
   const open: NoticeAction | undefined =
@@ -30,9 +33,19 @@ export function noticeActionsFor(db: Database, principalId: string, notice: Noti
         : { id: "open", placement: "secondary" };
   const canOpen = open !== undefined && open.unavailable === undefined;
   const look = canOpen && (notice.severity === "success" || notice.severity === "info");
+  const unknownEffect = reconcilableEffect(db, principalId, nodeId, notice);
 
   const actions: NoticeAction[] = [];
-  if (look) {
+  if (unknownEffect !== undefined) {
+    // The one thing the notice is waiting for is the person's answer, so the two answers are the buttons, and going
+    // to the conversation or asking Clark about it moves behind "More".
+    actions.push(
+      { id: "reconcile-confirmed", placement: "primary", effectId: unknownEffect },
+      { id: "reconcile-failed", placement: "secondary", effectId: unknownEffect },
+      { id: "ask-clark", placement: "menu" },
+    );
+    if (canOpen) actions.push({ id: "open", placement: "menu" });
+  } else if (look) {
     actions.push({ id: "open", placement: "primary" }, { id: "ask-clark", placement: "secondary" });
   } else {
     actions.push({ id: "ask-clark", placement: "primary" });
@@ -50,6 +63,17 @@ export function noticeActionsFor(db: Database, principalId: string, notice: Noti
   }
   if (open !== undefined && !canOpen) actions.push(open);
   return actions;
+}
+
+/**
+ * The effect a notice can be answered for from the inbox: the oldest still-`unknown` effect of the task it is about,
+ * that this node carried out and this person may answer for. Recomputed on each read, so once it is answered — from the
+ * button, a sentence, or another screen — the two actions are simply not offered any more. A notice another node sent
+ * is never answered here: the effect is that node's to reconcile.
+ */
+function reconcilableEffect(db: Database, principalId: string, nodeId: string, notice: Notice): string | undefined {
+  if (notice.originNodeId !== undefined || notice.subject?.kind !== "task") return undefined;
+  return answerableUnknownEffect({ db, nodeId, principalId }, notice.subject.taskId)?.effectId;
 }
 
 /**

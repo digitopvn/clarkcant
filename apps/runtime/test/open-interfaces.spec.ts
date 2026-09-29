@@ -307,6 +307,9 @@ describe("WebSocket gateway", () => {
       "//conversations//conv_x/approvals/appr_x/decide/",
       // A table's CSV is a whole dataset handed over as a file; it is downloaded by the person, not by a relay.
       "/conversations/conv_x/widgets/winst_x/export",
+      // Saying an unknown effect took effect would let an AI client clear its own task's uncertainty.
+      "/effects/eff_x/reconcile",
+      "//effects//eff_x/reconcile/",
     ];
     for (const [index, path] of decisions.entries()) {
       client.send({ type: "request", id: index, method: "POST", path, body: {} });

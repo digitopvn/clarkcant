@@ -52,6 +52,8 @@ export function unknownEffectNotice(input: {
   effects: readonly Pick<EffectRecord, "taskId" | "intent" | "reconciliationEvidence">[];
   task?: { conversationId: string; goal: string };
   at: Instant;
+  /** The key it is recorded under: the task's own worker key, unless it follows an answer for an earlier effect. */
+  dedupKey?: string;
 }): NodeNotice | undefined {
   const [first] = input.effects;
   if (first === undefined) return undefined;
@@ -69,28 +71,47 @@ export function unknownEffectNotice(input: {
     body:
       `“${quote(first.intent)}”${forTask} ${what}${others}, nên chưa rõ nó đã có hiệu lực hay chưa. ` +
       `Việc được giữ ở trạng thái chưa rõ kết quả; mọi lệnh ra bên ngoài mà nó nhận ra đều bị từ chối, vì chạy lại có thể làm nó hai lần. ` +
-      `Hãy kiểm tra ở nơi nhận (ví dụ remote Git hoặc dịch vụ) trước khi chạy lại.`,
+      `Hãy kiểm tra ở nơi nhận (ví dụ remote Git) rồi ghi nhận kết quả, trước khi chạy lại.`,
     ...(input.task === undefined ? {} : { conversationId: input.task.conversationId }),
     subject: {
       kind: "task",
       taskId: first.taskId,
       ...(input.task === undefined ? {} : { conversationId: input.task.conversationId }),
     },
-    dedupKey: workerNoticeKey(first.taskId),
+    dedupKey: input.dedupKey ?? workerNoticeKey(first.taskId),
     at: input.at,
   };
 }
 
+/**
+ * A task's effects whose outcome is unknown, oldest first: the order the notice quotes them in, and so the order the
+ * inbox offers to answer for them in. One function for both, so the button never answers for an effect the words
+ * beside it do not name.
+ */
+export function unknownEffectsOf(db: Database, taskId: string): EffectRecord[] {
+  return effectsForTask(db, taskId).filter((effect) => effect.state === "unknown");
+}
+
 /** The notice for a task's unknown effects, read from the ledger, or nothing when it has none. */
-export function unknownEffectsNotice(db: Database, taskId: string, at: Instant): NodeNotice | undefined {
-  const effects = effectsForTask(db, taskId).filter((effect) => effect.state === "unknown");
+export function unknownEffectsNotice(db: Database, taskId: string, at: Instant, dedupKey?: string): NodeNotice | undefined {
+  const effects = unknownEffectsOf(db, taskId);
   if (effects.length === 0) return undefined;
   const task = getTask(db, taskId);
   return unknownEffectNotice({
     effects,
     ...(task === undefined ? {} : { task: { conversationId: task.conversationId, goal: task.goal } }),
     at,
+    ...(dedupKey === undefined ? {} : { dedupKey }),
   });
+}
+
+/**
+ * The key of the notice that follows an answer while the task still has another unknown effect: one per effect, so
+ * the next one is heard once, and never under the task's own key — that one was resolved by the answer, and the
+ * sweep, which keeps writing under it, stays deduplicated against it.
+ */
+export function unknownEffectFollowUpKey(taskId: string, effectId: string): string {
+  return `${workerNoticeKey(taskId)}:unknown:${effectId}`;
 }
 
 /** One pass: every task with an effect this node executed that is `unknown`, each reported once. Never throws for one. */

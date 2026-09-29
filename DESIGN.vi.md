@@ -522,6 +522,25 @@ phải một nơi điều hướng thứ hai. Mỗi mục trỏ về hội tho�
     dụ "Việc tự động “…” — mức cảnh báo"), kèm một tiêu đề ví dụ, và "Báo lại" đảo lại; Hoàn tác cũng vậy.
   - **Việc chờ không bao giờ bị hoãn hay tắt báo.** Approval, yêu cầu cấp quyền và câu hỏi của Clark là quyết định,
     không phải thông báo: chúng ở lại trong "Đang chờ bạn" cho đến khi được quyết định hoặc hết hạn.
+- **Thao tác không ai thấy kết quả thì hỏi người dùng** (#273). Khi một lệnh đi ra ngoài node (một lần push, một lần
+  deploy) hết giờ hoặc bị dừng trước khi báo lại, task chờ ở trạng thái chưa rõ và hộp thư có đúng một thông báo về nó,
+  trỏ tới task và cuộc trò chuyện của task. Một thao tác trình duyệt quan trọng (một lần gửi biểu mẫu) cũng được ghi vào
+  cùng sổ đó và để lại cùng thông báo đó khi hết giờ, nhưng chỉ khi có thứ gì đó điều khiển browser pack cho một task,
+  mà hiện chưa có gì làm vậy trong production, nên hôm nay chỉ các lệnh mới hỏi người dùng theo cách này. Chỉ trong lúc
+  thao tác đó còn chưa rõ, hai nút của thông báo là "Đã có hiệu lực" và "Chưa có hiệu lực", với câu "Bạn đã kiểm tra ở
+  nơi nhận chưa? Ghi nhận xong thì không đổi lại được." đặt trước chúng bằng tông cảnh báo, không phải chữ thường. Bấm
+  một nút sẽ ghi câu trả lời, kèm ai và lúc nào, vào sổ effect; thông báo rời khỏi danh sách, focus chuyển sang thông
+  báo kế tiếp, và cuộc trò chuyện của task cho biết task kết thúc thế nào: chỉ thành công khi thao tác đã có hiệu lực và
+  lần chạy đã xác minh được kết quả, thất bại trong các trường hợp còn lại, đã dừng khi người dùng đã yêu cầu dừng. Task
+  còn một thao tác chưa rõ khác sẽ có một thông báo mới nêu đúng thao tác đó; task mà lần chạy vẫn đang tiếp tục sẽ kết
+  thúc khi lần chạy báo lại. Câu trả lời đã được ai đó ghi trước (từ màn hình khác, bằng một câu nói) sẽ được nói rõ như
+  vậy và danh sách được đọc lại. Vì câu trả lời không đổi lại được, cùng những lời đó khi gõ hoặc nói ("đã có hiệu lực",
+  "chưa có hiệu lực", "it took effect", "it did not take effect") không bao giờ tự ghi nó. Khi có đúng một thao tác đang
+  chờ, được nêu tên trong câu đọc lại: nếu nói, Clark hỏi lại ("Ghi nhận … đã có hiệu lực? Ghi nhận xong thì không đổi
+  lại được.") và ghi khi người dùng nói đồng ý; nếu gõ, Clark nói nút nào là câu trả lời và mở hộp thư ở đúng thông báo
+  đó, nên lần bấm cạnh lời cảnh báo chính là bước xác nhận. Khi không có hoặc có nhiều hơn một, Clark nói rõ và không
+  ghi gì. Clark không tự trả lời được: MCP, relay WebSocket và `clarkcant api` từ chối route này, còn `control_app`
+  không gọi được nó, vì một agent tự nói được lần push của chính nó đã thành công thì có thể tự báo là mình đã xong.
 - **Thông báo cập nhật cho Pi SDK, gói đã cài và widget** (`apps/runtime/src/update-checks.ts`), từ một job định kỳ
   so version đã cài với directory index và với npm registry (lỗi mạng không tạo thông báo lỗi). Nội dung nói version
   hiện tại → mới và risk lane, cùng cách gọi tên với marketplace. Chưa có nút "Cập nhật": route cập nhật thật đi qua

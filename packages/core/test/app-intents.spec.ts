@@ -137,6 +137,19 @@ const DOCUMENTED: readonly { kind: AppIntentKind; vietnamese: readonly string[];
     vietnamese: ["dừng lại", "Dừng lại!", "ngừng lại", "dừng trả lời", "dừng viết đi", "dung lai"],
     english: "stop generating",
   },
+  {
+    // Whole-sentence: the answer to "did that take effect?". Which effect it answers is decided on the node, which
+    // refuses rather than guesses when not exactly one is waiting (apps/runtime/test/effect-reconciliation.spec.ts).
+    kind: "effect.confirmed",
+    vietnamese: ["đã có hiệu lực", "Nó đã có hiệu lực rồi.", "việc đó đã có hiệu lực", "da co hieu luc"],
+    english: "it took effect",
+  },
+  {
+    // "chưa có hiệu lực" must not read as its positive twin: the longest phrase decides, and "chua" is in this one.
+    kind: "effect.failed",
+    vietnamese: ["chưa có hiệu lực", "Nó chưa có hiệu lực.", "việc đó chưa có hiệu lực", "chua co hieu luc"],
+    english: "it did not take effect",
+  },
 ];
 
 describe("every documented way of asking maps to one intent", () => {
@@ -330,11 +343,11 @@ describe("a work request is not an app intent", () => {
   });
 });
 
-describe("quitting always asks first", () => {
-  it("makes every intent but app.quit executable, and app.quit a question", () => {
+describe("quitting and answering about an effect always ask first", () => {
+  it("makes every intent but app.quit and the effect answers executable, and those a question", () => {
     for (const kind of APP_INTENT_KINDS) {
       const resolution = resolveAppIntent({ intent: { kind }, mintConfirmationToken: mint });
-      if (kind === "app.quit") {
+      if (kind === "app.quit" || kind === "effect.confirmed" || kind === "effect.failed") {
         expect(resolution.kind, kind).toBe("needs-confirmation");
         expect("confirmationToken" in resolution).toBe(true);
       } else {

@@ -106,6 +106,9 @@ export type NoticeSubject = z.infer<typeof noticeSubjectSchema>;
  *   - `suppress` / `unsuppress`: stop notifying about notices of this kind (`noticeSuppressionKey`) from now on, or
  *     start again. Future matching notices are still listed, but arrive read, so they raise no count and no
  *     notification outside the app. Nothing already in the list changes.
+ *   - `reconcile-confirmed` / `reconcile-failed`: record what the person saw on the other side of an effect whose
+ *     outcome nobody observed — it took effect, or it did not (`POST /effects/:effectId/reconcile`). Offered only while
+ *     that effect is still `unknown`, and each carries the `effectId` it answers for.
  */
 export const noticeActionIdSchema = z.enum([
   "open",
@@ -118,6 +121,8 @@ export const noticeActionIdSchema = z.enum([
   "unsnooze",
   "suppress",
   "unsuppress",
+  "reconcile-confirmed",
+  "reconcile-failed",
 ]);
 export type NoticeActionId = z.infer<typeof noticeActionIdSchema>;
 
@@ -130,12 +135,52 @@ export type NoticeActionId = z.infer<typeof noticeActionIdSchema>;
  * person's language; what only the surface knows (a reply being written, a draft that switching would drop) it adds
  * itself.
  */
-export const noticeActionSchema = z.strictObject({
-  id: noticeActionIdSchema,
-  placement: z.enum(["primary", "secondary", "menu"]),
-  unavailable: z.enum(["conversation-gone"]).optional(),
-});
+export const noticeActionSchema = z
+  .strictObject({
+    id: noticeActionIdSchema,
+    placement: z.enum(["primary", "secondary", "menu"]),
+    unavailable: z.enum(["conversation-gone"]).optional(),
+    /** The effect a `reconcile-*` action answers for; present on those two and on nothing else. */
+    effectId: z.string().min(1).max(128).optional(),
+  })
+  .refine((action) => (action.effectId !== undefined) === isReconcileAction(action.id), {
+    message: "effectId is carried by the reconcile actions, and only by them",
+    path: ["effectId"],
+  });
 export type NoticeAction = z.infer<typeof noticeActionSchema>;
+
+/** Whether an action records what the person saw of an effect whose outcome is unknown. */
+export function isReconcileAction(id: NoticeActionId): id is "reconcile-confirmed" | "reconcile-failed" {
+  return id === "reconcile-confirmed" || id === "reconcile-failed";
+}
+
+/**
+ * What a person records about an effect whose outcome nobody observed (`POST /effects/:effectId/reconcile`).
+ *
+ * `outcome` is what they saw on the other side. `source` is a label the page supplies for where they said it (a press,
+ * typed, spoken) and is stored as given: it is not provenance, and nothing may decide anything from it. What the record
+ * can be trusted for is who and when: the principal is the authenticated caller, never something the body claims, and
+ * the route is person-only, so no machine surface reaches it at all.
+ */
+export const effectReconcileRequestSchema = z.strictObject({
+  outcome: z.enum(["confirmed", "failed"]),
+  source: z.enum(["click", "chat", "voice"]).optional(),
+});
+export type EffectReconcileRequest = z.infer<typeof effectReconcileRequestSchema>;
+
+/**
+ * What recording it did: the effect's new state, the state its task is in now, how the task settled when this answer
+ * was the last thing it was uncertain about, and how many of its effects are still unknown.
+ */
+export const effectReconcileResponseSchema = z.strictObject({
+  effectId: z.string().min(1).max(128),
+  taskId: z.string().min(1).max(128),
+  outcome: z.enum(["confirmed", "failed"]),
+  taskState: z.string().min(1).max(40),
+  settled: z.enum(["succeeded", "failed", "cancelled"]).optional(),
+  remainingUnknown: z.int().nonnegative(),
+});
+export type EffectReconcileResponse = z.infer<typeof effectReconcileResponseSchema>;
 
 export const noticeSchema = z.strictObject({
   noticeId: z.string().min(1).max(128),
@@ -155,7 +200,7 @@ export const noticeSchema = z.strictObject({
   /** When a snoozed notice comes back. Present only while that is still ahead, which is only in `snoozed`. */
   snoozedUntil: instantSchema.optional(),
   /** What can be done with it now, worked out by the node when it was read. Absent where nothing resolved them. */
-  actions: z.array(noticeActionSchema).max(8).optional(),
+  actions: z.array(noticeActionSchema).max(10).optional(),
 });
 export type Notice = z.infer<typeof noticeSchema>;
 

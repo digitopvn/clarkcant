@@ -190,6 +190,70 @@ describe("asking Clark about the latest notice", () => {
   });
 });
 
+describe("saying whether a waiting action took effect", () => {
+  function answeringHost(): { host: AppIntentHost; answers: string[] } {
+    const answers: string[] = [];
+    return {
+      answers,
+      host: {
+        ...recordingHost().host,
+        recordEffectOutcome: async (effectId, outcome) => {
+          answers.push(`${effectId}:${outcome}`);
+        },
+      },
+    };
+  }
+
+  it("records the effect the node named, through the same host path the inbox buttons use", async () => {
+    const { host, answers } = answeringHost();
+
+    const confirmed = await runAppIntent(
+      executable({ kind: "intent", intent: { kind: "effect.confirmed", effectId: "eff_1" }, readBack: "ghi nhận" }),
+      host,
+    );
+    const failed = await runAppIntent(executable({ kind: "intent", intent: { kind: "effect.failed", effectId: "eff_2" }, readBack: "ghi nhận" }), host);
+
+    expect(confirmed).toEqual({ ran: true, say: "ghi nhận" });
+    expect(failed).toEqual({ ran: true, say: "ghi nhận" });
+    expect(answers).toEqual(["eff_1:confirmed", "eff_2:failed"]);
+  });
+
+  it("says what failed when the node would not record it, instead of reading the answer back", async () => {
+    const host: AppIntentHost = {
+      ...recordingHost().host,
+      recordEffectOutcome: async () => {
+        throw new Error("Việc đó đã được ghi nhận rồi.");
+      },
+    };
+
+    const run = await runAppIntent(executable({ kind: "intent", intent: { kind: "effect.confirmed", effectId: "eff_1" }, readBack: "ghi nhận" }), host);
+
+    expect(run).toEqual({ ran: false, say: "Việc đó đã được ghi nhận rồi." });
+  });
+
+  it("refuses an answer that arrived as an agent's control, or names no effect", async () => {
+    const { host, answers } = answeringHost();
+
+    const fromAgent = await runAppIntent(
+      { ...executable({ kind: "intent", intent: { kind: "effect.confirmed", effectId: "eff_1" }, readBack: "ghi nhận" }), controlId: "ctl_1" } as AppIntentDecision,
+      host,
+    );
+    const unnamed = await runAppIntent(executable({ kind: "intent", intent: { kind: "effect.failed" }, readBack: "ghi nhận" }), host);
+
+    expect(fromAgent.ran).toBe(false);
+    expect(unnamed.ran).toBe(false);
+    expect(answers).toEqual([]);
+  });
+
+  it("is refused by a host with no inbox", async () => {
+    const run = await runAppIntent(
+      executable({ kind: "intent", intent: { kind: "effect.confirmed", effectId: "eff_1" }, readBack: "ghi nhận" }),
+      recordingHost().host,
+    );
+    expect(run.ran).toBe(false);
+  });
+});
+
 describe("what the executor will not do", () => {
   it("does not act on a question, even for an intent it could otherwise run", async () => {
     const { host, calls } = recordingHost(true);

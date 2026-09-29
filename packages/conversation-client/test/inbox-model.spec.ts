@@ -15,10 +15,12 @@ import {
   noticeConversationTarget,
   noticeIdsToMarkRead,
   noticeKindQuieted,
+  noticeReconcileEffect,
   noticeReference,
   noticesMayBeCapped,
   noticeSourceKey,
   noticeTone,
+  reconcileAlreadyRecorded,
   relativeAge,
   sanitizeReason,
   snoozePresetKey,
@@ -97,6 +99,28 @@ describe("snoozing", () => {
     expect(noticeKindQuieted(notice("c"))).toBe(false);
   });
 
+  it("offers an unknown effect's two answers as the row's buttons, and only the effect the node named", () => {
+    const answering: Notice = {
+      ...notice("e"),
+      actions: [
+        { id: "reconcile-confirmed", placement: "primary", effectId: "eff_1" },
+        { id: "reconcile-failed", placement: "secondary", effectId: "eff_1" },
+        { id: "open", placement: "menu" },
+        { id: "dismiss", placement: "menu" },
+      ],
+    };
+
+    expect(noticeActionGroups(answering).buttons.map((action) => action.id)).toEqual(["reconcile-confirmed", "reconcile-failed"]);
+    expect(noticeReconcileEffect(answering)).toBe("eff_1");
+    // Once the node stops offering them, the surface has nothing to answer for.
+    expect(noticeReconcileEffect({ ...answering, actions: [{ id: "open", placement: "primary" }] })).toBeUndefined();
+  });
+
+  it("tells an answer someone already recorded apart from one that failed", () => {
+    expect(reconcileAlreadyRecorded(gatewayError("EFFECT_NOT_UNKNOWN", "already confirmed"))).toBe(true);
+    expect(reconcileAlreadyRecorded(gatewayError("EFFECT_NOT_FOUND", "no such effect"))).toBe(false);
+    expect(reconcileAlreadyRecorded(new Error("network down"))).toBe(false);
+  });
   it("keeps snooze and quieting behind More, never as one of the two buttons", () => {
     const { buttons, menu } = noticeActionGroups({
       ...notice("d"),

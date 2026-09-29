@@ -1,19 +1,23 @@
-import { type Instant, type MessageBlock, instantSchema } from "@clarkcant/contracts";
+import { type CapabilityRef, type Instant, type MessageBlock, advanceEffect, instantSchema } from "@clarkcant/contracts";
 import {
   type ConductorDeps,
   type ConductorEmit,
   type CoordinationDeps,
+  advanceResolving,
+  applyTaskEvent,
   captureSnapshot,
   createInstance,
   createTask,
+  markEffectUnknown,
   modelReplyCard,
+  prepareEffect,
   requestApproval,
   saveActionBinding,
   setPreference,
 } from "@clarkcant/core";
 import { GALLERY, STATUS, TABLE, YOUTUBE } from "@clarkcant/data-canvas";
 import { FakePiAdapter, type WorkerEvent } from "@clarkcant/pi-adapter";
-import { getNotification, listLocalImages, upsertArtifact, upsertDataset } from "@clarkcant/storage";
+import { getNotification, listLocalImages, upsertArtifact, upsertDataset, upsertEffect } from "@clarkcant/storage";
 import { definitionDigest } from "@clarkcant/widget-host";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -23,6 +27,7 @@ import { capabilityInvokeDeps } from "../application/capability-invoke.ts";
 import { attachmentRefsForLastUserMessage } from "../attachments.ts";
 import { blobsDir, readBlob } from "../blobs.ts";
 import { composeMiniApp } from "../compose-mini-app.ts";
+import { sweepUnknownEffects } from "../effect-notices.ts";
 import { referenceBrief, referencesForLastUserMessage } from "../composer-references.ts";
 import { type InteractionDeps } from "../interactions.ts";
 import { type ModelTurn, createModelTurn } from "../model-turn.ts";
@@ -884,6 +889,50 @@ export function createModelComposer(deps: FixtureModelDeps): FixtureCompose {
           ],
         },
       };
+    }
+
+    /*
+     * An action whose outcome nobody saw, scripted — but real rows, written by the calls the product makes.
+     *
+     * What is scripted is only that a push timed out: the fixture cannot reach a remote, and a node that really ran
+     * `git push` against nothing would prove a network error, not a timeout. Everything after the timeout is the
+     * product's own: the task runs through its machine, the effect is written down as handed off and marked unknown by
+     * the same `markEffectUnknown` the command broker calls (which turns the task uncertain), and the notice is left by
+     * the same sweep the node runs on its clock. The inbox's two answers then act on those rows over the real route.
+     */
+    if (/thao tác không rõ kết quả|unknown outcome/i.test(input.text)) {
+      const services = deps.services();
+      const now = () => instantSchema.parse(new Date().toISOString());
+      const taskDeps = { db: services.runtime.db, nodeId: services.runtime.identity.nodeId, now, newId: services.conductor.newId };
+      const task = createTask(taskDeps, {
+        conversationId: input.conversationId as never,
+        goal: "Đẩy nhánh fixture lên remote",
+        principal: {
+          principalId: input.principal.principalId as never,
+          kind: "user" as const,
+          nodeId: services.runtime.identity.nodeId as never,
+        },
+      });
+      applyTaskEvent(taskDeps, task.taskId, "resolve.start");
+      advanceResolving(taskDeps, task.taskId, { kind: "ready", executionNodeId: services.runtime.identity.nodeId });
+      applyTaskEvent(taskDeps, task.taskId, "dispatch.acknowledged");
+      const prepared = prepareEffect(taskDeps, {
+        taskId: task.taskId,
+        executorNodeId: services.runtime.identity.nodeId,
+        category: "external-write",
+        capabilityRef: "project.command.run@1" as CapabilityRef,
+        intent: "git push origin fixture — (fixture)",
+        operationDigest: `sha256:fixture-${task.taskId}`,
+        externalSupportsDedup: false,
+      });
+      const submitted = advanceEffect(prepared, { to: "submitted", at: now() });
+      if (submitted.ok) upsertEffect(services.runtime.db, submitted.effect);
+      markEffectUnknown(taskDeps, prepared.effectId, "the command ran out of time and was stopped (fixture)");
+      sweepUnknownEffects(services, now());
+      const reply =
+        "Đây là thao tác do fixture tạo, không phải model thật: lệnh đẩy nhánh đã hết giờ nên chưa rõ nó có hiệu lực hay " +
+        "chưa. Hộp thư có một thông báo để bạn ghi nhận.";
+      return { text: reply, block: { type: "text", format: "plain", content: reply, streaming: false } };
     }
 
     /*

@@ -78,6 +78,23 @@ export function eventsSince(
   return rows.map((row) => parseJson<unknown>(row.document, "events.document"));
 }
 
+/**
+ * One task's events of one kind, newest first, as their documents.
+ *
+ * Read in insertion order (`rowid`) rather than by `source_sequence`, which counts per stream and node: a task's own
+ * history is only ever written by the node that holds it, in the order it happened.
+ */
+export function taskEventDocuments(db: Database, filter: { taskId: string; kind: string; limit?: number }): unknown[] {
+  const rows = allRows<{ document: string }>(
+    db,
+    "SELECT document FROM events WHERE task_id = ? AND kind = ? ORDER BY rowid DESC LIMIT ?",
+    filter.taskId,
+    filter.kind,
+    filter.limit ?? 20,
+  );
+  return rows.map((row) => parseJson<unknown>(row.document, "events.document"));
+}
+
 export interface RecentEvent {
   kind: string;
   occurredAt: string;

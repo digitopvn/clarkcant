@@ -274,6 +274,27 @@ const PHRASES: readonly { phrase: string; kind: AppIntentKind; wholeSentence?: t
   { phrase: "stop now", kind: "turn.stop", wholeSentence: true },
   { phrase: "stop generating", kind: "turn.stop", wholeSentence: true },
   { phrase: "stop writing", kind: "turn.stop", wholeSentence: true },
+  // The person's answer to an effect whose outcome nobody observed: the inbox's two buttons, said or typed. Whole
+  // sentence only, so "nó đã có hiệu lực từ năm ngoái chưa?" is a question for the agent. Which effect is not in the
+  // words: the node names the one that is waiting, and refuses when there is none or more than one.
+  { phrase: "da co hieu luc", kind: "effect.confirmed", wholeSentence: true },
+  { phrase: "no da co hieu luc", kind: "effect.confirmed", wholeSentence: true },
+  { phrase: "da co hieu luc roi", kind: "effect.confirmed", wholeSentence: true },
+  { phrase: "no da co hieu luc roi", kind: "effect.confirmed", wholeSentence: true },
+  { phrase: "viec do da co hieu luc", kind: "effect.confirmed", wholeSentence: true },
+  { phrase: "ghi nhan da co hieu luc", kind: "effect.confirmed", wholeSentence: true },
+  { phrase: "it took effect", kind: "effect.confirmed", wholeSentence: true },
+  { phrase: "that took effect", kind: "effect.confirmed", wholeSentence: true },
+  { phrase: "it went through", kind: "effect.confirmed", wholeSentence: true },
+  { phrase: "chua co hieu luc", kind: "effect.failed", wholeSentence: true },
+  { phrase: "no chua co hieu luc", kind: "effect.failed", wholeSentence: true },
+  { phrase: "viec do chua co hieu luc", kind: "effect.failed", wholeSentence: true },
+  { phrase: "ghi nhan chua co hieu luc", kind: "effect.failed", wholeSentence: true },
+  { phrase: "it did not take effect", kind: "effect.failed", wholeSentence: true },
+  { phrase: "it didn't take effect", kind: "effect.failed", wholeSentence: true },
+  { phrase: "that did not take effect", kind: "effect.failed", wholeSentence: true },
+  { phrase: "it did not go through", kind: "effect.failed", wholeSentence: true },
+  { phrase: "it didn't go through", kind: "effect.failed", wholeSentence: true },
 ];
 
 /**
@@ -597,6 +618,7 @@ export function recordAppIntentEvent(
     ...(input.intent.family === undefined ? {} : { family: input.intent.family }),
     ...(input.intent.modelAlias === undefined ? {} : { modelAlias: input.intent.modelAlias }),
     ...(input.intent.orbProfile === undefined ? {} : { orbProfile: input.intent.orbProfile }),
+    ...(input.intent.effectId === undefined ? {} : { effectId: input.intent.effectId }),
     source: input.source,
     confirmed: input.confirmed,
   };

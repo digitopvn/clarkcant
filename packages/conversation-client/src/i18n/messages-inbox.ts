@@ -130,6 +130,16 @@ export const MESSAGES_INBOX_VI = {
   "inbox.suppressions.example": "Như: {title}",
   "inbox.suppressions.remove": "Báo lại",
   "inbox.suppressions.removeAria": "Báo lại về: {title}",
+  "inbox.action.reconcileConfirmed": "Đã có hiệu lực",
+  "inbox.action.reconcileFailed": "Chưa có hiệu lực",
+  "inbox.action.reconcileConfirmedAria": "Ghi nhận là đã có hiệu lực: {title}",
+  "inbox.action.reconcileFailedAria": "Ghi nhận là chưa có hiệu lực: {title}",
+  "inbox.reconcile.hint": "Bạn đã kiểm tra ở nơi nhận chưa? Ghi nhận xong thì không đổi lại được.",
+  "inbox.reconciled.confirmed": "Đã ghi nhận là thao tác đã có hiệu lực. Kết quả đã được báo trong cuộc trò chuyện.",
+  "inbox.reconciled.failed": "Đã ghi nhận là thao tác chưa có hiệu lực. Kết quả đã được báo trong cuộc trò chuyện.",
+  "inbox.reconciled.more": "Việc này còn thao tác khác chưa rõ kết quả; thông báo mới ở trên cho biết đó là thao tác nào.",
+  "inbox.reconcileFailed.already": "Thao tác này đã được ghi nhận rồi, có thể từ màn hình khác. Hộp thư đã được làm mới.",
+  "inbox.reconcileFailed": "Không ghi nhận được: {reason}. Thao tác vẫn ở trạng thái chưa rõ.",
 } as const;
 
 export type MessageInboxKey = keyof typeof MESSAGES_INBOX_VI;
@@ -257,4 +267,14 @@ export const MESSAGES_INBOX_EN = {
   "inbox.suppressions.example": "Like: {title}",
   "inbox.suppressions.remove": "Notify again",
   "inbox.suppressions.removeAria": "Notify again about: {title}",
+  "inbox.action.reconcileConfirmed": "It took effect",
+  "inbox.action.reconcileFailed": "It did not take effect",
+  "inbox.action.reconcileConfirmedAria": "Record that it took effect: {title}",
+  "inbox.action.reconcileFailedAria": "Record that it did not take effect: {title}",
+  "inbox.reconcile.hint": "Checked on the receiving side? Once recorded, this cannot be changed.",
+  "inbox.reconciled.confirmed": "Recorded that the action took effect. The result is in the conversation.",
+  "inbox.reconciled.failed": "Recorded that the action did not take effect. The result is in the conversation.",
+  "inbox.reconciled.more": "This task has another action whose outcome is unknown; the new notice above names it.",
+  "inbox.reconcileFailed.already": "This action was already recorded, perhaps from another screen. The inbox has been refreshed.",
+  "inbox.reconcileFailed": "Could not record it: {reason}. The action's outcome is still unknown.",
 } as const satisfies Record<MessageInboxKey, string>;

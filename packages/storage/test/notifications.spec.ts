@@ -13,6 +13,7 @@ import {
   MAX_NOTIFICATIONS,
   countUnreadNotifications,
   dismissNotification,
+  dismissNotificationByKey,
   findNoticeSuppression,
   getNotification,
   listNoticeSuppressions,
@@ -231,6 +232,19 @@ describe("reading and dismissing", () => {
     expect(a.created).toBe(true);
     expect(b.created).toBe(true);
     expect(a.notificationId).not.toBe(b.notificationId);
+  });
+
+  it("dismisses by a producer's exact key, never a key it only prefixes, and keeps the row to dedupe against", () => {
+    record({ dedupKey: "worker:task_1", notificationId: "ntf_task_1" });
+    record({ dedupKey: "worker:task_12", notificationId: "ntf_task_12" });
+    const at = "2026-09-24T08:00:00.000Z" as Instant;
+
+    expect(dismissNotificationByKey(db, { principalId: "owner_2", dedupKey: "worker:task_1", at })).toBe(false);
+    expect(dismissNotificationByKey(db, { principalId: "owner_1", dedupKey: "worker:task_1", at })).toBe(true);
+    expect(dismissNotificationByKey(db, { principalId: "owner_1", dedupKey: "worker:task_1", at })).toBe(false);
+
+    expect(listNotifications(db, "owner_1").map((notice) => notice.noticeId)).toEqual(["ntf_task_12"]);
+    expect(record({ dedupKey: "worker:task_1" })).toEqual({ notificationId: "ntf_task_1", created: false, suppressed: false });
   });
 });
 

@@ -226,7 +226,12 @@ the notice's kind for this principal: later notices of that kind are still liste
 notification. Only a narrow kind can be quieted, one tied to an automation, a signal source, a package, a node, or a
 person's own background work; any other kind would also silence reminders and every other automation's notices, so
 the route refuses it with `409 SUPPRESSION_TOO_BROAD` and the notice's `actions` never offer it. Each route acts only on the calling principal's own
-notices. The shapes are `packages/contracts/src/inbox.ts`; the behaviour is described in
+notices. `POST /effects/:effectId/reconcile` with `{ "outcome": "confirmed" | "failed", "source"?: "click" | "chat" |
+"voice" }` records what the person saw of an action whose outcome was unknown, the answer an unknown-outcome notice
+offers as its two buttons: `404 RESOURCE_NOT_FOUND` for an effect of another principal's task, of another node, or none
+at all, `409 EFFECT_NOT_UNKNOWN` once it is no longer unknown; it is person-only, as below. `source` is a label the
+caller supplies for where the answer was given and is stored as given, not provenance; who answered is the
+authenticated principal. The shapes are `packages/contracts/src/inbox.ts`; the behaviour is described in
 [system-architecture.md](system-architecture.md) under the inbox.
 
 Other routes exist (settings, packages, widgets, peers…) and are reachable with the same token, but they are not yet
@@ -254,8 +259,10 @@ tool for it would let an AI client approve its own guarded action. Approvals sta
 the generic relays (a WebSocket `request` frame, `clarkcant api`) and MCP refuse every route that records a person's
 decision with `403 PERSON_ONLY` for the same reason: approving a guarded action (on a card, or one a running task
 raised), deciding a package capability,
-confirming an app intent, reporting what the page did with an action the agent asked for, trusting a paired peer and
-issuing a grant. Exporting a table as a CSV file
+confirming an app intent, reporting what the page did with an action the agent asked for, trusting a paired peer,
+issuing a grant, and recording whether an action whose outcome nobody saw took effect
+(`POST /effects/{effectId}/reconcile`; an AI client that could say "that push landed" could clear its own task's
+uncertainty and then report its own success). Exporting a table as a CSV file
 (`POST /conversations/{id}/widgets/{instanceId}/export`) is refused on the same relays too: the file is written for
 the person who is looking at the table, not handed to a machine client. Stop, answering a question and reading stay
 available. The discovery document lists this under `personDecisions`.

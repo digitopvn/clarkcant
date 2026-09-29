@@ -384,6 +384,22 @@ export function noticeKindQuieted(notice: Notice): boolean {
 }
 
 /**
+ * The effect the node offers to answer for from this notice, or nothing. Read from the actions it worked out — which it
+ * offers only while that effect is still unknown — so the surface never decides by itself that something is answerable.
+ */
+export function noticeReconcileEffect(notice: Notice): string | undefined {
+  return notice.actions?.find((action) => action.id === "reconcile-confirmed" || action.id === "reconcile-failed")?.effectId;
+}
+
+/**
+ * Whether recording an answer failed only because one was already recorded (`EFFECT_NOT_UNKNOWN`): from another
+ * screen, a sentence, or a second press. Nothing is wrong then; the list, read again, shows what stands.
+ */
+export function reconcileAlreadyRecorded(cause: unknown): boolean {
+  return gatewayErrorCode(cause) === "EFFECT_NOT_UNKNOWN";
+}
+
+/**
  * A notice's actions split the way the row draws them: at most two buttons, and the rest behind "More". A notice read
  * from a node that does not work out actions yet keeps the two it always had, "Open" and "Dismiss".
  */
