@@ -10,6 +10,7 @@ import { type Database, type JsonValue, activeGrants, upsertGrant } from "@clark
 import { type PeerGatewayDeps, receiveEnvelope } from "@clarkcant/node-link";
 
 import { extensionForMimeType, fetchArtifactFromPeer } from "../artifact-transfer.ts";
+import { queuePeerSignal, receivePeerSignal } from "../peer-signals.ts";
 import { blobPathForDigest, readBlob } from "../blobs.ts";
 import type { NodeIdentity } from "../node.ts";
 import {
@@ -50,6 +51,8 @@ export interface PeerUplinkDeps {
   pairing: PairingDeps;
   runtime: { dataDir: string };
   request: GatewayRequest;
+  /** A peer's signal was recorded for the first time: the standing requests can look at it now. */
+  onSignal?: () => void;
 }
 
 /**
@@ -60,6 +63,8 @@ export interface PeerUplinkDeps {
  */
 export interface PairingRouteDeps {
   pairing: PairingDeps;
+  /** Something was queued for a peer: deliver it now rather than at the next pass. */
+  onQueued?: () => void;
   runtime: { db: Database; identity: NodeIdentity };
   /** The clock the dispatch resolved, so a route and its caller agree on "now". */
   now: () => string;
@@ -105,9 +110,19 @@ function peerOfferFrom(body: Record<string, unknown>): { inviteId: string; peer:
  * node has seen the message. Its answer is stored with the inbox row, which is why a replay gets
  * these exact bytes rather than a second execution.
  */
-function peerHandler(pairing: PairingDeps): (envelope: PeerEnvelope) => unknown {
+function peerHandler(pairing: PairingDeps, onSignal: () => void): (envelope: PeerEnvelope) => unknown {
   return (envelope) => {
     const at = pairing.now();
+
+    if (envelope.kind === "signal") {
+      // A fact from a confirmed peer, recorded under the peer's name. It needs no grant because it grants nothing.
+      const received = receivePeerSignal(
+        { db: pairing.db, nodeId: pairing.identity.nodeId, now: pairing.now, newId: pairing.newId },
+        envelope,
+      );
+      if (received.accepted && !received.duplicate) onSignal();
+      return received;
+    }
 
     if (envelope.kind === "pair.confirm") {
       // The grant that establishes a delegation. Validated rather than trusted: it arrives from
@@ -234,7 +249,7 @@ function scheduleArtifactIntake(input: {
     });
 }
 
-function peerGateway(pairing: PairingDeps, peerNodeId: string): PeerGatewayDeps {
+function peerGateway(pairing: PairingDeps, peerNodeId: string, onSignal: () => void): PeerGatewayDeps {
   return {
     db: pairing.db,
     nodeId: pairing.identity.nodeId,
@@ -244,7 +259,7 @@ function peerGateway(pairing: PairingDeps, peerNodeId: string): PeerGatewayDeps 
     // silently downgraded (T11).
     supportedVersions: { min: 1, max: 2 },
     knownDelegationIds: new Set(activeGrants(pairing.db, peerNodeId, pairing.now()).map((grant) => grant.grantId)),
-    handler: peerHandler(pairing),
+    handler: peerHandler(pairing, onSignal),
   };
 }
 
@@ -335,7 +350,7 @@ export function handlePeerUplinkRoutes(input: PeerUplinkDeps): GatewayResponse |
     }
     const parsed = readJson(request);
     if (!parsed.ok) return parsed.response;
-    const outcome = receiveEnvelope(peerGateway(pairing, peer.peerNodeId), parsed.value, {
+    const outcome = receiveEnvelope(peerGateway(pairing, peer.peerNodeId, input.onSignal ?? (() => undefined)), parsed.value, {
       authenticatedSenderNodeId: peer.peerNodeId,
     });
     if (outcome.status === "gap") {
@@ -487,6 +502,29 @@ export function handlePairingRoutes(input: PairingRouteDeps): GatewayResponse | 
       tokenHash: offer.tokenHash,
     });
     return json(201, { nodeId: recorded.peerNodeId, trustedAt: recorded.trustedAt });
+  }
+
+  if (segments.length === 3 && segments[0] === "peers" && segments[2] === "signals" && request.method === "POST") {
+    // Something that happened here, for a paired node's standing requests. Queued before it is sent, so it is not lost
+    // to a peer that is offline right now; the peer records it once however often the outbox retries.
+    const parsed = readJson(request);
+    if (!parsed.ok) return parsed.response;
+    const body = parsed.value;
+    const id = typeof body["id"] === "string" ? body["id"].trim() : "";
+    const topic = typeof body["topic"] === "string" ? body["topic"].trim() : "";
+    if (id === "" || topic === "") {
+      return fail(400, "INVALID_SCHEMA", "a signal for a peer carries id (its own name for the event) and topic, with payload, subject and occurredAt optional");
+    }
+    const queued = queuePeerSignal(pairing, segments[1] ?? "", {
+      topic,
+      dedupeKey: id,
+      ...(body["payload"] === undefined ? {} : { payload: body["payload"] as Record<string, unknown> }),
+      ...(body["subject"] === undefined ? {} : { subject: body["subject"] as never }),
+      ...(typeof body["occurredAt"] === "string" ? { occurredAt: body["occurredAt"] } : {}),
+    });
+    if (!queued.ok) return fail(queued.code === "PEER_UNKNOWN" ? 404 : 400, queued.code, queued.message);
+    input.onQueued?.();
+    return json(202, { messageId: queued.messageId, queued: true });
   }
 
   if (segments.length === 3 && segments[0] === "peers" && segments[2] === "confirm" && request.method === "POST") {

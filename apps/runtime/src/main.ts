@@ -491,6 +491,7 @@ async function main(): Promise<void> {
     runtimeHandles.stopUpdateChecks();
     services.expirySweep?.stop();
     services.automation?.stop();
+    services.peerDelivery?.stop();
     void (async () => {
       try {
         const stopped = await performEmergencyStop({

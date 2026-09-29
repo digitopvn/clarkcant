@@ -36,6 +36,11 @@ export const peerMessageKindSchema = z.enum([
   "artifact.offer",
   "artifact.accept",
   "heartbeat",
+  /**
+   * Something that happened on the sender, for the receiver's standing requests to match. A fact, never a command: it
+   * carries no grant and asks for nothing, and what it starts is decided by what the receiver's owner set up there.
+   */
+  "signal",
 ]);
 export type PeerMessageKind = z.infer<typeof peerMessageKindSchema>;
 
@@ -88,6 +93,7 @@ const REQUIRED_PAYLOAD_KEYS: Record<PeerMessageKind, readonly string[]> = {
   "artifact.offer": ["artifact", "digest", "sizeBytes", "classification"],
   "artifact.accept": ["artifactOfferMessageId", "decision"],
   heartbeat: [],
+  signal: ["signal"],
 };
 
 export const peerValidationIssueSchema = z.strictObject({

@@ -17,11 +17,20 @@ import {
   writeRegisteredPreference,
 } from "@clarkcant/core";
 import type { ToolDefinition } from "@clarkcant/pi-adapter";
-import { GITHUB_EVENTS, GITHUB_WEBHOOK_CONSUMER, GITHUB_WEBHOOK_SECRET_NAME } from "@clarkcant/signal-sources";
+import {
+  GITHUB_EVENTS,
+  GITHUB_WEBHOOK_CONSUMER,
+  GITHUB_WEBHOOK_SECRET_NAME,
+  WEBHOOK_SIGNATURE_HEADER,
+  webhookConsumer,
+  webhookSecretName,
+  webhookSourceOfTopic,
+} from "@clarkcant/signal-sources";
 import { type Database, getSecretMetadata, secretBackendFor } from "@clarkcant/storage";
 
 import { containingRoot, ownedResources } from "./preflight.ts";
 import { GITHUB_SELF_LOGINS_PREFERENCE, GITHUB_SIGNAL_PATH, githubSelfLogins } from "./routes/github-signals.ts";
+import { WEBHOOK_SIGNAL_PATH_PREFIX } from "./routes/webhook-signals.ts";
 
 /**
  * "From now on, when X happens, do Y", as tools the main agent calls.
@@ -226,6 +235,28 @@ function githubSetup(deps: AutomationToolDeps, intent: PersistentIntent): string
   return lines.join("\n");
 }
 
+/**
+ * What a signed webhook automation needs before a delivery can reach it: where the sender posts, how it signs and what
+ * it sends, and — asked for only now — the shared secret, through `request_secret` so its value never enters the
+ * conversation.
+ */
+function webhookSetup(deps: AutomationToolDeps, sourceId: string): string {
+  const lines = [
+    `The sender reaches this automation with POST ${WEBHOOK_SIGNAL_PATH_PREFIX}${sourceId} on this node's public address: ` +
+      `a JSON body { "id": its own id for the event, "topic": what happened (dotted lower-case words), "payload": {…} } ` +
+      `signed with the shared secret as ${WEBHOOK_SIGNATURE_HEADER}: sha256=<hex HMAC-SHA256 of the exact body>. ` +
+      `A body with topic x.y becomes the signal webhook.${sourceId}.x.y.`,
+  ];
+  if (!hasSecret(deps.db, deps.principalId, webhookSecretName(sourceId))) {
+    lines.push(
+      `No shared secret is set for ${sourceId} yet, and a delivery to it is refused until there is one. Call request_secret ` +
+        `with name "${webhookSecretName(sourceId)}", secretKind "webhook-secret", consumer "${webhookConsumer(sourceId)}", ` +
+        `and tell the user to give the sender the same secret.`,
+    );
+  }
+  return lines.join("\n");
+}
+
 function rememberSelfLogins(deps: AutomationToolDeps, raw: unknown): { ok: true } | { ok: false; text: string } {
   if (raw === undefined) return { ok: true };
   if (!Array.isArray(raw) || !raw.every((entry) => typeof entry === "string")) {
@@ -248,7 +279,9 @@ export function createAutomationTools(deps: AutomationToolDeps): ToolDefinition[
       description:
         "Set up something that happens on its own from now on: when a signal arrives (e.g. topic github.issue.labeled " +
         "where payload.label equals ai-handle) or on a schedule (every N minutes, or once at a time). Use it only when " +
-        "the user asks for something to keep happening later, never for work to do now. action task runs Clark work " +
+        "the user asks for something to keep happening later, never for work to do now. Anything else that can sign an " +
+        "HTTP POST becomes a source the user names: topic webhook.<source>.<what happened>, e.g. webhook.deploys.build.failed. " +
+        "action task runs Clark work " +
         "in the folders/repositories named, with only the effects the user gave it (allowedEffects); action remind " +
         "says a message in this conversation and the inbox. Ask the user for anything missing instead of guessing.",
       parameters: {
@@ -329,7 +362,9 @@ export function createAutomationTools(deps: AutomationToolDeps): ToolDefinition[
         if (!created.ok) return { text: `Not set up: ${created.message}` };
         deps.kick?.();
         const setUp = `Set up. It reports in this conversation.\n${describe(created.intent, [])}`;
-        return { text: created.intent.when.topic.startsWith("github.") ? `${setUp}\n${githubSetup(deps, created.intent)}` : setUp };
+        if (created.intent.when.topic.startsWith("github.")) return { text: `${setUp}\n${githubSetup(deps, created.intent)}` };
+        const webhookSource = webhookSourceOfTopic(created.intent.when.topic);
+        return { text: webhookSource === undefined ? setUp : `${setUp}\n${webhookSetup(deps, webhookSource)}` };
       },
     },
     {

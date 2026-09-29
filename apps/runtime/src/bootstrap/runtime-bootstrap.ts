@@ -15,6 +15,7 @@ import { ownedResources } from "../preflight.ts";
 import { refreshProjectIndex } from "../project-finder.ts";
 import { startAutomationService } from "../automation-service.ts";
 import { startExpiryNoticeSweep } from "../expiry-notices.ts";
+import { startPeerDelivery } from "../peer-signals.ts";
 import { taskDispatchReports } from "../task-reporting.ts";
 import { createSecretBroker } from "../secret-broker.ts";
 import { type RequestSecretDeps } from "../request-secret.ts";
@@ -284,6 +285,17 @@ export function wireRuntime(deps: RuntimeBootstrapDeps): RuntimeHandles {
    * Its first tick is asked for by the entry point once recovery has settled what the previous process left running.
    */
   deps.services.automation = startAutomationService(deps.services);
+
+  /*
+   * What carries queued envelopes to paired nodes. A node that has paired with nothing finds nothing to send, and one
+   * that queued something before it stopped sends it on the first pass.
+   */
+  deps.services.peerDelivery = startPeerDelivery({
+    db: deps.services.runtime.db,
+    identity: deps.services.runtime.identity,
+    now: () => new Date().toISOString() as Instant,
+  });
+  deps.services.peerDelivery.kick();
 
   /*
    * Installed packages' service facets, each in a container.

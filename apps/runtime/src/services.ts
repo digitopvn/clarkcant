@@ -252,6 +252,13 @@ export interface NodeServices {
    */
   automation?: { kick(): void; tick(): void; stop(): void };
   /**
+   * What carries queued envelopes to paired nodes: a pass every so often, and one at once when something is queued.
+   *
+   * Assigned after boot, like `automation`. Absent in a test that builds `NodeServices` directly; what is queued there
+   * stays in the outbox until a pass runs.
+   */
+  peerDelivery?: { kick(): void; stop(): void };
+  /**
    * The containers that run installed packages' service facets.
    *
    * Assigned after boot, like `taskDispatch`: it reads what is installed and registers capabilities, so it starts once
