@@ -11,7 +11,7 @@ import {
   type ExecutionPolicyConfig,
   type Instant,
 } from "@clarkcant/contracts";
-import { EXECUTION_POLICY_PREFERENCE_KEY, getCapability, writeRegisteredPreference } from "@clarkcant/core";
+import { EXECUTION_POLICY_PREFERENCE_KEY, getCapability, registerCapability, writeRegisteredPreference } from "@clarkcant/core";
 import { migrate, openDatabase, type Database } from "@clarkcant/storage";
 
 import {
@@ -20,6 +20,7 @@ import {
   invokeCapability,
   runApprovedCapability,
 } from "../src/application/capability-invoke.ts";
+import { describeCapabilityOutcome } from "../src/invoke-capability-tool.ts";
 import { NEEDS_ENGINE_REASON, type ServiceEngine } from "../src/service-container.ts";
 import { createServiceHost, serviceEffectCategory, type ServiceHost, type ServiceLauncher } from "../src/service-host.ts";
 
@@ -72,15 +73,29 @@ function plainLauncher(): ServiceLauncher {
   });
 }
 
-function start(options: { engine?: ServiceEngine; launcher?: ServiceLauncher; restartBaseMs?: number } = {}): ServiceHost {
+function start(
+  options: {
+    engine?: ServiceEngine | (() => ServiceEngine);
+    launcher?: ServiceLauncher;
+    restartBaseMs?: number;
+    engineRetryMs?: number;
+    packageRoot?: (packageId: string) => string | undefined;
+  } = {},
+): ServiceHost {
+  const engine = options.engine;
   host = createServiceHost({
     registry: { db, nodeId: NODE },
     dataDir: dir,
-    engine: async () => options.engine ?? RUNNING,
-    packageRoot: (generation) => (generation.packageId === PACKAGE ? root : undefined),
+    engine: async () => (typeof engine === "function" ? engine() : (engine ?? RUNNING)),
+    packageRoot: (generation) =>
+      options.packageRoot === undefined ? (generation.packageId === PACKAGE ? root : undefined) : options.packageRoot(generation.packageId),
     launcher: options.launcher ?? plainLauncher(),
     log: (line) => logs.push(line),
-    timings: { restartBaseMs: options.restartBaseMs ?? 20, pingIntervalMs: 60_000 },
+    timings: {
+      restartBaseMs: options.restartBaseMs ?? 20,
+      pingIntervalMs: 60_000,
+      ...(options.engineRetryMs === undefined ? {} : { engineRetryMs: options.engineRetryMs }),
+    },
   });
   return host;
 }
@@ -123,6 +138,27 @@ function writePolicy(value: ExecutionPolicyConfig): void {
 
 function invokeDeps(): CapabilityInvokeDeps {
   return { db, nodeId: NODE, principalId: PRINCIPAL, newId: (prefix) => `${prefix}_${String(++counter)}`, serviceHost: host };
+}
+
+/** A row as a previous run of the node, or the node itself, left it. */
+function preRegister(ref: CapabilityRef, provider: "package" | "node"): void {
+  registerCapability(
+    { db, nodeId: NODE },
+    {
+      ref,
+      ...(provider === "package"
+        ? { providedBy: { packageId: PACKAGE, version: "1.0.0", digest: "sha256:notes-service-digest", generation: GENERATION } }
+        : {}),
+      executionNodeId: NODE,
+      summary: provider === "package" ? "Add a note" : "The node's own add",
+      resourceKinds: [],
+      effectCategory: "read",
+      supportsCancellation: false,
+      requiresConnection: false,
+      readiness: { installed: true, loaded: true, authenticated: true, authorized: true, healthy: true },
+      uiAffordances: [],
+    },
+  );
 }
 
 function readiness(ref: CapabilityRef) {
@@ -270,13 +306,22 @@ describe("the policy in front of a service", () => {
     const asked = await invokeCapability(invokeDeps(), { ref: ADD, args: { text: "gọi mẹ" }, source: "agent" });
     if (asked.kind !== "approval-required") throw new Error(`expected a card, got ${JSON.stringify(asked)}`);
     expect(asked.card.owner).toBe("host");
-    expect(asked.card.operationDigest).toBe(capabilityDigest(ADD, { text: "gọi mẹ" }));
+    expect(asked.card.operationDigest).toBe(
+      capabilityDigest(ADD, { text: "gọi mẹ" }, { generation: GENERATION, effectCategory: "local-write" }),
+    );
     // Nothing ran: the service still has no notes.
     writePolicy({ ...DEFAULT_EXECUTION_POLICY_CONFIG, mode: "autonomous" });
     expect(await invokeCapability(invokeDeps(), { ref: LIST, args: {}, source: "agent" })).toMatchObject({ output: "No notes yet." });
 
     const forged = await runApprovedCapability(invokeDeps(), {
-      payload: JSON.stringify({ kind: "capability", capabilityRef: ADD, args: { text: "chuyển tiền" }, source: "agent" }),
+      payload: JSON.stringify({
+        kind: "capability",
+        capabilityRef: ADD,
+        args: { text: "chuyển tiền" },
+        source: "agent",
+        generation: GENERATION,
+        effectCategory: "local-write",
+      }),
       expectedDigest: asked.card.operationDigest,
       approvalId: asked.approval.approvalId,
       conversationId: "conv_a",
@@ -294,6 +339,50 @@ describe("the policy in front of a service", () => {
     expect(approved.blocks[0]).toMatchObject({ type: "tool-activity", status: "done", result: "Saved. 1 note(s): gọi mẹ" });
   });
 
+  it("does not run an approval the policy has since refused, or one for a capability that changed", async () => {
+    activate();
+    await running(start());
+    writePolicy({ ...DEFAULT_EXECUTION_POLICY_CONFIG, mode: "ask" });
+    const asked = await invokeCapability(invokeDeps(), { ref: ADD, args: { text: "gọi mẹ" }, source: "agent" });
+    if (asked.kind !== "approval-required") throw new Error(`expected a card, got ${JSON.stringify(asked)}`);
+    const approvedBy = { approvalId: asked.approval.approvalId, generation: GENERATION, effectCategory: "local-write" as const };
+
+    // A refusal the person set after the card was shown outranks the card.
+    writePolicy({ ...DEFAULT_EXECUTION_POLICY_CONFIG, mode: "ask", rules: [{ effectCategory: "local-write", decision: "deny" }] });
+    const denied = await invokeCapability(invokeDeps(), { ref: ADD, args: { text: "gọi mẹ" }, source: "agent", approvedBy });
+    expect(denied).toMatchObject({ kind: "refused", code: "POLICY_REFUSED" });
+    const run = await runApprovedCapability(invokeDeps(), {
+      payload: asked.card.payload ?? "",
+      expectedDigest: asked.card.operationDigest,
+      approvalId: asked.approval.approvalId,
+      conversationId: "conv_a",
+    });
+    expect(run).toMatchObject({ ok: true, succeeded: false });
+    writePolicy({ ...DEFAULT_EXECUTION_POLICY_CONFIG, mode: "ask" });
+
+    // The card covered one package generation and one effect; either changing voids it.
+    const updated = await invokeCapability(invokeDeps(), {
+      ref: ADD,
+      args: { text: "gọi mẹ" },
+      source: "agent",
+      approvedBy: { ...approvedBy, generation: `${PACKAGE}@2.0.0:code_2` },
+    });
+    expect(updated).toMatchObject({ kind: "refused", code: "APPROVAL_STALE", status: 409 });
+    if (updated.kind !== "refused") throw new Error("unreachable");
+    expect(updated.message).toContain("its package was updated");
+    const descriptor = getCapability({ db, nodeId: NODE }, ADD, NODE);
+    if (descriptor === undefined) throw new Error("unreachable");
+    registerCapability({ db, nodeId: NODE }, { ...descriptor, effectCategory: "destructive" });
+    const riskier = await invokeCapability(invokeDeps(), { ref: ADD, args: { text: "gọi mẹ" }, source: "agent", approvedBy });
+    expect(riskier).toMatchObject({ kind: "refused", code: "APPROVAL_STALE" });
+    if (riskier.kind !== "refused") throw new Error("unreachable");
+    expect(riskier.message).toContain("it is now destructive");
+
+    writePolicy({ ...DEFAULT_EXECUTION_POLICY_CONFIG, mode: "autonomous" });
+    registerCapability({ db, nodeId: NODE }, descriptor);
+    expect(await invokeCapability(invokeDeps(), { ref: LIST, args: {}, source: "agent" })).toMatchObject({ output: "No notes yet." });
+  });
+
   it("refuses a call the policy refuses, and runs nothing", async () => {
     activate();
     await running(start());
@@ -302,6 +391,43 @@ describe("the policy in front of a service", () => {
     const outcome = await invokeCapability(invokeDeps(), { ref: ADD, args: { text: "x" }, source: "voice" });
     expect(outcome).toMatchObject({ kind: "refused", code: "POLICY_REFUSED", status: 403 });
     expect(await invokeCapability(invokeDeps(), { ref: LIST, args: {}, source: "voice" })).toMatchObject({ output: "No notes yet." });
+  });
+});
+
+describe("what the agent is told about a call that failed", () => {
+  it("does not say nothing ran when the request reached the service", () => {
+    for (const code of ["SERVICE_UNREACHABLE", "SERVICE_TOOL_FAILED"] as const) {
+      const told = describeCapabilityOutcome({ kind: "refused", status: 504, code, message: "no answer in 30 s" });
+      expect(told, code).not.toContain("Không có gì được chạy");
+      expect(told, code).toContain("có thể nó đã chạy một phần");
+    }
+    const refused = describeCapabilityOutcome({ kind: "refused", status: 403, code: "POLICY_REFUSED", message: "denied" });
+    expect(refused).toContain("Không có gì được chạy");
+  });
+});
+
+describe("a capability something else on the node already provides", () => {
+  it("is left as it was, and the package's service does not serve it", async () => {
+    preRegister(ADD, "node");
+    activate();
+    await running(start());
+
+    const row = getCapability({ db, nodeId: NODE }, ADD, NODE);
+    expect(row?.summary).toBe("The node's own add");
+    expect(row?.providedBy).toBeUndefined();
+    expect(row?.readiness).toMatchObject({ loaded: true, healthy: true });
+    expect(host?.serves(ADD)).toBeUndefined();
+    expect(host?.serves(LIST)).toEqual({ packageId: PACKAGE, generationId: GENERATION });
+    expect(await invokeCapability(invokeDeps(), { ref: ADD, args: { text: "x" }, source: "agent" })).toMatchObject({
+      kind: "refused",
+      code: "NOT_A_SERVICE_CAPABILITY",
+    });
+    expect(logs.filter((line) => line.includes(`declares ${ADD}, which is already registered`))).toHaveLength(1);
+
+    uninstall();
+    await host?.reconcile();
+    expect(getCapability({ db, nodeId: NODE }, ADD, NODE)?.readiness).toMatchObject({ installed: true, loaded: true, healthy: true });
+    expect(readiness(LIST)).toMatchObject({ installed: false });
   });
 });
 
@@ -355,6 +481,47 @@ describe("a service that is not running", () => {
     expect(outcome).toMatchObject({ kind: "refused", code: "CAPABILITY_NOT_READY", status: 503 });
     if (outcome.kind !== "refused") throw new Error("unreachable");
     expect(outcome.message).toContain(NEEDS_ENGINE_REASON);
+  });
+
+  it("starts the service once an engine appears, without restarting the node", async () => {
+    activate();
+    let answer: ServiceEngine = { available: false, reason: NEEDS_ENGINE_REASON, detail: "docker: not found" };
+    const serviceHost = start({ engine: () => answer, engineRetryMs: 50 });
+    await serviceHost.reconcile();
+    await until(() => readiness(ADD)?.blockedReason === NEEDS_ENGINE_REASON, "the missing engine");
+
+    answer = RUNNING;
+    await until(() => readiness(ADD)?.healthy === true, "the service to start once the engine is there");
+    expect(await invokeCapability(invokeDeps(), { ref: LIST, args: {}, source: "voice" })).toMatchObject({ kind: "done" });
+  });
+
+  it("does not show what a previous run registered as ready before anything has started", async () => {
+    preRegister(ADD, "package");
+    activate();
+    const serviceHost = start({ packageRoot: () => undefined });
+    expect(readiness(ADD)).toMatchObject({ loaded: false, healthy: false, blockedReason: "the service has not started yet" });
+
+    await serviceHost.reconcile();
+    expect(readiness(ADD)?.blockedReason).toBe("the package's files are not on this node");
+    expect(await invokeCapability(invokeDeps(), { ref: ADD, args: { text: "x" }, source: "widget" })).toMatchObject({
+      kind: "refused",
+    });
+  });
+
+  it("does not come back after a stop that landed while it was waiting to restart", async () => {
+    activate();
+    const serviceHost = start({ restartBaseMs: 400 });
+    await running(serviceHost);
+    const pidFile = await until(() => findPidFile(join(dir, "services")), "the pid file");
+    const firstPid = readFileSync(pidFile, "utf8");
+    process.kill(Number(firstPid));
+    await until(() => readiness(ADD)?.blockedReason?.includes("restarts in") === true, "the restart backoff");
+
+    await serviceHost.stopAll();
+    await new Promise((resolve) => setTimeout(resolve, 1_200));
+    expect(serviceHost.status()).toEqual([]);
+    expect(readiness(ADD)).toMatchObject({ loaded: false, healthy: false, blockedReason: "the node stopped its services" });
+    expect(readFileSync(pidFile, "utf8")).toBe(firstPid);
   });
 
   it("marks the capabilities down when the service is killed, and brings it back with its data", async () => {

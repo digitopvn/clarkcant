@@ -54,6 +54,11 @@ interface Pending {
 
 /** How much stderr is kept for diagnostics. Enough to explain a crash, not a log sink. */
 const STDERR_TAIL_BYTES = 4000;
+/**
+ * The longest message a server may send. A line is held until its newline arrives, so a server that never sends one
+ * would otherwise grow the node's memory without bound; one that goes past this is stopped as out of protocol.
+ */
+export const MAX_MESSAGE_CHARS = 4 * 1024 * 1024;
 
 export class StdioMcpTransport implements McpTransport {
   readonly #options: StdioMcpTransportOptions;
@@ -241,6 +246,7 @@ export class StdioMcpTransport implements McpTransport {
   }
 
   #onStdout(chunk: string): void {
+    if (this.#exited || this.#closed) return;
     this.#buffer += chunk;
     let index = this.#buffer.indexOf("\n");
     while (index >= 0) {
@@ -248,6 +254,16 @@ export class StdioMcpTransport implements McpTransport {
       this.#buffer = this.#buffer.slice(index + 1);
       if (line.length > 0) this.#onMessage(line);
       index = this.#buffer.indexOf("\n");
+    }
+    if (this.#buffer.length > MAX_MESSAGE_CHARS) {
+      this.#buffer = "";
+      const child = this.#child;
+      this.#gone(
+        new Error(
+          `mcp server ${this.#options.serverId} sent a message longer than ${String(MAX_MESSAGE_CHARS / (1024 * 1024))} MB and was stopped`,
+        ),
+      );
+      child?.kill("SIGKILL");
     }
   }
 

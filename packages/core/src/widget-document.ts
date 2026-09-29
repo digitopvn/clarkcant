@@ -135,16 +135,10 @@ export function widgetDocument(input: WidgetDocumentInput): string {
   const bootstrap = [
     `<script type="module" nonce="${input.nonce}">`,
     /*
-     * The endpoint is the widget's own window for listening and its parent for sending, and the split is not a
-     * detail: a sandboxed frame has an opaque origin, so `window.parent` is cross-origin and only `postMessage` may be
-     * called on it. Passing `window.parent` as the whole endpoint — which this did — throws a SecurityError on
-     * `addEventListener` before the runtime exists, and the frame then sits there looking healthy with no bridge.
+     * Only the host is listened to. The frame's parent is the one window that mounted it; a message from anywhere else —
+     * a window the widget opened, or the widget posting to itself — is not the host speaking, whatever it claims.
      */
-    "const endpoint = {",
-    '  postMessage: (message) => window.parent.postMessage(message, "*"),',
-    '  addEventListener: (type, listener) => window.addEventListener(type, listener),',
-    '  removeEventListener: (type, listener) => window.removeEventListener(type, listener),',
-    "};",
+    'const fromHost = (event) => event.source === window.parent;',
     /*
      * What the host says before the runtime exists is buffered here, synchronously, in the order it arrived.
      *
@@ -152,16 +146,41 @@ export function widgetDocument(input: WidgetDocumentInput): string {
      * resolves after the document's `load`. The host posts `init` on `load`, and whatever it has to say next right
      * behind it (which of the widget's service-backed actions can run, for one), so those messages can arrive before
      * there is anything to receive them. Keeping only `init` left the frame initialized but never told the rest: a
-     * widget whose service was already running kept waiting to hear so. Registering the listener during module
-     * evaluation and replaying everything that arrived, in order, closes the gap. It is the frame's own glue and not
-     * a second protocol: the runtime reads the replayed messages exactly as it would have read the originals, and the
-     * buffer is bounded because a host that says more than this before the runtime loads is not one to keep up with.
+     * widget whose service was already running kept waiting to hear so. The buffer is bounded because a host that
+     * says more than this before the runtime loads is not one to keep up with.
      */
     "const pending = [];",
     "const buffer = (event) => {",
-    '  if (event.data !== null && typeof event.data === "object" && pending.length < 64) pending.push(event.data);',
+    '  if (fromHost(event) && event.data !== null && typeof event.data === "object" && pending.length < 64) pending.push(event.data);',
     "};",
     'window.addEventListener("message", buffer);',
+    /*
+     * The endpoint is the widget's own window for listening and its parent for sending, and the split is not a
+     * detail: a sandboxed frame has an opaque origin, so `window.parent` is cross-origin and only `postMessage` may be
+     * called on it. Passing `window.parent` as the whole endpoint — which this did — throws a SecurityError on
+     * `addEventListener` before the runtime exists, and the frame then sits there looking healthy with no bridge.
+     *
+     * The buffered messages are handed to the runtime's listener the moment it registers, in the same task: nothing
+     * the host sends later can be read before them, so `init` is always the first thing the runtime reads.
+     */
+    "const listening = new Map();",
+    "const endpoint = {",
+    '  postMessage: (message) => window.parent.postMessage(message, "*"),',
+    "  addEventListener: (type, listener) => {",
+    "    const filtered = (event) => {",
+    "      if (fromHost(event)) listener(event);",
+    "    };",
+    "    listening.set(listener, filtered);",
+    "    window.addEventListener(type, filtered);",
+    '    if (type !== "message") return;',
+    '    window.removeEventListener("message", buffer);',
+    "    for (const data of pending.splice(0)) listener({ data, source: window.parent });",
+    "  },",
+    "  removeEventListener: (type, listener) => {",
+    "    window.removeEventListener(type, listening.get(listener) ?? listener);",
+    "    listening.delete(listener);",
+    "  },",
+    "};",
     /*
      * A **dynamic** import, and that word is the whole fix.
      *
@@ -181,8 +200,6 @@ export function widgetDocument(input: WidgetDocumentInput): string {
     '  onRejected: (rejection) => window.dispatchEvent(new CustomEvent("clarkcant:rejected", { detail: rejection })),',
     "});",
     "window.clarkcantWidget = runtime;",
-    'window.removeEventListener("message", buffer);',
-    'for (const message of pending) window.postMessage(message, "*");',
     "    } catch (error) {",
     "      window.__clarkcantBridgeError = String(error && error.message ? error.message : error);",
     "    }",

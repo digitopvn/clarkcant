@@ -56,13 +56,56 @@ export interface EngineAnswer {
 /** Runs the engine's command line. Injected so a test can answer without an engine installed. */
 export type EngineRunner = (binary: string, args: readonly string[], timeoutMs: number) => Promise<EngineAnswer>;
 
+/**
+ * What the engine's command line is given of this node's environment: how to find itself, its engine and its
+ * credential helper, and nothing else. The node's own environment holds provider keys; the command line needs none of
+ * them, and the container gets only the variables `serviceRunArgs` names.
+ */
+const ENGINE_ENV_ALLOWLIST = [
+  "PATH",
+  "Path",
+  "PATHEXT",
+  "HOME",
+  "USERPROFILE",
+  "APPDATA",
+  "LOCALAPPDATA",
+  "PROGRAMDATA",
+  "ProgramFiles",
+  "SystemDrive",
+  "SystemRoot",
+  "SYSTEMROOT",
+  "windir",
+  "TEMP",
+  "TMP",
+  "TMPDIR",
+  "XDG_RUNTIME_DIR",
+  "XDG_CONFIG_HOME",
+  "DOCKER_HOST",
+  "DOCKER_CONTEXT",
+  "DOCKER_CONFIG",
+  "DOCKER_CERT_PATH",
+  "DOCKER_TLS_VERIFY",
+  "CONTAINER_HOST",
+  "CONTAINER_CONNECTION",
+  "CONTAINERS_CONF",
+];
+
+export function engineEnvironment(source: NodeJS.ProcessEnv = process.env): Record<string, string> {
+  const env: Record<string, string> = {};
+  for (const name of ENGINE_ENV_ALLOWLIST) {
+    const value = source[name];
+    if (value !== undefined) env[name] = value;
+  }
+  return env;
+}
+
 /** Asynchronous, so a slow engine never holds the node's event loop, and bounded, so a hung one never holds a caller. */
 export const runEngine: EngineRunner = (binary, args, timeoutMs) =>
   new Promise((settle) => {
     execFile(
       binary,
       [...args],
-      { encoding: "utf8", timeout: timeoutMs, windowsHide: true, maxBuffer: 1024 * 1024 },
+      { encoding: "utf8", timeout: timeoutMs, windowsHide: true, maxBuffer: 1024 * 1024, env: engineEnvironment() },
       (error, stdout, stderr) => {
         const status = error === null ? 0 : typeof error.code === "number" ? error.code : null;
         settle({ status, stdout: `${stdout ?? ""}`, stderr: `${stderr ?? ""}` });
@@ -168,6 +211,21 @@ export function serviceUser(platform: NodeJS.Platform = process.platform): { uid
  * `/pkg`, because the path inside the container is Linux whatever the host is, and a manifest's entry has already been
  * checked to stay inside the package.
  */
+/**
+ * A folder as a `--mount` source.
+ *
+ * The engine reads `--mount` as comma-separated fields, quoted CSV-style, so a folder whose path holds a comma or a quote
+ * would be read as more fields than it is — a second `source=` or a dropped `readonly`. Such a path is refused rather
+ * than escaped: the boundary is the one thing here that must mean exactly what it says.
+ */
+export function mountSource(path: string): string {
+  const absolute = resolve(path);
+  if (/[,"\r\n]/u.test(absolute)) {
+    throw new Error(`the folder ${absolute} cannot be given to a service: its path holds a comma, a quote or a line break`);
+  }
+  return absolute;
+}
+
 export function serviceRunArgs(spec: ServiceContainerSpec): string[] {
   const user = spec.user ?? serviceUser();
   const entry = posix.join("/pkg", spec.entry.replaceAll("\\", "/"));
@@ -197,14 +255,17 @@ export function serviceRunArgs(spec: ServiceContainerSpec): string[] {
     // Rootless Podman maps the container's ids into the user's own namespace; keeping the id is what lets the private
     // folder stay writable. Docker has no such flag and needs none.
     ...(spec.engine === "podman" ? ["--userns", "keep-id"] : []),
+    // The service's stdout is the protocol, which carries what a person gave it. Docker would also keep a copy in its
+    // log files, unrotated, for as long as the container lives; the host reads the stream itself and needs no copy.
+    ...(spec.engine === "docker" ? ["--log-driver", "none"] : []),
     "--user",
     `${String(user.uid)}:${String(user.gid)}`,
     // `--mount` rather than `--volume`: its fields are named, so a Windows path's drive-letter colon is not read as a
     // separator, and a missing source is refused instead of being created as an empty root-owned directory.
     "--mount",
-    `type=bind,source=${resolve(spec.packageRoot)},target=/pkg,readonly`,
+    `type=bind,source=${mountSource(spec.packageRoot)},target=/pkg,readonly`,
     "--mount",
-    `type=bind,source=${resolve(spec.dataDir)},target=/data`,
+    `type=bind,source=${mountSource(spec.dataDir)},target=/data`,
     "--workdir",
     "/pkg",
     "--env",

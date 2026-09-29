@@ -145,7 +145,11 @@ Each facet kind runs in exactly one lane, and the schema refuses any other pairi
 
 The reader also refuses a manifest when:
 
-- two facets share an `id`;
+- two facets share an `id`, or an `id` is not one plain name (letters, digits, `.`, `_`, `@`, `-`, starting and ending
+  with a letter or digit), since it also names the service's data folder and container;
+- a package with a `tools` facet has an `id` that is not a reverse-DNS name of at least two lowercase segments, such as
+  `com.example.notes`, or is under a namespace the node's own capabilities use (`canvas`, `clarkcant`, `dev`, `mcp`,
+  `project`);
 - a facet's `entry` or `definition` is outside the package (`..`, an absolute path, a drive letter) or is a URL;
 - a `tools` capability `ref` is not named under the package id (`<package id>.<name>@<major>`), or a tool or
   capability is declared twice.
@@ -167,7 +171,10 @@ What the registry reports is what the host observed, not what the manifest hoped
 
 - a tool the service lists but the manifest does not declare is never registered;
 - a declared tool the service does not list stays not loaded, and the reason says so;
-- a service that stops is restarted with backoff and left stopped if it keeps crashing, and the reason says which.
+- a service that stops is restarted with backoff and left stopped if it keeps crashing, and the reason says which;
+- a ref the node or another package already registered is left as it is and not served by this package, and the node's
+  log says so;
+- a node that finds no engine asks again after a minute, so starting Docker later does not need a node restart.
 
 The reason is what a person reads beside a disabled action. A widget's `invoke` binding, the agent's
 `invoke_capability` tool and a spoken command reach one host path, `invokeCapability`
@@ -368,7 +375,8 @@ The shipped types are `WidgetAuthorApi` in `packages/widget-sdk/src/index.ts`. W
 
 - `actions.invoke` resolves with the service's text output when the binding calls a package service
   (see [§4](#4-package-manifest)), and with `undefined` otherwise. It rejects with the host's reason, including when
-  the action waits on an approval card.
+  the action waits on an approval card. Each call is answered by its own `invocationId`, so two calls of one binding
+  settle independently. When the reason says the request reached the service, the service may have done part of it.
 - `actions.availability()` returns what the host last said about each service-backed binding: `available`, and the
   reason when it is not. `actions.subscribe(handler)` is called when that changes. The host sends it only for
   service-backed bindings, and only when the answer changed. Disable that control and show the reason; the rest of the

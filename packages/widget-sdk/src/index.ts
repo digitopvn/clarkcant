@@ -71,6 +71,11 @@ export const hostToWidgetSchema = z.discriminatedUnion("kind", [
     kind: z.literal("action-result"),
     nonce: z.string().min(16).max(200),
     actionBindingId: z.string().min(1).max(128),
+    /**
+     * The invocation this answers. Two clicks on one binding are two invocations, and each waits for its own answer;
+     * optional so a runtime that keys on the binding alone still parses it.
+     */
+    invocationId: z.string().min(1).max(128).optional(),
     status: z.enum(["accepted", "refused", "failed", "uncertain"]),
     message: z.string().min(1).max(1000),
     /**

@@ -45,7 +45,18 @@ export type IsolationClass = z.infer<typeof isolationClassSchema>;
  * Facets
  * ------------------------------------------------------------------ */
 
-const facetIdSchema = z.string().min(1).max(160);
+/**
+ * A facet's id. It names a widget definition (`com.example.notes.board@1`) or a service, and a service's id also names
+ * the folder its private data lives in and the container it runs in, so it is a single path segment that no platform
+ * reads as anything else: no separator, no `.` or `..`, no trailing dot, nothing a command line would split on.
+ */
+const facetIdSchema = z
+  .string()
+  .min(1)
+  .max(160)
+  .regex(/^[A-Za-z0-9](?:[A-Za-z0-9._@-]*[A-Za-z0-9])?$/, {
+    error: "must be letters, digits, '.', '_', '@' or '-', starting and ending with a letter or digit",
+  });
 /** A path inside the package. Escapes and remote URLs are refused by `manifestProblems`, not by the shape. */
 const packagePathSchema = z.string().min(1).max(300);
 
@@ -248,6 +259,12 @@ export type PackageManifest = z.infer<typeof packageManifestSchema>;
  * Kept apart from the schema so a reader can report every problem at once, with the field named, rather than stop at
  * the first refinement that failed. Empty means the manifest is coherent; it still grants nothing.
  */
+/** The first segments of the capability refs the node registers itself; a package's capabilities never start with one. */
+export const RESERVED_CAPABILITY_NAMESPACES: readonly string[] = ["canvas", "clarkcant", "dev", "mcp", "project"];
+
+/** The shape of a package id its capability refs can be named under: the ref pattern without the `name@n` tail. */
+const CAPABILITY_NAMESPACE_PATTERN = /^[a-z][a-z0-9]*(?:\.[a-z][a-z0-9-]*)+$/;
+
 export function manifestProblems(manifest: PackageManifest): string[] {
   const problems: string[] = [];
 
@@ -265,6 +282,21 @@ export function manifestProblems(manifest: PackageManifest): string[] {
       } else if (/^[a-z][a-z0-9+.-]*:/i.test(path)) {
         problems.push(`facet ${facet.id}: ${path} is a URL; a facet's files must be inside the package`);
       }
+    }
+  }
+
+  /*
+   * A package that provides capabilities names them under its own id, so the id has to be one that cannot collide with
+   * a name the node already gives out: a reverse-DNS id of at least two segments, outside the namespaces the node's own
+   * capabilities use. Without that, a package with the id `project` could declare `project.code.change@1`.
+   */
+  if (manifest.facets.some((facet) => facet.kind === "tools")) {
+    if (!CAPABILITY_NAMESPACE_PATTERN.test(manifest.id)) {
+      problems.push(
+        `id: ${manifest.id} must be a reverse-DNS name of at least two lowercase segments, such as com.example.notes, to provide capabilities`,
+      );
+    } else if (RESERVED_CAPABILITY_NAMESPACES.includes(manifest.id.split(".")[0] ?? "")) {
+      problems.push(`id: ${manifest.id} is under ${manifest.id.split(".")[0] ?? ""}, which the node's own capabilities use`);
     }
   }
 

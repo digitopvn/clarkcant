@@ -11,7 +11,7 @@ import {
 
 import { appendHostReply } from "../routes/conversations.ts";
 import { type NodeServices, buildTimeline } from "../services.ts";
-import { type CapabilityInvokeSource, capabilityInvokeDeps, invokeCapability } from "./capability-invoke.ts";
+import { type CapabilityInvokeSource, capabilityInvokeDeps, invokeCapability, mayHaveRun } from "./capability-invoke.ts";
 
 /**
  * Widget actions: the cursor a spoken action is checked against, and the invocation itself.
@@ -69,6 +69,9 @@ function statusOf(code: string): number {
         : 400;
 }
 
+/** Invocation ids whose service call has not answered yet, on this node. */
+const inFlight = new Set<string>();
+
 /**
  * The `invoke` half: a widget button that calls a package's service capability.
  *
@@ -115,16 +118,36 @@ async function invokeCapabilityAction(
       : respond(202, { approvalRequired: { approvalId: checked.duplicate.approvalId } }, true);
   }
 
-  const outcome = await invokeCapability(capabilityInvokeDeps(services), {
-    ref: checked.proposal.capabilityRef,
-    args: checked.args,
-    source,
-    conversationId: request.conversationId,
-    bindingGeneration: checked.binding.packageGeneration,
-  });
+  // A second request with the same invocation id while the first is still with the service would run it twice: the
+  // outcome that makes it a duplicate is only recorded once the service answers.
+  if (inFlight.has(request.invocationId)) {
+    return {
+      ok: false,
+      status: 409,
+      code: "INVOCATION_IN_PROGRESS",
+      message: "this action is already running; its answer will come back to the first request",
+    };
+  }
+  inFlight.add(request.invocationId);
+  let outcome: Awaited<ReturnType<typeof invokeCapability>>;
+  try {
+    outcome = await invokeCapability(capabilityInvokeDeps(services), {
+      ref: checked.proposal.capabilityRef,
+      args: checked.args,
+      source,
+      conversationId: request.conversationId,
+      bindingGeneration: checked.binding.packageGeneration,
+    });
+  } finally {
+    inFlight.delete(request.invocationId);
+  }
   if (outcome.kind === "refused") {
-    // Not recorded: a refusal changed nothing, and a retry after the service recovers should be able to run.
-    return { ok: false, status: outcome.status, code: outcome.code, message: outcome.message };
+    // Not recorded, so a retry after the service recovers can run. A refusal decided before the service was asked
+    // changed nothing; one after it may have, and the person is told so rather than that nothing happened.
+    const message = mayHaveRun(outcome.code)
+      ? `${outcome.message} — the request reached the service, so it may have done part of it`
+      : outcome.message;
+    return { ok: false, status: outcome.status, code: outcome.code, message };
   }
 
   const record = {

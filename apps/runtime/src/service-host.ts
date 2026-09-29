@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { join, resolve } from "node:path";
+import { isAbsolute, relative, resolve } from "node:path";
 
 import type {
   CapabilityDescriptor,
@@ -15,6 +15,7 @@ import type {
 import {
   activeGenerations,
   getCapability,
+  packageProvidedCapabilities,
   readPackage,
   registerCapability,
   type RegistryDeps,
@@ -25,7 +26,9 @@ import { type McpToolMetadata, StdioMcpTransport, type StdioMcpTransportOptions 
 
 import {
   type ContainerEngineName,
+  engineEnvironment,
   ensureServiceImage,
+  NEEDS_ENGINE_REASON,
   prepareServiceDataDir,
   removeServiceContainer,
   type ServiceEngine,
@@ -33,6 +36,8 @@ import {
   serviceRunArgs,
   sweepServiceContainers,
 } from "./service-container.ts";
+
+export { engineEnvironment } from "./service-container.ts";
 
 /**
  * The host for packages' service facets.
@@ -54,14 +59,23 @@ import {
  * A tool the service lists but the manifest does not declare is never registered: consent covered the declaration,
  * not whatever the code turned out to offer. A declared tool the service does not list is registered as not loaded,
  * with that as the reason, so a person reads why the button is off rather than a generic failure.
+ *
+ * A package only ever writes its own rows. A ref the registry already holds for something else — one of the node's own
+ * capabilities, or another package's — is left as it is, and the facet does not serve it.
  */
 
-/** A pending restart backs off from one second to a minute, and a service that keeps dying is left stopped. */
+/**
+ * A service that stops is restarted after one second, doubling each time; one that stops five times in ten minutes is
+ * left stopped. A runtime image that cannot be fetched is not the service's fault: it is retried, backing off to a
+ * minute, without counting towards that limit.
+ */
 const RESTART_BASE_MS = 1_000;
 const RESTART_CEILING_MS = 60_000;
 const CRASH_WINDOW_MS = 10 * 60_000;
 const CRASH_LIMIT = 5;
 const PING_INTERVAL_MS = 30_000;
+/** How long a node that found no engine waits before asking again, so starting Docker later is noticed. */
+const ENGINE_RETRY_MS = 60_000;
 /** A container's first answer includes Node starting inside it, which is slower than a bare process. */
 const HANDSHAKE_TIMEOUT_MS = 30_000;
 const CALL_TIMEOUT_MS = 60_000;
@@ -117,49 +131,10 @@ export type ServiceLauncher = (spec: {
 
 export const containerLauncher: ServiceLauncher = (spec) => ({ command: spec.engine, args: serviceRunArgs(spec) });
 
-/**
- * What the engine's command line is given of this node's environment: how to find itself and its engine, and nothing
- * else. The node's own environment holds provider keys; the command line needs none of them, and the container gets
- * only the variables `serviceRunArgs` names.
- */
-const ENGINE_ENV_ALLOWLIST = [
-  "PATH",
-  "Path",
-  "HOME",
-  "USERPROFILE",
-  "APPDATA",
-  "LOCALAPPDATA",
-  "PROGRAMDATA",
-  "SystemRoot",
-  "SYSTEMROOT",
-  "TEMP",
-  "TMP",
-  "TMPDIR",
-  "XDG_RUNTIME_DIR",
-  "XDG_CONFIG_HOME",
-  "DOCKER_HOST",
-  "DOCKER_CONTEXT",
-  "DOCKER_CONFIG",
-  "DOCKER_CERT_PATH",
-  "DOCKER_TLS_VERIFY",
-  "CONTAINER_HOST",
-  "CONTAINER_CONNECTION",
-  "CONTAINERS_CONF",
-];
-
-export function engineEnvironment(source: NodeJS.ProcessEnv = process.env): Record<string, string> {
-  const env: Record<string, string> = {};
-  for (const name of ENGINE_ENV_ALLOWLIST) {
-    const value = source[name];
-    if (value !== undefined) env[name] = value;
-  }
-  return env;
-}
-
 export interface ServiceHostOptions {
   registry: RegistryDeps;
   dataDir: string;
-  /** Detected once, on first use, so a node never waits on the engine before it can listen. */
+  /** Asked on first use, so a node never waits on the engine before it can listen, and again while it finds none. */
   engine: () => Promise<ServiceEngine>;
   /** Where an active generation's files are on this machine, or undefined when this node does not have them. */
   packageRoot: (generation: PackageGeneration) => string | undefined;
@@ -173,7 +148,7 @@ export interface ServiceHostOptions {
     remove: (engine: ContainerEngineName, name: string) => Promise<void>;
     sweep: (engine: ContainerEngineName, nodeId: string) => Promise<string[]>;
   };
-  timings?: { restartBaseMs?: number; pingIntervalMs?: number };
+  timings?: { restartBaseMs?: number; pingIntervalMs?: number; engineRetryMs?: number };
 }
 
 export type ServiceCallFailure = "SERVICE_NOT_RUNNING" | "SERVICE_TOOL_FAILED" | "SERVICE_UNREACHABLE";
@@ -192,10 +167,11 @@ export interface ServiceHost {
   /** Call a registered service capability. The caller has already asked the policy; this only runs it. */
   call(ref: CapabilityRef, args: Record<string, unknown>): Promise<{ content: string }>;
   /**
-   * The active generation whose service facet declares this ref, whatever state the service is in.
+   * The active generation whose service facet declares this ref and owns its registry row, whatever state the service
+   * is in.
    *
-   * What makes a capability a service capability of this node: a ref some other part of the node registered, or one a
-   * package no longer active declared, is not something this host runs.
+   * What makes a capability a service capability of this node: a ref some other part of the node registered, one
+   * another package holds, or one a package no longer active declared, is not something this host runs.
    */
   serves(ref: CapabilityRef): { packageId: string; generationId: string } | undefined;
   /** Stop every service. With `restart`, they are started again from scratch; without, the host stays stopped. */
@@ -211,23 +187,45 @@ interface ServiceEntry {
   generation: PackageGeneration;
   facet: ToolsFacet;
   packageRoot: string;
+  /** The stable part of the container's name; each run adds its epoch, so a late cleanup never removes a newer run. */
   containerName: string;
   state: ServiceState;
   reason?: string | undefined;
   connection?: ServiceConnection | undefined;
+  /** The container of the run in progress or running, so a stop removes exactly that one. */
+  runName?: string | undefined;
   /** Declared ref → the tool it runs, once matched against what the service listed. */
   tools: Map<CapabilityRef, string>;
   crashes: number[];
+  /** Consecutive image fetches that failed, for their own backoff. */
+  fetchFailures: number;
   restartTimer?: ReturnType<typeof setTimeout> | undefined;
   pingTimer?: ReturnType<typeof setInterval> | undefined;
   /** Bumped on every start and stop, so a late answer from a previous run cannot change the current one. */
   epoch: number;
+  /** Refs this facet declares that the registry holds for something else, already logged. */
+  refused: Set<CapabilityRef>;
 }
 
-/** A folder name for a package's private data: readable, and unique even when the id is a local path. */
-function dataFolderFor(packageId: string): string {
-  const readable = packageId.replace(/[^A-Za-z0-9._-]+/g, "-").replace(/^-+|-+$/g, "").slice(-60) || "package";
-  return `${readable}-${createHash("sha256").update(packageId).digest("hex").slice(0, 8)}`;
+/**
+ * A folder name for a package's or a facet's private data: readable, unique even when the id is a local path, and a
+ * single segment every platform reads as a plain name — no separator, no dot (so no `..` and no `CON.x` device name),
+ * never empty.
+ */
+function dataFolderFor(id: string): string {
+  const readable = id.replace(/[^A-Za-z0-9_-]+/g, "-").replace(/^-+|-+$/g, "").slice(-60) || "id";
+  return `${readable}-${createHash("sha256").update(id).digest("hex").slice(0, 8)}`;
+}
+
+/** The facet's private folder, refused if it would resolve anywhere but under the node's own services folder. */
+function serviceDataDir(dataDir: string, packageId: string, facetId: string): string {
+  const servicesRoot = resolve(dataDir, "services");
+  const folder = resolve(servicesRoot, dataFolderFor(packageId), dataFolderFor(facetId));
+  const inside = relative(servicesRoot, folder);
+  if (inside === "" || inside.startsWith("..") || isAbsolute(inside)) {
+    throw new Error(`the service's private folder would be outside ${servicesRoot}`);
+  }
+  return folder;
 }
 
 export function createServiceHost(options: ServiceHostOptions): ServiceHost {
@@ -244,20 +242,60 @@ export function createServiceHost(options: ServiceHostOptions): ServiceHost {
     });
   const restartBaseMs = options.timings?.restartBaseMs ?? RESTART_BASE_MS;
   const pingIntervalMs = options.timings?.pingIntervalMs ?? PING_INTERVAL_MS;
+  const engineRetryMs = options.timings?.engineRetryMs ?? ENGINE_RETRY_MS;
 
   const entries = new Map<string, ServiceEntry>();
   let engine: ServiceEngine | undefined;
+  let engineAskedAt = 0;
+  let detecting: Promise<ServiceEngine> | undefined;
   let swept = false;
-  let queue: Promise<void> = Promise.resolve();
+  let queue: Promise<unknown> = Promise.resolve();
   let halted = false;
 
-  async function engineOnce(): Promise<ServiceEngine> {
-    if (engine === undefined) {
-      engine = await options.engine();
-      if (engine.available) log(`services: ${engine.engine} ${engine.version} runs package services on this node`);
-      else log(`services: not started — ${engine.reason} (${engine.detail})`);
-    }
-    return engine;
+  /*
+   * What the registry said about a service when the node last ran is not what is true now: nothing has started yet on
+   * this run. Rows a package service registered are marked so before anything reads them, and each is brought up to
+   * date as its service starts.
+   */
+  for (const row of packageProvidedCapabilities(registry)) {
+    updateReadiness(registry, {
+      ref: row.ref,
+      executionNodeId: registry.nodeId,
+      change: { loaded: false, healthy: false, blockedReason: "the service has not started yet" },
+      at: now(),
+    });
+  }
+
+  /**
+   * The engine that runs services. One that was found is kept; an answer that there is none is asked again once it is
+   * a minute old, so a person who starts Docker after the node does not have to restart the node too.
+   */
+  function currentEngine(): Promise<ServiceEngine> {
+    if (engine?.available === true) return Promise.resolve(engine);
+    if (engine !== undefined && Date.now() - engineAskedAt < engineRetryMs) return Promise.resolve(engine);
+    detecting ??= options
+      .engine()
+      .catch(
+        (cause: unknown): ServiceEngine => ({
+          available: false,
+          reason: NEEDS_ENGINE_REASON,
+          detail: cause instanceof Error ? cause.message : String(cause),
+        }),
+      )
+      .then((found) => {
+        const changed = engine === undefined || engine.available !== found.available;
+        engine = found;
+        engineAskedAt = Date.now();
+        if (changed) {
+          if (found.available) log(`services: ${found.engine} ${found.version} runs package services on this node`);
+          else log(`services: not started — ${found.reason} (${found.detail})`);
+        }
+        return found;
+      })
+      .finally(() => {
+        detecting = undefined;
+      });
+    return detecting;
   }
 
   function readiness(change: Partial<CapabilityReadiness>): CapabilityReadiness {
@@ -272,15 +310,39 @@ export function createServiceHost(options: ServiceHostOptions): ServiceHost {
     };
   }
 
+  function providerIdOf(entry: Pick<ServiceEntry, "generation">): string {
+    return entry.generation.packageId.slice(0, 160);
+  }
+
+  /** Whether a ref's registry row is free or already this package's. Read only; `claim` is the one that reports. */
+  function owns(entry: Pick<ServiceEntry, "generation">, ref: CapabilityRef): boolean {
+    const existing = getCapability(registry, ref, registry.nodeId);
+    return existing === undefined || existing.providedBy?.packageId === providerIdOf(entry);
+  }
+
+  /**
+   * Whether this facet may write a ref's row. A row the node or another package holds is not overwritten: the facet
+   * does not serve that ref, and the log says so once per facet.
+   */
+  function claim(entry: ServiceEntry, ref: CapabilityRef): boolean {
+    if (owns(entry, ref)) return true;
+    if (!entry.refused.has(ref)) {
+      entry.refused.add(ref);
+      log(`services: ${entry.key} declares ${ref}, which is already registered by something else on this node; not served`);
+    }
+    return false;
+  }
+
   function register(
-    entry: Pick<ServiceEntry, "generation">,
+    entry: ServiceEntry,
     declaration: ServiceCapabilityDeclaration,
     state: { readiness: CapabilityReadiness; effectCategory?: EffectCategory; inputSchema?: Record<string, unknown> },
   ): void {
+    if (!claim(entry, declaration.ref)) return;
     const descriptor: CapabilityDescriptor = {
       ref: declaration.ref,
       providedBy: {
-        packageId: entry.generation.packageId.slice(0, 160),
+        packageId: providerIdOf(entry),
         version: entry.generation.version,
         digest: entry.generation.digest,
         generation: entry.generation.generationId,
@@ -301,6 +363,7 @@ export function createServiceHost(options: ServiceHostOptions): ServiceHost {
   /** Mark every capability of a facet with one readiness change, keeping what was learned about each tool. */
   function markAll(entry: ServiceEntry, change: Partial<CapabilityReadiness>): void {
     for (const declaration of entry.facet.capabilities) {
+      if (!claim(entry, declaration.ref)) continue;
       if (getCapability(registry, declaration.ref, registry.nodeId) === undefined) {
         register(entry, declaration, { readiness: readiness(change) });
         continue;
@@ -309,15 +372,35 @@ export function createServiceHost(options: ServiceHostOptions): ServiceHost {
     }
   }
 
-  function desired(): Map<string, Omit<ServiceEntry, "state" | "tools" | "crashes" | "epoch">> {
-    const wanted = new Map<string, Omit<ServiceEntry, "state" | "tools" | "crashes" | "epoch">>();
+  /** Say why a generation's service is not started, on the rows it registered on an earlier run. */
+  function markGeneration(generationId: string, reason: string): void {
+    for (const row of packageProvidedCapabilities(registry)) {
+      if (row.generation !== generationId) continue;
+      updateReadiness(registry, {
+        ref: row.ref,
+        executionNodeId: registry.nodeId,
+        change: { loaded: false, healthy: false, blockedReason: reason.slice(0, 500) },
+        at: now(),
+      });
+    }
+  }
+
+  type Wanted = Pick<ServiceEntry, "key" | "generation" | "facet" | "packageRoot" | "containerName">;
+
+  function desired(): Map<string, Wanted> {
+    const wanted = new Map<string, Wanted>();
     for (const generation of activeGenerations(registry)) {
       const root = options.packageRoot(generation);
-      if (root === undefined) continue;
+      if (root === undefined) {
+        markGeneration(generation.generationId, "the package's files are not on this node");
+        continue;
+      }
       let manifest;
       try {
         manifest = readPackage(root).manifest;
-      } catch {
+      } catch (cause) {
+        const why = cause instanceof Error ? cause.message : String(cause);
+        markGeneration(generation.generationId, `the package's manifest could not be read: ${why}`);
         continue;
       }
       for (const facet of manifest.facets ?? []) {
@@ -339,11 +422,22 @@ export function createServiceHost(options: ServiceHostOptions): ServiceHost {
     return wanted;
   }
 
+  /** Whether an entry is still the one the host runs for its key, and the host is not stopped. */
+  function current(entry: ServiceEntry, epoch: number): boolean {
+    return !halted && entries.get(entry.key) === entry && entry.epoch === epoch;
+  }
+
   function clearTimers(entry: ServiceEntry): void {
     if (entry.restartTimer !== undefined) clearTimeout(entry.restartTimer);
     if (entry.pingTimer !== undefined) clearInterval(entry.pingTimer);
     entry.restartTimer = undefined;
     entry.pingTimer = undefined;
+  }
+
+  async function removeContainer(name: string | undefined): Promise<void> {
+    const known = engine;
+    if (name === undefined || known?.available !== true || options.containers === undefined) return;
+    await options.containers.remove(known.engine, name).catch(() => undefined);
   }
 
   async function stop(entry: ServiceEntry, finalState: ServiceState, reason: string): Promise<void> {
@@ -352,12 +446,23 @@ export function createServiceHost(options: ServiceHostOptions): ServiceHost {
     entry.state = finalState;
     entry.reason = reason;
     const connection = entry.connection;
+    const runName = entry.runName;
     entry.connection = undefined;
+    entry.runName = undefined;
     await connection?.close().catch(() => undefined);
-    const current = engine;
-    if (current?.available === true && options.containers !== undefined) {
-      await options.containers.remove(current.engine, entry.containerName).catch(() => undefined);
-    }
+    // Closing the engine's command line does not stop the container on every engine; removing it does.
+    await removeContainer(runName);
+  }
+
+  /** Start the entry again after `delay`, unless something else started or stopped it in the meantime. */
+  function later(entry: ServiceEntry, delay: number): void {
+    const epoch = entry.epoch;
+    entry.restartTimer = setTimeout(() => {
+      entry.restartTimer = undefined;
+      if (!current(entry, epoch)) return;
+      void start(entry);
+    }, delay);
+    entry.restartTimer.unref?.();
   }
 
   function scheduleRestart(entry: ServiceEntry, why: string): void {
@@ -375,41 +480,41 @@ export function createServiceHost(options: ServiceHostOptions): ServiceHost {
     entry.state = "restarting";
     entry.reason = `the service stopped and restarts in ${String(Math.round(delay / 1000))}s: ${why}`;
     markAll(entry, { healthy: false, blockedReason: entry.reason.slice(0, 500) });
-    const epoch = entry.epoch;
-    entry.restartTimer = setTimeout(() => {
-      entry.restartTimer = undefined;
-      if (halted || entry.epoch !== epoch || !entries.has(entry.key)) return;
-      void start(entry);
-    }, delay);
-    entry.restartTimer.unref?.();
+    later(entry, delay);
   }
 
-  function onGone(entry: ServiceEntry, epoch: number, reason: Error): void {
-    if (halted || entry.epoch !== epoch) return;
+  function onGone(entry: ServiceEntry, epoch: number, runName: string, reason: Error): void {
+    if (!current(entry, epoch)) return;
     entry.epoch += 1;
+    const next = entry.epoch;
     clearTimers(entry);
     entry.connection = undefined;
+    entry.runName = undefined;
+    entry.state = "restarting";
     log(`services: ${entry.key} stopped: ${reason.message.slice(0, 300)}`);
     // What a person reads: the MCP client names the server by its internal generation id, which says nothing to them.
     const why = reason.message.replace(/^mcp server \S+ /u, "").slice(0, 300);
-    // The container may outlive its command line on some engines; it is removed before a new one takes the name.
-    const current = engine;
-    const removal =
-      current?.available === true && options.containers !== undefined
-        ? options.containers.remove(current.engine, entry.containerName).catch(() => undefined)
-        : Promise.resolve();
-    void removal.then(() => scheduleRestart(entry, why));
+    entry.reason = `the service stopped: ${why}`;
+    // Down from this moment, not from when the container is gone: a call in between would be sent nowhere.
+    markAll(entry, { healthy: false, blockedReason: entry.reason.slice(0, 500) });
+    // The container may outlive its command line on some engines; it is removed before a new run starts.
+    void removeContainer(runName).then(() => {
+      if (current(entry, next)) scheduleRestart(entry, why);
+    });
   }
 
   async function start(entry: ServiceEntry): Promise<void> {
-    const current = await engineOnce();
+    const found = await currentEngine();
+    if (halted || entries.get(entry.key) !== entry) return;
     entry.epoch += 1;
     const epoch = entry.epoch;
     clearTimers(entry);
-    if (!current.available) {
+    if (!found.available) {
       entry.state = "stopped";
-      entry.reason = current.reason;
-      markAll(entry, { loaded: false, healthy: false, blockedReason: current.reason });
+      entry.reason = found.reason;
+      markAll(entry, { loaded: false, healthy: false, blockedReason: found.reason });
+      // Asked again later: an engine started after the node is picked up without a restart.
+      later(entry, engineRetryMs);
       return;
     }
 
@@ -418,29 +523,46 @@ export function createServiceHost(options: ServiceHostOptions): ServiceHost {
     markAll(entry, { installed: true, loaded: false, healthy: false, blockedReason: "the service is starting" });
 
     if (options.containers !== undefined) {
-      const image = await options.containers.ensureImage(current.engine);
-      if (entry.epoch !== epoch) return;
+      const image = await options.containers.ensureImage(found.engine);
+      if (!current(entry, epoch)) return;
       if (!image.ok) {
-        scheduleRestart(entry, image.reason);
+        const delay = Math.min(RESTART_CEILING_MS, restartBaseMs * 2 ** entry.fetchFailures);
+        entry.fetchFailures += 1;
+        entry.state = "restarting";
+        entry.reason = `${image.reason}; trying again in ${String(Math.round(delay / 1000))}s`;
+        markAll(entry, { loaded: false, healthy: false, blockedReason: entry.reason.slice(0, 500) });
+        later(entry, delay);
         return;
       }
-      // A container left from a crash holds the name; it is this node's own and is removed.
-      await options.containers.remove(current.engine, entry.containerName).catch(() => undefined);
-      if (entry.epoch !== epoch) return;
+      entry.fetchFailures = 0;
     }
 
-    const dataDir = join(options.dataDir, "services", dataFolderFor(entry.generation.packageId), entry.facet.id);
-    prepareServiceDataDir(dataDir);
-    const launch = launcher({
-      engine: current.engine,
-      nodeId: registry.nodeId,
-      name: entry.containerName,
-      packageRoot: entry.packageRoot,
-      dataDir,
-      entry: entry.facet.entry,
-    });
+    const runName = `${entry.containerName}-${String(epoch)}`;
+    let launch: { command: string; args: string[] };
+    let dataDir: string;
+    try {
+      dataDir = serviceDataDir(options.dataDir, entry.generation.packageId, entry.facet.id);
+      prepareServiceDataDir(dataDir);
+      launch = launcher({
+        engine: found.engine,
+        nodeId: registry.nodeId,
+        name: runName,
+        packageRoot: entry.packageRoot,
+        dataDir,
+        entry: entry.facet.entry,
+      });
+    } catch (cause) {
+      // Not something a restart changes: the package's folder or the node's data folder cannot be given to a container.
+      const why = cause instanceof Error ? cause.message : String(cause);
+      entry.state = "failed";
+      entry.reason = why.slice(0, 500);
+      markAll(entry, { loaded: false, healthy: false, blockedReason: entry.reason });
+      log(`services: ${entry.key} cannot start: ${why}`);
+      return;
+    }
+    entry.runName = runName;
 
-    let connection: ServiceConnection;
+    let connection: ServiceConnection | undefined;
     let listed: McpToolMetadata[];
     try {
       connection = await connect({
@@ -450,25 +572,24 @@ export function createServiceHost(options: ServiceHostOptions): ServiceHost {
         env: engineEnvironment(),
         inheritEnv: false,
         requestTimeoutMs: HANDSHAKE_TIMEOUT_MS,
-        onExit: (reason) => onGone(entry, epoch, reason),
+        onExit: (reason) => onGone(entry, epoch, runName, reason),
       });
-      if (entry.epoch !== epoch) {
-        await connection.close().catch(() => undefined);
-        return;
-      }
+      if (!current(entry, epoch)) throw new Error("superseded");
       listed = await connection.listTools();
     } catch (cause) {
-      if (entry.epoch !== epoch) return;
+      await connection?.close().catch(() => undefined);
+      // This run's container, and only this run's: a newer run has its own name.
+      await removeContainer(runName);
+      if (!current(entry, epoch)) return;
       const why = cause instanceof Error ? cause.message : String(cause);
       entry.epoch += 1;
-      if (options.containers !== undefined) {
-        await options.containers.remove(current.engine, entry.containerName).catch(() => undefined);
-      }
+      entry.runName = undefined;
       scheduleRestart(entry, why.slice(0, 300));
       return;
     }
-    if (entry.epoch !== epoch) {
+    if (!current(entry, epoch)) {
       await connection.close().catch(() => undefined);
+      await removeContainer(runName);
       return;
     }
 
@@ -490,6 +611,7 @@ export function createServiceHost(options: ServiceHostOptions): ServiceHost {
         });
         continue;
       }
+      if (!claim(entry, declaration.ref)) continue;
       entry.tools.set(declaration.ref, declaration.tool);
       register(entry, declaration, {
         readiness: readiness({ loaded: true, healthy: true }),
@@ -502,13 +624,13 @@ export function createServiceHost(options: ServiceHostOptions): ServiceHost {
       log(`services: ${entry.key} offers ${undeclared.join(", ")}, which its package does not declare; not registered`);
     }
     entry.pingTimer = setInterval(() => {
-      if (entry.epoch !== epoch || entry.connection === undefined) return;
-      entry.connection.ping().catch((cause: unknown) => {
-        if (entry.epoch !== epoch) return;
+      if (!current(entry, epoch) || entry.connection === undefined) return;
+      const pinged = entry.connection;
+      pinged.ping().catch((cause: unknown) => {
+        if (!current(entry, epoch)) return;
         const why = `it stopped answering: ${cause instanceof Error ? cause.message : String(cause)}`;
-        const stale = entry.connection;
-        onGone(entry, epoch, new Error(why));
-        void stale?.close().catch(() => undefined);
+        onGone(entry, epoch, runName, new Error(why));
+        void pinged.close().catch(() => undefined);
       });
     }, pingIntervalMs);
     entry.pingTimer.unref?.();
@@ -517,10 +639,10 @@ export function createServiceHost(options: ServiceHostOptions): ServiceHost {
   async function reconcileNow(): Promise<void> {
     if (halted) return;
     const wanted = desired();
-    const current = wanted.size > 0 || entries.size > 0 ? await engineOnce() : engine;
-    if (!swept && current?.available === true && options.containers !== undefined) {
+    const found = wanted.size > 0 || entries.size > 0 ? await currentEngine() : engine;
+    if (!swept && found?.available === true && options.containers !== undefined) {
       swept = true;
-      const removed = await options.containers.sweep(current.engine, registry.nodeId).catch(() => []);
+      const removed = await options.containers.sweep(found.engine, registry.nodeId).catch(() => []);
       if (removed.length > 0) log(`services: removed ${String(removed.length)} container(s) a previous run left behind`);
     }
 
@@ -534,7 +656,9 @@ export function createServiceHost(options: ServiceHostOptions): ServiceHost {
       );
       for (const declaration of entry.facet.capabilities) {
         if (stillProvided.has(declaration.ref)) continue;
-        if (getCapability(registry, declaration.ref, registry.nodeId) === undefined) continue;
+        // Only the rows this generation wrote: a ref it was refused is someone else's, and stays as it is.
+        const existing = getCapability(registry, declaration.ref, registry.nodeId);
+        if (existing?.providedBy?.generation !== entry.generation.generationId) continue;
         updateReadiness(registry, {
           ref: declaration.ref,
           executionNodeId: registry.nodeId,
@@ -551,7 +675,15 @@ export function createServiceHost(options: ServiceHostOptions): ServiceHost {
 
     for (const [key, next] of wanted) {
       if (entries.has(key)) continue;
-      const entry: ServiceEntry = { ...next, state: "starting", tools: new Map(), crashes: [], epoch: 0 };
+      const entry: ServiceEntry = {
+        ...next,
+        state: "starting",
+        tools: new Map(),
+        crashes: [],
+        fetchFailures: 0,
+        epoch: 0,
+        refused: new Set(),
+      };
       entries.set(key, entry);
       // Each service starts on its own: one that takes a minute to fetch its image does not hold the others.
       void start(entry).catch((cause: unknown) => {
@@ -560,13 +692,27 @@ export function createServiceHost(options: ServiceHostOptions): ServiceHost {
     }
   }
 
-  function reconcile(): Promise<void> {
-    queue = queue.then(reconcileNow, reconcileNow);
-    return queue;
+  /** Run one step after every step already asked for, so a stop and a reconcile never interleave. */
+  function serialised<T>(step: () => Promise<T>): Promise<T> {
+    const run = queue.then(step, step);
+    queue = run.catch(() => undefined);
+    return run;
+  }
+
+  async function stopNow(): Promise<number> {
+    const running = [...entries.values()].filter((entry) => entry.connection !== undefined).length;
+    await Promise.all(
+      [...entries.values()].map(async (entry) => {
+        await stop(entry, "stopped", "the node stopped its services");
+        markAll(entry, { loaded: false, healthy: false, blockedReason: "the node stopped its services" });
+      }),
+    );
+    entries.clear();
+    return running;
   }
 
   return {
-    reconcile,
+    reconcile: () => serialised(reconcileNow),
 
     async call(ref, args) {
       const entry = [...entries.values()].find((candidate) => candidate.tools.has(ref));
@@ -587,28 +733,22 @@ export function createServiceHost(options: ServiceHostOptions): ServiceHost {
 
     serves(ref) {
       for (const entry of entries.values()) {
-        if (entry.facet.capabilities.some((declaration) => declaration.ref === ref)) {
-          return { packageId: entry.generation.packageId, generationId: entry.generation.generationId };
-        }
+        if (!entry.facet.capabilities.some((declaration) => declaration.ref === ref)) continue;
+        if (!owns(entry, ref)) return undefined;
+        return { packageId: entry.generation.packageId, generationId: entry.generation.generationId };
       }
       return undefined;
     },
 
     async stopAll(stopOptions = {}) {
+      // Halted at once, so a restart timer that fires while earlier steps finish starts nothing.
       halted = true;
-      const running = [...entries.values()].filter((entry) => entry.connection !== undefined).length;
-      await Promise.all(
-        [...entries.values()].map(async (entry) => {
-          await stop(entry, "stopped", "the node stopped its services");
-          markAll(entry, { loaded: false, healthy: false, blockedReason: "the node stopped its services" });
-        }),
-      );
-      entries.clear();
+      const stopped = await serialised(stopNow);
       if (stopOptions.restart === true) {
         halted = false;
-        await reconcile();
+        await serialised(reconcileNow);
       }
-      return running;
+      return stopped;
     },
 
     status() {

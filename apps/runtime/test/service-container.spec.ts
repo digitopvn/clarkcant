@@ -5,7 +5,9 @@ import { describe, expect, it } from "vitest";
 import {
   detectServiceEngine,
   type EngineAnswer,
+  engineEnvironment,
   type EngineRunner,
+  mountSource,
   NEEDS_ENGINE_REASON,
   SERVICE_IMAGE,
   serviceContainerName,
@@ -62,6 +64,24 @@ describe("the service container's command line", () => {
     // Nothing of the node's own environment is passed through; the service gets exactly these.
     const env = serviceRunArgs(SPEC).flatMap((value, index, all) => (all[index - 1] === "--env" ? [value] : []));
     expect(env).toEqual(["HOME=/data", "NODE_ENV=production"]);
+  });
+
+  it("refuses a folder whose path the engine would read as more than one mount field", () => {
+    // `--mount` is comma-separated: `a,readonly=false` would be a second field, and a quote would change the parsing.
+    for (const packageRoot of [resolve("pkg,target=/,readonly=false"), resolve('pkg"root'), resolve("pkg\nroot")]) {
+      expect(() => serviceRunArgs({ ...SPEC, packageRoot }), JSON.stringify(packageRoot)).toThrow(/cannot be given to a service/);
+    }
+    expect(() => serviceRunArgs({ ...SPEC, dataDir: resolve("data,dst=/etc") })).toThrow(/cannot be given to a service/);
+    expect(mountSource(resolve("plain folder (1)"))).toBe(resolve("plain folder (1)"));
+  });
+
+  it("keeps no copy of what the service writes to its standard output in Docker's log files", () => {
+    expect(flag(serviceRunArgs(SPEC), "--log-driver")).toBe("none");
+  });
+
+  it("gives the engine's command line only what it needs to find itself, not the node's provider keys", () => {
+    const env = engineEnvironment({ PATH: "/usr/bin", HOME: "/home/a", DOCKER_HOST: "unix:///x", OPENAI_API_KEY: "secret", CC_TOKEN: "t" });
+    expect(env).toEqual({ PATH: "/usr/bin", HOME: "/home/a", DOCKER_HOST: "unix:///x" });
   });
 
   it("keeps the user's ids under rootless Podman, and joins a Windows-style entry as a Linux path", () => {

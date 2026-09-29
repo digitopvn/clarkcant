@@ -146,7 +146,10 @@ Mỗi loại facet chỉ chạy trong đúng một lane, và schema từ chối 
 
 Reader cũng từ chối manifest khi:
 
-- hai facet trùng `id`;
+- hai facet trùng `id`, hoặc một `id` không phải là một tên đơn (chữ cái, chữ số, `.`, `_`, `@`, `-`, bắt đầu và kết
+  thúc bằng chữ cái hoặc chữ số), vì nó còn đặt tên cho thư mục dữ liệu và container của service;
+- package có facet `tools` mà `id` không phải tên reverse-DNS gồm ít nhất hai đoạn chữ thường, như `com.example.notes`,
+  hoặc nằm dưới namespace mà capability của chính node dùng (`canvas`, `clarkcant`, `dev`, `mcp`, `project`);
 - `entry` hoặc `definition` của facet nằm ngoài package (`..`, đường dẫn tuyệt đối, ký tự ổ đĩa) hoặc là URL;
 - `ref` của một capability trong facet `tools` không nằm dưới package id (`<package id>.<name>@<major>`), hoặc một
   tool hay capability bị khai báo hai lần.
@@ -169,7 +172,10 @@ Những gì registry báo là những gì host đã quan sát được, không p
 
 - tool mà service liệt kê nhưng manifest không khai báo thì không bao giờ được đăng ký;
 - tool đã khai báo mà service không liệt kê thì vẫn ở trạng thái chưa load, và lý do nói rõ điều đó;
-- service bị dừng thì được khởi động lại với backoff, và bị để dừng hẳn nếu cứ crash mãi, lý do nói rõ trường hợp nào.
+- service bị dừng thì được khởi động lại với backoff, và bị để dừng hẳn nếu cứ crash mãi, lý do nói rõ trường hợp nào;
+- ref mà node hoặc package khác đã đăng ký thì được giữ nguyên và package này không phục vụ nó, log của node ghi rõ điều
+  đó;
+- node không tìm thấy engine sẽ hỏi lại sau một phút, nên bật Docker sau đó không cần khởi động lại node.
 
 Lý do đó là thứ người dùng đọc được bên cạnh một action bị vô hiệu hoá. Binding `invoke` của widget, tool
 `invoke_capability` của agent và lệnh nói đều đi tới một đường host duy nhất, `invokeCapability`
@@ -370,7 +376,8 @@ Kiểu đã ship là `WidgetAuthorApi` trong `packages/widget-sdk/src/index.ts`.
 
 - `actions.invoke` resolve với text output của service khi binding gọi một package service
   (xem [§4](#4-package-manifest)), và với `undefined` trong các trường hợp khác. Nó reject kèm lý do của host, kể cả
-  khi action đang chờ approval card.
+  khi action đang chờ approval card. Mỗi lời gọi được trả lời theo `invocationId` của riêng nó, nên hai lời gọi của cùng
+  một binding kết thúc độc lập. Khi lý do nói yêu cầu đã tới service, service có thể đã làm một phần.
 - `actions.availability()` trả về điều host nói gần nhất về từng binding có service phía sau: `available`, và lý do khi
   không available. `actions.subscribe(handler)` được gọi khi điều đó thay đổi. Host chỉ gửi thông tin này cho binding
   có service phía sau, và chỉ khi câu trả lời thay đổi. Hãy vô hiệu hoá control đó và hiển thị lý do; phần còn lại của

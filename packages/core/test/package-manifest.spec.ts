@@ -156,6 +156,34 @@ describe("the canonical package manifest", () => {
     ]);
   });
 
+  it("refuses a package id a service's capabilities could collide with a name the node already gives out", () => {
+    // `project` is one segment and the node's own namespace: its capabilities would be `project.code.change@1`.
+    const tools = canonical().facets[1] as Extract<PackageManifest["facets"][number], { kind: "tools" }>;
+    const posing = { ...tools, capabilities: [{ ...tools.capabilities[0]!, ref: "project.code.change@1" }] };
+    expect(manifestProblems(canonical({ id: "project", facets: [posing] }))).toContain(
+      "id: project must be a reverse-DNS name of at least two lowercase segments, such as com.example.notes, to provide capabilities",
+    );
+    const reserved = { ...tools, capabilities: [{ ...tools.capabilities[0]!, ref: "canvas.widgets.cta@1" }] };
+    expect(manifestProblems(canonical({ id: "canvas.widgets", facets: [reserved] }))).toContain(
+      "id: canvas.widgets is under canvas, which the node's own capabilities use",
+    );
+    // A package without a service names no capability, and keeps whatever id it had.
+    const [ui] = canonical().facets;
+    expect(manifestProblems(canonical({ id: "My Board", facets: [ui!] }))).toEqual([]);
+  });
+
+  it("refuses a facet id that is not one plain name, since it names a folder and a container", () => {
+    const tools = canonical().facets[1]!;
+    for (const id of ["..", "../../outside", "a/b", "a\\b", "data,readonly=false", 'a"b', "name.", "-name", "a b", ""]) {
+      const parsed = packageManifestSchema.safeParse(canonical({ facets: [{ ...tools, id } as PackageManifest["facets"][number]] }));
+      expect(parsed.success, JSON.stringify(id)).toBe(false);
+    }
+    for (const id of ["com.example.board.service", "com.example.board.main@1", "svc_1", "a"]) {
+      const parsed = packageManifestSchema.safeParse(canonical({ facets: [{ ...tools, id } as PackageManifest["facets"][number]] }));
+      expect(parsed.success, id).toBe(true);
+    }
+  });
+
   it("reports a tool or capability a service declares twice", () => {
     const tools = canonical().facets[1] as Extract<PackageManifest["facets"][number], { kind: "tools" }>;
     const first = tools.capabilities[0]!;

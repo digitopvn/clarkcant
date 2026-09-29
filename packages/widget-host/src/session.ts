@@ -190,13 +190,16 @@ export function createFrameSession(input: FrameSessionInput): FrameSession {
     });
   };
   /** An action result, carrying the service's answer only when there is one, so an older runtime still parses it. */
-  const postResult = (actionBindingId: string, outcome: FrameActionOutcome): void => {
+  const postResult = (actionBindingId: string, invocationId: string, outcome: FrameActionOutcome): void => {
     input.post({
       kind: "action-result",
       nonce: input.nonce,
       actionBindingId,
+      invocationId,
       status: outcome.status,
-      message: outcome.message,
+      // Bounded as the bridge bounds it: a longer or empty message would fail the frame's schema, and the widget would
+      // wait for an answer it had already been sent.
+      message: (outcome.message === "" ? outcome.status : outcome.message).slice(0, 1000),
       ...(outcome.output === undefined ? {} : { output: outcome.output.slice(0, 16_000) }),
     });
   };
@@ -323,7 +326,7 @@ export function createFrameSession(input: FrameSessionInput): FrameSession {
            * The same click twice. Returning the first outcome rather than running it again is what makes a double
            * click one effect; re-running would be the host doing an effect twice because a pointer bounced.
            */
-          postResult(message.actionBindingId, seen);
+          postResult(message.actionBindingId, message.invocationId, seen);
           return { ok: true, kind: "action.invoke", detail: "duplicate" };
         }
         if (!input.knownActionBindings.includes(message.actionBindingId)) {
@@ -340,7 +343,7 @@ export function createFrameSession(input: FrameSessionInput): FrameSession {
           })
           .then((outcome) => {
             invocations.set(message.invocationId, outcome);
-            postResult(message.actionBindingId, outcome);
+            postResult(message.actionBindingId, message.invocationId, outcome);
           })
           .catch((error: unknown) => {
             const outcome: FrameActionOutcome = {
@@ -348,7 +351,7 @@ export function createFrameSession(input: FrameSessionInput): FrameSession {
               message: error instanceof Error ? error.message : "the action failed",
             };
             invocations.set(message.invocationId, outcome);
-            postResult(message.actionBindingId, outcome);
+            postResult(message.actionBindingId, message.invocationId, outcome);
           });
         transcript.push({ kind: "action.invoke", detail: message.actionBindingId });
         return { ok: true, kind: "action.invoke", detail: message.actionBindingId };

@@ -339,6 +339,32 @@ describe("what the host does with an accepted message", () => {
     expect(plain.posted.find((message) => message.kind === "action-result")).not.toHaveProperty("output");
   });
 
+  it("names the invocation it answers, and keeps the reason short enough for the frame to accept", async () => {
+    const { session, posted } = makeSession({
+      invokeAction: async () => ({ status: "refused", message: "x".repeat(5_000) }),
+    });
+    session.init();
+    session.accept(
+      fromFrame({ kind: "action.invoke", actionBindingId: "act_1", expectedRevision: 0, input: {}, invocationId: "inv_9" }),
+    );
+    await Promise.resolve();
+    await Promise.resolve();
+
+    const answer = posted.find((message) => message.kind === "action-result");
+    expect(answer).toMatchObject({ actionBindingId: "act_1", invocationId: "inv_9", status: "refused" });
+    expect(String(answer?.message)).toHaveLength(1_000);
+
+    // An empty reason would be refused by the frame's codec, and the widget would wait forever.
+    const silent = makeSession({ invokeAction: async () => ({ status: "refused", message: "" }) });
+    silent.session.init();
+    silent.session.accept(
+      fromFrame({ kind: "action.invoke", actionBindingId: "act_1", expectedRevision: 0, input: {}, invocationId: "inv_1" }),
+    );
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(silent.posted.find((message) => message.kind === "action-result")).toMatchObject({ message: "refused" });
+  });
+
   it("answers a repeated invocation id without running it again", async () => {
     const { session, ran } = makeSession();
     session.init();

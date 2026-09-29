@@ -5,6 +5,7 @@ import {
   type AppIntentDecision,
   type AppIntentResolution,
   type AttachmentRef,
+  type CapabilityRef,
   type DirectoryEntry,
   type Instant,
   type MessageBlock,
@@ -193,7 +194,7 @@ interface FrameBindingRow {
 }
 
 function resolveLiveWidget(
-  services: Pick<NodeServices, "runtime" | "conductor">,
+  services: Pick<NodeServices, "runtime" | "conductor" | "serviceHost">,
   conversationId: string,
   instanceId: string,
   principalId: string,
@@ -262,7 +263,15 @@ function resolveLiveWidget(
       };
       if (binding.proposal.kind !== "invoke") return [{ ...base, unavailable: undefined }];
       const ref = binding.proposal.capabilityRef;
-      const checked = preflight(ref);
+      // The same first question the invoke path asks: a row the registry holds is not a service this node runs.
+      const checked: ReturnType<typeof preflight> | { ready: false; code: "NOT_A_SERVICE_CAPABILITY"; message: string } =
+        services.serviceHost?.serves(ref as CapabilityRef) === undefined
+          ? {
+              ready: false,
+              code: "NOT_A_SERVICE_CAPABILITY",
+              message: `${ref} is not provided by an active package's service on this node`,
+            }
+          : preflight(ref);
       return [
         checked.ready
           ? { ...base, capabilityRef: ref, available: true, unavailable: undefined }

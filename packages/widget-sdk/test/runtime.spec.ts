@@ -236,6 +236,42 @@ describe("what the runtime sends", () => {
     await expect(pending).resolves.toBe("Saved. 1 note(s): mua sữa");
   });
 
+  it("gives each call of the same action its own answer, whichever comes back first", async () => {
+    const { api, bus } = ready();
+
+    const first = api.actions.invoke("act_1", { text: "một" }, "inv_1");
+    const second = api.actions.invoke("act_1", { text: "hai" }, "inv_2");
+    bus.deliver({
+      kind: "action-result",
+      nonce: NONCE,
+      actionBindingId: "act_1",
+      invocationId: "inv_2",
+      status: "accepted",
+      message: "ok",
+      output: "hai",
+    });
+    bus.deliver({
+      kind: "action-result",
+      nonce: NONCE,
+      actionBindingId: "act_1",
+      invocationId: "inv_1",
+      status: "refused",
+      message: "no answer from the service",
+    });
+
+    await expect(second).resolves.toBe("hai");
+    await expect(first).rejects.toThrow("no answer from the service");
+  });
+
+  it("does not settle a call with an answer that names another action", async () => {
+    const { api, bus } = ready();
+
+    const pending = api.actions.invoke("act_1", {}, "inv_1");
+    bus.deliver({ kind: "action-result", nonce: NONCE, actionBindingId: "act_2", invocationId: "inv_1", status: "accepted", message: "ok" });
+    bus.deliver({ kind: "action-result", nonce: NONCE, actionBindingId: "act_1", invocationId: "inv_1", status: "accepted", message: "ok", output: "đúng" });
+    await expect(pending).resolves.toBe("đúng");
+  });
+
   it("tells the widget which service-backed actions can run, and why one cannot", () => {
     const { api, bus } = ready();
     const seen: unknown[] = [];

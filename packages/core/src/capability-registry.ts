@@ -123,6 +123,15 @@ export function listCapabilitySummaries(
   return options.usableOnly ? summaries.filter((summary) => summary.usable) : summaries;
 }
 
+/** The refs on this node a package generation registered, with the generation that did. */
+export function packageProvidedCapabilities(deps: RegistryDeps): { ref: CapabilityRef; generation: string }[] {
+  return allRows<{ capability_ref: string; package_generation: string }>(
+    deps.db,
+    "SELECT capability_ref, package_generation FROM capabilities WHERE execution_node_id = ? AND package_generation IS NOT NULL",
+    deps.nodeId,
+  ).map((row) => ({ ref: row.capability_ref as CapabilityRef, generation: row.package_generation }));
+}
+
 /** Load the full schema for one capability, once it has been chosen. */
 export function loadCapabilitySchema(
   deps: RegistryDeps,

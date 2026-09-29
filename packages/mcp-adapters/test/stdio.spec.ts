@@ -141,6 +141,15 @@ describe("failure modes each settle", () => {
     expect(transport.stderrTail).toContain("crashing on purpose");
   });
 
+  it("stops a server whose message outgrows the limit, instead of holding it all in memory", async () => {
+    const reasons: Error[] = [];
+    const transport = await connect("flood", 10_000, (reason) => reasons.push(reason));
+    await expect(transport.listTools()).rejects.toThrow(/longer than 4 MB/);
+    expect(reasons).toHaveLength(1);
+    expect(reasons[0]?.message).toMatch(/longer than 4 MB and was stopped/);
+    expect(transport.running).toBe(false);
+  });
+
   it("tolerates a server that prints a banner to stdout", async () => {
     const transport = await connect("banner");
     // A chatty server is common and is not a protocol violation worth failing over.

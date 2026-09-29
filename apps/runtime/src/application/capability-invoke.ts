@@ -1,4 +1,11 @@
-import { type CapabilityRef, type EffectCategory, type Instant, type MessageBlock, nowInstant } from "@clarkcant/contracts";
+import {
+  type CapabilityRef,
+  type EffectCategory,
+  effectCategorySchema,
+  type Instant,
+  type MessageBlock,
+  nowInstant,
+} from "@clarkcant/contracts";
 import {
   type ApprovalRecord,
   decideExecution,
@@ -44,6 +51,7 @@ export type CapabilityInvokeRefusal =
   | "INVALID_INPUT"
   | "POLICY_REFUSED"
   | "APPROVAL_UNAVAILABLE"
+  | "APPROVAL_STALE"
   | "SERVICE_NOT_RUNNING"
   | "SERVICE_TOOL_FAILED"
   | "SERVICE_UNREACHABLE";
@@ -98,12 +106,31 @@ export interface CapabilityInvokeRequest {
    *
    * Set only by `runApprovedCapability`, after `decideApproval` checked the decider and the digest.
    */
-  approvedBy?: { approvalId: string };
+  approvedBy?: { approvalId: string; generation: string; effectCategory: EffectCategory };
 }
 
-/** What an approval for a capability call is bound to: the ref and the arguments, nothing that can drift. */
-export function capabilityDigest(ref: string, args: Record<string, unknown>): string {
-  return payloadDigest(asJsonValue({ capabilityRef: ref, args }));
+/** What an approval is also bound to besides the call: the code that would run it, and the effect it was shown as. */
+export interface CapabilityApprovalContext {
+  generation: string;
+  effectCategory: EffectCategory;
+}
+
+/**
+ * Whether a refused call may still have done something: it was sent to the service, and what came back was an error
+ * or nothing at all. Every other refusal is decided before the service is asked, so nothing ran.
+ */
+export function mayHaveRun(code: CapabilityInvokeRefusal): boolean {
+  return code === "SERVICE_TOOL_FAILED" || code === "SERVICE_UNREACHABLE";
+}
+
+/**
+ * What an approval for a capability call is bound to: the ref, the arguments, the generation that would run them and
+ * the effect the card showed. A newer package, or a service that now says it does more, is not what was approved.
+ */
+export function capabilityDigest(ref: string, args: Record<string, unknown>, context: CapabilityApprovalContext): string {
+  return payloadDigest(
+    asJsonValue({ capabilityRef: ref, args, generation: context.generation, effectCategory: context.effectCategory }),
+  );
 }
 
 /** An approval card is left long enough to read and decide, and not so long it can be approved for a stale reason. */
@@ -195,21 +222,33 @@ export async function invokeCapability(
   const checked = validateArgs(descriptor.inputSchema, request.args);
   if (!checked.ok) return refused(400, "INVALID_INPUT", `${request.ref} does not accept that input: ${checked.message}`);
 
-  const operationDigest = capabilityDigest(request.ref, request.args);
+  const context: CapabilityApprovalContext = { generation: served.generationId, effectCategory: descriptor.effectCategory };
+  const approvedBy = request.approvedBy;
+  if (
+    approvedBy !== undefined &&
+    (approvedBy.generation !== context.generation || approvedBy.effectCategory !== context.effectCategory)
+  ) {
+    const change =
+      approvedBy.generation !== context.generation ? "its package was updated" : `it is now ${context.effectCategory}`;
+    return refused(409, "APPROVAL_STALE", `${request.ref} changed since it was approved (${change}); nothing was run — ask again`);
+  }
+  const operationDigest = capabilityDigest(request.ref, request.args, context);
   const description = `${descriptor.summary} (${request.ref}, ${request.source})`;
   const policy = readExecutionPolicy({ db: deps.db, now }, deps.principalId);
+  const policyDecision = decideExecution({
+    policy,
+    action: { kind: "effect", category: descriptor.effectCategory, operationDigest },
+    // A click, a sentence or a spoken command is the person asking; the policy still decides whether that is
+    // enough, and a prohibition or a hard boundary is read before the intent matters.
+    explicitUserIntent: true,
+  });
+  // An approval answers the policy's question; it does not outrank a refusal the person set after the card was shown.
   const decided =
-    request.approvedBy === undefined
-      ? decideExecution({
-          policy,
-          action: { kind: "effect", category: descriptor.effectCategory, operationDigest },
-          // A click, a sentence or a spoken command is the person asking; the policy still decides whether that is
-          // enough, and a prohibition or a hard boundary is read before the intent matters.
-          explicitUserIntent: true,
-        })
+    approvedBy === undefined || policyDecision.kind === "deny"
+      ? policyDecision
       : ({
           kind: "execute",
-          reason: `approved by the person on the host's card ${request.approvedBy.approvalId}`,
+          reason: `approved by the person on the host's card ${approvedBy.approvalId}`,
           audit: true,
         } as const);
 
@@ -222,6 +261,8 @@ export async function invokeCapability(
       capabilityRef: request.ref,
       args: request.args,
       source: request.source,
+      generation: context.generation,
+      effectCategory: context.effectCategory,
     });
     if (payload.length > PAYLOAD_LIMIT) {
       return refused(
@@ -310,7 +351,7 @@ export async function runApprovedCapability(
   deps: CapabilityInvokeDeps,
   input: { payload: string; expectedDigest: string; approvalId: string; conversationId: string },
 ): Promise<{ ok: true; blocks: MessageBlock[]; description: string; succeeded: boolean } | { ok: false; code: string; message: string }> {
-  let parsed: { capabilityRef?: unknown; args?: unknown; source?: unknown };
+  let parsed: { capabilityRef?: unknown; args?: unknown; source?: unknown; generation?: unknown; effectCategory?: unknown };
   try {
     parsed = JSON.parse(input.payload) as typeof parsed;
   } catch {
@@ -321,10 +362,13 @@ export async function runApprovedCapability(
     parsed.args !== null && typeof parsed.args === "object" && !Array.isArray(parsed.args)
       ? (parsed.args as Record<string, unknown>)
       : undefined;
-  if (ref === "" || args === undefined) {
+  const generation = typeof parsed.generation === "string" ? parsed.generation : "";
+  const effect = effectCategorySchema.safeParse(parsed.effectCategory);
+  if (ref === "" || args === undefined || generation === "" || !effect.success) {
     return { ok: false, code: "APPROVAL_PAYLOAD_UNREADABLE", message: "the approved payload names no capability" };
   }
-  if (capabilityDigest(ref, args) !== input.expectedDigest) {
+  const context: CapabilityApprovalContext = { generation, effectCategory: effect.data };
+  if (capabilityDigest(ref, args, context) !== input.expectedDigest) {
     return {
       ok: false,
       code: "APPROVAL_FORGED",
@@ -339,7 +383,7 @@ export async function runApprovedCapability(
     args,
     source: parsed.source === "widget" || parsed.source === "voice" ? parsed.source : "agent",
     conversationId: input.conversationId,
-    approvedBy: { approvalId: input.approvalId },
+    approvedBy: { approvalId: input.approvalId, ...context },
   });
   const succeeded = outcome.kind === "done";
   const result =
