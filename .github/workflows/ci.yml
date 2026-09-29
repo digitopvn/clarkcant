@@ -248,22 +248,53 @@ jobs:
       - name: Install
         run: pnpm install --frozen-lockfile
 
-      # Ubuntu 24.04 lets AppArmor refuse unprivileged user namespaces, which a rootless daemon is made of.
+      # The runner's Docker comes without the rootless extras and its apt sources carry none, so Docker's own static
+      # release is used, pinned by version and digest. Ubuntu 24.04 lets AppArmor refuse unprivileged user namespaces,
+      # which a rootless daemon is made of, so that restriction is lifted for this job only.
       - name: Set up rootless Docker
+        env:
+          DOCKER_STATIC: https://download.docker.com/linux/static/stable/x86_64
+          DOCKER_VERSION: 29.8.1
+          DOCKER_SHA256: d8db66739d2e28d4933786d73e918d9be643a67fbd835db1bf740d650a259e70
+          ROOTLESS_EXTRAS_SHA256: 8f1ed16fc6913241e599af6234a7f30502bde6e73bebbbc7176b17802d967d49
         run: |
           sudo apt-get update
-          sudo apt-get install -y uidmap docker-ce-rootless-extras
-          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true
+          sudo apt-get install -y uidmap slirp4netns
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
           sudo systemctl disable --now docker.service docker.socket
-          dockerd-rootless-setuptool.sh install --force
-          echo "DOCKER_HOST=unix:///run/user/$(id -u)/docker.sock" >> "$GITHUB_ENV"
+          grep -q "^$(whoami):" /etc/subuid || echo "$(whoami):100000:65536" | sudo tee -a /etc/subuid
+          grep -q "^$(whoami):" /etc/subgid || echo "$(whoami):100000:65536" | sudo tee -a /etc/subgid
+
+          cd "$RUNNER_TEMP"
+          curl -fsSLO "$DOCKER_STATIC/docker-$DOCKER_VERSION.tgz"
+          curl -fsSLO "$DOCKER_STATIC/docker-rootless-extras-$DOCKER_VERSION.tgz"
+          echo "$DOCKER_SHA256  docker-$DOCKER_VERSION.tgz" | sha256sum -c -
+          echo "$ROOTLESS_EXTRAS_SHA256  docker-rootless-extras-$DOCKER_VERSION.tgz" | sha256sum -c -
+          bin="$RUNNER_TEMP/rootless-docker/bin"
+          mkdir -p "$bin"
+          tar -xzf "docker-$DOCKER_VERSION.tgz" --strip-components=1 -C "$bin"
+          tar -xzf "docker-rootless-extras-$DOCKER_VERSION.tgz" --strip-components=1 -C "$bin"
+
+          export PATH="$bin:$PATH"
+          export XDG_RUNTIME_DIR="$RUNNER_TEMP/xdg"
+          mkdir -p "$XDG_RUNTIME_DIR" && chmod 700 "$XDG_RUNTIME_DIR"
+          nohup dockerd-rootless.sh > "$RUNNER_TEMP/dockerd-rootless.log" 2>&1 &
+          export DOCKER_HOST="unix://$XDG_RUNTIME_DIR/docker.sock"
+          for _ in $(seq 60); do docker info > /dev/null 2>&1 && break; sleep 1; done
+          docker info --format '{{json .SecurityOptions}}'
+
+          echo "$bin" >> "$GITHUB_PATH"
+          echo "XDG_RUNTIME_DIR=$XDG_RUNTIME_DIR" >> "$GITHUB_ENV"
+          echo "DOCKER_HOST=$DOCKER_HOST" >> "$GITHUB_ENV"
 
       - name: Service container suite on rootless Docker
         env:
           CC_EXPECT_ROOTLESS_DOCKER: "1"
-        run: |
-          docker info --format '{{json .SecurityOptions}}'
-          pnpm exec vitest run apps/runtime/test/service-container-engine.spec.ts apps/runtime/test/service-container.spec.ts
+        run: pnpm exec vitest run apps/runtime/test/service-container-engine.spec.ts apps/runtime/test/service-container.spec.ts
+
+      - name: The rootless daemon's log
+        if: failure()
+        run: tail -n 100 "$RUNNER_TEMP/dockerd-rootless.log" || true
 
   # The desktop shell's own behaviour - the bounds it reports, the floor it
   # enforces, whether it is always on top -
