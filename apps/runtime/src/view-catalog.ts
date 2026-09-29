@@ -21,6 +21,7 @@ import {
   INPUT_KINDS,
   MAX_COMPOSITION_SECTIONS,
   MAX_FORM_FIELDS,
+  MAX_GRAPH_KEYS,
   MAX_GRID_COLUMNS,
   MAX_LAYOUT_DEPTH,
   MAX_LAYOUT_NODES,
@@ -146,7 +147,16 @@ export function buildViewCatalog(
         `{"kind":"divider"}, and containers {"kind":"stack"|"row"|"grid"|"card"|"tabs"|"split"|"collapsible","label":"...","children":[...]} ` +
         `(grid takes "columns" 1-${String(MAX_GRID_COLUMNS)}; collapsible needs a label and takes "open"; each tab needs a label; a split has two children). ` +
         `At most ${String(MAX_LAYOUT_DEPTH)} levels, ${String(MAX_LAYOUT_NODES)} nodes and ${String(MAX_COMPOSITION_SECTIONS)} widgets; ` +
-        `the node fills each widget with its own data. props.title names the surface.`,
+        `the node fills each widget with its own data. props.title names the surface. ` +
+        `To connect widgets, declare props.state as {"<key>":{"type":"string"|"number"|"boolean"|"string-list","initial":...}} ` +
+        `(at most ${String(MAX_GRAPH_KEYS)} keys) and give leaves "on" and "feed" lists. "on" entries are {"event":"...","steps":[...]}: ` +
+        `canvas.search@1 emits query.change {query}, canvas.choice@1 choice.change {value}, canvas.input@1 input.change {value}, ` +
+        `canvas.list@1 selection.change {selected}, canvas.table@1 row.select {rowIds}, canvas.calendar@1 date.select {date}. ` +
+        `Steps: {"op":"select-field","key","field"}, {"op":"set","key","value"}, {"op":"toggle","key","field"?}, {"op":"copy","key","from"}, ` +
+        `{"op":"append"|"remove","key","field"}, {"op":"map-field","key","field","map":{...},"fallback"?}, {"op":"take","key","field","count"}, {"op":"count","key","field"}. ` +
+        `"feed" entries are {"op":"query","key"} for a table or list, or {"op":"filter-equals","field","key"} for a table column, ` +
+        `a list's title/subtitle/meta, or a chart's "series". A choice or input is placed only with an "on" rule; ` +
+        `with no props.state, a search box narrows every table by itself.`,
       build: async (request) => {
         const templateId = request.props.templateId;
         const period = request.props.period;
@@ -167,6 +177,7 @@ export function buildViewCatalog(
                 ...common,
                 layout: request.props.layout,
                 ...(typeof request.props.title === "string" ? { title: request.props.title } : {}),
+                ...(request.props.state === undefined ? {} : { state: request.props.state }),
               });
 
         if (!outcome.ok) {

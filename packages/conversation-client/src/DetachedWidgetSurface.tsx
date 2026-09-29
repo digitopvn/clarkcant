@@ -1,6 +1,6 @@
-import { type ReactElement, useEffect, useState } from "react";
+import { type ReactElement, useEffect, useRef, useState } from "react";
 
-import { MiniAppSurface } from "./mini-app-surface.tsx";
+import { MiniAppSurface, STATE_EVENT_OPERATION, actionForIntent } from "./mini-app-surface.tsx";
 import { toSurfaceViewFromLive } from "./DesktopSurfaces.tsx";
 import type { LiveWidgetResponse } from "./api.ts";
 import { useT } from "./i18n/locale-context.tsx";
@@ -42,6 +42,11 @@ export function DetachedWidgetSurface({ bridge }: { bridge: DetachedBridge }): R
   const [refusal, setRefusal] = useState<string | undefined>(undefined);
   const [notice, setNotice] = useState<string | undefined>(undefined);
   const [busy, setBusy] = useState(false);
+  /*
+   * Intents go to the host one at a time, each against the revision the one before it produced. The window never re-reads
+   * the surface, so without this every action after the first would be refused as made against an older view.
+   */
+  const queue = useRef<{ chain: Promise<void>; revision: number | undefined }>({ chain: Promise.resolve(), revision: undefined });
 
   useEffect(() => {
     let cancelled = false;
@@ -100,26 +105,34 @@ export function DetachedWidgetSurface({ bridge }: { bridge: DetachedBridge }): R
         title={loaded.title}
         busy={busy}
         onIntent={(intent) => {
-          const action = loaded.live.spec.actions.find((entry) => entry.sectionId === intent.sectionId);
+          const action = actionForIntent(loaded.live.spec.actions, intent);
           if (action === undefined) {
             setNotice(t("widgets.detached.actionDetached"));
             return;
           }
-          setBusy(true);
-          setNotice(undefined);
-          void bridge
-            .intent({
-              instanceRef: loaded.instanceRef,
-              actionBindingId: action.actionBindingId,
-              // The revision the user is looking at: the node refuses a stale one rather than applying it to
-              // something the window never showed.
-              expectedRevision: loaded.live.revision,
-              input: intent.input,
-            })
-            .then((answer) => {
-              setBusy(false);
-              if (!answer.ok) setNotice(answer.refused ?? t("widgets.detached.serverRefused"));
-            });
+          // A graph event is the surface keeping its own state, not a press: it does not hold the other controls.
+          const pressed = intent.action !== STATE_EVENT_OPERATION;
+          if (pressed) {
+            setBusy(true);
+            setNotice(undefined);
+          }
+          queue.current.chain = queue.current.chain.then(() =>
+            bridge
+              .intent({
+                instanceRef: loaded.instanceRef,
+                actionBindingId: action.actionBindingId,
+                // The revision the user is looking at: the node refuses a stale one rather than applying it to
+                // something the window never showed.
+                expectedRevision: queue.current.revision ?? loaded.live.revision,
+                input: intent.input,
+              })
+              .then((answer) => {
+                if (pressed) setBusy(false);
+                const revision = (answer.result as { revision?: unknown } | undefined)?.revision;
+                if (answer.ok && typeof revision === "number") queue.current.revision = revision;
+                if (!answer.ok) setNotice(answer.refused ?? t("widgets.detached.serverRefused"));
+              }),
+          );
         }}
       />
     </main>

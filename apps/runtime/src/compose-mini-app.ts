@@ -2,6 +2,7 @@ import {
   type ActionBinding,
   type CompiledSection,
   type CompositionSlot,
+  type CompositionGraph,
   type CompositionSourceRevision,
   type Instant,
   type LayoutNode,
@@ -482,6 +483,8 @@ export interface PersistRequest {
   sections: CompiledSection[];
   /** Present for a composed tree; its leaves name `sections` by id. */
   layout?: LayoutNode;
+  /** Present for a composed tree whose leaves write or read state; each leaf with an event rule gets a binding. */
+  graph?: CompositionGraph;
   period: "week" | "month";
   timezone: string;
   selector: { mode: "explicit" | "jev" | "fallback"; model?: string; confidence?: number; margin?: number; reason?: string };
@@ -504,7 +507,7 @@ export function persistComposition(
 ): ComposeOutcome {
   const registry = deps.registry;
   const instanceId = deps.newId("winst");
-  const bindings = compileBindings(deps, request.sections, instanceId);
+  const bindings = compileBindings(deps, request.sections, instanceId, request.graph);
   const compositionId = deps.newId("comp");
   const provenance = {
     createdAt: deps.now(),
@@ -540,9 +543,11 @@ export function persistComposition(
         label: binding.label,
         kind: "view" as const,
         effectCategory: binding.effectCategory,
+        ...(binding.proposal.kind === "view" ? { operation: binding.proposal.operation } : {}),
       })),
       provenance,
       ...(request.layout === undefined ? {} : { layout: request.layout }),
+      ...(request.graph === undefined ? {} : { graph: request.graph }),
     },
     registry,
     { allowedDataRefs: new Set(request.sections.flatMap((section) => section.dataRefs)) },
@@ -570,6 +575,7 @@ export function persistComposition(
     templateVersion: request.templateVersion,
     sections: request.sections,
     ...(request.layout === undefined ? {} : { layout: request.layout }),
+    ...(request.graph === undefined ? {} : { graph: request.graph }),
     props: {
       compositionId,
       templateId: request.templateId,
@@ -788,11 +794,12 @@ function compileBindings(
   deps: ComposeDeps,
   sections: readonly CompiledSection[],
   instanceId: string,
+  graph?: CompositionGraph,
 ): { binding: ActionBinding; sectionId: string }[] {
   const bindings: { binding: ActionBinding; sectionId: string }[] = [];
   const knownCapabilities = new Set<string>();
 
-  const add = (section: CompiledSection, operation: string, label: string): void => {
+  const add = (section: CompiledSection, operation: string, label: string, digestSuffix = ""): void => {
     const compiled = compileActionBinding({
       bindingId: deps.newId("act"),
       instance: {
@@ -811,7 +818,7 @@ function compileBindings(
       effectCategory: "read",
       requiresApproval: false,
       limits: {},
-      bindingDigest: `sha256:${operation}:${instanceId}`,
+      bindingDigest: `sha256:${operation}:${instanceId}${digestSuffix}`,
       at: deps.now(),
       knownCapabilities,
     });
@@ -827,6 +834,10 @@ function compileBindings(
   for (const section of sections) {
     const bound = OPERATIONS[section.slot];
     if (bound !== undefined) add(section, bound.operation, bound.label);
+    // A leaf the graph listens to reports its events through its own binding; the node applies them by the graph's rules.
+    if (graph?.on.some((rule) => rule.sectionId === section.sectionId) === true) {
+      add(section, "state.event", "Cập nhật trạng thái bề mặt", `:${section.sectionId}`);
+    }
   }
   return bindings;
 }

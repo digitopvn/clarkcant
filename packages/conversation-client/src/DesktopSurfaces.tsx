@@ -20,7 +20,7 @@ import {
 import { useT } from "./i18n/locale-context.tsx";
 import { readStoredLocale } from "./i18n/locale.ts";
 import { CATALOGS, type MessageKey } from "./i18n/messages.ts";
-import { MiniAppSurface, type CompositeSurfaceView } from "./mini-app-surface.tsx";
+import { MiniAppSurface, STATE_EVENT_OPERATION, type CompositeSurfaceView, actionForIntent } from "./mini-app-surface.tsx";
 import { WidgetFrame } from "./WidgetFrame.tsx";
 import { useImageUrls } from "./use-image-urls.ts";
 
@@ -244,6 +244,14 @@ export function PinnedLiveSurface({
    */
   const [inView, setInView] = useState(false);
   const ownerToken = useRef<string>(newOwnerToken());
+  /*
+   * Graph events go to the node one at a time, each against the revision the one before it produced, and the surface is
+   * re-read once they have all landed. Sent together they would race for one revision; re-read after each, a query typed
+   * on would flicker back through every value it passed on the way.
+   */
+  const graphQueue = useRef<{ chain: Promise<void>; pending: number; revision: number }>({ chain: Promise.resolve(), pending: 0, revision: -1 });
+  const latestRevision = useRef(-1);
+  if (live !== undefined && "revision" in live) latestRevision.current = live.revision;
 
   useEffect(() => {
     const element = panel.current;
@@ -722,8 +730,33 @@ export function PinnedLiveSurface({
           readOnly
             ? undefined
             : (intent) => {
-                const action = live.spec.actions.find((entry) => entry.sectionId === intent.sectionId);
+                const action = actionForIntent(live.spec.actions, intent);
                 if (action === undefined) return;
+                if (intent.action === STATE_EVENT_OPERATION) {
+                  const queue = graphQueue.current;
+                  queue.pending += 1;
+                  queue.chain = queue.chain.then(async () => {
+                    try {
+                      const result = await client.invokeAction(conversationId, instanceId, {
+                        actionBindingId: action.actionBindingId,
+                        expectedRevision: Math.max(queue.revision, latestRevision.current),
+                        expectedBindingDigest: digestForBinding(live, action.actionBindingId),
+                        input: intent.input,
+                        invocationId: newOwnerToken(),
+                      });
+                      queue.revision = result.revision;
+                    } catch (cause: unknown) {
+                      // The node kept what it holds; the re-read below shows it, so the page does not keep a value the
+                      // node refused.
+                      const message = cause instanceof Error ? cause.message : String(cause);
+                      setNotice(message.includes("REVISION_MISMATCH") ? t("shell.live.revisionMismatch") : message);
+                    } finally {
+                      queue.pending -= 1;
+                      if (queue.pending === 0) await load();
+                    }
+                  });
+                  return;
+                }
                 setBusy(true);
                 setNotice(undefined);
                 void client
@@ -769,6 +802,7 @@ export function toSurfaceViewFromLive(live: LiveWidgetResponse, readOnly: boolea
     compositionId: live.compositionId,
     instanceId: live.spec.instanceId,
     ...(live.spec.layout === undefined ? {} : { layout: live.spec.layout }),
+    ...(live.spec.graph === undefined ? {} : { graph: live.spec.graph, graphState: live.state.graph }),
     catalogDigest: live.spec.catalogDigest,
     initialState: {
       period: live.period,
@@ -783,6 +817,7 @@ export function toSurfaceViewFromLive(live: LiveWidgetResponse, readOnly: boolea
           label: action.label,
           kind: action.kind as CompositeSurfaceView["actions"][number]["kind"],
           effectCategory: action.effectCategory,
+          ...(action.operation === undefined ? {} : { operation: action.operation }),
         })),
     sections: live.sections.map((section) => ({
       sectionId: section.sectionId,

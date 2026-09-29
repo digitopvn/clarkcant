@@ -5,6 +5,7 @@ import {
   type CapabilityRef,
   type CompiledSection,
   type CompositionActionRef,
+  type CompositionGraph,
   type CompositionInitialState,
   type CompositionProvenance,
   type ExecutionPolicyConfig,
@@ -19,11 +20,13 @@ import {
   type WidgetInstance,
   type WidgetSnapshot,
   bindingStillValid,
+  applyGraphEvent,
   checkPresentationBundle,
   LAYOUT_COMPOSITION_SCHEMA_VERSION,
   SURFACE_COMPOSITION_SCHEMA_VERSION,
   checkSurfaceCompositionSpec,
   compileActionBinding,
+  graphValues,
   nowInstant,
   toCompositionSection,
   widgetInstanceSchema,
@@ -34,6 +37,7 @@ import {
   type Database,
   asJsonValue,
   insertPresentationBundle,
+  findCompositionByInstance,
   insertSurfaceComposition,
   oneRow,
   parseJson,
@@ -454,6 +458,8 @@ export interface CompositeCaptureInput {
   sections: readonly CompiledSection[];
   /** How the sections are arranged, when a tree rather than a template's slots does it. Makes the spec version 2. */
   layout?: LayoutNode;
+  /** The state the surface holds and how its leaves write and read it. Only beside a layout. */
+  graph?: CompositionGraph;
   /** Container props. The leaf regions live in the spec, not here. */
   props: Record<string, unknown>;
   initialState: CompositionInitialState;
@@ -549,6 +555,7 @@ export function captureCompositeSurface(
     label: binding.label,
     kind: binding.proposal.kind,
     effectCategory: binding.effectCategory,
+    ...(binding.proposal.kind === "view" ? { operation: binding.proposal.operation } : {}),
   }));
 
   const composition: SurfaceCompositionSpec = {
@@ -563,6 +570,7 @@ export function captureCompositeSurface(
     actions,
     provenance: input.provenance,
     ...(input.layout === undefined ? {} : { layout: input.layout }),
+    ...(input.graph === undefined ? {} : { graph: input.graph }),
   };
 
   const specCheck = checkSurfaceCompositionSpec(composition, {
@@ -1076,13 +1084,15 @@ export function listPinsForConversation(deps: WidgetDeps, conversationId: string
  * `invoke`, an `agent` intent, a workflow — goes through the approval path instead, and a binding
  * that proposes one is refused here rather than quietly executed.
  */
-export const M1_VIEW_OPERATIONS = ["period.change", "date.select", "view.save"] as const;
+export const M1_VIEW_OPERATIONS = ["period.change", "date.select", "view.save", "state.event"] as const;
 
 /** Bumped when a filter changes the range, because the underlying rows are re-read. */
 const OPERATION_BUMP: Record<string, "presentation" | "data"> = {
   "period.change": "data",
   "date.select": "presentation",
   "view.save": "presentation",
+  // A leaf wired into the surface's graph changes what the surface shows, not the rows it reads.
+  "state.event": "presentation",
 };
 
 export interface MiniAppActionRequest extends ActionInvocation {
@@ -1276,10 +1286,24 @@ export function invokeMiniAppAction(deps: WidgetDeps, request: MiniAppActionRequ
   const bump = OPERATION_BUMP[operation] ?? "presentation";
   const saveRequested = operation === "view.save";
 
-  return transaction(deps.db, () => {
+  return transaction(deps.db, (): MiniAppActionOutcome => {
     const at = deps.now();
     const current = readWidgetStateRow(deps.db, instance.instanceId);
-    const body: Record<string, unknown> = { ...(current?.body ?? {}), ...validation.patch };
+    let patch = validation.patch;
+    if (operation === "state.event") {
+      // Applied here, to the values the node holds, by the same rules the page ran: what is stored is what the graph
+      // says the event does, never a value the page computed and sent.
+      const applied = applyStateEvent(deps, {
+        instanceId: instance.instanceId,
+        principalId: request.principalId,
+        actionBindingId: request.actionBindingId,
+        stored: current?.body.graph,
+        input: request.input,
+      });
+      if (!applied.ok) return { ok: false, code: "INVALID_INPUT", message: applied.problem };
+      patch = { graph: applied.values };
+    }
+    const body: Record<string, unknown> = { ...(current?.body ?? {}), ...patch };
     const stateRevision = (current?.revision ?? 0) + 1;
 
     if (current === undefined) {
@@ -1615,6 +1639,31 @@ export function liveStateOf(
 type InputValidation = { ok: true; patch: Record<string, unknown> } | { ok: false; message: string };
 
 /**
+ * Apply one wired event to the graph values an instance holds.
+ *
+ * The section comes from the binding the person pressed through, not from the request, so an event cannot be
+ * attributed to a leaf that does not emit it.
+ */
+function applyStateEvent(
+  deps: WidgetDeps,
+  input: { instanceId: string; principalId: string; actionBindingId: string; stored: unknown; input: Record<string, unknown> },
+): { ok: true; values: Record<string, unknown> } | { ok: false; problem: string } {
+  const composition = findCompositionByInstance(deps.db, input.instanceId, input.principalId);
+  const graph: CompositionGraph | undefined = composition?.graph;
+  if (composition === undefined || graph === undefined) return { ok: false, problem: "this surface has no graph to apply the event to" };
+  const sectionId = composition.actions.find((action) => action.actionBindingId === input.actionBindingId)?.sectionId;
+  const section = composition.sections.find((candidate) => candidate.sectionId === sectionId);
+  if (section === undefined) return { ok: false, problem: "the binding is not attached to a section of this surface" };
+  const applied = applyGraphEvent(graph, graphValues(graph, input.stored), {
+    sectionId: section.sectionId,
+    definitionId: section.definitionRef.id,
+    event: String(input.input.event),
+    payload: input.input.payload,
+  });
+  return applied.ok ? { ok: true, values: applied.values } : { ok: false, problem: applied.problem };
+}
+
+/**
  * Validate the input a view operation carries.
  *
  * The values are checked here rather than trusted from the binding, because the binding says what
@@ -1647,6 +1696,18 @@ function validateViewInput(operation: string, input: Record<string, unknown>): I
     }
     case "view.save":
       return { ok: true, patch: {} };
+    case "state.event": {
+      // Only the envelope here; what the event may carry depends on the graph, which is read with the state it changes.
+      const extra = Object.keys(input).filter((key) => key !== "event" && key !== "payload");
+      if (extra.length > 0) return { ok: false, message: `a state event carries event and payload, not ${extra.join(", ")}` };
+      if (typeof input.event !== "string" || input.event === "" || input.event.length > 80) {
+        return { ok: false, message: "a state event must name the event the widget reported" };
+      }
+      if (typeof input.payload !== "object" || input.payload === null || Array.isArray(input.payload)) {
+        return { ok: false, message: "a state event must carry the fields the widget reported as an object" };
+      }
+      return { ok: true, patch: {} };
+    }
     default:
       return { ok: false, message: `"${operation}" has no input contract` };
   }

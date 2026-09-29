@@ -255,7 +255,39 @@ function chartSummary(points: ChartPoint[]): string {
 
 const CATEGORY_KEYS = ["week", "name", "label"];
 
-function LineChart({ props, dataset }: RendererProps): ReactElement {
+/**
+ * The series a surface's state chose for a chart, when it chose one: an exact-match filter on `series`. Only a numeric
+ * column of the rows can be plotted, so a name that is not one is reported as missing rather than drawn as zeros.
+ */
+function chosenSeries(
+  state: Record<string, unknown> | undefined,
+  rows: readonly Record<string, unknown>[],
+): { requested?: string; series?: string; label?: string } {
+  const filters = state?.filters;
+  const requested = typeof filters === "object" && filters !== null ? (filters as Record<string, unknown>).series : undefined;
+  if (typeof requested !== "string" || requested === "") return {};
+  // The words the person picked it by, when a choice on the surface set it; otherwise the series is named as it is.
+  const labels = state?.filterLabels;
+  const named = typeof labels === "object" && labels !== null ? (labels as Record<string, unknown>).series : undefined;
+  const label = typeof named === "string" && named !== "" ? named : requested;
+  return rows.some((row) => typeof row[requested] === "number") ? { requested, series: requested, label } : { requested, label };
+}
+
+/** Says which series a chart is showing when the surface chose it, and says so plainly when the choice is not there. */
+function SeriesNote({ choice }: { choice: { requested?: string; series?: string; label?: string } }): ReactElement | null {
+  const t = useT();
+  if (choice.requested === undefined) return null;
+  const named = choice.label ?? choice.requested;
+  return (
+    <p className="cc-freshness" data-chart-series={choice.series ?? ""} style={{ margin: 0 }}>
+      {choice.series === undefined
+        ? t("widgets.chart.seriesMissing").replace("{series}", named)
+        : t("widgets.chart.showingSeries").replace("{series}", named)}
+    </p>
+  );
+}
+
+function LineChart({ props, dataset, state }: RendererProps): ReactElement {
   const t = useT();
   const title = String(props.title ?? t("widgets.lineChart.title"));
   const [measure, width] = useMeasuredWidth(640);
@@ -267,11 +299,12 @@ function LineChart({ props, dataset }: RendererProps): ReactElement {
     );
   }
 
-  const seriesKey = typeof props.series === "object" && Array.isArray(props.series) && props.series.length > 0
+  const choice = chosenSeries(state, dataset.rows);
+  const seriesKey = choice.series ?? (typeof props.series === "object" && Array.isArray(props.series) && props.series.length > 0
     ? String((props.series as unknown[])[0])
     : typeof props.unit === "string" && props.unit.includes("lần")
       ? "runs"
-      : Object.keys(dataset.rows[0] ?? {}).find((key) => typeof dataset.rows[0]?.[key] === "number") ?? "value";
+      : Object.keys(dataset.rows[0] ?? {}).find((key) => typeof dataset.rows[0]?.[key] === "number") ?? "value");
 
   const points = chartPoints(dataset.rows, seriesKey, (row) => label(row, CATEGORY_KEYS));
   const values = points.map((point) => point.value);
@@ -287,8 +320,9 @@ function LineChart({ props, dataset }: RendererProps): ReactElement {
   return (
     <Frame title={title} dataset={dataset} role="chart">
       <>
+        <SeriesNote choice={choice} />
         <div ref={measure} className="cc-chart-box">
-          <svg className="cc-chart" viewBox={`0 0 ${width} ${CHART_HEIGHT}`} role="img" aria-label={`${title}: ${seriesKey}`}>
+          <svg className="cc-chart" viewBox={`0 0 ${width} ${CHART_HEIGHT}`} role="img" aria-label={`${title}: ${choice.series === undefined ? seriesKey : (choice.label ?? seriesKey)}`}>
             <ChartGrid geometry={geometry} />
             {area !== "" && <path className="area" d={area} />}
             <path className="series" d={line} />
@@ -324,7 +358,7 @@ function LineChart({ props, dataset }: RendererProps): ReactElement {
   );
 }
 
-function BarChart({ props, dataset }: RendererProps): ReactElement {
+function BarChart({ props, dataset, state }: RendererProps): ReactElement {
   const t = useT();
   const title = String(props.title ?? t("widgets.barChart.title"));
   const [measure, width] = useMeasuredWidth(640);
@@ -336,8 +370,9 @@ function BarChart({ props, dataset }: RendererProps): ReactElement {
     );
   }
 
+  const choice = chosenSeries(state, dataset.rows);
   const seriesKey =
-    Object.keys(dataset.rows[0] ?? {}).find((key) => typeof dataset.rows[0]?.[key] === "number") ?? "value";
+    choice.series ?? Object.keys(dataset.rows[0] ?? {}).find((key) => typeof dataset.rows[0]?.[key] === "number") ?? "value";
   const points = chartPoints(dataset.rows, seriesKey, (row) => label(row, CATEGORY_KEYS));
   const values = points.map((point) => point.value);
   const geometry = chartGeometry(width, values);
@@ -349,8 +384,9 @@ function BarChart({ props, dataset }: RendererProps): ReactElement {
   return (
     <Frame title={title} dataset={dataset} role="chart">
       <>
+        <SeriesNote choice={choice} />
         <div ref={measure} className="cc-chart-box">
-          <svg className="cc-chart" viewBox={`0 0 ${width} ${CHART_HEIGHT}`} role="img" aria-label={`${title}: ${seriesKey}`}>
+          <svg className="cc-chart" viewBox={`0 0 ${width} ${CHART_HEIGHT}`} role="img" aria-label={`${title}: ${choice.series === undefined ? seriesKey : (choice.label ?? seriesKey)}`}>
             <ChartGrid geometry={geometry} />
             {points.map(({ label: rowLabel, value }, index) => {
               const y = geometry.scaleY(value);
@@ -842,7 +878,7 @@ function Note({ props, state, onStateChange, onAction }: RendererProps): ReactEl
 /** Distinct wedge tones before they repeat; the stylesheet defines one rule per tone. */
 const DONUT_TONES = 6;
 
-function Donut({ props, dataset }: RendererProps): ReactElement {
+function Donut({ props, dataset, state }: RendererProps): ReactElement {
   const t = useT();
   const title = String(props.title ?? t("widgets.donut.title"));
   if (!dataset || dataset.rows.length === 0) {
@@ -853,7 +889,8 @@ function Donut({ props, dataset }: RendererProps): ReactElement {
     );
   }
 
-  const valueKey = Object.keys(dataset.rows[0] ?? {}).find((key) => typeof dataset.rows[0]?.[key] === "number") ?? "value";
+  const choice = chosenSeries(state, dataset.rows);
+  const valueKey = choice.series ?? Object.keys(dataset.rows[0] ?? {}).find((key) => typeof dataset.rows[0]?.[key] === "number") ?? "value";
   const entries = dataset.rows.map((row) => ({ label: label(row, ["label", "name", "category"]), value: Number(row[valueKey] ?? 0) }));
   const result = donutSlices(entries);
 
@@ -881,6 +918,7 @@ function Donut({ props, dataset }: RendererProps): ReactElement {
   return (
     <Frame title={title} dataset={dataset} role="chart">
       <>
+        <SeriesNote choice={choice} />
         <div style={{ display: "flex", gap: "var(--cc-space-md)", alignItems: "center", flexWrap: "wrap" }}>
           <svg
             className="cc-donut"
@@ -1894,8 +1932,9 @@ function FieldControl({ field, value, onChange, onBlur, error, controlId, disabl
 /**
  * A single choice or input on its own.
  *
- * It holds its value on the page and reports it as view state; it sends nothing anywhere, which is why a model is never
- * offered one on its own. It is the same control a form draws for one field, shown by itself in the widget library.
+ * It holds its value on the page, reports it as view state and emits its change event. On a composed surface that event
+ * matters only when the surface's graph wires it into state, which is why a model is offered one on its own only with
+ * an `on` rule. It is the same control a form draws for one field, shown by itself in the widget library.
  */
 function StandaloneField({
   props,
@@ -2218,7 +2257,21 @@ function ListView({ props, state, onAction, onStateChange }: RendererProps): Rea
     actionLabel !== undefined && !itemActionLive ? (unavailableReason ?? t("widgets.list.viewOnlyNotice")) : undefined;
   const ids = new Set(items.map((item) => item.id));
   const current = selected.filter((id) => ids.has(id));
-  const shown = listPage(items, page, pageSize);
+  /*
+   * What a surface's state narrows the list to: a query over the text a person reads, and exact matches on a field. The
+   * items stay whole; only which of them are on screen changes, so clearing the value shows them all again.
+   */
+  const query = typeof state?.query === "string" ? state.query.trim().toLocaleLowerCase(locale) : "";
+  const exact = Object.entries(recordOf(state?.filters));
+  const visible =
+    query === "" && exact.length === 0
+      ? items
+      : items.filter(
+          (item) =>
+            (query === "" || [item.title, item.subtitle, item.meta].some((text) => typeof text === "string" && text.toLocaleLowerCase(locale).includes(query))) &&
+            exact.every(([field, value]) => String((item as Record<string, unknown>)[field] ?? "") === String(value)),
+        );
+  const shown = listPage(visible, page, pageSize);
   const count = (value: number): string => new Intl.NumberFormat(locale).format(value);
   const pressedTitle = items.find((item) => item.id === pressed)?.title;
 
@@ -2259,6 +2312,10 @@ function ListView({ props, state, onAction, onStateChange }: RendererProps): Rea
         ) : items.length === 0 ? (
           <p className="cc-freshness" data-list-state="empty" style={{ margin: 0 }}>
             {typeof props.emptyText === "string" && props.emptyText !== "" ? props.emptyText : t("widgets.list.empty")}
+          </p>
+        ) : visible.length === 0 ? (
+          <p className="cc-freshness" data-list-state="no-match" style={{ margin: 0 }}>
+            {t("widgets.list.noMatch")}
           </p>
         ) : (
           <ul className="cc-list" aria-label={title} data-list-state="ready">

@@ -1,5 +1,6 @@
 import {
   type CompiledSection,
+  type CompositionGraph,
   type CompositionSlot,
   type LayoutContainerKind,
   type LayoutNode,
@@ -9,6 +10,9 @@ import {
   MAX_LAYOUT_CHILDREN,
   MAX_LAYOUT_DEPTH,
   MAX_LAYOUT_NODES,
+  MAX_GRAPH_FEEDS,
+  MAX_GRAPH_RULES,
+  checkCompositionGraph,
   checkLayout,
   describeLayout,
 } from "@clarkcant/contracts";
@@ -51,7 +55,7 @@ export const LAYOUT_TEMPLATE_VERSION = "1";
 
 /** What a model writes for one node. A leaf names a catalog widget; containers nest. */
 export type ProposedLayoutNode =
-  | { kind: "widget"; widget: string; props: Record<string, unknown>; label?: string }
+  | { kind: "widget"; widget: string; props: Record<string, unknown>; label?: string; on?: unknown[]; feed?: unknown[] }
   | { kind: "divider" }
   | { kind: LayoutContainerKind; label?: string; columns?: number; open?: boolean; children: ProposedLayoutNode[] };
 
@@ -77,7 +81,13 @@ const SLOT_BY_FAMILY: Readonly<Record<string, CompositionSlot>> = {
 export function layoutLeafWidgets(registry: CatalogRegistry): string[] {
   return registry
     .entries()
-    .filter((entry) => SLOT_BY_FAMILY[entry.family] !== undefined || entry.definition.id === "canvas.image@1")
+    .filter(
+      (entry) =>
+        SLOT_BY_FAMILY[entry.family] !== undefined ||
+        entry.family === "choice" ||
+        entry.family === "input" ||
+        entry.definition.id === "canvas.image@1",
+    )
     .map((entry) => entry.definition.id)
     .sort();
 }
@@ -116,8 +126,25 @@ function readLabel(value: unknown, where: string, problems: string[]): string | 
   return value.trim();
 }
 
+/**
+ * A leaf's `on` or `feed`: a short list of objects. Only the envelope is read here; what each entry may say is the
+ * graph's to check, once the leaf has a section id to attach it to.
+ */
+function readWiring(value: unknown, name: "on" | "feed", max: number, where: string, problems: string[]): unknown[] | undefined {
+  if (value === undefined) return undefined;
+  if (!Array.isArray(value) || value.length === 0 || value.length > max) {
+    problems.push(`${where} has ${name} that is not a list of 1 to ${String(max)} entries`);
+    return undefined;
+  }
+  if (value.some((entry) => typeof entry !== "object" || entry === null || Array.isArray(entry))) {
+    problems.push(`${where} has ${name} entries that are not objects`);
+    return undefined;
+  }
+  return value;
+}
+
 const NODE_KEYS: Readonly<Record<string, readonly string[]>> = {
-  widget: ["kind", "widget", "props", "label"],
+  widget: ["kind", "widget", "props", "label", "on", "feed"],
   divider: ["kind"],
   container: ["kind", "label", "columns", "open", "children"],
 };
@@ -155,11 +182,15 @@ function readNode(value: unknown, where: string, problems: string[]): ProposedLa
       problems.push(`${where} has props that are not an object`);
       return undefined;
     }
+    const on = readWiring(node.on, "on", MAX_GRAPH_RULES, where, problems);
+    const feed = readWiring(node.feed, "feed", MAX_GRAPH_FEEDS, where, problems);
     return {
       kind: "widget",
       widget: node.widget.trim(),
       props: (node.props ?? {}) as Record<string, unknown>,
       ...(label === undefined ? {} : { label }),
+      ...(on === undefined ? {} : { on }),
+      ...(feed === undefined ? {} : { feed }),
     };
   }
 
@@ -201,10 +232,12 @@ export interface CompileLayoutInput {
   rowsBySlot: Partial<Record<CompositionSlot, Record<string, unknown>[]>>;
   initialState: CompileInput["initialState"];
   imageRef?: { imageId: string; altText: string };
+  /** The state the model declared for the surface, as it wrote it: `{ key: { type, initial } }`. Checked with the graph. */
+  state?: unknown;
 }
 
 export type CompileLayoutResult =
-  | { ok: true; sections: CompiledSection[]; layout: LayoutNode; textAlternative: string }
+  | { ok: true; sections: CompiledSection[]; layout: LayoutNode; textAlternative: string; graph?: CompositionGraph }
   | { ok: false; problems: string[] };
 
 /**
@@ -229,6 +262,9 @@ export function compileLayout(input: CompileLayoutInput): CompileLayoutResult {
 
   const sections: CompiledSection[] = [];
   const countBySlot = new Map<CompositionSlot, number>();
+  // What each leaf wired, with the section id the host gave it attached; the leaf never names one itself.
+  const on: unknown[] = [];
+  const feed: unknown[] = [];
   // The recipe's defaults for a region, so a leaf that asks for metrics without a title gets the same
   // one the overview gives it, and a save button its label and description.
   const recipe = findTemplate("overview");
@@ -252,7 +288,7 @@ export function compileLayout(input: CompileLayoutInput): CompileLayoutResult {
       problems.push(`${where} names "${node.widget}", which is not a widget this node's catalog holds`);
       return undefined;
     }
-    const slot = slotFor(entry.definition.id, entry.family, where, problems);
+    const slot = slotFor(entry.definition.id, entry.family, node.on !== undefined, where, problems);
     if (slot === undefined) return undefined;
     if (slot === "image" && input.imageRef === undefined) {
       problems.push(`${where} asks for an image, and there is no imported image on this node to show`);
@@ -286,6 +322,8 @@ export function compileLayout(input: CompileLayoutInput): CompileLayoutResult {
     const count = (countBySlot.get(slot) ?? 0) + 1;
     countBySlot.set(slot, count);
     const sectionId = `${slot}-${String(count)}`;
+    for (const rule of node.on ?? []) on.push({ ...(rule as Record<string, unknown>), sectionId });
+    for (const entry of node.feed ?? []) feed.push({ ...(entry as Record<string, unknown>), sectionId });
     const rows = input.rowsBySlot[slot];
     sections.push({
       sectionId,
@@ -309,18 +347,52 @@ export function compileLayout(input: CompileLayoutInput): CompileLayoutResult {
   const structural = checkLayout(layout, new Set(sections.map((section) => section.sectionId)));
   if (structural.length > 0) return { ok: false, problems: structural };
 
+  const graph = graphOf(input.state, on, feed, sections);
+  if (!graph.ok) return { ok: false, problems: graph.problems };
+
   const textOf = new Map(sections.map((section) => [section.sectionId, section.textAlternative]));
   return {
     ok: true,
     sections,
     layout,
     textAlternative: describeLayout(layout, (sectionId) => textOf.get(sectionId) ?? ""),
+    ...(graph.graph === undefined ? {} : { graph: graph.graph }),
   };
 }
 
-function slotFor(definitionId: string, family: string, where: string, problems: string[]): CompositionSlot | undefined {
+/**
+ * The graph a tree declares, or the one a search box implies.
+ *
+ * A tree that declares state or wires a leaf gets exactly what it declared, checked whole. A tree that declares nothing
+ * and holds a search box gets the graph that box has always had: it writes the query, every table reads it. With a
+ * declared graph a search box that writes nothing is refused rather than left as a box that silently does nothing.
+ */
+function graphOf(
+  state: unknown,
+  on: unknown[],
+  feed: unknown[],
+  sections: readonly CompiledSection[],
+): { ok: true; graph?: CompositionGraph } | { ok: false; problems: string[] } {
+  const leaves = sections.map((section) => ({ sectionId: section.sectionId, definitionId: section.definitionRef.id, props: section.props }));
+  // Nothing declared: a search box narrows its tables on the page only, by the graph `implicitSearchGraph` gives the
+  // page, and the node stores no graph and binds no event for it.
+  if (state === undefined && on.length === 0 && feed.length === 0) return { ok: true };
+  const graph = { state: state ?? {}, on, feed };
+  const problems = checkCompositionGraph(graph, leaves);
+  const wired = new Set(on.map((rule) => (rule as { sectionId: string }).sectionId));
+  for (const section of sections) {
+    if (section.slot === "search" && !wired.has(section.sectionId)) {
+      problems.push(`${section.sectionId} is a search box that writes no state; give it an "on" rule for "query.change"`);
+    }
+  }
+  return problems.length > 0 ? { ok: false, problems } : { ok: true, graph: graph as CompositionGraph };
+}
+
+function slotFor(definitionId: string, family: string, wired: boolean, where: string, problems: string[]): CompositionSlot | undefined {
   const slot = SLOT_BY_FAMILY[family];
   if (slot !== undefined) return slot;
+  // A choice or an input placed on its own acts only through the surface's state, so it is placed only when it writes some.
+  if ((family === "choice" || family === "input") && wired) return family;
   if (definitionId === "canvas.image@1") return "image";
   if (family === "layout") {
     problems.push(`${where} names the container "${definitionId}"; nest a ${LAYOUT_CONTAINER_KINDS.join(", ")} node instead`);
@@ -331,7 +403,9 @@ function slotFor(definitionId: string, family: string, where: string, problems: 
   } else if (family === "form") {
     problems.push(`${where} names "${definitionId}"; a form is placed with its own show_view, where what it sends is bound, not inside a layout`);
   } else if (family === "choice" || family === "input") {
-    problems.push(`${where} names "${definitionId}", which sends its value nowhere on its own; make it a field of a canvas.form@1`);
+    problems.push(
+      `${where} names "${definitionId}", which sends its value nowhere on its own; give it an "on" rule that writes the surface's state, or make it a field of a canvas.form@1`,
+    );
   } else if (family === "media") {
     problems.push(`${where} names "${definitionId}", and this node has no source for it yet; only an imported image can be placed`);
   } else {
@@ -347,6 +421,8 @@ function slotFor(definitionId: string, family: string, where: string, problems: 
 export interface ComposeLayoutInput extends ComposeInput {
   layout: unknown;
   title?: string;
+  /** The surface state the model declared, unread until the graph is checked. */
+  state?: unknown;
 }
 
 /**
@@ -374,6 +450,7 @@ export function composeLayout(deps: ComposeDeps, input: ComposeLayoutInput): Com
     rowsBySlot: rowsBySlotOf(published),
     initialState: { period, timezone },
     ...(published.imageRefs[0] === undefined ? {} : { imageRef: published.imageRefs[0] }),
+    ...(input.state === undefined ? {} : { state: input.state }),
   });
   if (!compiled.ok) {
     return { ok: false, code: "COMPILE_FAILED", message: "the layout did not compile", problems: compiled.problems };
@@ -384,6 +461,7 @@ export function composeLayout(deps: ComposeDeps, input: ComposeLayoutInput): Com
     templateVersion: LAYOUT_TEMPLATE_VERSION,
     sections: compiled.sections,
     layout: compiled.layout,
+    ...(compiled.graph === undefined ? {} : { graph: compiled.graph }),
     period,
     timezone,
     selector: { mode: "explicit" },

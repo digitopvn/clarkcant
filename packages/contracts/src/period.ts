@@ -18,6 +18,8 @@ export const SLOT_ORDER: readonly CompositionSlot[] = [
   "metrics",
   "filter",
   "search",
+  "choice",
+  "input",
   "trend",
   "table",
   "list",

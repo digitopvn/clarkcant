@@ -1356,10 +1356,11 @@ export function createModelComposer(deps: FixtureModelDeps): FixtureCompose {
      *
      * The tree is scripted; the descriptor is the real one, so the compiler, the catalog lookup, the bounds and the
      * refusal sentence are the host's. `bảng điều khiển` is a grid of two metric tiles and a card holding a search box
-     * above the table it narrows; `đầy đủ` uses every container kind; `quá sâu` and `widget lạ` are proposals the host
-     * refuses.
+     * above the table it narrows; `đầy đủ` uses every container kind; `có liên kết` connects a choice to the series a line
+     * chart plots and a search box to a table through declared state; `quá sâu`, `widget lạ` and `liên kết sai` are
+     * proposals the host refuses.
      */
-    const arranged = /^bố cục\s+(bảng điều khiển|đầy đủ|quá sâu|widget lạ)$/iu.exec(input.text.trim());
+    const arranged = /^bố cục\s+(bảng điều khiển|đầy đủ|có liên kết|liên kết sai|quá sâu|widget lạ)$/iu.exec(input.text.trim());
     if (arranged !== null) {
       const compose = deps.wiring.compose();
       if (compose === undefined) return undefined;
@@ -1372,6 +1373,24 @@ export function createModelComposer(deps: FixtureModelDeps): FixtureCompose {
         ...(label === undefined ? {} : { label }),
       });
       const which = (arranged[1] ?? "").toLowerCase();
+      const wired = (node: Record<string, unknown>, on?: unknown[], feed?: unknown[]): Record<string, unknown> => ({
+        ...node,
+        ...(on === undefined ? {} : { on }),
+        ...(feed === undefined ? {} : { feed }),
+      });
+      const metricChoice = leaf("canvas.choice@1", {
+        label: "Chỉ số trên biểu đồ",
+        kind: "radio",
+        options: [
+          { value: "completed", label: "Việc xong" },
+          { value: "created", label: "Việc tạo" },
+        ],
+        value: "completed",
+      });
+      const linkedState = {
+        metric: { type: "string", initial: "completed" },
+        query: { type: "string", initial: "" },
+      };
       let nested: Record<string, unknown> = leaf("canvas.metrics@1");
       for (let level = 0; level < 6; level += 1) nested = { kind: "stack", children: [nested] };
       const layout: Record<string, unknown> =
@@ -1410,12 +1429,41 @@ export function createModelComposer(deps: FixtureModelDeps): FixtureCompose {
                   { kind: "collapsible", label: "Thêm biểu đồ cột", children: [leaf("canvas.bar@1", { title: "Cột theo ngày" })] },
                 ],
               }
-            : which === "quá sâu"
-              ? nested
-              : { kind: "grid", children: [leaf("canvas.metrics@1"), leaf("canvas.sparkle@1")] };
+            : which === "có liên kết"
+              ? {
+                  kind: "stack",
+                  children: [
+                    {
+                      kind: "row",
+                      children: [
+                        wired(metricChoice, [{ event: "choice.change", steps: [{ op: "select-field", key: "metric", field: "value" }] }]),
+                        wired(leaf("canvas.search@1", { label: "Tìm trong bảng", placeholder: "Ngày, số việc…" }), [
+                          { event: "query.change", steps: [{ op: "select-field", key: "query", field: "query" }] },
+                        ]),
+                      ],
+                    },
+                    wired(leaf("canvas.line@1", { title: "Xu hướng" }), undefined, [{ op: "filter-equals", field: "series", key: "metric" }]),
+                    wired(leaf("canvas.table@1", { title: "Số việc theo ngày" }), undefined, [{ op: "query", key: "query" }]),
+                  ],
+                }
+              : which === "liên kết sai"
+                ? {
+                    kind: "stack",
+                    children: [
+                      wired(metricChoice, [{ event: "choice.change", steps: [{ op: "select-field", key: "chart", field: "value" }] }]),
+                      wired(leaf("canvas.metrics@1"), undefined, [{ op: "query", key: "metric" }]),
+                    ],
+                  }
+                : which === "quá sâu"
+                  ? nested
+                  : { kind: "grid", children: [leaf("canvas.metrics@1"), leaf("canvas.sparkle@1")] };
       try {
         const block = await view.build({
-          props: { layout, title: which === "đầy đủ" ? "Mọi kiểu bố cục" : "Bảng điều khiển" },
+          props: {
+            layout,
+            title: which === "đầy đủ" ? "Mọi kiểu bố cục" : which === "có liên kết" ? "Bảng có liên kết" : "Bảng điều khiển",
+            ...(which === "có liên kết" || which === "liên kết sai" ? { state: linkedState } : {}),
+          },
           caption: "",
           at: instantSchema.parse(new Date().toISOString()),
           principal: input.principal as never,

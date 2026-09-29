@@ -59,6 +59,8 @@ function toSurfaceViewFromSnapshot(captured: SnapshotPresentationResponse, revis
     tombstone: captured.tombstone,
     availability,
     ...(spec?.layout === undefined ? {} : { layout: spec.layout }),
+    // The graph it was captured with, and no stored values: history shows the state the surface started in.
+    ...(spec?.graph === undefined ? {} : { graph: spec.graph }),
     // A snapshot is history: it never acts, whatever it recorded when it was taken.
     readOnly: true,
   };

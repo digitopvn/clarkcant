@@ -1,6 +1,22 @@
 import { type KeyboardEvent, type ReactElement, type ReactNode, useId, useMemo, useRef, useState } from "react";
 
-import { type CompositionSlot, type LayoutContainerNode, type LayoutNode, describeLayout, orderSections } from "@clarkcant/contracts";
+import {
+  type CompositionGraph,
+  type CompositionSlot,
+  type GraphValues,
+  type LayoutContainerNode,
+  type LayoutNode,
+  GRAPH_EVENTS,
+  applyGraphEvent,
+  describeLayout,
+  graphFeedState,
+  graphFeedsReading,
+  graphFilterLabels,
+  graphRuleFor,
+  graphValues,
+  implicitSearchGraph,
+  orderSections,
+} from "@clarkcant/contracts";
 
 import { type RendererDataset, resolveRenderer } from "./renderers.tsx";
 import { useT } from "./i18n/locale-context.tsx";
@@ -42,6 +58,8 @@ export interface CompositeSurfaceAction {
   label: string;
   kind: "view" | "invoke" | "agent" | "workflow";
   effectCategory: string;
+  /** The view operation, when known; a graph event goes to the section's `state.event` binding and nothing else does. */
+  operation?: string;
 }
 
 export interface CompositeSurfaceView {
@@ -65,6 +83,10 @@ export interface CompositeSurfaceView {
    * sections by id; without it the regions are laid out in slot order.
    */
   layout?: LayoutNode;
+  /** How the leaves write and read the surface's state. Absent on a surface with none; a search box then implies one. */
+  graph?: CompositionGraph;
+  /** The graph values the node holds for a live surface. Absent for history, which shows the values it started with. */
+  graphState?: unknown;
   /**
    * Set when this surface may not act.
    *
@@ -101,15 +123,37 @@ const AVAILABILITY_TEXT_KEY: Record<RegionAvailability, MessageKey | undefined> 
   loading: "widgets.surface.regionLoading",
 };
 
-const SEARCH_DEFINITION_ID = "canvas.search@1";
-const TABLE_DEFINITION_ID = "canvas.table@1";
+/** The view operation a graph event is sent through. */
+export const STATE_EVENT_OPERATION = "state.event";
 
 /**
- * Events that only describe the view: a search's settled query and a list's selection. They stay on the page, like the
- * table sort and the selected day, because nothing on the node answers them; forwarding one would reach the action
- * route as if a person had pressed something.
+ * Events that only describe the view: a search's settled query and a list's selection. Unless the surface's graph
+ * listens to them they stay on the page, like the table sort and the selected day, because nothing on the node answers
+ * them; forwarding one would reach the action route as if a person had pressed something.
  */
 const VIEW_EVENTS: ReadonlySet<string> = new Set(["query.change", "selection.change"]);
+
+/**
+ * The binding an intent goes to: a section's `state.event` binding for a graph event, and its other binding for
+ * anything else. A section can hold both, as a calendar that selects a day and also reports it to the graph does.
+ */
+export function actionForIntent<T extends { sectionId: string; operation?: string }>(
+  actions: readonly T[],
+  intent: Pick<SurfaceIntent, "sectionId" | "action">,
+): T | undefined {
+  const wantsGraph = intent.action === STATE_EVENT_OPERATION;
+  return actions.find((action) => action.sectionId === intent.sectionId && (action.operation === STATE_EVENT_OPERATION) === wantsGraph);
+}
+
+/** The graph a surface runs: the one it declares, or the one its search box implies. */
+export function surfaceGraph(view: Pick<CompositeSurfaceView, "graph" | "sections">): CompositionGraph | undefined {
+  return (
+    view.graph ??
+    implicitSearchGraph(
+      view.sections.map((section) => ({ sectionId: section.sectionId, definitionId: section.definitionRef.id, props: section.props })),
+    )
+  );
+}
 
 function regionDataset(section: CompositeSurfaceSection, availability: RegionAvailability): RendererDataset | undefined {
   if (availability === "missing" || availability === "denied" || availability === "error" || availability === "loading") {
@@ -129,23 +173,57 @@ export function MiniAppSurface(props: MiniAppSurfaceProps): ReactElement {
   const readOnly = view.readOnly === true;
   const sectionById = useMemo(() => new Map(view.sections.map((section) => [section.sectionId, section])), [view.sections]);
 
+  // A graph event's binding is plumbing, not something a person presses, so it is never announced as an action.
   const actionBySection = useMemo(() => {
     const map = new Map<string, CompositeSurfaceAction>();
-    for (const action of view.actions) map.set(action.sectionId, action);
+    for (const action of view.actions) if (action.operation !== STATE_EVENT_OPERATION) map.set(action.sectionId, action);
     return map;
   }, [view.actions]);
+
+  /*
+   * Sections whose events the node keeps. A search box on a surface stored without a graph narrows its tables on the
+   * page only, as it always has, so it has no such binding and nothing is sent for it.
+   */
+  const graphBound = useMemo(
+    () => new Set(view.actions.filter((action) => action.operation === STATE_EVENT_OPERATION).map((action) => action.sectionId)),
+    [view.actions],
+  );
 
   const emit = (sectionId: string, action: string, input: Record<string, unknown>): void => {
     onIntent?.({ sectionId, action, input });
   };
 
   /*
-   * A search box names the surface's current query, and the surface applies it to its own tables on the page: the rows
-   * are already here, so narrowing them needs no read and no action. The box's own props give the starting query.
+   * The surface's state. The page applies an event at once, by the same rules the node applies it with, so the tables and
+   * charts it feeds answer without a round trip; the node's values replace the page's whenever the node reports new ones.
    */
-  const searchSection = view.sections.find((section) => section.definitionRef.id === SEARCH_DEFINITION_ID);
-  const searched = searchSection === undefined ? undefined : (state[searchSection.sectionId]?.query ?? searchSection.props.query);
-  const surfaceQuery = typeof searched === "string" ? searched : undefined;
+  const graph = useMemo(() => surfaceGraph(view), [view.graph, view.sections]);
+  const storedKey = JSON.stringify(view.graphState ?? null);
+  const [local, setLocal] = useState<{ storedKey: string; values: GraphValues } | undefined>();
+  const values: GraphValues =
+    graph === undefined ? {} : local !== undefined && local.storedKey === storedKey ? local.values : graphValues(graph, view.graphState);
+
+  /** Apply one wired event on the page. False when the graph refuses it, so nothing is sent for it either. */
+  const applyLocally = (section: CompositeSurfaceSection, event: string, payload: Record<string, unknown>): boolean => {
+    if (graph === undefined) return false;
+    const outcome = applyGraphEvent(graph, values, { sectionId: section.sectionId, definitionId: section.definitionRef.id, event, payload });
+    if (!outcome.ok) return false;
+    setLocal({ storedKey, values: outcome.values });
+    const fed = graphFeedsReading(graph, outcome.changed);
+    if (fed.length > 0) {
+      // What a changed value drives starts on its first page, and a query a table typed into its own box gives way to the
+      // one the surface now holds, as a table's own search box does.
+      setState((current) => {
+        const next = { ...current };
+        for (const feed of fed) {
+          const { query: _own, ...kept } = current[feed.sectionId] ?? {};
+          next[feed.sectionId] = { ...(feed.op === "query" ? kept : (current[feed.sectionId] ?? {})), page: 1 };
+        }
+        return next;
+      });
+    }
+    return true;
+  };
 
   if (view.tombstone != null) {
     return (
@@ -191,6 +269,13 @@ export function MiniAppSurface(props: MiniAppSurfaceProps): ReactElement {
     </figure>
   );
 
+  /** A filter the surface set, named as the choice that set it names it, so a chart says what a person picked. */
+  function filterLabelsOf(section: CompositeSurfaceSection): { filterLabels?: Record<string, string> } {
+    const leaves = view.sections.map((entry) => ({ sectionId: entry.sectionId, definitionId: entry.definitionRef.id, props: entry.props }));
+    const labels = graphFilterLabels(graph, values, leaves, section);
+    return Object.keys(labels).length === 0 ? {} : { filterLabels: labels };
+  }
+
   function region(section: CompositeSurfaceSection): ReactElement {
     const availability = view.availability?.[section.sectionId] ?? (section.rows === undefined ? "missing" : "live");
     const Renderer = resolveRenderer(section.definitionRef.id);
@@ -201,10 +286,10 @@ export function MiniAppSurface(props: MiniAppSurfaceProps): ReactElement {
       period: view.initialState.period,
       ...(view.initialState.selectedDate === undefined ? {} : { selectedDate: view.initialState.selectedDate }),
       ...(busy === true ? { pending: true } : {}),
-      ...(section.definitionRef.id === TABLE_DEFINITION_ID && surfaceQuery !== undefined ? { query: surfaceQuery } : {}),
+      ...graphFeedState(graph, values, { sectionId: section.sectionId, definitionId: section.definitionRef.id }),
+      ...filterLabelsOf(section),
       ...(state[section.sectionId] ?? {}),
     };
-    const isSearch = section.definitionRef.id === SEARCH_DEFINITION_ID;
 
     return (
       <section
@@ -252,24 +337,32 @@ export function MiniAppSurface(props: MiniAppSurfaceProps): ReactElement {
             // period is on screen are presentation, not a change to the node. Only the action
             // channel is gated, because that is the one that would reach the server.
             onStateChange={(patch: Record<string, unknown>) => {
-              setState((current) => {
-                const next = { ...current, [section.sectionId]: { ...(current[section.sectionId] ?? {}), ...patch } };
-                // A new query starts every table on its first page, as a table's own search box does. A query a table
-                // typed into its own box is dropped, so the one box the person just used is the one that counts.
-                if (isSearch && typeof patch.query === "string") {
-                  for (const other of view.sections) {
-                    if (other.definitionRef.id !== TABLE_DEFINITION_ID) continue;
-                    const { query: _own, ...kept } = current[other.sectionId] ?? {};
-                    next[other.sectionId] = { ...kept, page: 1 };
+              setState((current) => ({ ...current, [section.sectionId]: { ...(current[section.sectionId] ?? {}), ...patch } }));
+              /*
+               * History cannot act, but it can still be read: a search box or a choice in a snapshot narrows what the
+               * snapshot shows, on the page only. Its value arrives here, as the control's own view state.
+               */
+              if (readOnly) {
+                for (const [event, spec] of Object.entries(GRAPH_EVENTS[section.definitionRef.id] ?? {})) {
+                  if (spec.echo !== undefined && spec.echo in patch && graphRuleFor(graph, section.sectionId, event) !== undefined) {
+                    applyLocally(section, event, { [spec.echo]: patch[spec.echo] });
                   }
                 }
-                return next;
-              });
+              }
             }}
             {...(readOnly
               ? {}
               : {
                   onAction: (action: string, payload: Record<string, unknown>) => {
+                    // A wired event changes the surface's state here and on the node; what it also does on its own, it
+                    // still does below.
+                    if (graphRuleFor(graph, section.sectionId, action) !== undefined) {
+                      if (applyLocally(section, action, payload) && graphBound.has(section.sectionId)) {
+                        emit(section.sectionId, STATE_EVENT_OPERATION, { event: action, payload });
+                      }
+                      // What the leaf also does on its own reaches the node only through a binding it has.
+                      if (!actionBySection.has(section.sectionId)) return;
+                    }
                     if (VIEW_EVENTS.has(action)) return;
                     emit(section.sectionId, action, payload);
                   },
