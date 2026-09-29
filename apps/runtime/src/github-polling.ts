@@ -164,6 +164,8 @@ export function createGithubPolling(
       title: `Chưa theo dõi được ${target.repository}`,
       body,
       conversationId: target.conversationId,
+      // Names the repository, so "stop telling me about this" quiets this repository's polling and no other's.
+      subject: { kind: "signal-source", sourceKey: target.sourceKey, label: target.repository, conversationId: target.conversationId },
       dedupKey: `github-poll:${target.sourceKey}:${failingSince}`,
       at,
     });
