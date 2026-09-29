@@ -14,11 +14,17 @@ import {
   readArtifactViewer,
   readStatusCard,
   statusCardSemantic,
+  XY_CHART_KIND,
+  readXyChart,
+  readXyChartView,
+  xyChartData,
+  xyChartSemantic,
 } from "@clarkcant/contracts";
 import { ARTIFACT_VIEWER_KIND, STATUS_CARD_KIND } from "@clarkcant/data-canvas";
 import { type WidgetDeps, getActionBinding, getInstance, liveStateOf, semanticViewOf } from "@clarkcant/core";
 import {
   findCompositionByInstance,
+  getDatasetForPrincipal,
   getWidgetSemantic,
   listTouchedWidgets,
   recordWidgetSemantic,
@@ -115,6 +121,27 @@ export function buildWidgetSemantic(
     return normalizeSemanticDoc({ instanceId, definitionId, ...artifactViewerSemantic(viewer), availableActions, freshness: "unknown" });
   }
 
+  // An area or scatter chart says which series are shown, their ranges and the point selected, from the state row and
+  // the rows this node holds now. Its freshness is the dataset's own: the chart is drawn from it, not from the props.
+  const chartKind = XY_CHART_KIND[definitionId];
+  const chart = chartKind === undefined ? undefined : readXyChart(chartKind, instance.props);
+  if (chart !== undefined) {
+    const dataset = getDatasetForPrincipal(deps.db, chart.datasetRef, instance.ownerPrincipalId);
+    const document = dataset?.document;
+    const rows =
+      typeof document === "object" && document !== null && Array.isArray((document as { rows?: unknown }).rows)
+        ? (document as { rows: unknown[] }).rows
+        : [];
+    const data = dataset === undefined ? undefined : xyChartData(chart, rows);
+    const view = readXyChartView(chart, liveStateOf(deps, instanceId)?.body);
+    return normalizeSemanticDoc({
+      instanceId,
+      definitionId,
+      ...xyChartSemantic(chart, data, view),
+      availableActions,
+      freshness: dataset?.freshness ?? "unknown",
+    });
+  }
   return normalizeSemanticDoc({ instanceId, definitionId, summary: `${definitionId} (${instance.lifecycle})`, availableActions });
 }
 

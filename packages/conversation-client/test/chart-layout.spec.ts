@@ -8,9 +8,18 @@ import {
   formatTick,
   formatTicks,
   labelStride,
+  linearScale,
+  markerPath,
+  markerShape,
+  MARKER_SHAPES,
   MIN_LABEL_SLOT,
+  movePointCursor,
   niceRange,
+  niceSpan,
   niceTicks,
+  pointOrder,
+  seriesDash,
+  stackBands,
   valueLabelShown,
 } from "../src/chart-layout.ts";
 
@@ -146,5 +155,97 @@ describe("value labels", () => {
 
   it("shows every label when there is room", () => {
     expect([0, 1, 2, 3].every((index) => valueLabelShown(index, 4, 1))).toBe(true);
+  });
+});
+
+describe("a number line that is not measured from zero", () => {
+  it("covers the values with round ticks and does not stretch down to zero", () => {
+    const ticks = niceSpan(3.4, 4.6);
+    expect(ticks[0]).toBeLessThanOrEqual(3.4);
+    expect(ticks.at(-1)).toBeGreaterThanOrEqual(4.6);
+    expect(ticks[0]).toBeGreaterThan(0);
+    expect(ticks).toEqual([3, 3.5, 4, 4.5, 5]);
+  });
+
+  it("puts a single value inside the plot rather than on its edge", () => {
+    const ticks = niceSpan(7, 7);
+    expect(ticks[0]).toBeLessThan(7);
+    expect(ticks.at(-1)).toBeGreaterThan(7);
+    expect(niceSpan(0, 0)[0]).toBeLessThan(0);
+  });
+
+  it("draws the axis of a scale that does not reach zero along its lowest line", () => {
+    const geometry = chartGeometry(300, [3.4, 4.6], niceSpan(3.4, 4.6));
+    expect(geometry.zero).toBe(geometry.scaleY(3));
+    expect(geometry.zero).toBe(CHART_HEIGHT - CHART_PAD.bottom);
+  });
+
+  it("maps a domain onto a range, and a domain of one value onto the middle", () => {
+    expect(linearScale([0, 10], [100, 200])(5)).toBe(150);
+    expect(linearScale([3, 3], [100, 200])(3)).toBe(150);
+  });
+});
+
+describe("stacked areas", () => {
+  it("puts each series on top of the ones before it", () => {
+    expect(stackBands([[1, 2], [3, 4], [5, 6]])).toEqual([
+      { lower: [0, 0], upper: [1, 2] },
+      { lower: [1, 2], upper: [4, 6] },
+      { lower: [4, 6], upper: [9, 12] },
+    ]);
+  });
+
+  it("lets a gap add nothing instead of pulling the bands above it to zero", () => {
+    expect(stackBands([[1, Number.NaN], [2, 2]])[1]).toEqual({ lower: [1, 0], upper: [3, 2] });
+  });
+});
+
+describe("telling series apart without colour", () => {
+  it("gives each of the most series a chart holds its own shape and line pattern", () => {
+    const shapes = Array.from({ length: 8 }, (_, index) => markerShape(index));
+    const dashes = Array.from({ length: 8 }, (_, index) => seriesDash(index));
+    expect(new Set(shapes).size).toBe(8);
+    expect(new Set(dashes).size).toBe(8);
+  });
+
+  it("draws every shape as a closed path around its centre", () => {
+    for (const shape of MARKER_SHAPES) {
+      const d = markerPath(shape, 50, 40, 4);
+      expect(d.startsWith("M ")).toBe(true);
+      expect(d.trimEnd().endsWith("Z")).toBe(true);
+      const numbers = (d.match(/-?\d+(\.\d+)?/gu) ?? []).map(Number);
+      expect(numbers.every((value) => Number.isFinite(value))).toBe(true);
+    }
+  });
+});
+
+describe("walking a chart's points with the keyboard", () => {
+  it("walks a scatter's points by x, not by row", () => {
+    expect(pointOrder([3, 1, 2, 1])).toEqual([1, 3, 2, 0]);
+    expect(pointOrder(["W1", "W2"])).toEqual([0, 1]);
+    const order = pointOrder([3, 1, 2]);
+    expect(movePointCursor("ArrowRight", { series: 0, index: 1 }, [0], order)).toEqual({ series: 0, index: 2 });
+    expect(movePointCursor("ArrowRight", { series: 0, index: 2 }, [0], order)).toEqual({ series: 0, index: 0 });
+  });
+
+  it("stays on the chart at its ends, and Home and End jump to them", () => {
+    const order = [0, 1, 2];
+    expect(movePointCursor("ArrowLeft", { series: 0, index: 0 }, [0], order)).toEqual({ series: 0, index: 0 });
+    expect(movePointCursor("ArrowRight", { series: 0, index: 2 }, [0], order)).toEqual({ series: 0, index: 2 });
+    expect(movePointCursor("End", { series: 0, index: 0 }, [0], order)).toEqual({ series: 0, index: 2 });
+    expect(movePointCursor("Home", { series: 0, index: 2 }, [0], order)).toEqual({ series: 0, index: 0 });
+  });
+
+  it("moves between shown series on the same row and skips a hidden one", () => {
+    const order = [0, 1, 2];
+    // Series 1 is hidden, so down from series 0 lands on series 2.
+    expect(movePointCursor("ArrowDown", { series: 0, index: 1 }, [0, 2], order)).toEqual({ series: 2, index: 1 });
+    expect(movePointCursor("ArrowUp", { series: 2, index: 1 }, [0, 2], order)).toEqual({ series: 0, index: 1 });
+    expect(movePointCursor("ArrowUp", { series: 0, index: 1 }, [0, 2], order)).toEqual({ series: 0, index: 1 });
+  });
+
+  it("leaves other keys to the page", () => {
+    expect(movePointCursor("Tab", { series: 0, index: 0 }, [0], [0])).toBeUndefined();
+    expect(movePointCursor("ArrowRight", { series: 0, index: 0 }, [0], [])).toBeUndefined();
   });
 });

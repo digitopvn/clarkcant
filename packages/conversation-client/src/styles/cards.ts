@@ -186,6 +186,40 @@ button.cc-badge:hover, .cc-badge[role="button"]:hover { color: var(--cc-text); b
 .cc-chart .bar { fill: var(--cc-accent); }
 .cc-chart .datum:hover .point { fill: var(--cc-accent); }
 .cc-chart .datum:hover .bar { fill: color-mix(in oklab, var(--cc-accent) 80%, var(--cc-text)); }
+/*
+ * Area and scatter charts. Each series reads its tone from data-slice-tone and is told apart by its line pattern and
+ * point shape too, so no series is known by colour alone. A point is a button: the focused one takes the focus colour,
+ * the selected one is filled and larger. Past a few dozen rows an area draws only the points a person is on.
+ */
+.cc-chart .xy-area { fill: var(--cc-slice, var(--cc-accent)); opacity: 0.12; stroke: none; }
+.cc-chart[data-stacked="true"] .xy-area { opacity: 0.32; }
+.cc-chart .xy-line, .cc-xy-key line { fill: none; stroke: var(--cc-slice, var(--cc-accent)); stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
+.cc-chart .marker, .cc-xy-key .marker { fill: var(--cc-card); fill-rule: evenodd; stroke: var(--cc-slice, var(--cc-accent)); stroke-width: 1.75; }
+.cc-chart .marker { cursor: pointer; }
+.cc-chart .marker:hover { fill: var(--cc-slice, var(--cc-accent)); }
+.cc-chart .marker[aria-pressed="true"] { fill: var(--cc-slice, var(--cc-accent)); stroke: var(--cc-text); stroke-width: 2; }
+.cc-chart .marker:focus { outline: none; }
+.cc-chart .marker:focus-visible { stroke: var(--cc-focus); stroke-width: 3; opacity: 1; }
+.cc-chart[data-dense="true"] .marker { opacity: 0; }
+.cc-chart[data-dense="true"] .marker:hover, .cc-chart[data-dense="true"] .marker[aria-pressed="true"] { opacity: 1; }
+.cc-xy-legend { list-style: none; margin: 0 0 var(--cc-space-xs); padding: 0; display: flex; flex-wrap: wrap; gap: var(--cc-space-xs); }
+.cc-xy-legend button {
+  display: inline-flex; align-items: center; gap: var(--cc-space-xs); min-height: 32px; max-width: 100%;
+  padding: 0 var(--cc-space-sm); border: 1px solid var(--cc-border); border-radius: var(--cc-radius-badge);
+  background: var(--cc-elevated); color: var(--cc-text); font: inherit; font-size: var(--cc-text-label); cursor: pointer;
+}
+.cc-xy-legend button[aria-pressed="false"] { background: transparent; color: var(--cc-text-muted); }
+.cc-xy-legend button[aria-pressed="false"] .cc-xy-legend-name { text-decoration: line-through; }
+.cc-xy-legend button[aria-pressed="false"] .cc-xy-key { opacity: 0.45; }
+.cc-xy-legend button:focus-visible, .cc-xy-clear:focus-visible { outline: 2px solid var(--cc-focus); outline-offset: 2px; }
+.cc-xy-legend-name { min-width: 0; overflow-wrap: anywhere; }
+.cc-xy-key { width: 26px; height: 12px; flex: none; overflow: visible; }
+.cc-xy-selected { display: flex; flex-wrap: wrap; align-items: center; gap: var(--cc-space-sm); min-height: 0; font-size: var(--cc-text-label); overflow-wrap: anywhere; }
+.cc-xy-selected:empty { display: none; }
+.cc-xy-clear {
+  min-height: 28px; padding: 0 var(--cc-space-sm); border: 1px solid var(--cc-border); border-radius: var(--cc-radius-badge);
+  background: transparent; color: var(--cc-text); font: inherit; font-size: var(--cc-text-label); cursor: pointer;
+}
 
 /* Note */
 .cc-note-area {

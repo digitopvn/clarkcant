@@ -125,8 +125,13 @@ export interface ChartGeometry {
   scaleY: (value: number) => number;
 }
 
-export function chartGeometry(width: number, values: number[]): ChartGeometry {
-  const ticks = niceRange(Math.min(...values, 0), Math.max(...values, 0));
+/**
+ * The frame of a chart `width` pixels wide: the plot area and the value scale.
+ *
+ * The value ticks default to a range from zero; a chart whose values are not measured from zero (a scatter plot) passes
+ * its own, from `niceSpan`.
+ */
+export function chartGeometry(width: number, values: number[], ticks: number[] = niceRange(Math.min(...values, 0), Math.max(...values, 0))): ChartGeometry {
   const bottom = ticks[0] ?? 0;
   const top = ticks.at(-1) ?? 1;
   const plotHeight = CHART_HEIGHT - CHART_PAD.top - CHART_PAD.bottom;
@@ -137,9 +142,187 @@ export function chartGeometry(width: number, values: number[]): ChartGeometry {
     plotWidth: Math.max(width - CHART_PAD.left - CHART_PAD.right, 1),
     plotHeight,
     ticks,
-    zero: scaleY(0),
+    // A scale that does not reach zero draws its axis along its lowest gridline, not outside the plot.
+    zero: scaleY(bottom <= 0 && top >= 0 ? 0 : bottom),
     scaleY,
   };
+}
+
+/** A round step (1, 2 or 5 times a power of ten) of about `span / target`. */
+function niceStep(span: number, target: number): number {
+  const rough = span / target;
+  const power = 10 ** Math.floor(Math.log10(rough));
+  const residual = rough / power;
+  return (residual <= 1 ? 1 : residual <= 2 ? 2 : residual <= 5 ? 5 : 10) * power;
+}
+
+/**
+ * Gridline values covering `min` to `max` with a round step, without reaching for zero.
+ *
+ * For a number line whose values are not measured from zero, the x axis of a scatter plot or its y axis: points
+ * between 3.4 and 4.6 squeezed into the top fifth of a scale from zero would read as one blob. A single value is given a
+ * step either side, so it is drawn inside the plot rather than on its edge.
+ */
+export function niceSpan(min: number, max: number, target = 4): number[] {
+  if (!Number.isFinite(min) || !Number.isFinite(max)) return [0, 1];
+  let low = Math.min(min, max);
+  let high = Math.max(min, max);
+  if (high === low) {
+    const pad = low === 0 ? 1 : Math.abs(low) / 10;
+    low -= pad;
+    high += pad;
+  }
+  const step = niceStep(high - low, target);
+  const first = Math.floor(low / step) * step;
+  const last = Math.ceil(high / step) * step;
+  const ticks: number[] = [];
+  for (let value = first; value <= last + step / 2; value += step) ticks.push(Number(value.toFixed(10)) || 0);
+  return ticks;
+}
+
+/** A map from `domain` onto `range`; a domain of one value maps to the middle of the range. */
+export function linearScale(domain: readonly [number, number], range: readonly [number, number]): (value: number) => number {
+  const [d0, d1] = domain;
+  const [r0, r1] = range;
+  if (d1 === d0) return () => (r0 + r1) / 2;
+  return (value) => r0 + ((value - d0) / (d1 - d0)) * (r1 - r0);
+}
+
+/** One band of a stacked area: the series drawn from `lower` up to `upper`, index by index. */
+export interface StackedBand {
+  lower: number[];
+  upper: number[];
+}
+
+/**
+ * The bands of a stacked area, each series on top of the ones before it.
+ *
+ * A value that is not a number adds nothing, so a gap never pulls the bands above it down to zero. The node refuses
+ * negative values on a stacked area, because a band cannot be stacked below the one it sits on.
+ */
+export function stackBands(series: readonly (readonly number[])[]): StackedBand[] {
+  const length = Math.max(0, ...series.map((values) => values.length));
+  let running = Array.from({ length }, () => 0);
+  return series.map((values) => {
+    const lower = running;
+    const upper = lower.map((base, index) => {
+      const value = values[index];
+      return value !== undefined && Number.isFinite(value) ? base + value : base;
+    });
+    running = upper;
+    return { lower, upper };
+  });
+}
+
+/**
+ * The shape of each series' points, in series order.
+ *
+ * A series is told apart by its shape and its line pattern as well as its tone, so a reader who cannot tell the tones
+ * apart, or a print in grey, still sees which points belong together.
+ */
+export const MARKER_SHAPES = ["circle", "square", "triangle", "diamond", "cross", "triangle-down", "plus", "ring"] as const;
+export type MarkerShape = (typeof MARKER_SHAPES)[number];
+
+/** The line pattern of each series, in series order: solid first, then dashes a reader can tell apart. */
+export const SERIES_DASHES = ["", "7 4", "2 3", "9 3 2 3", "1 5", "12 4", "5 2 1 2", "3 6"] as const;
+
+export function markerShape(seriesIndex: number): MarkerShape {
+  return MARKER_SHAPES[seriesIndex % MARKER_SHAPES.length] ?? "circle";
+}
+
+export function seriesDash(seriesIndex: number): string {
+  return SERIES_DASHES[seriesIndex % SERIES_DASHES.length] ?? "";
+}
+
+/** An SVG path for a point of `shape` centred on (`cx`, `cy`), about `r` from centre to edge. */
+export function markerPath(shape: MarkerShape, cx: number, cy: number, r: number): string {
+  const n = (value: number): string => String(Number(value.toFixed(2)));
+  const circle = (radius: number): string =>
+    `M ${n(cx - radius)} ${n(cy)} a ${n(radius)} ${n(radius)} 0 1 0 ${n(radius * 2)} 0 a ${n(radius)} ${n(radius)} 0 1 0 ${n(-radius * 2)} 0 Z`;
+  switch (shape) {
+    case "circle":
+      return circle(r);
+    case "ring":
+      return `${circle(r)} ${circle(r * 0.45)}`;
+    case "square":
+      return `M ${n(cx - r * 0.85)} ${n(cy - r * 0.85)} H ${n(cx + r * 0.85)} V ${n(cy + r * 0.85)} H ${n(cx - r * 0.85)} Z`;
+    case "triangle":
+      return `M ${n(cx)} ${n(cy - r * 1.1)} L ${n(cx + r)} ${n(cy + r * 0.75)} L ${n(cx - r)} ${n(cy + r * 0.75)} Z`;
+    case "triangle-down":
+      return `M ${n(cx)} ${n(cy + r * 1.1)} L ${n(cx + r)} ${n(cy - r * 0.75)} L ${n(cx - r)} ${n(cy - r * 0.75)} Z`;
+    case "diamond":
+      return `M ${n(cx)} ${n(cy - r * 1.15)} L ${n(cx + r * 1.15)} ${n(cy)} L ${n(cx)} ${n(cy + r * 1.15)} L ${n(cx - r * 1.15)} ${n(cy)} Z`;
+    case "cross": {
+      const a = r * 0.9;
+      const w = r * 0.35;
+      return (
+        `M ${n(cx - a)} ${n(cy - a + w)} L ${n(cx - a + w)} ${n(cy - a)} L ${n(cx)} ${n(cy - w)} L ${n(cx + a - w)} ${n(cy - a)} ` +
+        `L ${n(cx + a)} ${n(cy - a + w)} L ${n(cx + w)} ${n(cy)} L ${n(cx + a)} ${n(cy + a - w)} L ${n(cx + a - w)} ${n(cy + a)} ` +
+        `L ${n(cx)} ${n(cy + w)} L ${n(cx - a + w)} ${n(cy + a)} L ${n(cx - a)} ${n(cy + a - w)} L ${n(cx - w)} ${n(cy)} Z`
+      );
+    }
+    case "plus": {
+      const a = r * 1.05;
+      const w = r * 0.38;
+      return (
+        `M ${n(cx - w)} ${n(cy - a)} H ${n(cx + w)} V ${n(cy - w)} H ${n(cx + a)} V ${n(cy + w)} H ${n(cx + w)} V ${n(cy + a)} ` +
+        `H ${n(cx - w)} V ${n(cy + w)} H ${n(cx - a)} V ${n(cy - w)} H ${n(cx - w)} Z`
+      );
+    }
+  }
+}
+
+/** Where a chart's keyboard focus is: a point of a series, by row index. */
+export interface PointCursor {
+  series: number;
+  index: number;
+}
+
+/**
+ * The order the arrow keys walk a series' points in: by x, then by row.
+ *
+ * An area's rows already rise along x. A scatter's rows can come in any order, and walking them by row made the right
+ * arrow jump back and forth across the plot.
+ */
+export function pointOrder(xs: readonly (number | string)[]): number[] {
+  const indices = xs.map((_, index) => index);
+  if (!xs.every((x) => typeof x === "number")) return indices;
+  return indices.sort((a, b) => (xs[a] as number) - (xs[b] as number) || a - b);
+}
+
+/**
+ * Where a key moves the focus among a chart's points, or `undefined` when the key is not one the chart handles.
+ *
+ * Left and right walk the focused series in `order`, Home and End jump to its ends, and up and down move to the same row
+ * of the previous or next shown series. The focus never leaves the chart and never lands on a hidden series.
+ */
+export function movePointCursor(
+  key: string,
+  cursor: PointCursor,
+  shownSeries: readonly number[],
+  order: readonly number[],
+): PointCursor | undefined {
+  if (order.length === 0 || shownSeries.length === 0) return undefined;
+  const position = Math.max(0, order.indexOf(cursor.index));
+  const seriesAt = Math.max(0, shownSeries.indexOf(cursor.series));
+  const series = shownSeries[seriesAt] ?? shownSeries[0] ?? 0;
+  const at = (next: number): PointCursor => ({ series, index: order[Math.min(Math.max(next, 0), order.length - 1)] ?? 0 });
+  switch (key) {
+    case "ArrowRight":
+      return at(position + 1);
+    case "ArrowLeft":
+      return at(position - 1);
+    case "Home":
+      return at(0);
+    case "End":
+      return at(order.length - 1);
+    case "ArrowUp":
+      return { series: shownSeries[Math.max(seriesAt - 1, 0)] ?? series, index: cursor.index };
+    case "ArrowDown":
+      return { series: shownSeries[Math.min(seriesAt + 1, shownSeries.length - 1)] ?? series, index: cursor.index };
+    default:
+      return undefined;
+  }
 }
 
 /**
