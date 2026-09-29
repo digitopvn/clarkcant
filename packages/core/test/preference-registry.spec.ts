@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it } from "vitest";
 
-import { ORB_PROFILE_NAMES, PREFERENCE_KEYS } from "@clarkcant/contracts";
+import { ORB_PROFILE_NAMES, PREFERENCE_KEYS, PREFERENCE_REGISTRY } from "@clarkcant/contracts";
 import { MIGRATIONS, migrate, openDatabase } from "@clarkcant/storage";
 
 import { listPreferences, setPreference } from "../src/preferences.ts";
@@ -344,6 +344,14 @@ describe("a theme choice stored before the theme and the colour scheme were sepa
     expect(theme).toMatchObject({ value: "builtin:clark", isDefault: true });
   });
 
+  it("answers a legacy value no build could draw with the default, not as a choice", () => {
+    for (const value of ["blue", "Dark", ""]) {
+      const upgraded = upgradedFrom({ value, revision: 1, previous: null });
+      const scheme = readRegisteredPreference(upgraded, { principalId: PRINCIPAL, key: "experience.colorScheme" });
+      expect(scheme, value).toMatchObject({ value: "system", isDefault: true, revision: 0 });
+    }
+  });
+
   it("keeps Undo: the choice before the upgrade is still one step back", () => {
     const upgraded = upgradedFrom({ value: "light", revision: 2, previous: "dark" });
     const outcome = undoRegisteredPreference(upgraded, { principalId: PRINCIPAL, key: "experience.colorScheme" });
@@ -351,6 +359,59 @@ describe("a theme choice stored before the theme and the colour scheme were sepa
     if (!outcome.ok) throw new Error("expected an undo");
     expect(outcome.undone).toBe(true);
     expect(outcome.preference.value).toBe("dark");
+  });
+});
+
+describe("a stored value the key cannot hold", () => {
+  /*
+   * Rows reach the store by other paths than a registry write — an older build, a migration, a hand edit — so a read
+   * checks what it hands out. Written directly with `setPreference`, because the registry itself cannot store one.
+   */
+  function storeRaw(key: string, value: unknown): void {
+    const definition = PREFERENCE_REGISTRY[key as keyof typeof PREFERENCE_REGISTRY];
+    setPreference(deps, { principalId: PRINCIPAL, key, scope: definition.scope, value, source: "user" });
+  }
+
+  it("reads as the default, in a single read and in the list", () => {
+    storeRaw("experience.colorScheme", "blue");
+    storeRaw("experience.motion", 42);
+    for (const [key, fallback] of [
+      ["experience.colorScheme", "system"],
+      ["experience.motion", "system"],
+    ] as const) {
+      expect(readRegisteredPreference(deps, { principalId: PRINCIPAL, key }), key).toMatchObject({
+        value: fallback,
+        isDefault: true,
+        revision: 0,
+        updatedAt: null,
+      });
+      expect(listRegisteredPreferences(deps, PRINCIPAL).find((preference) => preference.key === key)).toMatchObject({
+        value: fallback,
+        isDefault: true,
+      });
+    }
+    // The row is not removed: nothing is lost, and the next write replaces it.
+    expect(storedKeys()).toEqual(expect.arrayContaining(["experience.colorScheme", "experience.motion"]));
+  });
+
+  it("changes nothing for a valid stored value of any key", () => {
+    for (const key of PREFERENCE_KEYS) storeRaw(key, PREFERENCE_REGISTRY[key].default);
+    for (const preference of listRegisteredPreferences(deps, PRINCIPAL)) {
+      expect(preference, preference.key).toMatchObject({
+        value: PREFERENCE_REGISTRY[preference.key as keyof typeof PREFERENCE_REGISTRY].default,
+        isDefault: false,
+        revision: 1,
+      });
+    }
+  });
+
+  it("still hands the execution policy's row to its own reader, which parses it field by field", () => {
+    const partial = { mode: "sometimes", prohibition: "no-external-effects" };
+    storeRaw("execution.policy", partial);
+    expect(readRegisteredPreference(deps, { principalId: PRINCIPAL, key: "execution.policy" })).toMatchObject({
+      value: partial,
+      isDefault: false,
+    });
   });
 });
 

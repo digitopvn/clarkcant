@@ -1076,11 +1076,15 @@ user would look for it — silently skipping it is worse, because the user would
 
 Use segmented controls, toggles and swatches:
 
-- Appearance: System / Light / Dark. This is the **colour scheme** (`experience.colorScheme`), not the theme. The
-  theme is a separate preference (`experience.themeRef`, default `builtin:clark`, Clark Default), and every theme is
-  drawn in whichever scheme this resolves to. The scheme is also kept on the device (`cc.theme`), so the page never
-  paints in the wrong scheme before the node answers. There is no theme control yet: one appears when an installed
-  theme can actually be selected (#201).
+- Appearance: System / Light / Dark. This is the **colour scheme**, not the theme. The choice is stored on this
+  device (`localStorage` key `cc.theme`), which is what the pre-paint script reads, so the page paints in the chosen
+  scheme before anything else loads. The node also registers a key for it, `experience.colorScheme`, which the REST
+  API reads and writes (`GET /preferences`, `PUT /preferences/experience.colorScheme`); the web client does not read
+  or write that key yet, so a scheme chosen on one device does not follow the person to another. The theme is a
+  separate preference
+  (`experience.themeRef`, default `builtin:clark`, Clark Default), and every theme is drawn in whichever scheme the
+  choice resolves to. There is no theme control yet: one appears when an installed theme can actually be selected
+  (#201).
 - Language: Tiếng Việt / English — segmented control, applies immediately (no save button), sets
   `<html lang>`, and persists across reload and devices through the preference registry
   (`experience.language`). Default is Vietnamese; there is no "follow system" option, because no

@@ -21,6 +21,8 @@
 
 import { z } from "zod";
 
+import { facetIdSchema } from "./install.ts";
+
 /** The version of the theme document and snapshot shapes. A theme declares the range it was written against. */
 export const APPEARANCE_API_VERSION = 1;
 
@@ -74,8 +76,6 @@ export const PACKAGE_THEME_PREFIX = "package:";
 export const BUILTIN_CLARK_THEME_REF = "builtin:clark";
 
 const BUILTIN_THEME_NAME = /^[a-z][a-z0-9-]{0,63}$/;
-/** The same shape a manifest's facet id has, so a reference can name every facet a manifest can declare. */
-const THEME_FACET_ID = /^[A-Za-z0-9](?:[A-Za-z0-9._@-]*[A-Za-z0-9])?$/;
 /** Printable, no whitespace and no `#`: a package id is looked up verbatim, never interpreted. */
 const THEME_PACKAGE_ID = /^[\x21-\x22\x24-\x7e]{1,160}$/;
 
@@ -92,7 +92,8 @@ export function parseThemeRef(value: string): ThemeRefParts | undefined {
     if (separator <= 0) return undefined;
     const packageId = rest.slice(0, separator);
     const facetId = rest.slice(separator + 1);
-    if (!THEME_PACKAGE_ID.test(packageId) || facetId.length > 160 || !THEME_FACET_ID.test(facetId)) return undefined;
+    // The manifest's own facet-id schema, so a reference can name every facet a manifest can declare and no other.
+    if (!THEME_PACKAGE_ID.test(packageId) || !facetIdSchema.safeParse(facetId).success) return undefined;
     return { kind: "package", packageId, facetId };
   }
   return undefined;
@@ -259,7 +260,7 @@ export const appearanceApiRangeSchema = z
 export const themeDocumentSchema = z.strictObject({
   appearanceApi: appearanceApiRangeSchema,
   /** The theme's id. For a package theme it must equal the `themes` facet id that points at this file. */
-  id: z.string().min(1).max(160).regex(THEME_FACET_ID, { error: "must be letters, digits, '.', '_', '@' or '-'" }),
+  id: facetIdSchema,
   displayName: z.string().trim().min(1).max(80),
   description: z.string().trim().min(1).max(400).optional(),
   colors: z

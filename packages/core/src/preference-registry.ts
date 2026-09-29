@@ -87,7 +87,12 @@ function envelope(
     scope: definition.scope,
     applies: definition.applies,
   };
-  if (record === undefined) {
+  /*
+   * A stored value this build's schema refuses is answered as the default, exactly as if nothing were stored: a
+   * reader must never be handed a choice the key cannot hold (`experience.colorScheme: "blue"`), and a surface must
+   * not show one as the person's. The row stays where it is, so nothing is lost and the next write replaces it.
+   */
+  if (record === undefined || !(definition.storedValueParsedByOwner === true || definition.schema.safeParse(record.value).success)) {
     /*
      * A default is module-level state — `DEFAULT_EXECUTION_POLICY_CONFIG` holds arrays this process shares with
      * every read — so it is copied rather than handed out by reference: a caller that mutated what it read would

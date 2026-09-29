@@ -11,7 +11,7 @@ import {
 } from "@clarkcant/contracts";
 
 import { type ContrastAudit, auditColors } from "./contrast.ts";
-import { CLARK_SCHEMES, LAYOUT, MOTION, MOTION_REDUCED, RADIUS, SPACE, TYPE_SCALE } from "./tokens.ts";
+import { CLARK_SCHEMES, type ColorTokens, LAYOUT, MOTION, MOTION_REDUCED, RADIUS, SPACE, TYPE_SCALE } from "./tokens.ts";
 
 /**
  * The appearance compiler: a theme document and a colour scheme in, a bounded snapshot out.
@@ -33,24 +33,43 @@ export const CLARK_THEME: ThemeDocument = {
   displayName: "Clark Default",
 };
 
-export interface CompileAppearanceInput {
-  /** The scheme to draw in, already resolved from the person's choice. */
-  scheme: ResolvedColorScheme;
-  /** The theme, validated. Clark Default when absent. */
-  theme?: ThemeDocument | undefined;
-  /** The reference the theme was selected by. `builtin:clark` when absent. */
-  themeRef?: string | undefined;
-}
+/**
+ * What to compile: Clark Default in a scheme, or a theme together with the reference it was selected by.
+ *
+ * The reference travels with the theme because the snapshot names the theme its tokens came from. Letting one default
+ * without the other would stamp `builtin:clark` on another theme's tokens, and a consumer that trusts the name — a
+ * cache, a fallback notice, a widget told which theme it is drawn in — would be told something untrue.
+ */
+export type CompileAppearanceInput =
+  | {
+      /** The scheme to draw in, already resolved from the person's choice. */
+      scheme: ResolvedColorScheme;
+      theme?: undefined;
+      themeRef?: typeof BUILTIN_CLARK_THEME_REF | undefined;
+    }
+  | {
+      scheme: ResolvedColorScheme;
+      /** The theme, validated. */
+      theme: ThemeDocument;
+      /** The reference the theme was selected by. */
+      themeRef: string;
+    };
 
-/** Compile one theme in one scheme. Throws only if the result would break the snapshot contract. */
+/** Compile one theme in one scheme. Throws if the input pairs a theme and a reference wrongly, or if the result would break the snapshot contract. */
 export function compileAppearance(input: CompileAppearanceInput): AppearanceSnapshot {
+  if (input.theme !== undefined && input.themeRef === undefined) {
+    throw new Error("a theme is compiled with the reference it was selected by");
+  }
+  if (input.theme === undefined && input.themeRef !== undefined && input.themeRef !== BUILTIN_CLARK_THEME_REF) {
+    throw new Error(`${input.themeRef} names a theme, but none was given to compile`);
+  }
   const theme = input.theme ?? CLARK_THEME;
   const radius: Record<string, string> = { ...RADIUS };
   for (const [name, rem] of Object.entries(theme.radius ?? {})) {
     if (rem !== undefined) radius[name] = remLength(rem);
   }
   const tokens = {
-    color: { ...CLARK_SCHEMES[input.scheme], ...theme.colors?.[input.scheme] },
+    color: themeColors(input.scheme, theme),
     type: TYPE_SCALE,
     space: SPACE,
     radius,
@@ -74,9 +93,19 @@ export function auditAppearance(snapshot: AppearanceSnapshot): ContrastAudit {
   return auditColors(snapshot.scheme, snapshot.tokens.color);
 }
 
-/** A theme document audited in every scheme it can be drawn in. */
+/**
+ * A theme document audited in every scheme it can be drawn in.
+ *
+ * The palette audited is the one `compileAppearance` draws, from the same merge, so the audit and the stylesheet cannot
+ * disagree about which colours a theme ends up with. A colour that is not a six-digit hex throws here as it does there.
+ */
 export function auditThemeDocument(theme: ThemeDocument): ContrastAudit[] {
-  return RESOLVED_COLOR_SCHEMES.map((scheme) => auditAppearance(compileAppearance({ scheme, theme })));
+  return RESOLVED_COLOR_SCHEMES.map((scheme) => auditColors(scheme, themeColors(scheme, theme)));
+}
+
+/** A theme's palette in one scheme: Clark's, patched by what the theme says for that scheme. */
+function themeColors(scheme: ResolvedColorScheme, theme: ThemeDocument): ColorTokens {
+  return { ...CLARK_SCHEMES[scheme], ...theme.colors?.[scheme] } as ColorTokens;
 }
 
 /**

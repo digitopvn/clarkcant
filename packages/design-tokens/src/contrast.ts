@@ -79,9 +79,21 @@ export function requiredPairs(tokens: ColorTokens): ContrastPair[] {
     { color: tokens.textTertiary, name: "tertiary text" },
   ];
 
+  /*
+   * The accent and the status colours are text too. The accent is a link in a message and a keyword in a code block,
+   * and a status colour is a badge's label on a card, a notice on the page or an error in a menu, so each is held to
+   * the text threshold on every surface text is drawn on rather than on the one surface it was first designed for.
+   */
+  const coloredText: { color: string; name: string }[] = [
+    { color: tokens.accent, name: "accent text" },
+    { color: tokens.success, name: "success status text" },
+    { color: tokens.warning, name: "warning status text" },
+    { color: tokens.danger, name: "error status text" },
+  ];
+
   const pairs: ContrastPair[] = [];
 
-  for (const tier of textTiers) {
+  for (const tier of [...textTiers, ...coloredText]) {
     for (const surface of surfaces) {
       pairs.push({
         foreground: tier.color,
@@ -94,9 +106,6 @@ export function requiredPairs(tokens: ColorTokens): ContrastPair[] {
 
   pairs.push(
     { foreground: tokens.onAccent, background: tokens.accent, minimum: AA_NORMAL_TEXT, purpose: "label on an accent button" },
-    { foreground: tokens.success, background: tokens.card, minimum: AA_NORMAL_TEXT, purpose: "success status text" },
-    { foreground: tokens.warning, background: tokens.card, minimum: AA_NORMAL_TEXT, purpose: "warning status text" },
-    { foreground: tokens.danger, background: tokens.card, minimum: AA_NORMAL_TEXT, purpose: "error status text" },
     { foreground: tokens.focus, background: tokens.canvas, minimum: AA_NON_TEXT, purpose: "focus ring against the page" },
     { foreground: tokens.focus, background: tokens.card, minimum: AA_NON_TEXT, purpose: "focus ring against a card" },
     { foreground: tokens.focus, background: tokens.elevated, minimum: AA_NON_TEXT, purpose: "focus ring against an elevated surface" },

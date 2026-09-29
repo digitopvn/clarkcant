@@ -20,7 +20,7 @@
  * runtime should not be dropped into a dark page.
  */
 
-import { type ColorScheme, type ResolvedColorScheme, resolveColorScheme } from "@clarkcant/contracts";
+import { type ColorScheme, type ResolvedColorScheme, colorSchemeSchema, resolveColorScheme } from "@clarkcant/contracts";
 
 /** What the user asked for. `system` is a choice, not a resolved scheme. */
 export type ThemeChoice = ColorScheme;
@@ -45,8 +45,9 @@ export const THEME_STORAGE_KEY = "cc.theme";
  */
 export const DEFAULT_THEME_CHOICE: ThemeChoice = "system";
 
+/** Whether a stored value is a choice, by the contract's own schema rather than a second list that could drift. */
 export function isThemeChoice(value: unknown): value is ThemeChoice {
-  return value === "dark" || value === "light" || value === "system";
+  return colorSchemeSchema.safeParse(value).success;
 }
 
 /**

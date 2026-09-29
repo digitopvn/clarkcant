@@ -130,6 +130,24 @@ describe("migration 35: split_theme_preference_into_color_scheme", () => {
     expect(rows(db, "experience.colorScheme")).toEqual([]);
   });
 
+  it("carries no value the old key could not hold, and keeps those legacy rows as they are", () => {
+    const db = databaseBeforeSplit();
+    const unknown = legacy("prin_blue", "blue");
+    const garbage: PreferenceRow[] = [
+      { ...legacy("prin_json", "x"), value: "{not json" },
+      { ...legacy("prin_number", "x"), value: "3" },
+      { ...legacy("prin_object", "x"), value: JSON.stringify({ scheme: "dark" }) },
+      { ...legacy("prin_case", "x"), value: JSON.stringify("Dark") },
+    ];
+    for (const row of [unknown, ...garbage]) insert(db, row);
+    insert(db, legacy("prin_valid", "dark"));
+
+    migrate(db, MIGRATIONS);
+
+    expect(rows(db, "experience.colorScheme")).toEqual([{ ...legacy("prin_valid", "dark"), key: "experience.colorScheme" }]);
+    expect(rows(db, "experience.theme")).toHaveLength(6);
+  });
+
   it("changes nothing when the migrations run again", () => {
     const db = databaseBeforeSplit();
     insert(db, legacy("prin_owner", "light"));

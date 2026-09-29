@@ -19,6 +19,7 @@ import {
   auditThemeDocument,
   compileAppearance,
 } from "../src/appearance.ts";
+import { requiredPairs } from "../src/contrast.ts";
 import { appearanceToCss, themeStylesheet } from "../src/css.ts";
 import { DARK, LAYOUT, LIGHT, MOTION, RADIUS, SPACE, TYPE_SCALE } from "../src/tokens.ts";
 
@@ -39,6 +40,7 @@ const PIXEL: ThemeDocument = {
   colors: { dark: { accent: "#C9B8FF", focus: "#FFE08A" }, light: { accent: "#5A3FB0" } },
   radius: { card: 0, button: 0.125 },
 };
+const PIXEL_REF = "package:@community/pixel#pixel-arcade";
 
 describe("Clark Default", () => {
   it("compiles to the stylesheet it always had, byte for byte", () => {
@@ -46,7 +48,7 @@ describe("Clark Default", () => {
   });
 
   it("is the stylesheet a theme with no changes compiles to", () => {
-    expect(themeStylesheet(CLARK_THEME)).toBe(themeStylesheet());
+    expect(themeStylesheet(CLARK_THEME, "builtin:clark")).toBe(themeStylesheet());
   });
 });
 
@@ -64,7 +66,7 @@ describe("the token contract and the token values name the same tokens", () => {
 
 describe("compiling a theme", () => {
   it("applies the theme's patch in the scheme it names and keeps Clark's value for everything else", () => {
-    const dark = compileAppearance({ scheme: "dark", theme: PIXEL, themeRef: "package:@community/pixel#pixel-arcade" });
+    const dark = compileAppearance({ scheme: "dark", theme: PIXEL, themeRef: PIXEL_REF });
     expect(dark.tokens.color.accent).toBe("#C9B8FF");
     expect(dark.tokens.color.focus).toBe("#FFE08A");
     expect(dark.tokens.color.canvas).toBe(DARK.canvas);
@@ -74,30 +76,40 @@ describe("compiling a theme", () => {
     expect(dark.tokens.radius.pill).toBe(RADIUS.pill);
     expect(dark.themeRef).toBe("package:@community/pixel#pixel-arcade");
 
-    const light = compileAppearance({ scheme: "light", theme: PIXEL });
+    const light = compileAppearance({ scheme: "light", theme: PIXEL, themeRef: PIXEL_REF });
     expect(light.tokens.color.accent).toBe("#5A3FB0");
     expect(light.tokens.color.focus).toBe(LIGHT.focus);
+  });
+
+  it("never names another theme's tokens after Clark Default", () => {
+    // A theme without the reference it was selected by would be stamped `builtin:clark` over someone else's colours.
+    // @ts-expect-error -- the type requires the reference whenever a theme is given.
+    expect(() => compileAppearance({ scheme: "dark", theme: PIXEL })).toThrow(/reference/);
+    // @ts-expect-error -- and refuses a package reference with no theme to compile.
+    expect(() => compileAppearance({ scheme: "dark", themeRef: PIXEL_REF })).toThrow(/none was given/);
+    expect(compileAppearance({ scheme: "dark" }).themeRef).toBe("builtin:clark");
+    expect(compileAppearance({ scheme: "dark", themeRef: "builtin:clark" }).themeRef).toBe("builtin:clark");
   });
 
   it("keeps the scheme independent of the theme", () => {
     // The same theme drawn in each scheme, and each scheme drawn in two themes: the scheme decides which palette,
     // the theme decides what is patched, and neither choice changes the other.
     for (const scheme of ["dark", "light"] as const) {
-      expect(compileAppearance({ scheme, theme: PIXEL }).scheme).toBe(scheme);
+      expect(compileAppearance({ scheme, theme: PIXEL, themeRef: PIXEL_REF }).scheme).toBe(scheme);
       expect(compileAppearance({ scheme }).tokens.color).toEqual(scheme === "dark" ? DARK : LIGHT);
     }
   });
 
   it("produces a snapshot the contract accepts, and nothing more", () => {
-    const snapshot = compileAppearance({ scheme: "dark", theme: PIXEL });
+    const snapshot = compileAppearance({ scheme: "dark", theme: PIXEL, themeRef: PIXEL_REF });
     expect(appearanceSnapshotSchema.parse(snapshot)).toEqual(snapshot);
   });
 
   it("gives the same revision to the same appearance and a different one to a different appearance", () => {
-    const once = compileAppearance({ scheme: "dark", theme: PIXEL });
-    const again = compileAppearance({ scheme: "dark", theme: structuredClone(PIXEL) });
+    const once = compileAppearance({ scheme: "dark", theme: PIXEL, themeRef: PIXEL_REF });
+    const again = compileAppearance({ scheme: "dark", theme: structuredClone(PIXEL), themeRef: PIXEL_REF });
     expect(again.revision).toBe(once.revision);
-    expect(compileAppearance({ scheme: "light", theme: PIXEL }).revision).not.toBe(once.revision);
+    expect(compileAppearance({ scheme: "light", theme: PIXEL, themeRef: PIXEL_REF }).revision).not.toBe(once.revision);
     expect(compileAppearance({ scheme: "dark" }).revision).not.toBe(once.revision);
   });
 
@@ -106,16 +118,16 @@ describe("compiling a theme", () => {
       ...PIXEL,
       colors: { dark: { accent: "red; } body { display: none" } },
     } as unknown as ThemeDocument;
-    expect(() => compileAppearance({ scheme: "dark", theme: hostile })).toThrow();
+    expect(() => compileAppearance({ scheme: "dark", theme: hostile, themeRef: PIXEL_REF })).toThrow();
   });
 
   it("refuses a token the contract does not name", () => {
     const extra = { ...PIXEL, colors: { dark: { background: "#000000" } } } as unknown as ThemeDocument;
-    expect(() => compileAppearance({ scheme: "dark", theme: extra })).toThrow();
+    expect(() => compileAppearance({ scheme: "dark", theme: extra, themeRef: PIXEL_REF })).toThrow();
   });
 
   it("writes a theme's values into the scheme's own block and nowhere else", () => {
-    const css = appearanceToCss(compileAppearance({ scheme: "dark", theme: PIXEL }));
+    const css = appearanceToCss(compileAppearance({ scheme: "dark", theme: PIXEL, themeRef: PIXEL_REF }));
     expect(css.startsWith(':root[data-cc-theme="dark"],\n[data-cc-theme="dark"] {\n')).toBe(true);
     expect(css).toContain("  --cc-accent: #C9B8FF;");
     expect(css).toContain("  --cc-radius-card: 0rem;");
@@ -139,9 +151,38 @@ describe("contrast audits run against any theme, not only Clark's palettes", () 
     expect(light!.failures.map((failure) => failure.purpose)).toContain("caption text on a card");
   });
 
+  it("fails a dark accent that a link on the page could not be read in", () => {
+    // Links in a message and keywords in a code block are drawn in the accent, so the accent is text.
+    const dim: ThemeDocument = { ...PIXEL, colors: { dark: { accent: "#3A3470", onAccent: "#FFFFFF" } } };
+    const [dark, light] = auditThemeDocument(dim);
+    const failed = dark!.failures.map((failure) => failure.purpose);
+    expect(failed).toContain("accent text on the page");
+    expect(failed).toContain("accent text on a code block");
+    expect(failed).not.toContain("label on an accent button");
+    expect(light!.failures).toEqual([]);
+  });
+
+  it("holds the accent and every status colour to the text threshold on every surface text is drawn on", () => {
+    const audited = requiredPairs(DARK).map((pair) => `${pair.purpose}@${String(pair.minimum)}`);
+    for (const color of ["accent text", "success status text", "warning status text", "error status text"]) {
+      for (const surface of ["the page", "the window", "a card", "an elevated surface", "a code block"]) {
+        expect(audited).toContain(`${color} on ${surface}@4.5`);
+      }
+    }
+  });
+
+  it("fails a status colour on the surface where it becomes unreadable, not only on a card", () => {
+    // Readable on a light card (#FFFFFF) at 4.6:1, but not on the darker code block behind it.
+    const theme: ThemeDocument = { ...PIXEL, colors: { light: { danger: "#D0342C", code: "#E6E6E0" } } };
+    const light = auditThemeDocument(theme)[1]!;
+    const failed = light.failures.map((failure) => failure.purpose);
+    expect(failed).toContain("error status text on a code block");
+    expect(failed).not.toContain("error status text on a card");
+  });
+
   it("audits a compiled snapshot by the same pairs as Clark Default", () => {
     const clark = auditAppearance(compileAppearance({ scheme: "dark" }));
-    const themed = auditAppearance(compileAppearance({ scheme: "dark", theme: PIXEL }));
+    const themed = auditAppearance(compileAppearance({ scheme: "dark", theme: PIXEL, themeRef: PIXEL_REF }));
     expect(themed.checked).toBe(clark.checked);
   });
 });

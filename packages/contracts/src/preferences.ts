@@ -550,6 +550,15 @@ export interface PreferenceDefinition {
    * names the field the user got wrong instead of a normalization that silently did nothing.
    */
   readonly normalize?: (value: unknown) => object | undefined;
+  /**
+   * The key's own reader parses a stored value field by field, so the registry hands it the stored row as it is.
+   *
+   * Every other key's stored value is read through `schema`, and a value that fails it is answered as the default: a
+   * row written by an older build, or edited by hand, must not reach a surface as a choice this build cannot make.
+   * The execution policy is the exception because a row with one bad leaf still carries the user's other choices, and
+   * answering it with the default would replace a refusal the user set with the loosest mode.
+   */
+  readonly storedValueParsedByOwner?: true;
 }
 
 /** Trim-only. A user's own wording is theirs; this removes only what they cannot see. */
@@ -664,6 +673,7 @@ export const PREFERENCE_REGISTRY = {
     applies: "immediate",
     default: DEFAULT_EXECUTION_POLICY_CONFIG,
     schema: executionPolicyConfigSchema,
+    storedValueParsedByOwner: true,
   },
   "execution.backgroundLimit": {
     key: "execution.backgroundLimit",

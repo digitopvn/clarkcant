@@ -12,7 +12,7 @@ import {
   type ThemeDocument,
 } from "@clarkcant/contracts";
 
-import { compileAppearance } from "./appearance.ts";
+import { type CompileAppearanceInput, compileAppearance } from "./appearance.ts";
 
 /**
  * Emit an appearance as CSS custom properties.
@@ -123,12 +123,13 @@ export function appearanceStylesheet(snapshots: Readonly<Record<ResolvedColorSch
   return `${appearanceToCss(snapshots.dark)}\n\n${appearanceToCss(snapshots.light)}\n\n${media}\n\n${scoped}`;
 }
 
-/** The stylesheet for a theme, Clark Default when none is given. */
+/** The stylesheet for a theme and the reference it was selected by, or Clark Default's when none is given. */
+export function themeStylesheet(): string;
+export function themeStylesheet(theme: ThemeDocument, themeRef: string): string;
 export function themeStylesheet(theme?: ThemeDocument, themeRef?: string): string {
-  return appearanceStylesheet({
-    dark: compileAppearance({ scheme: "dark", theme, themeRef }),
-    light: compileAppearance({ scheme: "light", theme, themeRef }),
-  });
+  const compile = (scheme: ResolvedColorScheme) =>
+    compileAppearance((theme === undefined ? { scheme } : { scheme, theme, themeRef }) as CompileAppearanceInput);
+  return appearanceStylesheet({ dark: compile("dark"), light: compile("light") });
 }
 
 function kebab(value: string): string {
