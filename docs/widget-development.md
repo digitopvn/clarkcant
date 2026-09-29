@@ -1156,7 +1156,9 @@ What the node keeps:
   `DELETE …/artifacts/{artifactId}/grant`.
 - **Retention.** Working artifacts that time out are removed every 10 minutes, and before a new artifact is stored.
   Finalized artifacts last as long as their conversation. When a conversation is released, its artifacts go too,
-  along with any bytes no attachment still shares.
+  along with any bytes no attachment still shares. Nothing deletes a conversation yet
+  ([#343](https://github.com/digitopvn/clarkcant/issues/343)), so today a finalized artifact stays, and keeps
+  counting against the quota.
 
 Tests: [artifacts.spec.ts](../packages/contracts/test/artifacts.spec.ts) for the rules,
 [artifact-refs.spec.ts](../packages/storage/test/artifact-refs.spec.ts) for storage,

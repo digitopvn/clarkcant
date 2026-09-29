@@ -1159,7 +1159,9 @@ Node giữ những gì:
   `DELETE …/artifacts/{artifactId}/grant`.
 - **Lưu giữ.** Các artifact `working` hết hạn bị xoá mỗi 10 phút, và trước khi lưu một artifact mới. Artifact đã cố
   định tồn tại lâu bằng cuộc trò chuyện của nó. Khi một cuộc trò chuyện được giải phóng, các artifact của nó cũng bị
-  xoá, cùng với những byte không còn tệp đính kèm nào dùng chung.
+  xoá, cùng với những byte không còn tệp đính kèm nào dùng chung. Hiện chưa có gì xoá một cuộc trò chuyện
+  ([#343](https://github.com/digitopvn/clarkcant/issues/343)), nên hôm nay một artifact đã cố định vẫn còn đó, và vẫn
+  được tính vào hạn mức.
 
 Kiểm thử: [artifacts.spec.ts](../packages/contracts/test/artifacts.spec.ts) cho các quy tắc,
 [artifact-refs.spec.ts](../packages/storage/test/artifact-refs.spec.ts) cho phần lưu trữ,
