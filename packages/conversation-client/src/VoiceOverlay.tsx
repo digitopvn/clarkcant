@@ -6,6 +6,7 @@ import type { GatewayClient } from "./api.ts";
 import { useT } from "./i18n/locale-context.tsx";
 import type { MessageKey } from "./i18n/messages.ts";
 import { Orb } from "./Orb.tsx";
+import type { ResolvedOrbProfile } from "./orb-profile.ts";
 import { VoiceUnavailable } from "./voice-unavailable.tsx";
 import type { VoiceSession, VoiceTranscriptUpdate } from "./voice-session.ts";
 
@@ -133,6 +134,13 @@ export interface VoiceOverlayProps {
   startCollapsed?: boolean | undefined;
   requires?: string;
   unblockedBy?: string;
+  /**
+   * The personalized orb, the same resolved profile the conversation draws.
+   *
+   * Voice is another mode for the same Clark, so the orb it shows is the one the person chose, including a
+   * stored reduced-motion choice; without it the style would vanish the moment someone started talking.
+   */
+  orbProfile?: ResolvedOrbProfile | undefined;
 }
 
 export function VoiceOverlay({
@@ -147,6 +155,7 @@ export function VoiceOverlay({
   startCollapsed = false,
   requires,
   unblockedBy,
+  orbProfile,
 }: VoiceOverlayProps): ReactElement {
   const t = useT();
   const effectiveRequires = requires ?? t("voice.defaultRequires");
@@ -372,7 +381,7 @@ export function VoiceOverlay({
       >
         <header className="cc-voice-head">
           <div className="cc-brand">
-            <Orb size={22} className="cc-orb" label="" />
+            <Orb size={22} className="cc-orb" label="" {...(orbProfile === undefined ? {} : { profile: orbProfile })} />
             <span>ClarkCant</span>
           </div>
           <div className="cc-voice-status">
@@ -383,7 +392,12 @@ export function VoiceOverlay({
 
         <div className="cc-voice-body">
           <div className="cc-voice-orb" data-voice-orb="true" style={{ transform: `scale(${(1 + level * 0.06).toFixed(3)})` }}>
-            <Orb size={190} className="cc-voice-orb-canvas" label="" />
+            <Orb
+              size={190}
+              className="cc-voice-orb-canvas"
+              label=""
+              {...(orbProfile === undefined ? {} : { profile: orbProfile })}
+            />
           </div>
 
           <h1 className="cc-voice-headline">

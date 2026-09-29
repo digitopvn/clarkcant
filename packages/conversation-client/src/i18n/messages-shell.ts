@@ -131,6 +131,9 @@ export const MESSAGES_SHELL_VI = {
   "shell.intent.notConversation": "Bản dựng này không quay lại được cuộc trò chuyện, nên tôi chưa làm gì cả.",
   "shell.intent.notInbox": "Bản dựng này không có hộp thư để mở, nên tôi chưa làm gì cả.",
   "shell.intent.notTurn": "Bản dựng này không dừng được câu trả lời, nên tôi chưa làm gì cả.",
+  "shell.intent.notOrb": "Bản dựng này không lưu được kiểu Orb, nên tôi chưa làm gì cả.",
+  "shell.intent.orbProfileMissing": "Chưa rõ bạn muốn đổi Orb sang kiểu nào, nên tôi chưa làm gì cả.",
+  "shell.intent.orbChanged": "Đã đổi Orb sang kiểu {name}.",
 
   "shell.onboarding.tagline": "Nói điều bạn muốn làm.",
   "shell.onboarding.start": "Bắt đầu",
@@ -309,6 +312,9 @@ export const MESSAGES_SHELL_EN = {
   "shell.intent.notConversation": "This build cannot return to the conversation, so nothing happened.",
   "shell.intent.notInbox": "This build has no inbox to open, so nothing happened.",
   "shell.intent.notTurn": "This build cannot stop a reply, so nothing happened.",
+  "shell.intent.notOrb": "This build cannot save an orb style, so nothing happened.",
+  "shell.intent.orbProfileMissing": "It is not clear which orb style you want, so nothing happened.",
+  "shell.intent.orbChanged": "The orb is now in the {name} style.",
 
   "shell.onboarding.tagline": "Say what you want to do.",
   "shell.onboarding.start": "Get started",

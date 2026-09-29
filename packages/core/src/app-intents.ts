@@ -596,6 +596,7 @@ export function recordAppIntentEvent(
     ...(input.intent.definitionId === undefined ? {} : { definitionId: input.intent.definitionId }),
     ...(input.intent.family === undefined ? {} : { family: input.intent.family }),
     ...(input.intent.modelAlias === undefined ? {} : { modelAlias: input.intent.modelAlias }),
+    ...(input.intent.orbProfile === undefined ? {} : { orbProfile: input.intent.orbProfile }),
     source: input.source,
     confirmed: input.confirmed,
   };

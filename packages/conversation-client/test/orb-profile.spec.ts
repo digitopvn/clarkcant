@@ -5,10 +5,21 @@ import {
   ORB_OPTICAL_BOUNDS,
   ORB_PALETTE_CHANNELS,
   ORB_PHYSICS_BOUNDS,
+  ORB_PROFILE_NAMES,
 } from "@clarkcant/contracts";
 
-import { orbFallbackBackground, resolveOrbProfile } from "../src/orb-profile.ts";
-import { ORB_PALETTE, ORB_SHAPE } from "../src/orb-shader.ts";
+import { orbFallbackBackground, orbPaletteGradient, resolveOrbProfile } from "../src/orb-profile.ts";
+import {
+  ORB_FRAGMENT_SHADER,
+  ORB_PALETTE,
+  ORB_SHAPE,
+  ORB_STYLES,
+  type OrbStyle,
+  orbStyleIndex,
+} from "../src/orb-shader.ts";
+
+/** The named presets, without `custom`, which is a patch rather than a preset. */
+const PRESET_NAMES = ORB_PROFILE_NAMES.filter((name) => name !== "custom");
 
 /**
  * Orb personalization (V19).
@@ -66,14 +77,12 @@ describe("every profile is deterministic and distinct", () => {
   });
 
   it("gives each preset its own key", () => {
-    const keys = ["clark", "calm", "jelly", "glass"].map(
-      (name) => resolveOrbProfile({ profile: name }).key,
-    );
+    const keys = PRESET_NAMES.map((name) => resolveOrbProfile({ profile: name }).key);
     expect(new Set(keys).size).toBe(keys.length);
   });
 
   it("keeps every preset inside the declared bounds", () => {
-    for (const name of ["clark", "calm", "jelly", "glass"] as const) {
+    for (const name of ORB_PROFILE_NAMES) {
       const profile = resolveOrbProfile({ profile: name });
       for (const [key, value] of Object.entries(profile.optical)) {
         const bound = ORB_OPTICAL_BOUNDS[key as keyof typeof ORB_OPTICAL_BOUNDS];
@@ -85,6 +94,16 @@ describe("every profile is deterministic and distinct", () => {
         expect(value, `${name}.${key}`).toBeGreaterThanOrEqual(bound.min);
         expect(value, `${name}.${key}`).toBeLessThanOrEqual(bound.max);
       }
+      expect(profile.speed, `${name}.speed`).toBeGreaterThanOrEqual(ORB_MOTION_BOUNDS.speed.min);
+      expect(profile.speed, `${name}.speed`).toBeLessThanOrEqual(ORB_MOTION_BOUNDS.speed.max);
+      for (const [channel, value] of Object.entries(profile.palette)) {
+        expect(value, `${name}.${channel}`).toHaveLength(3);
+        for (const part of value) {
+          expect(part, `${name}.${channel}`).toBeGreaterThanOrEqual(0);
+          expect(part, `${name}.${channel}`).toBeLessThanOrEqual(1);
+        }
+      }
+      expect(ORB_STYLES, `${name}.style`).toContain(profile.style);
     }
   });
 
@@ -95,6 +114,45 @@ describe("every profile is deterministic and distinct", () => {
     expect(jelly.physics.stiffness).toBeGreaterThan(clark.physics.stiffness);
     expect(calm.physics.damping).toBeGreaterThan(clark.physics.damping);
     expect(jelly.speed).toBeGreaterThan(calm.speed);
+  });
+
+  it("gives every preset but the shipped one its own colours", () => {
+    // A style picker whose styles all looked the same would be a control that does nothing.
+    const palettes = PRESET_NAMES.map((name) => JSON.stringify(resolveOrbProfile({ profile: name }).palette));
+    expect(new Set(palettes).size).toBe(palettes.length);
+    expect(resolveOrbProfile({ profile: "clark" }).palette).toEqual({});
+  });
+
+  it("draws the signature band unless a preset names another interior", () => {
+    expect(resolveOrbProfile({}).style).toBe("band");
+    expect(resolveOrbProfile({ profile: "custom" }).style).toBe("band");
+    expect(resolveOrbProfile({ profile: "pearl" }).style).toBe("pearl");
+    expect(resolveOrbProfile({ profile: "plasma" }).style).toBe("plasma");
+  });
+
+  it("never lets a preset change the orb's size", () => {
+    // Palette, effects and physics are personal; the silhouette is the identity.
+    for (const name of ORB_PROFILE_NAMES) {
+      expect(resolveOrbProfile({ profile: name }).optical.radius, name).toBe(ORB_SHAPE.radius);
+    }
+  });
+
+  it("falls back to the shipped orb for an unknown profile name, style and colours included", () => {
+    const unknown = resolveOrbProfile({ profile: "aurora" });
+    const shipped = resolveOrbProfile({});
+    expect(unknown).toEqual(shipped);
+  });
+});
+
+describe("the shader's style index", () => {
+  it("maps each style to its position, and anything else to the band", () => {
+    expect(ORB_STYLES.map((style) => orbStyleIndex(style))).toEqual([0, 1, 2]);
+    expect(orbStyleIndex(undefined)).toBe(0);
+    expect(orbStyleIndex("sparkle" as OrbStyle)).toBe(0);
+  });
+
+  it("is declared in the shader, so the uniform the renderer sets is one it reads", () => {
+    expect(ORB_FRAGMENT_SHADER).toContain("uniform float u_style;");
   });
 });
 
@@ -134,9 +192,11 @@ describe("a custom patch is clamped, not trusted", () => {
 
   it("applies a patch only to the custom profile", () => {
     // Selecting a preset is a decision, and a stale patch must not quietly change what it means.
-    const custom = { palette: { colorA: [1, 0, 0] as const } };
+    const custom = { palette: { colorA: [1, 0, 0] as const }, physics: { stiffness: 190 } };
     const preset = resolveOrbProfile({ profile: "calm", custom });
-    expect(preset.palette).toEqual({});
+    // The preset keeps its own colours and spring; the patch's red and stiffness are ignored.
+    expect(preset).toEqual(resolveOrbProfile({ profile: "calm" }));
+    expect(preset.palette.colorA).not.toEqual([1, 0, 0]);
     expect(resolveOrbProfile({ profile: "custom", custom }).palette.colorA).toEqual([1, 0, 0]);
   });
 
@@ -199,6 +259,22 @@ describe("a palette is named channels, never code", () => {
     // The channels that were not chosen keep the shipped colours rather than going transparent.
     expect(background).toContain("rgb(255 255 255)");
   });
+
+  it("gives a preset's fallback its own colours, and the shipped orb none", () => {
+    // Without WebGL every preset would otherwise look like every other one.
+    const plasma = resolveOrbProfile({ profile: "plasma" });
+    expect(orbFallbackBackground(plasma.palette)).toBe(orbPaletteGradient(plasma.palette));
+    expect(orbFallbackBackground(plasma.palette)).toContain("rgb(140 179 255)");
+    expect(orbFallbackBackground(resolveOrbProfile({ profile: "clark" }).palette)).toBeUndefined();
+  });
+
+  it("fills the whole disc, so nothing behind the still orb shows through its edge", () => {
+    // Every user of the gradient clips it to a circle; a gradient that faded out before the edge left a
+    // crescent of the page visible inside the orb.
+    const gradient = orbPaletteGradient(resolveOrbProfile({ profile: "pearl" }).palette);
+    expect(gradient).toContain("farthest-corner");
+    expect(gradient).not.toContain("transparent");
+  });
 });
 
 describe("reduced motion wins over a custom profile", () => {
@@ -221,7 +297,7 @@ describe("reduced motion wins over a custom profile", () => {
   });
 
   it("cannot be undone by a profile asking for motion", () => {
-    for (const name of ["clark", "calm", "jelly", "glass", "custom"] as const) {
+    for (const name of ORB_PROFILE_NAMES) {
       const profile = resolveOrbProfile({ profile: name, reducedMotion: true });
       expect(profile.speed, name).toBe(0);
       expect(profile.physics.wobbleGain, name).toBe(0);

@@ -189,6 +189,44 @@ test("the agent cycles the model the way the hotkey does, and the label says whe
   await expect(label).toHaveAttribute("data-model-label", before ?? "", { timeout: 15_000 });
 });
 
+test("the agent changes the orb's style through the preference Settings writes, and the orb on screen follows", async ({
+  page,
+  request,
+}) => {
+  const headers = { authorization: `Bearer ${token()}` };
+  const storedOrb = async (): Promise<unknown> => {
+    const response = await request.get(`${GATEWAY}/preferences`, { headers });
+    const body = (await response.json()) as { preferences: { key: string; value: unknown }[] };
+    return body.preferences.find((entry) => entry.key === "orb.profile")?.value;
+  };
+
+  mkdirSync(EVIDENCE, { recursive: true });
+  await openApp(page);
+  await startConversation(page);
+  const orb = page.locator(".cc-orb[data-orb]").first();
+  await expect(orb).toHaveAttribute("data-orb-profile", "clark");
+
+  try {
+    await askAgent(page, "agent control_app orb.select plasma", DONE);
+    // What the reply claims is what the screen shows, and what the node stored: one preference, not a
+    // second copy of the choice kept by the conversation.
+    await expect(orb).toHaveAttribute("data-orb-profile", "plasma");
+    expect(await storedOrb()).toBe("plasma");
+    await page.screenshot({ path: join(EVIDENCE, "agent-app-control-05-orb-plasma.png"), fullPage: false });
+
+    // Settings shows the agent's choice as the selected style, because it reads the same preference.
+    await page.locator('[data-settings="true"]').click();
+    await expect(page.locator('[data-orb-preset="plasma"]')).toHaveAttribute("aria-pressed", "true");
+  } finally {
+    // The style is the node's, so it is put back for the suites that expect the shipped orb.
+    for (let step = 0; step < 16; step += 1) {
+      const response = await request.post(`${GATEWAY}/preferences/orb.profile/undo`, { headers });
+      const answer = (await response.json()) as { preference?: { isDefault?: boolean } };
+      if (answer.preference?.isDefault === true) break;
+    }
+  }
+});
+
 test("the voice agent ends voice mode through the same contract, and the page confirms it", async ({ page, request }) => {
   await openApp(page);
   await startConversation(page);

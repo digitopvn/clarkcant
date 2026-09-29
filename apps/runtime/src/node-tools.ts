@@ -3,11 +3,13 @@ import { join } from "node:path";
 
 import {
   ATTACHMENT_LIMITS,
+  ORB_PROFILE_NAMES,
   appIntentSchema,
   attachmentIdSchema,
   describeAppIntent,
   memoryKindSchema,
   memoryScopeSchema,
+  orbProfileSchema,
   settingsTabSchema,
   type AppIntentDecision,
   type ConversationId,
@@ -292,6 +294,7 @@ const CONTROL_APP_KINDS = [
   "model.cycle",
   "model.select",
   "inbox.open",
+  "orb.select",
 ] as const;
 
 /**
@@ -337,6 +340,18 @@ export interface ControlAppDeps {
   hostControl?: HostControlAcks;
 }
 
+/**
+ * What the model is told when a kind that needs a parameter arrived without a valid one.
+ *
+ * The only kinds that can fail the contract here are the three that carry a parameter, so an entry per kind is the
+ * whole list, and the sentence names what was missing so the model can correct itself in the same turn.
+ */
+const CONTROL_APP_MISSING_PARAMETER: Partial<Record<string, string>> = {
+  "settings.tab": "settings.tab cần tên tab hợp lệ.",
+  "model.select": "model.select cần modelAlias của một profile đã cấu hình.",
+  "orb.select": `orb.select cần orbProfile là một trong: ${ORB_PROFILE_NAMES.join(", ")}.`,
+};
+
 const NO_ACTIVE_HOST_SURFACE_SAY =
   "Không có màn hình nào đang mở phiên trò chuyện này để tôi thực hiện lệnh, nên tôi chưa làm gì cả.";
 
@@ -364,7 +379,8 @@ export function createControlAppTool(deps: ControlAppDeps): ToolDefinition {
     description:
       "Ask the app to carry out one of its own semantic actions on the person's behalf: open Settings " +
       "(optionally at a tab), open the inbox (what is waiting for the person and the notices from background " +
-      "work), return to the current conversation, go to the home screen, start or end voice mode, or switch the configured model (cycle to the next one, or select a specific alias). " +
+      "work), return to the current conversation, go to the home screen, start or end voice mode, switch the configured model (cycle to the next one, or select a specific alias), " +
+      "or change the Orb's style to one of its named profiles (saved the same way the Settings buttons save it). " +
       "This is not a scripting surface — it accepts only these fixed kinds, never a URL, selector or " +
       "arbitrary command. Only call it when the user's own request implies the app itself should change, " +
       "not merely to narrate what you are about to say. The result is the screen's own report: done, " +
@@ -387,9 +403,17 @@ export function createControlAppTool(deps: ControlAppDeps): ToolDefinition {
           type: "string",
           description: "Required only for kind \"model.select\": the configured profile's alias.",
         },
+        orbProfile: {
+          type: "string",
+          enum: [...ORB_PROFILE_NAMES],
+          description:
+            "Required only for kind \"orb.select\": the Orb profile to switch to. \"clark\" is the signature default; " +
+            "\"custom\" is the person's own adjustments from Settings.",
+        },
       },
     },
-    promptSnippet: "control_app — open Settings or the inbox, navigate, or switch voice/model state for the user",
+    promptSnippet:
+      "control_app — open Settings or the inbox, navigate, switch voice/model state, or change the Orb's style for the user",
     execute: async (params: Record<string, unknown>): Promise<{ text: string }> => {
       const outcome = await controlApp(deps, params);
       return { text: outcome.say };
@@ -437,16 +461,12 @@ export function decideControlApp(deps: ControlAppDeps, params: Record<string, un
     ...(kind === "model.select" && typeof params.modelAlias === "string" && params.modelAlias.trim() !== ""
       ? { modelAlias: params.modelAlias.trim() }
       : {}),
+    ...(kind === "orb.select" && orbProfileSchema.safeParse(params.orbProfile).success
+      ? { orbProfile: params.orbProfile }
+      : {}),
   });
   if (!parsed.success) {
-    return {
-      status: "refused",
-      reason: "unsupported",
-      say:
-        kind === "settings.tab"
-          ? "settings.tab cần tên tab hợp lệ."
-          : "model.select cần modelAlias của một profile đã cấu hình.",
-    };
+    return { status: "refused", reason: "unsupported", say: CONTROL_APP_MISSING_PARAMETER[kind] ?? "" };
   }
 
   const intent = parsed.data;

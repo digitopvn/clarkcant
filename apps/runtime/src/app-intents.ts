@@ -215,6 +215,7 @@ export function decideAppIntent(
             ...(input.request.tab === undefined ? {} : { tab: input.request.tab }),
             ...(input.request.definitionId === undefined ? {} : { definitionId: input.request.definitionId }),
             ...(input.request.family === undefined ? {} : { family: input.request.family }),
+            ...(input.request.orbProfile === undefined ? {} : { orbProfile: input.request.orbProfile }),
           }),
         }),
     mintConfirmationToken: () => randomUUID() as ConfirmationToken,

@@ -92,11 +92,26 @@ const orbProfile = (page: Page): Promise<string | null> =>
 const orbMotion = (page: Page): Promise<string | null> =>
   page.locator(".cc-orb[data-orb]").first().getAttribute("data-orb-motion");
 
+/**
+ * Step a preference back to its declared default, however many writes a test made.
+ *
+ * Undo steps back one write, and a journey here writes a style several times; a single undo would leave the
+ * next test starting from the second-to-last style instead of the shipped orb. Bounded, as the settings
+ * surface's own reset is, so a node that never reports a default cannot hold the suite in a loop.
+ */
+async function resetPreference(key: string): Promise<void> {
+  for (let step = 0; step < 16; step += 1) {
+    const answer = await api<{ preference: { isDefault: boolean } }>("POST", `/preferences/${key}/undo`);
+    if (answer.preference.isDefault) return;
+  }
+  throw new Error(`${key} did not return to its default`);
+}
+
 test.beforeEach(async () => {
   // Every test starts from the shipped profile, so one test's preference cannot decide another's result.
-  await api("POST", "/preferences/orb.profile/undo");
-  await api("POST", "/preferences/orb.custom/undo");
-  await api("POST", "/preferences/experience.motion/undo");
+  await resetPreference("orb.profile");
+  await resetPreference("orb.custom");
+  await resetPreference("experience.motion");
 });
 
 test("the shipped orb is what an unpersonalized node draws", async ({ page }) => {
@@ -194,6 +209,196 @@ test("reduced motion wins over a profile that asks for motion", async ({ page })
   expect(await orbProfile(page)).toBe("custom");
   expect(await orbMotion(page)).toBe("reduced");
   await page.screenshot({ path: join(EVIDENCE, "orb-02-reduced-motion.png"), fullPage: true });
+});
+
+/** Opens Settings on its first tab, Experience, where the orb's styles are. */
+async function openOrbSettings(page: Page): Promise<void> {
+  await page.locator('[data-settings="true"]').click();
+  await expect(page.locator("#cc-tabpanel-experience")).toBeVisible();
+  await expect(page.locator('[data-orb-settings="true"]')).toBeVisible();
+}
+
+const preset = (page: Page, name: string) => page.locator(`[data-orb-preset="${name}"]`);
+const previewCanvas = (page: Page) => page.locator(".cc-orb-preview-canvas");
+
+/**
+ * Two pictures of the same element a moment apart, compared byte for byte.
+ *
+ * A WebGL canvas cannot be read back without asking the renderer to keep its buffer, so the claim "the orb
+ * is still" is checked the way a person would check it: by looking twice.
+ */
+async function looksStill(page: Page, selector: string): Promise<boolean> {
+  const target = page.locator(selector).first();
+  const first = await target.screenshot();
+  await page.waitForTimeout(600);
+  const second = await target.screenshot();
+  return first.equals(second);
+}
+
+test("a style chosen in Settings changes the orb at once, keeps its colours in the preview, and survives a reload", async ({
+  page,
+}) => {
+  mkdirSync(EVIDENCE, { recursive: true });
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await page.emulateMedia({ colorScheme: "dark" });
+  await openApp(page);
+  await openOrbSettings(page);
+  // `system`, so the emulated scheme above decides the theme whatever an earlier journey stored.
+  await page.locator('[data-theme-choice="system"]').click();
+
+  // Every style the contract names is offered, and the shipped one is selected.
+  await expect(page.locator("[data-orb-preset]")).toHaveCount(7);
+  await expect(preset(page, "clark")).toHaveAttribute("aria-pressed", "true");
+
+  await preset(page, "pearl").click();
+  await expect(preset(page, "pearl")).toHaveAttribute("aria-pressed", "true");
+  await expect(preset(page, "clark")).toHaveAttribute("aria-pressed", "false");
+  // No Save button: the preview and the orb in the header both follow the choice once the node has it.
+  await expect(previewCanvas(page)).toHaveAttribute("data-orb-profile", "pearl");
+  await expect(previewCanvas(page)).toHaveAttribute("data-orb", "gl");
+  await expect.poll(() => orbProfile(page)).toBe("pearl");
+  await expect(page.locator('[data-orb-preview-name="pearl"]')).toBeVisible();
+  await page.screenshot({ path: join(EVIDENCE, "orb-03-settings-pearl-1280-dark.png"), fullPage: true });
+
+  await page.emulateMedia({ colorScheme: "light" });
+  await expect.poll(() => page.evaluate(() => document.documentElement.getAttribute("data-cc-theme"))).toBe("light");
+  await preset(page, "plasma").click();
+  await expect.poll(() => orbProfile(page)).toBe("plasma");
+  await page.screenshot({ path: join(EVIDENCE, "orb-04-settings-plasma-1280-light.png"), fullPage: true });
+
+  // The node holds it, and a reload reads it back rather than showing the last thing drawn.
+  const listed = await api<{ preferences: { key: string; value: unknown }[] }>("GET", "/preferences");
+  expect(listed.preferences.find((entry) => entry.key === "orb.profile")?.value).toBe("plasma");
+  await page.reload();
+  await expect(page.locator("text=Ready")).toBeVisible({ timeout: 15_000 });
+  await expect.poll(() => orbProfile(page)).toBe("plasma");
+  await expect(page.locator(".cc-orb[data-orb='gl']").first()).toBeVisible();
+
+  // Back to the signature orb from the same control, which is how a person undoes a style they did not like.
+  await openOrbSettings(page);
+  await page.locator('[data-orb-reset="true"]').click();
+  await expect(preset(page, "clark")).toHaveAttribute("aria-pressed", "true");
+  await expect.poll(() => orbProfile(page)).toBe("clark");
+});
+
+test("the styles are chosen from the keyboard alone, with a visible focus ring", async ({ page }) => {
+  await openApp(page);
+  await openOrbSettings(page);
+
+  await preset(page, "glass").focus();
+  // Tab, not a programmatic focus, so the browser treats this as keyboard navigation and shows its ring.
+  await page.keyboard.press("Tab");
+  await expect(preset(page, "pearl")).toBeFocused();
+  const outline = await preset(page, "pearl").evaluate((element) => getComputedStyle(element).outlineStyle);
+  expect(outline).not.toBe("none");
+
+  await page.keyboard.press("Space");
+  await expect(preset(page, "pearl")).toHaveAttribute("aria-pressed", "true");
+  await expect.poll(() => orbProfile(page)).toBe("pearl");
+});
+
+test.describe("on a phone", () => {
+  test.use({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true });
+
+  test("the styles fit a 390px screen and answer a tap", async ({ page }) => {
+    mkdirSync(EVIDENCE, { recursive: true });
+    await page.emulateMedia({ colorScheme: "dark" });
+    await openApp(page);
+    await openOrbSettings(page);
+    await page.locator('[data-theme-choice="system"]').click();
+
+    // Nothing in the list runs off the side of the screen: every style is reachable without scrolling sideways.
+    for (const name of ["clark", "calm", "jelly", "glass", "pearl", "plasma", "custom"]) {
+      const box = await preset(page, name).boundingBox();
+      if (box === null) throw new Error(`${name} has no box`);
+      expect(box.x, name).toBeGreaterThanOrEqual(0);
+      expect(box.x + box.width, name).toBeLessThanOrEqual(390);
+      // A target a finger can hit.
+      expect(box.height, name).toBeGreaterThanOrEqual(44);
+    }
+
+    await preset(page, "jelly").tap();
+    await expect(preset(page, "jelly")).toHaveAttribute("aria-pressed", "true");
+    await expect.poll(() => orbProfile(page)).toBe("jelly");
+    await page.locator('[data-orb-settings="true"]').screenshot({ path: join(EVIDENCE, "orb-05-settings-jelly-390-dark.png") });
+
+    await page.emulateMedia({ colorScheme: "light" });
+    await preset(page, "calm").tap();
+    await expect.poll(() => orbProfile(page)).toBe("calm");
+    await page.locator('[data-orb-settings="true"]').screenshot({ path: join(EVIDENCE, "orb-06-settings-calm-390-light.png") });
+  });
+});
+
+test("reduced motion stills every style, and the preview says so", async ({ page }) => {
+  mkdirSync(EVIDENCE, { recursive: true });
+  await api("PUT", "/preferences/orb.profile", { value: "plasma" });
+
+  // First with motion, so the stillness below is a property of the setting rather than of a canvas that
+  // never moves: plasma is the busiest style there is. Dark, because on a light surface the orb's
+  // additive interior saturates to white, and a white disc looks the same from one frame to the next.
+  await page.emulateMedia({ colorScheme: "dark" });
+  await openApp(page);
+  await openOrbSettings(page);
+  await page.locator('[data-theme-choice="system"]').click();
+  await expect.poll(() => page.evaluate(() => document.documentElement.getAttribute("data-cc-theme"))).toBe("dark");
+  await expect(previewCanvas(page)).toHaveAttribute("data-orb-motion", "full");
+  expect(await looksStill(page, ".cc-orb-preview-canvas")).toBe(false);
+
+  // The setting in the same panel, which applies at once.
+  await page.locator('[data-segmented="motion"] [data-segment="reduced"]').click();
+  await expect(previewCanvas(page)).toHaveAttribute("data-orb-motion", "reduced");
+  await expect(page.locator('[data-orb-preview-motion="reduced"]')).toBeVisible();
+  await expect.poll(() => orbMotion(page)).toBe("reduced");
+  // The style is kept - colour is not motion - but it no longer moves.
+  await expect(previewCanvas(page)).toHaveAttribute("data-orb-profile", "plasma");
+  expect(await looksStill(page, ".cc-orb-preview-canvas")).toBe(true);
+  await page.screenshot({ path: join(EVIDENCE, "orb-07-settings-plasma-reduced-motion.png"), fullPage: true });
+
+  // The platform's own switch is enough on its own, with the stored preference back at its default.
+  await api("POST", "/preferences/experience.motion/undo");
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await page.reload();
+  await expect(page.locator("text=Ready")).toBeVisible({ timeout: 15_000 });
+  await expect.poll(() => orbMotion(page)).toBe("reduced");
+  expect(await looksStill(page, ".cc-orb[data-orb]")).toBe(true);
+});
+
+test("without WebGL the orb stays visible in its style's colours, and Settings says why it is still", async ({ page }) => {
+  mkdirSync(EVIDENCE, { recursive: true });
+  // A machine whose browser offers no WebGL: every request for a context is refused, as a disabled GPU does.
+  await page.addInitScript(() => {
+    const original = HTMLCanvasElement.prototype.getContext;
+    HTMLCanvasElement.prototype.getContext = function withoutWebgl(this: HTMLCanvasElement, ...args: unknown[]) {
+      if (args[0] === "webgl" || args[0] === "webgl2" || args[0] === "experimental-webgl") return null;
+      return (original as (...rest: unknown[]) => unknown).apply(this, args);
+    } as typeof HTMLCanvasElement.prototype.getContext;
+  });
+  await api("PUT", "/preferences/orb.profile", { value: "pearl" });
+
+  await openApp(page);
+  const header = page.locator(".cc-orb[data-orb]").first();
+  await expect(header).toHaveAttribute("data-orb", "fallback");
+  await expect(header).toHaveAttribute("data-orb-profile", "pearl");
+  // The fallback carries the chosen style rather than reverting to the shipped gradient.
+  expect(await header.evaluate((element) => (element as HTMLElement).style.background)).toContain("radial-gradient");
+
+  await openOrbSettings(page);
+  await expect(page.locator('[data-orb-preview="true"]')).toHaveAttribute("data-orb-preview-mode", "fallback");
+  await expect(page.locator('[data-orb-fallback-note="true"]')).toBeVisible();
+  // The preview's own status says it is still, rather than claiming an animation a gradient cannot have.
+  await expect(page.locator("[data-orb-preview-motion]")).toHaveText("Đang hiện ảnh tĩnh.");
+  // The choice still works: it is saved, and the orb shows the new style's colours.
+  await preset(page, "plasma").click();
+  await expect.poll(() => orbProfile(page)).toBe("plasma");
+  await expect(header).toHaveAttribute("data-orb", "fallback");
+  await page.screenshot({ path: join(EVIDENCE, "orb-08-settings-no-webgl.png"), fullPage: true });
+
+  // The shipped orb has no palette of its own to carry, and still shows the signature gradient rather than
+  // an empty box.
+  await preset(page, "clark").click();
+  await expect.poll(() => orbProfile(page)).toBe("clark");
+  const previewBackground = await previewCanvas(page).evaluate((element) => getComputedStyle(element).backgroundImage);
+  expect(previewBackground).toContain("radial-gradient");
 });
 
 test("the shell publishes how the user is interacting and what the agent is doing", async ({ page }) => {

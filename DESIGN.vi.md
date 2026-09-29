@@ -122,15 +122,25 @@ User được cá nhân hoá **cách Orb thể hiện**, không xoá semantic id
 
 Personalization phải đi qua typed preferences và bounded ranges/presets. Không cho arbitrary shader source, arbitrary GLSL, CSS injection hoặc unbounded physics values từ Settings/widget/theme package.
 
-Các preset built-in tối thiểu:
+Các preset built-in:
 
 - Clark — default signature;
-- Calm — ít glow/chromatic, damping cao hơn;
-- Jelly — spring mềm và overshoot rõ hơn nhưng vẫn bounded;
-- Glass — sheen/exposure rõ hơn, motion thấp;
+- Calm — tông xanh mát, ít glow/chromatic, damping cao hơn;
+- Jelly — tông ấm, spring mềm và overshoot rõ hơn nhưng vẫn bounded;
+- Glass — tông băng, sheen/exposure rõ hơn, motion thấp;
+- Pearl — những lớp xà cừ màu phấn bên trong cùng lớp vỏ kính, trôi chậm;
+- Plasma — những tia sáng từ lõi ra vỏ kính, vươn theo con trỏ;
 - Custom — chỉnh advanced values trong range an toàn.
 
-prefers-reduced-motion luôn thắng preference animation: Orb vẫn hiện nhưng đứng yên hoặc chỉ phản hồi trạng thái không chuyển động.
+Một preset được chọn palette, kiểu lõi trong một danh sách đóng (dải phổ, đường xà cừ, tia plasma), optics, tốc độ và physics. Preset không được đổi kích thước, silhouette, vỏ kính hay viền của Orb: chính những thứ đó khiến mọi preset vẫn nhận ra ngay là Orb. Lõi Pearl và Plasma lấy cảm hứng từ bộ orb trên shadercn.run và được viết lại từ đầu, vì bộ đó không công bố giấy phép.
+
+Preference là `orb.profile` ở phạm vi global. Settings → Experience có một bản xem trước sống, mỗi preset có một swatch tĩnh bằng chính màu của nó, và lựa chọn được lưu ngay khi bấm. Cuộc trò chuyện đi tới cùng preference đó qua app intent `orb.select`, mà agent và voice agent gọi qua `control_app`, nên "đổi Orb sang Plasma" và bấm vào swatch Plasma là một lần ghi, không phải hai bản cài đặt.
+
+prefers-reduced-motion luôn thắng preference animation: Orb vẫn hiện nhưng đứng yên hoặc chỉ phản hồi trạng thái không chuyển động. Preference giảm chuyển động đã lưu và thiết lập của nền tảng, mỗi thứ đều tự đủ, và thiết lập của nền tảng được theo dõi trực tiếp.
+
+Khi không có WebGL, Orb vẫn hiện dưới dạng gradient tĩnh bằng màu của preset đã chọn (gradient gốc với Clark), và Settings nói rõ máy này không vẽ được Orb nhưng lựa chọn vẫn được lưu. Khi đó, dòng trạng thái của bản xem trước báo là ảnh tĩnh chứ không báo đang chuyển động.
+
+Hạn chế đã biết: ở chủ đề sáng, phần lõi WebGL của mọi preset (kể cả Clark) bị cháy thành một đĩa trắng. Lý do là ánh sáng của lõi được cộng vào thân kính, mà thân kính lại dựng từ màu nền của trang. Chủ đề tối không bị ảnh hưởng. Orb nên hiện thế nào trên nền sáng là một quyết định thiết kế, đang được theo dõi ở #269.
 
 ---
 
@@ -272,7 +282,7 @@ Root conversation surface nên có state machine hiển thị bằng data attrib
 Trên chính canvas của Orb, ba attribute nữa công bố **profile đã resolve** chứ không phải preference thô:
 
     data-orb          = gl | fallback
-    data-orb-profile  = clark | calm | jelly | glass | custom
+    data-orb-profile  = clark | calm | jelly | glass | pearl | plasma | custom
     data-orb-motion   = full | reduced
 
 `data-orb-motion` là giá trị **sau khi** reduced-motion đã thắng, nên một surface đọc được sự thật đã resolve

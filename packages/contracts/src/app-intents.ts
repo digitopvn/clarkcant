@@ -26,6 +26,7 @@
 import { z } from "zod";
 
 import { capabilityRefSchema } from "./grants.ts";
+import { ORB_PROFILE_LABELS, orbProfileSchema } from "./preferences.ts";
 
 /**
  * The kinds.
@@ -60,6 +61,7 @@ export const APP_INTENT_KINDS = [
   "inbox.open",
   "inbox.ask",
   "turn.stop",
+  "orb.select",
 ] as const;
 
 export const appIntentKindSchema = z.enum(APP_INTENT_KINDS);
@@ -122,6 +124,12 @@ export const appIntentSchema = z
     family: widgetFamilySchema.optional(),
     /** Carried only by `model.select`, naming a profile from the configured pool - never a bare provider/model string. */
     modelAlias: modelAliasSchema.optional(),
+    /**
+     * Carried only by `orb.select`: one of the orb's named profiles, the same closed set the `orb.profile` preference
+     * accepts. A name, never a colour or a shader value, so this channel cannot carry anything the Settings buttons
+     * could not.
+     */
+    orbProfile: orbProfileSchema.optional(),
   })
   .refine((intent) => intent.kind !== "settings.tab" || intent.tab !== undefined, {
     message: "settings.tab must name the tab to change to",
@@ -142,6 +150,14 @@ export const appIntentSchema = z
   .refine((intent) => intent.kind === "model.select" || intent.modelAlias === undefined, {
     message: "only model.select may name a model alias",
     path: ["modelAlias"],
+  })
+  .refine((intent) => intent.kind !== "orb.select" || intent.orbProfile !== undefined, {
+    message: "orb.select must name the orb profile to switch to",
+    path: ["orbProfile"],
+  })
+  .refine((intent) => intent.kind === "orb.select" || intent.orbProfile === undefined, {
+    message: "only orb.select may name an orb profile",
+    path: ["orbProfile"],
   });
 export type AppIntent = z.infer<typeof appIntentSchema>;
 
@@ -196,6 +212,11 @@ const TAB_LABELS: Record<SettingsTab, string> = {
   memory: "Memory",
   developer: "Developer",
 };
+
+/** The on-screen name of the profile an `orb.select` names; the refinements above guarantee there is one. */
+function orbProfileLabel(intent: AppIntent): string {
+  return ORB_PROFILE_LABELS[intent.orbProfile ?? "clark"];
+}
 
 /**
  * The sentence read back before the application acts, in Vietnamese.
@@ -252,6 +273,8 @@ function describeAppIntentVi(intent: AppIntent): string {
       return "Tôi xem thông báo mới nhất rồi nói cho bạn nó nghĩa là gì nhé.";
     case "turn.stop":
       return "Tôi dừng câu trả lời đang chạy nhé; phần đã viết vẫn được giữ lại.";
+    case "orb.select":
+      return `Tôi đổi Orb sang kiểu ${orbProfileLabel(intent)} nhé.`;
     default: {
       // Every kind above returns, so this is unreachable today. It exists so that adding a tenth kind
       // without a sentence is a loud failure in a test rather than `undefined` read aloud by a voice.
@@ -307,6 +330,8 @@ function describeAppIntentEn(intent: AppIntent): string {
       return "Looking at your latest notice and saying what it means.";
     case "turn.stop":
       return "Stopping the reply in progress; what it already wrote is kept.";
+    case "orb.select":
+      return `Switching the Orb to the ${orbProfileLabel(intent)} style.`;
     default: {
       const unreachable: never = intent.kind;
       throw new Error(`no read-back sentence for app intent ${String(unreachable)}`);
@@ -396,6 +421,8 @@ export const appIntentRequestSchema = z
     family: widgetFamilySchema.optional(),
     /** Carried so a click or an agent tool call can name a configured model-pool profile directly. */
     modelAlias: modelAliasSchema.optional(),
+    /** Carried so a click can name the orb profile an `orb.select` switches to. */
+    orbProfile: orbProfileSchema.optional(),
     conversationId: z.string().min(1).max(128).optional(),
     source: appIntentSourceSchema,
   })
@@ -432,6 +459,8 @@ export const appIntentEventDocumentSchema = z.strictObject({
   family: widgetFamilySchema.optional(),
   /** Recorded so the audit can answer which profile a `model.select` switched to. */
   modelAlias: modelAliasSchema.optional(),
+  /** Recorded so the audit can answer which orb an `orb.select` switched to. */
+  orbProfile: orbProfileSchema.optional(),
   source: appIntentSourceSchema,
   confirmed: z.boolean(),
 });

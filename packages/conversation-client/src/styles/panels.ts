@@ -373,9 +373,9 @@ button:focus-visible, textarea:focus-visible, input:focus-visible, [tabindex]:fo
 /*
  * The orb preview: one live renderer, not a grid of them.
  *
- * A WebGL context per preset would be a GPU program each for a difference the label already states. The
- * selected preset feeds this one canvas, and the stage behind it carries the palette so a machine without
- * WebGL still shows the colours that were chosen.
+ * A WebGL context per preset would be a GPU program each for a difference a swatch already shows. The
+ * selected preset feeds this one canvas. Without WebGL the canvas shows a still picture instead: the chosen
+ * preset's own palette, set inline by the Orb, or the signature orb's gradient below for the shipped profile.
  */
 .cc-orb-preview { display: flex; align-items: center; gap: var(--cc-space-md); padding: var(--cc-space-sm) 0; }
 .cc-orb-preview-stage {
@@ -383,7 +383,40 @@ button:focus-visible, textarea:focus-visible, input:focus-visible, [tabindex]:fo
   display: flex; align-items: center; justify-content: center;
   background: var(--cc-card); border: 1px solid var(--cc-border);
 }
-.cc-orb-preview-canvas { display: block; }
+.cc-orb-preview-canvas { display: block; border-radius: var(--cc-radius-pill); }
+.cc-orb-preview-canvas[data-orb="fallback"] {
+  background:
+    radial-gradient(ellipse 78% 11% at 50% 50%, #ffffff 0%, #ffd86b 22%, #82f4ff 40%, #ff7bd5 62%, #8e6cff 82%, transparent 100%),
+    radial-gradient(circle at 50% 46%, #2a2350 0%, #161231 45%, #0b0a1c 100%);
+}
+
+/*
+ * The preset list: a swatch and a name per preset, wrapping onto as many rows as the width needs.
+ *
+ * Buttons rather than a radio group because each one is a single action that saves at once, the same as the
+ * theme and motion controls. The selected one is marked by its border, its weight and aria-pressed together,
+ * so the state never rests on colour alone. At least 44px tall, so a finger can hit one without its neighbour.
+ */
+.cc-orb-presets { display: flex; flex-wrap: wrap; gap: var(--cc-space-xs); justify-content: flex-end; }
+.cc-orb-preset {
+  display: inline-flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: var(--cc-space-xxs); min-width: 64px; min-height: 44px;
+  padding: var(--cc-space-xs) var(--cc-space-sm);
+  border: 1px solid var(--cc-border); border-radius: var(--cc-radius-badge);
+  background: var(--cc-card); color: var(--cc-text-muted);
+  font: inherit; font-size: var(--cc-text-label); cursor: pointer;
+}
+.cc-orb-preset:hover { color: var(--cc-text); border-color: color-mix(in oklab, var(--cc-text) 35%, var(--cc-border)); }
+.cc-orb-preset[aria-pressed="true"] {
+  color: var(--cc-text); font-weight: 600; border-color: var(--cc-accent);
+  box-shadow: inset 0 0 0 1px var(--cc-accent);
+  background: color-mix(in oklab, var(--cc-accent) 12%, var(--cc-card));
+}
+.cc-orb-preset:focus-visible { outline: 2px solid var(--cc-focus); outline-offset: 2px; }
+.cc-orb-preset-swatch {
+  width: 28px; height: 28px; border-radius: var(--cc-radius-pill); flex: none;
+  box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--cc-text) 14%, transparent);
+}
 
 .cc-effect-list { list-style: none; margin: var(--cc-space-sm) 0 0; padding: 0; display: flex; flex-direction: column; gap: var(--cc-space-xs); }
 .cc-effect-list li { font-size: var(--cc-text-label); color: var(--cc-text-muted); overflow-wrap: anywhere; }

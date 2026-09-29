@@ -1,5 +1,7 @@
 import { type CSSProperties, type ReactElement, useRef, useState } from "react";
 
+import { ORB_PROFILE_LABELS, type OrbProfileName } from "@clarkcant/contracts";
+
 import type { GatewayClient, Timeline } from "./api.ts";
 import { agentStateFrom, windowModeFrom } from "./input-modality.ts";
 import type { ResolvedOrbProfile } from "./orb-profile.ts";
@@ -280,6 +282,20 @@ export function Conversation({
     // The hotkey's own switches, so the alias and note on screen follow an agent's switch too.
     cycleModel,
     selectModel,
+    /*
+     * The orb style an agent or a spoken request asks for, saved with the same preference write the Settings
+     * control makes and then shown with the same refresh. Offered only when the host can refresh the orb: a
+     * style that was saved but not drawn until the next reload would make "done" untrue on screen.
+     */
+    ...(onOrbChange === undefined
+      ? {}
+      : {
+          selectOrbProfile: async (profile: OrbProfileName) => {
+            await client.writePreference("orb.profile", profile);
+            onOrbChange();
+            return localeState.t("shell.intent.orbChanged").replace("{name}", ORB_PROFILE_LABELS[profile]);
+          },
+        }),
   });
 
   /**
@@ -572,6 +588,7 @@ export function Conversation({
           onAppIntent={appIntents.runIntent}
           onWidgetActionResult={appIntents.bumpLiveRefresh}
           {...(focusedInstanceId === undefined ? {} : { focusedInstanceId })}
+          {...(orbProfile === undefined ? {} : { orbProfile })}
           onClose={({ focusComposer }) => {
             setVoiceOpen(false);
             if (focusComposer) composerInput.current?.focus();

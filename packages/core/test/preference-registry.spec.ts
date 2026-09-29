@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it } from "vitest";
 
-import { PREFERENCE_KEYS } from "@clarkcant/contracts";
+import { ORB_PROFILE_NAMES, PREFERENCE_KEYS } from "@clarkcant/contracts";
 import { migrate, openDatabase } from "@clarkcant/storage";
 
 import { listPreferences, setPreference } from "../src/preferences.ts";
@@ -89,6 +89,20 @@ describe("an invalid value leaves the previous one alone", () => {
     const current = readRegisteredPreference(deps, { principalId: PRINCIPAL, key: "orb.custom" });
     expect(current?.value).toEqual({ physics: { stiffness: 120 } });
     expect(current?.revision).toBe(1);
+  });
+
+  it("stores every orb style the contract names, and refuses one it does not", () => {
+    for (const name of ORB_PROFILE_NAMES) {
+      const written = writeRegisteredPreference(deps, { principalId: PRINCIPAL, key: "orb.profile", value: name });
+      expect(written.ok, name).toBe(true);
+    }
+    const refused = writeRegisteredPreference(deps, { principalId: PRINCIPAL, key: "orb.profile", value: "aurora" });
+    expect(refused.ok).toBe(false);
+    if (refused.ok) throw new Error("expected a refusal");
+    expect(refused.code).toBe("PREFERENCE_INVALID");
+    // The refusal leaves the last accepted style in place.
+    const current = readRegisteredPreference(deps, { principalId: PRINCIPAL, key: "orb.profile" });
+    expect(current?.value).toBe(ORB_PROFILE_NAMES[ORB_PROFILE_NAMES.length - 1]);
   });
 
   it("refuses a value whose type is wrong", () => {

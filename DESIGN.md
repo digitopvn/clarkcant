@@ -122,15 +122,25 @@ Users may personalize **how the Orb presents itself**, but not strip its semanti
 
 Personalization must go through typed preferences and bounded ranges/presets. No arbitrary shader source, arbitrary GLSL, CSS injection or unbounded physics values from Settings/widget/theme packages.
 
-Minimum built-in presets:
+Built-in presets:
 
 - Clark — default signature;
-- Calm — less glow/chromatic fringe, higher damping;
-- Jelly — softer spring with more pronounced but still bounded overshoot;
-- Glass — more sheen/exposure, low motion;
+- Calm — cool blues, less glow/chromatic fringe, higher damping;
+- Jelly — warm tones, softer spring with more pronounced but still bounded overshoot;
+- Glass — icy tones, more sheen/exposure, low motion;
+- Pearl — pastel mother-of-pearl contour layers inside the same glass shell, slow drift;
+- Plasma — filaments from a lit core to the glass that reach toward the pointer;
 - Custom — adjust advanced values within a safe range.
 
-prefers-reduced-motion always wins over the animation preference: the Orb still appears but stays still, or only reacts to state without motion.
+A preset may choose a palette, an interior style from a closed list (the spectral band, nacre contours, plasma filaments), optics, speed and physics. It may not change the Orb's size, silhouette, glass shell or rim: those are what make every preset recognisably the Orb. The Pearl and Plasma interiors are inspired by the orb catalogue at shadercn.run and are written from scratch, because that catalogue publishes no licence.
+
+The preference is the global `orb.profile`. Settings → Experience shows one live preview, and a still swatch in each preset's own colours, and saves a choice as soon as it is made. The conversation reaches the same preference through the `orb.select` app intent, which the agent and the voice agent call through `control_app`, so "switch the Orb to Plasma" and a click on the Plasma swatch are one write, not two implementations.
+
+prefers-reduced-motion always wins over the animation preference: the Orb still appears but stays still, or only reacts to state without motion. The stored reduced-motion preference and the platform setting are each enough on their own, and the platform setting is followed live.
+
+Without WebGL, the Orb stays visible as a still gradient in the chosen preset's colours (the shipped gradient for Clark), and Settings says that the machine cannot draw it and that the choice is still saved. The preview's status then reads as still rather than animating.
+
+Known limitation: on the light theme the WebGL interior of every preset, Clark's included, saturates to a white disc, because the interior's light is added to a glass body built from the page background. The dark theme is unaffected. How the Orb should sit on a light surface is a design decision tracked in #269.
 
 ---
 
@@ -273,7 +283,7 @@ The root conversation surface should have a state machine expressed via data att
 On the Orb's own canvas, three more attributes publish the **resolved profile** rather than the raw preference:
 
     data-orb          = gl | fallback
-    data-orb-profile  = clark | calm | jelly | glass | custom
+    data-orb-profile  = clark | calm | jelly | glass | pearl | plasma | custom
     data-orb-motion   = full | reduced
 
 `data-orb-motion` is the value **after** reduced-motion has already won, so a surface reads the resolved truth

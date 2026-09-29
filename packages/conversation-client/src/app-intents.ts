@@ -25,6 +25,7 @@
 import {
   type AppIntent,
   type AppIntentDecision,
+  type OrbProfileName,
   type SettingsTab,
   describeAppIntent,
 } from "@clarkcant/contracts";
@@ -97,6 +98,13 @@ export interface AppIntentHost {
   /** Selects a configured model-pool profile by its alias. See `cycleModel` for why this is optional. */
   selectModel?(alias: string): HostEffect;
   /**
+   * Changes the orb's style, through the same preference write the Settings control makes.
+   *
+   * Optional: a host with no node behind it has nowhere to store the choice, and an orb that changed on
+   * screen without being saved would revert on the next reload — a success that was not one.
+   */
+  selectOrbProfile?(profile: OrbProfileName): HostEffect;
+  /**
    * Opens the widget library.
    *
    * Optional for the same reason the window methods are: a host that cannot show the library should
@@ -151,6 +159,8 @@ function missingCapabilitySay(intent: AppIntent): string {
       return catalog["shell.intent.notInbox"];
     case "turn.stop":
       return catalog["shell.intent.notTurn"];
+    case "orb.select":
+      return catalog["shell.intent.notOrb"];
     default:
       return catalog["shell.intent.notDesktop"];
   }
@@ -167,6 +177,10 @@ function notExecutableSay(decision: AppIntentDecision): string {
       // Unreachable: this function is only called for the other two members.
       return describeAppIntent(decision.intent);
   }
+}
+
+function describeMissingOrbProfile(): string {
+  return CATALOGS[readStoredLocale()]["shell.intent.orbProfileMissing"];
 }
 
 /** Exported for the test that proves every kind is answerable here. */
@@ -229,6 +243,11 @@ function carryOut(intent: AppIntent, host: AppIntentHost): HostEffect {
       return host.cycleModel?.();
     case "model.select":
       return host.selectModel?.(intent.modelAlias ?? "");
+    case "orb.select":
+      // The contract refuses an `orb.select` without a profile, so this is a decision that did not come
+      // through it. Refused rather than defaulted: switching to some orb nobody named is not what was asked.
+      if (intent.orbProfile === undefined) throw new Error(describeMissingOrbProfile());
+      return host.selectOrbProfile?.(intent.orbProfile);
     case "window.expand":
       return host.expandWindow?.();
     case "window.minimise":
@@ -286,6 +305,8 @@ function hostHasCapability(host: AppIntentHost, intent: AppIntent): boolean {
       return host.cycleModel !== undefined;
     case "model.select":
       return host.selectModel !== undefined;
+    case "orb.select":
+      return host.selectOrbProfile !== undefined;
     default:
       return true;
   }

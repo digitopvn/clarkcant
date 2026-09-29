@@ -93,6 +93,45 @@ describe("control_app", () => {
     });
   });
 
+  it("delivers orb.select carrying the requested style, and audits the style", () => {
+    const delivered: ModelTurnEvent[] = [];
+    const result = decideControlApp(deps(() => (event) => delivered.push(event)), {
+      kind: "orb.select",
+      orbProfile: "plasma",
+    });
+    expect(result.status).toBe("delivered");
+    expect(delivered[0]).toMatchObject({
+      type: "host-control",
+      decision: { kind: "intent", intent: { kind: "orb.select", orbProfile: "plasma" } },
+    });
+    const events = services.runtime.db
+      .prepare("SELECT document FROM events WHERE kind = 'app.intent' ORDER BY rowid DESC LIMIT 1")
+      .all() as { document: string }[];
+    const document = JSON.parse(events[0]!.document) as { kind: string; orbProfile?: string };
+    expect(document).toMatchObject({ kind: "orb.select", orbProfile: "plasma" });
+  });
+
+  it("refuses orb.select with no style or an unknown one, naming the styles, without delivering anything", () => {
+    for (const params of [{ kind: "orb.select" }, { kind: "orb.select", orbProfile: "aurora" }]) {
+      const delivered: ModelTurnEvent[] = [];
+      const result = decideControlApp(deps(() => (event) => delivered.push(event)), params);
+      expect(result.status, JSON.stringify(params)).toBe("refused");
+      if (result.status !== "refused") throw new Error("expected a refusal");
+      // The model is told what it may pass, so its next call can be a valid one.
+      expect(result.say).toContain("pearl");
+      expect(delivered).toHaveLength(0);
+    }
+  });
+
+  it("does not carry an orbProfile on any other kind", () => {
+    const delivered: ModelTurnEvent[] = [];
+    decideControlApp(deps(() => (event) => delivered.push(event)), { kind: "settings.open", orbProfile: "pearl" });
+    expect(delivered[0]).toMatchObject({ type: "host-control", decision: { kind: "intent", intent: { kind: "settings.open" } } });
+    const event = delivered[0];
+    if (event?.type !== "host-control" || event.decision.kind !== "intent") throw new Error("expected an intent");
+    expect(event.decision.intent.orbProfile).toBeUndefined();
+  });
+
   it("delivers inbox.open, so the agent can open the inbox the way a spoken command does", () => {
     const delivered: ModelTurnEvent[] = [];
     const result = decideControlApp(deps(() => (event) => delivered.push(event)), { kind: "inbox.open" });

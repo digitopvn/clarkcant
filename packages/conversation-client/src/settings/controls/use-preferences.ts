@@ -65,9 +65,15 @@ export interface PreferencesHandle {
   flag: (key: string, fallback: boolean) => boolean;
   /** An object value, for a patch-shaped preference such as the orb's. */
   record: (key: string) => Record<string, unknown> | undefined;
-  write: (key: string, value: unknown) => void;
-  /** Undo the last write, which is how a control offers "back to what it was". */
-  undo: (key: string) => void;
+  /**
+   * Write one preference. `onSaved` runs once the node has accepted it, never on a refusal.
+   *
+   * The callback exists for a surface outside settings that shows the same preference, such as the orb in
+   * the header: telling it to re-read before the node has answered makes it read the value being replaced.
+   */
+  write: (key: string, value: unknown, onSaved?: () => void) => void;
+  /** Undo the last write, which is how a control offers "back to what it was". `onSaved` as for `write`. */
+  undo: (key: string, onSaved?: () => void) => void;
   /**
    * Return a preference to its declared default, however many writes it took to get away from it.
    *
@@ -166,7 +172,7 @@ export function usePreferences(client: GatewayClient, open: boolean): Preference
    * safe to render beside the control that was wrong.
    */
   const write = useCallback(
-    (key: string, value: unknown): void => {
+    (key: string, value: unknown, onSaved?: () => void): void => {
       setPending(key);
       setStatus(undefined);
       client
@@ -181,6 +187,7 @@ export function usePreferences(client: GatewayClient, open: boolean): Preference
             tone: "ok",
             status: { kind: "saved", applies: answer.preference.applies },
           });
+          onSaved?.();
         })
         .catch((cause: unknown) => {
           setStatus({
@@ -197,7 +204,7 @@ export function usePreferences(client: GatewayClient, open: boolean): Preference
   );
 
   const undo = useCallback(
-    (key: string): void => {
+    (key: string, onSaved?: () => void): void => {
       setPending(key);
       setStatus(undefined);
       client
@@ -214,6 +221,7 @@ export function usePreferences(client: GatewayClient, open: boolean): Preference
             // better than reporting a change that did not happen.
             status: { kind: answer.undone ? "undone" : "neverSet" },
           });
+          onSaved?.();
         })
         .catch((cause: unknown) => {
           setStatus({
