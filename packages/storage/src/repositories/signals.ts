@@ -178,6 +178,89 @@ export function activeIntentsForTopic(db: Database, topic: string): PersistentIn
   ).map(intentFromRow);
 }
 
+/** Active intents whose topic starts with a family, such as `github.`: what a poller for that family is for. */
+export function activeIntentsForTopicFamily(db: Database, family: string): PersistentIntent[] {
+  return allRows<IntentRow>(
+    db,
+    "SELECT document FROM persistent_intents WHERE state = 'active' AND substr(topic, 1, length(?)) = ? ORDER BY created_at ASC, intent_id ASC",
+    family,
+    family,
+  ).map(intentFromRow);
+}
+
+/**
+ * When a source last delivered a signal whose dedupe key starts with a prefix, such as a verified webhook's
+ * `delivery:`. Sources are compared case-insensitively, since a repository's name is.
+ */
+export function lastSignalReceivedAt(db: Database, sourceId: string, dedupePrefix: string): Instant | undefined {
+  const row = oneRow<{ at: string | null }>(
+    db,
+    `SELECT MAX(received_at) AS at FROM signal_deliveries
+     WHERE source_id = ? COLLATE NOCASE AND substr(dedupe_key, 1, length(?)) = ?`,
+    sourceId,
+    dedupePrefix,
+    dedupePrefix,
+  );
+  return row?.at === null || row?.at === undefined ? undefined : (row.at as Instant);
+}
+
+/** Where polling one source got to. */
+export interface SignalPollState {
+  sourceKey: string;
+  cursor?: string;
+  etag?: string;
+  nextPollAt: Instant;
+  failures: number;
+  failingSince?: Instant;
+  lastError?: string;
+  updatedAt: Instant;
+}
+
+interface PollStateRow {
+  source_key: string;
+  cursor: string | null;
+  etag: string | null;
+  next_poll_at: string;
+  failures: number;
+  failing_since: string | null;
+  last_error: string | null;
+  updated_at: string;
+}
+
+export function getSignalPollState(db: Database, sourceKey: string): SignalPollState | undefined {
+  const row = oneRow<PollStateRow>(db, "SELECT * FROM signal_poll_state WHERE source_key = ?", sourceKey);
+  if (row === undefined) return undefined;
+  return {
+    sourceKey: row.source_key,
+    ...(row.cursor === null ? {} : { cursor: row.cursor }),
+    ...(row.etag === null ? {} : { etag: row.etag }),
+    nextPollAt: row.next_poll_at as Instant,
+    failures: Number(row.failures),
+    ...(row.failing_since === null ? {} : { failingSince: row.failing_since as Instant }),
+    ...(row.last_error === null ? {} : { lastError: row.last_error }),
+    updatedAt: row.updated_at as Instant,
+  };
+}
+
+export function putSignalPollState(db: Database, state: SignalPollState): void {
+  db.prepare(
+    `INSERT INTO signal_poll_state (source_key, cursor, etag, next_poll_at, failures, failing_since, last_error, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT(source_key) DO UPDATE SET
+       cursor = excluded.cursor, etag = excluded.etag, next_poll_at = excluded.next_poll_at, failures = excluded.failures,
+       failing_since = excluded.failing_since, last_error = excluded.last_error, updated_at = excluded.updated_at`,
+  ).run(
+    state.sourceKey,
+    state.cursor ?? null,
+    state.etag ?? null,
+    state.nextPollAt,
+    state.failures,
+    state.failingSince ?? null,
+    state.lastError ?? null,
+    state.updatedAt,
+  );
+}
+
 /** Active timer intents whose next firing is due. */
 export function dueTimerIntents(db: Database, now: Instant): PersistentIntent[] {
   return allRows<IntentRow>(

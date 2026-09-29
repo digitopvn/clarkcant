@@ -1369,6 +1369,29 @@ export const MIGRATIONS: readonly Migration[] = [
       `);
     },
   },
+  {
+    version: 32,
+    name: "signal_poll_state",
+    reversible: true,
+    up: (db) => {
+      db.exec(`
+        -- Where polling a source that cannot deliver to this node got to: one row per polled source, such as a GitHub
+        -- repository. The cursor is the newest event already turned into signals, so a restart goes on from there
+        -- instead of from "now" or from the beginning; the entity tag lets the provider answer "nothing new" cheaply.
+        -- failing_since marks a run of failures, so the person is told about it once rather than on every attempt.
+        CREATE TABLE signal_poll_state (
+          source_key     TEXT PRIMARY KEY,
+          cursor         TEXT,
+          etag           TEXT,
+          next_poll_at   TEXT NOT NULL,
+          failures       INTEGER NOT NULL DEFAULT 0,
+          failing_since  TEXT,
+          last_error     TEXT,
+          updated_at     TEXT NOT NULL
+        );
+      `);
+    },
+  },
 ];
 
 function readAll<T>(db: Database, sql: string): T[] {

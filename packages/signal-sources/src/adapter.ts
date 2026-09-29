@@ -41,6 +41,33 @@ export interface PollResult {
   signals: SignalInput[];
   /** Where the next poll starts. Unchanged when nothing new arrived. */
   cursor: string | undefined;
+  /** The source's tag for what it answered, sent back next time so an unchanged answer costs nothing. */
+  etag?: string;
+  /** How long the source asked to be left before the next poll, in seconds. */
+  pollIntervalSeconds?: number;
+}
+
+export interface PollOptions {
+  /** The tag the previous answer carried. */
+  etag?: string;
+}
+
+/**
+ * A source refusing a poll, with what the caller needs to decide when to try again: the status it answered, and, when it
+ * was limiting the rate, the time it said it would take requests again.
+ */
+export class SignalPollError extends Error {
+  readonly status: number;
+  readonly rateLimited: boolean;
+  readonly retryAt: string | undefined;
+
+  constructor(message: string, status: number, options: { rateLimited?: boolean; retryAt?: string } = {}) {
+    super(message);
+    this.name = "SignalPollError";
+    this.status = status;
+    this.rateLimited = options.rateLimited ?? false;
+    this.retryAt = options.retryAt;
+  }
 }
 
 export interface SignalSourceAdapter {
@@ -57,7 +84,7 @@ export interface SignalSourceAdapter {
  */
 export interface SignalPoller {
   readonly provider: string;
-  poll(cursor: string | undefined): Promise<PollResult>;
+  poll(cursor: string | undefined, options?: PollOptions): Promise<PollResult>;
 }
 
 /** One header, whatever case it arrived in and however many times. */

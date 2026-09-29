@@ -306,13 +306,15 @@ describe("what a delivery starts", () => {
       message: "xem PR",
     });
     expect(created.text).toContain("POST /signals/github");
+    // A node without a public address is not left out: it polls instead, with nothing asked for up front.
+    expect(created.text).toContain("polls the github.com repository named by subject.refs.repository");
     expect(created.text).toContain('request_secret with name "github_webhook_secret"');
     expect(created.text).toContain("pass it as githubSelfLogins");
     // A reminder pushes nothing, so it needs no token.
     expect(created.text).not.toContain('request_secret with name "github_token"');
   });
 
-  it("asks for a token only a task's git and gh can receive, when the automation will push", async () => {
+  it("asks for a token only a task's git and gh, and the repository poller, can receive, when the automation will push", async () => {
     const conversationId = await conversation();
     const create = createTool(conversationId);
     const repository = clone("hello-world", "git@github.com:Codertocat/Hello-World.git");
@@ -325,7 +327,7 @@ describe("what a delivery starts", () => {
       allowedEffects: ["read", "local-write", "external-write"],
     };
     const created = await create(task);
-    expect(created.text).toContain('request_secret with name "github_token", secretKind "token", consumer "command:gh,command:git"');
+    expect(created.text).toContain('request_secret with name "github_token", secretKind "token", consumer "command:gh,command:git,signals:github"');
 
     // Once it is there, nothing more is asked.
     expect((await authed("POST", "/credentials", { fields: [{ name: "github_token", value: "fixture-token-value", kind: "token", consumer: "command:gh,command:git" }] })).status).toBe(201);

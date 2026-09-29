@@ -112,7 +112,16 @@ export function repositoryBindingRefusal(
 
 export function startAutomationService(
   services: AutomationServices,
-  options: { intervalMs?: number; now?: () => Instant; readRemote?: (path: string) => string | undefined } = {},
+  options: {
+    intervalMs?: number;
+    now?: () => Instant;
+    readRemote?: (path: string) => string | undefined;
+    /**
+     * Asking the sources that cannot deliver to this node for what happened, on each tick, one pass at a time. Answers
+     * how many new signals it recorded, so they are matched now rather than on the next tick. Absent, nothing is polled.
+     */
+    pollSignals?: () => Promise<number>;
+  } = {},
 ): AutomationService {
   const now = options.now ?? ((): Instant => new Date().toISOString() as Instant);
   const readRemote = options.readRemote ?? readOriginRemote;
@@ -125,6 +134,7 @@ export function startAutomationService(
   const delegation = { db: deps.db, identity: services.runtime.identity, now, newId: services.conductor.newId };
   let stopped = false;
   let kicked = false;
+  let polling = false;
 
   const say = (conversationId: string, text: string): void => {
     try {
@@ -277,9 +287,26 @@ export function startAutomationService(
     }
   };
 
+  const poll = (): void => {
+    const pollSignals = options.pollSignals;
+    if (pollSignals === undefined || polling) return;
+    polling = true;
+    pollSignals()
+      .then((recorded) => {
+        if (recorded > 0) service.kick();
+      })
+      .catch((cause: unknown) => {
+        process.stderr.write(`automation: polling failed (${cause instanceof Error ? cause.message : String(cause)})\n`);
+      })
+      .finally(() => {
+        polling = false;
+      });
+  };
+
   const tick = (): void => {
     if (stopped) return;
     kicked = false;
+    poll();
     try {
       fireDueTimers(deps);
       const matched = matchDueSignals(deps);
@@ -306,7 +333,7 @@ export function startAutomationService(
   const timer = setInterval(tick, options.intervalMs ?? DEFAULT_INTERVAL_MS);
   timer.unref();
 
-  return {
+  const service: AutomationService = {
     kick() {
       if (stopped || kicked) return;
       kicked = true;
@@ -318,4 +345,5 @@ export function startAutomationService(
       clearInterval(timer);
     },
   };
+  return service;
 }

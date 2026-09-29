@@ -16,6 +16,7 @@ import { refreshProjectIndex } from "../project-finder.ts";
 import { startAutomationService } from "../automation-service.ts";
 import { resumeTasksWaitingOnCapability } from "../capability-waiters.ts";
 import { startExpiryNoticeSweep } from "../expiry-notices.ts";
+import { createGithubPolling } from "../github-polling.ts";
 import { startPeerDelivery } from "../peer-signals.ts";
 import { settleUndeliveredTasks } from "../delegation-handlers.ts";
 import { taskDispatchReports } from "../task-reporting.ts";
@@ -286,8 +287,15 @@ export function wireRuntime(deps: RuntimeBootstrapDeps): RuntimeHandles {
    * Standing requests: "from now on, when X happens, do Y". Started after the dispatcher above so a run it starts has a
    * worker to go to, and on a fixture node too, where a reminder needs no worker and a task stays honestly dispatched.
    * Its first tick is asked for by the entry point once recovery has settled what the previous process left running.
+   *
+   * Its ticks also poll the GitHub repositories the person's automations are about, for a node GitHub cannot deliver
+   * to — but not on a fixture node, for the same reason update checks are skipped below: a browser suite must never
+   * depend on github.com answering.
    */
-  deps.services.automation = startAutomationService(deps.services);
+  deps.services.automation = startAutomationService(
+    deps.services,
+    sessionFixture ? {} : { pollSignals: createGithubPolling(deps.services).pollDue },
+  );
 
   /*
    * What carries queued envelopes to paired nodes. A node that has paired with nothing finds nothing to send, and one

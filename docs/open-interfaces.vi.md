@@ -98,8 +98,19 @@ thành một signal — `github.issue.labeled|opened|edited`, `github.pull_reque
 khử trùng theo `X-GitHub-Delivery`. Việc do chính các login GitHub của node gây ra (preference
 `signals.github.selfLogins`) được đánh dấu tự gây ra và không khởi động gì, trừ khi việc tự động yêu cầu điều đó; và
 một task chỉ bắt đầu trong bản clone cục bộ có `origin` đúng là repository mà signal nói tới. Body quá 2 MiB bị từ chối
-`413`. Với node mà GitHub không gọi tới được, `@clarkcant/signal-sources` còn có một poller đọc các event của
-repository thành cùng loại signal đó; node chưa tự chạy nó theo lịch.
+`413`.
+
+Node mà GitHub không gọi tới được sẽ tự poll thay vào đó, không cần thiết lập gì. Mỗi repository trên github.com mà
+một việc tự động `github.*` đang hoạt động nêu qua `subject.refs.repository` (`equals`, hoặc từng tên của `in`) được
+đọc danh sách Events API thành cùng loại signal — issue, pull request và comment của chúng; CI run vẫn cần webhook —
+khử trùng theo id của event. Mỗi repository được poll nhiều nhất năm phút một lần, hoặc thưa hơn khi `X-Poll-Interval`
+của GitHub yêu cầu, kèm `If-None-Match` để danh sách không đổi chỉ là một `304`; khi bị giới hạn tốc độ, node chờ tới
+lúc GitHub reset. Cursor và tag được lưu theo từng repository, nên sau khi khởi động lại node đi tiếp từ chỗ đã dừng và
+mỗi event chỉ được ghi một lần. Repository đã có webhook delivery được xác minh trong 24 giờ qua thì không bị poll, và
+node không có việc tự động nào như vậy thì không gửi request nào. Repository công khai không cần token; repository
+riêng tư được đọc bằng `github_token` khi người dùng đã lưu nó cho consumer `signals:github`. Một lần bị từ chối, hoặc
+ba lần lỗi liên tiếp, để lại đúng một thông báo trong inbox, và repository được thử lại với thời gian chờ tăng dần (tối
+đa sáu giờ), hoặc ngay lập tức khi token được lưu lại. Việc tự động gắn với `subject.refs.host` khác được để cho webhook.
 
 Bất cứ thứ gì khác ký được một request đều có thể gửi tới `POST /signals/webhook/{source}`, cũng không cần token của
 node. Người dùng đặt tên nguồn khi thiết lập một yêu cầu lâu dài trên topic `webhook.<source>.<việc đã xảy ra>`, và

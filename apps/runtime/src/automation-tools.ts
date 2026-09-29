@@ -19,6 +19,7 @@ import {
 import type { ToolDefinition } from "@clarkcant/pi-adapter";
 import {
   GITHUB_EVENTS,
+  GITHUB_TOKEN_SECRET_NAME,
   GITHUB_WEBHOOK_CONSUMER,
   GITHUB_WEBHOOK_SECRET_NAME,
   WEBHOOK_SIGNATURE_HEADER,
@@ -31,6 +32,7 @@ import {
   getGrant,
   getPeer,
   getSecretMetadata,
+  getSignalPollState,
   listPeers,
   livePeerAllowance,
   putPeerAllowance,
@@ -39,6 +41,7 @@ import {
 } from "@clarkcant/storage";
 
 import { TASK_GRANT_LIFETIME_MS, taskGrant, withdrawGrant, writeGrant } from "./delegation.ts";
+import { polledGithubRepositories } from "./github-polling.ts";
 import { containingRoot, ownedResources } from "./preflight.ts";
 import { GITHUB_SELF_LOGINS_PREFERENCE, GITHUB_SIGNAL_PATH, githubSelfLogins } from "./routes/github-signals.ts";
 import { WEBHOOK_SIGNAL_PATH_PREFIX } from "./routes/webhook-signals.ts";
@@ -271,20 +274,26 @@ function hasSecret(db: Database, principalId: string, name: string): boolean {
 }
 
 /**
+ * Who the GitHub token is for: the two commands a coding task pushes and opens pull requests with, and the poller that
+ * reads a private repository's events on a node GitHub cannot reach.
+ */
+export const GITHUB_TOKEN_CONSUMERS = `command:gh,command:git,${GITHUB_WEBHOOK_CONSUMER}`;
+
+/**
  * What a GitHub automation still needs before a delivery can reach it, said to the agent right after it is set up.
  *
  * Asked for only now, when something needs it: the webhook secret through `request_secret`, so its value never enters
  * the conversation; which account is Clark's own, so its own labels and comments do not start the work again; and the
  * repository the automation is about, so a label anywhere else does not start work in this checkout.
  */
-/** The token a coding task pushes and opens pull requests with, and the two commands it is for. */
-const GITHUB_TOKEN_SECRET_NAME = "github_token";
-const GITHUB_TOKEN_CONSUMERS = "command:gh,command:git";
-
 function githubSetup(deps: AutomationToolDeps, intent: PersistentIntent): string {
   const lines = [
     `GitHub reaches this automation with a repository webhook to POST ${GITHUB_SIGNAL_PATH} on this node's public address, ` +
       `content type application/json, for the events it answers (${GITHUB_EVENTS.join(", ")}).`,
+    `A node GitHub cannot reach needs no webhook: while no verified delivery has arrived for a day, it polls the github.com ` +
+      `repository named by subject.refs.repository about every 5 minutes, for issues, pull requests and their comments. A ` +
+      `public repository needs nothing more; a private one is read with the "${GITHUB_TOKEN_SECRET_NAME}" token, asked for ` +
+      `only if GitHub refuses it.`,
   ];
   if (!hasSecret(deps.db, deps.principalId, GITHUB_WEBHOOK_SECRET_NAME)) {
     lines.push(
@@ -311,6 +320,25 @@ function githubSetup(deps: AutomationToolDeps, intent: PersistentIntent): string
     lines.push("It is not bound to one repository: add match subject.refs.repository equals owner/name, or every repository's events will reach it and be refused against its checkout.");
   }
   return lines.join("\n");
+}
+
+/**
+ * The repositories whose polling is failing, and what would fix it, for the agent that lists automations.
+ *
+ * A refusal is what a private repository looks like to a request without a token it may use, so the fix is named with
+ * the exact `request_secret` call; the node tries again as soon as the token is stored.
+ */
+function githubPollingProblems(db: Database): string[] {
+  return polledGithubRepositories(db).flatMap((target) => {
+    const state = getSignalPollState(db, target.sourceKey);
+    if (state === undefined || state.failures === 0) return [];
+    return [
+      `GitHub polling of ${target.repository} has failed ${String(state.failures)} time(s) since ${state.failingSince ?? state.updatedAt} ` +
+        `(${state.lastError ?? "no reason recorded"}); next try ${state.nextPollAt}. If GitHub refused it (401, 403 or 404), ` +
+        `the repository is private or the token cannot read it: call request_secret with name "${GITHUB_TOKEN_SECRET_NAME}", ` +
+        `secretKind "token", consumer "${GITHUB_TOKEN_CONSUMERS}", and it is tried again at once.`,
+    ];
+  });
 }
 
 /**
@@ -532,7 +560,7 @@ export function createAutomationTools(deps: AutomationToolDeps): ToolDefinition[
       execute: async (): Promise<{ text: string }> => {
         const listed = listAutomations({ db: deps.db }, deps.principalId);
         if (listed.length === 0) return { text: "Nothing is set up to happen on its own." };
-        return { text: listed.map((entry) => describe(entry.intent, entry.recentRuns)).join("\n") };
+        return { text: [...listed.map((entry) => describe(entry.intent, entry.recentRuns)), ...githubPollingProblems(deps.db)].join("\n") };
       },
     },
     {
