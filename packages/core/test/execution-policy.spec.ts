@@ -10,8 +10,11 @@ import {
 import { migrate, openDatabase, allRows } from "@clarkcant/storage";
 
 import {
+  type ExecutionIntent,
   decideExecution,
+  executionIntentOf,
   guardrailCovers,
+  intentCovers,
   readExecutionPolicy,
   recordEffectExecution,
 } from "../src/execution-policy.ts";
@@ -51,7 +54,7 @@ function policy(overrides: Partial<ExecutionPolicyConfig> = {}): ExecutionPolicy
 function outcome(
   mode: ExecutionMode,
   category: EffectCategory,
-  options: { explicitUserIntent?: boolean; rules?: readonly ExecutionRule[]; prohibition?: "none" | "all" } = {},
+  options: { intent?: ExecutionIntent; rules?: readonly ExecutionRule[]; prohibition?: "none" | "all" } = {},
 ): string {
   return decideExecution({
     policy: policy({
@@ -60,14 +63,14 @@ function outcome(
       ...(options.prohibition === undefined ? {} : { prohibition: options.prohibition }),
     }),
     action: effect(category),
-    explicitUserIntent: options.explicitUserIntent ?? false,
+    intent: options.intent ?? { kind: "system" },
   }).kind;
 }
 
 describe("a local view action is not an effect", () => {
   it("never asks, in any mode", () => {
     for (const mode of ["autonomous", "guarded", "ask"] as const) {
-      const decision = decideExecution({ policy: policy({ mode }), action: { kind: "view" }, explicitUserIntent: false });
+      const decision = decideExecution({ policy: policy({ mode }), action: { kind: "view" }, intent: { kind: "system" } });
       expect(decision.kind, mode).toBe("execute");
       if (decision.kind !== "execute") throw new Error("expected an execution");
       // A filter change is not an effect, so it leaves no audit trail to wade through.
@@ -80,7 +83,7 @@ describe("ask mode asks before every effect", () => {
   it("produces an approval card for every category, asked for or not", () => {
     for (const category of ALL_CATEGORIES) {
       expect(outcome("ask", category), category).toBe("ask");
-      expect(outcome("ask", category, { explicitUserIntent: true }), `${category} explicit`).toBe("ask");
+      expect(outcome("ask", category, { intent: { kind: "interactive" } }), `${category} explicit`).toBe("ask");
     }
   });
 
@@ -88,7 +91,7 @@ describe("ask mode asks before every effect", () => {
     const decision = decideExecution({
       policy: policy({ mode: "ask" }),
       action: effect("local-write"),
-      explicitUserIntent: true,
+      intent: { kind: "interactive" },
     });
     if (decision.kind !== "ask") throw new Error("expected an approval");
     expect(decision.approvalSpec).toMatchObject({
@@ -114,7 +117,7 @@ describe("guarded mode asks where the category or a rule requires it", () => {
   it("asks before every category that reaches past it", () => {
     for (const category of RISKY) {
       expect(outcome("guarded", category), category).toBe("ask");
-      expect(outcome("guarded", category, { explicitUserIntent: true }), `${category} explicit`).toBe("ask");
+      expect(outcome("guarded", category, { intent: { kind: "interactive" } }), `${category} explicit`).toBe("ask");
     }
   });
 
@@ -135,7 +138,7 @@ describe("autonomous mode executes the user's own instruction", () => {
       const decision = decideExecution({
         policy: policy({ mode: "autonomous" }),
         action: effect(category),
-        explicitUserIntent: false,
+        intent: { kind: "system" },
       });
       expect(decision.kind, category).toBe("execute");
       if (decision.kind !== "execute") throw new Error("expected an execution");
@@ -145,7 +148,7 @@ describe("autonomous mode executes the user's own instruction", () => {
 
   it("performs a risky effect the user asked for", () => {
     for (const category of RISKY) {
-      expect(outcome("autonomous", category, { explicitUserIntent: true }), category).toBe("execute");
+      expect(outcome("autonomous", category, { intent: { kind: "interactive" } }), category).toBe("execute");
     }
   });
 
@@ -153,7 +156,7 @@ describe("autonomous mode executes the user's own instruction", () => {
     // The difference between carrying out an instruction and taking an initiative: autonomy is not a
     // promise to send mail nobody asked for.
     for (const category of RISKY) {
-      expect(outcome("autonomous", category, { explicitUserIntent: false }), category).toBe("ask");
+      expect(outcome("autonomous", category, { intent: { kind: "system" } }), category).toBe("ask");
     }
   });
 
@@ -163,6 +166,74 @@ describe("autonomous mode executes the user's own instruction", () => {
   });
 });
 
+describe("an automation carries the user's intent only for what it was given", () => {
+  const persistent = (allowedCategories: EffectCategory[]): ExecutionIntent => ({ kind: "persistent", allowedCategories });
+
+  it("performs a risky effect the automation was given, in autonomous mode", () => {
+    expect(outcome("autonomous", "external-write", { intent: persistent(["external-write"]) })).toBe("execute");
+  });
+
+  it("asks before a risky effect outside what it was given", () => {
+    // Set up to open a pull request, not to send mail: the mail is the agent's own initiative.
+    const decision = decideExecution({
+      policy: policy({ mode: "autonomous" }),
+      action: effect("communication"),
+      intent: persistent(["external-write"]),
+    });
+    expect(decision.kind).toBe("ask");
+    if (decision.kind !== "ask") throw new Error("expected an approval");
+    expect(decision.approvalSpec.because).toContain("automation was not given it");
+  });
+
+  it("still does local work the automation was not named for", () => {
+    expect(outcome("autonomous", "local-write", { intent: persistent([]) })).toBe("execute");
+  });
+
+  it("gains nothing over a person in guarded or ask mode", () => {
+    for (const category of RISKY) {
+      expect(outcome("guarded", category, { intent: persistent([category]) }), category).toBe("ask");
+      expect(outcome("ask", category, { intent: persistent([category]) }), category).toBe("ask");
+    }
+  });
+
+  it("is refused by a node-wide prohibition like anything else", () => {
+    expect(outcome("autonomous", "external-write", { intent: persistent(["external-write"]), prohibition: "all" })).toBe(
+      "deny",
+    );
+  });
+
+  it("treats the node's own work as nobody's instruction and a delegated task as the grant's", () => {
+    for (const category of RISKY) {
+      expect(outcome("autonomous", category, { intent: { kind: "system" } }), category).toBe("ask");
+      expect(outcome("autonomous", category, { intent: { kind: "delegated" } }), category).toBe("execute");
+    }
+  });
+
+  it("reads a task's origin, and a task with none as a person's request", () => {
+    expect(executionIntentOf(undefined)).toEqual({ kind: "interactive" });
+    expect(executionIntentOf({ kind: "interactive", principalId: "prin_owner" })).toEqual({ kind: "interactive" });
+    expect(
+      executionIntentOf({
+        kind: "persistent",
+        principalId: "prin_owner",
+        intentId: "int_1",
+        triggerSignalId: "sig_1",
+        allowedCategories: ["external-write"],
+      }),
+    ).toEqual({ kind: "persistent", allowedCategories: ["external-write"] });
+    expect(executionIntentOf({ kind: "system", reason: "maintenance" })).toEqual({ kind: "system" });
+    expect(
+      executionIntentOf({ kind: "delegated", principalId: "prin_owner", peerNodeId: "node_2", delegationId: "dlg_1" }),
+    ).toEqual({ kind: "delegated" });
+  });
+
+  it("fails closed on an intent kind this build does not know", () => {
+    // SAFETY: a value outside the closed union is what an older build reading a newer origin looks like.
+    const unknown = { kind: "prophecy" } as unknown as ExecutionIntent;
+    expect(intentCovers(unknown, "external-write")).toBe(false);
+    expect(outcome("autonomous", "external-write", { intent: unknown })).toBe("ask");
+  });
+});
 describe("two decisions hold in every mode", () => {
   it("refuses what a rule refuses", () => {
     const rules: ExecutionRule[] = [{ effectCategory: "destructive", decision: "deny" }];
@@ -179,7 +250,7 @@ describe("two decisions hold in every mode", () => {
       const decision = decideExecution({
         policy: policy({ mode, rules }),
         action: effect("media-capture"),
-        explicitUserIntent: true,
+        intent: { kind: "interactive" },
         hardBoundary: { kind: "os-permission", because: "macOS asks before a microphone is used" },
       });
       expect(decision.kind, mode).toBe("ask");
@@ -196,7 +267,7 @@ describe("a node-wide prohibition is read above everything", () => {
       for (const category of ALL_CATEGORIES) {
         expect(outcome(mode, category, { prohibition: "all" }), `${mode}/${category}`).toBe("deny");
         expect(
-          outcome(mode, category, { prohibition: "all", explicitUserIntent: true }),
+          outcome(mode, category, { prohibition: "all", intent: { kind: "interactive" } }),
           `${mode}/${category} explicit`,
         ).toBe("deny");
       }
@@ -210,7 +281,7 @@ describe("a node-wide prohibition is read above everything", () => {
       const decision = decideExecution({
         policy: policy({ mode, prohibition: "all" }),
         action: effect("media-capture"),
-        explicitUserIntent: true,
+        intent: { kind: "interactive" },
         hardBoundary: { kind: "oauth", because: "the account holder has to grant this" },
       });
       expect(decision.kind, mode).toBe("deny");
@@ -264,7 +335,7 @@ function decideDecisionForUnknownCategory(): string {
     // SAFETY: the point of the case is a value outside the closed union, which is what a build that adds a category
     // and an older resolver look like to each other; the resolver must answer it rather than crash on it.
     action: { kind: "effect", category: "teleportation" as EffectCategory, operationDigest: DIGEST },
-    explicitUserIntent: true,
+    intent: { kind: "interactive" },
   }).kind;
 }
 
@@ -279,7 +350,7 @@ describe("the audit is the record autonomy would otherwise not leave", () => {
     const decision = decideExecution({
       policy: policy({ mode: "autonomous" }),
       action: effect("local-write"),
-      explicitUserIntent: true,
+      intent: { kind: "interactive" },
     });
     if (decision.kind !== "execute") throw new Error("expected an execution");
 

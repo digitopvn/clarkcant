@@ -20,7 +20,7 @@ import { join } from "node:path";
 import { FakePiAdapter, RealPiAdapter, modelFromEnv, type PiAdapter, type ScriptedTurn } from "@clarkcant/pi-adapter";
 
 import { runWorker, workerBriefEnvelopeSchema, type WorkerBriefEnvelope, type WorkerDeps } from "./index.ts";
-import { allWorkerTools } from "./tools.ts";
+import { allWorkerTools, processCommandChannel } from "./tools.ts";
 
 interface Args {
   briefPath: string | undefined;
@@ -148,10 +148,15 @@ async function main(): Promise<number> {
     return 2;
   }
 
+  // Commands go to the host that started this process, over the channel it opened, and only when it opened one.
+  const commands = processCommandChannel();
   const deps: WorkerDeps = {
     adapter,
     nodeId: args.nodeId,
-    availableTools: allWorkerTools(envelope.projectRoots),
+    availableTools: allWorkerTools(envelope.projectRoots, {
+      ...(envelope.writableRoots === undefined ? {} : { writableRoots: envelope.writableRoots }),
+      ...(commands === undefined ? {} : { commands }),
+    }),
   };
 
   const result = await runWorker(envelope, deps);
@@ -181,11 +186,14 @@ async function main(): Promise<number> {
 main().then(
   (code) => {
     process.exitCode = code;
+    // An open IPC channel would keep a finished worker alive; the host reads the record on exit.
+    if (process.connected) process.disconnect();
   },
   (cause: unknown) => {
     process.stderr.write(
       `worker: ${cause instanceof Error ? cause.stack : String(cause)}\n`,
     );
     process.exitCode = 2;
+    if (process.connected) process.disconnect();
   },
 );

@@ -918,7 +918,7 @@ export function createRunCommandTool(
          * lifts nothing on its own: a node-wide prohibition, a rule the user wrote, and every hard consent
          * boundary are all read before the intent matters, and the preflight has already run.
          */
-        explicitUserIntent: true,
+        intent: { kind: "interactive" },
       });
 
       if (decision.kind === "deny") {

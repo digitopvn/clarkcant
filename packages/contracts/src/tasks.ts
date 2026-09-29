@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-import { instantSchema } from "./primitives.ts";
+import { effectCategorySchema, instantSchema } from "./primitives.ts";
 
 /**
  * Task and run lifecycle.
@@ -301,6 +301,52 @@ export const runRecordSchema = z.strictObject({
 });
 export type RunRecord = z.infer<typeof runRecordSchema>;
 
+/**
+ * Why a task exists, carried from the moment it is created (#197).
+ *
+ * A boolean "the user asked for this" was enough while every task started from a turn. A task a
+ * persistent automation starts is still the user's intent, but only for what they gave it; one a
+ * peer delegates is the intent a grant allowed; one the node starts for itself is nobody's. The
+ * policy reads this, not a flag each call site sets to `true`.
+ */
+export const intentOriginSchema = z.discriminatedUnion("kind", [
+  /** A person asked in this conversation. */
+  z.strictObject({ kind: z.literal("interactive"), principalId: z.string().min(1).max(128) }),
+  /** An automation the person set up earlier matched something that happened. */
+  z.strictObject({
+    kind: z.literal("persistent"),
+    principalId: z.string().min(1).max(128),
+    intentId: z.string().min(1).max(128),
+    triggerSignalId: z.string().min(1).max(128),
+    /** The effects the person gave the automation. A risky effect outside them is asked about. */
+    allowedCategories: z.array(effectCategorySchema).max(8),
+    /** Where the triggering fact came from, in words a person reads: "issue #420 in owner/repo". */
+    sourceRef: z.string().min(1).max(300).optional(),
+  }),
+  /** A paired node handed this task over under a grant. */
+  z.strictObject({
+    kind: z.literal("delegated"),
+    principalId: z.string().min(1).max(128),
+    peerNodeId: z.string().min(1).max(128),
+    delegationId: z.string().min(1).max(128),
+  }),
+  /** The node's own work, which no person asked for. */
+  z.strictObject({ kind: z.literal("system"), reason: z.string().min(1).max(300) }),
+]);
+export type IntentOrigin = z.infer<typeof intentOriginSchema>;
+
+/**
+ * What a task may touch, named by the task rather than taken from every root the node knows.
+ *
+ * A `folder` is handed to the worker as it is. A `repository` is never worked on in place: the node makes a worktree of
+ * it under its own data directory and the worker gets only that, so an automated change cannot land in the tree a
+ * person is editing.
+ */
+export const taskResourceSchema = z.discriminatedUnion("kind", [
+  z.strictObject({ kind: z.literal("folder"), path: z.string().min(1).max(1000), access: z.enum(["read", "write"]) }),
+  z.strictObject({ kind: z.literal("repository"), path: z.string().min(1).max(1000) }),
+]);
+export type TaskResource = z.infer<typeof taskResourceSchema>;
 export const taskRecordSchema = z.strictObject({
   taskId: z.string().min(1).max(128),
   conversationId: z.string().min(1).max(128),
@@ -327,6 +373,10 @@ export const taskRecordSchema = z.strictObject({
       maxDelegationDepth: z.int().nonnegative().max(8),
     })
     .optional(),
+  /** Why the task exists. Absent on a task stored before this was recorded, which was always a person's request. */
+  origin: intentOriginSchema.optional(),
+  /** What the task may touch. Absent means the node's own roots, which only a person's request may use. */
+  resources: z.array(taskResourceSchema).max(8).optional(),
   createdAt: instantSchema,
   updatedAt: instantSchema,
 });

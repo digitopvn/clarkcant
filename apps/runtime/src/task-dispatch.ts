@@ -15,6 +15,7 @@ import {
   approvalAuthorizes,
   decideApproval,
   decideExecution,
+  executionIntentOf,
   getCapability,
   readExecutionPolicy,
   recordEffectExecution,
@@ -25,10 +26,14 @@ import {
   type CoordinationDeps,
   type PolicyDecision,
 } from "@clarkcant/core";
+import { ensureManagedWorktree, removeManagedWorktree, workerCapabilitiesFor, type ManagedWorktree } from "@clarkcant/project-work";
 import { getTask, oneRow, type Database } from "@clarkcant/storage";
 
+import type { CommandToolDeps } from "./node-tools.ts";
 import { containingRoot, ownedResources } from "./preflight.ts";
 import { signalTree, stopTree } from "./process-tree.ts";
+import { stopCommandsForTask } from "./run-command.ts";
+import { createWorkerCommandBroker, parseWorkerCommandRequest } from "./worker-command-broker.ts";
 import { runWorkerProcess, type WorkerProcessResult } from "./worker-process.ts";
 import type { WorkView } from "./work-supervisor.ts";
 
@@ -106,7 +111,27 @@ export interface TaskDispatcherDeps {
   timeoutMs?: number;
   /** How long a lease on a capability is held before it is reclaimable. */
   leaseTtlMs?: number;
+  /**
+   * Where the node keeps the worktrees it makes for tasks that change a repository, under its own data directory.
+   * Absent means this node makes none, and a task that names a repository is refused rather than run in place.
+   */
+  worktreesDir?: () => string;
+  /**
+   * The command path's dependencies, when a worker may ask the host to run commands. Absent means the worker is given
+   * no way to run one. Read at dispatch, like everything else here, so the policy in force is the one that decides.
+   */
+  commandDeps?: () => CommandToolDeps | undefined;
+  /**
+   * Reported when a finished task's worktree could not be taken away, which is what happens when it holds changes
+   * nobody committed: those exist nowhere else, so they are kept and the person is told where.
+   */
+  onWorktreeKept?: (input: { taskId: string; conversationId: string; path: string; branch: string }) => void;
 }
+
+/** What a run may touch, decided from the task before a worker exists. */
+type RootPlan =
+  | { ok: true; read: string[]; write: string[]; repositories: string[]; scoped: boolean }
+  | { ok: false; refusal: string };
 
 export interface TaskDispatcher {
   /**
@@ -329,19 +354,13 @@ export function createTaskDispatcher(deps: TaskDispatcherDeps): TaskDispatcher {
       return;
     }
 
-    const roots = [...deps.projectRoots()];
-    const owned = ownedResources(deps.ownedRoots());
-    const outsideOwnership = roots.find((root) => containingRoot(owned, root) === undefined);
-    if (outsideOwnership !== undefined) {
+    const plan = planRoots(task);
+    if (!plan.ok) {
       releaseLease({ db: deps.conductor.db, nodeId: deps.conductor.nodeId, now: at, newId: deps.conductor.newId }, lease.lease.leaseId);
-      const refusal = `refused: ${outsideOwnership} is not a root this node owns, so the worker was never started`;
-      const outcome = await runDispatchedTask(deps.conductor, {
-        taskId: job.taskId,
-        collectEvidence: async () => ({ kind: "exit-status", summary: refusal, verified: false }),
-      });
-      settle(job, outcome.outcome, refusal);
+      await refuse(job, plan.refusal);
       return;
     }
+    const intent = executionIntentOf(task.origin);
 
     /*
      * The execution-policy gate.
@@ -371,9 +390,9 @@ export function createTaskDispatcher(deps: TaskDispatcherDeps): TaskDispatcher {
         const policyDecision: PolicyDecision = decideExecution({
           policy,
           action: { kind: "effect", category: descriptor.effectCategory, operationDigest },
-          // The task was created from the user's own request; dispatching the capability it needs is
-          // not the agent deciding to do something on its own.
-          explicitUserIntent: true,
+          // Whose intent the task carries out, from why it was created: a person asking in the conversation, an
+          // automation acting for the effects it was given, or the node's own work, which nobody asked for.
+          intent,
         });
 
         if (policyDecision.kind === "deny") {
@@ -445,6 +464,42 @@ export function createTaskDispatcher(deps: TaskDispatcherDeps): TaskDispatcher {
     }
 
     /*
+     * A repository is worked on in a worktree the node makes of it, never in place.
+     *
+     * Made after the gate, so a task the policy refuses or parks leaves nothing behind, and reused when it already
+     * exists, so a task dispatched again after an approval continues from what it did.
+     */
+    const read = [...plan.read];
+    const write = [...plan.write];
+    const worktrees: ManagedWorktree[] = [];
+    for (const repository of plan.repositories) {
+      const made =
+        deps.worktreesDir === undefined
+          ? ({ ok: false, message: "this node keeps no place for task worktrees, so a repository cannot be worked on" } as const)
+          : await ensureManagedWorktree({ repoPath: repository, worktreesDir: deps.worktreesDir(), taskId: job.taskId });
+      if (!made.ok) {
+        releaseLease({ db: deps.conductor.db, nodeId: deps.conductor.nodeId, now: at, newId: deps.conductor.newId }, lease.lease.leaseId);
+        await refuse(job, `refused: ${made.message}; the worker was never started`);
+        return;
+      }
+      worktrees.push(made.worktree);
+      read.push(made.worktree.path);
+      write.push(made.worktree.path);
+    }
+
+    const commandDeps = write.length === 0 ? undefined : deps.commandDeps?.();
+    const broker =
+      commandDeps === undefined
+        ? undefined
+        : createWorkerCommandBroker({
+            command: commandDeps,
+            taskId: job.taskId,
+            conversationId: task.conversationId,
+            roots: write,
+            intent,
+          });
+
+    /*
      * The wall-clock budget.
      *
      * `task.budget.maxWallClockMs` is a ceiling on this run, not on the queue wait before it, so the
@@ -465,6 +520,7 @@ export function createTaskDispatcher(deps: TaskDispatcherDeps): TaskDispatcher {
             wallClockExceeded = true;
             const live = liveChildren.get(runId);
             if (live !== undefined) void stopTree(live.child);
+            stopCommandsForTask(job.taskId);
           }, maxWallClockMs);
     wallClockTimer?.unref();
     const wallClockRefusal = (): string =>
@@ -479,10 +535,22 @@ export function createTaskDispatcher(deps: TaskDispatcherDeps): TaskDispatcher {
           taskRevision: task.revision,
           leaseEpoch: lease.lease.epoch,
           goal: task.goal,
-          projectRoots: roots,
-          allowedCapabilityRefs: [job.capabilityRef],
+          projectRoots: read,
+          ...(plan.scoped ? { writableRoots: write } : {}),
+          allowedCapabilityRefs: [...workerCapabilitiesFor(job.capabilityRef)],
         },
         ...(deps.timeoutMs === undefined ? {} : { timeoutMs: deps.timeoutMs }),
+        ...(broker === undefined
+          ? {}
+          : {
+              onCommand: async (raw: unknown) => {
+                const request = parseWorkerCommandRequest(raw);
+                if (request === undefined) {
+                  return { kind: "refused", text: "refused: the request was not a command this host can read" };
+                }
+                return broker(request);
+              },
+            }),
         onChild: (child) => {
           liveChildren.set(runId, { taskId: job.taskId, child });
           journal((j) =>
@@ -555,7 +623,62 @@ export function createTaskDispatcher(deps: TaskDispatcherDeps): TaskDispatcher {
       if (wallClockTimer !== undefined) clearTimeout(wallClockTimer);
       liveChildren.delete(runId);
       releaseLease({ db: deps.conductor.db, nodeId: deps.conductor.nodeId, now: at, newId: deps.conductor.newId }, lease.lease.leaseId);
+      // What the task committed stays on its branch; a worktree with uncommitted changes is kept and said so.
+      for (const worktree of worktrees) {
+        const removed = await removeManagedWorktree({ repoPath: worktree.repoPath, path: worktree.path });
+        if (!removed.removed) {
+          deps.onWorktreeKept?.({
+            taskId: job.taskId,
+            conversationId: task.conversationId,
+            path: worktree.path,
+            branch: worktree.branch,
+          });
+        }
+      }
     }
+  }
+
+  /**
+   * What a run may touch.
+   *
+   * A task that names its folders and repositories gets exactly those, each still inside what this node owns. A task a
+   * person asked for in the conversation and that named none gets the node's roots, as it always has. Anything else
+   * that named none is refused before a worker exists: work nobody is watching does not get every folder the node knows.
+   */
+  function planRoots(task: NonNullable<ReturnType<typeof getTask>>): RootPlan {
+    const resources = task.resources ?? [];
+    let plan: Extract<RootPlan, { ok: true }>;
+    if (resources.length === 0) {
+      if (task.origin !== undefined && task.origin.kind !== "interactive") {
+        return {
+          ok: false,
+          refusal:
+            "refused: work nobody asked for in this conversation has to name the folder or repository it may touch, " +
+            "and this task named none, so the worker was never started",
+        };
+      }
+      const roots = [...deps.projectRoots()];
+      plan = { ok: true, read: roots, write: [...roots], repositories: [], scoped: false };
+    } else {
+      plan = { ok: true, read: [], write: [], repositories: [], scoped: true };
+      for (const resource of resources) {
+        if (resource.kind === "repository") {
+          plan.repositories.push(resource.path);
+        } else {
+          plan.read.push(resource.path);
+          if (resource.access === "write") plan.write.push(resource.path);
+        }
+      }
+    }
+    const owned = ownedResources(deps.ownedRoots());
+    const outsideOwnership = [...plan.read, ...plan.repositories].find((root) => containingRoot(owned, root) === undefined);
+    if (outsideOwnership !== undefined) {
+      return {
+        ok: false,
+        refusal: `refused: ${outsideOwnership} is not a root this node owns, so the worker was never started`,
+      };
+    }
+    return plan;
   }
 
   function settle(
@@ -596,6 +719,7 @@ export function createTaskDispatcher(deps: TaskDispatcherDeps): TaskDispatcher {
       for (const { taskId, child } of liveChildren.values()) {
         stopping.add(taskId);
         void stopTree(child);
+        stopCommandsForTask(taskId);
       }
       // A queued task is failed with a reason rather than dropped: dropped, it would stay `dispatched` with nothing
       // behind it, which is the state this module exists to end.
@@ -616,6 +740,9 @@ export function createTaskDispatcher(deps: TaskDispatcherDeps): TaskDispatcher {
         void stopTree(entry.child);
         found = true;
       }
+      // The commands its worker asked the host to run are the task's too, and a stop that left them running would
+      // leave the effect the person meant to end still happening.
+      if (found) stopCommandsForTask(taskId);
       return found;
     },
     work() {

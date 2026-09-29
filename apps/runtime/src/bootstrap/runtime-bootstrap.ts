@@ -257,6 +257,17 @@ export function wireRuntime(deps: RuntimeBootstrapDeps): RuntimeHandles {
       ownedRoots: () =>
         ownedResources([...deps.services.projects.roots(), deps.services.runtime.dataDir, process.cwd()]).roots,
       ownerPrincipalId: () => deps.services.runtime.identity.ownerPrincipalId,
+      // A task that changes a repository works in a worktree kept here, never in the person's own tree.
+      worktreesDir: () => join(deps.services.runtime.dataDir, "worktrees"),
+      // The same command path the conversation uses, so a worker's command is decided and recorded the same way.
+      commandDeps: () => wiring.command.deps,
+      onWorktreeKept: ({ taskId, conversationId, path, branch }) => {
+        appendHostReply(deps.services, {
+          conversationId,
+          text: `Task ${taskId} để lại thay đổi chưa commit, nên chúng được giữ nguyên ở ${path} (nhánh ${branch}).`,
+          at: new Date().toISOString() as Instant,
+        });
+      },
       ...(deps.work === undefined ? {} : { journal: deps.work.journal }),
       onSettled: ({ taskId, conversationId, outcome, message }) => {
         const label =

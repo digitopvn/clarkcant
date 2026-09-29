@@ -35,6 +35,7 @@ import {
   type ExecutionMode,
   type ExecutionPolicyConfig,
   type Instant,
+  type IntentOrigin,
   type RegisteredPreference,
   executionModeSchema,
   executionProhibitionSchema,
@@ -69,6 +70,59 @@ export interface EffectAction {
   operationDigest: string;
 }
 
+/**
+ * Whose intent an effect carries out, which is the difference Autonomous turns on.
+ *
+ * - `interactive`: a person asked for this in the conversation.
+ * - `delegated`: a paired node handed the work over under a grant, which was checked where the grant is.
+ * - `persistent`: an automation a person set up earlier. It is their intent, but only for the effects they gave
+ *   it; anything outside `allowedCategories` is treated as the agent's own initiative.
+ * - `system`: the node's own work, which nobody asked for.
+ */
+export type ExecutionIntent =
+  | { kind: "interactive" }
+  | { kind: "delegated" }
+  | { kind: "persistent"; allowedCategories: readonly EffectCategory[] }
+  | { kind: "system" };
+
+/** Whether a person's instruction stands behind an effect of this category. */
+export function intentCovers(intent: ExecutionIntent, category: EffectCategory): boolean {
+  switch (intent.kind) {
+    case "interactive":
+    case "delegated":
+      return true;
+    case "persistent":
+      return intent.allowedCategories.includes(category);
+    case "system":
+      return false;
+    default:
+      // A kind this build does not know is nobody's instruction.
+      return false;
+  }
+}
+
+/**
+ * The intent a task carries, read from why it was created.
+ *
+ * A task stored before origins were recorded was always started by a person in the conversation, so no origin
+ * reads as interactive.
+ */
+export function executionIntentOf(origin: IntentOrigin | undefined): ExecutionIntent {
+  if (origin === undefined) return { kind: "interactive" };
+  switch (origin.kind) {
+    case "interactive":
+      return { kind: "interactive" };
+    case "delegated":
+      return { kind: "delegated" };
+    case "persistent":
+      return { kind: "persistent", allowedCategories: origin.allowedCategories };
+    case "system":
+      return { kind: "system" };
+    default:
+      return { kind: "system" };
+  }
+}
+
 export interface ExecutionQuestion {
   /**
    * The policy in force, passed in rather than read here.
@@ -79,10 +133,10 @@ export interface ExecutionQuestion {
   policy: ExecutionPolicyConfig;
   action: ViewAction | EffectAction;
   /**
-   * True when the user asked for this act in this turn, rather than the agent deciding to do it while
-   * working on something else. This is the difference Autonomous turns on.
+   * Whose intent this act carries out: a person asking now, an automation they set up, a peer under a grant, or
+   * the node itself. This is the difference Autonomous turns on.
    */
-  explicitUserIntent: boolean;
+  intent: ExecutionIntent;
   hardBoundary?: HardBoundary;
 }
 
@@ -233,18 +287,22 @@ export function decideExecution(question: ExecutionQuestion): PolicyDecision {
        * which is the difference between an assistant that carries out what it was told and one that
        * sends mail nobody asked it to send.
        */
-      if (RISKY_CATEGORIES.has(action.category) && !question.explicitUserIntent) {
+      if (RISKY_CATEGORIES.has(action.category) && !intentCovers(question.intent, action.category)) {
         return askFor(
           action,
-          `${action.category} reaches past this machine and the user did not ask for it`,
+          question.intent.kind === "persistent"
+            ? `${action.category} reaches past this machine and the automation was not given it`
+            : `${action.category} reaches past this machine and the user did not ask for it`,
           "autonomous mode does not act outside this machine on the agent's own initiative",
         );
       }
       return {
         kind: "execute",
-        reason: question.explicitUserIntent
-          ? `the user asked for this ${action.category} effect`
-          : `${action.category} stays on this machine`,
+        reason: !intentCovers(question.intent, action.category)
+          ? `${action.category} stays on this machine`
+          : question.intent.kind === "persistent"
+            ? `an automation the user set up was given ${action.category} effects`
+            : `the user asked for this ${action.category} effect`,
         audit: true,
       };
 
