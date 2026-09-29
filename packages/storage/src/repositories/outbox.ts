@@ -41,6 +41,30 @@ export function markOutboxAttempt(db: Database, messageId: string, at: Instant):
   db.prepare("UPDATE outbox SET attempts = attempts + 1, last_attempt_at = ? WHERE message_id = ?").run(at, messageId);
 }
 
+/**
+ * Count an attempt against a message that was not sent, because the one ahead of it could not reach the peer: it is
+ * counted towards giving up on its own schedule, as it would be had it been sent. `last_attempt_at` is left as it was,
+ * since nothing was transmitted, so a message never sent keeps none and can be told apart from one that was.
+ */
+export function markOutboxHeldBack(db: Database, messageId: string): void {
+  db.prepare("UPDATE outbox SET attempts = attempts + 1 WHERE message_id = ?").run(messageId);
+}
+
+/** Where one message's retries stand: how often it was counted, when it was last sent, if ever, and why it last failed. */
+export function outboxRetryState(
+  db: Database,
+  messageId: string,
+): { attempts: number; lastAttemptAt: Instant | null; lastError: string | null } | undefined {
+  const row = oneRow<{ attempts: number; last_attempt_at: string | null; last_error: string | null }>(
+    db,
+    "SELECT attempts, last_attempt_at, last_error FROM outbox WHERE message_id = ?",
+    messageId,
+  );
+  return row === undefined
+    ? undefined
+    : { attempts: row.attempts, lastAttemptAt: (row.last_attempt_at ?? null) as Instant | null, lastError: row.last_error ?? null };
+}
+
 export function markOutboxAcknowledged(db: Database, messageId: string, at: Instant): void {
   db.prepare("UPDATE outbox SET acknowledged_at = ? WHERE message_id = ?").run(at, messageId);
 }
@@ -215,6 +239,41 @@ export function peerDeliveryState(db: Database, peerNodeId: string): PeerDeliver
     lastError: dropped.last_error,
     givenUpSince: later(dropped.since as Instant, lastAcknowledgedAt),
   };
+}
+
+/** One message this node ever queued for a peer, and where it stands. */
+export interface OutboxLedgerEntry {
+  messageId: string;
+  document: unknown;
+  createdAt: Instant;
+  acknowledgedAt: Instant | null;
+  deadLetteredAt: Instant | null;
+}
+
+/**
+ * Everything this node ever queued for one peer, oldest first: what was acknowledged, what was given up on and what is
+ * still owed. The outbox never deletes a row, so this is the whole of what the stream to that peer carried.
+ */
+export function outboxLedger(db: Database, peerNodeId: string): OutboxLedgerEntry[] {
+  const rows = allRows<{
+    message_id: string;
+    document: string;
+    created_at: string;
+    acknowledged_at: string | null;
+    dead_lettered_at: string | null;
+  }>(
+    db,
+    `SELECT message_id, document, created_at, acknowledged_at, dead_lettered_at
+       FROM outbox WHERE peer_node_id = ? ORDER BY created_at, rowid`,
+    peerNodeId,
+  );
+  return rows.map((row) => ({
+    messageId: row.message_id,
+    document: parseJson<unknown>(row.document, "outbox.document"),
+    createdAt: row.created_at as Instant,
+    acknowledgedAt: (row.acknowledged_at ?? null) as Instant | null,
+    deadLetteredAt: (row.dead_lettered_at ?? null) as Instant | null,
+  }));
 }
 
 export interface DeadLetteredOutboxEntry {

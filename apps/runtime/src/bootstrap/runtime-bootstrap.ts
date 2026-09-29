@@ -18,6 +18,7 @@ import { resumeTasksWaitingOnCapability } from "../capability-waiters.ts";
 import { startExpiryNoticeSweep } from "../expiry-notices.ts";
 import { createGithubPolling } from "../github-polling.ts";
 import { tellNoticeTurnedDown } from "../peer-notices.ts";
+import { tellSkipped, tellStuck } from "../peer-skip.ts";
 import { watchPeerOutages } from "../peer-outage.ts";
 import { startPeerDelivery } from "../peer-signals.ts";
 import { settleUndeliveredTasks } from "../delegation-handlers.ts";
@@ -312,6 +313,9 @@ export function wireRuntime(deps: RuntimeBootstrapDeps): RuntimeHandles {
       onDeadLettered: settleUndeliveredTasks(deps.services, deliveryNow),
       // A notice a peer acknowledged and did not take is told here, since the route that queued it already answered.
       onTurnedDown: (turned) => tellNoticeTurnedDown(deps.services, turned, deliveryNow()),
+      // What a peer skipped, and a pairing too old to skip: the owner hears either once, in the inbox.
+      onSkipped: (report) => tellSkipped(deps.services, report, deliveryNow()),
+      onStuck: (peerNodeId) => tellStuck(deps.services, peerNodeId, deliveryNow()),
       // A peer that stays unreachable is told once per outage, and the notice goes when it answers again.
       afterPass: () => outages.reconcile(deliveryNow()),
       // Time asleep is not time an outage was watched.

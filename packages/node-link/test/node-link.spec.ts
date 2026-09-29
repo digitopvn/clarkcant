@@ -98,6 +98,55 @@ describe("at-least-once delivery with durable dedup (T02, T03)", () => {
   });
 });
 
+describe("a skip over messages the sender gave up on", () => {
+  const from = { authenticatedSenderNodeId: NODE_A };
+  const skip = (through: number, messageId = `skip_${String(through)}`) =>
+    envelope({
+      kind: "skip",
+      messageId,
+      sourceSequence: through,
+      payload: { skip: { through, lost: [{ sequence: through, messageId: `msg_${String(through)}`, kind: "status" }] } },
+    });
+
+  it("closes the gap it names, so what follows is taken instead of refused for good", () => {
+    receiveEnvelope(d, envelope(), from);
+    // Sequence 2 never arrives: 3 is refused for the gap, as before.
+    expect(receiveEnvelope(d, envelope({ messageId: "msg_3", sourceSequence: 3 }), from)).toMatchObject({ status: "gap", expected: 2 });
+    expect(receiveEnvelope(d, skip(2), from).status).toBe("processed");
+    expect(receiveEnvelope(d, envelope({ messageId: "msg_3", sourceSequence: 3 }), from).status).toBe("processed");
+  });
+
+  it("jumps a run of missing sequences at once, and never moves the cursor back", () => {
+    receiveEnvelope(d, envelope(), from);
+    expect(receiveEnvelope(d, skip(5), from).status).toBe("processed");
+    expect(receiveEnvelope(d, envelope({ messageId: "msg_6", sourceSequence: 6 }), from).status).toBe("processed");
+    // A replay of the skip is answered from the inbox; the cursor stays where the later message left it.
+    expect(receiveEnvelope(d, skip(5), from).status).toBe("duplicate");
+    expect(receiveEnvelope(d, envelope({ messageId: "msg_7", sourceSequence: 7 }), from).status).toBe("processed");
+  });
+
+  it("is stale, not refused, when everything it covers arrived after all", () => {
+    receiveEnvelope(d, envelope(), from);
+    receiveEnvelope(d, envelope({ messageId: "msg_2", sourceSequence: 2 }), from);
+    let handled = 0;
+    d.handler = () => {
+      handled += 1;
+      return { outcome: "accepted" };
+    };
+    expect(receiveEnvelope(d, skip(2, "skip_late"), from)).toEqual({ status: "stale", lastSequence: 2 });
+    expect(handled).toBe(0);
+    // Any other kind at a spent sequence is still refused as a regression.
+    expect(receiveEnvelope(d, envelope({ messageId: "msg_other", sourceSequence: 2 }), from).status).toBe("rejected");
+  });
+
+  it("is refused whole when its payload is not a skip, and moves nothing", () => {
+    receiveEnvelope(d, envelope(), from);
+    const bad = envelope({ kind: "skip", messageId: "skip_bad", sourceSequence: 5, payload: { skip: { through: 9, lost: [] } } });
+    expect(receiveEnvelope(d, bad, from)).toMatchObject({ status: "rejected", code: "SKIP_INVALID" });
+    expect(receiveEnvelope(d, envelope({ messageId: "msg_6", sourceSequence: 6 }), from)).toMatchObject({ status: "gap", expected: 2 });
+  });
+});
+
 describe("outbound durability", () => {
   it("records intent before transmission", () => {
     sendEnvelope(d, envelope({ recipientNodeId: NODE_B }));

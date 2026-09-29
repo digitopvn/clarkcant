@@ -10,7 +10,7 @@ import { sendEnvelope } from "@clarkcant/node-link";
 import { type Database, getPeer, nextOutboundSequence } from "@clarkcant/storage";
 
 import type { NodeIdentity } from "./node.ts";
-import { type DeadLetter, type PeerTransportDeps, type TurnedDown, deliverPending } from "./peer-transport.ts";
+import { type DeadLetter, type PeerTransportDeps, type SkipReport, type TurnedDown, deliverPending } from "./peer-transport.ts";
 
 /**
  * Signals between paired nodes: something that happened on one Clark, for the other's standing requests to answer.
@@ -167,6 +167,10 @@ export function startPeerDelivery(
     onDeadLettered?: (letter: DeadLetter) => void;
     /** Told about each notice a peer acknowledged and did not take, so this node's owner hears it did not arrive. */
     onTurnedDown?: (turned: TurnedDown) => void;
+    /** Told about each run of given-up messages a peer skipped, so this node's owner hears what was lost. */
+    onSkipped?: (report: SkipReport) => void;
+    /** Told about each peer too old to take a skip that just lost a message: that pairing is stuck until it updates. */
+    onStuck?: (peerNodeId: string) => void;
     /** Run after every pass, with the outbox as that pass left it: how a peer that stays unreachable is noticed. */
     afterPass?: () => void;
     /**
@@ -193,12 +197,20 @@ export function startPeerDelivery(
     try {
       do {
         again = false;
-        const outcome = await deliverPending({ ...deps, peerFor: (peerNodeId) => getPeer(deps.db, peerNodeId) });
+        // Told inside the pass, before each skip is acknowledged, so a crash in between cannot lose the telling.
+        const onSkipped = options.onSkipped ?? deps.onSkipped;
+        const outcome = await deliverPending({
+          ...deps,
+          peerFor: (peerNodeId) => getPeer(deps.db, peerNodeId),
+          ...(onSkipped === undefined ? {} : { onSkipped }),
+        });
         for (const dead of outcome.deadLettered ?? []) {
           log(
             dead.refusedByPeer
               ? `nodelink: gave up delivering ${dead.messageId} to ${dead.peerNodeId}; the peer refused it`
-              : `nodelink: gave up delivering ${dead.messageId} to ${dead.peerNodeId} after repeated failures`,
+              : dead.neverSent === true
+                ? `nodelink: gave up delivering ${dead.messageId} to ${dead.peerNodeId}; the peer could not be reached, so it was never sent`
+                : `nodelink: gave up delivering ${dead.messageId} to ${dead.peerNodeId} after repeated failures`,
           );
           try {
             options.onDeadLettered?.(dead);
@@ -211,6 +223,17 @@ export function startPeerDelivery(
             options.onTurnedDown?.(turned);
           } catch (cause) {
             log(`nodelink: could not tell that ${turned.peerNodeId} did not take ${turned.messageId} (${cause instanceof Error ? cause.message : String(cause)})`);
+          }
+        }
+        for (const report of outcome.skipped ?? []) {
+          log(`nodelink: ${report.peerNodeId} skipped ${String(report.lost.length)} message(s) this node gave up on, through sequence ${String(report.through)}`);
+        }
+        for (const peerNodeId of outcome.stuck ?? []) {
+          log(`nodelink: ${peerNodeId} takes no skips, so it will refuse what follows a message given up on until it is updated`);
+          try {
+            options.onStuck?.(peerNodeId);
+          } catch (cause) {
+            log(`nodelink: could not tell that the pairing with ${peerNodeId} is stuck (${cause instanceof Error ? cause.message : String(cause)})`);
           }
         }
       } while (again && !stopped);

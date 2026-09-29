@@ -10,6 +10,7 @@ import {
   receiveStatus,
   reportDelegatedOutcome,
   reportDelegatedStatus,
+  settleLostResult,
   settleUndelivered,
 } from "./delegation.ts";
 import type { DeadLetter } from "./peer-transport.ts";
@@ -162,6 +163,23 @@ export function settleUndeliveredTasks(services: NodeServices, now: () => Instan
       letter,
     );
     if (settled && letter.taskId !== undefined) clearWaitingNotice(services, letter.taskId, now());
+  };
+}
+
+/**
+ * Settle the task a result was for, when the peer that ran it gave up delivering the result and skipped it.
+ *
+ * Without it the task waits for an answer that never comes.
+ */
+export function settleLostResults(services: NodeServices, now: () => Instant): (lost: { peerNodeId: string; taskId: string }) => boolean {
+  return (lost) => {
+    const { runtime, conductor } = services;
+    const settled = settleLostResult(
+      { db: runtime.db, nodeId: runtime.identity.nodeId, now, conductor, onSettled: taskDispatchReports(services).onSettled },
+      lost,
+    );
+    if (settled) clearWaitingNotice(services, lost.taskId, now());
+    return settled;
   };
 }
 /**

@@ -62,6 +62,11 @@ export interface PeerUplinkDeps {
   delegation?: DelegationHandlers;
   /** A peer's notice for this node's inbox: absent on a node that records none, which refuses it. */
   notice?: (envelope: PeerEnvelope) => unknown;
+  /**
+   * A peer's skip over messages it gave up on: absent on a node that takes none, which refuses it unread and does not
+   * advertise `skip`, so its cursor never moves past a gap nobody told its owner about.
+   */
+  skip?: (envelope: PeerEnvelope) => unknown;
 }
 
 /** What a hand-over, its answer and a stop mean on this node. Each is answered once and the answer recorded. */
@@ -137,9 +142,16 @@ function peerHandler(
   onSignal: () => void,
   delegation: DelegationHandlers | undefined,
   notice: ((envelope: PeerEnvelope) => unknown) | undefined,
+  skip: ((envelope: PeerEnvelope) => unknown) | undefined,
 ): (envelope: PeerEnvelope) => unknown {
   return (envelope) => {
     const at = pairing.now();
+
+    if (envelope.kind === "skip") {
+      // Refused before it reaches here on a node without a handler; this only keeps the default below from taking it.
+      if (skip === undefined) return { accepted: false, code: "SKIPS_OFF", reason: "this node takes no skips from peers" };
+      return skip(envelope);
+    }
 
     if (envelope.kind === "notice") {
       // Words for this node's inbox, under the peer's name, taken only when this node's owner chose to work with it.
@@ -311,6 +323,7 @@ function peerGateway(
   onSignal: () => void,
   delegation: DelegationHandlers | undefined,
   notice: ((envelope: PeerEnvelope) => unknown) | undefined,
+  skip: ((envelope: PeerEnvelope) => unknown) | undefined,
 ): PeerGatewayDeps {
   return {
     db: pairing.db,
@@ -323,7 +336,7 @@ function peerGateway(
     // Every grant that peer gave, live or not: the hand-over handler answers one under an expired or revoked grant with
     // why it does not run, so the peer's task ends instead of waiting on a message refused unheard.
     knownDelegationIds: grantIdsFrom(pairing.db, peerNodeId),
-    handler: peerHandler(pairing, onSignal, delegation, notice),
+    handler: peerHandler(pairing, onSignal, delegation, notice, skip),
   };
 }
 
@@ -414,14 +427,48 @@ export function handlePeerUplinkRoutes(input: PeerUplinkDeps): GatewayResponse |
     }
     const parsed = readJson(request);
     if (!parsed.ok) return parsed.response;
-    const outcome = receiveEnvelope(peerGateway(pairing, peer.peerNodeId, input.onSignal ?? (() => undefined), input.delegation, input.notice), parsed.value, {
-      authenticatedSenderNodeId: peer.peerNodeId,
-    });
+    // What this node takes and what it calls itself. A kind this node has no handler for is not advertised.
+    const advertised = {
+      features: PEER_FEATURES.filter(
+        (feature) => (feature !== "notice" || input.notice !== undefined) && (feature !== "skip" || input.skip !== undefined),
+      ),
+      label: pairing.identity.label,
+    };
+    if (input.skip === undefined && (parsed.value as { kind?: unknown }).kind === "skip") {
+      // Refused before anything is recorded: a skip moves the cursor past a gap, which only a node that tells its owner
+      // what was lost may do.
+      return fail(400, "UNSUPPORTED_KIND", "this node takes no skips from peers");
+    }
+    const outcome = receiveEnvelope(
+      peerGateway(pairing, peer.peerNodeId, input.onSignal ?? (() => undefined), input.delegation, input.notice, input.skip),
+      parsed.value,
+      { authenticatedSenderNodeId: peer.peerNodeId },
+    );
     if (outcome.status === "gap") {
       // The sender's outbox keeps the message pending because nothing acknowledged it, so this is a
       // retry rather than a loss. Accepting it would move the cursor past the hole and make the
-      // delayed message unprocessable for good.
-      return fail(409, "SEQUENCE_GAP", `expected sequence ${String(outcome.expected)} but received ${String(outcome.received)}`);
+      // delayed message unprocessable for good. Where the stream stands and what this node takes go with the refusal,
+      // so a sender that gave the missing sequence up learns it can skip it.
+      return fail(409, "SEQUENCE_GAP", `expected sequence ${String(outcome.expected)} but received ${String(outcome.received)}`, {
+        expected: outcome.expected,
+        received: outcome.received,
+        ...advertised,
+      });
+    }
+    if (outcome.status === "stale") {
+      // Everything the skip covers arrived here: acknowledged so the sender stops sending it, with nothing recorded.
+      return json(200, {
+        status: "stale",
+        response: {
+          status: "stale",
+          outcome: {
+            accepted: false,
+            code: "SKIP_STALE",
+            reason: `every sequence through ${String(outcome.lastSequence)} was already received here, so nothing is skipped`,
+          },
+        },
+        ...advertised,
+      });
     }
     if (outcome.status === "rejected") {
       return fail(400, outcome.code, outcome.message, { issues: outcome.issues });
@@ -445,9 +492,8 @@ export function handlePeerUplinkRoutes(input: PeerUplinkDeps): GatewayResponse |
       // acknowledgement was lost a retry rather than a second instruction.
       response: recorded,
       // What this node takes and what it calls itself, on every acknowledgement, so a peer paired before either
-      // existed learns them from its next delivery. A kind this node has no handler for is not advertised.
-      features: PEER_FEATURES.filter((feature) => feature !== "notice" || input.notice !== undefined),
-      label: pairing.identity.label,
+      // existed learns them from its next delivery.
+      ...advertised,
     });
   }
 

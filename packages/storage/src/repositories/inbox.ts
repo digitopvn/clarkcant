@@ -36,6 +36,11 @@ export function recordInbox(
      */
     responseJson: string;
     receivedAt: Instant;
+    /**
+     * The envelope says the sequences between the cursor and its own were given up on by their sender (a NodeLink
+     * `skip`), so the cursor moves to it even over a gap. Never backwards.
+     */
+    closesGap?: boolean;
   },
 ): InboxRecordResult {
   return transaction(db, () => {
@@ -80,7 +85,10 @@ export function recordInbox(
         input.sourceSequence,
         input.receivedAt,
       );
-    } else if (input.sourceSequence === cursor.last_sequence + 1) {
+    } else if (
+      input.sourceSequence === cursor.last_sequence + 1 ||
+      (input.closesGap === true && input.sourceSequence > cursor.last_sequence)
+    ) {
       // Contiguous only, which is what the column documents itself as being. Advancing over a gap is
       // what turns a delayed message into a permanently unprocessable one: the missing sequence
       // arrives later, reads as a regression, and is refused for good.

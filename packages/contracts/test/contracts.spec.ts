@@ -40,6 +40,8 @@ import {
   PEER_FEATURES,
   PEER_FEATURES_MAX,
   PEER_LABEL_MAX,
+  PEER_SKIP_LOST_MAX,
+  peerSkipSchema,
   NOTICE_BODY_MAX,
   NOTICE_TITLE_MAX,
 } from "../src/index.ts";
@@ -607,6 +609,49 @@ describe("peer envelope validation (T08, T11)", () => {
     const result = validatePeerEnvelope({ ...envelope, kind: "notice", payload: {} }, context);
     expect(result.valid === false && result.issues.map((issue) => issue.field)).toEqual(["payload.notice"]);
   });
+
+  describe("a skip", () => {
+    const lost = { sequence: 4, messageId: "msg_4", kind: "result" as const, taskId: "task_1" };
+    const skip = (sourceSequence: number, payload: unknown) =>
+      validatePeerEnvelope({ ...envelope, kind: "skip", sourceSequence, payload: { skip: payload } }, { ...context, lastSeenSequence: 3 });
+    const codes = (result: ReturnType<typeof validatePeerEnvelope>) => (result.valid ? [] : result.issues.map((issue) => issue.code));
+
+    it("names the sequences it gives up on, and occupies the slot of the last one", () => {
+      expect(skip(5, { through: 5, lost: [lost, { sequence: 5, messageId: "msg_5", kind: "signal" }] }).valid).toBe(true);
+      expect(PEER_SKIP_LOST_MAX).toBe(50);
+    });
+
+    it("is refused when it reaches past its own slot, so it cannot move a cursor over messages not yet sent", () => {
+      expect(codes(skip(4, { through: 9, lost: [lost] }))).toEqual(["SKIP_INVALID"]);
+    });
+
+    it("is refused when it lists a message twice, out of order, past its range, or nothing at all", () => {
+      expect(codes(skip(5, { through: 5, lost: [lost, lost] }))).toEqual(["SKIP_INVALID"]);
+      expect(codes(skip(5, { through: 5, lost: [{ ...lost, sequence: 5 }, lost] }))).toEqual(["SKIP_INVALID"]);
+      expect(codes(skip(5, { through: 5, lost: [{ ...lost, sequence: 6 }] }))).toEqual(["SKIP_INVALID"]);
+      expect(codes(skip(5, { through: 5, lost: [] }))).toEqual(["SKIP_INVALID"]);
+      const tooMany = Array.from({ length: PEER_SKIP_LOST_MAX + 1 }, (_, index) => ({ ...lost, sequence: index + 1 }));
+      expect(codes(skip(60, { through: 60, lost: tooMany }))).toEqual(["SKIP_INVALID"]);
+    });
+
+    it("is refused when its list does not end at its own sequence, so it never moves a cursor past what it accounts for", () => {
+      // Lost 4, but the skip takes slot 5: 5 would be skipped without being named.
+      expect(codes(skip(5, { through: 5, lost: [lost] }))).toEqual(["SKIP_INVALID"]);
+      expect(codes(skip(5, { through: 5, lost: [lost, { ...lost, sequence: 5, messageId: "msg_5" }] }))).toEqual([]);
+    });
+
+    it("is refused whole when it carries anything else, a skip of a skip, or a task that is not an id", () => {
+      expect(codes(skip(4, { through: 4, lost: [lost], note: "x" }))).toEqual(["SKIP_INVALID"]);
+      expect(codes(skip(4, { through: 4, lost: [{ ...lost, kind: "skip" }] }))).toEqual(["SKIP_INVALID"]);
+      expect(codes(skip(4, { through: 4, lost: [{ ...lost, taskId: "run the build now" }] }))).toEqual(["SKIP_INVALID"]);
+      expect(peerSkipSchema.safeParse({ through: 4, lost: [lost] }).success).toBe(true);
+    });
+
+    it("requires its payload, like every kind", () => {
+      const result = validatePeerEnvelope({ ...envelope, kind: "skip", sourceSequence: 4, payload: {} }, context);
+      expect(result.valid === false && result.issues.map((issue) => issue.field)).toEqual(["payload.skip"]);
+    });
+  });
 });
 
 describe("a peer's notice", () => {
@@ -628,8 +673,9 @@ describe("a peer's notice", () => {
 
 describe("what a peer says about itself", () => {
   it("keeps only the features this build knows, each once, from a bounded list", () => {
-    expect(PEER_FEATURES).toEqual(["notice"]);
+    expect(PEER_FEATURES).toEqual(["notice", "skip"]);
     expect(readPeerFeatures(["notice", "teleport", "notice", 7, null])).toEqual(["notice"]);
+    expect(readPeerFeatures(["skip", "notice", "skip"])).toEqual(["skip", "notice"]);
     expect(readPeerFeatures([])).toEqual([]);
     // Past the bound nothing is read, so a long list cannot make this node parse without limit.
     expect(readPeerFeatures([...Array.from({ length: PEER_FEATURES_MAX }, () => "x"), "notice"])).toEqual([]);
@@ -680,6 +726,14 @@ describe("inbox dedup decisions (T02, T03)", () => {
     const decision = decideInboxAction(envelope, { keys: new Map(), lastSequence: 3 });
     expect(decision.action).toBe("gap-detected");
     expect(decision.action === "gap-detected" && decision.expected).toBe(4);
+  });
+
+  it("processes a skip past a gap, since the gap is what it closes, and never one at or below the cursor", () => {
+    const skip = { ...envelope, kind: "skip" as const, payload: {} };
+    expect(decideInboxAction(skip, { keys: new Map(), lastSequence: 3 }).action).toBe("process");
+    expect(decideInboxAction(skip, { keys: new Map(), lastSequence: 6 }).action).toBe("process");
+    expect(decideInboxAction(skip, { keys: new Map(), lastSequence: 7 }).action).not.toBe("process");
+    expect(decideInboxAction(skip, { keys: new Map([["node_a:7:msg_7", "msg_7"]]), lastSequence: 7 }).action).toBe("duplicate");
   });
 });
 

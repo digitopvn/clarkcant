@@ -3,9 +3,10 @@ import { randomUUID } from "node:crypto";
 import { type Instant, nowInstant } from "@clarkcant/contracts";
 import { verifyFrameGrant } from "@clarkcant/core";
 
-import { peerDelegationHandlers } from "./delegation-handlers.ts";
+import { peerDelegationHandlers, settleLostResults } from "./delegation-handlers.ts";
 import { recordNodeNotice } from "./notices.ts";
 import { receivePeerNotice } from "./peer-notices.ts";
+import { receivePeerSkip } from "./peer-skip.ts";
 import { type PairingDeps } from "./peers.ts";
 import { type NodeServices } from "./services.ts";
 import { type GatewayRequest, type GatewayResponse, bearer, fail, tokenMatches } from "./routes/http.ts";
@@ -163,6 +164,18 @@ export async function handleRequest(deps: GatewayDeps, request: GatewayRequest):
           nodeId: runtime.identity.nodeId,
           now: () => at() as Instant,
           record: (notice) => recordNodeNotice(services, notice),
+        },
+        envelope,
+      ),
+    skip: (envelope) =>
+      receivePeerSkip(
+        {
+          db: runtime.db,
+          nodeId: runtime.identity.nodeId,
+          ownerPrincipalId: runtime.identity.ownerPrincipalId,
+          now: () => at() as Instant,
+          record: (notice) => recordNodeNotice(services, notice),
+          settleLostResult: settleLostResults(services, () => at() as Instant),
         },
         envelope,
       ),

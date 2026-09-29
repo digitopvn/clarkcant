@@ -4,6 +4,7 @@ import { instantSchema } from "@clarkcant/contracts";
 
 import {
   MAX_OUTBOX_ATTEMPTS,
+  deadLetterOutbox,
   deadLetteredOutbox,
   enqueueOutbox,
   markOutboxAcknowledged,
@@ -12,6 +13,7 @@ import {
   migrate,
   nextOutboundSequence,
   openDatabase,
+  outboxLedger,
   pendingOutbox,
 } from "../src/index.ts";
 
@@ -170,5 +172,26 @@ describe("outbox backoff", () => {
 
     // A different peer has its own independent stream.
     expect(nextOutboundSequence(db, "node_c")).toBe(1);
+  });
+});
+
+describe("the outbox ledger", () => {
+  it("keeps every message to a peer, in the order it was queued, with what became of it", () => {
+    const db = freshDb();
+    for (const [index, messageId] of ["msg_1", "msg_2", "msg_3"].entries()) {
+      enqueue(db, { messageId, document: { sourceSequence: index + 1 } });
+    }
+    enqueue(db, { messageId: "msg_c", peerNodeId: "node_c", document: { sourceSequence: 1 } });
+    markOutboxAcknowledged(db, "msg_1", AT);
+    deadLetterOutbox(db, "msg_2", AT, "the peer answered 400");
+
+    // Unlike what is pending, the ledger still shows what was acknowledged and what was given up on: a skip is
+    // worked out from all of it.
+    expect(outboxLedger(db, "node_b")).toEqual([
+      { messageId: "msg_1", document: { sourceSequence: 1 }, createdAt: AT, acknowledgedAt: AT, deadLetteredAt: null },
+      { messageId: "msg_2", document: { sourceSequence: 2 }, createdAt: AT, acknowledgedAt: null, deadLetteredAt: AT },
+      { messageId: "msg_3", document: { sourceSequence: 3 }, createdAt: AT, acknowledgedAt: null, deadLetteredAt: null },
+    ]);
+    expect(outboxLedger(db, "node_z")).toEqual([]);
   });
 });
