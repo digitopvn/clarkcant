@@ -12,8 +12,11 @@ import {
   MAX_LAYOUT_NODES,
   MAX_GRAPH_FEEDS,
   MAX_GRAPH_RULES,
+  SECTION_TEXT_LIMIT,
+  SNAPSHOT_TEXT_LIMIT,
   checkCompositionGraph,
   checkLayout,
+  clipWithMarker,
   describeLayout,
   readStatusCard,
   statusCardText,
@@ -352,7 +355,8 @@ export function compileLayout(input: CompileLayoutInput): CompileLayoutResult {
     ok: true,
     sections,
     layout,
-    textAlternative: describeLayout(layout, (sectionId) => textOf.get(sectionId) ?? ""),
+    // Twelve sections of up to 2000 characters each can say more than a snapshot keeps; past that the text says so.
+    textAlternative: clipWithMarker(describeLayout(layout, (sectionId) => textOf.get(sectionId) ?? ""), SNAPSHOT_TEXT_LIMIT),
     ...(graph.graph === undefined ? {} : { graph: graph.graph }),
   };
 }
@@ -394,7 +398,7 @@ function sectionText(
 ): string {
   const kind = STATUS_CARD_KIND[definition.id];
   const card = kind === undefined ? undefined : readStatusCard(kind, props);
-  return card === undefined ? describeSection(definition, slot, rows) : statusCardText(card);
+  return card === undefined ? describeSection(definition, slot, rows) : statusCardText(card, SECTION_TEXT_LIMIT);
 }
 
 function slotFor(definitionId: string, family: string, wired: boolean, where: string, problems: string[]): CompositionSlot | undefined {

@@ -3,7 +3,9 @@ import { describe, expect, it } from "vitest";
 import {
   MAX_DETAIL_ITEMS,
   MAX_PROGRESS_STEPS,
+  SECTION_TEXT_LIMIT,
   SEMANTIC_LIMITS,
+  SNAPSHOT_TEXT_LIMIT,
   canonicalSemanticDoc,
   normalizeSemanticDoc,
   progressPercent,
@@ -37,11 +39,52 @@ describe("status cards: what is refused", () => {
     expect(statusCardProblems("details", { items: [{ label: "Owner", value: "Lan" }] })).toEqual([]);
   });
 
-  it("refuses a tone, a step status or a key it does not know", () => {
-    expect(statusCardProblems("status", { label: "x", tone: "red" })).not.toEqual([]);
-    expect(statusCardProblems("status", { label: "x", tone: "info", live: true })).not.toEqual([]);
-    expect(statusCardProblems("progress", { steps: [{ label: "x", status: "running" }] })).not.toEqual([]);
-    expect(statusCardProblems("details", { items: [{ label: "x", value: "y", tone: "ok" }] })).not.toEqual([]);
+  it("refuses a tone, a step status or a key it does not know, and names where", () => {
+    expect(statusCardProblems("status", { label: "x", tone: "red" })).toEqual([expect.stringMatching(/^"tone": .*"neutral"/u)]);
+    expect(statusCardProblems("status", { label: "x", tone: "info", live: true })).toEqual([expect.stringMatching(/^props: .*"live"/u)]);
+    expect(statusCardProblems("progress", { steps: [{ label: "x", status: "running" }] })).toEqual([
+      expect.stringMatching(/^"steps\.0\.status": /u),
+    ]);
+    expect(statusCardProblems("details", { items: [{ label: "x", value: "y", tone: "ok" }] })).toEqual([
+      expect.stringMatching(/^"items\.0": .*"tone"/u),
+    ]);
+  });
+
+  it("refuses a line break, a bidi control or an invisible character in any text, and names the character", () => {
+    expect(statusCardProblems("status", { label: "Up\nDown", tone: "info" })).toEqual([
+      '"label": contains U+000A, a line break, and this field is one line; remove it',
+    ]);
+    expect(statusCardProblems("status", { title: "Build \u202eevil", label: "Up", tone: "info" })).toEqual([
+      '"title": contains U+202E, a control that changes text direction, so the text would read differently from how it is drawn; remove it',
+    ]);
+    expect(statusCardProblems("progress", { steps: [{ label: "Pack", status: "done", detail: "a\u2028b" }] })).toEqual([
+      '"steps.0.detail": contains U+2028, a line break, and this field is one line; remove it',
+    ]);
+    expect(statusCardProblems("details", { items: [{ label: "Owner", value: "L\u200ban" }] })).toEqual([
+      '"items.0.value": contains U+200B, an invisible character; remove it',
+    ]);
+    expect(statusCardProblems("progress", { value: 1, max: 2, unit: "fi\u0085les" })).toEqual([
+      '"unit": contains U+0085, a line break, and this field is one line; remove it',
+    ]);
+    // Joiners are how some scripts and emoji are written, so they stay.
+    expect(statusCardProblems("details", { items: [{ label: "Dev", value: "👩\u200d💻 می\u200cخواهم" }] })).toEqual([]);
+  });
+
+  it("reads text in NFC and trimmed, so spaces are empty and look-alike labels repeat", () => {
+    expect(statusCardProblems("status", { label: "   ", tone: "info" })).toEqual(['"label": is empty']);
+    expect(statusCardProblems("details", { items: [{ label: "x", value: " " }] })).toEqual(['"items.0.value": is empty']);
+    expect(
+      statusCardProblems("details", {
+        items: [
+          { label: "Café", value: "1" },
+          { label: " Cafe\u0301 ", value: "2" },
+        ],
+      }),
+    ).toEqual(["labels repeat: Café; each fact needs its own label"]);
+    expect(readStatusCard("status", { label: "  Up  ", tone: "info", title: " " })).toEqual({
+      kind: "status",
+      card: { label: "Up", tone: "info", title: "" },
+    });
   });
 
   it("has no progress without a value and a maximum or steps, so nothing spins with nothing behind it", () => {
@@ -113,8 +156,13 @@ describe("status cards: what is refused", () => {
 });
 
 describe("status cards: what a card says", () => {
-  it("rounds a percentage and counts finished steps", () => {
+  it("rounds a percentage, says 100% only at the maximum, and counts finished steps", () => {
     expect(progressPercent({ value: 42, max: 120 })).toBe(35);
+    expect(progressPercent({ value: 57, max: 100 })).toBe(57);
+    expect(progressPercent({ value: 999, max: 1000 })).toBe(99);
+    expect(progressPercent({ value: 99.6, max: 100 })).toBe(99);
+    expect(progressPercent({ value: 1000, max: 1000 })).toBe(100);
+    expect(progressPercent({ value: 0, max: 3 })).toBe(0);
     expect(progressPercent({ steps: [{ label: "a", status: "done" }] })).toBeUndefined();
     expect(stepCounts(STEPS as never)).toEqual({ finished: 2, total: 5, failed: 1, current: { label: "Move", status: "current" } });
   });
@@ -147,8 +195,65 @@ describe("status cards: what a card says", () => {
     expect(statusCardSemantic(steps)).toMatchObject({
       title: "Move",
       summary: "Progress as stated when shown: 2 of 5 steps finished; current: Move; failed: Internet",
-      values: { stepsFinished: 2, stepsTotal: 5, currentStep: "Move", failedSteps: ["Internet"] },
+      values: {
+        stepsFinished: 2,
+        stepsTotal: 5,
+        steps: ["done: Pack", "current: Move", "skipped: Paint", "failed: Internet", "pending: Party"],
+        currentStep: "Move",
+        failedSteps: ["Internet"],
+      },
     });
+  });
+
+  it("keeps a long card's text within a snapshot's limit, whole facts first, and says how many more it had", () => {
+    const items = Array.from({ length: MAX_DETAIL_ITEMS }, (_, index) => ({
+      label: `${"k".repeat(78)}${String(index).padStart(2, "0")}`,
+      value: "v".repeat(300),
+    }));
+    const details = readStatusCard("details", { title: "t".repeat(200), items, asOf: "2026-09-30T09:00:00.000+07:00" });
+    if (details === undefined) throw new Error("unreadable");
+    const text = statusCardText(details);
+    expect(text.length).toBeLessThanOrEqual(SNAPSHOT_TEXT_LIMIT);
+    expect(text.startsWith(`${"t".repeat(200)}: ${items[0]?.label ?? ""}: ${"v".repeat(300)}; `)).toBe(true);
+    const kept = text.split("; ").length - 1;
+    expect(text).toMatch(new RegExp(`…and ${String(MAX_DETAIL_ITEMS - kept)} more facts \\(as of 2026-09-30T09:00:00\\.000\\+07:00\\)$`, "u"));
+    // Nothing is cut in the middle: every value kept is whole.
+    expect(text.match(/v+/gu)?.every((run) => run.length === 300)).toBe(true);
+
+    const steps = readStatusCard("progress", {
+      title: "t".repeat(200),
+      label: "l".repeat(200),
+      steps: Array.from({ length: MAX_PROGRESS_STEPS }, (_, index) => ({
+        label: `${"s".repeat(118)}${String(index).padStart(2, "0")}`,
+        status: "skipped",
+        detail: "d".repeat(200),
+      })),
+      asOf: "2026-09-30T09:00:00.000+07:00",
+    });
+    if (steps === undefined) throw new Error("unreadable");
+    expect(statusCardText(steps).length).toBeGreaterThan(SECTION_TEXT_LIMIT);
+    expect(statusCardText(steps).length).toBeLessThanOrEqual(SNAPSHOT_TEXT_LIMIT);
+    const section = statusCardText(steps, SECTION_TEXT_LIMIT);
+    expect(section.length).toBeLessThanOrEqual(SECTION_TEXT_LIMIT);
+    expect(section).toMatch(/…and 1 more step \(as of 2026-09-30T09:00:00\.000\+07:00\)$/u);
+  });
+
+  it("puts a step's status before its label, shortens a fact's label before its value, and says when it lists only some", () => {
+    const long = "Upload the signed installer to the release page for every platform we ship, then check each download";
+    const steps = readStatusCard("progress", { steps: [{ label: long, status: "failed" }] });
+    if (steps === undefined) throw new Error("unreadable");
+    const stepDoc = normalizeSemanticDoc({ instanceId: "i", definitionId: "canvas.progress@1", ...statusCardSemantic(steps) });
+    expect((stepDoc.values.steps as string[])[0]).toBe(`failed: ${long.slice(0, SEMANTIC_LIMITS.listEntry - 9)}…`);
+
+    const items = Array.from({ length: MAX_DETAIL_ITEMS }, (_, index) => ({ label: `${"k".repeat(70)}${String(index)}`, value: `value ${String(index)}` }));
+    const details = readStatusCard("details", { items });
+    if (details === undefined) throw new Error("unreadable");
+    const meaning = statusCardSemantic(details);
+    expect(meaning.summary).toBe(`24 fact(s) as stated when shown; the first ${String(SEMANTIC_LIMITS.list)} of 24 are listed`);
+    const doc = normalizeSemanticDoc({ instanceId: "i", definitionId: "canvas.details@1", ...meaning });
+    const listed = doc.values.items as string[];
+    expect(listed).toHaveLength(SEMANTIC_LIMITS.list);
+    expect(listed[0]).toBe(`${"k".repeat(31)}…: value 0`);
   });
 
   it("stays inside the semantic bounds at the largest card the schema allows", () => {

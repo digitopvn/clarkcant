@@ -295,9 +295,11 @@ Không giữ stale rows dưới nhãn live khi refresh fail.
 
 ---
 
-## 8. Actions
+## 8. Hành động, nhập liệu và thẻ chỉ đọc
 
-Phân biệt cứng:
+Mục này nói về việc một widget làm (§8.1), điều người dùng đưa cho Clark qua một widget (§8.2), cách các widget trên
+cùng một bề mặt tác động lên nhau (§8.3), và các thẻ chỉ đọc không làm gì cả (§8.4). Ba phần đầu dựa trên một phân biệt
+cứng:
 
 ### Local view action
 
@@ -418,7 +420,8 @@ duyệt [input-primitives.spec.ts](../apps/web/e2e/input-primitives.spec.ts), ch
 
 ### 8.3 Nối các widget trên cùng một bề mặt
 
-Cây bố cục (§8.2, và [widget và extension](widgets-and-extensions.vi.md)) đặt các widget. Đồ thị state nói chúng tác động
+Cây bố cục ([widget và extension §4.1](widgets-and-extensions.vi.md#41-trạng-thái-triển-khai-2026-09-17)) đặt các
+widget. Đồ thị state nói chúng tác động
 lên nhau thế nào: một lựa chọn quyết định biểu đồ vẽ chuỗi nào, một ô tìm kiếm lọc một bảng, các dòng được chọn của một
 bảng được đếm thành một con số. Đồ thị là dữ liệu do host sở hữu và kiểm tra, gồm ba phần đóng, trong
 [composition-graph.ts](../packages/contracts/src/composition-graph.ts):
@@ -488,22 +491,39 @@ lẫn trang đều dùng bộ hàm này, nên trang không bao giờ vẽ một 
 
 | Định nghĩa | Là gì | Props |
 | --- | --- | --- |
-| `canvas.status@1` | Một trạng thái kèm sắc thái. | `label` (1–120), `tone` (`neutral`, `info`, `success`, `warning`, `danger`), tuỳ chọn `title`, `detail` (tối đa 500) và `asOf`. |
-| `canvas.progress@1` | Tiến độ của một việc: một giá trị trên một mức tối đa, hoặc một danh sách bước. | Hoặc `value` (từ 0 trở lên) cùng `max` (lớn hơn 0) và `unit` tuỳ chọn, hoặc `steps` (1–12), mỗi bước `{ label, status, detail? }` với status `done`, `current`, `pending`, `failed` hoặc `skipped`. Tuỳ chọn `title`, `label` và `asOf`. |
-| `canvas.details@1` | Các thông tin có nhãn. | `items` (1–24), mỗi mục `{ label (1–80), value (1–300) }`, không nhãn nào lặp lại. Tuỳ chọn `title` và `asOf`. |
+| `canvas.status@1` | Một trạng thái kèm sắc thái. | `label` (1–120), `tone` (`neutral`, `info`, `success`, `warning`, `danger`), tuỳ chọn `title` (tối đa 200), `detail` (tối đa 500) và `asOf`. |
+| `canvas.progress@1` | Tiến độ của một việc: một giá trị trên một mức tối đa, hoặc một danh sách bước. | Hoặc `value` (từ 0 trở lên) cùng `max` (lớn hơn 0) và `unit` tuỳ chọn (tối đa 20), hoặc `steps` (1–12), mỗi bước `{ label (1–120), status, detail? (tối đa 200) }` với status `done`, `current`, `pending`, `failed` hoặc `skipped`. Tuỳ chọn `title` và `label` (mỗi cái tối đa 200) và `asOf`. |
+| `canvas.details@1` | Các thông tin có nhãn. | `items` (1–24), mỗi mục `{ label (1–80), value (1–300) }`, không nhãn nào lặp lại. Tuỳ chọn `title` (tối đa 200) và `asOf`. |
 
-Model đặt từng thẻ bằng `show_view`, hoặc làm lá của một cây bố cục (§8.3), nơi cả ba nằm ở vùng `status`.
+Mọi prop chữ đều nằm trên một dòng. Độ dài tính theo đơn vị mã UTF-16, giống `maxLength` của JSON Schema.
+
+Model đặt từng thẻ bằng `show_view`, hoặc làm lá của một cây bố cục
+([widget và extension §4.1](widgets-and-extensions.vi.md#41-trạng-thái-triển-khai-2026-09-17)), nơi cả ba nằm ở vùng
+`status`.
 
 Node bảo đảm:
 
 - **Không có gì quay tròn khi chẳng có gì phía sau.** Thẻ tiến độ cần một giá trị và một mức tối đa, hoặc các bước.
   Thẻ không có cái nào, có cả hai, có giá trị vượt mức tối đa, có đơn vị đi kèm các bước, hoặc có hơn một bước đang làm
   đều bị từ chối kèm lý do ngay trong lượt đó, và không instance nào được lưu.
+- **Thứ được vẽ là thứ được đọc.** Một prop chữ không được chứa dấu xuống dòng, ký tự điều khiển, ký tự điều khiển
+  hướng chữ (U+202A–U+202E, U+2066–U+2069, U+200E, U+200F, U+061C) hay ký tự vô hình (U+200B, U+FEFF). Mỗi ký tự như vậy
+  làm điều mà trình đọc màn hình, bản ghi hội thoại hay lượt sau đọc được khác với điều trang vẽ ra. Lời từ chối nêu tên
+  ký tự, ví dụ `property "label": contains U+202E, a control that changes text direction …; remove it`. ZWJ và ZWNJ vẫn
+  được dùng, vì chữ viết và emoji cần chúng. JSON Schema của định nghĩa mang cùng quy tắc dưới dạng `pattern`, nên model
+  đọc được nó trước khi thử. Chữ được cắt khoảng trắng hai đầu và chuẩn hoá NFC trước khi kiểm một nhãn có rỗng hay bị
+  lặp.
 - **Mốc "tính đến" không bao giờ mơ hồ.** `asOf` là một ngày (`2026-09-30`) hoặc một thời điểm có `Z` hay độ lệch múi
   giờ (`2026-09-30T07:30:00+07:00`). Giờ địa phương không có độ lệch, hoặc ngày không tồn tại, đều bị từ chối.
 - **Text alternative là chính lời của thẻ.** Nó được dựng từ props, ví dụ
   `Build: Flaky (warning). 2 retries (as of 2026-09-30)` hoặc `Photos: 42 of 120 photos (35%)`, và caption không thay
   thế được nó. Một section của bố cục chứa thẻ cũng dùng đúng những lời đó.
+- **Câu chữ có giới hạn.** Một snapshot mà hội thoại không đọc lại được sẽ khiến cả hội thoại không mở được, nên node
+  kiểm mọi snapshot trước khi lưu. Câu chữ của một thẻ giữ trọn từng thông tin hay từng bước trong 4000 ký tự, và kết
+  thúc bằng `…and N more facts` (hoặc steps) khi có phần không vừa. Một section của bố cục giữ tối đa 2000, và câu chữ
+  của cả bố cục kết thúc bằng `… (shortened)` khi vượt 4000. Caption dài hơn 4000 ký tự bị từ chối.
+- **Con số không bao giờ nói quá.** Phần trăm được làm tròn, và hiện 99% chứ không phải 100% khi giá trị vẫn còn dưới
+  mức tối đa.
 - **Voice và `inspect_ui` đọc điều đã được nêu, không phải số đo trực tiếp.** Tài liệu ngữ nghĩa (§9) được dựng từ
   props. Summary của nó ghi "as stated when shown", và freshness là `unknown` chứ không phải `live`. Thẻ không có action
   và không có state.
@@ -516,17 +536,27 @@ Trang làm gì:
   `aria-valuetext` khớp với con số trên màn hình.
 - `asOf` là một ngày thì hiện đúng ngày đó. Một thời điểm thì hiện theo múi giờ và ngôn ngữ của người đọc, sau chữ
   "Tính đến".
+- Thẻ trông như một số đo sẽ nói nó hiện lời của ai. Thẻ tiến độ luôn kết thúc bằng "Theo Clark lúc 09:30", và thẻ
+  trạng thái cũng vậy khi không có `asOf`. Thời điểm là lúc tin nhắn được lưu, theo ngôn ngữ của người đọc, kèm ngày khi
+  không phải hôm nay. Model được dặn không dùng thẻ tiến độ cho tác vụ và lượt chạy của chính node, vốn đã có thẻ tác vụ
+  trực tiếp.
 - Thẻ không có badge độ mới, vì thứ nó hiện là điều model đã viết. Nó không có nút điều khiển nào và không tự thêm
   chuyển động.
-- Phần chi tiết xếp thành hai cột thẳng hàng và chuyển thành một cột khi hẹp hơn 480 px. Giá trị dài thì xuống dòng thay
-  vì làm trang rộng ra.
-- Props mà trang không đọc được thì hiện trạng thái lỗi, thay vì một thẻ đoán mò.
+- Phần chi tiết xếp thành hai cột thẳng hàng, cột nhãn chiếm tối đa 40% thẻ. Khi chính thẻ hẹp hơn 360 px, trên điện
+  thoại hay khi là một ô của lưới, mỗi giá trị xuống dưới nhãn của nó. Giá trị dài thì xuống dòng thay vì làm trang rộng
+  ra.
+- Props mà trang không đọc được, như một nhãn có dấu xuống dòng do node cũ lưu, thì hiện trạng thái lỗi, thay vì một thẻ
+  đoán mò.
 
 Kiểm thử: [status-cards.spec.ts](../packages/contracts/test/status-cards.spec.ts) cho các quy tắc,
 [status-cards.spec.ts](../apps/runtime/test/status-cards.spec.ts) cho node,
 [status-cards.spec.ts](../packages/conversation-client/test/status-cards.spec.ts) cho trang, và journey trình duyệt
 [status-cards.spec.ts](../apps/web/e2e/status-cards.spec.ts), chạy ở 1280 px với giao diện tối và sáng, ở 390 px có
-cảm ứng, và trong Widget Library.
+cảm ứng, khi là các ô của một lưới ba cột, và trong Widget Library. Quy tắc về ký tự ẩn nằm trong
+[text-rules.ts](../packages/contracts/src/text-rules.ts), được kiểm bởi
+[text-rules.spec.ts](../packages/contracts/test/text-rules.spec.ts), và
+[status-card-schemas.spec.ts](../packages/widget-catalog/test/status-card-schemas.spec.ts) kiểm rằng JSON Schema và
+bộ kiểm của chính thẻ chấp nhận và từ chối cùng những props như nhau.
 
 ---
 

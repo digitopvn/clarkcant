@@ -35,6 +35,9 @@ export const LAYOUT_COMPOSITION_SCHEMA_VERSION = 2;
 
 /** Ceilings from docs/widgets-and-extensions.md §12 and the analysis report §3.2. */
 export const MAX_COMPOSITION_SECTIONS = 12;
+
+/** The most text one section of a composed surface keeps for a reader who cannot see it. */
+export const SECTION_TEXT_LIMIT = 2000;
 export const MAX_COMPOSITION_SPEC_BYTES = 256 * 1024;
 export const MAX_PRESENTATION_BUNDLE_BYTES = 1024 * 1024;
 export const MAX_SELECTION_METADATA_BYTES = 16 * 1024;
@@ -103,7 +106,7 @@ export const compiledSectionSchema = z.strictObject({
   dataRefs: z.array(z.string().min(1).max(200)).max(64),
   rows: z.array(z.record(z.string(), z.unknown())).max(MAX_MATERIALIZED_ROWS).optional(),
   /** Mandatory: history has to read when the renderer is gone (T44). */
-  textAlternative: z.string().min(1).max(2000),
+  textAlternative: z.string().min(1).max(SECTION_TEXT_LIMIT),
 });
 export type CompiledSection = z.infer<typeof compiledSectionSchema>;
 

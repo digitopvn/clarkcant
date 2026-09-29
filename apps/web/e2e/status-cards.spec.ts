@@ -98,6 +98,47 @@ async function factOffset(details: Locator, label: string): Promise<{ dy: number
   });
 }
 
+/**
+ * The card says it shows what Clark stated, at the time its message was kept, as a time the reader can read: the time
+ * alone today. The attribute is the stored instant, so the words are checked against it rather than against a clock.
+ */
+async function expectStated(card: Locator): Promise<void> {
+  const stated = card.locator("time[data-status-stated-at]");
+  await expect(stated).toHaveCount(1);
+  const at = await stated.getAttribute("data-status-stated-at");
+  expect(Number.isNaN(Date.parse(at ?? "")), "the stated time is an instant").toBe(false);
+  expect(await stated.getAttribute("datetime")).toBe(at);
+  const shown = await stated.evaluate((element, instant) => {
+    const time = new Intl.DateTimeFormat(document.documentElement.lang || "vi", { timeStyle: "short" }).format(new Date(instant));
+    return { text: element.textContent ?? "", time };
+  }, at ?? "");
+  expect(shown.text).toBe(`Theo Clark lúc ${shown.time}`);
+}
+
+/**
+ * How each fact of a details card sits in the space it was given: whether a label or a value spills out of its own box,
+ * how narrow the label was squeezed, and whether a row reaches past the card.
+ */
+async function factFit(details: Locator): Promise<{ label: string; spills: boolean; labelWidth: number; pastCard: number; dy: number }[]> {
+  return details.evaluate((card) => {
+    const box = card.getBoundingClientRect();
+    return [...card.querySelectorAll<HTMLElement>("[data-details-item]")].map((row) => {
+      const term = row.querySelector("dt");
+      const value = row.querySelector("dd");
+      if (term === null || value === null) throw new Error("the fact has no label or no value");
+      const termBox = term.getBoundingClientRect();
+      const valueBox = value.getBoundingClientRect();
+      return {
+        label: row.dataset.detailsItem ?? "",
+        spills: term.scrollWidth > term.clientWidth + 1 || value.scrollWidth > value.clientWidth + 1,
+        labelWidth: termBox.width,
+        pastCard: Math.max(termBox.right, valueBox.right) - box.right,
+        dy: valueBox.top - termBox.top,
+      };
+    });
+  });
+}
+
 async function horizontalOverflow(page: Page): Promise<number> {
   return page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
 }
@@ -122,6 +163,8 @@ test("a status, a progress and a details card say what the model wrote, and noth
   const asOf = status.locator("[data-status-as-of] time");
   await expect(asOf).toHaveAttribute("datetime", "2026-09-30T07:30:00+07:00");
   await expect(asOf).toContainText("Tính đến");
+  // A card that says when it was true needs nothing more: "as Clark stated" is for one that does not.
+  await expect(status.locator("[data-status-stated-at]")).toHaveCount(0);
 
   // A value of a maximum is a progress bar a screen reader hears as the same figure a sighted reader sees.
   const bar = value.getByRole("progressbar");
@@ -131,6 +174,8 @@ test("a status, a progress and a details card say what the model wrote, and noth
   await expect(bar).toHaveAttribute("aria-valuetext", "42 / 120 ảnh · 35%");
   await expect(bar).toHaveAccessibleName("Ảnh đã nhập");
   await expect(value.locator("[data-progress-percent='35']")).toHaveText("42 / 120 ảnh · 35%");
+  // Progress looks like a reading, so it always says whose words it is and when they were kept, in the reader's time.
+  await expectStated(value);
 
   // Steps say how many are finished and which one is current, in words as well as marks.
   await expect(steps.locator("[data-progress-kind='steps']")).toBeVisible();
@@ -142,11 +187,14 @@ test("a status, a progress and a details card say what the model wrote, and noth
   await expect(current).toContainText("Chuyển đồ");
   await expect(current).toContainText("Đang làm");
   await expect(steps.locator("[data-step-status='done']")).toContainText("Xong");
+  await expectStated(steps);
 
   // Facts are label and value pairs, each label beside its own value.
   await expect(details.locator("[data-details-item]")).toHaveCount(3);
   await expect(details.locator("[data-details-item='Tổng tiền'] dt")).toHaveText("Tổng tiền");
   await expect(details.locator("[data-details-item='Tổng tiền'] dd")).toHaveText("1.250.000 ₫");
+  // Facts are what they are, with no time claimed for them unless the model gave one.
+  await expect(details.locator(".cc-status-card-asof")).toHaveCount(0);
   await settled(details);
   const wide = await factOffset(details, "Khách hàng");
   expect(Math.abs(wide.dy), "a label and its value share a row at desktop width").toBeLessThan(4);
@@ -261,4 +309,82 @@ test("the library previews each card through the production renderer", async ({ 
     await page.locator("[data-widget-library-back]").click();
     await expect(page.locator("[data-widget-grid]")).toBeVisible({ timeout: 20_000 });
   }
+});
+
+/** Ask for the fixture's grid of the three cards and return it. */
+async function arrangeCards(page: Page): Promise<Locator> {
+  const before = await page.locator("[data-layout-root]").count();
+  await say(page, "bố cục thẻ trạng thái");
+  await expect(page.locator("[data-layout-root]")).toHaveCount(before + 1, { timeout: 30_000 });
+  return page.locator("[data-layout-root]").nth(before);
+}
+
+test("a details card as one tile of a three-column grid keeps each label beside or above its own value", async ({ page }, testInfo) => {
+  test.setTimeout(120_000);
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await page.emulateMedia({ colorScheme: "dark" });
+  await openApp(page);
+  const surface = await arrangeCards(page);
+  const details = surface.locator("[data-widget-role='details']");
+  await expect(details.locator("[data-details-item]")).toHaveCount(3);
+  await expect(details.locator("[data-details-item='Địa chỉ giao hàng đầy đủ'] dd")).toHaveText("12 Nguyễn Huệ, Quận 1, TP. Hồ Chí Minh");
+  // In a layout, the cards read as they do on their own: the status and the progress say they are what Clark stated.
+  await expectStated(surface.locator("[data-widget-role='progress']"));
+  await expectStated(surface.locator("[data-widget-role='status']"));
+  await settled(surface);
+
+  for (const scheme of ["dark", "light"] as const) {
+    await page.emulateMedia({ colorScheme: scheme });
+    await expect.poll(() => theme(page)).toBe(scheme);
+    const facts = await factFit(details);
+    for (const fact of facts) {
+      expect(fact.spills, `"${fact.label}" stays inside its own box`).toBe(false);
+      expect(fact.pastCard, `"${fact.label}" stays inside the card`).toBeLessThanOrEqual(0.5);
+      // A label is never squeezed to a sliver by a long value: it keeps room for a word, or goes above its value.
+      expect(fact.labelWidth, `"${fact.label}" has room to be read`).toBeGreaterThan(48);
+    }
+    // Every row is laid out the same way, so labels and values line up down the card.
+    const beside = facts.map((fact) => Math.abs(fact.dy) < 4);
+    expect(new Set(beside).size, "every fact is laid out the same way").toBe(1);
+    expect(await horizontalOverflow(page)).toBeLessThanOrEqual(0);
+    await surface.scrollIntoViewIfNeeded();
+    await settled(surface);
+    await page.screenshot({ path: testInfo.outputPath(`status-cards-grid-1280-${scheme}.png`), fullPage: false });
+  }
+});
+
+test("the grid of cards reads at phone width, each fact's value under its label", async ({ browser }, testInfo) => {
+  test.setTimeout(120_000);
+  const context = await browser.newContext({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true });
+  const page = await context.newPage();
+  try {
+    await openApp(page);
+    const surface = await arrangeCards(page);
+    const details = surface.locator("[data-widget-role='details']");
+    await expect(details.locator("[data-details-item]")).toHaveCount(3);
+    await settled(surface);
+    for (const fact of await factFit(details)) {
+      expect(fact.spills, `"${fact.label}" stays inside its own box`).toBe(false);
+      expect(fact.pastCard, `"${fact.label}" stays inside the card`).toBeLessThanOrEqual(0.5);
+      expect(fact.dy, `"${fact.label}" goes under its label`).toBeGreaterThan(0);
+    }
+    expect(await horizontalOverflow(page)).toBeLessThanOrEqual(0);
+    await details.scrollIntoViewIfNeeded();
+    await settled(details);
+    await page.screenshot({ path: testInfo.outputPath("status-cards-grid-390.png") });
+  } finally {
+    await context.close();
+  }
+});
+
+test("a status card an older node stored with a line break in its label says it cannot be read, and draws no forged line", async ({ page }) => {
+  test.setTimeout(60_000);
+  await openApp(page);
+  const before = await page.locator("[data-widget-role='status']").count();
+  await say(page, "đặt thẻ trạng thái cũ");
+  await expect(page.locator("[data-widget-role='status']")).toHaveCount(before + 1, { timeout: 20_000 });
+  const card = page.locator("[data-widget-role='status']").nth(before);
+  await expect(card.locator("[data-status-state='error']")).toHaveText("Thẻ trạng thái này không đọc được nên chưa hiển thị.");
+  await expect(card.locator("[data-status-state='ready']")).toHaveCount(0);
+  await expect(card).not.toContainText("Dòng hai");
 });

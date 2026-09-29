@@ -328,14 +328,18 @@ label.cc-list-main { cursor: pointer; }
 .cc-progress-step-detail { font-size: var(--cc-text-label); color: var(--cc-text-muted); overflow-wrap: anywhere; }
 .cc-progress-step-status { flex: none; font-size: var(--cc-text-label); color: var(--cc-text-muted); }
 .cc-progress-step[data-step-status="failed"] .cc-progress-step-status { color: var(--cc-danger); }
-/* Its own grid rather than .cc-fields, whose columns the later panels layer sets and would win over these. */
-.cc-details { display: grid; grid-template-columns: minmax(0, max-content) minmax(0, 1fr); gap: var(--cc-space-xs) var(--cc-space-md); margin: 0; }
-.cc-details dt { color: var(--cc-text-muted); }
+/* Its own grid rather than .cc-fields, whose columns the later panels layer sets and would win over these.
+   Sized by the card's own width, not the window's: a details card in one column of a layout grid is narrow on a wide
+   screen. Labels take at most 40% so a long one wraps instead of pushing the values into a sliver, and a card too
+   narrow for two readable columns puts each value under its label. */
+.cc-details-box { container-type: inline-size; min-width: 0; }
+.cc-details { display: grid; grid-template-columns: fit-content(40%) minmax(0, 1fr); gap: var(--cc-space-xs) var(--cc-space-md); margin: 0; }
+.cc-details dt { color: var(--cc-text-muted); min-width: 0; }
 .cc-details dd { margin: 0; min-width: 0; }
 /* Each pair is a row of the parent grid, so a label and its value line up whatever their lengths. */
 .cc-details-row { display: contents; }
 .cc-details dt, .cc-details dd { overflow-wrap: anywhere; font-size: var(--cc-text-body-sm); }
-@media (max-width: 480px) {
+@container (max-width: 360px) {
   .cc-details { grid-template-columns: minmax(0, 1fr); row-gap: 0; }
   .cc-details dd { margin-bottom: var(--cc-space-sm); }
 }

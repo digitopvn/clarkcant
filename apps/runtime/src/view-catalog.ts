@@ -30,6 +30,7 @@ import {
   MAX_DETAIL_ITEMS,
   MAX_LIST_ITEMS,
   MAX_PROGRESS_STEPS,
+  SNAPSHOT_TEXT_LIMIT,
   STATUS_TONES,
   STEP_STATUSES,
   formInputSchema,
@@ -130,6 +131,9 @@ export function buildViewCatalog(
      * better raised here than discovered by a user staring at a broken card.
      */
     build: ({ props, caption, principal, messageId }) => {
+      // The caption is what a reader sees if the renderer is gone, so it wins over the
+      // definition's generic fallback whenever the model supplied one.
+      const textAlternative = keptText(definition.id, caption, definition.textFallback);
       const instance: WidgetInstance = createInstance(deps, {
         definition,
         packageDigest: definitionDigest(definition),
@@ -140,9 +144,7 @@ export function buildViewCatalog(
       const snapshot: WidgetSnapshot = captureSnapshot(deps, {
         messageId,
         instance,
-        // The caption is what a reader sees if the renderer is gone, so it wins over the
-        // definition's generic fallback whenever the model supplied one.
-        textAlternative: caption.trim() === "" ? definition.textFallback : caption,
+        textAlternative,
         presentationRef: `catalog:${definition.id}`,
       });
 
@@ -251,6 +253,7 @@ function actionView(deps: WidgetDeps, bindingDeps: () => ActionBindingDeps): Vie
         action,
       });
       if (!compiled.ok) throw new Error(compiled.message);
+      const textAlternative = keptText(ACTION.id, caption, `${String(shown.label)}. ${ACTION.textFallback}`);
 
       const instance: WidgetInstance = createInstance(deps, {
         definition: ACTION,
@@ -262,7 +265,8 @@ function actionView(deps: WidgetDeps, bindingDeps: () => ActionBindingDeps): Vie
       const snapshot: WidgetSnapshot = captureSnapshot(deps, {
         messageId,
         instance,
-        textAlternative: caption.trim() === "" ? `${String(shown.label)}. ${ACTION.textFallback}` : caption,
+        textAlternative,
+
         presentationRef: `catalog:${ACTION.id}`,
       });
       return { type: "surface", definitionRef: { id: ACTION.id, version: ACTION.version }, snapshot };
@@ -276,6 +280,22 @@ const SENDING_ACTIONS =
   `{"kind":"invoke","capabilityRef":"<a package service capability>","args":{...}}`;
 
 type ViewRequest = Parameters<ViewDescriptor["build"]>[0];
+
+/**
+ * The text a widget's snapshot keeps: the model's caption, or the widget's own words when it wrote none.
+ *
+ * Checked before anything is stored. A snapshot with more text than a reader of the conversation accepts would make the
+ * whole conversation fail to open, so a caption that long is refused in the same turn, with nothing left behind.
+ */
+function keptText(definitionId: string, caption: string, fallback: string): string {
+  const text = caption.trim() === "" ? fallback : caption;
+  if (text.length > SNAPSHOT_TEXT_LIMIT) {
+    throw new Error(
+      `${definitionId} cannot be shown: its caption is ${String(text.length)} characters and at most ${String(SNAPSHOT_TEXT_LIMIT)} are kept; write one short sentence`,
+    );
+  }
+  return text;
+}
 
 /**
  * Store one widget whose action sends something: compile the action with what it carries, then make the instance, bind
@@ -305,6 +325,7 @@ function placeSending(
     if (!result.ok) throw new Error(result.message);
     compiled = result;
   }
+  const kept = keptText(definition.id, request.caption, textAlternative);
 
   const instance: WidgetInstance = createInstance(deps, {
     definition,
@@ -316,7 +337,8 @@ function placeSending(
   const snapshot: WidgetSnapshot = captureSnapshot(deps, {
     messageId: request.messageId,
     instance,
-    textAlternative: request.caption.trim() === "" ? textAlternative : request.caption,
+    textAlternative: kept,
+
     presentationRef: `catalog:${definition.id}`,
   });
   return { type: "surface", definitionRef: { id: definition.id, version: definition.version }, snapshot };
@@ -415,7 +437,8 @@ const STATUS_CARD_NOTES: Readonly<Record<string, string>> = {
   [PROGRESS.id]:
     `Either props.value and props.max (value 0 to max; optional props.unit), or props.steps: 1-${String(MAX_PROGRESS_STEPS)} of ` +
     `{"label":"...","status":"${STEP_STATUSES.join('" | "')}","detail"?} with at most one current step. ` +
-    `Optional props.title, props.label (what is progressing) and props.asOf. Only a value you actually know: never a guess.`,
+    `Optional props.title, props.label (what is progressing) and props.asOf. Only a value you actually know: never a guess. ` +
+    `Not for this node's own tasks and runs: those already have a live task card, and this card only repeats what you wrote.`,
   [DETAILS.id]:
     `props.items is 1-${String(MAX_DETAIL_ITEMS)} of {"label":"...","value":"..."}, each label once; optional props.title and props.asOf.`,
 };
@@ -433,7 +456,8 @@ function statusCardViews(deps: WidgetDeps): ViewDescriptor[] {
     notes: STATUS_CARD_NOTES[definition.id] ?? "",
     shownText: `Shown: ${definition.id}. It shows what you wrote, not a live reading, and nothing on it acts.`,
     build: (request) => {
-      const kind = STATUS_CARD_KIND[definition.id] ?? "status";
+      const kind = STATUS_CARD_KIND[definition.id];
+      if (kind === undefined) throw new Error(`${definition.id} is not a status card`);
       const content = readStatusCard(kind, request.props);
       const text = content === undefined ? definition.textFallback : statusCardText(content);
       // The card's own words are its text alternative: a caption would only repeat what the card says, less exactly.

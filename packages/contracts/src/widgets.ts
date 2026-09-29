@@ -169,6 +169,9 @@ export const widgetInstanceSchema = z.strictObject({
 });
 export type WidgetInstance = z.infer<typeof widgetInstanceSchema>;
 
+/** The most text a snapshot keeps for a reader who cannot see the widget. A row with more cannot be read back. */
+export const SNAPSHOT_TEXT_LIMIT = 4000;
+
 export const widgetSnapshotSchema = z.strictObject({
   snapshotId: z.string().min(1).max(128),
   instanceId: z.string().min(1).max(128).optional(),
@@ -176,7 +179,7 @@ export const widgetSnapshotSchema = z.strictObject({
   capturedRevision: z.int().nonnegative(),
   capturedAt: instantSchema,
   /** Mandatory: history must be readable when the renderer is gone. */
-  textAlternative: z.string().min(1).max(4000),
+  textAlternative: z.string().min(1).max(SNAPSHOT_TEXT_LIMIT),
   presentationRef: z.string().min(1).max(300),
   /**
    * Opaque reference to the immutable presentation bundle, when one was captured.

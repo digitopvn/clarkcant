@@ -362,6 +362,7 @@ export function useSurfaceRenderer({
               definitionId={definitionId}
               props={instance.props}
               dataset={dataset}
+              statedAt={input.capturedAt}
               // The picture resolver, which used to reach only the composed surface. A widget that
               // draws a picture cannot fetch one: it can only draw a URL it was handed, so leaving
               // this out made every picture widget show its text alternative while the bytes sat

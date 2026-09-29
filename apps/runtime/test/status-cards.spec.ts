@@ -4,12 +4,22 @@ import { join } from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { type Instant, type MessageBlock, SEMANTIC_LIMITS, canonicalSemanticDoc } from "@clarkcant/contracts";
-import { getInstance } from "@clarkcant/core";
-import { DETAILS, PROGRESS, STATUS } from "@clarkcant/data-canvas";
+import {
+  type Instant,
+  type MessageBlock,
+  MAX_DETAIL_ITEMS,
+  MAX_PROGRESS_STEPS,
+  SECTION_TEXT_LIMIT,
+  SEMANTIC_LIMITS,
+  SNAPSHOT_TEXT_LIMIT,
+  canonicalSemanticDoc,
+} from "@clarkcant/contracts";
+import { captureSnapshot, getInstance } from "@clarkcant/core";
+import { DETAILS, FILTER, PROGRESS, STATUS } from "@clarkcant/data-canvas";
+import { appendMessage, createConversation } from "@clarkcant/storage";
 
-import { compileLayout, layoutLeafWidgets } from "../src/compose-layout.ts";
-import { bootNodeServices, type NodeServices } from "../src/services.ts";
+import { compileLayout, composeLayout, layoutLeafWidgets } from "../src/compose-layout.ts";
+import { bootNodeServices, buildTimeline, type NodeServices } from "../src/services.ts";
 import { buildViewCatalog } from "../src/view-catalog.ts";
 import { buildWidgetSemantic } from "../src/widget-semantic.ts";
 
@@ -40,7 +50,7 @@ async function place(definitionId: string, props: Record<string, unknown>, capti
     at: AT,
     principal: { principalId: services.runtime.identity.ownerPrincipalId, kind: "user", nodeId: services.runtime.identity.nodeId } as never,
     messageId: `msg_${String(++counter)}`,
-    conversationId: "conv_status_cards",
+    conversationId: CONVERSATION,
   })) as Extract<MessageBlock, { type: "surface" }>;
 }
 
@@ -48,9 +58,59 @@ function instanceRows(): number {
   return (services.runtime.db.prepare("SELECT COUNT(*) AS n FROM widget_instances").get() as { n: number }).n;
 }
 
+function snapshotRows(): number {
+  return (services.runtime.db.prepare("SELECT COUNT(*) AS n FROM widget_snapshots").get() as { n: number }).n;
+}
+
+const CONVERSATION = "conv_status_cards";
+
+/** Put a placed card in a message of the conversation, as a turn does, so the timeline reads it back. */
+function keep(block: MessageBlock, messageId: string): void {
+  appendMessage(
+    services.runtime.db,
+    {
+      messageId,
+      conversationId: CONVERSATION,
+      role: "assistant",
+      authorNodeId: services.runtime.identity.nodeId,
+      delivery: "accepted",
+      createdAt: AT,
+      blocks: [block],
+    } as never,
+    ++counter,
+  );
+}
+
+const AS_OF = "2026-09-30T09:00:00.000+07:00";
+
+/** The most a details card may hold: every field at its maximum length. */
+const LARGEST_DETAILS = {
+  title: "t".repeat(200),
+  items: Array.from({ length: MAX_DETAIL_ITEMS }, (_, index) => ({
+    label: `${"k".repeat(78)}${String(index).padStart(2, "0")}`,
+    value: "v".repeat(300),
+  })),
+  asOf: AS_OF,
+};
+
+/** The most a progress card may hold: its longest steps, each with the longest status word. */
+const LARGEST_PROGRESS = {
+  title: "t".repeat(200),
+  label: "l".repeat(200),
+  steps: Array.from({ length: MAX_PROGRESS_STEPS }, (_, index) => ({
+    label: `${"s".repeat(118)}${String(index).padStart(2, "0")}`,
+    status: "skipped",
+    detail: "d".repeat(200),
+  })),
+  asOf: AS_OF,
+};
+
+const LARGEST_STATUS = { title: "t".repeat(200), label: "x".repeat(120), tone: "warning", detail: "d".repeat(500), asOf: AS_OF };
+
 beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), "clarkcant-status-cards-"));
   services = bootNodeServices({ dataDir: dir, label: "test node" });
+  createConversation(services.runtime.db, { conversationId: CONVERSATION, homeNodeId: services.runtime.identity.nodeId, at: AT });
 });
 
 afterEach(() => {
@@ -68,6 +128,7 @@ describe("the model's vocabulary", () => {
     }
     expect(byId.get(STATUS.id)?.notes).toContain("neutral, info, success, warning, danger");
     expect(byId.get(PROGRESS.id)?.notes).toContain("at most one current step");
+    expect(byId.get(PROGRESS.id)?.notes).toContain("Not for this node's own tasks and runs");
   });
 
   it("lets a layout place them", () => {
@@ -122,6 +183,19 @@ describe("placing a card", () => {
     ["an as-of with no offset", STATUS.id, { label: "x", tone: "info", asOf: "2026-09-30T09:00:00" }, "asOf"],
     ["an unknown tone", STATUS.id, { label: "x", tone: "red" }, "tone"],
     ["a key the card does not have", STATUS.id, { label: "x", tone: "info", live: true }, 'unknown property "live"'],
+    [
+      "a line break in a label",
+      STATUS.id,
+      { label: "Up\nDown", tone: "info" },
+      'property "label": contains U+000A, a line break, and this field is one line; remove it',
+    ],
+    [
+      "a bidi control in a fact",
+      DETAILS.id,
+      { items: [{ label: "Owner", value: "L\u202ean" }] },
+      'property "items.0.value": contains U+202E, a control that changes text direction',
+    ],
+    ["a label of spaces", DETAILS.id, { items: [{ label: "  ", value: "1" }] }, 'property "items.0.label": is empty'],
   ])("refuses %s and leaves nothing behind", async (_name, definitionId, props, reason) => {
     const before = instanceRows();
     await expect(place(definitionId, props)).rejects.toThrow(reason);
@@ -188,5 +262,101 @@ describe("a card in a layout", () => {
     expect(result.ok).toBe(false);
     if (result.ok) return;
     expect(result.problems.join("; ")).toContain("the value 5 is above the maximum 4");
+  });
+});
+
+describe("a conversation with the largest cards in it", () => {
+  const principalId = () => services.runtime.identity.ownerPrincipalId;
+
+  it("still opens with the largest details and progress cards placed on their own", async () => {
+    const details = await place(DETAILS.id, LARGEST_DETAILS);
+    const progress = await place(PROGRESS.id, LARGEST_PROGRESS);
+    const status = await place(STATUS.id, LARGEST_STATUS);
+    for (const block of [details, progress, status]) keep(block, block.snapshot.messageId);
+
+    const timeline = buildTimeline(services, { conversationId: CONVERSATION, afterSequence: 0 });
+    const texts = new Map(timeline.snapshots.map((snapshot) => [snapshot.snapshotId, snapshot.textAlternative]));
+    const detailsText = texts.get(details.snapshot.snapshotId) ?? "";
+    expect(detailsText.length).toBeLessThanOrEqual(SNAPSHOT_TEXT_LIMIT);
+    expect(detailsText).toMatch(/…and \d+ more facts \(as of 2026-09-30T09:00:00\.000\+07:00\)$/u);
+    expect(texts.get(progress.snapshot.snapshotId)).toBe(progress.snapshot.textAlternative);
+    expect(texts.get(status.snapshot.snapshotId)).toBe(status.snapshot.textAlternative);
+  });
+
+  it("still opens with the largest cards as leaves of a layout, and with a layout of twelve of them", () => {
+    const grid = composeLayout(services.compose, {
+      conversationId: CONVERSATION,
+      messageId: "msg_largest_grid",
+      principalId: principalId(),
+      intent: "",
+      layout: {
+        kind: "grid",
+        columns: 3,
+        children: [
+          { kind: "widget", widget: DETAILS.id, props: LARGEST_DETAILS },
+          { kind: "widget", widget: PROGRESS.id, props: LARGEST_PROGRESS },
+          { kind: "widget", widget: STATUS.id, props: LARGEST_STATUS },
+        ],
+      },
+    });
+    if (!grid.ok) throw new Error(`${grid.message}: ${(grid.problems ?? []).join("; ")}`);
+    keep(grid.block, "msg_largest_grid");
+
+    const twelve = composeLayout(services.compose, {
+      conversationId: CONVERSATION,
+      messageId: "msg_largest_twelve",
+      principalId: principalId(),
+      intent: "",
+      layout: { kind: "stack", children: Array.from({ length: 12 }, () => ({ kind: "widget", widget: DETAILS.id, props: LARGEST_DETAILS })) },
+    });
+    if (!twelve.ok) throw new Error(`${twelve.message}: ${(twelve.problems ?? []).join("; ")}`);
+    keep(twelve.block, "msg_largest_twelve");
+
+    const timeline = buildTimeline(services, { conversationId: CONVERSATION, afterSequence: 0 });
+    const gridText = timeline.snapshots.find((snapshot) => snapshot.snapshotId === grid.snapshotId)?.textAlternative ?? "";
+    const twelveText = timeline.snapshots.find((snapshot) => snapshot.snapshotId === twelve.snapshotId)?.textAlternative ?? "";
+    expect(gridText.length).toBeLessThanOrEqual(SNAPSHOT_TEXT_LIMIT);
+    // Each leaf says how many facts or steps it left out; the whole says it was shortened.
+    expect(gridText).toContain("more facts");
+    expect(gridText).toContain("…and 1 more step (as of");
+    expect(twelveText.length).toBeLessThanOrEqual(SNAPSHOT_TEXT_LIMIT);
+    expect(twelveText.endsWith("… (shortened)")).toBe(true);
+
+    const leaves = compileLayout({
+      proposal: { kind: "stack", children: [{ kind: "widget", widget: PROGRESS.id, props: LARGEST_PROGRESS }] },
+      registry: services.compose.registry,
+      rowsBySlot: {},
+      initialState: { period: "week", timezone: "UTC" },
+    });
+    if (!leaves.ok) throw new Error(leaves.problems.join("; "));
+    expect(leaves.sections[0]?.textAlternative.length).toBeLessThanOrEqual(SECTION_TEXT_LIMIT);
+  });
+
+  it("refuses a caption longer than a snapshot keeps, in the same turn, with nothing left behind", async () => {
+    const before = { instances: instanceRows(), snapshots: snapshotRows() };
+    // A card's own words replace a caption, so the caption that counts is a widget's that keeps one.
+    await expect(place(FILTER.id, { period: "week", timezone: "UTC" }, "x".repeat(SNAPSHOT_TEXT_LIMIT + 1))).rejects.toThrow(
+      `its caption is ${String(SNAPSHOT_TEXT_LIMIT + 1)} characters and at most ${String(SNAPSHOT_TEXT_LIMIT)} are kept`,
+    );
+    expect({ instances: instanceRows(), snapshots: snapshotRows() }).toEqual(before);
+  });
+
+  it("never stores a snapshot the conversation could not read back", async () => {
+    const block = await place(STATUS.id, { label: "Up", tone: "info" });
+    const instance = getInstance(services.conductor, block.snapshot.instanceId ?? "");
+    if (instance === undefined) throw new Error("no instance");
+    const before = snapshotRows();
+    expect(() =>
+      captureSnapshot(services.conductor, {
+        messageId: "msg_too_long",
+        instance,
+        textAlternative: "x".repeat(SNAPSHOT_TEXT_LIMIT + 1),
+        presentationRef: `catalog:${STATUS.id}`,
+      }),
+    ).toThrow(`catalog:${STATUS.id} cannot be kept in the conversation: textAlternative:`);
+    expect(() =>
+      captureSnapshot(services.conductor, { messageId: "msg_empty", instance, textAlternative: "", presentationRef: `catalog:${STATUS.id}` }),
+    ).toThrow("cannot be kept in the conversation");
+    expect(snapshotRows()).toBe(before);
   });
 });

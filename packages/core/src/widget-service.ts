@@ -380,20 +380,33 @@ export function sweepExpiredLiveOwners(deps: WidgetDeps): number {
  * Snapshots
  * ------------------------------------------------------------------ */
 
+/**
+ * Keep what a message showed.
+ *
+ * The snapshot is checked against the schema it is read back with before it is stored. A row the reader refuses (a
+ * text alternative over its limit, say) would make every later read of the conversation throw, so it is refused here,
+ * where the caller can still turn it into a reason, rather than written and discovered when the conversation will not
+ * open.
+ */
 export function captureSnapshot(
   deps: WidgetDeps,
   input: { messageId: string; instance: WidgetInstance; textAlternative: string; presentationRef: string },
 ): WidgetSnapshot {
-  const snapshot: WidgetSnapshot = {
-    snapshotId: deps.newId("wsnap") as WidgetSnapshot["snapshotId"],
+  const checked = widgetSnapshotSchema.safeParse({
+    snapshotId: deps.newId("wsnap"),
     instanceId: input.instance.instanceId,
-    messageId: input.messageId as WidgetSnapshot["messageId"],
+    messageId: input.messageId,
     capturedRevision: input.instance.revision,
     capturedAt: deps.now(),
     textAlternative: input.textAlternative,
     presentationRef: input.presentationRef,
     stale: false,
-  };
+  });
+  if (!checked.success) {
+    const problems = checked.error.issues.map((issue) => `${issue.path.map(String).join(".") || "snapshot"}: ${issue.message}`);
+    throw new Error(`${input.presentationRef} cannot be kept in the conversation: ${problems.join("; ")}`);
+  }
+  const snapshot: WidgetSnapshot = checked.data;
 
   deps.db
     .prepare(

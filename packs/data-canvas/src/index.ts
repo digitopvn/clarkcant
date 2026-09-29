@@ -9,6 +9,8 @@ import {
   MAX_LIST_ITEMS,
   MAX_PROGRESS_STEPS,
   MAX_TEXT_LENGTH,
+  ONE_LINE_PATTERN,
+  ONE_LINE_REQUIRED_PATTERN,
   STATUS_TONES,
   STEP_STATUSES,
   type StatusCardKind,
@@ -739,6 +741,16 @@ export const LIST: WidgetDefinition = {
  * no control, and an `asOf` is said in words: "as of" a time, never "live".
  */
 
+/**
+ * A one-line string with no control, bidi or invisible character; the node says which one it found. A required one
+ * also holds something besides spaces, since the card reads it trimmed.
+ */
+function oneLineProp(maxLength: number, minLength?: number): Record<string, unknown> {
+  return minLength === undefined
+    ? { type: "string", maxLength, pattern: ONE_LINE_PATTERN }
+    : { type: "string", minLength, maxLength, pattern: ONE_LINE_REQUIRED_PATTERN };
+}
+
 const asOfProp = {
   type: "string",
   maxLength: 40,
@@ -755,10 +767,10 @@ export const STATUS: WidgetDefinition = {
     type: "object",
     additionalProperties: false,
     properties: {
-      title: { type: "string", maxLength: 200 },
-      label: { type: "string", minLength: 1, maxLength: 120 },
+      title: oneLineProp(200),
+      label: oneLineProp(120, 1),
       tone: { type: "string", enum: [...STATUS_TONES] },
-      detail: { type: "string", maxLength: 500 },
+      detail: oneLineProp(500),
       asOf: asOfProp,
     },
     required: ["label", "tone"],
@@ -781,11 +793,11 @@ export const PROGRESS: WidgetDefinition = {
     type: "object",
     additionalProperties: false,
     properties: {
-      title: { type: "string", maxLength: 200 },
-      label: { type: "string", maxLength: 200 },
+      title: oneLineProp(200),
+      label: oneLineProp(200),
       value: { type: "number", minimum: 0 },
       max: { type: "number", exclusiveMinimum: 0 },
-      unit: { type: "string", maxLength: 20 },
+      unit: oneLineProp(20),
       steps: {
         type: "array",
         minItems: 1,
@@ -794,9 +806,9 @@ export const PROGRESS: WidgetDefinition = {
           type: "object",
           additionalProperties: false,
           properties: {
-            label: { type: "string", minLength: 1, maxLength: 120 },
+            label: oneLineProp(120, 1),
             status: { type: "string", enum: [...STEP_STATUSES] },
-            detail: { type: "string", maxLength: 200 },
+            detail: oneLineProp(200),
           },
           required: ["label", "status"],
         },
@@ -822,7 +834,7 @@ export const DETAILS: WidgetDefinition = {
     type: "object",
     additionalProperties: false,
     properties: {
-      title: { type: "string", maxLength: 200 },
+      title: oneLineProp(200),
       items: {
         type: "array",
         minItems: 1,
@@ -831,8 +843,8 @@ export const DETAILS: WidgetDefinition = {
           type: "object",
           additionalProperties: false,
           properties: {
-            label: { type: "string", minLength: 1, maxLength: 80 },
-            value: { type: "string", minLength: 1, maxLength: 300 },
+            label: oneLineProp(80, 1),
+            value: oneLineProp(300, 1),
           },
           required: ["label", "value"],
         },

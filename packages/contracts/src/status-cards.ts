@@ -1,6 +1,8 @@
 import { z } from "zod";
 
-import type { SemanticValue } from "./widget-semantic.ts";
+import { clipWithMarker, hiddenCharacterProblem, sliceCodePoints } from "./text-rules.ts";
+import { SNAPSHOT_TEXT_LIMIT } from "./widgets.ts";
+import { SEMANTIC_LIMITS, type SemanticValue } from "./widget-semantic.ts";
 
 /**
  * Cards that say where something stands: one status, the progress of one thing, a few labelled facts.
@@ -33,39 +35,58 @@ export const MAX_DETAIL_ITEMS = 24;
 export const AS_OF_PATTERN = "^\\d{4}-\\d{2}-\\d{2}(?:T\\d{2}:\\d{2}(?::\\d{2}(?:\\.\\d{1,3})?)?(?:Z|[+-]\\d{2}:\\d{2}))?$";
 const asOfSchema = z.string().max(40).regex(new RegExp(AS_OF_PATTERN, "u"));
 
-const titleSchema = z.string().max(200);
+/**
+ * One line of the model's words, as a card shows it.
+ *
+ * Refused when it holds a line break, a control, a bidi control or an invisible character, with a reason that names
+ * it; otherwise read in NFC and trimmed, so a label of spaces is empty and two labels that look the same are the same.
+ * The length is the model's own, before trimming, as its JSON Schema counts it.
+ */
+function oneLine(max: number, required: boolean) {
+  return z
+    .string()
+    .max(max, `is longer than ${String(max)} characters`)
+    .superRefine((value, ctx) => {
+      const problem = hiddenCharacterProblem(value);
+      if (problem !== undefined) ctx.addIssue({ code: "custom", message: problem });
+    })
+    .transform((value) => value.normalize("NFC").trim())
+    .refine((value) => !required || value !== "", "is empty");
+}
+
+const titleSchema = oneLine(200, false);
 
 export const statusCardSchema = z.strictObject({
   title: titleSchema.optional(),
-  label: z.string().min(1).max(120),
+  label: oneLine(120, true),
   tone: z.enum(STATUS_TONES),
-  detail: z.string().max(500).optional(),
+  detail: oneLine(500, false).optional(),
   asOf: asOfSchema.optional(),
 });
 export type StatusCard = z.infer<typeof statusCardSchema>;
 
 export const progressStepSchema = z.strictObject({
-  label: z.string().min(1).max(120),
+  label: oneLine(120, true),
   status: z.enum(STEP_STATUSES),
-  detail: z.string().max(200).optional(),
+  detail: oneLine(200, false).optional(),
 });
 export type ProgressStep = z.infer<typeof progressStepSchema>;
 
 export const progressCardSchema = z.strictObject({
   title: titleSchema.optional(),
   /** What is progressing, in the model's words. */
-  label: z.string().max(200).optional(),
+  label: oneLine(200, false).optional(),
   value: z.number().nonnegative().optional(),
   max: z.number().positive().optional(),
-  unit: z.string().max(20).optional(),
+  unit: oneLine(20, false).optional(),
   steps: z.array(progressStepSchema).min(1).max(MAX_PROGRESS_STEPS).optional(),
   asOf: asOfSchema.optional(),
 });
 export type ProgressCard = z.infer<typeof progressCardSchema>;
 
 export const detailItemSchema = z.strictObject({
-  label: z.string().min(1).max(80),
-  value: z.string().min(1).max(300),
+  label: oneLine(80, true),
+  value: oneLine(300, true),
 });
 export type DetailItem = z.infer<typeof detailItemSchema>;
 
@@ -87,17 +108,29 @@ export type StatusCardContent =
  * Reading and checking
  * ------------------------------------------------------------------ */
 
-function parsed(kind: StatusCardKind, props: unknown): StatusCardContent | undefined {
+/** At most this many schema problems in one refusal, so one bad list cannot flood it. */
+const MAX_SCHEMA_PROBLEMS = 5;
+
+type Parsed = { ok: true; content: StatusCardContent } | { ok: false; problems: string[] };
+
+function schemaProblems(error: z.ZodError): string[] {
+  return error.issues.slice(0, MAX_SCHEMA_PROBLEMS).map((issue) => {
+    const where = issue.path.length === 0 ? "props" : `"${issue.path.map(String).join(".")}"`;
+    return `${where}: ${issue.message}`;
+  });
+}
+
+function parsed(kind: StatusCardKind, props: unknown): Parsed {
   if (kind === "status") {
     const result = statusCardSchema.safeParse(props);
-    return result.success ? { kind, card: result.data } : undefined;
+    return result.success ? { ok: true, content: { kind, card: result.data } } : { ok: false, problems: schemaProblems(result.error) };
   }
   if (kind === "progress") {
     const result = progressCardSchema.safeParse(props);
-    return result.success ? { kind, card: result.data } : undefined;
+    return result.success ? { ok: true, content: { kind, card: result.data } } : { ok: false, problems: schemaProblems(result.error) };
   }
   const result = detailsCardSchema.safeParse(props);
-  return result.success ? { kind, card: result.data } : undefined;
+  return result.success ? { ok: true, content: { kind, card: result.data } } : { ok: false, problems: schemaProblems(result.error) };
 }
 
 /** Whether an `asOf` names a day that exists: the pattern alone would let 2026-02-30 through. */
@@ -140,10 +173,15 @@ function detailsProblems(card: DetailsCard): string[] {
   return repeated.size === 0 ? [] : [`labels repeat: ${[...repeated].slice(0, 5).join(", ")}; each fact needs its own label`];
 }
 
-/** Everything wrong with a card's props: what the schema says, then what it cannot say. */
+/**
+ * Everything wrong with a card's props: what the schema says, then what it cannot say.
+ *
+ * Labels are compared as the card reads them, in NFC and trimmed, so "Owner" and "Owner " are the same label.
+ */
 export function statusCardProblems(kind: StatusCardKind, props: unknown): string[] {
-  const content = parsed(kind, props);
-  if (content === undefined) return [`the props do not describe a ${kind} card`];
+  const result = parsed(kind, props);
+  if (!result.ok) return result.problems;
+  const content = result.content;
   const problems: string[] = [];
   const asOf = asOfProblem(content.card.asOf);
   if (asOf !== undefined) problems.push(asOf);
@@ -154,18 +192,25 @@ export function statusCardProblems(kind: StatusCardKind, props: unknown): string
 
 /** The card its props describe, or `undefined` when the node would refuse them. */
 export function readStatusCard(kind: StatusCardKind, props: unknown): StatusCardContent | undefined {
-  const content = parsed(kind, props);
-  return content !== undefined && statusCardProblems(kind, props).length === 0 ? content : undefined;
+  const result = parsed(kind, props);
+  return result.ok && statusCardProblems(kind, props).length === 0 ? result.content : undefined;
 }
 
 /* ------------------------------------------------------------------ *
  * Progress arithmetic
  * ------------------------------------------------------------------ */
 
-/** The whole percentage a determinate card shows, or `undefined` for steps. */
+/**
+ * The whole percentage a determinate card shows, or `undefined` for steps.
+ *
+ * Rounded, except that a card says 100% only when the value is the maximum: 999 of 1000 is 99%, never a finished bar
+ * over work that is not finished. (Rounding down instead would show 57 of 100 as 56%, since 0.57 × 100 is not 57 in
+ * floating point.)
+ */
 export function progressPercent(card: ProgressCard): number | undefined {
   if (card.value === undefined || card.max === undefined || card.max <= 0) return undefined;
-  return Math.round((Math.min(card.value, card.max) / card.max) * 100);
+  const percent = Math.round((Math.min(card.value, card.max) / card.max) * 100);
+  return percent === 100 && card.value < card.max ? 99 : percent;
 }
 
 /** How many steps are finished (done or skipped) of how many, and the one in progress. */
@@ -187,37 +232,72 @@ function withAsOf(text: string, asOf: string | undefined): string {
   return asOf === undefined ? text : `${text} (as of ${asOf})`;
 }
 
+
+/**
+ * `head`, as many of `facts` as fit in `limit`, then `tail`, saying how many facts were left out.
+ *
+ * Facts are kept whole and in order: a reader gets the first ones in full and is told the rest exist, rather than a
+ * sentence cut in the middle of a value.
+ */
+function fitFacts(head: string, facts: readonly string[], tail: string, noun: [string, string], limit: number): string {
+  const whole = `${head}${facts.join("; ")}${tail}`;
+  if (whole.length <= limit) return whole;
+  for (let kept = facts.length - 1; kept >= 0; kept -= 1) {
+    const left = facts.length - kept;
+    const more = `and ${String(left)} more ${left === 1 ? noun[0] : noun[1]}`;
+    const text = `${head}${facts.slice(0, kept).join("; ")}${kept === 0 ? "" : "; "}…${more}${tail}`;
+    if (text.length <= limit) return text;
+  }
+  return clipWithMarker(`${head}…${tail}`, limit);
+}
+
 /**
  * The card as one plain sentence: the text alternative a reader gets when it cannot be drawn.
  *
- * Built from the props, so a transcript that outlives the renderer still says what the card said.
+ * Built from the props, so a transcript that outlives the renderer still says what the card said. Never longer than
+ * `limit`: a long card keeps its first facts or steps whole and says how many more it had. The default is what a
+ * snapshot keeps; a card placed as a section of a layout passes `SECTION_TEXT_LIMIT`. A snapshot holding more could not
+ * be read back, and a conversation with one in it could not be opened.
  */
-export function statusCardText(content: StatusCardContent): string {
+export function statusCardText(content: StatusCardContent, limit: number = SNAPSHOT_TEXT_LIMIT): string {
   const title = content.card.title !== undefined && content.card.title !== "" ? `${content.card.title}: ` : "";
+  const asOf = content.card.asOf === undefined ? "" : withAsOf("", content.card.asOf);
   if (content.kind === "status") {
-    const { label, tone, detail, asOf } = content.card;
-    return withAsOf(`${title}${label} (${tone})${detail === undefined || detail === "" ? "" : `. ${detail}`}`, asOf);
+    const { label, tone, detail } = content.card;
+    return clipWithMarker(`${title}${label} (${tone})${detail === undefined || detail === "" ? "" : `. ${detail}`}${asOf}`, limit);
   }
   if (content.kind === "progress") {
     const card = content.card;
     const subject = card.label !== undefined && card.label !== "" ? `${card.label}: ` : "";
     if (card.steps === undefined) {
       const unit = card.unit === undefined || card.unit === "" ? "" : ` ${card.unit}`;
-      return withAsOf(`${title}${subject}${String(card.value)} of ${String(card.max)}${unit} (${String(progressPercent(card))}%)`, card.asOf);
+      return clipWithMarker(`${title}${subject}${String(card.value)} of ${String(card.max)}${unit} (${String(progressPercent(card))}%)${asOf}`, limit);
     }
-    const steps = card.steps.map((step) => `${step.label} [${step.status}]`).join("; ");
     const counts = stepCounts(card.steps);
-    return withAsOf(`${title}${subject}${String(counts.finished)} of ${String(counts.total)} steps finished. ${steps}`, card.asOf);
+    return fitFacts(
+      `${title}${subject}${String(counts.finished)} of ${String(counts.total)} steps finished. `,
+      card.steps.map((step) => `${step.label} [${step.status}]`),
+      asOf,
+      ["step", "steps"],
+      limit,
+    );
   }
-  const items = content.card.items.map((item) => `${item.label}: ${item.value}`).join("; ");
-  return withAsOf(`${title}${items}`, content.card.asOf);
+  return fitFacts(title, content.card.items.map((item) => `${item.label}: ${item.value}`), asOf, ["fact", "facts"], limit);
+}
+
+/** How much of a list entry a label may take, so the value or status next to it survives the entry's own limit. */
+const SEMANTIC_LABEL = 32;
+
+function shortLabel(label: string): string {
+  return label.length <= SEMANTIC_LABEL ? label : `${sliceCodePoints(label, SEMANTIC_LABEL - 1)}…`;
 }
 
 /**
  * What the card means for voice and `inspect_ui`: a summary and a few values, all from its props.
  *
- * Bounded by `normalizeSemanticDoc` afterwards; the lists here are already short enough that clipping them loses the
- * tail of a long card rather than its point.
+ * Bounded by `normalizeSemanticDoc` afterwards, which keeps the first entries of a list and the start of each entry.
+ * So a step's status comes before its label, a fact's label is shortened before its value, and a summary says when
+ * only the first facts are listed.
  */
 export function statusCardSemantic(content: StatusCardContent): {
   title?: string;
@@ -263,7 +343,7 @@ export function statusCardSemantic(content: StatusCardContent): {
       values: {
         stepsFinished: counts.finished,
         stepsTotal: counts.total,
-        steps: card.steps.map((step) => `${step.label}: ${step.status}`),
+        steps: card.steps.map((step) => `${step.status}: ${step.label}`),
         ...(counts.current === undefined ? {} : { currentStep: counts.current.label }),
         ...(failed.length === 0 ? {} : { failedSteps: failed }),
         ...asOf,
@@ -271,9 +351,12 @@ export function statusCardSemantic(content: StatusCardContent): {
     };
   }
   const items = content.card.items;
+  const listed = Math.min(items.length, SEMANTIC_LIMITS.list);
   return {
     ...title,
-    summary: `${String(items.length)} fact(s) as stated when shown`,
-    values: { count: items.length, items: items.map((item) => `${item.label}: ${item.value}`), ...asOf },
+    summary:
+      `${String(items.length)} fact(s) as stated when shown` +
+      (listed < items.length ? `; the first ${String(listed)} of ${String(items.length)} are listed` : ""),
+    values: { count: items.length, items: items.map((item) => `${shortLabel(item.label)}: ${item.value}`), ...asOf },
   };
 }

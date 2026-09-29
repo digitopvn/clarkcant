@@ -124,6 +124,13 @@ export interface RendererProps {
    * shows its export disabled with the reason instead of a button that silently does nothing.
    */
   canExport?: boolean | undefined;
+  /**
+   * When the message that placed the widget was kept: the snapshot's capture time.
+   *
+   * A card that shows only what the model wrote says when it was written, so a number on it is not read as a live one.
+   * Absent where there is no such message (a preview in the library).
+   */
+  statedAt?: string | undefined;
 }
 
 export type CatalogRenderer = (props: RendererProps) => ReactElement | null;
@@ -2449,29 +2456,61 @@ const TONE_BADGE: Record<StatusTone, string | undefined> = {
 };
 const STEP_MARK: Record<StepStatus, string> = { done: "✓", current: "›", pending: "○", failed: "✕", skipped: "–" };
 
+/** The capture time, in the reader's locale and timezone: the time alone when it is today, the day and time otherwise. */
+function statedTime(locale: string, at: Date): string {
+  const today = new Date().toDateString() === at.toDateString();
+  return new Intl.DateTimeFormat(locale, today ? { timeStyle: "short" } : { dateStyle: "medium", timeStyle: "short" }).format(at);
+}
+
 /**
- * "As of" a day or an instant, in the reader's locale.
+ * Where the card's words come from, in one small line.
  *
- * A day is formatted in UTC so it stays the day the model named; an instant carries its offset and is shown in the
- * reader's own timezone, which is the moment it names.
+ * "As of" a day or an instant when the model said when its facts were true. A day is formatted in UTC so it stays the
+ * day the model named; an instant carries its offset and is shown in the reader's own timezone, which is the moment it
+ * names. "As Clark stated at 09:30" when `stated` is asked for: the time the message was kept, so a card that looks
+ * like a reading says it is what Clark wrote then. A progress card always says it; a status card says it when it has no
+ * "as of".
  */
-function AsOf({ asOf }: { asOf: string | undefined }): ReactElement | null {
+function Provenance({
+  asOf,
+  stated,
+  statedAt,
+}: {
+  asOf: string | undefined;
+  stated: boolean;
+  statedAt: string | undefined;
+}): ReactElement | null {
   const t = useT();
   const locale = useLocale();
-  if (asOf === undefined) return null;
-  const dayOnly = asOf.length === 10;
-  const formatted = new Intl.DateTimeFormat(
-    locale,
-    dayOnly ? { dateStyle: "medium", timeZone: "UTC" } : { dateStyle: "medium", timeStyle: "short" },
-  ).format(new Date(dayOnly ? `${asOf}T00:00:00Z` : asOf));
+  if (asOf === undefined && !stated) return null;
+  const at = statedAt === undefined ? undefined : new Date(statedAt);
+  const statedText = at === undefined || Number.isNaN(at.getTime()) ? undefined : statedTime(locale, at);
+  let asOfText: string | undefined;
+  if (asOf !== undefined) {
+    const dayOnly = asOf.length === 10;
+    const formatted = new Intl.DateTimeFormat(
+      locale,
+      dayOnly ? { dateStyle: "medium", timeZone: "UTC" } : { dateStyle: "medium", timeStyle: "short" },
+    ).format(new Date(dayOnly ? `${asOf}T00:00:00Z` : asOf));
+    asOfText = t("widgets.status.asOf").replace("{time}", () => formatted);
+  }
   return (
-    <p className="cc-freshness cc-status-card-asof" data-status-as-of={asOf}>
-      <time dateTime={asOf}>{t("widgets.status.asOf").replace("{time}", formatted)}</time>
+    <p className="cc-freshness cc-status-card-asof" {...(asOf === undefined ? {} : { "data-status-as-of": asOf })}>
+      {asOfText !== undefined && <time dateTime={asOf}>{asOfText}</time>}
+      {asOfText !== undefined && stated && " · "}
+      {stated &&
+        (statedText !== undefined ? (
+          <time dateTime={statedAt} data-status-stated-at={statedAt}>
+            {t("widgets.status.statedAt").replace("{time}", () => statedText)}
+          </time>
+        ) : (
+          <span data-status-stated-at="">{t("widgets.status.stated")}</span>
+        ))}
     </p>
   );
 }
 
-function StatusCardView({ props }: RendererProps): ReactElement {
+function StatusCardView({ props, statedAt }: RendererProps): ReactElement {
   const t = useT();
   const content = useMemo(() => readStatusCard("status", props), [props]);
   const title = typeof props.title === "string" && props.title !== "" ? props.title : t("widgets.status.title");
@@ -2502,12 +2541,12 @@ function StatusCardView({ props }: RendererProps): ReactElement {
           {detail !== undefined && detail !== "" && <p className="cc-status-card-detail">{detail}</p>}
         </div>
       </div>
-      <AsOf asOf={asOf} />
+      <Provenance asOf={asOf} stated={asOf === undefined} statedAt={statedAt} />
     </Frame>
   );
 }
 
-function ProgressCardView({ props }: RendererProps): ReactElement {
+function ProgressCardView({ props, statedAt }: RendererProps): ReactElement {
   const t = useT();
   const locale = useLocale();
   const content = useMemo(() => readStatusCard("progress", props), [props]);
@@ -2530,11 +2569,13 @@ function ProgressCardView({ props }: RendererProps): ReactElement {
     const value = card.value ?? 0;
     const max = card.max ?? 1;
     const shown = percent ?? 0;
+    // Function replacers: a unit is the model's text, and a string replacement would read "$&" in it as a pattern.
+    const unit = card.unit === undefined || card.unit === "" ? "" : ` ${card.unit}`;
     const figure = t("widgets.progress.value")
-      .replace("{value}", number.format(value))
-      .replace("{max}", number.format(max))
-      .replace("{unit}", card.unit === undefined || card.unit === "" ? "" : ` ${card.unit}`)
-      .replace("{percent}", number.format(shown));
+      .replace("{value}", () => number.format(value))
+      .replace("{max}", () => number.format(max))
+      .replace("{unit}", () => unit)
+      .replace("{percent}", () => number.format(shown));
     return (
       <Frame title={title} dataset={undefined} role="progress">
         {subject !== undefined && <p className="cc-progress-subject">{subject}</p>}
@@ -2554,7 +2595,7 @@ function ProgressCardView({ props }: RendererProps): ReactElement {
             {figure}
           </span>
         </div>
-        <AsOf asOf={card.asOf} />
+        <Provenance asOf={card.asOf} stated statedAt={statedAt} />
       </Frame>
     );
   }
@@ -2588,12 +2629,12 @@ function ProgressCardView({ props }: RendererProps): ReactElement {
           </li>
         ))}
       </ol>
-      <AsOf asOf={card.asOf} />
+      <Provenance asOf={card.asOf} stated statedAt={statedAt} />
     </Frame>
   );
 }
 
-function DetailsCardView({ props }: RendererProps): ReactElement {
+function DetailsCardView({ props, statedAt }: RendererProps): ReactElement {
   const t = useT();
   const content = useMemo(() => readStatusCard("details", props), [props]);
   const title = typeof props.title === "string" && props.title !== "" ? props.title : t("widgets.details.title");
@@ -2608,15 +2649,17 @@ function DetailsCardView({ props }: RendererProps): ReactElement {
   }
   return (
     <Frame title={title} dataset={undefined} role="details">
-      <dl className="cc-details" data-details-state="ready">
-        {content.card.items.map((item) => (
-          <div key={item.label} className="cc-details-row" data-details-item={item.label}>
-            <dt>{item.label}</dt>
-            <dd>{item.value}</dd>
-          </div>
-        ))}
-      </dl>
-      <AsOf asOf={content.card.asOf} />
+      <div className="cc-details-box">
+        <dl className="cc-details" data-details-state="ready">
+          {content.card.items.map((item) => (
+            <div key={item.label} className="cc-details-row" data-details-item={item.label}>
+              <dt>{item.label}</dt>
+              <dd>{item.value}</dd>
+            </div>
+          ))}
+        </dl>
+      </div>
+      <Provenance asOf={content.card.asOf} stated={false} statedAt={statedAt} />
     </Frame>
   );
 }
