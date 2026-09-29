@@ -126,7 +126,12 @@ Task của một yêu cầu lâu dài cũng có thể chạy trên một node đ
 một route: chủ của node gửi nêu peer làm executor của task, và chủ của node nhận nói peer đó được chạy gì ở đó (thư
 mục, repository, effect). Hai node trao đổi grant, lần giao (`delegate`), câu trả lời (`result`) và lệnh dừng
 (`cancel.request`) bằng message NodeLink; bên nhận chỉ chạy task trong phạm vi cả hai cho phép, và mỗi chủ node nghe
-kết quả trong hội thoại của chính mình.
+kết quả trong hội thoại của chính mình. Trong lúc task chờ chủ node nhận duyệt, bên nhận báo điều đó bằng `status`
+(`taskState` là `waiting_approval`, rồi `running` khi đã được cho phép), và chủ node gửi được báo mà không được đưa
+quyền quyết định. Tạm dừng hoặc gỡ automation sẽ rút grant riêng của nó bằng `revoke` (`grantId`, `reason`), và chỉ
+bên gửi grant mới gửi được message này. Giới hạn thời gian cho mỗi lần chạy, đặt khi tạo automation
+(`maxMinutesPerRun`), đi theo grant dưới dạng `budget.maxWallClockMs`, và bên nhận dừng lần chạy khi hết thời gian;
+`maxRuns` và `maxTokens` của grant cũng được giữ theo cách đó.
 
 Một tin nhắn có thể mang theo những gì người dùng chọn sau `/` hoặc `@` trong ô soạn tin dưới dạng `references`:
 `{ "version": 1, "items": [...] }`, tối đa 8 mục, mỗi mục là một trong `skill { skillId, source, revision }`,

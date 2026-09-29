@@ -2,6 +2,7 @@ import { type Principal, nowInstant } from "@clarkcant/contracts";
 
 import { performEmergencyStop } from "../application/emergency-stop.ts";
 import { buildTimeline, type NodeServices } from "../services.ts";
+import { answerApprovalDecision } from "../delegation-handlers.ts";
 import { decideTaskApprovalForNode, stopTask } from "../task-dispatch.ts";
 import { nodeWork } from "../work-supervisor.ts";
 import { appendHostReply, startBackgroundWork } from "./conversations.ts";
@@ -206,11 +207,14 @@ export async function handleControlRoutes(deps: ControlRouteDeps): Promise<Gatew
       },
       { taskId, approvalId, decision, decidingPrincipal: owner, seenOperationDigest: digest },
     );
+    // A task a peer handed over: that peer hears what was decided here, and its own task goes on or settles.
+    const answerPeer = answerApprovalDecision(services, () => at);
     if (!decided.ok) {
       // The approval's own deadline passed before this decision landed. Nobody decided anything, but the
       // task was already settled by that expiry (`decideTaskApprovalForNode`'s own `run.approval_expired`);
       // the conversation gets to hear that honestly rather than staying silent because the HTTP call failed.
       if (decided.code === "APPROVAL_EXPIRED" && decided.conversationId !== undefined) {
+        answerPeer(taskId, "expired");
         appendHostReply(services, {
           conversationId: decided.conversationId,
           at,
@@ -220,6 +224,8 @@ export async function handleControlRoutes(deps: ControlRouteDeps): Promise<Gatew
       return fail(decided.code === "TASK_NOT_FOUND" ? 404 : 409, decided.code, decided.message);
     }
 
+    if (decision === "denied") answerPeer(taskId, "denied");
+    else if (decided.redispatched) answerPeer(taskId, "granted");
     const text =
       decision === "denied"
         ? "Đã từ chối. Việc này đã dừng và không chạy gì."

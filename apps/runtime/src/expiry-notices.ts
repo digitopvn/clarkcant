@@ -4,6 +4,7 @@ import { allRows, getTask, parseJson } from "@clarkcant/storage";
 
 import { QUESTION_TTL_MS, expireQuestions, interactionFromBlock } from "./interactions.ts";
 import { interactionDepsFor } from "./routes/conversations.ts";
+import { answerApprovalDecision } from "./delegation-handlers.ts";
 import { tryRecordNodeNotice } from "./notices.ts";
 import type { NodeServices } from "./services.ts";
 
@@ -23,7 +24,7 @@ import type { NodeServices } from "./services.ts";
  * and is reused here rather than duplicated; it is idempotent, so a sweep that runs twice on the same question
  * writes that block once.
  */
-export type ExpiryNoticeServices = Pick<NodeServices, "runtime" | "conductor" | "search">;
+export type ExpiryNoticeServices = Pick<NodeServices, "runtime" | "conductor" | "search" | "peerDelivery">;
 
 /**
  * How far back the sweep looks for something that expired without anybody answering it.
@@ -77,11 +78,13 @@ function sweepExpiredApprovals(services: ExpiryNoticeServices, now: Instant): vo
 
   for (const row of rows) {
     if (row.task_id !== null) {
-      applyTaskEvent(
+      const expired = applyTaskEvent(
         { db: services.runtime.db, nodeId: services.runtime.identity.nodeId, now: () => now, newId: services.conductor.newId },
         row.task_id,
         "run.approval_expired",
       );
+      // A task a peer handed over ended here: that peer's own task settles on it rather than waiting on.
+      if (expired.ok && expired.changed) answerApprovalDecision(services, () => now)(row.task_id, "expired");
     }
     const conversationId =
       row.task_id === null ? cardConversations.get(row.approval_id) : getTask(services.runtime.db, row.task_id)?.conversationId;

@@ -10,7 +10,7 @@ import { type Database, type JsonValue, activeGrants, getGrant, grantIdsFrom, up
 import { type PeerGatewayDeps, receiveEnvelope } from "@clarkcant/node-link";
 
 import { extensionForMimeType, fetchArtifactFromPeer } from "../artifact-transfer.ts";
-import { writeGrant } from "../delegation.ts";
+import { receiveRevoke, writeGrant } from "../delegation.ts";
 import { queuePeerSignal, receivePeerSignal } from "../peer-signals.ts";
 import { blobPathForDigest, readBlob } from "../blobs.ts";
 import type { NodeIdentity } from "../node.ts";
@@ -63,6 +63,8 @@ export interface DelegationHandlers {
   delegate: (envelope: PeerEnvelope) => unknown;
   result: (envelope: PeerEnvelope) => unknown;
   cancel: (envelope: PeerEnvelope) => unknown;
+  /** The peer's word on a task this node handed it, while it is still open there. */
+  status: (envelope: PeerEnvelope) => unknown;
 }
 
 /**
@@ -188,7 +190,13 @@ function peerHandler(
     }
 
     if (envelope.kind === "status") {
-      return { received: true, at, taskState: envelope.payload["taskState"] ?? null };
+      if (delegation === undefined) return { received: true, at, taskState: envelope.payload["taskState"] ?? null };
+      return delegation.status(envelope);
+    }
+
+    if (envelope.kind === "revoke") {
+      // The grant's own sender withdraws it; nobody else can, and nothing here is decided for this node's owner.
+      return receiveRevoke({ db: pairing.db, now: pairing.now }, envelope);
     }
 
     return { accepted: true, kind: envelope.kind };
