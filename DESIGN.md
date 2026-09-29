@@ -140,7 +140,7 @@ prefers-reduced-motion always wins over the animation preference: the Orb still 
 
 Without WebGL, the Orb stays visible as a still gradient in the chosen preset's colours (the shipped gradient for Clark), and Settings says that the machine cannot draw it and that the choice is still saved. The preview's status then reads as still rather than animating.
 
-Known limitation: on the light theme the WebGL interior of every preset, Clark's included, saturates to a white disc, because the interior's light is added to a glass body built from the page background. The dark theme is unaffected. How the Orb should sit on a light surface is a design decision tracked in #269.
+On a light surface the Orb keeps its own deep glass. The interior is light added to the glass body, so the body cannot be the page colour there: light added to a near-white page clips to a blank white disc. On the light theme the body is therefore the same dark, shell-tinted glass sphere the dark theme shows, and every preset's interior (the band, the nacre layers, the plasma filaments) reads as it does on dark. Towards the silhouette the glass takes on the page and shell colours, the way a glass ball's edge reflects a bright room, and the outer glow is a tinted aura rather than a grey ring. This matches the still gradient shown without WebGL, which is also a deep glass ball. The shader derives the surface's lightness from the page colour it is given, so the dark theme renders exactly as before, and a future theme gets the right body from its own canvas colour.
 
 ---
 

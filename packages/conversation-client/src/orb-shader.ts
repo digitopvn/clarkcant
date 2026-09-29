@@ -284,9 +284,27 @@ void main() {
 
   // --- composition ------------------------------------------------------
 
+  // How light the surface under the orb is, from its luminance: 0 on a dark page, 1 on a light one.
+  // The edges sit far from both themes' canvases, so this is exactly 0 on the dark theme (and on the
+  // palette's own default canvas) and every term it blends in below leaves the dark orb untouched.
+  float surfaceLight = smoothstep(0.35, 0.75, dot(u_canvas, vec3(0.2126, 0.7152, 0.0722)));
+
   // The glass body stays dark: barely above the surface it sits on, picking up the shell's violet
   // only near the equator. A lighter ball loses the glass and reads as a marble.
   vec3 body = u_canvas + u_shellEdge * (0.020 + 0.090 * lens);
+
+  // On a light surface the body cannot be the page. The interior is light added to the glass, and
+  // light added to a near-white page can only clip to white, so every style became the same blank
+  // disc. The ball keeps its own deep glass there instead - the same dark sphere the dark theme
+  // shows, tinted a little more by the shell so it reads as coloured glass rather than a grey hole
+  // (the shell colour is squared for that tint, which deepens its hue instead of greying it) - and
+  // towards the silhouette it takes on the page and the shell's colour, the way a glass ball's edge
+  // reflects the bright room around it. That edge is what seats the sphere on the page instead of
+  // cutting a dark hole in it.
+  float fresnel = pow(clamp(r / R, 0.0, 1.0), 6.0);
+  vec3 deepGlass = vec3(0.018, 0.020, 0.045) + u_shellEdge * u_shellEdge * (0.050 + 0.110 * lens);
+  deepGlass = mix(deepGlass, mix(u_canvas, u_shellEdge, 0.45), fresnel * 0.60);
+  body = mix(body, deepGlass, surfaceLight);
 
   // A soft brightening just inside the silhouette, kept low: the edge should read as glass, not
   // as a neon tube. It brightens where the pointer is, which is the rim of the bubble catching the
@@ -331,11 +349,16 @@ void main() {
   // The falloff is steep so the orb sits in its own light without washing purple over the whole
   // canvas — which is only visible at all now that the canvas is transparent.
   float glowMask = exp(-max(0.0, r - R) * 16.0) * outside;
-  vec3 col = mix(u_glowColor * u_glow * 1.1 + flare, glass, inside);
+  // On a light page a dim glow colour at high opacity is darker than the page, so the glow reads as
+  // a grey shadow ring. There the glow is its own colour at an opacity set by the glow strength: a
+  // tinted aura, which is what light looks like on a bright surface.
+  vec3 haloColor = mix(u_glowColor * u_glow * 1.1, u_glowColor, surfaceLight);
+  float haloOpacity = mix(0.9, clamp(u_glow * 1.5, 0.0, 0.9), surfaceLight);
+  vec3 col = mix(haloColor + flare, glass, inside);
   // The flare carries its own opacity outside the shell, or a premultiplied colour added where
   // alpha is zero is invisible: the light would be computed every frame and never drawn.
   float flareAlpha = clamp(dot(flare, vec3(0.3333)) * 1.8, 0.0, 0.85) * outside;
-  float alpha = clamp(inside + glowMask * 0.9 + flareAlpha, 0.0, 1.0);
+  float alpha = clamp(inside + glowMask * haloOpacity + flareAlpha, 0.0, 1.0);
 
   gl_FragColor = vec4(col * alpha, alpha);
 }

@@ -140,7 +140,7 @@ prefers-reduced-motion luôn thắng preference animation: Orb vẫn hiện như
 
 Khi không có WebGL, Orb vẫn hiện dưới dạng gradient tĩnh bằng màu của preset đã chọn (gradient gốc với Clark), và Settings nói rõ máy này không vẽ được Orb nhưng lựa chọn vẫn được lưu. Khi đó, dòng trạng thái của bản xem trước báo là ảnh tĩnh chứ không báo đang chuyển động.
 
-Hạn chế đã biết: ở chủ đề sáng, phần lõi WebGL của mọi preset (kể cả Clark) bị cháy thành một đĩa trắng. Lý do là ánh sáng của lõi được cộng vào thân kính, mà thân kính lại dựng từ màu nền của trang. Chủ đề tối không bị ảnh hưởng. Orb nên hiện thế nào trên nền sáng là một quyết định thiết kế, đang được theo dõi ở #269.
+Trên nền sáng, Orb giữ thân kính sẫm của chính nó. Phần lõi là ánh sáng được cộng vào thân kính, nên ở đó thân kính không thể là màu nền của trang: ánh sáng cộng vào một nền gần trắng chỉ có thể cháy thành một đĩa trắng trơn. Vì vậy ở chủ đề sáng, thân kính là chính khối cầu kính sẫm, nhuốm màu vỏ, giống như ở chủ đề tối, và phần lõi của mọi preset (dải quang phổ, các lớp xà cừ, các sợi plasma) hiện ra như trên nền tối. Càng gần viền, kính càng mang màu của trang và của vỏ, giống như mép một quả cầu thủy tinh phản chiếu căn phòng sáng xung quanh, và quầng sáng bên ngoài là một vầng màu thay vì một vòng xám. Cách này khớp với gradient tĩnh hiện ra khi không có WebGL, vốn cũng là một quả cầu kính sẫm. Shader tự suy ra độ sáng của bề mặt từ màu nền được truyền vào, nên chủ đề tối hiển thị đúng như trước, và một chủ đề mới sau này cũng tự có thân kính phù hợp từ màu nền của nó.
 
 ---
 
