@@ -34,6 +34,15 @@ import { type Database, allRows, oneRow, transaction } from "../db.ts";
 export const MAX_NOTIFICATIONS = 200;
 
 /**
+ * How many undismissed notices one paired node keeps in this inbox.
+ *
+ * A peer's notices are capped apart from this node's own: the node's cap counts only notices without an origin, and a
+ * peer's only evicts that peer's oldest. However much one peer sends, it cannot push out what this node or another peer
+ * said.
+ */
+export const MAX_NOTIFICATIONS_PER_ORIGIN = 20;
+
+/**
  * How long a dismissed notice is kept, so a producer that repeats itself inside that window stays deduplicated.
  * This is the only rule that removes a dismissed notice; it is independent of `MAX_NOTIFICATIONS`.
  */
@@ -140,7 +149,8 @@ function cleanSubjectLabel(subject: NoticeSubject): NoticeSubject {
  *   - The undismissed inbox is capped at `MAX_NOTIFICATIONS`, oldest by insertion (`rowid`) first. Ordering by
  *     insertion rather than by the caller-supplied `at` means the row this call just wrote is always the newest
  *     by that ordering and is never the one the same transaction deletes, even if its `at` is backdated behind
- *     existing rows.
+ *     existing rows. A notice from a paired node counts instead against `MAX_NOTIFICATIONS_PER_ORIGIN` for that node,
+ *     and evicts only that node's oldest.
  */
 export function recordNotification(
   db: Database,
@@ -195,14 +205,25 @@ export function recordNotification(
     // A notice snoozed until a time still ahead is never the one evicted: the person put it aside to come back to, and
     // losing it silently would break exactly that promise. Snoozes are a person's own actions, so the rows this keeps
     // past the cap are bounded by what somebody chose to set aside.
-    db.prepare(
-      `DELETE FROM notifications WHERE principal_id = ? AND dismissed_at IS NULL
-          AND (snoozed_until IS NULL OR snoozed_until <= ?)
-          AND notification_id NOT IN (
-            SELECT notification_id FROM notifications WHERE principal_id = ? AND dismissed_at IS NULL
-             ORDER BY rowid DESC LIMIT ?
-          )`,
-    ).run(input.principalId, input.at, input.principalId, MAX_NOTIFICATIONS);
+    if (input.originNodeId === undefined) {
+      db.prepare(
+        `DELETE FROM notifications WHERE principal_id = ? AND dismissed_at IS NULL AND origin_node_id IS NULL
+            AND (snoozed_until IS NULL OR snoozed_until <= ?)
+            AND notification_id NOT IN (
+              SELECT notification_id FROM notifications WHERE principal_id = ? AND dismissed_at IS NULL AND origin_node_id IS NULL
+               ORDER BY rowid DESC LIMIT ?
+            )`,
+      ).run(input.principalId, input.at, input.principalId, MAX_NOTIFICATIONS);
+    } else {
+      db.prepare(
+        `DELETE FROM notifications WHERE principal_id = ? AND dismissed_at IS NULL AND origin_node_id = ?
+            AND (snoozed_until IS NULL OR snoozed_until <= ?)
+            AND notification_id NOT IN (
+              SELECT notification_id FROM notifications WHERE principal_id = ? AND dismissed_at IS NULL AND origin_node_id = ?
+               ORDER BY rowid DESC LIMIT ?
+            )`,
+      ).run(input.principalId, input.originNodeId, input.at, input.principalId, input.originNodeId, MAX_NOTIFICATIONS_PER_ORIGIN);
+    }
 
     return { notificationId: input.notificationId, created: true, suppressed };
   });
@@ -355,6 +376,80 @@ export function dismissNotification(
     )
     .run(input.at, input.at, input.at, input.principalId, input.notificationId);
   return Number(result.changes) > 0;
+}
+
+/**
+ * Take a producer's notices out of the inbox once what they said is no longer so: a wait that ended, a peer that
+ * answers again. The same dismissal a person makes, so the rows stay for the retention window and the producer stays
+ * deduplicated.
+ *
+ * Matched on the start of the dedup key as a range of the dedup index — every key from the prefix up to the first
+ * string past all keys that start with it — rather than with `LIKE`, so an id carrying `%` or `_` cannot widen the
+ * match and the lookup reads only the family, not the principal's whole inbox. `except` keeps the one notice that
+ * still holds.
+ */
+export function dismissNotificationsByKeyPrefix(
+  db: Database,
+  input: { principalId: string; dedupKeyPrefix: string; at: Instant; except?: string },
+): number {
+  if (input.dedupKeyPrefix === "") return 0;
+  const upper = prefixUpperBound(input.dedupKeyPrefix);
+  const range = upper === undefined ? "dedup_key >= ?" : "dedup_key >= ? AND dedup_key < ?";
+  const result = db
+    .prepare(
+      `UPDATE notifications SET dismissed_at = ?, read_at = COALESCE(read_at, ?)
+        WHERE principal_id = ? AND ${range}
+          AND dismissed_at IS NULL AND (? IS NULL OR dedup_key <> ?)`,
+    )
+    .run(
+      input.at,
+      input.at,
+      input.principalId,
+      input.dedupKeyPrefix,
+      ...(upper === undefined ? [] : [upper]),
+      input.except ?? null,
+      input.except ?? null,
+    );
+  return Number(result.changes);
+}
+
+/**
+ * The key of the newest notice (dismissed or not) whose key starts with `dedupKeyPrefix`, by insertion: how a producer
+ * that keys one story by a family of keys finds where the story got to. Read as a range of the dedup index, like the
+ * dismissal above.
+ */
+export function latestNotificationKeyWithPrefix(
+  db: Database,
+  input: { principalId: string; dedupKeyPrefix: string },
+): string | undefined {
+  if (input.dedupKeyPrefix === "") return undefined;
+  const upper = prefixUpperBound(input.dedupKeyPrefix);
+  const range = upper === undefined ? "dedup_key >= ?" : "dedup_key >= ? AND dedup_key < ?";
+  return oneRow<{ dedup_key: string }>(
+    db,
+    `SELECT dedup_key FROM notifications WHERE principal_id = ? AND ${range} ORDER BY rowid DESC LIMIT 1`,
+    input.principalId,
+    input.dedupKeyPrefix,
+    ...(upper === undefined ? [] : [upper]),
+  )?.dedup_key;
+}
+
+/**
+ * The first string past every string that starts with `prefix`: its last character moved up by one, after dropping any
+ * trailing characters that are already the highest there is. SQLite compares text as UTF-8 bytes, which order the same
+ * way code points do, so this bound holds under the index's own collation. `undefined` when no such string exists.
+ */
+function prefixUpperBound(prefix: string): string | undefined {
+  const points = [...prefix];
+  while (points.length > 0) {
+    const last = (points.pop() ?? "").codePointAt(0) ?? 0;
+    if (last < 0x10ffff) {
+      // The surrogate range is not a character; the next code point past it is.
+      const next = last + 1 === 0xd800 ? 0xe000 : last + 1;
+      return `${points.join("")}${String.fromCodePoint(next)}`;
+    }
+  }
+  return undefined;
 }
 
 /**

@@ -33,6 +33,15 @@ import {
   attachmentRefSchema,
   isHostOwnedBlock,
   messageBlockSchema,
+  peerNoticeSchema,
+  peerTextAsData,
+  readPeerFeatures,
+  readPeerLabel,
+  PEER_FEATURES,
+  PEER_FEATURES_MAX,
+  PEER_LABEL_MAX,
+  NOTICE_BODY_MAX,
+  NOTICE_TITLE_MAX,
 } from "../src/index.ts";
 
 // Branded values are produced through their own schema so the fixtures cannot drift
@@ -592,6 +601,51 @@ describe("peer envelope validation (T08, T11)", () => {
     );
     expect(result.valid).toBe(false);
     expect(result.valid === false && result.issues.some((i) => i.code === "DELEGATION_UNKNOWN")).toBe(true);
+  });
+
+  it("requires a notice envelope to carry the notice", () => {
+    const result = validatePeerEnvelope({ ...envelope, kind: "notice", payload: {} }, context);
+    expect(result.valid === false && result.issues.map((issue) => issue.field)).toEqual(["payload.notice"]);
+  });
+});
+
+describe("a peer's notice", () => {
+  const notice = { key: "build-812", category: "alert", severity: "warning", title: "Build hỏng", body: "main đỏ" };
+
+  it("is words with the sender's key for them", () => {
+    expect(peerNoticeSchema.parse(notice)).toEqual(notice);
+  });
+
+  it("cannot carry an action, a subject or text past the inbox's bounds", () => {
+    expect(peerNoticeSchema.safeParse({ ...notice, actions: [{ id: "open", placement: "primary" }] }).success).toBe(false);
+    expect(peerNoticeSchema.safeParse({ ...notice, subject: { kind: "task", taskId: "task_1" } }).success).toBe(false);
+    expect(peerNoticeSchema.safeParse({ ...notice, title: "x".repeat(NOTICE_TITLE_MAX + 1) }).success).toBe(false);
+    expect(peerNoticeSchema.safeParse({ ...notice, body: "x".repeat(NOTICE_BODY_MAX + 1) }).success).toBe(false);
+    expect(peerNoticeSchema.safeParse({ ...notice, key: "k".repeat(161) }).success).toBe(false);
+    expect(peerNoticeSchema.safeParse({ ...notice, severity: "panic" }).success).toBe(false);
+  });
+});
+
+describe("what a peer says about itself", () => {
+  it("keeps only the features this build knows, each once, from a bounded list", () => {
+    expect(PEER_FEATURES).toEqual(["notice"]);
+    expect(readPeerFeatures(["notice", "teleport", "notice", 7, null])).toEqual(["notice"]);
+    expect(readPeerFeatures([])).toEqual([]);
+    // Past the bound nothing is read, so a long list cannot make this node parse without limit.
+    expect(readPeerFeatures([...Array.from({ length: PEER_FEATURES_MAX }, () => "x"), "notice"])).toEqual([]);
+    // A build from before features advertised nothing, which is not the same as advertising an empty list.
+    expect(readPeerFeatures(undefined)).toBeUndefined();
+    expect(readPeerFeatures("notice")).toBeUndefined();
+  });
+
+  it("reads its name as data: no control, bidi or zero-width characters, bounded, and never empty", () => {
+    expect(readPeerLabel("  Máy\u0007bàn\n của   Duy ")).toBe("Máy bàn của Duy");
+    expect(readPeerLabel("laptop‮gpj.exe​")).toBe("laptopgpj.exe");
+    expect(readPeerLabel("​⁦ \u0000")).toBeUndefined();
+    expect(readPeerLabel(42)).toBeUndefined();
+    const long = readPeerLabel("ồ".repeat(PEER_LABEL_MAX + 10));
+    expect(long === undefined ? 0 : [...long].length).toBe(PEER_LABEL_MAX);
+    expect(peerTextAsData("a\u0007b‍c")).toBe("a bc");
   });
 });
 

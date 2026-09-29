@@ -45,6 +45,15 @@ export function markOutboxAcknowledged(db: Database, messageId: string, at: Inst
   db.prepare("UPDATE outbox SET acknowledged_at = ? WHERE message_id = ?").run(at, messageId);
 }
 
+/**
+ * Record why a peer that acknowledged a message did not act on it: the message was delivered and stays acknowledged,
+ * so nothing retries it, but the row says it was turned down. Only an acknowledged row is touched, so this can never make
+ * a message that is still owed look failed to `peerDeliveryState`.
+ */
+export function markOutboxTurnedDown(db: Database, messageId: string, reason: string): void {
+  db.prepare("UPDATE outbox SET last_error = ? WHERE message_id = ? AND acknowledged_at IS NOT NULL").run(reason.slice(0, 500), messageId);
+}
+
 export type OutboxFailureOutcome =
   | { status: "scheduled"; nextAttemptAt: Instant }
   | { status: "dead-lettered" };
@@ -114,6 +123,98 @@ export function pendingOutbox(db: Database, peerNodeId?: string, now?: Instant):
     ...params,
   );
   return rows.map((row) => parseJson<unknown>(row.document, "outbox.document"));
+}
+
+/** How delivery to one peer is going, read from the outbox's own retry state. */
+export interface PeerDeliveryState {
+  /** The last time the peer acknowledged anything this node sent it; null when it never has. */
+  lastAcknowledgedAt: Instant | null;
+  /**
+   * Since when delivery has been failing: the oldest message still being retried that failed after the last
+   * acknowledgement, and never earlier than that acknowledgement. Null while nothing owed to the peer is failing.
+   */
+  failingSince: Instant | null;
+  /**
+   * Why the latest attempt failed, while delivery is failing, or why the last message was given up on, once it has
+   * been: the reason the transport stored, so a peer that answered and refused can be told apart from one that never
+   * answered. Null otherwise.
+   */
+  lastError: string | null;
+  /**
+   * Since when what was owed to the peer was given up on: set only once nothing owed since the last acknowledgement is
+   * still being retried and at least one message was dead-lettered after it, and never earlier than that
+   * acknowledgement. Null otherwise; the next acknowledgement ends it.
+   */
+  givenUpSince: Instant | null;
+}
+
+const later = (first: Instant, second: Instant | null): Instant => (second !== null && second > first ? second : first);
+
+/**
+ * Whether a peer is being reached, without a second record of it: an acknowledgement is a delivery that worked, and a
+ * message still being retried whose last attempt came after the last acknowledgement is one that did not. A message
+ * given up on is not counted as failing now, and a peer nothing is owed to is not failing either; a peer whose every
+ * message since its last acknowledgement was given up on is reported as given up on.
+ */
+export function peerDeliveryState(db: Database, peerNodeId: string): PeerDeliveryState {
+  const acknowledged = oneRow<{ at: string | null }>(
+    db,
+    "SELECT MAX(acknowledged_at) AS at FROM outbox WHERE peer_node_id = ?",
+    peerNodeId,
+  );
+  const lastAcknowledgedAt = (acknowledged?.at ?? null) as Instant | null;
+  const failing = oneRow<{ since: string | null }>(
+    db,
+    `SELECT MIN(created_at) AS since FROM outbox
+      WHERE peer_node_id = ? AND acknowledged_at IS NULL AND dead_lettered_at IS NULL
+        AND last_error IS NOT NULL AND last_attempt_at IS NOT NULL
+        AND (? IS NULL OR last_attempt_at > ?)`,
+    peerNodeId,
+    lastAcknowledgedAt,
+    lastAcknowledgedAt,
+  );
+  const since = (failing?.since ?? null) as Instant | null;
+  if (since !== null) {
+    const latest = oneRow<{ last_error: string | null }>(
+      db,
+      `SELECT last_error FROM outbox
+        WHERE peer_node_id = ? AND acknowledged_at IS NULL AND dead_lettered_at IS NULL
+          AND last_error IS NOT NULL AND last_attempt_at IS NOT NULL
+          AND (? IS NULL OR last_attempt_at > ?)
+        ORDER BY last_attempt_at DESC, rowid DESC LIMIT 1`,
+      peerNodeId,
+      lastAcknowledgedAt,
+      lastAcknowledgedAt,
+    );
+    return { lastAcknowledgedAt, failingSince: later(since, lastAcknowledgedAt), lastError: latest?.last_error ?? null, givenUpSince: null };
+  }
+
+  const owed = oneRow<{ count: number }>(
+    db,
+    "SELECT COUNT(*) AS count FROM outbox WHERE peer_node_id = ? AND acknowledged_at IS NULL AND dead_lettered_at IS NULL",
+    peerNodeId,
+  );
+  const dropped =
+    Number(owed?.count ?? 0) > 0
+      ? undefined
+      : oneRow<{ since: string | null; last_error: string | null }>(
+          db,
+          `SELECT MIN(created_at) OVER () AS since, last_error FROM outbox
+            WHERE peer_node_id = ? AND dead_lettered_at IS NOT NULL AND (? IS NULL OR dead_lettered_at > ?)
+            ORDER BY dead_lettered_at DESC, rowid DESC LIMIT 1`,
+          peerNodeId,
+          lastAcknowledgedAt,
+          lastAcknowledgedAt,
+        );
+  if (dropped?.since === undefined || dropped.since === null) {
+    return { lastAcknowledgedAt, failingSince: null, lastError: null, givenUpSince: null };
+  }
+  return {
+    lastAcknowledgedAt,
+    failingSince: null,
+    lastError: dropped.last_error,
+    givenUpSince: later(dropped.since as Instant, lastAcknowledgedAt),
+  };
 }
 
 export interface DeadLetteredOutboxEntry {

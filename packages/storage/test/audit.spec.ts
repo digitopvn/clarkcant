@@ -51,8 +51,9 @@ describe("what is written down", () => {
     // 21 rather than the 19 this branch already uses; migration 22 (backfilling `grantedCapabilities` onto a
     // pre-existing package generation) is the next one after that, and 23 records the lifecycle an uninstall
     // replaced; 24 and 25 are main's work journal and outbox backoff, and 26 adds the inbox's notices; 27 keeps what each widget a person changed means now; 28 records why a task exists and what it may touch; 29 keeps signals, standing requests and the runs that answered them; 30 records what a paired node allows; 31 records what each notice is about; 32 keeps where polling each source got to; 33 records snoozed notices and the kinds a person
-    // asked not to be notified about. The schema version is the count of migrations that have run.
-    expect(currentSchemaVersion(db)).toBe(33);
+    // asked not to be notified about; 34 records what a paired node says it takes and what it calls itself. The schema
+    // version is the count of migrations that have run.
+    expect(currentSchemaVersion(db)).toBe(34);
   });
 
   it("reads back newest first, with the fields it was given", () => {

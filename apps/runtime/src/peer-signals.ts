@@ -10,7 +10,7 @@ import { sendEnvelope } from "@clarkcant/node-link";
 import { type Database, getPeer, nextOutboundSequence } from "@clarkcant/storage";
 
 import type { NodeIdentity } from "./node.ts";
-import { type DeadLetter, type PeerTransportDeps, deliverPending } from "./peer-transport.ts";
+import { type DeadLetter, type PeerTransportDeps, type TurnedDown, deliverPending } from "./peer-transport.ts";
 
 /**
  * Signals between paired nodes: something that happened on one Clark, for the other's standing requests to answer.
@@ -165,9 +165,20 @@ export function startPeerDelivery(
     log?: (line: string) => void;
     /** Told about each message given up on, so what waited on it is settled rather than left waiting. */
     onDeadLettered?: (letter: DeadLetter) => void;
+    /** Told about each notice a peer acknowledged and did not take, so this node's owner hears it did not arrive. */
+    onTurnedDown?: (turned: TurnedDown) => void;
+    /** Run after every pass, with the outbox as that pass left it: how a peer that stays unreachable is noticed. */
+    afterPass?: () => void;
+    /**
+     * Told when the machine seems to have slept: the timer fired more than two intervals after it last did, which a
+     * process that kept running does not do. Told before the pass that tick starts.
+     */
+    onWake?: (at: Instant) => void;
   } = {},
 ): PeerDelivery {
   const log = options.log ?? ((line: string) => process.stderr.write(`${line}\n`));
+  const intervalMs = options.intervalMs ?? DEFAULT_DELIVERY_INTERVAL_MS;
+  let lastTick = Date.parse(deps.now());
   let stopped = false;
   let running = false;
   let again = false;
@@ -195,15 +206,41 @@ export function startPeerDelivery(
             log(`nodelink: could not settle what ${dead.messageId} was about (${cause instanceof Error ? cause.message : String(cause)})`);
           }
         }
+        for (const turned of outcome.turnedDown ?? []) {
+          try {
+            options.onTurnedDown?.(turned);
+          } catch (cause) {
+            log(`nodelink: could not tell that ${turned.peerNodeId} did not take ${turned.messageId} (${cause instanceof Error ? cause.message : String(cause)})`);
+          }
+        }
       } while (again && !stopped);
     } catch (cause) {
       log(`nodelink: delivery pass failed (${cause instanceof Error ? cause.message : String(cause)})`);
+    }
+    try {
+      if (!stopped) options.afterPass?.();
+    } catch (cause) {
+      log(`nodelink: the check after a delivery pass failed (${cause instanceof Error ? cause.message : String(cause)})`);
     } finally {
       running = false;
     }
   };
 
-  const timer = setInterval(() => void pass(), options.intervalMs ?? DEFAULT_DELIVERY_INTERVAL_MS);
+  const tick = (): void => {
+    const at = deps.now();
+    const now = Date.parse(at);
+    const slept = now - lastTick > 2 * intervalMs;
+    lastTick = now;
+    if (slept) {
+      try {
+        options.onWake?.(at);
+      } catch (cause) {
+        log(`nodelink: could not note a wake from sleep (${cause instanceof Error ? cause.message : String(cause)})`);
+      }
+    }
+    void pass();
+  };
+  const timer = setInterval(tick, intervalMs);
   timer.unref();
   return {
     kick() {

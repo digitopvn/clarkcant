@@ -12,8 +12,9 @@ import { type Database, recordNotification } from "@clarkcant/storage";
  * conversation, which is where the person reads it; the notice exists because nobody was looking at that
  * conversation when it arrived.
  *
- * `originNodeId` is here for the NodeLink path that does not exist yet: a peer's notice is recorded through this
- * same function, with the peer's message id as its dedup key, so at-least-once delivery lands once.
+ * `originNodeId` is set for a notice a paired node sent (`peer-notices.ts`): it is recorded through this same function,
+ * under a dedup key built from the peer and the peer's own key for it, so at-least-once delivery lands once. Nothing
+ * recorded here is passed on to a peer by itself: a notice leaves this node only when something asks for it to be sent.
  */
 export interface NoticeServices {
   runtime: { db: Database; identity: { ownerPrincipalId: string } };

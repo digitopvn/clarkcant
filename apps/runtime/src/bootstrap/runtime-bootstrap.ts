@@ -17,6 +17,8 @@ import { startAutomationService } from "../automation-service.ts";
 import { resumeTasksWaitingOnCapability } from "../capability-waiters.ts";
 import { startExpiryNoticeSweep } from "../expiry-notices.ts";
 import { createGithubPolling } from "../github-polling.ts";
+import { tellNoticeTurnedDown } from "../peer-notices.ts";
+import { watchPeerOutages } from "../peer-outage.ts";
 import { startPeerDelivery } from "../peer-signals.ts";
 import { settleUndeliveredTasks } from "../delegation-handlers.ts";
 import { taskDispatchReports } from "../task-reporting.ts";
@@ -302,10 +304,19 @@ export function wireRuntime(deps: RuntimeBootstrapDeps): RuntimeHandles {
    * that queued something before it stopped sends it on the first pass.
    */
   const deliveryNow = (): Instant => new Date().toISOString() as Instant;
+  const outages = watchPeerOutages(deps.services, deliveryNow());
   deps.services.peerDelivery = startPeerDelivery(
     { db: deps.services.runtime.db, identity: deps.services.runtime.identity, now: deliveryNow },
-    // A hand-over or a stop given up on settles the task that waited on it.
-    { onDeadLettered: settleUndeliveredTasks(deps.services, deliveryNow) },
+    {
+      // A hand-over or a stop given up on settles the task that waited on it.
+      onDeadLettered: settleUndeliveredTasks(deps.services, deliveryNow),
+      // A notice a peer acknowledged and did not take is told here, since the route that queued it already answered.
+      onTurnedDown: (turned) => tellNoticeTurnedDown(deps.services, turned, deliveryNow()),
+      // A peer that stays unreachable is told once per outage, and the notice goes when it answers again.
+      afterPass: () => outages.reconcile(deliveryNow()),
+      // Time asleep is not time an outage was watched.
+      onWake: (at) => outages.woke(at),
+    },
   );
   deps.services.peerDelivery.kick();
 

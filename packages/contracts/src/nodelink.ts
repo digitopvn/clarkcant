@@ -2,6 +2,7 @@ import { z } from "zod";
 
 import { instantSchema, sequenceSchema, type Instant } from "./primitives.ts";
 import { grantSchema } from "./grants.ts";
+import { NOTICE_BODY_MAX, NOTICE_TITLE_MAX, noticeCategorySchema, noticeSeveritySchema } from "./inbox.ts";
 
 /**
  * NodeLink — the peer protocol between independent installations.
@@ -41,8 +42,79 @@ export const peerMessageKindSchema = z.enum([
    * carries no grant and asks for nothing, and what it starts is decided by what the receiver's owner set up there.
    */
   "signal",
+  /**
+   * Something the sender's owner should hear about on this node too, for its inbox. Words and nothing more: a notice
+   * carries no subject, no action and no instruction, and the receiver records it under the sender's name only when its
+   * own owner decided to work with that node (a grant the receiver wrote to it, or an allowance for it). Sent only to a
+   * node that advertised `notice` among its features.
+   */
+  "notice",
 ]);
 export type PeerMessageKind = z.infer<typeof peerMessageKindSchema>;
+
+/**
+ * The payload of a `notice` envelope.
+ *
+ * `key` is the sender's own name for the event, so the same notice sent again — a retry, or a second envelope for the
+ * same thing — is recorded once. Strict: a sender that adds a subject, an action or anything else is refused rather
+ * than having it dropped silently, because what a person can do with a notice is decided by the host that shows it.
+ */
+export const peerNoticeSchema = z.strictObject({
+  key: z.string().min(1).max(160),
+  category: noticeCategorySchema,
+  severity: noticeSeveritySchema,
+  title: z.string().min(1).max(NOTICE_TITLE_MAX),
+  body: z.string().max(NOTICE_BODY_MAX).optional(),
+});
+export type PeerNotice = z.infer<typeof peerNoticeSchema>;
+
+/**
+ * What a node says it takes beyond the envelopes every build understands, so a peer sends a newer kind only to a node
+ * that reads it. A closed list: a value this build does not know is dropped, never stored, so a peer cannot write
+ * arbitrary words into this node's peer row by advertising them.
+ */
+export const peerFeatureSchema = z.enum(["notice"]);
+export type PeerFeature = z.infer<typeof peerFeatureSchema>;
+/** Every feature this build takes, in the order it advertises them. */
+export const PEER_FEATURES: readonly PeerFeature[] = peerFeatureSchema.options;
+/** How many advertised values are looked at; the rest are ignored rather than parsed. */
+export const PEER_FEATURES_MAX = 16;
+
+/**
+ * A peer's advertised features, as this build reads them: known values only, each once. `undefined` when the peer
+ * advertised nothing readable, which is how a build from before features existed answers.
+ */
+export function readPeerFeatures(value: unknown): PeerFeature[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const known = new Set<PeerFeature>();
+  for (const item of value.slice(0, PEER_FEATURES_MAX)) {
+    const read = peerFeatureSchema.safeParse(item);
+    if (read.success) known.add(read.data);
+  }
+  return [...known];
+}
+
+/** The longest name a peer may give itself here, in characters. */
+export const PEER_LABEL_MAX = 64;
+
+/**
+ * A peer's words as text this node shows: control characters become a space, and format characters — bidi overrides,
+ * zero-width joiners and spaces — are removed, so a peer cannot reorder or hide what a person reads next to them.
+ */
+export function peerTextAsData(text: string): string {
+  return text.replace(/\p{Cc}+/gu, " ").replace(/\p{Cf}+/gu, "");
+}
+
+/**
+ * The name a peer gives itself, treated as data: cleaned like any peer text, whitespace collapsed, at most
+ * `PEER_LABEL_MAX` characters. `undefined` when nothing is left, so an empty name is never stored.
+ */
+export function readPeerLabel(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const cleaned = peerTextAsData(value).replace(/\s+/g, " ").trim();
+  const bounded = [...cleaned].slice(0, PEER_LABEL_MAX).join("").trim();
+  return bounded === "" ? undefined : bounded;
+}
 
 export const peerEnvelopeSchema = z.strictObject({
   protocol: z.literal("agent.nodelink"),
@@ -94,6 +166,7 @@ const REQUIRED_PAYLOAD_KEYS: Record<PeerMessageKind, readonly string[]> = {
   "artifact.accept": ["artifactOfferMessageId", "decision"],
   heartbeat: [],
   signal: ["signal"],
+  notice: ["notice"],
 };
 
 export const peerValidationIssueSchema = z.strictObject({

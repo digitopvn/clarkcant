@@ -5,12 +5,16 @@ import {
   peerEnvelopeSchema,
   checkArtifactAcceptance,
   grantSchema,
+  nodeIdSchema,
+  PEER_FEATURES,
+  readPeerFeatures,
 } from "@clarkcant/contracts";
 import { type Database, type JsonValue, activeGrants, getGrant, grantIdsFrom, upsertGrant } from "@clarkcant/storage";
 import { type PeerGatewayDeps, receiveEnvelope } from "@clarkcant/node-link";
 
 import { extensionForMimeType, fetchArtifactFromPeer } from "../artifact-transfer.ts";
 import { receiveRevoke, writeGrant } from "../delegation.ts";
+import { queuePeerNotice } from "../peer-notices.ts";
 import { queuePeerSignal, receivePeerSignal } from "../peer-signals.ts";
 import { blobPathForDigest, readBlob } from "../blobs.ts";
 import type { NodeIdentity } from "../node.ts";
@@ -56,6 +60,8 @@ export interface PeerUplinkDeps {
   onSignal?: () => void;
   /** Work handed over between paired nodes: absent on a node that takes none, which refuses it. */
   delegation?: DelegationHandlers;
+  /** A peer's notice for this node's inbox: absent on a node that records none, which refuses it. */
+  notice?: (envelope: PeerEnvelope) => unknown;
 }
 
 /** What a hand-over, its answer and a stop mean on this node. Each is answered once and the answer recorded. */
@@ -103,7 +109,11 @@ function readPeerOffer(fields: Record<string, unknown>): PeerOffer | undefined {
     tokenHash: read("tokenHash"),
   };
   if (Object.values(peer).some((value) => value === "")) return undefined;
-  return peer;
+  // The node id becomes a key in this node's tables and a segment of its routes, so it must be one.
+  if (!nodeIdSchema.safeParse(peer.nodeId).success) return undefined;
+  // Optional, and read through the closed list: a build from before features offers none.
+  const features = readPeerFeatures(fields["features"]);
+  return features === undefined ? peer : { ...peer, features };
 }
 
 /** A claim body: an invitation id plus the identity of the node claiming it. */
@@ -126,9 +136,16 @@ function peerHandler(
   pairing: PairingDeps,
   onSignal: () => void,
   delegation: DelegationHandlers | undefined,
+  notice: ((envelope: PeerEnvelope) => unknown) | undefined,
 ): (envelope: PeerEnvelope) => unknown {
   return (envelope) => {
     const at = pairing.now();
+
+    if (envelope.kind === "notice") {
+      // Words for this node's inbox, under the peer's name, taken only when this node's owner chose to work with it.
+      if (notice === undefined) return { accepted: false, code: "NOTICES_OFF", reason: "this node records no notices from peers" };
+      return notice(envelope);
+    }
 
     if (envelope.kind === "signal") {
       // A fact from a confirmed peer, recorded under the peer's name. It needs no grant because it grants nothing.
@@ -293,6 +310,7 @@ function peerGateway(
   peerNodeId: string,
   onSignal: () => void,
   delegation: DelegationHandlers | undefined,
+  notice: ((envelope: PeerEnvelope) => unknown) | undefined,
 ): PeerGatewayDeps {
   return {
     db: pairing.db,
@@ -305,7 +323,7 @@ function peerGateway(
     // Every grant that peer gave, live or not: the hand-over handler answers one under an expired or revoked grant with
     // why it does not run, so the peer's task ends instead of waiting on a message refused unheard.
     knownDelegationIds: grantIdsFrom(pairing.db, peerNodeId),
-    handler: peerHandler(pairing, onSignal, delegation),
+    handler: peerHandler(pairing, onSignal, delegation, notice),
   };
 }
 
@@ -396,7 +414,7 @@ export function handlePeerUplinkRoutes(input: PeerUplinkDeps): GatewayResponse |
     }
     const parsed = readJson(request);
     if (!parsed.ok) return parsed.response;
-    const outcome = receiveEnvelope(peerGateway(pairing, peer.peerNodeId, input.onSignal ?? (() => undefined), input.delegation), parsed.value, {
+    const outcome = receiveEnvelope(peerGateway(pairing, peer.peerNodeId, input.onSignal ?? (() => undefined), input.delegation, input.notice), parsed.value, {
       authenticatedSenderNodeId: peer.peerNodeId,
     });
     if (outcome.status === "gap") {
@@ -426,6 +444,10 @@ export function handlePeerUplinkRoutes(input: PeerUplinkDeps): GatewayResponse |
       // The recorded outcome, handed back verbatim on a replay. That is what makes a delegation whose
       // acknowledgement was lost a retry rather than a second instruction.
       response: recorded,
+      // What this node takes and what it calls itself, on every acknowledgement, so a peer paired before either
+      // existed learns them from its next delivery. A kind this node has no handler for is not advertised.
+      features: PEER_FEATURES.filter((feature) => feature !== "notice" || input.notice !== undefined),
+      label: pairing.identity.label,
     });
   }
 
@@ -541,6 +563,7 @@ export function handlePairingRoutes(input: PairingRouteDeps): GatewayResponse | 
         endpoint: offer.endpoint,
         publicKey: offer.publicKey,
         fingerprint: offer.fingerprint,
+        ...(offer.features === undefined ? {} : { features: offer.features }),
       },
       tokenHash: offer.tokenHash,
     });
@@ -566,6 +589,36 @@ export function handlePairingRoutes(input: PairingRouteDeps): GatewayResponse | 
       ...(typeof body["occurredAt"] === "string" ? { occurredAt: body["occurredAt"] } : {}),
     });
     if (!queued.ok) return fail(queued.code === "PEER_UNKNOWN" ? 404 : 400, queued.code, queued.message);
+    input.onQueued?.();
+    return json(202, { messageId: queued.messageId, queued: true });
+  }
+
+  if (segments.length === 3 && segments[0] === "peers" && segments[2] === "notices" && request.method === "POST") {
+    // Something the owner of this node wants their paired node's inbox to show. Queued like a signal, and refused here
+    // for a peer that is not confirmed or has not said it takes notices. Whether it is recorded there is the decision
+    // of that node's owner, which this node cannot see.
+    const parsed = readJson(request);
+    if (!parsed.ok) return parsed.response;
+    const body = parsed.value;
+    const id = typeof body["id"] === "string" ? body["id"].trim() : "";
+    const title = typeof body["title"] === "string" ? body["title"].trim() : "";
+    if (id === "" || title === "") {
+      return fail(400, "INVALID_SCHEMA", "a notice for a peer carries id (its own name for the event) and title, with body, category and severity optional");
+    }
+    const queued = queuePeerNotice(
+      { db: runtime.db, identity: runtime.identity, now: () => at() as Instant, newId: pairing.newId },
+      segments[1] ?? "",
+      {
+        key: id,
+        title,
+        category: body["category"] ?? "message",
+        severity: body["severity"] ?? "info",
+        ...(body["body"] === undefined ? {} : { body: body["body"] }),
+      },
+    );
+    if (!queued.ok) {
+      return fail(queued.code === "PEER_UNKNOWN" ? 404 : queued.code === "NOTICES_UNSUPPORTED" ? 409 : 400, queued.code, queued.message);
+    }
     input.onQueued?.();
     return json(202, { messageId: queued.messageId, queued: true });
   }

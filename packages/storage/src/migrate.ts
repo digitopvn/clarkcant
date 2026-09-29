@@ -1422,6 +1422,21 @@ export const MIGRATIONS: readonly Migration[] = [
       `);
     },
   },
+  {
+    version: 34,
+    name: "peer_features",
+    reversible: true,
+    up: (db) => {
+      db.exec(`
+        -- What a peer said it takes and what it calls itself, as it last said so in a pairing message or an answer to
+        -- something this node sent it. features is a JSON array of known values only; NULL means the peer advertised
+        -- nothing, which is how a build from before this answers, and such a peer is sent no newer kind of envelope.
+        -- label is shown to the person and never trusted: it is cleaned and bounded before it is stored.
+        ALTER TABLE peers ADD COLUMN features TEXT;
+        ALTER TABLE peers ADD COLUMN label TEXT;
+      `);
+    },
+  },
 ];
 
 function readAll<T>(db: Database, sql: string): T[] {

@@ -1,6 +1,9 @@
 import {
   type Instant,
   type PairInvite,
+  type PeerFeature,
+  readPeerFeatures,
+  readPeerLabel,
 } from "@clarkcant/contracts";
 
 import { type Database, allRows, oneRow } from "../db.ts";
@@ -21,6 +24,10 @@ export interface PeerRecord {
   /** Null while the pairing is pending, which is a state that admits no envelope. */
   trustedAt: Instant | null;
   revokedAt: Instant | null;
+  /** What the peer last advertised it takes; absent when it advertised nothing, as a build from before features does. */
+  features?: PeerFeature[];
+  /** What the peer last called itself, already cleaned and bounded; absent when it never said. */
+  label?: string;
 }
 
 interface PeerRow {
@@ -32,9 +39,23 @@ interface PeerRow {
   paired_at: string;
   trusted_at: string | null;
   revoked_at: string | null;
+  features: string | null;
+  label: string | null;
+}
+
+/** Stored features, read back through the same closed list they were written through; anything else is none. */
+function featuresFromColumn(column: string | null): PeerFeature[] | undefined {
+  if (column === null) return undefined;
+  try {
+    return readPeerFeatures(JSON.parse(column));
+  } catch {
+    return undefined;
+  }
 }
 
 function toPeerRecord(row: PeerRow): PeerRecord {
+  const features = featuresFromColumn(row.features);
+  const label = readPeerLabel(row.label);
   return {
     peerNodeId: row.peer_node_id,
     endpoint: row.endpoint,
@@ -44,6 +65,8 @@ function toPeerRecord(row: PeerRow): PeerRecord {
     pairedAt: row.paired_at as Instant,
     trustedAt: row.trusted_at === null ? null : (row.trusted_at as Instant),
     revokedAt: row.revoked_at === null ? null : (row.revoked_at as Instant),
+    ...(features === undefined ? {} : { features }),
+    ...(label === undefined ? {} : { label }),
   };
 }
 
@@ -115,6 +138,27 @@ export function upsertPeer(db: Database, peer: PeerRecord): void {
     peer.pairedAt,
     peer.trustedAt,
     peer.revokedAt,
+  );
+}
+
+/**
+ * Record what a peer says about itself: from a pairing message, or from its answer to something this node sent it.
+ *
+ * Both values pass through the contract's readers here, so nothing a peer sends reaches the row uncleaned. Features are
+ * replaced every time, since a peer that stopped advertising one no longer takes it: an unreadable or missing list is
+ * stored as none. A label is only ever replaced by a readable one, so an answer that carries no name keeps the last.
+ */
+export function recordPeerAdvertisement(
+  db: Database,
+  peerNodeId: string,
+  advertised: { features: unknown; label?: unknown },
+): void {
+  const features = readPeerFeatures(advertised.features);
+  const label = readPeerLabel(advertised.label);
+  db.prepare("UPDATE peers SET features = ?, label = COALESCE(?, label) WHERE peer_node_id = ?").run(
+    features === undefined ? null : JSON.stringify(features),
+    label ?? null,
+    peerNodeId,
   );
 }
 

@@ -4,6 +4,8 @@ import { type Instant, nowInstant } from "@clarkcant/contracts";
 import { verifyFrameGrant } from "@clarkcant/core";
 
 import { peerDelegationHandlers } from "./delegation-handlers.ts";
+import { recordNodeNotice } from "./notices.ts";
+import { receivePeerNotice } from "./peer-notices.ts";
 import { type PairingDeps } from "./peers.ts";
 import { type NodeServices } from "./services.ts";
 import { type GatewayRequest, type GatewayResponse, bearer, fail, tokenMatches } from "./routes/http.ts";
@@ -153,6 +155,16 @@ export async function handleRequest(deps: GatewayDeps, request: GatewayRequest):
     request,
     onSignal: () => services.automation?.kick(),
     delegation: peerDelegationHandlers(services, () => at() as Instant),
+    notice: (envelope) =>
+      receivePeerNotice(
+        {
+          db: runtime.db,
+          nodeId: runtime.identity.nodeId,
+          now: () => at() as Instant,
+          record: (notice) => recordNodeNotice(services, notice),
+        },
+        envelope,
+      ),
   });
   if (peerUplinkResponse !== undefined) return peerUplinkResponse;
 

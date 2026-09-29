@@ -132,6 +132,31 @@ occurredAt? }` on its own gateway, with its own token. The signal is queued in t
 NodeLink `signal` message; the peer records it as `peer.<topic>` from the node the authenticated channel says sent it,
 so its standing requests decide what, if anything, it starts. See [distributed runtime](distributed-runtime.md).
 
+A paired node puts something in the other owner's inbox with `POST /peers/{nodeId}/notices` `{ id, title, body?,
+category?, severity? }` on its own gateway, with its own token (`202` queued; `404` `PEER_UNKNOWN` for a peer that is
+not paired and confirmed; `409` `NOTICES_UNSUPPORTED` for a peer that has not said it takes notices, with a message
+saying to send that peer something first or update it; `400` for anything else). This route is the producer for now: nothing on a node sends notices by itself, so local tools — the CLI, an MCP
+client, an automation — use it to tell a paired Clark that accepts them. It travels as a NodeLink `notice` message
+whose payload is `notice` `{ key, category, severity, title, body? }` — a strict object: title at most 120 characters,
+body at most 500, key at most 160, and nothing else, so there is no field for actions, a subject or a link. The
+receiver records it only when its own owner chose to work with the sender — a live grant the receiver wrote to that
+peer, or a live allowance for it; a grant the sender wrote does not count — and at most 30 a minute from one peer.
+Otherwise it answers `accepted: false` with a `code` (`PEER_NOT_ALLOWED`, `RATE_LIMITED`, `NOTICE_UNREADABLE`,
+`NOTICES_OFF`) and a `reason`, which is final: the sender does not retry it, records it on the outbox row, and puts
+one notice per peer and reason in its own owner's inbox saying what did not arrive, why, and what would change it. It is recorded as
+the peer's (`sourceKind` `peer`, `originNodeId`, subject `peer`) under the key `peer:<senderNodeId>:<key>`, so a resend
+or a replay is one notice; its text is treated as data (control, bidi and zero-width characters removed); one peer keeps
+at most 20 undismissed notices, its oldest going first, without pushing out the node's own or another peer's; and what
+can be done with it is worked out by the receiving host like for any notice.
+
+Every `200` from `POST /peers/messages` carries `features` (what the answering node takes beyond the base envelopes;
+today `["notice"]`) and `label` (what it calls itself). The sender records both for that peer, only from an answer to
+something it delivered over the authenticated channel; a pairing offer may carry `features` too. Unknown features are
+dropped, the label is cleaned and cut to 64 characters, and a peer that advertised nothing — a build from before this —
+is sent no notices until an answer says it takes them. The sender reads at most 16 KiB of an answer, within the
+delivery's 30-second deadline; an answer past either is ignored, and the message stays acknowledged when its status
+was `200`.
+
 A standing request's task can also run on a paired node. That is set up in conversation, not through a route: the
 sending node's owner names the peer as the task's executor, and the receiving node's owner says what that peer may run
 there (folders, repositories, effects). The nodes exchange the grant, the hand-over (`delegate`), its answer
