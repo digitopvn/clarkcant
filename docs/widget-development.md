@@ -460,28 +460,53 @@ journey [composition-graph.spec.ts](../apps/web/e2e/composition-graph.spec.ts), 
 
 ---
 
-## 9. Semantic contract for voice
+## 9. Semantic contract for voice and the next turn
 
-A widget must publish a semantic view when its actionable state changes:
+What a widget shows now reaches Clark in two ways, both built from one document per widget:
 
-- summary;
-- selected IDs;
-- available actions;
-- concise text representation.
+- **Voice** reads the focused widget's summary, selection and values before it decides what a sentence means.
+- **The next typed or spoken turn** ends with a short note about the widgets the person changed in this conversation.
+  A person picking, searching or saving on a widget starts no turn and writes no message: the node only records that
+  the widget was touched, and works out what the change meant when the next turn starts.
+
+The document holds a summary, a few named values (a period, a chosen series, a query, a page), the selected IDs and the
+actions the widget offers. It is canonical and bounded: at most 16 values, lists of 12 short entries, 20 selected IDs,
+12 actions and 4 KB in all. Control and direction-changing characters are removed and anything secret-shaped is
+redacted. Its revision moves only when the document changes, so saving the same value, a view-only save or ten edits
+between two turns count as one change or none.
+
+The note is appended after everything else in the new turn and never rewrites earlier context, so a provider's cached
+prefix is unchanged. A session that has not seen a widget is told the whole document; a continuing session is told only
+what moved (`query: "" → "acme"`); a session that has seen the current revision is told nothing. The note names at most
+three widgets in about 2,400 characters and says when it left something out. The model can read the rest, for this
+conversation only, with the read-only `inspect_ui` tool. The note is marked as data from the screen, never
+instructions.
+
+Who writes the document:
+
+- **Built-in and composed surfaces** are described by the host from the state it stores: period, selected day and the
+  declared graph values.
+- **A widget in its own frame** proposes a summary, selected IDs and values with
+  `semantic.publish(summary, selectedIds, values?)`. The host sends the last of a burst after 250 ms, validates it
+  against a strict schema (`POST …/widgets/{instanceId}/semantic`), cleans it and marks it as the widget's own words. A
+  frame cannot name actions: the actions always come from the instance's bindings, so a frame cannot advertise an
+  action it was not bound to.
 
 Voice and click must call the same action binding/state path.
 
 Do not publish raw DOM, hidden text, the full dataset or secrets just so voice can “understand the screen”.
 
-Example:
+Example, from a frame:
 
-    semantic.publish({
-      summary: "Calendar for September 2026; September 20 selected.",
-      selectedIds: ["2026-09-20"],
-      availableActions: [
-        { actionBindingId: "act_create_event", label: "Create event" }
-      ]
-    })
+    semantic.publish(
+      "Calendar for September 2026; September 20 selected.",
+      ["2026-09-20"],
+      { view: "month", month: "2026-09" }
+    )
+
+Tests: [widget-semantic.spec.ts](../packages/contracts/test/widget-semantic.spec.ts) for the document and the note,
+[widget-semantic.spec.ts](../apps/runtime/test/widget-semantic.spec.ts) for the prompt, the routes and `inspect_ui`, and
+the browser journey [widget-semantic.spec.ts](../apps/web/e2e/widget-semantic.spec.ts).
 
 ---
 
@@ -509,7 +534,7 @@ Author-facing target:
     host.requestDetach()
     host.openExternal(approvedUrl)
 
-    semantic.publish(summary, selectedIds, availableActions)
+    semantic.publish(summary, selectedIds, values?)
 
     lifecycle.onMount()
     lifecycle.onSuspend()

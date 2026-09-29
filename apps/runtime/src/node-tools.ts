@@ -49,6 +49,7 @@ import { createFindRuntimeTool } from "./runtime-candidates.ts";
 import { createInvokeCapabilityTool, type InvokeCapabilityToolDeps } from "./invoke-capability-tool.ts";
 import { createManagePackageTool, type ManagePackageToolDeps } from "./manage-package-tool.ts";
 import { createReadInboxTool } from "./read-inbox-tool.ts";
+import { type InspectUiDeps, createInspectUiTool } from "./inspect-ui-tool.ts";
 import { createTerminalTools } from "./terminal-tools.ts";
 import type { TerminalRegistry } from "./terminal-sessions.ts";
 import { rememberMemory, type MemoryDeps } from "./memory.ts";
@@ -191,6 +192,12 @@ export function createNodeTools(input: {
    * Absent means neither tool is registered; the node's supervisor is the list both read.
    */
   work?: { conversationId?: string };
+  /**
+   * The widgets the person changed in this conversation, when the turn belongs to one.
+   *
+   * Absent means `inspect_ui` is not registered: a turn with no conversation has no screen of its own to read.
+   */
+  ui?: InspectUiDeps;
 }): ToolDefinition[] {
   const roots = input.roots ?? machineRoots;
   return [
@@ -254,6 +261,7 @@ export function createNodeTools(input: {
     ...(input.capabilities === undefined ? [] : [createInvokeCapabilityTool(input.capabilities)]),
     ...(input.work === undefined ? [] : createWorkTools(input.work)),
     ...(input.inbox === undefined ? [] : [createReadInboxTool(input.inbox)]),
+    ...(input.ui === undefined ? [] : [createInspectUiTool(input.ui)]),
   ];
 }
 

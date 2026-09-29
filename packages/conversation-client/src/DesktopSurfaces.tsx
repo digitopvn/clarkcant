@@ -629,6 +629,13 @@ export function PinnedLiveSurface({
               return { ok: false, code: "STATE_NOT_SAVED", message: cause instanceof Error ? cause.message : String(cause) };
             }
           }}
+          /*
+           * What the widget says it shows, for the next turn and for voice. Nothing waits on it: a publish that does not
+           * arrive leaves the widget out of the next turn's note, and changes nothing on screen.
+           */
+          publishSemantic={(proposal) => {
+            client.publishWidgetSemantic(conversationId, instanceId, proposal).catch(() => undefined);
+          }}
           brokeredCapabilities={frame.grantedCapabilities}
           allowedOrigins={frame.allowedOrigins}
           knownActionBindings={live.bindings.map((entry) => entry.actionBindingId)}

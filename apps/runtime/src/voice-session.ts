@@ -12,7 +12,7 @@ import {
   type VoiceCapabilities,
   nowInstant,
 } from "@clarkcant/contracts";
-import { recordVoiceTranscript, semanticViewOf } from "@clarkcant/core";
+import { recordVoiceTranscript } from "@clarkcant/core";
 import { GeminiLiveAdapter, type VoiceProviderAdapter } from "@clarkcant/voice-adapters";
 import { type RawData, WebSocketServer, type WebSocket } from "ws";
 
@@ -25,6 +25,7 @@ import {
   type VoiceWidgetRun,
 } from "./widget-voice-action.ts";
 import type { NodeServices } from "./services.ts";
+import { focusedSemanticView } from "./widget-semantic.ts";
 
 /**
  * The voice socket.
@@ -531,12 +532,13 @@ export function attachVoiceGateway(options: VoiceGatewayOptions): VoiceGateway {
      *
      * Built on demand rather than kept, so what decides a sentence is the node's current reading of the instance
      * instead of a description a page sent earlier and may have outgrown. `semanticViewOf` is the same function the
-     * agent's semantic view comes from, so a spoken action and an agent action see one account of the widget.
+     * agent's semantic view comes from, so a spoken action and an agent action see one account of the widget; and its
+     * state is read from the same document a typed turn's UI note is (#195), so voice and text describe one screen.
      */
     const focusedViewNow = (): SemanticView | undefined =>
       focusedInstanceId === undefined
         ? undefined
-        : semanticViewOf(options.services.conductor, focusedInstanceId, { source: "live" });
+        : focusedSemanticView(options.services.conductor, focusedInstanceId);
 
     /**
      * Run a widget action and report what came of it.

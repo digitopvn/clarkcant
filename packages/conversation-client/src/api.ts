@@ -34,6 +34,7 @@ import {
   type InboxSummary,
   type MemoryRecord,
   type RegisteredPreference,
+  type SemanticProposal,
   type SettingsTab,
   type Suggestion,
   type VoiceCapabilities,
@@ -1277,6 +1278,16 @@ export class GatewayClient {
     write: { expectedRevision: number; patch: Record<string, unknown> },
   ): Promise<{ stateRevision: number; state: Record<string, unknown> }> {
     return this.#call("POST", `/conversations/${conversationId}/widgets/${instanceId}/state`, write);
+  }
+
+  /**
+   * Tell the node what a frame says it shows, for the next turn and for voice.
+   *
+   * The node bounds and cleans the proposal and adds the widget's actions from its own bindings; a frame's words are
+   * never taken as actions or as instructions.
+   */
+  publishWidgetSemantic(conversationId: string, instanceId: string, proposal: SemanticProposal): Promise<{ accepted: true }> {
+    return this.#call("POST", `/conversations/${conversationId}/widgets/${instanceId}/semantic`, { proposal });
   }
 
   /**

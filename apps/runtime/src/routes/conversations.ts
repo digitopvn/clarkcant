@@ -14,6 +14,7 @@ import {
   commandEnvelopeSchema,
   graphSemanticState,
   nowInstant,
+  semanticProposalSchema,
   surfaceCompositionSpecSchema,
 } from "@clarkcant/contracts";
 import {
@@ -53,6 +54,8 @@ import {
   listConversations,
   nextMessageSequence,
   oneRow,
+  recordWidgetProposal,
+  touchWidgetSemantic,
 } from "@clarkcant/storage";
 
 import { type AppIntentDeps, decideAppIntent, mintConfirmation } from "../app-intents.ts";
@@ -192,6 +195,20 @@ interface FrameBindingRow {
   available?: boolean;
   unavailableReason?: string;
   unavailable: UnavailableCapability | undefined;
+}
+
+/**
+ * Mark a widget as changed from this conversation, after the change was stored.
+ *
+ * Nothing is built and no model is called: the next turn works out what the change meant. A failure to record the touch
+ * does not undo or fail the change the person made; the widget is only left out of the next turn's note.
+ */
+function touchWidget(db: Database, conversationId: string, instanceId: string): void {
+  try {
+    touchWidgetSemantic(db, { instanceId, conversationId, at: nowInstant() });
+  } catch {
+    // Deliberately quiet: see above.
+  }
 }
 
 function resolveLiveWidget(
@@ -1199,7 +1216,10 @@ export async function handleConversationRoutes(deps: ConversationRouteDeps): Pro
       invocationId: typeof parsed.value.invocationId === "string" ? parsed.value.invocationId : "",
     });
 
-    if (result.ok) return json(result.status, result.body);
+    if (result.ok) {
+      touchWidget(runtime.db, conversationId, instanceId);
+      return json(result.status, result.body);
+    }
     return fail(result.status, result.code, result.message, {
       ...(result.currentRevision === undefined ? {} : { currentRevision: result.currentRevision }),
     });
@@ -1249,11 +1269,44 @@ export async function handleConversationRoutes(deps: ConversationRouteDeps): Pro
       expectedRevision,
       patch: patch as Record<string, unknown>,
     });
-    if (outcome.ok) return json(200, { stateRevision: outcome.stateRevision, state: outcome.state });
+    if (outcome.ok) {
+      touchWidget(runtime.db, conversationId, instanceId);
+      return json(200, { stateRevision: outcome.stateRevision, state: outcome.state });
+    }
     return fail(STATE_REFUSAL_STATUS[outcome.code], outcome.code, outcome.message, {
       ...(outcome.stateRevision === undefined ? {} : { stateRevision: outcome.stateRevision }),
       ...(outcome.state === undefined ? {} : { state: outcome.state }),
     });
+  }
+
+  // /conversations/:id/widgets/:instanceId/semantic — what a frame says it shows, for the next turn (#195).
+  if (
+    segments.length === 5 &&
+    segments[2] === "widgets" &&
+    segments[4] === "semantic" &&
+    request.method === "POST"
+  ) {
+    const parsed = readJson(request);
+    if (!parsed.ok) return parsed.response;
+    const instanceId = segments[3] ?? "";
+    const instance = getInstance(services.conductor, instanceId);
+    if (instance === undefined) return fail(404, "RESOURCE_NOT_FOUND", "that instance is not on this node");
+    if (instance.ownerPrincipalId !== runtime.identity.ownerPrincipalId) {
+      return fail(403, "NOT_AUTHORIZED", "that instance belongs to another principal");
+    }
+    // A built-in or composed surface is described by the host from the state it stores; only a frame, whose state the
+    // host cannot read the meaning of, says what it shows.
+    const isolated = locateIsolatedFrame(runtime, instance.definitionRef.id);
+    if (!isolated.ok) {
+      return fail(409, "NOT_AN_ISOLATED_APP", "this widget is described by the host from its own state");
+    }
+    // Strict: a proposal that names actions, or anything else a frame does not own, is refused whole.
+    const proposal = semanticProposalSchema.safeParse(parsed.value.proposal);
+    if (!proposal.success) {
+      return fail(400, "INVALID_SCHEMA", "a semantic proposal carries a summary, and optionally selectedIds and values, and nothing else");
+    }
+    recordWidgetProposal(runtime.db, { instanceId, conversationId, proposal: proposal.data, at: nowInstant() });
+    return json(200, { accepted: true });
   }
 
   // /conversations/:id/widgets/:instanceId/export — a table's CSV, person-only (see `isPersonOnlyRoute`).

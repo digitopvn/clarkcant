@@ -23,6 +23,7 @@ import { textOfMessage } from "../session-search.ts";
 import { registerSessionFile } from "../session-store.ts";
 import { type NodeServices } from "../services.ts";
 import { registerNodeTools } from "../tool-catalogue.ts";
+import { conversationUiContext } from "../widget-semantic.ts";
 
 /**
  * The model turn, and everything it reads from the node.
@@ -198,6 +199,13 @@ export async function createNodeModelTurn(deps: ModelBootstrapDeps): Promise<Mod
         { db: deps.services().runtime.db, now: () => new Date().toISOString(), newId: deps.services().conductor.newId },
         { principalId: deps.services().runtime.identity.ownerPrincipalId, conversationId },
       ),
+    /*
+     * What the widgets the person changed now mean, read when a turn starts (#195).
+     *
+     * Rebuilding them here is what turns the edits since the last turn into one change or none; changing a widget
+     * never calls a model, it only marks the widget as touched.
+     */
+    uiContext: (conversationId) => conversationUiContext(deps.services().conductor, conversationId),
     // The Session Manager's search surface, exposed to the main model as its own tool. Read from a
     // closure so the services it needs, which are assembled below, exist by the time a turn runs.
     // The Session Manager's read-only reports, including the project finder. Built by a function a
@@ -273,6 +281,8 @@ export async function createNodeModelTurn(deps: ModelBootstrapDeps): Promise<Mod
         memory: { conversationId: turn.conversationId, newId: deps.services().conductor.newId },
         // "Anything waiting for me?" is answered from the same read the inbox panel makes, at the moment it is asked.
         inbox: () => readInbox(deps.services(), instantSchema.parse(new Date().toISOString())),
+        // What the widgets the person changed show now, read from the same documents the turn's UI note is built from.
+        ui: { deps: () => deps.services().conductor, conversationId: turn.conversationId },
         // The same action as the Settings buttons, so a spoken or typed "uninstall it" and a click are one path.
         packages: {
           packages: packageInstallDepsOf(deps.services()),

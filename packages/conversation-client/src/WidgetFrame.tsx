@@ -1,5 +1,7 @@
 import { type ReactElement, useEffect, useRef, useState } from "react";
 
+import type { SemanticProposal } from "@clarkcant/contracts";
+
 /*
  * The session entry, not the package root.
  *
@@ -51,6 +53,11 @@ export interface WidgetFrameProps {
    * only when this says so.
    */
   persistState?: (write: { expectedRevision: number; patch: Record<string, unknown> }) => Promise<FrameStateOutcome>;
+  /**
+   * Send what the widget says it shows to the node, for the next turn and for voice. Called with the last of a burst
+   * only (`SEMANTIC_SETTLE_MS`), so a widget that publishes on every keystroke costs one request when it settles.
+   */
+  publishSemantic?: (proposal: SemanticProposal) => void;
   /** Capabilities the host will broker for this frame. Empty unless something granted them. */
   brokeredCapabilities: readonly string[];
   /** Origins the document may reach. Enforced by its policy; declared here because the protocol says so. */
@@ -88,6 +95,8 @@ function newNonce(): string {
 
 /** The height a frame opens at, before its widget has said how tall it is. */
 export const DEFAULT_FRAME_HEIGHT = 200;
+/** How long a widget's semantic publishes must be quiet before the last one is sent to the node. */
+export const SEMANTIC_SETTLE_MS = 250;
 const MIN_FRAME_HEIGHT = 80;
 const MAX_FRAME_HEIGHT = 1200;
 
@@ -120,6 +129,7 @@ export function WidgetFrame(input: WidgetFrameProps): ReactElement {
   const [status, setStatus] = useState<"loading" | "ready" | "refused">("loading");
   const [notice, setNotice] = useState<string | undefined>(undefined);
   const [height, setHeight] = useState(DEFAULT_FRAME_HEIGHT);
+  const semanticTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
 
   useEffect(() => {
     const frame = element.current;
@@ -139,6 +149,14 @@ export function WidgetFrame(input: WidgetFrameProps): ReactElement {
               latest.current.persistState?.(write) ??
               Promise.resolve<FrameStateOutcome>({ ok: false, code: "STATE_NOT_SAVED", message: "the host stopped saving state" }),
           }),
+      // Settled here rather than sent per publish: the node only needs what the widget says once it stops changing.
+      publishSemantic: (proposal) => {
+        if (semanticTimer.current !== undefined) clearTimeout(semanticTimer.current);
+        semanticTimer.current = setTimeout(() => {
+          semanticTimer.current = undefined;
+          latest.current.publishSemantic?.(proposal);
+        }, SEMANTIC_SETTLE_MS);
+      },
       brokeredCapabilities: latest.current.brokeredCapabilities,
       allowedOrigins: latest.current.allowedOrigins,
       knownActionBindings: latest.current.knownActionBindings,
@@ -186,6 +204,8 @@ export function WidgetFrame(input: WidgetFrameProps): ReactElement {
     window.addEventListener("message", onMessage);
     return () => {
       window.removeEventListener("message", onMessage);
+      if (semanticTimer.current !== undefined) clearTimeout(semanticTimer.current);
+      semanticTimer.current = undefined;
       live.dispose();
       session.current = undefined;
     };

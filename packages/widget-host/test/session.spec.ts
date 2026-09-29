@@ -409,6 +409,27 @@ describe("what the host does with an accepted message", () => {
       expect.arrayContaining([{ kind: "semantic.publish", detail: "đang xem doanh thu tháng 9" }]),
     );
   });
+
+  it("hands what the frame says it shows to the host as a proposal, never with actions", () => {
+    const proposals: unknown[] = [];
+    const { session } = makeSession({ publishSemantic: (proposal) => proposals.push(proposal) });
+    session.init();
+
+    session.accept(
+      fromFrame({ kind: "semantic.publish", summary: "3 việc, 1 đã ghim", selectedIds: ["n2"], values: { filter: "pinned" } }),
+    );
+    session.accept(fromFrame({ kind: "semantic.publish", summary: "không có bộ lọc", selectedIds: [] }));
+    // A frame that tries to say which actions it offers is refused by the bridge schema, before the host hears it.
+    const forged = session.accept(
+      fromFrame({ kind: "semantic.publish", summary: "x", selectedIds: [], availableActions: [{ actionBindingId: "delete-all" }] }),
+    );
+
+    expect(forged.ok).toBe(false);
+    expect(proposals).toEqual([
+      { summary: "3 việc, 1 đã ghim", selectedIds: ["n2"], values: { filter: "pinned" } },
+      { summary: "không có bộ lọc", selectedIds: [] },
+    ]);
+  });
 });
 
 describe("the frame lifecycle from the host side", () => {

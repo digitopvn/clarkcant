@@ -1,3 +1,4 @@
+import type { SemanticProposal } from "@clarkcant/contracts";
 import {
   BRIDGE_PROTOCOL,
   BRIDGE_VERSION,
@@ -101,6 +102,13 @@ export interface FrameSessionInput {
    * applied to this session's copy, which is all those hosts have.
    */
   persistState?: (input: { expectedRevision: number; patch: Record<string, unknown> }) => Promise<FrameStateOutcome>;
+  /**
+   * Where what the frame says it shows is sent, for the next model turn and for voice.
+   *
+   * Absent (the dev host, the conformance harness), a publish is only recorded in the transcript. Called at most as
+   * often as the frame publishes; a host that sends it over the network should settle a burst into one request.
+   */
+  publishSemantic?: (proposal: SemanticProposal) => void;
   /** Capabilities the host is willing to broker for this frame, and no others. */
   brokeredCapabilities: readonly string[];
   /** Origins this frame may reach, enforced by CSP and stated here for the init message. */
@@ -380,8 +388,14 @@ export function createFrameSession(input: FrameSessionInput): FrameSession {
       }
 
       case "semantic.publish":
-        // Published for a reader who cannot see the widget, and for a voice path to address its actions.
+        // Published for a reader who cannot see the widget, and for the next model turn and voice to know what it shows.
+        // Handed on as a proposal: the node bounds and cleans it, and adds the actions from its own bindings.
         transcript.push({ kind: "semantic.publish", detail: message.summary });
+        input.publishSemantic?.({
+          summary: message.summary,
+          selectedIds: message.selectedIds,
+          ...(message.values === undefined ? {} : { values: message.values }),
+        });
         return { ok: true, kind: "semantic.publish", detail: message.summary };
     }
   };
