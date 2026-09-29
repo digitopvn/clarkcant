@@ -761,8 +761,13 @@ test("an update notice updates through the install route, opens Settings to revi
       ?.noticeId ?? "";
   expect(noticeId).not.toBe("");
 
-  await expect(page.locator("[data-inbox-mark]")).toBeVisible({ timeout: 15_000 });
-  await page.locator("[data-inbox-mark]").click();
+  // The notice arrives in the conversation on screen, so it is read at once and raises no mark of its own: open the
+  // inbox the way a person would here, by asking for it, so the journey does not lean on what earlier tests left waiting.
+  const openInbox = async (): Promise<void> => {
+    await composer.fill("mở hộp thư");
+    await composer.press("Enter");
+  };
+  await openInbox();
   const dialog = page.getByRole("dialog");
   const row = dialog.locator(`[data-inbox-notice="${noticeId}"]`);
   await expect(row).toBeVisible({ timeout: 10_000 });
@@ -774,8 +779,8 @@ test("an update notice updates through the install route, opens Settings to revi
   // the notice stays, because nothing was installed.
   await update.click();
   const failed = dialog.locator('[data-inbox-status="failed"]');
-  await expect(failed).toContainText("Không cập nhật được:", { timeout: 20_000 });
-  await expect(failed).toContainText("Bản đang cài vẫn giữ nguyên.");
+  // Said in the reader's language, as whole sentences: the node's English refusal never reaches the line.
+  await expect(failed).toHaveText("Không cập nhật được: danh mục gói không có bản 1.0.1. Bản đang cài vẫn giữ nguyên.", { timeout: 20_000 });
   await expect(row).toBeVisible();
 
   // Skipping the version takes the notice out; Undo brings it back and the version is reported again.
@@ -809,7 +814,7 @@ test("an update notice updates through the install route, opens Settings to revi
   expect((await page.request.post(`${GATEWAY}/inbox/notices/${noticeId}/restore`, { headers })).ok()).toBe(true);
   await page.keyboard.press("Escape");
   await expect(dialog).toHaveCount(0);
-  await page.locator("[data-inbox-mark]").click();
+  await openInbox();
   await expect(row).toBeVisible({ timeout: 10_000 });
 
   // Review closes the inbox and opens Settings on the installed extensions.

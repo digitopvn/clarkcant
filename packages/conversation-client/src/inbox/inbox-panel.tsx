@@ -38,6 +38,7 @@ import {
   snoozeUntil,
   suppressionDescription,
   timeLeft,
+  updateFailureReason,
   waitingKey,
 } from "./inbox-model.ts";
 
@@ -543,7 +544,7 @@ export function InboxPanel({
           afterLeaving(before, notice.noticeId),
         );
       })
-      .catch((cause: unknown) => finish({ tone: "failed", text: t("inbox.updateFailed").replace("{reason}", failedReason(cause)) }, { kind: "status" }));
+      .catch((cause: unknown) => finish({ tone: "failed", text: t("inbox.updateFailed").replace("{reason}", updateFailureReason(cause, version, t)) }, { kind: "status" }));
   };
 
   /** "Skip this version": the node stops reporting it (and anything older), and the notice leaves the list, undoably. */
