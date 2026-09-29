@@ -92,6 +92,12 @@ function queueRaw(from: LiveNode, to: LiveNode, kind: PeerEnvelope["kind"], payl
   return messageId;
 }
 
+/** A signal as `POST /peers/{nodeId}/signals` queues it, for `queueRaw`. */
+function signalPayload(from: LiveNode, id: string): Record<string, unknown> {
+  const at = new Date().toISOString();
+  return { signal: { source: { kind: "local", sourceId: identityOf(from).nodeId }, topic: "build.failed", payload: {}, occurredAt: at, dedupeKey: id } };
+}
+
 async function signal(from: LiveNode, to: LiveNode, id: string): Promise<void> {
   expect((await call(from, `/peers/${identityOf(to).nodeId}/signals`, { body: { id, topic: "build.failed" }, token: from.token })).status).toBe(202);
 }
@@ -384,8 +390,9 @@ describe("a message given up on, to a peer too old to take a skip", () => {
     const peerB = identityOf(b).nodeId;
     expect(getPeer(a.services.runtime.db, peerB)?.features).toEqual(["notice"]);
 
+    // Queued together, before the pass the first one starts: both are tried on every pass from the first.
     const lost = queueRaw(a, b, "notice", {});
-    await signal(a, b, "after-1");
+    queueRaw(a, b, "signal", signalPayload(a, "after-1"));
     const explain = (): unknown => ({ outbox: outboxOf(a), notices: noticesOn(a, "peer-") });
     await waitUntil(() => failedTimes(a, lost, 1), "the first refusal", explain);
     // B refuses what follows for the gap, as before; nothing was given up on yet, so nothing is stuck yet.
@@ -418,8 +425,9 @@ describe("a message given up on, to a peer too old to take a skip", () => {
     await pair(a, b);
     await introduce(a, b);
     const peerB = identityOf(b).nodeId;
+    // Queued together, before the pass the first one starts: both are tried on every pass from the first.
     const lost = queueRaw(a, b, "notice", {});
-    await signal(a, b, "after-1");
+    queueRaw(a, b, "signal", signalPayload(a, "after-1"));
     const explain = (): unknown => ({ outbox: outboxOf(a), notices: noticesOn(a, "peer-") });
     await giveUpOn(a, lost, explain);
     await waitUntil(() => noticesOn(a, "peer-stuck:").length === 1, "the stuck notice", explain);
