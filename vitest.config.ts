@@ -65,6 +65,10 @@ export default defineConfig({
     environment: "node",
     reporters: ["default"],
     testTimeout: 20_000,
+    // Setup and teardown do the same real disk work as the tests — open a WAL database and migrate it, checkpoint it
+    // on close, delete its directory — so they get the same budget. Vitest's 10s default for hooks is shorter than a
+    // single synchronous close-and-delete can take on a loaded Windows runner, where every file handle is scanned.
+    hookTimeout: 20_000,
     restoreMocks: true,
   },
 });

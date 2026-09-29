@@ -40,7 +40,7 @@ beforeEach(() => {
 
 afterEach(() => {
   db.close();
-  rmSync(dir, { recursive: true, force: true });
+  rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
 });
 
 function add(name = "github_token", overrides: Partial<Parameters<typeof putSecretMetadata>[1]> = {}): void {
