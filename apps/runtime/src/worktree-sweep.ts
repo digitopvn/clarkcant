@@ -1,5 +1,5 @@
 import { isTerminal, type Instant } from "@clarkcant/contracts";
-import { findManagedWorktrees, removeManagedWorktree } from "@clarkcant/project-work";
+import { findManagedWorktrees, removeEmptyTaskFolder, removeManagedWorktree, type FoundWorktree } from "@clarkcant/project-work";
 import { getTask } from "@clarkcant/storage";
 
 import { recordNodeNotice } from "./notices.ts";
@@ -27,19 +27,27 @@ export async function sweepTaskWorktrees(
 ): Promise<WorktreeSweep> {
   const now = input.now ?? ((): Instant => new Date().toISOString() as Instant);
   const sweep: WorktreeSweep = { removed: [], kept: [] };
+  // A task that changed several repositories has a worktree of each; what it leaves is said once, for all of them.
+  const keptByTask = new Map<string, { task: NonNullable<ReturnType<typeof getTask>>; worktrees: FoundWorktree[] }>();
   for (const worktree of await findManagedWorktrees({ worktreesDir: input.worktreesDir })) {
-    const task = getTask(services.runtime.db, worktree.name);
+    const task = getTask(services.runtime.db, worktree.taskId);
     if (task === undefined || !isTerminal(task.state)) continue;
     if (!worktree.dirty) {
       const removed = await removeManagedWorktree({ repoPath: worktree.repoPath, path: worktree.path });
       if (removed.removed) {
         sweep.removed.push(worktree.path);
+        await removeEmptyTaskFolder({ worktreesDir: input.worktreesDir, taskId: worktree.taskId });
         continue;
       }
     }
     sweep.kept.push({ taskId: task.taskId, path: worktree.path, branch: worktree.branch });
+    const entry = keptByTask.get(task.taskId) ?? { task, worktrees: [] };
+    entry.worktrees.push(worktree);
+    keptByTask.set(task.taskId, entry);
+  }
+  for (const { task, worktrees } of keptByTask.values()) {
     // Once per task, however many boots find it: the inbox notice is the record that it was said, so a restart that
-    // finds the same worktree again says nothing new. The path goes in the conversation; the inbox does not keep paths.
+    // finds the same worktrees again says nothing new. The paths go in the conversation; the inbox does not keep paths.
     let firstTime = true;
     try {
       firstTime = recordNodeNotice(services, {
@@ -60,7 +68,9 @@ export async function sweepTaskWorktrees(
     try {
       appendHostReply(services, {
         conversationId: task.conversationId,
-        text: `Task ${task.taskId} để lại thay đổi chưa commit, nên chúng được giữ nguyên ở ${worktree.path} (nhánh ${worktree.branch}).`,
+        text: `Task ${task.taskId} để lại thay đổi chưa commit, nên chúng được giữ nguyên ở ${worktrees
+          .map((worktree) => `${worktree.path} (nhánh ${worktree.branch})`)
+          .join(", ")}.`,
         at: now(),
       });
     } catch (cause) {
