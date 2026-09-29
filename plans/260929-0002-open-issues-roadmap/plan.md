@@ -70,8 +70,8 @@ issues: [93, 129, 137, 169, 170, 171, 172, 173, 174, 190, 192, 195, 196, 197, 19
 | 05 | [#195 semantic state của widget](phase-05-widget-semantic-state.md) | 2 | 04 (hợp đồng composition) | done (#195) |
 | 06 | [#197 phase 1–2: provenance, resource theo task, Signal/Intent](phase-06-reactive-automation-core.md) | 2 | 03 | done (#240 #245, #241 #247) |
 | 07 | [#210 A–D cùng #196 phase 1–2: hợp đồng reference chung](phase-07-composer-refs-actionable-inbox.md) | 2 | 01 | done (#210 A–D đóng, E tách #255; #196 phase 1–2 qua #258; [kế hoạch con](../260929-2100-210-composer-references/plan.md)) |
-| 08 | [#196 phase 3–5, #170, #172 phần còn lại](phase-08-inbox-completion.md) | 3 | 06, 07 | pending |
-| 09 | [#192 cá nhân hoá Orb](phase-09-orb-personalization.md) | 3 | 01 | pending |
+| 08 | [#196 phase 3–5, #170, #172 phần còn lại](phase-08-inbox-completion.md) | 3 | 06, 07 | in progress (#172 đóng; #170 đóng qua #276, tiêu chí 2 tách #274; #196 phase 4 qua #272, #268; còn #196 phase 3, 5) |
+| 09 | [#192 cá nhân hoá Orb](phase-09-orb-personalization.md) | 3 | 01 | done (#192 qua #271; #269 qua #278) |
 | 10 | [#198 P1/P2 và #200 (đã khử trùng lặp)](phase-10-widget-platform-expansion.md) | 4 | 04, 05 | pending |
 | 11 | [#197 phase 3–5 (fixture, tách live journey)](phase-11-reactive-automation-adapters.md) | 4 | 06 | done (#242 #249, #243 #252, #244 #254); follow-up: #251 (PR #260), #246 (PR #261), #248 (polling theo lịch), #253; #250 gated |
 | 12 | [#201 nền tảng theme](phase-12-theme-platform.md) | 4 | 04, 09 | pending |
